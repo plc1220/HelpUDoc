@@ -1,0 +1,14 @@
+# Node.js
+node_modules/
+dist/
+build/
+*.log
+.env*
+
+# Universal
+.DS_Store
+Thumbs.db
+*.tmp
+*.swp
+.vscode/
+.idea/

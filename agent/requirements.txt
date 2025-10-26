@@ -1,0 +1,6 @@
+fastapi
+uvicorn
+langchain
+deepagents
+google-generativeai
+python-dotenv
