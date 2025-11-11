@@ -7,7 +7,7 @@ import {
   createTheme,
 } from '@mui/material';
 import { Menu as MenuIcon } from '@mui/icons-material';
-import { File as FileIcon, Edit, Trash, Star, Send, Plus, ChevronRight } from 'lucide-react';
+import { File as FileIcon, Edit, Trash, Star, Send, Plus, ChevronRight, ChevronLeft } from 'lucide-react';
 import { getWorkspaces, createWorkspace, deleteWorkspace } from '../services/workspaceApi';
 import { getFiles, createFile, updateFileContent, deleteFile, getFileContent } from '../services/fileApi';
 import { runAgent } from '../services/agentApi';
@@ -48,6 +48,7 @@ export default function WorkspacePage() {
   const [selectedPersona, setSelectedPersona] = useState('default');
   const [isEditMode, setIsEditMode] = useState(false);
   const [isAgentPaneVisible, setIsAgentPaneVisible] = useState(true);
+  const [isFilePaneVisible, setIsFilePaneVisible] = useState(true);
 
   const isFileEditable = (fileName: string): boolean => {
     const editableExtensions = ['.md', '.mermaid', '.txt', '.json', '.html', '.css', '.js', '.ts', '.tsx', '.jsx'];
@@ -150,8 +151,10 @@ export default function WorkspacePage() {
   };
 
   const handleUpdateFile = async (id: number, content: string) => {
+    if (!selectedWorkspace) return;
+
     try {
-      await updateFileContent(id, content);
+      await updateFileContent(selectedWorkspace.id, id, content);
       // Optionally, you can refetch the file or update it in the state
     } catch (error) {
       console.error('Failed to update file:', error);
@@ -274,34 +277,44 @@ export default function WorkspacePage() {
               </div>
               <div className="flex-1 flex">
                 {/* File Explorer */}
-                <div className="w-80 bg-white border-r border-gray-200 flex flex-col">
+                <div className={`bg-white border-r border-gray-200 flex flex-col transition-all duration-300 ${isFilePaneVisible ? 'w-80' : 'w-12'}`}>
                   <div className="p-4 border-b border-gray-200 flex justify-between items-center">
-                    <h3 className="text-lg font-semibold text-gray-800">Files</h3>
-                    <div className="flex items-center space-x-2">
-                      <input
-                        type="file"
-                        id="file-upload"
-                        style={{ display: 'none' }}
-                        onChange={handleFileUpload}
-                        multiple
-                      />
+                    <div className="flex items-center">
+                      {isFilePaneVisible && <h3 className="text-lg font-semibold text-gray-800">Files</h3>}
                       <button
-                        onClick={() => document.getElementById('file-upload')?.click()}
-                        disabled={!selectedWorkspace}
-                        className="p-2 rounded-lg hover:bg-gray-200 disabled:opacity-50"
+                        onClick={() => setIsFilePaneVisible(!isFilePaneVisible)}
+                        className="p-1 border rounded-md ml-2 hover:bg-gray-100"
                       >
-                        <Plus size={18} className="text-gray-600" />
-                      </button>
-                      <button
-                        onClick={handleBulkDelete}
-                        disabled={selectedFiles.size === 0}
-                        className="p-2 rounded-lg hover:bg-gray-200 disabled:opacity-50"
-                      >
-                        <Trash size={18} className="text-gray-600" />
+                        <ChevronLeft size={16} className={`text-gray-600 transition-transform duration-300 ${isFilePaneVisible ? '' : 'rotate-180'}`} />
                       </button>
                     </div>
+                    {isFilePaneVisible && (
+                      <div className="flex items-center space-x-2">
+                        <input
+                          type="file"
+                          id="file-upload"
+                          style={{ display: 'none' }}
+                          onChange={handleFileUpload}
+                          multiple
+                        />
+                        <button
+                          onClick={() => document.getElementById('file-upload')?.click()}
+                          disabled={!selectedWorkspace}
+                          className="p-2 rounded-lg hover:bg-gray-200 disabled:opacity-50"
+                        >
+                          <Plus size={18} className="text-gray-600" />
+                        </button>
+                        <button
+                          onClick={handleBulkDelete}
+                          disabled={selectedFiles.size === 0}
+                          className="p-2 rounded-lg hover:bg-gray-200 disabled:opacity-50"
+                        >
+                          <Trash size={18} className="text-gray-600" />
+                        </button>
+                      </div>
+                    )}
                   </div>
-                  <div className="flex-1 p-4 overflow-y-auto">
+                  <div className={`flex-1 p-4 overflow-y-auto ${isFilePaneVisible ? 'block' : 'hidden'}`}>
                     {files.map((file) => (
                       <div
                         key={file.id}
@@ -317,7 +330,7 @@ export default function WorkspacePage() {
                         />
                         <div onClick={() => {
                           setSelectedFile(file);
-                          setIsEditMode(file.name.endsWith('.md'));
+                          setIsEditMode(false);
                         }} className="flex items-center flex-1">
                           <FileIcon size={18} className="mr-3 text-gray-600" />
                           <span className="text-gray-800">{file.name}</span>

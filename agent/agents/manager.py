@@ -1,30 +1,29 @@
 import os
 from deepagents import create_deep_agent
 from langchain.chat_models import init_chat_model
-from deepagents.middleware.filesystem import FilesystemMiddleware
-from core.workspace import get_workspace_path
+from deepagents.backends import FilesystemBackend
 from core.config import MODEL_NAME
 
 AGENT_CACHE = {}
 
+
 def create_workspace_agent(workspace: str):
-    """Create or reuse a DeepAgent instance for a workspace"""
+    """Create or reuse a DeepAgent instance for a workspace."""
     if workspace in AGENT_CACHE:
         return AGENT_CACHE[workspace]
 
+    # Load system prompt
     prompt_path = os.path.join(os.path.dirname(__file__), "prompts/default_system_prompt.md")
-    with open(prompt_path) as f:
+    with open(prompt_path, encoding="utf-8") as f:
         system_prompt = f.read()
 
+    # Initialize chat model
     model = init_chat_model(model=MODEL_NAME)
-    fs = FilesystemMiddleware(
-        root_dir=get_workspace_path(workspace),
-        system_prompt="Only use tools within this workspace."
-    )
 
+    # Create DeepAgent
     agent = create_deep_agent(
         model=model,
-        middleware=[fs],
+        backend=FilesystemBackend(root_dir='/Users/cmtest/Documents/HelpUDoc/backend/workspaces/test/'),
         system_prompt=system_prompt
     )
 

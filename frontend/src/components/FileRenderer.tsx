@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import mermaid from 'mermaid';
 import ReactMarkdown from 'react-markdown';
 import type { File } from '../types';
@@ -10,18 +10,76 @@ interface FileRendererProps {
 
 const FileRenderer: React.FC<FileRendererProps> = ({ file, fileContent }) => {
   const mermaidRef = useRef<HTMLDivElement>(null);
+  const [isMermaidRendered, setIsMermaidRendered] = useState(false);
 
   useEffect(() => {
-    if (file?.name.endsWith('.mermaid') && mermaidRef.current) {
-      try {
-        mermaid.run({
-          nodes: [mermaidRef.current],
-        });
-      } catch (e) {
-        console.error('Mermaid rendering error:', e);
+    const renderMermaid = async () => {
+      if (file?.name.endsWith('.mermaid') && mermaidRef.current) {
+        setIsMermaidRendered(false);
+        try {
+          // Ensure the container is empty before rendering
+          mermaidRef.current.innerHTML = '';
+          const { svg } = await mermaid.render('mermaid-graph', fileContent);
+          if (mermaidRef.current) {
+            mermaidRef.current.innerHTML = svg;
+            setIsMermaidRendered(true);
+          }
+        } catch (e) {
+          console.error('Mermaid rendering error:', e);
+          if (mermaidRef.current) {
+            // Display the raw content as a fallback
+            mermaidRef.current.textContent = fileContent;
+          }
+        }
       }
-    }
+    };
+    renderMermaid();
   }, [file, fileContent]);
+
+  const handleCopyImage = () => {
+    if (!mermaidRef.current) return;
+
+    const svgElement = mermaidRef.current.querySelector('svg');
+    if (!svgElement) return;
+
+    const serializer = new XMLSerializer();
+    const svgString = serializer.serializeToString(svgElement);
+    const svgBlob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
+    const url = URL.createObjectURL(svgBlob);
+
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = img.width;
+      canvas.height = img.height;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.drawImage(img, 0, 0);
+        canvas.toBlob(async (blob) => {
+          if (blob) {
+            try {
+              await navigator.clipboard.write([
+                new ClipboardItem({
+                  'image/png': blob,
+                }),
+              ]);
+              alert('Diagram copied to clipboard as image!');
+            } catch (err) {
+              console.error('Failed to copy image: ', err);
+              alert('Failed to copy image to clipboard.');
+            }
+          }
+        }, 'image/png');
+      }
+      URL.revokeObjectURL(url);
+    };
+    img.onerror = (err) => {
+      console.error('Failed to load SVG image for copying', err);
+      alert('Could not load diagram image for copying.');
+      URL.revokeObjectURL(url);
+    };
+    img.src = url;
+  };
 
   if (!file) {
     return (
@@ -34,7 +92,7 @@ const FileRenderer: React.FC<FileRendererProps> = ({ file, fileContent }) => {
   const renderContent = () => {
     if (file.name.endsWith('.md')) {
       return (
-        <div className="prose max-w-none break-words overflow-x-hidden h-full overflow-y-auto">
+        <div className="prose max-w-none break-words overflow-x-hidden h-full overflow-y-auto p-4" style={{ maxHeight: 'calc(100vh - 200px)' }}>
           <ReactMarkdown
             components={{
               img: ({ node, ...props }) => (
@@ -42,6 +100,7 @@ const FileRenderer: React.FC<FileRendererProps> = ({ file, fileContent }) => {
                   className="max-w-full h-auto rounded-lg shadow-md"
                   loading="lazy"
                   {...props}
+                  src={props.src || undefined}
                 />
               ),
             }}
@@ -53,8 +112,17 @@ const FileRenderer: React.FC<FileRendererProps> = ({ file, fileContent }) => {
     }
     if (file.name.endsWith('.mermaid')) {
       return (
-        <div ref={mermaidRef} className="mermaid">
-          {fileContent}
+        <div className="relative h-full">
+          <div ref={mermaidRef} className="mermaid-container w-full h-full"></div>
+          {isMermaidRendered && (
+            <button
+              onClick={handleCopyImage}
+              className="absolute top-2 right-2 bg-gray-700 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded-lg shadow-md transition-colors duration-200"
+              title="Copy as Image"
+            >
+              Copy as Image
+            </button>
+          )}
         </div>
       );
     }

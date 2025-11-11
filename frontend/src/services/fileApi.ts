@@ -23,7 +23,6 @@ export const createFile = async (workspaceId: string, file: File) => {
   const response = await fetch(`${API_URL}/workspaces/${workspaceId}/files`, {
     method: 'POST',
     body: formData,
-    headers: {},
   });
   if (!response.ok) {
     throw new Error('Failed to create file');
@@ -32,11 +31,12 @@ export const createFile = async (workspaceId: string, file: File) => {
 };
 
 export const updateFileContent = async (
+  workspaceId: string,
   fileId: number,
   content: string,
 ) => {
   const response = await fetch(
-    `${API_URL}/files/${fileId}/content`,
+    `${API_URL}/workspaces/${workspaceId}/files/${fileId}/content`,
     {
       method: 'PUT',
       headers: {

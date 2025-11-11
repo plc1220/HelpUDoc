@@ -44,15 +44,10 @@ export class FileService {
     let storageType: 'local' | 's3';
     let filePath: string;
 
-    if (this.isTextFile(fileName, mimeType)) {
-      storageType = 'local';
-      filePath = path.join(WORKSPACE_DIR, workspaceId, fileName);
-      await fs.writeFile(filePath, fileBuffer);
-    } else {
-      storageType = 's3';
-      const result = await this.s3Service.uploadFile(workspaceId, fileName, fileBuffer);
-      filePath = result.Key;
-    }
+    storageType = 'local';
+    filePath = path.join(WORKSPACE_DIR, workspaceId, fileName);
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.writeFile(filePath, fileBuffer);
 
     const [newFile] = await this.db('files').insert({
       name: fileName,
@@ -70,19 +65,15 @@ export class FileService {
       throw new Error('File not found');
     }
 
-    if (file.storageType === 'local') {
-      const buffer = await fs.readFile(file.path);
-      const mimeType = file.mimeType || 'application/octet-stream';
-      
-      if (this.isTextFile(file.name, mimeType)) {
-        return { ...file, content: buffer.toString('utf-8') };
-      } else {
-        return { ...file, content: buffer.toString('base64') };
-      }
+    const buffer = await fs.readFile(file.path);
+    const mimeType = file.mimeType || 'application/octet-stream';
+
+    if (this.isTextFile(file.name, mimeType)) {
+      const content = buffer.toString('utf-8');
+      return { ...file, content };
     } else {
-      // TODO: Implement S3 file content retrieval
-      console.warn('Retrieving S3 file content is not fully implemented.');
-      return file;
+      const content = buffer.toString('base64');
+      return { ...file, content };
     }
   }
 
@@ -100,7 +91,7 @@ export class FileService {
       console.warn('Updating S3 files is not fully implemented.');
     }
 
-    return this.db('files').where({ id: fileId }).update({ content }).returning('*');
+    return this.db('files').where({ id: fileId }).first();
   }
 
   async deleteFile(fileId: number) {

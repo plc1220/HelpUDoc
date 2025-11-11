@@ -12,3 +12,5 @@ Thumbs.db
 *.swp
 .vscode/
 .idea/
+agent/.venv
+licheng_accessKeys.csv

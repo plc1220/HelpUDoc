@@ -3,6 +3,7 @@ dotenv.config();
 import express from 'express';
 import helmet from 'helmet';
 import cors from 'cors';
+import multer from 'multer';
 import apiRoutes from './api/routes';
 import { loggingMiddleware } from './api/logging';
 import { DatabaseService } from './services/databaseService';
@@ -21,7 +22,9 @@ async function startServer() {
     allowedHeaders: ['Content-Type', 'Authorization'],
   }));
   app.use(loggingMiddleware);
-  app.use(express.json());
+  app.use(express.json({ limit: '50mb' }));
+  app.use(express.urlencoded({ limit: '50mb', extended: true }));
+
   app.use('/api', apiRoutes(databaseService));
 
   app.listen(port, () => {

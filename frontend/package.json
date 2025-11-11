@@ -12,9 +12,11 @@
   "dependencies": {
     "@emotion/react": "^11.14.0",
     "@emotion/styled": "^11.14.1",
+    "@mdxeditor/editor": "^3.48.0",
     "@monaco-editor/react": "^4.7.0",
     "@mui/icons-material": "^7.3.4",
     "@mui/material": "^7.3.4",
+    "@types/react-syntax-highlighter": "^15.5.13",
     "autoprefixer": "^10.4.21",
     "easymde": "^2.20.0",
     "lucide-react": "^0.546.0",
@@ -25,6 +27,7 @@
     "react-markdown": "^10.1.0",
     "react-router-dom": "^7.9.4",
     "react-simplemde-editor": "^5.2.0",
+    "react-syntax-highlighter": "^16.0.0",
     "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
