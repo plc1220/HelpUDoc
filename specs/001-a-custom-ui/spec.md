@@ -28,6 +28,7 @@ As a non-technical user, I want to interact with a ReAct agent through a simple 
 
 1. **Given** the application is open, **When** I type "Generate a pricing table for three tiers: Basic, Pro, and Enterprise." into the chat input and press send, **Then** the agent displays a markdown table with the requested pricing tiers.
 2. **Given** the agent has returned a response, **When** I copy the response, **Then** the markdown is copied to my clipboard.
+3. **Given** I submit a prompt to the agent, **When** the agent begins composing its answer, **Then** I see the response stream into the chat bubble token-by-token (or chunk-by-chunk) instead of appearing all at once, so I can monitor progress in real time.
 
 ---
 
@@ -78,6 +79,7 @@ As a user, I want to be able to choose from a list of different agent personas, 
 - **FR-005**: The backend MUST manage agent definitions, including prompts, instructions, statically registered tools, and MCP servers, based on the `AgentDefinition` interface.
 - **FR-006**: The agent's output MUST be rendered as markdown in the UI.
 - **FR-007**: System MUST prevent the creation of workspaces with duplicate names and inform the user with an error message.
+- **FR-008**: System MUST stream agent responses from the agent service through the backend to the frontend, updating the UI incrementally as new tokens/chunks arrive.
 
 ### Key Entities *(include if feature involves data)*
 
