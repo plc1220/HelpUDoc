@@ -3,19 +3,17 @@ import type { CSSProperties } from 'react';
 import {
   Box,
   CssBaseline,
-  IconButton,
   ThemeProvider,
   createTheme,
 } from '@mui/material';
-import { Menu as MenuIcon } from '@mui/icons-material';
-import { File as FileIcon, Edit, Trash, Star, Send, Plus, ChevronRight, ChevronLeft, RotateCcw, Maximize2, Minimize2 } from 'lucide-react';
+import { Edit, Trash, Star, Send, Plus, ChevronRight, ChevronLeft, RotateCcw, Maximize2, Minimize2, X, FileIcon } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { getWorkspaces, createWorkspace, deleteWorkspace } from '../services/workspaceApi';
-import { getFiles, createFile, updateFileContent, deleteFile, getFileContent } from '../services/fileApi';
-import { fetchPersonas, runAgentStream } from '../services/agentApi';
+import { getFiles, createFile, updateFileContent, deleteFile, getFileContent, renameFile } from '../services/fileApi';
+import { fetchPersonas, runAgentStream, type AgentStreamChunk } from '../services/agentApi';
 import { fetchRecentConversations, createConversation as createConversationApi, fetchConversationDetail, appendMessage as appendConversationMessage, deleteConversation as deleteConversationApi } from '../services/conversationApi';
-import type { Workspace, File, AgentPersona, ConversationSummary, ConversationMessage } from '../types';
+import type { Workspace, File as WorkspaceFile, AgentPersona, ConversationSummary, ConversationMessage, ToolEvent } from '../types';
 import CollapsibleDrawer from '../components/CollapsibleDrawer';
 import FileEditor from '../components/FileEditor';
 import FileRenderer from '../components/FileRenderer';
@@ -23,10 +21,13 @@ import ExpandableSidebar from '../components/ExpandableSidebar';
 import PersonaSelector from '../components/PersonaSelector';
 
 const drawerWidth = 280;
+const DEFAULT_PERSONA_NAME = 'general-assistant';
 
 const theme = createTheme({
   // Your theme customizations
 });
+
+const THOUGHT_PREVIEW_LIMIT = 320;
 
 const mapMessagesToAgentHistory = (messages: ConversationMessage[]) => {
   return messages
@@ -40,14 +41,16 @@ const mapMessagesToAgentHistory = (messages: ConversationMessage[]) => {
 export default function WorkspacePage() {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [selectedWorkspace, setSelectedWorkspace] = useState<Workspace | null>(null);
-  const [files, setFiles] = useState<File[]>([]);
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [files, setFiles] = useState<WorkspaceFile[]>([]);
+  const [selectedFile, setSelectedFile] = useState<WorkspaceFile | null>(null);
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
   const [fileContent, setFileContent] = useState('');
   const [newWorkspaceName, setNewWorkspaceName] = useState('');
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const [chatMessage, setChatMessage] = useState('');
+  const [chatAttachments, setChatAttachments] = useState<File[]>([]);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [hoveredFileId, setHoveredFileId] = useState<string | null>(null);
   const [personas, setPersonas] = useState<AgentPersona[]>([]);
   const [selectedPersona, setSelectedPersona] = useState('');
   const [isEditMode, setIsEditMode] = useState(false);
@@ -62,14 +65,18 @@ export default function WorkspacePage() {
   const messagesRef = useRef<ConversationMessage[]>([]);
   const lastUserMessageRef = useRef<string>('');
   const chatInputRef = useRef<HTMLTextAreaElement | null>(null);
+  const attachmentInputRef = useRef<HTMLInputElement | null>(null);
   const [isMentionOpen, setIsMentionOpen] = useState(false);
   const [mentionQuery, setMentionQuery] = useState('');
   const [mentionTriggerIndex, setMentionTriggerIndex] = useState<number | null>(null);
   const [mentionCursorPosition, setMentionCursorPosition] = useState<number | null>(null);
   const [mentionSelectedIndex, setMentionSelectedIndex] = useState(0);
+  const [expandedToolMessages, setExpandedToolMessages] = useState<Set<ConversationMessage['id']>>(new Set());
+  const [expandedThinkingMessages, setExpandedThinkingMessages] = useState<Set<ConversationMessage['id']>>(new Set());
+  const [copiedCodeBlockId, setCopiedCodeBlockId] = useState<string | null>(null);
   const mentionSuggestions = useMemo(() => {
     if (!isMentionOpen) {
-      return [] as File[];
+      return [] as WorkspaceFile[];
     }
     const normalized = mentionQuery.trim().toLowerCase();
     const filtered = files.filter((file) =>
@@ -78,11 +85,138 @@ export default function WorkspacePage() {
     return filtered.slice(0, 8);
   }, [files, isMentionOpen, mentionQuery]);
 
+  const personaDisplayName = useMemo(() => {
+    const personaId = activeConversationPersona || selectedPersona;
+    if (!personaId) {
+      return 'Agent';
+    }
+    const persona = personas.find((item) => item.name === personaId);
+    return persona?.displayName || personaId;
+  }, [activeConversationPersona, selectedPersona, personas]);
+
+  const formatMessageTimestamp = useCallback((value?: string) => {
+    if (!value) {
+      return '';
+    }
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      return '';
+    }
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }, []);
+
+  const handleCopyCodeBlock = useCallback(async (blockId: string, content: string) => {
+    if (typeof navigator === 'undefined' || !navigator.clipboard?.writeText) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(content);
+      setCopiedCodeBlockId(blockId);
+      window.setTimeout(() => {
+        setCopiedCodeBlockId((current) => (current === blockId ? null : current));
+      }, 1500);
+    } catch (error) {
+      console.error('Failed to copy code snippet', error);
+    }
+  }, []);
+
+  const markdownComponents = useMemo(
+    () => ({
+      a({ ...props }: any) {
+        return (
+          <a
+            {...props}
+            target="_blank"
+            rel="noreferrer"
+            className="font-medium text-blue-600 underline decoration-2 underline-offset-2 hover:text-blue-500"
+          />
+        );
+      },
+      code({ inline, className, children, ...props }: any) {
+        if (inline) {
+          return (
+            <code
+              className={`rounded-md bg-slate-200 px-1.5 py-0.5 font-mono text-xs text-slate-800 ${className || ''}`}
+              {...props}
+            >
+              {children}
+            </code>
+          );
+        }
+
+        const languageMatch = /language-(\w+)/.exec(className || '');
+        const languageLabel = languageMatch?.[1]?.toUpperCase() ?? 'CODE';
+        const codeContent = (Array.isArray(children) ? children.join('') : String(children ?? '')).replace(/\n$/, '');
+        const blockId = `${languageLabel}-${codeContent.length}-${codeContent.charCodeAt(0) || 0}`;
+        const copyLabel = copiedCodeBlockId === blockId ? 'Copied' : 'Copy';
+
+        return (
+          <div className="mb-4 overflow-hidden rounded-2xl border border-slate-200 bg-slate-950/90 text-slate-100 shadow-lg">
+            <div className="flex items-center justify-between border-b border-slate-800 bg-slate-900/60 px-4 py-2 text-[11px] font-semibold tracking-wide uppercase text-slate-300">
+              <span>{languageLabel}</span>
+              <button
+                type="button"
+                onClick={() => handleCopyCodeBlock(blockId, codeContent)}
+                className="flex items-center gap-1 rounded-full border border-slate-600 px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest text-slate-200 hover:border-slate-400"
+              >
+                {copyLabel}
+              </button>
+            </div>
+            <pre className="overflow-x-auto px-4 py-3 text-xs leading-relaxed sm:text-sm">
+              <code {...props} className={`font-mono ${className || ''}`}>
+                {children}
+              </code>
+            </pre>
+          </div>
+        );
+      },
+    }),
+    [copiedCodeBlockId, handleCopyCodeBlock]
+  );
+
+  const toggleToolActivityVisibility = useCallback((messageId: ConversationMessage['id']) => {
+    setExpandedToolMessages((prev) => {
+      const next = new Set(prev);
+      if (next.has(messageId)) {
+        next.delete(messageId);
+      } else {
+        next.add(messageId);
+      }
+      return next;
+    });
+  }, []);
+
+  const toggleThinkingVisibility = useCallback((messageId: ConversationMessage['id']) => {
+    setExpandedThinkingMessages((prev) => {
+      const next = new Set(prev);
+      if (next.has(messageId)) {
+        next.delete(messageId);
+      } else {
+        next.add(messageId);
+      }
+      return next;
+    });
+  }, []);
+
+  const buildThinkingPreview = useCallback((text: string, expanded: boolean) => {
+    if (!text) {
+      return '';
+    }
+    if (expanded || text.length <= THOUGHT_PREVIEW_LIMIT) {
+      return text;
+    }
+    return `${text.slice(0, THOUGHT_PREVIEW_LIMIT).trimEnd()}…`;
+  }, []);
+
   const agentPaneWidth = isAgentPaneFullScreen
     ? '100%'
     : isAgentPaneVisible
       ? '24rem'
       : '3rem';
+
+  const filePaneWidth = isFilePaneVisible ? 320 : 56;
+
+  const layoutHeight = 'calc(100vh - 48px)';
 
   const agentPaneStyles: CSSProperties = {
     flexBasis: agentPaneWidth,
@@ -90,6 +224,53 @@ export default function WorkspacePage() {
     flexGrow: isAgentPaneFullScreen ? 1 : 0,
     flexShrink: isAgentPaneFullScreen ? 1 : 0,
     transition: 'flex-basis 0.35s ease, flex-grow 0.35s ease, width 0.35s ease',
+  };
+
+  const handleRenameFile = async (file: WorkspaceFile) => {
+    if (!selectedWorkspace) return;
+    const proposedName = window.prompt('Rename file', file.name)?.trim();
+    if (!proposedName || proposedName === file.name) {
+      return;
+    }
+
+    try {
+      const updated = await renameFile(selectedWorkspace.id, file.id, proposedName);
+      setFiles((prev) =>
+        prev.map((item) => (item.id === file.id ? { ...item, name: updated.name } : item))
+      );
+      if (selectedFile?.id === file.id) {
+        setSelectedFile((prev) => (prev ? { ...prev, name: updated.name } : prev));
+      }
+    } catch (error) {
+      console.error('Failed to rename file:', error);
+    }
+  };
+
+  const handleDeleteSingleFile = async (file: WorkspaceFile) => {
+    if (!selectedWorkspace) return;
+    const confirmed = window.confirm(`Delete ${file.name}?`);
+    if (!confirmed) return;
+
+    try {
+      await deleteFile(selectedWorkspace.id, file.id);
+      setFiles((prev) => prev.filter((item) => item.id !== file.id));
+      setSelectedFiles((prev) => {
+        const next = new Set(prev);
+        next.delete(file.id);
+        return next;
+      });
+      if (selectedFile?.id === file.id) {
+        setSelectedFile(null);
+      }
+    } catch (error) {
+      console.error('Failed to delete file:', error);
+    }
+  };
+
+  const filePaneStyles: CSSProperties = {
+    width: filePaneWidth,
+    minWidth: filePaneWidth,
+    transition: 'width 0.35s ease',
   };
 
   const workspacePaneStyles: CSSProperties = {
@@ -126,6 +307,11 @@ export default function WorkspacePage() {
   useEffect(() => {
     messagesRef.current = messages;
   }, [messages]);
+
+  useEffect(() => {
+    setExpandedToolMessages(new Set());
+    setExpandedThinkingMessages(new Set());
+  }, [activeConversationId]);
 
   useEffect(() => {
     if (!isAgentPaneVisible && isAgentPaneFullScreen) {
@@ -206,7 +392,7 @@ export default function WorkspacePage() {
   );
 
   const handleSelectMention = useCallback(
-    (file: File) => {
+    (file: WorkspaceFile) => {
       if (mentionTriggerIndex === null || mentionCursorPosition === null) {
         closeMention();
         return;
@@ -316,7 +502,9 @@ export default function WorkspacePage() {
         const personaList = await fetchPersonas();
         setPersonas(personaList);
         if (personaList.length) {
-          setSelectedPersona((current) => current || personaList[0].name);
+          const defaultPersona =
+            personaList.find((persona) => persona.name === DEFAULT_PERSONA_NAME) || personaList[0];
+          setSelectedPersona((current) => current || defaultPersona.name);
         }
       } catch (error) {
         console.error('Failed to load personas', error);
@@ -367,10 +555,6 @@ export default function WorkspacePage() {
     fetchFileContent();
   }, [selectedFile, selectedWorkspace]);
 
-  const handleRefreshFile = () => {
-    fetchFileContent();
-  };
-
   const handleCreateWorkspace = async () => {
     if (newWorkspaceName.trim()) {
       const newWorkspaceData = await createWorkspace(newWorkspaceName);
@@ -407,6 +591,124 @@ export default function WorkspacePage() {
     },
     [activeConversationId],
   );
+
+  const updateToolEvents = (index: number, updater: (events: ToolEvent[]) => ToolEvent[]) => {
+    setMessages((prev) => {
+      const updated = [...prev];
+      const target = updated[index];
+      if (!target) {
+        return updated;
+      }
+      const existing = target.toolEvents || [];
+      updated[index] = {
+        ...target,
+        toolEvents: updater(existing),
+      };
+      return updated;
+    });
+  };
+
+  const createToolEvent = (name: string): ToolEvent => ({
+    id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    name,
+    status: 'running',
+    startedAt: new Date().toISOString(),
+  });
+
+  const appendAgentThought = (index: number, chunk: string) => {
+    if (!chunk || index < 0) {
+      return;
+    }
+    setMessages((prevMessages) => {
+      const updated = [...prevMessages];
+      const target = updated[index];
+      if (!target) {
+        return updated;
+      }
+      updated[index] = {
+        ...target,
+        thinkingText: `${target.thinkingText || ''}${chunk}`,
+      };
+      return updated;
+    });
+  };
+
+  const truncateToolOutput = (text: string, maxLength = 200) => {
+    if (text.length <= maxLength) {
+      return text;
+    }
+    return `${text.slice(0, maxLength)}…`;
+  };
+
+  const appendToolStart = (index: number, chunk: AgentStreamChunk & { type: 'tool_start' }) => {
+    const label = chunk.name || chunk.content || 'tool';
+    updateToolEvents(index, (events) => [...events, createToolEvent(label)]);
+  };
+
+  const appendToolEnd = (index: number, chunk: AgentStreamChunk & { type: 'tool_end' }) => {
+    const label = chunk.name || 'tool';
+    const summary = chunk.content ? truncateToolOutput(chunk.content) : '';
+    updateToolEvents(index, (events) => {
+      if (!events.length) {
+        return [
+          {
+            ...createToolEvent(label),
+            status: 'completed',
+            finishedAt: new Date().toISOString(),
+            summary,
+          },
+        ];
+      }
+      const next = [...events];
+      const lastRunningOffset = [...next].reverse().findIndex((event) => event.status === 'running');
+      if (lastRunningOffset === -1) {
+        next.push({
+          ...createToolEvent(label),
+          status: 'completed',
+          finishedAt: new Date().toISOString(),
+          summary,
+        });
+        return next;
+      }
+      const targetIndex = next.length - 1 - lastRunningOffset;
+      next[targetIndex] = {
+        ...next[targetIndex],
+        status: 'completed',
+        finishedAt: new Date().toISOString(),
+        summary: summary || next[targetIndex].summary,
+      };
+      return next;
+    });
+  };
+
+  const handleStreamChunk = (agentMessageIndex: number, chunk: AgentStreamChunk) => {
+    if (chunk.type === 'thought') {
+      appendAgentThought(agentMessageIndex, chunk.content || '');
+      return;
+    }
+
+    if (chunk.type === 'tool_start') {
+      appendToolStart(agentMessageIndex, chunk);
+      return;
+    }
+
+    if (chunk.type === 'tool_end') {
+      appendToolEnd(agentMessageIndex, chunk);
+      return;
+    }
+
+    if (chunk.type === 'token' || chunk.type === 'chunk') {
+      if (chunk.role && chunk.role !== 'assistant') {
+        return;
+      }
+      appendAgentChunk(agentMessageIndex, chunk.content || '');
+      return;
+    }
+
+    if (chunk.type === 'error') {
+      appendAgentChunk(agentMessageIndex, `\n${chunk.message || 'Agent stream failed.'}`);
+    }
+  };
 
   const appendAgentChunk = (index: number, chunk: string) => {
     if (!chunk || index < 0) {
@@ -502,13 +804,7 @@ export default function WorkspacePage() {
         persona,
         trimmed,
         historyPayload.length ? historyPayload : undefined,
-        (chunk) => {
-          if (chunk.type === 'token' || chunk.type === 'chunk') {
-            appendAgentChunk(agentMessageIndex, chunk.content || '');
-          } else if (chunk.type === 'error') {
-            appendAgentChunk(agentMessageIndex, `\n${chunk.message || 'Agent stream failed.'}`);
-          }
-        },
+        (chunk) => handleStreamChunk(agentMessageIndex, chunk),
         controller.signal,
         { forceReset: true }
       );
@@ -532,7 +828,12 @@ export default function WorkspacePage() {
           const persisted = await appendConversationMessage(activeConversationId, 'agent', agentMessage.text);
           setMessages((prev) => {
             const updated = [...prev];
-            updated[agentMessageIndex] = persisted;
+            const existing = updated[agentMessageIndex];
+            updated[agentMessageIndex] = {
+              ...persisted,
+              thinkingText: existing?.thinkingText,
+              toolEvents: existing?.toolEvents,
+            };
             return updated;
           });
           await refreshConversationHistory(selectedWorkspace.id);
@@ -545,7 +846,15 @@ export default function WorkspacePage() {
 
   const handleSendMessage = async () => {
     const trimmed = chatMessage.trim();
-    if (!trimmed) return;
+    const hasAttachments = chatAttachments.length > 0;
+    if (!trimmed && !hasAttachments) return;
+
+    const attachmentSummary = hasAttachments
+      ? `Attachments: ${chatAttachments.map((file) => file.name).join(', ')}`
+      : '';
+    const messageContent = hasAttachments
+      ? `${trimmed}${trimmed ? '\n\n' : ''}[${attachmentSummary}]`
+      : trimmed;
 
     if (!selectedWorkspace) {
       addLocalSystemMessage('Please select a workspace before chatting with an agent.');
@@ -570,37 +879,41 @@ export default function WorkspacePage() {
       return;
     }
 
-    lastUserMessageRef.current = trimmed;
+    lastUserMessageRef.current = messageContent;
     cancelStream();
     setChatMessage('');
+    setChatAttachments([]);
     closeMention();
 
     let userMessageRecord: ConversationMessage | null = null;
     let historyPayload: Array<{ role: string; content: string }> = [];
     try {
-      userMessageRecord = await appendConversationMessage(conversationId, 'user', trimmed);
-      setMessages((prev) => [...prev, userMessageRecord]);
+      const createdMessage = await appendConversationMessage(conversationId, 'user', messageContent);
+      userMessageRecord = createdMessage;
+      setMessages((prev) => [...prev, createdMessage]);
       await refreshConversationHistory(workspaceId);
-      const pendingMessages = [...messagesRef.current, userMessageRecord];
+      const pendingMessages = [...messagesRef.current, createdMessage];
       historyPayload = mapMessagesToAgentHistory(pendingMessages);
     } catch (error) {
       console.error('Failed to send user message', error);
       addLocalSystemMessage('Failed to send your message. Please try again.');
       return;
     }
+    if (!userMessageRecord) {
+      addLocalSystemMessage('Failed to record your message. Please try again.');
+      return;
+    }
 
     let agentMessageIndex = -1;
     setMessages((prevMessages) => {
-      const updated = [
-        ...prevMessages,
-        {
-          id: `agent-${Date.now()}`,
-          conversationId,
-          sender: 'agent',
-          text: '',
-          createdAt: new Date().toISOString(),
-        },
-      ];
+      const placeholder: ConversationMessage = {
+        id: `agent-${Date.now()}`,
+        conversationId,
+        sender: 'agent',
+        text: '',
+        createdAt: new Date().toISOString(),
+      };
+      const updated = [...prevMessages, placeholder];
       agentMessageIndex = updated.length - 1;
       return updated;
     });
@@ -613,15 +926,9 @@ export default function WorkspacePage() {
       await runAgentStream(
         workspaceId,
         persona,
-        trimmed,
+        messageContent,
         historyPayload.length ? historyPayload : undefined,
-        (chunk) => {
-          if (chunk.type === 'token' || chunk.type === 'chunk') {
-            appendAgentChunk(agentMessageIndex, chunk.content || '');
-          } else if (chunk.type === 'error') {
-            appendAgentChunk(agentMessageIndex, `\n${chunk.message || 'Agent stream failed.'}`);
-          }
-        },
+        (chunk) => handleStreamChunk(agentMessageIndex, chunk),
         controller.signal
       );
     } catch (error) {
@@ -644,7 +951,12 @@ export default function WorkspacePage() {
           const persisted = await appendConversationMessage(conversationId, 'agent', agentMessage.text);
           setMessages((prev) => {
             const updated = [...prev];
-            updated[agentMessageIndex] = persisted;
+            const existing = updated[agentMessageIndex];
+            updated[agentMessageIndex] = {
+              ...persisted,
+              thinkingText: existing?.thinkingText,
+              toolEvents: existing?.toolEvents,
+            };
             return updated;
           });
           await refreshConversationHistory(workspaceId);
@@ -669,6 +981,13 @@ export default function WorkspacePage() {
   };
 
   const handleChatInputKeyUp = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (
+      isMentionOpen &&
+      (event.key === 'ArrowDown' || event.key === 'ArrowUp')
+    ) {
+      // Skip mention state recalculation when navigating suggestions
+      return;
+    }
     const target = event.currentTarget;
     updateMentionState(target.value, target.selectionStart ?? target.value.length);
   };
@@ -754,23 +1073,6 @@ export default function WorkspacePage() {
     }
   };
 
-  const handleDeleteFile = async (id: string) => {
-    if (!selectedWorkspace) return;
-
-    const confirmed = window.confirm('Are you sure you want to delete this file?');
-    if (!confirmed) {
-      return;
-    }
-
-    try {
-      await deleteFile(selectedWorkspace.id, id);
-      setFiles((prevFiles) => prevFiles.filter((file) => file.id !== id));
-      setSelectedFile(null);
-    } catch (error) {
-      console.error('Failed to delete file:', error);
-    }
-  };
-
   const handleBulkDelete = async () => {
     if (!selectedWorkspace) return;
 
@@ -808,25 +1110,43 @@ export default function WorkspacePage() {
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     if (!selectedWorkspace || !event.target.files || event.target.files.length === 0) {
       return;
-  }
-
-  const filesToUpload = event.target.files;
-  
-  try {
-    for (const file of filesToUpload) {
-      const newFileData = await createFile(selectedWorkspace.id, file);
-      setFiles((prevFiles) => [...prevFiles, newFileData]);
     }
-  } catch (error) {
-    console.error('Failed to upload file:', error);
-  }
-};
+
+    const filesToUpload = event.target.files;
+
+    try {
+      for (const file of filesToUpload) {
+        const newFileData = (await createFile(selectedWorkspace.id, file)) as WorkspaceFile;
+        setFiles((prevFiles) => [...prevFiles, newFileData]);
+      }
+    } catch (error) {
+      console.error('Failed to upload file:', error);
+    }
+  };
+
+  const handleChatAttachmentButtonClick = () => {
+    attachmentInputRef.current?.click();
+  };
+
+  const handleChatAttachmentChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    if (!event.target.files) return;
+    const selected = Array.from(event.target.files);
+    setChatAttachments((prev) => [...prev, ...selected]);
+    event.target.value = '';
+  };
+
+  const handleRemoveChatAttachment = (index: number) => {
+    setChatAttachments((prev) => prev.filter((_, idx) => idx !== index));
+  };
  
    return (
      <ThemeProvider theme={theme}>
       <Box sx={{ display: 'flex' }}>
         <CssBaseline />
-        <ExpandableSidebar handleDrawerToggle={handleDrawerToggle} />
+        <ExpandableSidebar
+          handleDrawerToggle={handleDrawerToggle}
+          isDrawerOpen={drawerOpen}
+        />
         <CollapsibleDrawer
           open={drawerOpen}
           handleDrawerClose={handleDrawerToggle}
@@ -859,7 +1179,7 @@ export default function WorkspacePage() {
             }),
           }}
         >
-          <div className="flex h-screen bg-gray-100 font-sans">
+          <div className="flex bg-gray-100 font-sans" style={{ height: layoutHeight }}>
             {/* Middle Pane: Files & Editor */}
             <div
               className="flex flex-col border-r border-gray-200 min-w-0 overflow-hidden"
@@ -873,19 +1193,32 @@ export default function WorkspacePage() {
               </div>
               <div className="flex-1 flex">
                 {/* File Explorer */}
-                <div className={`bg-white border-r border-gray-200 flex flex-col transition-all duration-300 ${isFilePaneVisible ? 'w-80' : 'w-12'}`}>
-                  <div className="p-4 border-b border-gray-200 flex justify-between items-center">
-                    <div className="flex items-center">
-                      {isFilePaneVisible && <h3 className="text-lg font-semibold text-gray-800">Files</h3>}
+                <div
+                  className="bg-white border-r border-gray-200 flex flex-col overflow-hidden"
+                  style={filePaneStyles}
+                >
+                  <div
+                    className={`p-4 border-b border-gray-200 flex items-center ${
+                      isFilePaneVisible ? 'justify-between' : 'justify-center'
+                    }`}
+                  >
+                    <div className={`flex items-center ${isFilePaneVisible ? 'gap-3' : ''}`}>
                       <button
                         onClick={() => setIsFilePaneVisible(!isFilePaneVisible)}
-                        className="p-1 border rounded-md ml-2 hover:bg-gray-100"
+                        className="p-1.5 border rounded-full hover:bg-gray-100"
+                        title={isFilePaneVisible ? 'Collapse files' : 'Expand files'}
                       >
-                        <ChevronLeft size={16} className={`text-gray-600 transition-transform duration-300 ${isFilePaneVisible ? '' : 'rotate-180'}`} />
+                        <ChevronLeft
+                          size={16}
+                          className={`text-gray-600 transition-transform duration-300 ${
+                            isFilePaneVisible ? '' : 'rotate-180'
+                          }`}
+                        />
                       </button>
+                      {isFilePaneVisible && <h3 className="text-lg font-semibold text-gray-800">Files</h3>}
                     </div>
                     {isFilePaneVisible && (
-                      <div className="flex items-center space-x-2">
+                      <div className="flex items-center space-x-1.5">
                         <input
                           type="file"
                           id="file-upload"
@@ -896,14 +1229,14 @@ export default function WorkspacePage() {
                         <button
                           onClick={() => document.getElementById('file-upload')?.click()}
                           disabled={!selectedWorkspace}
-                          className="p-2 rounded-lg hover:bg-gray-200 disabled:opacity-50"
+                          className="p-2 rounded-lg hover:bg-gray-100 disabled:opacity-50"
                         >
                           <Plus size={18} className="text-gray-600" />
                         </button>
                         <button
                           onClick={handleRefreshFiles}
                           disabled={!selectedWorkspace}
-                          className="p-2 rounded-lg hover:bg-gray-200 disabled:opacity-50"
+                          className="p-2 rounded-lg hover:bg-gray-100 disabled:opacity-50"
                           title="Refresh files"
                         >
                           <RotateCcw size={18} className="text-gray-600" />
@@ -911,20 +1244,27 @@ export default function WorkspacePage() {
                         <button
                           onClick={handleBulkDelete}
                           disabled={selectedFiles.size === 0}
-                          className="p-2 rounded-lg hover:bg-gray-200 disabled:opacity-50"
+                          className="p-2 rounded-lg hover:bg-gray-100 disabled:opacity-50"
                         >
                           <Trash size={18} className="text-gray-600" />
                         </button>
                       </div>
                     )}
                   </div>
-                  <div className={`flex-1 p-4 overflow-y-auto ${isFilePaneVisible ? 'block' : 'hidden'}`}>
+                  <div
+                    className={`flex-1 px-4 py-3 overflow-y-auto transition-opacity duration-200 ${
+                      isFilePaneVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'
+                    }`}
+                    aria-hidden={!isFilePaneVisible}
+                  >
                     {files.map((file) => (
                       <div
                         key={file.id}
-                        className={`flex items-center p-2 rounded-lg cursor-pointer ${
-                          selectedFile?.id === file.id ? 'bg-blue-100' : 'hover:bg-gray-100'
+                        className={`group flex items-center p-2 rounded-lg cursor-pointer transition-colors ${
+                          selectedFile?.id === file.id ? 'bg-blue-50' : 'hover:bg-gray-100'
                         }`}
+                        onMouseEnter={() => setHoveredFileId(file.id)}
+                        onMouseLeave={() => setHoveredFileId((current) => (current === file.id ? null : current))}
                       >
                         <input
                           type="checkbox"
@@ -932,12 +1272,40 @@ export default function WorkspacePage() {
                           onChange={() => handleFileSelect(file.id)}
                           className="mr-3"
                         />
-                        <div onClick={() => {
-                          setSelectedFile(file);
-                          setIsEditMode(false);
-                        }} className="flex items-center flex-1">
-                          <FileIcon size={18} className="mr-3 text-gray-600" />
-                          <span className="text-gray-800">{file.name}</span>
+                        <div
+                          onClick={() => {
+                            setSelectedFile(file);
+                            setIsEditMode(false);
+                          }}
+                          className="flex-1 flex items-start justify-between gap-2 min-w-0"
+                        >
+                          <span className="text-gray-800 break-words leading-snug">
+                            {file.name}
+                          </span>
+                          <div className={`shrink-0 items-center gap-1 ml-1 ${hoveredFileId === file.id ? 'flex' : 'hidden group-hover:flex'}`}>
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                handleRenameFile(file);
+                              }}
+                              className="p-1 rounded hover:bg-gray-200"
+                              title="Rename"
+                            >
+                              <Edit size={14} className="text-gray-600" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                handleDeleteSingleFile(file);
+                              }}
+                              className="p-1 rounded hover:bg-gray-200"
+                              title="Delete"
+                            >
+                              <Trash size={14} className="text-gray-600" />
+                            </button>
+                          </div>
                         </div>
                       </div>
                     ))}
@@ -990,7 +1358,6 @@ export default function WorkspacePage() {
               </div>
 
             {/* Right Pane: Agent Chat */}
-            {/* Right Pane: Agent Chat */}
             <div
               className="bg-white flex flex-col overflow-hidden"
               style={agentPaneStyles}
@@ -1027,9 +1394,9 @@ export default function WorkspacePage() {
                   </div>
                 )}
               </div>
-              <div className={`flex-1 flex flex-col overflow-hidden ${
-                isAgentPaneFullScreen || isAgentPaneVisible ? 'block' : 'hidden'
-              }`}>
+                <div className={`flex-1 flex flex-col overflow-hidden ${
+                  isAgentPaneFullScreen || isAgentPaneVisible ? 'block' : 'hidden'
+                }`}>
                 <div className="p-4 border-b border-gray-200">
                   <PersonaSelector
                     personas={personas}
@@ -1080,138 +1447,231 @@ export default function WorkspacePage() {
                     )}
                   </div>
                 </div>
-                <div className="flex-1 p-4 overflow-y-auto space-y-4" style={{ maxHeight: 'calc(100vh - 250px)' }}>
-                  {messages.map((message) => (
-                    <div
-                      key={message.id}
-                      className={`flex items-start group ${
-                        message.sender === 'user' ? 'justify-end' : ''
-                      }`}
-                    >
-                      {message.sender === 'agent' && (
-                        <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center mr-3">
-                          <Star size={18} className="text-white" />
-                        </div>
-                      )}
-                      <div style={{ maxWidth: isAgentPaneFullScreen ? '85%' : '75%' }} className="relative">
-                        <div
-                          className={`w-fit p-3 rounded-lg ${
-                            message.sender === 'user'
-                              ? 'bg-blue-600 text-white'
-                              : 'bg-gray-100 text-gray-800'
-                          }`}
-                        >
-                          {message.sender === 'agent' ? (
-                            message.text ? (
-                              <div className="agent-markdown text-sm">
-                                <ReactMarkdown
-                                  remarkPlugins={[remarkGfm]}
-                                  components={{
-                                    a({ node, ...props }) {
-                                      return (
-                                        <a
-                                          {...props}
-                                          target="_blank"
-                                          rel="noreferrer"
-                                          className="underline decoration-white/60 hover:opacity-80"
-                                        />
-                                      );
-                                    },
-                                    code({ inline, className, children, node, ...props }) {
-                                      if (inline) {
-                                        return (
-                                          <code
-                                            className={`px-1 py-0.5 rounded bg-black/20 ${className || ''}`}
-                                            {...props}
-                                          >
-                                            {children}
-                                          </code>
-                                        );
-                                      }
-                                      return (
-                                        <pre className="bg-black/20 rounded-lg p-3 overflow-x-auto text-xs sm:text-sm">
-                                          <code {...props}>{children}</code>
-                                        </pre>
-                                      );
-                                    },
-                                  }}
-                                >
-                                  {message.text}
-                                </ReactMarkdown>
-                              </div>
-                            ) : (
-                              <span className="text-sm opacity-70">Thinking…</span>
-                            )
-                          ) : (
-                            <p>{message.text}</p>
-                          )}
-                        </div>
-                        {message.sender === 'user' && (
-                          <button
-                            type="button"
-                            onClick={() => handleRerunMessage(message.id)}
-                            disabled={isStreaming}
-                            title="Rerun this message"
-                            className={`absolute -top-2 -right-2 p-1.5 rounded-full bg-blue-500 text-white shadow transition-opacity opacity-0 ${
-                              isStreaming
-                                ? 'cursor-not-allowed group-hover:opacity-60 hover:opacity-60'
-                                : 'group-hover:opacity-100 hover:opacity-100 focus-visible:opacity-100'
-                            }`}
-                          >
-                            <RotateCcw size={14} />
-                          </button>
+                <div className="flex-1 p-4 overflow-y-auto space-y-4">
+                  {messages.map((message) => {
+                    const isAgentMessage = message.sender === 'agent';
+                    const timestampLabel = formatMessageTimestamp(message.createdAt);
+                    const toolEvents = message.toolEvents || [];
+                    const hasToolEvents = toolEvents.length > 0;
+                    const isToolActivityExpanded = expandedToolMessages.has(message.id);
+                    const isThinkingExpanded = expandedThinkingMessages.has(message.id);
+                    const thinkingPreview = buildThinkingPreview(message.thinkingText || '', isThinkingExpanded);
+                    const showThinkingToggle =
+                      Boolean(message.thinkingText) && (message.thinkingText?.length || 0) > THOUGHT_PREVIEW_LIMIT;
+                    return (
+                      <div
+                        key={message.id}
+                        className={`flex items-start gap-3 group ${
+                          isAgentMessage ? '' : 'justify-end'
+                        }`}
+                      >
+                        {isAgentMessage && (
+                          <div className="mr-1 flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-indigo-500 shadow-inner">
+                            <Star size={18} className="text-white" />
+                          </div>
                         )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                <div className="p-4 border-t border-gray-200 mt-auto">
-                  <div className="relative">
-                    <textarea
-                      placeholder="Interact with the agent..."
-                      value={chatMessage}
-                      ref={chatInputRef}
-                      onChange={handleChatInputChange}
-                      onKeyDown={handleChatInputKeyDown}
-                      onKeyUp={handleChatInputKeyUp}
-                      onSelect={handleChatInputSelectionChange}
-                      className="w-full pl-4 pr-12 py-3 bg-gray-100 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none text-sm"
-                      rows={3}
-                      style={{ overflowY: 'auto' }}
-                    />
-                    {isMentionOpen && (
-                      <div className="absolute left-0 right-0 bottom-16 bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto z-10">
-                        {mentionSuggestions.length ? (
-                          mentionSuggestions.map((file, index) => (
+                        <div
+                          style={{ maxWidth: isAgentPaneFullScreen ? '85%' : '75%' }}
+                          className="relative flex-1 md:flex-initial"
+                        >
+                          {isAgentMessage ? (
+                            <div className="w-full rounded-2xl border border-slate-200 bg-gradient-to-br from-white to-slate-50 px-4 py-4 text-slate-800 shadow-lg">
+                              <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                                <span className="text-slate-600">{personaDisplayName}</span>
+                                {timestampLabel && <span>{timestampLabel}</span>}
+                              </div>
+                              {message.thinkingText && (
+                                <div className="mt-3 rounded-2xl border border-blue-100 bg-blue-50/80 px-3 py-3 text-[13px] text-slate-600 shadow-inner">
+                                  <div className="flex items-center justify-between text-[11px] font-semibold uppercase tracking-wide text-blue-500">
+                                    <span>Thinking</span>
+                                    {showThinkingToggle && (
+                                      <button
+                                        type="button"
+                                        onClick={() => toggleThinkingVisibility(message.id)}
+                                        className="text-blue-600 hover:text-blue-500"
+                                      >
+                                        {isThinkingExpanded ? 'Show less' : 'Expand'}
+                                      </button>
+                                    )}
+                                  </div>
+                                  <div className="mt-2 whitespace-pre-line leading-relaxed">{thinkingPreview}</div>
+                                </div>
+                              )}
+                              {message.text ? (
+                                <div className="agent-markdown mt-3 text-sm">
+                                  <ReactMarkdown
+                                    remarkPlugins={[remarkGfm]}
+                                    components={markdownComponents}
+                                  >
+                                    {message.text}
+                                  </ReactMarkdown>
+                                </div>
+                              ) : (
+                                <span className="mt-3 block text-sm text-slate-500">
+                                  {message.thinkingText ? 'Finalizing response…' : 'Thinking…'}
+                                </span>
+                              )}
+                              {hasToolEvents && (
+                                <div className="mt-3">
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleToolActivityVisibility(message.id)}
+                                    className="text-xs font-semibold uppercase tracking-wide text-slate-500 hover:text-slate-700"
+                                  >
+                                    {isToolActivityExpanded
+                                      ? 'Hide tool activity'
+                                      : `Show tool activity (${toolEvents.length})`}
+                                  </button>
+                                  {isToolActivityExpanded && (
+                                    <div className="mt-2 rounded-2xl border border-slate-200 bg-white/80 px-3 py-3 text-xs text-slate-600 shadow-inner">
+                                      {toolEvents.map((event, index) => {
+                                        const isLast = index === toolEvents.length - 1;
+                                        return (
+                                          <div key={event.id || `${event.name}-${index}`} className="flex gap-3 pb-3 last:pb-0">
+                                            <div className="flex flex-col items-center">
+                                              <span
+                                                className={`h-2.5 w-2.5 rounded-full ${
+                                                  event.status === 'completed' ? 'bg-emerald-500' : 'bg-amber-400'
+                                                }`}
+                                              />
+                                              {!isLast && <span className="flex-1 w-px bg-slate-200" />}
+                                            </div>
+                                            <div className="flex-1">
+                                              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                                                {event.name}
+                                              </p>
+                                              <p className="text-sm text-slate-700">
+                                                {event.summary || (event.status === 'completed' ? 'Completed' : 'In progress…')}
+                                              </p>
+                                              <p className="mt-1 text-[11px] uppercase tracking-wide text-slate-400">
+                                                {formatMessageTimestamp(event.startedAt)}
+                                                {event.finishedAt ? ` • ${formatMessageTimestamp(event.finishedAt)}` : ''}
+                                              </p>
+                                            </div>
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <div className="rounded-2xl bg-gradient-to-br from-blue-600 to-blue-500 px-4 py-3 text-sm text-white shadow-lg">
+                              <p className="whitespace-pre-line leading-relaxed">{message.text}</p>
+                              {timestampLabel && (
+                                <span className="mt-2 block text-[11px] uppercase tracking-wide text-white/70">
+                                  {timestampLabel}
+                                </span>
+                              )}
+                            </div>
+                          )}
+                          {message.sender === 'user' && (
                             <button
-                              key={file.id}
                               type="button"
-                              onMouseDown={(event) => {
-                                event.preventDefault();
-                                handleSelectMention(file);
-                              }}
-                              className={`w-full flex items-center text-left px-3 py-2 text-sm hover:bg-blue-50 ${
-                                index === mentionSelectedIndex ? 'bg-blue-50 text-blue-700' : 'text-gray-800'
+                              onClick={() => handleRerunMessage(message.id)}
+                              disabled={isStreaming}
+                              title="Rerun this message"
+                              className={`absolute -top-2 -right-2 rounded-full bg-blue-500 p-1.5 text-white shadow transition-opacity opacity-0 ${
+                                isStreaming
+                                  ? 'cursor-not-allowed group-hover:opacity-60 hover:opacity-60'
+                                  : 'group-hover:opacity-100 hover:opacity-100 focus-visible:opacity-100'
                               }`}
                             >
-                              <FileIcon size={16} className="mr-2 text-gray-500" />
-                              <span className="truncate">{file.name}</span>
+                              <RotateCcw size={14} />
                             </button>
-                          ))
-                        ) : (
-                          <div className="px-3 py-2 text-sm text-gray-500">No matching files</div>
-                        )}
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="border-t border-gray-200 bg-white p-4">
+                  <div className="space-y-3">
+                    {chatAttachments.length > 0 && (
+                      <div className="flex flex-wrap gap-2">
+                        {chatAttachments.map((file, index) => (
+                          <span
+                            key={`${file.name}-${index}`}
+                            className="inline-flex items-center gap-2 rounded-full bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700"
+                          >
+                            {file.name}
+                            <button
+                              type="button"
+                              className="text-blue-600 hover:text-blue-800"
+                              onClick={() => handleRemoveChatAttachment(index)}
+                              aria-label={`Remove ${file.name}`}
+                            >
+                              <X size={14} />
+                            </button>
+                          </span>
+                        ))}
                       </div>
                     )}
-                    <button
-                      onClick={handleSendMessage}
-                      disabled={isStreaming}
-                      className={`absolute right-2 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full flex items-center justify-center text-white transition ${
-                        isStreaming ? 'bg-blue-300 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'
-                      }`}
-                    >
-                      <Send size={18} />
-                    </button>
+                    <div className="relative rounded-2xl border border-gray-200 bg-gray-50 px-3 py-2 shadow-sm focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-100">
+                      <textarea
+                        placeholder="Interact with the agent..."
+                        value={chatMessage}
+                        ref={chatInputRef}
+                        onChange={handleChatInputChange}
+                        onKeyDown={handleChatInputKeyDown}
+                        onKeyUp={handleChatInputKeyUp}
+                        onSelect={handleChatInputSelectionChange}
+                        className="w-full bg-transparent resize-none text-sm leading-relaxed focus:outline-none pl-10 pr-12"
+                        rows={3}
+                        style={{ overflowY: 'auto' }}
+                      />
+                      {isMentionOpen && (
+                        <div className="absolute bottom-full mb-2 left-0 right-0 bg-white border border-gray-200 rounded-xl shadow-lg max-h-48 overflow-y-auto z-10">
+                          {mentionSuggestions.length ? (
+                            mentionSuggestions.map((file, index) => (
+                              <button
+                                key={file.id}
+                                type="button"
+                                onMouseDown={(event) => {
+                                  event.preventDefault();
+                                  handleSelectMention(file);
+                                }}
+                                className={`w-full flex items-center text-left px-3 py-2 text-sm hover:bg-blue-50 ${
+                                  index === mentionSelectedIndex ? 'bg-blue-50 text-blue-700' : 'text-gray-800'
+                                }`}
+                              >
+                                <FileIcon size={16} className="mr-2 text-gray-500" />
+                                <span className="truncate">{file.name}</span>
+                              </button>
+                            ))
+                          ) : (
+                            <div className="px-3 py-2 text-sm text-gray-500">No matching files</div>
+                          )}
+                        </div>
+                      )}
+                      <button
+                        type="button"
+                        onClick={handleChatAttachmentButtonClick}
+                        className="absolute left-3 bottom-3 w-9 h-9 rounded-full border border-dashed border-blue-400 text-blue-600 flex items-center justify-center hover:bg-blue-50"
+                        title="Attach files or images"
+                      >
+                        <Plus size={18} />
+                      </button>
+                      <button
+                        onClick={handleSendMessage}
+                        disabled={isStreaming}
+                        className={`absolute right-3 bottom-3 w-10 h-10 rounded-full flex items-center justify-center text-white shadow-sm transition ${
+                          isStreaming ? 'bg-blue-300 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'
+                        }`}
+                        title="Send message"
+                      >
+                        <Send size={18} />
+                      </button>
+                      <input
+                        type="file"
+                        ref={attachmentInputRef}
+                        className="hidden"
+                        multiple
+                        accept="image/*,.pdf,.md,.txt,.doc,.docx"
+                        onChange={handleChatAttachmentChange}
+                      />
+                    </div>
                   </div>
                 </div>
               </div>

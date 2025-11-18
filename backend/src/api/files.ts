@@ -13,6 +13,10 @@ export default function(dbService: DatabaseService) {
     content: z.string(),
   });
 
+  const renameFileSchema = z.object({
+    name: z.string().min(1),
+  });
+
   router.get('/', async (req: Request<{ workspaceId: string }>, res: Response) => {
     const { workspaceId } = req.params;
     const files = await fileService.getFiles(workspaceId);
@@ -72,6 +76,18 @@ export default function(dbService: DatabaseService) {
     const { fileId } = req.params;
     await fileService.deleteFile(parseInt(fileId));
     res.status(204).send();
+  });
+
+  router.patch('/:fileId', async (req: Request<{ fileId: string }>, res: Response) => {
+    try {
+      const { fileId } = req.params;
+      const { name } = renameFileSchema.parse(req.body);
+      const updatedFile = await fileService.renameFile(parseInt(fileId, 10), name);
+      res.json(updatedFile);
+    } catch (error) {
+      console.error('Error renaming file:', error);
+      res.status(400).json({ error: 'Failed to rename file' });
+    }
   });
 
   return router;

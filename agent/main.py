@@ -1,13 +1,10 @@
-from fastapi import FastAPI, Form
-from fastapi.responses import JSONResponse
+import sys
+from pathlib import Path
 
-from agents.manager import create_workspace_agent
+CURRENT_DIR = Path(__file__).resolve().parent
+if str(CURRENT_DIR) not in sys.path:
+    sys.path.insert(0, str(CURRENT_DIR))
 
-app = FastAPI(title="DeepAgent Service", version="0.1")
+from helpudoc_agent.app import create_app
 
-
-@app.post("/workspace/{workspace}/chat")
-async def chat(workspace: str, message: str = Form(...)):
-    agent = create_workspace_agent(workspace)
-    result = agent.invoke({"messages": [{"role": "user", "content": message}]})
-    return JSONResponse({"reply": result})
+app = create_app()

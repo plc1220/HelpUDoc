@@ -62,3 +62,20 @@ export const deleteFile = async (workspaceId: string, fileId: string) => {
     throw new Error('Failed to delete file');
   }
 };
+
+export const renameFile = async (workspaceId: string, fileId: string, name: string) => {
+  const response = await fetch(
+    `${API_URL}/workspaces/${workspaceId}/files/${fileId}`,
+    {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ name }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error('Failed to rename file');
+  }
+  return response.json();
+};

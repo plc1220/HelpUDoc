@@ -1,13 +1,9 @@
 import React from 'react';
 import { Select, MenuItem, FormControl, InputLabel } from '@mui/material';
-
-interface Persona {
-  name: string;
-  displayName: string;
-}
+import type { AgentPersona } from '../types';
 
 interface PersonaSelectorProps {
-  personas: Persona[];
+  personas: AgentPersona[];
   selectedPersona: string;
   onPersonaChange: (persona: string) => void;
 }
@@ -23,6 +19,7 @@ const PersonaSelector: React.FC<PersonaSelectorProps> = ({
       <Select
         value={selectedPersona}
         onChange={(e) => onPersonaChange(e.target.value)}
+        disabled={!personas.length}
       >
         {personas.map((persona) => (
           <MenuItem key={persona.name} value={persona.name}>

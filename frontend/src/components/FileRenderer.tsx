@@ -1,12 +1,62 @@
 import React, { useEffect, useRef, useState } from 'react';
 import mermaid from 'mermaid';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import type { File } from '../types';
 
 interface FileRendererProps {
   file: File | null;
   fileContent: string;
 }
+
+const MermaidDiagram: React.FC<{ chart: string }> = ({ chart }) => {
+  const diagramRef = useRef<HTMLDivElement>(null);
+  const idRef = useRef(`mermaid-md-${Math.random().toString(36).slice(2, 11)}`);
+  const [hasError, setHasError] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const renderDiagram = async () => {
+      if (!diagramRef.current) {
+        return;
+      }
+      try {
+        setHasError(false);
+        diagramRef.current.innerHTML = '';
+        const renderId = `${idRef.current}-${Date.now()}`;
+        const { svg } = await mermaid.render(renderId, chart);
+        if (!cancelled && diagramRef.current) {
+          diagramRef.current.innerHTML = svg;
+        }
+      } catch (error) {
+        console.error('Mermaid markdown rendering error:', error);
+        if (!cancelled && diagramRef.current) {
+          setHasError(true);
+          diagramRef.current.textContent = chart;
+        }
+      }
+    };
+
+    renderDiagram();
+    return () => {
+      cancelled = true;
+    };
+  }, [chart]);
+
+  return (
+    <div
+      ref={diagramRef}
+      className="mermaid-container my-4 overflow-auto rounded-xl border border-gray-200 bg-white p-4"
+    >
+      {hasError && (
+        <p className="mb-2 text-sm text-red-600">
+          Unable to render diagram, showing source instead.
+        </p>
+      )}
+    </div>
+  );
+};
 
 const FileRenderer: React.FC<FileRendererProps> = ({ file, fileContent }) => {
   const mermaidRef = useRef<HTMLDivElement>(null);
@@ -94,6 +144,7 @@ const FileRenderer: React.FC<FileRendererProps> = ({ file, fileContent }) => {
       return (
         <div className="prose max-w-none break-words overflow-x-hidden h-full overflow-y-auto p-4" style={{ maxHeight: 'calc(100vh - 200px)' }}>
           <ReactMarkdown
+            remarkPlugins={[remarkGfm]}
             components={{
               img: ({ node, ...props }) => (
                 <img
@@ -103,6 +154,33 @@ const FileRenderer: React.FC<FileRendererProps> = ({ file, fileContent }) => {
                   src={props.src || undefined}
                 />
               ),
+              code: ({ inline, className, children, ...props }) => {
+                const language = /language-(\w+)/.exec(className || '');
+                const content = (Array.isArray(children) ? children.join('') : String(children ?? '')).replace(/\n$/, '');
+
+                if (!inline && language?.[1] === 'mermaid') {
+                  return <MermaidDiagram chart={content} />;
+                }
+
+                if (inline) {
+                  return (
+                    <code
+                      className={`rounded-md bg-gray-200 px-1.5 py-0.5 font-mono text-xs text-gray-800 ${className || ''}`}
+                      {...props}
+                    >
+                      {children}
+                    </code>
+                  );
+                }
+
+                return (
+                  <pre className="my-4 overflow-x-auto rounded-xl bg-gray-900 p-4 text-sm text-gray-100">
+                    <code className={`font-mono ${className || ''}`} {...props}>
+                      {children}
+                    </code>
+                  </pre>
+                );
+              },
             }}
           >
             {fileContent}

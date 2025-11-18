@@ -1,6 +1,6 @@
 import React from 'react';
 import { Drawer, Box, IconButton, Typography, TextField, Button } from '@mui/material';
-import { ChevronLeft } from '@mui/icons-material';
+import { ChevronLeft, Add } from '@mui/icons-material';
 import WorkspaceList from './WorkspaceList';
 import type { Workspace } from '../types';
 
@@ -37,39 +37,60 @@ const CollapsibleDrawer: React.FC<CollapsibleDrawerProps> = ({
         '& .MuiDrawer-paper': {
           width: drawerWidth,
           boxSizing: 'border-box',
+          backgroundColor: '#f8fafc',
+          borderRight: '1px solid #e2e8f0',
         },
       }}
       variant="persistent"
       anchor="left"
       open={open}
     >
-      <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', p: 1, justifyContent: 'flex-end' }}>
-          <IconButton onClick={handleDrawerClose}>
-            <ChevronLeft />
+      <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', p: 2.5, gap: 2 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <Typography variant="h6" sx={{ fontWeight: 600 }}>
+            Workspaces
+          </Typography>
+          <IconButton onClick={handleDrawerClose} size="small" sx={{ border: '1px solid #e2e8f0', borderRadius: 2 }}>
+            <ChevronLeft fontSize="small" />
           </IconButton>
         </Box>
-        <Box sx={{ p: 2 }}>
-          <Typography variant="h6" sx={{ mb: 2, fontWeight: 600 }}>Workspace</Typography>
+
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
           <TextField
-            label="New Workspace"
+            placeholder="New workspace"
             variant="outlined"
             fullWidth
+            size="small"
             value={newWorkspaceName}
             onChange={(e) => setNewWorkspaceName(e.target.value)}
-            sx={{ mb: 2 }}
+            InputProps={{
+              sx: {
+                borderRadius: 2,
+                backgroundColor: 'common.white',
+              },
+            }}
           />
-          <Button variant="contained" onClick={handleCreateWorkspace} fullWidth>
-            + New Workspace
+          <Button
+            variant="contained"
+            color="primary"
+            fullWidth
+            onClick={handleCreateWorkspace}
+            startIcon={<Add />}
+            sx={{ borderRadius: 2, textTransform: 'none', fontWeight: 600 }}
+          >
+            Create
           </Button>
         </Box>
-        <Box sx={{ flexGrow: 1, overflowY: 'auto', p: 2 }}>
-          <WorkspaceList
-            workspaces={workspaces}
-            selectedWorkspace={selectedWorkspace}
-            onSelectWorkspace={onSelectWorkspace}
-            onDeleteWorkspace={handleDeleteWorkspace}
-          />
+
+        <Box sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+          <Box sx={{ flexGrow: 1, overflowY: 'auto', pr: 1 }}>
+            <WorkspaceList
+              workspaces={workspaces}
+              selectedWorkspace={selectedWorkspace}
+              onSelectWorkspace={onSelectWorkspace}
+              onDeleteWorkspace={handleDeleteWorkspace}
+            />
+          </Box>
         </Box>
       </Box>
     </Drawer>

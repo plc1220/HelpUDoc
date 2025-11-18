@@ -26,6 +26,7 @@ export class FileService {
   }
 
   async getFiles(workspaceId: string) {
+    await this.syncWorkspaceFiles(workspaceId);
     return this.db('files').where({ workspaceId });
   }
 
@@ -111,5 +112,81 @@ export class FileService {
     }
 
     await this.db('files').where({ id: fileId }).del();
+  }
+
+  async renameFile(fileId: number, newName: string) {
+    const file = await this.db('files').where({ id: fileId }).first();
+    if (!file) {
+      throw new Error('File not found');
+    }
+
+    const targetDir = path.dirname(file.path);
+    const newPath = path.join(targetDir, newName);
+
+    try {
+      await fs.rename(file.path, newPath);
+    } catch (error) {
+      console.error('Failed to rename file on disk:', error);
+      throw error;
+    }
+
+    await this.db('files').where({ id: fileId }).update({
+      name: newName,
+      path: newPath,
+    });
+
+    return this.db('files').where({ id: fileId }).first();
+  }
+
+  private async syncWorkspaceFiles(workspaceId: string) {
+    const workspacePath = path.join(WORKSPACE_DIR, workspaceId);
+    try {
+      await fs.access(workspacePath);
+    } catch {
+      return;
+    }
+
+    const existing = await this.db('files').where({ workspaceId });
+    const existingPaths = new Set(
+      existing.map((file) => path.normalize(file.path))
+    );
+
+    const diskFiles = await this.walkWorkspace(workspacePath);
+    const missingFiles = diskFiles.filter(
+      (filePath) => !existingPaths.has(path.normalize(filePath))
+    );
+
+    if (!missingFiles.length) {
+      return;
+    }
+
+    const newRecords = missingFiles.map((filePath) => ({
+      name: path.relative(workspacePath, filePath),
+      workspaceId,
+      storageType: 'local' as const,
+      path: filePath,
+    }));
+
+    await this.db('files').insert(newRecords);
+  }
+
+  private async walkWorkspace(root: string): Promise<string[]> {
+    const results: string[] = [];
+    const stack: string[] = [root];
+
+    while (stack.length) {
+      const current = stack.pop()!;
+      const dirEntries = await fs.readdir(current, { withFileTypes: true });
+      for (const entry of dirEntries) {
+        const entryPath = path.join(current, entry.name);
+        if (entry.isDirectory()) {
+          stack.push(entryPath);
+        } else if (entry.isFile()) {
+          results.push(entryPath);
+        }
+      }
+    }
+
+    return results;
   }
 }

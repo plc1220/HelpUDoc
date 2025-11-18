@@ -4,3 +4,7 @@ langchain
 deepagents
 google-generativeai
 python-dotenv
+pydantic
+pyyaml
+requests
+pillow

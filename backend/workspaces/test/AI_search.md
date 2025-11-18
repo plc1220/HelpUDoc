@@ -40,23 +40,25 @@ Only if a query is new and not found in the cache will it be sent to Vertex AI S
 * **Increased Ad Revenue Potential:** Higher engagement, more page views, and longer session durations translate directly to better advertising outcomes.
 * **Increased Ad Revenue Potential:** Higher engagement, more page views, and longer session durations translate directly to better advertising outcomes.
 
-### **6\. Scope of Work**
+### **6\. Project Timeline**
 
-#### **Phase 1: Discovery & Data Foundation**
-*   **Data Pipeline Setup:** Complete (1 week: 2025-10-20 to 2025-10-26)
-*   **BigQuery Integration:** Complete (1 week: 2025-10-27 to 2025-11-02)
-
-#### **Phase 2: Deployment & Integration**
-*   **Vertex AI Search Setup:** In Progress (2 weeks: 2025-11-03 to 2025-11-16)
-*   **Backend API Development:** (2 weeks: 2025-11-17 to 2025-11-30)
-*   **Frontend Integration:** (1 week: 2025-12-01 to 2025-12-07)
-
-#### **Phase 3: Handover & Training**
-*   **UAT & Testing:** (3 days: 2025-12-08 to 2025-12-10)
-*   **Training Session:** (2 days: 2025-12-11 to 2025-12-12)
-
-#### **Post-Launch Support**
-*   **Hypercare Support:** (2 weeks: 2025-12-15 to 2025-12-28)
+```mermaid
+gantt
+    title AI Search Project Timeline
+    dateFormat  YYYY-MM-DD
+    section Discovery & Data Foundation
+    Data Pipeline Setup      :done, 2025-10-20, 1w
+    BigQuery Integration     :done, 2025-10-27, 1w
+    section Deployment & Integration
+    Vertex AI Search Setup   :active, 2025-11-03, 2w
+    Backend API Development  :2025-11-17, 2w
+    Frontend Integration     :2025-12-01, 1w
+    section Handover & Training
+    UAT & Testing            :2025-12-08, 3d
+    Training Session         :2025-12-11, 2d
+    section Post-Launch Support
+    Hypercare Support        :2025-12-15, 2w
+```
 
 ### **7\. Project Deliverables and Success Criteria**
 

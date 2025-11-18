@@ -1,0 +1,62 @@
+model:
+  provider: gemini
+  name: gemini-2.5-flash
+  image_name: gemini-2.5-flash-image
+  project: my-rd-coe-demo-gen-ai
+  location: us-central1
+
+backend:
+  workspace_root: backend/workspaces
+  virtual_mode: true
+
+tools:
+  - name: google_search
+    kind: builtin
+    description: Gemini-native Google search tool
+  - name: gemini_image
+    kind: builtin
+    description: Generate or edit images using Gemini
+
+mcp_servers:
+  - name: research_fs
+    transport: stdio
+    command: ./scripts/start_mcp_fs.sh
+    description: Example MCP filesystem server
+
+agents:
+  - name: research
+    display_name: Research Agent
+    description: Deep research assistant with critique and sourcing pipeline
+    system_prompt_id: research/core
+    tools:
+      - google_search
+    subagents:
+      - name: research-agent
+        description: Conducts focused research on a single topic
+        system_prompt_id: research/sub_researcher
+        tools:
+          - google_search
+      - name: critique-agent
+        description: Reviews the final report and suggests improvements
+        system_prompt_id: research/critique
+        tools:
+          - google_search
+  - name: general-assistant
+    display_name: General Assistant
+    description: A general-purpose assistant that can read/edit files and perform web searches.
+    system_prompt_id: general/core
+    tools:
+      - google_search
+      - gemini_image
+    subagents:
+     - name: general-purpose
+       description: Standard general-assistant behavior
+       system_prompt_id: general/core
+       tools:
+         - google_search
+         - gemini_image
+     - name: greeting-responder
+       description: Handles lightweight greeting/small-talk tasks
+       system_prompt_id: general/core
+       tools: []
+    

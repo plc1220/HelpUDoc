@@ -1,3 +1,53 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+.agent-markdown {
+  color: #0f172a;
+  line-height: 1.7;
+  font-size: 0.95rem;
+  word-break: break-word;
+}
+
+.agent-markdown p {
+  margin: 0 0 1rem;
+}
+
+.agent-markdown p:last-child {
+  margin-bottom: 0;
+}
+
+.agent-markdown ul,
+.agent-markdown ol {
+  margin: 0.5rem 0 1rem;
+  padding-left: 1.25rem;
+}
+
+.agent-markdown li {
+  margin-bottom: 0.35rem;
+}
+
+.agent-markdown blockquote {
+  margin: 0 0 1rem;
+  padding-left: 1rem;
+  border-left: 4px solid rgba(59, 130, 246, 0.4);
+  color: #475569;
+  font-style: italic;
+}
+
+.agent-markdown pre {
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  color: inherit;
+}
+
+.agent-markdown code {
+  background: transparent;
+  padding: 0;
+}
+
+.agent-markdown a {
+  color: inherit;
+  text-decoration: underline;
+}
