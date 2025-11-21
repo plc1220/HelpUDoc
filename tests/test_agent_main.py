@@ -155,6 +155,40 @@ def _install_dependency_stubs():
     else:
         langchain_core = sys.modules["langchain_core"]
 
+    if "langchain_core.callbacks" not in sys.modules:
+        callbacks_pkg = ModuleType("langchain_core.callbacks")
+        sys.modules["langchain_core.callbacks"] = callbacks_pkg
+    else:
+        callbacks_pkg = sys.modules["langchain_core.callbacks"]
+
+    if "langchain_core.callbacks.base" not in sys.modules:
+        callbacks_base = ModuleType("langchain_core.callbacks.base")
+
+        class _AsyncCallbackHandler:
+            async def on_llm_new_token(self, *args, **kwargs):
+                return None
+
+            async def on_llm_end(self, *args, **kwargs):
+                return None
+
+            async def on_agent_action(self, *args, **kwargs):
+                return None
+
+            async def on_tool_start(self, *args, **kwargs):
+                return None
+
+            async def on_tool_end(self, *args, **kwargs):
+                return None
+
+            async def on_tool_error(self, *args, **kwargs):
+                return None
+
+            async def on_custom_event(self, *args, **kwargs):
+                return None
+
+        callbacks_base.AsyncCallbackHandler = _AsyncCallbackHandler
+        sys.modules["langchain_core.callbacks.base"] = callbacks_base
+        callbacks_pkg.base = callbacks_base
     if "langchain_core.tools" not in sys.modules:
         tools_module = ModuleType("langchain_core.tools")
 

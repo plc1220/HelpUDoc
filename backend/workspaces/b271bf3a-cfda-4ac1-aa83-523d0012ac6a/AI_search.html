@@ -52,7 +52,7 @@
        }
    </style>
 </head>
-<body class="bg-gray-100 flex flex-col items-center justify-center min-h-screen p-4 md:p-8">
+<body class="bg-gray-800 flex flex-col items-center justify-center min-h-screen p-4 md:p-8">
 
    <div id="presentation-container" class="w-full max-w-5xl bg-white rounded-xl shadow-2xl overflow-hidden">
        <!-- Slides will be injected here -->
@@ -60,9 +60,9 @@
            
            <!-- Slide 1: Title -->
            <div class="slide active p-8 md:p-16 flex flex-col justify-center items-center text-center h-[600px] bg-gradient-to-br from-blue-600 to-indigo-800 text-white">
-               <img src="/Users/cmtest/Documents/HelpUDoc/backend/workspaces/test/512px-Berita_Harian.png" alt="Berita Harian Logo" class="h-12 mb-6 bg-white p-2 rounded-lg">
+               <img src="http://localhost:9000/helpudoc/test/512px-Berita_Harian.png" alt="Berita Harian Logo" class="h-24 mb-8 bg-white p-2 rounded-lg">
                <h1 class="text-3xl md:text-5xl font-bold mb-4">Generative AI Search & Discovery</h1>
-                <p class="text-xl md:text-2xl text-blue-200">A Proposal for Media Prima Digital</p>
+                <p class="text-xl md:text-2xl text-blue-300">A Proposal for Media Prima Digital</p>
                 <p class="mt-12 text-lg">Presented by: CloudMile</p>
                 <p class="text-sm text-blue-300">17th October 2025</p>
             </div>
@@ -94,12 +94,12 @@
                 <h2 class="text-3xl font-bold text-gray-800 mb-6">Proposed Solution: The "Berita AI" Engine</h2>
                 <div class="grid md:grid-cols-2 gap-8 text-lg">
                     <div class="bg-gray-50 p-6 rounded-lg">
-                        <h3 class="font-semibold text-xl text-blue-700 mb-2">1. Data Foundation</h3>
-                        <p class="text-gray-600">Establish a robust data pipeline to sync news articles from the existing RDBMS into Google BigQuery, creating a centralized, AI-ready content repository.</p>
+                        <h3 class="font-semibold text-xl text-blue-300 mb-2">1. Data Foundation</h3>
+                        <p class="text-gray-400">Establish a robust data pipeline to sync news articles from the existing RDBMS into Google BigQuery, creating a centralized, AI-ready content repository.</p>
                     </div>
                     <div class="bg-gray-50 p-6 rounded-lg">
-                        <h3 class="font-semibold text-xl text-blue-700 mb-2">2. Generative Answers</h3>
-                        <p class="text-gray-600">Use Vertex AI Search to understand natural language queries (BM & EN) and generate cohesive, summarized answers with direct citations to the source articles.</p>
+                        <h3 class="font-semibold text-xl text-blue-300 mb-2">2. Generative Answers</h3>
+                        <p class="text-gray-400">Use Vertex AI Search to understand natural language queries (BM & EN) and generate cohesive, summarized answers with direct citations to the source articles.</p>
                     </div>
                 </div>
             </div>
@@ -107,7 +107,7 @@
             <!-- Slide 5: Cost-Control Architecture -->
             <div class="slide p-8 md:p-16 h-[600px] flex flex-col justify-center">
                 <h2 class="text-3xl font-bold text-gray-800 mb-6">A Cost-Optimized Architecture</h2>
-                <p class="text-lg text-gray-600 mb-6">A multi-tiered strategy to deliver an AI experience that is financially viable for a high-traffic news site.</p>
+                <p class="text-lg text-gray-400 mb-6">A multi-tiered strategy to deliver an AI experience that is financially viable for a high-traffic news site.</p>
                 <ul class="space-y-3 text-lg text-gray-700">
                     <li class="flex items-start"><span class="text-blue-600 font-bold mr-3">✔</span><strong>Daily Pre-generation:</strong> Automatically generate and cache answers for trending news topics and FAQs.</li>
                     <li class="flex items-start"><span class="text-blue-600 font-bold mr-3">✔</span><strong>Suggested Questions UI:</strong> Guide users towards instant, zero-cost, pre-generated answers.</li>
@@ -118,7 +118,7 @@
             <!-- Slide 6: System Architecture -->
             <div class="slide p-8 md-p-12 h-[600px] flex flex-col justify-center">
                 <h2 class="text-3xl font-bold text-gray-800 mb-4 text-center">System Architecture</h2>
-                <img src="image.png" alt="System Architecture Diagram" class="mt-2 max-h-[450px] w-auto mx-auto">
+                <img src="http://localhost:9000/helpudoc/test/image.png" alt="System Architecture Diagram" class="mt-2 max-h-[450px] w-auto mx-auto">
             </div>
 
             <!-- Slide 7: Sequence Diagram -->
@@ -211,8 +211,8 @@
             <!-- Slide 9: Next Steps -->
             <div class="slide p-8 md:p-16 h-[600px] flex flex-col justify-center items-center text-center">
                 <h2 class="text-4xl font-bold text-gray-800 mb-6">Next Steps & Q&A</h2>
-                <p class="text-xl text-gray-600 max-w-2xl mb-8">We propose moving forward by finalizing the commercial statement of work and exploring potential Google Cloud funding opportunities to support this strategic initiative.</p>
-                <h3 class="text-3xl font-semibold text-blue-700">Thank You</h3>
+                <p class="text-xl text-gray-400 max-w-2xl mb-8">We propose moving forward by finalizing the commercial statement of work and exploring potential Google Cloud funding opportunities to support this strategic initiative.</p>
+                <h3 class="text-3xl font-semibold text-blue-300">Thank You</h3>
             </div>
         </div>
 
@@ -220,12 +220,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
     <script>
-        mermaid.initialize({ startOnLoad: true, theme: 'base', themeVariables: {
-            primaryColor: '#e0f2fe',
-            primaryTextColor: '#0c4a6e',
-            lineColor: '#3b82f6',
-            textColor: '#374151'
-        } });
+        mermaid.initialize({ startOnLoad: true });
 
         document.addEventListener('DOMContentLoaded', () => {
             const slides = document.querySelectorAll('.slide');
@@ -257,4 +252,4 @@
         });
     </script>
 </body>
-</html>
+</html>>

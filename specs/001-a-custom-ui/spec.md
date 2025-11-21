@@ -102,3 +102,9 @@ As a user, I want to be able to choose from a list of different agent personas, 
 - **NFR-003**: **Configuration**: Agent personas MUST be configurable via a central configuration file, allowing administrators to manage available agents.
 - **NFR-004**: **Extensibility**: The agent architecture SHOULD be extensible to allow for the future addition of new agent personas and tools without requiring significant code changes.
 - **NFR-005**: **Reliability**: The system MUST implement a retry mechanism with exponential backoff for calls to external dependencies, such as MCP servers, and report a clear error to the user if the failure persists.
+- **NFR-006**: **Admin Portal**: The system MUST provide an Admin Portal with the following pages:
+    - **Dashboard**: Overview of workspace activity.
+    - **Agents**: Configuration for Core Agents and Subagents, including creating, editing, and deleting agents.
+    - **Tools**: Global tool and MCP server configuration.
+    - **Users**: User management (placeholder).
+    - **Billing**: Billing management (placeholder).

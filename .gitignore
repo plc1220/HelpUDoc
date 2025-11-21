@@ -4,6 +4,8 @@ dist/
 build/
 *.log
 .env*
+!.env.example
+!*/.env.example
 
 # Universal
 .DS_Store
@@ -14,3 +16,9 @@ Thumbs.db
 .idea/
 agent/.venv
 licheng_accessKeys.csv
+
+# Database and Data
+workspaces.db
+.minio-data/
+.postgres-data/
+backend/workspaces.db

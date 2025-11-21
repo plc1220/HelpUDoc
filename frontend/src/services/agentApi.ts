@@ -1,4 +1,4 @@
-import type { AgentPersona } from '../types';
+import type { AgentPersona, ToolOutputFile } from '../types';
 
 const API_URL = 'http://localhost:3000/api';
 
@@ -6,7 +6,8 @@ export type AgentStreamChunk =
   | { type: 'token' | 'chunk'; content?: string; role?: string }
   | { type: 'thought'; content?: string; role?: string }
   | { type: 'tool_start'; content?: string; name?: string }
-  | { type: 'tool_end'; content?: string; name?: string }
+  | { type: 'tool_end'; content?: string; name?: string; outputFiles?: ToolOutputFile[] }
+  | { type: 'tool_error'; content?: string; name?: string }
   | { type: 'done' }
   | { type: 'error'; message?: string };
 

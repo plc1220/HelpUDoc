@@ -1,0 +1,44 @@
+version: '3.8'
+services:
+  postgres:
+    image: postgres:16
+    container_name: helpudoc-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-helpudoc}
+      POSTGRES_USER: ${POSTGRES_USER:-helpudoc}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-helpudoc}
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./.postgres-data:/var/lib/postgresql/data
+
+  minio:
+    image: minio/minio:latest
+    container_name: helpudoc-minio
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    command: server /data --console-address ":9001"
+    volumes:
+      - ./.minio-data:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+  minio-setup:
+    image: minio/mc:latest
+    depends_on:
+      - minio
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    entrypoint: [ "/bin/sh", "-c" ]
+    command: >
+      set -e;
+      until (mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"); do
+        sleep 1;
+      done;
+      mc mb -p local/helpudoc || true;
+      mc anonymous set download local/helpudoc;
+      exit 0;

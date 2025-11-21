@@ -7,6 +7,12 @@ export interface Workspace {
 export interface File {
   id: string;
   name: string;
+  workspaceId?: string;
+  storageType?: 'local' | 's3';
+  path?: string;
+  mimeType?: string | null;
+  publicUrl?: string | null;
+  content?: string;
 }
 
 export interface AgentPersona {
@@ -27,10 +33,17 @@ export interface ConversationSummary {
 export interface ToolEvent {
   id: string;
   name: string;
-  status: 'running' | 'completed';
+  status: 'running' | 'completed' | 'error';
   summary?: string;
   startedAt: string;
   finishedAt?: string;
+  outputFiles?: ToolOutputFile[];
+}
+
+export interface ToolOutputFile {
+  path: string;
+  mimeType?: string | null;
+  size?: number;
 }
 
 export interface ConversationMessage {
@@ -39,6 +52,14 @@ export interface ConversationMessage {
   sender: 'user' | 'agent';
   text: string;
   createdAt: string;
+  updatedAt?: string;
+  turnId?: string;
   thinkingText?: string;
   toolEvents?: ToolEvent[];
+}
+
+export interface PromptDefinition {
+  id: string;
+  label: string;
+  content: string;
 }

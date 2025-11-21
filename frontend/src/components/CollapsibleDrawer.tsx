@@ -1,6 +1,6 @@
 import React from 'react';
 import { Drawer, Box, IconButton, Typography, TextField, Button } from '@mui/material';
-import { ChevronLeft, Add } from '@mui/icons-material';
+import { ChevronLeft, Add, Settings } from '@mui/icons-material';
 import WorkspaceList from './WorkspaceList';
 import type { Workspace } from '../types';
 
@@ -14,6 +14,7 @@ interface CollapsibleDrawerProps {
   handleCreateWorkspace: () => void;
   handleDeleteWorkspace: (id: string) => void;
   onSelectWorkspace: (workspace: Workspace) => void;
+  onOpenSettings: () => void;
 }
 
 const drawerWidth = 280;
@@ -28,7 +29,13 @@ const CollapsibleDrawer: React.FC<CollapsibleDrawerProps> = ({
   handleCreateWorkspace,
   handleDeleteWorkspace,
   onSelectWorkspace,
+  onOpenSettings,
 }) => {
+  const handleOpenSettingsClick = () => {
+    handleDrawerClose();
+    onOpenSettings();
+  };
+
   return (
     <Drawer
       sx={{
@@ -90,6 +97,20 @@ const CollapsibleDrawer: React.FC<CollapsibleDrawerProps> = ({
               onSelectWorkspace={onSelectWorkspace}
               onDeleteWorkspace={handleDeleteWorkspace}
             />
+          </Box>
+          <Box sx={{ borderTop: '1px solid #e2e8f0', pt: 2, mt: 2 }}>
+            <Button
+              variant="outlined"
+              startIcon={<Settings />}
+              fullWidth
+              sx={{ borderRadius: 2, textTransform: 'none', fontWeight: 600 }}
+              onClick={handleOpenSettingsClick}
+            >
+              Agent Settings
+            </Button>
+            <Typography variant="body2" sx={{ color: 'text.secondary', mt: 1 }}>
+              Manage personas, tools, and prompts.
+            </Typography>
           </Box>
         </Box>
       </Box>

@@ -56,17 +56,21 @@ class ToolFactory:
         tools: List[Tool] = []
         for name in tool_names:
             config = self.settings.get_tool(name)
-            tools.append(self._build_tool(config, workspace_state))
+            built = self._build_tool(config, workspace_state)
+            if isinstance(built, list):
+                tools.extend(built)
+            else:
+                tools.append(built)
         return tools
 
-    def _build_tool(self, config: ToolConfig, workspace_state: WorkspaceState) -> Tool:
+    def _build_tool(self, config: ToolConfig, workspace_state: WorkspaceState) -> Tool | List[Tool]:
         if config.name in self._builtin_map:
             return self._builtin_map[config.name](workspace_state)
         if config.entrypoint:
             return self._load_entrypoint(config.entrypoint, workspace_state)
         raise ValueError(f"Tool '{config.name}' has no builder")
 
-    def _load_entrypoint(self, entrypoint: str, workspace_state: WorkspaceState) -> Tool:
+    def _load_entrypoint(self, entrypoint: str, workspace_state: WorkspaceState) -> Tool | List[Tool]:
         module_path, attr = entrypoint.split(":")
         module = import_module(module_path)
         factory = getattr(module, attr)
@@ -171,8 +175,7 @@ def build_gemini_image_tool(
     if client is None or model_name is None:
         raise ValueError("Gemini client and image model name are required")
 
-    output_dir = workspace_state.root_path / "generated_images"
-    output_dir.mkdir(parents=True, exist_ok=True)
+    output_dir = workspace_state.root_path
 
     def _resolve_source_image(path_str: str) -> Image.Image:
         candidate = Path(path_str)

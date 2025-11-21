@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any, Dict
 
 
 @dataclass
@@ -13,6 +14,7 @@ class WorkspaceState:
     root_path: Path
     final_report_path: Path = field(init=False)
     question_path: Path = field(init=False)
+    context: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         self.root_path.mkdir(parents=True, exist_ok=True)

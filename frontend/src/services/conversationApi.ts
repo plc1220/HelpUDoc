@@ -51,13 +51,14 @@ export const appendMessage = async (
   conversationId: string,
   sender: 'user' | 'agent',
   text: string,
+  options?: { turnId?: string; replaceExisting?: boolean },
 ): Promise<ConversationMessage> => {
   const response = await fetch(`${API_URL}/conversations/${conversationId}/messages`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ sender, text }),
+    body: JSON.stringify({ sender, text, ...options }),
   });
 
   if (!response.ok) {

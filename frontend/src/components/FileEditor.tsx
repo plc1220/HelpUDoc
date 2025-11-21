@@ -81,11 +81,13 @@ const FileEditor: React.FC<FileEditorProps> = ({ file, fileContent, onContentCha
   }
 
   const getLanguage = (fileName: string) => {
-    const extension = fileName.split('.').pop();
+    const extension = fileName.split('.').pop()?.toLowerCase();
     switch (extension) {
       case 'js':
+      case 'jsx':
         return 'javascript';
       case 'ts':
+      case 'tsx':
         return 'typescript';
       case 'css':
         return 'css';
@@ -95,6 +97,35 @@ const FileEditor: React.FC<FileEditorProps> = ({ file, fileContent, onContentCha
         return 'json';
       case 'md':
         return 'markdown';
+      case 'py':
+        return 'python';
+      case 'java':
+        return 'java';
+      case 'c':
+      case 'h':
+        return 'c';
+      case 'cpp':
+      case 'hpp':
+      case 'cc':
+        return 'cpp';
+      case 'go':
+        return 'go';
+      case 'rs':
+        return 'rust';
+      case 'php':
+        return 'php';
+      case 'rb':
+        return 'ruby';
+      case 'sh':
+      case 'bash':
+        return 'shell';
+      case 'yaml':
+      case 'yml':
+        return 'yaml';
+      case 'xml':
+        return 'xml';
+      case 'sql':
+        return 'sql';
       default:
         return 'plaintext';
     }

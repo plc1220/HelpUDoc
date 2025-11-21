@@ -1,6 +1,8 @@
 import { Knex } from 'knex';
 import { v4 as uuidv4 } from 'uuid';
 import { DatabaseService } from './databaseService';
+import { WorkspaceService } from './workspaceService';
+import { NotFoundError } from '../errors';
 
 export type ConversationSender = 'user' | 'agent';
 
@@ -19,29 +21,44 @@ export interface ConversationMessageRecord {
   sender: ConversationSender;
   text: string;
   createdAt: string;
+  updatedAt: string;
+  turnId?: string | null;
+}
+
+interface AppendMessageOptions {
+  turnId?: string;
+  replaceExisting?: boolean;
 }
 
 export class ConversationService {
   private db: Knex;
+  private workspaceService: WorkspaceService;
 
-  constructor(databaseService: DatabaseService) {
+  constructor(databaseService: DatabaseService, workspaceService: WorkspaceService) {
     this.db = databaseService.getDb();
+    this.workspaceService = workspaceService;
   }
 
-  async createConversation(workspaceId: string, persona: string): Promise<ConversationRecord> {
+  async createConversation(userId: string, workspaceId: string, persona: string): Promise<ConversationRecord> {
+    await this.workspaceService.ensureMembership(workspaceId, userId);
     const [conversation] = await this.db('conversations')
       .insert({
         id: uuidv4(),
         workspaceId,
         persona,
         title: 'New Conversation',
+        createdBy: userId,
+        updatedBy: userId,
       })
       .returning('*');
+
+    await this.workspaceService.touchWorkspace(workspaceId, userId);
 
     return conversation as ConversationRecord;
   }
 
-  async listRecentConversations(workspaceId: string, limit = 5): Promise<ConversationRecord[]> {
+  async listRecentConversations(userId: string, workspaceId: string, limit = 5): Promise<ConversationRecord[]> {
+    await this.workspaceService.ensureMembership(workspaceId, userId);
     const conversations = await this.db('conversations')
       .where({ workspaceId })
       .orderBy('updatedAt', 'desc')
@@ -50,11 +67,16 @@ export class ConversationService {
     return conversations as ConversationRecord[];
   }
 
-  async getConversationWithMessages(conversationId: string): Promise<{ conversation: ConversationRecord; messages: ConversationMessageRecord[] } | null> {
+  async getConversationWithMessages(
+    userId: string,
+    conversationId: string,
+  ): Promise<{ conversation: ConversationRecord; messages: ConversationMessageRecord[] } | null> {
     const conversation = await this.db('conversations').where({ id: conversationId }).first();
     if (!conversation) {
       return null;
     }
+
+    await this.workspaceService.ensureMembership(conversation.workspaceId, userId);
 
     const messages = await this.db('conversation_messages')
       .where({ conversationId })
@@ -66,35 +88,72 @@ export class ConversationService {
     };
   }
 
-  async appendMessage(conversationId: string, sender: ConversationSender, text: string): Promise<ConversationMessageRecord> {
+  async appendMessage(
+    userId: string,
+    conversationId: string,
+    sender: ConversationSender,
+    text: string,
+    options: AppendMessageOptions = {}
+  ): Promise<ConversationMessageRecord> {
     const conversation = await this.db('conversations').where({ id: conversationId }).first();
     if (!conversation) {
-      throw new Error('Conversation not found');
+      throw new NotFoundError('Conversation not found');
     }
 
-    const [message] = await this.db('conversation_messages')
-      .insert({
-        conversationId,
-        sender,
-        text,
-      })
-      .returning('*');
+    await this.workspaceService.ensureMembership(conversation.workspaceId, userId, { requireEdit: true });
 
-    const updatePayload: Record<string, unknown> = {
-      updatedAt: this.db.fn.now(),
+    const turnId = options.turnId || (sender === 'user' ? uuidv4() : undefined);
+    const timestamp = this.db.fn.now();
+
+    if (options.replaceExisting && turnId) {
+      const existing = await this.db('conversation_messages')
+        .where({ conversationId, sender, turnId })
+        .first();
+      if (existing) {
+        const [updated] = await this.db('conversation_messages')
+          .where({ id: existing.id })
+          .update({
+            text,
+            updatedAt: timestamp,
+            authorId: sender === 'user' ? userId : existing.authorId,
+          })
+          .returning('*');
+        await this.updateConversationMetadata(conversation, sender, text, userId);
+        return updated as ConversationMessageRecord;
+      }
+    }
+
+    const insertPayload: Record<string, unknown> = {
+      conversationId,
+      sender,
+      text,
+      updatedAt: timestamp,
+      authorId: sender === 'user' ? userId : null,
     };
 
-    if (sender === 'user' && this.needsTitleUpdate(conversation.title)) {
-      updatePayload.title = this.buildConversationTitle(text);
+    if (turnId) {
+      insertPayload.turnId = turnId;
     }
 
-    await this.db('conversations').where({ id: conversationId }).update(updatePayload);
+    const [message] = await this.db('conversation_messages').insert(insertPayload).returning('*');
+
+    await this.updateConversationMetadata(conversation, sender, text, userId);
 
     return message as ConversationMessageRecord;
   }
 
-  async deleteConversation(conversationId: string): Promise<boolean> {
+  async deleteConversation(userId: string, conversationId: string): Promise<boolean> {
+    const conversation = await this.db('conversations').where({ id: conversationId }).first();
+    if (!conversation) {
+      return false;
+    }
+
+    await this.workspaceService.ensureMembership(conversation.workspaceId, userId, { requireEdit: true });
+
     const deleted = await this.db('conversations').where({ id: conversationId }).del();
+    if (deleted) {
+      await this.workspaceService.touchWorkspace(conversation.workspaceId, userId);
+    }
     return deleted > 0;
   }
 
@@ -103,6 +162,25 @@ export class ConversationService {
       return true;
     }
     return existingTitle === 'New Conversation';
+  }
+
+  private async updateConversationMetadata(
+    conversation: ConversationRecord,
+    sender: ConversationSender,
+    text: string,
+    userId: string,
+  ): Promise<void> {
+    const updatePayload: Record<string, unknown> = {
+      updatedAt: this.db.fn.now(),
+      updatedBy: userId,
+    };
+
+    if (sender === 'user' && this.needsTitleUpdate(conversation.title)) {
+      updatePayload.title = this.buildConversationTitle(text);
+    }
+
+    await this.db('conversations').where({ id: conversation.id }).update(updatePayload);
+    await this.workspaceService.touchWorkspace(conversation.workspaceId, userId);
   }
 
   private buildConversationTitle(text: string): string {

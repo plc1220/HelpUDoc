@@ -1,19 +1,37 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import type { CSSProperties } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo, Children, isValidElement } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { useNavigate } from 'react-router-dom';
 import {
   Box,
   CssBaseline,
   ThemeProvider,
   createTheme,
 } from '@mui/material';
-import { Edit, Trash, Star, Send, Plus, ChevronRight, ChevronLeft, RotateCcw, Maximize2, Minimize2, X, FileIcon } from 'lucide-react';
+import { Edit, Trash, Star, Send, Plus, ChevronRight, ChevronLeft, RotateCcw, Maximize2, Minimize2, X, FileIcon, Printer, Download, Link as LinkIcon } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { getWorkspaces, createWorkspace, deleteWorkspace } from '../services/workspaceApi';
-import { getFiles, createFile, updateFileContent, deleteFile, getFileContent, renameFile } from '../services/fileApi';
+import {
+  getFiles,
+  createFile,
+  updateFileContent,
+  deleteFile,
+  getFileContent,
+  renameFile,
+  getWorkspaceFilePreview,
+} from '../services/fileApi';
 import { fetchPersonas, runAgentStream, type AgentStreamChunk } from '../services/agentApi';
 import { fetchRecentConversations, createConversation as createConversationApi, fetchConversationDetail, appendMessage as appendConversationMessage, deleteConversation as deleteConversationApi } from '../services/conversationApi';
-import type { Workspace, File as WorkspaceFile, AgentPersona, ConversationSummary, ConversationMessage, ToolEvent } from '../types';
+import type {
+  Workspace,
+  File as WorkspaceFile,
+  AgentPersona,
+  ConversationSummary,
+  ConversationMessage,
+  ToolEvent,
+  ToolOutputFile,
+} from '../types';
 import CollapsibleDrawer from '../components/CollapsibleDrawer';
 import FileEditor from '../components/FileEditor';
 import FileRenderer from '../components/FileRenderer';
@@ -29,6 +47,125 @@ const theme = createTheme({
 
 const THOUGHT_PREVIEW_LIMIT = 320;
 
+type FilePreviewPayload = {
+  path: string;
+  mimeType?: string | null;
+  encoding: 'text' | 'base64';
+  content: string;
+};
+
+const ToolOutputFilePreview = ({
+  workspaceId,
+  file,
+}: {
+  workspaceId?: string;
+  file: ToolOutputFile;
+}) => {
+  const [preview, setPreview] = useState<FilePreviewPayload | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!workspaceId) {
+      setPreview(null);
+      return;
+    }
+    let cancelled = false;
+    setIsLoading(true);
+    setError(null);
+    getWorkspaceFilePreview(workspaceId, file.path)
+      .then((data) => {
+        if (!cancelled) {
+          setPreview(data);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setError('Unable to load preview for this artifact.');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [workspaceId, file.path]);
+
+  if (!workspaceId) {
+    return <p className="text-xs text-gray-500">Select a workspace to preview this file.</p>;
+  }
+  if (isLoading) {
+    return <p className="text-xs text-gray-500">Loading preview…</p>;
+  }
+  if (error) {
+    return <p className="text-xs text-red-500">{error}</p>;
+  }
+  if (!preview) {
+    return null;
+  }
+
+  const { mimeType, encoding, content } = preview;
+  const normalizedMime = mimeType || '';
+
+  if (normalizedMime.startsWith('image/')) {
+    const dataUrl = encoding === 'base64' ? `data:${normalizedMime};base64,${content}` : content;
+    return <img src={dataUrl} alt={file.path} className="mt-2 max-w-full rounded border border-gray-200" />;
+  }
+
+  if (normalizedMime.includes('html')) {
+    return (
+      <iframe
+        title={file.path}
+        className="mt-2 w-full h-64 rounded border border-gray-200"
+        srcDoc={content}
+        sandbox="allow-scripts allow-same-origin"
+      />
+    );
+  }
+
+  if (normalizedMime.includes('markdown')) {
+    return (
+      <div className="mt-2 prose prose-sm max-w-none">
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+      </div>
+    );
+  }
+
+  if (normalizedMime.includes('json')) {
+    let formatted = content;
+    try {
+      formatted = JSON.stringify(JSON.parse(content), null, 2);
+    } catch {
+      // leave as-is
+    }
+    return (
+      <pre className="mt-2 max-h-64 overflow-auto rounded bg-slate-900 p-3 text-xs text-slate-100">
+        {formatted}
+      </pre>
+    );
+  }
+
+  return (
+    <pre className="mt-2 max-h-64 overflow-auto rounded border border-gray-200 bg-gray-50 p-3 text-xs text-gray-800">
+      {encoding === 'base64' ? 'Binary file preview not available.' : content}
+    </pre>
+  );
+};
+const BLOCK_LEVEL_TAGS = ['div', 'pre', 'table', 'ol', 'ul', 'li', 'blockquote', 'section', 'article'];
+const MARKDOWN_FILE_EXTENSIONS = ['.md'];
+const HTML_FILE_EXTENSIONS = ['.html', '.htm'];
+const IMAGE_FILE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp'];
+
+const generateTurnId = () => {
+  if (typeof globalThis !== 'undefined' && globalThis.crypto?.randomUUID) {
+    return globalThis.crypto.randomUUID();
+  }
+  return `turn-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+};
+
 const mapMessagesToAgentHistory = (messages: ConversationMessage[]) => {
   return messages
     .filter((message) => typeof message.text === 'string' && message.text.trim().length > 0)
@@ -39,10 +176,12 @@ const mapMessagesToAgentHistory = (messages: ConversationMessage[]) => {
 };
 
 export default function WorkspacePage() {
+  const navigate = useNavigate();
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [selectedWorkspace, setSelectedWorkspace] = useState<Workspace | null>(null);
   const [files, setFiles] = useState<WorkspaceFile[]>([]);
   const [selectedFile, setSelectedFile] = useState<WorkspaceFile | null>(null);
+  const [selectedFileDetails, setSelectedFileDetails] = useState<WorkspaceFile | null>(null);
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
   const [fileContent, setFileContent] = useState('');
   const [newWorkspaceName, setNewWorkspaceName] = useState('');
@@ -63,6 +202,7 @@ export default function WorkspacePage() {
   const [activeConversationPersona, setActiveConversationPersona] = useState<string | null>(null);
   const streamAbortRef = useRef<AbortController | null>(null);
   const messagesRef = useRef<ConversationMessage[]>([]);
+  const agentMessageBufferRef = useRef<Map<ConversationMessage['id'], string>>(new Map());
   const lastUserMessageRef = useRef<string>('');
   const chatInputRef = useRef<HTMLTextAreaElement | null>(null);
   const attachmentInputRef = useRef<HTMLInputElement | null>(null);
@@ -74,6 +214,8 @@ export default function WorkspacePage() {
   const [expandedToolMessages, setExpandedToolMessages] = useState<Set<ConversationMessage['id']>>(new Set());
   const [expandedThinkingMessages, setExpandedThinkingMessages] = useState<Set<ConversationMessage['id']>>(new Set());
   const [copiedCodeBlockId, setCopiedCodeBlockId] = useState<string | null>(null);
+  const [copiedImageUrl, setCopiedImageUrl] = useState(false);
+  const [copiedFileUrlId, setCopiedFileUrlId] = useState<string | null>(null);
   const mentionSuggestions = useMemo(() => {
     if (!isMentionOpen) {
       return [] as WorkspaceFile[];
@@ -120,8 +262,31 @@ export default function WorkspacePage() {
     }
   }, []);
 
+  const classifyCodeBlockLabel = useCallback((languageMatch: RegExpExecArray | null, content: string) => {
+    if (languageMatch?.[1]) {
+      return languageMatch[1].toUpperCase();
+    }
+    const trimmed = content.trim();
+    const isSingleLine = !trimmed.includes('\n');
+    if (isSingleLine && /^[\w-]+\.[\w.-]+$/.test(trimmed)) {
+      return 'FILE';
+    }
+    if (isSingleLine && /^[a-z0-9_-]+$/i.test(trimmed)) {
+      return 'TOOL';
+    }
+    return 'CODE';
+  }, []);
+
   const markdownComponents = useMemo(
     () => ({
+      p({ children }: { children?: ReactNode }) {
+        const childArray = Children.toArray(children);
+        const containsBlockChild = childArray.some(
+          (child) => isValidElement(child) && typeof child.type === 'string' && BLOCK_LEVEL_TAGS.includes(child.type)
+        );
+        const Element: 'p' | 'div' = containsBlockChild ? 'div' : 'p';
+        return <Element className="mb-4 leading-relaxed text-slate-700">{children}</Element>;
+      },
       a({ ...props }: any) {
         return (
           <a
@@ -145,13 +310,13 @@ export default function WorkspacePage() {
         }
 
         const languageMatch = /language-(\w+)/.exec(className || '');
-        const languageLabel = languageMatch?.[1]?.toUpperCase() ?? 'CODE';
         const codeContent = (Array.isArray(children) ? children.join('') : String(children ?? '')).replace(/\n$/, '');
+        const languageLabel = classifyCodeBlockLabel(languageMatch, codeContent);
         const blockId = `${languageLabel}-${codeContent.length}-${codeContent.charCodeAt(0) || 0}`;
         const copyLabel = copiedCodeBlockId === blockId ? 'Copied' : 'Copy';
 
         return (
-          <div className="mb-4 overflow-hidden rounded-2xl border border-slate-200 bg-slate-950/90 text-slate-100 shadow-lg">
+          <div className="mb-4 mt-2 overflow-hidden rounded-2xl border border-slate-200 bg-slate-950/90 text-slate-100 shadow-lg">
             <div className="flex items-center justify-between border-b border-slate-800 bg-slate-900/60 px-4 py-2 text-[11px] font-semibold tracking-wide uppercase text-slate-300">
               <span>{languageLabel}</span>
               <button
@@ -162,7 +327,7 @@ export default function WorkspacePage() {
                 {copyLabel}
               </button>
             </div>
-            <pre className="overflow-x-auto px-4 py-3 text-xs leading-relaxed sm:text-sm">
+            <pre className="overflow-x-auto px-4 py-3 text-xs leading-relaxed whitespace-pre-wrap break-words sm:text-sm">
               <code {...props} className={`font-mono ${className || ''}`}>
                 {children}
               </code>
@@ -171,7 +336,7 @@ export default function WorkspacePage() {
         );
       },
     }),
-    [copiedCodeBlockId, handleCopyCodeBlock]
+    [classifyCodeBlockLabel, copiedCodeBlockId, handleCopyCodeBlock]
   );
 
   const toggleToolActivityVisibility = useCallback((messageId: ConversationMessage['id']) => {
@@ -226,6 +391,90 @@ export default function WorkspacePage() {
     transition: 'flex-basis 0.35s ease, flex-grow 0.35s ease, width 0.35s ease',
   };
 
+  const activeFile = selectedFileDetails || selectedFile;
+  const activeFileName = activeFile?.name ?? '';
+  const normalizedFileName = activeFileName.toLowerCase();
+  const isMarkdownFile = !!activeFile && MARKDOWN_FILE_EXTENSIONS.some((ext) => normalizedFileName.endsWith(ext));
+  const isHtmlFile = !!activeFile && HTML_FILE_EXTENSIONS.some((ext) => normalizedFileName.endsWith(ext));
+  const isImageFile = !!activeFile && IMAGE_FILE_EXTENSIONS.some((ext) => normalizedFileName.endsWith(ext));
+  const canPrintOrDownloadFile = Boolean(activeFile && (isMarkdownFile || isHtmlFile));
+  const canCopyImageUrl = Boolean(isImageFile && activeFile?.publicUrl);
+
+  const handleDownloadActiveFile = useCallback(() => {
+    if (!activeFile || !(isMarkdownFile || isHtmlFile)) {
+      return;
+    }
+    const blob = new Blob([fileContent], {
+      type: isMarkdownFile ? 'text/markdown;charset=utf-8' : 'text/html;charset=utf-8',
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = activeFile.name;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }, [activeFile, fileContent, isHtmlFile, isMarkdownFile]);
+
+  const handlePrintActiveFile = useCallback(() => {
+    if (!activeFile || !(isMarkdownFile || isHtmlFile)) {
+      return;
+    }
+
+    const wrapInDocument = (body: string) => `<!DOCTYPE html><html><head><meta charset="utf-8" /><title>${activeFile.name}</title><style>body{font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;padding:32px;line-height:1.6;color:#0f172a;}pre{background:#0f172a;color:#f8fafc;padding:12px 16px;border-radius:12px;overflow-x:auto;}code{font-family:'SFMono-Regular',Menlo,Monaco,Consolas,'Liberation Mono','Courier New',monospace;font-size:0.9em;}img{max-width:100%;height:auto;border-radius:8px;}h1,h2,h3,h4,h5,h6{margin-top:1.5em;}</style></head><body>${body}</body></html>`;
+
+    const hasHtmlShell = /<html[\s>]/i.test(fileContent);
+    const printableContent = isHtmlFile
+      ? hasHtmlShell
+        ? fileContent
+        : wrapInDocument(fileContent)
+      : wrapInDocument(
+        renderToStaticMarkup(
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{fileContent}</ReactMarkdown>
+        )
+      );
+
+    const printWindow = window.open('', '_blank', 'width=900,height=700');
+    if (!printWindow) {
+      return;
+    }
+    printWindow.document.open();
+    printWindow.document.write(printableContent);
+    printWindow.document.close();
+    printWindow.focus();
+    setTimeout(() => {
+      printWindow.print();
+      printWindow.close();
+    }, 300);
+  }, [activeFile, fileContent, isHtmlFile, isMarkdownFile]);
+
+  const handleCopyImageUrl = useCallback(async () => {
+    if (!activeFile?.publicUrl || !navigator?.clipboard) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(activeFile.publicUrl);
+      setCopiedImageUrl(true);
+      window.setTimeout(() => setCopiedImageUrl(false), 1500);
+    } catch (error) {
+      console.error('Failed to copy image URL', error);
+    }
+  }, [activeFile]);
+
+  const handleCopyFilePublicUrl = useCallback(async (file: WorkspaceFile) => {
+    if (!file.publicUrl || !navigator?.clipboard) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(file.publicUrl);
+      setCopiedFileUrlId(file.id);
+      window.setTimeout(() => setCopiedFileUrlId((current) => (current === file.id ? null : current)), 1500);
+    } catch (error) {
+      console.error('Failed to copy file public URL', error);
+    }
+  }, []);
+
   const handleRenameFile = async (file: WorkspaceFile) => {
     if (!selectedWorkspace) return;
     const proposedName = window.prompt('Rename file', file.name)?.trim();
@@ -261,6 +510,8 @@ export default function WorkspacePage() {
       });
       if (selectedFile?.id === file.id) {
         setSelectedFile(null);
+        setSelectedFileDetails(null);
+        setFileContent('');
       }
     } catch (error) {
       console.error('Failed to delete file:', error);
@@ -340,9 +591,21 @@ export default function WorkspacePage() {
   }, [mentionSuggestions.length]);
 
   const isFileEditable = (fileName: string): boolean => {
-    const editableExtensions = ['.md', '.mermaid', '.txt', '.json', '.html', '.css', '.js', '.ts', '.tsx', '.jsx'];
-    const ext = fileName.slice(fileName.lastIndexOf('.'));
+    const editableExtensions = [
+      '.md', '.mermaid', '.txt', '.json', '.html', '.css', '.js', '.ts', '.tsx', '.jsx',
+      '.py', '.java', '.c', '.cpp', '.go', '.rs', '.php', '.rb', '.sh', '.yaml', '.yml', '.xml', '.sql', '.csv'
+    ];
+    const ext = fileName.slice(fileName.lastIndexOf('.')).toLowerCase();
     return editableExtensions.includes(ext);
+  };
+
+  const shouldForceEditMode = (fileName: string): boolean => {
+    const ext = fileName.slice(fileName.lastIndexOf('.')).toLowerCase();
+    // Code files that are NOT md or html
+    const codeExtensions = [
+      '.js', '.ts', '.tsx', '.jsx', '.py', '.java', '.c', '.cpp', '.go', '.rs', '.php', '.rb', '.sh', '.yaml', '.yml', '.xml', '.sql', '.json', '.css'
+    ];
+    return codeExtensions.includes(ext);
   };
 
   const handleDrawerToggle = () => {
@@ -355,6 +618,10 @@ export default function WorkspacePage() {
     }
     setIsAgentPaneFullScreen((prev) => !prev);
   };
+
+  const handleOpenAgentSettings = useCallback(() => {
+    navigate('/settings');
+  }, [navigate]);
 
   const closeMention = useCallback(() => {
     setIsMentionOpen(false);
@@ -430,26 +697,33 @@ export default function WorkspacePage() {
   const loadConversationMessages = useCallback(async (conversationId: string) => {
     try {
       const detail = await fetchConversationDetail(conversationId);
+      const buffer = agentMessageBufferRef.current;
+      buffer.clear();
+      detail.messages.forEach((message) => {
+        if (message.sender === 'agent') {
+          buffer.set(message.id, message.text || '');
+        }
+      });
       setMessages(detail.messages);
       setActiveConversationPersona(detail.conversation.persona);
     } catch (error) {
       console.error('Failed to load conversation messages', error);
+      agentMessageBufferRef.current.clear();
       setMessages([]);
       setActiveConversationPersona(null);
     }
   }, []);
 
   const addLocalSystemMessage = useCallback((text: string) => {
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: `local-${Date.now()}`,
-        conversationId: activeConversationId || 'local',
-        sender: 'agent',
-        text,
-        createdAt: new Date().toISOString(),
-      },
-    ]);
+    const systemMessage: ConversationMessage = {
+      id: `local-${Date.now()}`,
+      conversationId: activeConversationId || 'local',
+      sender: 'agent',
+      text,
+      createdAt: new Date().toISOString(),
+    };
+    setMessages((prev) => [...prev, systemMessage]);
+    agentMessageBufferRef.current.set(systemMessage.id, systemMessage.text || '');
   }, [activeConversationId]);
 
   const ensureConversation = useCallback(async () => {
@@ -463,6 +737,7 @@ export default function WorkspacePage() {
       const conversation = await createConversationApi(selectedWorkspace.id, selectedPersona);
       setActiveConversationId(conversation.id);
       setActiveConversationPersona(conversation.persona);
+      agentMessageBufferRef.current.clear();
       setMessages([]);
       await refreshConversationHistory(selectedWorkspace.id);
       return conversation.id;
@@ -477,6 +752,7 @@ export default function WorkspacePage() {
       if (!selectedWorkspace) {
         setConversationHistory([]);
         setActiveConversationId(null);
+        agentMessageBufferRef.current.clear();
         setMessages([]);
         setActiveConversationPersona(null);
         return;
@@ -488,6 +764,7 @@ export default function WorkspacePage() {
         await loadConversationMessages(firstConversation.id);
       } else {
         setActiveConversationId(null);
+        agentMessageBufferRef.current.clear();
         setMessages([]);
         setActiveConversationPersona(null);
       }
@@ -541,13 +818,16 @@ export default function WorkspacePage() {
     if (selectedFile && selectedWorkspace) {
       try {
         const fileWithContent = await getFileContent(selectedWorkspace.id, selectedFile.id);
+        setSelectedFileDetails(fileWithContent);
         setFileContent(fileWithContent.content || '');
       } catch (error) {
         console.error('Failed to fetch file content:', error);
         setFileContent('Failed to load file content.');
+        setSelectedFileDetails(null);
       }
     } else {
       setFileContent('');
+      setSelectedFileDetails(null);
     }
   };
 
@@ -582,6 +862,7 @@ export default function WorkspacePage() {
         setConversationHistory((prev) => prev.filter((conversation) => conversation.id !== conversationId));
         if (activeConversationId === conversationId) {
           setActiveConversationId(null);
+          agentMessageBufferRef.current.clear();
           setMessages([]);
           setActiveConversationPersona(null);
         }
@@ -608,10 +889,10 @@ export default function WorkspacePage() {
     });
   };
 
-  const createToolEvent = (name: string): ToolEvent => ({
+  const createToolEvent = (name: string, status: ToolEvent['status'] = 'running'): ToolEvent => ({
     id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
     name,
-    status: 'running',
+    status,
     startedAt: new Date().toISOString(),
   });
 
@@ -645,17 +926,22 @@ export default function WorkspacePage() {
     updateToolEvents(index, (events) => [...events, createToolEvent(label)]);
   };
 
-  const appendToolEnd = (index: number, chunk: AgentStreamChunk & { type: 'tool_end' }) => {
+  const appendToolEnd = (
+    index: number,
+    chunk: (AgentStreamChunk & { type: 'tool_end' | 'tool_error' }),
+    status: ToolEvent['status'] = 'completed',
+  ) => {
     const label = chunk.name || 'tool';
     const summary = chunk.content ? truncateToolOutput(chunk.content) : '';
+    const outputFiles = 'outputFiles' in chunk ? chunk.outputFiles : undefined;
     updateToolEvents(index, (events) => {
       if (!events.length) {
         return [
           {
-            ...createToolEvent(label),
-            status: 'completed',
+            ...createToolEvent(label, status),
             finishedAt: new Date().toISOString(),
             summary,
+            outputFiles,
           },
         ];
       }
@@ -663,19 +949,20 @@ export default function WorkspacePage() {
       const lastRunningOffset = [...next].reverse().findIndex((event) => event.status === 'running');
       if (lastRunningOffset === -1) {
         next.push({
-          ...createToolEvent(label),
-          status: 'completed',
+          ...createToolEvent(label, status),
           finishedAt: new Date().toISOString(),
           summary,
+          outputFiles,
         });
         return next;
       }
       const targetIndex = next.length - 1 - lastRunningOffset;
       next[targetIndex] = {
         ...next[targetIndex],
-        status: 'completed',
+        status,
         finishedAt: new Date().toISOString(),
         summary: summary || next[targetIndex].summary,
+        outputFiles: outputFiles || next[targetIndex].outputFiles,
       };
       return next;
     });
@@ -694,6 +981,11 @@ export default function WorkspacePage() {
 
     if (chunk.type === 'tool_end') {
       appendToolEnd(agentMessageIndex, chunk);
+      return;
+    }
+
+    if (chunk.type === 'tool_error') {
+      appendToolEnd(agentMessageIndex, chunk, 'error');
       return;
     }
 
@@ -732,10 +1024,19 @@ export default function WorkspacePage() {
           nextChunk = remainder;
         }
       }
-      updated[index] = {
+      const combinedText = `${target.text || ''}${nextChunk}`;
+      const updatedMessage: ConversationMessage = {
         ...target,
-        text: `${target.text || ''}${nextChunk}`,
+        text: combinedText,
       };
+      updated[index] = updatedMessage;
+      if (
+        updatedMessage.sender === 'agent' &&
+        updatedMessage.id !== undefined &&
+        updatedMessage.id !== null
+      ) {
+        agentMessageBufferRef.current.set(updatedMessage.id, combinedText);
+      }
       return updated;
     });
   };
@@ -774,25 +1075,47 @@ export default function WorkspacePage() {
       return;
     }
 
+    const targetTurnId = targetMessage.turnId || generateTurnId();
+
     lastUserMessageRef.current = trimmed;
     cancelStream();
 
     const historyMessages = currentMessages.slice(0, targetIndex + 1);
     const historyPayload = mapMessagesToAgentHistory(historyMessages);
 
+    const agentIdsToRemove = currentMessages
+      .filter((message) => message.sender === 'agent' && message.turnId === targetTurnId)
+      .map((message) => message.id);
+    agentIdsToRemove.forEach((id) => {
+      if (id !== null && id !== undefined) {
+        agentMessageBufferRef.current.delete(id);
+      }
+    });
+
     let agentMessageIndex = -1;
+    let rerunPlaceholderId: ConversationMessage['id'] | null = null;
     setMessages((prevMessages) => {
+      const placeholderId = `agent-${Date.now()}-rerun`;
+      rerunPlaceholderId = placeholderId;
+      const withoutPreviousAgent = prevMessages.filter(
+        (message) => !(message.sender === 'agent' && message.turnId === targetTurnId)
+      );
       const placeholder: ConversationMessage = {
-        id: `agent-${Date.now()}-rerun`,
+        id: placeholderId,
         conversationId: activeConversationId,
         sender: 'agent',
         text: '',
         createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        turnId: targetTurnId,
       };
-      const updated = [...prevMessages, placeholder];
+      const updated = [...withoutPreviousAgent, placeholder];
       agentMessageIndex = updated.length - 1;
       return updated;
     });
+    if (rerunPlaceholderId) {
+      agentMessageBufferRef.current.set(rerunPlaceholderId, '');
+    }
 
     const controller = new AbortController();
     streamAbortRef.current = controller;
@@ -823,9 +1146,18 @@ export default function WorkspacePage() {
 
     if (agentMessageIndex >= 0) {
       const agentMessage = messagesRef.current[agentMessageIndex];
-      if (agentMessage?.text) {
+      const placeholderId = agentMessage?.id ?? null;
+      const bufferedText =
+        placeholderId !== null && placeholderId !== undefined
+          ? agentMessageBufferRef.current.get(placeholderId) ?? agentMessage?.text
+          : agentMessage?.text;
+      const placeholderTurnId = agentMessage?.turnId || targetTurnId;
+      if (bufferedText) {
         try {
-          const persisted = await appendConversationMessage(activeConversationId, 'agent', agentMessage.text);
+          const persisted = await appendConversationMessage(activeConversationId, 'agent', bufferedText, {
+            turnId: placeholderTurnId,
+            replaceExisting: true,
+          });
           setMessages((prev) => {
             const updated = [...prev];
             const existing = updated[agentMessageIndex];
@@ -836,10 +1168,16 @@ export default function WorkspacePage() {
             };
             return updated;
           });
+          if (placeholderId !== null && placeholderId !== undefined) {
+            agentMessageBufferRef.current.delete(placeholderId);
+          }
+          agentMessageBufferRef.current.set(persisted.id, persisted.text || '');
           await refreshConversationHistory(selectedWorkspace.id);
         } catch (error) {
           console.error('Failed to store rerun agent message', error);
         }
+      } else if (placeholderId !== null && placeholderId !== undefined) {
+        agentMessageBufferRef.current.delete(placeholderId);
       }
     }
   };
@@ -885,11 +1223,16 @@ export default function WorkspacePage() {
     setChatAttachments([]);
     closeMention();
 
+    const pendingTurnId = generateTurnId();
+    let resolvedTurnId = pendingTurnId;
     let userMessageRecord: ConversationMessage | null = null;
     let historyPayload: Array<{ role: string; content: string }> = [];
     try {
-      const createdMessage = await appendConversationMessage(conversationId, 'user', messageContent);
+      const createdMessage = await appendConversationMessage(conversationId, 'user', messageContent, {
+        turnId: pendingTurnId,
+      });
       userMessageRecord = createdMessage;
+      resolvedTurnId = createdMessage.turnId || pendingTurnId;
       setMessages((prev) => [...prev, createdMessage]);
       await refreshConversationHistory(workspaceId);
       const pendingMessages = [...messagesRef.current, createdMessage];
@@ -905,18 +1248,26 @@ export default function WorkspacePage() {
     }
 
     let agentMessageIndex = -1;
+    let agentPlaceholderId: ConversationMessage['id'] | null = null;
     setMessages((prevMessages) => {
+      const placeholderId = `agent-${Date.now()}`;
+      agentPlaceholderId = placeholderId;
       const placeholder: ConversationMessage = {
-        id: `agent-${Date.now()}`,
+        id: placeholderId,
         conversationId,
         sender: 'agent',
         text: '',
         createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        turnId: resolvedTurnId,
       };
       const updated = [...prevMessages, placeholder];
       agentMessageIndex = updated.length - 1;
       return updated;
     });
+    if (agentPlaceholderId) {
+      agentMessageBufferRef.current.set(agentPlaceholderId, '');
+    }
 
     const controller = new AbortController();
     streamAbortRef.current = controller;
@@ -946,9 +1297,17 @@ export default function WorkspacePage() {
 
     if (agentMessageIndex >= 0) {
       const agentMessage = messagesRef.current[agentMessageIndex];
-      if (agentMessage?.text) {
+      const placeholderId = agentMessage?.id ?? null;
+      const bufferedText =
+        placeholderId !== null && placeholderId !== undefined
+          ? agentMessageBufferRef.current.get(placeholderId) ?? agentMessage?.text
+          : agentMessage?.text;
+      const placeholderTurnId = agentMessage?.turnId || resolvedTurnId;
+      if (bufferedText) {
         try {
-          const persisted = await appendConversationMessage(conversationId, 'agent', agentMessage.text);
+          const persisted = await appendConversationMessage(conversationId, 'agent', bufferedText, {
+            turnId: placeholderTurnId,
+          });
           setMessages((prev) => {
             const updated = [...prev];
             const existing = updated[agentMessageIndex];
@@ -959,10 +1318,16 @@ export default function WorkspacePage() {
             };
             return updated;
           });
+          if (placeholderId !== null && placeholderId !== undefined) {
+            agentMessageBufferRef.current.delete(placeholderId);
+          }
+          agentMessageBufferRef.current.set(persisted.id, persisted.text || '');
           await refreshConversationHistory(workspaceId);
         } catch (error) {
           console.error('Failed to store agent message', error);
         }
+      } else if (placeholderId !== null && placeholderId !== undefined) {
+        agentMessageBufferRef.current.delete(placeholderId);
       }
     }
   };
@@ -1041,6 +1406,7 @@ export default function WorkspacePage() {
       const conversation = await createConversationApi(workspaceId, selectedPersona);
       setActiveConversationId(conversation.id);
       setActiveConversationPersona(conversation.persona);
+      agentMessageBufferRef.current.clear();
       setMessages([]);
       setChatMessage('');
       closeMention();
@@ -1092,6 +1458,8 @@ export default function WorkspacePage() {
       );
       setSelectedFiles(new Set());
       setSelectedFile(null);
+      setSelectedFileDetails(null);
+      setFileContent('');
     } catch (error) {
       console.error('Failed to delete files:', error);
     }
@@ -1138,14 +1506,15 @@ export default function WorkspacePage() {
   const handleRemoveChatAttachment = (index: number) => {
     setChatAttachments((prev) => prev.filter((_, idx) => idx !== index));
   };
- 
-   return (
-     <ThemeProvider theme={theme}>
+
+  return (
+    <ThemeProvider theme={theme}>
       <Box sx={{ display: 'flex' }}>
         <CssBaseline />
         <ExpandableSidebar
           handleDrawerToggle={handleDrawerToggle}
           isDrawerOpen={drawerOpen}
+          onOpenSettings={handleOpenAgentSettings}
         />
         <CollapsibleDrawer
           open={drawerOpen}
@@ -1157,6 +1526,7 @@ export default function WorkspacePage() {
           handleCreateWorkspace={handleCreateWorkspace}
           handleDeleteWorkspace={handleDeleteWorkspace}
           onSelectWorkspace={setSelectedWorkspace}
+          onOpenSettings={handleOpenAgentSettings}
         />
         <Box
           component="main"
@@ -1186,7 +1556,7 @@ export default function WorkspacePage() {
               style={workspacePaneStyles}
             >
               {/* Workspace Header */}
-              <div className="p-4 border-b border-gray-200">
+              <div className="p-4 border-b border-gray-200 flex justify-between items-center">
                 <h2 className="text-xl font-semibold text-gray-800">
                   {selectedWorkspace ? selectedWorkspace.name : 'No workspace selected'}
                 </h2>
@@ -1198,9 +1568,8 @@ export default function WorkspacePage() {
                   style={filePaneStyles}
                 >
                   <div
-                    className={`p-4 border-b border-gray-200 flex items-center ${
-                      isFilePaneVisible ? 'justify-between' : 'justify-center'
-                    }`}
+                    className={`p-4 border-b border-gray-200 flex items-center ${isFilePaneVisible ? 'justify-between' : 'justify-center'
+                      }`}
                   >
                     <div className={`flex items-center ${isFilePaneVisible ? 'gap-3' : ''}`}>
                       <button
@@ -1210,9 +1579,8 @@ export default function WorkspacePage() {
                       >
                         <ChevronLeft
                           size={16}
-                          className={`text-gray-600 transition-transform duration-300 ${
-                            isFilePaneVisible ? '' : 'rotate-180'
-                          }`}
+                          className={`text-gray-600 transition-transform duration-300 ${isFilePaneVisible ? '' : 'rotate-180'
+                            }`}
                         />
                       </button>
                       {isFilePaneVisible && <h3 className="text-lg font-semibold text-gray-800">Files</h3>}
@@ -1252,17 +1620,15 @@ export default function WorkspacePage() {
                     )}
                   </div>
                   <div
-                    className={`flex-1 px-4 py-3 overflow-y-auto transition-opacity duration-200 ${
-                      isFilePaneVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'
-                    }`}
+                    className={`flex-1 px-4 py-3 overflow-y-auto transition-opacity duration-200 ${isFilePaneVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'
+                      }`}
                     aria-hidden={!isFilePaneVisible}
                   >
                     {files.map((file) => (
                       <div
                         key={file.id}
-                        className={`group flex items-center p-2 rounded-lg cursor-pointer transition-colors ${
-                          selectedFile?.id === file.id ? 'bg-blue-50' : 'hover:bg-gray-100'
-                        }`}
+                        className={`group flex items-center p-2 rounded-lg cursor-pointer transition-colors ${selectedFile?.id === file.id ? 'bg-blue-50' : 'hover:bg-gray-100'
+                          }`}
                         onMouseEnter={() => setHoveredFileId(file.id)}
                         onMouseLeave={() => setHoveredFileId((current) => (current === file.id ? null : current))}
                       >
@@ -1275,7 +1641,9 @@ export default function WorkspacePage() {
                         <div
                           onClick={() => {
                             setSelectedFile(file);
-                            setIsEditMode(false);
+                            setSelectedFileDetails(null);
+                            setFileContent('');
+                            setIsEditMode(shouldForceEditMode(file.name));
                           }}
                           className="flex-1 flex items-start justify-between gap-2 min-w-0"
                         >
@@ -1283,6 +1651,19 @@ export default function WorkspacePage() {
                             {file.name}
                           </span>
                           <div className={`shrink-0 items-center gap-1 ml-1 ${hoveredFileId === file.id ? 'flex' : 'hidden group-hover:flex'}`}>
+                            {file.publicUrl && (
+                              <button
+                                type="button"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  handleCopyFilePublicUrl(file);
+                                }}
+                                className="p-1 rounded hover:bg-gray-200"
+                                title={copiedFileUrlId === file.id ? 'Copied!' : file.publicUrl}
+                              >
+                                <LinkIcon size={14} className="text-gray-600" />
+                              </button>
+                            )}
                             <button
                               type="button"
                               onClick={(event) => {
@@ -1319,18 +1700,50 @@ export default function WorkspacePage() {
                       {selectedFile ? selectedFile.name : 'Editor'}
                     </h3>
                     <div className="flex items-center space-x-2">
-                      <button
-                        className="p-2 rounded-lg hover:bg-gray-200 disabled:opacity-50"
-                        onClick={() => {
-                          if (!isAgentPaneVisible) {
-                            setIsAgentPaneVisible(true);
-                          }
-                          setIsEditMode(!isEditMode);
-                        }}
-                        disabled={!selectedFile || !isFileEditable(selectedFile.name)}
-                      >
-                        <Edit size={18} className="text-gray-600" />
-                      </button>
+                      {canCopyImageUrl && (
+                        <button
+                          type="button"
+                          className="p-2 rounded-lg hover:bg-gray-200 disabled:opacity-50"
+                          onClick={handleCopyImageUrl}
+                          title={copiedImageUrl ? 'Copied!' : 'Copy public URL'}
+                        >
+                          <LinkIcon size={18} className="text-gray-600" />
+                        </button>
+                      )}
+                      {canPrintOrDownloadFile && (
+                        <>
+                          <button
+                            type="button"
+                            className="p-2 rounded-lg hover:bg-gray-200 disabled:opacity-50"
+                            onClick={handlePrintActiveFile}
+                            title="Print file"
+                          >
+                            <Printer size={18} className="text-gray-600" />
+                          </button>
+                          <button
+                            type="button"
+                            className="p-2 rounded-lg hover:bg-gray-200 disabled:opacity-50"
+                            onClick={handleDownloadActiveFile}
+                            title="Download file"
+                          >
+                            <Download size={18} className="text-gray-600" />
+                          </button>
+                        </>
+                      )}
+                      {!shouldForceEditMode(selectedFile?.name || '') && (
+                        <button
+                          className="p-2 rounded-lg hover:bg-gray-200 disabled:opacity-50"
+                          onClick={() => {
+                            if (!isAgentPaneVisible) {
+                              setIsAgentPaneVisible(true);
+                            }
+                            setIsEditMode(!isEditMode);
+                          }}
+                          disabled={!selectedFile || !isFileEditable(selectedFile.name)}
+                        >
+                          <Edit size={18} className="text-gray-600" />
+                        </button>
+                      )}
                       <button
                         className="p-2 rounded-lg hover:bg-gray-200 disabled:opacity-50"
                         onClick={() => selectedFile && handleUpdateFile(Number(selectedFile.id), fileContent)}
@@ -1343,19 +1756,19 @@ export default function WorkspacePage() {
                   <div className="flex-1 overflow-y-auto overflow-x-hidden">
                     {isEditMode ? (
                       <FileEditor
-                        file={selectedFile}
+                        file={selectedFileDetails || selectedFile}
                         fileContent={fileContent}
                         onContentChange={setFileContent}
                       />
                     ) : (
                       <div className="h-full w-full">
-                        <FileRenderer file={selectedFile} fileContent={fileContent} />
+                        <FileRenderer file={selectedFileDetails || selectedFile} fileContent={fileContent} />
                       </div>
                     )}
                   </div>
                 </div>
-                </div>
               </div>
+            </div>
 
             {/* Right Pane: Agent Chat */}
             <div
@@ -1394,8 +1807,7 @@ export default function WorkspacePage() {
                   </div>
                 )}
               </div>
-                <div className={`flex-1 flex flex-col overflow-hidden ${
-                  isAgentPaneFullScreen || isAgentPaneVisible ? 'block' : 'hidden'
+              <div className={`flex-1 flex flex-col overflow-hidden ${isAgentPaneFullScreen || isAgentPaneVisible ? 'block' : 'hidden'
                 }`}>
                 <div className="p-4 border-b border-gray-200">
                   <PersonaSelector
@@ -1419,11 +1831,10 @@ export default function WorkspacePage() {
                             <button
                               type="button"
                               onClick={() => handleSelectConversationFromHistory(conversation.id)}
-                              className={`w-full text-left p-2 pr-9 rounded-lg border transition ${
-                                isActive
-                                  ? 'border-blue-500 bg-blue-50'
-                                  : 'border-gray-200 hover:border-blue-400 hover:bg-blue-50'
-                              }`}
+                              className={`w-full text-left p-2 pr-9 rounded-lg border transition ${isActive
+                                ? 'border-blue-500 bg-blue-50'
+                                : 'border-gray-200 hover:border-blue-400 hover:bg-blue-50'
+                                }`}
                             >
                               <p className="text-sm font-medium text-gray-800 truncate">{conversation.title}</p>
                               <p className="text-xs text-gray-500">
@@ -1450,7 +1861,7 @@ export default function WorkspacePage() {
                 <div className="flex-1 p-4 overflow-y-auto space-y-4">
                   {messages.map((message) => {
                     const isAgentMessage = message.sender === 'agent';
-                    const timestampLabel = formatMessageTimestamp(message.createdAt);
+                    const timestampLabel = formatMessageTimestamp(message.updatedAt || message.createdAt);
                     const toolEvents = message.toolEvents || [];
                     const hasToolEvents = toolEvents.length > 0;
                     const isToolActivityExpanded = expandedToolMessages.has(message.id);
@@ -1461,9 +1872,8 @@ export default function WorkspacePage() {
                     return (
                       <div
                         key={message.id}
-                        className={`flex items-start gap-3 group ${
-                          isAgentMessage ? '' : 'justify-end'
-                        }`}
+                        className={`flex items-start gap-3 group ${isAgentMessage ? '' : 'justify-end'
+                          }`}
                       >
                         {isAgentMessage && (
                           <div className="mr-1 flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-indigo-500 shadow-inner">
@@ -1471,7 +1881,7 @@ export default function WorkspacePage() {
                           </div>
                         )}
                         <div
-                          style={{ maxWidth: isAgentPaneFullScreen ? '85%' : '75%' }}
+                          style={{ width: '100%', maxWidth: '720px' }}
                           className="relative flex-1 md:flex-initial"
                         >
                           {isAgentMessage ? (
@@ -1530,23 +1940,49 @@ export default function WorkspacePage() {
                                           <div key={event.id || `${event.name}-${index}`} className="flex gap-3 pb-3 last:pb-0">
                                             <div className="flex flex-col items-center">
                                               <span
-                                                className={`h-2.5 w-2.5 rounded-full ${
-                                                  event.status === 'completed' ? 'bg-emerald-500' : 'bg-amber-400'
-                                                }`}
+                                                className={`h-2.5 w-2.5 rounded-full ${event.status === 'completed' ? 'bg-emerald-500' : 'bg-amber-400'
+                                                  }`}
                                               />
                                               {!isLast && <span className="flex-1 w-px bg-slate-200" />}
                                             </div>
                                             <div className="flex-1">
-                                              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                                              <p
+                                                className={`text-[11px] font-semibold uppercase tracking-wide ${event.status === 'error' ? 'text-red-500' : 'text-slate-500'
+                                                  }`}
+                                              >
                                                 {event.name}
                                               </p>
-                                              <p className="text-sm text-slate-700">
-                                                {event.summary || (event.status === 'completed' ? 'Completed' : 'In progress…')}
+                                              <p
+                                                className={`text-sm ${event.status === 'error' ? 'text-red-600' : 'text-slate-700'
+                                                  }`}
+                                              >
+                                                {event.summary ||
+                                                  (event.status === 'completed'
+                                                    ? 'Completed'
+                                                    : event.status === 'error'
+                                                      ? 'Failed'
+                                                      : 'In progress…')}
                                               </p>
                                               <p className="mt-1 text-[11px] uppercase tracking-wide text-slate-400">
                                                 {formatMessageTimestamp(event.startedAt)}
                                                 {event.finishedAt ? ` • ${formatMessageTimestamp(event.finishedAt)}` : ''}
                                               </p>
+                                              {event.outputFiles?.length ? (
+                                                <div className="mt-2 space-y-3">
+                                                  {event.outputFiles.map((file) => (
+                                                    <div
+                                                      key={`${event.id}-${file.path}`}
+                                                      className="rounded-lg border border-gray-200 bg-white p-2"
+                                                    >
+                                                      <p className="text-xs font-semibold text-gray-700">{file.path}</p>
+                                                      <ToolOutputFilePreview
+                                                        workspaceId={selectedWorkspace?.id}
+                                                        file={file}
+                                                      />
+                                                    </div>
+                                                  ))}
+                                                </div>
+                                              ) : null}
                                             </div>
                                           </div>
                                         );
@@ -1572,11 +2008,10 @@ export default function WorkspacePage() {
                               onClick={() => handleRerunMessage(message.id)}
                               disabled={isStreaming}
                               title="Rerun this message"
-                              className={`absolute -top-2 -right-2 rounded-full bg-blue-500 p-1.5 text-white shadow transition-opacity opacity-0 ${
-                                isStreaming
-                                  ? 'cursor-not-allowed group-hover:opacity-60 hover:opacity-60'
-                                  : 'group-hover:opacity-100 hover:opacity-100 focus-visible:opacity-100'
-                              }`}
+                              className={`absolute -top-2 -right-2 rounded-full bg-blue-500 p-1.5 text-white shadow transition-opacity opacity-0 ${isStreaming
+                                ? 'cursor-not-allowed group-hover:opacity-60 hover:opacity-60'
+                                : 'group-hover:opacity-100 hover:opacity-100 focus-visible:opacity-100'
+                                }`}
                             >
                               <RotateCcw size={14} />
                             </button>
@@ -1632,9 +2067,8 @@ export default function WorkspacePage() {
                                   event.preventDefault();
                                   handleSelectMention(file);
                                 }}
-                                className={`w-full flex items-center text-left px-3 py-2 text-sm hover:bg-blue-50 ${
-                                  index === mentionSelectedIndex ? 'bg-blue-50 text-blue-700' : 'text-gray-800'
-                                }`}
+                                className={`w-full flex items-center text-left px-3 py-2 text-sm hover:bg-blue-50 ${index === mentionSelectedIndex ? 'bg-blue-50 text-blue-700' : 'text-gray-800'
+                                  }`}
                               >
                                 <FileIcon size={16} className="mr-2 text-gray-500" />
                                 <span className="truncate">{file.name}</span>
@@ -1656,9 +2090,8 @@ export default function WorkspacePage() {
                       <button
                         onClick={handleSendMessage}
                         disabled={isStreaming}
-                        className={`absolute right-3 bottom-3 w-10 h-10 rounded-full flex items-center justify-center text-white shadow-sm transition ${
-                          isStreaming ? 'bg-blue-300 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'
-                        }`}
+                        className={`absolute right-3 bottom-3 w-10 h-10 rounded-full flex items-center justify-center text-white shadow-sm transition ${isStreaming ? 'bg-blue-300 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'
+                          }`}
                         title="Send message"
                       >
                         <Send size={18} />

@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import mermaid from 'mermaid';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import Papa from 'papaparse';
 import type { File } from '../types';
 
 interface FileRendererProps {
@@ -61,6 +62,7 @@ const MermaidDiagram: React.FC<{ chart: string }> = ({ chart }) => {
 const FileRenderer: React.FC<FileRendererProps> = ({ file, fileContent }) => {
   const mermaidRef = useRef<HTMLDivElement>(null);
   const [isMermaidRendered, setIsMermaidRendered] = useState(false);
+  const [copiedUrl, setCopiedUrl] = useState(false);
 
   useEffect(() => {
     const renderMermaid = async () => {
@@ -154,7 +156,8 @@ const FileRenderer: React.FC<FileRendererProps> = ({ file, fileContent }) => {
                   src={props.src || undefined}
                 />
               ),
-              code: ({ inline, className, children, ...props }) => {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              code: ({ inline, className, children, ...props }: any) => {
                 const language = /language-(\w+)/.exec(className || '');
                 const content = (Array.isArray(children) ? children.join('') : String(children ?? '')).replace(/\n$/, '');
 
@@ -207,18 +210,98 @@ const FileRenderer: React.FC<FileRendererProps> = ({ file, fileContent }) => {
     if (file.name.endsWith('.html')) {
       return <iframe srcDoc={fileContent} title={file.name} className="w-full h-full border-none" style={{ height: '100%' }} />;
     }
-    if (['.png', '.jpg', '.jpeg', '.gif'].some(ext => file.name.endsWith(ext))) {
-      if (!fileContent) {
-        return null;
+    if (['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp'].some(ext => file.name.toLowerCase().endsWith(ext))) {
+      const dataSrc = fileContent ? `data:${file.mimeType || 'image/*'};base64,${fileContent}` : undefined;
+      const imageSrc = file.publicUrl || dataSrc;
+      if (!imageSrc) {
+        return (
+          <div className="flex h-full items-center justify-center text-sm text-gray-500">
+            Unable to display image preview.
+          </div>
+        );
       }
+      const handleCopyUrl = async () => {
+        if (!file.publicUrl || typeof navigator === 'undefined' || !navigator.clipboard?.writeText) {
+          return;
+        }
+        try {
+          await navigator.clipboard.writeText(file.publicUrl);
+          setCopiedUrl(true);
+          window.setTimeout(() => setCopiedUrl(false), 1500);
+        } catch (error) {
+          console.error('Failed to copy image URL', error);
+        }
+      };
+      const canCopyUrl = Boolean(file.publicUrl);
       return (
-        <div className="flex items-center justify-center h-full">
-          <img src={`data:image;base64,${fileContent}`} alt={file.name} className="max-w-full max-h-full object-contain" />
+        <div className="group relative flex h-full items-center justify-center">
+          <img src={imageSrc} alt={file.name} className="max-w-full max-h-full object-contain" />
+          {canCopyUrl && (
+            <button
+              type="button"
+              title={copiedUrl ? 'Copied!' : 'Copy public URL'}
+              onClick={handleCopyUrl}
+              className="absolute right-3 top-3 hidden rounded-full bg-black/60 px-3 py-1 text-xs font-semibold text-white shadow-md transition group-hover:flex"
+            >
+              {copiedUrl ? 'Copied' : 'Copy URL'}
+            </button>
+          )}
         </div>
       );
     }
     if (file.name.endsWith('.pdf')) {
-      return <embed src={`data:application/pdf;base64,${fileContent}`} type="application/pdf" className="w-full h-full" style={{ height: '100%' }} />;
+      const pdfSrc = file.publicUrl || (fileContent ? `data:application/pdf;base64,${fileContent}` : undefined);
+      if (!pdfSrc) {
+        return (
+          <div className="flex h-full items-center justify-center text-sm text-gray-500">
+            Unable to display PDF preview.
+          </div>
+        );
+      }
+      return <embed src={pdfSrc} type="application/pdf" className="w-full h-full" style={{ height: '100%' }} />;
+    }
+    if (file.name.endsWith('.csv')) {
+      const { data } = Papa.parse(fileContent, { header: true, skipEmptyLines: true });
+      if (!data || data.length === 0) {
+        return (
+          <div className="flex h-full items-center justify-center text-sm text-gray-500">
+            Empty or invalid CSV file.
+          </div>
+        );
+      }
+      const headers = Object.keys(data[0] as object);
+      return (
+        <div className="overflow-auto h-full w-full">
+          <table className="min-w-full divide-y divide-gray-200 border-collapse">
+            <thead className="bg-gray-50 sticky top-0 z-10">
+              <tr>
+                {headers.map((header) => (
+                  <th
+                    key={header}
+                    className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider border-b border-gray-200 bg-gray-50"
+                  >
+                    {header}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="bg-white divide-y divide-gray-200">
+              {data.map((row: any, idx: number) => (
+                <tr key={idx} className="hover:bg-gray-50">
+                  {headers.map((header) => (
+                    <td
+                      key={`${idx}-${header}`}
+                      className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 border-b border-gray-200"
+                    >
+                      {row[header]}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      );
     }
     return <pre className="whitespace-pre-wrap break-words">{fileContent}</pre>;
   };

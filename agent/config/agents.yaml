@@ -16,6 +16,9 @@ tools:
   - name: gemini_image
     kind: builtin
     description: Generate or edit images using Gemini
+  - name: data_agent_tools
+    entrypoint: helpudoc_agent.data_agent_tools:build_data_agent_tools
+    description: Tools for Data Agent (DuckDB, Charts)
 
 mcp_servers:
   - name: research_fs
@@ -59,4 +62,35 @@ agents:
        description: Handles lightweight greeting/small-talk tasks
        system_prompt_id: general/core
        tools: []
-    
+  - name: data-agent
+    display_name: Data Agent
+    description: Analyze data files (CSV, Parquet) using SQL and charts.
+    system_prompt_id: data_agent/core
+    tools:
+      - data_agent_tools
+    subagents:
+      - name: schema-agent
+        description: Inspects table structures before any SQL runs.
+        system_prompt_id: data_agent/schema
+        tools:
+          - data_agent_tools
+      - name: sql-agent
+        description: Crafts and executes DuckDB queries based on the schema plan.
+        system_prompt_id: data_agent/sql
+        tools:
+          - data_agent_tools
+      - name: chart-agent
+        description: Builds chart configurations or artifacts from the latest query result.
+        system_prompt_id: data_agent/chart
+        tools:
+          - data_agent_tools
+      - name: file-agent
+        description: Manages generated artifacts and ensures they are documented.
+        system_prompt_id: data_agent/file
+        tools:
+          - data_agent_tools
+      - name: summary-agent
+        description: Writes the final answer after queries/charts are complete.
+        system_prompt_id: data_agent/summary
+        tools:
+          - data_agent_tools

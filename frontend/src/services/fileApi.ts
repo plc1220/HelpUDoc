@@ -16,6 +16,16 @@ export const getFileContent = async (workspaceId: string, fileId: string) => {
   return response.json();
 };
 
+export const getWorkspaceFilePreview = async (workspaceId: string, relativePath: string) => {
+  const url = new URL(`${API_URL}/workspaces/${workspaceId}/files/preview`);
+  url.searchParams.set('path', relativePath);
+  const response = await fetch(url.toString());
+  if (!response.ok) {
+    throw new Error('Failed to preview file');
+  }
+  return response.json();
+};
+
 export const createFile = async (workspaceId: string, file: File) => {
   const formData = new FormData();
   formData.append('file', file);
