@@ -72,6 +72,22 @@ export default function conversationRoutes(conversationService: ConversationServ
     text: z.string().min(1),
     turnId: z.string().min(1).optional(),
     replaceExisting: z.boolean().optional(),
+    metadata: z.object({
+      thinkingText: z.string().optional(),
+      toolEvents: z.array(z.object({
+        id: z.string().optional(),
+        name: z.string(),
+        status: z.enum(['running', 'completed', 'error']).optional(),
+        summary: z.string().optional(),
+        startedAt: z.string().optional(),
+        finishedAt: z.string().optional(),
+        outputFiles: z.array(z.object({
+          path: z.string(),
+          mimeType: z.string().nullable().optional(),
+          size: z.number().int().nonnegative().optional(),
+        }).strict()).optional(),
+      }).strict()).optional(),
+    }).partial().optional(),
   });
 
   router.post('/conversations/:conversationId/messages', async (req, res) => {
@@ -86,6 +102,7 @@ export default function conversationRoutes(conversationService: ConversationServ
         {
           turnId: payload.turnId,
           replaceExisting: payload.replaceExisting,
+          metadata: payload.metadata,
         }
       );
       res.status(201).json(message);

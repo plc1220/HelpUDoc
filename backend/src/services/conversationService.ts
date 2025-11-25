@@ -23,11 +23,13 @@ export interface ConversationMessageRecord {
   createdAt: string;
   updatedAt: string;
   turnId?: string | null;
+  metadata?: Record<string, unknown> | null;
 }
 
 interface AppendMessageOptions {
   turnId?: string;
   replaceExisting?: boolean;
+  metadata?: Record<string, unknown>;
 }
 
 export class ConversationService {
@@ -110,13 +112,17 @@ export class ConversationService {
         .where({ conversationId, sender, turnId })
         .first();
       if (existing) {
+        const updatePayload: Record<string, unknown> = {
+          text,
+          updatedAt: timestamp,
+          authorId: sender === 'user' ? userId : existing.authorId,
+        };
+        if (options.metadata !== undefined) {
+          updatePayload.metadata = options.metadata;
+        }
         const [updated] = await this.db('conversation_messages')
           .where({ id: existing.id })
-          .update({
-            text,
-            updatedAt: timestamp,
-            authorId: sender === 'user' ? userId : existing.authorId,
-          })
+          .update(updatePayload)
           .returning('*');
         await this.updateConversationMetadata(conversation, sender, text, userId);
         return updated as ConversationMessageRecord;
@@ -133,6 +139,9 @@ export class ConversationService {
 
     if (turnId) {
       insertPayload.turnId = turnId;
+    }
+    if (options.metadata !== undefined) {
+      insertPayload.metadata = options.metadata;
     }
 
     const [message] = await this.db('conversation_messages').insert(insertPayload).returning('*');

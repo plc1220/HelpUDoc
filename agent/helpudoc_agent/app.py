@@ -5,6 +5,8 @@ import asyncio
 from typing import Any, Dict, List, AsyncGenerator, Iterable, Sequence, Set
 import json
 import logging
+from pathlib import Path
+from dotenv import load_dotenv
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
@@ -32,7 +34,20 @@ class ChatResponse(BaseModel):
     reply: Any
 
 
+BASE_DIR = Path(__file__).resolve().parent
+
+
+def _load_env_files() -> None:
+    """Load environment variables from known locations.
+
+    We prioritize the agent's .env (agent/.env) and then allow any existing
+    process-level env vars to remain.
+    """
+    load_dotenv(BASE_DIR.parent / ".env")
+
+
 def create_app() -> FastAPI:
+    _load_env_files()
     settings = load_settings()
     prompt_store = PromptStore()
     source_tracker = SourceTracker()

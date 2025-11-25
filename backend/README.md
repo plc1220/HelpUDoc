@@ -73,6 +73,7 @@ When these headers are absent the backend falls back to `DEFAULT_USER_*` so loca
 - **Agent Interaction**: Core endpoint to interact with a specified agent (enforces workspace access before issuing tool calls).
 - **Workspace Management**: Create, list, and share workspaces scoped to the authenticated user.
 - **File Management with optimistic locking**: Upload, download, and manage files. Each file tracks an incremental `version` so clients can avoid overwriting each other.
+- **Knowledge sources**: CRUD endpoints for text, table, image, presentation, and infographic knowledge entries tied to a workspace.
 
 ## API Endpoints
 
@@ -89,5 +90,10 @@ When these headers are absent the backend falls back to `DEFAULT_USER_*` so loca
 - `PUT /api/workspaces/:workspaceId/files/:fileId/content`: Updates the content of a file (optionally include `version` to enforce optimistic locking).
 - `PATCH /api/workspaces/:workspaceId/files/:fileId`: Renames a file (optionally include `version`).
 - `DELETE /api/workspaces/:workspaceId/files/:fileId`: Deletes a file.
+- `GET /api/workspaces/:workspaceId/knowledge`: Lists knowledge sources for a workspace.
+- `POST /api/workspaces/:workspaceId/knowledge`: Creates a knowledge source (supports `text`, `table`, `image`, `presentation`, `infographic`).
+- `GET /api/workspaces/:workspaceId/knowledge/:knowledgeId`: Returns a single knowledge source with attached file metadata.
+- `PUT /api/workspaces/:workspaceId/knowledge/:knowledgeId`: Updates a knowledge source.
+- `DELETE /api/workspaces/:workspaceId/knowledge/:knowledgeId`: Deletes a knowledge source.
 
 Each file record now includes `storageType`, `mimeType`, `version`, and (for binary assets stored in MinIO) a `publicUrl`. Agents or UI clients can fetch `/api/workspaces/:workspaceId/files` to discover these URLs and embed them directly inside Markdown or HTML.

@@ -1,0 +1,39 @@
+{
+  "sections": [
+    {
+      "id": "01_executive_summary",
+      "title": "Executive Summary & Strategic Alignment",
+      "task_instruction": "Write an Executive Summary for Bank Muamalat Malaysia Berhad (BMMB). Align with their RISE26+ strategy ('Strongest Islamic Bank'). Propose a 'Migrate & Modernize' strategy to move from MapR/SQL Server to GCP. Highlight the urgency (6-month MapR license expiry) and the solution (Secure, RMiT-compliant Data Platform). Mention the 'Black Box' solution briefly as a key differentiator."
+    },
+    {
+      "id": "02_business_requirements",
+      "title": "Business Requirements & Current State Analysis",
+      "task_instruction": "Detail the 'As-Is' technical landscape: MapR (150TB, EOL) and SQL Server/Wherescape (4000+ procs, 'Black Box', 14hr batch). explicitely mention the pain points. Then, detail the Regulatory Requirements: BNM RMiT compliance, Data Residency (Singapore region as primary, with future repatriation to MY), and strict encryption (CMEK) requirements."
+    },
+    {
+      "id": "03_architecture",
+      "title": "Proposed Target Architecture",
+      "task_instruction": "Describe the GCP 'To-Be' architecture. 1. Ingestion: Storage Transfer Service (from MapR), Pub/Sub (real-time). 2. Storage: GCS (Raw Lake), BigQuery (Data Warehouse). 3. Processing: Dataproc (Legacy Spark), Dataform (SQL Transformation). 4. Serving: Looker. 5. Security: Cloud KMS (CMEK), IAM. \n\nCRITICAL: You MUST include a Mermaid diagram code block (graph TD) illustrating the flow from On-Prem (MapR/SQL Server) -> Interconnect -> GCP (GCS -> BigQuery -> Looker)."
+    },
+    {
+      "id": "04_scope_of_work",
+      "title": "Scope of Work & Implementation Plan",
+      "task_instruction": "Detail 4 Workstreams: 1. Infra (Secure Landing Zone, CMEK). 2. Data Lake Migration (MapR -> GCS/Bigtable). 3. Data Mart Revamp (The 'Reverse Engineering Factory': Extract Wherescape metadata -> Generate Dataform Skeleton -> Refactor Logic). 4. Visualization (SSRS -> Looker). \n\nCRITICAL: You MUST include a Mermaid Gantt chart code block showing the 6-month timeline with critical path (especially the Wherescape refactoring)."
+    },
+    {
+      "id": "05_assumptions",
+      "title": "Assumptions & Out of Scope",
+      "task_instruction": "List key assumptions: Client provides access to Wherescape metadata tables, Telco links ordered immediately (VPN used for interim), no major changes to source systems (Mambu) during migration. \n\nOut of Scope: Application layer modernization (other than reports), extensive data quality cleansing (focus is migration first)."
+    },
+    {
+      "id": "06_success_criteria",
+      "title": "Success Criteria & Acceptance Testing",
+      "task_instruction": "Define clear success metrics: 1. Performance: Nightly batch < 3 hours. 2. Data Integrity: 100% parity validated via automated testing (e.g., Datafold). 3. Compliance: BNM RMiT sign-off secured. 4. Adoption: 50+ Reports live in Looker."
+    },
+    {
+      "id": "07_commercials",
+      "title": "Commercial Model & TCO",
+      "task_instruction": "Present the Commercial strategy. Highlight the shift from CapEx (MapR Bare Metal + SQL Server Enterprise Licensing) to OpEx (BigQuery Pay-as-you-go). Mention cost savings from retiring MapR nodes and reducing admin overhead. Provide a high-level TCO comparison narrative."
+    }
+  ]
+}

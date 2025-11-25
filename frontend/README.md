@@ -45,3 +45,7 @@ All API requests are prefixed with `http://localhost:3000/api`.
 *   **`DELETE /files/{id}`**
     *   **Description:** Deletes a file by its ID.
     *   **Reference:** `specs/001-a-custom-ui/contracts/openapi.yaml`
+
+## Notes on file rendering
+
+`FileRenderer.tsx` uses an iframe for `.html` previews. The sandbox now allows `allow-scripts allow-same-origin` so embedded Plotly/Chart.js content can execute while still isolating the preview from the parent page.

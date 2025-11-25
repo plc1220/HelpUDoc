@@ -1,4 +1,4 @@
-import type { ConversationSummary, ConversationMessage } from '../types';
+import type { ConversationSummary, ConversationMessage, ConversationMessageMetadata } from '../types';
 
 const API_URL = 'http://localhost:3000/api';
 
@@ -51,7 +51,7 @@ export const appendMessage = async (
   conversationId: string,
   sender: 'user' | 'agent',
   text: string,
-  options?: { turnId?: string; replaceExisting?: boolean },
+  options?: { turnId?: string; replaceExisting?: boolean; metadata?: ConversationMessageMetadata },
 ): Promise<ConversationMessage> => {
   const response = await fetch(`${API_URL}/conversations/${conversationId}/messages`, {
     method: 'POST',

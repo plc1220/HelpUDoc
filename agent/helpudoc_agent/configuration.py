@@ -1,6 +1,7 @@
 """Configuration loading utilities for the agent service."""
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -16,10 +17,22 @@ DEFAULT_CONFIG_PATH = AGENT_ROOT / "config" / "agents.yaml"
 
 class ModelConfig(BaseModel):
     provider: str = Field(default="gemini")
-    name: str = Field(default="gemini-2.5-flash")
+    name: str = Field(default="gemini-2.5-pro")
     image_name: Optional[str] = None
     project: Optional[str] = None
     location: Optional[str] = None
+    api_key: Optional[str] = Field(default_factory=lambda: os.getenv("GEMINI_API_KEY"))
+    use_vertex_ai: bool = Field(default=False)
+
+    @property
+    def chat_model_name(self) -> str:
+        """Return the canonical chat model identifier."""
+        return self.name
+
+    @property
+    def image_model_name(self) -> str:
+        """Return the canonical image model identifier (falls back to chat model)."""
+        return self.image_name or self.name
 
 
 class BackendConfig(BaseModel):
@@ -97,9 +110,19 @@ def _load_yaml(path: Path) -> dict:
         return yaml.safe_load(handle)
 
 
+def _expand_env_vars(data):
+    if isinstance(data, dict):
+        return {key: _expand_env_vars(value) for key, value in data.items()}
+    if isinstance(data, list):
+        return [_expand_env_vars(item) for item in data]
+    if isinstance(data, str):
+        return os.path.expandvars(data)
+    return data
+
+
 def load_settings(config_path: Path | None = None) -> Settings:
     path = config_path or DEFAULT_CONFIG_PATH
-    config_dict = _load_yaml(path)
+    config_dict = _expand_env_vars(_load_yaml(path))
 
     payload = {
         "model": config_dict.get("model", {}),

@@ -1,9 +1,12 @@
 model:
   provider: gemini
-  name: gemini-2.5-flash
-  image_name: gemini-2.5-flash-image
+  name: gemini-3-pro-preview
+  image_name: gemini-3-pro-image-preview
   project: my-rd-coe-demo-gen-ai
   location: us-central1
+  #api_key: ${GOOGLE_CLOUD_API_KEY}
+  api_key: ${GEMINI_API_KEY}
+  use_vertex_ai: false
 
 backend:
   workspace_root: backend/workspaces
@@ -13,12 +16,21 @@ tools:
   - name: google_search
     kind: builtin
     description: Gemini-native Google search tool
+  - name: google_grounded_search
+    kind: builtin
+    description: Gemini search with citations for proposal research
   - name: gemini_image
     kind: builtin
     description: Generate or edit images using Gemini
   - name: data_agent_tools
     entrypoint: helpudoc_agent.data_agent_tools:build_data_agent_tools
     description: Tools for Data Agent (DuckDB, Charts)
+  - name: get_image_url
+    kind: builtin
+    description: Get public URLs for images stored in MinIO/S3
+  - name: append_to_report
+    kind: builtin
+    description: Stitch generated proposal sections into a final document
 
 mcp_servers:
   - name: research_fs
@@ -51,6 +63,7 @@ agents:
     tools:
       - google_search
       - gemini_image
+      - get_image_url
     subagents:
      - name: general-purpose
        description: Standard general-assistant behavior
@@ -58,6 +71,7 @@ agents:
        tools:
          - google_search
          - gemini_image
+         - get_image_url
      - name: greeting-responder
        description: Handles lightweight greeting/small-talk tasks
        system_prompt_id: general/core
@@ -94,3 +108,20 @@ agents:
         system_prompt_id: data_agent/summary
         tools:
           - data_agent_tools
+  - name: proposal-agent
+    display_name: Proposal Agent
+    description: 3-phase consultative SOW writer with research, planning, and stitching.
+    system_prompt_id: proposal_agent/orchestrator
+    tools:
+      - google_grounded_search
+      - append_to_report
+    subagents:
+      - name: research_agent
+        description: Researches client strategy, technical context, and business pains.
+        system_prompt_id: proposal_agent/researcher
+        tools:
+          - google_grounded_search
+      - name: writer_agent
+        description: Writes proposal sections with diagrams, tables, and stitching support.
+        system_prompt_id: proposal_agent/writer
+        tools: []

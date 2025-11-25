@@ -1,6 +1,7 @@
 """Tool creation helpers and MCP integration stubs."""
 from __future__ import annotations
 
+import os
 from importlib import import_module
 from io import BytesIO
 from pathlib import Path
@@ -13,7 +14,7 @@ from langchain_core.tools import Tool
 try:
     import vertexai
     from google import genai
-    from google.genai.types import GenerateContentConfig, Modality
+    from google.genai.types import GenerateContentConfig, ImageConfig, Modality
     from PIL import Image
 except ImportError as exc:  # pragma: no cover
     raise RuntimeError("Gemini dependencies are required") from exc
@@ -30,14 +31,31 @@ class GeminiClientManager:
         model_cfg = settings.model
         if model_cfg.provider != "gemini":
             raise ValueError(f"Unsupported model provider {model_cfg.provider}")
-        vertexai.init(project=model_cfg.project, location=model_cfg.location)
-        self.client = genai.Client(
-            vertexai=True,
-            project=model_cfg.project,
-            location=model_cfg.location,
-        )
-        self.model_name = model_cfg.name
-        self.image_model_name = getattr(model_cfg, "image_name", None) or model_cfg.name
+
+        api_key = model_cfg.api_key or os.getenv("GOOGLE_CLOUD_API_KEY") or os.getenv("GEMINI_API_KEY")
+        use_vertex = model_cfg.use_vertex_ai
+
+        client_kwargs: dict = {}
+        if api_key:
+            client_kwargs["api_key"] = api_key
+
+        if use_vertex:
+            if not model_cfg.project or not model_cfg.location:
+                raise ValueError("Vertex AI mode requires both project and location")
+            vertexai.init(project=model_cfg.project, location=model_cfg.location)
+            client_kwargs.update(
+                {
+                    "vertexai": True,
+                    "project": model_cfg.project,
+                    "location": model_cfg.location,
+                }
+            )
+        else:
+            client_kwargs["vertexai"] = False
+
+        self.client = genai.Client(**client_kwargs)
+        self.model_name = model_cfg.chat_model_name
+        self.image_model_name = model_cfg.image_model_name
 
 
 class ToolFactory:
@@ -50,6 +68,9 @@ class ToolFactory:
         self._builtin_map: Dict[str, Callable[[WorkspaceState], Tool]] = {
             "google_search": self._build_google_search_tool,
             "gemini_image": self._build_gemini_image_tool,
+            "google_grounded_search": self._build_google_grounded_search_tool,
+            "append_to_report": self._build_append_to_report_tool,
+            "get_image_url": self._build_get_image_url_tool,
         }
 
     def build_tools(self, tool_names: List[str], workspace_state: WorkspaceState) -> List[Tool]:
@@ -93,6 +114,228 @@ class ToolFactory:
             client=self.gemini_manager.client,
             model_name=self.gemini_manager.image_model_name,
         )
+
+    def _build_google_grounded_search_tool(self, workspace_state: WorkspaceState) -> Tool:
+        """Grounded search that also records sources for final reporting."""
+        client = self.gemini_manager.client
+        model_name = self.gemini_manager.model_name
+        tracker = self.source_tracker
+
+        @tool
+        def google_grounded_search(query: str) -> str:
+            """Run a Gemini search with citations and store sources."""
+            search_prompt = (
+                f"Search the web for information about: {query}\n\n"
+                "Return a comprehensive summary of the search results."
+            )
+            response = client.models.generate_content(
+                model=model_name,
+                contents=search_prompt,
+                config={
+                    "tools": [{"google_search": {}}],
+                    "temperature": 0,
+                },
+            )
+
+            summary = response.text or "No results found."
+            sources: List[Dict[str, str]] = []
+            sources_str = "\n\n--- SOURCES ---"
+
+            if response.candidates and response.candidates[0].grounding_metadata:
+                grounding_chunks = response.candidates[0].grounding_metadata.grounding_chunks or []
+                web_chunks = [
+                    chunk for chunk in grounding_chunks
+                    if hasattr(chunk, "web") and chunk.web
+                ]
+                resolved_map = resolve_urls(
+                    web_chunks,
+                    id_seed=abs(hash(query)) % 1_000_000,
+                ) if web_chunks else {}
+
+                seen_urls = set()
+                for chunk in web_chunks:
+                    actual_url = extract_web_url(chunk.web)
+                    if not actual_url or actual_url in seen_urls:
+                        continue
+                    sources.append({
+                        "title": getattr(chunk.web, "title", None) or "Untitled",
+                        "url": actual_url,
+                        "short_url": resolved_map.get(getattr(chunk.web, "uri", ""), ""),
+                    })
+                    seen_urls.add(actual_url)
+
+            if sources:
+                tracker.record(workspace_state, sources)
+                for src in sources:
+                    display_url = src.get("short_url") or src["url"]
+                    sources_str += f"\nTitle: {src['title']}\nURL: {display_url}\n"
+            else:
+                sources_str += "\nNo sources were found for this query."
+
+            return summary + sources_str
+
+        google_grounded_search.name = "google_grounded_search"
+        google_grounded_search.description = "Use Gemini's grounded search with citations."
+        return google_grounded_search
+
+    def _build_append_to_report_tool(self, workspace_state: WorkspaceState) -> Tool:
+        """Append a section file to the stitched proposal inside the workspace."""
+        root = workspace_state.root_path.resolve()
+
+        def _resolve(path_str: str) -> Path:
+            candidate = (root / path_str.lstrip("/")).resolve()
+            if root not in candidate.parents and candidate != root:
+                raise ValueError("Path must remain inside the workspace")
+            return candidate
+
+        def _display(path_obj: Path) -> str:
+            try:
+                return "/" + path_obj.relative_to(root).as_posix()
+            except ValueError:
+                return str(path_obj)
+
+        @tool
+        def append_to_report(source_path: str, target_path: str = "/Final_Proposal.md") -> str:
+            """Append content from source_path into target_path with a separator."""
+            try:
+                source = _resolve(source_path)
+                target = _resolve(target_path)
+            except ValueError as exc:
+                return str(exc)
+
+            if not source.exists():
+                return f"Source file '{_display(source)}' not found"
+
+            try:
+                source_text = source.read_text(encoding="utf-8").strip()
+            except Exception as exc:  # pragma: no cover - filesystem guard
+                return f"Error reading source '{_display(source)}': {exc}"
+
+            target.parent.mkdir(parents=True, exist_ok=True)
+
+            try:
+                if target.exists():
+                    existing = target.read_text(encoding="utf-8").rstrip()
+                    stitched = f"{existing}\n\n{source_text}\n\n---\n"
+                else:
+                    stitched = f"{source_text}\n\n---\n"
+                target.write_text(stitched, encoding="utf-8")
+            except Exception as exc:  # pragma: no cover - filesystem guard
+                return f"Error writing target '{_display(target)}': {exc}"
+
+            return f"Appended {_display(source)} to {_display(target)}"
+
+        append_to_report.name = "append_to_report"
+        append_to_report.description = "Stitch a generated section into the final proposal."
+        return append_to_report
+
+    def _build_get_image_url_tool(self, workspace_state: WorkspaceState) -> Tool:
+        """Get public URLs for images stored in MinIO/S3."""
+        
+        @tool
+        def get_image_url(file_name: str) -> str:
+            """Get the public URL for an image file stored in MinIO/S3.
+            
+            Args:
+                file_name: The name of the image file (e.g., 'chart.png', 'diagram.jpg')
+            
+            Returns:
+                The public URL of the image if found, or an error message if not found.
+            """
+            try:
+                import json
+                import os
+                from pathlib import Path
+                
+                workspace_root = workspace_state.root_path
+                
+                # Look for a .workspace_metadata.json file that contains file information
+                metadata_file = workspace_root / ".workspace_metadata.json"
+                
+                if not metadata_file.exists():
+                    # If no metadata file exists, try to find the file locally and construct URL
+                    # Search for the file in the workspace
+                    matching_files = list(workspace_root.rglob(file_name))
+                    
+                    if not matching_files:
+                        # Try partial match
+                        matching_files = [
+                            f for f in workspace_root.rglob("*")
+                            if f.is_file() and file_name.lower() in f.name.lower()
+                        ]
+                    
+                    if not matching_files:
+                        return f"Error: No file found with name '{file_name}' in the workspace."
+                    
+                    # Get the first match
+                    found_file = matching_files[0]
+                    relative_path = found_file.relative_to(workspace_root)
+                    
+                    # Construct MinIO URL based on environment variables or defaults
+                    s3_endpoint = os.getenv('S3_ENDPOINT') or os.getenv('MINIO_ENDPOINT') or 'http://localhost:9000'
+                    s3_bucket = os.getenv('S3_BUCKET_NAME') or 'helpudoc'
+                    workspace_id = workspace_state.workspace_id
+                    
+                    # Normalize the S3 key
+                    s3_key = f"{workspace_id}/{relative_path.as_posix()}"
+                    public_url = f"{s3_endpoint.rstrip('/')}/{s3_bucket}/{s3_key}"
+                    
+                    return (
+                        f"File found: {found_file.name}\n"
+                        f"Local path: /{relative_path.as_posix()}\n"
+                        f"Potential public URL: {public_url}\n\n"
+                        f"Note: This URL is constructed based on the file location. "
+                        f"If the file hasn't been uploaded to MinIO/S3 yet, the URL may not be accessible."
+                    )
+                
+                # Read metadata file if it exists
+                with open(metadata_file, 'r') as f:
+                    metadata = json.load(f)
+                
+                files = metadata.get('files', [])
+                
+                # Search for exact match first
+                matching_file = None
+                for file_info in files:
+                    if file_info.get('name') == file_name:
+                        matching_file = file_info
+                        break
+                
+                # Try partial match if exact match not found
+                if not matching_file:
+                    for file_info in files:
+                        if file_name.lower() in file_info.get('name', '').lower():
+                            matching_file = file_info
+                            break
+                
+                if not matching_file:
+                    return f"Error: No file found with name '{file_name}' in workspace metadata."
+                
+                # Check if file has a public URL
+                public_url = matching_file.get('publicUrl')
+                if public_url:
+                    return (
+                        f"File: {matching_file['name']}\n"
+                        f"Public URL: {public_url}\n"
+                        f"MIME Type: {matching_file.get('mimeType', 'unknown')}"
+                    )
+                else:
+                    storage_type = matching_file.get('storageType', 'unknown')
+                    if storage_type == 'local':
+                        return (
+                            f"File '{matching_file['name']}' is stored locally and does not have a public URL.\n"
+                            f"The file needs to be uploaded to MinIO/S3 to get a public URL."
+                        )
+                    else:
+                        return f"Error: File '{matching_file['name']}' does not have a public URL available."
+                    
+            except Exception as e:
+                import traceback
+                return f"Error retrieving image URL: {str(e)}\n{traceback.format_exc()}"
+        
+        get_image_url.name = "get_image_url"
+        get_image_url.description = "Retrieve the public URL for an image file stored in MinIO/S3."
+        return get_image_url
 
 
 def build_google_search_tool(
@@ -240,8 +483,11 @@ def build_gemini_image_tool(
             model=model_name,
             contents=contents,
             config=GenerateContentConfig(
-                response_modalities=[Modality.TEXT, Modality.IMAGE],
+                response_modalities=[Modality.IMAGE, Modality.TEXT],
                 candidate_count=1,
+                image_config=ImageConfig(
+                    aspectRatio="1:1",
+                ),
             ),
         )
 
@@ -261,14 +507,14 @@ def build_gemini_image_tool(
                     saved = _save_inline_image(part.inline_data, prefix, len(saved_images))
                     saved_images.append(saved)
 
-        if not saved_images:
-            raise RuntimeError("Gemini did not return an image in the response")
-
         summary_lines = []
         if text_parts:
             summary_lines.append("\n".join(text_parts).strip())
-        summary_lines.append("Saved images:")
-        summary_lines.extend(saved_images)
+        if saved_images:
+            summary_lines.append("Saved images:")
+            summary_lines.extend(saved_images)
+        else:
+            summary_lines.append("No images were returned by Gemini.")
         return "\n".join(summary_lines)
 
     gemini_image.name = "gemini_image"

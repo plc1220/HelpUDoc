@@ -1,8 +1,9 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import mermaid from 'mermaid';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import Papa from 'papaparse';
+import PlotlyChart, { type PlotlySpec } from './PlotlyChart';
 import type { File } from '../types';
 
 interface FileRendererProps {
@@ -25,6 +26,8 @@ const MermaidDiagram: React.FC<{ chart: string }> = ({ chart }) => {
       try {
         setHasError(false);
         diagramRef.current.innerHTML = '';
+        // Validate syntax first to avoid mermaid's inline error SVG
+        mermaid.parse(chart);
         const renderId = `${idRef.current}-${Date.now()}`;
         const { svg } = await mermaid.render(renderId, chart);
         if (!cancelled && diagramRef.current) {
@@ -61,32 +64,82 @@ const MermaidDiagram: React.FC<{ chart: string }> = ({ chart }) => {
 
 const FileRenderer: React.FC<FileRendererProps> = ({ file, fileContent }) => {
   const mermaidRef = useRef<HTMLDivElement>(null);
+  const mermaidIdRef = useRef(`mermaid-graph-${Math.random().toString(36).slice(2, 11)}`);
   const [isMermaidRendered, setIsMermaidRendered] = useState(false);
+  const [mermaidError, setMermaidError] = useState<string | null>(null);
+  const [copyStatus, setCopyStatus] = useState<string | null>(null);
   const [copiedUrl, setCopiedUrl] = useState(false);
 
   useEffect(() => {
+    if (!copyStatus) return;
+    const timer = window.setTimeout(() => setCopyStatus(null), 1500);
+    return () => window.clearTimeout(timer);
+  }, [copyStatus]);
+
+  const lowerName = (file?.name || '').toLowerCase();
+  const isMarkdownFile = lowerName.endsWith('.md');
+  const isMermaidFile = lowerName.endsWith('.mermaid');
+  const isHtmlFile = lowerName.endsWith('.html') || lowerName.endsWith('.htm');
+  const isImageFile = ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp'].some((ext) =>
+    lowerName.endsWith(ext),
+  );
+  const isPdfFile = lowerName.endsWith('.pdf');
+  const isCsvFile = lowerName.endsWith('.csv');
+  const isPlotlyFile =
+    lowerName.endsWith('.plotly.json') ||
+    lowerName.endsWith('.plot.json') ||
+    lowerName.endsWith('.chart.json') ||
+    lowerName.endsWith('.plotly');
+
+  const parsedCsv = useMemo(() => {
+    if (!isCsvFile) return null;
+    try {
+      return Papa.parse(fileContent, { header: true, skipEmptyLines: true });
+    } catch (error) {
+      console.error('CSV parse error', error);
+      return { data: [], errors: [{ message: 'Parse failed' }] };
+    }
+  }, [fileContent, isCsvFile]);
+
+  useEffect(() => {
+    let cancelled = false;
+
     const renderMermaid = async () => {
-      if (file?.name.endsWith('.mermaid') && mermaidRef.current) {
+      if (isMermaidFile && mermaidRef.current) {
         setIsMermaidRendered(false);
+        setMermaidError(null);
         try {
-          // Ensure the container is empty before rendering
           mermaidRef.current.innerHTML = '';
-          const { svg } = await mermaid.render('mermaid-graph', fileContent);
-          if (mermaidRef.current) {
+          // Validate syntax before rendering to avoid Mermaid's error SVG
+          mermaid.parse(fileContent);
+          const renderId = `${mermaidIdRef.current}-${Date.now()}`;
+          const { svg } = await mermaid.render(renderId, fileContent);
+          if (!cancelled && mermaidRef.current) {
             mermaidRef.current.innerHTML = svg;
             setIsMermaidRendered(true);
           }
         } catch (e) {
           console.error('Mermaid rendering error:', e);
-          if (mermaidRef.current) {
-            // Display the raw content as a fallback
+          if (!cancelled && mermaidRef.current) {
+            setMermaidError('Mermaid syntax error. Showing source instead.');
             mermaidRef.current.textContent = fileContent;
           }
         }
       }
     };
     renderMermaid();
-  }, [file, fileContent]);
+    return () => {
+      cancelled = true;
+    };
+  }, [fileContent, isMermaidFile]);
+
+  if (!file) {
+    return (
+      <div className="text-center text-gray-400">
+        <p>Select a file to view its content</p>
+      </div>
+    );
+  }
 
   const handleCopyImage = () => {
     if (!mermaidRef.current) return;
@@ -110,15 +163,19 @@ const FileRenderer: React.FC<FileRendererProps> = ({ file, fileContent }) => {
         canvas.toBlob(async (blob) => {
           if (blob) {
             try {
+              if (!navigator.clipboard?.write) {
+                setCopyStatus('Clipboard not supported in this browser.');
+                return;
+              }
               await navigator.clipboard.write([
                 new ClipboardItem({
                   'image/png': blob,
                 }),
               ]);
-              alert('Diagram copied to clipboard as image!');
+              setCopyStatus('Diagram copied to clipboard.');
             } catch (err) {
               console.error('Failed to copy image: ', err);
-              alert('Failed to copy image to clipboard.');
+              setCopyStatus('Failed to copy image.');
             }
           }
         }, 'image/png');
@@ -127,27 +184,20 @@ const FileRenderer: React.FC<FileRendererProps> = ({ file, fileContent }) => {
     };
     img.onerror = (err) => {
       console.error('Failed to load SVG image for copying', err);
-      alert('Could not load diagram image for copying.');
+      setCopyStatus('Could not load diagram image.');
       URL.revokeObjectURL(url);
     };
     img.src = url;
   };
 
-  if (!file) {
-    return (
-      <div className="text-center text-gray-400">
-        <p>Select a file to view its content</p>
-      </div>
-    );
-  }
-
   const renderContent = () => {
-    if (file.name.endsWith('.md')) {
+    if (isMarkdownFile) {
       return (
-        <div className="prose max-w-none break-words overflow-x-hidden h-full overflow-y-auto p-4" style={{ maxHeight: 'calc(100vh - 200px)' }}>
+        <div className="prose max-w-none break-words overflow-x-hidden h-full overflow-y-auto p-4">
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
             components={{
+              p: ({ children }) => <div className="mb-4 last:mb-0">{children}</div>,
               img: ({ node, ...props }) => (
                 <img
                   className="max-w-full h-auto rounded-lg shadow-md"
@@ -159,10 +209,35 @@ const FileRenderer: React.FC<FileRendererProps> = ({ file, fileContent }) => {
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
               code: ({ inline, className, children, ...props }: any) => {
                 const language = /language-(\w+)/.exec(className || '');
-                const content = (Array.isArray(children) ? children.join('') : String(children ?? '')).replace(/\n$/, '');
+                const codeContent = (
+                  Array.isArray(children) ? children.join('') : String(children ?? '')
+                ).replace(/\n$/, '');
 
                 if (!inline && language?.[1] === 'mermaid') {
-                  return <MermaidDiagram chart={content} />;
+                  return <MermaidDiagram chart={codeContent} />;
+                }
+
+                if (!inline && language?.[1] === 'plotly') {
+                  try {
+                    const spec = JSON.parse(codeContent) as PlotlySpec;
+                    if (!spec || typeof spec !== 'object') {
+                      throw new Error('Plotly spec must be a JSON object.');
+                    }
+                    if (!Array.isArray(spec.data)) {
+                      throw new Error('Plotly spec must include a top-level "data" array.');
+                    }
+                    return (
+                      <div className="my-4 overflow-hidden rounded-xl border border-gray-200 bg-white p-2">
+                        <PlotlyChart spec={spec} minHeight={360} />
+                      </div>
+                    );
+                  } catch (error) {
+                    return (
+                      <pre className="my-4 overflow-x-auto rounded-xl bg-red-50 p-4 text-sm text-red-700">
+                        Invalid Plotly JSON: {error instanceof Error ? error.message : 'Unknown error'}
+                      </pre>
+                    );
+                  }
                 }
 
                 if (inline) {
@@ -191,7 +266,25 @@ const FileRenderer: React.FC<FileRendererProps> = ({ file, fileContent }) => {
         </div>
       );
     }
-    if (file.name.endsWith('.mermaid')) {
+    if (isPlotlyFile) {
+      try {
+        const spec = JSON.parse(fileContent) as PlotlySpec;
+        if (!spec || typeof spec !== 'object') {
+          throw new Error('Plotly spec must be a JSON object.');
+        }
+        if (!Array.isArray(spec.data)) {
+          throw new Error('Plotly spec must include a top-level "data" array.');
+        }
+        return <PlotlyChart spec={spec} />;
+      } catch (error) {
+        return (
+          <div className="flex h-full items-center justify-center px-4 text-sm text-red-600">
+            Failed to parse Plotly JSON: {error instanceof Error ? error.message : 'Unknown error'}
+          </div>
+        );
+      }
+    }
+    if (isMermaidFile) {
       return (
         <div className="relative h-full">
           <div ref={mermaidRef} className="mermaid-container w-full h-full"></div>
@@ -204,13 +297,33 @@ const FileRenderer: React.FC<FileRendererProps> = ({ file, fileContent }) => {
               Copy as Image
             </button>
           )}
+          {mermaidError && (
+            <p className="absolute bottom-2 left-2 rounded bg-red-50 px-3 py-1 text-xs text-red-700 shadow">
+              {mermaidError}
+            </p>
+          )}
+          {copyStatus && (
+            <p className="absolute bottom-2 right-2 rounded bg-gray-900/80 px-3 py-1 text-xs text-white shadow">
+              {copyStatus}
+            </p>
+          )}
         </div>
       );
     }
-    if (file.name.endsWith('.html')) {
-      return <iframe srcDoc={fileContent} title={file.name} className="w-full h-full border-none" style={{ height: '100%' }} />;
+    if (isHtmlFile) {
+      return (
+        <iframe
+          srcDoc={fileContent}
+          title={file.name}
+          className="w-full h-full border-none"
+          style={{ height: '100%' }}
+          sandbox="allow-same-origin allow-scripts"
+          referrerPolicy="no-referrer"
+          loading="lazy"
+        />
+      );
     }
-    if (['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp'].some(ext => file.name.toLowerCase().endsWith(ext))) {
+    if (isImageFile) {
       const dataSrc = fileContent ? `data:${file.mimeType || 'image/*'};base64,${fileContent}` : undefined;
       const imageSrc = file.publicUrl || dataSrc;
       if (!imageSrc) {
@@ -249,7 +362,7 @@ const FileRenderer: React.FC<FileRendererProps> = ({ file, fileContent }) => {
         </div>
       );
     }
-    if (file.name.endsWith('.pdf')) {
+    if (isPdfFile) {
       const pdfSrc = file.publicUrl || (fileContent ? `data:application/pdf;base64,${fileContent}` : undefined);
       if (!pdfSrc) {
         return (
@@ -260,8 +373,16 @@ const FileRenderer: React.FC<FileRendererProps> = ({ file, fileContent }) => {
       }
       return <embed src={pdfSrc} type="application/pdf" className="w-full h-full" style={{ height: '100%' }} />;
     }
-    if (file.name.endsWith('.csv')) {
-      const { data } = Papa.parse(fileContent, { header: true, skipEmptyLines: true });
+    if (isCsvFile) {
+      const parseError = parsedCsv?.errors?.[0]?.message;
+      if (parseError) {
+        return (
+          <div className="flex h-full items-center justify-center px-4 text-sm text-red-600">
+            Failed to parse CSV: {parseError}
+          </div>
+        );
+      }
+      const data = parsedCsv?.data as Record<string, unknown>[] | undefined;
       if (!data || data.length === 0) {
         return (
           <div className="flex h-full items-center justify-center text-sm text-gray-500">

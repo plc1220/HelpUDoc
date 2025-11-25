@@ -7,8 +7,9 @@ import {
   CssBaseline,
   ThemeProvider,
   createTheme,
+  type PaletteMode,
 } from '@mui/material';
-import { Edit, Trash, Star, Send, Plus, ChevronRight, ChevronLeft, RotateCcw, Maximize2, Minimize2, X, FileIcon, Printer, Download, Link as LinkIcon } from 'lucide-react';
+import { Copy, Edit, Trash, Star, Send, Plus, ChevronRight, ChevronLeft, RotateCcw, Maximize2, Minimize2, X, FileIcon, Printer, Download, Link as LinkIcon, MonitorPlay, StopCircle } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { getWorkspaces, createWorkspace, deleteWorkspace } from '../services/workspaceApi';
@@ -23,6 +24,7 @@ import {
 } from '../services/fileApi';
 import { fetchPersonas, runAgentStream, type AgentStreamChunk } from '../services/agentApi';
 import { fetchRecentConversations, createConversation as createConversationApi, fetchConversationDetail, appendMessage as appendConversationMessage, deleteConversation as deleteConversationApi } from '../services/conversationApi';
+import { createPresentation } from '../services/presentationApi';
 import type {
   Workspace,
   File as WorkspaceFile,
@@ -31,6 +33,7 @@ import type {
   ConversationMessage,
   ToolEvent,
   ToolOutputFile,
+  ConversationMessageMetadata,
 } from '../types';
 import CollapsibleDrawer from '../components/CollapsibleDrawer';
 import FileEditor from '../components/FileEditor';
@@ -41,9 +44,43 @@ import PersonaSelector from '../components/PersonaSelector';
 const drawerWidth = 280;
 const DEFAULT_PERSONA_NAME = 'general-assistant';
 
-const theme = createTheme({
-  // Your theme customizations
-});
+const buildTheme = (mode: PaletteMode) =>
+  createTheme({
+    palette: {
+      mode,
+      primary: {
+        main: mode === 'light' ? '#2563eb' : '#60a5fa',
+      },
+      background: {
+        default: mode === 'light' ? '#f8fafc' : '#0b1220',
+        paper: mode === 'light' ? '#ffffff' : '#0f172a',
+      },
+      text: {
+        primary: mode === 'light' ? '#0f172a' : '#e2e8f0',
+        secondary: mode === 'light' ? '#475569' : '#cbd5e1',
+      },
+      divider: mode === 'light' ? '#e2e8f0' : '#1f2937',
+    },
+    shape: {
+      borderRadius: 12,
+    },
+    components: {
+      MuiDrawer: {
+        styleOverrides: {
+          paper: {
+            backgroundColor: mode === 'light' ? '#f8fafc' : '#0f172a',
+          },
+        },
+      },
+      MuiPaper: {
+        styleOverrides: {
+          root: {
+            backgroundImage: 'none',
+          },
+        },
+      },
+    },
+  });
 
 const THOUGHT_PREVIEW_LIMIT = 320;
 
@@ -175,8 +212,47 @@ const mapMessagesToAgentHistory = (messages: ConversationMessage[]) => {
     }));
 };
 
+const mergeMessageMetadata = (message: ConversationMessage): ConversationMessage => {
+  const metadata = message.metadata as ConversationMessageMetadata | null | undefined;
+  if (!metadata) {
+    return message;
+  }
+  const thinkingText = message.thinkingText ?? metadata.thinkingText;
+  const toolEvents = message.toolEvents ?? metadata.toolEvents;
+  if (thinkingText === message.thinkingText && toolEvents === message.toolEvents) {
+    return message;
+  }
+  return {
+    ...message,
+    thinkingText,
+    toolEvents,
+  };
+};
+
+const buildMessageMetadata = (message?: ConversationMessage | null): ConversationMessageMetadata | undefined => {
+  if (!message) {
+    return undefined;
+  }
+  const metadata: ConversationMessageMetadata = {};
+  if (message.thinkingText) {
+    metadata.thinkingText = message.thinkingText;
+  }
+  if (message.toolEvents?.length) {
+    metadata.toolEvents = message.toolEvents;
+  }
+  return Object.keys(metadata).length ? metadata : undefined;
+};
+
 export default function WorkspacePage() {
   const navigate = useNavigate();
+  const [colorMode, setColorMode] = useState<PaletteMode>(() => {
+    if (typeof window === 'undefined') return 'light';
+    const stored = window.localStorage.getItem('helpudoc-color-mode');
+    if (stored === 'light' || stored === 'dark') {
+      return stored;
+    }
+    return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  });
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [selectedWorkspace, setSelectedWorkspace] = useState<Workspace | null>(null);
   const [files, setFiles] = useState<WorkspaceFile[]>([]);
@@ -203,6 +279,7 @@ export default function WorkspacePage() {
   const streamAbortRef = useRef<AbortController | null>(null);
   const messagesRef = useRef<ConversationMessage[]>([]);
   const agentMessageBufferRef = useRef<Map<ConversationMessage['id'], string>>(new Map());
+  const stopRequestedRef = useRef(false);
   const lastUserMessageRef = useRef<string>('');
   const chatInputRef = useRef<HTMLTextAreaElement | null>(null);
   const attachmentInputRef = useRef<HTMLInputElement | null>(null);
@@ -216,6 +293,21 @@ export default function WorkspacePage() {
   const [copiedCodeBlockId, setCopiedCodeBlockId] = useState<string | null>(null);
   const [copiedImageUrl, setCopiedImageUrl] = useState(false);
   const [copiedFileUrlId, setCopiedFileUrlId] = useState<string | null>(null);
+  const [copiedWorkspaceContent, setCopiedWorkspaceContent] = useState(false);
+  const [copiedMessageId, setCopiedMessageId] = useState<ConversationMessage['id'] | null>(null);
+  const theme = useMemo(() => buildTheme(colorMode), [colorMode]);
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', colorMode);
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem('helpudoc-color-mode', colorMode);
+    }
+  }, [colorMode]);
+
+  const toggleColorMode = useCallback(
+    () => setColorMode((prev) => (prev === 'light' ? 'dark' : 'light')),
+    []
+  );
   const mentionSuggestions = useMemo(() => {
     if (!isMentionOpen) {
       return [] as WorkspaceFile[];
@@ -373,6 +465,26 @@ export default function WorkspacePage() {
     return `${text.slice(0, THOUGHT_PREVIEW_LIMIT).trimEnd()}…`;
   }, []);
 
+  const handleCopyMessageText = useCallback(async (message: ConversationMessage) => {
+    if (typeof navigator === 'undefined' || !navigator.clipboard?.writeText) {
+      return;
+    }
+    const content = (message.text || message.thinkingText || '').trim();
+    if (!content) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(content);
+      setCopiedMessageId(message.id);
+      window.setTimeout(
+        () => setCopiedMessageId((current) => (current === message.id ? null : current)),
+        1500
+      );
+    } catch (error) {
+      console.error('Failed to copy message text', error);
+    }
+  }, []);
+
   const agentPaneWidth = isAgentPaneFullScreen
     ? '100%'
     : isAgentPaneVisible
@@ -381,7 +493,19 @@ export default function WorkspacePage() {
 
   const filePaneWidth = isFilePaneVisible ? 320 : 56;
 
-  const layoutHeight = 'calc(100vh - 48px)';
+  const layoutHeight = '100%';
+
+  useEffect(() => {
+    const prevBodyOverflow = document.body.style.overflow;
+    const prevHtmlOverflow = document.documentElement.style.overflow;
+    document.body.style.overflow = 'hidden';
+    document.documentElement.style.overflow = 'hidden';
+
+    return () => {
+      document.body.style.overflow = prevBodyOverflow;
+      document.documentElement.style.overflow = prevHtmlOverflow;
+    };
+  }, []);
 
   const agentPaneStyles: CSSProperties = {
     flexBasis: agentPaneWidth,
@@ -462,6 +586,19 @@ export default function WorkspacePage() {
     }
   }, [activeFile]);
 
+  const handleCopyWorkspaceContent = useCallback(async () => {
+    if (!selectedFile || typeof navigator === 'undefined' || !navigator.clipboard?.writeText) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(fileContent);
+      setCopiedWorkspaceContent(true);
+      window.setTimeout(() => setCopiedWorkspaceContent(false), 1500);
+    } catch (error) {
+      console.error('Failed to copy workspace content', error);
+    }
+  }, [fileContent, selectedFile]);
+
   const handleCopyFilePublicUrl = useCallback(async (file: WorkspaceFile) => {
     if (!file.publicUrl || !navigator?.clipboard) {
       return;
@@ -539,6 +676,11 @@ export default function WorkspacePage() {
       streamAbortRef.current = null;
     }
     setIsStreaming(false);
+  };
+
+  const handleStopStreaming = () => {
+    stopRequestedRef.current = true;
+    cancelStream();
   };
 
   const loadFilesForWorkspace = useCallback(async (workspaceId: string | null) => {
@@ -682,6 +824,24 @@ export default function WorkspacePage() {
     [chatMessage, closeMention, mentionCursorPosition, mentionTriggerIndex]
   );
 
+  const findMentionedFiles = useCallback(
+    (value: string): WorkspaceFile[] => {
+      if (!value) {
+        return [];
+      }
+      return files.filter((file) => value.includes(`@${file.name}`));
+    },
+    [files],
+  );
+
+  const toNumericFileId = (value: WorkspaceFile['id']): number | null => {
+    if (typeof value === 'number') {
+      return Number.isFinite(value) ? value : null;
+    }
+    const parsed = parseInt(String(value), 10);
+    return Number.isNaN(parsed) ? null : parsed;
+  };
+
   const refreshConversationHistory = useCallback(async (workspaceId: string) => {
     try {
       const conversations = await fetchRecentConversations(workspaceId, 5);
@@ -697,14 +857,15 @@ export default function WorkspacePage() {
   const loadConversationMessages = useCallback(async (conversationId: string) => {
     try {
       const detail = await fetchConversationDetail(conversationId);
+      const hydratedMessages = detail.messages.map(mergeMessageMetadata);
       const buffer = agentMessageBufferRef.current;
       buffer.clear();
-      detail.messages.forEach((message) => {
+      hydratedMessages.forEach((message) => {
         if (message.sender === 'agent') {
           buffer.set(message.id, message.text || '');
         }
       });
-      setMessages(detail.messages);
+      setMessages(hydratedMessages);
       setActiveConversationPersona(detail.conversation.persona);
     } catch (error) {
       console.error('Failed to load conversation messages', error);
@@ -1058,6 +1219,7 @@ export default function WorkspacePage() {
       return;
     }
 
+    stopRequestedRef.current = false;
     const currentMessages = [...messagesRef.current];
     const targetIndex = currentMessages.findIndex((message) => message.id === messageId);
     if (targetIndex === -1) {
@@ -1133,7 +1295,8 @@ export default function WorkspacePage() {
       );
     } catch (error) {
       if ((error as DOMException)?.name === 'AbortError') {
-        appendAgentChunk(agentMessageIndex, '\n[Stream cancelled]');
+        const stopLabel = stopRequestedRef.current ? '\n[Stopped by user]' : '\n[Stream cancelled]';
+        appendAgentChunk(agentMessageIndex, stopLabel);
       } else {
         console.error('Failed to rerun agent response', error);
         appendAgentChunk(agentMessageIndex, '\nSorry, rerun failed.');
@@ -1141,12 +1304,14 @@ export default function WorkspacePage() {
     } finally {
       setIsStreaming(false);
       streamAbortRef.current = null;
+      stopRequestedRef.current = false;
       loadFilesForWorkspace(selectedWorkspace.id);
     }
 
     if (agentMessageIndex >= 0) {
       const agentMessage = messagesRef.current[agentMessageIndex];
       const placeholderId = agentMessage?.id ?? null;
+      const metadata = buildMessageMetadata(agentMessage);
       const bufferedText =
         placeholderId !== null && placeholderId !== undefined
           ? agentMessageBufferRef.current.get(placeholderId) ?? agentMessage?.text
@@ -1157,14 +1322,16 @@ export default function WorkspacePage() {
           const persisted = await appendConversationMessage(activeConversationId, 'agent', bufferedText, {
             turnId: placeholderTurnId,
             replaceExisting: true,
+            metadata,
           });
+          const hydratedPersisted = mergeMessageMetadata(persisted);
           setMessages((prev) => {
             const updated = [...prev];
             const existing = updated[agentMessageIndex];
             updated[agentMessageIndex] = {
-              ...persisted,
-              thinkingText: existing?.thinkingText,
-              toolEvents: existing?.toolEvents,
+              ...hydratedPersisted,
+              thinkingText: hydratedPersisted.thinkingText ?? existing?.thinkingText,
+              toolEvents: hydratedPersisted.toolEvents ?? existing?.toolEvents,
             };
             return updated;
           });
@@ -1182,10 +1349,163 @@ export default function WorkspacePage() {
     }
   };
 
+  const runPresentationCommand = useCallback(
+    async ({
+      workspaceId,
+      conversationId,
+      turnId,
+      brief,
+      fileIds,
+      fileNames,
+    }: {
+      workspaceId: string;
+      conversationId: string;
+      turnId: string;
+      brief: string;
+      fileIds: number[];
+      fileNames: string[];
+    }) => {
+      if (!fileIds.length) {
+        addLocalSystemMessage('Tag at least one file using @filename before running /presentation.');
+        return;
+      }
+      let agentMessageIndex = -1;
+      let placeholderId: ConversationMessage['id'] | null = null;
+      setMessages((prevMessages) => {
+        const placeholder: ConversationMessage = {
+          id: `agent-${Date.now()}-presentation`,
+          conversationId,
+          sender: 'agent',
+          text: 'Generating presentation slides…',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          turnId,
+        };
+        placeholderId = placeholder.id;
+        const updated = [...prevMessages, placeholder];
+        agentMessageIndex = updated.length - 1;
+        return updated;
+      });
+      if (placeholderId) {
+        agentMessageBufferRef.current.set(placeholderId, 'Generating presentation slides…');
+      }
+      setIsStreaming(true);
+      try {
+        const response = await createPresentation({
+          workspaceId,
+          brief,
+          fileIds,
+        });
+        const targetLabel =
+          brief ||
+          (fileNames.length === 1
+            ? fileNames[0]
+            : fileNames.length > 1
+              ? `${fileNames.length} files`
+              : 'selected files');
+        const summaryText = `Generated HTML presentation for ${targetLabel}.`;
+        const toolEvent: ToolEvent = {
+          id: `presentation-${Date.now()}`,
+          name: 'presentation',
+          status: 'completed',
+          startedAt: new Date().toISOString(),
+          finishedAt: new Date().toISOString(),
+          summary: summaryText,
+          outputFiles: [
+            { path: response.htmlPath, mimeType: 'text/html' },
+          ],
+        };
+        let persisted: ConversationMessage | null = null;
+        try {
+          persisted = await appendConversationMessage(conversationId, 'agent', summaryText, {
+            turnId,
+            metadata: {
+              toolEvents: [toolEvent],
+            },
+          });
+        } catch (error) {
+          console.error('Failed to persist presentation summary', error);
+        }
+        const hydratedPersisted = persisted ? mergeMessageMetadata(persisted) : null;
+        setMessages((prev) => {
+          const updated = [...prev];
+          const target = updated[agentMessageIndex];
+          if (!target) {
+            return updated;
+          }
+          const baseMessage = hydratedPersisted || target;
+          const mergedToolEvents =
+            (baseMessage.toolEvents && baseMessage.toolEvents.length
+              ? baseMessage.toolEvents
+              : [...(target.toolEvents || []), toolEvent]);
+          updated[agentMessageIndex] = {
+            ...baseMessage,
+            text: summaryText,
+            thinkingText: target.thinkingText,
+            toolEvents: mergedToolEvents,
+          };
+          return updated;
+        });
+        if (placeholderId) {
+          agentMessageBufferRef.current.delete(placeholderId);
+        }
+        if (persisted?.id) {
+          agentMessageBufferRef.current.set(persisted.id, persisted.text || summaryText);
+        }
+        await refreshConversationHistory(workspaceId);
+        await loadFilesForWorkspace(workspaceId);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Failed to generate presentation.';
+        console.error('Presentation generation failed', error);
+        setMessages((prev) => {
+          const updated = [...prev];
+          if (agentMessageIndex >= 0 && updated[agentMessageIndex]) {
+            updated[agentMessageIndex] = {
+              ...updated[agentMessageIndex],
+              text: `Presentation generation failed: ${message}`,
+            };
+          }
+          return updated;
+        });
+        addLocalSystemMessage(`Presentation request failed: ${message}`);
+        if (placeholderId) {
+          agentMessageBufferRef.current.delete(placeholderId);
+        }
+      } finally {
+        setIsStreaming(false);
+        stopRequestedRef.current = false;
+      }
+    },
+    [addLocalSystemMessage, appendConversationMessage, createPresentation, loadFilesForWorkspace, refreshConversationHistory],
+  );
+
   const handleSendMessage = async () => {
     const trimmed = chatMessage.trim();
     const hasAttachments = chatAttachments.length > 0;
     if (!trimmed && !hasAttachments) return;
+
+    stopRequestedRef.current = false;
+    const isPresentationCommand = /^\/presentation\b/i.test(trimmed);
+    const mentionedFiles = isPresentationCommand ? findMentionedFiles(trimmed) : [];
+    const presentationFileIds = isPresentationCommand
+      ? Array.from(
+        new Set(
+          mentionedFiles
+            .map((file) => toNumericFileId(file.id))
+            .filter((id): id is number => typeof id === 'number' && Number.isFinite(id)),
+        ),
+      )
+      : [];
+    const presentationBrief = isPresentationCommand ? trimmed.replace(/^\/presentation\b/i, '').trim() : '';
+
+    if (isPresentationCommand && hasAttachments) {
+      addLocalSystemMessage('Attachments are not supported for /presentation. Please tag files using @filename instead.');
+      return;
+    }
+    if (isPresentationCommand && !presentationFileIds.length) {
+      addLocalSystemMessage('Tag at least one file using @filename before requesting a presentation.');
+      return;
+    }
 
     const attachmentSummary = hasAttachments
       ? `Attachments: ${chatAttachments.map((file) => file.name).join(', ')}`
@@ -1231,11 +1551,12 @@ export default function WorkspacePage() {
       const createdMessage = await appendConversationMessage(conversationId, 'user', messageContent, {
         turnId: pendingTurnId,
       });
-      userMessageRecord = createdMessage;
-      resolvedTurnId = createdMessage.turnId || pendingTurnId;
-      setMessages((prev) => [...prev, createdMessage]);
+      const normalizedMessage = mergeMessageMetadata(createdMessage);
+      userMessageRecord = normalizedMessage;
+      resolvedTurnId = normalizedMessage.turnId || pendingTurnId;
+      setMessages((prev) => [...prev, normalizedMessage]);
       await refreshConversationHistory(workspaceId);
-      const pendingMessages = [...messagesRef.current, createdMessage];
+      const pendingMessages = [...messagesRef.current, normalizedMessage];
       historyPayload = mapMessagesToAgentHistory(pendingMessages);
     } catch (error) {
       console.error('Failed to send user message', error);
@@ -1244,6 +1565,18 @@ export default function WorkspacePage() {
     }
     if (!userMessageRecord) {
       addLocalSystemMessage('Failed to record your message. Please try again.');
+      return;
+    }
+
+    if (isPresentationCommand) {
+      await runPresentationCommand({
+        workspaceId,
+        conversationId,
+        turnId: resolvedTurnId,
+        brief: presentationBrief,
+        fileIds: presentationFileIds,
+        fileNames: mentionedFiles.map((file) => file.name),
+      });
       return;
     }
 
@@ -1284,7 +1617,8 @@ export default function WorkspacePage() {
       );
     } catch (error) {
       if ((error as DOMException)?.name === 'AbortError') {
-        appendAgentChunk(agentMessageIndex, '\n[Stream cancelled]');
+        const stopLabel = stopRequestedRef.current ? '\n[Stopped by user]' : '\n[Stream cancelled]';
+        appendAgentChunk(agentMessageIndex, stopLabel);
       } else {
         console.error('Failed to get agent response:', error);
         appendAgentChunk(agentMessageIndex, '\nSorry, something went wrong.');
@@ -1292,12 +1626,14 @@ export default function WorkspacePage() {
     } finally {
       setIsStreaming(false);
       streamAbortRef.current = null;
+      stopRequestedRef.current = false;
       loadFilesForWorkspace(workspaceId);
     }
 
     if (agentMessageIndex >= 0) {
       const agentMessage = messagesRef.current[agentMessageIndex];
       const placeholderId = agentMessage?.id ?? null;
+      const metadata = buildMessageMetadata(agentMessage);
       const bufferedText =
         placeholderId !== null && placeholderId !== undefined
           ? agentMessageBufferRef.current.get(placeholderId) ?? agentMessage?.text
@@ -1305,19 +1641,21 @@ export default function WorkspacePage() {
       const placeholderTurnId = agentMessage?.turnId || resolvedTurnId;
       if (bufferedText) {
         try {
-          const persisted = await appendConversationMessage(conversationId, 'agent', bufferedText, {
-            turnId: placeholderTurnId,
-          });
-          setMessages((prev) => {
-            const updated = [...prev];
-            const existing = updated[agentMessageIndex];
-            updated[agentMessageIndex] = {
-              ...persisted,
-              thinkingText: existing?.thinkingText,
-              toolEvents: existing?.toolEvents,
-            };
-            return updated;
-          });
+        const persisted = await appendConversationMessage(conversationId, 'agent', bufferedText, {
+          turnId: placeholderTurnId,
+          metadata,
+        });
+        const hydratedPersisted = mergeMessageMetadata(persisted);
+        setMessages((prev) => {
+          const updated = [...prev];
+          const existing = updated[agentMessageIndex];
+          updated[agentMessageIndex] = {
+            ...hydratedPersisted,
+            thinkingText: hydratedPersisted.thinkingText ?? existing?.thinkingText,
+            toolEvents: hydratedPersisted.toolEvents ?? existing?.toolEvents,
+          };
+          return updated;
+        });
           if (placeholderId !== null && placeholderId !== undefined) {
             agentMessageBufferRef.current.delete(placeholderId);
           }
@@ -1507,9 +1845,37 @@ export default function WorkspacePage() {
     setChatAttachments((prev) => prev.filter((_, idx) => idx !== index));
   };
 
+  const handleInsertPresentationShortcut = () => {
+    setChatMessage((prev) => {
+      const trimmedStart = prev.trimStart();
+      if (trimmedStart.toLowerCase().startsWith('/presentation')) {
+        return prev;
+      }
+      const suffix = trimmedStart.length ? ` ${trimmedStart}` : '';
+      return `/presentation${suffix} `;
+    });
+    closeMention();
+    requestAnimationFrame(() => {
+      if (chatInputRef.current) {
+        const { value } = chatInputRef.current;
+        chatInputRef.current.focus();
+        chatInputRef.current.setSelectionRange(value.length, value.length);
+      }
+    });
+  };
+
   return (
     <ThemeProvider theme={theme}>
-      <Box sx={{ display: 'flex' }}>
+      <Box
+        sx={{
+          display: 'flex',
+          height: '100vh',
+          maxHeight: '100vh',
+          width: '100vw',
+          maxWidth: '100vw',
+          overflow: 'hidden',
+        }}
+      >
         <CssBaseline />
         <ExpandableSidebar
           handleDrawerToggle={handleDrawerToggle}
@@ -1527,12 +1893,20 @@ export default function WorkspacePage() {
           handleDeleteWorkspace={handleDeleteWorkspace}
           onSelectWorkspace={setSelectedWorkspace}
           onOpenSettings={handleOpenAgentSettings}
+          colorMode={colorMode}
+          onToggleColorMode={toggleColorMode}
         />
         <Box
           component="main"
           sx={{
             flexGrow: 1,
             p: 3,
+            height: '100%',
+            maxHeight: '100%',
+            minHeight: 0,
+            overflow: 'hidden',
+            display: 'flex',
+            flexDirection: 'column',
             transition: (theme) =>
               theme.transitions.create('margin', {
                 easing: theme.transitions.easing.sharp,
@@ -1549,10 +1923,13 @@ export default function WorkspacePage() {
             }),
           }}
         >
-          <div className="flex bg-gray-100 font-sans" style={{ height: layoutHeight }}>
+          <div
+            className="flex bg-gray-100 font-sans h-full min-h-0 overflow-hidden"
+            style={{ height: layoutHeight }}
+          >
             {/* Middle Pane: Files & Editor */}
             <div
-              className="flex flex-col border-r border-gray-200 min-w-0 overflow-hidden"
+              className="flex flex-col border-r border-gray-200 min-w-0 min-h-0 overflow-hidden"
               style={workspacePaneStyles}
             >
               {/* Workspace Header */}
@@ -1561,10 +1938,10 @@ export default function WorkspacePage() {
                   {selectedWorkspace ? selectedWorkspace.name : 'No workspace selected'}
                 </h2>
               </div>
-              <div className="flex-1 flex">
+              <div className="flex-1 flex min-h-0">
                 {/* File Explorer */}
                 <div
-                  className="bg-white border-r border-gray-200 flex flex-col overflow-hidden"
+                  className="bg-white border-r border-gray-200 flex flex-col overflow-hidden min-h-0"
                   style={filePaneStyles}
                 >
                   <div
@@ -1620,7 +1997,7 @@ export default function WorkspacePage() {
                     )}
                   </div>
                   <div
-                    className={`flex-1 px-4 py-3 overflow-y-auto transition-opacity duration-200 ${isFilePaneVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'
+                    className={`flex-1 px-4 py-3 overflow-y-auto min-h-0 transition-opacity duration-200 ${isFilePaneVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'
                       }`}
                     aria-hidden={!isFilePaneVisible}
                   >
@@ -1647,7 +2024,7 @@ export default function WorkspacePage() {
                           }}
                           className="flex-1 flex items-start justify-between gap-2 min-w-0"
                         >
-                          <span className="text-gray-800 break-words leading-snug">
+                          <span className="text-gray-800 break-all whitespace-normal leading-snug">
                             {file.name}
                           </span>
                           <div className={`shrink-0 items-center gap-1 ml-1 ${hoveredFileId === file.id ? 'flex' : 'hidden group-hover:flex'}`}>
@@ -1694,7 +2071,7 @@ export default function WorkspacePage() {
                 </div>
 
                 {/* Content Editor */}
-                <div className="flex-1 flex flex-col bg-gray-50 overflow-hidden min-w-0">
+                <div className="flex-1 flex flex-col bg-gray-50 overflow-hidden min-w-0 min-h-0">
                   <div className="p-4 border-b border-gray-200 flex justify-between items-center">
                     <h3 className="text-lg font-semibold text-gray-800">
                       {selectedFile ? selectedFile.name : 'Editor'}
@@ -1710,6 +2087,15 @@ export default function WorkspacePage() {
                           <LinkIcon size={18} className="text-gray-600" />
                         </button>
                       )}
+                      <button
+                        type="button"
+                        className="p-2 rounded-lg hover:bg-gray-200 disabled:opacity-50"
+                        onClick={handleCopyWorkspaceContent}
+                        disabled={!selectedFile}
+                        title={copiedWorkspaceContent ? 'Copied!' : 'Copy file content'}
+                      >
+                        <Copy size={18} className="text-gray-600" />
+                      </button>
                       {canPrintOrDownloadFile && (
                         <>
                           <button
@@ -1753,7 +2139,7 @@ export default function WorkspacePage() {
                       </button>
                     </div>
                   </div>
-                  <div className="flex-1 overflow-y-auto overflow-x-hidden">
+                  <div className="flex-1 overflow-y-auto overflow-x-hidden min-h-0">
                     {isEditMode ? (
                       <FileEditor
                         file={selectedFileDetails || selectedFile}
@@ -1772,7 +2158,7 @@ export default function WorkspacePage() {
 
             {/* Right Pane: Agent Chat */}
             <div
-              className="bg-white flex flex-col overflow-hidden"
+              className="bg-white flex flex-col overflow-hidden min-h-0"
               style={agentPaneStyles}
             >
               <div className="p-4 border-b border-gray-200 flex justify-between items-center">
@@ -1807,7 +2193,7 @@ export default function WorkspacePage() {
                   </div>
                 )}
               </div>
-              <div className={`flex-1 flex flex-col overflow-hidden ${isAgentPaneFullScreen || isAgentPaneVisible ? 'block' : 'hidden'
+              <div className={`flex-1 flex flex-col overflow-hidden min-h-0 ${isAgentPaneFullScreen || isAgentPaneVisible ? 'block' : 'hidden'
                 }`}>
                 <div className="p-4 border-b border-gray-200">
                   <PersonaSelector
@@ -1858,7 +2244,7 @@ export default function WorkspacePage() {
                     )}
                   </div>
                 </div>
-                <div className="flex-1 p-4 overflow-y-auto space-y-4">
+                <div className="flex-1 p-4 overflow-y-auto space-y-4 min-h-0">
                   {messages.map((message) => {
                     const isAgentMessage = message.sender === 'agent';
                     const timestampLabel = formatMessageTimestamp(message.updatedAt || message.createdAt);
@@ -1869,6 +2255,10 @@ export default function WorkspacePage() {
                     const thinkingPreview = buildThinkingPreview(message.thinkingText || '', isThinkingExpanded);
                     const showThinkingToggle =
                       Boolean(message.thinkingText) && (message.thinkingText?.length || 0) > THOUGHT_PREVIEW_LIMIT;
+                    const canCopyMessage =
+                      Boolean((message.text && message.text.trim()) || (message.thinkingText && message.thinkingText.trim()));
+                    const copyTitle = copiedMessageId === message.id ? 'Copied!' : 'Copy message';
+                    const copyButtonPositionClass = message.sender === 'user' ? 'right-10' : 'right-2';
                     return (
                       <div
                         key={message.id}
@@ -2002,6 +2392,16 @@ export default function WorkspacePage() {
                               )}
                             </div>
                           )}
+                          <button
+                            type="button"
+                            onClick={() => handleCopyMessageText(message)}
+                            disabled={!canCopyMessage}
+                            title={copyTitle}
+                            aria-label="Copy message text"
+                            className={`absolute -top-2 ${copyButtonPositionClass} rounded-full bg-white p-1.5 text-gray-600 shadow ring-1 ring-slate-200 transition opacity-0 group-hover:opacity-100 hover:bg-gray-50 focus-visible:opacity-100 disabled:opacity-40 disabled:cursor-not-allowed`}
+                          >
+                            <Copy size={14} />
+                          </button>
                           {message.sender === 'user' && (
                             <button
                               type="button"
@@ -2043,18 +2443,59 @@ export default function WorkspacePage() {
                         ))}
                       </div>
                     )}
-                    <div className="relative rounded-2xl border border-gray-200 bg-gray-50 px-3 py-2 shadow-sm focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-100">
-                      <textarea
-                        placeholder="Interact with the agent..."
-                        value={chatMessage}
-                        ref={chatInputRef}
-                        onChange={handleChatInputChange}
-                        onKeyDown={handleChatInputKeyDown}
-                        onKeyUp={handleChatInputKeyUp}
-                        onSelect={handleChatInputSelectionChange}
-                        className="w-full bg-transparent resize-none text-sm leading-relaxed focus:outline-none pl-10 pr-12"
-                        rows={3}
-                        style={{ overflowY: 'auto' }}
+                    <div className="relative rounded-2xl border border-gray-200 bg-gray-50 p-3 shadow-sm focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-100">
+                      <div className="flex items-end gap-3">
+                        <button
+                          type="button"
+                          onClick={handleChatAttachmentButtonClick}
+                          className="w-11 h-11 rounded-full border border-dashed border-blue-400 text-blue-600 bg-white flex items-center justify-center hover:bg-blue-50 shrink-0"
+                          title="Attach files or images"
+                        >
+                          <Plus size={18} />
+                        </button>
+                        <div className="flex-1 flex flex-col gap-2 min-w-0">
+                          <textarea
+                            placeholder="Interact with the agent..."
+                            value={chatMessage}
+                            ref={chatInputRef}
+                            onChange={handleChatInputChange}
+                            onKeyDown={handleChatInputKeyDown}
+                            onKeyUp={handleChatInputKeyUp}
+                            onSelect={handleChatInputSelectionChange}
+                            className="w-full bg-transparent resize-none text-sm leading-relaxed focus:outline-none placeholder:text-gray-500 text-gray-900"
+                            rows={3}
+                            style={{ overflowY: 'auto' }}
+                          />
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={handleInsertPresentationShortcut}
+                              className="inline-flex items-center gap-2 rounded-full border border-blue-200 bg-white px-3 py-1.5 text-xs font-semibold text-blue-700 shadow-sm transition hover:bg-blue-50"
+                              title="Generate presentation slides"
+                            >
+                              <MonitorPlay size={14} />
+                              the presentation
+                            </button>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <button
+                            onClick={isStreaming ? handleStopStreaming : handleSendMessage}
+                            disabled={false}
+                            className={`w-11 h-11 rounded-full flex items-center justify-center text-white shadow-sm transition ${isStreaming ? 'bg-red-500 hover:bg-red-400' : 'bg-blue-600 hover:bg-blue-700'}`}
+                            title={isStreaming ? 'Stop current agent response' : 'Send message'}
+                          >
+                            {isStreaming ? <StopCircle size={18} /> : <Send size={18} />}
+                          </button>
+                        </div>
+                      </div>
+                      <input
+                        type="file"
+                        ref={attachmentInputRef}
+                        className="hidden"
+                        multiple
+                        accept="image/*,.pdf,.md,.txt,.doc,.docx"
+                        onChange={handleChatAttachmentChange}
                       />
                       {isMentionOpen && (
                         <div className="absolute bottom-full mb-2 left-0 right-0 bg-white border border-gray-200 rounded-xl shadow-lg max-h-48 overflow-y-auto z-10">
@@ -2079,31 +2520,6 @@ export default function WorkspacePage() {
                           )}
                         </div>
                       )}
-                      <button
-                        type="button"
-                        onClick={handleChatAttachmentButtonClick}
-                        className="absolute left-3 bottom-3 w-9 h-9 rounded-full border border-dashed border-blue-400 text-blue-600 flex items-center justify-center hover:bg-blue-50"
-                        title="Attach files or images"
-                      >
-                        <Plus size={18} />
-                      </button>
-                      <button
-                        onClick={handleSendMessage}
-                        disabled={isStreaming}
-                        className={`absolute right-3 bottom-3 w-10 h-10 rounded-full flex items-center justify-center text-white shadow-sm transition ${isStreaming ? 'bg-blue-300 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'
-                          }`}
-                        title="Send message"
-                      >
-                        <Send size={18} />
-                      </button>
-                      <input
-                        type="file"
-                        ref={attachmentInputRef}
-                        className="hidden"
-                        multiple
-                        accept="image/*,.pdf,.md,.txt,.doc,.docx"
-                        onChange={handleChatAttachmentChange}
-                      />
                     </div>
                   </div>
                 </div>

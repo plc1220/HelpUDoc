@@ -25,6 +25,7 @@ export class DatabaseService {
     await this.createWorkspacesTable();
     await this.createWorkspaceMembersTable();
     await this.createFilesTable();
+    await this.createKnowledgeSourcesTable();
     await this.createConversationsTable();
     await this.createConversationMessagesTable();
   }
@@ -150,6 +151,48 @@ export class DatabaseService {
     }
   }
 
+  private async createKnowledgeSourcesTable(): Promise<void> {
+    const exists = await this.db.schema.hasTable('knowledge_sources');
+    if (!exists) {
+      await this.db.schema.createTable('knowledge_sources', (table) => {
+        table.increments('id').primary();
+        table.uuid('workspaceId').notNullable().references('id').inTable('workspaces').onDelete('CASCADE');
+        table.string('title').notNullable();
+        table.string('type', 32).notNullable();
+        table.text('description');
+        table.text('content');
+        table.integer('fileId').references('id').inTable('files').onDelete('SET NULL');
+        table.string('sourceUrl');
+        table.jsonb('tags');
+        table.jsonb('metadata');
+        table.uuid('createdBy').references('id').inTable('users');
+        table.uuid('updatedBy').references('id').inTable('users');
+        table.timestamp('createdAt').notNullable().defaultTo(this.db.fn.now());
+        table.timestamp('updatedAt').notNullable().defaultTo(this.db.fn.now());
+        table.index(['workspaceId', 'type'], 'knowledge_workspace_type_idx');
+        table.index(['workspaceId', 'updatedAt'], 'knowledge_workspace_updated_idx');
+      });
+      console.log('Created \"knowledge_sources\" table.');
+    } else {
+      await this.ensureColumn('knowledge_sources', 'description', (table) => table.text('description'));
+      await this.ensureColumn('knowledge_sources', 'content', (table) => table.text('content'));
+      await this.ensureColumn('knowledge_sources', 'fileId', (table) => table.integer('fileId').references('id').inTable('files').onDelete('SET NULL'));
+      await this.ensureColumn('knowledge_sources', 'sourceUrl', (table) => table.string('sourceUrl'));
+      await this.ensureColumn('knowledge_sources', 'tags', (table) => table.jsonb('tags'));
+      await this.ensureColumn('knowledge_sources', 'metadata', (table) => table.jsonb('metadata'));
+      await this.ensureColumn('knowledge_sources', 'createdBy', (table) => table.uuid('createdBy'));
+      await this.ensureColumn('knowledge_sources', 'updatedBy', (table) => table.uuid('updatedBy'));
+      await this.ensureColumn('knowledge_sources', 'createdAt', (table) => table.timestamp('createdAt').defaultTo(this.db.fn.now()));
+      await this.ensureColumn('knowledge_sources', 'updatedAt', (table) => table.timestamp('updatedAt').defaultTo(this.db.fn.now()));
+      await this.db.raw(
+        'CREATE INDEX IF NOT EXISTS knowledge_workspace_type_idx ON knowledge_sources ("workspaceId", "type")',
+      );
+      await this.db.raw(
+        'CREATE INDEX IF NOT EXISTS knowledge_workspace_updated_idx ON knowledge_sources ("workspaceId", "updatedAt")',
+      );
+    }
+  }
+
   private async createConversationsTable(): Promise<void> {
     const exists = await this.db.schema.hasTable('conversations');
     if (!exists) {
@@ -180,6 +223,7 @@ export class DatabaseService {
         table.string('sender', 16).notNullable();
         table.uuid('authorId').references('id').inTable('users');
         table.text('text').notNullable();
+        table.jsonb('metadata');
         table.string('turnId');
         table.timestamp('createdAt').notNullable().defaultTo(this.db.fn.now());
         table.timestamp('updatedAt').notNullable().defaultTo(this.db.fn.now());
@@ -204,6 +248,7 @@ export class DatabaseService {
     await this.ensureColumn('conversation_messages', 'turnId', (table) => table.string('turnId'));
     await this.ensureColumn('conversation_messages', 'updatedAt', (table) => table.timestamp('updatedAt'));
     await this.ensureColumn('conversation_messages', 'authorId', (table) => table.uuid('authorId'));
+    await this.ensureColumn('conversation_messages', 'metadata', (table) => table.jsonb('metadata'));
     await this.db.raw(
       'CREATE INDEX IF NOT EXISTS conversation_messages_turn_idx ON conversation_messages ("conversationId", "turnId")'
     );

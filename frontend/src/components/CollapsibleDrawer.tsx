@@ -1,8 +1,9 @@
 import React from 'react';
-import { Drawer, Box, IconButton, Typography, TextField, Button } from '@mui/material';
-import { ChevronLeft, Add, Settings } from '@mui/icons-material';
+import { Drawer, Box, IconButton, Typography, TextField, Button, Switch } from '@mui/material';
+import { ChevronLeft, Add, Settings, LightMode, DarkMode } from '@mui/icons-material';
 import WorkspaceList from './WorkspaceList';
 import type { Workspace } from '../types';
+import type { PaletteMode } from '@mui/material';
 
 interface CollapsibleDrawerProps {
   open: boolean;
@@ -15,6 +16,8 @@ interface CollapsibleDrawerProps {
   handleDeleteWorkspace: (id: string) => void;
   onSelectWorkspace: (workspace: Workspace) => void;
   onOpenSettings: () => void;
+  colorMode: PaletteMode;
+  onToggleColorMode: () => void;
 }
 
 const drawerWidth = 280;
@@ -30,6 +33,8 @@ const CollapsibleDrawer: React.FC<CollapsibleDrawerProps> = ({
   handleDeleteWorkspace,
   onSelectWorkspace,
   onOpenSettings,
+  colorMode,
+  onToggleColorMode,
 }) => {
   const handleOpenSettingsClick = () => {
     handleDrawerClose();
@@ -44,8 +49,8 @@ const CollapsibleDrawer: React.FC<CollapsibleDrawerProps> = ({
         '& .MuiDrawer-paper': {
           width: drawerWidth,
           boxSizing: 'border-box',
-          backgroundColor: '#f8fafc',
-          borderRight: '1px solid #e2e8f0',
+          backgroundColor: (theme) => theme.palette.background.default,
+          borderRight: (theme) => `1px solid ${theme.palette.divider}`,
         },
       }}
       variant="persistent"
@@ -57,7 +62,11 @@ const CollapsibleDrawer: React.FC<CollapsibleDrawerProps> = ({
           <Typography variant="h6" sx={{ fontWeight: 600 }}>
             Workspaces
           </Typography>
-          <IconButton onClick={handleDrawerClose} size="small" sx={{ border: '1px solid #e2e8f0', borderRadius: 2 }}>
+          <IconButton
+            onClick={handleDrawerClose}
+            size="small"
+            sx={{ border: (theme) => `1px solid ${theme.palette.divider}`, borderRadius: 2 }}
+          >
             <ChevronLeft fontSize="small" />
           </IconButton>
         </Box>
@@ -73,7 +82,7 @@ const CollapsibleDrawer: React.FC<CollapsibleDrawerProps> = ({
             InputProps={{
               sx: {
                 borderRadius: 2,
-                backgroundColor: 'common.white',
+                backgroundColor: (theme) => theme.palette.background.paper,
               },
             }}
           />
@@ -98,7 +107,49 @@ const CollapsibleDrawer: React.FC<CollapsibleDrawerProps> = ({
               onDeleteWorkspace={handleDeleteWorkspace}
             />
           </Box>
-          <Box sx={{ borderTop: '1px solid #e2e8f0', pt: 2, mt: 2 }}>
+          <Box
+            sx={{
+              borderTop: (theme) => `1px solid ${theme.palette.divider}`,
+              pt: 2,
+              mt: 2,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 1.5,
+            }}
+          >
+            <Box
+              sx={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                p: 1.5,
+                borderRadius: 2,
+                border: (theme) => `1px solid ${theme.palette.divider}`,
+                backgroundColor: (theme) =>
+                  theme.palette.mode === 'light'
+                    ? 'rgba(37, 99, 235, 0.06)'
+                    : 'rgba(96, 165, 250, 0.12)',
+              }}
+            >
+              <Box>
+                <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+                  Appearance
+                </Typography>
+                <Typography variant="body2" sx={{ color: 'text.secondary', lineHeight: 1.2 }}>
+                  {colorMode === 'dark' ? 'Dark mode' : 'Light mode'}
+                </Typography>
+              </Box>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                <LightMode fontSize="small" color={colorMode === 'light' ? 'primary' : 'disabled'} />
+                <Switch
+                  size="small"
+                  checked={colorMode === 'dark'}
+                  onChange={onToggleColorMode}
+                  inputProps={{ 'aria-label': 'Toggle dark mode' }}
+                />
+                <DarkMode fontSize="small" color={colorMode === 'dark' ? 'primary' : 'disabled'} />
+              </Box>
+            </Box>
             <Button
               variant="outlined"
               startIcon={<Settings />}

@@ -46,6 +46,11 @@ export interface ToolOutputFile {
   size?: number;
 }
 
+export interface ConversationMessageMetadata {
+  thinkingText?: string;
+  toolEvents?: ToolEvent[];
+}
+
 export interface ConversationMessage {
   id: number | string;
   conversationId: string;
@@ -56,6 +61,7 @@ export interface ConversationMessage {
   turnId?: string;
   thinkingText?: string;
   toolEvents?: ToolEvent[];
+  metadata?: ConversationMessageMetadata | null;
 }
 
 export interface PromptDefinition {

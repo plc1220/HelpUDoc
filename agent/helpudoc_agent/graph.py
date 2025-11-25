@@ -25,7 +25,21 @@ class AgentRegistry:
 
     def _init_model(self):
         if self._model is None:
-            self._model = init_chat_model(model=self.settings.model.name)
+            cfg = self.settings.model
+            if cfg.use_vertex_ai:
+                self._model = init_chat_model(
+                    cfg.chat_model_name,
+                    model_provider="google_vertex_ai",
+                    project=cfg.project,
+                    location=cfg.location,
+                )
+            else:
+                # Force public Gemini (API key) path to avoid accidental Vertex calls.
+                self._model = init_chat_model(
+                    cfg.chat_model_name,
+                    model_provider="google_genai",
+                    api_key=cfg.api_key,
+                )
         return self._model
 
     def get_or_create(self, agent_name: str, workspace_id: str) -> AgentRuntimeState:

@@ -21,7 +21,7 @@ async function startServer() {
   app.use(helmet());
   app.use(cors({
     origin: '*',
-    methods: ['GET', 'POST', 'PUT', 'DELETE'],
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-User-Id', 'X-User-Name', 'X-User-Email'],
   }));
   app.use(loggingMiddleware);
