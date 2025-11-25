@@ -18,6 +18,7 @@
   --accent-strong: #1d4ed8;
   --accent-soft: #eff6ff;
   --accent-soft-strong: #dbeafe;
+  --code-text: #e2e8f0;
   --danger: #ef4444;
   --danger-soft: #fef2f2;
   --slate-900: #0f172a;
@@ -37,10 +38,11 @@
   --text-primary: #e2e8f0;
   --text-secondary: #cbd5e1;
   --text-muted: #94a3b8;
-  --accent: #60a5fa;
-  --accent-strong: #93c5fd;
-  --accent-soft: rgba(96, 165, 250, 0.16);
-  --accent-soft-strong: rgba(96, 165, 250, 0.26);
+  --accent: #3b82f6;
+  --accent-strong: #2563eb;
+  --accent-soft: rgba(59, 130, 246, 0.18);
+  --accent-soft-strong: rgba(59, 130, 246, 0.28);
+  --code-text: #e2e8f0;
   --danger: #f87171;
   --danger-soft: rgba(248, 113, 113, 0.14);
   --slate-900: #0b1220;
@@ -130,7 +132,9 @@ body {
 .text-gray-900,
 .text-gray-800,
 .text-gray-700,
-.text-slate-800 {
+.text-slate-900,
+.text-slate-800,
+.text-slate-700 {
   color: var(--text-primary) !important;
 }
 
@@ -152,6 +156,12 @@ body {
 .text-blue-700,
 .text-blue-800 {
   color: var(--accent) !important;
+}
+
+.hover\:text-slate-900:hover,
+.hover\:text-slate-800:hover,
+.hover\:text-slate-700:hover {
+  color: var(--text-primary) !important;
 }
 
 .text-red-500,
@@ -187,6 +197,10 @@ body {
 .border-blue-400,
 .border-blue-500 {
   border-color: var(--accent) !important;
+}
+
+.border-slate-900 {
+  border-color: var(--text-primary) !important;
 }
 
 .hover\:bg-gray-50:hover {
@@ -293,7 +307,7 @@ body {
   background: color-mix(in srgb, var(--slate-950) 88%, transparent);
   padding: 0.75rem 1rem;
   margin: 0.75rem 0 1rem;
-  color: var(--text-primary);
+  color: var(--code-text, var(--text-primary));
   border-radius: 1rem;
   overflow: auto;
   white-space: pre-wrap;
