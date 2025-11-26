@@ -1,4 +1,4 @@
-const API_URL = 'http://localhost:3000/api';
+import { API_URL, apiFetch } from './apiClient';
 
 export interface PresentationRequest {
   workspaceId: string;
@@ -12,7 +12,7 @@ export interface PresentationResponse {
 }
 
 export const createPresentation = async (payload: PresentationRequest): Promise<PresentationResponse> => {
-  const response = await fetch(`${API_URL}/agent/presentation`, {
+  const response = await apiFetch(`${API_URL}/agent/presentation`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

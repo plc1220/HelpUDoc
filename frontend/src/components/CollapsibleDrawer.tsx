@@ -1,6 +1,6 @@
 import React from 'react';
 import { Drawer, Box, IconButton, Typography, TextField, Button, Switch } from '@mui/material';
-import { ChevronLeft, Add, Settings, LightMode, DarkMode } from '@mui/icons-material';
+import { ChevronLeft, Add, Settings, LightMode, DarkMode, Logout } from '@mui/icons-material';
 import WorkspaceList from './WorkspaceList';
 import type { Workspace } from '../types';
 import type { PaletteMode } from '@mui/material';
@@ -18,6 +18,7 @@ interface CollapsibleDrawerProps {
   onOpenSettings: () => void;
   colorMode: PaletteMode;
   onToggleColorMode: () => void;
+  onSignOut?: () => void;
 }
 
 const drawerWidth = 280;
@@ -35,6 +36,7 @@ const CollapsibleDrawer: React.FC<CollapsibleDrawerProps> = ({
   onOpenSettings,
   colorMode,
   onToggleColorMode,
+  onSignOut,
 }) => {
   const handleOpenSettingsClick = () => {
     handleDrawerClose();
@@ -162,6 +164,31 @@ const CollapsibleDrawer: React.FC<CollapsibleDrawerProps> = ({
             <Typography variant="body2" sx={{ color: 'text.secondary', mt: 1 }}>
               Manage personas, tools, and prompts.
             </Typography>
+            {onSignOut ? (
+              <Button
+                variant="text"
+                color="inherit"
+                startIcon={<Logout />}
+                fullWidth
+                onClick={onSignOut}
+                sx={{
+                  borderRadius: 2,
+                  justifyContent: 'flex-start',
+                  textTransform: 'none',
+                  fontWeight: 600,
+                  px: 1,
+                  color: (theme) => theme.palette.text.secondary,
+                  '&:hover': {
+                    backgroundColor: (theme) =>
+                      theme.palette.mode === 'light'
+                        ? 'rgba(15, 23, 42, 0.06)'
+                        : 'rgba(148, 163, 184, 0.12)',
+                  },
+                }}
+              >
+                Logout
+              </Button>
+            ) : null}
           </Box>
         </Box>
       </Box>

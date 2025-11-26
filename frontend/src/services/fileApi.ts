@@ -1,7 +1,7 @@
-const API_URL = 'http://localhost:3000/api';
+import { API_URL, apiFetch } from './apiClient';
 
 export const getFiles = async (workspaceId: string) => {
-  const response = await fetch(`${API_URL}/workspaces/${workspaceId}/files`);
+  const response = await apiFetch(`${API_URL}/workspaces/${workspaceId}/files`);
   if (!response.ok) {
     throw new Error('Failed to fetch files');
   }
@@ -9,7 +9,7 @@ export const getFiles = async (workspaceId: string) => {
 };
 
 export const getFileContent = async (workspaceId: string, fileId: string) => {
-  const response = await fetch(`${API_URL}/workspaces/${workspaceId}/files/${fileId}/content`);
+  const response = await apiFetch(`${API_URL}/workspaces/${workspaceId}/files/${fileId}/content`);
   if (!response.ok) {
     throw new Error('Failed to fetch file content');
   }
@@ -19,7 +19,7 @@ export const getFileContent = async (workspaceId: string, fileId: string) => {
 export const getWorkspaceFilePreview = async (workspaceId: string, relativePath: string) => {
   const url = new URL(`${API_URL}/workspaces/${workspaceId}/files/preview`);
   url.searchParams.set('path', relativePath);
-  const response = await fetch(url.toString());
+  const response = await apiFetch(url.toString());
   if (!response.ok) {
     throw new Error('Failed to preview file');
   }
@@ -30,7 +30,7 @@ export const createFile = async (workspaceId: string, file: File) => {
   const formData = new FormData();
   formData.append('file', file);
 
-  const response = await fetch(`${API_URL}/workspaces/${workspaceId}/files`, {
+  const response = await apiFetch(`${API_URL}/workspaces/${workspaceId}/files`, {
     method: 'POST',
     body: formData,
   });
@@ -45,7 +45,7 @@ export const updateFileContent = async (
   fileId: number,
   content: string,
 ) => {
-  const response = await fetch(
+  const response = await apiFetch(
     `${API_URL}/workspaces/${workspaceId}/files/${fileId}/content`,
     {
       method: 'PUT',
@@ -62,7 +62,7 @@ export const updateFileContent = async (
 };
 
 export const deleteFile = async (workspaceId: string, fileId: string) => {
-  const response = await fetch(
+  const response = await apiFetch(
     `${API_URL}/workspaces/${workspaceId}/files/${fileId}`,
     {
       method: 'DELETE',
@@ -74,7 +74,7 @@ export const deleteFile = async (workspaceId: string, fileId: string) => {
 };
 
 export const renameFile = async (workspaceId: string, fileId: string, name: string) => {
-  const response = await fetch(
+  const response = await apiFetch(
     `${API_URL}/workspaces/${workspaceId}/files/${fileId}`,
     {
       method: 'PATCH',

@@ -42,3 +42,13 @@ services:
       mc mb -p local/helpudoc || true;
       mc anonymous set download local/helpudoc;
       exit 0;
+  redis:
+    image: redis:7-alpine
+    container_name: helpudoc-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - ./.redis-data:/data
+

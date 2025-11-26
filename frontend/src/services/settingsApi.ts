@@ -1,9 +1,8 @@
 import type { PromptDefinition } from '../types';
-
-const API_URL = 'http://localhost:3000/api';
+import { API_URL, apiFetch } from './apiClient';
 
 export const fetchAgentConfig = async (): Promise<string> => {
-  const response = await fetch(`${API_URL}/settings/agent-config`);
+  const response = await apiFetch(`${API_URL}/settings/agent-config`);
   if (!response.ok) {
     throw new Error('Failed to load agents.yaml');
   }
@@ -12,7 +11,7 @@ export const fetchAgentConfig = async (): Promise<string> => {
 };
 
 export const saveAgentConfig = async (content: string) => {
-  const response = await fetch(`${API_URL}/settings/agent-config`, {
+  const response = await apiFetch(`${API_URL}/settings/agent-config`, {
     method: 'PUT',
     headers: {
       'Content-Type': 'application/json',
@@ -26,7 +25,7 @@ export const saveAgentConfig = async (content: string) => {
 };
 
 export const fetchPrompts = async (): Promise<PromptDefinition[]> => {
-  const response = await fetch(`${API_URL}/settings/prompts`);
+  const response = await apiFetch(`${API_URL}/settings/prompts`);
   if (!response.ok) {
     throw new Error('Failed to load prompts');
   }
@@ -35,7 +34,7 @@ export const fetchPrompts = async (): Promise<PromptDefinition[]> => {
 };
 
 export const savePrompt = async (id: string, content: string) => {
-  const response = await fetch(`${API_URL}/settings/prompts`, {
+  const response = await apiFetch(`${API_URL}/settings/prompts`, {
     method: 'PUT',
     headers: {
       'Content-Type': 'application/json',

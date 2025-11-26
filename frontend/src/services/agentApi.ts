@@ -1,6 +1,5 @@
 import type { AgentPersona, ToolOutputFile } from '../types';
-
-const API_URL = 'http://localhost:3000/api';
+import { API_URL, apiFetch } from './apiClient';
 
 export type AgentStreamChunk =
   | { type: 'token' | 'chunk'; content?: string; role?: string }
@@ -16,7 +15,7 @@ type AgentStreamOptions = {
 };
 
 export const fetchPersonas = async (): Promise<AgentPersona[]> => {
-  const response = await fetch(`${API_URL}/agent/personas`);
+  const response = await apiFetch(`${API_URL}/agent/personas`);
   if (!response.ok) {
     throw new Error('Failed to fetch personas');
   }
@@ -32,7 +31,7 @@ export const runAgentStream = async (
   signal?: AbortSignal,
   options?: AgentStreamOptions,
 ) => {
-  const response = await fetch(`${API_URL}/agent/run-stream`, {
+  const response = await apiFetch(`${API_URL}/agent/run-stream`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

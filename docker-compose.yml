@@ -1,0 +1,128 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: helpudoc-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-helpudoc}
+      POSTGRES_USER: ${POSTGRES_USER:-helpudoc}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-helpudoc}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-helpudoc} -d ${POSTGRES_DB:-helpudoc}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: helpudoc-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    image: minio/minio:latest
+    container_name: helpudoc-minio
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+
+  minio-setup:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_started
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      S3_BUCKET_NAME: ${S3_BUCKET_NAME:-helpudoc}
+    entrypoint: ["/bin/sh", "-c"]
+    command: >
+      set -e;
+      until (mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"); do
+        sleep 1;
+      done;
+      mc mb -p local/"$${S3_BUCKET_NAME}" || true;
+      mc anonymous set download local/"$${S3_BUCKET_NAME}";
+      exit 0;
+
+  backend:
+    build:
+      context: ./backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio-setup:
+        condition: service_completed_successfully
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      SESSION_SECRET: ${SESSION_SECRET:-change-me}
+      SESSION_NAME: ${SESSION_NAME:-helpudoc.sid}
+      SESSION_TTL_SECONDS: ${SESSION_TTL_SECONDS:-604800}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-helpudoc}
+      POSTGRES_USER: ${POSTGRES_USER:-helpudoc}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-helpudoc}
+      DATABASE_URL: postgres://${POSTGRES_USER:-helpudoc}:${POSTGRES_PASSWORD:-helpudoc}@postgres:5432/${POSTGRES_DB:-helpudoc}
+      REDIS_URL: redis://redis:6379
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      S3_BUCKET_NAME: ${S3_BUCKET_NAME:-helpudoc}
+      S3_ENDPOINT: http://minio:9000
+      S3_FORCE_PATH_STYLE: "true"
+    ports:
+      - "3000:3000"
+
+  agent:
+    build:
+      context: ./agent
+    depends_on:
+      backend:
+        condition: service_started
+    environment:
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GOOGLE_CLOUD_API_KEY: ${GOOGLE_CLOUD_API_KEY:-}
+      S3_ENDPOINT: http://minio:9000
+      MINIO_ENDPOINT: http://minio:9000
+      S3_BUCKET_NAME: ${S3_BUCKET_NAME:-helpudoc}
+    ports:
+      - "8001:8001"
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_URL: http://backend:3000/api
+    depends_on:
+      backend:
+        condition: service_started
+    ports:
+      - "8080:80"
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:

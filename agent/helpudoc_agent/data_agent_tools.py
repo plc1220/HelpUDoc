@@ -422,8 +422,7 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
                 "1. Matplotlib/Seaborn: Use plt.figure(), plt.plot(), sns.barplot(), etc. "
                 "Figures are auto-saved as PNG.\n"
                 "2. Plotly (preferred): Build a Plotly figure or a dict with data/layout/config assigned to 'chart_config'. "
-                "Plotly specs are saved as .plotly.json for the viewer. "
-                "Chart.js configs are still accepted and saved as JSON."
+                "Plotly specs are saved as .plotly.json for the viewer."
             )
         ),
         callbacks: Optional[CallbackManagerForToolRun] = None,
@@ -436,7 +435,7 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
         - plt: matplotlib.pyplot for creating charts
         - sns: seaborn for statistical visualizations
         - np: numpy for numerical operations
-        - json: for creating Plotly/Chart.js configs
+        - json: for creating Plotly configs
         
         Two ways to create charts:
         1. Use matplotlib/seaborn directly (recommended for quick PNGs):
@@ -452,8 +451,6 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
            }
            # Auto-saved as .plotly.json in charts/ directory
            
-        Chart.js configs in chart_config are still saved as JSON for compatibility.
-        
         Returns JSON with chart metadata and output file paths.
         """
         try:

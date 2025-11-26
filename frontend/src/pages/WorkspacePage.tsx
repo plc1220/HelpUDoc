@@ -40,6 +40,7 @@ import FileEditor from '../components/FileEditor';
 import FileRenderer from '../components/FileRenderer';
 import ExpandableSidebar from '../components/ExpandableSidebar';
 import PersonaSelector from '../components/PersonaSelector';
+import { useAuth } from '../auth/AuthProvider';
 
 const drawerWidth = 280;
 const DEFAULT_PERSONA_NAME = 'general-assistant';
@@ -245,6 +246,7 @@ const buildMessageMetadata = (message?: ConversationMessage | null): Conversatio
 
 export default function WorkspacePage() {
   const navigate = useNavigate();
+  const { signOut } = useAuth();
   const [colorMode, setColorMode] = useState<PaletteMode>(() => {
     if (typeof window === 'undefined') return 'light';
     const stored = window.localStorage.getItem('helpudoc-color-mode');
@@ -764,6 +766,12 @@ export default function WorkspacePage() {
   const handleOpenAgentSettings = useCallback(() => {
     navigate('/settings');
   }, [navigate]);
+
+  const handleSignOut = useCallback(() => {
+    setDrawerOpen(false);
+    signOut();
+    navigate('/login', { replace: true });
+  }, [navigate, signOut]);
 
   const closeMention = useCallback(() => {
     setIsMentionOpen(false);
@@ -1895,6 +1903,7 @@ export default function WorkspacePage() {
           onOpenSettings={handleOpenAgentSettings}
           colorMode={colorMode}
           onToggleColorMode={toggleColorMode}
+          onSignOut={handleSignOut}
         />
         <Box
           component="main"

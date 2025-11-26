@@ -9,6 +9,13 @@ export function userContextMiddleware(userService: UserService) {
   return async (req: Request, res: Response, next: NextFunction) => {
     try {
       const externalId = (req.header('x-user-id') || DEFAULT_USER_ID).trim().toLowerCase();
+
+      if (req.session?.userContext && req.session.externalId === externalId) {
+        req.userContext = req.session.userContext;
+        res.locals.userContext = req.session.userContext;
+        return next();
+      }
+
       const displayName = req.header('x-user-name') || DEFAULT_USER_NAME;
       const email = req.header('x-user-email') || undefined;
 
@@ -24,6 +31,11 @@ export function userContextMiddleware(userService: UserService) {
         displayName: userRecord.displayName,
         email: userRecord.email,
       };
+
+      if (req.session) {
+        req.session.userContext = userContext;
+        req.session.externalId = externalId;
+      }
 
       req.userContext = userContext;
       res.locals.userContext = userContext;

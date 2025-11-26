@@ -1,14 +1,14 @@
-const API_URL = 'http://localhost:3000/api';
+import { API_URL, apiFetch } from './apiClient';
 
 export const getWorkspaces = async () => {
-  const response = await fetch(`${API_URL}/workspaces`);
+  const response = await apiFetch(`${API_URL}/workspaces`);
   if (!response.ok) {
     throw new Error('Failed to fetch workspaces');
   }
   return response.json();
 };
 export const getWorkspace = async (workspaceId: string) => {
-  const response = await fetch(`${API_URL}/workspaces/${workspaceId}`);
+  const response = await apiFetch(`${API_URL}/workspaces/${workspaceId}`);
   if (!response.ok) {
     throw new Error('Failed to fetch workspace');
   }
@@ -17,7 +17,7 @@ export const getWorkspace = async (workspaceId: string) => {
 
 
 export const createWorkspace = async (name: string) => {
-  const response = await fetch(`${API_URL}/workspaces`, {
+  const response = await apiFetch(`${API_URL}/workspaces`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -31,7 +31,7 @@ export const createWorkspace = async (name: string) => {
 };
 
 export const deleteWorkspace = async (workspaceId: string) => {
-  const response = await fetch(`${API_URL}/workspaces/${workspaceId}`, {
+  const response = await apiFetch(`${API_URL}/workspaces/${workspaceId}`, {
     method: 'DELETE',
   });
   if (!response.ok) {

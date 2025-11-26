@@ -1,6 +1,5 @@
 import type { ConversationSummary, ConversationMessage, ConversationMessageMetadata } from '../types';
-
-const API_URL = 'http://localhost:3000/api';
+import { API_URL, apiFetch } from './apiClient';
 
 export interface ConversationDetailResponse {
   conversation: ConversationSummary;
@@ -11,7 +10,7 @@ export const fetchRecentConversations = async (
   workspaceId: string,
   limit = 5,
 ): Promise<ConversationSummary[]> => {
-  const response = await fetch(`${API_URL}/workspaces/${workspaceId}/conversations?limit=${limit}`);
+  const response = await apiFetch(`${API_URL}/workspaces/${workspaceId}/conversations?limit=${limit}`);
   if (!response.ok) {
     throw new Error('Failed to fetch conversations');
   }
@@ -22,7 +21,7 @@ export const createConversation = async (
   workspaceId: string,
   persona: string,
 ): Promise<ConversationSummary> => {
-  const response = await fetch(`${API_URL}/workspaces/${workspaceId}/conversations`, {
+  const response = await apiFetch(`${API_URL}/workspaces/${workspaceId}/conversations`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -40,7 +39,7 @@ export const createConversation = async (
 export const fetchConversationDetail = async (
   conversationId: string,
 ): Promise<ConversationDetailResponse> => {
-  const response = await fetch(`${API_URL}/conversations/${conversationId}`);
+  const response = await apiFetch(`${API_URL}/conversations/${conversationId}`);
   if (!response.ok) {
     throw new Error('Failed to load conversation');
   }
@@ -53,7 +52,7 @@ export const appendMessage = async (
   text: string,
   options?: { turnId?: string; replaceExisting?: boolean; metadata?: ConversationMessageMetadata },
 ): Promise<ConversationMessage> => {
-  const response = await fetch(`${API_URL}/conversations/${conversationId}/messages`, {
+  const response = await apiFetch(`${API_URL}/conversations/${conversationId}/messages`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -69,7 +68,7 @@ export const appendMessage = async (
 };
 
 export const deleteConversation = async (conversationId: string): Promise<void> => {
-  const response = await fetch(`${API_URL}/conversations/${conversationId}`, {
+  const response = await apiFetch(`${API_URL}/conversations/${conversationId}`, {
     method: 'DELETE',
   });
 
