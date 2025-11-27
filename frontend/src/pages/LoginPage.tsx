@@ -1,4 +1,5 @@
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import type { FormEvent } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Sparkles, ShieldCheck, Lock, ArrowRight, Sun, Moon, LogIn } from 'lucide-react';
 import { useAuth } from '../auth/AuthProvider';

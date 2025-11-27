@@ -57,8 +57,8 @@ services:
       S3_BUCKET_NAME: ${S3_BUCKET_NAME:-helpudoc}
     entrypoint: ["/bin/sh", "-c"]
     command: >
-      set -e;
-      until (mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"); do
+      set -euo pipefail;
+      until mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"; do
         sleep 1;
       done;
       mc mb -p local/"$${S3_BUCKET_NAME}" || true;
@@ -81,6 +81,7 @@ services:
       SESSION_SECRET: ${SESSION_SECRET:-change-me}
       SESSION_NAME: ${SESSION_NAME:-helpudoc.sid}
       SESSION_TTL_SECONDS: ${SESSION_TTL_SECONDS:-604800}
+      AGENT_URL: http://agent:8001
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
       POSTGRES_DB: ${POSTGRES_DB:-helpudoc}
@@ -92,9 +93,13 @@ services:
       AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
       S3_BUCKET_NAME: ${S3_BUCKET_NAME:-helpudoc}
       S3_ENDPOINT: http://minio:9000
+      S3_PUBLIC_BASE_URL: ${S3_PUBLIC_BASE_URL:-http://localhost:9000/helpudoc}
       S3_FORCE_PATH_STYLE: "true"
+      WORKSPACE_ROOT: /app/workspaces
     ports:
       - "3000:3000"
+    volumes:
+      - workspace_data:/app/workspaces
 
   agent:
     build:
@@ -102,20 +107,24 @@ services:
     depends_on:
       backend:
         condition: service_started
+    env_file:
+      - agent/.env
     environment:
-      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
-      GOOGLE_CLOUD_API_KEY: ${GOOGLE_CLOUD_API_KEY:-}
       S3_ENDPOINT: http://minio:9000
       MINIO_ENDPOINT: http://minio:9000
       S3_BUCKET_NAME: ${S3_BUCKET_NAME:-helpudoc}
+      S3_PUBLIC_BASE_URL: ${S3_PUBLIC_BASE_URL:-http://localhost:9000/helpudoc}
     ports:
       - "8001:8001"
+    volumes:
+      - workspace_data:/app/workspaces
 
   frontend:
     build:
       context: ./frontend
       args:
-        VITE_API_URL: http://backend:3000/api
+        VITE_API_URL: ${FRONTEND_API_URL:-/api}
+        VITE_GOOGLE_CLIENT_ID: ${VITE_GOOGLE_CLIENT_ID:-}
     depends_on:
       backend:
         condition: service_started
@@ -126,3 +135,4 @@ volumes:
   postgres_data:
   redis_data:
   minio_data:
+  workspace_data:

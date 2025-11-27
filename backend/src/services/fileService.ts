@@ -6,7 +6,9 @@ import { Knex } from 'knex';
 import { WorkspaceService } from './workspaceService';
 import { ConflictError, NotFoundError } from '../errors';
 
-const WORKSPACE_DIR = path.join(process.cwd(), 'workspaces');
+const WORKSPACE_DIR = process.env.WORKSPACE_ROOT
+  ? path.resolve(process.env.WORKSPACE_ROOT)
+  : path.join(process.cwd(), 'workspaces');
 const TEXT_MIME_TYPES = [
   'text/plain',
   'text/markdown',

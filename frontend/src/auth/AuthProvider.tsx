@@ -23,6 +23,15 @@ type GoogleCredentialPayload = {
   picture?: string;
 };
 
+type GoogleCredentialResponse = {
+  credential?: string;
+};
+
+type PromptMomentNotification = {
+  isNotDisplayed: () => boolean;
+  isSkippedMoment: () => boolean;
+};
+
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -93,7 +102,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         window.google!.accounts.id.initialize({
           client_id: GOOGLE_CLIENT_ID,
-          callback: (response) => {
+          callback: (response: GoogleCredentialResponse) => {
             if (settled) return;
             if (!response?.credential) {
               settled = true;
@@ -121,7 +130,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           },
         });
 
-        window.google!.accounts.id.prompt((notification) => {
+        window.google!.accounts.id.prompt((notification: PromptMomentNotification) => {
           if (settled) return;
           if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
             settled = true;

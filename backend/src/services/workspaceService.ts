@@ -6,7 +6,9 @@ import { DatabaseService } from './databaseService';
 import { UserContext } from '../types/user';
 import { AccessDeniedError, NotFoundError } from '../errors';
 
-const WORKSPACE_DIR = path.join(process.cwd(), 'workspaces');
+const WORKSPACE_DIR = process.env.WORKSPACE_ROOT
+  ? path.resolve(process.env.WORKSPACE_ROOT)
+  : path.join(process.cwd(), 'workspaces');
 
 export type WorkspaceRole = 'owner' | 'editor' | 'viewer';
 

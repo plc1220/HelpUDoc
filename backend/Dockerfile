@@ -7,7 +7,7 @@ COPY package*.json ./
 COPY tsconfig.json ./
 
 # Install all dependencies (ts-node lives in devDependencies)
-RUN npm ci
+RUN npm ci --legacy-peer-deps
 
 # Copy the rest of the backend source code (including seed workspace data)
 COPY src ./src

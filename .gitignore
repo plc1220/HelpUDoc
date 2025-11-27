@@ -21,4 +21,6 @@ licheng_accessKeys.csv
 workspaces.db
 .minio-data/
 .postgres-data/
+.redis-data/
 backend/workspaces.db
+.pytest_cache/
