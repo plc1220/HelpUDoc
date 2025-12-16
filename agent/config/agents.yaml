@@ -9,7 +9,7 @@ model:
   use_vertex_ai: false
 
 backend:
-  workspace_root: /app/workspaces
+  workspace_root: backend/workspaces
   virtual_mode: true
 
 tools:

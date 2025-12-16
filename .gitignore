@@ -17,6 +17,10 @@ Thumbs.db
 agent/.venv
 licheng_accessKeys.csv
 
+# Python artifacts
+__pycache__/
+*.py[cod]
+
 # Database and Data
 workspaces.db
 .minio-data/
@@ -24,3 +28,4 @@ workspaces.db
 .redis-data/
 backend/workspaces.db
 .pytest_cache/
+backend/workspaces/

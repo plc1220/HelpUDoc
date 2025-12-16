@@ -5,10 +5,20 @@ export interface PresentationRequest {
   brief?: string;
   fileIds: number[];
   persona?: string;
+  output?: 'slides' | 'poster';
+  content?: 'paper' | 'general';
+  style?: string;
+  length?: 'short' | 'medium' | 'long';
+  mode?: 'fast' | 'normal';
+  parallel?: number | boolean;
+  fromStage?: 'rag' | 'analysis' | 'summary' | 'plan' | 'generate';
 }
 
 export interface PresentationResponse {
-  htmlPath: string;
+  htmlPath?: string;
+  pdfPath?: string;
+  slideImages?: string[];
+  jobId?: string;
 }
 
 export const createPresentation = async (payload: PresentationRequest): Promise<PresentationResponse> => {

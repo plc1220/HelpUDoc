@@ -9,7 +9,7 @@ import {
   createTheme,
   type PaletteMode,
 } from '@mui/material';
-import { Copy, Edit, Trash, Star, Send, Plus, ChevronRight, ChevronLeft, RotateCcw, Maximize2, Minimize2, X, FileIcon, Printer, Download, Link as LinkIcon, MonitorPlay, StopCircle } from 'lucide-react';
+import { CheckSquare, Copy, Edit, Trash, Star, Send, Plus, ChevronRight, ChevronLeft, RotateCcw, Maximize2, Minimize2, X, FileIcon, Printer, Download, Link as LinkIcon, MonitorPlay, StopCircle, Loader2 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { getWorkspaces, createWorkspace, deleteWorkspace } from '../services/workspaceApi';
@@ -22,9 +22,9 @@ import {
   renameFile,
   getWorkspaceFilePreview,
 } from '../services/fileApi';
+import { startPaper2SlidesJob, getPaper2SlidesJob } from '../services/paper2SlidesJobApi';
 import { fetchPersonas, runAgentStream, type AgentStreamChunk } from '../services/agentApi';
 import { fetchRecentConversations, createConversation as createConversationApi, fetchConversationDetail, appendMessage as appendConversationMessage, deleteConversation as deleteConversationApi } from '../services/conversationApi';
-import { createPresentation } from '../services/presentationApi';
 import type {
   Workspace,
   File as WorkspaceFile,
@@ -84,6 +84,22 @@ const buildTheme = (mode: PaletteMode) =>
   });
 
 const THOUGHT_PREVIEW_LIMIT = 320;
+const PAPER2SLIDES_STAGE_ORDER = ['rag', 'analysis', 'plan', 'generate'] as const;
+const PAPER2SLIDES_STYLE_PRESETS = ['academic', 'doraemon', 'custom'] as const;
+
+type Paper2SlidesStage = (typeof PAPER2SLIDES_STAGE_ORDER)[number];
+type Paper2SlidesStylePreset = (typeof PAPER2SLIDES_STYLE_PRESETS)[number];
+
+type PresentationOptionsState = {
+  output: 'slides' | 'poster';
+  content: 'paper' | 'general';
+  stylePreset: Paper2SlidesStylePreset;
+  customStyle: string;
+  length: 'short' | 'medium' | 'long';
+  mode: 'fast' | 'normal';
+  parallel: number;
+  fromStage?: Paper2SlidesStage;
+};
 
 type FilePreviewPayload = {
   path: string;
@@ -278,13 +294,28 @@ export default function WorkspacePage() {
   const [conversationHistory, setConversationHistory] = useState<ConversationSummary[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [activeConversationPersona, setActiveConversationPersona] = useState<string | null>(null);
+  const [presentationOptions, setPresentationOptions] = useState<PresentationOptionsState>({
+    output: 'slides',
+    content: 'paper',
+    stylePreset: 'academic',
+    customStyle: '',
+    length: 'medium',
+    mode: 'fast',
+    parallel: 2,
+  });
+  const [presentationStatus, setPresentationStatus] = useState<'idle' | 'running' | 'success' | 'error'>('idle');
+  const [presentationStageIndex, setPresentationStageIndex] = useState<number>(-1);
+  const [isPresentationModalOpen, setIsPresentationModalOpen] = useState(false);
+  const [draftPresentationOptions, setDraftPresentationOptions] = useState<PresentationOptionsState | null>(null);
   const streamAbortRef = useRef<AbortController | null>(null);
+  const presentationJobPollsRef = useRef<Map<string, number>>(new Map());
   const messagesRef = useRef<ConversationMessage[]>([]);
   const agentMessageBufferRef = useRef<Map<ConversationMessage['id'], string>>(new Map());
   const stopRequestedRef = useRef(false);
   const lastUserMessageRef = useRef<string>('');
   const chatInputRef = useRef<HTMLTextAreaElement | null>(null);
   const attachmentInputRef = useRef<HTMLInputElement | null>(null);
+  const presentationProgressTimerRef = useRef<number | null>(null);
   const [isMentionOpen, setIsMentionOpen] = useState(false);
   const [mentionQuery, setMentionQuery] = useState('');
   const [mentionTriggerIndex, setMentionTriggerIndex] = useState<number | null>(null);
@@ -298,6 +329,7 @@ export default function WorkspacePage() {
   const [copiedWorkspaceContent, setCopiedWorkspaceContent] = useState(false);
   const [copiedMessageId, setCopiedMessageId] = useState<ConversationMessage['id'] | null>(null);
   const theme = useMemo(() => buildTheme(colorMode), [colorMode]);
+  const allFilesSelected = files.length > 0 && selectedFiles.size === files.length;
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', colorMode);
@@ -329,6 +361,87 @@ export default function WorkspacePage() {
     const persona = personas.find((item) => item.name === personaId);
     return persona?.displayName || personaId;
   }, [activeConversationPersona, selectedPersona, personas]);
+
+  const presentationOptionSummary = useMemo(() => {
+    const parts = [
+      presentationOptions.output === 'slides' ? 'Slides' : 'Poster',
+      presentationOptions.length.charAt(0).toUpperCase() + presentationOptions.length.slice(1),
+      presentationOptions.mode === 'fast' ? 'Fast' : 'Normal',
+      presentationOptions.stylePreset === 'custom'
+        ? presentationOptions.customStyle.trim() || 'Custom'
+        : presentationOptions.stylePreset.charAt(0).toUpperCase() + presentationOptions.stylePreset.slice(1),
+      presentationOptions.content === 'paper' ? 'Paper' : 'General',
+    ];
+    return parts.filter(Boolean).join(' · ');
+  }, [presentationOptions]);
+
+  const resolvePresentationStyle = useCallback(() => {
+    if (presentationOptions.stylePreset === 'custom') {
+      return presentationOptions.customStyle.trim();
+    }
+    return presentationOptions.stylePreset;
+  }, [presentationOptions]);
+
+  const handleDraftPresentationOptionChange = useCallback(
+    <K extends keyof PresentationOptionsState>(key: K, value: PresentationOptionsState[K]) => {
+      setDraftPresentationOptions((prev) => {
+        const base = prev || presentationOptions;
+        return { ...base, [key]: value };
+      });
+    },
+    [presentationOptions],
+  );
+
+  const handleOpenPresentationModal = useCallback(() => {
+    setDraftPresentationOptions(presentationOptions);
+    setIsPresentationModalOpen(true);
+  }, [presentationOptions]);
+
+  const handleClosePresentationModal = useCallback(() => {
+    setIsPresentationModalOpen(false);
+    setDraftPresentationOptions(null);
+  }, []);
+
+  const handleSavePresentationOptions = useCallback(() => {
+    if (draftPresentationOptions) {
+      setPresentationOptions(draftPresentationOptions);
+    }
+    setIsPresentationModalOpen(false);
+  }, [draftPresentationOptions]);
+
+  const startPresentationProgress = useCallback(() => {
+    setPresentationStatus('running');
+    setPresentationStageIndex(0);
+    if (presentationProgressTimerRef.current !== null) {
+      window.clearInterval(presentationProgressTimerRef.current);
+    }
+    presentationProgressTimerRef.current = window.setInterval(() => {
+      setPresentationStageIndex((prev) => {
+        if (prev < PAPER2SLIDES_STAGE_ORDER.length - 1) {
+          return prev + 1;
+        }
+        return prev;
+      });
+    }, 1400);
+  }, []);
+
+  const stopPresentationProgress = useCallback(
+    (status: 'success' | 'error' = 'success') => {
+      if (presentationProgressTimerRef.current !== null) {
+        window.clearInterval(presentationProgressTimerRef.current);
+        presentationProgressTimerRef.current = null;
+      }
+      setPresentationStatus(status);
+      setPresentationStageIndex((current) =>
+        status === 'success' ? PAPER2SLIDES_STAGE_ORDER.length - 1 : current,
+      );
+      window.setTimeout(() => {
+        setPresentationStatus('idle');
+        setPresentationStageIndex(-1);
+      }, 1500);
+    },
+    [],
+  );
 
   const formatMessageTimestamp = useCallback((value?: string) => {
     if (!value) {
@@ -509,6 +622,16 @@ export default function WorkspacePage() {
     };
   }, []);
 
+  useEffect(() => {
+    return () => {
+      if (presentationProgressTimerRef.current !== null) {
+        window.clearInterval(presentationProgressTimerRef.current);
+      }
+      presentationJobPollsRef.current.forEach((timerId) => window.clearInterval(timerId));
+      presentationJobPollsRef.current.clear();
+    };
+  }, []);
+
   const agentPaneStyles: CSSProperties = {
     flexBasis: agentPaneWidth,
     width: agentPaneWidth,
@@ -600,6 +723,31 @@ export default function WorkspacePage() {
       console.error('Failed to copy workspace content', error);
     }
   }, [fileContent, selectedFile]);
+
+  const addPendingPresentationPlaceholder = useCallback(
+    (jobId: string, workspaceId: string) => {
+      const placeholder: WorkspaceFile = {
+        id: `paperjob-${jobId}`,
+        name: `presentations/slide_${jobId}/ (pending)`,
+        workspaceId,
+        path: `presentations/slide_${jobId}/`,
+        mimeType: 'application/vnd.helpudoc.paper2slides-job',
+        publicUrl: null,
+        content: undefined,
+      };
+      setFiles((prev) => [...prev, placeholder]);
+    },
+    [],
+  );
+
+  const removePendingPresentationPlaceholder = useCallback((jobId: string) => {
+    setFiles((prev) => prev.filter((file) => file.id !== `paperjob-${jobId}`));
+    setSelectedFiles((prev) => {
+      const next = new Set(prev);
+      next.delete(`paperjob-${jobId}`);
+      return next;
+    });
+  }, []);
 
   const handleCopyFilePublicUrl = useCallback(async (file: WorkspaceFile) => {
     if (!file.publicUrl || !navigator?.clipboard) {
@@ -1365,6 +1513,7 @@ export default function WorkspacePage() {
       brief,
       fileIds,
       fileNames,
+      persona,
     }: {
       workspaceId: string;
       conversationId: string;
@@ -1372,19 +1521,22 @@ export default function WorkspacePage() {
       brief: string;
       fileIds: number[];
       fileNames: string[];
+      persona: string;
     }) => {
       if (!fileIds.length) {
         addLocalSystemMessage('Tag at least one file using @filename before running /presentation.');
         return;
       }
+      const resolvedStyle = resolvePresentationStyle();
       let agentMessageIndex = -1;
       let placeholderId: ConversationMessage['id'] | null = null;
+      const startedAt = new Date().toISOString();
       setMessages((prevMessages) => {
         const placeholder: ConversationMessage = {
           id: `agent-${Date.now()}-presentation`,
           conversationId,
           sender: 'agent',
-          text: 'Generating presentation slides…',
+          text: 'Queued Paper2Slides job…',
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
           turnId,
@@ -1395,15 +1547,37 @@ export default function WorkspacePage() {
         return updated;
       });
       if (placeholderId) {
-        agentMessageBufferRef.current.set(placeholderId, 'Generating presentation slides…');
+        agentMessageBufferRef.current.set(placeholderId, 'Queued Paper2Slides job…');
       }
       setIsStreaming(true);
+      startPresentationProgress();
       try {
-        const response = await createPresentation({
+        const startResponse = await startPaper2SlidesJob({
           workspaceId,
           brief,
           fileIds,
+          persona,
+          output: presentationOptions.output,
+          content: presentationOptions.content,
+          style: resolvedStyle || undefined,
+          length: presentationOptions.length,
+          mode: presentationOptions.mode,
+          parallel: presentationOptions.parallel,
+          fromStage: presentationOptions.fromStage,
         });
+        addPendingPresentationPlaceholder(startResponse.jobId, workspaceId);
+        const jobLabel = `Paper2Slides job ${startResponse.jobId.slice(0, 8)}`;
+        setMessages((prev) => {
+          const updated = [...prev];
+          if (agentMessageIndex >= 0 && updated[agentMessageIndex]) {
+            updated[agentMessageIndex] = {
+              ...updated[agentMessageIndex],
+              text: `${jobLabel} started…`,
+            };
+          }
+          return updated;
+        });
+
         const targetLabel =
           brief ||
           (fileNames.length === 1
@@ -1411,57 +1585,113 @@ export default function WorkspacePage() {
             : fileNames.length > 1
               ? `${fileNames.length} files`
               : 'selected files');
-        const summaryText = `Generated HTML presentation for ${targetLabel}.`;
-        const toolEvent: ToolEvent = {
-          id: `presentation-${Date.now()}`,
-          name: 'presentation',
-          status: 'completed',
-          startedAt: new Date().toISOString(),
-          finishedAt: new Date().toISOString(),
-          summary: summaryText,
-          outputFiles: [
-            { path: response.htmlPath, mimeType: 'text/html' },
-          ],
-        };
-        let persisted: ConversationMessage | null = null;
-        try {
-          persisted = await appendConversationMessage(conversationId, 'agent', summaryText, {
-            turnId,
-            metadata: {
-              toolEvents: [toolEvent],
-            },
-          });
-        } catch (error) {
-          console.error('Failed to persist presentation summary', error);
-        }
-        const hydratedPersisted = persisted ? mergeMessageMetadata(persisted) : null;
-        setMessages((prev) => {
-          const updated = [...prev];
-          const target = updated[agentMessageIndex];
-          if (!target) {
-            return updated;
+
+        const finalizeMessage = async (
+          status: 'completed' | 'failed',
+          payload?: { pdfPath?: string; slideImages?: string[]; htmlPath?: string; error?: string },
+          finishedAt?: string,
+        ) => {
+          const outputFiles: ToolOutputFile[] = [];
+          if (payload?.pdfPath) {
+            outputFiles.push({ path: payload.pdfPath, mimeType: 'application/pdf' });
           }
-          const baseMessage = hydratedPersisted || target;
-          const mergedToolEvents =
-            (baseMessage.toolEvents && baseMessage.toolEvents.length
-              ? baseMessage.toolEvents
-              : [...(target.toolEvents || []), toolEvent]);
-          updated[agentMessageIndex] = {
-            ...baseMessage,
-            text: summaryText,
-            thinkingText: target.thinkingText,
-            toolEvents: mergedToolEvents,
+          if (payload?.slideImages?.length) {
+            payload.slideImages.forEach((path) => outputFiles.push({ path, mimeType: 'image/png' }));
+          }
+          if (payload?.htmlPath) {
+            outputFiles.push({ path: payload.htmlPath, mimeType: 'text/html' });
+          }
+
+          const summaryText =
+            status === 'completed'
+              ? `Generated ${presentationOptions.output} with Paper2Slides (${presentationOptions.mode}, ${presentationOptions.length})${resolvedStyle ? ` · style: ${resolvedStyle}` : ''} for ${targetLabel}.`
+              : `Paper2Slides job failed: ${payload?.error || 'Unknown error'}`;
+
+          const toolEvent: ToolEvent = {
+            id: `presentation-${startResponse.jobId}`,
+            name: 'paper2slides',
+            status: status === 'completed' ? 'completed' : 'error',
+            startedAt: startedAt,
+            finishedAt: finishedAt || new Date().toISOString(),
+            summary: summaryText,
+            outputFiles,
           };
-          return updated;
-        });
-        if (placeholderId) {
-          agentMessageBufferRef.current.delete(placeholderId);
+
+          let persisted: ConversationMessage | null = null;
+          try {
+            persisted = await appendConversationMessage(conversationId, 'agent', summaryText, {
+              turnId,
+              metadata: { toolEvents: [toolEvent] },
+            });
+          } catch (error) {
+            console.error('Failed to persist presentation summary', error);
+          }
+          const hydratedPersisted = persisted ? mergeMessageMetadata(persisted) : null;
+
+          setMessages((prev) => {
+            const updated = [...prev];
+            const target = updated[agentMessageIndex];
+            if (!target) {
+              return updated;
+            }
+            const baseMessage = hydratedPersisted || target;
+            const mergedToolEvents =
+              (baseMessage.toolEvents && baseMessage.toolEvents.length
+                ? baseMessage.toolEvents
+                : [...(target.toolEvents || []), toolEvent]);
+            updated[agentMessageIndex] = {
+              ...baseMessage,
+              text: summaryText,
+              thinkingText: target.thinkingText,
+              toolEvents: mergedToolEvents,
+            };
+            return updated;
+          });
+
+          if (placeholderId) {
+            agentMessageBufferRef.current.delete(placeholderId);
+          }
+          if (persisted?.id) {
+            agentMessageBufferRef.current.set(persisted.id, persisted.text || summaryText);
+          }
+        };
+
+        const poll = async () => {
+          try {
+            const status = await getPaper2SlidesJob(startResponse.jobId);
+            if (status.status === 'completed') {
+              await finalizeMessage('completed', status.result, status.updatedAt);
+              stopPresentationProgress('success');
+              removePendingPresentationPlaceholder(startResponse.jobId);
+              await loadFilesForWorkspace(workspaceId);
+              await refreshConversationHistory(workspaceId);
+              return true;
+            }
+            if (status.status === 'failed') {
+              await finalizeMessage('failed', { error: status.error });
+              stopPresentationProgress('error');
+              removePendingPresentationPlaceholder(startResponse.jobId);
+              return true;
+            }
+            return false;
+          } catch (error) {
+            console.error('Failed to poll Paper2Slides job', error);
+            return false;
+          }
+        };
+
+        // kick off poll loop
+        const finishedImmediately = await poll();
+        if (!finishedImmediately) {
+          const timerId = window.setInterval(async () => {
+            const done = await poll();
+            if (done) {
+              window.clearInterval(timerId);
+              presentationJobPollsRef.current.delete(startResponse.jobId);
+            }
+          }, 2500);
+          presentationJobPollsRef.current.set(startResponse.jobId, timerId);
         }
-        if (persisted?.id) {
-          agentMessageBufferRef.current.set(persisted.id, persisted.text || summaryText);
-        }
-        await refreshConversationHistory(workspaceId);
-        await loadFilesForWorkspace(workspaceId);
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Failed to generate presentation.';
         console.error('Presentation generation failed', error);
@@ -1476,6 +1706,7 @@ export default function WorkspacePage() {
           return updated;
         });
         addLocalSystemMessage(`Presentation request failed: ${message}`);
+        stopPresentationProgress('error');
         if (placeholderId) {
           agentMessageBufferRef.current.delete(placeholderId);
         }
@@ -1484,7 +1715,27 @@ export default function WorkspacePage() {
         stopRequestedRef.current = false;
       }
     },
-    [addLocalSystemMessage, appendConversationMessage, createPresentation, loadFilesForWorkspace, refreshConversationHistory],
+    [
+      addLocalSystemMessage,
+      appendConversationMessage,
+      loadFilesForWorkspace,
+      presentationOptions.content,
+      presentationOptions.length,
+      presentationOptions.mode,
+      presentationOptions.output,
+      presentationOptions.parallel,
+      presentationOptions.stylePreset,
+      presentationOptions.customStyle,
+      presentationOptions.fromStage,
+      refreshConversationHistory,
+      resolvePresentationStyle,
+      startPresentationProgress,
+      stopPresentationProgress,
+      startPaper2SlidesJob,
+      getPaper2SlidesJob,
+      removePendingPresentationPlaceholder,
+      addPendingPresentationPlaceholder,
+    ],
   );
 
   const handleSendMessage = async () => {
@@ -1584,6 +1835,7 @@ export default function WorkspacePage() {
         brief: presentationBrief,
         fileIds: presentationFileIds,
         fileNames: mentionedFiles.map((file) => file.name),
+        persona,
       });
       return;
     }
@@ -1821,6 +2073,18 @@ export default function WorkspacePage() {
     setSelectedFiles(newSelectedFiles);
   };
 
+  const handleSelectAllFiles = () => {
+    if (!files.length) {
+      setSelectedFiles(new Set());
+      return;
+    }
+    if (allFilesSelected) {
+      setSelectedFiles(new Set());
+      return;
+    }
+    setSelectedFiles(new Set(files.map((file) => file.id)));
+  };
+
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     if (!selectedWorkspace || !event.target.files || event.target.files.length === 0) {
       return;
@@ -1996,6 +2260,14 @@ export default function WorkspacePage() {
                           <RotateCcw size={18} className="text-gray-600" />
                         </button>
                         <button
+                          onClick={handleSelectAllFiles}
+                          disabled={files.length === 0}
+                          className="p-2 rounded-lg hover:bg-gray-100 disabled:opacity-50"
+                          title={allFilesSelected ? 'Clear selection' : 'Select all files'}
+                        >
+                          <CheckSquare size={18} className="text-gray-600" />
+                        </button>
+                        <button
                           onClick={handleBulkDelete}
                           disabled={selectedFiles.size === 0}
                           className="p-2 rounded-lg hover:bg-gray-100 disabled:opacity-50"
@@ -2010,72 +2282,86 @@ export default function WorkspacePage() {
                       }`}
                     aria-hidden={!isFilePaneVisible}
                   >
-                    {files.map((file) => (
-                      <div
-                        key={file.id}
-                        className={`group flex items-center p-2 rounded-lg cursor-pointer transition-colors ${selectedFile?.id === file.id ? 'bg-blue-50' : 'hover:bg-gray-100'
-                          }`}
-                        onMouseEnter={() => setHoveredFileId(file.id)}
-                        onMouseLeave={() => setHoveredFileId((current) => (current === file.id ? null : current))}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={selectedFiles.has(file.id)}
-                          onChange={() => handleFileSelect(file.id)}
-                          className="mr-3"
-                        />
+                    {files.map((file) => {
+                      const isPendingJob = file.mimeType === 'application/vnd.helpudoc.paper2slides-job';
+                      return (
                         <div
-                          onClick={() => {
-                            setSelectedFile(file);
-                            setSelectedFileDetails(null);
-                            setFileContent('');
-                            setIsEditMode(shouldForceEditMode(file.name));
-                          }}
-                          className="flex-1 flex items-start justify-between gap-2 min-w-0"
+                          key={file.id}
+                          className={`group flex items-center p-2 rounded-lg cursor-pointer transition-colors ${selectedFile?.id === file.id ? 'bg-blue-50' : 'hover:bg-gray-100'
+                            }`}
+                          onMouseEnter={() => setHoveredFileId(file.id)}
+                          onMouseLeave={() => setHoveredFileId((current) => (current === file.id ? null : current))}
                         >
-                          <span className="text-gray-800 break-all whitespace-normal leading-snug">
-                            {file.name}
-                          </span>
-                          <div className={`shrink-0 items-center gap-1 ml-1 ${hoveredFileId === file.id ? 'flex' : 'hidden group-hover:flex'}`}>
-                            {file.publicUrl && (
-                              <button
-                                type="button"
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  handleCopyFilePublicUrl(file);
-                                }}
-                                className="p-1 rounded hover:bg-gray-200"
-                                title={copiedFileUrlId === file.id ? 'Copied!' : file.publicUrl}
-                              >
-                                <LinkIcon size={14} className="text-gray-600" />
-                              </button>
+                          <input
+                            type="checkbox"
+                            checked={selectedFiles.has(file.id)}
+                            disabled={isPendingJob}
+                            onChange={() => handleFileSelect(file.id)}
+                            className="mr-3"
+                          />
+                          <div
+                            onClick={() => {
+                              if (isPendingJob) {
+                                return;
+                              }
+                              setSelectedFile(file);
+                              setSelectedFileDetails(null);
+                              setFileContent('');
+                              setIsEditMode(shouldForceEditMode(file.name));
+                            }}
+                            className="flex-1 flex items-start justify-between gap-2 min-w-0"
+                          >
+                            <div className="flex items-center gap-2 min-w-0">
+                              {isPendingJob && (
+                                <Loader2 size={14} className="text-blue-500 animate-spin shrink-0" />
+                              )}
+                              <span className="text-gray-800 break-all whitespace-normal leading-snug">
+                                {file.name}
+                              </span>
+                            </div>
+                            {!isPendingJob && (
+                              <div className={`shrink-0 items-center gap-1 ml-1 ${hoveredFileId === file.id ? 'flex' : 'hidden group-hover:flex'}`}>
+                                {file.publicUrl && (
+                                  <button
+                                    type="button"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      handleCopyFilePublicUrl(file);
+                                    }}
+                                    className="p-1 rounded hover:bg-gray-200"
+                                    title={copiedFileUrlId === file.id ? 'Copied!' : file.publicUrl}
+                                  >
+                                    <LinkIcon size={14} className="text-gray-600" />
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    handleRenameFile(file);
+                                  }}
+                                  className="p-1 rounded hover:bg-gray-200"
+                                  title="Rename"
+                                >
+                                  <Edit size={14} className="text-gray-600" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    handleDeleteSingleFile(file);
+                                  }}
+                                  className="p-1 rounded hover:bg-gray-200"
+                                  title="Delete"
+                                >
+                                  <Trash size={14} className="text-gray-600" />
+                                </button>
+                              </div>
                             )}
-                            <button
-                              type="button"
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                handleRenameFile(file);
-                              }}
-                              className="p-1 rounded hover:bg-gray-200"
-                              title="Rename"
-                            >
-                              <Edit size={14} className="text-gray-600" />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                handleDeleteSingleFile(file);
-                              }}
-                              className="p-1 rounded hover:bg-gray-200"
-                              title="Delete"
-                            >
-                              <Trash size={14} className="text-gray-600" />
-                            </button>
                           </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
 
@@ -2432,6 +2718,71 @@ export default function WorkspacePage() {
                 </div>
                 <div className="border-t border-gray-200 bg-white p-4">
                   <div className="space-y-3">
+                    <div className="rounded-2xl border border-blue-100 bg-white p-3 shadow-sm">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                          <p className="text-xs font-semibold uppercase tracking-wide text-blue-900">Paper2Slides</p>
+                          <p className="text-[11px] text-slate-500">
+                            {presentationOptionSummary || 'Generate themed slides/posters instead of plain HTML.'}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={handleOpenPresentationModal}
+                            className="inline-flex items-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700 shadow-sm transition hover:bg-blue-100"
+                            title="Configure Paper2Slides options"
+                          >
+                            <MonitorPlay size={14} />
+                            Configure
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleInsertPresentationShortcut}
+                            className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
+                            title="Insert /presentation command"
+                          >
+                            Use /presentation
+                          </button>
+                        </div>
+                      </div>
+                      {presentationStatus !== 'idle' && (
+                        <div className="mt-3 flex flex-wrap items-center gap-2">
+                          {PAPER2SLIDES_STAGE_ORDER.map((stage, index) => {
+                            const isActive = presentationStatus === 'running' && index === presentationStageIndex;
+                            const isDone =
+                              presentationStatus === 'success' ||
+                              (presentationStatus === 'running' && index < presentationStageIndex);
+                            const label = stage === 'rag' ? 'RAG' : stage.charAt(0).toUpperCase() + stage.slice(1);
+                            return (
+                              <span
+                                key={stage}
+                                className={`rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-wide ${
+                                  isDone
+                                    ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                                    : isActive
+                                      ? 'border-blue-200 bg-blue-50 text-blue-700'
+                                      : 'border-slate-200 bg-slate-50 text-slate-500'
+                                }`}
+                              >
+                                {label}
+                              </span>
+                            );
+                          })}
+                          <span
+                            className={`text-xs font-semibold ${
+                              presentationStatus === 'error' ? 'text-red-600' : 'text-emerald-700'
+                            }`}
+                          >
+                            {presentationStatus === 'running'
+                              ? 'Running…'
+                              : presentationStatus === 'success'
+                                ? 'Completed'
+                                : 'Failed'}
+                          </span>
+                        </div>
+                      )}
+                    </div>
                     {chatAttachments.length > 0 && (
                       <div className="flex flex-wrap gap-2">
                         {chatAttachments.map((file, index) => (
@@ -2475,18 +2826,7 @@ export default function WorkspacePage() {
                             rows={3}
                             style={{ overflowY: 'auto' }}
                           />
-                          <div className="flex items-center gap-2">
-                            <button
-                              type="button"
-                              onClick={handleInsertPresentationShortcut}
-                              className="inline-flex items-center gap-2 rounded-full border border-blue-200 bg-white px-3 py-1.5 text-xs font-semibold text-blue-700 shadow-sm transition hover:bg-blue-50"
-                              title="Generate presentation slides"
-                            >
-                              <MonitorPlay size={14} />
-                              the presentation
-                            </button>
-                          </div>
-                        </div>
+                      </div>
                         <div className="flex items-center gap-2 shrink-0">
                           <button
                             onClick={isStreaming ? handleStopStreaming : handleSendMessage}
@@ -2537,6 +2877,175 @@ export default function WorkspacePage() {
           </div>
         </Box>
       </Box>
+      <PresentationModal
+        isOpen={isPresentationModalOpen}
+        draft={draftPresentationOptions}
+        onChange={handleDraftPresentationOptionChange}
+        onClose={handleClosePresentationModal}
+        onSave={handleSavePresentationOptions}
+      />
     </ThemeProvider>
+  );
+}
+
+function PresentationModal({
+  isOpen,
+  draft,
+  onChange,
+  onClose,
+  onSave,
+}: {
+  isOpen: boolean;
+  draft: PresentationOptionsState | null;
+  onChange: <K extends keyof PresentationOptionsState>(key: K, value: PresentationOptionsState[K]) => void;
+  onClose: () => void;
+  onSave: () => void;
+}) {
+  if (!isOpen || !draft) {
+    return null;
+  }
+  const showCustomStyle = draft.stylePreset === 'custom';
+
+  const selectClass =
+    'w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm text-slate-800';
+  const labelClass = 'flex flex-col gap-1 text-xs font-semibold text-slate-600';
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 px-4">
+      <div className="w-full max-w-3xl rounded-2xl bg-white p-5 shadow-2xl">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-sm font-semibold text-slate-900">Configure Paper2Slides</p>
+            <p className="text-xs text-slate-500">Choose output, style, and pipeline controls.</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-full p-2 text-slate-500 hover:bg-slate-100"
+            aria-label="Close"
+          >
+            <X size={16} />
+          </button>
+        </div>
+        <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          <label className={labelClass}>
+            <span>Output</span>
+            <select
+              className={selectClass}
+              value={draft.output}
+              onChange={(event) => onChange('output', event.target.value as PresentationOptionsState['output'])}
+            >
+              <option value="slides">Slides</option>
+              <option value="poster">Poster</option>
+            </select>
+          </label>
+          <label className={labelClass}>
+            <span>Length</span>
+            <select
+              className={selectClass}
+              value={draft.length}
+              onChange={(event) => onChange('length', event.target.value as PresentationOptionsState['length'])}
+            >
+              <option value="short">Short</option>
+              <option value="medium">Medium</option>
+              <option value="long">Long</option>
+            </select>
+          </label>
+          <label className={labelClass}>
+            <span>Mode</span>
+            <select
+              className={selectClass}
+              value={draft.mode}
+              onChange={(event) => onChange('mode', event.target.value as PresentationOptionsState['mode'])}
+            >
+              <option value="fast">Fast</option>
+              <option value="normal">Normal</option>
+            </select>
+          </label>
+          <label className={labelClass}>
+            <span>Style</span>
+            <select
+              className={selectClass}
+              value={draft.stylePreset}
+              onChange={(event) =>
+                onChange('stylePreset', event.target.value as PresentationOptionsState['stylePreset'])
+              }
+            >
+              {PAPER2SLIDES_STYLE_PRESETS.map((style) => (
+                <option key={style} value={style}>
+                  {style === 'custom' ? 'Custom prompt' : style.charAt(0).toUpperCase() + style.slice(1)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className={labelClass}>
+            <span>Content</span>
+            <select
+              className={selectClass}
+              value={draft.content}
+              onChange={(event) => onChange('content', event.target.value as PresentationOptionsState['content'])}
+            >
+              <option value="paper">Paper</option>
+              <option value="general">General</option>
+            </select>
+          </label>
+          <label className={labelClass}>
+            <span>Parallel</span>
+            <input
+              type="number"
+              min={1}
+              className={selectClass}
+              value={draft.parallel}
+              onChange={(event) => onChange('parallel', Math.max(1, Number(event.target.value) || 1))}
+            />
+          </label>
+          <label className={labelClass}>
+            <span>Restart from</span>
+            <select
+              className={selectClass}
+              value={draft.fromStage || ''}
+              onChange={(event) =>
+                onChange('fromStage', event.target.value ? (event.target.value as PresentationOptionsState['fromStage']) : undefined)
+              }
+            >
+              <option value="">Auto</option>
+              {PAPER2SLIDES_STAGE_ORDER.map((stage) => (
+                <option key={stage} value={stage}>
+                  {stage === 'rag' ? 'RAG' : stage.charAt(0).toUpperCase() + stage.slice(1)}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        {showCustomStyle && (
+          <div className="mt-3">
+            <label className="text-xs font-semibold text-slate-600">Style prompt</label>
+            <input
+              type="text"
+              className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800"
+              placeholder="e.g., Studio Ghibli watercolor with warm tones"
+              value={draft.customStyle}
+              onChange={(event) => onChange('customStyle', event.target.value)}
+            />
+          </div>
+        )}
+        <div className="mt-5 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={onSave}
+            className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-blue-700"
+          >
+            Save
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }

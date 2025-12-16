@@ -124,6 +124,7 @@ export class FileService {
     fileBuffer: Buffer,
     mimeType: string,
     userId: string,
+    options?: { forceLocal?: boolean },
   ) {
     await this.workspaceService.ensureMembership(workspaceId, userId, { requireEdit: true });
     const isText = this.isTextFile(fileName, mimeType);
@@ -131,7 +132,7 @@ export class FileService {
     let filePath: string;
     let publicUrl: string | null = null;
 
-    if (isText) {
+    if (isText || options?.forceLocal) {
       storageType = 'local';
       filePath = path.join(WORKSPACE_DIR, workspaceId, fileName);
       await fs.mkdir(path.dirname(filePath), { recursive: true });
