@@ -11,7 +11,7 @@ import { loggingMiddleware } from './api/logging';
 import { DatabaseService } from './services/databaseService';
 import { UserService } from './services/userService';
 import { userContextMiddleware } from './middleware/userContext';
-import { redisClient } from './services/redisService';
+import { blockingRedisClient, redisClient } from './services/redisService';
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -20,7 +20,7 @@ async function startServer() {
   const databaseService = new DatabaseService();
   await databaseService.initialize();
   const userService = new UserService(databaseService);
-  await redisClient.connect();
+  await Promise.all([redisClient.connect(), blockingRedisClient.connect()]);
 
   const sessionTtlSeconds = Number(process.env.SESSION_TTL_SECONDS);
   const sessionMaxAgeSeconds = Number.isFinite(sessionTtlSeconds) && sessionTtlSeconds > 0

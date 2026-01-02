@@ -27,6 +27,7 @@ export interface Paper2SlidesJobStatusResponse {
   status: Paper2SlidesJobStatus;
   result?: {
     pdfPath?: string;
+    pptxPath?: string;
     slideImages?: string[];
     htmlPath?: string;
   };

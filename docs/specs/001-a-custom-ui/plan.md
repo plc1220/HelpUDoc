@@ -1,7 +1,7 @@
 # Implementation Plan: Custom Agent UI and Backend
 
 **Branch**: `001-a-custom-ui` | **Date**: 2025-10-15 | **Spec**: [./spec.md](./spec.md)
-**Input**: Feature specification from `/specs/[###-feature-name]/spec.md`
+**Input**: Feature specification from `/docs/specs/[###-feature-name]/spec.md`
 
 **Note**: This template is filled in by the `/speckit.plan` command. See `.specify/templates/commands/plan.md` for the execution workflow.
 
@@ -40,7 +40,7 @@ A custom UI for a ReAct agent, inspired by vscode and CLI agents like gemini-cli
 ### Documentation (this feature)
 
 ```
-specs/[###-feature]/
+docs/specs/[###-feature]/
 ├── plan.md              # This file (/speckit.plan command output)
 ├── research.md          # Phase 0 output (/speckit.plan command)
 ├── data-model.md        # Phase 1 output (/speckit.plan command)

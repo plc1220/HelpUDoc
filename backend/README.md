@@ -1,22 +1,25 @@
-# Custom Agent UI Backend
+# HelpUDoc Backend
 
-This is the backend for the Custom Agent UI. It is a Node.js application built with Express.
+The backend is a Node.js (Express + TypeScript) API that manages workspaces, files, knowledge sources, and agent runs. It persists to PostgreSQL, Redis, and MinIO/S3.
 
-## Getting Started
+## Getting started
 
 ### Prerequisites
 
 - Node.js 20.x
-- npm or yarn
+- npm (or yarn)
+- PostgreSQL, Redis, and MinIO (see Docker Compose below)
 
 ### Installation
 
-1. Navigate to the `backend` directory.
-2. Install dependencies: `npm install`
+```bash
+cd backend
+npm install
+```
 
-### Environment Variables
+### Environment variables
 
-Copy `.env.example` to `.env` inside the `backend` directory and update the values as needed:
+Copy `.env.example` to `.env` and update values as needed:
 
 ```bash
 cp .env.example .env
@@ -26,28 +29,31 @@ Key variables:
 
 - **PostgreSQL**
   - `DATABASE_URL` or the individual `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`.
-  - `DATABASE_SSL` – set to `false` locally, or `true/strict/allow` to toggle TLS when pointing at a managed database.
+  - `DATABASE_SSL` set to `false` locally, or `true/strict/allow` to toggle TLS when pointing at a managed database.
 - **Object storage**
-  - `S3_BUCKET_NAME`: Target bucket for binary files (defaults to `helpudoc`).
+  - `S3_BUCKET_NAME`: target bucket for binary files (defaults to `helpudoc`).
   - `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`: MinIO or AWS credentials.
-  - `S3_ENDPOINT`: The MinIO endpoint (e.g., `http://localhost:9000`).
-  - `S3_PUBLIC_BASE_URL`: Base URL exposed to the frontend for direct asset links (e.g., `http://localhost:9000/helpudoc`).
+  - `S3_ENDPOINT`: the MinIO endpoint (for example `http://localhost:9000`).
+  - `S3_PUBLIC_BASE_URL`: base URL exposed to the frontend for direct asset links (for example `http://localhost:9000/helpudoc`).
 - **Identity defaults**
-  - `DEFAULT_USER_ID`, `DEFAULT_USER_NAME`, `DEFAULT_USER_EMAIL` (optional) let you emulate a user when the client does not yet send headers.
+  - `DEFAULT_USER_ID`, `DEFAULT_USER_NAME`, `DEFAULT_USER_EMAIL` (optional) let you emulate a user when the client does not send headers.
 
-### Running the Application
+### Running the application
 
-1. Start the development server: `npm run dev`
-2. The API will be available at `http://localhost:3000`.
+```bash
+npm run dev
+```
 
-### Running MinIO & PostgreSQL Locally
+The API will be available at `http://localhost:3000/api`.
 
-This repository includes `docker-compose.minio.yml` in the project root. It provisions PostgreSQL plus MinIO and automatically creates a public `helpudoc` bucket.
+### Running dependencies locally
+
+This repository includes `infra/docker-compose.minio.yml`, which provisions PostgreSQL, Redis, and MinIO and creates a public `helpudoc` bucket.
 
 From the repository root run:
 
 ```bash
-docker compose -f docker-compose.minio.yml up -d
+docker compose -f infra/docker-compose.minio.yml up -d
 ```
 
 By default MinIO listens on:
@@ -55,7 +61,7 @@ By default MinIO listens on:
 - API: `http://localhost:9000`
 - Console UI: `http://localhost:9001`
 
-Use the same credentials from your `.env` file to sign in to MinIO. PostgreSQL is exposed on `localhost:5432` with matching defaults (`helpudoc/helpudoc`).
+PostgreSQL is exposed on `localhost:5432` with matching defaults (`helpudoc/helpudoc`).
 
 ### Identity headers
 
@@ -70,12 +76,12 @@ When these headers are absent the backend falls back to `DEFAULT_USER_*` so loca
 ## Features
 
 - **Multi-tenant workspaces**: Each workspace belongs to a user, with owner/editor/viewer roles managed through collaborator invitations.
-- **Agent Interaction**: Core endpoint to interact with a specified agent (enforces workspace access before issuing tool calls).
-- **Workspace Management**: Create, list, and share workspaces scoped to the authenticated user.
-- **File Management with optimistic locking**: Upload, download, and manage files. Each file tracks an incremental `version` so clients can avoid overwriting each other.
+- **Agent interaction**: Core endpoint to interact with a specified agent (enforces workspace access before issuing tool calls).
+- **Workspace management**: Create, list, and share workspaces scoped to the authenticated user.
+- **File management with optimistic locking**: Upload, download, and manage files. Each file tracks an incremental `version` so clients can avoid overwriting each other.
 - **Knowledge sources**: CRUD endpoints for text, table, image, presentation, and infographic knowledge entries tied to a workspace.
 
-## API Endpoints
+## API endpoints
 
 - `POST /api/agent/run`: Runs the agent with a given persona and prompt (must have edit access to the workspace).
 - `GET /api/workspaces`: Lists workspaces the caller belongs to.
@@ -96,4 +102,4 @@ When these headers are absent the backend falls back to `DEFAULT_USER_*` so loca
 - `PUT /api/workspaces/:workspaceId/knowledge/:knowledgeId`: Updates a knowledge source.
 - `DELETE /api/workspaces/:workspaceId/knowledge/:knowledgeId`: Deletes a knowledge source.
 
-Each file record now includes `storageType`, `mimeType`, `version`, and (for binary assets stored in MinIO) a `publicUrl`. Agents or UI clients can fetch `/api/workspaces/:workspaceId/files` to discover these URLs and embed them directly inside Markdown or HTML.
+Each file record includes `storageType`, `mimeType`, `version`, and (for binary assets stored in MinIO) a `publicUrl`. Agents or UI clients can fetch `/api/workspaces/:workspaceId/files` to discover these URLs and embed them directly inside Markdown or HTML.

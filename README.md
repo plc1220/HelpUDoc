@@ -2,41 +2,185 @@
 
 HelpUDoc is a research and proposal authoring workspace that combines:
 
-- a TypeScript/Express **backend** that manages workspaces, sources, generated documents, and persistence (PostgreSQL, Redis, MinIO/S3)
-- a React/Vite **frontend** that provides the collaborative UI, editors, and visualization tools
-- a Python **agent service** that orchestrates Gemini-powered multi-agent workflows for research, data analysis, and proposal creation
+- a TypeScript/Express **backend** for workspaces, knowledge, and persistence (PostgreSQL, Redis, MinIO/S3)
+- a React/Vite **frontend** for the collaborative UI, editors, and visualization tools
+- a Python **agent service** that orchestrates Gemini-powered multi-agent workflows
 
-The repository is structured so you can run the entire stack locally via Docker or develop each component independently with familiar tooling.
+The repository is organized so you can run the full stack with Docker or develop each component independently.
 
 ## Repository layout
 
 | Path | Description |
 | ---- | ----------- |
-| `frontend/` | Vite + React client application, UI components, and build assets. |
-| `backend/` | Express/TypeScript API, database migrations that auto-create tables, and workspace metadata. |
-| `agent/` | FastAPI app exposing multi-agent endpoints plus Gemini configuration, prompts, and custom tools. |
-| `docker-compose.yml` | Production-style stack that brings up the frontend, backend, agent, PostgreSQL, Redis, and MinIO. |
-| `docker-compose.minio.yml` | Helper compose file for spinning up only the persistence dependencies (Postgres, Redis, MinIO). |
-| `specs/` | Product and technical reference material that describes desired behaviors. |
-| `tests/` | Placeholder for end-to-end or integration tests. |
+| `agent/` | FastAPI service, prompt catalog, and paper2slides pipeline. |
+| `backend/` | Express/TypeScript API, persistence, and workspace metadata. |
+| `frontend/` | Vite + React client application. |
+| `infra/` | Docker Compose files for the full stack and shared dependencies. |
+| `docs/` | Product specs and internal documentation (`docs/specs/` includes the OpenAPI contract). |
+| `scripts/` | Helper scripts for local runs. |
+| `tests/` | Integration and regression tests. |
 
-Each runtime has its own README with component-specific notes; the sections below summarize the common tasks.
+### Detailed app tree (current)
+
+```
+HelpUDoc/
+├── frontend/                      # Vite + React client app
+│   ├── src/
+│   │   ├── pages/                # Route-level pages
+│   │   │   ├── WorkspacePage.tsx
+│   │   │   ├── UsersPage.tsx
+│   │   │   ├── DashboardPage.tsx
+│   │   │   ├── KnowledgePage.tsx
+│   │   │   ├── AgentSettingsPage.tsx
+│   │   │   ├── BillingPage.tsx
+│   │   │   └── LoginPage.tsx
+│   │   ├── components/           # Reusable UI components
+│   │   │   ├── settings/
+│   │   │   │   ├── AgentSettingsTabs.tsx
+│   │   │   │   ├── CoreAgentsTab.tsx
+│   │   │   │   ├── SubagentsTab.tsx
+│   │   │   │   ├── ToolsTab.tsx
+│   │   │   │   └── SettingsShell.tsx
+│   │   │   ├── WorkspaceList.tsx
+│   │   │   ├── FileList.tsx
+│   │   │   ├── FileEditor.tsx
+│   │   │   ├── FileRenderer.tsx
+│   │   │   ├── PlotlyChart.tsx
+│   │   │   ├── PersonaSelector.tsx
+│   │   │   ├── CollapsibleDrawer.tsx
+│   │   │   └── ExpandableSidebar.tsx
+│   │   ├── services/             # API clients
+│   │   │   ├── apiClient.ts
+│   │   │   ├── agentApi.ts
+│   │   │   ├── conversationApi.ts
+│   │   │   ├── fileApi.ts
+│   │   │   ├── knowledgeApi.ts
+│   │   │   ├── paper2SlidesJobApi.ts
+│   │   │   ├── presentationApi.ts
+│   │   │   ├── settingsApi.ts
+│   │   │   └── workspaceApi.ts
+│   │   ├── auth/
+│   │   │   ├── AuthProvider.tsx
+│   │   │   └── authStore.ts
+│   │   ├── App.tsx
+│   │   ├── main.tsx
+│   │   ├── theme.ts
+│   │   ├── types.ts
+│   │   ├── index.css
+│   │   └── plotly.js-dist-min.d.ts
+│   ├── public/                   # Static assets
+│   ├── package.json
+│   ├── package-lock.json
+│   ├── vite.config.ts
+│   ├── tailwind.config.js
+│   ├── postcss.config.js
+│   ├── eslint.config.js
+│   ├── tsconfig.json
+│   ├── tsconfig.app.json
+│   ├── tsconfig.node.json
+│   ├── Dockerfile
+│   └── nginx.conf
+│
+├── backend/                       # Express + TypeScript API
+│   ├── src/
+│   │   ├── api/                  # Route handlers
+│   │   │   ├── agent.ts
+│   │   │   ├── conversations.ts
+│   │   │   ├── files.ts
+│   │   │   ├── knowledge.ts
+│   │   │   ├── logging.ts
+│   │   │   ├── routes.ts
+│   │   │   ├── settings.ts
+│   │   │   └── workspaces.ts
+│   │   ├── services/             # Domain + integration services
+│   │   │   ├── agentService.ts
+│   │   │   ├── conversationService.ts
+│   │   │   ├── databaseService.ts
+│   │   │   ├── fileService.ts
+│   │   │   ├── knowledgeService.ts
+│   │   │   ├── paper2SlidesService.ts
+│   │   │   ├── presentationService.ts
+│   │   │   ├── ragQueueService.ts
+│   │   │   ├── redisService.ts
+│   │   │   ├── s3Service.ts
+│   │   │   ├── userService.ts
+│   │   │   └── workspaceService.ts
+│   │   ├── types/                # Shared types
+│   │   │   ├── knowledge.ts
+│   │   │   ├── presentation.ts
+│   │   │   ├── user.ts
+│   │   │   └── session.d.ts
+│   │   ├── middleware/
+│   │   │   └── userContext.ts
+│   │   ├── config/
+│   │   │   └── personas.ts
+│   │   ├── core/
+│   │   │   └── agent.ts
+│   │   ├── errors.ts
+│   │   └── index.ts
+│   ├── scripts/                  # Local test scripts
+│   │   ├── test_frontend_prompt_stream.mjs
+│   │   ├── test_rag_hybrid_flow.mjs
+│   │   ├── test_tagged_rag_query.mjs
+│   │   └── test_upload_rag_flow.mjs
+│   ├── package.json
+│   ├── package-lock.json
+│   ├── tsconfig.json
+│   ├── Dockerfile
+│   ├── README.md
+│   └── .env.example
+│
+├── agent/                         # Python agent service + pipelines
+│   ├── main.py
+│   ├── README.md
+│   ├── requirements.txt
+│   ├── Dockerfile
+│   ├── config/
+│   │   └── agents.yaml
+│   ├── prompts/                  # Prompt catalog
+│   │   ├── data_agent/
+│   │   ├── general/
+│   │   ├── proposal_agent/
+│   │   └── research/
+│   ├── helpudoc_agent/           # API + orchestration helpers
+│   ├── paper2slides/             # Paper-to-slides pipeline
+│   ├── lightrag_server/
+│   │   ├── README.md
+│   │   └── env.example
+│   └── docs/                     # Agent docs and references
+│
+├── docs/                          # Product specs and internal docs
+│   └── specs/                     # UI spec + OpenAPI contract
+├── infra/                         # Docker Compose stacks
+│   ├── docker-compose.yml
+│   └── docker-compose.minio.yml
+├── scripts/                       # Helper scripts
+│   ├── start_agent.sh
+│   └── test_paper2slides.sh
+├── tests/                         # Regression tests
+├── pyproject.toml                 # Python project config
+├── uv.lock                        # Python lockfile
+├── .env.example                   # Environment variable template
+├── LICENSE
+└── README.md
+```
 
 ## Running with Docker Compose
 
-1. **Prerequisites:** Docker Desktop 4.30+ (or Engine 26+) with Compose V2, and a Gemini API key (set `GEMINI_API_KEY` in your shell or `.env` file before launching the stack).
-2. **Build and start:** from the repo root run:
+1. **Prerequisites:** Docker Desktop 4.30+ (or Engine 26+), plus a Gemini API key.
+2. **Agent env:** ensure `agent/.env` contains `GEMINI_API_KEY` (and related Google Cloud vars).
+3. **Build and start (from repo root):**
    ```bash
-   docker compose up --build
+   docker compose -f infra/docker-compose.yml up --build
    ```
-3. **Services:**
-   - Frontend UI → http://localhost:8080
-   - Backend API → http://localhost:3000/api
-   - Agent service → http://localhost:8001
+4. **Services:**
+   - Frontend UI: http://localhost:8080
+   - Backend API: http://localhost:3000/api
+   - Agent service: http://localhost:8001
    - PostgreSQL (5432), Redis (6379), MinIO API (9000) and console (9001) are forwarded for convenience.
-4. **Stopping:** `docker compose down` tears the stack down but keeps the named volumes (`postgres_data`, `redis_data`, `minio_data`). Use `docker compose down -v` if you also want to reset the data stores.
+5. **Stopping:** `docker compose -f infra/docker-compose.yml down` tears the stack down but keeps named volumes (`postgres_data`, `redis_data`, `minio_data`). Use `-v` if you also want to reset data stores.
 
-### Customizing environment variables
+### Common environment variables
 
 Compose reads standard variables from your shell, so you can override defaults safely:
 
@@ -46,9 +190,9 @@ Compose reads standard variables from your shell, so you can override defaults s
 | `SESSION_SECRET`, `SESSION_NAME`, `SESSION_TTL_SECONDS` | Express session configuration. | `change-me`, `helpudoc.sid`, `604800` |
 | `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD` | MinIO admin credentials used by the backend and agent. | `minioadmin` / `minioadmin` |
 | `S3_BUCKET_NAME` | Bucket created during startup for document storage. | `helpudoc` |
-| `GEMINI_API_KEY` / `GOOGLE_CLOUD_API_KEY` | Credentials for the Gemini-powered agent service. | _required for agent_ |
+| `GEMINI_API_KEY` / `GOOGLE_CLOUD_API_KEY` | Credentials for the Gemini-powered agent service. | required for agent |
 
-The frontend build accepts `VITE_API_URL` as a build argument (default `http://backend:3000/api`). Adjust it by running `docker compose build --build-arg VITE_API_URL="..." frontend` if you need a different API base URL.
+The frontend build accepts `FRONTEND_API_URL` (default `/api`) as a build argument. Override it with `FRONTEND_API_URL=... docker compose -f infra/docker-compose.yml build frontend` if you need a different API base URL.
 
 ## Local development workflow
 
@@ -56,7 +200,7 @@ You can iterate on each component separately while still using Docker for the sh
 
 1. **Spin up databases only**
    ```bash
-   docker compose -f docker-compose.minio.yml up -d
+   docker compose -f infra/docker-compose.minio.yml up -d
    ```
 2. **Backend API**
    ```bash
@@ -71,7 +215,7 @@ You can iterate on each component separately while still using Docker for the sh
    npm install
    npm run dev
    ```
-   Set `VITE_API_URL` in `frontend/.env` or your shell to point at your backend (e.g., `http://localhost:3000/api`).
+   Set `VITE_API_URL` in `frontend/.env` or your shell to point at your backend (for example `http://localhost:3000/api`).
 4. **Agent service**
    ```bash
    cd agent
@@ -79,13 +223,11 @@ You can iterate on each component separately while still using Docker for the sh
    pip install -r requirements.txt
    uvicorn main:app --host 0.0.0.0 --port 8001 --reload
    ```
-   Copy `agent/config/agents.yaml` if you need environment-specific overrides and ensure `GEMINI_API_KEY` is exported in your shell.
+   Ensure `agent/.env` has the required Gemini credentials before starting the service.
 
 ## Useful tips
 
-- The backend automatically migrates/creates tables during startup, so you don't need a separate migration command.
-- The agent service relies on MinIO/S3 to share generated artifacts with the frontend; keep the services on the same network (Compose handles this automatically).
+- The backend automatically migrates/creates tables during startup.
+- The agent service relies on MinIO/S3 to share generated artifacts with the frontend; keep services on the same network (Compose handles this automatically).
 - When updating the frontend API base URL, rebuild the frontend image so the static files pick up the new value.
 - Named Docker volumes (`postgres_data`, `redis_data`, `minio_data`) retain your workspaces and uploads between restarts. Remove them when you need a clean slate.
-
-With these pieces in place you can demo the full HelpUDoc experience locally or adapt the Compose stack for staging/production deployments.

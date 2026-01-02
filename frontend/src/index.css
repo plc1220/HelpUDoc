@@ -64,12 +64,24 @@ body {
   background-color: color-mix(in srgb, var(--surface) 80%, transparent) !important;
 }
 
+.bg-white\/95 {
+  background-color: color-mix(in srgb, var(--surface) 95%, transparent) !important;
+}
+
 .bg-gray-50 {
   background-color: var(--surface-subtle) !important;
 }
 
 .bg-gray-100 {
   background-color: var(--app-bg) !important;
+}
+
+.bg-slate-50 {
+  background-color: var(--app-bg) !important;
+}
+
+.bg-slate-100 {
+  background-color: var(--surface-subtle) !important;
 }
 
 .bg-gray-200 {
@@ -175,12 +187,17 @@ body {
 }
 
 .border-gray-200,
+.border-slate-100,
 .border-slate-200,
 .border-slate-400,
 .border-slate-600,
 .ring-slate-200 {
   border-color: var(--border-color) !important;
   --tw-ring-color: var(--border-color);
+}
+
+.divide-slate-200 > :not([hidden]) ~ :not([hidden]) {
+  border-color: var(--border-color) !important;
 }
 
 .border-slate-800 {
@@ -212,6 +229,14 @@ body {
 }
 
 .hover\:bg-gray-200:hover {
+  background-color: var(--surface-strong-hover) !important;
+}
+
+.hover\:bg-slate-100:hover {
+  background-color: var(--surface-hover) !important;
+}
+
+.hover\:bg-slate-200:hover {
   background-color: var(--surface-strong-hover) !important;
 }
 
@@ -262,7 +287,20 @@ body {
   --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to, rgb(255 255 255 / 0));
 }
 
+.from-slate-50 {
+  --tw-gradient-from: var(--app-bg);
+  --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to, rgb(248 250 252 / 0));
+}
+
+.via-white {
+  --tw-gradient-stops: var(--tw-gradient-from), var(--surface), var(--tw-gradient-to, rgb(255 255 255 / 0));
+}
+
 .to-slate-50 {
+  --tw-gradient-to: var(--surface-subtle);
+}
+
+.to-slate-100 {
   --tw-gradient-to: var(--surface-subtle);
 }
 

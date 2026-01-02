@@ -17,7 +17,7 @@ DEFAULT_CONFIG_PATH = AGENT_ROOT / "config" / "agents.yaml"
 
 class ModelConfig(BaseModel):
     provider: str = Field(default="gemini")
-    name: str = Field(default="gemini-2.5-pro")
+    name: str = Field(default="gemini-3-flash-preview")
     image_name: Optional[str] = None
     project: Optional[str] = None
     location: Optional[str] = None
@@ -123,6 +123,14 @@ def _expand_env_vars(data):
 def load_settings(config_path: Path | None = None) -> Settings:
     path = config_path or DEFAULT_CONFIG_PATH
     config_dict = _expand_env_vars(_load_yaml(path))
+
+    # Allow runtime override for shared workspace volume paths (e.g., Docker Compose).
+    workspace_root_override = os.getenv("WORKSPACE_ROOT")
+    if workspace_root_override:
+        backend_cfg = config_dict.get("backend") or {}
+        if isinstance(backend_cfg, dict):
+            backend_cfg["workspace_root"] = workspace_root_override
+            config_dict["backend"] = backend_cfg
 
     payload = {
         "model": config_dict.get("model", {}),

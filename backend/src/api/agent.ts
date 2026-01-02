@@ -13,9 +13,18 @@ import {
 import { Paper2SlidesService } from '../services/paper2SlidesService';
 import { Paper2SlidesJobService } from '../services/paper2SlidesJobService';
 import type { PresentationSourceFile } from '../types/presentation';
+import {
+  cancelAgentRun,
+  getRunMeta,
+  getRunStreamKey,
+  startAgentRun,
+} from '../services/agentRunService';
+import { blockingRedisClient } from '../services/redisService';
 
 const DEFAULT_PRESENTATION_PERSONA = 'general-assistant';
 const IMAGE_NAME_PATTERN = /\.(png|jpe?g|gif|bmp|webp|svg)$/i;
+const DEBUG_AGENT_RUN_STREAM =
+  process.env.DEBUG_AGENT_RUN_STREAM === '1' || process.env.DEBUG_AGENT_RUN_STREAM === 'true';
 
 const extractTextFromAgentReply = (reply: unknown): string => {
   if (reply === null || reply === undefined) {
@@ -63,6 +72,7 @@ export default function(workspaceService: WorkspaceService, fileService: FileSer
       content: z.string().min(1),
     })).optional(),
     forceReset: z.boolean().optional(),
+    turnId: z.string().optional(),
   });
 
   const presentationSchema = z.object({
@@ -192,13 +202,27 @@ export default function(workspaceService: WorkspaceService, fileService: FileSer
     const files = await fileService.getFiles(workspaceId, userId);
     const tagged = files.filter((file) => prompt.includes(`@${file.name}`));
     const withUrls = tagged.filter((file) => file.publicUrl && isImageFile(file));
-    if (!withUrls.length) {
+    const taggedPaths = Array.from(
+      new Set(
+        tagged
+          .map((file) => (typeof file.name === 'string' ? file.name.trim() : ''))
+          .filter((name) => name.length > 0),
+      ),
+    ).map((name) => (name.startsWith('/') ? name : `/${name}`));
+
+    if (!withUrls.length && !taggedPaths.length) {
       return prompt;
     }
+    const fileHint = taggedPaths.length
+      ? `\n\nTagged files (use only these for RAG retrieval):\n${taggedPaths.map((path) => `- ${path}`).join('\n')}`
+      : '';
     const urlList = withUrls
       .map((file) => `- ${file.name}: ${file.publicUrl}`)
       .join('\n');
-    return `${prompt}\n\nTagged image URLs (use these HTTP links instead of file paths in HTML/Markdown/Mermaid):\n${urlList}`;
+    const urlHint = withUrls.length
+      ? `\n\nTagged image URLs (use these HTTP links instead of file paths in HTML/Markdown/Mermaid):\n${urlList}`
+      : '';
+    return `${prompt}${fileHint}${urlHint}`;
   };
 
   router.post('/run', async (req, res) => {
@@ -218,33 +242,216 @@ export default function(workspaceService: WorkspaceService, fileService: FileSer
   });
 
   router.post('/run-stream', async (req, res) => {
+    const upstreamAbort = new AbortController();
+    let streamResponse: Awaited<ReturnType<typeof runAgentStream>> | null = null;
+    let cleanedUp = false;
+
+    const cleanupListeners = () => {
+      if (cleanedUp) return;
+      cleanedUp = true;
+      req.off('close', handleClientClose);
+      res.off('close', handleClientClose);
+    };
+
+    const handleClientClose = () => {
+      upstreamAbort.abort();
+      if (streamResponse?.data && !streamResponse.data.destroyed) {
+        streamResponse.data.destroy();
+      }
+      cleanupListeners();
+    };
+
+    req.on('close', handleClientClose);
+    res.on('close', handleClientClose);
+
     try {
       const user = requireUserContext(req);
       const { persona, prompt, workspaceId, history, forceReset } = runAgentSchema.parse(req.body);
       await workspaceService.ensureMembership(workspaceId, user.userId, { requireEdit: true });
       const enrichedPrompt = await injectTaggedFileUrls(prompt, workspaceId, user.userId);
-      const streamResponse = await runAgentStream(persona, workspaceId, enrichedPrompt, history, { forceReset });
+      streamResponse = await runAgentStream(persona, workspaceId, enrichedPrompt, history, {
+        forceReset,
+        signal: upstreamAbort.signal,
+      });
       res.setHeader('Content-Type', 'application/jsonl');
       streamResponse.data.on('data', (chunk: Buffer) => {
-        res.write(chunk);
+        if (!res.writableEnded) {
+          res.write(chunk);
+        }
       });
       streamResponse.data.on('end', () => {
-        res.end();
+        if (!res.writableEnded) {
+          res.end();
+        }
+        cleanupListeners();
       });
       streamResponse.data.on('error', (error: Error) => {
         console.error("Agent stream error", error);
         if (!res.headersSent) {
           res.status(500).json({ error: 'Agent stream failed' });
         } else {
-          res.end();
+          if (!res.writableEnded) {
+            res.end();
+          }
         }
+        cleanupListeners();
       });
     } catch (error: any) {
+      cleanupListeners();
+      if (error?.code === 'ERR_CANCELED') {
+        if (!res.writableEnded) {
+          res.end();
+        }
+        return;
+      }
       if (error instanceof z.ZodError) {
         return res.status(400).json({ error: 'Invalid input' });
       }
       handleError(res, error, 'Failed to stream agent response');
     }
+  });
+
+  router.post('/runs', async (req, res) => {
+    try {
+      const user = requireUserContext(req);
+      const { persona, prompt, workspaceId, history, forceReset, turnId } = runAgentSchema.parse(req.body);
+      await workspaceService.ensureMembership(workspaceId, user.userId, { requireEdit: true });
+      const enrichedPrompt = await injectTaggedFileUrls(prompt, workspaceId, user.userId);
+      const { runId, status } = await startAgentRun({
+        persona,
+        workspaceId,
+        prompt: enrichedPrompt,
+        history,
+        forceReset,
+        turnId,
+      });
+      res.json({ runId, status });
+    } catch (error: any) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: 'Invalid input' });
+      }
+      handleError(res, error, 'Failed to start agent run');
+    }
+  });
+
+  router.get('/runs/:runId', async (req, res) => {
+    try {
+      const user = requireUserContext(req);
+      const meta = await getRunMeta(req.params.runId);
+      if (!meta) {
+        return res.status(404).json({ error: 'Run not found' });
+      }
+      await workspaceService.ensureMembership(meta.workspaceId, user.userId, { requireEdit: true });
+      res.json(meta);
+    } catch (error) {
+      handleError(res, error, 'Failed to fetch run status');
+    }
+  });
+
+  router.post('/runs/:runId/cancel', async (req, res) => {
+    try {
+      const user = requireUserContext(req);
+      const meta = await getRunMeta(req.params.runId);
+      if (!meta) {
+        return res.status(404).json({ error: 'Run not found' });
+      }
+      await workspaceService.ensureMembership(meta.workspaceId, user.userId, { requireEdit: true });
+      await cancelAgentRun(req.params.runId);
+      res.json({ status: 'cancelled' });
+    } catch (error) {
+      handleError(res, error, 'Failed to cancel run');
+    }
+  });
+
+  router.get('/runs/:runId/stream', async (req, res) => {
+    const { runId } = req.params;
+    const after = typeof req.query.after === 'string' && req.query.after.trim() ? req.query.after : '0-0';
+    const abortController = new AbortController();
+
+    let streamKey: string | null = null;
+    let terminalStatus: 'completed' | 'failed' | 'cancelled' | null = null;
+
+    try {
+      const user = requireUserContext(req);
+      const meta = await getRunMeta(runId);
+      if (!meta) {
+        return res.status(404).json({ error: 'Run not found' });
+      }
+      await workspaceService.ensureMembership(meta.workspaceId, user.userId, { requireEdit: true });
+      streamKey = getRunStreamKey(runId);
+    } catch (error) {
+      if (error instanceof HttpError) {
+        return res.status(error.statusCode).json({ error: error.message });
+      }
+      return handleError(res, error, 'Failed to authorize run stream');
+    }
+
+    const cleanup = () => {
+      abortController.abort();
+    };
+
+    req.on('close', cleanup);
+    res.on('close', cleanup);
+
+    res.setHeader('Content-Type', 'application/jsonl');
+    if (DEBUG_AGENT_RUN_STREAM) {
+      console.info('[agent-run-stream] client connected', { runId, after });
+    }
+
+    const readLoop = async () => {
+      if (!streamKey) {
+        return;
+      }
+      let lastId = after;
+      try {
+        while (!abortController.signal.aborted && !res.writableEnded) {
+          const streams = await blockingRedisClient.xRead(
+            { key: streamKey, id: lastId },
+            { BLOCK: 10000, COUNT: 50 }
+          );
+          if (streams && streams.length) {
+            for (const stream of streams) {
+              for (const message of stream.messages) {
+                const data = message.message.data;
+                if (data && !res.writableEnded) {
+                  res.write(`${data}\n`);
+                  if (DEBUG_AGENT_RUN_STREAM) {
+                    console.info('[agent-run-stream] sent', {
+                      runId,
+                      id: message.id,
+                      bytes: String(data).length,
+                      sample: String(data).slice(0, 160),
+                    });
+                  }
+                }
+                lastId = message.id;
+              }
+            }
+          }
+
+          if (!terminalStatus) {
+            const meta = await getRunMeta(runId);
+            if (meta?.status === 'completed' || meta?.status === 'failed' || meta?.status === 'cancelled') {
+              terminalStatus = meta.status;
+            }
+          }
+
+          if (terminalStatus && (!streams || !streams.length)) {
+            break;
+          }
+        }
+      } catch (error) {
+        if (!res.headersSent && !res.writableEnded) {
+          res.status(500).json({ error: 'Run stream failed' });
+        }
+      } finally {
+        if (!res.writableEnded) {
+          res.end();
+        }
+      }
+    };
+
+    void readLoop();
   });
 
   router.post('/presentation', async (req, res) => {

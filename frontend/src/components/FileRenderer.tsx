@@ -83,7 +83,7 @@ const FileRenderer: React.FC<FileRendererProps> = ({ file, fileContent }) => {
   const isImageFile = ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp'].some((ext) =>
     lowerName.endsWith(ext),
   );
-  const isPdfFile = lowerName.endsWith('.pdf');
+  const isPdfFile = lowerName.endsWith('.pdf') || file?.mimeType === 'application/pdf';
   const isCsvFile = lowerName.endsWith('.csv');
   const isPlotlyFile =
     lowerName.endsWith('.plotly.json') ||
@@ -371,7 +371,26 @@ const FileRenderer: React.FC<FileRendererProps> = ({ file, fileContent }) => {
           </div>
         );
       }
-      return <embed src={pdfSrc} type="application/pdf" className="w-full h-full" style={{ height: '100%' }} />;
+      const handleOpenNewTab = () => {
+        window.open(pdfSrc, '_blank', 'noreferrer');
+      };
+      return (
+        <div className="relative h-full w-full">
+          <iframe
+            src={pdfSrc}
+            title={file.name}
+            className="h-full w-full border-none"
+            style={{ height: '100%' }}
+          />
+          <button
+            type="button"
+            onClick={handleOpenNewTab}
+            className="absolute right-3 top-3 rounded-full bg-black/60 px-3 py-1 text-xs font-semibold text-white shadow-md transition hover:bg-black/75"
+          >
+            Open in new tab
+          </button>
+        </div>
+      );
     }
     if (isCsvFile) {
       const parseError = parsedCsv?.errors?.[0]?.message;

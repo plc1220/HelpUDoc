@@ -38,13 +38,13 @@ def _parts_from_content_item(item) -> List[types.Part]:
     parts: List[types.Part] = []
 
     if isinstance(item, str):
-        return [types.Part.from_text(item)]
+        return [types.Part(text=item)]
 
     if not isinstance(item, dict):
         return parts
 
     if item.get("type") == "text":
-        return [types.Part.from_text(item.get("text", ""))]
+        return [types.Part(text=item.get("text", ""))]
 
     if item.get("type") == "image_url":
         url = item.get("image_url", {}).get("url", "")
@@ -65,7 +65,7 @@ def _parts_from_message_content(content) -> List[types.Part]:
         for item in content:
             parts.extend(_parts_from_content_item(item))
         return parts
-    return [types.Part.from_text(content if content is not None else "")]
+    return [types.Part(text=content if content is not None else "")]
 
 
 def _normalize_messages(messages: Sequence[dict], system_prompt: Optional[str] = None):
@@ -152,7 +152,7 @@ def generate_image(
 
     Returns a list of (image_bytes, mime_type).
     """
-    parts: List[types.Part] = [types.Part.from_text(prompt)]
+    parts: List[types.Part] = [types.Part(text=prompt)]
 
     for img in reference_images or []:
         label = ""
@@ -162,7 +162,7 @@ def generate_image(
                 caption = img.get("caption") or ""
                 label = f"[{figure_id}]: {caption}" if caption else f"[{figure_id}]"
         if label:
-            parts.append(types.Part.from_text(label))
+            parts.append(types.Part(text=label))
         if isinstance(img, dict) and img.get("base64"):
             mime_type = img.get("mime_type", "image/png")
             try:

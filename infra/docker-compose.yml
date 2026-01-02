@@ -67,7 +67,7 @@ services:
 
   backend:
     build:
-      context: ./backend
+      context: ../backend
     depends_on:
       postgres:
         condition: service_healthy
@@ -103,13 +103,16 @@ services:
 
   agent:
     build:
-      context: ./agent
+      context: ../agent
     depends_on:
       backend:
         condition: service_started
     env_file:
-      - agent/.env
+      - ../agent/.env
     environment:
+      REDIS_URL: redis://redis:6379
+      RAG_OFFLINE: ${RAG_OFFLINE:-true}
+      WORKSPACE_ROOT: /app/workspaces
       S3_ENDPOINT: http://minio:9000
       MINIO_ENDPOINT: http://minio:9000
       S3_BUCKET_NAME: ${S3_BUCKET_NAME:-helpudoc}
@@ -121,7 +124,7 @@ services:
 
   frontend:
     build:
-      context: ./frontend
+      context: ../frontend
       args:
         VITE_API_URL: ${FRONTEND_API_URL:-/api}
         VITE_GOOGLE_CLIENT_ID: ${VITE_GOOGLE_CLIENT_ID:-}

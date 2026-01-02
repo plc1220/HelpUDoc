@@ -8,7 +8,7 @@ import logging
 from pathlib import Path
 from dotenv import load_dotenv
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Body
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -19,6 +19,7 @@ from .state import AgentRuntimeState
 from .tools_and_schemas import ToolFactory, GeminiClientManager, MCPServerRegistry
 from .utils import SourceTracker
 from langchain_core.callbacks.base import AsyncCallbackHandler
+from .rag_worker import RagIndexWorker
 
 
 logger = logging.getLogger(__name__)
@@ -32,6 +33,25 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     reply: Any
+
+
+class RagQueryRequest(BaseModel):
+    query: str
+    mode: str = "local"
+    onlyNeedContext: bool = True
+    includeReferences: bool = False
+
+
+class RagQueryResponse(BaseModel):
+    response: str
+
+
+class RagStatusRequest(BaseModel):
+    files: List[str]
+
+
+class RagStatusResponse(BaseModel):
+    statuses: Dict[str, Any]
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -57,6 +77,62 @@ def create_app() -> FastAPI:
     mcp_registry = MCPServerRegistry(settings)
 
     app = FastAPI(title="DeepAgents Service", version="0.2.0")
+    rag_worker = RagIndexWorker(settings.backend.workspace_root)
+
+    @app.on_event("startup")
+    async def _startup() -> None:
+        try:
+            await rag_worker.start()
+        except Exception:
+            logger.exception("Failed to start RAG index worker (continuing without it)")
+
+    @app.on_event("shutdown")
+    async def _shutdown() -> None:
+        try:
+            await rag_worker.stop()
+        except Exception:
+            logger.exception("Failed to stop RAG index worker cleanly")
+
+    @app.post("/rag/workspaces/{workspace_id}/query", response_model=RagQueryResponse)
+    async def rag_query(workspace_id: str, req: RagQueryRequest = Body(...)):
+        if not req.query or not req.query.strip():
+            raise HTTPException(status_code=400, detail="query is required")
+        try:
+            response = await rag_worker.store.query(
+                workspace_id,
+                req.query,
+                mode=req.mode,
+                only_need_context=req.onlyNeedContext,
+                include_references=req.includeReferences,
+            )
+            return RagQueryResponse(response=response)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/rag/workspaces/{workspace_id}/status", response_model=RagStatusResponse)
+    async def rag_status(workspace_id: str, req: RagStatusRequest = Body(...)):
+        if not req.files:
+            raise HTTPException(status_code=400, detail="files is required")
+        statuses: Dict[str, Any] = {}
+        for name in req.files:
+            if not isinstance(name, str) or not name.strip():
+                continue
+            relative = name.strip().lstrip("/")
+            try:
+                status = await rag_worker.store.get_doc_status(workspace_id, relative)
+            except Exception as exc:
+                status = {"status": "error", "error": str(exc)}
+            if status is None:
+                statuses[name] = {"status": "not_indexed"}
+            else:
+                statuses[name] = {
+                    "status": status.get("status", "unknown"),
+                    "updatedAt": status.get("updated_at"),
+                    "error": status.get("error_msg"),
+                }
+        return RagStatusResponse(statuses=statuses)
 
     @app.get("/agents")
     def list_agents():
@@ -83,6 +159,114 @@ def create_app() -> FastAPI:
 
     def _prepare_payload(message: ChatRequest) -> List[Dict[str, Any]]:
         return message.history or [{"role": "user", "content": message.message}]
+
+
+    def _extract_tagged_files(content: str) -> List[str]:
+        if not content:
+            return []
+        lines = content.splitlines()
+        tagged: List[str] = []
+        in_block = False
+        for line in lines:
+            stripped = line.strip()
+            if not stripped:
+                if in_block:
+                    break
+                continue
+            if "Tagged files (use only these for RAG retrieval)" in stripped:
+                in_block = True
+                continue
+            if in_block:
+                if stripped.startswith("-"):
+                    candidate = stripped.lstrip("-").strip()
+                    if candidate:
+                        tagged.append(candidate)
+                else:
+                    break
+        return tagged
+
+    def _load_mineru_text(workspace_id: str, tagged_paths: List[str]) -> str | None:
+        output_root = rag_worker.store.config.raganything_output_dir
+        for raw in tagged_paths:
+            if not raw:
+                continue
+            name = Path(raw).name
+            base = name
+            if base.lower().endswith(".pdf"):
+                base = base[:-4]
+            md_path = output_root / workspace_id / base / "auto" / f"{base}.md"
+            if not md_path.exists():
+                continue
+            try:
+                text = md_path.read_text(encoding="utf-8", errors="replace").strip()
+            except Exception:
+                logger.exception("Failed reading MinerU markdown: %s", md_path)
+                continue
+            if text:
+                return text
+        return None
+
+    async def _prefetch_rag_context(workspace_id: str, prompt: str) -> str | None:
+        if not prompt or "Tagged files (use only these for RAG retrieval)" not in prompt:
+            return None
+        try:
+            response = await rag_worker.store.query_data(
+                workspace_id,
+                prompt,
+                mode="naive",
+                include_references=False,
+            )
+            data = response.get("data") if isinstance(response, dict) else None
+            chunks = data.get("chunks", []) if isinstance(data, dict) else []
+            lines: List[str] = []
+            for chunk in chunks:
+                content = chunk.get("content") or ""
+                if content and content.lstrip().startswith("SOURCE:"):
+                    lines.append(content)
+            if not lines:
+                for chunk in chunks:
+                    content = (chunk.get("content") or "").strip()
+                    if not content:
+                        continue
+                    lines.append(content)
+            if lines:
+                non_textual = 0
+                for content in lines:
+                    lowered = content.lower()
+                    if lowered.startswith("table analysis:") or lowered.startswith("discarded content analysis:"):
+                        non_textual += 1
+                if non_textual < len(lines):
+                    return "\n\n".join(lines)
+            response = await rag_worker.store.query_data(
+                workspace_id,
+                prompt,
+                mode="hybrid",
+                include_references=False,
+            )
+            data = response.get("data") if isinstance(response, dict) else None
+            chunks = data.get("chunks", []) if isinstance(data, dict) else []
+            lines = []
+            for chunk in chunks:
+                content = (chunk.get("content") or "").strip()
+                if not content:
+                    continue
+                lines.append(content)
+            if lines:
+                non_textual = 0
+                for content in lines:
+                    lowered = content.lower()
+                    if lowered.startswith("table analysis:") or lowered.startswith("discarded content analysis:"):
+                        non_textual += 1
+                if non_textual < len(lines):
+                    return "\n\n".join(lines)
+            tagged_paths = _extract_tagged_files(prompt)
+            mineru_text = _load_mineru_text(workspace_id, tagged_paths)
+            if mineru_text:
+                return mineru_text[:12000]
+            return None
+        except Exception:
+            logger.exception("Failed to prefetch RAG context for tagged files.")
+            return None
 
     def _invoke_agent(runtime: AgentRuntimeState, message: ChatRequest):
         agent = getattr(runtime, "agent", None)
@@ -342,14 +526,38 @@ def create_app() -> FastAPI:
             manager.reset_session()
 
         payload = _prepare_payload(message)
+        tagged_files = _extract_tagged_files(message.message)
+        runtime.workspace_state.context["tagged_files"] = tagged_files
+        runtime.workspace_state.context["tagged_files_only"] = bool(tagged_files)
+        if tagged_files:
+            rag_context = await _prefetch_rag_context(runtime.workspace_state.workspace_id, message.message)
+            if rag_context:
+                runtime.workspace_state.context["tagged_rag_context"] = rag_context
+                payload = [{"role": "user", "content": f"{message.message}\n\nRAG_CONTEXT:\n{rag_context}\n\nAnswer using only RAG_CONTEXT."}]
         handler = _CallbackStreamingHandler(_message_to_text)
         sentinel = object()
         fallback_chunks: List[Any] = []
+        stream_started = asyncio.get_running_loop().time()
+        raw_chunk_count = 0
+        logger.info(
+            "Agent stream start: agent=%s workspace=%s",
+            runtime.agent_name,
+            runtime.workspace_state.workspace_id,
+        )
 
         async def _agent_runner():
             try:
                 async for raw_chunk in agent.astream({"messages": payload}, config={"callbacks": [handler]}):
                     fallback_chunks.append(raw_chunk)
+                    nonlocal raw_chunk_count
+                    raw_chunk_count += 1
+                    if raw_chunk_count in {1, 5, 10} or raw_chunk_count % 50 == 0:
+                        logger.info(
+                            "Agent stream chunk %s: agent=%s workspace=%s",
+                            raw_chunk_count,
+                            runtime.agent_name,
+                            runtime.workspace_state.workspace_id,
+                        )
             except ValueError as exc:
                 message_text = str(exc)
                 if "No generations found in stream" in message_text:
@@ -395,6 +603,14 @@ def create_app() -> FastAPI:
                 await handler._emit({"type": "error", "message": str(exc)})
                 raise
             finally:
+                elapsed = asyncio.get_running_loop().time() - stream_started
+                logger.info(
+                    "Agent stream finished: agent=%s workspace=%s chunks=%s elapsed=%.2fs",
+                    runtime.agent_name,
+                    runtime.workspace_state.workspace_id,
+                    raw_chunk_count,
+                    elapsed,
+                )
                 if not handler.has_events and fallback_chunks:
                     tracker = _DeltaTracker()
                     for raw_chunk in fallback_chunks:
@@ -426,7 +642,11 @@ def create_app() -> FastAPI:
         task = asyncio.create_task(_agent_runner())
         try:
             while True:
-                event = await handler.queue.get()
+                try:
+                    event = await asyncio.wait_for(handler.queue.get(), timeout=15.0)
+                except asyncio.TimeoutError:
+                    yield _json_line({"type": "keepalive"})
+                    continue
                 if event is sentinel:
                     break
                 yield _json_line(event)
@@ -441,6 +661,19 @@ def create_app() -> FastAPI:
             runtime = registry.get_or_create(agent_name, workspace_id)
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+        tagged_files = _extract_tagged_files(chat_request.message)
+        runtime.workspace_state.context["tagged_files"] = tagged_files
+        runtime.workspace_state.context["tagged_files_only"] = bool(tagged_files)
+        if tagged_files:
+            rag_context = await _prefetch_rag_context(runtime.workspace_state.workspace_id, chat_request.message)
+            if rag_context:
+                runtime.workspace_state.context["tagged_rag_context"] = rag_context
+                chat_request = ChatRequest(
+                    message=f"{chat_request.message}\n\nRAG_CONTEXT:\n{rag_context}\n\nAnswer using only RAG_CONTEXT.",
+                    history=chat_request.history,
+                    forceReset=chat_request.forceReset,
+                )
 
         result = _invoke_agent(runtime, chat_request)
         source_tracker.update_final_report(runtime.workspace_state)

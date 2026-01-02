@@ -32,6 +32,7 @@ export type AgentHistoryEntry = {
 
 type RunAgentOptions = {
   forceReset?: boolean;
+  signal?: AbortSignal;
 };
 
 export async function runAgent(
@@ -72,5 +73,14 @@ export async function runAgentStream(
 
   return client.post(`/agents/${persona}/workspace/${workspaceId}/chat/stream`, payload, {
     responseType: "stream",
+    signal: options?.signal,
   });
+}
+
+export async function fetchRagStatuses(
+  workspaceId: string,
+  files: string[],
+): Promise<Record<string, { status: string; updatedAt?: string; error?: string }>> {
+  const res = await client.post(`/rag/workspaces/${workspaceId}/status`, { files });
+  return res.data?.statuses || {};
 }

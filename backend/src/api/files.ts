@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import multer from 'multer';
 import { FileService } from '../services/fileService';
+import { fetchRagStatuses } from '../services/agentService';
 import { HttpError } from '../errors';
 
 export default function(fileService: FileService) {
@@ -16,6 +17,10 @@ export default function(fileService: FileService) {
   const renameFileSchema = z.object({
     name: z.string().min(1),
     version: z.number().int().positive().optional(),
+  });
+
+  const ragStatusSchema = z.object({
+    files: z.array(z.string().min(1)),
   });
 
   const requireUserContext = (req: Request) => {
@@ -67,6 +72,22 @@ export default function(fileService: FileService) {
       res.json(file);
     } catch (error) {
       handleError(res, error, 'Failed to retrieve file content');
+    }
+  });
+
+  router.post('/rag-status', async (req: Request<{ workspaceId: string }>, res: Response) => {
+    try {
+      const { workspaceId } = req.params;
+      const user = requireUserContext(req);
+      await fileService.getFiles(workspaceId, user.userId);
+      const payload = ragStatusSchema.parse(req.body);
+      const statuses = await fetchRagStatuses(workspaceId, payload.files);
+      res.json({ statuses });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: 'Invalid input' });
+      }
+      handleError(res, error, 'Failed to fetch RAG status');
     }
   });
 

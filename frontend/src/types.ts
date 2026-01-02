@@ -49,6 +49,8 @@ export interface ToolOutputFile {
 export interface ConversationMessageMetadata {
   thinkingText?: string;
   toolEvents?: ToolEvent[];
+  runId?: string;
+  status?: 'running' | 'completed' | 'failed' | 'cancelled';
 }
 
 export interface ConversationMessage {

@@ -5,6 +5,7 @@ import { DatabaseService } from './databaseService';
 import { Knex } from 'knex';
 import { WorkspaceService } from './workspaceService';
 import { ConflictError, NotFoundError } from '../errors';
+import { RagQueueService } from './ragQueueService';
 
 const WORKSPACE_DIR = process.env.WORKSPACE_ROOT
   ? path.resolve(process.env.WORKSPACE_ROOT)
@@ -40,11 +41,13 @@ export class FileService {
   private s3Service: S3Service;
   private db: Knex;
   private workspaceService: WorkspaceService;
+  private ragQueueService?: RagQueueService;
 
-  constructor(databaseService: DatabaseService, workspaceService: WorkspaceService) {
+  constructor(databaseService: DatabaseService, workspaceService: WorkspaceService, ragQueueService?: RagQueueService) {
     this.s3Service = new S3Service();
     this.db = databaseService.getDb();
     this.workspaceService = workspaceService;
+    this.ragQueueService = ragQueueService;
   }
 
   async getFiles(workspaceId: string, userId: string) {
@@ -72,6 +75,22 @@ export class FileService {
     }
     const ext = path.extname(fileName).toLowerCase();
     return BINARY_MIME_TYPES_BY_EXTENSION[ext] || null;
+  }
+
+  private normalizeRelativePath(fileName: string): string {
+    const normalized = path.posix
+      .normalize(fileName.replace(/\\/g, '/'))
+      .replace(/^(\.\.\/)+/, '')
+      .replace(/^\/+/, '');
+    if (!normalized || normalized === '.') {
+      throw new ConflictError('Invalid file name');
+    }
+    return normalized;
+  }
+
+  private getLocalPath(workspaceId: string, fileName: string): string {
+    const relative = this.normalizeRelativePath(fileName);
+    return path.join(WORKSPACE_DIR, workspaceId, relative);
   }
 
   private async ensurePublicUrl(file: any): Promise<void> {
@@ -127,22 +146,25 @@ export class FileService {
     options?: { forceLocal?: boolean },
   ) {
     await this.workspaceService.ensureMembership(workspaceId, userId, { requireEdit: true });
-    const isText = this.isTextFile(fileName, mimeType);
+    const relativePath = this.normalizeRelativePath(fileName);
+    const localPath = this.getLocalPath(workspaceId, relativePath);
+    const isText = this.isTextFile(relativePath, mimeType);
     let storageType: 'local' | 's3';
     let filePath: string;
     let publicUrl: string | null = null;
 
+    await fs.mkdir(path.dirname(localPath), { recursive: true });
+    await fs.writeFile(localPath, fileBuffer);
+
     if (isText || options?.forceLocal) {
       storageType = 'local';
-      filePath = path.join(WORKSPACE_DIR, workspaceId, fileName);
-      await fs.mkdir(path.dirname(filePath), { recursive: true });
-      await fs.writeFile(filePath, fileBuffer);
+      filePath = localPath;
     } else {
       storageType = 's3';
-      const key = normalizeS3Key(workspaceId, fileName);
+      const key = normalizeS3Key(workspaceId, relativePath);
       const result = await this.s3Service.uploadFile(
         workspaceId,
-        fileName,
+        relativePath,
         fileBuffer,
         mimeType,
         key,
@@ -152,7 +174,7 @@ export class FileService {
     }
 
     const [newFile] = await this.db('files').insert({
-      name: fileName,
+      name: relativePath,
       workspaceId,
       storageType,
       path: filePath,
@@ -163,6 +185,20 @@ export class FileService {
     }).returning('*');
 
     await this.workspaceService.touchWorkspace(workspaceId, userId);
+
+    // Enqueue for RAG indexing (best-effort). The agent service will consume this job.
+    try {
+      await this.ragQueueService?.enqueueFileUpsert({
+        workspaceId,
+        fileId: newFile.id,
+        relativePath,
+        mimeType: newFile.mimeType ?? mimeType ?? null,
+        storageType,
+        publicUrl,
+      });
+    } catch (error) {
+      console.error('Failed to enqueue RAG index job', error);
+    }
 
     return newFile;
   }
@@ -217,6 +253,20 @@ export class FileService {
 
     await this.workspaceService.touchWorkspace(file.workspaceId, userId);
 
+    // Re-enqueue for RAG indexing (best-effort).
+    try {
+      await this.ragQueueService?.enqueueFileUpsert({
+        workspaceId: file.workspaceId,
+        fileId,
+        relativePath: file.name,
+        mimeType: file.mimeType ?? null,
+        storageType: file.storageType,
+        publicUrl: file.publicUrl ?? null,
+      });
+    } catch (error) {
+      console.error('Failed to enqueue RAG index job', error);
+    }
+
     return updated;
   }
 
@@ -260,6 +310,7 @@ export class FileService {
 
     await this.workspaceService.ensureMembership(file.workspaceId, userId, { requireEdit: true });
 
+    const localPath = this.getLocalPath(file.workspaceId, file.name);
     if (file.storageType === 'local') {
       try {
         await fs.unlink(file.path);
@@ -271,6 +322,13 @@ export class FileService {
         await this.s3Service.deleteFile(file.path);
       } catch (error) {
         console.error(`Failed to delete S3 file: ${file.path}`, error);
+      }
+      try {
+        await fs.unlink(localPath);
+      } catch (error: any) {
+        if (error?.code !== 'ENOENT') {
+          console.error(`Failed to delete local copy of S3 file: ${localPath}`, error);
+        }
       }
     }
 
@@ -284,13 +342,14 @@ export class FileService {
       throw new NotFoundError('File not found');
     }
 
+    const normalizedNewName = this.normalizeRelativePath(newName);
     await this.workspaceService.ensureMembership(file.workspaceId, userId, { requireEdit: true });
     const currentVersion = this.assertVersion(file.version, expectedVersion);
     const nextVersion = currentVersion + 1;
 
     if (file.storageType === 'local') {
       const targetDir = path.dirname(file.path);
-      const newPath = path.join(targetDir, newName);
+      const newPath = path.join(targetDir, normalizedNewName);
 
       try {
         await fs.rename(file.path, newPath);
@@ -300,7 +359,7 @@ export class FileService {
       }
 
       await this.db('files').where({ id: fileId }).update({
-        name: newName,
+        name: normalizedNewName,
         path: newPath,
         updatedBy: userId,
         updatedAt: this.db.fn.now(),
@@ -308,16 +367,24 @@ export class FileService {
       });
     } else {
       const currentKey = file.path.replace(/\\/g, '/');
+      const currentLocalPath = this.getLocalPath(file.workspaceId, file.name);
+      const newLocalPath = this.getLocalPath(file.workspaceId, normalizedNewName);
       const currentDir = path.posix.dirname(currentKey);
       const newKey = currentDir === '.'
-        ? newName
-        : `${currentDir}/${newName}`;
+        ? normalizedNewName
+        : `${currentDir}/${normalizedNewName}`;
       await this.s3Service.copyFile(currentKey, newKey);
       await this.s3Service.deleteFile(currentKey);
       const publicUrl = this.s3Service.getPublicUrl(newKey);
+      try {
+        await fs.mkdir(path.dirname(newLocalPath), { recursive: true });
+        await fs.rename(currentLocalPath, newLocalPath);
+      } catch (error) {
+        console.error('Failed to rename local copy of S3 file:', error);
+      }
 
       await this.db('files').where({ id: fileId }).update({
-        name: newName,
+        name: normalizedNewName,
         path: newKey,
         publicUrl,
         updatedBy: userId,
@@ -340,9 +407,17 @@ export class FileService {
     }
 
     const existing = await this.db('files').where({ workspaceId });
-    const existingPaths = new Set(
-      existing.map((file) => path.normalize(file.path))
-    );
+    const existingPaths = new Set<string>();
+    for (const file of existing) {
+      existingPaths.add(path.normalize(file.path));
+      if (file.storageType === 's3') {
+        try {
+          existingPaths.add(path.normalize(this.getLocalPath(workspaceId, file.name)));
+        } catch (error) {
+          console.error('Failed to resolve local path for file during sync:', error);
+        }
+      }
+    }
 
     const diskFiles = await this.walkWorkspace(workspacePath);
     const missingFiles = diskFiles.filter(

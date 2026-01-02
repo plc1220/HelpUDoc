@@ -31,6 +31,7 @@ type InputFile = {
 
 type CollectedOutputs = {
   pdf?: string;
+  pptx?: string;
   images: string[];
 };
 
@@ -62,6 +63,7 @@ const collectOutputs = async (root: string): Promise<CollectedOutputs> => {
   }
 
   const images: string[] = [];
+  const pptxCandidates: string[] = [];
   let pdf: string | undefined;
 
   const stack: string[] = [root];
@@ -79,6 +81,9 @@ const collectOutputs = async (root: string): Promise<CollectedOutputs> => {
       if (ext === '.pdf') {
         pdf = resolved;
       }
+      if (ext === '.pptx') {
+        pptxCandidates.push(resolved);
+      }
       if (IMAGE_EXTENSIONS.has(ext)) {
         images.push(resolved);
       }
@@ -86,10 +91,47 @@ const collectOutputs = async (root: string): Promise<CollectedOutputs> => {
   }
 
   images.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-  return { pdf, images };
+  const preferredPptx = pptxCandidates.find((candidate) => candidate.endsWith('slides_editable.pptx'));
+  const pptx = preferredPptx || pptxCandidates[0];
+  return { pdf, pptx, images };
 };
 
-const buildCommandArgs = (inputPath: string, options: Paper2SlidesOptions) => {
+const detectStateError = async (root: string): Promise<string | null> => {
+  const stack: string[] = [root];
+  while (stack.length) {
+    const current = stack.pop();
+    if (!current) continue;
+    const entries = await fs.readdir(current, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      const resolved = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        stack.push(resolved);
+        continue;
+      }
+      if (entry.name !== 'state.json') continue;
+      try {
+        const raw = await fs.readFile(resolved, 'utf-8');
+        const state = JSON.parse(raw) as any;
+        if (state?.error) {
+          return String(state.error);
+        }
+        const stages = state?.stages;
+        if (stages && typeof stages === 'object') {
+          const failedStage = Object.entries(stages).find(([, status]) => status === 'failed');
+          if (failedStage) {
+            const [stage] = failedStage;
+            return `stage "${stage}" failed`;
+          }
+        }
+      } catch {
+        // Ignore malformed state files
+      }
+    }
+  }
+  return null;
+};
+
+const buildCommandArgs = (inputPath: string, options: Paper2SlidesOptions, outputDir?: string) => {
   const args = ['-m', 'paper2slides', '--input', inputPath];
   args.push('--output', options.output || 'slides');
   args.push('--content', options.content || 'paper');
@@ -115,6 +157,9 @@ const buildCommandArgs = (inputPath: string, options: Paper2SlidesOptions) => {
   if (parallelValue && parallelValue > 1) {
     args.push('--parallel', String(parallelValue));
   }
+  if (outputDir) {
+    args.push('--output-dir', outputDir);
+  }
   return args;
 };
 
@@ -131,7 +176,7 @@ export class Paper2SlidesService {
     files: InputFile[],
     options: Paper2SlidesOptions,
     jobId?: string,
-  ): Promise<{ pdfPath?: string; slideImages?: string[]; htmlPath?: string; jobId?: string }> {
+  ): Promise<{ pdfPath?: string; pptxPath?: string; slideImages?: string[]; htmlPath?: string; jobId?: string }> {
     if (!files.length) {
       throw new Error('No files provided for Paper2Slides');
     }
@@ -157,8 +202,18 @@ export class Paper2SlidesService {
       );
 
       const inputPath = writtenPaths.length === 1 ? writtenPaths[0] : tempDir;
-      const args = buildCommandArgs(inputPath, options);
+      const outputsRoot = path.join(tempDir, 'outputs');
+      await fs.mkdir(outputsRoot, { recursive: true });
+      const args = buildCommandArgs(inputPath, options, outputsRoot);
       const env = { ...process.env };
+      const repoRoot = path.resolve(__dirname, '..', '..', '..');
+      const agentPath = path.join(repoRoot, 'agent');
+      const paper2SlidesPath = await fs.stat(agentPath).then((stat) => (stat.isDirectory() ? agentPath : null)).catch(() => null);
+      if (paper2SlidesPath) {
+        env.PYTHONPATH = env.PYTHONPATH
+          ? `${paper2SlidesPath}${path.delimiter}${env.PYTHONPATH}`
+          : paper2SlidesPath;
+      }
 
       const { stdout, stderr } = await execFileAsync('python', args, {
         cwd: tempDir,
@@ -173,7 +228,11 @@ export class Paper2SlidesService {
         }
       }
 
-      const outputsRoot = path.join(tempDir, 'outputs');
+      const stateError = await detectStateError(outputsRoot);
+      if (stateError) {
+        throw new Error(stateError);
+      }
+
       const collected = await collectOutputs(outputsRoot);
       if (!collected.pdf && collected.images.length === 0) {
         throw new Error('Paper2Slides finished but no outputs were found');
@@ -184,6 +243,7 @@ export class Paper2SlidesService {
       const folder = path.posix.join('presentations', jobId ? `slide_${runId}` : '');
       const baseName = jobId ? 'slides' : `paper2slides-${timestamp}`;
       let pdfPath: string | undefined;
+      let pptxPath: string | undefined;
       const slideImages: string[] = [];
 
       if (collected.pdf) {
@@ -193,6 +253,20 @@ export class Paper2SlidesService {
           forceLocal: true,
         });
         pdfPath = relativeName;
+      }
+
+      if (collected.pptx) {
+        const pptxBuffer = await fs.readFile(collected.pptx);
+        const relativeName = path.posix.join(folder, `${baseName}.pptx`);
+        await this.fileService.createFile(
+          workspaceId,
+          relativeName,
+          pptxBuffer,
+          'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+          userId,
+          { forceLocal: true },
+        );
+        pptxPath = relativeName;
       }
 
       for (let i = 0; i < collected.images.length; i += 1) {
@@ -214,6 +288,7 @@ export class Paper2SlidesService {
 
       return {
         pdfPath,
+        pptxPath,
         slideImages,
         jobId: runId,
       };

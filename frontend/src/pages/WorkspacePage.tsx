@@ -9,7 +9,7 @@ import {
   createTheme,
   type PaletteMode,
 } from '@mui/material';
-import { CheckSquare, Copy, Edit, Trash, Star, Send, Plus, ChevronRight, ChevronLeft, RotateCcw, Maximize2, Minimize2, X, FileIcon, Printer, Download, Link as LinkIcon, MonitorPlay, StopCircle, Loader2 } from 'lucide-react';
+import { CheckSquare, Copy, Edit, Trash, Send, Plus, ChevronRight, ChevronLeft, RotateCcw, Maximize2, Minimize2, X, FileIcon, Printer, Download, Link as LinkIcon, MonitorPlay, StopCircle, Loader2, History } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { getWorkspaces, createWorkspace, deleteWorkspace } from '../services/workspaceApi';
@@ -21,9 +21,18 @@ import {
   getFileContent,
   renameFile,
   getWorkspaceFilePreview,
+  getRagStatuses,
 } from '../services/fileApi';
 import { startPaper2SlidesJob, getPaper2SlidesJob } from '../services/paper2SlidesJobApi';
-import { fetchPersonas, runAgentStream, type AgentStreamChunk } from '../services/agentApi';
+import {
+  cancelRun,
+  fetchPersonas,
+  getRunStatus,
+  startAgentRun,
+  streamAgentRun,
+  type AgentRunStatus,
+  type AgentStreamChunk,
+} from '../services/agentApi';
 import { fetchRecentConversations, createConversation as createConversationApi, fetchConversationDetail, appendMessage as appendConversationMessage, deleteConversation as deleteConversationApi } from '../services/conversationApi';
 import type {
   Workspace,
@@ -84,11 +93,23 @@ const buildTheme = (mode: PaletteMode) =>
   });
 
 const THOUGHT_PREVIEW_LIMIT = 320;
+const STREAM_DEBUG_ENABLED =
+  typeof import.meta !== 'undefined' &&
+  typeof import.meta.env !== 'undefined' &&
+  (import.meta.env.VITE_DEBUG_STREAM === '1' || import.meta.env.VITE_DEBUG_STREAM === 'true');
 const PAPER2SLIDES_STAGE_ORDER = ['rag', 'analysis', 'plan', 'generate'] as const;
 const PAPER2SLIDES_STYLE_PRESETS = ['academic', 'doraemon', 'custom'] as const;
+const SLASH_COMMANDS = [
+  {
+    id: 'presentation',
+    command: '/presentation',
+    description: 'Generate slides/posters from @files.',
+  },
+];
 
 type Paper2SlidesStage = (typeof PAPER2SLIDES_STAGE_ORDER)[number];
 type Paper2SlidesStylePreset = (typeof PAPER2SLIDES_STYLE_PRESETS)[number];
+type SlashCommand = (typeof SLASH_COMMANDS)[number];
 
 type PresentationOptionsState = {
   output: 'slides' | 'poster';
@@ -107,6 +128,19 @@ type FilePreviewPayload = {
   encoding: 'text' | 'base64';
   content: string;
 };
+
+type ActiveRunInfo = {
+  runId: string;
+  conversationId: string;
+  workspaceId: string;
+  persona: string;
+  turnId: string;
+  placeholderId: ConversationMessage['id'];
+  lastStreamId?: string;
+  status: AgentRunStatus;
+};
+
+const ACTIVE_RUNS_STORAGE_KEY = 'helpudoc-active-runs';
 
 const ToolOutputFilePreview = ({
   workspaceId,
@@ -229,11 +263,11 @@ const mapMessagesToAgentHistory = (messages: ConversationMessage[]) => {
     }));
 };
 
-const mergeMessageMetadata = (message: ConversationMessage): ConversationMessage => {
-  const metadata = message.metadata as ConversationMessageMetadata | null | undefined;
-  if (!metadata) {
-    return message;
-  }
+  const mergeMessageMetadata = (message: ConversationMessage): ConversationMessage => {
+    const metadata = message.metadata as ConversationMessageMetadata | null | undefined;
+    if (!metadata) {
+      return message;
+    }
   const thinkingText = message.thinkingText ?? metadata.thinkingText;
   const toolEvents = message.toolEvents ?? metadata.toolEvents;
   if (thinkingText === message.thinkingText && toolEvents === message.toolEvents) {
@@ -260,6 +294,23 @@ const buildMessageMetadata = (message?: ConversationMessage | null): Conversatio
   return Object.keys(metadata).length ? metadata : undefined;
 };
 
+const loadActiveRunsFromStorage = (): Record<string, ActiveRunInfo> => {
+  if (typeof window === 'undefined') {
+    return {};
+  }
+  try {
+    const raw = window.localStorage.getItem(ACTIVE_RUNS_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object') {
+      return parsed as Record<string, ActiveRunInfo>;
+    }
+  } catch (error) {
+    console.error('Failed to load active runs from storage', error);
+  }
+  return {};
+};
+
 export default function WorkspacePage() {
   const navigate = useNavigate();
   const { signOut } = useAuth();
@@ -279,7 +330,7 @@ export default function WorkspacePage() {
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
   const [fileContent, setFileContent] = useState('');
   const [newWorkspaceName, setNewWorkspaceName] = useState('');
-  const [messages, setMessages] = useState<ConversationMessage[]>([]);
+  const [conversationMessages, setConversationMessages] = useState<Record<string, ConversationMessage[]>>({});
   const [chatMessage, setChatMessage] = useState('');
   const [chatAttachments, setChatAttachments] = useState<File[]>([]);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -289,11 +340,13 @@ export default function WorkspacePage() {
   const [isEditMode, setIsEditMode] = useState(false);
   const [isAgentPaneVisible, setIsAgentPaneVisible] = useState(true);
   const [isFilePaneVisible, setIsFilePaneVisible] = useState(true);
-  const [isStreaming, setIsStreaming] = useState(false);
+  const [conversationStreaming, setConversationStreaming] = useState<Record<string, boolean>>({});
   const [isAgentPaneFullScreen, setIsAgentPaneFullScreen] = useState(false);
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [conversationHistory, setConversationHistory] = useState<ConversationSummary[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [activeConversationPersona, setActiveConversationPersona] = useState<string | null>(null);
+  const [activeRuns, setActiveRuns] = useState<Record<string, ActiveRunInfo>>({});
   const [presentationOptions, setPresentationOptions] = useState<PresentationOptionsState>({
     output: 'slides',
     content: 'paper',
@@ -307,12 +360,18 @@ export default function WorkspacePage() {
   const [presentationStageIndex, setPresentationStageIndex] = useState<number>(-1);
   const [isPresentationModalOpen, setIsPresentationModalOpen] = useState(false);
   const [draftPresentationOptions, setDraftPresentationOptions] = useState<PresentationOptionsState | null>(null);
-  const streamAbortRef = useRef<AbortController | null>(null);
+  const streamAbortMapRef = useRef<Map<string, AbortController>>(new Map());
   const presentationJobPollsRef = useRef<Map<string, number>>(new Map());
-  const messagesRef = useRef<ConversationMessage[]>([]);
+  const conversationMessagesRef = useRef<Record<string, ConversationMessage[]>>({});
   const agentMessageBufferRef = useRef<Map<ConversationMessage['id'], string>>(new Map());
+  const agentChunkBufferRef = useRef<Map<string, Map<number, string>>>(new Map());
+  const agentChunkFlushTimerRef = useRef<number | null>(null);
+  const lastUserMessageMapRef = useRef<Record<string, string>>({});
+  const activeRunsRef = useRef<Record<string, ActiveRunInfo>>({});
+  const lastPersistedAgentTextRef = useRef<Record<string, string>>({});
+  const lastPersistedStatusRef = useRef<Record<string, AgentRunStatus | undefined>>({});
+  const persistInFlightRef = useRef<Set<string>>(new Set());
   const stopRequestedRef = useRef(false);
-  const lastUserMessageRef = useRef<string>('');
   const chatInputRef = useRef<HTMLTextAreaElement | null>(null);
   const attachmentInputRef = useRef<HTMLInputElement | null>(null);
   const presentationProgressTimerRef = useRef<number | null>(null);
@@ -321,15 +380,84 @@ export default function WorkspacePage() {
   const [mentionTriggerIndex, setMentionTriggerIndex] = useState<number | null>(null);
   const [mentionCursorPosition, setMentionCursorPosition] = useState<number | null>(null);
   const [mentionSelectedIndex, setMentionSelectedIndex] = useState(0);
+  const [isCommandOpen, setIsCommandOpen] = useState(false);
+  const [commandQuery, setCommandQuery] = useState('');
+  const [commandTriggerIndex, setCommandTriggerIndex] = useState<number | null>(null);
+  const [commandCursorPosition, setCommandCursorPosition] = useState<number | null>(null);
+  const [commandSelectedIndex, setCommandSelectedIndex] = useState(0);
   const [expandedToolMessages, setExpandedToolMessages] = useState<Set<ConversationMessage['id']>>(new Set());
   const [expandedThinkingMessages, setExpandedThinkingMessages] = useState<Set<ConversationMessage['id']>>(new Set());
   const [copiedCodeBlockId, setCopiedCodeBlockId] = useState<string | null>(null);
   const [copiedImageUrl, setCopiedImageUrl] = useState(false);
   const [copiedFileUrlId, setCopiedFileUrlId] = useState<string | null>(null);
+  const [ragStatuses, setRagStatuses] = useState<Record<string, { status?: string; updatedAt?: string; error?: string }>>({});
   const [copiedWorkspaceContent, setCopiedWorkspaceContent] = useState(false);
   const [copiedMessageId, setCopiedMessageId] = useState<ConversationMessage['id'] | null>(null);
+  const ragStatusFetchedRef = useRef<Record<string, boolean>>({});
+  const resumeInFlightRef = useRef<Set<string>>(new Set());
+  const resumeAttemptedRef = useRef<Set<string>>(new Set());
   const theme = useMemo(() => buildTheme(colorMode), [colorMode]);
+  const messages = useMemo(
+    () => (activeConversationId ? conversationMessages[activeConversationId] || [] : []),
+    [activeConversationId, conversationMessages],
+  );
+  const isStreaming = useMemo(
+    () => (activeConversationId ? conversationStreaming[activeConversationId] || false : false),
+    [activeConversationId, conversationStreaming],
+  );
   const allFilesSelected = files.length > 0 && selectedFiles.size === files.length;
+  const showPaper2SlidesControls = Boolean(
+    selectedFile || chatAttachments.length || chatMessage.trim().length || presentationStatus !== 'idle',
+  );
+
+  const persistActiveRuns = useCallback((runs: Record<string, ActiveRunInfo>) => {
+    activeRunsRef.current = runs;
+    setActiveRuns(runs);
+    if (typeof window !== 'undefined') {
+      try {
+        window.localStorage.setItem(ACTIVE_RUNS_STORAGE_KEY, JSON.stringify(runs));
+      } catch (error) {
+        console.error('Failed to persist active runs', error);
+      }
+    }
+  }, []);
+
+  const registerActiveRun = useCallback((runInfo: ActiveRunInfo) => {
+    const next = { ...activeRunsRef.current, [runInfo.runId]: runInfo };
+    persistActiveRuns(next);
+  }, [persistActiveRuns]);
+
+  const removeActiveRun = useCallback((runId: string) => {
+    if (!activeRunsRef.current[runId]) return;
+    const next = { ...activeRunsRef.current };
+    delete next[runId];
+    persistActiveRuns(next);
+    delete lastPersistedAgentTextRef.current[runId];
+    delete lastPersistedStatusRef.current[runId];
+    resumeInFlightRef.current.delete(runId);
+    resumeAttemptedRef.current.delete(runId);
+  }, [persistActiveRuns]);
+
+  const getActiveRunForConversation = useCallback((conversationId: string | null) => {
+    if (!conversationId) {
+      return null;
+    }
+    const runs = Object.values(activeRunsRef.current);
+    const active = runs.find((run) => run.conversationId === conversationId && run.status === 'running') || null;
+    if (!active) {
+      return null;
+    }
+    const messages = conversationMessagesRef.current[conversationId] || [];
+    const hasPlaceholder = messages.some((message) =>
+      message.id === active.placeholderId ||
+      (message.sender === 'agent' && message.metadata?.runId === active.runId)
+    );
+    if (!hasPlaceholder) {
+      removeActiveRun(active.runId);
+      return null;
+    }
+    return active;
+  }, [removeActiveRun]);
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', colorMode);
@@ -337,6 +465,11 @@ export default function WorkspacePage() {
       window.localStorage.setItem('helpudoc-color-mode', colorMode);
     }
   }, [colorMode]);
+
+  useEffect(() => {
+    const storedRuns = loadActiveRunsFromStorage();
+    persistActiveRuns(storedRuns);
+  }, [persistActiveRuns]);
 
   const toggleColorMode = useCallback(
     () => setColorMode((prev) => (prev === 'light' ? 'dark' : 'light')),
@@ -352,6 +485,20 @@ export default function WorkspacePage() {
     );
     return filtered.slice(0, 8);
   }, [files, isMentionOpen, mentionQuery]);
+
+  const commandSuggestions = useMemo(() => {
+    if (!isCommandOpen) {
+      return [] as SlashCommand[];
+    }
+    const normalized = commandQuery.trim().toLowerCase();
+    return SLASH_COMMANDS.filter((command) => {
+      if (!normalized) {
+        return true;
+      }
+      const commandValue = command.command.slice(1).toLowerCase();
+      return commandValue.startsWith(normalized) || command.command.toLowerCase().includes(normalized);
+    });
+  }, [commandQuery, isCommandOpen]);
 
   const personaDisplayName = useMemo(() => {
     const personaId = activeConversationPersona || selectedPersona;
@@ -820,17 +967,63 @@ export default function WorkspacePage() {
     transition: 'flex-grow 0.35s ease, opacity 0.35s ease',
   };
 
-  const cancelStream = () => {
-    if (streamAbortRef.current) {
-      streamAbortRef.current.abort();
-      streamAbortRef.current = null;
-    }
-    setIsStreaming(false);
-  };
+  const setStreamingForConversation = useCallback((conversationId: string, value: boolean) => {
+    setConversationStreaming((prev) => ({ ...prev, [conversationId]: value }));
+  }, []);
+
+  const updateMessagesForConversation = useCallback(
+    (conversationId: string, updater: (prev: ConversationMessage[]) => ConversationMessage[]) => {
+      if (!conversationId) {
+        return;
+      }
+      setConversationMessages((prev) => {
+        const next = { ...prev };
+        const current = next[conversationId] || [];
+        next[conversationId] = updater(current);
+        return next;
+      });
+    },
+    [],
+  );
+
+  const getConversationMessagesSnapshot = useCallback(
+    (conversationId: string | null) => {
+      if (!conversationId) return [];
+      return conversationMessagesRef.current[conversationId] || [];
+    },
+    [],
+  );
+
+  const cancelStreamForConversation = useCallback(
+    (conversationId?: string | null) => {
+      if (!conversationId) {
+        return;
+      }
+      const controller = streamAbortMapRef.current.get(conversationId);
+      if (controller) {
+        controller.abort();
+        streamAbortMapRef.current.delete(conversationId);
+      }
+      setStreamingForConversation(conversationId, false);
+    },
+    [setStreamingForConversation],
+  );
+
+  const cancelAllStreams = useCallback(() => {
+    streamAbortMapRef.current.forEach((controller) => controller.abort());
+    streamAbortMapRef.current.clear();
+    setConversationStreaming({});
+  }, []);
 
   const handleStopStreaming = () => {
     stopRequestedRef.current = true;
-    cancelStream();
+    const activeRun = getActiveRunForConversation(activeConversationId);
+    if (activeRun) {
+      cancelRun(activeRun.runId).catch((error) => {
+        console.error('Failed to cancel run', error);
+      });
+    }
+    cancelStreamForConversation(activeConversationId);
   };
 
   const loadFilesForWorkspace = useCallback(async (workspaceId: string | null) => {
@@ -843,13 +1036,34 @@ export default function WorkspacePage() {
     }
   }, []);
 
-  useEffect(() => {
-    return () => cancelStream();
-  }, []);
+  const fetchRagStatusForFiles = useCallback(async () => {
+    if (!selectedWorkspace) {
+      setRagStatuses({});
+      return;
+    }
+    const names = files
+      .map((file) => file.name)
+      .filter((name) => typeof name === 'string' && name.trim().length > 0);
+    if (!names.length) {
+      setRagStatuses({});
+      return;
+    }
+    try {
+      const response = await getRagStatuses(selectedWorkspace.id, names);
+      setRagStatuses(response?.statuses || {});
+      ragStatusFetchedRef.current[selectedWorkspace.id] = true;
+    } catch (error) {
+      console.error('Failed to load RAG status', error);
+    }
+  }, [files, selectedWorkspace]);
 
   useEffect(() => {
-    messagesRef.current = messages;
-  }, [messages]);
+    return () => cancelAllStreams();
+  }, [cancelAllStreams]);
+
+  useEffect(() => {
+    conversationMessagesRef.current = conversationMessages;
+  }, [conversationMessages]);
 
   useEffect(() => {
     setExpandedToolMessages(new Set());
@@ -863,14 +1077,58 @@ export default function WorkspacePage() {
   }, [isAgentPaneVisible, isAgentPaneFullScreen]);
 
   useEffect(() => {
+    if (!isAgentPaneVisible) {
+      setIsHistoryOpen(false);
+    }
+  }, [isAgentPaneVisible]);
+
+  useEffect(() => {
     if (!selectedWorkspace || !isStreaming) {
       return;
     }
     const interval = setInterval(() => {
       loadFilesForWorkspace(selectedWorkspace.id);
-    }, 3000);
+    }, 12000);
     return () => clearInterval(interval);
   }, [isStreaming, selectedWorkspace, loadFilesForWorkspace]);
+
+  useEffect(() => {
+    if (!selectedWorkspace) {
+      return;
+    }
+    const workspaceId = selectedWorkspace.id;
+    const hasPendingStatus = Object.values(ragStatuses).some((status) => {
+      const normalized = String(status?.status || '').toLowerCase();
+      return ['pending', 'processing', 'preprocessed'].includes(normalized);
+    });
+    if (!ragStatusFetchedRef.current[workspaceId] || hasPendingStatus) {
+      void fetchRagStatusForFiles();
+    }
+
+    if (!hasPendingStatus) {
+      return;
+    }
+    const shouldPoll = files.some((file) => {
+      if (!file?.name || typeof file.name !== 'string') {
+        return false;
+      }
+      const status = ragStatuses[file.name]?.status;
+      if (!status) {
+        return false;
+      }
+      const normalized = String(status).toLowerCase();
+      return ['pending', 'processing', 'preprocessed'].includes(normalized);
+    });
+
+    if (!shouldPoll) {
+      return;
+    }
+
+    const interval = window.setInterval(() => {
+      void fetchRagStatusForFiles();
+    }, 5000);
+    return () => window.clearInterval(interval);
+  }, [fetchRagStatusForFiles, files, ragStatuses, selectedWorkspace]);
 
   useEffect(() => {
     if (!mentionSuggestions.length) {
@@ -881,6 +1139,16 @@ export default function WorkspacePage() {
       );
     }
   }, [mentionSuggestions.length]);
+
+  useEffect(() => {
+    if (!commandSuggestions.length) {
+      setCommandSelectedIndex(0);
+    } else {
+      setCommandSelectedIndex((current) =>
+        Math.min(current, commandSuggestions.length - 1)
+      );
+    }
+  }, [commandSuggestions.length]);
 
   const isFileEditable = (fileName: string): boolean => {
     const editableExtensions = [
@@ -929,9 +1197,18 @@ export default function WorkspacePage() {
     setMentionSelectedIndex(0);
   }, []);
 
+  const closeCommand = useCallback(() => {
+    setIsCommandOpen(false);
+    setCommandQuery('');
+    setCommandTriggerIndex(null);
+    setCommandCursorPosition(null);
+    setCommandSelectedIndex(0);
+  }, []);
+
   useEffect(() => {
     closeMention();
-  }, [closeMention, selectedWorkspace]);
+    closeCommand();
+  }, [closeMention, closeCommand, selectedWorkspace]);
 
   const updateMentionState = useCallback(
     (value: string, cursor: number | null | undefined) => {
@@ -956,6 +1233,41 @@ export default function WorkspacePage() {
     [closeMention, selectedWorkspace]
   );
 
+  const updateCommandState = useCallback(
+    (value: string, cursor: number | null | undefined) => {
+      if (cursor === null || cursor === undefined) {
+        closeCommand();
+        return false;
+      }
+      const textBeforeCursor = value.slice(0, cursor);
+      const commandMatch = textBeforeCursor.match(/(^|[\s([{])\/([^\s/]*)$/);
+      if (!commandMatch) {
+        closeCommand();
+        return false;
+      }
+      const query = commandMatch[2] || '';
+      const triggerIndex = cursor - query.length - 1;
+      setIsCommandOpen(true);
+      setCommandQuery(query);
+      setCommandTriggerIndex(triggerIndex);
+      setCommandCursorPosition(cursor);
+      setCommandSelectedIndex(0);
+      closeMention();
+      return true;
+    },
+    [closeCommand, closeMention],
+  );
+
+  const updateAutocompleteState = useCallback(
+    (value: string, cursor: number | null | undefined) => {
+      const commandActive = updateCommandState(value, cursor);
+      if (!commandActive) {
+        updateMentionState(value, cursor);
+      }
+    },
+    [updateCommandState, updateMentionState],
+  );
+
   const handleSelectMention = useCallback(
     (file: WorkspaceFile) => {
       if (mentionTriggerIndex === null || mentionCursorPosition === null) {
@@ -978,6 +1290,29 @@ export default function WorkspacePage() {
       });
     },
     [chatMessage, closeMention, mentionCursorPosition, mentionTriggerIndex]
+  );
+
+  const handleSelectCommand = useCallback(
+    (command: SlashCommand) => {
+      if (commandTriggerIndex === null || commandCursorPosition === null) {
+        closeCommand();
+        return;
+      }
+      const before = chatMessage.slice(0, commandTriggerIndex);
+      const after = chatMessage.slice(commandCursorPosition);
+      const needsSpace = after.length === 0 || after.startsWith(' ') ? '' : ' ';
+      const nextValue = `${before}${command.command}${needsSpace}${after}`;
+      setChatMessage(nextValue);
+      closeCommand();
+      requestAnimationFrame(() => {
+        if (chatInputRef.current) {
+          const cursorPosition = before.length + command.command.length + (needsSpace ? 1 : 0);
+          chatInputRef.current.focus();
+          chatInputRef.current.setSelectionRange(cursorPosition, cursorPosition);
+        }
+      });
+    },
+    [chatMessage, closeCommand, commandCursorPosition, commandTriggerIndex],
   );
 
   const findMentionedFiles = useCallback(
@@ -1014,22 +1349,65 @@ export default function WorkspacePage() {
     try {
       const detail = await fetchConversationDetail(conversationId);
       const hydratedMessages = detail.messages.map(mergeMessageMetadata);
+      const filteredMessages = hydratedMessages.filter((message) => {
+        if (message.sender !== 'agent') {
+          return true;
+        }
+        if (message.text?.trim()) {
+          return true;
+        }
+        if (message.thinkingText?.trim()) {
+          return true;
+        }
+        if (message.toolEvents?.length) {
+          return true;
+        }
+        return message.metadata?.status === 'running';
+      });
       const buffer = agentMessageBufferRef.current;
-      buffer.clear();
-      hydratedMessages.forEach((message) => {
+      filteredMessages.forEach((message) => {
         if (message.sender === 'agent') {
           buffer.set(message.id, message.text || '');
         }
       });
-      setMessages(hydratedMessages);
+      setConversationMessages((prev) => ({ ...prev, [conversationId]: filteredMessages }));
       setActiveConversationPersona(detail.conversation.persona);
+      const runningRunIds = new Set(
+        filteredMessages
+          .filter((message) => message.sender === 'agent' && message.metadata?.runId && message.metadata?.status === 'running')
+          .map((message) => message.metadata?.runId as string)
+      );
+      const runningAgentMessage = filteredMessages.find(
+        (message) => message.sender === 'agent' && message.metadata?.runId && message.metadata?.status === 'running'
+      );
+      if (runningAgentMessage && !activeRunsRef.current[runningAgentMessage.metadata?.runId || '']) {
+        const runId = runningAgentMessage.metadata?.runId as string;
+        const placeholderId = runningAgentMessage.id;
+        const turnId = runningAgentMessage.turnId || generateTurnId();
+        const runInfo: ActiveRunInfo = {
+          runId,
+          conversationId,
+          workspaceId: detail.conversation.workspaceId,
+          persona: detail.conversation.persona,
+          turnId,
+          placeholderId,
+          status: 'running',
+        };
+        registerActiveRun(runInfo);
+      }
+      Object.values(activeRunsRef.current)
+        .filter((run) => run.conversationId === conversationId && run.status === 'running')
+        .forEach((run) => {
+          if (!runningRunIds.has(run.runId)) {
+            removeActiveRun(run.runId);
+          }
+        });
     } catch (error) {
       console.error('Failed to load conversation messages', error);
-      agentMessageBufferRef.current.clear();
-      setMessages([]);
+      setConversationMessages((prev) => ({ ...prev, [conversationId]: [] }));
       setActiveConversationPersona(null);
     }
-  }, []);
+  }, [registerActiveRun, removeActiveRun]);
 
   const addLocalSystemMessage = useCallback((text: string) => {
     const systemMessage: ConversationMessage = {
@@ -1039,9 +1417,10 @@ export default function WorkspacePage() {
       text,
       createdAt: new Date().toISOString(),
     };
-    setMessages((prev) => [...prev, systemMessage]);
+    const conversationId = activeConversationId || 'local';
+    updateMessagesForConversation(conversationId, (prev) => [...prev, systemMessage]);
     agentMessageBufferRef.current.set(systemMessage.id, systemMessage.text || '');
-  }, [activeConversationId]);
+  }, [activeConversationId, updateMessagesForConversation]);
 
   const ensureConversation = useCallback(async () => {
     if (activeConversationId) {
@@ -1054,15 +1433,15 @@ export default function WorkspacePage() {
       const conversation = await createConversationApi(selectedWorkspace.id, selectedPersona);
       setActiveConversationId(conversation.id);
       setActiveConversationPersona(conversation.persona);
-      agentMessageBufferRef.current.clear();
-      setMessages([]);
+      setConversationMessages((prev) => ({ ...prev, [conversation.id]: [] }));
+      setStreamingForConversation(conversation.id, false);
       await refreshConversationHistory(selectedWorkspace.id);
       return conversation.id;
     } catch (error) {
       console.error('Failed to create conversation', error);
       return null;
     }
-  }, [activeConversationId, selectedWorkspace, selectedPersona, refreshConversationHistory]);
+  }, [activeConversationId, selectedWorkspace, selectedPersona, refreshConversationHistory, setStreamingForConversation]);
 
   useEffect(() => {
     const loadConversations = async () => {
@@ -1070,10 +1449,14 @@ export default function WorkspacePage() {
         setConversationHistory([]);
         setActiveConversationId(null);
         agentMessageBufferRef.current.clear();
-        setMessages([]);
+        setConversationMessages({});
+        setConversationStreaming({});
+        lastUserMessageMapRef.current = {};
         setActiveConversationPersona(null);
         return;
       }
+      cancelAllStreams();
+      setConversationStreaming({});
       const conversations = await refreshConversationHistory(selectedWorkspace.id);
       if (conversations.length) {
         const firstConversation = conversations[0];
@@ -1081,14 +1464,12 @@ export default function WorkspacePage() {
         await loadConversationMessages(firstConversation.id);
       } else {
         setActiveConversationId(null);
-        agentMessageBufferRef.current.clear();
-        setMessages([]);
         setActiveConversationPersona(null);
       }
     };
 
     loadConversations();
-  }, [selectedWorkspace, refreshConversationHistory, loadConversationMessages]);
+  }, [selectedWorkspace, refreshConversationHistory, loadConversationMessages, cancelAllStreams]);
 
   useEffect(() => {
     const loadPersonas = async () => {
@@ -1165,7 +1546,6 @@ export default function WorkspacePage() {
   };
 
   const handleSelectConversationFromHistory = async (conversationId: string) => {
-    cancelStream();
     setActiveConversationId(conversationId);
     await loadConversationMessages(conversationId);
     setChatMessage('');
@@ -1176,22 +1556,44 @@ export default function WorkspacePage() {
     async (conversationId: string) => {
       try {
         await deleteConversationApi(conversationId);
+        cancelStreamForConversation(conversationId);
+        setConversationMessages((prev) => {
+          const next = { ...prev };
+          delete next[conversationId];
+          return next;
+        });
+        setConversationStreaming((prev) => {
+          const next = { ...prev };
+          delete next[conversationId];
+          return next;
+        });
+        const existingMessages = conversationMessagesRef.current[conversationId] || [];
+        existingMessages.forEach((message) => agentMessageBufferRef.current.delete(message.id));
+        delete lastUserMessageMapRef.current[conversationId];
+        Object.values(activeRunsRef.current).forEach((run) => {
+          if (run.conversationId === conversationId) {
+            removeActiveRun(run.runId);
+          }
+        });
         setConversationHistory((prev) => prev.filter((conversation) => conversation.id !== conversationId));
         if (activeConversationId === conversationId) {
           setActiveConversationId(null);
-          agentMessageBufferRef.current.clear();
-          setMessages([]);
+          setConversationMessages((prev) => ({ ...prev, [conversationId]: [] }));
           setActiveConversationPersona(null);
         }
       } catch (error) {
         console.error('Failed to delete conversation', error);
       }
     },
-    [activeConversationId],
+    [activeConversationId, cancelStreamForConversation, removeActiveRun],
   );
 
-  const updateToolEvents = (index: number, updater: (events: ToolEvent[]) => ToolEvent[]) => {
-    setMessages((prev) => {
+  const updateToolEvents = (
+    conversationId: string,
+    index: number,
+    updater: (events: ToolEvent[]) => ToolEvent[],
+  ) => {
+    updateMessagesForConversation(conversationId, (prev) => {
       const updated = [...prev];
       const target = updated[index];
       if (!target) {
@@ -1213,11 +1615,11 @@ export default function WorkspacePage() {
     startedAt: new Date().toISOString(),
   });
 
-  const appendAgentThought = (index: number, chunk: string) => {
+  const appendAgentThought = (conversationId: string, index: number, chunk: string) => {
     if (!chunk || index < 0) {
       return;
     }
-    setMessages((prevMessages) => {
+    updateMessagesForConversation(conversationId, (prevMessages) => {
       const updated = [...prevMessages];
       const target = updated[index];
       if (!target) {
@@ -1238,12 +1640,13 @@ export default function WorkspacePage() {
     return `${text.slice(0, maxLength)}…`;
   };
 
-  const appendToolStart = (index: number, chunk: AgentStreamChunk & { type: 'tool_start' }) => {
+  const appendToolStart = (conversationId: string, index: number, chunk: AgentStreamChunk & { type: 'tool_start' }) => {
     const label = chunk.name || chunk.content || 'tool';
-    updateToolEvents(index, (events) => [...events, createToolEvent(label)]);
+    updateToolEvents(conversationId, index, (events) => [...events, createToolEvent(label)]);
   };
 
   const appendToolEnd = (
+    conversationId: string,
     index: number,
     chunk: (AgentStreamChunk & { type: 'tool_end' | 'tool_error' }),
     status: ToolEvent['status'] = 'completed',
@@ -1251,7 +1654,7 @@ export default function WorkspacePage() {
     const label = chunk.name || 'tool';
     const summary = chunk.content ? truncateToolOutput(chunk.content) : '';
     const outputFiles = 'outputFiles' in chunk ? chunk.outputFiles : undefined;
-    updateToolEvents(index, (events) => {
+    updateToolEvents(conversationId, index, (events) => {
       if (!events.length) {
         return [
           {
@@ -1285,24 +1688,232 @@ export default function WorkspacePage() {
     });
   };
 
-  const handleStreamChunk = (agentMessageIndex: number, chunk: AgentStreamChunk) => {
+  const flushBufferedAgentChunks = useCallback(() => {
+    if (!agentChunkBufferRef.current.size) {
+      return;
+    }
+    const pending = agentChunkBufferRef.current;
+    agentChunkBufferRef.current = new Map();
+    pending.forEach((messageChunks, conversationId) => {
+      updateMessagesForConversation(conversationId, (prevMessages) => {
+        if (!messageChunks.size || !prevMessages.length) {
+          return prevMessages;
+        }
+        const updated = [...prevMessages];
+        messageChunks.forEach((chunkText, index) => {
+          if (!chunkText || index < 0) {
+            return;
+          }
+          const target = updated[index];
+          if (!target) {
+            return;
+          }
+          let nextChunk = chunkText;
+          const userPrompt = (lastUserMessageMapRef.current[conversationId] || '').trim();
+          if (!target.text && userPrompt) {
+            const chunkNoLeading = nextChunk.replace(/^\s+/, '');
+            if (chunkNoLeading.startsWith(userPrompt)) {
+              const remainder = chunkNoLeading.slice(userPrompt.length).replace(/^\s+/, '');
+              if (!remainder) {
+                return;
+              }
+              nextChunk = remainder;
+            }
+          }
+          const combinedText = `${target.text || ''}${nextChunk}`;
+          const updatedMessage: ConversationMessage = {
+            ...target,
+            text: combinedText,
+          };
+          updated[index] = updatedMessage;
+          if (
+            updatedMessage.sender === 'agent' &&
+            updatedMessage.id !== undefined &&
+            updatedMessage.id !== null
+          ) {
+            agentMessageBufferRef.current.set(updatedMessage.id, combinedText);
+          }
+        });
+        return updated;
+      });
+    });
+  }, [updateMessagesForConversation]);
+
+  const ensureAgentPlaceholder = useCallback(
+    (conversationId: string, placeholderId: ConversationMessage['id'], turnId: string, resetText = false) => {
+      if (!conversationId) {
+        return -1;
+      }
+      const snapshot = conversationMessagesRef.current[conversationId] || [];
+      const existingSnapshotIndex = snapshot.findIndex((message) => message.id === placeholderId);
+      const targetIndex = existingSnapshotIndex !== -1 ? existingSnapshotIndex : snapshot.length;
+      updateMessagesForConversation(conversationId, (prevMessages) => {
+        const existingIndex = prevMessages.findIndex((message) => message.id === placeholderId);
+        if (existingIndex !== -1) {
+          const existing = prevMessages[existingIndex];
+          if (resetText && existing) {
+            const resetMessage: ConversationMessage = { ...existing, text: '' };
+            agentMessageBufferRef.current.set(placeholderId, '');
+            const next = [...prevMessages];
+            next[existingIndex] = resetMessage;
+            return next;
+          }
+          return prevMessages;
+        }
+        const placeholder: ConversationMessage = {
+          id: placeholderId,
+          conversationId,
+          sender: 'agent',
+          text: '',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          turnId,
+        };
+        return [...prevMessages, placeholder];
+      });
+      return targetIndex;
+    },
+    [updateMessagesForConversation],
+  );
+
+  const findAgentMessageForRun = useCallback(
+    (conversationId: string, placeholderId: ConversationMessage['id'], turnId: string) => {
+      const messages = conversationMessagesRef.current[conversationId] || [];
+      const byId = messages.find((message) => message.id === placeholderId);
+      if (byId) return byId;
+      return messages.find((message) => message.turnId === turnId && message.sender === 'agent') || null;
+    },
+    [],
+  );
+
+  const getBufferedAgentText = useCallback(
+    (runInfo: ActiveRunInfo) => {
+      const { placeholderId, conversationId, turnId } = runInfo;
+      const buffered = agentMessageBufferRef.current.get(placeholderId);
+      if (buffered !== undefined) {
+        return buffered;
+      }
+      const message = findAgentMessageForRun(conversationId, placeholderId, turnId);
+      return message?.text || '';
+    },
+    [findAgentMessageForRun],
+  );
+
+  const persistAgentProgress = useCallback(
+    async (runInfo: ActiveRunInfo, statusOverride?: AgentRunStatus) => {
+      const { runId, conversationId, turnId, placeholderId } = runInfo;
+      if (persistInFlightRef.current.has(runId)) {
+        return;
+      }
+      const text = getBufferedAgentText(runInfo);
+      const lastText = lastPersistedAgentTextRef.current[runId];
+      const nextStatus = statusOverride || 'running';
+      const lastStatus = lastPersistedStatusRef.current[runId];
+      if (text === lastText && nextStatus === lastStatus) {
+        return;
+      }
+      const message = findAgentMessageForRun(conversationId, placeholderId, turnId);
+      if (!text && !message?.thinkingText && !message?.toolEvents?.length) {
+        return;
+      }
+      const metadata = { ...(buildMessageMetadata(message) || {}), runId, status: nextStatus };
+      persistInFlightRef.current.add(runId);
+      try {
+        const persisted = await appendConversationMessage(conversationId, 'agent', text, {
+          turnId,
+          replaceExisting: true,
+          metadata,
+        });
+        const hydrated = mergeMessageMetadata(persisted);
+        updateMessagesForConversation(conversationId, (prev) => {
+          const updated = [...prev];
+          const existingIndex = updated.findIndex(
+            (m) => m.id === hydrated.id || (m.sender === 'agent' && m.turnId === hydrated.turnId)
+          );
+          if (existingIndex !== -1) {
+            const existing = updated[existingIndex];
+            updated[existingIndex] = {
+              ...hydrated,
+              thinkingText: hydrated.thinkingText ?? existing?.thinkingText,
+              toolEvents: hydrated.toolEvents ?? existing?.toolEvents,
+            };
+          } else {
+            updated.push(hydrated);
+          }
+          return updated;
+        });
+        lastPersistedAgentTextRef.current[runId] = text;
+        lastPersistedStatusRef.current[runId] = nextStatus;
+        agentMessageBufferRef.current.set(hydrated.id, hydrated.text || '');
+        if (placeholderId !== hydrated.id) {
+          agentMessageBufferRef.current.delete(placeholderId);
+        }
+      } catch (error) {
+        console.error('Failed to persist agent progress', error);
+      } finally {
+        persistInFlightRef.current.delete(runId);
+      }
+    },
+    [getBufferedAgentText, findAgentMessageForRun, updateMessagesForConversation],
+  );
+
+  const bufferAgentChunk = (conversationId: string, index: number, chunk: string) => {
+    if (!conversationId || !chunk || index < 0) {
+      return;
+    }
+    const conversationBuffer = agentChunkBufferRef.current.get(conversationId) ?? new Map();
+    conversationBuffer.set(index, `${conversationBuffer.get(index) || ''}${chunk}`);
+    agentChunkBufferRef.current.set(conversationId, conversationBuffer);
+  };
+
+  useEffect(() => {
+    if (agentChunkFlushTimerRef.current !== null) {
+      return;
+    }
+    agentChunkFlushTimerRef.current = window.setInterval(() => {
+      flushBufferedAgentChunks();
+    }, 75);
+    return () => {
+      if (agentChunkFlushTimerRef.current !== null) {
+        window.clearInterval(agentChunkFlushTimerRef.current);
+        agentChunkFlushTimerRef.current = null;
+      }
+    };
+  }, [flushBufferedAgentChunks]);
+
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      const runs = Object.values(activeRunsRef.current);
+      runs.forEach((run) => {
+        void persistAgentProgress(run);
+      });
+    }, 450);
+    return () => window.clearInterval(interval);
+  }, [persistAgentProgress]);
+
+  const handleStreamChunk = (conversationId: string, agentMessageIndex: number, chunk: AgentStreamChunk) => {
+    if (chunk.type === 'keepalive') {
+      setStreamingForConversation(conversationId, true);
+      return;
+    }
+
     if (chunk.type === 'thought') {
-      appendAgentThought(agentMessageIndex, chunk.content || '');
+      appendAgentThought(conversationId, agentMessageIndex, chunk.content || '');
       return;
     }
 
     if (chunk.type === 'tool_start') {
-      appendToolStart(agentMessageIndex, chunk);
+      appendToolStart(conversationId, agentMessageIndex, chunk);
       return;
     }
 
     if (chunk.type === 'tool_end') {
-      appendToolEnd(agentMessageIndex, chunk);
+      appendToolEnd(conversationId, agentMessageIndex, chunk);
       return;
     }
 
     if (chunk.type === 'tool_error') {
-      appendToolEnd(agentMessageIndex, chunk, 'error');
+      appendToolEnd(conversationId, agentMessageIndex, chunk, 'error');
       return;
     }
 
@@ -1310,52 +1921,179 @@ export default function WorkspacePage() {
       if (chunk.role && chunk.role !== 'assistant') {
         return;
       }
-      appendAgentChunk(agentMessageIndex, chunk.content || '');
+      appendAgentChunk(conversationId, agentMessageIndex, chunk.content || '');
       return;
     }
 
     if (chunk.type === 'error') {
-      appendAgentChunk(agentMessageIndex, `\n${chunk.message || 'Agent stream failed.'}`);
+      appendAgentChunk(conversationId, agentMessageIndex, `\n${chunk.message || 'Agent stream failed.'}`);
     }
   };
 
-  const appendAgentChunk = (index: number, chunk: string) => {
-    if (!chunk || index < 0) {
-      return;
-    }
-    setMessages((prevMessages) => {
-      const updated = [...prevMessages];
-      const target = updated[index];
-      if (!target) {
-        return updated;
+  const streamRunForConversation = useCallback(
+    async (runInfo: ActiveRunInfo, replayFromStart = false) => {
+      const { conversationId, runId, turnId, placeholderId } = runInfo;
+      cancelStreamForConversation(conversationId);
+      const agentMessageIndex = ensureAgentPlaceholder(conversationId, placeholderId, turnId, replayFromStart);
+      if (agentMessageIndex < 0) {
+        if (STREAM_DEBUG_ENABLED) {
+          console.debug('[WorkspacePage] missing placeholder', { runId, conversationId });
+        }
+        removeActiveRun(runId);
+        return;
       }
-      let nextChunk = chunk;
-      const userPrompt = lastUserMessageRef.current.trim();
-      if (!target.text && userPrompt) {
-        const chunkNoLeading = nextChunk.replace(/^\s+/, '');
-        if (chunkNoLeading.startsWith(userPrompt)) {
-          const remainder = chunkNoLeading.slice(userPrompt.length).replace(/^\s+/, '');
-          if (!remainder) {
-            return updated;
-          }
-          nextChunk = remainder;
+
+      if (replayFromStart) {
+        agentChunkBufferRef.current.delete(conversationId);
+        agentMessageBufferRef.current.set(placeholderId, '');
+      }
+
+      const controller = new AbortController();
+      streamAbortMapRef.current.set(conversationId, controller);
+      setStreamingForConversation(conversationId, true);
+      let finalStatus: AgentRunStatus = 'completed';
+
+      try {
+        if (STREAM_DEBUG_ENABLED) {
+          console.debug('[WorkspacePage] start stream', { runId, conversationId });
+        }
+        await streamAgentRun(
+          runId,
+          (chunk) => handleStreamChunk(conversationId, agentMessageIndex, chunk),
+          controller.signal,
+          replayFromStart ? undefined : undefined
+        );
+      } catch (error) {
+        if ((error as DOMException)?.name === 'AbortError') {
+          const stopLabel = stopRequestedRef.current ? '\n[Stopped by user]' : '\n[Stream cancelled]';
+          appendAgentChunk(conversationId, agentMessageIndex, stopLabel);
+          finalStatus = 'cancelled';
+        } else {
+          console.error('Failed to stream agent run', error);
+          appendAgentChunk(conversationId, agentMessageIndex, '\nSorry, something went wrong.');
+          finalStatus = 'failed';
+        }
+      } finally {
+        if (STREAM_DEBUG_ENABLED) {
+          console.debug('[WorkspacePage] stream finished', { runId, status: finalStatus });
+        }
+        flushBufferedAgentChunks();
+        await persistAgentProgress({ ...runInfo, status: finalStatus }, finalStatus);
+        setStreamingForConversation(conversationId, false);
+        streamAbortMapRef.current.delete(conversationId);
+        stopRequestedRef.current = false;
+        removeActiveRun(runId);
+        const workspaceId = selectedWorkspace?.id;
+        if (workspaceId) {
+          loadFilesForWorkspace(workspaceId);
         }
       }
-      const combinedText = `${target.text || ''}${nextChunk}`;
-      const updatedMessage: ConversationMessage = {
-        ...target,
-        text: combinedText,
-      };
-      updated[index] = updatedMessage;
-      if (
-        updatedMessage.sender === 'agent' &&
-        updatedMessage.id !== undefined &&
-        updatedMessage.id !== null
-      ) {
-        agentMessageBufferRef.current.set(updatedMessage.id, combinedText);
+    },
+    [
+      cancelStreamForConversation,
+      ensureAgentPlaceholder,
+      handleStreamChunk,
+      flushBufferedAgentChunks,
+      removeActiveRun,
+      selectedWorkspace?.id,
+      loadFilesForWorkspace,
+    ],
+  );
+
+  useEffect(() => {
+    if (!activeConversationId) {
+      return;
+    }
+    if (conversationStreaming[activeConversationId]) {
+      return;
+    }
+    const activeRun = getActiveRunForConversation(activeConversationId);
+    if (activeRun) {
+      if (resumeAttemptedRef.current.has(activeRun.runId)) {
+        return;
       }
-      return updated;
-    });
+      if (resumeInFlightRef.current.has(activeRun.runId)) {
+        return;
+      }
+      resumeInFlightRef.current.add(activeRun.runId);
+      resumeAttemptedRef.current.add(activeRun.runId);
+      if (STREAM_DEBUG_ENABLED) {
+        console.debug('[WorkspacePage] resume run', {
+          runId: activeRun.runId,
+          conversationId: activeConversationId,
+        });
+      }
+      getRunStatus(activeRun.runId)
+        .then((status) => {
+          if (status.status === 'running' || status.status === 'queued') {
+            if (STREAM_DEBUG_ENABLED) {
+              console.debug('[WorkspacePage] resume stream', { runId: activeRun.runId });
+            }
+            streamRunForConversation(activeRun, true)
+              .catch((error) => {
+                console.error('Failed to resume agent stream', error);
+                removeActiveRun(activeRun.runId);
+              })
+              .finally(() => {
+                resumeInFlightRef.current.delete(activeRun.runId);
+              });
+          } else {
+            resumeInFlightRef.current.delete(activeRun.runId);
+            const staleMessage = findAgentMessageForRun(
+              activeRun.conversationId,
+              activeRun.placeholderId,
+              activeRun.turnId
+            );
+            if (
+              staleMessage &&
+              staleMessage.sender === 'agent' &&
+              !staleMessage.text &&
+              !staleMessage.thinkingText &&
+              !staleMessage.toolEvents?.length
+            ) {
+              updateMessagesForConversation(activeRun.conversationId, (prev) =>
+                prev.filter((message) => message.id !== staleMessage.id)
+              );
+              agentMessageBufferRef.current.delete(staleMessage.id);
+            }
+            removeActiveRun(activeRun.runId);
+          }
+        })
+        .catch((error) => {
+          console.error('Failed to resume run status', error);
+          resumeInFlightRef.current.delete(activeRun.runId);
+          const staleMessage = findAgentMessageForRun(
+            activeRun.conversationId,
+            activeRun.placeholderId,
+            activeRun.turnId
+          );
+          if (
+            staleMessage &&
+            staleMessage.sender === 'agent' &&
+            !staleMessage.text &&
+            !staleMessage.thinkingText &&
+            !staleMessage.toolEvents?.length
+          ) {
+            updateMessagesForConversation(activeRun.conversationId, (prev) =>
+              prev.filter((message) => message.id !== staleMessage.id)
+            );
+            agentMessageBufferRef.current.delete(staleMessage.id);
+          }
+          removeActiveRun(activeRun.runId);
+        });
+    }
+  }, [
+    activeConversationId,
+    conversationStreaming,
+    findAgentMessageForRun,
+    getActiveRunForConversation,
+    removeActiveRun,
+    streamRunForConversation,
+    updateMessagesForConversation,
+  ]);
+
+  const appendAgentChunk = (conversationId: string, index: number, chunk: string) => {
+    bufferAgentChunk(conversationId, index, chunk);
   };
 
   const handleRerunMessage = async (messageId: ConversationMessage['id']) => {
@@ -1376,7 +2114,8 @@ export default function WorkspacePage() {
     }
 
     stopRequestedRef.current = false;
-    const currentMessages = [...messagesRef.current];
+    const conversationId = activeConversationId;
+    const currentMessages = [...getConversationMessagesSnapshot(conversationId)];
     const targetIndex = currentMessages.findIndex((message) => message.id === messageId);
     if (targetIndex === -1) {
       addLocalSystemMessage('Could not find that message to rerun.');
@@ -1392,11 +2131,27 @@ export default function WorkspacePage() {
       addLocalSystemMessage('Cannot rerun an empty message.');
       return;
     }
+    const isPresentationCommand = /^\/presentation\b/i.test(trimmed);
+    const mentionedFiles = isPresentationCommand ? findMentionedFiles(trimmed) : [];
+    const presentationFileIds = isPresentationCommand
+      ? Array.from(
+        new Set(
+          mentionedFiles
+            .map((file) => toNumericFileId(file.id))
+            .filter((id): id is number => typeof id === 'number' && Number.isFinite(id)),
+        ),
+      )
+      : [];
+    const presentationBrief = isPresentationCommand ? trimmed.replace(/^\/presentation\b/i, '').trim() : '';
+    if (isPresentationCommand && !presentationFileIds.length) {
+      addLocalSystemMessage('Tag at least one file using @filename before rerunning /presentation.');
+      return;
+    }
 
     const targetTurnId = targetMessage.turnId || generateTurnId();
 
-    lastUserMessageRef.current = trimmed;
-    cancelStream();
+    lastUserMessageMapRef.current[conversationId] = trimmed;
+    cancelStreamForConversation(conversationId);
 
     const historyMessages = currentMessages.slice(0, targetIndex + 1);
     const historyPayload = mapMessagesToAgentHistory(historyMessages);
@@ -1410,64 +2165,52 @@ export default function WorkspacePage() {
       }
     });
 
-    let agentMessageIndex = -1;
-    let rerunPlaceholderId: ConversationMessage['id'] | null = null;
-    setMessages((prevMessages) => {
-      const placeholderId = `agent-${Date.now()}-rerun`;
-      rerunPlaceholderId = placeholderId;
-      const withoutPreviousAgent = prevMessages.filter(
-        (message) => !(message.sender === 'agent' && message.turnId === targetTurnId)
+    if (isPresentationCommand) {
+      updateMessagesForConversation(conversationId, (prev) =>
+        prev.filter((message) => !(message.sender === 'agent' && message.turnId === targetTurnId)),
       );
-      const placeholder: ConversationMessage = {
-        id: placeholderId,
-        conversationId: activeConversationId,
-        sender: 'agent',
-        text: '',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
+      await runPresentationCommand({
+        workspaceId: selectedWorkspace.id,
+        conversationId,
         turnId: targetTurnId,
-      };
-      const updated = [...withoutPreviousAgent, placeholder];
-      agentMessageIndex = updated.length - 1;
-      return updated;
-    });
-    if (rerunPlaceholderId) {
-      agentMessageBufferRef.current.set(rerunPlaceholderId, '');
+        brief: presentationBrief,
+        fileIds: presentationFileIds,
+        fileNames: mentionedFiles.map((file) => file.name),
+        persona,
+        replaceExisting: true,
+      });
+      return;
     }
 
-    const controller = new AbortController();
-    streamAbortRef.current = controller;
-    setIsStreaming(true);
-
     try {
-      await runAgentStream(
+      const { runId } = await startAgentRun(
         selectedWorkspace.id,
         persona,
         trimmed,
         historyPayload.length ? historyPayload : undefined,
-        (chunk) => handleStreamChunk(agentMessageIndex, chunk),
-        controller.signal,
+        targetTurnId,
         { forceReset: true }
       );
-    } catch (error) {
-      if ((error as DOMException)?.name === 'AbortError') {
-        const stopLabel = stopRequestedRef.current ? '\n[Stopped by user]' : '\n[Stream cancelled]';
-        appendAgentChunk(agentMessageIndex, stopLabel);
-      } else {
-        console.error('Failed to rerun agent response', error);
-        appendAgentChunk(agentMessageIndex, '\nSorry, rerun failed.');
-      }
-    } finally {
-      setIsStreaming(false);
-      streamAbortRef.current = null;
-      stopRequestedRef.current = false;
-      loadFilesForWorkspace(selectedWorkspace.id);
-    }
+      const placeholderId = `agent-${runId}`;
+      ensureAgentPlaceholder(conversationId, placeholderId, targetTurnId, true);
+      agentMessageBufferRef.current.set(placeholderId, '');
+      const runInfo: ActiveRunInfo = {
+        runId,
+        conversationId,
+        workspaceId: selectedWorkspace.id,
+        persona,
+        turnId: targetTurnId,
+        placeholderId,
+        status: 'running',
+      };
+      registerActiveRun(runInfo);
+      await persistAgentProgress(runInfo, 'running');
+      await streamRunForConversation(runInfo, true);
 
-    if (agentMessageIndex >= 0) {
-      const agentMessage = messagesRef.current[agentMessageIndex];
-      const placeholderId = agentMessage?.id ?? null;
-      const metadata = buildMessageMetadata(agentMessage);
+      const messagesSnapshot = getConversationMessagesSnapshot(conversationId);
+      const targetIndex = messagesSnapshot.findIndex((message) => message.id === placeholderId);
+      const agentMessage = targetIndex >= 0 ? messagesSnapshot[targetIndex] : null;
+      const metadata = buildMessageMetadata(agentMessage) || {};
       const bufferedText =
         placeholderId !== null && placeholderId !== undefined
           ? agentMessageBufferRef.current.get(placeholderId) ?? agentMessage?.text
@@ -1475,20 +2218,24 @@ export default function WorkspacePage() {
       const placeholderTurnId = agentMessage?.turnId || targetTurnId;
       if (bufferedText) {
         try {
-          const persisted = await appendConversationMessage(activeConversationId, 'agent', bufferedText, {
+          const persisted = await appendConversationMessage(conversationId, 'agent', bufferedText, {
             turnId: placeholderTurnId,
             replaceExisting: true,
-            metadata,
+            metadata: { ...metadata, runId },
           });
           const hydratedPersisted = mergeMessageMetadata(persisted);
-          setMessages((prev) => {
+          updateMessagesForConversation(conversationId, (prev) => {
             const updated = [...prev];
-            const existing = updated[agentMessageIndex];
-            updated[agentMessageIndex] = {
-              ...hydratedPersisted,
-              thinkingText: hydratedPersisted.thinkingText ?? existing?.thinkingText,
-              toolEvents: hydratedPersisted.toolEvents ?? existing?.toolEvents,
-            };
+            if (targetIndex >= 0) {
+              const existing = updated[targetIndex];
+              updated[targetIndex] = {
+                ...hydratedPersisted,
+                thinkingText: hydratedPersisted.thinkingText ?? existing?.thinkingText,
+                toolEvents: hydratedPersisted.toolEvents ?? existing?.toolEvents,
+              };
+            } else {
+              updated.push(hydratedPersisted);
+            }
             return updated;
           });
           if (placeholderId !== null && placeholderId !== undefined) {
@@ -1502,6 +2249,9 @@ export default function WorkspacePage() {
       } else if (placeholderId !== null && placeholderId !== undefined) {
         agentMessageBufferRef.current.delete(placeholderId);
       }
+    } catch (error) {
+      console.error('Failed to rerun agent response', error);
+      addLocalSystemMessage('Rerun failed. Please try again.');
     }
   };
 
@@ -1514,6 +2264,7 @@ export default function WorkspacePage() {
       fileIds,
       fileNames,
       persona,
+      replaceExisting = false,
     }: {
       workspaceId: string;
       conversationId: string;
@@ -1522,6 +2273,7 @@ export default function WorkspacePage() {
       fileIds: number[];
       fileNames: string[];
       persona: string;
+      replaceExisting?: boolean;
     }) => {
       if (!fileIds.length) {
         addLocalSystemMessage('Tag at least one file using @filename before running /presentation.');
@@ -1531,7 +2283,7 @@ export default function WorkspacePage() {
       let agentMessageIndex = -1;
       let placeholderId: ConversationMessage['id'] | null = null;
       const startedAt = new Date().toISOString();
-      setMessages((prevMessages) => {
+      updateMessagesForConversation(conversationId, (prevMessages) => {
         const placeholder: ConversationMessage = {
           id: `agent-${Date.now()}-presentation`,
           conversationId,
@@ -1549,7 +2301,7 @@ export default function WorkspacePage() {
       if (placeholderId) {
         agentMessageBufferRef.current.set(placeholderId, 'Queued Paper2Slides job…');
       }
-      setIsStreaming(true);
+      setStreamingForConversation(conversationId, true);
       startPresentationProgress();
       try {
         const startResponse = await startPaper2SlidesJob({
@@ -1567,7 +2319,7 @@ export default function WorkspacePage() {
         });
         addPendingPresentationPlaceholder(startResponse.jobId, workspaceId);
         const jobLabel = `Paper2Slides job ${startResponse.jobId.slice(0, 8)}`;
-        setMessages((prev) => {
+        updateMessagesForConversation(conversationId, (prev) => {
           const updated = [...prev];
           if (agentMessageIndex >= 0 && updated[agentMessageIndex]) {
             updated[agentMessageIndex] = {
@@ -1588,12 +2340,18 @@ export default function WorkspacePage() {
 
         const finalizeMessage = async (
           status: 'completed' | 'failed',
-          payload?: { pdfPath?: string; slideImages?: string[]; htmlPath?: string; error?: string },
+          payload?: { pdfPath?: string; pptxPath?: string; slideImages?: string[]; htmlPath?: string; error?: string },
           finishedAt?: string,
         ) => {
           const outputFiles: ToolOutputFile[] = [];
           if (payload?.pdfPath) {
             outputFiles.push({ path: payload.pdfPath, mimeType: 'application/pdf' });
+          }
+          if (payload?.pptxPath) {
+            outputFiles.push({
+              path: payload.pptxPath,
+              mimeType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+            });
           }
           if (payload?.slideImages?.length) {
             payload.slideImages.forEach((path) => outputFiles.push({ path, mimeType: 'image/png' }));
@@ -1622,13 +2380,14 @@ export default function WorkspacePage() {
             persisted = await appendConversationMessage(conversationId, 'agent', summaryText, {
               turnId,
               metadata: { toolEvents: [toolEvent] },
+              replaceExisting,
             });
           } catch (error) {
             console.error('Failed to persist presentation summary', error);
           }
           const hydratedPersisted = persisted ? mergeMessageMetadata(persisted) : null;
 
-          setMessages((prev) => {
+          updateMessagesForConversation(conversationId, (prev) => {
             const updated = [...prev];
             const target = updated[agentMessageIndex];
             if (!target) {
@@ -1695,7 +2454,7 @@ export default function WorkspacePage() {
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Failed to generate presentation.';
         console.error('Presentation generation failed', error);
-        setMessages((prev) => {
+        updateMessagesForConversation(conversationId, (prev) => {
           const updated = [...prev];
           if (agentMessageIndex >= 0 && updated[agentMessageIndex]) {
             updated[agentMessageIndex] = {
@@ -1711,7 +2470,7 @@ export default function WorkspacePage() {
           agentMessageBufferRef.current.delete(placeholderId);
         }
       } finally {
-        setIsStreaming(false);
+        setStreamingForConversation(conversationId, false);
         stopRequestedRef.current = false;
       }
     },
@@ -1735,6 +2494,8 @@ export default function WorkspacePage() {
       getPaper2SlidesJob,
       removePendingPresentationPlaceholder,
       addPendingPresentationPlaceholder,
+      setStreamingForConversation,
+      updateMessagesForConversation,
     ],
   );
 
@@ -1796,16 +2557,18 @@ export default function WorkspacePage() {
       return;
     }
 
-    lastUserMessageRef.current = messageContent;
-    cancelStream();
+    cancelStreamForConversation(conversationId);
+    lastUserMessageMapRef.current[conversationId] = messageContent;
     setChatMessage('');
     setChatAttachments([]);
     closeMention();
+    closeCommand();
 
     const pendingTurnId = generateTurnId();
     let resolvedTurnId = pendingTurnId;
     let userMessageRecord: ConversationMessage | null = null;
     let historyPayload: Array<{ role: string; content: string }> = [];
+    const existingMessages = getConversationMessagesSnapshot(conversationId);
     try {
       const createdMessage = await appendConversationMessage(conversationId, 'user', messageContent, {
         turnId: pendingTurnId,
@@ -1813,9 +2576,9 @@ export default function WorkspacePage() {
       const normalizedMessage = mergeMessageMetadata(createdMessage);
       userMessageRecord = normalizedMessage;
       resolvedTurnId = normalizedMessage.turnId || pendingTurnId;
-      setMessages((prev) => [...prev, normalizedMessage]);
+      updateMessagesForConversation(conversationId, (prev) => [...prev, normalizedMessage]);
       await refreshConversationHistory(workspaceId);
-      const pendingMessages = [...messagesRef.current, normalizedMessage];
+      const pendingMessages = [...existingMessages, normalizedMessage];
       historyPayload = mapMessagesToAgentHistory(pendingMessages);
     } catch (error) {
       console.error('Failed to send user message', error);
@@ -1840,60 +2603,38 @@ export default function WorkspacePage() {
       return;
     }
 
-    let agentMessageIndex = -1;
-    let agentPlaceholderId: ConversationMessage['id'] | null = null;
-    setMessages((prevMessages) => {
-      const placeholderId = `agent-${Date.now()}`;
-      agentPlaceholderId = placeholderId;
-      const placeholder: ConversationMessage = {
-        id: placeholderId,
-        conversationId,
-        sender: 'agent',
-        text: '',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        turnId: resolvedTurnId,
-      };
-      const updated = [...prevMessages, placeholder];
-      agentMessageIndex = updated.length - 1;
-      return updated;
-    });
-    if (agentPlaceholderId) {
-      agentMessageBufferRef.current.set(agentPlaceholderId, '');
-    }
-
-    const controller = new AbortController();
-    streamAbortRef.current = controller;
-    setIsStreaming(true);
-
     try {
-      await runAgentStream(
+      const { runId } = await startAgentRun(
         workspaceId,
         persona,
         messageContent,
         historyPayload.length ? historyPayload : undefined,
-        (chunk) => handleStreamChunk(agentMessageIndex, chunk),
-        controller.signal
+        resolvedTurnId,
+        { forceReset: true }
       );
-    } catch (error) {
-      if ((error as DOMException)?.name === 'AbortError') {
-        const stopLabel = stopRequestedRef.current ? '\n[Stopped by user]' : '\n[Stream cancelled]';
-        appendAgentChunk(agentMessageIndex, stopLabel);
-      } else {
-        console.error('Failed to get agent response:', error);
-        appendAgentChunk(agentMessageIndex, '\nSorry, something went wrong.');
+      if (STREAM_DEBUG_ENABLED) {
+        console.debug('[WorkspacePage] run started', { runId, conversationId });
       }
-    } finally {
-      setIsStreaming(false);
-      streamAbortRef.current = null;
-      stopRequestedRef.current = false;
-      loadFilesForWorkspace(workspaceId);
-    }
+      const placeholderId = `agent-${runId}`;
+      ensureAgentPlaceholder(conversationId, placeholderId, resolvedTurnId, true);
+      agentMessageBufferRef.current.set(placeholderId, '');
+      const runInfo: ActiveRunInfo = {
+        runId,
+        conversationId,
+        workspaceId,
+        persona,
+        turnId: resolvedTurnId,
+        placeholderId,
+        status: 'running',
+      };
+      registerActiveRun(runInfo);
+      await persistAgentProgress(runInfo, 'running');
+      await streamRunForConversation(runInfo, true);
 
-    if (agentMessageIndex >= 0) {
-      const agentMessage = messagesRef.current[agentMessageIndex];
-      const placeholderId = agentMessage?.id ?? null;
-      const metadata = buildMessageMetadata(agentMessage);
+      const messagesSnapshot = getConversationMessagesSnapshot(conversationId);
+      const targetIndex = messagesSnapshot.findIndex((message) => message.id === placeholderId);
+      const agentMessage = targetIndex >= 0 ? messagesSnapshot[targetIndex] : null;
+      const metadata = buildMessageMetadata(agentMessage) || {};
       const bufferedText =
         placeholderId !== null && placeholderId !== undefined
           ? agentMessageBufferRef.current.get(placeholderId) ?? agentMessage?.text
@@ -1901,21 +2642,26 @@ export default function WorkspacePage() {
       const placeholderTurnId = agentMessage?.turnId || resolvedTurnId;
       if (bufferedText) {
         try {
-        const persisted = await appendConversationMessage(conversationId, 'agent', bufferedText, {
-          turnId: placeholderTurnId,
-          metadata,
-        });
-        const hydratedPersisted = mergeMessageMetadata(persisted);
-        setMessages((prev) => {
-          const updated = [...prev];
-          const existing = updated[agentMessageIndex];
-          updated[agentMessageIndex] = {
-            ...hydratedPersisted,
-            thinkingText: hydratedPersisted.thinkingText ?? existing?.thinkingText,
-            toolEvents: hydratedPersisted.toolEvents ?? existing?.toolEvents,
-          };
-          return updated;
-        });
+          const persisted = await appendConversationMessage(conversationId, 'agent', bufferedText, {
+            turnId: placeholderTurnId,
+            metadata: { ...metadata, runId },
+            replaceExisting: true,
+          });
+          const hydratedPersisted = mergeMessageMetadata(persisted);
+          updateMessagesForConversation(conversationId, (prev) => {
+            const updated = [...prev];
+            if (targetIndex >= 0) {
+              const existing = updated[targetIndex];
+              updated[targetIndex] = {
+                ...hydratedPersisted,
+                thinkingText: hydratedPersisted.thinkingText ?? existing?.thinkingText,
+                toolEvents: hydratedPersisted.toolEvents ?? existing?.toolEvents,
+              };
+            } else {
+              updated.push(hydratedPersisted);
+            }
+            return updated;
+          });
           if (placeholderId !== null && placeholderId !== undefined) {
             agentMessageBufferRef.current.delete(placeholderId);
           }
@@ -1927,35 +2673,65 @@ export default function WorkspacePage() {
       } else if (placeholderId !== null && placeholderId !== undefined) {
         agentMessageBufferRef.current.delete(placeholderId);
       }
+    } catch (error) {
+      console.error('Failed to start agent run', error);
+      addLocalSystemMessage('Failed to start agent run. Please try again.');
     }
   };
 
   const handleChatInputChange = (event: React.ChangeEvent<HTMLTextAreaElement>) => {
     const value = event.target.value;
     setChatMessage(value);
-    updateMentionState(value, event.target.selectionStart ?? value.length);
+    updateAutocompleteState(value, event.target.selectionStart ?? value.length);
   };
 
   const handleChatInputSelectionChange = (
     event: React.SyntheticEvent<HTMLTextAreaElement>
   ) => {
     const target = event.currentTarget;
-    updateMentionState(target.value, target.selectionStart ?? target.value.length);
+    updateAutocompleteState(target.value, target.selectionStart ?? target.value.length);
   };
 
   const handleChatInputKeyUp = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (
-      isMentionOpen &&
+      (isMentionOpen || isCommandOpen) &&
       (event.key === 'ArrowDown' || event.key === 'ArrowUp')
     ) {
       // Skip mention state recalculation when navigating suggestions
       return;
     }
     const target = event.currentTarget;
-    updateMentionState(target.value, target.selectionStart ?? target.value.length);
+    updateAutocompleteState(target.value, target.selectionStart ?? target.value.length);
   };
 
   const handleChatInputKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (isCommandOpen) {
+      if (event.key === 'ArrowDown' && commandSuggestions.length) {
+        event.preventDefault();
+        setCommandSelectedIndex((prev) => (prev + 1) % commandSuggestions.length);
+        return;
+      }
+      if (event.key === 'ArrowUp' && commandSuggestions.length) {
+        event.preventDefault();
+        setCommandSelectedIndex((prev) =>
+          (prev - 1 + commandSuggestions.length) % commandSuggestions.length
+        );
+        return;
+      }
+      if ((event.key === 'Enter' && !event.shiftKey) || event.key === 'Tab') {
+        if (commandSuggestions.length) {
+          event.preventDefault();
+          handleSelectCommand(commandSuggestions[commandSelectedIndex]);
+          return;
+        }
+      }
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closeCommand();
+        return;
+      }
+    }
+
     if (isMentionOpen) {
       if (event.key === 'ArrowDown' && mentionSuggestions.length) {
         event.preventDefault();
@@ -1990,7 +2766,7 @@ export default function WorkspacePage() {
   };
 
   const handleNewChat = async () => {
-    cancelStream();
+    cancelStreamForConversation(activeConversationId);
     if (!selectedWorkspace) {
       addLocalSystemMessage('Please select a workspace before starting a conversation.');
       return;
@@ -2004,10 +2780,11 @@ export default function WorkspacePage() {
       const conversation = await createConversationApi(workspaceId, selectedPersona);
       setActiveConversationId(conversation.id);
       setActiveConversationPersona(conversation.persona);
-      agentMessageBufferRef.current.clear();
-      setMessages([]);
+      setConversationMessages((prev) => ({ ...prev, [conversation.id]: [] }));
+      setStreamingForConversation(conversation.id, false);
       setChatMessage('');
       closeMention();
+      closeCommand();
       await refreshConversationHistory(workspaceId);
     } catch (error) {
       console.error('Failed to start new conversation', error);
@@ -2096,6 +2873,12 @@ export default function WorkspacePage() {
       for (const file of filesToUpload) {
         const newFileData = (await createFile(selectedWorkspace.id, file)) as WorkspaceFile;
         setFiles((prevFiles) => [...prevFiles, newFileData]);
+        if (newFileData?.name) {
+          setRagStatuses((prev) => ({
+            ...prev,
+            [newFileData.name]: { status: 'pending' },
+          }));
+        }
       }
     } catch (error) {
       console.error('Failed to upload file:', error);
@@ -2117,22 +2900,22 @@ export default function WorkspacePage() {
     setChatAttachments((prev) => prev.filter((_, idx) => idx !== index));
   };
 
-  const handleInsertPresentationShortcut = () => {
-    setChatMessage((prev) => {
-      const trimmedStart = prev.trimStart();
-      if (trimmedStart.toLowerCase().startsWith('/presentation')) {
-        return prev;
-      }
-      const suffix = trimmedStart.length ? ` ${trimmedStart}` : '';
-      return `/presentation${suffix} `;
-    });
+  const handleInsertSlashTrigger = () => {
+    const input = chatInputRef.current;
+    const cursorStart = input?.selectionStart ?? chatMessage.length;
+    const cursorEnd = input?.selectionEnd ?? cursorStart;
+    const before = chatMessage.slice(0, cursorStart);
+    const after = chatMessage.slice(cursorEnd);
+    const nextValue = `${before}/${after}`;
+    setChatMessage(nextValue);
     closeMention();
     requestAnimationFrame(() => {
-      if (chatInputRef.current) {
-        const { value } = chatInputRef.current;
-        chatInputRef.current.focus();
-        chatInputRef.current.setSelectionRange(value.length, value.length);
+      const cursorPosition = before.length + 1;
+      if (input) {
+        input.focus();
+        input.setSelectionRange(cursorPosition, cursorPosition);
       }
+      updateCommandState(nextValue, cursorPosition);
     });
   };
 
@@ -2284,6 +3067,11 @@ export default function WorkspacePage() {
                   >
                     {files.map((file) => {
                       const isPendingJob = file.mimeType === 'application/vnd.helpudoc.paper2slides-job';
+                      const ragStatus = typeof file.name === 'string' ? ragStatuses[file.name] : undefined;
+                      const ragState = ragStatus?.status ? String(ragStatus.status).toLowerCase() : '';
+                      const isIndexing =
+                        !isPendingJob &&
+                        ['pending', 'processing', 'preprocessed'].includes(ragState);
                       return (
                         <div
                           key={file.id}
@@ -2312,7 +3100,7 @@ export default function WorkspacePage() {
                             className="flex-1 flex items-start justify-between gap-2 min-w-0"
                           >
                             <div className="flex items-center gap-2 min-w-0">
-                              {isPendingJob && (
+                              {(isPendingJob || isIndexing) && (
                                 <Loader2 size={14} className="text-blue-500 animate-spin shrink-0" />
                               )}
                               <span className="text-gray-800 break-all whitespace-normal leading-snug">
@@ -2457,7 +3245,7 @@ export default function WorkspacePage() {
               style={agentPaneStyles}
             >
               <div className="p-4 border-b border-gray-200 flex justify-between items-center">
-                <div className="flex items-center">
+                <div className="flex items-center gap-2">
                   <button
                     onClick={() => setIsAgentPaneVisible(!isAgentPaneVisible)}
                     className="p-2 rounded-lg hover:bg-gray-200"
@@ -2465,10 +3253,30 @@ export default function WorkspacePage() {
                   >
                     <ChevronRight size={18} className={`text-gray-600 transition-transform duration-300 ${isAgentPaneVisible ? '' : 'rotate-180'}`} />
                   </button>
-                  {isAgentPaneVisible && <h2 className="text-lg font-semibold text-gray-800 ml-2">Agent Chat</h2>}
+                  {isAgentPaneVisible && (
+                    <>
+                      <PersonaSelector
+                        personas={personas}
+                        selectedPersona={selectedPersona}
+                        onPersonaChange={setSelectedPersona}
+                        variant="compact"
+                      />
+                    </>
+                  )}
                 </div>
                 {isAgentPaneVisible && (
-                  <div className="flex items-center space-x-2">
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setIsHistoryOpen((prev) => !prev)}
+                      className={`p-2 rounded-lg transition ${isHistoryOpen ? 'bg-blue-50 text-blue-600' : 'hover:bg-gray-200 text-gray-600'}`}
+                      title="Recent conversations"
+                      aria-pressed={isHistoryOpen}
+                      aria-label="Toggle recent conversations"
+                    >
+                      <History size={18} />
+                    </button>
+                    <span className="h-5 w-px bg-gray-200" aria-hidden="true" />
                     <button
                       onClick={handleNewChat}
                       className="p-2 rounded-lg hover:bg-gray-200"
@@ -2488,38 +3296,59 @@ export default function WorkspacePage() {
                   </div>
                 )}
               </div>
-              <div className={`flex-1 flex flex-col overflow-hidden min-h-0 ${isAgentPaneFullScreen || isAgentPaneVisible ? 'block' : 'hidden'
+              <div className={`flex-1 flex flex-col overflow-hidden min-h-0 relative ${isAgentPaneFullScreen || isAgentPaneVisible ? 'block' : 'hidden'
                 }`}>
-                <div className="p-4 border-b border-gray-200">
-                  <PersonaSelector
-                    personas={personas}
-                    selectedPersona={selectedPersona}
-                    onPersonaChange={setSelectedPersona}
+                {isHistoryOpen && (
+                  <button
+                    type="button"
+                    aria-label="Close history panel"
+                    onClick={() => setIsHistoryOpen(false)}
+                    className="absolute inset-0 z-10 bg-slate-900/20 backdrop-blur-sm"
                   />
-                </div>
-                <div className="p-4 border-b border-gray-200">
-                  <div className="flex items-center justify-between">
+                )}
+                <div
+                  className={`absolute inset-y-0 right-0 z-20 flex w-80 max-w-[90%] flex-col border-l border-gray-200 bg-white shadow-2xl ring-1 ring-black/10 transition-transform duration-200 ${
+                    isHistoryOpen ? 'translate-x-0' : 'translate-x-full pointer-events-none'
+                  }`}
+                  aria-hidden={!isHistoryOpen}
+                >
+                  <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
                     <p className="text-sm font-semibold text-gray-700">Recent Conversations</p>
+                    <button
+                      type="button"
+                      onClick={() => setIsHistoryOpen(false)}
+                      className="rounded-full p-1.5 text-gray-500 hover:bg-gray-100"
+                      aria-label="Close history"
+                    >
+                      <X size={16} />
+                    </button>
                   </div>
-                  <div className="mt-3 space-y-2 max-h-40 overflow-y-auto">
+                  <div className="flex-1 overflow-y-auto p-4 space-y-2">
                     {conversationHistory.length === 0 ? (
                       <p className="text-xs text-gray-500">No past conversations yet.</p>
                     ) : (
                       conversationHistory.map((conversation) => {
                         const isActive = conversation.id === activeConversationId;
+                        const isConversationStreaming = conversationStreaming[conversation.id];
                         return (
                           <div key={conversation.id} className="relative group">
                             <button
                               type="button"
-                              onClick={() => handleSelectConversationFromHistory(conversation.id)}
+                              onClick={() => {
+                                handleSelectConversationFromHistory(conversation.id);
+                                setIsHistoryOpen(false);
+                              }}
                               className={`w-full text-left p-2 pr-9 rounded-lg border transition ${isActive
                                 ? 'border-blue-500 bg-blue-50'
                                 : 'border-gray-200 hover:border-blue-400 hover:bg-blue-50'
                                 }`}
                             >
                               <p className="text-sm font-medium text-gray-800 truncate">{conversation.title}</p>
-                              <p className="text-xs text-gray-500">
-                                Persona: {conversation.persona} · {new Date(conversation.updatedAt).toLocaleString()}
+                              <p className="text-xs text-gray-500 flex items-center gap-1">
+                                {isConversationStreaming && <Loader2 size={12} className="animate-spin text-blue-500" />}
+                                <span>
+                                  Persona: {conversation.persona} · {new Date(conversation.updatedAt).toLocaleString()}
+                                </span>
                               </p>
                             </button>
                             <button
@@ -2558,13 +3387,8 @@ export default function WorkspacePage() {
                       <div
                         key={message.id}
                         className={`flex items-start gap-3 group ${isAgentMessage ? '' : 'justify-end'
-                          }`}
+                        }`}
                       >
-                        {isAgentMessage && (
-                          <div className="mr-1 flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-indigo-500 shadow-inner">
-                            <Star size={18} className="text-white" />
-                          </div>
-                        )}
                         <div
                           style={{ width: '100%', maxWidth: '720px' }}
                           className="relative flex-1 md:flex-initial"
@@ -2716,160 +3540,194 @@ export default function WorkspacePage() {
                     );
                   })}
                 </div>
-                <div className="border-t border-gray-200 bg-white p-4">
-                  <div className="space-y-3">
-                    <div className="rounded-2xl border border-blue-100 bg-white p-3 shadow-sm">
-                      <div className="flex flex-wrap items-center justify-between gap-3">
-                        <div>
-                          <p className="text-xs font-semibold uppercase tracking-wide text-blue-900">Paper2Slides</p>
-                          <p className="text-[11px] text-slate-500">
-                            {presentationOptionSummary || 'Generate themed slides/posters instead of plain HTML.'}
-                          </p>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={handleOpenPresentationModal}
-                            className="inline-flex items-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700 shadow-sm transition hover:bg-blue-100"
-                            title="Configure Paper2Slides options"
-                          >
-                            <MonitorPlay size={14} />
-                            Configure
-                          </button>
-                          <button
-                            type="button"
-                            onClick={handleInsertPresentationShortcut}
-                            className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
-                            title="Insert /presentation command"
-                          >
-                            Use /presentation
-                          </button>
-                        </div>
+                <div className="p-4 bg-white border-t border-gray-100">
+                  <div className="relative rounded-xl border border-gray-200 bg-white shadow-sm transition-all focus-within:border-blue-500 focus-within:ring-1 focus-within:ring-blue-500">
+                    {presentationStatus !== 'idle' && (
+                      <div className="flex flex-wrap items-center gap-2 px-3 pt-3">
+                        {PAPER2SLIDES_STAGE_ORDER.map((stage, index) => {
+                          const isActive = presentationStatus === 'running' && index === presentationStageIndex;
+                          const isDone =
+                            presentationStatus === 'success' ||
+                            (presentationStatus === 'running' && index < presentationStageIndex);
+                          const label = stage === 'rag' ? 'RAG' : stage.charAt(0).toUpperCase() + stage.slice(1);
+                          return (
+                            <span
+                              key={stage}
+                              className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide ${
+                                isDone
+                                  ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                                  : isActive
+                                    ? 'border-blue-200 bg-blue-50 text-blue-700'
+                                    : 'border-slate-200 bg-slate-50 text-slate-500'
+                              }`}
+                            >
+                              {label}
+                            </span>
+                          );
+                        })}
+                        <span
+                          className={`text-xs font-semibold ${
+                            presentationStatus === 'error' ? 'text-red-600' : 'text-emerald-700'
+                          }`}
+                        >
+                          {presentationStatus === 'running'
+                            ? 'Running…'
+                            : presentationStatus === 'success'
+                              ? 'Completed'
+                              : 'Failed'}
+                        </span>
                       </div>
-                      {presentationStatus !== 'idle' && (
-                        <div className="mt-3 flex flex-wrap items-center gap-2">
-                          {PAPER2SLIDES_STAGE_ORDER.map((stage, index) => {
-                            const isActive = presentationStatus === 'running' && index === presentationStageIndex;
-                            const isDone =
-                              presentationStatus === 'success' ||
-                              (presentationStatus === 'running' && index < presentationStageIndex);
-                            const label = stage === 'rag' ? 'RAG' : stage.charAt(0).toUpperCase() + stage.slice(1);
-                            return (
-                              <span
-                                key={stage}
-                                className={`rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-wide ${
-                                  isDone
-                                    ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-                                    : isActive
-                                      ? 'border-blue-200 bg-blue-50 text-blue-700'
-                                      : 'border-slate-200 bg-slate-50 text-slate-500'
-                                }`}
-                              >
-                                {label}
-                              </span>
-                            );
-                          })}
-                          <span
-                            className={`text-xs font-semibold ${
-                              presentationStatus === 'error' ? 'text-red-600' : 'text-emerald-700'
-                            }`}
-                          >
-                            {presentationStatus === 'running'
-                              ? 'Running…'
-                              : presentationStatus === 'success'
-                                ? 'Completed'
-                                : 'Failed'}
-                          </span>
-                        </div>
-                      )}
-                    </div>
+                    )}
                     {chatAttachments.length > 0 && (
-                      <div className="flex flex-wrap gap-2">
+                      <div className="flex flex-wrap gap-2 px-3 pt-3">
                         {chatAttachments.map((file, index) => (
-                          <span
+                          <div
                             key={`${file.name}-${index}`}
-                            className="inline-flex items-center gap-2 rounded-full bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700"
+                            className="group flex items-center gap-2 rounded-md border border-gray-200 bg-gray-50 px-2 py-1 text-xs font-medium text-gray-700"
                           >
-                            {file.name}
+                            <span className="truncate max-w-[120px]">{file.name}</span>
                             <button
                               type="button"
-                              className="text-blue-600 hover:text-blue-800"
+                              className="text-gray-400 hover:text-red-500"
                               onClick={() => handleRemoveChatAttachment(index)}
                               aria-label={`Remove ${file.name}`}
                             >
-                              <X size={14} />
+                              <X size={12} />
                             </button>
-                          </span>
+                          </div>
                         ))}
                       </div>
                     )}
-                    <div className="relative rounded-2xl border border-gray-200 bg-gray-50 p-3 shadow-sm focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-100">
-                      <div className="flex items-end gap-3">
+                    <textarea
+                      placeholder="Interact with the agent... (Type / for commands)"
+                      value={chatMessage}
+                      ref={chatInputRef}
+                      onChange={handleChatInputChange}
+                      onKeyDown={handleChatInputKeyDown}
+                      onKeyUp={handleChatInputKeyUp}
+                      onSelect={handleChatInputSelectionChange}
+                      className="w-full max-h-60 bg-transparent px-4 py-3 text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none resize-none"
+                      rows={Math.min(5, Math.max(1, chatMessage.split('\n').length))}
+                      style={{ minHeight: '56px' }}
+                    />
+                    <div className="flex items-center justify-between px-2 pb-2">
+                      <div className="flex items-center gap-1">
                         <button
                           type="button"
                           onClick={handleChatAttachmentButtonClick}
-                          className="w-11 h-11 rounded-full border border-dashed border-blue-400 text-blue-600 bg-white flex items-center justify-center hover:bg-blue-50 shrink-0"
-                          title="Attach files or images"
+                          className="p-2 rounded-lg text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700"
+                          title="Attach files"
                         >
                           <Plus size={18} />
                         </button>
-                        <div className="flex-1 flex flex-col gap-2 min-w-0">
-                          <textarea
-                            placeholder="Interact with the agent..."
-                            value={chatMessage}
-                            ref={chatInputRef}
-                            onChange={handleChatInputChange}
-                            onKeyDown={handleChatInputKeyDown}
-                            onKeyUp={handleChatInputKeyUp}
-                            onSelect={handleChatInputSelectionChange}
-                            className="w-full bg-transparent resize-none text-sm leading-relaxed focus:outline-none placeholder:text-gray-500 text-gray-900"
-                            rows={3}
-                            style={{ overflowY: 'auto' }}
-                          />
+                        <button
+                          type="button"
+                          onClick={handleInsertSlashTrigger}
+                          className="p-2 rounded-lg text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700"
+                          title="Commands"
+                          aria-label="Insert command"
+                        >
+                          <span className="text-xs font-semibold">/</span>
+                        </button>
+                        {showPaper2SlidesControls && (
+                          <>
+                            <div className="w-px h-4 bg-gray-200 mx-1" aria-hidden="true" />
+                            <button
+                              type="button"
+                              onClick={handleOpenPresentationModal}
+                              className={`p-2 rounded-lg transition-colors ${
+                                presentationStatus === 'running'
+                                  ? 'text-blue-600 bg-blue-50'
+                                  : 'text-gray-500 hover:bg-gray-100 hover:text-blue-600'
+                              }`}
+                              title={`Configure Paper2Slides: ${presentationOptionSummary || 'Options'}`}
+                              aria-label="Configure Paper2Slides"
+                            >
+                              <MonitorPlay size={18} />
+                            </button>
+                          </>
+                        )}
                       </div>
-                        <div className="flex items-center gap-2 shrink-0">
-                          <button
-                            onClick={isStreaming ? handleStopStreaming : handleSendMessage}
-                            disabled={false}
-                            className={`w-11 h-11 rounded-full flex items-center justify-center text-white shadow-sm transition ${isStreaming ? 'bg-red-500 hover:bg-red-400' : 'bg-blue-600 hover:bg-blue-700'}`}
-                            title={isStreaming ? 'Stop current agent response' : 'Send message'}
-                          >
-                            {isStreaming ? <StopCircle size={18} /> : <Send size={18} />}
-                          </button>
-                        </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] text-gray-400 hidden sm:inline-block mr-2">
+                          {isStreaming ? 'Generating...' : 'Enter to send'}
+                        </span>
+                        <button
+                          onClick={isStreaming ? handleStopStreaming : handleSendMessage}
+                          disabled={!chatMessage.trim() && !chatAttachments.length && !isStreaming}
+                          className={`p-2 rounded-lg transition-all duration-200 ${
+                            !chatMessage.trim() && !chatAttachments.length && !isStreaming
+                              ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                              : isStreaming
+                                ? 'bg-red-50 text-red-600 hover:bg-red-100'
+                                : 'bg-blue-600 text-white hover:bg-blue-700 shadow-sm'
+                          }`}
+                          title={isStreaming ? 'Stop current agent response' : 'Send message'}
+                        >
+                          {isStreaming ? <StopCircle size={18} /> : <Send size={18} />}
+                        </button>
                       </div>
-                      <input
-                        type="file"
-                        ref={attachmentInputRef}
-                        className="hidden"
-                        multiple
-                        accept="image/*,.pdf,.md,.txt,.doc,.docx"
-                        onChange={handleChatAttachmentChange}
-                      />
-                      {isMentionOpen && (
-                        <div className="absolute bottom-full mb-2 left-0 right-0 bg-white border border-gray-200 rounded-xl shadow-lg max-h-48 overflow-y-auto z-10">
-                          {mentionSuggestions.length ? (
-                            mentionSuggestions.map((file, index) => (
-                              <button
-                                key={file.id}
-                                type="button"
-                                onMouseDown={(event) => {
-                                  event.preventDefault();
-                                  handleSelectMention(file);
-                                }}
-                                className={`w-full flex items-center text-left px-3 py-2 text-sm hover:bg-blue-50 ${index === mentionSelectedIndex ? 'bg-blue-50 text-blue-700' : 'text-gray-800'
-                                  }`}
-                              >
-                                <FileIcon size={16} className="mr-2 text-gray-500" />
-                                <span className="truncate">{file.name}</span>
-                              </button>
-                            ))
-                          ) : (
-                            <div className="px-3 py-2 text-sm text-gray-500">No matching files</div>
-                          )}
-                        </div>
-                      )}
                     </div>
+                    <input
+                      type="file"
+                      ref={attachmentInputRef}
+                      className="hidden"
+                      multiple
+                      accept="image/*,.pdf,.md,.txt,.doc,.docx"
+                      onChange={handleChatAttachmentChange}
+                    />
+                    {isMentionOpen && (
+                      <div className="absolute bottom-full left-0 mb-2 w-64 bg-white border border-gray-200 rounded-lg shadow-xl max-h-48 overflow-y-auto z-20">
+                        {mentionSuggestions.length ? (
+                          mentionSuggestions.map((file, index) => (
+                            <button
+                              key={file.id}
+                              type="button"
+                              onMouseDown={(event) => {
+                                event.preventDefault();
+                                handleSelectMention(file);
+                              }}
+                              className={`w-full flex items-center text-left px-3 py-2 text-xs ${index === mentionSelectedIndex
+                                ? 'bg-blue-50 text-blue-700'
+                                : 'text-gray-700 hover:bg-gray-50'
+                                }`}
+                            >
+                              <FileIcon size={16} className="mr-2 text-gray-500" />
+                              <span className="truncate">{file.name}</span>
+                            </button>
+                          ))
+                        ) : (
+                          <div className="px-3 py-2 text-xs text-gray-500">No matching files</div>
+                        )}
+                      </div>
+                    )}
+                    {isCommandOpen && (
+                      <div className="absolute bottom-full left-0 mb-2 w-72 bg-white border border-gray-200 rounded-lg shadow-xl max-h-48 overflow-y-auto z-20">
+                        {commandSuggestions.length ? (
+                          commandSuggestions.map((command, index) => (
+                            <button
+                              key={command.id}
+                              type="button"
+                              onMouseDown={(event) => {
+                                event.preventDefault();
+                                handleSelectCommand(command);
+                              }}
+                              className={`w-full text-left px-3 py-2 text-xs ${index === commandSelectedIndex
+                                ? 'bg-blue-50 text-blue-700'
+                                : 'text-gray-700 hover:bg-gray-50'
+                                }`}
+                            >
+                              <div className="flex flex-col">
+                                <span className="font-semibold">{command.command}</span>
+                                <span className="text-[11px] text-gray-500">{command.description}</span>
+                              </div>
+                            </button>
+                          ))
+                        ) : (
+                          <div className="px-3 py-2 text-xs text-gray-500">No matching commands</div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>

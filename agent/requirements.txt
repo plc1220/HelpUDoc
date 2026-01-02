@@ -13,6 +13,8 @@ pydantic
 pyyaml
 requests
 pillow
+python-pptx
+pymupdf
 duckdb
 pandas
 tabulate
@@ -21,3 +23,7 @@ matplotlib
 altair
 plotly
 kaleido
+lightrag-hku[api]
+raganything
+pypdf
+redis

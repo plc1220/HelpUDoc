@@ -11,7 +11,12 @@ from typing import Optional, Dict, Any, List, Callable
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from lightrag.utils import EmbeddingFunc
+try:  # pragma: no cover - exercised at runtime
+    from lightrag.utils import EmbeddingFunc
+    _LIGHRAG_AVAILABLE = True
+except Exception:  # pragma: no cover - allow optional LightRAG
+    _LIGHRAG_AVAILABLE = False
+
 from paper2slides.llm.genai_client import create_client, embed_texts, extract_text, generate_text
 
 from .config import RAGConfig
@@ -42,6 +47,11 @@ class RAGClient:
         self._lightrag = lightrag_instance
         self._initialized = False
         self._genai_client = None
+        if not _LIGHRAG_AVAILABLE:
+            raise ImportError(
+                "LightRAG is required for RAG operations but is not installed or incompatible. "
+                "Install with `pip install \"lightrag-hku[api]\"` to enable RAG."
+            )
     
     @classmethod
     def from_storage(cls, storage_dir: str) -> "RAGClient":
@@ -70,14 +80,15 @@ class RAGClient:
         api = self.config.api
         client = self._get_client()
         
-        def func(prompt: str, system_prompt: Optional[str] = None,
-                 history_messages: List = None, **kwargs):
+        async def func(prompt: str, system_prompt: Optional[str] = None,
+                       history_messages: List = None, **kwargs):
             messages = history_messages[:] if history_messages else []
             if system_prompt:
                 messages.insert(0, {"role": "system", "content": system_prompt})
             messages.append({"role": "user", "content": prompt})
-            
-            response = generate_text(
+
+            response = await asyncio.to_thread(
+                generate_text,
                 client,
                 api.llm_model,
                 messages=messages,
@@ -92,11 +103,12 @@ class RAGClient:
         client = self._get_client()
         llm_func = self._create_llm_func()
         
-        def func(prompt: str, system_prompt: Optional[str] = None,
-                 history_messages: List = None, image_data: Optional[str] = None,
-                 messages: Optional[List] = None, **kwargs):
+        async def func(prompt: str, system_prompt: Optional[str] = None,
+                       history_messages: List = None, image_data: Optional[str] = None,
+                       messages: Optional[List] = None, **kwargs):
             if messages:
-                response = generate_text(
+                response = await asyncio.to_thread(
+                    generate_text,
                     client,
                     api.llm_model,
                     messages=messages,
@@ -104,7 +116,7 @@ class RAGClient:
                     temperature=kwargs.get("temperature"),
                 )
                 return extract_text(response)
-            elif image_data:
+            if image_data:
                 vision_messages = []
                 if system_prompt:
                     vision_messages.append({"role": "system", "content": system_prompt})
@@ -113,11 +125,12 @@ class RAGClient:
                         "role": "user",
                         "content": [
                             {"type": "text", "text": prompt},
-                            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_data}"}} if image_data else {"type": "text", "text": prompt},
+                            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_data}"}},
                         ],
                     }
                 )
-                response = generate_text(
+                response = await asyncio.to_thread(
+                    generate_text,
                     client,
                     api.llm_model,
                     messages=vision_messages,
@@ -125,22 +138,30 @@ class RAGClient:
                     temperature=kwargs.get("temperature"),
                 )
                 return extract_text(response)
-            else:
-                return llm_func(prompt, system_prompt, history_messages or [], **kwargs)
+            return await llm_func(prompt, system_prompt, history_messages or [], **kwargs)
         return func
     
     def _create_embedding_func(self) -> EmbeddingFunc:
         api = self.config.api
         client = self._get_client()
-        return EmbeddingFunc(
-            embedding_dim=api.embedding_dim,
-            max_token_size=api.embedding_max_tokens,
-            func=lambda texts: embed_texts(
+
+        async def _embed(texts: List[str]):
+            # google-genai client is synchronous; run in a thread to avoid blocking.
+            vectors = await asyncio.to_thread(
+                embed_texts,
                 client,
                 model=api.embedding_model,
                 texts=texts,
                 output_dimensionality=api.embedding_dim,
-            ),
+            )
+            import numpy as np
+
+            return np.array(vectors, dtype=np.float32)
+
+        return EmbeddingFunc(
+            embedding_dim=api.embedding_dim,
+            max_token_size=api.embedding_max_tokens,
+            func=_embed,
         )
     
     def _get_rag(self):

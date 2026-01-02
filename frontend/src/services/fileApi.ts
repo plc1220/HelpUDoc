@@ -89,3 +89,17 @@ export const renameFile = async (workspaceId: string, fileId: string, name: stri
   }
   return response.json();
 };
+
+export const getRagStatuses = async (workspaceId: string, files: string[]) => {
+  const response = await apiFetch(`${API_URL}/workspaces/${workspaceId}/files/rag-status`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ files }),
+  });
+  if (!response.ok) {
+    throw new Error('Failed to fetch RAG status');
+  }
+  return response.json();
+};

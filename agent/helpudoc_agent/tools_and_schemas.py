@@ -20,6 +20,7 @@ except ImportError as exc:  # pragma: no cover
     raise RuntimeError("Gemini dependencies are required") from exc
 
 from .configuration import Settings, ToolConfig
+from .rag_indexer import RagConfig, WorkspaceRagStore
 from .state import WorkspaceState
 from .utils import SourceTracker, resolve_urls, extract_web_url
 
@@ -71,6 +72,7 @@ class ToolFactory:
             "google_grounded_search": self._build_google_grounded_search_tool,
             "append_to_report": self._build_append_to_report_tool,
             "get_image_url": self._build_get_image_url_tool,
+            "rag_query": self._build_rag_query_tool,
         }
 
     def build_tools(self, tool_names: List[str], workspace_state: WorkspaceState) -> List[Tool]:
@@ -124,6 +126,8 @@ class ToolFactory:
         @tool
         def google_grounded_search(query: str) -> str:
             """Run a Gemini search with citations and store sources."""
+            if workspace_state.context.get("tagged_files_only"):
+                return "Tool disabled: tagged files were provided, use rag_query only."
             search_prompt = (
                 f"Search the web for information about: {query}\n\n"
                 "Return a comprehensive summary of the search results."
@@ -197,6 +201,8 @@ class ToolFactory:
         @tool
         def append_to_report(source_path: str, target_path: str = "/Final_Proposal.md") -> str:
             """Append content from source_path into target_path with a separator."""
+            if workspace_state.context.get("tagged_files_only"):
+                return "Tool disabled: tagged files were provided, use rag_query only."
             try:
                 source = _resolve(source_path)
                 target = _resolve(target_path)
@@ -242,6 +248,8 @@ class ToolFactory:
             Returns:
                 The public URL of the image if found, or an error message if not found.
             """
+            if workspace_state.context.get("tagged_files_only"):
+                return "Tool disabled: tagged files were provided, use rag_query only."
             try:
                 import json
                 import os
@@ -337,6 +345,118 @@ class ToolFactory:
         get_image_url.description = "Retrieve the public URL for an image file stored in MinIO/S3."
         return get_image_url
 
+    def _build_rag_query_tool(self, workspace_state: WorkspaceState) -> Tool:
+        rag_cfg = RagConfig.from_env(self.settings.backend.workspace_root)
+        rag_store = WorkspaceRagStore(self.settings.backend.workspace_root, rag_cfg)
+
+        def _normalize_file_paths(paths: List[str]) -> List[str]:
+            normalized: List[str] = []
+            for raw in paths:
+                if not raw:
+                    continue
+                cleaned = str(raw).strip().replace("\\", "/")
+                if not cleaned:
+                    continue
+                lowered = cleaned.lower()
+                if "tagged files" in lowered:
+                    continue
+                if cleaned.startswith(("-", "*", "•")):
+                    cleaned = cleaned.lstrip("-*•").strip()
+                if cleaned.startswith(":"):
+                    cleaned = cleaned.lstrip(":").strip()
+                if cleaned.startswith(("'", "\"")) and cleaned.endswith(("'", "\"")):
+                    cleaned = cleaned[1:-1].strip()
+                if not cleaned.startswith("/"):
+                    cleaned = f"/{cleaned.lstrip('/')}"
+                normalized.append(cleaned)
+            return sorted(set(normalized))
+
+        @tool
+        async def rag_query(
+            query: str,
+            file_paths: Optional[List[str]] = None,
+            mode: str = "naive",
+            include_references: bool = False,
+        ) -> str:
+            """Retrieve context from LightRAG, optionally restricted to specific file paths."""
+            if not query or not query.strip():
+                raise ValueError("Query is required")
+            effective_paths = file_paths or workspace_state.context.get("tagged_files") or []
+            normalized = _normalize_file_paths(effective_paths)
+            if normalized and mode != "hybrid":
+                mode = "hybrid"
+            cached_context = workspace_state.context.get("tagged_rag_context")
+            if cached_context and workspace_state.context.get("tagged_files_only"):
+                return str(cached_context)
+            keywords: List[str] = [query.strip()]
+            if normalized:
+                keywords.extend(normalized)
+                keywords.extend([Path(item).name for item in normalized if item])
+            response = await rag_store.query_data(
+                workspace_state.workspace_id,
+                query,
+                mode=mode,
+                include_references=include_references,
+                hl_keywords=keywords,
+                ll_keywords=keywords,
+            )
+            data = response.get("data") if isinstance(response, dict) else None
+            chunks = data.get("chunks", []) if isinstance(data, dict) else []
+            if not chunks and mode != "naive":
+                response = await rag_store.query_data(
+                    workspace_state.workspace_id,
+                    query,
+                    mode="naive",
+                    include_references=include_references,
+                    hl_keywords=keywords,
+                    ll_keywords=keywords,
+                )
+                data = response.get("data") if isinstance(response, dict) else None
+                chunks = data.get("chunks", []) if isinstance(data, dict) else []
+            if not chunks and mode != "hybrid":
+                response = await rag_store.query_data(
+                    workspace_state.workspace_id,
+                    query,
+                    mode="hybrid",
+                    include_references=include_references,
+                    hl_keywords=keywords,
+                    ll_keywords=keywords,
+                )
+                data = response.get("data") if isinstance(response, dict) else None
+                chunks = data.get("chunks", []) if isinstance(data, dict) else []
+            if normalized:
+                normalized_basenames = {Path(item).name for item in normalized if item}
+                filtered = []
+                for chunk in chunks:
+                    file_path = chunk.get("file_path") or ""
+                    if file_path in normalized:
+                        filtered.append(chunk)
+                        continue
+                    if Path(file_path).name in normalized_basenames:
+                        filtered.append(chunk)
+                chunks = filtered
+            if not chunks:
+                return (
+                    "No relevant context found for the requested file(s)."
+                    if normalized
+                    else "No relevant context found."
+                )
+            lines: List[str] = []
+            for chunk in chunks:
+                content = chunk.get("content") or ""
+                if not content:
+                    continue
+                file_path = chunk.get("file_path") or "unknown_source"
+                lines.append(f"[{file_path}] {content}")
+            return "\n\n".join(lines) if lines else "No relevant context found."
+
+        rag_query.name = "rag_query"
+        rag_query.description = (
+            "Retrieve workspace context from LightRAG. "
+            "Use file_paths to restrict results to specific tagged files."
+        )
+        return rag_query
+
 
 def build_google_search_tool(
     workspace_state: WorkspaceState,
@@ -352,6 +472,8 @@ def build_google_search_tool(
     @tool
     def internet_search(query: str, max_results: int = 5) -> str:
         """Run a Gemini native Google search for the given query."""
+        if workspace_state.context.get("tagged_files_only"):
+            return "Tool disabled: tagged files were provided, use rag_query only."
         search_prompt = (
             f"Search the web for information about: {query}\n\n"
             "Return a comprehensive summary of the search results."
@@ -444,6 +566,24 @@ def build_gemini_image_tool(
         )
         return safe or f"gemini-image-{uuid4().hex[:8]}"
 
+    def _is_explicit_image_request(prompt: str) -> bool:
+        text = (prompt or "").lower()
+        keywords = (
+            "image",
+            "picture",
+            "photo",
+            "diagram",
+            "figure",
+            "illustration",
+            "render",
+            "draw",
+            "sketch",
+            "visual",
+            "edit",
+            "generate",
+        )
+        return any(keyword in text for keyword in keywords)
+
     def _save_inline_image(inline_data, prefix: str, index: int) -> str:
         filename = f"{prefix}-{index + 1}.png"
         destination = output_dir / filename
@@ -470,10 +610,19 @@ def build_gemini_image_tool(
         """
 
         if not prompt.strip():
-            raise ValueError("Prompt is required for image generation")
+            return "Skipped gemini_image: prompt is required for image generation/editing."
+
+        if workspace_state.context.get("tagged_files_only"):
+            return "Tool disabled: tagged files were provided, use rag_query only."
+
+        if not _is_explicit_image_request(prompt):
+            return "Skipped gemini_image: user did not explicitly request image generation/editing."
 
         if source_image_path:
-            source_image = _resolve_source_image(source_image_path)
+            try:
+                source_image = _resolve_source_image(source_image_path)
+            except Exception as exc:
+                return f"Skipped gemini_image: {exc}"
             contents: List[object] = [source_image, prompt]
         else:
             contents = [prompt]

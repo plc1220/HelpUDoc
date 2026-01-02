@@ -97,6 +97,15 @@ async def run_generate_stage(base_dir: Path, config_dir: Path, config: Dict) -> 
     max_workers = config.get("max_workers", 1)
     images = generator.generate(plan, gen_input, max_workers=max_workers, save_callback=save_image_callback)
     logger.info(f"  Generated {len(images)} images")
+
+    image_paths = []
+    for img in images:
+        ext = ext_map.get(img.mime_type, ".png")
+        image_path = output_subdir / f"{img.section_id}{ext}"
+        if image_path.exists():
+            image_paths.append(str(image_path))
+        else:
+            logger.warning("Expected image missing: %s", image_path)
     
     # Generate PDF for slides
     output_type = config.get("output_type", "slides")
@@ -104,9 +113,32 @@ async def run_generate_stage(base_dir: Path, config_dir: Path, config: Dict) -> 
         pdf_path = output_subdir / "slides.pdf"
         save_images_as_pdf(images, str(pdf_path))
         logger.info(f"  Saved: slides.pdf")
+
+    if output_type == "slides" and image_paths:
+        from paper2slides.utils.export_service import ExportService
+
+        pptx_path = output_subdir / "slides.pptx"
+        try:
+            ExportService.create_pptx_from_images(image_paths, str(pptx_path))
+            logger.info("  Saved: slides.pptx")
+        except Exception as exc:
+            logger.warning("Failed to export PPTX: %s", exc)
+
+        mineru_dir = ExportService.find_mineru_result_dir(str(base_dir / "rag_output"))
+        if mineru_dir:
+            editable_path = output_subdir / "slides_editable.pptx"
+            try:
+                ExportService.create_editable_pptx_from_mineru(
+                    mineru_dir,
+                    output_file=str(editable_path),
+                    slide_width_pixels=1920,
+                    slide_height_pixels=1080,
+                )
+                logger.info("  Saved: slides_editable.pptx")
+            except Exception as exc:
+                logger.warning("Failed to export editable PPTX: %s", exc)
     
     logger.info("")
     logger.info(f"Output: {output_subdir}")
     
     return {"output_dir": str(output_subdir), "num_images": len(images)}
-

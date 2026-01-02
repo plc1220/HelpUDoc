@@ -212,7 +212,7 @@ async def get_general_overview(
     mode: str = "mix",
     max_section_length: int = 0,  # 0 = no truncation
 ) -> str:
-    from summary.clean import clean_references
+    from paper2slides.summary.clean import clean_references
     
     overview_parts = []
     

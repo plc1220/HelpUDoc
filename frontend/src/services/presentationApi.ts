@@ -17,6 +17,7 @@ export interface PresentationRequest {
 export interface PresentationResponse {
   htmlPath?: string;
   pdfPath?: string;
+  pptxPath?: string;
   slideImages?: string[];
   jobId?: string;
 }

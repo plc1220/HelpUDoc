@@ -4,7 +4,7 @@ RAG Stage - Document indexing and querying
 import asyncio
 import logging
 from pathlib import Path
-from typing import Dict
+from typing import Dict, List
 
 from ...utils import save_json
 from ..paths import get_rag_checkpoint
@@ -35,9 +35,57 @@ async def run_rag_stage(base_dir: Path, config: Dict) -> Dict:
     output_dir = base_dir / "rag_output"
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    from paper2slides.rag import RAGClient, RAG_PAPER_QUERIES, RAG_QUERY_MODES
+    from paper2slides.rag import RAGClient, RAG_PAPER_QUERIES, RAG_QUERY_MODES, RAG_AVAILABLE
     from paper2slides.rag.query import get_general_overview, generate_general_queries
     from paper2slides.rag.config import RAGConfig
+
+    # If LightRAG isn't available, create a minimal checkpoint so downstream
+    # stages can continue using direct markdown content.
+    if not RAG_AVAILABLE:
+        logger.warning("LightRAG not available; skipping RAG and creating stub checkpoint.")
+        markdown_paths: List[str] = []
+        if path.is_file():
+            markdown_paths = [str(path)]
+        elif path.is_dir():
+            markdown_paths = [str(p) for p in path.rglob("*.md")]
+        if not markdown_paths:
+            raise ValueError("No markdown files found for RAG stub.")
+
+        combined = []
+        for md in markdown_paths:
+            try:
+                combined.append(Path(md).read_text(encoding="utf-8"))
+            except Exception:
+                continue
+        merged = "\n\n".join(combined).strip()
+        if not merged:
+            raise ValueError("Unable to read markdown content for RAG stub.")
+
+        if content_type == "paper":
+            rag_results = {
+                "paper_info": [{"answer": merged, "query": "paper info (no RAG)", "mode": "no_rag"}],
+                "motivation": [{"answer": merged, "query": "motivation (no RAG)", "mode": "no_rag"}],
+                "solution": [{"answer": merged, "query": "solution (no RAG)", "mode": "no_rag"}],
+                "results": [{"answer": merged, "query": "results (no RAG)", "mode": "no_rag"}],
+                "contributions": [{"answer": merged, "query": "contributions (no RAG)", "mode": "no_rag"}],
+            }
+        else:
+            rag_results = {
+                "content": [{"answer": merged, "query": "document content (no RAG)", "mode": "no_rag"}],
+            }
+
+        result = {
+            "rag_results": rag_results,
+            "markdown_paths": markdown_paths,
+            "input_path": input_path,
+            "content_type": content_type,
+            "mode": "no_rag",
+        }
+        checkpoint_path = get_rag_checkpoint(base_dir, config)
+        checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+        save_json(checkpoint_path, result)
+        logger.info(f"  Saved stub RAG checkpoint: {checkpoint_path}")
+        return result
     
     storage_dir = base_dir / "rag_storage"
     storage_dir.mkdir(parents=True, exist_ok=True)

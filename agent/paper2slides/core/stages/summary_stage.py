@@ -4,7 +4,7 @@ Summary Stage - Content extraction from RAG results
 import os
 import logging
 from pathlib import Path
-from typing import Dict
+from typing import Dict, List
 
 from ...utils import load_json, save_json, save_text
 from ..paths import get_rag_checkpoint, get_summary_checkpoint, get_summary_md
@@ -17,21 +17,64 @@ async def run_summary_stage(base_dir: Path, config: Dict) -> Dict:
     from paper2slides.summary import extract_paper, extract_general, extract_tables_and_figures, OriginalElements
     from paper2slides.summary.paper import extract_paper_metadata_from_markdown
     from paper2slides.llm.genai_client import create_client
-    
+    from paper2slides.rag.query import RAGQueryResult
+
     rag_data = load_json(get_rag_checkpoint(base_dir, config))
+    input_path = config.get("input_path", "")
+    content_type = config.get("content_type", "paper")
+
     if not rag_data:
-        raise ValueError("Missing RAG checkpoint.")
+        logger.warning("Missing RAG checkpoint; falling back to direct markdown extraction (no RAG).")
+        markdown_paths: List[str] = []
+        if input_path:
+            path = Path(input_path)
+            if path.is_file():
+                markdown_paths = [str(path)]
+            elif path.is_dir():
+                markdown_paths = [str(p) for p in path.rglob("*.md")]
+        if not markdown_paths:
+            raise ValueError("No markdown files found to summarize (input_path missing or invalid).")
+
+        combined_texts = []
+        for md in markdown_paths:
+            try:
+                combined_texts.append(Path(md).read_text(encoding="utf-8"))
+            except Exception:
+                continue
+        merged = "\n\n".join(combined_texts).strip()
+        if not merged:
+            raise ValueError("Unable to read markdown content for summary.")
+
+        if content_type == "paper":
+            rag_results: Dict[str, List[RAGQueryResult]] = {
+                "paper_info": [{"answer": merged, "query": "paper info (no RAG)", "mode": "no_rag"}],
+                "motivation": [{"answer": merged, "query": "motivation (no RAG)", "mode": "no_rag"}],
+                "solution": [{"answer": merged, "query": "solution (no RAG)", "mode": "no_rag"}],
+                "results": [{"answer": merged, "query": "results (no RAG)", "mode": "no_rag"}],
+                "contributions": [{"answer": merged, "query": "contributions (no RAG)", "mode": "no_rag"}],
+            }
+        else:
+            rag_results = {
+                "content": [{"answer": merged, "query": "document content (no RAG)", "mode": "no_rag"}],
+            }
+        rag_data = {
+            "rag_results": rag_results,
+            "markdown_paths": markdown_paths,
+            "content_type": content_type,
+            "mode": "no_rag",
+        }
     
     rag_results = rag_data["rag_results"]
     markdown_paths = rag_data.get("markdown_paths", [])
-    content_type = rag_data.get("content_type", "paper")
-    
-    api_key = os.getenv("RAG_LLM_API_KEY", "") or os.getenv("GEMINI_API_KEY", "") or os.getenv("GOOGLE_API_KEY", "")
-    llm_client = create_client(api_key=api_key)
+    content_type = rag_data.get("content_type", content_type)
     
     logger.info(f"Extracting content from indexed documents ({content_type})...")
     
     if content_type == "paper":
+        api_key = os.getenv("RAG_LLM_API_KEY", "") or os.getenv("GEMINI_API_KEY", "") or os.getenv("GOOGLE_API_KEY", "")
+        if not api_key:
+            raise ValueError("Missing API key for LLM (set RAG_LLM_API_KEY or GEMINI_API_KEY).")
+        llm_client = create_client(api_key=api_key)
         # Extract paper metadata directly from markdown (bypasses RAG)
         if markdown_paths:
             num_files = len(markdown_paths)
@@ -66,11 +109,11 @@ async def run_summary_stage(base_dir: Path, config: Dict) -> Dict:
         all_results = []
         for items in rag_results.values():
             all_results.extend(items)
-        content = await extract_general(
-            rag_results=all_results,
-            llm_client=llm_client,
-            model=os.getenv("LLM_MODEL", "gemini-2.5-flash"),
-        )
+            content = await extract_general(
+                rag_results=all_results,
+                llm_client=None,
+                model=os.getenv("LLM_MODEL", "gemini-2.5-flash"),
+            )
         summary_text = content.content
     
     logger.info(f"  Summary: {len(summary_text)} chars")

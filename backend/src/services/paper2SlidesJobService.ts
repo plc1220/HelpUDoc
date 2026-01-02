@@ -20,6 +20,7 @@ type Paper2SlidesJob = {
   error?: string;
   result?: {
     pdfPath?: string;
+    pptxPath?: string;
     slideImages?: string[];
     htmlPath?: string;
   };

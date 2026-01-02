@@ -69,7 +69,7 @@ export default function conversationRoutes(conversationService: ConversationServ
 
   const addMessageSchema = z.object({
     sender: z.enum(['user', 'agent']),
-    text: z.string().min(1),
+    text: z.string(),
     turnId: z.string().min(1).optional(),
     replaceExisting: z.boolean().optional(),
     metadata: z.object({
@@ -87,7 +87,17 @@ export default function conversationRoutes(conversationService: ConversationServ
           size: z.number().int().nonnegative().optional(),
         }).strict()).optional(),
       }).strict()).optional(),
+      runId: z.string().optional(),
+      status: z.enum(['running', 'completed', 'failed', 'cancelled']).optional(),
     }).partial().optional(),
+  }).superRefine((payload, ctx) => {
+    if (payload.sender === 'user' && payload.text.trim().length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Text is required for user messages',
+        path: ['text'],
+      });
+    }
   });
 
   router.post('/conversations/:conversationId/messages', async (req, res) => {

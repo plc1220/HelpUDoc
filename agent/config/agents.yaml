@@ -1,6 +1,6 @@
 model:
   provider: gemini
-  name: gemini-3-pro-preview
+  name: gemini-3-flash-preview
   image_name: gemini-3-pro-image-preview
   project: my-rd-coe-demo-gen-ai
   location: us-central1
@@ -28,6 +28,9 @@ tools:
   - name: get_image_url
     kind: builtin
     description: Get public URLs for images stored in MinIO/S3
+  - name: rag_query
+    kind: builtin
+    description: Query LightRAG for workspace context
   - name: append_to_report
     kind: builtin
     description: Stitch generated proposal sections into a final document
@@ -64,6 +67,7 @@ agents:
       - google_search
       - gemini_image
       - get_image_url
+      - rag_query
     subagents:
      - name: general-purpose
        description: Standard general-assistant behavior
@@ -72,6 +76,7 @@ agents:
          - google_search
          - gemini_image
          - get_image_url
+         - rag_query
      - name: greeting-responder
        description: Handles lightweight greeting/small-talk tasks
        system_prompt_id: general/core
