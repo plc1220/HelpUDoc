@@ -62,6 +62,33 @@ def main():
                         help="Fast mode: parse only, no RAG indexing (direct LLM query)")
     parser.add_argument("--parallel", type=int, nargs='?', const=2, default=None,
                         help="Enable parallel slide generation with N workers (default: 2 if specified)")
+    parser.add_argument("--extract-assets", action="store_true",
+                        help="Extract slide layout/assets from generated images and build editable PPTX")
+    parser.add_argument("--layout-model",
+                        help="Gemini model for layout JSON extraction (defaults to LAYOUT_MODEL/LLM_MODEL)")
+    parser.add_argument("--image-model",
+                        help="Gemini model for background/asset images (defaults to IMAGE_GEN_MODEL)")
+    parser.add_argument("--layout-max-tokens", type=int,
+                        help="Max tokens for layout JSON extraction response")
+    parser.add_argument("--refine-assets", dest="refine_assets", action="store_true",
+                        help="Refine asset bounding boxes using Gemini vision")
+    parser.add_argument("--no-refine-assets", dest="refine_assets", action="store_false",
+                        help="Disable asset bbox refinement")
+    parser.add_argument("--clean-assets", dest="clean_assets", action="store_true",
+                        help="Clean asset crops using Gemini image model")
+    parser.add_argument("--no-clean-assets", dest="clean_assets", action="store_false",
+                        help="Disable asset cleanup")
+    parser.add_argument("--clean-image-model",
+                        help="Gemini image model for asset cleanup (defaults to CLEAN_IMAGE_MODEL or IMAGE_GEN_MODEL)")
+    parser.add_argument("--refine-text-layout", dest="refine_text_layout", action="store_true",
+                        help="Refine text bboxes and line breaks using Gemini vision")
+    parser.add_argument("--no-refine-text-layout", dest="refine_text_layout", action="store_false",
+                        help="Disable text layout refinement")
+    parser.add_argument("--refine-text-max-tokens", type=int,
+                        help="Max tokens for text layout refinement response")
+    parser.add_argument("--clean-bg-tolerance", type=int,
+                        help="Tolerance for color-key background removal (0-60)")
+    parser.set_defaults(refine_assets=None, clean_assets=None, refine_text_layout=None)
     
     args = parser.parse_args()
     
@@ -100,6 +127,16 @@ def main():
         "poster_density": args.density,
         "fast_mode": args.fast,
         "max_workers": args.parallel if args.parallel else 1,
+        "extract_assets": args.extract_assets,
+        "layout_model": args.layout_model,
+        "image_model": args.image_model,
+        "layout_max_tokens": args.layout_max_tokens,
+        "refine_assets": args.refine_assets,
+        "clean_assets": args.clean_assets,
+        "clean_image_model": args.clean_image_model,
+        "refine_text_layout": args.refine_text_layout,
+        "refine_text_max_tokens": args.refine_text_max_tokens,
+        "clean_bg_tolerance": args.clean_bg_tolerance,
     }
     
     # Determine paths

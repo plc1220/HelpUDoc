@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import time
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
@@ -65,7 +66,16 @@ def process_custom_style(client, user_style: str, model: str = None) -> Processe
             response_format={"type": "json_object"},
             max_output_tokens=500,
         )
-        result = json.loads(extract_text(response))
+        raw_text = extract_text(response).strip()
+        try:
+            result = json.loads(raw_text)
+        except json.JSONDecodeError:
+            # Fallback: strip code fences or extra text, then parse JSON object.
+            cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw_text, flags=re.IGNORECASE | re.DOTALL).strip()
+            match = re.search(r"\{.*\}", cleaned, flags=re.DOTALL)
+            if not match:
+                raise
+            result = json.loads(match.group(0))
         return ProcessedStyle(
             style_name=result.get("style_name", ""),
             color_tone=result.get("color_tone", ""),

@@ -347,11 +347,6 @@ def sanitize_python_code(code: str) -> str:
         "json",
         "math",
         "statistics",
-        "matplotlib",
-        "matplotlib.pyplot",
-        "plt",
-        "seaborn",
-        "sns",
         "plotly",
         "plotly.express",
         "plotly.graph_objects",
@@ -432,19 +427,10 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
         
         The Python sandbox has access to:
         - df: pandas DataFrame with the last query result
-        - plt: matplotlib.pyplot for creating charts
-        - sns: seaborn for statistical visualizations
         - np: numpy for numerical operations
         - json: for creating Plotly configs
         
-        Two ways to create charts:
-        1. Use matplotlib/seaborn directly (recommended for quick PNGs):
-           plt.figure(figsize=(10, 6))
-           plt.plot(df['x'], df['y'])
-           plt.title('My Chart')
-           # Auto-saved as PNG in charts/ directory
-           
-        2. Use Plotly for interactive specs:
+        Use Plotly for interactive specs:
            chart_config = {
                "data": [{"x": df['category'].tolist(), "y": df['value'].tolist(), "type": "bar"}],
                "layout": {"title": chart_title},
@@ -470,8 +456,6 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
             "pd": SafePandasProxy(pd),
             "np": np,
             "json": json,
-            "plt": plt,
-            "sns": sns,
             # Expose key builtins directly to avoid NameError in some exec contexts
             "isinstance": isinstance,
             "len": len,
@@ -516,27 +500,6 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
             workspace_state.root_path, before_snapshot, after_snapshot
         )
 
-        # Auto-save any matplotlib figures into charts/ so the agent produces tangible images without
-        # extra user code. Each figure gets a numbered suffix if multiple are present.
-        if plt is not None and plt.get_fignums():
-            try:
-                charts_dir.mkdir(exist_ok=True)
-                fig_numbers = plt.get_fignums()
-                for idx, fig_num in enumerate(fig_numbers, start=1):
-                    fig = plt.figure(fig_num)
-                    suffix = f"_{idx}" if len(fig_numbers) > 1 else ""
-                    out_path = charts_dir / f"{safe_title}{suffix}.png"
-                    fig.savefig(out_path, dpi=200, bbox_inches="tight")
-                    artifacts.append(
-                        {
-                            "path": out_path.relative_to(workspace_state.root_path).as_posix(),
-                            "mimeType": ALLOWED_ARTIFACT_EXTENSIONS[".png"],
-                            "size": out_path.stat().st_size,
-                        }
-                    )
-                plt.close("all")
-            except Exception:  # pragma: no cover - best effort persistence
-                logger.warning("Failed to persist matplotlib figures", exc_info=True)
         plotly_config_path: Optional[Path] = None
         plotly_html_path: Optional[Path] = None
         if plotly_payload is not None:

@@ -29,3 +29,5 @@ workspaces.db
 backend/workspaces.db
 .pytest_cache/
 backend/workspaces/
+agent/outputs/
+rag_storage/

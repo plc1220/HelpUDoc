@@ -10,6 +10,28 @@ import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from pptx import Presentation
+from pptx.util import Inches
+
+from .pptx_builder import PPTXBuilder
+
+
+class _SimpleTextStyle:
+    def __init__(
+        self,
+        font_color_rgb: Optional[List[int]] = None,
+        text_alignment: Optional[str] = None,
+        is_bold: bool = False,
+        is_italic: bool = False,
+        is_underline: bool = False,
+    ) -> None:
+        self.font_color_rgb = font_color_rgb
+        self.text_alignment = text_alignment
+        self.is_bold = is_bold
+        self.is_italic = is_italic
+        self.is_underline = is_underline
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -30,9 +52,6 @@ class ExportService:
         """
         if not image_paths:
             raise ValueError("No image paths provided for PPTX export")
-
-        from pptx import Presentation
-        from pptx.util import Inches
 
         # Validate and preserve order
         valid_paths = []
@@ -68,6 +87,286 @@ class ExportService:
         prs.save(pptx_bytes)
         pptx_bytes.seek(0)
         return pptx_bytes.getvalue()
+
+    @staticmethod
+    def create_editable_pptx_from_images_via_mineru(
+        image_paths: List[str],
+        output_file: str,
+        lang: Optional[str] = None,
+        include_background: bool = True,
+    ) -> None:
+        """
+        Create editable PPTX from slide images by running MinerU OCR per image.
+        """
+        if not image_paths:
+            raise ValueError("No image paths provided for editable PPTX export")
+
+        from paper2slides.raganything.parser import MineruParser
+
+        try:
+            from PIL import Image
+        except Exception as exc:
+            raise RuntimeError(
+                "Pillow is required to read image dimensions for PPTX export."
+            ) from exc
+
+        valid_paths = []
+        for image_path in image_paths:
+            if os.path.exists(image_path):
+                valid_paths.append(image_path)
+            else:
+                logger.warning("Image not found for editable PPTX export: %s", image_path)
+
+        if not valid_paths:
+            raise ValueError("No valid images found for editable PPTX export")
+
+        mineru = MineruParser()
+        builder = PPTXBuilder()
+        builder.create_presentation()
+
+        slide_width_px = None
+        slide_height_px = None
+        content_by_slide: List[List[Dict[str, Any]]] = []
+
+        temp_dir = Path(tempfile.mkdtemp(prefix="mineru-slides-"))
+        try:
+            for image_path in valid_paths:
+                with Image.open(image_path) as img:
+                    width_px, height_px = img.size
+
+                if slide_width_px is None or slide_height_px is None:
+                    slide_width_px = width_px
+                    slide_height_px = height_px
+                    builder.setup_presentation_size(slide_width_px, slide_height_px)
+
+                content_list = mineru.parse_image(
+                    image_path=image_path,
+                    output_dir=str(temp_dir),
+                    lang=lang,
+                )
+                content_by_slide.append(content_list)
+
+            if slide_width_px is None or slide_height_px is None:
+                raise ValueError("Unable to determine slide dimensions from images")
+
+            for idx, image_path in enumerate(valid_paths):
+                slide = builder.add_blank_slide()
+
+                if include_background:
+                    slide.shapes.add_picture(
+                        image_path,
+                        left=0,
+                        top=0,
+                        width=builder.prs.slide_width,
+                        height=builder.prs.slide_height,
+                    )
+
+                slide_items = content_by_slide[idx]
+                if not slide_items:
+                    continue
+
+                with Image.open(image_path) as img:
+                    width_px, height_px = img.size
+
+                scale_x = slide_width_px / width_px
+                scale_y = slide_height_px / height_px
+
+                text_items = []
+                image_items = []
+                for item in slide_items:
+                    item_type = item.get("type", "")
+                    if item_type in ["text", "title", "header", "footer"]:
+                        text_items.append(item)
+                    elif item_type in ["image", "table", "equation"]:
+                        image_items.append(item)
+
+                for img_item in image_items:
+                    ExportService._add_mineru_image_to_slide(
+                        builder, slide, img_item, temp_dir, scale_x, scale_y
+                    )
+
+                for text_item in text_items:
+                    ExportService._add_mineru_text_to_slide(
+                        builder, slide, text_item, scale_x, scale_y
+                    )
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+        builder.save(output_file)
+
+    @staticmethod
+    def create_editable_pptx_from_slide_assets(
+        slide_dirs: List[str],
+        output_file: str,
+        include_background: bool = True,
+    ) -> None:
+        """
+        Build editable PPTX from per-slide asset folders.
+
+        Each slide directory should include layout.json and optional assets/background images.
+        """
+        if not slide_dirs:
+            raise ValueError("No slide directories provided for PPTX export")
+
+        builder = PPTXBuilder()
+        builder.create_presentation()
+
+        slide_width_px: Optional[int] = None
+        slide_height_px: Optional[int] = None
+
+        for slide_dir in slide_dirs:
+            slide_path = Path(slide_dir)
+            layout_path = slide_path / "layout.json"
+            if not layout_path.exists():
+                logger.warning("Missing layout.json in %s", slide_dir)
+                continue
+
+            try:
+                with open(layout_path, "r", encoding="utf-8") as handle:
+                    layout = json.load(handle)
+            except Exception as exc:
+                logger.warning("Failed to read layout.json in %s: %s", slide_dir, exc)
+                continue
+
+            canvas = layout.get("canvas", {}) if isinstance(layout, dict) else {}
+            width_px = ExportService._coerce_int(canvas.get("width"))
+            height_px = ExportService._coerce_int(canvas.get("height"))
+            if width_px is None or height_px is None:
+                logger.warning("Invalid canvas size in %s", slide_dir)
+                continue
+
+            if slide_width_px is None or slide_height_px is None:
+                slide_width_px = width_px
+                slide_height_px = height_px
+                builder.setup_presentation_size(slide_width_px, slide_height_px)
+
+            scale_x = slide_width_px / width_px
+            scale_y = slide_height_px / height_px
+
+            slide = builder.add_blank_slide()
+
+            if include_background:
+                bg_path = ExportService._resolve_slide_path(slide_path, layout.get("background"))
+                if not bg_path:
+                    bg_path = ExportService._resolve_slide_path(
+                        slide_path, layout.get("source_image")
+                    )
+                if bg_path and os.path.exists(bg_path):
+                    slide.shapes.add_picture(
+                        bg_path,
+                        left=0,
+                        top=0,
+                        width=builder.prs.slide_width,
+                        height=builder.prs.slide_height,
+                    )
+
+            ExportService._render_layout_elements(
+                builder, slide, layout, slide_path, scale_x, scale_y
+            )
+
+        builder.save(output_file)
+
+    @staticmethod
+    def _render_layout_elements(
+        builder: PPTXBuilder,
+        slide,
+        layout: Dict[str, Any],
+        slide_path: Path,
+        scale_x: float,
+        scale_y: float,
+    ) -> None:
+        elements = layout.get("elements")
+        if not isinstance(elements, list):
+            return
+
+        for idx, element in enumerate(elements, start=1):
+            if not isinstance(element, dict):
+                continue
+            element_type = str(element.get("type", "")).lower().strip()
+            bbox = element.get("bbox")
+            scaled_bbox = ExportService._scale_bbox(bbox, scale_x, scale_y)
+            if not scaled_bbox:
+                continue
+
+            if element_type == "text":
+                text = str(element.get("text", "")).strip()
+                if not text:
+                    continue
+                align = str(element.get("align", "left")).lower()
+                font_size = element.get("font_size")
+                color = element.get("color_rgb")
+                style = _SimpleTextStyle(
+                    font_color_rgb=color if isinstance(color, list) else None,
+                    text_alignment=None,
+                    is_bold=bool(element.get("bold", False)),
+                    is_italic=bool(element.get("italic", False)),
+                    is_underline=bool(element.get("underline", False)),
+                )
+                builder.add_text_element(
+                    slide=slide,
+                    text=text,
+                    bbox=scaled_bbox,
+                    align=align,
+                    font_size=font_size,
+                    text_style=style,
+                )
+                continue
+
+            if element_type == "table" and element.get("cells"):
+                builder.add_table_element(
+                    slide=slide,
+                    html_table=element.get("cells"),
+                    bbox=scaled_bbox,
+                )
+                continue
+
+            asset_path = element.get("asset_path")
+            if not asset_path and slide_path:
+                candidate = slide_path / "assets" / f"asset-{idx:03d}.png"
+                if candidate.exists():
+                    asset_path = str(candidate)
+            resolved_path = ExportService._resolve_slide_path(slide_path, asset_path)
+            if not resolved_path:
+                continue
+
+            builder.add_image_element(
+                slide=slide,
+                image_path=resolved_path,
+                bbox=scaled_bbox,
+            )
+
+    @staticmethod
+    def _scale_bbox(
+        bbox: Any, scale_x: float, scale_y: float
+    ) -> Optional[List[int]]:
+        if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+            return None
+        try:
+            x0, y0, x1, y1 = bbox
+            return [
+                int(round(x0 * scale_x)),
+                int(round(y0 * scale_y)),
+                int(round(x1 * scale_x)),
+                int(round(y1 * scale_y)),
+            ]
+        except Exception:
+            return None
+
+    @staticmethod
+    def _resolve_slide_path(slide_path: Path, value: Any) -> Optional[str]:
+        if not value or not isinstance(value, str):
+            return None
+        candidate = Path(value)
+        if not candidate.is_absolute():
+            candidate = slide_path / candidate
+        return str(candidate.resolve())
+
+    @staticmethod
+    def _coerce_int(value: Any) -> Optional[int]:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
 
     @staticmethod
     def find_mineru_result_dir(search_root: str) -> Optional[str]:

@@ -1,7 +1,9 @@
 """Tool creation helpers and MCP integration stubs."""
 from __future__ import annotations
 
+import json
 import os
+import re
 from importlib import import_module
 from io import BytesIO
 from pathlib import Path
@@ -592,11 +594,26 @@ def build_gemini_image_tool(
                 image.save(destination)
         return str(destination.relative_to(workspace_state.root_path))
 
+    def _extract_json_payload(text: str) -> str:
+        fenced = re.search(r"```json\s*(.*?)```", text, flags=re.DOTALL | re.IGNORECASE)
+        if fenced:
+            return fenced.group(1).strip()
+        return text.strip()
+
+    def _save_json_payload(payload: dict, prefix: str) -> str:
+        filename = f"{prefix}.json"
+        destination = output_dir / filename
+        with open(destination, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=False, indent=2)
+        return str(destination.relative_to(workspace_state.root_path))
+
     @tool
     def gemini_image(
         prompt: str,
         source_image_path: str | None = None,
         output_name_prefix: str | None = None,
+        extract_assets: bool = False,
+        assets_output_name: str | None = None,
     ) -> str:
         """Generate or edit an image with Gemini.
 
@@ -604,6 +621,8 @@ def build_gemini_image_tool(
             prompt: Description of the image or edit instructions.
             source_image_path: Optional path (relative to workspace root) to edit an existing image.
             output_name_prefix: Optional file name prefix for the saved image(s).
+            extract_assets: If true, request a JSON asset description instead of images.
+            assets_output_name: Optional JSON file name prefix for extracted assets.
 
         Returns:
             Summary text describing Gemini's response and the saved image paths.
@@ -628,17 +647,40 @@ def build_gemini_image_tool(
             contents = [prompt]
 
         prefix = _sanitize_prefix(output_name_prefix)
-        response = client.models.generate_content(
-            model=model_name,
-            contents=contents,
-            config=GenerateContentConfig(
-                response_modalities=[Modality.IMAGE, Modality.TEXT],
-                candidate_count=1,
-                image_config=ImageConfig(
-                    aspectRatio="1:1",
+        assets_prefix = _sanitize_prefix(assets_output_name or f"{prefix}-assets")
+        if extract_assets:
+            assets_prompt = (
+                "Return JSON only for PPTX reconstruction. "
+                "Schema: {\"version\":\"1\",\"canvas\":{\"width\":int,\"height\":int},"
+                "\"elements\":[{\"type\":\"text\",\"bbox\":[x0,y0,x1,y1],"
+                "\"text\":\"...\",\"font_size\":number,\"bold\":bool,\"italic\":bool,"
+                "\"underline\":bool,\"color_rgb\":[r,g,b],\"align\":\"left|center|right|justify\"},"
+                "{\"type\":\"image\",\"bbox\":[x0,y0,x1,y1],\"description\":\"...\"},"
+                "{\"type\":\"table\",\"bbox\":[x0,y0,x1,y1],\"rows\":int,\"cols\":int,"
+                "\"cells\":[[\"...\"]]}]}. "
+                "Use pixel coordinates matching the input image. "
+                "If unsure, omit fields rather than guessing."
+            )
+            response = client.models.generate_content(
+                model=model_name,
+                contents=[*contents, assets_prompt],
+                config=GenerateContentConfig(
+                    response_modalities=[Modality.TEXT],
+                    candidate_count=1,
                 ),
-            ),
-        )
+            )
+        else:
+            response = client.models.generate_content(
+                model=model_name,
+                contents=contents,
+                config=GenerateContentConfig(
+                    response_modalities=[Modality.IMAGE, Modality.TEXT],
+                    candidate_count=1,
+                    image_config=ImageConfig(
+                        aspectRatio="1:1",
+                    ),
+                ),
+            )
 
         text_parts: List[str] = []
         saved_images: List[str] = []
@@ -657,6 +699,20 @@ def build_gemini_image_tool(
                     saved_images.append(saved)
 
         summary_lines = []
+        if extract_assets:
+            if not text_parts:
+                return "No JSON was returned by Gemini."
+            raw_text = "\n".join(text_parts).strip()
+            json_text = _extract_json_payload(raw_text)
+            try:
+                payload = json.loads(json_text)
+            except json.JSONDecodeError as exc:
+                return f"Failed to parse JSON from Gemini: {exc}"
+            saved_json = _save_json_payload(payload, assets_prefix)
+            summary_lines.append("Saved JSON:")
+            summary_lines.append(saved_json)
+            return "\n".join(summary_lines)
+
         if text_parts:
             summary_lines.append("\n".join(text_parts).strip())
         if saved_images:
@@ -668,7 +724,7 @@ def build_gemini_image_tool(
 
     gemini_image.name = "gemini_image"
     gemini_image.description = (
-        "Generate brand-new images or edit workspace images using Gemini models."
+        "Generate or edit workspace images using Gemini models; can also extract JSON layout assets."
     )
     return gemini_image
 
