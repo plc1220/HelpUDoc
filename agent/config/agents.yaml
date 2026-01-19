@@ -81,6 +81,11 @@ agents:
        description: Handles lightweight greeting/small-talk tasks
        system_prompt_id: general/core
        tools: []
+  - name: infographic-agent
+    display_name: Infographic Agent
+    description: Create AntV Infographic HTML (with SVG export) from user-provided content.
+    system_prompt_id: infographic_agent/core
+    tools: []
   - name: data-agent
     display_name: Data Agent
     description: Analyze data files (CSV, Parquet) using SQL and charts.

@@ -11,6 +11,17 @@ The agent service is a Python FastAPI application that orchestrates Gemini-power
 - `docs/`: internal documentation for image tools and workflows.
 - `lightrag_server/`: optional LightRAG server config and notes.
 
+## Agent personas
+
+Personas are defined in `config/agents.yaml` and are available to the frontend persona selector.
+Current personas include:
+
+- `general-assistant`: General-purpose assistant with file editing and search tools.
+- `research`: Research assistant with critique and sourcing pipeline.
+- `data-agent`: Data analysis workflow with DuckDB + chart tooling.
+- `proposal-agent`: Consultative proposal writer with research and planning subagents.
+- `infographic-agent`: Generates AntV Infographic HTML files with SVG export.
+
 ## Getting started
 
 ### Prerequisites
