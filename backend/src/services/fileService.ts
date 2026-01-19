@@ -334,6 +334,16 @@ export class FileService {
 
     await this.db('files').where({ id: fileId }).del();
     await this.workspaceService.touchWorkspace(file.workspaceId, userId);
+
+    // Best-effort: remove from RAG index.
+    try {
+      await this.ragQueueService?.enqueueFileDelete({
+        workspaceId: file.workspaceId,
+        relativePath: file.name,
+      });
+    } catch (error) {
+      console.error('Failed to enqueue RAG delete job', error);
+    }
   }
 
   async renameFile(fileId: number, newName: string, userId: string, expectedVersion?: number) {

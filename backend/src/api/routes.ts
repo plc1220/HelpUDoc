@@ -16,8 +16,8 @@ import { RagQueueService } from '../services/ragQueueService';
 
 export default function(dbService: DatabaseService, userService: UserService) {
   const router = Router();
-  const workspaceService = new WorkspaceService(dbService);
   const ragQueueService = new RagQueueService(redisClient);
+  const workspaceService = new WorkspaceService(dbService, ragQueueService);
   const fileService = new FileService(dbService, workspaceService, ragQueueService);
   const conversationService = new ConversationService(dbService, workspaceService);
   const knowledgeService = new KnowledgeService(dbService, workspaceService);

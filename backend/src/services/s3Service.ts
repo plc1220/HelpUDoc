@@ -1,6 +1,8 @@
 import {
   DeleteObjectCommand,
+  DeleteObjectsCommand,
   GetObjectCommand,
+  ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
   CopyObjectCommand,
@@ -89,6 +91,34 @@ export class S3Service {
       Key: newKey,
     });
     await s3.send(command);
+  }
+
+  async deletePrefix(prefix: string): Promise<void> {
+    let continuationToken: string | undefined;
+    do {
+      const listCommand = new ListObjectsV2Command({
+        Bucket: S3_BUCKET_NAME,
+        Prefix: prefix,
+        ContinuationToken: continuationToken,
+      });
+      const listResponse = await s3.send(listCommand);
+      const keys = (listResponse.Contents || [])
+        .map((item) => item.Key)
+        .filter((key): key is string => Boolean(key));
+
+      if (keys.length > 0) {
+        const deleteCommand = new DeleteObjectsCommand({
+          Bucket: S3_BUCKET_NAME,
+          Delete: {
+            Objects: keys.map((key) => ({ Key: key })),
+            Quiet: true,
+          },
+        });
+        await s3.send(deleteCommand);
+      }
+
+      continuationToken = listResponse.IsTruncated ? listResponse.NextContinuationToken : undefined;
+    } while (continuationToken);
   }
 
   getPublicUrl(key: string): string {

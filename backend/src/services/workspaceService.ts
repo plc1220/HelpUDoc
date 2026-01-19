@@ -3,6 +3,8 @@ import * as path from 'path';
 import { Knex } from 'knex';
 import { v4 as uuidv4 } from 'uuid';
 import { DatabaseService } from './databaseService';
+import { RagQueueService } from './ragQueueService';
+import { S3Service } from './s3Service';
 import { UserContext } from '../types/user';
 import { AccessDeniedError, NotFoundError } from '../errors';
 
@@ -37,9 +39,13 @@ interface MembershipCheckOptions {
 
 export class WorkspaceService {
   private db: Knex;
+  private ragQueueService?: RagQueueService;
+  private s3Service: S3Service;
 
-  constructor(databaseService: DatabaseService) {
+  constructor(databaseService: DatabaseService, ragQueueService?: RagQueueService) {
     this.db = databaseService.getDb();
+    this.ragQueueService = ragQueueService;
+    this.s3Service = new S3Service();
     this.ensureWorkspaceDir();
   }
 
@@ -144,6 +150,16 @@ export class WorkspaceService {
 
     const workspacePath = path.join(WORKSPACE_DIR, workspace.id);
     await fs.rm(workspacePath, { recursive: true, force: true });
+    try {
+      await this.s3Service.deletePrefix(`${workspace.id}/`);
+    } catch (error) {
+      console.error(`Failed to delete S3 objects for workspace: ${workspace.id}`, error);
+    }
+    try {
+      await this.ragQueueService?.enqueueWorkspaceDelete({ workspaceId: workspace.id });
+    } catch (error) {
+      console.error(`Failed to enqueue RAG workspace delete job: ${workspace.id}`, error);
+    }
   }
 
   async addCollaborator(

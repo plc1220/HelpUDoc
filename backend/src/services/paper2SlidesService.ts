@@ -50,6 +50,14 @@ const sanitizeFileName = (name: string, fallback: string) => {
   return cleaned || fallback;
 };
 
+const buildPresentationBaseName = (files: InputFile[], fallback: string) => {
+  const rawName = String(files[0]?.name || '');
+  const normalized = rawName.replace(/\\/g, '/');
+  const baseName = normalized.split('/').pop() || '';
+  const withoutExt = baseName.includes('.') ? baseName.slice(0, baseName.lastIndexOf('.')) : baseName;
+  return sanitizeFileName(withoutExt, fallback);
+};
+
 const mapStage = (stage?: Paper2SlidesStage) => {
   if (!stage) return undefined;
   if (stage === 'analysis') return 'summary';
@@ -240,8 +248,8 @@ export class Paper2SlidesService {
 
       const timestamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
       const runId = jobId || randomUUID();
-      const folder = path.posix.join('presentations', jobId ? `slide_${runId}` : '');
-      const baseName = jobId ? 'slides' : `paper2slides-${timestamp}`;
+      const baseName = buildPresentationBaseName(files, 'paper2slides');
+      const folder = path.posix.join('presentations', baseName, timestamp);
       let pdfPath: string | undefined;
       let pptxPath: string | undefined;
       const slideImages: string[] = [];
