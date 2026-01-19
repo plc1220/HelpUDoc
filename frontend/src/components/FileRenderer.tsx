@@ -92,7 +92,7 @@ const FileRenderer: React.FC<FileRendererProps> = ({ file, fileContent }) => {
     lowerName.endsWith('.plotly');
 
   const parsedCsv = useMemo(() => {
-    if (!isCsvFile) return null;
+    if (!isCsvFile || !fileContent.trim()) return null;
     try {
       return Papa.parse(fileContent, { header: true, skipEmptyLines: true });
     } catch (error) {
@@ -393,7 +393,16 @@ const FileRenderer: React.FC<FileRendererProps> = ({ file, fileContent }) => {
       );
     }
     if (isCsvFile) {
-      const parseError = parsedCsv?.errors?.[0]?.message;
+      if (!fileContent.trim()) {
+        return (
+          <div className="flex h-full items-center justify-center text-sm text-gray-500">
+            Loading CSV preview...
+          </div>
+        );
+      }
+      const parseError = parsedCsv?.errors?.find(
+        (error) => !/auto-detect/i.test(error.message),
+      )?.message;
       if (parseError) {
         return (
           <div className="flex h-full items-center justify-center px-4 text-sm text-red-600">

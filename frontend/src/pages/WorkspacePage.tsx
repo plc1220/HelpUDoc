@@ -107,6 +107,44 @@ const SLASH_COMMANDS = [
   },
 ];
 
+const SYSTEM_DIR_NAMES = new Set(['__macosx']);
+const SYSTEM_FILE_NAMES = new Set(['thumbs.db', 'desktop.ini']);
+
+const normalizeFilePath = (value: string) => value.replace(/\\/g, '/');
+
+const sanitizePresentationLabel = (value: string, fallback: string) => {
+  const normalized = normalizeFilePath(value);
+  const baseName = normalized.split('/').pop() || '';
+  const trimmed = baseName.includes('.') ? baseName.slice(0, baseName.lastIndexOf('.')) : baseName;
+  const cleaned = trimmed.replace(/[^a-zA-Z0-9._-]/g, '_').replace(/^_+/, '');
+  return cleaned || fallback;
+};
+
+const isSystemFile = (file: WorkspaceFile): boolean => {
+  const name = normalizeFilePath(file.name || '');
+  if (!name) {
+    return false;
+  }
+  const lowerName = name.toLowerCase();
+  const parts = lowerName.split('/');
+  const baseName = parts[parts.length - 1] || '';
+  if (SYSTEM_FILE_NAMES.has(baseName)) {
+    return true;
+  }
+  for (const part of parts) {
+    if (!part) {
+      continue;
+    }
+    if (SYSTEM_DIR_NAMES.has(part)) {
+      return true;
+    }
+    if (part.startsWith('.')) {
+      return true;
+    }
+  }
+  return false;
+};
+
 type Paper2SlidesStage = (typeof PAPER2SLIDES_STAGE_ORDER)[number];
 type Paper2SlidesStylePreset = (typeof PAPER2SLIDES_STYLE_PRESETS)[number];
 type SlashCommand = (typeof SLASH_COMMANDS)[number];
@@ -340,6 +378,7 @@ export default function WorkspacePage() {
   const [isEditMode, setIsEditMode] = useState(false);
   const [isAgentPaneVisible, setIsAgentPaneVisible] = useState(true);
   const [isFilePaneVisible, setIsFilePaneVisible] = useState(true);
+  const [showSystemFiles, setShowSystemFiles] = useState(false);
   const [conversationStreaming, setConversationStreaming] = useState<Record<string, boolean>>({});
   const [isAgentPaneFullScreen, setIsAgentPaneFullScreen] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
@@ -405,7 +444,19 @@ export default function WorkspacePage() {
     () => (activeConversationId ? conversationStreaming[activeConversationId] || false : false),
     [activeConversationId, conversationStreaming],
   );
-  const allFilesSelected = files.length > 0 && selectedFiles.size === files.length;
+  const systemFiles = useMemo(() => files.filter(isSystemFile), [files]);
+  const visibleFiles = useMemo(
+    () => (showSystemFiles ? files : files.filter((file) => !isSystemFile(file))),
+    [files, showSystemFiles],
+  );
+  const visibleFileIds = useMemo(() => new Set(visibleFiles.map((file) => file.id)), [visibleFiles]);
+  const allFilesSelected = useMemo(() => {
+    if (!visibleFiles.length) {
+      return false;
+    }
+    return visibleFiles.every((file) => selectedFiles.has(file.id));
+  }, [visibleFiles, selectedFiles]);
+  const hiddenFileCount = systemFiles.length;
   const showPaper2SlidesControls = Boolean(
     selectedFile || chatAttachments.length || chatMessage.trim().length || presentationStatus !== 'idle',
   );
@@ -471,6 +522,31 @@ export default function WorkspacePage() {
     persistActiveRuns(storedRuns);
   }, [persistActiveRuns]);
 
+  useEffect(() => {
+    if (showSystemFiles) {
+      return;
+    }
+    setSelectedFiles((prev) => {
+      let hasHiddenSelections = false;
+      for (const id of prev) {
+        if (!visibleFileIds.has(id)) {
+          hasHiddenSelections = true;
+          break;
+        }
+      }
+      if (!hasHiddenSelections) {
+        return prev;
+      }
+      const next = new Set<string>();
+      for (const id of prev) {
+        if (visibleFileIds.has(id)) {
+          next.add(id);
+        }
+      }
+      return next;
+    });
+  }, [showSystemFiles, visibleFileIds]);
+
   const toggleColorMode = useCallback(
     () => setColorMode((prev) => (prev === 'light' ? 'dark' : 'light')),
     []
@@ -480,11 +556,11 @@ export default function WorkspacePage() {
       return [] as WorkspaceFile[];
     }
     const normalized = mentionQuery.trim().toLowerCase();
-    const filtered = files.filter((file) =>
+    const filtered = visibleFiles.filter((file) =>
       !normalized || file.name.toLowerCase().includes(normalized)
     );
     return filtered.slice(0, 8);
-  }, [files, isMentionOpen, mentionQuery]);
+  }, [visibleFiles, isMentionOpen, mentionQuery]);
 
   const commandSuggestions = useMemo(() => {
     if (!isCommandOpen) {
@@ -872,12 +948,12 @@ export default function WorkspacePage() {
   }, [fileContent, selectedFile]);
 
   const addPendingPresentationPlaceholder = useCallback(
-    (jobId: string, workspaceId: string) => {
+    (jobId: string, workspaceId: string, label: string) => {
       const placeholder: WorkspaceFile = {
         id: `paperjob-${jobId}`,
-        name: `presentations/slide_${jobId}/ (pending)`,
+        name: `presentations/${label}/ (pending)`,
         workspaceId,
-        path: `presentations/slide_${jobId}/`,
+        path: `presentations/${label}/`,
         mimeType: 'application/vnd.helpudoc.paper2slides-job',
         publicUrl: null,
         content: undefined,
@@ -1320,9 +1396,9 @@ export default function WorkspacePage() {
       if (!value) {
         return [];
       }
-      return files.filter((file) => value.includes(`@${file.name}`));
+      return visibleFiles.filter((file) => value.includes(`@${file.name}`));
     },
-    [files],
+    [visibleFiles],
   );
 
   const toNumericFileId = (value: WorkspaceFile['id']): number | null => {
@@ -2304,6 +2380,7 @@ export default function WorkspacePage() {
       setStreamingForConversation(conversationId, true);
       startPresentationProgress();
       try {
+        const presentationLabel = sanitizePresentationLabel(fileNames[0] || 'paper2slides', 'paper2slides');
         const startResponse = await startPaper2SlidesJob({
           workspaceId,
           brief,
@@ -2317,7 +2394,7 @@ export default function WorkspacePage() {
           parallel: presentationOptions.parallel,
           fromStage: presentationOptions.fromStage,
         });
-        addPendingPresentationPlaceholder(startResponse.jobId, workspaceId);
+        addPendingPresentationPlaceholder(startResponse.jobId, workspaceId, presentationLabel);
         const jobLabel = `Paper2Slides job ${startResponse.jobId.slice(0, 8)}`;
         updateMessagesForConversation(conversationId, (prev) => {
           const updated = [...prev];
@@ -2851,7 +2928,7 @@ export default function WorkspacePage() {
   };
 
   const handleSelectAllFiles = () => {
-    if (!files.length) {
+    if (!visibleFiles.length) {
       setSelectedFiles(new Set());
       return;
     }
@@ -2859,7 +2936,7 @@ export default function WorkspacePage() {
       setSelectedFiles(new Set());
       return;
     }
-    setSelectedFiles(new Set(files.map((file) => file.id)));
+    setSelectedFiles(new Set(visibleFiles.map((file) => file.id)));
   };
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -3044,7 +3121,7 @@ export default function WorkspacePage() {
                         </button>
                         <button
                           onClick={handleSelectAllFiles}
-                          disabled={files.length === 0}
+                          disabled={visibleFiles.length === 0}
                           className="p-2 rounded-lg hover:bg-gray-100 disabled:opacity-50"
                           title={allFilesSelected ? 'Clear selection' : 'Select all files'}
                         >
@@ -3060,12 +3137,28 @@ export default function WorkspacePage() {
                       </div>
                     )}
                   </div>
+                  {isFilePaneVisible && hiddenFileCount > 0 && (
+                    <div className="px-4 pb-2 text-xs text-gray-500 flex items-center justify-between">
+                      <span>
+                        {showSystemFiles
+                          ? `Showing ${files.length} files`
+                          : `Showing ${visibleFiles.length} of ${files.length}`}
+                      </span>
+                      <button
+                        type="button"
+                        className="text-blue-600 hover:text-blue-700"
+                        onClick={() => setShowSystemFiles((prev) => !prev)}
+                      >
+                        {showSystemFiles ? 'Hide system files' : `Show ${hiddenFileCount} hidden`}
+                      </button>
+                    </div>
+                  )}
                   <div
                     className={`flex-1 px-4 py-3 overflow-y-auto min-h-0 transition-opacity duration-200 ${isFilePaneVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'
                       }`}
                     aria-hidden={!isFilePaneVisible}
                   >
-                    {files.map((file) => {
+                    {visibleFiles.map((file) => {
                       const isPendingJob = file.mimeType === 'application/vnd.helpudoc.paper2slides-job';
                       const ragStatus = typeof file.name === 'string' ? ragStatuses[file.name] : undefined;
                       const ragState = ragStatus?.status ? String(ragStatus.status).toLowerCase() : '';
