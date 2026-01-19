@@ -14,7 +14,8 @@ Thumbs.db
 *.swp
 .vscode/
 .idea/
-agent/.venv
+.venv/
+agent/.venv/
 licheng_accessKeys.csv
 
 # Python artifacts
