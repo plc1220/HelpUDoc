@@ -80,15 +80,29 @@ class RagIndexWorker:
 
     async def _handle_message(self, fields: Dict[str, Any]) -> None:
         job_type = (fields.get("type") or "").strip()
-        if job_type != "file_upsert":
-            raise ValueError(f"Unsupported job type: {job_type}")
-
         workspace_id = str(fields.get("workspaceId") or "").strip()
-        relative_path = str(fields.get("relativePath") or "").strip()
-        if not workspace_id or not relative_path:
-            raise ValueError("Missing workspaceId or relativePath")
+        if not workspace_id:
+            raise ValueError("Missing workspaceId")
 
-        await self.store.ingest_file(workspace_id, relative_path)
+        if job_type == "file_upsert":
+            relative_path = str(fields.get("relativePath") or "").strip()
+            if not relative_path:
+                raise ValueError("Missing relativePath")
+            await self.store.ingest_file(workspace_id, relative_path)
+            return
+
+        if job_type == "file_delete":
+            relative_path = str(fields.get("relativePath") or "").strip()
+            if not relative_path:
+                raise ValueError("Missing relativePath")
+            await self.store.delete_file(workspace_id, relative_path)
+            return
+
+        if job_type == "workspace_delete":
+            await self.store.delete_workspace(workspace_id)
+            return
+
+        raise ValueError(f"Unsupported job type: {job_type}")
 
     async def _run_loop(self) -> None:
         assert self.redis is not None
@@ -120,4 +134,3 @@ class RagIndexWorker:
             except Exception:
                 logger.exception("RAG worker loop error; retrying soon")
                 await asyncio.sleep(2)
-

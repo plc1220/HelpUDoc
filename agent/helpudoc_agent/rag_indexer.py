@@ -35,6 +35,22 @@ def _env(name: str, default: str | None = None) -> str | None:
     return value if value else default
 
 
+def _ensure_pg_storage_env() -> None:
+    os.environ.setdefault("LIGHTRAG_KV_STORAGE", "PGKVStorage")
+    os.environ.setdefault("LIGHTRAG_DOC_STATUS_STORAGE", "PGDocStatusStorage")
+    os.environ.setdefault("LIGHTRAG_GRAPH_STORAGE", "PGGraphStorage")
+    os.environ.setdefault("LIGHTRAG_VECTOR_STORAGE", "PGVectorStorage")
+
+    if "POSTGRES_DATABASE" not in os.environ and "POSTGRES_DB" in os.environ:
+        os.environ["POSTGRES_DATABASE"] = os.environ["POSTGRES_DB"]
+
+    os.environ.setdefault("POSTGRES_HOST", "localhost")
+    os.environ.setdefault("POSTGRES_PORT", "5432")
+    os.environ.setdefault("POSTGRES_USER", "helpudoc")
+    os.environ.setdefault("POSTGRES_PASSWORD", "helpudoc")
+    os.environ.setdefault("POSTGRES_DATABASE", "helpudoc")
+
+
 @dataclass(frozen=True)
 class RagConfig:
     working_dir: Path
@@ -56,6 +72,7 @@ class RagConfig:
 
     @classmethod
     def from_env(cls, workspace_root: Path) -> "RagConfig":
+        _ensure_pg_storage_env()
         working_dir = Path(_env("RAG_WORKING_DIR", str(workspace_root / ".lightrag_storage"))).resolve()
         llm_model = _env("RAG_LLM_MODEL", _env("LLM_MODEL", "gemini-3-flash-preview")) or "gemini-3-flash-preview"
         embedding_model = _env("RAG_EMBEDDING_MODEL", _env("EMBEDDING_MODEL", "gemini-embedding-001")) or "gemini-embedding-001"
@@ -102,6 +119,10 @@ def _safe_join_workspace(workspace_root: Path, workspace_id: str, relative_path:
     if base not in candidate.parents and candidate != base:
         raise ValueError("Path must remain inside the workspace")
     return candidate
+
+
+def _doc_id_for_file(workspace_id: str, relative_path: str) -> str:
+    return compute_mdhash_id(f"{workspace_id}:{relative_path}", prefix="doc-")
 
 
 async def _embed_gemini(
@@ -293,7 +314,7 @@ class WorkspaceRagStore:
         if not text:
             return "Skipped empty content."
 
-        doc_id = compute_mdhash_id(f"{workspace_id}:{relative_path}", prefix="doc-")
+        doc_id = _doc_id_for_file(workspace_id, relative_path)
         rag = await self._get_rag(workspace_id)
         payload = f"SOURCE: /{relative_path.lstrip('/')}\n\n{text}"
         await rag.ainsert(payload, ids=doc_id, file_paths="/" + relative_path.lstrip("/"))
@@ -461,3 +482,28 @@ class WorkspaceRagStore:
             stream=False,
         )
         return await rag.aquery_data(query, param=param)
+
+    async def delete_file(self, workspace_id: str, relative_path: str, *, delete_llm_cache: bool = False) -> dict[str, Any]:
+        rag = await self._get_rag(workspace_id)
+        doc_id = _doc_id_for_file(workspace_id, relative_path)
+        result = await rag.adelete_by_doc_id(doc_id, delete_llm_cache=delete_llm_cache)
+        if hasattr(result, "__dict__"):
+            return result.__dict__
+        return dict(result)
+
+    async def delete_workspace(self, workspace_id: str, *, delete_llm_cache: bool = False) -> int:
+        rag = await self._get_rag(workspace_id)
+        deleted = 0
+        while True:
+            docs, _total = await rag.doc_status.get_docs_paginated(page=1, page_size=200)
+            if not docs:
+                break
+            deleted_in_batch = 0
+            for doc_id, _doc_status in docs:
+                result = await rag.adelete_by_doc_id(doc_id, delete_llm_cache=delete_llm_cache)
+                if getattr(result, "status", "") == "success":
+                    deleted += 1
+                    deleted_in_batch += 1
+            if deleted_in_batch == 0:
+                break
+        return deleted
