@@ -392,7 +392,6 @@ export default function WorkspacePage() {
   const [conversationHistory, setConversationHistory] = useState<ConversationSummary[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [activeConversationPersona, setActiveConversationPersona] = useState<string | null>(null);
-  const [activeRuns, setActiveRuns] = useState<Record<string, ActiveRunInfo>>({});
   const [presentationOptions, setPresentationOptions] = useState<PresentationOptionsState>({
     output: 'slides',
     content: 'paper',
@@ -3381,7 +3380,7 @@ export default function WorkspacePage() {
                     </div>
                   </div>
                   <div className="flex-1 overflow-y-auto overflow-x-hidden min-h-0">
-                    {isEditMode ? (
+                    {isEditMode && selectedWorkspace ? (
                       <FileEditor
                         file={selectedFileDetails || selectedFile}
                         fileContent={fileContent}
