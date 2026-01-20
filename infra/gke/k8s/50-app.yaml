@@ -1,0 +1,160 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: helpudoc-app
+  namespace: helpudoc
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: helpudoc-app
+  template:
+    metadata:
+      labels:
+        app: helpudoc-app
+    spec:
+      containers:
+        - name: backend
+          image: helpudoc-backend:latest
+          ports:
+            - containerPort: 3000
+          env:
+            - name: NODE_ENV
+              value: production
+            - name: PORT
+              value: "3000"
+            - name: AGENT_URL
+              value: http://localhost:8001
+            - name: SESSION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: SESSION_SECRET
+            - name: SESSION_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: SESSION_NAME
+            - name: SESSION_TTL_SECONDS
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: SESSION_TTL_SECONDS
+            - name: POSTGRES_HOST
+              value: postgres
+            - name: POSTGRES_PORT
+              value: "5432"
+            - name: POSTGRES_DB
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: POSTGRES_DB
+            - name: POSTGRES_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: POSTGRES_PASSWORD
+            - name: DATABASE_URL
+              value: "postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@postgres:5432/$(POSTGRES_DB)"
+            - name: REDIS_URL
+              value: redis://redis:6379
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: MINIO_ROOT_USER
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: MINIO_ROOT_PASSWORD
+            - name: S3_BUCKET_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: S3_BUCKET_NAME
+            - name: S3_ENDPOINT
+              value: http://minio:9000
+            - name: S3_PUBLIC_BASE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: S3_PUBLIC_BASE_URL
+            - name: S3_FORCE_PATH_STYLE
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: S3_FORCE_PATH_STYLE
+            - name: WORKSPACE_ROOT
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: WORKSPACE_ROOT
+          volumeMounts:
+            - name: workspace-data
+              mountPath: /app/workspaces
+        - name: agent
+          image: helpudoc-agent:latest
+          ports:
+            - containerPort: 8001
+          env:
+            - name: REDIS_URL
+              value: redis://redis:6379
+            - name: RAG_OFFLINE
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: RAG_OFFLINE
+            - name: WORKSPACE_ROOT
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: WORKSPACE_ROOT
+            - name: S3_ENDPOINT
+              value: http://minio:9000
+            - name: MINIO_ENDPOINT
+              value: http://minio:9000
+            - name: S3_BUCKET_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: S3_BUCKET_NAME
+            - name: S3_PUBLIC_BASE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: S3_PUBLIC_BASE_URL
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: MINIO_ROOT_USER
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: MINIO_ROOT_PASSWORD
+          volumeMounts:
+            - name: workspace-data
+              mountPath: /app/workspaces
+      volumes:
+        - name: workspace-data
+          persistentVolumeClaim:
+            claimName: workspace-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  namespace: helpudoc
+spec:
+  selector:
+    app: helpudoc-app
+  ports:
+    - port: 3000
+      targetPort: 3000

@@ -1,0 +1,37 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: helpudoc-minio-setup
+  namespace: helpudoc
+spec:
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: minio-setup
+          image: minio/mc:latest
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: MINIO_ROOT_USER
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: MINIO_ROOT_PASSWORD
+            - name: S3_BUCKET_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: S3_BUCKET_NAME
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -euo pipefail
+              until mc alias set local http://minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"; do
+                sleep 1
+              done
+              mc mb -p local/"$S3_BUCKET_NAME" || true
+              mc anonymous set download local/"$S3_BUCKET_NAME"

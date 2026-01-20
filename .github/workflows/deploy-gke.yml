@@ -1,0 +1,81 @@
+name: Deploy to GKE
+
+on:
+  push:
+    branches:
+      - master
+      - main
+
+env:
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  REGION: ${{ secrets.GCP_REGION }}
+  GKE_CLUSTER: ${{ secrets.GKE_CLUSTER }}
+  REGISTRY: ${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/helpudoc
+  IMAGE_TAG: ${{ github.sha }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker auth
+        run: gcloud auth configure-docker "${{ env.REGION }}-docker.pkg.dev"
+
+      - name: Build images
+        run: |
+          docker build -t "${REGISTRY}/helpudoc-backend:${IMAGE_TAG}" backend
+          docker build -t "${REGISTRY}/helpudoc-agent:${IMAGE_TAG}" agent
+          docker build --build-arg VITE_API_URL=/api -t "${REGISTRY}/helpudoc-frontend:${IMAGE_TAG}" frontend
+
+      - name: Push images
+        run: |
+          docker push "${REGISTRY}/helpudoc-backend:${IMAGE_TAG}"
+          docker push "${REGISTRY}/helpudoc-agent:${IMAGE_TAG}"
+          docker push "${REGISTRY}/helpudoc-frontend:${IMAGE_TAG}"
+
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: ${{ env.GKE_CLUSTER }}
+          location: ${{ env.REGION }}
+
+      - name: Apply manifests
+        run: |
+          kubectl apply -f infra/gke/k8s/00-namespace.yaml
+          kubectl apply -f infra/gke/k8s/10-secrets.yaml
+          kubectl apply -f infra/gke/k8s/20-configmap.yaml
+          kubectl apply -f infra/gke/k8s/30-storage.yaml
+          kubectl apply -f infra/gke/k8s/40-postgres.yaml
+          kubectl apply -f infra/gke/k8s/41-redis.yaml
+          kubectl apply -f infra/gke/k8s/42-minio.yaml
+          kubectl apply -f infra/gke/k8s/43-minio-setup.yaml
+          kubectl apply -f infra/gke/k8s/50-app.yaml
+          kubectl apply -f infra/gke/k8s/60-frontend.yaml
+
+      - name: Update images
+        run: |
+          kubectl -n helpudoc set image deployment/helpudoc-app \
+            backend="${REGISTRY}/helpudoc-backend:${IMAGE_TAG}" \
+            agent="${REGISTRY}/helpudoc-agent:${IMAGE_TAG}"
+          kubectl -n helpudoc set image deployment/helpudoc-frontend \
+            frontend="${REGISTRY}/helpudoc-frontend:${IMAGE_TAG}"
+
+      - name: Rollout status
+        run: |
+          kubectl -n helpudoc rollout status deployment/helpudoc-app
+          kubectl -n helpudoc rollout status deployment/helpudoc-frontend

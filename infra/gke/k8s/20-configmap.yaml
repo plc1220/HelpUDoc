@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: helpudoc-config
+  namespace: helpudoc
+data:
+  SESSION_NAME: helpudoc.sid
+  SESSION_TTL_SECONDS: "604800"
+  POSTGRES_DB: helpudoc
+  POSTGRES_USER: helpudoc
+  S3_BUCKET_NAME: helpudoc
+  S3_PUBLIC_BASE_URL: http://minio:9000/helpudoc
+  S3_FORCE_PATH_STYLE: "true"
+  WORKSPACE_ROOT: /app/workspaces
+  RAG_OFFLINE: "true"
