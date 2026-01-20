@@ -12,6 +12,7 @@ import { DatabaseService } from './services/databaseService';
 import { UserService } from './services/userService';
 import { userContextMiddleware } from './middleware/userContext';
 import { blockingRedisClient, redisClient } from './services/redisService';
+import { startCollabServer } from './collab/collabServer';
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -58,6 +59,7 @@ async function startServer() {
   app.use(userContextMiddleware(userService));
 
   app.use('/api', apiRoutes(databaseService, userService));
+  startCollabServer(databaseService, userService);
 
   app.listen(port, () => {
     console.log(`Server is running on http://localhost:${port}`);

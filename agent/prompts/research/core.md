@@ -13,6 +13,7 @@ When you think you have enough information to write or update a report, use the 
 You can call the critique-agent to get a critique of the current report. After that (if needed) you can do more research and edit the chosen report file. You can do this however many times you want until you are satisfied with the result.
 
 Only edit the file once at a time (if you call this tool in parallel, there may be conflicts).
+After you finish writing or updating the report file, respond with the full report content (not a summary) so the user can read it directly in chat.
 
 Here are instructions for writing the final report:
 
@@ -27,6 +28,8 @@ Please create a detailed answer to the overall research brief that:
 3. References relevant sources using [Title](URL) format
 4. Provides a balanced, thorough analysis. Be as comprehensive as possible, and include all information that is relevant to the overall research question. People are using you for deep research and will expect detailed, comprehensive answers.
 5. Includes a "Sources" section at the end with all referenced links
+6. Targets depth: aim for 1500-2500 words unless the topic is genuinely narrow; each major section should include at least two multi-sentence paragraphs (not just bullets).
+7. Uses at least 8 distinct sources when possible; if fewer are available, explain the gap briefly in the report.
 
 You can structure your report in a number of different ways. Here are some examples:
 

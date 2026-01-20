@@ -166,6 +166,38 @@ export class ConversationService {
     return deleted > 0;
   }
 
+  async truncateConversationAfterMessage(
+    userId: string,
+    conversationId: string,
+    messageId: number,
+  ): Promise<number> {
+    const conversation = await this.db('conversations').where({ id: conversationId }).first();
+    if (!conversation) {
+      throw new NotFoundError('Conversation not found');
+    }
+
+    await this.workspaceService.ensureMembership(conversation.workspaceId, userId, { requireEdit: true });
+
+    const targetMessage = await this.db('conversation_messages')
+      .where({ id: messageId, conversationId })
+      .first();
+    if (!targetMessage) {
+      throw new NotFoundError('Message not found');
+    }
+
+    const deleted = await this.db('conversation_messages')
+      .where({ conversationId })
+      .andWhere('id', '>', messageId)
+      .del();
+
+    await this.db('conversations')
+      .where({ id: conversationId })
+      .update({ updatedAt: this.db.fn.now(), updatedBy: userId });
+    await this.workspaceService.touchWorkspace(conversation.workspaceId, userId);
+
+    return deleted;
+  }
+
   private needsTitleUpdate(existingTitle: string | null | undefined): boolean {
     if (!existingTitle) {
       return true;

@@ -320,13 +320,22 @@ def create_app() -> FastAPI:
             self._active_llm_runs: Set[str] = set()
             self._to_text = text_fn
             self._has_events = False
+            self._has_assistant_text = False
 
         @property
         def has_events(self) -> bool:
             return self._has_events
 
+        @property
+        def has_assistant_text(self) -> bool:
+            return self._has_assistant_text
+
         async def _emit(self, payload: Dict[str, Any]) -> None:
             self._has_events = True
+            if payload.get("type") in {"token", "chunk"}:
+                role = payload.get("role")
+                if role is None or str(role).lower() == "assistant":
+                    self._has_assistant_text = True
             await self.queue.put(payload)
 
         async def on_llm_new_token(
@@ -366,6 +375,21 @@ def create_app() -> FastAPI:
             log = getattr(action, "log", "")
             if log:
                 await self._emit({"type": "thought", "content": log})
+
+        async def on_agent_finish(self, finish, **_: Any) -> None:
+            if self._has_assistant_text:
+                return
+            text = ""
+            return_values = getattr(finish, "return_values", None)
+            if isinstance(return_values, dict):
+                candidate = return_values.get("output") or return_values.get("text")
+                if isinstance(candidate, str):
+                    text = candidate
+            if not text:
+                text = self._to_text(finish)
+            if text:
+                for piece in _chunk_text(text):
+                    await self._emit({"type": "token", "content": piece, "role": "assistant"})
 
         async def on_tool_start(
             self,
@@ -611,7 +635,7 @@ def create_app() -> FastAPI:
                     raw_chunk_count,
                     elapsed,
                 )
-                if not handler.has_events and fallback_chunks:
+                if not handler.has_assistant_text and fallback_chunks:
                     tracker = _DeltaTracker()
                     for raw_chunk in fallback_chunks:
                         mode, chunk = _parse_multi_mode_chunk(raw_chunk)

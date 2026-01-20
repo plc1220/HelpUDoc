@@ -25,6 +25,7 @@ export class DatabaseService {
     await this.createWorkspacesTable();
     await this.createWorkspaceMembersTable();
     await this.createFilesTable();
+    await this.createCollabDocumentsTable();
     await this.createKnowledgeSourcesTable();
     await this.createConversationsTable();
     await this.createConversationMessagesTable();
@@ -148,6 +149,26 @@ export class DatabaseService {
       console.log('Created "files" table.');
     } else {
       await this.ensureFilesTableColumns();
+    }
+  }
+
+  private async createCollabDocumentsTable(): Promise<void> {
+    const exists = await this.db.schema.hasTable('collab_documents');
+    if (!exists) {
+      await this.db.schema.createTable('collab_documents', (table) => {
+        table.string('id').primary();
+        table.binary('state');
+        table.timestamp('createdAt').notNullable().defaultTo(this.db.fn.now());
+        table.timestamp('updatedAt').notNullable().defaultTo(this.db.fn.now());
+      });
+      console.log('Created "collab_documents" table.');
+    } else {
+      await this.ensureColumn('collab_documents', 'state', (table) => table.binary('state'));
+      await this.ensureColumn(
+        'collab_documents',
+        'updatedAt',
+        (table) => table.timestamp('updatedAt').defaultTo(this.db.fn.now()),
+      );
     }
   }
 

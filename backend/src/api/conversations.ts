@@ -124,6 +124,28 @@ export default function conversationRoutes(conversationService: ConversationServ
     }
   });
 
+  const truncateMessagesSchema = z.object({
+    afterMessageId: z.coerce.number().int().positive(),
+  });
+
+  router.delete('/conversations/:conversationId/messages', async (req, res) => {
+    try {
+      const user = requireUserContext(req);
+      const { afterMessageId } = truncateMessagesSchema.parse(req.query);
+      const deleted = await conversationService.truncateConversationAfterMessage(
+        user.userId,
+        req.params.conversationId,
+        afterMessageId,
+      );
+      res.status(200).json({ deleted });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: 'Invalid input' });
+      }
+      handleError(res, error, 'Failed to truncate conversation messages');
+    }
+  });
+
   router.delete('/conversations/:conversationId', async (req, res) => {
     try {
       const user = requireUserContext(req);

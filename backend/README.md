@@ -37,6 +37,8 @@ Key variables:
   - `S3_PUBLIC_BASE_URL`: base URL exposed to the frontend for direct asset links (for example `http://localhost:9000/helpudoc`).
 - **Identity defaults**
   - `DEFAULT_USER_ID`, `DEFAULT_USER_NAME`, `DEFAULT_USER_EMAIL` (optional) let you emulate a user when the client does not send headers.
+- **Collaboration**
+  - `COLLAB_PORT` sets the WebSocket port for live document collaboration (defaults to `1234`).
 
 ### Running the application
 
@@ -45,6 +47,7 @@ npm run dev
 ```
 
 The API will be available at `http://localhost:3000/api`.
+The collaboration WebSocket server listens on `ws://localhost:1234` by default.
 
 ### Running dependencies locally
 

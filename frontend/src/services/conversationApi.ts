@@ -67,6 +67,22 @@ export const appendMessage = async (
   return response.json();
 };
 
+export const truncateConversationMessages = async (
+  conversationId: string,
+  afterMessageId: number,
+): Promise<void> => {
+  const response = await apiFetch(
+    `${API_URL}/conversations/${conversationId}/messages?afterMessageId=${afterMessageId}`,
+    {
+      method: 'DELETE',
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error('Failed to truncate conversation messages');
+  }
+};
+
 export const deleteConversation = async (conversationId: string): Promise<void> => {
   const response = await apiFetch(`${API_URL}/conversations/${conversationId}`, {
     method: 'DELETE',

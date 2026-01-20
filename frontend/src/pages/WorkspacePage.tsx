@@ -33,7 +33,14 @@ import {
   type AgentRunStatus,
   type AgentStreamChunk,
 } from '../services/agentApi';
-import { fetchRecentConversations, createConversation as createConversationApi, fetchConversationDetail, appendMessage as appendConversationMessage, deleteConversation as deleteConversationApi } from '../services/conversationApi';
+import {
+  fetchRecentConversations,
+  createConversation as createConversationApi,
+  fetchConversationDetail,
+  appendMessage as appendConversationMessage,
+  deleteConversation as deleteConversationApi,
+  truncateConversationMessages,
+} from '../services/conversationApi';
 import type {
   Workspace,
   File as WorkspaceFile,
@@ -414,6 +421,8 @@ export default function WorkspacePage() {
   const chatInputRef = useRef<HTMLTextAreaElement | null>(null);
   const attachmentInputRef = useRef<HTMLInputElement | null>(null);
   const presentationProgressTimerRef = useRef<number | null>(null);
+  const autoSaveTimerRef = useRef<number | null>(null);
+  const lastAutoSavedContentRef = useRef<string>('');
   const [isMentionOpen, setIsMentionOpen] = useState(false);
   const [mentionQuery, setMentionQuery] = useState('');
   const [mentionTriggerIndex, setMentionTriggerIndex] = useState<number | null>(null);
@@ -862,6 +871,7 @@ export default function WorkspacePage() {
     flexShrink: isAgentPaneFullScreen ? 1 : 0,
     transition: 'flex-basis 0.35s ease, flex-grow 0.35s ease, width 0.35s ease',
   };
+  const messageBubbleMaxWidth = isAgentPaneFullScreen ? '100%' : '720px';
 
   const activeFile = selectedFileDetails || selectedFile;
   const activeFileName = activeFile?.name ?? '';
@@ -1531,8 +1541,6 @@ export default function WorkspacePage() {
         setActiveConversationPersona(null);
         return;
       }
-      cancelAllStreams();
-      setConversationStreaming({});
       const conversations = await refreshConversationHistory(selectedWorkspace.id);
       if (conversations.length) {
         const firstConversation = conversations[0];
@@ -1593,7 +1601,9 @@ export default function WorkspacePage() {
       try {
         const fileWithContent = await getFileContent(selectedWorkspace.id, selectedFile.id);
         setSelectedFileDetails(fileWithContent);
-        setFileContent(fileWithContent.content || '');
+        const content = fileWithContent.content || '';
+        setFileContent(content);
+        lastAutoSavedContentRef.current = content;
       } catch (error) {
         console.error('Failed to fetch file content:', error);
         setFileContent('Failed to load file content.');
@@ -1602,6 +1612,7 @@ export default function WorkspacePage() {
     } else {
       setFileContent('');
       setSelectedFileDetails(null);
+      lastAutoSavedContentRef.current = '';
     }
   };
 
@@ -2189,7 +2200,6 @@ export default function WorkspacePage() {
       return;
     }
 
-    stopRequestedRef.current = false;
     const conversationId = activeConversationId;
     const currentMessages = [...getConversationMessagesSnapshot(conversationId)];
     const targetIndex = currentMessages.findIndex((message) => message.id === messageId);
@@ -2224,27 +2234,59 @@ export default function WorkspacePage() {
       return;
     }
 
+    const confirmed = window.confirm(
+      'Redo from this message? This will remove all messages below it.'
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    const targetMessageId = Number(targetMessage.id);
+    if (!Number.isFinite(targetMessageId)) {
+      addLocalSystemMessage('This message is not saved yet, so it cannot be redone.');
+      return;
+    }
+
+    stopRequestedRef.current = false;
     const targetTurnId = targetMessage.turnId || generateTurnId();
 
-    lastUserMessageMapRef.current[conversationId] = trimmed;
     cancelStreamForConversation(conversationId);
 
+    try {
+      await truncateConversationMessages(conversationId, targetMessageId);
+    } catch (error) {
+      console.error('Failed to truncate conversation messages', error);
+      addLocalSystemMessage('Failed to clear messages for redo. Please try again.');
+      return;
+    }
+
+    const removedMessages = currentMessages.slice(targetIndex + 1);
     const historyMessages = currentMessages.slice(0, targetIndex + 1);
     const historyPayload = mapMessagesToAgentHistory(historyMessages);
 
-    const agentIdsToRemove = currentMessages
-      .filter((message) => message.sender === 'agent' && message.turnId === targetTurnId)
-      .map((message) => message.id);
-    agentIdsToRemove.forEach((id) => {
-      if (id !== null && id !== undefined) {
-        agentMessageBufferRef.current.delete(id);
-      }
-    });
+    if (removedMessages.length) {
+      const removedIds = new Set(removedMessages.map((message) => message.id));
+      removedIds.forEach((id) => agentMessageBufferRef.current.delete(id));
+      agentChunkBufferRef.current.delete(conversationId);
+      setExpandedToolMessages((prev) => {
+        if (!prev.size) return prev;
+        const next = new Set(prev);
+        removedIds.forEach((id) => next.delete(id));
+        return next;
+      });
+      setExpandedThinkingMessages((prev) => {
+        if (!prev.size) return prev;
+        const next = new Set(prev);
+        removedIds.forEach((id) => next.delete(id));
+        return next;
+      });
+      setCopiedMessageId((prev) => (prev && removedIds.has(prev) ? null : prev));
+    }
+
+    updateMessagesForConversation(conversationId, () => historyMessages);
+    lastUserMessageMapRef.current[conversationId] = trimmed;
 
     if (isPresentationCommand) {
-      updateMessagesForConversation(conversationId, (prev) =>
-        prev.filter((message) => !(message.sender === 'agent' && message.turnId === targetTurnId)),
-      );
       await runPresentationCommand({
         workspaceId: selectedWorkspace.id,
         conversationId,
@@ -2880,16 +2922,39 @@ export default function WorkspacePage() {
     }
   };
 
-  const handleUpdateFile = async (id: number, content: string) => {
+  const handleUpdateFile = useCallback(async (id: number, content: string) => {
     if (!selectedWorkspace) return;
 
     try {
       await updateFileContent(selectedWorkspace.id, id, content);
+      lastAutoSavedContentRef.current = content;
       // Optionally, you can refetch the file or update it in the state
     } catch (error) {
       console.error('Failed to update file:', error);
     }
-  };
+  }, [selectedWorkspace]);
+
+  useEffect(() => {
+    if (!isEditMode || !selectedWorkspace || !selectedFile) return;
+
+    if (autoSaveTimerRef.current) {
+      window.clearTimeout(autoSaveTimerRef.current);
+    }
+
+    autoSaveTimerRef.current = window.setTimeout(async () => {
+      if (fileContent === lastAutoSavedContentRef.current) {
+        return;
+      }
+      await handleUpdateFile(Number(selectedFile.id), fileContent);
+      lastAutoSavedContentRef.current = fileContent;
+    }, 2000);
+
+    return () => {
+      if (autoSaveTimerRef.current) {
+        window.clearTimeout(autoSaveTimerRef.current);
+      }
+    };
+  }, [fileContent, isEditMode, selectedFile, selectedWorkspace, handleUpdateFile]);
 
   const handleBulkDelete = async () => {
     if (!selectedWorkspace) return;
@@ -3321,6 +3386,7 @@ export default function WorkspacePage() {
                         file={selectedFileDetails || selectedFile}
                         fileContent={fileContent}
                         onContentChange={setFileContent}
+                        workspaceId={selectedWorkspace.id}
                       />
                     ) : (
                       <div className="h-full w-full">
@@ -3483,7 +3549,7 @@ export default function WorkspacePage() {
                         }`}
                       >
                         <div
-                          style={{ width: '100%', maxWidth: '720px' }}
+                          style={{ width: '100%', maxWidth: messageBubbleMaxWidth }}
                           className="relative flex-1 md:flex-initial"
                         >
                           {isAgentMessage ? (

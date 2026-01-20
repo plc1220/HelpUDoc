@@ -21,6 +21,7 @@ npm install
 Create or update `frontend/.env` with:
 
 - `VITE_API_URL` (default: `http://localhost:3000/api`)
+- `VITE_COLLAB_URL` (default: `ws://localhost:1234`)
 - `VITE_GOOGLE_CLIENT_ID` (optional, for Google auth)
 
 ### Running the application
