@@ -17,7 +17,7 @@ const API_BASE_URL = process.env.API_BASE_URL ?? "http://localhost:3000/api";
 const AGENT_BASE_URL = process.env.AGENT_BASE_URL ?? "http://localhost:8001";
 const WORKSPACE_ID = process.env.WORKSPACE_ID ?? "e48581c6-07b9-48c0-b292-58d3c10dc032";
 const FILE_PATH = process.env.FILE_PATH ?? "/Users/cmtest/Documents/HelpUDoc/backend/workspaces/e48581c6-07b9-48c0-b292-58d3c10dc032/STATEMENT OF WORK for Phase 0 1.0.pdf";
-const PERSONA = process.env.PERSONA ?? "general-assistant";
+const PERSONA = process.env.PERSONA ?? "fast";
 const QUERY = process.env.QUERY ?? "Generate a requirements list and points that require extra care.";
 const SKIP_UPLOAD = (process.env.SKIP_UPLOAD ?? "false").toLowerCase() === "true";
 

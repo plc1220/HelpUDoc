@@ -104,6 +104,7 @@ interface FileEditorProps {
   fileContent: string;
   onContentChange: (content: string) => void;
   workspaceId: string;
+  colorMode: 'light' | 'dark';
 }
 
 const FileEditor: React.FC<FileEditorProps> = ({
@@ -111,6 +112,7 @@ const FileEditor: React.FC<FileEditorProps> = ({
   fileContent,
   onContentChange,
   workspaceId,
+  colorMode,
 }) => {
   const fileId = file?.id ? String(file.id) : null;
   const fileName = file?.name ?? '';
@@ -127,6 +129,42 @@ const FileEditor: React.FC<FileEditorProps> = ({
   const [collabReady, setCollabReady] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState('connecting');
   const [presenceUsers, setPresenceUsers] = useState<Array<{ clientId: number; name: string; color: string }>>([]);
+  const isDarkMode = colorMode === 'dark';
+  const monacoTheme = isDarkMode ? 'helpudoc-nord' : 'vs';
+
+  useEffect(() => {
+    if (isDarkMode) {
+      editor.defineTheme('helpudoc-nord', {
+        base: 'vs-dark',
+        inherit: true,
+        rules: [
+          { token: 'comment', foreground: '4c566a' },
+          { token: 'string', foreground: 'a3be8c' },
+          { token: 'number', foreground: 'b48ead' },
+          { token: 'keyword', foreground: '81a1c1' },
+          { token: 'type.identifier', foreground: '8fbcbb' },
+          { token: 'delimiter', foreground: 'd8dee9' },
+          { token: 'tag', foreground: '81a1c1' },
+          { token: 'attribute.name', foreground: '88c0d0' },
+          { token: 'attribute.value', foreground: 'a3be8c' },
+        ],
+        colors: {
+          'editor.background': '#2e3440',
+          'editor.foreground': '#d8dee9',
+          'editorLineNumber.foreground': '#4c566a',
+          'editorLineNumber.activeForeground': '#eceff4',
+          'editorCursor.foreground': '#d8dee9',
+          'editor.selectionBackground': '#434c5e',
+          'editor.inactiveSelectionBackground': '#3b4252',
+          'editorIndentGuide.background': '#3b4252',
+          'editorIndentGuide.activeBackground': '#4c566a',
+        },
+      });
+      editor.setTheme('helpudoc-nord');
+    } else {
+      editor.setTheme('vs');
+    }
+  }, [isDarkMode]);
 
   const handleEditorDidMount: OnMount = (editorInstance) => {
     editorRef.current = editorInstance;
@@ -403,17 +441,42 @@ const FileEditor: React.FC<FileEditorProps> = ({
         </div>
       </div>
       {!isMarkdown && (
-        <div className="bg-gray-100 p-1 border-b">
-          <button onClick={handleUndo} className="px-2 py-1 mr-1 border rounded">Undo</button>
-          <button onClick={handleRedo} className="px-2 py-1 mr-1 border rounded">Redo</button>
-          <button onClick={() => applyFormat('bold')} className="px-2 py-1 mr-1 border rounded font-bold">B</button>
-          <button onClick={() => applyFormat('italic')} className="px-2 py-1 mr-1 border rounded italic">I</button>
-          <button onClick={() => applyFormat('heading')} className="px-2 py-1 mr-1 border rounded">H</button>
+        <div className="bg-white/95 p-1 border-b border-slate-200 backdrop-blur">
+          <button
+            onClick={handleUndo}
+            className="px-2 py-1 mr-1 border border-slate-200 rounded text-slate-700 hover:bg-slate-100"
+          >
+            Undo
+          </button>
+          <button
+            onClick={handleRedo}
+            className="px-2 py-1 mr-1 border border-slate-200 rounded text-slate-700 hover:bg-slate-100"
+          >
+            Redo
+          </button>
+          <button
+            onClick={() => applyFormat('bold')}
+            className="px-2 py-1 mr-1 border border-slate-200 rounded text-slate-700 hover:bg-slate-100 font-bold"
+          >
+            B
+          </button>
+          <button
+            onClick={() => applyFormat('italic')}
+            className="px-2 py-1 mr-1 border border-slate-200 rounded text-slate-700 hover:bg-slate-100 italic"
+          >
+            I
+          </button>
+          <button
+            onClick={() => applyFormat('heading')}
+            className="px-2 py-1 mr-1 border border-slate-200 rounded text-slate-700 hover:bg-slate-100"
+          >
+            H
+          </button>
         </div>
       )}
       <div className="flex-grow overflow-auto">
         {isMarkdown ? (
-          <div className="h-full overflow-y-auto" style={{ maxHeight: 'calc(100vh - 200px)' }}>
+          <div className="mdxeditor-root h-full overflow-y-auto" style={{ maxHeight: 'calc(100vh - 200px)' }}>
             <MDXEditor
               ref={mdxEditorRef}
               markdown={fileContent}
@@ -459,11 +522,13 @@ const FileEditor: React.FC<FileEditorProps> = ({
               if (collabReady) return;
               onContentChange(value || '');
             }}
-            theme="vs"
+            theme={monacoTheme}
             options={{
               wordWrap: 'on',
               wrappingIndent: 'indent',
               minimap: { enabled: false },
+              lineHeight: 22,
+              fontSize: 14,
             }}
           />
         )}

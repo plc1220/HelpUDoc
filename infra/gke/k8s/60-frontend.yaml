@@ -25,7 +25,6 @@ metadata:
   name: helpudoc-frontend
   namespace: helpudoc
 spec:
-  type: LoadBalancer
   selector:
     app: helpudoc-frontend
   ports:

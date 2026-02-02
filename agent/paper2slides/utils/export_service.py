@@ -89,6 +89,42 @@ class ExportService:
         return pptx_bytes.getvalue()
 
     @staticmethod
+    def create_pptx_from_pdf(
+        pdf_path: str,
+        output_file: Optional[str] = None,
+        slide_width_px: int = 1920,
+        slide_height_px: int = 1080,
+    ) -> Optional[bytes]:
+        """
+        Render PDF pages to images and create a PPTX deck.
+
+        Args:
+            pdf_path: Path to the PDF file.
+            output_file: Optional output file path (if None, returns bytes).
+            slide_width_px: Target slide width in pixels for rendering.
+            slide_height_px: Target slide height in pixels for rendering.
+        """
+        pdf_file = Path(pdf_path)
+        if not pdf_file.exists():
+            raise FileNotFoundError(f"PDF not found: {pdf_path}")
+
+        image_paths, temp_dir = ExportService._render_pdf_backgrounds(
+            pdf_file,
+            slide_width_px,
+            slide_height_px,
+        )
+        if not image_paths:
+            raise RuntimeError(
+                "No images rendered from PDF. Ensure PyMuPDF (fitz) is installed."
+            )
+
+        try:
+            return ExportService.create_pptx_from_images(image_paths, output_file)
+        finally:
+            if temp_dir:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+
+    @staticmethod
     def create_editable_pptx_from_images_via_mineru(
         image_paths: List[str],
         output_file: str,

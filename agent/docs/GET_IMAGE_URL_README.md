@@ -9,7 +9,7 @@ A new tool for the general agent to fetch public URLs of images stored in MinIO/
 ### 1. The tool is already configured and ready to use!
 
 The `get_image_url` tool has been added to:
-- Tool registry in `config/agents.yaml`
+- Tool registry in `config/runtime.yaml`
 - General assistant agent's available tools
 - Implementation in `helpudoc_agent/tools_and_schemas.py`
 
@@ -58,7 +58,7 @@ This will:
 ## Files Modified
 
 1. **`helpudoc_agent/tools_and_schemas.py`** - Tool implementation
-2. **`config/agents.yaml`** - Tool registration and agent assignment
+2. **`config/runtime.yaml`** - Tool registration and agent assignment
 
 ## Documentation
 

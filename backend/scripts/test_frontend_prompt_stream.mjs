@@ -7,7 +7,7 @@
 
 const API_BASE_URL = process.env.API_BASE_URL ?? "http://localhost:3000/api";
 const WORKSPACE_ID = process.env.WORKSPACE_ID ?? "e48581c6-07b9-48c0-b292-58d3c10dc032";
-const PERSONA = process.env.PERSONA ?? "general-assistant";
+const PERSONA = process.env.PERSONA ?? "fast";
 const PROMPT =
   process.env.PROMPT ??
   "read @STATEMENT OF WORK for Phase 0 1.0.pdf and generate a requirements list, and points that requires extra care";

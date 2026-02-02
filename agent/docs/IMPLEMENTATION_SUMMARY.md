@@ -27,7 +27,7 @@ The agent can now:
 - Implemented `_build_get_image_url_tool()` method (lines 214-321)
 - Implemented `_build_insert_image_to_file_tool()` method (lines 323-467)
 
-### 2. `/agent/config/agents.yaml`
+### 2. `/agent/config/runtime.yaml`
 
 **Tool Definitions Added:**
 ```yaml

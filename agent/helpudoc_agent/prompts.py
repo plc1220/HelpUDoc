@@ -1,4 +1,4 @@
-"""Prompt loading utilities."""
+"""Prompt loading utilities (archived)."""
 from __future__ import annotations
 
 from functools import lru_cache
@@ -11,6 +11,10 @@ DEFAULT_PROMPT_DIR = AGENT_ROOT / "prompts"
 PROMPT_ALIASES = {
     "general_assistant": "general/core",
 }
+
+# NOTE: This module and the prompts directory are archived. The runtime now uses
+# skills under /skills via skills_registry. Keep this loader only for backwards
+# compatibility with older references.
 
 
 class PromptStore:

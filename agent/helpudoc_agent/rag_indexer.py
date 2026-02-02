@@ -26,6 +26,8 @@ from lightrag.utils import EmbeddingFunc, compute_mdhash_id
 
 logger = logging.getLogger(__name__)
 
+RAG_INDEXABLE_SUFFIXES = {".pdf", ".doc", ".docx", ".md"}
+
 
 def _env(name: str, default: str | None = None) -> str | None:
     value = os.getenv(name)
@@ -298,15 +300,22 @@ class WorkspaceRagStore:
             raise ValueError(f"File too large to index ({stat.st_size} bytes): {relative_path}")
 
         suffix = path.suffix.lower()
-        if suffix in {".md", ".txt", ".json", ".yaml", ".yml", ".csv", ".tsv", ".py", ".js", ".ts", ".html"}:
+        if suffix not in RAG_INDEXABLE_SUFFIXES:
+            logger.info("Skipping file for RAG indexing (unsupported type): %s", relative_path)
+            return "Skipped unsupported file type."
+        if suffix == ".md":
             text = _read_text(path, self.config.max_text_chars).strip()
-        elif suffix == ".pdf":
+        elif suffix in {".pdf", ".doc", ".docx"}:
             if self.config.use_raganything:
                 try:
-                    return await self._ingest_pdf_with_raganything(workspace_id, relative_path, path)
+                    return await self._ingest_with_raganything(workspace_id, relative_path, path)
                 except Exception:
-                    logger.exception("RAGAnything ingestion failed; falling back to basic PDF parsing.")
-            text = _read_pdf_text(path, self.config.max_text_chars).strip()
+                    logger.exception("RAGAnything ingestion failed; falling back to basic parsing.")
+            if suffix == ".pdf":
+                text = _read_pdf_text(path, self.config.max_text_chars).strip()
+            else:
+                logger.info("Skipping non-PDF document without RAGAnything support: %s", relative_path)
+                return "Skipped unsupported file type."
         else:
             logger.info("Skipping non-text file for RAG indexing: %s", relative_path)
             return "Skipped unsupported file type."
@@ -321,11 +330,14 @@ class WorkspaceRagStore:
         return doc_id
 
     async def get_doc_status(self, workspace_id: str, relative_path: str) -> Dict[str, Any] | None:
+        suffix = Path(relative_path).suffix.lower()
+        if suffix not in RAG_INDEXABLE_SUFFIXES:
+            return None
         rag = await self._get_rag(workspace_id)
         doc_id = compute_mdhash_id(f"{workspace_id}:{relative_path}", prefix="doc-")
         return await rag.doc_status.get_by_id(doc_id)
 
-    async def _ingest_pdf_with_raganything(
+    async def _ingest_with_raganything(
         self,
         workspace_id: str,
         relative_path: str,

@@ -1,0 +1,56 @@
+model:
+  provider: gemini
+  name: gemini-3-flash-preview
+  fast_name: gemini-3-flash-preview
+  pro_name: gemini-3-pro-preview
+  image_name: gemini-3-pro-image-preview
+  project: my-rd-coe-demo-gen-ai
+  location: us-central1
+  #api_key: ${GOOGLE_CLOUD_API_KEY}
+  api_key: ${GEMINI_API_KEY}
+  use_vertex_ai: false
+
+backend:
+  workspace_root: backend/workspaces
+  virtual_mode: true
+  skills_root: skills
+  sync_skills_to_workspace: false
+  interrupt_on:
+    write_file: false
+    read_file: false
+    edit_file: false
+
+tools:
+  - name: google_search
+    kind: builtin
+    description: Gemini-native Google search tool
+  - name: google_grounded_search
+    kind: builtin
+    description: Gemini search with citations for proposal research
+  - name: gemini_image
+    kind: builtin
+    description: Generate or edit images using Gemini
+  - name: data_agent_tools
+    entrypoint: helpudoc_agent.data_agent_tools:build_data_agent_tools
+    description: Tools for Data Agent (DuckDB, Charts)
+  - name: get_image_url
+    kind: builtin
+    description: Get public URLs for images stored in MinIO/S3
+  - name: rag_query
+    kind: builtin
+    description: Query LightRAG for workspace context
+  - name: append_to_report
+    kind: builtin
+    description: Stitch generated proposal sections into a final document
+  - name: list_skills
+    kind: builtin
+    description: List available skills and their descriptions
+  - name: load_skill
+    kind: builtin
+    description: Load full skill content from the shared registry
+
+mcp_servers:
+  - name: research_fs
+    transport: stdio
+    command: ./scripts/start_mcp_fs.sh
+    description: Example MCP filesystem server

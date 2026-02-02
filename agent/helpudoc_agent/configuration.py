@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 
 import yaml
 from pydantic import BaseModel, Field, validator
@@ -12,12 +12,14 @@ from pydantic import BaseModel, Field, validator
 PACKAGE_ROOT = Path(__file__).resolve().parent
 AGENT_ROOT = PACKAGE_ROOT.parent
 REPO_ROOT = AGENT_ROOT.parent
-DEFAULT_CONFIG_PATH = AGENT_ROOT / "config" / "agents.yaml"
+DEFAULT_CONFIG_PATH = AGENT_ROOT / "config" / "runtime.yaml"
 
 
 class ModelConfig(BaseModel):
     provider: str = Field(default="gemini")
     name: str = Field(default="gemini-3-flash-preview")
+    fast_name: Optional[str] = None
+    pro_name: Optional[str] = None
     image_name: Optional[str] = None
     project: Optional[str] = None
     location: Optional[str] = None
@@ -29,6 +31,17 @@ class ModelConfig(BaseModel):
         """Return the canonical chat model identifier."""
         return self.name
 
+    def resolve_chat_model_name(self, mode: Optional[str]) -> str:
+        """Resolve a chat model name for the requested mode."""
+        if not mode:
+            return self.name
+        normalized = mode.strip().lower()
+        if normalized == "pro":
+            return self.pro_name or self.name
+        if normalized == "fast":
+            return self.fast_name or self.name
+        return self.name
+
     @property
     def image_model_name(self) -> str:
         """Return the canonical image model identifier (falls back to chat model)."""
@@ -38,9 +51,29 @@ class ModelConfig(BaseModel):
 class BackendConfig(BaseModel):
     workspace_root: Path
     virtual_mode: bool = Field(default=True)
+    skills_root: Optional[Path] = None
+    sync_skills_to_workspace: bool = Field(default=False)
+    interrupt_on: Dict[str, bool] = Field(
+        default_factory=lambda: {
+            "write_file": True,
+            "read_file": False,
+            "edit_file": True,
+        }
+    )
 
     @validator("workspace_root", pre=True)
     def _resolve_workspace(cls, value: str | Path) -> Path:
+        if isinstance(value, Path):
+            return value.resolve()
+        path = Path(value)
+        if not path.is_absolute():
+            path = REPO_ROOT / value
+        return path.resolve()
+
+    @validator("skills_root", pre=True)
+    def _resolve_skills_root(cls, value: str | Path | None) -> Optional[Path]:
+        if value is None:
+            return (REPO_ROOT / "skills").resolve()
         if isinstance(value, Path):
             return value.resolve()
         path = Path(value)
@@ -66,37 +99,11 @@ class ToolConfig(BaseModel):
     mcp_server: Optional[str] = None
 
 
-class SubAgentConfig(BaseModel):
-    name: str
-    description: str
-    system_prompt_id: str
-    tools: List[str] = Field(default_factory=list)
-
-
-class AgentConfig(BaseModel):
-    name: str
-    display_name: str
-    description: str
-    system_prompt_id: str
-    tools: List[str] = Field(default_factory=list)
-    subagents: List[SubAgentConfig] = Field(default_factory=list)
-
-
 class Settings(BaseModel):
     model: ModelConfig
     backend: BackendConfig
     tools: Dict[str, ToolConfig]
-    agents: Dict[str, AgentConfig]
     mcp_servers: Dict[str, MCPServerConfig] = Field(default_factory=dict)
-
-    def list_agents(self) -> List[AgentConfig]:
-        return list(self.agents.values())
-
-    def get_agent(self, name: str) -> AgentConfig:
-        try:
-            return self.agents[name]
-        except KeyError as exc:  # pragma: no cover - defensive
-            raise ValueError(f"Unknown agent '{name}'") from exc
 
     def get_tool(self, name: str) -> ToolConfig:
         try:
@@ -136,7 +143,6 @@ def load_settings(config_path: Path | None = None) -> Settings:
         "model": config_dict.get("model", {}),
         "backend": config_dict.get("backend", {}),
         "tools": {tool["name"]: tool for tool in config_dict.get("tools", [])},
-        "agents": {agent["name"]: agent for agent in config_dict.get("agents", [])},
         "mcp_servers": {srv["name"]: srv for srv in config_dict.get("mcp_servers", [])},
     }
     try:

@@ -131,26 +131,28 @@ async def run_generate_stage(base_dir: Path, config_dir: Path, config: Dict) -> 
     if output_type == "slides" and image_paths:
         from paper2slides.utils.export_service import ExportService
 
-        pptx_path = output_subdir / "slides.pptx"
-        try:
-            ExportService.create_pptx_from_images(image_paths, str(pptx_path))
-            logger.info("  Saved: slides.pptx")
-        except Exception as exc:
-            logger.warning("Failed to export PPTX: %s", exc)
-
-        mineru_dir = ExportService.find_mineru_result_dir(str(base_dir / "rag_output"))
-        if mineru_dir:
-            editable_path = output_subdir / "slides_editable.pptx"
+        export_pptx = bool(config.get("export_pptx"))
+        if export_pptx:
+            pptx_path = output_subdir / "slides.pptx"
             try:
-                ExportService.create_editable_pptx_from_mineru(
-                    mineru_dir,
-                    output_file=str(editable_path),
-                    slide_width_pixels=1920,
-                    slide_height_pixels=1080,
-                )
-                logger.info("  Saved: slides_editable.pptx")
+                ExportService.create_pptx_from_images(image_paths, str(pptx_path))
+                logger.info("  Saved: slides.pptx")
             except Exception as exc:
-                logger.warning("Failed to export editable PPTX: %s", exc)
+                logger.warning("Failed to export PPTX: %s", exc)
+
+            mineru_dir = ExportService.find_mineru_result_dir(str(base_dir / "rag_output"))
+            if mineru_dir:
+                editable_path = output_subdir / "slides_editable.pptx"
+                try:
+                    ExportService.create_editable_pptx_from_mineru(
+                        mineru_dir,
+                        output_file=str(editable_path),
+                        slide_width_pixels=1920,
+                        slide_height_pixels=1080,
+                    )
+                    logger.info("  Saved: slides_editable.pptx")
+                except Exception as exc:
+                    logger.warning("Failed to export editable PPTX: %s", exc)
 
         if config.get("extract_assets"):
             from paper2slides.utils.slide_assets import SlideAssetConfig, SlideAssetExtractor

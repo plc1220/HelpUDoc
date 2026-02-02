@@ -105,6 +105,11 @@ spec:
           env:
             - name: REDIS_URL
               value: redis://redis:6379
+            - name: GEMINI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: GEMINI_API_KEY
             - name: RAG_OFFLINE
               valueFrom:
                 configMapKeyRef:

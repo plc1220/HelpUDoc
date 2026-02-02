@@ -162,7 +162,7 @@ const CollapsibleDrawer: React.FC<CollapsibleDrawerProps> = ({
               Agent Settings
             </Button>
             <Typography variant="body2" sx={{ color: 'text.secondary', mt: 1 }}>
-              Manage personas, tools, and prompts.
+              Manage skills and tools.
             </Typography>
             {onSignOut ? (
               <Button

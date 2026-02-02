@@ -20,6 +20,7 @@ const TEXT_MIME_TYPES = [
 ];
 
 const TEXT_FILE_EXTENSIONS = ['.md', '.mermaid', '.txt', '.json', '.html', '.css', '.js', '.ts', '.tsx', '.jsx', '.svg', '.csv'];
+const RAG_INDEXABLE_EXTENSIONS = new Set(['.pdf', '.doc', '.docx', '.md']);
 const BINARY_MIME_TYPES_BY_EXTENSION: Record<string, string> = {
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
@@ -58,6 +59,12 @@ export class FileService {
     return files;
   }
 
+  async hasFileName(workspaceId: string, fileName: string, userId: string): Promise<boolean> {
+    await this.workspaceService.ensureMembership(workspaceId, userId);
+    const existing = await this.db('files').where({ workspaceId, name: fileName }).first();
+    return Boolean(existing);
+  }
+
   private isTextFile(fileName: string, mimeType: string): boolean {
     const ext = path.extname(fileName).toLowerCase();
     if (TEXT_FILE_EXTENSIONS.includes(ext)) {
@@ -75,6 +82,11 @@ export class FileService {
     }
     const ext = path.extname(fileName).toLowerCase();
     return BINARY_MIME_TYPES_BY_EXTENSION[ext] || null;
+  }
+
+  private isRagIndexable(fileName: string): boolean {
+    const ext = path.extname(fileName).toLowerCase();
+    return RAG_INDEXABLE_EXTENSIONS.has(ext);
   }
 
   private normalizeRelativePath(fileName: string): string {
@@ -186,18 +198,20 @@ export class FileService {
 
     await this.workspaceService.touchWorkspace(workspaceId, userId);
 
-    // Enqueue for RAG indexing (best-effort). The agent service will consume this job.
-    try {
-      await this.ragQueueService?.enqueueFileUpsert({
-        workspaceId,
-        fileId: newFile.id,
-        relativePath,
-        mimeType: newFile.mimeType ?? mimeType ?? null,
-        storageType,
-        publicUrl,
-      });
-    } catch (error) {
-      console.error('Failed to enqueue RAG index job', error);
+    if (this.isRagIndexable(relativePath)) {
+      // Enqueue for RAG indexing (best-effort). The agent service will consume this job.
+      try {
+        await this.ragQueueService?.enqueueFileUpsert({
+          workspaceId,
+          fileId: newFile.id,
+          relativePath,
+          mimeType: newFile.mimeType ?? mimeType ?? null,
+          storageType,
+          publicUrl,
+        });
+      } catch (error) {
+        console.error('Failed to enqueue RAG index job', error);
+      }
     }
 
     return newFile;
@@ -253,18 +267,20 @@ export class FileService {
 
     await this.workspaceService.touchWorkspace(file.workspaceId, userId);
 
-    // Re-enqueue for RAG indexing (best-effort).
-    try {
-      await this.ragQueueService?.enqueueFileUpsert({
-        workspaceId: file.workspaceId,
-        fileId,
-        relativePath: file.name,
-        mimeType: file.mimeType ?? null,
-        storageType: file.storageType,
-        publicUrl: file.publicUrl ?? null,
-      });
-    } catch (error) {
-      console.error('Failed to enqueue RAG index job', error);
+    if (this.isRagIndexable(file.name)) {
+      // Re-enqueue for RAG indexing (best-effort).
+      try {
+        await this.ragQueueService?.enqueueFileUpsert({
+          workspaceId: file.workspaceId,
+          fileId,
+          relativePath: file.name,
+          mimeType: file.mimeType ?? null,
+          storageType: file.storageType,
+          publicUrl: file.publicUrl ?? null,
+        });
+      } catch (error) {
+        console.error('Failed to enqueue RAG index job', error);
+      }
     }
 
     return updated;

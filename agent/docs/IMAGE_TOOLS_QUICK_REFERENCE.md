@@ -82,7 +82,7 @@ insert_image_to_file("revenue_chart.png", "/analysis.md", alt_text="Q4 Growth")
 
 Already configured and ready to use!
 
-- ✅ Tool registered in `config/agents.yaml`
+- ✅ Tool registered in `config/runtime.yaml`
 - ✅ Added to `general-assistant` agent
 - ✅ Implementation in `helpudoc_agent/tools_and_schemas.py`
 

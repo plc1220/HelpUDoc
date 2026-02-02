@@ -50,7 +50,7 @@ export interface ConversationMessageMetadata {
   thinkingText?: string;
   toolEvents?: ToolEvent[];
   runId?: string;
-  status?: 'running' | 'completed' | 'failed' | 'cancelled';
+  status?: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
 }
 
 export interface ConversationMessage {
@@ -66,8 +66,11 @@ export interface ConversationMessage {
   metadata?: ConversationMessageMetadata | null;
 }
 
-export interface PromptDefinition {
+export interface SkillDefinition {
   id: string;
-  label: string;
-  content: string;
+  name: string;
+  description?: string;
+  valid: boolean;
+  error?: string;
+  warning?: string;
 }

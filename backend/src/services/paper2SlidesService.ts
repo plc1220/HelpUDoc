@@ -22,6 +22,7 @@ export type Paper2SlidesOptions = {
   mode?: Paper2SlidesMode;
   parallel?: number | boolean;
   fromStage?: Paper2SlidesStage;
+  exportPptx?: boolean;
 };
 
 type InputFile = {
@@ -165,6 +166,9 @@ const buildCommandArgs = (inputPath: string, options: Paper2SlidesOptions, outpu
   if (parallelValue && parallelValue > 1) {
     args.push('--parallel', String(parallelValue));
   }
+  if (options.exportPptx) {
+    args.push('--export-pptx');
+  }
   if (outputDir) {
     args.push('--output-dir', outputDir);
   }
@@ -176,6 +180,33 @@ export class Paper2SlidesService {
 
   constructor(fileService: FileService) {
     this.fileService = fileService;
+  }
+
+  private async resolveUniquePptxPath(workspaceId: string, userId: string, pdfName: string): Promise<string> {
+    const normalized = String(pdfName || '').replace(/\\/g, '/');
+    const folder = path.posix.dirname(normalized);
+    const baseName = path.posix.basename(normalized, path.posix.extname(normalized)) || 'slides';
+    const safeBaseName = sanitizeFileName(baseName, 'slides');
+    const folderPrefix = folder === '.' ? '' : folder;
+    const baseCandidate = folderPrefix
+      ? path.posix.join(folderPrefix, `${safeBaseName}.pptx`)
+      : `${safeBaseName}.pptx`;
+    if (!await this.fileService.hasFileName(workspaceId, baseCandidate, userId)) {
+      return baseCandidate;
+    }
+
+    const timestamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
+    const stampedCandidate = folderPrefix
+      ? path.posix.join(folderPrefix, `${safeBaseName}-export-${timestamp}.pptx`)
+      : `${safeBaseName}-export-${timestamp}.pptx`;
+    if (!await this.fileService.hasFileName(workspaceId, stampedCandidate, userId)) {
+      return stampedCandidate;
+    }
+
+    const randomCandidate = folderPrefix
+      ? path.posix.join(folderPrefix, `${safeBaseName}-export-${randomUUID()}.pptx`)
+      : `${safeBaseName}-export-${randomUUID()}.pptx`;
+    return randomCandidate;
   }
 
   async generate(
@@ -253,6 +284,7 @@ export class Paper2SlidesService {
       let pdfPath: string | undefined;
       let pptxPath: string | undefined;
       const slideImages: string[] = [];
+      const shouldExportPptx = options.exportPptx === true;
 
       if (collected.pdf) {
         const pdfBuffer = await fs.readFile(collected.pdf);
@@ -263,7 +295,7 @@ export class Paper2SlidesService {
         pdfPath = relativeName;
       }
 
-      if (collected.pptx) {
+      if (shouldExportPptx && collected.pptx) {
         const pptxBuffer = await fs.readFile(collected.pptx);
         const relativeName = path.posix.join(folder, `${baseName}.pptx`);
         await this.fileService.createFile(
@@ -303,6 +335,101 @@ export class Paper2SlidesService {
     } catch (error: any) {
       const message = error?.message || String(error);
       throw new Error(`Paper2Slides pipeline failed: ${message}`);
+    } finally {
+      await cleanup();
+    }
+  }
+
+  async exportPptxFromPdf(
+    workspaceId: string,
+    userId: string,
+    fileId: number,
+  ): Promise<{ pptxPath: string }> {
+    const file = await this.fileService.getFileContent(fileId, userId);
+    if (file.workspaceId !== workspaceId) {
+      throw new Error('Selected file does not belong to the workspace');
+    }
+
+    const fileName = String(file.name || '');
+    const ext = path.extname(fileName).toLowerCase();
+    const mimeType = typeof file.mimeType === 'string' ? file.mimeType : '';
+    if (ext !== '.pdf' && mimeType !== 'application/pdf') {
+      throw new Error('Only PDF files can be exported to PPTX');
+    }
+
+    const rawContent = typeof file.content === 'string' ? file.content : '';
+    if (!rawContent) {
+      throw new Error('PDF file content is empty');
+    }
+
+    const buffer = Buffer.from(rawContent, 'base64');
+    if (!buffer.length) {
+      throw new Error('PDF file content is empty');
+    }
+
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'paper2slides-export-'));
+    const cleanup = async () => {
+      try {
+        await fs.rm(tempDir, { recursive: true, force: true });
+      } catch {
+        // Best-effort cleanup
+      }
+    };
+
+    try {
+      const normalizedName = fileName.replace(/\\/g, '/');
+      const safeFileName = sanitizeFileName(path.posix.basename(normalizedName) || 'slides.pdf', 'slides.pdf');
+      const inputName = safeFileName.toLowerCase().endsWith('.pdf') ? safeFileName : `${safeFileName}.pdf`;
+      const inputPath = path.join(tempDir, inputName);
+      const outputPath = path.join(tempDir, 'export.pptx');
+      await fs.writeFile(inputPath, buffer);
+
+      const env = { ...process.env };
+      const repoRoot = path.resolve(__dirname, '..', '..', '..');
+      const agentPath = path.join(repoRoot, 'agent');
+      const paper2SlidesPath = await fs.stat(agentPath).then((stat) => (stat.isDirectory() ? agentPath : null)).catch(() => null);
+      if (paper2SlidesPath) {
+        env.PYTHONPATH = env.PYTHONPATH
+          ? `${paper2SlidesPath}${path.delimiter}${env.PYTHONPATH}`
+          : paper2SlidesPath;
+      }
+
+      const { stdout, stderr } = await execFileAsync(
+        'python',
+        ['-m', 'paper2slides.export_pptx', '--input', inputPath, '--output', outputPath],
+        {
+          cwd: tempDir,
+          env,
+          maxBuffer: 15 * 1024 * 1024,
+        },
+      );
+
+      if (process.env.NODE_ENV !== 'production') {
+        console.log('[Paper2Slides Export] stdout:', stdout);
+        if (stderr) {
+          console.warn('[Paper2Slides Export] stderr:', stderr);
+        }
+      }
+
+      const pptxBuffer = await fs.readFile(outputPath).catch(() => null);
+      if (!pptxBuffer) {
+        throw new Error('PPTX export did not produce an output file');
+      }
+
+      const relativeName = await this.resolveUniquePptxPath(workspaceId, userId, fileName);
+      await this.fileService.createFile(
+        workspaceId,
+        relativeName,
+        pptxBuffer,
+        'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+        userId,
+        { forceLocal: true },
+      );
+
+      return { pptxPath: relativeName };
+    } catch (error: any) {
+      const message = error?.message || String(error);
+      throw new Error(`Paper2Slides PPTX export failed: ${message}`);
     } finally {
       await cleanup();
     }

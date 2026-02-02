@@ -1,7 +1,8 @@
 
 import ast
-import json
 import base64
+import html
+import json
 import logging
 import mimetypes
 import re
@@ -160,6 +161,79 @@ def _format_dataframe_markdown(df: pd.DataFrame) -> str:
     if len(rendered) > 4000:
         return rendered[:4000] + "\n... (Output truncated due to length)"
     return rendered
+
+
+def _markdown_to_html(markdown_text: str) -> str:
+    if not markdown_text:
+        return ""
+
+    text = markdown_text.replace("\r\n", "\n").replace("\r", "\n")
+    text = html.escape(text)
+
+    code_blocks: List[Tuple[str, str]] = []
+
+    def _capture_code_block(match: re.Match) -> str:
+        lang = match.group(1) or ""
+        code = match.group(2) or ""
+        idx = len(code_blocks)
+        code_blocks.append((lang, code))
+        return f"@@CODEBLOCK{idx}@@"
+
+    text = re.sub(r"```([\w+-]*)\n([\s\S]*?)\n```", _capture_code_block, text)
+
+    text = re.sub(r"`([^`]+)`", r"<code>\1</code>", text)
+    text = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", text)
+
+    for level in range(6, 0, -1):
+        pattern = rf"^{'#' * level}\s+(.*)$"
+        text = re.sub(pattern, rf"<h{level}>\1</h{level}>", text, flags=re.M)
+
+    text = re.sub(r"^---+$", "<hr />", text, flags=re.M)
+
+    lines = text.split("\n")
+    output: List[str] = []
+    in_list = False
+    for line in lines:
+        match = re.match(r"^\s*[-*]\s+(.*)$", line)
+        if match:
+            if not in_list:
+                output.append("<ul>")
+                in_list = True
+            output.append(f"<li>{match.group(1)}</li>")
+        else:
+            if in_list:
+                output.append("</ul>")
+                in_list = False
+            output.append(line)
+    if in_list:
+        output.append("</ul>")
+
+    text = "\n".join(output)
+
+    for idx, (lang, code) in enumerate(code_blocks):
+        class_attr = f" class=\"language-{lang}\"" if lang else ""
+        code_html = f"<pre><code{class_attr}>{code}</code></pre>"
+        text = text.replace(f"@@CODEBLOCK{idx}@@", code_html)
+
+    blocks = re.split(r"\n{2,}", text.strip())
+    wrapped: List[str] = []
+    block_start = re.compile(r"^(<h\d|<ul>|<ol>|<pre>|<hr\s*/?>)")
+    for block in blocks:
+        stripped = block.strip()
+        if not stripped:
+            continue
+        if block_start.match(stripped):
+            wrapped.append(stripped)
+        else:
+            wrapped.append(f"<p>{stripped}</p>")
+    return "\n".join(wrapped)
+
+
+def _chart_title_from_path(path: Path) -> str:
+    title = path.stem
+    if title.endswith(".plotly"):
+        title = title[: -len(".plotly")]
+    return title.replace("_", " ")
 
 
 def _json_default(value: Any) -> Any:
@@ -637,8 +711,14 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
             "    img { max-width: 100%; height: auto; display: block; margin: 12px 0; border-radius:12px; border:1px solid #e5e7eb; }",
             "    .plotly-embed { margin: 16px 0; }",
             "    .list-inline code { background:#f3f4f6; padding:2px 6px; border-radius:6px; }",
+            "    .agent-markdown { line-height: 1.7; font-size: 0.98rem; }",
+            "    .agent-markdown p { margin: 0 0 1rem; }",
+            "    .agent-markdown p:last-child { margin-bottom: 0; }",
+            "    .agent-markdown ul, .agent-markdown ol { margin: 0.5rem 0 1rem; padding-left: 1.25rem; }",
+            "    .agent-markdown li { margin-bottom: 0.35rem; }",
+            "    .agent-markdown code { background:#f3f4f6; padding:2px 6px; border-radius:6px; }",
             "  </style>",
-            "  <script src=\"https://cdn.plot.ly/plotly-2.35.2.min.js\"></script>",
+            "  <script src=\"https://cdn.plot.ly/plotly-3.3.0.min.js\"></script>",
             "</head>",
             "<body>",
             "  <div class=\"container\">",
@@ -646,9 +726,13 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
             f"    <div class=\"meta\">Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</div>",
             "    <div class=\"card\">",
             "      <h2>Summary</h2>",
-            f"      <p>{summary}</p>",
+            "      <div class=\"agent-markdown\">",
+            _markdown_to_html(summary) or "<p>No summary provided.</p>",
+            "      </div>",
             "      <h2>Key Insights</h2>",
-            f"      <p>{insights}</p>",
+            "      <div class=\"agent-markdown\">",
+            _markdown_to_html(insights) or "<p>No insights provided.</p>",
+            "      </div>",
             "    </div>",
         ]
 
@@ -691,21 +775,13 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
                 report_lines.append("    <div class=\"card\">")
                 report_lines.append("      <h2>Visualizations</h2>")
 
-                # Inline Plotly HTML
-                for html_path in plotly_html_files:
-                    try:
-                        html_fragment = html_path.read_text(encoding="utf-8")
-                        report_lines.append(f"      <div class=\"plotly-embed\">{html_fragment}</div>")
-                    except Exception:  # pragma: no cover - best effort
-                        logger.warning("Failed to embed Plotly HTML %s", html_path, exc_info=True)
-
-                # Render Plotly JSON directly (only if no HTML counterpart)
-                if not plotly_html_files:
+                if plotly_json_files:
                     for idx, json_path in enumerate(plotly_json_files, start=1):
                         try:
                             fig_json = json.loads(json_path.read_text(encoding="utf-8"))
                             script_payload = json.dumps(fig_json)
                             div_id = f"plotly-json-{idx}"
+                            report_lines.append(f"      <h3>{_chart_title_from_path(json_path)}</h3>")
                             report_lines.append(f"      <div id=\"{div_id}\" class=\"plotly-embed\" style=\"height:420px;\"></div>")
                             report_lines.append(
                                 "      <script>"
@@ -716,13 +792,21 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
                             )
                         except Exception:  # pragma: no cover - best effort
                             logger.warning("Failed to embed Plotly JSON %s", json_path, exc_info=True)
+                else:
+                    for html_path in plotly_html_files:
+                        try:
+                            html_fragment = html_path.read_text(encoding="utf-8")
+                            report_lines.append(f"      <h3>{_chart_title_from_path(html_path)}</h3>")
+                            report_lines.append(f"      <div class=\"plotly-embed\">{html_fragment}</div>")
+                        except Exception:  # pragma: no cover - best effort
+                            logger.warning("Failed to embed Plotly HTML %s", html_path, exc_info=True)
 
                 # Embed PNGs as base64 after Plotly embeds
                 for png_path in png_files:
                     try:
                         encoded = base64.b64encode(png_path.read_bytes()).decode("utf-8")
                         report_lines.append(
-                            f"      <h3>{png_path.stem}</h3><img src=\"data:image/png;base64,{encoded}\" alt=\"{png_path.stem}\" />"
+                            f"      <h3>{_chart_title_from_path(png_path)}</h3><img src=\"data:image/png;base64,{encoded}\" alt=\"{png_path.stem}\" />"
                         )
                     except Exception:  # pragma: no cover - best effort
                         logger.warning("Failed to embed PNG %s", png_path, exc_info=True)

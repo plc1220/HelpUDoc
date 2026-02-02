@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo, Children, isValidElement } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo, Children, isValidElement, type ChangeEvent } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { useNavigate } from 'react-router-dom';
@@ -9,6 +9,12 @@ import {
   createTheme,
   type PaletteMode,
 } from '@mui/material';
+import {
+  Description as MarkdownIcon,
+  Code as HtmlIcon,
+  PictureAsPdf as PdfIcon,
+  Image as ImageIcon,
+} from '@mui/icons-material';
 import { CheckSquare, Copy, Edit, Trash, Send, Plus, ChevronRight, ChevronLeft, RotateCcw, Maximize2, Minimize2, X, FileIcon, Printer, Download, Link as LinkIcon, MonitorPlay, StopCircle, Loader2, History } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -23,7 +29,7 @@ import {
   getWorkspaceFilePreview,
   getRagStatuses,
 } from '../services/fileApi';
-import { startPaper2SlidesJob, getPaper2SlidesJob } from '../services/paper2SlidesJobApi';
+import { startPaper2SlidesJob, getPaper2SlidesJob, exportPaper2SlidesPptx } from '../services/paper2SlidesJobApi';
 import {
   cancelRun,
   fetchPersonas,
@@ -53,13 +59,62 @@ import type {
 } from '../types';
 import CollapsibleDrawer from '../components/CollapsibleDrawer';
 import FileEditor from '../components/FileEditor';
-import FileRenderer from '../components/FileRenderer';
+import UIBlockRenderer, { type UIBlock } from '../components/UIBlockRenderer';
 import ExpandableSidebar from '../components/ExpandableSidebar';
-import PersonaSelector from '../components/PersonaSelector';
 import { useAuth } from '../auth/AuthProvider';
 
 const drawerWidth = 280;
-const DEFAULT_PERSONA_NAME = 'general-assistant';
+const DEFAULT_PERSONA_NAME = 'fast';
+const DEFAULT_PERSONAS: AgentPersona[] = [
+  {
+    name: 'fast',
+    displayName: 'Fast',
+    description: 'Gemini 3 Flash (Preview)',
+  },
+  {
+    name: 'pro',
+    displayName: 'Pro',
+    description: 'Gemini 3 Pro (Preview)',
+  },
+];
+
+const normalizePersonaName = (name: string): string => {
+  const normalized = name.trim().toLowerCase();
+  if (!normalized) {
+    return DEFAULT_PERSONA_NAME;
+  }
+  if (normalized === 'general-assistant') {
+    return 'fast';
+  }
+  return normalized;
+};
+
+const normalizePersonas = (personas: AgentPersona[]): AgentPersona[] => {
+  const normalized = new Map<string, AgentPersona>();
+  const defaults = new Map(DEFAULT_PERSONAS.map((persona) => [persona.name, persona]));
+
+  personas.forEach((persona) => {
+    const name = normalizePersonaName(persona.name);
+    if (name !== 'fast' && name !== 'pro') {
+      return;
+    }
+    const fallback = defaults.get(name);
+    normalized.set(name, {
+      ...fallback,
+      ...persona,
+      name,
+      displayName: persona.displayName || fallback?.displayName || name,
+    });
+  });
+
+  DEFAULT_PERSONAS.forEach((persona) => {
+    if (!normalized.has(persona.name)) {
+      normalized.set(persona.name, persona);
+    }
+  });
+
+  return DEFAULT_PERSONAS.map((persona) => normalized.get(persona.name) || persona);
+};
 
 const buildTheme = (mode: PaletteMode) =>
   createTheme({
@@ -112,12 +167,47 @@ const SLASH_COMMANDS = [
     command: '/presentation',
     description: 'Generate slides/posters from @files.',
   },
+  {
+    id: 'a2ui',
+    command: '/a2ui',
+    description: 'Render an A2UI canvas from your prompt.',
+  },
 ];
 
-const SYSTEM_DIR_NAMES = new Set(['__macosx']);
+const SYSTEM_DIR_NAMES = new Set(['__macosx', 'skills']);
 const SYSTEM_FILE_NAMES = new Set(['thumbs.db', 'desktop.ini']);
 
 const normalizeFilePath = (value: string) => value.replace(/\\/g, '/');
+
+const getFileDisplayName = (value: string) => {
+  if (!value) {
+    return '';
+  }
+  const normalized = normalizeFilePath(value);
+  const parts = normalized.split('/');
+  return parts[parts.length - 1] || normalized;
+};
+
+const getFileTypeIcon = (value: string) => {
+  const normalized = getFileDisplayName(value).toLowerCase();
+  const sharedClass = 'text-slate-400 opacity-70';
+  if (normalized.endsWith('.md') || normalized.endsWith('.markdown')) {
+    return <MarkdownIcon className={sharedClass} fontSize="small" />;
+  }
+  if (normalized.endsWith('.html') || normalized.endsWith('.htm')) {
+    return <HtmlIcon className={sharedClass} fontSize="small" />;
+  }
+  if (normalized.endsWith('.pdf')) {
+    return <PdfIcon className={sharedClass} fontSize="small" />;
+  }
+  if (normalized.endsWith('.jpg') || normalized.endsWith('.jpeg')) {
+    return <ImageIcon className={sharedClass} fontSize="small" />;
+  }
+  if (['.png', '.gif', '.bmp', '.webp', '.svg'].some((ext) => normalized.endsWith(ext))) {
+    return <ImageIcon className={sharedClass} fontSize="small" />;
+  }
+  return <FileIcon size={16} className={sharedClass} />;
+};
 
 const sanitizePresentationLabel = (value: string, fallback: string) => {
   const normalized = normalizeFilePath(value);
@@ -125,6 +215,112 @@ const sanitizePresentationLabel = (value: string, fallback: string) => {
   const trimmed = baseName.includes('.') ? baseName.slice(0, baseName.lastIndexOf('.')) : baseName;
   const cleaned = trimmed.replace(/[^a-zA-Z0-9._-]/g, '_').replace(/^_+/, '');
   return cleaned || fallback;
+};
+
+const buildA2uiFileName = (value: string) => {
+  const labelSource = value.trim().slice(0, 48) || 'a2ui';
+  const label = sanitizePresentationLabel(labelSource, 'a2ui');
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  return `a2ui/${label}-${timestamp}.a2ui.json`;
+};
+
+const parseJsonIfPossible = (value: string) => {
+  if (!value) return null;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+};
+
+const extractJsonSubstring = (value: string) => {
+  const start = value.search(/[{\[]/);
+  if (start < 0) return null;
+  const pairs: Record<string, string> = { '{': '}', '[': ']' };
+  const openers = new Set(Object.keys(pairs));
+  const closers = new Set(Object.values(pairs));
+  const stack: string[] = [];
+  let inString = false;
+  let escape = false;
+  for (let i = start; i < value.length; i += 1) {
+    const ch = value[i];
+    if (inString) {
+      if (escape) {
+        escape = false;
+        continue;
+      }
+      if (ch === '\\') {
+        escape = true;
+        continue;
+      }
+      if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+    if (openers.has(ch)) {
+      stack.push(ch);
+      continue;
+    }
+    if (closers.has(ch)) {
+      const last = stack.pop();
+      if (!last || pairs[last] !== ch) {
+        return null;
+      }
+      if (stack.length === 0) {
+        return value.slice(start, i + 1);
+      }
+    }
+  }
+  return null;
+};
+
+const extractA2uiPayload = (value: string) => {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+
+  const fenceMatch = trimmed.match(/```(?:json|a2ui|a2ui-json)?\s*([\s\S]*?)```/i);
+  if (fenceMatch?.[1]) {
+    const candidate = fenceMatch[1].trim();
+    const parsed = parseJsonIfPossible(candidate);
+    if (parsed) {
+      return { payload: parsed, raw: candidate };
+    }
+  }
+
+  const blockMatch = trimmed.match(/---BEGIN[^-]*---([\s\S]*?)---END[^-]*---/i);
+  if (blockMatch?.[1]) {
+    const candidate = blockMatch[1].trim();
+    const parsed = parseJsonIfPossible(candidate);
+    if (parsed) {
+      return { payload: parsed, raw: candidate };
+    }
+  }
+
+  const directParsed = parseJsonIfPossible(trimmed);
+  if (directParsed) {
+    return { payload: directParsed, raw: trimmed };
+  }
+
+  const substring = extractJsonSubstring(trimmed);
+  const parsed = substring ? parseJsonIfPossible(substring) : null;
+  if (parsed) {
+    return { payload: parsed, raw: substring };
+  }
+
+  return null;
+};
+
+const buildA2uiPrompt = (prompt: string, attachmentSummary: string) => {
+  const base = prompt.trim();
+  const withAttachments = attachmentSummary
+    ? `${base}${base ? '\n\n' : ''}[${attachmentSummary}]`
+    : base;
+  return `${withAttachments}\n\n${A2UI_RESPONSE_INSTRUCTIONS}`.trim();
 };
 
 const isSystemFile = (file: WorkspaceFile): boolean => {
@@ -165,6 +361,23 @@ type PresentationOptionsState = {
   mode: 'fast' | 'normal';
   parallel: number;
   fromStage?: Paper2SlidesStage;
+  exportPptx: boolean;
+};
+
+type A2uiDraft = {
+  payload: unknown;
+  raw: string;
+  prompt: string;
+  runId: string;
+  createdAt: string;
+};
+
+type A2uiRunInfo = {
+  runId: string;
+  placeholderId: ConversationMessage['id'];
+  conversationId: string;
+  workspaceId: string;
+  prompt: string;
 };
 
 type FilePreviewPayload = {
@@ -291,6 +504,9 @@ const BLOCK_LEVEL_TAGS = ['div', 'pre', 'table', 'ol', 'ul', 'li', 'blockquote',
 const MARKDOWN_FILE_EXTENSIONS = ['.md'];
 const HTML_FILE_EXTENSIONS = ['.html', '.htm'];
 const IMAGE_FILE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp'];
+const A2UI_FILE_EXTENSIONS = ['.a2ui.json', '.a2ui'];
+const A2UI_RESPONSE_INSTRUCTIONS =
+  'Return ONLY a valid JSON array of A2UI events with no markdown, no code fences, and no explanations.';
 
 const generateTurnId = () => {
   if (typeof globalThis !== 'undefined' && globalThis.crypto?.randomUUID) {
@@ -374,6 +590,10 @@ export default function WorkspacePage() {
   const [selectedFileDetails, setSelectedFileDetails] = useState<WorkspaceFile | null>(null);
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
   const [fileContent, setFileContent] = useState('');
+  const [canvasMode, setCanvasMode] = useState<'file' | 'a2ui'>('file');
+  const [a2uiDraft, setA2uiDraft] = useState<A2uiDraft | null>(null);
+  const [isA2uiPending, setIsA2uiPending] = useState(false);
+  const [a2uiStatusMessage, setA2uiStatusMessage] = useState<string | null>(null);
   const [newWorkspaceName, setNewWorkspaceName] = useState('');
   const [conversationMessages, setConversationMessages] = useState<Record<string, ConversationMessage[]>>({});
   const [chatMessage, setChatMessage] = useState('');
@@ -381,7 +601,7 @@ export default function WorkspacePage() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [hoveredFileId, setHoveredFileId] = useState<string | null>(null);
   const [personas, setPersonas] = useState<AgentPersona[]>([]);
-  const [selectedPersona, setSelectedPersona] = useState('');
+  const [selectedPersona, setSelectedPersona] = useState(DEFAULT_PERSONA_NAME);
   const [isEditMode, setIsEditMode] = useState(false);
   const [isAgentPaneVisible, setIsAgentPaneVisible] = useState(true);
   const [isFilePaneVisible, setIsFilePaneVisible] = useState(true);
@@ -400,16 +620,19 @@ export default function WorkspacePage() {
     length: 'medium',
     mode: 'fast',
     parallel: 2,
+    exportPptx: false,
   });
   const [presentationStatus, setPresentationStatus] = useState<'idle' | 'running' | 'success' | 'error'>('idle');
   const [presentationStageIndex, setPresentationStageIndex] = useState<number>(-1);
   const [isPresentationModalOpen, setIsPresentationModalOpen] = useState(false);
   const [draftPresentationOptions, setDraftPresentationOptions] = useState<PresentationOptionsState | null>(null);
+  const [isPptxExporting, setIsPptxExporting] = useState(false);
   const streamAbortMapRef = useRef<Map<string, AbortController>>(new Map());
   const presentationJobPollsRef = useRef<Map<string, number>>(new Map());
   const conversationMessagesRef = useRef<Record<string, ConversationMessage[]>>({});
   const agentMessageBufferRef = useRef<Map<ConversationMessage['id'], string>>(new Map());
   const agentChunkBufferRef = useRef<Map<string, Map<number, string>>>(new Map());
+  const a2uiRunsRef = useRef<Map<string, A2uiRunInfo>>(new Map());
   const agentChunkFlushTimerRef = useRef<number | null>(null);
   const lastUserMessageMapRef = useRef<Record<string, string>>({});
   const activeRunsRef = useRef<Record<string, ActiveRunInfo>>({});
@@ -471,7 +694,6 @@ export default function WorkspacePage() {
 
   const persistActiveRuns = useCallback((runs: Record<string, ActiveRunInfo>) => {
     activeRunsRef.current = runs;
-    setActiveRuns(runs);
     if (typeof window !== 'undefined') {
       try {
         window.localStorage.setItem(ACTIVE_RUNS_STORAGE_KEY, JSON.stringify(runs));
@@ -559,6 +781,13 @@ export default function WorkspacePage() {
     () => setColorMode((prev) => (prev === 'light' ? 'dark' : 'light')),
     []
   );
+  useEffect(() => {
+    if (!a2uiStatusMessage) {
+      return;
+    }
+    const timer = window.setTimeout(() => setA2uiStatusMessage(null), 1800);
+    return () => window.clearTimeout(timer);
+  }, [a2uiStatusMessage]);
   const mentionSuggestions = useMemo(() => {
     if (!isMentionOpen) {
       return [] as WorkspaceFile[];
@@ -589,9 +818,19 @@ export default function WorkspacePage() {
     if (!personaId) {
       return 'Agent';
     }
-    const persona = personas.find((item) => item.name === personaId);
-    return persona?.displayName || personaId;
+    const normalized = normalizePersonaName(personaId);
+    const persona = personas.find((item) => item.name === normalized);
+    return persona?.displayName || normalized;
   }, [activeConversationPersona, selectedPersona, personas]);
+
+  const handleModeChange = useCallback(
+    (event: ChangeEvent<HTMLSelectElement>) => {
+      const nextPersona = normalizePersonaName(event.target.value);
+      setSelectedPersona(nextPersona);
+      setActiveConversationPersona(nextPersona);
+    },
+    [],
+  );
 
   const presentationOptionSummary = useMemo(() => {
     const parts = [
@@ -602,6 +841,7 @@ export default function WorkspacePage() {
         ? presentationOptions.customStyle.trim() || 'Custom'
         : presentationOptions.stylePreset.charAt(0).toUpperCase() + presentationOptions.stylePreset.slice(1),
       presentationOptions.content === 'paper' ? 'Paper' : 'General',
+      presentationOptions.exportPptx ? 'PPTX' : '',
     ];
     return parts.filter(Boolean).join(' · ');
   }, [presentationOptions]);
@@ -715,12 +955,70 @@ export default function WorkspacePage() {
     return 'CODE';
   }, []);
 
+  const extractCodeText = useCallback((value: ReactNode): string => {
+    if (value === null || value === undefined) {
+      return '';
+    }
+    if (Array.isArray(value)) {
+      return value.map((child) => extractCodeText(child)).join('');
+    }
+    if (typeof value === 'string' || typeof value === 'number') {
+      return String(value);
+    }
+    return '';
+  }, []);
+
+  const inferInlineCode = useCallback(
+    (inline: boolean | undefined, className: string | undefined, content: string, node?: any) => {
+      if (typeof inline === 'boolean') {
+        return inline;
+      }
+      const startLine = node?.position?.start?.line;
+      const endLine = node?.position?.end?.line;
+      if (typeof startLine === 'number' && typeof endLine === 'number' && endLine > startLine) {
+        return false;
+      }
+      if (className && /language-\w+/i.test(className)) {
+        return false;
+      }
+      if (content.includes('\n')) {
+        return false;
+      }
+      return true;
+    },
+    []
+  );
+
   const markdownComponents = useMemo(
     () => ({
       p({ children }: { children?: ReactNode }) {
         const childArray = Children.toArray(children);
         const containsBlockChild = childArray.some(
-          (child) => isValidElement(child) && typeof child.type === 'string' && BLOCK_LEVEL_TAGS.includes(child.type)
+          (child) => {
+            if (!isValidElement(child)) {
+              return false;
+            }
+            if (typeof child.type === 'string') {
+              return BLOCK_LEVEL_TAGS.includes(child.type);
+            }
+            if (child.props?.inline === false) {
+              return true;
+            }
+            if (child.props?.node?.tagName && BLOCK_LEVEL_TAGS.includes(child.props.node.tagName)) {
+              return true;
+            }
+            if (child.props?.node?.tagName === 'code') {
+              const content = extractCodeText(child.props.children);
+              const isInline = inferInlineCode(
+                child.props.inline,
+                child.props.className,
+                content,
+                child.props.node
+              );
+              return !isInline;
+            }
+            return false;
+          }
         );
         const Element: 'p' | 'div' = containsBlockChild ? 'div' : 'p';
         return <Element className="mb-4 leading-relaxed text-slate-700">{children}</Element>;
@@ -735,8 +1033,10 @@ export default function WorkspacePage() {
           />
         );
       },
-      code({ inline, className, children, ...props }: any) {
-        if (inline) {
+      code({ inline, className, children, node, ...props }: any) {
+        const rawCodeContent = extractCodeText(children);
+        const isInline = inferInlineCode(inline, className, rawCodeContent, node);
+        if (isInline) {
           return (
             <code
               className={`rounded-md bg-slate-200 px-1.5 py-0.5 font-mono text-xs text-slate-800 ${className || ''}`}
@@ -748,7 +1048,7 @@ export default function WorkspacePage() {
         }
 
         const languageMatch = /language-(\w+)/.exec(className || '');
-        const codeContent = (Array.isArray(children) ? children.join('') : String(children ?? '')).replace(/\n$/, '');
+        const codeContent = rawCodeContent.replace(/\n$/, '');
         const languageLabel = classifyCodeBlockLabel(languageMatch, codeContent);
         const blockId = `${languageLabel}-${codeContent.length}-${codeContent.charCodeAt(0) || 0}`;
         const copyLabel = copiedCodeBlockId === blockId ? 'Copied' : 'Copy';
@@ -774,7 +1074,7 @@ export default function WorkspacePage() {
         );
       },
     }),
-    [classifyCodeBlockLabel, copiedCodeBlockId, handleCopyCodeBlock]
+    [classifyCodeBlockLabel, copiedCodeBlockId, extractCodeText, handleCopyCodeBlock, inferInlineCode]
   );
 
   const toggleToolActivityVisibility = useCallback((messageId: ConversationMessage['id']) => {
@@ -837,7 +1137,7 @@ export default function WorkspacePage() {
       ? '24rem'
       : '3rem';
 
-  const filePaneWidth = isFilePaneVisible ? 320 : 56;
+  const filePaneWidth = isFilePaneVisible ? 360 : 56;
 
   const layoutHeight = '100%';
 
@@ -878,8 +1178,75 @@ export default function WorkspacePage() {
   const isMarkdownFile = !!activeFile && MARKDOWN_FILE_EXTENSIONS.some((ext) => normalizedFileName.endsWith(ext));
   const isHtmlFile = !!activeFile && HTML_FILE_EXTENSIONS.some((ext) => normalizedFileName.endsWith(ext));
   const isImageFile = !!activeFile && IMAGE_FILE_EXTENSIONS.some((ext) => normalizedFileName.endsWith(ext));
+  const isPdfFile = !!activeFile && (normalizedFileName.endsWith('.pdf') || activeFile?.mimeType === 'application/pdf');
+  const isA2uiFile = !!activeFile && A2UI_FILE_EXTENSIONS.some((ext) => normalizedFileName.endsWith(ext));
   const canPrintOrDownloadFile = Boolean(activeFile && (isMarkdownFile || isHtmlFile));
   const canCopyImageUrl = Boolean(isImageFile && activeFile?.publicUrl);
+  const parsedA2uiFile = useMemo(() => {
+    if (!activeFile || !isA2uiFile || !fileContent.trim()) {
+      return null;
+    }
+    return extractA2uiPayload(fileContent)?.payload ?? null;
+  }, [activeFile, fileContent, isA2uiFile]);
+  const isA2uiCanvas = canvasMode === 'a2ui' && (a2uiDraft || isA2uiPending);
+  const canvasBlocks = useMemo<UIBlock[]>(() => {
+    if (canvasMode === 'a2ui') {
+      if (a2uiDraft) {
+        return [
+          {
+            kind: 'a2ui',
+            id: a2uiDraft.runId,
+            payload: a2uiDraft.payload,
+          },
+        ];
+      }
+      if (isA2uiPending) {
+        return [
+          {
+            kind: 'text',
+            content: 'Generating A2UI canvas...',
+          },
+        ];
+      }
+    }
+    if (!activeFile) {
+      return [];
+    }
+    if (isA2uiFile && parsedA2uiFile) {
+      return [
+        {
+          kind: 'a2ui',
+          id: activeFile.id,
+          payload: parsedA2uiFile,
+        },
+      ];
+    }
+    return [
+      {
+        kind: 'file',
+        id: activeFile.id,
+        file: activeFile,
+        content: fileContent,
+      },
+    ];
+  }, [
+    activeFile,
+    a2uiDraft,
+    canvasMode,
+    fileContent,
+    isA2uiFile,
+    isA2uiPending,
+    parsedA2uiFile,
+  ]);
+  const canvasTitle = isA2uiCanvas
+    ? a2uiDraft
+      ? 'A2UI Draft'
+      : 'A2UI Canvas'
+    : selectedFile
+      ? selectedFile.name
+      : 'Editor';
+  const showFileActions = !isA2uiCanvas;
+  const showA2uiDraftAction = !isA2uiCanvas && Boolean(a2uiDraft);
 
   const handleDownloadActiveFile = useCallback(() => {
     if (!activeFile || !(isMarkdownFile || isHtmlFile)) {
@@ -955,6 +1322,54 @@ export default function WorkspacePage() {
       console.error('Failed to copy workspace content', error);
     }
   }, [fileContent, selectedFile]);
+
+  const handleViewA2uiDraft = useCallback(() => {
+    if (!a2uiDraft) {
+      return;
+    }
+    setCanvasMode('a2ui');
+  }, [a2uiDraft]);
+
+  const handleCloseA2uiDraft = useCallback(() => {
+    setCanvasMode('file');
+  }, []);
+
+  const handleSaveA2uiDraft = useCallback(async () => {
+    if (!a2uiDraft) {
+      return;
+    }
+    if (!selectedWorkspace) {
+      setA2uiStatusMessage('Select a workspace before saving A2UI artifacts.');
+      return;
+    }
+    try {
+      setA2uiStatusMessage('Saving A2UI...');
+      const filename = buildA2uiFileName(a2uiDraft.prompt);
+      const content = a2uiDraft.raw || JSON.stringify(a2uiDraft.payload, null, 2);
+      const artifactFile = new File([content], filename, { type: 'application/json' });
+      const created = await createFile(selectedWorkspace.id, artifactFile);
+      try {
+        const files = await getFiles(selectedWorkspace.id);
+        setFiles(files);
+      } catch (error) {
+        console.error('Failed to refresh files after saving A2UI', error);
+      }
+      setSelectedFile(created);
+      setSelectedFileDetails(null);
+      setFileContent(content);
+      setIsEditMode(false);
+      setCanvasMode('file');
+      setA2uiDraft(null);
+      setIsA2uiPending(false);
+      setA2uiStatusMessage('A2UI saved.');
+    } catch (error) {
+      console.error('Failed to save A2UI artifact', error);
+      setA2uiStatusMessage('Failed to save A2UI.');
+    }
+  }, [
+    a2uiDraft,
+    selectedWorkspace,
+  ]);
 
   const addPendingPresentationPlaceholder = useCallback(
     (jobId: string, workspaceId: string, label: string) => {
@@ -1123,14 +1538,15 @@ export default function WorkspacePage() {
 
   const fetchRagStatusForFiles = useCallback(async () => {
     if (!selectedWorkspace) {
-      setRagStatuses({});
+      setRagStatuses((prev) => (Object.keys(prev).length ? {} : prev));
       return;
     }
     const names = files
+      .filter((file) => !isSystemFile(file))
       .map((file) => file.name)
       .filter((name) => typeof name === 'string' && name.trim().length > 0);
     if (!names.length) {
-      setRagStatuses({});
+      setRagStatuses((prev) => (Object.keys(prev).length ? {} : prev));
       return;
     }
     try {
@@ -1456,7 +1872,9 @@ export default function WorkspacePage() {
         }
       });
       setConversationMessages((prev) => ({ ...prev, [conversationId]: filteredMessages }));
-      setActiveConversationPersona(detail.conversation.persona);
+      const normalizedPersona = normalizePersonaName(detail.conversation.persona);
+      setActiveConversationPersona(normalizedPersona);
+      setSelectedPersona(normalizedPersona);
       const runningRunIds = new Set(
         filteredMessages
           .filter((message) => message.sender === 'agent' && message.metadata?.runId && message.metadata?.status === 'running')
@@ -1507,6 +1925,48 @@ export default function WorkspacePage() {
     agentMessageBufferRef.current.set(systemMessage.id, systemMessage.text || '');
   }, [activeConversationId, updateMessagesForConversation]);
 
+  const handleExportPptxFromPdf = useCallback(async () => {
+    if (!selectedWorkspace || !activeFile) {
+      addLocalSystemMessage('Select a PDF file to export.');
+      return;
+    }
+    if (!isPdfFile) {
+      addLocalSystemMessage('Select a PDF file to export.');
+      return;
+    }
+    const fileId = toNumericFileId(activeFile.id);
+    if (!fileId) {
+      addLocalSystemMessage('Unable to export this file.');
+      return;
+    }
+    if (isPptxExporting) {
+      return;
+    }
+    setIsPptxExporting(true);
+    addLocalSystemMessage('Exporting PPTX from PDF...');
+    try {
+      const response = await exportPaper2SlidesPptx({
+        workspaceId: selectedWorkspace.id,
+        fileId,
+      });
+      await loadFilesForWorkspace(selectedWorkspace.id);
+      addLocalSystemMessage(`PPTX export complete: ${response.pptxPath}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to export PPTX.';
+      addLocalSystemMessage(message);
+    } finally {
+      setIsPptxExporting(false);
+    }
+  }, [
+    activeFile,
+    addLocalSystemMessage,
+    isPdfFile,
+    isPptxExporting,
+    loadFilesForWorkspace,
+    selectedWorkspace,
+    toNumericFileId,
+  ]);
+
   const ensureConversation = useCallback(async () => {
     if (activeConversationId) {
       return activeConversationId;
@@ -1517,7 +1977,8 @@ export default function WorkspacePage() {
     try {
       const conversation = await createConversationApi(selectedWorkspace.id, selectedPersona);
       setActiveConversationId(conversation.id);
-      setActiveConversationPersona(conversation.persona);
+      setActiveConversationPersona(normalizePersonaName(conversation.persona));
+      setSelectedPersona(normalizePersonaName(conversation.persona));
       setConversationMessages((prev) => ({ ...prev, [conversation.id]: [] }));
       setStreamingForConversation(conversation.id, false);
       await refreshConversationHistory(selectedWorkspace.id);
@@ -1557,15 +2018,20 @@ export default function WorkspacePage() {
   useEffect(() => {
     const loadPersonas = async () => {
       try {
-        const personaList = await fetchPersonas();
+        const personaList = normalizePersonas(await fetchPersonas());
         setPersonas(personaList);
         if (personaList.length) {
           const defaultPersona =
             personaList.find((persona) => persona.name === DEFAULT_PERSONA_NAME) || personaList[0];
-          setSelectedPersona((current) => current || defaultPersona.name);
+          setSelectedPersona(defaultPersona.name);
+        } else {
+          setPersonas(DEFAULT_PERSONAS);
+          setSelectedPersona(DEFAULT_PERSONA_NAME);
         }
       } catch (error) {
         console.error('Failed to load personas', error);
+        setPersonas(DEFAULT_PERSONAS);
+        setSelectedPersona(DEFAULT_PERSONA_NAME);
       }
     };
     loadPersonas();
@@ -1588,6 +2054,11 @@ export default function WorkspacePage() {
       loadFilesForWorkspace(selectedWorkspace.id);
     }
   }, [selectedWorkspace, loadFilesForWorkspace]);
+  useEffect(() => {
+    setA2uiDraft(null);
+    setIsA2uiPending(false);
+    setCanvasMode('file');
+  }, [selectedWorkspace?.id]);
 
   const handleRefreshFiles = () => {
     if (selectedWorkspace) {
@@ -2068,6 +2539,29 @@ export default function WorkspacePage() {
         setStreamingForConversation(conversationId, false);
         streamAbortMapRef.current.delete(conversationId);
         stopRequestedRef.current = false;
+        const a2uiRun = a2uiRunsRef.current.get(runId);
+        if (a2uiRun) {
+          const raw = agentMessageBufferRef.current.get(a2uiRun.placeholderId) || '';
+          const extracted = extractA2uiPayload(raw);
+          if (extracted) {
+            setA2uiDraft({
+              payload: extracted.payload,
+              raw: extracted.raw,
+              prompt: a2uiRun.prompt,
+              runId,
+              createdAt: new Date().toISOString(),
+            });
+            setCanvasMode('a2ui');
+            setIsEditMode(false);
+            setA2uiStatusMessage('A2UI ready.');
+          } else {
+            addLocalSystemMessage('Failed to parse A2UI output. Make sure the response is valid JSON.');
+            setCanvasMode('file');
+            setA2uiStatusMessage('Invalid A2UI output.');
+          }
+          setIsA2uiPending(false);
+          a2uiRunsRef.current.delete(runId);
+        }
         removeActiveRun(runId);
         const workspaceId = selectedWorkspace?.id;
         if (workspaceId) {
@@ -2080,6 +2574,7 @@ export default function WorkspacePage() {
       ensureAgentPlaceholder,
       handleStreamChunk,
       flushBufferedAgentChunks,
+      addLocalSystemMessage,
       removeActiveRun,
       selectedWorkspace?.id,
       loadFilesForWorkspace,
@@ -2188,16 +2683,7 @@ export default function WorkspacePage() {
       return;
     }
 
-    if (!activeConversationPersona && !selectedPersona) {
-      addLocalSystemMessage('No persona selected. Please pick an agent persona.');
-      return;
-    }
-
-    const persona = activeConversationPersona || selectedPersona;
-    if (!persona) {
-      addLocalSystemMessage('Unable to determine which persona to use for this conversation.');
-      return;
-    }
+    const persona = normalizePersonaName(activeConversationPersona || selectedPersona || DEFAULT_PERSONA_NAME);
 
     const conversationId = activeConversationId;
     const currentMessages = [...getConversationMessagesSnapshot(conversationId)];
@@ -2217,6 +2703,7 @@ export default function WorkspacePage() {
       return;
     }
     const isPresentationCommand = /^\/presentation\b/i.test(trimmed);
+    const isA2uiCommand = /^\/a2ui\b/i.test(trimmed);
     const mentionedFiles = isPresentationCommand ? findMentionedFiles(trimmed) : [];
     const presentationFileIds = isPresentationCommand
       ? Array.from(
@@ -2228,8 +2715,13 @@ export default function WorkspacePage() {
       )
       : [];
     const presentationBrief = isPresentationCommand ? trimmed.replace(/^\/presentation\b/i, '').trim() : '';
+    const a2uiPrompt = isA2uiCommand ? trimmed.replace(/^\/a2ui\b/i, '').trim() : '';
     if (isPresentationCommand && !presentationFileIds.length) {
       addLocalSystemMessage('Tag at least one file using @filename before rerunning /presentation.');
+      return;
+    }
+    if (isA2uiCommand && !a2uiPrompt) {
+      addLocalSystemMessage('Add instructions after /a2ui before rerunning.');
       return;
     }
 
@@ -2300,10 +2792,18 @@ export default function WorkspacePage() {
     }
 
     try {
+      if (isA2uiCommand) {
+        setA2uiDraft(null);
+        setIsA2uiPending(true);
+        setCanvasMode('a2ui');
+        setIsEditMode(false);
+        setA2uiStatusMessage(null);
+      }
+      const agentPrompt = isA2uiCommand ? buildA2uiPrompt(a2uiPrompt, '') : trimmed;
       const { runId } = await startAgentRun(
         selectedWorkspace.id,
         persona,
-        trimmed,
+        agentPrompt,
         historyPayload.length ? historyPayload : undefined,
         targetTurnId,
         { forceReset: true }
@@ -2321,6 +2821,15 @@ export default function WorkspacePage() {
         status: 'running',
       };
       registerActiveRun(runInfo);
+      if (isA2uiCommand) {
+        a2uiRunsRef.current.set(runId, {
+          runId,
+          placeholderId,
+          conversationId,
+          workspaceId: selectedWorkspace.id,
+          prompt: a2uiPrompt,
+        });
+      }
       await persistAgentProgress(runInfo, 'running');
       await streamRunForConversation(runInfo, true);
 
@@ -2369,6 +2878,9 @@ export default function WorkspacePage() {
     } catch (error) {
       console.error('Failed to rerun agent response', error);
       addLocalSystemMessage('Rerun failed. Please try again.');
+      if (isA2uiCommand) {
+        setIsA2uiPending(false);
+      }
     }
   };
 
@@ -2434,6 +2946,7 @@ export default function WorkspacePage() {
           mode: presentationOptions.mode,
           parallel: presentationOptions.parallel,
           fromStage: presentationOptions.fromStage,
+          exportPptx: presentationOptions.exportPptx,
         });
         addPendingPresentationPlaceholder(startResponse.jobId, workspaceId, presentationLabel);
         const jobLabel = `Paper2Slides job ${startResponse.jobId.slice(0, 8)}`;
@@ -2601,6 +3114,7 @@ export default function WorkspacePage() {
       presentationOptions.mode,
       presentationOptions.output,
       presentationOptions.parallel,
+      presentationOptions.exportPptx,
       presentationOptions.stylePreset,
       presentationOptions.customStyle,
       presentationOptions.fromStage,
@@ -2624,6 +3138,7 @@ export default function WorkspacePage() {
 
     stopRequestedRef.current = false;
     const isPresentationCommand = /^\/presentation\b/i.test(trimmed);
+    const isA2uiCommand = /^\/a2ui\b/i.test(trimmed);
     const mentionedFiles = isPresentationCommand ? findMentionedFiles(trimmed) : [];
     const presentationFileIds = isPresentationCommand
       ? Array.from(
@@ -2635,6 +3150,7 @@ export default function WorkspacePage() {
       )
       : [];
     const presentationBrief = isPresentationCommand ? trimmed.replace(/^\/presentation\b/i, '').trim() : '';
+    const a2uiPrompt = isA2uiCommand ? trimmed.replace(/^\/a2ui\b/i, '').trim() : '';
 
     if (isPresentationCommand && hasAttachments) {
       addLocalSystemMessage('Attachments are not supported for /presentation. Please tag files using @filename instead.');
@@ -2644,6 +3160,10 @@ export default function WorkspacePage() {
       addLocalSystemMessage('Tag at least one file using @filename before requesting a presentation.');
       return;
     }
+    if (isA2uiCommand && !a2uiPrompt) {
+      addLocalSystemMessage('Add instructions after /a2ui to describe the UI you want.');
+      return;
+    }
 
     const attachmentSummary = hasAttachments
       ? `Attachments: ${chatAttachments.map((file) => file.name).join(', ')}`
@@ -2651,23 +3171,17 @@ export default function WorkspacePage() {
     const messageContent = hasAttachments
       ? `${trimmed}${trimmed ? '\n\n' : ''}[${attachmentSummary}]`
       : trimmed;
+    const agentPrompt = isA2uiCommand
+      ? buildA2uiPrompt(a2uiPrompt, attachmentSummary)
+      : messageContent;
 
     if (!selectedWorkspace) {
       addLocalSystemMessage('Please select a workspace before chatting with an agent.');
       return;
     }
 
-    if (!selectedPersona && !activeConversationPersona) {
-      addLocalSystemMessage('No persona selected. Please pick an agent persona.');
-      return;
-    }
-
     const workspaceId = selectedWorkspace.id;
-    const persona = activeConversationPersona || selectedPersona;
-    if (!persona) {
-      addLocalSystemMessage('Unable to determine which persona to use for this conversation.');
-      return;
-    }
+    const persona = normalizePersonaName(activeConversationPersona || selectedPersona || DEFAULT_PERSONA_NAME);
 
     const conversationId = await ensureConversation();
     if (!conversationId) {
@@ -2722,10 +3236,17 @@ export default function WorkspacePage() {
     }
 
     try {
+      if (isA2uiCommand) {
+        setA2uiDraft(null);
+        setIsA2uiPending(true);
+        setCanvasMode('a2ui');
+        setIsEditMode(false);
+        setA2uiStatusMessage(null);
+      }
       const { runId } = await startAgentRun(
         workspaceId,
         persona,
-        messageContent,
+        agentPrompt,
         historyPayload.length ? historyPayload : undefined,
         resolvedTurnId,
         { forceReset: true }
@@ -2746,6 +3267,15 @@ export default function WorkspacePage() {
         status: 'running',
       };
       registerActiveRun(runInfo);
+      if (isA2uiCommand) {
+        a2uiRunsRef.current.set(runId, {
+          runId,
+          placeholderId,
+          conversationId,
+          workspaceId,
+          prompt: a2uiPrompt,
+        });
+      }
       await persistAgentProgress(runInfo, 'running');
       await streamRunForConversation(runInfo, true);
 
@@ -2794,6 +3324,9 @@ export default function WorkspacePage() {
     } catch (error) {
       console.error('Failed to start agent run', error);
       addLocalSystemMessage('Failed to start agent run. Please try again.');
+      if (isA2uiCommand) {
+        setIsA2uiPending(false);
+      }
     }
   };
 
@@ -2889,15 +3422,13 @@ export default function WorkspacePage() {
       addLocalSystemMessage('Please select a workspace before starting a conversation.');
       return;
     }
-    if (!selectedPersona) {
-      addLocalSystemMessage('No persona selected. Please pick an agent persona.');
-      return;
-    }
     const workspaceId = selectedWorkspace.id;
     try {
-      const conversation = await createConversationApi(workspaceId, selectedPersona);
+      const persona = normalizePersonaName(selectedPersona || DEFAULT_PERSONA_NAME);
+      const conversation = await createConversationApi(workspaceId, persona);
       setActiveConversationId(conversation.id);
-      setActiveConversationPersona(conversation.persona);
+      setActiveConversationPersona(normalizePersonaName(conversation.persona));
+      setSelectedPersona(normalizePersonaName(conversation.persona));
       setConversationMessages((prev) => ({ ...prev, [conversation.id]: [] }));
       setStreamingForConversation(conversation.id, false);
       setChatMessage('');
@@ -3229,6 +3760,8 @@ export default function WorkspacePage() {
                       const isIndexing =
                         !isPendingJob &&
                         ['pending', 'processing', 'preprocessed'].includes(ragState);
+                      const displayName = getFileDisplayName(file.name || '');
+                      const fileIcon = getFileTypeIcon(file.name || '');
                       return (
                         <div
                           key={file.id}
@@ -3246,22 +3779,29 @@ export default function WorkspacePage() {
                           />
                           <div
                             onClick={() => {
-                              if (isPendingJob) {
-                                return;
-                              }
-                              setSelectedFile(file);
-                              setSelectedFileDetails(null);
-                              setFileContent('');
-                              setIsEditMode(shouldForceEditMode(file.name));
-                            }}
+                            if (isPendingJob) {
+                              return;
+                            }
+                            setSelectedFile(file);
+                            setSelectedFileDetails(null);
+                            setFileContent('');
+                            setIsEditMode(shouldForceEditMode(file.name));
+                            setCanvasMode('file');
+                          }}
                             className="flex-1 flex items-start justify-between gap-2 min-w-0"
                           >
                             <div className="flex items-center gap-2 min-w-0">
                               {(isPendingJob || isIndexing) && (
                                 <Loader2 size={14} className="text-blue-500 animate-spin shrink-0" />
                               )}
-                              <span className="text-gray-800 break-all whitespace-normal leading-snug">
-                                {file.name}
+                              <span className="shrink-0" aria-hidden="true">
+                                {fileIcon}
+                              </span>
+                              <span
+                                className="text-sm text-gray-800 break-words leading-snug"
+                                title={file.name}
+                              >
+                                {displayName}
                               </span>
                             </div>
                             {!isPendingJob && (
@@ -3312,35 +3852,42 @@ export default function WorkspacePage() {
 
                 {/* Content Editor */}
                 <div className="flex-1 flex flex-col bg-gray-50 overflow-hidden min-w-0 min-h-0">
-                  <div className="p-4 border-b border-gray-200 flex justify-between items-center">
-                    <h3 className="text-lg font-semibold text-gray-800">
-                      {selectedFile ? selectedFile.name : 'Editor'}
-                    </h3>
+                  <div className="px-4 pt-4 pb-6 border-b border-gray-200 flex justify-between items-center">
+                    <div className="flex items-center gap-3">
+                      <h3 className="text-lg font-semibold text-gray-800">{canvasTitle}</h3>
+                      {a2uiStatusMessage && (
+                        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
+                          {a2uiStatusMessage}
+                        </span>
+                      )}
+                    </div>
                     <div className="flex items-center space-x-2">
-                      {canCopyImageUrl && (
+                      {showFileActions && canCopyImageUrl && (
                         <button
                           type="button"
-                          className="p-2 rounded-lg hover:bg-gray-200 disabled:opacity-50"
+                          className="h-9 w-9 inline-flex items-center justify-center rounded-lg hover:bg-gray-200 disabled:opacity-50"
                           onClick={handleCopyImageUrl}
                           title={copiedImageUrl ? 'Copied!' : 'Copy public URL'}
                         >
                           <LinkIcon size={18} className="text-gray-600" />
                         </button>
                       )}
-                      <button
-                        type="button"
-                        className="p-2 rounded-lg hover:bg-gray-200 disabled:opacity-50"
-                        onClick={handleCopyWorkspaceContent}
-                        disabled={!selectedFile}
-                        title={copiedWorkspaceContent ? 'Copied!' : 'Copy file content'}
-                      >
-                        <Copy size={18} className="text-gray-600" />
-                      </button>
-                      {canPrintOrDownloadFile && (
+                      {showFileActions && (
+                        <button
+                          type="button"
+                          className="h-9 w-9 inline-flex items-center justify-center rounded-lg hover:bg-gray-200 disabled:opacity-50"
+                          onClick={handleCopyWorkspaceContent}
+                          disabled={!selectedFile}
+                          title={copiedWorkspaceContent ? 'Copied!' : 'Copy file content'}
+                        >
+                          <Copy size={18} className="text-gray-600" />
+                        </button>
+                      )}
+                      {showFileActions && canPrintOrDownloadFile && (
                         <>
                           <button
                             type="button"
-                            className="p-2 rounded-lg hover:bg-gray-200 disabled:opacity-50"
+                            className="h-9 w-9 inline-flex items-center justify-center rounded-lg hover:bg-gray-200 disabled:opacity-50"
                             onClick={handlePrintActiveFile}
                             title="Print file"
                           >
@@ -3348,7 +3895,7 @@ export default function WorkspacePage() {
                           </button>
                           <button
                             type="button"
-                            className="p-2 rounded-lg hover:bg-gray-200 disabled:opacity-50"
+                            className="h-9 w-9 inline-flex items-center justify-center rounded-lg hover:bg-gray-200 disabled:opacity-50"
                             onClick={handleDownloadActiveFile}
                             title="Download file"
                           >
@@ -3356,9 +3903,21 @@ export default function WorkspacePage() {
                           </button>
                         </>
                       )}
-                      {!shouldForceEditMode(selectedFile?.name || '') && (
+                      {showFileActions && isPdfFile && (
                         <button
-                          className="p-2 rounded-lg hover:bg-gray-200 disabled:opacity-50"
+                          type="button"
+                          className="h-9 px-3 inline-flex items-center justify-center gap-2 rounded-lg text-sm font-medium text-slate-700 hover:bg-gray-200 disabled:opacity-50"
+                          onClick={handleExportPptxFromPdf}
+                          disabled={!activeFile || isPptxExporting}
+                          title="Export PPTX from PDF"
+                        >
+                          {isPptxExporting ? <Loader2 size={14} className="animate-spin" /> : null}
+                          {isPptxExporting ? 'Exporting PPTX' : 'Export PPTX'}
+                        </button>
+                      )}
+                      {showFileActions && !shouldForceEditMode(selectedFile?.name || '') && (
+                        <button
+                          className="h-9 w-9 inline-flex items-center justify-center rounded-lg hover:bg-gray-200 disabled:opacity-50"
                           onClick={() => {
                             if (!isAgentPaneVisible) {
                               setIsAgentPaneVisible(true);
@@ -3370,26 +3929,64 @@ export default function WorkspacePage() {
                           <Edit size={18} className="text-gray-600" />
                         </button>
                       )}
-                      <button
-                        className="p-2 rounded-lg hover:bg-gray-200 disabled:opacity-50"
-                        onClick={() => selectedFile && handleUpdateFile(Number(selectedFile.id), fileContent)}
-                        disabled={!isEditMode}
-                      >
-                        Save
-                      </button>
+                      {showFileActions && (
+                        <button
+                          className="h-9 px-3 inline-flex items-center justify-center rounded-lg text-sm font-medium text-slate-700 hover:bg-gray-200 disabled:opacity-50"
+                          onClick={() => selectedFile && handleUpdateFile(Number(selectedFile.id), fileContent)}
+                          disabled={!isEditMode}
+                        >
+                          Save
+                        </button>
+                      )}
+                      {isA2uiCanvas && a2uiDraft && (
+                        <>
+                          <button
+                            type="button"
+                            className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-800"
+                            onClick={handleSaveA2uiDraft}
+                          >
+                            Save A2UI
+                          </button>
+                          <button
+                            type="button"
+                            className="rounded-lg px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-gray-200"
+                            onClick={handleCloseA2uiDraft}
+                          >
+                            Back to file
+                          </button>
+                        </>
+                      )}
+                      {showA2uiDraftAction && (
+                        <button
+                          type="button"
+                          className="rounded-lg px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-gray-200"
+                          onClick={handleViewA2uiDraft}
+                        >
+                          View A2UI
+                        </button>
+                      )}
                     </div>
                   </div>
                   <div className="flex-1 overflow-y-auto overflow-x-hidden min-h-0">
-                    {isEditMode && selectedWorkspace ? (
+                    {isEditMode && selectedWorkspace && !isA2uiCanvas ? (
                       <FileEditor
                         file={selectedFileDetails || selectedFile}
                         fileContent={fileContent}
                         onContentChange={setFileContent}
                         workspaceId={selectedWorkspace.id}
+                        colorMode={colorMode}
                       />
                     ) : (
                       <div className="h-full w-full">
-                        <FileRenderer file={selectedFileDetails || selectedFile} fileContent={fileContent} />
+                        <UIBlockRenderer
+                          blocks={canvasBlocks}
+                          className="h-full w-full"
+                          emptyState={
+                            <div className="text-center text-gray-400">
+                              <p>Select a file to view its content</p>
+                            </div>
+                          }
+                        />
                       </div>
                     )}
                   </div>
@@ -3412,14 +4009,24 @@ export default function WorkspacePage() {
                     <ChevronRight size={18} className={`text-gray-600 transition-transform duration-300 ${isAgentPaneVisible ? '' : 'rotate-180'}`} />
                   </button>
                   {isAgentPaneVisible && (
-                    <>
-                      <PersonaSelector
-                        personas={personas}
-                        selectedPersona={selectedPersona}
-                        onPersonaChange={setSelectedPersona}
-                        variant="compact"
-                      />
-                    </>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                        Mode
+                      </span>
+                      <select
+                        value={normalizePersonaName(activeConversationPersona || selectedPersona || DEFAULT_PERSONA_NAME)}
+                        onChange={handleModeChange}
+                        className="rounded-lg border border-slate-200 bg-slate-100 px-2 py-1 text-sm font-semibold text-slate-700 shadow-sm focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                        aria-label="Select agent mode"
+                        disabled={!personas.length}
+                      >
+                        {personas.map((persona) => (
+                          <option key={persona.name} value={persona.name}>
+                            {persona.displayName || persona.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                   )}
                 </div>
                 {isAgentPaneVisible && (
@@ -3488,6 +4095,10 @@ export default function WorkspacePage() {
                       conversationHistory.map((conversation) => {
                         const isActive = conversation.id === activeConversationId;
                         const isConversationStreaming = conversationStreaming[conversation.id];
+                        const normalizedPersona = normalizePersonaName(conversation.persona);
+                        const personaLabel =
+                          personas.find((persona) => persona.name === normalizedPersona)?.displayName ||
+                          normalizedPersona;
                         return (
                           <div key={conversation.id} className="relative group">
                             <button
@@ -3505,7 +4116,7 @@ export default function WorkspacePage() {
                               <p className="text-xs text-gray-500 flex items-center gap-1">
                                 {isConversationStreaming && <Loader2 size={12} className="animate-spin text-blue-500" />}
                                 <span>
-                                  Persona: {conversation.persona} · {new Date(conversation.updatedAt).toLocaleString()}
+                                  Mode: {personaLabel} · {new Date(conversation.updatedAt).toLocaleString()}
                                 </span>
                               </p>
                             </button>
@@ -4032,6 +4643,18 @@ function PresentationModal({
               ))}
             </select>
           </label>
+        </div>
+        <div className="mt-3 flex flex-wrap items-center gap-3 text-xs font-semibold text-slate-600">
+          <label className="inline-flex items-center gap-2">
+            <input
+              type="checkbox"
+              className="h-4 w-4 rounded border-slate-300 text-blue-600"
+              checked={draft.exportPptx}
+              onChange={(event) => onChange('exportPptx', event.target.checked)}
+            />
+            <span>Export PPTX (slow)</span>
+          </label>
+          <span className="text-[11px] text-slate-500">Run after slide render. You can also export later from a PDF.</span>
         </div>
         {showCustomStyle && (
           <div className="mt-3">

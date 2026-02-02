@@ -1,13 +1,12 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Users, Network, Wrench, Loader2 } from 'lucide-react';
+import { Wrench, Loader2, Library } from 'lucide-react';
 import { fetchAgentConfig, saveAgentConfig } from '../../services/settingsApi';
-import CoreAgentsTab from './CoreAgentsTab';
-import SubagentsTab from './SubagentsTab';
 import ToolsTab from './ToolsTab';
+import SkillsRegistryTab from './SkillsRegistryTab';
 import YAML from 'yaml';
 
 const AgentSettingsTabs = () => {
-    const [activeTab, setActiveTab] = useState<'core' | 'subagents' | 'tools'>('core');
+    const [activeTab, setActiveTab] = useState<'tools' | 'skills'>('skills');
     const [config, setConfig] = useState<any>(null);
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
@@ -72,26 +71,6 @@ const AgentSettingsTabs = () => {
         <div className="space-y-6">
             <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl w-fit">
                 <button
-                    onClick={() => setActiveTab('core')}
-                    className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${activeTab === 'core'
-                            ? 'bg-white text-slate-900 shadow-sm'
-                            : 'text-slate-600 hover:text-slate-900'
-                        }`}
-                >
-                    <Users size={16} />
-                    Core Agents
-                </button>
-                <button
-                    onClick={() => setActiveTab('subagents')}
-                    className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${activeTab === 'subagents'
-                            ? 'bg-white text-slate-900 shadow-sm'
-                            : 'text-slate-600 hover:text-slate-900'
-                        }`}
-                >
-                    <Network size={16} />
-                    Subagents
-                </button>
-                <button
                     onClick={() => setActiveTab('tools')}
                     className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${activeTab === 'tools'
                             ? 'bg-white text-slate-900 shadow-sm'
@@ -101,17 +80,24 @@ const AgentSettingsTabs = () => {
                     <Wrench size={16} />
                     Tools & MCP
                 </button>
+                <button
+                    onClick={() => setActiveTab('skills')}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${activeTab === 'skills'
+                            ? 'bg-white text-slate-900 shadow-sm'
+                            : 'text-slate-600 hover:text-slate-900'
+                        }`}
+                >
+                    <Library size={16} />
+                    Skill Registry
+                </button>
             </div>
 
             <div className="bg-white rounded-3xl border border-slate-200 shadow-sm p-6 min-h-[500px]">
-                {activeTab === 'core' && (
-                    <CoreAgentsTab config={config} onSave={handleSave} isSaving={saving} />
-                )}
-                {activeTab === 'subagents' && (
-                    <SubagentsTab config={config} onSave={handleSave} isSaving={saving} />
-                )}
                 {activeTab === 'tools' && (
                     <ToolsTab config={config} onSave={handleSave} isSaving={saving} />
+                )}
+                {activeTab === 'skills' && (
+                    <SkillsRegistryTab />
                 )}
             </div>
         </div>

@@ -72,6 +72,7 @@ kubectl apply -f infra/gke/k8s/42-minio.yaml
 kubectl apply -f infra/gke/k8s/43-minio-setup.yaml
 kubectl apply -f infra/gke/k8s/50-app.yaml
 kubectl apply -f infra/gke/k8s/60-frontend.yaml
+kubectl apply -f infra/gke/k8s/70-caddy.yaml
 ```
 
 7) Update app images
@@ -85,10 +86,10 @@ kubectl -n helpudoc set image deployment/helpudoc-frontend \
   frontend="${REGISTRY}/helpudoc-frontend:manual"
 ```
 
-8) Get the frontend URL
+8) Get the Caddy (public) URL
 
 ```sh
-kubectl -n helpudoc get svc helpudoc-frontend
+kubectl -n helpudoc get svc helpudoc-caddy
 ```
 
 ## Notes
@@ -98,6 +99,10 @@ kubectl -n helpudoc get svc helpudoc-frontend
 - Update `infra/gke/k8s/10-secrets.yaml` and `infra/gke/k8s/20-configmap.yaml` with real values before deploying.
 - For production, move Postgres/Redis/MinIO to managed services and use a real RWX storage class (Filestore) if you
   split backend and agent into separate pods.
+- gcloud builds submit .
+  --config=infra/cloudbuild.yaml
+  --project=my-rd-coe-demo-gen-ai
+  --substitutions=_GKE_LOCATION=asia-southeast1-a,_VITE_GOOGLE_CLIENT_ID=16646144790-fvdv7liepgo18aiu20n3btmdr56l33pq.apps.googleusercontent.com
 
 ## GitHub Actions (optional)
 

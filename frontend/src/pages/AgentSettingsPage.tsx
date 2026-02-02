@@ -4,9 +4,9 @@ import SettingsShell from '../components/settings/SettingsShell';
 const AgentSettingsPage = () => {
   return (
     <SettingsShell
-      eyebrow="Agents"
-      title="Core Agent & Subagents"
-      description="Configure personas, tools, and prompts powering your assistants in a focused workspace."
+      eyebrow="Skills & Tools"
+      title="Skills Registry & Tooling"
+      description="Manage reusable skills and the tools they can use."
     >
       <div className="rounded-3xl border border-slate-200 bg-white p-8 shadow-sm">
         <AgentSettingsTabs />

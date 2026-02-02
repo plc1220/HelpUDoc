@@ -6,21 +6,17 @@ The agent service is a Python FastAPI application that orchestrates Gemini-power
 
 - `helpudoc_agent/`: FastAPI app, runtime state, tools, and RAG worker.
 - `paper2slides/`: end-to-end pipeline for extracting summaries and generating slides.
-- `prompts/`: prompt templates for the core agents and subagents.
-- `config/agents.yaml`: agent personas, tools, and routing configuration.
+- `prompts/`: system prompt templates (general router prompt is active).
+- `config/runtime.yaml`: model, backend, tool registry, and MCP configuration.
+- `skills/`: reusable skills the general assistant can load on demand.
 - `docs/`: internal documentation for image tools and workflows.
 - `lightrag_server/`: optional LightRAG server config and notes.
 
-## Agent personas
+## Skills-first routing
 
-Personas are defined in `config/agents.yaml` and are available to the frontend persona selector.
-Current personas include:
-
-- `general-assistant`: General-purpose assistant with file editing and search tools.
-- `research`: Research assistant with critique and sourcing pipeline.
-- `data-agent`: Data analysis workflow with DuckDB + chart tooling.
-- `proposal-agent`: Consultative proposal writer with research and planning subagents.
-- `infographic-agent`: Generates AntV Infographic HTML files with SVG export.
+The service runs a single general assistant. Specialized behavior is implemented as skills
+under `skills/<skill-id>/SKILL.md`. Each skill can declare the tools it needs in frontmatter,
+and the assistant loads only the relevant skills per request.
 
 ## Getting started
 

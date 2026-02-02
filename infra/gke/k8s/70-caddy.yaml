@@ -1,0 +1,68 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: helpudoc-caddy-config
+  namespace: helpudoc
+data:
+  Caddyfile: |
+    lc-demo.com, www.lc-demo.com {
+      encode gzip zstd
+      @api path /api*
+      reverse_proxy @api backend:3000
+      reverse_proxy helpudoc-frontend:80
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: helpudoc-caddy
+  namespace: helpudoc
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: helpudoc-caddy
+  template:
+    metadata:
+      labels:
+        app: helpudoc-caddy
+    spec:
+      containers:
+        - name: caddy
+          image: caddy:2-alpine
+          ports:
+            - containerPort: 80
+            - containerPort: 443
+          volumeMounts:
+            - name: caddy-config
+              mountPath: /etc/caddy/Caddyfile
+              subPath: Caddyfile
+            - name: caddy-data
+              mountPath: /data
+            - name: caddy-config-storage
+              mountPath: /config
+      volumes:
+        - name: caddy-config
+          configMap:
+            name: helpudoc-caddy-config
+        - name: caddy-data
+          emptyDir: {}
+        - name: caddy-config-storage
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: helpudoc-caddy
+  namespace: helpudoc
+spec:
+  type: LoadBalancer
+  selector:
+    app: helpudoc-caddy
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+    - name: https
+      port: 443
+      targetPort: 443

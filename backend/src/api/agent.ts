@@ -21,7 +21,7 @@ import {
 } from '../services/agentRunService';
 import { blockingRedisClient } from '../services/redisService';
 
-const DEFAULT_PRESENTATION_PERSONA = 'general-assistant';
+const DEFAULT_PRESENTATION_PERSONA = 'fast';
 const IMAGE_NAME_PATTERN = /\.(png|jpe?g|gif|bmp|webp|svg)$/i;
 const DEBUG_AGENT_RUN_STREAM =
   process.env.DEBUG_AGENT_RUN_STREAM === '1' || process.env.DEBUG_AGENT_RUN_STREAM === 'true';
@@ -87,6 +87,12 @@ export default function(workspaceService: WorkspaceService, fileService: FileSer
     mode: z.enum(['fast', 'normal']).optional(),
     parallel: z.union([z.number().int().positive(), z.boolean()]).optional(),
     fromStage: z.enum(['rag', 'analysis', 'summary', 'plan', 'generate']).optional(),
+    exportPptx: z.boolean().optional(),
+  });
+
+  const pptxExportSchema = z.object({
+    workspaceId: z.string().min(1),
+    fileId: z.number().int().positive(),
   });
 
   router.get('/personas', async (_req, res) => {
@@ -127,6 +133,7 @@ export default function(workspaceService: WorkspaceService, fileService: FileSer
         mode,
         parallel,
         fromStage,
+        exportPptx,
       } = presentationSchema.parse(req.body);
 
       const job = await paper2SlidesJobService.createJob({
@@ -143,6 +150,7 @@ export default function(workspaceService: WorkspaceService, fileService: FileSer
           mode,
           parallel,
           fromStage,
+          exportPptx,
         },
       });
 
@@ -176,6 +184,23 @@ export default function(workspaceService: WorkspaceService, fileService: FileSer
         return res.status(error.statusCode).json({ error: error.message });
       }
       handleError(res, error, 'Failed to fetch Paper2Slides job');
+    }
+  });
+
+  router.post('/paper2slides/export-pptx', async (req, res) => {
+    try {
+      const user = requireUserContext(req);
+      const { workspaceId, fileId } = pptxExportSchema.parse(req.body);
+      const result = await paper2SlidesService.exportPptxFromPdf(workspaceId, user.userId, fileId);
+      res.json(result);
+    } catch (error: any) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: 'Invalid input' });
+      }
+      if (error instanceof HttpError) {
+        return res.status(error.statusCode).json({ error: error.message });
+      }
+      handleError(res, error, 'Failed to export PPTX');
     }
   });
 
@@ -469,6 +494,7 @@ export default function(workspaceService: WorkspaceService, fileService: FileSer
         mode,
         parallel,
         fromStage,
+        exportPptx,
       } = presentationSchema.parse(req.body);
       await workspaceService.ensureMembership(workspaceId, user.userId, { requireEdit: true });
 
@@ -512,6 +538,7 @@ export default function(workspaceService: WorkspaceService, fileService: FileSer
         mode,
         parallel,
         fromStage,
+        exportPptx,
       };
 
       try {

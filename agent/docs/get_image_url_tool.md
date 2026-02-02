@@ -8,7 +8,7 @@ The `get_image_url` tool allows the general agent to fetch public URLs for image
 
 ### Tool Registration
 
-The tool is registered in `/agent/config/agents.yaml`:
+The tool is registered in `/agent/config/runtime.yaml`:
 
 ```yaml
 tools:

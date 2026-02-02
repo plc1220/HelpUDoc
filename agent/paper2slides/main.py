@@ -62,6 +62,8 @@ def main():
                         help="Fast mode: parse only, no RAG indexing (direct LLM query)")
     parser.add_argument("--parallel", type=int, nargs='?', const=2, default=None,
                         help="Enable parallel slide generation with N workers (default: 2 if specified)")
+    parser.add_argument("--export-pptx", action="store_true",
+                        help="Export PPTX alongside slide images/PDF (slower)")
     parser.add_argument("--extract-assets", action="store_true",
                         help="Extract slide layout/assets from generated images and build editable PPTX")
     parser.add_argument("--layout-model",
@@ -127,6 +129,7 @@ def main():
         "poster_density": args.density,
         "fast_mode": args.fast,
         "max_workers": args.parallel if args.parallel else 1,
+        "export_pptx": args.export_pptx,
         "extract_assets": args.extract_assets,
         "layout_model": args.layout_model,
         "image_model": args.image_model,

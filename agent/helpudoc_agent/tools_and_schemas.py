@@ -1,9 +1,12 @@
 """Tool creation helpers and MCP integration stubs."""
 from __future__ import annotations
 
+import concurrent.futures
 import json
+import logging
 import os
 import re
+import time
 from importlib import import_module
 from io import BytesIO
 from pathlib import Path
@@ -22,9 +25,47 @@ except ImportError as exc:  # pragma: no cover
     raise RuntimeError("Gemini dependencies are required") from exc
 
 from .configuration import Settings, ToolConfig
+from .skills_registry import load_skills
 from .rag_indexer import RagConfig, WorkspaceRagStore
 from .state import WorkspaceState
 from .utils import SourceTracker, resolve_urls, extract_web_url
+
+logger = logging.getLogger(__name__)
+_DEFAULT_SEARCH_TIMEOUT = int(os.getenv("GOOGLE_SEARCH_TIMEOUT_SECONDS", "30"))
+_SEARCH_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=4)
+
+
+def _generate_with_timeout(
+    *,
+    client,
+    model_name: str,
+    contents: str,
+    config: dict,
+    timeout_s: int,
+    label: str,
+):
+    def _call():
+        return client.models.generate_content(
+            model=model_name,
+            contents=contents,
+            config=config,
+        )
+
+    start = time.monotonic()
+    logger.info("%s started", label)
+    future = _SEARCH_EXECUTOR.submit(_call)
+    try:
+        response = future.result(timeout=timeout_s)
+    except concurrent.futures.TimeoutError:
+        logger.warning("%s timed out after %ss", label, timeout_s)
+        return None, f"timeout after {timeout_s}s"
+    except Exception as exc:
+        logger.exception("%s failed", label)
+        return None, str(exc)
+    finally:
+        elapsed = time.monotonic() - start
+        logger.info("%s completed in %.2fs", label, elapsed)
+    return response, None
 
 
 class GeminiClientManager:
@@ -75,6 +116,8 @@ class ToolFactory:
             "append_to_report": self._build_append_to_report_tool,
             "get_image_url": self._build_get_image_url_tool,
             "rag_query": self._build_rag_query_tool,
+            "list_skills": self._build_list_skills_tool,
+            "load_skill": self._build_load_skill_tool,
         }
 
     def build_tools(self, tool_names: List[str], workspace_state: WorkspaceState) -> List[Tool]:
@@ -134,14 +177,19 @@ class ToolFactory:
                 f"Search the web for information about: {query}\n\n"
                 "Return a comprehensive summary of the search results."
             )
-            response = client.models.generate_content(
-                model=model_name,
+            response, error = _generate_with_timeout(
+                client=client,
+                model_name=model_name,
                 contents=search_prompt,
                 config={
                     "tools": [{"google_search": {}}],
                     "temperature": 0,
                 },
+                timeout_s=_DEFAULT_SEARCH_TIMEOUT,
+                label="google_grounded_search",
             )
+            if error:
+                return f"Search failed ({error})."
 
             summary = response.text or "No results found."
             sources: List[Dict[str, str]] = []
@@ -183,6 +231,59 @@ class ToolFactory:
         google_grounded_search.name = "google_grounded_search"
         google_grounded_search.description = "Use Gemini's grounded search with citations."
         return google_grounded_search
+
+    def _build_list_skills_tool(self, workspace_state: WorkspaceState) -> Tool:
+        """List available skills from the shared skills registry."""
+        skills_root = self.settings.backend.skills_root
+
+        @tool
+        def list_skills() -> str:
+            """List available skills and their descriptions."""
+            if workspace_state.context.get("tagged_files_only"):
+                return "Tool disabled: tagged files were provided, use rag_query only."
+            if skills_root is None or not skills_root.exists():
+                return "No skills directory configured."
+            skills = load_skills(skills_root)
+            if not skills:
+                return "No skills found."
+            lines = []
+            for skill in skills:
+                desc = f": {skill.description}" if skill.description else ""
+                lines.append(f"- {skill.skill_id}{desc}")
+            return "Available skills:\n" + "\n".join(lines)
+
+        list_skills.name = "list_skills"
+        list_skills.description = "List available skills and their descriptions."
+        return list_skills
+
+    def _build_load_skill_tool(self, workspace_state: WorkspaceState) -> Tool:
+        """Load the full content of a specific skill."""
+        skills_root = self.settings.backend.skills_root
+
+        @tool
+        def load_skill(skill_id: str) -> str:
+            """Load the full content of a skill by id or name."""
+            if workspace_state.context.get("tagged_files_only"):
+                return "Tool disabled: tagged files were provided, use rag_query only."
+            if skills_root is None or not skills_root.exists():
+                return "No skills directory configured."
+            skills = load_skills(skills_root)
+            if not skills:
+                return "No skills found."
+            normalized = skill_id.strip()
+            for skill in skills:
+                if normalized in {skill.skill_id, skill.name}:
+                    try:
+                        content = skill.path.read_text(encoding="utf-8")
+                    except Exception as exc:  # pragma: no cover - filesystem guard
+                        return f"Failed to read skill '{skill.skill_id}': {exc}"
+                    return f"Loaded skill: {skill.skill_id}\n\n{content}"
+            available = ", ".join(sorted({skill.skill_id for skill in skills}))
+            return f"Skill '{normalized}' not found. Available skills: {available}"
+
+        load_skill.name = "load_skill"
+        load_skill.description = "Load the full content of a skill by id or name."
+        return load_skill
 
     def _build_append_to_report_tool(self, workspace_state: WorkspaceState) -> Tool:
         """Append a section file to the stitched proposal inside the workspace."""
@@ -480,14 +581,19 @@ def build_google_search_tool(
             f"Search the web for information about: {query}\n\n"
             "Return a comprehensive summary of the search results."
         )
-        response = client.models.generate_content(
-            model=model_name,
+        response, error = _generate_with_timeout(
+            client=client,
+            model_name=model_name,
             contents=search_prompt,
             config={
                 "tools": [{"google_search": {}}],
                 "temperature": 0,
             },
+            timeout_s=_DEFAULT_SEARCH_TIMEOUT,
+            label="internet_search",
         )
+        if error:
+            return f"Search failed ({error})."
 
         summary = response.text
         sources_str = "\n\n--- SOURCES ---"

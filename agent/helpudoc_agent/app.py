@@ -6,6 +6,7 @@ from typing import Any, Dict, List, AsyncGenerator, Iterable, Sequence, Set
 import json
 import logging
 from pathlib import Path
+from uuid import uuid4
 from dotenv import load_dotenv
 
 from fastapi import FastAPI, HTTPException, Body
@@ -14,12 +15,12 @@ from pydantic import BaseModel
 
 from .configuration import load_settings
 from .graph import AgentRegistry
-from .prompts import PromptStore
 from .state import AgentRuntimeState
 from .tools_and_schemas import ToolFactory, GeminiClientManager, MCPServerRegistry
 from .utils import SourceTracker
 from langchain_core.callbacks.base import AsyncCallbackHandler
 from .rag_worker import RagIndexWorker
+from .skills_registry import collect_tool_names, load_skills
 
 
 logger = logging.getLogger(__name__)
@@ -69,11 +70,10 @@ def _load_env_files() -> None:
 def create_app() -> FastAPI:
     _load_env_files()
     settings = load_settings()
-    prompt_store = PromptStore()
     source_tracker = SourceTracker()
     gemini_manager = GeminiClientManager(settings)
     tool_factory = ToolFactory(settings, source_tracker, gemini_manager)
-    registry = AgentRegistry(settings, prompt_store, tool_factory)
+    registry = AgentRegistry(settings, tool_factory)
     mcp_registry = MCPServerRegistry(settings)
 
     app = FastAPI(title="DeepAgents Service", version="0.2.0")
@@ -136,23 +136,32 @@ def create_app() -> FastAPI:
 
     @app.get("/agents")
     def list_agents():
+        skills = load_skills(settings.backend.skills_root) if settings.backend.skills_root else []
+        tool_names = collect_tool_names(skills)
+        if tool_names:
+            tool_names = [name for name in tool_names if name in settings.tools]
+        if not tool_names:
+            tool_names = list(settings.tools.keys())
+        else:
+            for extra in ("list_skills", "load_skill"):
+                if extra in settings.tools and extra not in tool_names:
+                    tool_names.append(extra)
         return {
             "agents": [
                 {
-                    "name": agent.name,
-                    "displayName": agent.display_name,
-                    "description": agent.description,
-                    "tools": agent.tools,
-                    "subagents": [
-                        {
-                            "name": sub.name,
-                            "description": sub.description,
-                            "tools": sub.tools,
-                        }
-                        for sub in agent.subagents
-                    ],
-                }
-                for agent in settings.list_agents()
+                    "name": "fast",
+                    "displayName": "Fast",
+                    "description": "General assistant optimized for speed (Gemini Flash).",
+                    "tools": tool_names,
+                    "subagents": [],
+                },
+                {
+                    "name": "pro",
+                    "displayName": "Pro",
+                    "description": "General assistant optimized for quality (Gemini Pro).",
+                    "tools": tool_names,
+                    "subagents": [],
+                },
             ],
             "mcpServers": mcp_registry.describe(),
         }
@@ -268,6 +277,24 @@ def create_app() -> FastAPI:
             logger.exception("Failed to prefetch RAG context for tagged files.")
             return None
 
+    def _get_thread_id(runtime: AgentRuntimeState, force_reset: bool) -> str:
+        context = runtime.workspace_state.context
+        if force_reset or not context.get("thread_id"):
+            base = f"{runtime.agent_name}:{runtime.workspace_state.workspace_id}"
+            if force_reset:
+                thread_id = f"{base}:{uuid4()}"
+            else:
+                thread_id = base
+            context["thread_id"] = thread_id
+        return context["thread_id"]
+
+    def _build_agent_config(runtime: AgentRuntimeState, message: ChatRequest, callbacks=None) -> Dict[str, Any]:
+        thread_id = _get_thread_id(runtime, message.forceReset)
+        config: Dict[str, Any] = {"configurable": {"thread_id": thread_id}}
+        if callbacks:
+            config["callbacks"] = callbacks
+        return config
+
     def _invoke_agent(runtime: AgentRuntimeState, message: ChatRequest):
         agent = getattr(runtime, "agent", None)
         if agent is None:
@@ -277,7 +304,8 @@ def create_app() -> FastAPI:
         if manager and hasattr(manager, "reset_session"):
             manager.reset_session()
         payload = _prepare_payload(message)
-        return agent.invoke({"messages": payload})
+        config = _build_agent_config(runtime, message)
+        return agent.invoke({"messages": payload}, config=config)
 
     def _json_line(payload: Dict[str, Any]) -> bytes:
         return (json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8")
@@ -571,7 +599,8 @@ def create_app() -> FastAPI:
 
         async def _agent_runner():
             try:
-                async for raw_chunk in agent.astream({"messages": payload}, config={"callbacks": [handler]}):
+                stream_config = _build_agent_config(runtime, message, callbacks=[handler])
+                async for raw_chunk in agent.astream({"messages": payload}, config=stream_config):
                     fallback_chunks.append(raw_chunk)
                     nonlocal raw_chunk_count
                     raw_chunk_count += 1

@@ -122,6 +122,7 @@ export class Paper2SlidesJobService {
           mode: job.options.mode,
           parallel: job.options.parallel,
           fromStage: job.options.fromStage,
+          exportPptx: job.options.exportPptx,
         },
         jobId,
       );

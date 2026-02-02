@@ -45,7 +45,7 @@ DeepAgents already has:
 - **`get_image_url`** - Fetch MinIO/S3 public URLs
 
 ### Configuration
-- ✅ Registered in `config/agents.yaml`
+- ✅ Registered in `config/runtime.yaml`
 - ✅ Added to `general-assistant` agent
 - ✅ Implementation in `helpudoc_agent/tools_and_schemas.py`
 

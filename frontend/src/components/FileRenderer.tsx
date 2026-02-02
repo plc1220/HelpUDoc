@@ -212,6 +212,9 @@ const FileRenderer: React.FC<FileRendererProps> = ({ file, fileContent }) => {
                 const codeContent = (
                   Array.isArray(children) ? children.join('') : String(children ?? '')
                 ).replace(/\n$/, '');
+                const isInlineLike =
+                  inline ||
+                  (!language?.[1] && !codeContent.includes('\n'));
 
                 if (!inline && language?.[1] === 'mermaid') {
                   return <MermaidDiagram chart={codeContent} />;
@@ -240,10 +243,10 @@ const FileRenderer: React.FC<FileRendererProps> = ({ file, fileContent }) => {
                   }
                 }
 
-                if (inline) {
+                if (isInlineLike) {
                   return (
                     <code
-                      className={`rounded-md bg-gray-200 px-1.5 py-0.5 font-mono text-xs text-gray-800 ${className || ''}`}
+                      className={`inline-code rounded-md px-1.5 py-0.5 font-mono text-xs ${className || ''}`}
                       {...props}
                     >
                       {children}

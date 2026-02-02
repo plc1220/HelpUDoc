@@ -64,7 +64,7 @@ url = get_image_url("chart.png")
    - Added `_build_get_image_url_tool()` method
    - Implements URL fetching with metadata file support and fallback
 
-2. **`config/agents.yaml`**
+2. **`config/runtime.yaml`**
    - Registered `get_image_url` tool
    - Added to `general-assistant` agent
 

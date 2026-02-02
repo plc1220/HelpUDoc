@@ -1,0 +1,85 @@
+steps:
+  # 1. Build & Push Backend Image
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      [
+        'build',
+        '-f',
+        'backend/Dockerfile.gke',
+        '-t',
+        'gcr.io/$PROJECT_ID/helpudoc-backend:$BUILD_ID',
+        '-t',
+        'gcr.io/$PROJECT_ID/helpudoc-backend:latest',
+        'backend',
+      ]
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/$PROJECT_ID/helpudoc-backend:$BUILD_ID']
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/$PROJECT_ID/helpudoc-backend:latest']
+
+  # 2. Build & Push Frontend Image
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      [
+        'build',
+        '-f',
+        'frontend/Dockerfile.gke',
+        '--build-arg',
+        'VITE_GOOGLE_CLIENT_ID=$_VITE_GOOGLE_CLIENT_ID',
+        '-t',
+        'gcr.io/$PROJECT_ID/helpudoc-frontend:$BUILD_ID',
+        '-t',
+        'gcr.io/$PROJECT_ID/helpudoc-frontend:latest',
+        'frontend',
+      ]
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/$PROJECT_ID/helpudoc-frontend:$BUILD_ID']
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/$PROJECT_ID/helpudoc-frontend:latest']
+
+  # 3. Build & Push Agent Image
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      [
+        'build',
+        '-t',
+        'gcr.io/$PROJECT_ID/helpudoc-agent:$BUILD_ID',
+        '-t',
+        'gcr.io/$PROJECT_ID/helpudoc-agent:latest',
+        'agent',
+      ]
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/$PROJECT_ID/helpudoc-agent:$BUILD_ID']
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/$PROJECT_ID/helpudoc-agent:latest']
+
+  # 4. Update Image References in Manifests
+  - name: 'ubuntu'
+    args:
+      - 'bash'
+      - '-c'
+      - |
+        sed -i "s|image: helpudoc-backend:latest|image: gcr.io/$PROJECT_ID/helpudoc-backend:$BUILD_ID|g" infra/gke/k8s/50-app.yaml
+        sed -i "s|image: helpudoc-agent:latest|image: gcr.io/$PROJECT_ID/helpudoc-agent:$BUILD_ID|g" infra/gke/k8s/50-app.yaml
+        sed -i "s|image: helpudoc-frontend:latest|image: gcr.io/$PROJECT_ID/helpudoc-frontend:$BUILD_ID|g" infra/gke/k8s/60-frontend.yaml
+
+  # 5. Deploy to GKE
+  - name: 'gcr.io/cloud-builders/gke-deploy'
+    args:
+      - 'run'
+      - '--filename=infra/gke/k8s/'
+      - '--location=$_GKE_LOCATION'
+      - '--cluster=$_GKE_CLUSTER'
+
+images:
+  - 'gcr.io/$PROJECT_ID/helpudoc-backend:$BUILD_ID'
+  - 'gcr.io/$PROJECT_ID/helpudoc-frontend:$BUILD_ID'
+  - 'gcr.io/$PROJECT_ID/helpudoc-agent:$BUILD_ID'
+
+substitutions:
+  _GKE_CLUSTER: helpudoc-cluster
+  _GKE_LOCATION: asia-southeast1
+  _VITE_GOOGLE_CLIENT_ID: 16646144790-fvdv7liepgo18aiu20n3btmdr56l33pq.apps.googleusercontent.com
+
+options:
+  logging: CLOUD_LOGGING_ONLY

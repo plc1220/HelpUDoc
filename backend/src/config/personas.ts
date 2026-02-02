@@ -2,18 +2,18 @@ import { AgentDefinition } from '../core/agent';
 
 export const personas: AgentDefinition[] = [
   {
-    name: 'default',
-    displayName: 'Default',
-    description: 'A general-purpose assistant.',
+    name: 'fast',
+    displayName: 'Fast',
+    description: 'General assistant optimized for speed (Gemini Flash).',
     promptConfig: {},
     modelConfig: {},
     runConfig: {},
     toolConfig: {},
   },
   {
-    name: 'writer',
-    displayName: 'Creative Writer',
-    description: 'Helps with writing and brainstorming.',
+    name: 'pro',
+    displayName: 'Pro',
+    description: 'General assistant optimized for quality (Gemini Pro).',
     promptConfig: {},
     modelConfig: {},
     runConfig: {},

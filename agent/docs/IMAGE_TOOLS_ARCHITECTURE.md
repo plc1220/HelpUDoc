@@ -283,7 +283,7 @@ insert_image_to_file(image_file_name, target_file_path)
 ## Configuration Architecture
 
 ```
-config/agents.yaml
+config/runtime.yaml
     │
     ├─► tools:
     │       ├─► get_image_url (builtin)

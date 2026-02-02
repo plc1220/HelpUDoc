@@ -4,13 +4,13 @@ import SettingsShell from '../components/settings/SettingsShell';
 
 const DashboardPage = () => {
   const stats = [
-    { label: 'Total Agents', value: '2', hint: 'Core + subagents', icon: Users2 },
+    { label: 'Total Skills', value: '0', hint: 'Skill registry size', icon: Users2 },
     { label: 'Active Users', value: '1', hint: 'Last 24 hours', icon: MessageCircle },
     { label: 'Tool Calls', value: '124', hint: 'This week', icon: Hammer },
   ];
 
   const activities = [
-    { title: 'Agent settings refreshed', meta: '2m ago • general-assistant', icon: Sparkles },
+    { title: 'Skill registry refreshed', meta: '2m ago • general-assistant', icon: Sparkles },
     { title: 'Tool call spike detected', meta: '1h ago • PDF Reader', icon: Activity },
     { title: 'New user invited', meta: 'Yesterday • sso-signup', icon: MessageCircle },
   ];
@@ -19,7 +19,7 @@ const DashboardPage = () => {
     <SettingsShell
       eyebrow="Overview"
       title="Workspace Dashboard"
-      description="Pulse for your admin portal with quick access to agent health, users, and tools."
+      description="Pulse for your admin portal with quick access to skills, users, and tools."
     >
       <div className="space-y-6">
         <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
@@ -52,7 +52,7 @@ const DashboardPage = () => {
               to="/settings/agents"
               className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-900 px-3 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-slate-800"
             >
-              Manage agents
+              Manage skills
             </Link>
           </div>
           <div className="mt-4 divide-y divide-slate-200">

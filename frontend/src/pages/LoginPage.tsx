@@ -1,33 +1,39 @@
 import type { FormEvent } from 'react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Sparkles, ShieldCheck, Lock, ArrowRight, Sun, Moon, LogIn } from 'lucide-react';
+import { Sun, Moon, Mail, Lock, ArrowRight } from 'lucide-react';
 import { useAuth } from '../auth/AuthProvider';
+
+interface LocationState {
+  from?: string;
+}
 
 type PaletteMode = 'light' | 'dark';
 
-const featureHighlights = [
-  { icon: ShieldCheck, title: 'Workspace privacy', description: 'You only see your own projects and data.' },
-  { icon: Lock, title: 'Secure access', description: 'Google sign-in keeps your identity tied to your workspace.' },
-  { icon: Sparkles, title: 'Stay in flow', description: 'Pick up right where you left off after logging in.' },
-];
+const IS_DEV = import.meta.env.DEV;
 
 const LoginPage = () => {
-  const { user, loading, signInWithGoogle, signInWithEmail } = useAuth();
+  const { user, loading, googleReady, googleError, signInWithEmail } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [colorMode, setColorMode] = useState<PaletteMode>(() => {
     if (typeof window === 'undefined') return 'light';
     const stored = window.localStorage.getItem('helpudoc-color-mode');
-    return stored === 'dark' ? 'dark' : 'light';
+    if (stored === 'light' || stored === 'dark') {
+      return stored;
+    }
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
   });
   const [email, setEmail] = useState('');
-  const [name, setName] = useState('');
+  const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [focusedField, setFocusedField] = useState<string | null>(null);
+  const googleButtonRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', colorMode);
+    document.documentElement.classList.toggle('dark', colorMode === 'dark');
     if (typeof window !== 'undefined') {
       window.localStorage.setItem('helpudoc-color-mode', colorMode);
     }
@@ -35,33 +41,20 @@ const LoginPage = () => {
 
   useEffect(() => {
     if (user) {
-      const redirectTo = (location.state as any)?.from || '/';
+      const state = location.state as LocationState | null;
+      const redirectTo = state?.from || '/';
       navigate(redirectTo, { replace: true });
     }
   }, [location.state, navigate, user]);
-
-  const handleGoogleLogin = async () => {
-    setError(null);
-    setSubmitting(true);
-    try {
-      await signInWithGoogle();
-    } catch (err) {
-      console.error('Google sign-in failed', err);
-      const message = err instanceof Error ? err.message : 'Unable to sign in with Google right now.';
-      setError(message);
-    } finally {
-      setSubmitting(false);
-    }
-  };
 
   const handleEmailLogin = async (event: FormEvent) => {
     event.preventDefault();
     setError(null);
     setSubmitting(true);
     try {
-      await signInWithEmail(email, name);
+      await signInWithEmail(email, password);
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unable to sign in with email right now.';
+      const message = err instanceof Error ? err.message : 'Unable to sign in.';
       setError(message);
     } finally {
       setSubmitting(false);
@@ -74,180 +67,220 @@ const LoginPage = () => {
     try {
       await signInWithEmail('local-user@example.com', 'Local User', 'local-user');
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unable to bypass login right now.';
+      const message = err instanceof Error ? err.message : 'Bypass failed.';
       setError(message);
     } finally {
       setSubmitting(false);
     }
   };
 
-  const accentGradient = useMemo(
-    () =>
-      colorMode === 'light'
-        ? 'from-blue-500/90 via-indigo-500/80 to-sky-500/90'
-        : 'from-blue-500/70 via-indigo-500/60 to-sky-500/70',
-    [colorMode],
-  );
+  const heroImage = useMemo(() => (colorMode === 'light' ? '/Day.png' : '/Night.png'), [colorMode]);
+  const googleTheme = colorMode === 'dark' ? 'filled_black' : 'outline';
+
+  useEffect(() => {
+    if (!googleReady || !googleButtonRef.current || !window.google?.accounts?.id) return;
+
+    googleButtonRef.current.innerHTML = '';
+    const width = Math.min(360, googleButtonRef.current.offsetWidth || 340);
+    window.google.accounts.id.renderButton(googleButtonRef.current, {
+      theme: googleTheme,
+      size: 'large',
+      text: 'continue_with',
+      shape: 'pill',
+      width,
+    });
+  }, [googleReady, googleTheme]);
 
   return (
-    <>
-      <div className="min-h-screen bg-[radial-gradient(circle_at_20%_20%,rgba(59,130,246,0.12),transparent_32%),radial-gradient(circle_at_80%_0%,rgba(99,102,241,0.12),transparent_26%),linear-gradient(180deg,var(--app-bg),color-mix(in_srgb,var(--app-bg)_90%,transparent))]">
-        <div className="flex min-h-screen flex-col lg:flex-row">
-          <aside className="w-full lg:w-[40%] px-8 py-10 lg:py-14">
-            <div className={`relative h-full overflow-hidden rounded-3xl border border-slate-200/60 bg-gradient-to-br ${accentGradient} text-white shadow-xl shadow-blue-500/15`}>
-              <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_20%,rgba(255,255,255,0.18),transparent_40%)]" aria-hidden />
-              <div className="relative flex h-full flex-col justify-between p-8 lg:p-10">
-                <div className="flex items-center justify-between gap-4">
-                  <div className="flex items-center gap-3">
-                    <span className="grid h-10 w-10 place-items-center rounded-2xl bg-white/15 text-white">
-                      <Sparkles size={20} />
-                    </span>
-                    <div>
-                      <p className="text-xs uppercase tracking-[0.2em] text-white/80">HelpUDoc</p>
-                      <h1 className="text-2xl font-semibold leading-tight">Workspace Access</h1>
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setColorMode((prev) => (prev === 'light' ? 'dark' : 'light'))}
-                    className="inline-flex items-center gap-2 rounded-full border border-white/25 bg-white/10 px-3 py-2 text-xs font-semibold backdrop-blur hover:border-white/40"
-                  >
-                    {colorMode === 'light' ? <Moon size={14} /> : <Sun size={14} />}
-                    {colorMode === 'light' ? 'Dark mode' : 'Light mode'}
-                  </button>
-                </div>
+    <div className="relative min-h-screen overflow-hidden">
+      {/* Background Image */}
+      <div className="absolute inset-0">
+        <div
+          className="absolute inset-0 bg-cover bg-center transition-all duration-700"
+          style={{ backgroundImage: `url(${heroImage})` }}
+        />
+        {/* Subtle overlay for better contrast */}
+        <div className="absolute inset-0 bg-black/10 dark:bg-black/30" />
+      </div>
 
-                <div className="mt-10 space-y-5">
-                  <p className="text-lg font-medium text-white/90">
-                    Sign in to collaborate securely with agents across your private workspace. Your data stays yours.
-                  </p>
-                  <div className="grid grid-cols-1 gap-4">
-                    {featureHighlights.map(({ icon: Icon, title, description }) => (
-                      <div key={title} className="flex items-start gap-3 rounded-2xl bg-white/12 p-4 shadow-sm shadow-black/10">
-                        <span className="mt-1 inline-flex h-9 w-9 items-center justify-center rounded-xl bg-white/15 text-white">
-                          <Icon size={18} />
-                        </span>
-                        <div>
-                          <p className="text-sm font-semibold text-white">{title}</p>
-                          <p className="text-sm text-white/80">{description}</p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
+      {/* Floating decorative elements */}
+      <div className="absolute inset-0 overflow-hidden pointer-events-none">
+        <div className="absolute top-20 left-10 w-72 h-72 bg-gradient-to-br from-blue-500/10 to-cyan-500/10 rounded-full blur-3xl animate-pulse" style={{ animationDuration: '4s' }} />
+        <div className="absolute bottom-20 right-10 w-96 h-96 bg-gradient-to-br from-teal-500/10 to-blue-500/10 rounded-full blur-3xl animate-pulse" style={{ animationDuration: '6s', animationDelay: '2s' }} />
+      </div>
 
-                <div className="mt-8 flex items-center gap-3 text-sm text-white/80">
-                  <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-white/15 text-white">
-                    <Lock size={16} />
-                  </span>
-                  Single sign-on ensures each workspace is scoped to your account only.
-                </div>
-              </div>
-            </div>
-          </aside>
+      {/* Main content */}
+      <div className="relative z-10 flex min-h-screen items-center justify-center px-4 py-10">
+        <div
+          className="w-full max-w-md"
+          style={{ animation: 'float 6s ease-in-out infinite' }}
+        >
+          {/* Glass Card */}
+          <div
+            className="relative backdrop-blur-xl rounded-[28px] border border-slate-200 dark:border-slate-700/50 shadow-2xl shadow-black/10 dark:shadow-black/30 overflow-hidden"
+            style={{ backgroundColor: colorMode === 'light' ? 'rgba(255, 255, 255, 0.50)' : 'rgba(15, 23, 42, 0.50)' }}
+          >
 
-          <main className="flex w-full flex-1 items-center px-6 py-10 sm:px-10 lg:px-16">
-            <div className="w-full max-w-xl rounded-3xl border border-slate-200 bg-white/80 p-8 shadow-xl shadow-blue-500/5 backdrop-blur dark:border-slate-700/60 dark:bg-slate-900/80">
-              <div className="flex items-center justify-between gap-4">
-                <div>
-                  <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Sign in</p>
-                  <h2 className="text-2xl font-semibold text-slate-900 dark:text-slate-50">Welcome back</h2>
-                  <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">Access your HelpUDoc workspace and keep your data isolated to your account.</p>
+
+            {/* Card content */}
+            <div className="p-8 lg:p-10 relative">
+              {/* Theme toggle - inside card, top left */}
+              <button
+                type="button"
+                onClick={() => setColorMode((prev) => (prev === 'light' ? 'dark' : 'light'))}
+                className="absolute top-6 left-6 z-20"
+                aria-label="Toggle color mode"
+              >
+                <div className="p-2.5 rounded-xl bg-slate-100 dark:bg-slate-800/50 backdrop-blur-sm border border-slate-200 dark:border-slate-700/50 shadow-sm transition-all duration-300 hover:scale-110 hover:bg-slate-200 dark:hover:bg-slate-700/80 hover:shadow-md">
+                  {colorMode === 'light' ? (
+                    <Moon size={16} className="text-slate-700" />
+                  ) : (
+                    <Sun size={16} className="text-amber-400" />
+                  )}
                 </div>
-                <span className="hidden sm:inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-50 text-blue-700 dark:bg-blue-500/15 dark:text-blue-100">
-                  <LogIn size={20} />
-                </span>
+              </button>
+
+              {/* Logo and title */}
+              <div className="text-center mb-8">
+                <div className="inline-flex items-center justify-center mb-4">
+                  <img src="/logo.png" alt="HelpUDoc Logo" className="w-32 h-32 object-contain" />
+                </div>
+                <h1 className="text-3xl font-bold text-slate-900 dark:text-white mb-2">
+                  Welcome back
+                </h1>
+                <p className="text-slate-600 dark:text-slate-300 text-sm">
+                  Sign in to continue to <span className="font-semibold text-blue-600 dark:text-blue-400">HelpUDoc</span>
+                </p>
               </div>
 
-              {error ? (
-                <div className="mt-5 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-                  {error}
+              {/* Error message */}
+              {error && (
+                <div className="mb-6 p-4 rounded-2xl bg-red-100/80 dark:bg-red-500/20 backdrop-blur-sm border border-red-200 dark:border-red-500/30 animate-shake">
+                  <p className="text-red-700 dark:text-red-300 text-sm text-center">{error}</p>
                 </div>
-              ) : null}
+              )}
 
-              <div className="mt-6 space-y-4">
-                <button
-                  type="button"
-                  onClick={handleGoogleLogin}
-                  disabled={submitting || loading}
-                  className="group relative flex w-full items-center justify-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-800 shadow-sm transition hover:-translate-y-0.5 hover:shadow-lg disabled:cursor-not-allowed disabled:opacity-70 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-50"
-                >
-                  <span className="absolute inset-y-0 left-0 flex items-center pl-4 text-slate-500">
-                    <svg aria-hidden="true" focusable="false" width="20" height="20" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg" className="opacity-80">
-                      <path fill="#EA4335" d="M10 4.167c1.108 0 2.045.383 2.805 1.14l2.094-2.094C13.66 1.948 11.975 1.25 10 1.25 6.942 1.25 4.275 3.075 3.083 5.708l2.5 1.942C6.083 6.108 7.833 4.167 10 4.167Z" />
-                      <path fill="#34A853" d="M17.917 10.208c0-.7-.058-1.208-.183-1.742H10v3.333h4.583c-.092.742-.592 1.858-1.7 2.608l2.625 2.03c1.6-1.483 2.409-3.667 2.409-6.229Z" />
-                      <path fill="#4A90E2" d="m5.583 11.583-.392-.241-2.433 1.883C4.142 16.467 6.85 18.75 10 18.75c2.5 0 4.592-.833 6.125-2.275l-2.625-2.031C12.517 15.5 11.433 16 10 16c-2.142 0-3.95-1.4-4.633-3.417Z" />
-                      <path fill="#FBBC05" d="M3.167 7.65 5.75 9.55C6.433 7.533 8.241 6.133 10.383 6.133c1.525 0 2.592.65 3.184 1.2l2.35-2.35C14.733 3.983 12.642 2.917 10 2.917 6.85 2.917 4.142 5.2 3.167 7.65Z" />
-                    </svg>
-                  </span>
-                  {submitting ? 'Signing in…' : 'Continue with Google'}
-                  <ArrowRight size={16} className="text-slate-500 transition group-hover:translate-x-0.5" />
-                </button>
-
-                <div className="flex items-center gap-3 text-xs uppercase tracking-[0.2em] text-slate-500">
-                  <span className="h-px flex-1 bg-slate-200" />
-                  or use your work email
-                  <span className="h-px flex-1 bg-slate-200" />
-                </div>
-
-                <form onSubmit={handleEmailLogin} className="space-y-3">
-                  <label className="block text-sm font-semibold text-slate-700 dark:text-slate-100" htmlFor="email">
-                    Work email
+              {/* Login form */}
+              <form onSubmit={handleEmailLogin} className="space-y-5">
+                {/* Email field */}
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-slate-700 dark:text-slate-200 flex items-center gap-2" htmlFor="email">
+                    <Mail size={14} className="text-blue-600 dark:text-blue-400" />
+                    Email address
                   </label>
-                  <input
-                    id="email"
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    placeholder="you@company.com"
-                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 shadow-inner shadow-slate-100 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-50"
-                    required
-                  />
-                  <div className="flex items-center justify-between">
-                    <label className="block text-sm font-semibold text-slate-700 dark:text-slate-100" htmlFor="name">
-                      Display name <span className="text-slate-400">(optional)</span>
-                    </label>
-                    <p className="text-xs text-slate-500">Keeps your messages labeled.</p>
+                  <div className={`relative transition-all duration-300 ${focusedField === 'email' ? 'scale-[1.02]' : ''}`}>
+                    <input
+                      id="email"
+                      type="email"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      onFocus={() => setFocusedField('email')}
+                      onBlur={() => setFocusedField(null)}
+                      placeholder="you@company.com"
+                      className="w-full rounded-xl bg-slate-50 dark:bg-slate-800/50 backdrop-blur-sm border border-slate-200 dark:border-slate-600/50 px-4 py-3.5 text-sm text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all duration-300"
+                      required
+                    />
                   </div>
-                  <input
-                    id="name"
-                    type="text"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    placeholder="Alex Analyst"
-                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 shadow-inner shadow-slate-100 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-50"
-                  />
-                  <button
-                    type="submit"
-                    disabled={submitting || loading}
-                    className="group mt-3 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-blue-600 to-indigo-600 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-blue-500/20 transition hover:-translate-y-0.5 hover:shadow-blue-500/30 disabled:cursor-not-allowed disabled:opacity-70"
-                  >
-                    {submitting ? 'Signing in…' : 'Continue with email'}
-                    <ArrowRight size={16} className="transition group-hover:translate-x-0.5" />
-                  </button>
-                </form>
+                </div>
+
+                {/* Password field */}
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-slate-700 dark:text-slate-200 flex items-center gap-2" htmlFor="password">
+                    <Lock size={14} className="text-blue-600 dark:text-blue-400" />
+                    Password
+                  </label>
+                  <div className={`relative transition-all duration-300 ${focusedField === 'password' ? 'scale-[1.02]' : ''}`}>
+                    <input
+                      id="password"
+                      type="password"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      onFocus={() => setFocusedField('password')}
+                      onBlur={() => setFocusedField(null)}
+                      placeholder="Enter your password"
+                      className="w-full rounded-xl bg-slate-50 dark:bg-slate-800/50 backdrop-blur-sm border border-slate-200 dark:border-slate-600/50 px-4 py-3.5 text-sm text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all duration-300"
+                      required
+                    />
+                  </div>
+                </div>
+
+                {/* Submit button - plain blue */}
+                <button
+                  type="submit"
+                  disabled={submitting || loading}
+                  className="w-full mt-6 py-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold shadow-lg shadow-blue-500/25 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-blue-500/40 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0 flex items-center justify-center gap-2"
+                >
+                  {submitting ? (
+                    <>
+                      <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                      </svg>
+                      Signing in...
+                    </>
+                  ) : (
+                    <>
+                      Continue
+                      <ArrowRight size={18} />
+                    </>
+                  )}
+                </button>
+              </form>
+
+              {/* Divider */}
+              <div className="my-6 flex items-center gap-4">
+                <div className="flex-1 h-px bg-slate-300/50 dark:bg-slate-600/50" />
+                <span className="text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider">or</span>
+                <div className="flex-1 h-px bg-slate-300/50 dark:bg-slate-600/50" />
               </div>
 
-              <div className="mt-6 flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-800/70 dark:text-slate-300">
-                <div>
-                  <p className="font-semibold text-slate-800 dark:text-slate-100">Workspace isolation</p>
-                  <p className="text-slate-600 dark:text-slate-300">After signing in you only see workspaces linked to your account.</p>
-                </div>
-                <ShieldCheck className="text-blue-600 dark:text-blue-400" size={20} />
+              {/* Google button */}
+              <div className="relative">
+                {googleError ? (
+                  <div className="text-center text-xs text-red-600 dark:text-red-400 p-3 rounded-xl bg-red-100/80 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20">
+                    {googleError}
+                  </div>
+                ) : (
+                  <div ref={googleButtonRef} className="flex w-full justify-center rounded-full overflow-hidden" />
+                )}
               </div>
+
+              {/* Footer text */}
+              <p className="mt-8 text-center text-xs text-slate-500 dark:text-slate-400">
+                By continuing, you agree to our Terms of Service and Privacy Policy
+              </p>
             </div>
-          </main>
+          </div>
         </div>
       </div>
-      <button
-        type="button"
-        onClick={handleBypassLogin}
-        disabled={submitting || loading}
-        className="fixed bottom-5 right-5 rounded-full bg-slate-900 px-4 py-2 text-xs font-semibold text-white shadow-lg shadow-slate-400/30 transition hover:-translate-y-0.5 hover:shadow-xl disabled:cursor-not-allowed disabled:opacity-70"
-      >
-        Skip login (dev)
-      </button>
-    </>
+
+      {/* Dev bypass button */}
+      {IS_DEV && (
+        <button
+          type="button"
+          onClick={handleBypassLogin}
+          className="fixed bottom-6 left-6 z-50 px-4 py-2 rounded-full bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-white dark:hover:bg-slate-700 transition-all duration-300 shadow-lg"
+        >
+          🚀 Dev Bypass
+        </button>
+      )}
+
+      {/* Custom CSS animations */}
+      <style>{`
+        @keyframes float {
+          0%, 100% { transform: translateY(0px); }
+          50% { transform: translateY(-10px); }
+        }
+        @keyframes shake {
+          0%, 100% { transform: translateX(0); }
+          25% { transform: translateX(-5px); }
+          75% { transform: translateX(5px); }
+        }
+        .animate-shake {
+          animation: shake 0.4s ease-in-out;
+        }
+      `}</style>
+    </div>
   );
 };
 

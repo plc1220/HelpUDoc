@@ -12,6 +12,7 @@ export type AgentStreamChunk =
   | { type: 'tool_start'; content?: string; name?: string }
   | { type: 'tool_end'; content?: string; name?: string; outputFiles?: ToolOutputFile[] }
   | { type: 'tool_error'; content?: string; name?: string }
+  | { type: 'keepalive' }
   | { type: 'done' }
   | { type: 'error'; message?: string };
 

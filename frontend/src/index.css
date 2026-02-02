@@ -362,3 +362,121 @@ body {
   color: inherit;
   text-decoration: underline;
 }
+
+/* MDX editor toolbar polish (light theme) */
+.mdxeditor-root [role='toolbar'],
+.mdxeditor-root .mdxeditor-toolbar {
+  background: #f8fafc;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.mdxeditor-root [role='toolbar'] button,
+.mdxeditor-root [role='toolbar'] select,
+.mdxeditor-root .mdxeditor-toolbar button,
+.mdxeditor-root .mdxeditor-toolbar select {
+  color: #334155;
+  border-color: #e2e8f0;
+}
+
+.mdxeditor-root [role='toolbar'] button:hover,
+.mdxeditor-root .mdxeditor-toolbar button:hover {
+  background: #e2e8f0;
+}
+
+.inline-code {
+  background: #f6f8fa;
+  border: 1px solid #e2e8f0;
+  color: #334155;
+}
+
+:root[data-theme='dark'] .inline-code {
+  background: #2d333b;
+  border-color: #3a4350;
+  color: #e6edf3;
+}
+
+/* MDX editor dark theme tuning */
+:root[data-theme='dark'] .mdxeditor-root {
+  background: var(--surface);
+  color: #e6edf3;
+}
+
+:root[data-theme='dark'] .mdxeditor-root [contenteditable='true'] {
+  color: #e6edf3;
+  line-height: 1.7;
+}
+
+:root[data-theme='dark'] .mdxeditor-root [contenteditable='true'] p,
+:root[data-theme='dark'] .mdxeditor-root [contenteditable='true'] li,
+:root[data-theme='dark'] .mdxeditor-root [contenteditable='true'] blockquote {
+  color: #e6edf3;
+}
+
+:root[data-theme='dark'] .mdxeditor-root [contenteditable='true'] h1,
+:root[data-theme='dark'] .mdxeditor-root [contenteditable='true'] h2 {
+  color: #9bbcff;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+:root[data-theme='dark'] .mdxeditor-root [contenteditable='true'] h3,
+:root[data-theme='dark'] .mdxeditor-root [contenteditable='true'] h4,
+:root[data-theme='dark'] .mdxeditor-root [contenteditable='true'] h5,
+:root[data-theme='dark'] .mdxeditor-root [contenteditable='true'] h6 {
+  color: #a9c3ff;
+  font-weight: 600;
+}
+
+:root[data-theme='dark'] .mdxeditor-root [contenteditable='true'] code {
+  background: #2d333b;
+  border: 1px solid #3a4350;
+  color: #e6edf3;
+  font-family: 'SFMono-Regular', Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  padding: 0.1rem 0.35rem;
+  border-radius: 6px;
+  font-size: 0.85em;
+}
+
+:root[data-theme='dark'] .mdxeditor-root [contenteditable='true'] pre {
+  background: #0b1220;
+  border: 1px solid #1f2937;
+  border-radius: 12px;
+  padding: 0.75rem 1rem;
+}
+
+:root[data-theme='dark'] .mdxeditor-root [contenteditable='true'] pre code {
+  background: transparent;
+  border: none;
+  padding: 0;
+  font-size: 0.9em;
+}
+
+:root[data-theme='dark'] .mdxeditor-root [role='toolbar'],
+:root[data-theme='dark'] .mdxeditor-root .mdxeditor-toolbar {
+  background: rgba(15, 23, 42, 0.92);
+  border-bottom: 1px solid #1f2937;
+  backdrop-filter: blur(8px);
+}
+
+:root[data-theme='dark'] .mdxeditor-root [role='toolbar'] button,
+:root[data-theme='dark'] .mdxeditor-root [role='toolbar'] select,
+:root[data-theme='dark'] .mdxeditor-root .mdxeditor-toolbar button,
+:root[data-theme='dark'] .mdxeditor-root .mdxeditor-toolbar select {
+  color: #e6edf3;
+  border-color: #263245;
+}
+
+:root[data-theme='dark'] .mdxeditor-root [role='toolbar'] button:hover,
+:root[data-theme='dark'] .mdxeditor-root .mdxeditor-toolbar button:hover {
+  background: #1f2937;
+}
+
+:root[data-theme='dark'] .mdxeditor-root [role='toolbar'] button[aria-pressed='true'],
+:root[data-theme='dark'] .mdxeditor-root .mdxeditor-toolbar button[aria-pressed='true'] {
+  background: #26334a;
+}
+
+:root[data-theme='dark'] .mdxeditor-root [role='toolbar'] svg,
+:root[data-theme='dark'] .mdxeditor-root .mdxeditor-toolbar svg {
+  color: #e6edf3;
+}
