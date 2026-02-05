@@ -160,7 +160,7 @@ HelpUDoc/
 ├── tests/                         # Regression tests
 ├── pyproject.toml                 # Python project config
 ├── uv.lock                        # Python lockfile
-├── .env.example                   # Environment variable template
+├── env/                           # Env templates (local/prod)
 ├── LICENSE
 └── README.md
 ```
@@ -168,10 +168,13 @@ HelpUDoc/
 ## Running with Docker Compose
 
 1. **Prerequisites:** Docker Desktop 4.30+ (or Engine 26+), plus a Gemini API key.
-2. **Agent env:** ensure `agent/.env` contains `GEMINI_API_KEY` (and related Google Cloud vars).
+2. **Create a local env file:**
+   ```bash
+   cp env/local/stack.env.example env/local/stack.env
+   ```
 3. **Build and start (from repo root):**
    ```bash
-   docker compose -f infra/docker-compose.yml up --build
+   docker compose -f infra/docker-compose.yml --env-file env/local/stack.env up --build
    ```
 4. **Services:**
    - Frontend UI: http://localhost:8080
@@ -182,7 +185,7 @@ HelpUDoc/
 
 ### Common environment variables
 
-Compose reads standard variables from your shell, so you can override defaults safely:
+Compose reads variables from `env/local/stack.env` (or your shell), so you can override defaults safely:
 
 | Variable | Purpose | Default |
 | -------- | ------- | ------- |
@@ -198,32 +201,34 @@ The frontend build accepts `FRONTEND_API_URL` (default `/api`) as a build argume
 
 You can iterate on each component separately while still using Docker for the shared dependencies.
 
+See `docs/environment.md` for the full dev vs. production setup guide.
+
 1. **Spin up databases only**
    ```bash
-   docker compose -f infra/docker-compose.minio.yml up -d
+   docker compose -f infra/docker-compose.minio.yml --env-file env/local/stack.env up -d
    ```
 2. **Backend API**
    ```bash
    cd backend
    npm install
-   npm run dev
+   ENV_FILE=../env/local/dev.env npm run dev
    ```
-   Environment defaults live in `backend/.env`. When running locally make sure `POSTGRES_HOST`, `REDIS_URL`, and `S3_ENDPOINT` reference the containers (`localhost` works when exposing ports as shown above).
+   Configure values in `env/local/dev.env` (for example `POSTGRES_HOST=localhost`, `REDIS_URL=redis://localhost:6379`, `S3_ENDPOINT=http://localhost:9000`).
 3. **Frontend**
    ```bash
    cd frontend
    npm install
    npm run dev
    ```
-   Set `VITE_API_URL` in `frontend/.env` or your shell to point at your backend (for example `http://localhost:3000/api`).
+   Set `VITE_API_URL` (and `VITE_GOOGLE_CLIENT_ID`) in `env/local/dev.env` or your shell to point at your backend (for example `http://localhost:3000/api`).
 4. **Agent service**
    ```bash
    cd agent
    python -m venv .venv && source .venv/bin/activate
    pip install -r requirements.txt
-   uvicorn main:app --host 0.0.0.0 --port 8001 --reload
+   ENV_FILE=../env/local/dev.env uvicorn main:app --host 0.0.0.0 --port 8001 --reload
    ```
-   Ensure `agent/.env` has the required Gemini credentials before starting the service.
+   Ensure `env/local/dev.env` has the required Gemini credentials before starting the service.
 
 ## Useful tips
 

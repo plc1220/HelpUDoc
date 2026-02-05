@@ -19,10 +19,17 @@ npm install
 
 ### Environment variables
 
-Copy `.env.example` to `.env` and update values as needed:
+Copy the shared dev template and export it (recommended):
 
 ```bash
-cp .env.example .env
+cp ../env/local/dev.env.example ../env/local/dev.env
+set -a; source ../env/local/dev.env; set +a
+```
+
+You can also point the backend at a specific env file using `ENV_FILE`:
+
+```bash
+ENV_FILE=../env/local/dev.env npm run dev
 ```
 
 Key variables:
@@ -43,7 +50,7 @@ Key variables:
 ### Running the application
 
 ```bash
-npm run dev
+ENV_FILE=../env/local/dev.env npm run dev
 ```
 
 The API will be available at `http://localhost:3000/api`.
@@ -56,7 +63,7 @@ This repository includes `infra/docker-compose.minio.yml`, which provisions Post
 From the repository root run:
 
 ```bash
-docker compose -f infra/docker-compose.minio.yml up -d
+docker compose -f infra/docker-compose.minio.yml --env-file env/local/stack.env up -d
 ```
 
 By default MinIO listens on:

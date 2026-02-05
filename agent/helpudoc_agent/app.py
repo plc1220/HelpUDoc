@@ -5,13 +5,14 @@ import asyncio
 from typing import Any, Dict, List, AsyncGenerator, Iterable, Sequence, Set
 import json
 import logging
+import os
 from pathlib import Path
 from uuid import uuid4
 from dotenv import load_dotenv
 
 from fastapi import FastAPI, HTTPException, Body
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .configuration import load_settings
 from .graph import AgentRegistry
@@ -21,6 +22,7 @@ from .utils import SourceTracker
 from langchain_core.callbacks.base import AsyncCallbackHandler
 from .rag_worker import RagIndexWorker
 from .skills_registry import collect_tool_names, load_skills
+from .paper2slides_runner import run_paper2slides, export_pptx_from_pdf
 
 
 logger = logging.getLogger(__name__)
@@ -55,6 +57,47 @@ class RagStatusResponse(BaseModel):
     statuses: Dict[str, Any]
 
 
+class Paper2SlidesFile(BaseModel):
+    name: str
+    contentB64: str
+
+
+class Paper2SlidesOptions(BaseModel):
+    output: str | None = None
+    content: str | None = None
+    style: str | None = None
+    length: str | None = None
+    mode: str | None = None
+    parallel: int | bool | None = None
+    fromStage: str | None = None
+    exportPptx: bool | None = None
+
+
+class Paper2SlidesImage(BaseModel):
+    name: str
+    contentB64: str
+
+
+class Paper2SlidesRunRequest(BaseModel):
+    files: List[Paper2SlidesFile]
+    options: Paper2SlidesOptions = Field(default_factory=Paper2SlidesOptions)
+
+
+class Paper2SlidesRunResponse(BaseModel):
+    pdfB64: str | None = None
+    pptxB64: str | None = None
+    images: List[Paper2SlidesImage] = []
+
+
+class Paper2SlidesExportRequest(BaseModel):
+    fileName: str
+    contentB64: str
+
+
+class Paper2SlidesExportResponse(BaseModel):
+    pptxB64: str
+
+
 BASE_DIR = Path(__file__).resolve().parent
 
 
@@ -64,6 +107,10 @@ def _load_env_files() -> None:
     We prioritize the agent's .env (agent/.env) and then allow any existing
     process-level env vars to remain.
     """
+    env_file = os.getenv("ENV_FILE")
+    if env_file:
+        load_dotenv(env_file)
+        return
     load_dotenv(BASE_DIR.parent / ".env")
 
 
@@ -133,6 +180,28 @@ def create_app() -> FastAPI:
                     "error": status.get("error_msg"),
                 }
         return RagStatusResponse(statuses=statuses)
+
+    @app.post("/paper2slides/run", response_model=Paper2SlidesRunResponse)
+    async def paper2slides_run(req: Paper2SlidesRunRequest = Body(...)):
+        if not req.files:
+            raise HTTPException(status_code=400, detail="files is required")
+        try:
+            payload_files = [file.model_dump() for file in req.files]
+            options = req.options.model_dump()
+            result = await asyncio.to_thread(run_paper2slides, payload_files, options)
+            return Paper2SlidesRunResponse(**result)
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    @app.post("/paper2slides/export-pptx", response_model=Paper2SlidesExportResponse)
+    async def paper2slides_export(req: Paper2SlidesExportRequest = Body(...)):
+        if not req.contentB64:
+            raise HTTPException(status_code=400, detail="contentB64 is required")
+        try:
+            result = await asyncio.to_thread(export_pptx_from_pdf, req.fileName, req.contentB64)
+            return Paper2SlidesExportResponse(**result)
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     @app.get("/agents")
     def list_agents():

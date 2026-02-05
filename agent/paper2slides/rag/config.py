@@ -12,7 +12,11 @@ from dotenv import load_dotenv
 
 PROJECT_ROOT = Path(__file__).parent.parent
 
-load_dotenv(dotenv_path=PROJECT_ROOT / ".env", override=False)
+_env_file = os.getenv("ENV_FILE")
+if _env_file:
+    load_dotenv(dotenv_path=_env_file, override=False)
+else:
+    load_dotenv(dotenv_path=PROJECT_ROOT / ".env", override=False)
 
 DEFAULT_STORAGE_DIR = PROJECT_ROOT / "rag" / "storage"
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "rag" / "output"

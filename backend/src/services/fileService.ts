@@ -106,23 +106,51 @@ export class FileService {
   }
 
   private async ensurePublicUrl(file: any): Promise<void> {
-    if (file.publicUrl || file.storageType !== 'local') {
-      if (!file.mimeType) {
-        const resolved = this.resolveMimeType(file.name, file.mimeType);
-        if (resolved) {
-          file.mimeType = resolved;
-          await this.db('files').where({ id: file.id }).update({ mimeType: resolved });
-        }
-      }
-      return;
-    }
-
     const mimeType = this.resolveMimeType(file.name, file.mimeType);
-    if (this.isTextFile(file.name, mimeType || '')) {
+
+    const shouldRefreshPublicUrl = () => {
+      if (!file.publicUrl) return false;
+      const current = String(file.publicUrl);
+      if (current.includes('localhost:9000')) {
+        return true;
+      }
+      const base = process.env.S3_PUBLIC_BASE_URL;
+      if (!base) return false;
+      const normalizedBase = base.replace(/\/$/, '');
+      return !current.startsWith(`${normalizedBase}/`);
+    };
+
+    const updateMimeTypeIfMissing = async () => {
       if (!file.mimeType && mimeType) {
         file.mimeType = mimeType;
         await this.db('files').where({ id: file.id }).update({ mimeType });
       }
+    };
+
+    if (file.storageType !== 'local') {
+      const key = String(file.path).replace(/\\/g, '/');
+      const expectedUrl = this.s3Service.getPublicUrl(key);
+      if ((!file.publicUrl || shouldRefreshPublicUrl()) && expectedUrl) {
+        file.publicUrl = expectedUrl;
+        await this.db('files').where({ id: file.id }).update({ publicUrl: expectedUrl });
+      }
+      await updateMimeTypeIfMissing();
+      return;
+    }
+
+    if (file.publicUrl && shouldRefreshPublicUrl()) {
+      const key = normalizeS3Key(file.workspaceId, file.name);
+      const expectedUrl = this.s3Service.getPublicUrl(key);
+      if (expectedUrl && expectedUrl !== file.publicUrl) {
+        file.publicUrl = expectedUrl;
+        await this.db('files').where({ id: file.id }).update({ publicUrl: expectedUrl });
+      }
+      await updateMimeTypeIfMissing();
+      return;
+    }
+
+    if (this.isTextFile(file.name, mimeType || '')) {
+      await updateMimeTypeIfMissing();
       return;
     }
 

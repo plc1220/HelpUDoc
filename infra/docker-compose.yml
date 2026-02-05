@@ -107,11 +107,12 @@ services:
     depends_on:
       backend:
         condition: service_started
-    env_file:
-      - ../agent/.env
     environment:
       REDIS_URL: redis://redis:6379
       RAG_OFFLINE: ${RAG_OFFLINE:-true}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      RAG_LLM_API_KEY: ${RAG_LLM_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-gemini-3-flash-preview}
       WORKSPACE_ROOT: /app/workspaces
       S3_ENDPOINT: http://minio:9000
       MINIO_ENDPOINT: http://minio:9000

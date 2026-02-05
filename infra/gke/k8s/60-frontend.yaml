@@ -15,9 +15,17 @@ spec:
     spec:
       containers:
         - name: frontend
-          image: helpudoc-frontend:latest
+          image: gcr.io/my-rd-coe-demo-gen-ai/helpudoc-frontend:latest
+          imagePullPolicy: Always
           ports:
             - containerPort: 80
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "200m"
+              memory: "128Mi"
 ---
 apiVersion: v1
 kind: Service

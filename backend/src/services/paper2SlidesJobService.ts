@@ -1,8 +1,10 @@
 import { randomUUID } from 'crypto';
-import { Paper2SlidesService, Paper2SlidesOptions } from './paper2SlidesService';
+import { Paper2SlidesService } from './paper2SlidesService';
+import type { Paper2SlidesOptions } from '../types/paper2slides';
 import { FileService } from './fileService';
 import { WorkspaceService } from './workspaceService';
 import { HttpError } from '../errors';
+import { redisClient } from './redisService';
 
 type JobStatus = 'pending' | 'running' | 'completed' | 'failed';
 
@@ -26,6 +28,9 @@ type Paper2SlidesJob = {
   };
 };
 
+const JOB_TTL_SECONDS = 60 * 60 * 24;
+const jobKey = (jobId: string) => `paper2slides:job:${jobId}`;
+
 const isLikelyText = (file: any): boolean => {
   const mimeType = typeof file.mimeType === 'string' ? file.mimeType : 'application/octet-stream';
   if (mimeType.startsWith('text/')) return true;
@@ -44,6 +49,29 @@ export class Paper2SlidesJobService {
     this.fileService = fileService;
     this.workspaceService = workspaceService;
     this.paper2SlidesService = paper2SlidesService;
+  }
+
+  private async loadJob(jobId: string): Promise<Paper2SlidesJob | null> {
+    try {
+      const raw = await redisClient.get(jobKey(jobId));
+      if (!raw) {
+        return null;
+      }
+      const job = JSON.parse(raw) as Paper2SlidesJob;
+      this.jobs.set(jobId, job);
+      return job;
+    } catch (error) {
+      console.error('Failed to load Paper2Slides job from Redis', error);
+      return null;
+    }
+  }
+
+  private async saveJob(job: Paper2SlidesJob): Promise<void> {
+    try {
+      await redisClient.set(jobKey(job.id), JSON.stringify(job), { EX: JOB_TTL_SECONDS });
+    } catch (error) {
+      console.error('Failed to persist Paper2Slides job to Redis', error);
+    }
   }
 
   async createJob(params: {
@@ -73,13 +101,14 @@ export class Paper2SlidesJobService {
     };
 
     this.jobs.set(id, job);
+    await this.saveJob(job);
     // Fire-and-forget execution
     void this.runJob(id);
     return job;
   }
 
   async getJob(jobId: string, userId: string): Promise<Paper2SlidesJob> {
-    const job = this.jobs.get(jobId);
+    const job = this.jobs.get(jobId) ?? await this.loadJob(jobId);
     if (!job) {
       throw new HttpError(404, 'Job not found');
     }
@@ -96,6 +125,7 @@ export class Paper2SlidesJobService {
     job.status = 'running';
     job.updatedAt = new Date().toISOString();
     this.jobs.set(jobId, job);
+    await this.saveJob(job);
 
     try {
       const paper2SlidesFiles: Array<{ name: string; buffer: Buffer }> = [];
@@ -131,12 +161,14 @@ export class Paper2SlidesJobService {
       job.result = result;
       job.updatedAt = new Date().toISOString();
       this.jobs.set(jobId, job);
+      await this.saveJob(job);
     } catch (error: any) {
       const message = error?.message || String(error);
       job.status = 'failed';
       job.error = message;
       job.updatedAt = new Date().toISOString();
       this.jobs.set(jobId, job);
+      await this.saveJob(job);
     }
   }
 }

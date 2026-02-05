@@ -5,6 +5,8 @@ metadata:
   namespace: helpudoc
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: helpudoc-redis
@@ -19,6 +21,13 @@ spec:
           args: ["--appendonly", "yes"]
           ports:
             - containerPort: 6379
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
           volumeMounts:
             - name: redis-data
               mountPath: /data

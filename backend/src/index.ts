@@ -1,5 +1,11 @@
 import * as dotenv from 'dotenv';
-dotenv.config();
+
+const envFile = process.env.ENV_FILE;
+if (envFile) {
+  dotenv.config({ path: envFile });
+} else {
+  dotenv.config();
+}
 import express from 'express';
 import helmet from 'helmet';
 import cors from 'cors';

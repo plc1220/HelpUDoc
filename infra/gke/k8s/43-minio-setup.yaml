@@ -4,7 +4,14 @@ metadata:
   name: helpudoc-minio-setup
   namespace: helpudoc
 spec:
+  manualSelector: true
+  selector:
+    matchLabels:
+      app: helpudoc-minio-setup
   template:
+    metadata:
+      labels:
+        app: helpudoc-minio-setup
     spec:
       restartPolicy: OnFailure
       containers:
