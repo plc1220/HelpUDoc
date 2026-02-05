@@ -9,6 +9,8 @@ data:
       encode gzip zstd
       @api path /api*
       reverse_proxy @api backend:3000
+      @s3 path /helpudoc*
+      reverse_proxy @s3 minio:9000
       reverse_proxy helpudoc-frontend:80
     }
 ---
@@ -33,6 +35,13 @@ spec:
           ports:
             - containerPort: 80
             - containerPort: 443
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "200m"
+              memory: "256Mi"
           volumeMounts:
             - name: caddy-config
               mountPath: /etc/caddy/Caddyfile

@@ -84,3 +84,52 @@ export async function fetchRagStatuses(
   const res = await client.post(`/rag/workspaces/${workspaceId}/status`, { files });
   return res.data?.statuses || {};
 }
+
+export type Paper2SlidesFilePayload = {
+  name: string;
+  contentB64: string;
+};
+
+export type Paper2SlidesOptionsPayload = {
+  output?: 'slides' | 'poster';
+  content?: 'paper' | 'general';
+  style?: string;
+  length?: 'short' | 'medium' | 'long';
+  mode?: 'fast' | 'normal';
+  parallel?: number | boolean;
+  fromStage?: 'rag' | 'summary' | 'plan' | 'generate' | 'analysis';
+  exportPptx?: boolean;
+};
+
+export type Paper2SlidesImagePayload = {
+  name: string;
+  contentB64: string;
+};
+
+export type Paper2SlidesRunResponse = {
+  pdfB64?: string;
+  pptxB64?: string;
+  images: Paper2SlidesImagePayload[];
+};
+
+export async function runPaper2Slides(payload: {
+  files: Paper2SlidesFilePayload[];
+  options: Paper2SlidesOptionsPayload;
+}): Promise<Paper2SlidesRunResponse> {
+  const res = await client.post(`/paper2slides/run`, payload, {
+    maxContentLength: Infinity,
+    maxBodyLength: Infinity,
+  });
+  return res.data;
+}
+
+export async function exportPaper2SlidesPptx(payload: {
+  fileName: string;
+  contentB64: string;
+}): Promise<{ pptxB64: string }> {
+  const res = await client.post(`/paper2slides/export-pptx`, payload, {
+    maxContentLength: Infinity,
+    maxBodyLength: Infinity,
+  });
+  return res.data;
+}

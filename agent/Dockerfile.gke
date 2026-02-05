@@ -1,5 +1,6 @@
 FROM python:3.12-slim
-WORKDIR /app
+
+WORKDIR /app/agent
 
 # System libs required by mineru/opencv (paper2slides parser)
 RUN apt-get update \
@@ -15,7 +16,11 @@ RUN apt-get update \
     libsm6 \
   && rm -rf /var/lib/apt/lists/*
 
-COPY . .
-RUN pip install --no-cache-dir -r requirements.txt
+# Copy agent code and shared skills into the image so list_skills works in GKE.
+COPY agent/ /app/agent/
+COPY skills/ /app/skills/
+
+RUN pip install --no-cache-dir -r /app/agent/requirements.txt
+
 EXPOSE 8001
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001"]

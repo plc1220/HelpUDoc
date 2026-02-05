@@ -6,6 +6,7 @@ build/
 .env*
 !.env.example
 !*/.env.example
+env/**/*.env
 
 # Universal
 .DS_Store

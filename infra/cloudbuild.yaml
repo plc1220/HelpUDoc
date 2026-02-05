@@ -10,7 +10,7 @@ steps:
         'gcr.io/$PROJECT_ID/helpudoc-backend:$BUILD_ID',
         '-t',
         'gcr.io/$PROJECT_ID/helpudoc-backend:latest',
-        'backend',
+        '.',
       ]
   - name: 'gcr.io/cloud-builders/docker'
     args: ['push', 'gcr.io/$PROJECT_ID/helpudoc-backend:$BUILD_ID']
@@ -42,11 +42,13 @@ steps:
     args:
       [
         'build',
+        '-f',
+        'agent/Dockerfile.gke',
         '-t',
         'gcr.io/$PROJECT_ID/helpudoc-agent:$BUILD_ID',
         '-t',
         'gcr.io/$PROJECT_ID/helpudoc-agent:latest',
-        'agent',
+        '.',
       ]
   - name: 'gcr.io/cloud-builders/docker'
     args: ['push', 'gcr.io/$PROJECT_ID/helpudoc-agent:$BUILD_ID']
@@ -71,6 +73,45 @@ steps:
       - '--location=$_GKE_LOCATION'
       - '--cluster=$_GKE_CLUSTER'
 
+  # 6. E2E check (fails build on mixed-content / localhost assets)
+  - name: 'node:20-bookworm'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        set -euo pipefail
+        if [ "${_RUN_E2E}" != "true" ]; then
+          echo "Skipping e2e (set _RUN_E2E=true to enable)"
+          exit 0
+        fi
+
+        export E2E_BASE_URL="${_E2E_BASE_URL}"
+        echo "Waiting for ${_E2E_BASE_URL}/ to return 200..."
+        node - <<'NODE'
+        const base = process.env.E2E_BASE_URL;
+        const url = new URL('/', base).toString();
+        const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+        (async () => {
+          for (let i = 0; i < 60; i += 1) {
+            try {
+              const res = await fetch(url, { redirect: 'follow' });
+              if (res.status === 200) {
+                process.exit(0);
+              }
+            } catch {}
+            await sleep(5000);
+          }
+          console.error(`Timed out waiting for ${url}`);
+          process.exit(1);
+        })();
+        NODE
+
+        cd frontend
+        npm ci
+        npx playwright install --with-deps chromium
+        npx playwright test --project=chromium
+
 images:
   - 'gcr.io/$PROJECT_ID/helpudoc-backend:$BUILD_ID'
   - 'gcr.io/$PROJECT_ID/helpudoc-frontend:$BUILD_ID'
@@ -80,6 +121,8 @@ substitutions:
   _GKE_CLUSTER: helpudoc-cluster
   _GKE_LOCATION: asia-southeast1
   _VITE_GOOGLE_CLIENT_ID: 16646144790-fvdv7liepgo18aiu20n3btmdr56l33pq.apps.googleusercontent.com
+  _RUN_E2E: "true"
+  _E2E_BASE_URL: "https://lc-demo.com"
 
 options:
   logging: CLOUD_LOGGING_ONLY

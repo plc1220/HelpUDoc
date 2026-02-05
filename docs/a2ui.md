@@ -102,9 +102,8 @@ The A2UI spec also allows streaming-style orders; those can still be converted i
 ]
 
 ## Renderer implementation notes
-- The canvas uses the official A2UI Lit renderer via the `<a2ui-surface>` web component.
-- The renderer is loaded from `VITE_A2UI_WEB_LIB_URL` (defaults to `https://esm.sh/@a2ui/web-lib@0.8.0`) because the Lit package is not published to npm yet.
-- If the Lit renderer is unavailable, the UI falls back to showing raw A2UI JSON.
+- The canvas uses CopilotKit’s `@copilotkit/a2ui-renderer` (React) to render A2UI payloads.
+- The renderer expects a JSON array of A2UI events and converts `surfaceUpdate` + `dataModelUpdate` into a component tree and data model.
 - If a payload is invalid (not an array, unknown event keys, etc.), the renderer shows an error message.
 
 ## Troubleshooting

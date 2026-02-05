@@ -5,6 +5,8 @@ metadata:
   namespace: helpudoc
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: helpudoc-app
@@ -15,9 +17,16 @@ spec:
     spec:
       containers:
         - name: backend
-          image: helpudoc-backend:latest
+          image: gcr.io/my-rd-coe-demo-gen-ai/helpudoc-backend:latest
           ports:
             - containerPort: 3000
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
           env:
             - name: NODE_ENV
               value: production
@@ -98,23 +107,63 @@ spec:
           volumeMounts:
             - name: workspace-data
               mountPath: /app/workspaces
+            - name: skills-data
+              mountPath: /app/skills
         - name: agent
-          image: helpudoc-agent:latest
+          image: gcr.io/my-rd-coe-demo-gen-ai/helpudoc-agent:latest
           ports:
             - containerPort: 8001
+          resources:
+            requests:
+              cpu: "750m"
+              memory: "3Gi"
+            limits:
+              cpu: "1500m"
+              memory: "4Gi"
           env:
             - name: REDIS_URL
               value: redis://redis:6379
+            - name: RAG_PARSER_PIPELINE
+              value: basic
+            - name: POSTGRES_HOST
+              value: postgres
+            - name: POSTGRES_PORT
+              value: "5432"
+            - name: POSTGRES_DB
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: POSTGRES_DB
+            - name: POSTGRES_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: POSTGRES_PASSWORD
             - name: GEMINI_API_KEY
               valueFrom:
                 secretKeyRef:
                   name: helpudoc-secrets
                   key: GEMINI_API_KEY
+            - name: RAG_LLM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: RAG_LLM_API_KEY
             - name: RAG_OFFLINE
               valueFrom:
                 configMapKeyRef:
                   name: helpudoc-config
                   key: RAG_OFFLINE
+            - name: LLM_MODEL
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: LLM_MODEL
             - name: WORKSPACE_ROOT
               valueFrom:
                 configMapKeyRef:
@@ -147,10 +196,17 @@ spec:
           volumeMounts:
             - name: workspace-data
               mountPath: /app/workspaces
+            - name: skills-data
+              mountPath: /app/skills
+            - name: skills-data
+              mountPath: /skills
       volumes:
         - name: workspace-data
           persistentVolumeClaim:
             claimName: workspace-pvc
+        - name: skills-data
+          persistentVolumeClaim:
+            claimName: skills-pvc
 ---
 apiVersion: v1
 kind: Service

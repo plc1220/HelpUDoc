@@ -36,7 +36,14 @@ pip install -r requirements.txt
 
 ### Environment variables
 
-The service loads `agent/.env`. Make sure it includes:
+The service reads variables from `ENV_FILE` if provided; otherwise it falls back to `agent/.env`.
+For local development, copy `env/local/dev.env.example` to `env/local/dev.env` and export it:
+
+```bash
+set -a; source ../env/local/dev.env; set +a
+```
+
+Required values:
 
 - `GEMINI_API_KEY` or `GOOGLE_CLOUD_API_KEY`
 - `RAG_LLM_API_KEY` (if running the RAG worker)
@@ -47,7 +54,7 @@ When running with Docker Compose, additional variables are provided automaticall
 ### Running the application
 
 ```bash
-uvicorn main:app --host 0.0.0.0 --port 8001 --reload
+ENV_FILE=../env/local/dev.env uvicorn main:app --host 0.0.0.0 --port 8001 --reload
 ```
 
 The service will be available at `http://localhost:8001`.
@@ -60,7 +67,7 @@ From the repo root:
 docker compose -f infra/docker-compose.yml up --build agent
 ```
 
-Compose will load `agent/.env` and connect the agent to the shared Redis and MinIO services.
+Compose will connect the agent to the shared Redis and MinIO services using `env/local/stack.env` if provided.
 
 ## Useful scripts
 

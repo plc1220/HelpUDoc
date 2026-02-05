@@ -9,7 +9,9 @@ data:
   POSTGRES_DB: helpudoc
   POSTGRES_USER: helpudoc
   S3_BUCKET_NAME: helpudoc
-  S3_PUBLIC_BASE_URL: http://minio:9000/helpudoc
+  # Same-origin path; Caddy proxies this to the in-cluster MinIO service.
+  S3_PUBLIC_BASE_URL: /helpudoc
   S3_FORCE_PATH_STYLE: "true"
   WORKSPACE_ROOT: /app/workspaces
   RAG_OFFLINE: "true"
+  LLM_MODEL: gemini-3-flash-preview

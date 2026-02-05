@@ -224,13 +224,65 @@ const buildA2uiFileName = (value: string) => {
   return `a2ui/${label}-${timestamp}.a2ui.json`;
 };
 
+const sanitizeJsonSource = (value: string) =>
+  value.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFEFF]/g, '');
+
 const parseJsonIfPossible = (value: string) => {
   if (!value) return null;
   try {
-    return JSON.parse(value);
+    return JSON.parse(sanitizeJsonSource(value));
   } catch {
     return null;
   }
+};
+
+const A2UI_ALLOWED_MESSAGE_KEYS = new Set([
+  'beginRendering',
+  'surfaceUpdate',
+  'dataModelUpdate',
+  'deleteSurface',
+]);
+
+const normalizeA2uiPayload = (parsed: unknown) => {
+  if (typeof parsed === 'string') {
+    const reparsed = parseJsonIfPossible(parsed);
+    if (reparsed != null) {
+      return normalizeA2uiPayload(reparsed);
+    }
+    return parsed;
+  }
+  if (Array.isArray(parsed)) {
+    return parsed;
+  }
+  if (parsed && typeof parsed === 'object') {
+    const record = parsed as Record<string, unknown>;
+    const nested = record.events ?? record.messages ?? record.a2ui;
+    if (Array.isArray(nested)) {
+      return nested;
+    }
+    const keys = Object.keys(record);
+    if (keys.length === 1 && A2UI_ALLOWED_MESSAGE_KEYS.has(keys[0])) {
+      return [record];
+    }
+  }
+  return parsed;
+};
+
+const parseJsonLines = (value: string) => {
+  const lines = value
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (!lines.length) return null;
+  const events: unknown[] = [];
+  for (const line of lines) {
+    const parsed = parseJsonIfPossible(line);
+    if (!parsed) {
+      return null;
+    }
+    events.push(parsed);
+  }
+  return events.length ? events : null;
 };
 
 const extractJsonSubstring = (value: string) => {
@@ -279,8 +331,20 @@ const extractJsonSubstring = (value: string) => {
   return null;
 };
 
-const extractA2uiPayload = (value: string) => {
-  const trimmed = value.trim();
+const extractBracketedJson = (value: string) => {
+  const start = value.indexOf('[');
+  const end = value.lastIndexOf(']');
+  if (start < 0 || end < 0 || end <= start) return null;
+  return value.slice(start, end + 1);
+};
+
+type A2uiPayloadResult = {
+  payload: unknown;
+  raw: string;
+};
+
+const extractA2uiPayload = (value: string): A2uiPayloadResult | null => {
+  const trimmed = sanitizeJsonSource(value).trim();
   if (!trimmed) return null;
 
   const fenceMatch = trimmed.match(/```(?:json|a2ui|a2ui-json)?\s*([\s\S]*?)```/i);
@@ -288,7 +352,11 @@ const extractA2uiPayload = (value: string) => {
     const candidate = fenceMatch[1].trim();
     const parsed = parseJsonIfPossible(candidate);
     if (parsed) {
-      return { payload: parsed, raw: candidate };
+      return { payload: normalizeA2uiPayload(parsed), raw: candidate };
+    }
+    const jsonLines = parseJsonLines(candidate);
+    if (jsonLines) {
+      return { payload: normalizeA2uiPayload(jsonLines), raw: candidate };
     }
   }
 
@@ -297,19 +365,37 @@ const extractA2uiPayload = (value: string) => {
     const candidate = blockMatch[1].trim();
     const parsed = parseJsonIfPossible(candidate);
     if (parsed) {
-      return { payload: parsed, raw: candidate };
+      return { payload: normalizeA2uiPayload(parsed), raw: candidate };
+    }
+    const jsonLines = parseJsonLines(candidate);
+    if (jsonLines) {
+      return { payload: normalizeA2uiPayload(jsonLines), raw: candidate };
     }
   }
 
   const directParsed = parseJsonIfPossible(trimmed);
   if (directParsed) {
-    return { payload: directParsed, raw: trimmed };
+    return { payload: normalizeA2uiPayload(directParsed), raw: trimmed };
+  }
+  const jsonLines = parseJsonLines(trimmed);
+  if (jsonLines) {
+    return { payload: normalizeA2uiPayload(jsonLines), raw: trimmed };
   }
 
   const substring = extractJsonSubstring(trimmed);
   const parsed = substring ? parseJsonIfPossible(substring) : null;
-  if (parsed) {
-    return { payload: parsed, raw: substring };
+  if (parsed && substring) {
+    return { payload: normalizeA2uiPayload(parsed), raw: substring };
+  }
+  const subJsonLines = substring ? parseJsonLines(substring) : null;
+  if (subJsonLines && substring) {
+    return { payload: normalizeA2uiPayload(subJsonLines), raw: substring };
+  }
+
+  const bracketed = extractBracketedJson(trimmed);
+  const bracketParsed = bracketed ? parseJsonIfPossible(bracketed) : null;
+  if (bracketParsed && bracketed) {
+    return { payload: normalizeA2uiPayload(bracketParsed), raw: bracketed };
   }
 
   return null;
@@ -629,6 +715,7 @@ export default function WorkspacePage() {
   const [isPptxExporting, setIsPptxExporting] = useState(false);
   const streamAbortMapRef = useRef<Map<string, AbortController>>(new Map());
   const presentationJobPollsRef = useRef<Map<string, number>>(new Map());
+  const pendingPresentationJobsRef = useRef<Map<string, Array<{ jobId: string; label: string }>>>(new Map());
   const conversationMessagesRef = useRef<Record<string, ConversationMessage[]>>({});
   const agentMessageBufferRef = useRef<Map<ConversationMessage['id'], string>>(new Map());
   const agentChunkBufferRef = useRef<Map<string, Map<number, string>>>(new Map());
@@ -998,22 +1085,28 @@ export default function WorkspacePage() {
             if (!isValidElement(child)) {
               return false;
             }
+            const childProps = child.props as {
+              inline?: boolean;
+              node?: { tagName?: string };
+              className?: string;
+              children?: ReactNode;
+            };
             if (typeof child.type === 'string') {
               return BLOCK_LEVEL_TAGS.includes(child.type);
             }
-            if (child.props?.inline === false) {
+            if (childProps.inline === false) {
               return true;
             }
-            if (child.props?.node?.tagName && BLOCK_LEVEL_TAGS.includes(child.props.node.tagName)) {
+            if (childProps.node?.tagName && BLOCK_LEVEL_TAGS.includes(childProps.node.tagName)) {
               return true;
             }
-            if (child.props?.node?.tagName === 'code') {
-              const content = extractCodeText(child.props.children);
+            if (childProps.node?.tagName === 'code') {
+              const content = extractCodeText(childProps.children);
               const isInline = inferInlineCode(
-                child.props.inline,
-                child.props.className,
+                childProps.inline,
+                childProps.className,
                 content,
-                child.props.node
+                childProps.node
               );
               return !isInline;
             }
@@ -1247,6 +1340,7 @@ export default function WorkspacePage() {
       : 'Editor';
   const showFileActions = !isA2uiCanvas;
   const showA2uiDraftAction = !isA2uiCanvas && Boolean(a2uiDraft);
+  const canViewA2uiFile = Boolean(isA2uiFile && parsedA2uiFile);
 
   const handleDownloadActiveFile = useCallback(() => {
     if (!activeFile || !(isMarkdownFile || isHtmlFile)) {
@@ -1345,7 +1439,13 @@ export default function WorkspacePage() {
     try {
       setA2uiStatusMessage('Saving A2UI...');
       const filename = buildA2uiFileName(a2uiDraft.prompt);
-      const content = a2uiDraft.raw || JSON.stringify(a2uiDraft.payload, null, 2);
+      let content = a2uiDraft.raw || '';
+      if (!content.trim()) {
+        content = JSON.stringify(a2uiDraft.payload, null, 2);
+      }
+      if (!content.trim()) {
+        content = '[]';
+      }
       const artifactFile = new File([content], filename, { type: 'application/json' });
       const created = await createFile(selectedWorkspace.id, artifactFile);
       try {
@@ -1373,6 +1473,10 @@ export default function WorkspacePage() {
 
   const addPendingPresentationPlaceholder = useCallback(
     (jobId: string, workspaceId: string, label: string) => {
+      const existing = pendingPresentationJobsRef.current.get(workspaceId) || [];
+      if (!existing.some((entry) => entry.jobId === jobId)) {
+        pendingPresentationJobsRef.current.set(workspaceId, [...existing, { jobId, label }]);
+      }
       const placeholder: WorkspaceFile = {
         id: `paperjob-${jobId}`,
         name: `presentations/${label}/ (pending)`,
@@ -1393,6 +1497,14 @@ export default function WorkspacePage() {
       const next = new Set(prev);
       next.delete(`paperjob-${jobId}`);
       return next;
+    });
+    pendingPresentationJobsRef.current.forEach((entries, workspaceId) => {
+      const filtered = entries.filter((entry) => entry.jobId !== jobId);
+      if (filtered.length) {
+        pendingPresentationJobsRef.current.set(workspaceId, filtered);
+      } else {
+        pendingPresentationJobsRef.current.delete(workspaceId);
+      }
     });
   }, []);
 
@@ -1530,7 +1642,21 @@ export default function WorkspacePage() {
     if (!workspaceId) return;
     try {
       const files = await getFiles(workspaceId);
-      setFiles(files);
+      const pending = pendingPresentationJobsRef.current.get(workspaceId) || [];
+      if (pending.length) {
+        const placeholders: WorkspaceFile[] = pending.map((entry) => ({
+          id: `paperjob-${entry.jobId}`,
+          name: `presentations/${entry.label}/ (pending)`,
+          workspaceId,
+          path: `presentations/${entry.label}/`,
+          mimeType: 'application/vnd.helpudoc.paper2slides-job',
+          publicUrl: null,
+          content: undefined,
+        }));
+        setFiles([...files, ...placeholders]);
+      } else {
+        setFiles(files);
+      }
     } catch (error) {
       console.error('Failed to load files for workspace', error);
     }
@@ -2541,7 +2667,12 @@ export default function WorkspacePage() {
         stopRequestedRef.current = false;
         const a2uiRun = a2uiRunsRef.current.get(runId);
         if (a2uiRun) {
-          const raw = agentMessageBufferRef.current.get(a2uiRun.placeholderId) || '';
+          const raw = getBufferedAgentText({
+            ...runInfo,
+            placeholderId: a2uiRun.placeholderId,
+            conversationId: a2uiRun.conversationId,
+            turnId: runInfo.turnId,
+          });
           const extracted = extractA2uiPayload(raw);
           if (extracted) {
             setA2uiDraft({
@@ -2555,8 +2686,16 @@ export default function WorkspacePage() {
             setIsEditMode(false);
             setA2uiStatusMessage('A2UI ready.');
           } else {
+            setA2uiDraft({
+              payload: raw,
+              raw,
+              prompt: a2uiRun.prompt,
+              runId,
+              createdAt: new Date().toISOString(),
+            });
+            setCanvasMode('a2ui');
+            setIsEditMode(false);
             addLocalSystemMessage('Failed to parse A2UI output. Make sure the response is valid JSON.');
-            setCanvasMode('file');
             setA2uiStatusMessage('Invalid A2UI output.');
           }
           setIsA2uiPending(false);
@@ -2574,6 +2713,7 @@ export default function WorkspacePage() {
       ensureAgentPlaceholder,
       handleStreamChunk,
       flushBufferedAgentChunks,
+      getBufferedAgentText,
       addLocalSystemMessage,
       removeActiveRun,
       selectedWorkspace?.id,
@@ -3053,8 +3193,10 @@ export default function WorkspacePage() {
               await finalizeMessage('completed', status.result, status.updatedAt);
               stopPresentationProgress('success');
               removePendingPresentationPlaceholder(startResponse.jobId);
-              await loadFilesForWorkspace(workspaceId);
-              await refreshConversationHistory(workspaceId);
+              if (selectedWorkspace?.id === workspaceId) {
+                await loadFilesForWorkspace(workspaceId);
+                await refreshConversationHistory(workspaceId);
+              }
               return true;
             }
             if (status.status === 'failed') {
@@ -3126,6 +3268,7 @@ export default function WorkspacePage() {
       getPaper2SlidesJob,
       removePendingPresentationPlaceholder,
       addPendingPresentationPlaceholder,
+      selectedWorkspace?.id,
       setStreamingForConversation,
       updateMessagesForConversation,
     ],
@@ -3965,6 +4108,24 @@ export default function WorkspacePage() {
                           View A2UI
                         </button>
                       )}
+                      {showFileActions && canViewA2uiFile && (
+                        <button
+                          type="button"
+                          className="rounded-lg px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-gray-200"
+                          onClick={() => setCanvasMode('a2ui')}
+                        >
+                          View A2UI
+                        </button>
+                      )}
+                      {isA2uiCanvas && !a2uiDraft && isA2uiFile && (
+                        <button
+                          type="button"
+                          className="rounded-lg px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-gray-200"
+                          onClick={() => setCanvasMode('file')}
+                        >
+                          Back to file
+                        </button>
+                      )}
                     </div>
                   </div>
                   <div className="flex-1 overflow-y-auto overflow-x-hidden min-h-0">
@@ -4334,17 +4495,6 @@ export default function WorkspacePage() {
                             </span>
                           );
                         })}
-                        <span
-                          className={`text-xs font-semibold ${
-                            presentationStatus === 'error' ? 'text-red-600' : 'text-emerald-700'
-                          }`}
-                        >
-                          {presentationStatus === 'running'
-                            ? 'Running…'
-                            : presentationStatus === 'success'
-                              ? 'Completed'
-                              : 'Failed'}
-                        </span>
                       </div>
                     )}
                     {chatAttachments.length > 0 && (

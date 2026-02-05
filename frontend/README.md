@@ -18,7 +18,7 @@ npm install
 
 ### Environment variables
 
-Create or update `frontend/.env` with:
+Set the variables in your shell (recommended) or create `frontend/.env.local` with:
 
 - `VITE_API_URL` (default: `http://localhost:3000/api`)
 - `VITE_COLLAB_URL` (default: `ws://localhost:1234`)

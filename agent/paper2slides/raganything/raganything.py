@@ -22,7 +22,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 # Load environment variables from .env file BEFORE importing LightRAG
 # This is critical for TIKTOKEN_CACHE_DIR to work properly in offline environments
 # The OS environment variables take precedence over the .env file
-load_dotenv(dotenv_path=".env", override=False)
+_env_file = os.getenv("ENV_FILE")
+if _env_file:
+    load_dotenv(dotenv_path=_env_file, override=False)
+else:
+    load_dotenv(dotenv_path=".env", override=False)
 
 from lightrag import LightRAG
 from lightrag.utils import logger
