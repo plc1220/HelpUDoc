@@ -5,7 +5,11 @@ metadata:
   namespace: helpudoc
 data:
   Caddyfile: |
-    lc-demo.com, www.lc-demo.com {
+    {
+      auto_https off
+    }
+
+    :80 {
       encode gzip zstd
       @api path /api*
       reverse_proxy @api backend:3000
