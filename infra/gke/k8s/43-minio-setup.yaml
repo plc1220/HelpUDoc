@@ -3,15 +3,15 @@ kind: Job
 metadata:
   name: helpudoc-minio-setup
   namespace: helpudoc
+  labels:
+    app: helpudoc-minio-setup
+    app.kubernetes.io/managed-by: gcp-cloud-build-deploy
 spec:
-  manualSelector: true
-  selector:
-    matchLabels:
-      app: helpudoc-minio-setup
   template:
     metadata:
       labels:
         app: helpudoc-minio-setup
+        app.kubernetes.io/managed-by: gcp-cloud-build-deploy
     spec:
       restartPolicy: OnFailure
       containers:
