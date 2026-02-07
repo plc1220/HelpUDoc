@@ -1,3 +1,67 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: helpudoc-agent-runtime-default
+  namespace: helpudoc
+data:
+  runtime.yaml: |
+    model:
+      provider: gemini
+      name: gemini-3-flash-preview
+      fast_name: gemini-3-flash-preview
+      pro_name: gemini-3-pro-preview
+      image_name: gemini-3-pro-image-preview
+      project: my-rd-coe-demo-gen-ai
+      location: us-central1
+      #api_key: ${GOOGLE_CLOUD_API_KEY}
+      api_key: ${GEMINI_API_KEY}
+      use_vertex_ai: false
+
+    backend:
+      workspace_root: backend/workspaces
+      virtual_mode: true
+      skills_root: skills
+      sync_skills_to_workspace: false
+      interrupt_on:
+        write_file: false
+        read_file: false
+        edit_file: false
+
+    tools:
+      - name: google_search
+        kind: builtin
+        description: Gemini-native Google search tool
+      - name: google_grounded_search
+        kind: builtin
+        description: Gemini search with citations for proposal research
+      - name: gemini_image
+        kind: builtin
+        description: Generate or edit images using Gemini
+      - name: data_agent_tools
+        entrypoint: helpudoc_agent.data_agent_tools:build_data_agent_tools
+        description: Tools for Data Agent (DuckDB, Charts)
+      - name: get_image_url
+        kind: builtin
+        description: Get public URLs for images stored in MinIO/S3
+      - name: rag_query
+        kind: builtin
+        description: Query LightRAG for workspace context
+      - name: append_to_report
+        kind: builtin
+        description: Stitch generated proposal sections into a final document
+      - name: list_skills
+        kind: builtin
+        description: List available skills and their descriptions
+      - name: load_skill
+        kind: builtin
+        description: Load full skill content from the shared registry
+
+    mcp_servers:
+      - name: research_fs
+        transport: stdio
+        command: ./scripts/start_mcp_fs.sh
+        description: Example MCP filesystem server
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -15,9 +79,26 @@ spec:
       labels:
         app: helpudoc-app
     spec:
+      initContainers:
+        - name: init-agent-config
+          image: busybox:1.36
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+              if [ ! -f /config/runtime.yaml ]; then
+                cp /defaults/runtime.yaml /config/runtime.yaml
+              fi
+          volumeMounts:
+            - name: agent-config
+              mountPath: /config
+            - name: agent-config-default
+              mountPath: /defaults
       containers:
         - name: backend
           image: gcr.io/my-rd-coe-demo-gen-ai/helpudoc-backend:latest
+          imagePullPolicy: Always
           ports:
             - containerPort: 3000
           resources:
@@ -99,6 +180,8 @@ spec:
                 configMapKeyRef:
                   name: helpudoc-config
                   key: S3_FORCE_PATH_STYLE
+            - name: AGENT_CONFIG_PATH
+              value: /config/runtime.yaml
             - name: WORKSPACE_ROOT
               valueFrom:
                 configMapKeyRef:
@@ -109,8 +192,11 @@ spec:
               mountPath: /app/workspaces
             - name: skills-data
               mountPath: /app/skills
+            - name: agent-config
+              mountPath: /config
         - name: agent
           image: gcr.io/my-rd-coe-demo-gen-ai/helpudoc-agent:latest
+          imagePullPolicy: Always
           ports:
             - containerPort: 8001
           resources:
@@ -124,7 +210,11 @@ spec:
             - name: REDIS_URL
               value: redis://redis:6379
             - name: RAG_PARSER_PIPELINE
-              value: basic
+              value: rageverything
+            - name: RAGANYTHING_PARSER
+              value: docling
+            - name: PARSER
+              value: docling
             - name: POSTGRES_HOST
               value: postgres
             - name: POSTGRES_PORT
@@ -164,6 +254,8 @@ spec:
                 configMapKeyRef:
                   name: helpudoc-config
                   key: LLM_MODEL
+            - name: AGENT_CONFIG_PATH
+              value: /config/runtime.yaml
             - name: WORKSPACE_ROOT
               valueFrom:
                 configMapKeyRef:
@@ -200,6 +292,8 @@ spec:
               mountPath: /app/skills
             - name: skills-data
               mountPath: /skills
+            - name: agent-config
+              mountPath: /config
       volumes:
         - name: workspace-data
           persistentVolumeClaim:
@@ -207,6 +301,12 @@ spec:
         - name: skills-data
           persistentVolumeClaim:
             claimName: skills-pvc
+        - name: agent-config
+          persistentVolumeClaim:
+            claimName: agent-config-pvc
+        - name: agent-config-default
+          configMap:
+            name: helpudoc-agent-runtime-default
 ---
 apiVersion: v1
 kind: Service

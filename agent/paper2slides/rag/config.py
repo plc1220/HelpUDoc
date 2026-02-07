@@ -87,7 +87,7 @@ class StorageConfig:
 class ParserConfig:
     """Paper parser settings."""
     
-    parser: str = field(default_factory=lambda: os.getenv("PARSER", "mineru"))
+    parser: str = field(default_factory=lambda: os.getenv("PARSER") or os.getenv("RAGANYTHING_PARSER") or "mineru")
     """Parser: 'mineru' or 'docling'."""
     
     parse_method: str = field(default_factory=lambda: os.getenv("PARSE_METHOD", "auto"))
