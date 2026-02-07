@@ -119,7 +119,7 @@ images:
 
 substitutions:
   _GKE_CLUSTER: helpudoc-cluster
-  _GKE_LOCATION: asia-southeast1
+  _GKE_LOCATION: asia-southeast1-a
   _VITE_GOOGLE_CLIENT_ID: 16646144790-fvdv7liepgo18aiu20n3btmdr56l33pq.apps.googleusercontent.com
   _RUN_E2E: "true"
   _E2E_BASE_URL: "https://lc-demo.com"
