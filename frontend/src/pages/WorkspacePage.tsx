@@ -709,7 +709,6 @@ export default function WorkspacePage() {
     exportPptx: false,
   });
   const [presentationStatus, setPresentationStatus] = useState<'idle' | 'running' | 'success' | 'error'>('idle');
-  const [presentationStageIndex, setPresentationStageIndex] = useState<number>(-1);
   const [isPresentationModalOpen, setIsPresentationModalOpen] = useState(false);
   const [draftPresentationOptions, setDraftPresentationOptions] = useState<PresentationOptionsState | null>(null);
   const [isPptxExporting, setIsPptxExporting] = useState(false);
@@ -729,7 +728,6 @@ export default function WorkspacePage() {
   const stopRequestedRef = useRef(false);
   const chatInputRef = useRef<HTMLTextAreaElement | null>(null);
   const attachmentInputRef = useRef<HTMLInputElement | null>(null);
-  const presentationProgressTimerRef = useRef<number | null>(null);
   const autoSaveTimerRef = useRef<number | null>(null);
   const lastAutoSavedContentRef = useRef<string>('');
   const [isMentionOpen, setIsMentionOpen] = useState(false);
@@ -969,33 +967,13 @@ export default function WorkspacePage() {
 
   const startPresentationProgress = useCallback(() => {
     setPresentationStatus('running');
-    setPresentationStageIndex(0);
-    if (presentationProgressTimerRef.current !== null) {
-      window.clearInterval(presentationProgressTimerRef.current);
-    }
-    presentationProgressTimerRef.current = window.setInterval(() => {
-      setPresentationStageIndex((prev) => {
-        if (prev < PAPER2SLIDES_STAGE_ORDER.length - 1) {
-          return prev + 1;
-        }
-        return prev;
-      });
-    }, 1400);
   }, []);
 
   const stopPresentationProgress = useCallback(
     (status: 'success' | 'error' = 'success') => {
-      if (presentationProgressTimerRef.current !== null) {
-        window.clearInterval(presentationProgressTimerRef.current);
-        presentationProgressTimerRef.current = null;
-      }
       setPresentationStatus(status);
-      setPresentationStageIndex((current) =>
-        status === 'success' ? PAPER2SLIDES_STAGE_ORDER.length - 1 : current,
-      );
       window.setTimeout(() => {
         setPresentationStatus('idle');
-        setPresentationStageIndex(-1);
       }, 1500);
     },
     [],
@@ -1248,9 +1226,6 @@ export default function WorkspacePage() {
 
   useEffect(() => {
     return () => {
-      if (presentationProgressTimerRef.current !== null) {
-        window.clearInterval(presentationProgressTimerRef.current);
-      }
       presentationJobPollsRef.current.forEach((timerId) => window.clearInterval(timerId));
       presentationJobPollsRef.current.clear();
     };
@@ -4472,31 +4447,6 @@ export default function WorkspacePage() {
                 </div>
                 <div className="p-4 bg-white border-t border-gray-100">
                   <div className="relative rounded-xl border border-gray-200 bg-white shadow-sm transition-all focus-within:border-blue-500 focus-within:ring-1 focus-within:ring-blue-500">
-                    {presentationStatus !== 'idle' && (
-                      <div className="flex flex-wrap items-center gap-2 px-3 pt-3">
-                        {PAPER2SLIDES_STAGE_ORDER.map((stage, index) => {
-                          const isActive = presentationStatus === 'running' && index === presentationStageIndex;
-                          const isDone =
-                            presentationStatus === 'success' ||
-                            (presentationStatus === 'running' && index < presentationStageIndex);
-                          const label = stage === 'rag' ? 'RAG' : stage.charAt(0).toUpperCase() + stage.slice(1);
-                          return (
-                            <span
-                              key={stage}
-                              className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide ${
-                                isDone
-                                  ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-                                  : isActive
-                                    ? 'border-blue-200 bg-blue-50 text-blue-700'
-                                    : 'border-slate-200 bg-slate-50 text-slate-500'
-                              }`}
-                            >
-                              {label}
-                            </span>
-                          );
-                        })}
-                      </div>
-                    )}
                     {chatAttachments.length > 0 && (
                       <div className="flex flex-wrap gap-2 px-3 pt-3">
                         {chatAttachments.map((file, index) => (
