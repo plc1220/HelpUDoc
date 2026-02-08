@@ -61,9 +61,9 @@ steps:
       - 'bash'
       - '-c'
       - |
-        sed -i "s|image: helpudoc-backend:latest|image: gcr.io/$PROJECT_ID/helpudoc-backend:$BUILD_ID|g" infra/gke/k8s/50-app.yaml
-        sed -i "s|image: helpudoc-agent:latest|image: gcr.io/$PROJECT_ID/helpudoc-agent:$BUILD_ID|g" infra/gke/k8s/50-app.yaml
-        sed -i "s|image: helpudoc-frontend:latest|image: gcr.io/$PROJECT_ID/helpudoc-frontend:$BUILD_ID|g" infra/gke/k8s/60-frontend.yaml
+        sed -i "s|image: gcr.io/$PROJECT_ID/helpudoc-backend:latest|image: gcr.io/$PROJECT_ID/helpudoc-backend:$BUILD_ID|g" infra/gke/k8s/50-app.yaml
+        sed -i "s|image: gcr.io/$PROJECT_ID/helpudoc-agent:latest|image: gcr.io/$PROJECT_ID/helpudoc-agent:$BUILD_ID|g" infra/gke/k8s/50-app.yaml
+        sed -i "s|image: gcr.io/$PROJECT_ID/helpudoc-frontend:latest|image: gcr.io/$PROJECT_ID/helpudoc-frontend:$BUILD_ID|g" infra/gke/k8s/60-frontend.yaml
 
   # 5. Deploy to GKE
   - name: 'gcr.io/cloud-builders/gke-deploy'
