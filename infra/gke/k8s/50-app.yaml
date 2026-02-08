@@ -125,6 +125,8 @@ spec:
               value: redis://redis:6379
             - name: RAG_PARSER_PIPELINE
               value: basic
+            - name: PARSER
+              value: docling
             - name: POSTGRES_HOST
               value: postgres
             - name: POSTGRES_PORT
