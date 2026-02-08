@@ -104,11 +104,17 @@ spec:
                 configMapKeyRef:
                   name: helpudoc-config
                   key: WORKSPACE_ROOT
+            - name: SKILLS_ROOT
+              value: /app/skills
+            - name: AGENT_CONFIG_PATH
+              value: /agent/config/runtime.yaml
           volumeMounts:
             - name: workspace-data
               mountPath: /app/workspaces
             - name: skills-data
               mountPath: /app/skills
+            - name: agent-config-data
+              mountPath: /agent/config
         - name: agent
           image: gcr.io/my-rd-coe-demo-gen-ai/helpudoc-agent:latest
           ports:
@@ -202,6 +208,8 @@ spec:
               mountPath: /app/skills
             - name: skills-data
               mountPath: /skills
+            - name: agent-config-data
+              mountPath: /agent/config
       volumes:
         - name: workspace-data
           persistentVolumeClaim:
@@ -209,6 +217,9 @@ spec:
         - name: skills-data
           persistentVolumeClaim:
             claimName: skills-pvc
+        - name: agent-config-data
+          persistentVolumeClaim:
+            claimName: agent-config-pvc
 ---
 apiVersion: v1
 kind: Service

@@ -5,8 +5,12 @@ import { promises as fs } from 'fs';
 import { parse as parseYaml } from 'yaml';
 
 const repoRoot = path.resolve(__dirname, '../../..');
-const agentConfigPath = path.join(repoRoot, 'agent', 'config', 'runtime.yaml');
-const skillsRoot = path.join(repoRoot, 'skills');
+
+// In production containers, the repo layout does not exist. Use explicit env vars.
+// Defaults are chosen to match our GKE volume mounts.
+const agentConfigPath = process.env.AGENT_CONFIG_PATH
+  || path.join(process.env.AGENT_CONFIG_DIR || '/agent/config', 'runtime.yaml');
+const skillsRoot = process.env.SKILLS_ROOT || path.join(repoRoot, 'skills');
 
 type SkillMetadata = {
   id: string;
@@ -128,9 +132,14 @@ export default function settingsRoutes() {
 
   router.get('/agent-config', async (_req, res) => {
     try {
+      await fs.mkdir(path.dirname(agentConfigPath), { recursive: true });
       const content = await fs.readFile(agentConfigPath, 'utf-8');
       res.json({ content });
     } catch (error) {
+      // First-time boot: the PVC exists but runtime.yaml may not.
+      if ((error as any)?.code === 'ENOENT') {
+        return res.json({ content: '' });
+      }
       console.error('Failed to read runtime config', error);
       res.status(500).json({ error: 'Failed to read runtime config' });
     }
@@ -139,6 +148,7 @@ export default function settingsRoutes() {
   router.put('/agent-config', async (req, res) => {
     try {
       const { content } = updateConfigSchema.parse(req.body);
+      await fs.mkdir(path.dirname(agentConfigPath), { recursive: true });
       await fs.writeFile(agentConfigPath, content, 'utf-8');
       res.json({ success: true });
     } catch (error: unknown) {

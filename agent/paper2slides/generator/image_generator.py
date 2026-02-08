@@ -9,6 +9,7 @@ import logging
 import os
 import time
 import re
+import ast
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
@@ -75,14 +76,31 @@ def process_custom_style(client, user_style: str, model: str = None) -> Processe
             match = re.search(r"\{.*\}", cleaned, flags=re.DOTALL)
             if not match:
                 raise
-            result = json.loads(match.group(0))
+            blob = match.group(0).strip()
+            try:
+                result = json.loads(blob)
+            except json.JSONDecodeError:
+                # Last resort: tolerate python-ish dicts (single quotes, etc.).
+                result = ast.literal_eval(blob)  # type: ignore[assignment]
+                if not isinstance(result, dict):
+                    raise
+        if not isinstance(result, dict):
+            raise ValueError("Style processor returned non-object JSON.")
+
+        # If the model omits `valid`, treat it as valid unless it explicitly reported an error.
+        reported_error = result.get("error")
+        valid = result.get("valid")
+        if isinstance(valid, bool):
+            is_valid = valid and not reported_error
+        else:
+            is_valid = not reported_error
         return ProcessedStyle(
             style_name=result.get("style_name", ""),
             color_tone=result.get("color_tone", ""),
             special_elements=result.get("special_elements", ""),
             decorations=result.get("decorations", ""),
-            valid=result.get("valid", False),
-            error=result.get("error"),
+            valid=is_valid,
+            error=str(reported_error) if reported_error else None,
         )
     except Exception as e:
         return ProcessedStyle(style_name="", color_tone="", special_elements="", decorations="", valid=False, error=str(e))
@@ -128,7 +146,16 @@ class ImageGenerator:
         if style_name == "custom" and custom_style:
             processed_style = process_custom_style(self.client, custom_style)
             if not processed_style.valid:
-                raise ValueError(f"Invalid custom style: {processed_style.error}")
+                # Don't fail the entire job: proceed with the raw user style text as a best-effort fallback.
+                logging.warning("Custom style processing failed; falling back to raw style text. Error: %s", processed_style.error)
+                processed_style = ProcessedStyle(
+                    style_name=custom_style,
+                    color_tone="",
+                    special_elements="",
+                    decorations="",
+                    valid=True,
+                    error=processed_style.error,
+                )
         
         all_sections_md = self._format_sections_markdown(plan)
         all_images = self._filter_images(plan.sections, figure_images)
