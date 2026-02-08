@@ -1,0 +1,43 @@
+apiVersion: networking.gke.io/v1
+kind: ManagedCertificate
+metadata:
+  name: helpudoc-managed-cert
+  namespace: helpudoc
+spec:
+  # Replace with your real domain and point its DNS A record at the Ingress IP.
+  domains:
+    - lc-demo.com
+---
+apiVersion: networking.gke.io/v1beta1
+kind: FrontendConfig
+metadata:
+  name: helpudoc-frontendconfig
+  namespace: helpudoc
+spec:
+  redirectToHttps:
+    enabled: true
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: helpudoc-ingress
+  namespace: helpudoc
+  annotations:
+    kubernetes.io/ingress.class: "gce"
+    networking.gke.io/managed-certificates: "helpudoc-managed-cert"
+    networking.gke.io/v1beta1.FrontendConfig: "helpudoc-frontendconfig"
+    # Optional: reserve a static IP and attach it for a stable DNS target.
+    # kubernetes.io/ingress.global-static-ip-name: "helpudoc-ip"
+spec:
+  ingressClassName: gce
+  rules:
+    - host: lc-demo.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: helpudoc-caddy
+                port:
+                  number: 80
