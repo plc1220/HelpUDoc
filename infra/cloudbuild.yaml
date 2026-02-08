@@ -73,6 +73,8 @@ steps:
       - '--filename=infra/gke/k8s/'
       - '--location=$_GKE_LOCATION'
       - '--cluster=$_GKE_CLUSTER'
+      # Pulling the agent image can exceed the default 5m readiness wait (5GB+ image).
+      - '--timeout=15m'
 
   # 6. E2E check (fails build on mixed-content / localhost assets)
   - name: 'node:20-bookworm'
