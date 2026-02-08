@@ -4,12 +4,73 @@ RAG Stage - Document indexing and querying
 import asyncio
 import logging
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 from ...utils import save_json
 from ..paths import get_rag_checkpoint
 
 logger = logging.getLogger(__name__)
+
+def _read_markdown_text(markdown_paths: List[str]) -> str:
+    combined: List[str] = []
+    for md in markdown_paths:
+        try:
+            combined.append(Path(md).read_text(encoding="utf-8", errors="replace"))
+        except Exception:
+            continue
+    return "\n\n".join(combined).strip()
+
+
+def _resolve_markdown_paths(input_path: str, markdown_paths: List[str]) -> List[str]:
+    # Prefer parsed markdown under rag_output if present, else fall back to raw input_path.
+    if markdown_paths:
+        return markdown_paths
+    if not input_path:
+        return []
+    path = Path(input_path)
+    if path.is_file():
+        return [str(path)]
+    if path.is_dir():
+        return [str(p) for p in path.rglob("*.md")]
+    return []
+
+
+def _build_no_rag_result(
+    *,
+    input_path: str,
+    content_type: str,
+    markdown_paths: List[str],
+    reason: str,
+) -> Tuple[Dict, List[str]]:
+    resolved_paths = _resolve_markdown_paths(input_path, markdown_paths)
+    if not resolved_paths:
+        raise ValueError("No markdown files found for RAG fallback.")
+    merged = _read_markdown_text(resolved_paths)
+    if not merged:
+        raise ValueError("Unable to read markdown content for RAG fallback.")
+
+    if content_type == "paper":
+        rag_results = {
+            "paper_info": [{"answer": merged, "query": f"paper info (no RAG: {reason})", "mode": "no_rag"}],
+            "motivation": [{"answer": merged, "query": f"motivation (no RAG: {reason})", "mode": "no_rag"}],
+            "solution": [{"answer": merged, "query": f"solution (no RAG: {reason})", "mode": "no_rag"}],
+            "results": [{"answer": merged, "query": f"results (no RAG: {reason})", "mode": "no_rag"}],
+            "contributions": [{"answer": merged, "query": f"contributions (no RAG: {reason})", "mode": "no_rag"}],
+        }
+    else:
+        rag_results = {
+            "content": [{"answer": merged, "query": f"document content (no RAG: {reason})", "mode": "no_rag"}],
+        }
+
+    result = {
+        "rag_results": rag_results,
+        "markdown_paths": resolved_paths,
+        "input_path": input_path,
+        "content_type": content_type,
+        "mode": "no_rag",
+        "reason": reason,
+    }
+    return result, resolved_paths
 
 
 async def run_rag_stage(base_dir: Path, config: Dict) -> Dict:
@@ -43,44 +104,12 @@ async def run_rag_stage(base_dir: Path, config: Dict) -> Dict:
     # stages can continue using direct markdown content.
     if not RAG_AVAILABLE:
         logger.warning("LightRAG not available; skipping RAG and creating stub checkpoint.")
-        markdown_paths: List[str] = []
-        if path.is_file():
-            markdown_paths = [str(path)]
-        elif path.is_dir():
-            markdown_paths = [str(p) for p in path.rglob("*.md")]
-        if not markdown_paths:
-            raise ValueError("No markdown files found for RAG stub.")
-
-        combined = []
-        for md in markdown_paths:
-            try:
-                combined.append(Path(md).read_text(encoding="utf-8"))
-            except Exception:
-                continue
-        merged = "\n\n".join(combined).strip()
-        if not merged:
-            raise ValueError("Unable to read markdown content for RAG stub.")
-
-        if content_type == "paper":
-            rag_results = {
-                "paper_info": [{"answer": merged, "query": "paper info (no RAG)", "mode": "no_rag"}],
-                "motivation": [{"answer": merged, "query": "motivation (no RAG)", "mode": "no_rag"}],
-                "solution": [{"answer": merged, "query": "solution (no RAG)", "mode": "no_rag"}],
-                "results": [{"answer": merged, "query": "results (no RAG)", "mode": "no_rag"}],
-                "contributions": [{"answer": merged, "query": "contributions (no RAG)", "mode": "no_rag"}],
-            }
-        else:
-            rag_results = {
-                "content": [{"answer": merged, "query": "document content (no RAG)", "mode": "no_rag"}],
-            }
-
-        result = {
-            "rag_results": rag_results,
-            "markdown_paths": markdown_paths,
-            "input_path": input_path,
-            "content_type": content_type,
-            "mode": "no_rag",
-        }
+        result, _ = _build_no_rag_result(
+            input_path=input_path,
+            content_type=content_type,
+            markdown_paths=[],
+            reason="lightrag_unavailable",
+        )
         checkpoint_path = get_rag_checkpoint(base_dir, config)
         checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
         save_json(checkpoint_path, result)
@@ -128,13 +157,47 @@ async def run_rag_stage(base_dir: Path, config: Dict) -> Dict:
                 modes_by_category=RAG_QUERY_MODES,
             )
         else:
-            logger.info("  Getting document overview...")
-            overview = await get_general_overview(rag, mode="mix")
-            logger.info("  Generating queries from overview...")
-            queries = generate_general_queries(rag, overview, count=12)
-            logger.info(f"  Executing {len(queries)} queries...")
-            query_results = await rag.batch_query(queries, mode="mix")
-            rag_results = {"content": query_results}
+            try:
+                logger.info("  Getting document overview...")
+                overview = await get_general_overview(rag, mode="mix")
+                logger.info("  Generating queries from overview...")
+                queries = generate_general_queries(rag, overview, count=12)
+                if not queries:
+                    raise ValueError("No queries generated from document overview.")
+
+                logger.info(f"  Executing {len(queries)} queries...")
+                query_results = await rag.batch_query(queries, mode="mix")
+
+                usable_results = []
+                for item in (query_results or []):
+                    if not isinstance(item, dict):
+                        continue
+                    if not item.get("answer"):
+                        continue
+                    if item.get("success", True) is False:
+                        continue
+                    usable_results.append(item)
+
+                if not usable_results:
+                    raise ValueError("No successful RAG query results were returned.")
+
+                rag_results = {"content": usable_results}
+            except Exception as exc:
+                logger.warning(
+                    "  General RAG query flow failed (%s). Falling back to markdown-only checkpoint.",
+                    exc,
+                )
+                fallback_result, markdown_paths = _build_no_rag_result(
+                    input_path=input_path,
+                    content_type=content_type,
+                    markdown_paths=markdown_paths,
+                    reason="general_rag_failed",
+                )
+                checkpoint_path = get_rag_checkpoint(base_dir, config)
+                checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+                save_json(checkpoint_path, fallback_result)
+                logger.info(f"  Saved fallback RAG checkpoint: {checkpoint_path}")
+                return fallback_result
         
         total = sum(len(r) for r in rag_results.values())
         logger.info(f"  Completed {total} queries")

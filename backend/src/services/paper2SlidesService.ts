@@ -1,5 +1,6 @@
 import * as path from 'path';
 import { randomUUID } from 'crypto';
+import axios from 'axios';
 import { FileService } from './fileService';
 import { exportPaper2SlidesPptx, runPaper2Slides } from './agentService';
 import type { Paper2SlidesOptions } from '../types/paper2slides';
@@ -28,6 +29,37 @@ const buildPresentationBaseName = (files: InputFile[], fallback: string) => {
   const baseName = normalized.split('/').pop() || '';
   const withoutExt = baseName.includes('.') ? baseName.slice(0, baseName.lastIndexOf('.')) : baseName;
   return sanitizeFileName(withoutExt, fallback);
+};
+
+const formatAgentFailure = (error: any): string => {
+  if (!axios.isAxiosError(error)) {
+    return error?.message || String(error);
+  }
+
+  const status = error.response?.status;
+  const data = error.response?.data;
+  let detail: string = '';
+
+  if (typeof data === 'string') {
+    detail = data;
+  } else if (data && typeof data === 'object') {
+    const maybeDetail = (data as any).detail ?? (data as any).message ?? (data as any).error;
+    if (typeof maybeDetail === 'string') {
+      detail = maybeDetail;
+    } else {
+      try {
+        detail = JSON.stringify(data);
+      } catch {
+        detail = String(data);
+      }
+    }
+  }
+
+  const base = status ? `agent responded ${status}` : 'agent request failed';
+  if (detail) {
+    return `${base}: ${detail}`;
+  }
+  return `${base}${error.message ? `: ${error.message}` : ''}`.trim();
 };
 
 export class Paper2SlidesService {
@@ -156,8 +188,7 @@ export class Paper2SlidesService {
         jobId: runId,
       };
     } catch (error: any) {
-      const message = error?.message || String(error);
-      throw new Error(`Paper2Slides pipeline failed: ${message}`);
+      throw new Error(`Paper2Slides pipeline failed: ${formatAgentFailure(error)}`);
     }
   }
 
@@ -209,8 +240,7 @@ export class Paper2SlidesService {
 
       return { pptxPath: relativeName };
     } catch (error: any) {
-      const message = error?.message || String(error);
-      throw new Error(`Paper2Slides PPTX export failed: ${message}`);
+      throw new Error(`Paper2Slides PPTX export failed: ${formatAgentFailure(error)}`);
     }
   }
 }

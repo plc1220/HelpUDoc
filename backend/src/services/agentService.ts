@@ -20,6 +20,16 @@ const client = axios.create({
   baseURL: AGENT_URL,
 });
 
+const resolvePaper2SlidesTimeoutMs = (): number => {
+  const raw = process.env.PAPER2SLIDES_TIMEOUT_MS || process.env.PAPER2SLIDES_AGENT_TIMEOUT_MS || '';
+  if (!raw) return 30 * 60 * 1000; // 30 minutes
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) return 30 * 60 * 1000;
+  return Math.floor(parsed);
+};
+
+const PAPER2SLIDES_TIMEOUT_MS = resolvePaper2SlidesTimeoutMs();
+
 export async function fetchAgentCatalog(): Promise<AgentCatalogResponse> {
   const res = await client.get<AgentCatalogResponse>("/agents");
   return res.data;
@@ -119,6 +129,7 @@ export async function runPaper2Slides(payload: {
   const res = await client.post(`/paper2slides/run`, payload, {
     maxContentLength: Infinity,
     maxBodyLength: Infinity,
+    timeout: PAPER2SLIDES_TIMEOUT_MS,
   });
   return res.data;
 }
@@ -130,6 +141,7 @@ export async function exportPaper2SlidesPptx(payload: {
   const res = await client.post(`/paper2slides/export-pptx`, payload, {
     maxContentLength: Infinity,
     maxBodyLength: Infinity,
+    timeout: PAPER2SLIDES_TIMEOUT_MS,
   });
   return res.data;
 }
