@@ -8,9 +8,7 @@ const AgentSettingsPage = () => {
       title="Skills Registry & Tooling"
       description="Manage reusable skills and the tools they can use."
     >
-      <div className="rounded-3xl border border-slate-200 bg-white p-8 shadow-sm">
-        <AgentSettingsTabs />
-      </div>
+      <AgentSettingsTabs />
     </SettingsShell>
   );
 };

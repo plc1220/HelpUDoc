@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Plus, RefreshCw, Loader2, Save, FileText } from 'lucide-react';
+import { Plus, RefreshCw, Loader2, Save, FolderOpen, AlertCircle, Search, ChevronRight } from 'lucide-react';
+import Editor from '@monaco-editor/react';
 import {
   createSkill,
   fetchSkillContent,
@@ -19,6 +20,7 @@ const SkillsRegistryTab: React.FC = () => {
   const [newName, setNewName] = useState('');
   const [newDesc, setNewDesc] = useState('');
   const [createError, setCreateError] = useState<string | null>(null);
+  const [createLoading, setCreateLoading] = useState(false);
 
   const [selectedSkillId, setSelectedSkillId] = useState<string | null>(null);
   const [files, setFiles] = useState<string[]>([]);
@@ -28,6 +30,8 @@ const SkillsRegistryTab: React.FC = () => {
   const [fileContent, setFileContent] = useState('');
   const [fileLoading, setFileLoading] = useState(false);
   const [fileSaving, setFileSaving] = useState(false);
+
+  const [searchTerm, setSearchTerm] = useState('');
 
   const loadSkills = useCallback(async () => {
     try {
@@ -64,7 +68,13 @@ const SkillsRegistryTab: React.FC = () => {
         setFilesLoading(true);
         const data = await fetchSkillFiles(selectedSkillId);
         setFiles(data);
-        setSelectedFile(null);
+        // Auto-select the main file (SKILL.md preferred, then README.md, then first file)
+        if (data.length > 0) {
+          const preferred = data.find(f => f === 'SKILL.md') || data.find(f => f === 'README.md') || data[0];
+          setSelectedFile(preferred);
+        } else {
+          setSelectedFile(null);
+        }
       } catch (err) {
         console.error('Failed to load skill files', err);
         setFiles([]);
@@ -102,13 +112,24 @@ const SkillsRegistryTab: React.FC = () => {
     [skills, selectedSkillId]
   );
 
+  const filteredSkills = useMemo(() => {
+    if (!searchTerm) return skills;
+    const lower = searchTerm.toLowerCase();
+    return skills.filter(s =>
+      s.id.toLowerCase().includes(lower) ||
+      (s.name && s.name.toLowerCase().includes(lower)) ||
+      (s.description && s.description.toLowerCase().includes(lower))
+    );
+  }, [skills, searchTerm]);
+
   const handleCreateSkill = async () => {
     if (!newId) {
-      setCreateError('Skill id is required');
+      setCreateError('Skill ID is required');
       return;
     }
 
     try {
+      setCreateLoading(true);
       setCreateError(null);
       await createSkill({ id: newId, name: newName || undefined, description: newDesc || undefined });
       await loadSkills();
@@ -121,6 +142,8 @@ const SkillsRegistryTab: React.FC = () => {
       console.error('Failed to create skill', err);
       const message = err instanceof Error ? err.message : 'Failed to create skill';
       setCreateError(message);
+    } finally {
+      setCreateLoading(false);
     }
   };
 
@@ -140,9 +163,21 @@ const SkillsRegistryTab: React.FC = () => {
     }
   };
 
+  const getLanguage = (fileName: string) => {
+    if (fileName.endsWith('.json')) return 'json';
+    if (fileName.endsWith('.ts') || fileName.endsWith('.tsx')) return 'typescript';
+    if (fileName.endsWith('.js') || fileName.endsWith('.jsx')) return 'javascript';
+    if (fileName.endsWith('.py')) return 'python';
+    if (fileName.endsWith('.md')) return 'markdown';
+    if (fileName.endsWith('.yaml') || fileName.endsWith('.yml')) return 'yaml';
+    if (fileName.endsWith('.css')) return 'css';
+    if (fileName.endsWith('.html')) return 'html';
+    return 'plaintext';
+  };
+
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
+      <div className="flex items-center justify-center h-96">
         <Loader2 className="animate-spin text-slate-400" size={32} />
       </div>
     );
@@ -150,11 +185,14 @@ const SkillsRegistryTab: React.FC = () => {
 
   if (error) {
     return (
-      <div className="p-6 text-center">
+      <div className="p-8 text-center">
+        <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-rose-100 text-rose-600 mb-4">
+          <AlertCircle size={24} />
+        </div>
         <p className="text-rose-600 mb-4">{error}</p>
         <button
           onClick={loadSkills}
-          className="px-4 py-2 bg-slate-900 text-white rounded-lg hover:bg-slate-800"
+          className="px-4 py-2 bg-slate-900 text-white rounded-lg hover:bg-slate-800 transition-colors"
         >
           Retry
         </button>
@@ -163,20 +201,35 @@ const SkillsRegistryTab: React.FC = () => {
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h3 className="text-lg font-semibold text-slate-900">Skill Registry</h3>
-          <p className="text-slate-500 text-sm">Create and manage reusable skills for your assistant.</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={loadSkills}
-            className="flex items-center gap-2 px-3 py-2 text-sm text-slate-600 rounded-lg hover:bg-slate-100"
-          >
-            <RefreshCw size={14} />
-            Refresh
-          </button>
+    <div style={{ height: 'calc(100vh - 280px)', minHeight: '550px' }} className="flex gap-5">
+      {/* Left Sidebar - Skills List */}
+      <div className="w-72 flex-shrink-0 flex flex-col bg-white border border-slate-200 rounded-xl overflow-hidden">
+        {/* Sidebar Header */}
+        <div className="p-3 border-b border-slate-200 bg-slate-50">
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Skills</span>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={loadSkills}
+                className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-md transition-colors"
+                title="Refresh"
+              >
+                <RefreshCw size={14} />
+              </button>
+            </div>
+          </div>
+          {/* Search */}
+          <div className="relative mb-2">
+            <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input
+              type="text"
+              placeholder="Search..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full pl-8 pr-3 py-1.5 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-slate-400 transition-all"
+            />
+          </div>
+          {/* Add Skill Button */}
           <button
             onClick={() => {
               setIsAdding(true);
@@ -185,194 +238,195 @@ const SkillsRegistryTab: React.FC = () => {
               setNewName('');
               setNewDesc('');
             }}
-            className="flex items-center gap-2 px-4 py-2 bg-slate-900 text-white rounded-lg text-sm font-medium hover:bg-slate-800"
+            className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-slate-900 text-white rounded-lg text-sm font-medium hover:bg-slate-800 transition-colors"
           >
             <Plus size={16} />
             Add Skill
           </button>
         </div>
-      </div>
 
-      {isAdding && (
-        <div className="p-4 bg-slate-50 rounded-xl border border-slate-200">
-          <h4 className="font-medium text-slate-900 mb-4">New Skill</h4>
-          <div className="grid grid-cols-2 gap-4 mb-4">
-            <div>
-              <label className="block text-xs font-medium text-slate-500 mb-1">Skill ID</label>
+        {/* Add Skill Form (inline) */}
+        {isAdding && (
+          <div className="p-3 border-b border-slate-200 bg-amber-50">
+            <div className="space-y-2">
               <input
                 type="text"
                 value={newId}
                 onChange={(e) => setNewId(e.target.value)}
-                placeholder="e.g., data-cleaning"
-                className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm"
+                placeholder="skill-id *"
+                className="w-full px-2.5 py-1.5 rounded-md border border-slate-300 text-sm font-mono bg-white focus:outline-none focus:ring-1 focus:ring-amber-500"
               />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-slate-500 mb-1">Display Name</label>
               <input
                 type="text"
                 value={newName}
                 onChange={(e) => setNewName(e.target.value)}
-                placeholder="Skill name"
-                className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm"
+                placeholder="Display Name"
+                className="w-full px-2.5 py-1.5 rounded-md border border-slate-300 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-amber-500"
               />
-            </div>
-            <div className="col-span-2">
-              <label className="block text-xs font-medium text-slate-500 mb-1">Description</label>
               <input
                 type="text"
                 value={newDesc}
                 onChange={(e) => setNewDesc(e.target.value)}
-                placeholder="What this skill is for"
-                className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm"
+                placeholder="Description"
+                className="w-full px-2.5 py-1.5 rounded-md border border-slate-300 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-amber-500"
               />
+              {createError && <p className="text-xs text-rose-600">{createError}</p>}
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setIsAdding(false)}
+                  className="flex-1 px-2 py-1.5 text-slate-600 text-sm hover:bg-slate-100 rounded-md transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleCreateSkill}
+                  disabled={createLoading}
+                  className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 bg-emerald-600 text-white text-sm rounded-md hover:bg-emerald-700 transition-colors disabled:opacity-50"
+                >
+                  {createLoading ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                  Create
+                </button>
+              </div>
             </div>
           </div>
-          {createError && <p className="text-sm text-rose-600 mb-3">{createError}</p>}
-          <div className="flex justify-end gap-2">
-            <button
-              onClick={() => {
-                setIsAdding(false);
-                setCreateError(null);
-              }}
-              className="px-3 py-1.5 text-slate-600 text-sm hover:bg-slate-200 rounded-lg"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleCreateSkill}
-              className="flex items-center gap-2 px-3 py-1.5 bg-emerald-600 text-white text-sm rounded-lg hover:bg-emerald-700"
-            >
-              <Save size={14} />
-              Save Skill
-            </button>
-          </div>
-        </div>
-      )}
+        )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-[260px_1fr] gap-6">
-        <div className="space-y-3">
-          {skills.map((skill) => (
+        {/* Skills List */}
+        <div className="flex-1 overflow-y-auto p-2 space-y-1">
+          {filteredSkills.map((skill) => (
             <button
               key={skill.id}
               onClick={() => setSelectedSkillId(skill.id)}
-              className={`w-full text-left p-3 rounded-xl border transition-colors ${selectedSkillId === skill.id
-                ? 'border-slate-900 bg-slate-50'
-                : 'border-slate-200 hover:border-slate-400 hover:bg-slate-50'
+              className={`w-full text-left p-2.5 rounded-lg border transition-all ${selectedSkillId === skill.id
+                ? 'border-slate-400 bg-slate-100'
+                : 'border-transparent hover:bg-slate-50'
                 }`}
             >
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="font-medium text-slate-900">{skill.name || skill.id}</p>
-                  <p className="text-xs text-slate-500 font-mono">{skill.id}</p>
-                </div>
-                <span
-                  className={`text-xs px-2 py-0.5 rounded-full ${skill.valid
-                    ? 'bg-emerald-100 text-emerald-700'
-                    : 'bg-amber-100 text-amber-700'
-                    }`}
-                >
-                  {skill.valid ? 'Ready' : 'Needs attention'}
-                </span>
+              <div className="flex items-center gap-2">
+                {/* Status Dot */}
+                <span className={`w-2 h-2 rounded-full flex-shrink-0 ${skill.valid ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+                <span className="font-medium text-slate-900 truncate text-sm">{skill.name || skill.id}</span>
               </div>
-              <p className="text-sm text-slate-500 mt-2">
-                {skill.description || skill.warning || skill.error || 'No description available.'}
-              </p>
+              <p className="text-xs font-mono text-slate-400 mt-0.5 ml-4">{skill.id}</p>
+              {skill.description && (
+                <p className="text-xs text-slate-500 mt-1 ml-4 line-clamp-2">{skill.description}</p>
+              )}
             </button>
           ))}
-          {skills.length === 0 && (
-            <div className="text-center py-8 text-slate-500">No skills yet. Add one to get started.</div>
+          {filteredSkills.length === 0 && (
+            <div className="text-center py-8 text-slate-400 text-sm">
+              {searchTerm ? 'No skills match your search.' : 'No skills yet.'}
+            </div>
           )}
         </div>
+      </div>
 
-        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 min-h-[360px]">
-          {selectedSkill ? (
-            <div className="space-y-4">
-              <div>
-                <div className="flex items-center justify-between">
-                  <h4 className="text-lg font-semibold text-slate-900">{selectedSkill.name || selectedSkill.id}</h4>
-                  <span className="text-xs font-mono px-2 py-0.5 bg-slate-200 text-slate-600 rounded-full">
-                    {selectedSkill.id}
-                  </span>
-                </div>
-                <p className="text-sm text-slate-600 mt-1">
-                  {selectedSkill.description || 'No description provided.'}
-                </p>
-                {selectedSkill.error && (
-                  <p className="text-sm text-rose-600 mt-2">{selectedSkill.error}</p>
-                )}
-                {selectedSkill.warning && !selectedSkill.error && (
-                  <p className="text-sm text-amber-600 mt-2">{selectedSkill.warning}</p>
+      {/* Right Panel - Editor Area */}
+      <div className="flex-1 flex flex-col bg-white border border-slate-200 rounded-xl overflow-hidden">
+        {selectedSkill ? (
+          <>
+            {/* Editor Header / Toolbar */}
+            <div className="flex items-center justify-between px-4 py-2.5 border-b border-slate-200 bg-slate-50">
+              <div className="flex items-center gap-2 min-w-0">
+                {/* Breadcrumb */}
+                <span className="font-medium text-slate-700 truncate">{selectedSkill.name || selectedSkill.id}</span>
+                {selectedFile && (
+                  <>
+                    <ChevronRight size={14} className="text-slate-400 flex-shrink-0" />
+                    <span className="text-sm font-mono text-slate-500 truncate">{selectedFile}</span>
+                  </>
                 )}
               </div>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <button
+                  onClick={handleSaveFile}
+                  disabled={!selectedFile || fileSaving}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-emerald-600 text-white rounded-md hover:bg-emerald-700 disabled:opacity-50 transition-colors font-medium"
+                >
+                  {fileSaving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                  Save
+                </button>
+              </div>
+            </div>
 
-              <div className="grid grid-cols-1 lg:grid-cols-[200px_1fr] gap-4">
-                <div className="bg-white rounded-xl border border-slate-200 p-3">
-                  <div className="flex items-center gap-2 text-xs uppercase tracking-wide text-slate-500 mb-2">
-                    <FileText size={14} />
+            {/* Main Content Area */}
+            <div className="flex-1 flex min-h-0">
+              {/* Files Sidebar (thin) */}
+              <div className="w-40 flex-shrink-0 border-r border-slate-200 bg-slate-50 flex flex-col">
+                <div className="p-2 border-b border-slate-100">
+                  <div className="flex items-center gap-1.5 text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
+                    <FolderOpen size={12} />
                     Files
                   </div>
-                  {filesLoading ? (
-                    <div className="flex items-center justify-center py-6">
-                      <Loader2 size={18} className="animate-spin text-slate-400" />
-                    </div>
-                  ) : (
-                    <div className="space-y-1">
-                      {files.map((file) => (
-                        <button
-                          key={file}
-                          onClick={() => setSelectedFile(file)}
-                          className={`w-full text-left px-2 py-1 rounded-md text-sm ${selectedFile === file
-                            ? 'bg-slate-900 text-white'
-                            : 'text-slate-600 hover:bg-slate-100'
-                            }`}
-                        >
-                          {file}
-                        </button>
-                      ))}
-                      {files.length === 0 && (
-                        <p className="text-sm text-slate-500">No files yet.</p>
-                      )}
-                    </div>
-                  )}
                 </div>
-
-                <div className="bg-white rounded-xl border border-slate-200 p-3 flex flex-col">
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="text-xs uppercase tracking-wide text-slate-500">
-                      {selectedFile || 'Select a file'}
-                    </div>
-                    <button
-                      onClick={handleSaveFile}
-                      disabled={!selectedFile || fileSaving}
-                      className="flex items-center gap-2 px-2.5 py-1 text-xs bg-emerald-600 text-white rounded-md hover:bg-emerald-700 disabled:opacity-50"
-                    >
-                      {fileSaving ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
-                      Save
-                    </button>
+                {filesLoading ? (
+                  <div className="flex-1 flex items-center justify-center">
+                    <Loader2 size={16} className="animate-spin text-slate-400" />
                   </div>
-                  {fileLoading ? (
-                    <div className="flex-1 flex items-center justify-center py-10">
-                      <Loader2 size={20} className="animate-spin text-slate-400" />
-                    </div>
-                  ) : (
-                    <textarea
-                      value={fileContent}
-                      onChange={(e) => setFileContent(e.target.value)}
-                      placeholder="Select a file to view or edit its contents."
-                      className="flex-1 w-full min-h-[220px] resize-none rounded-lg border border-slate-200 px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-slate-900"
-                      disabled={!selectedFile}
-                    />
-                  )}
-                </div>
+                ) : (
+                  <div className="flex-1 overflow-y-auto py-1">
+                    {files.map((file) => (
+                      <button
+                        key={file}
+                        onClick={() => setSelectedFile(file)}
+                        className={`w-full text-left px-3 py-1.5 text-xs transition-colors truncate ${selectedFile === file
+                          ? 'bg-white text-emerald-700 font-medium border-l-2 border-emerald-500'
+                          : 'text-slate-600 hover:bg-slate-100 border-l-2 border-transparent'
+                          }`}
+                        title={file}
+                      >
+                        {file}
+                      </button>
+                    ))}
+                    {files.length === 0 && (
+                      <p className="text-xs text-slate-400 p-3 text-center italic">No files</p>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Code Editor */}
+              <div className="flex-1 relative bg-[#1e1e1e]">
+                {fileLoading ? (
+                  <div className="absolute inset-0 flex items-center justify-center bg-[#1e1e1e]">
+                    <Loader2 size={24} className="animate-spin text-slate-500" />
+                  </div>
+                ) : selectedFile ? (
+                  <Editor
+                    height="100%"
+                    theme="vs-dark"
+                    language={getLanguage(selectedFile)}
+                    value={fileContent}
+                    onChange={(value) => setFileContent(value || '')}
+                    options={{
+                      minimap: { enabled: false },
+                      fontSize: 13,
+                      lineHeight: 20,
+                      wordWrap: 'on',
+                      scrollBeyondLastLine: false,
+                      automaticLayout: true,
+                      padding: { top: 12, bottom: 12 },
+                      lineNumbers: 'on',
+                      renderLineHighlight: 'line',
+                      cursorBlinking: 'smooth',
+                      smoothScrolling: true,
+                    }}
+                  />
+                ) : (
+                  <div className="flex flex-col items-center justify-center h-full text-slate-500 bg-slate-100">
+                    <p className="text-sm">Select a file to edit</p>
+                  </div>
+                )}
               </div>
             </div>
-          ) : (
-            <div className="flex items-center justify-center h-full text-slate-500">
-              Select a skill to view its files.
-            </div>
-          )}
-        </div>
+          </>
+        ) : (
+          <div className="flex-1 flex flex-col items-center justify-center text-slate-400 bg-slate-50">
+            <FolderOpen size={40} className="mb-3 opacity-20" />
+            <p className="font-medium text-slate-500">No skill selected</p>
+            <p className="text-sm mt-1">Select a skill from the list to view and edit its files.</p>
+          </div>
+        )}
       </div>
     </div>
   );
