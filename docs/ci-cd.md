@@ -26,6 +26,7 @@ Prereqs:
 - `gcloud` authenticated
 - You have access to the GCP project and the GKE cluster
 
+### Full Stack (Backend + Agent + Frontend)
 ```bash
 export PROJECT_ID=my-rd-coe-demo-gen-ai
 export GKE_LOCATION=asia-southeast1-a   # zone or region (must match the cluster)
@@ -34,6 +35,20 @@ export CLUSTER=helpudoc-cluster
 gcloud builds submit . \
   --project="$PROJECT_ID" \
   --config=infra/cloudbuild.yaml \
+  --substitutions=_GKE_LOCATION="$GKE_LOCATION",_GKE_CLUSTER="$CLUSTER",_RUN_E2E=false
+```
+
+### Frontend Only
+Use `infra/cloudbuild-frontend.yaml` to rebuild and deploy only `helpudoc-frontend` (it applies only `infra/gke/k8s/60-frontend.yaml`).
+
+```bash
+export PROJECT_ID=my-rd-coe-demo-gen-ai
+export GKE_LOCATION=asia-southeast1-a   # zone or region (must match the cluster)
+export CLUSTER=helpudoc-cluster
+
+gcloud builds submit . \
+  --project="$PROJECT_ID" \
+  --config=infra/cloudbuild-frontend.yaml \
   --substitutions=_GKE_LOCATION="$GKE_LOCATION",_GKE_CLUSTER="$CLUSTER",_RUN_E2E=false
 ```
 
@@ -133,4 +148,3 @@ The E2E step primarily exists to catch mixed-content / localhost asset URLs (e.g
 If you hit that regression:
 - Verify `S3_PUBLIC_BASE_URL` in the `helpudoc-config` ConfigMap (commonly `/helpudoc` when behind HTTPS + Caddy).
 - Verify Caddy routes in `infra/gke/k8s/70-caddy.yaml`.
-

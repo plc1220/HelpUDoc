@@ -1,0 +1,94 @@
+steps:
+  # 1. Build & Push Frontend Image
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      [
+        'build',
+        '-f',
+        'frontend/Dockerfile.gke',
+        '--build-arg',
+        'VITE_GOOGLE_CLIENT_ID=$_VITE_GOOGLE_CLIENT_ID',
+        '-t',
+        'gcr.io/$PROJECT_ID/helpudoc-frontend:$BUILD_ID',
+        '-t',
+        'gcr.io/$PROJECT_ID/helpudoc-frontend:latest',
+        'frontend',
+      ]
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/$PROJECT_ID/helpudoc-frontend:$BUILD_ID']
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/$PROJECT_ID/helpudoc-frontend:latest']
+
+  # 2. Update Image Reference in Frontend Manifest
+  - name: 'ubuntu'
+    args:
+      - 'bash'
+      - '-c'
+      - |
+        # Replace image tags regardless of the current tag (latest or build id) to avoid sticky manifests.
+        sed -i -E "s|image: gcr.io/$PROJECT_ID/helpudoc-frontend:[^[:space:]]+|image: gcr.io/$PROJECT_ID/helpudoc-frontend:$BUILD_ID|g" infra/gke/k8s/60-frontend.yaml
+
+  # 3. Deploy Frontend Only to GKE
+  #
+  # gke-deploy expects a filename (file or dir). We point it at only the frontend manifest
+  # to avoid re-applying backend/agent resources.
+  - name: 'gcr.io/cloud-builders/gke-deploy'
+    args:
+      - 'run'
+      - '--filename=infra/gke/k8s/60-frontend.yaml'
+      - '--location=$_GKE_LOCATION'
+      - '--cluster=$_GKE_CLUSTER'
+      - '--timeout=10m'
+
+  # 4. Optional E2E check (fails build on mixed-content / localhost assets)
+  - name: 'node:20-bookworm'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        set -euo pipefail
+        if [ "${_RUN_E2E}" != "true" ]; then
+          echo "Skipping e2e (set _RUN_E2E=true to enable)"
+          exit 0
+        fi
+
+        export E2E_BASE_URL="${_E2E_BASE_URL}"
+        echo "Waiting for ${_E2E_BASE_URL}/ to return 200..."
+        node - <<'NODE'
+        const base = process.env.E2E_BASE_URL;
+        const url = new URL('/', base).toString();
+        const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+        (async () => {
+          for (let i = 0; i < 60; i += 1) {
+            try {
+              const res = await fetch(url, { redirect: 'follow' });
+              if (res.status === 200) {
+                process.exit(0);
+              }
+            } catch {}
+            await sleep(5000);
+          }
+          console.error(`Timed out waiting for ${url}`);
+          process.exit(1);
+        })();
+        NODE
+
+        cd frontend
+        npm ci
+        npx playwright install --with-deps chromium
+        npx playwright test --project=chromium
+
+images:
+  - 'gcr.io/$PROJECT_ID/helpudoc-frontend:$BUILD_ID'
+
+substitutions:
+  _GKE_CLUSTER: helpudoc-cluster
+  _GKE_LOCATION: asia-southeast1-a
+  _VITE_GOOGLE_CLIENT_ID: 16646144790-fvdv7liepgo18aiu20n3btmdr56l33pq.apps.googleusercontent.com
+  _RUN_E2E: "false"
+  _E2E_BASE_URL: "https://lc-demo.com"
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+
