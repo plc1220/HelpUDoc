@@ -3,10 +3,10 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 import yaml
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, validator, root_validator
 
 
 PACKAGE_ROOT = Path(__file__).resolve().parent
@@ -84,11 +84,64 @@ class BackendConfig(BaseModel):
 
 class MCPServerConfig(BaseModel):
     name: str
-    transport: str
+    transport: str  # "stdio" | "http" | "sse"
+
+    # Back-compat (older configs used "endpoint" for remote servers).
     endpoint: Optional[str] = None
+
+    # STDIO transport
     command: Optional[str] = None
+    args: Optional[List[str]] = None
     description: Optional[str] = None
     env: Dict[str, str] = Field(default_factory=dict)
+    env_passthrough: Optional[List[str]] = None
+    cwd: Optional[str] = None
+
+    # HTTP/SSE transport
+    url: Optional[str] = None
+    headers: Dict[str, str] = Field(default_factory=dict)
+    headers_from_env: Dict[str, str] = Field(default_factory=dict)
+    bearer_token_env_var: Optional[str] = None
+
+    # RBAC metadata
+    default_access: str = Field(default="allow")  # "allow" | "deny"
+
+    @root_validator(pre=True)
+    def _normalize_legacy_and_camelcase_keys(cls, values: dict) -> dict:
+        """Accept both YAML styles (snake_case and camelCase) from the admin UI."""
+        if not isinstance(values, dict):
+            return values
+
+        # Legacy/alternate keys from the frontend YAML editor.
+        mapping = {
+            "envPassthrough": "env_passthrough",
+            "headersFromEnv": "headers_from_env",
+            "bearerTokenEnvVar": "bearer_token_env_var",
+            "defaultAccess": "default_access",
+        }
+        for src, dst in mapping.items():
+            if src in values and dst not in values:
+                values[dst] = values.pop(src)
+
+        # Legacy remote config key.
+        if "endpoint" in values and "url" not in values:
+            values["url"] = values.get("endpoint")
+
+        return values
+
+    @validator("default_access")
+    def _validate_default_access(cls, value: str) -> str:
+        normalized = (value or "").strip().lower()
+        if normalized not in {"allow", "deny"}:
+            raise ValueError("default_access must be 'allow' or 'deny'")
+        return normalized
+
+    @validator("transport")
+    def _validate_transport(cls, value: str) -> str:
+        normalized = (value or "").strip().lower()
+        if normalized not in {"stdio", "http", "sse"}:
+            raise ValueError("transport must be 'stdio', 'http', or 'sse'")
+        return normalized
 
 
 class ToolConfig(BaseModel):

@@ -20,6 +20,7 @@ import {
   startAgentRun,
 } from '../services/agentRunService';
 import { blockingRedisClient } from '../services/redisService';
+import { signAgentContextToken } from '../services/agentToken';
 
 const DEFAULT_PRESENTATION_PERSONA = 'fast';
 const IMAGE_NAME_PATTERN = /\.(png|jpe?g|gif|bmp|webp|svg)$/i;
@@ -254,9 +255,15 @@ export default function(workspaceService: WorkspaceService, fileService: FileSer
     try {
       const user = requireUserContext(req);
       const { persona, prompt, workspaceId, history, forceReset } = runAgentSchema.parse(req.body);
-      await workspaceService.ensureMembership(workspaceId, user.userId, { requireEdit: true });
+      const policy = await workspaceService.getMcpServerPolicy(workspaceId, user.userId, { requireEdit: true });
       const enrichedPrompt = await injectTaggedFileUrls(prompt, workspaceId, user.userId);
-      const response = await runAgent(persona, workspaceId, enrichedPrompt, history, { forceReset });
+      const authToken = signAgentContextToken({
+        sub: user.userId,
+        userId: user.userId,
+        workspaceId,
+        ...policy,
+      });
+      const response = await runAgent(persona, workspaceId, enrichedPrompt, history, { forceReset, authToken: authToken || undefined });
       res.json(response);
     } catch (error: any) {
       if (error instanceof z.ZodError) {
@@ -292,11 +299,18 @@ export default function(workspaceService: WorkspaceService, fileService: FileSer
     try {
       const user = requireUserContext(req);
       const { persona, prompt, workspaceId, history, forceReset } = runAgentSchema.parse(req.body);
-      await workspaceService.ensureMembership(workspaceId, user.userId, { requireEdit: true });
+      const policy = await workspaceService.getMcpServerPolicy(workspaceId, user.userId, { requireEdit: true });
       const enrichedPrompt = await injectTaggedFileUrls(prompt, workspaceId, user.userId);
+      const authToken = signAgentContextToken({
+        sub: user.userId,
+        userId: user.userId,
+        workspaceId,
+        ...policy,
+      });
       streamResponse = await runAgentStream(persona, workspaceId, enrichedPrompt, history, {
         forceReset,
         signal: upstreamAbort.signal,
+        authToken: authToken || undefined,
       });
       res.setHeader('Content-Type', 'application/jsonl');
       streamResponse.data.on('data', (chunk: Buffer) => {

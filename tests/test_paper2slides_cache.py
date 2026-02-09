@@ -20,12 +20,22 @@ from helpudoc_agent.paper2slides_runner import _compute_cache_key, _select_lates
 def test_cache_key_stable_across_ordering():
     a = ("a.pdf", b"AAA")
     b = ("b.pdf", b"BBB")
-    assert _compute_cache_key([a, b]) == _compute_cache_key([b, a])
+    assert _compute_cache_key([a, b], {}) == _compute_cache_key([b, a], {})
 
 
 def test_cache_key_changes_for_name_or_content():
-    assert _compute_cache_key([("a.pdf", b"x")]) != _compute_cache_key([("b.pdf", b"x")])
-    assert _compute_cache_key([("a.pdf", b"x")]) != _compute_cache_key([("a.pdf", b"y")])
+    assert _compute_cache_key([("a.pdf", b"x")], {}) != _compute_cache_key([("b.pdf", b"x")], {})
+    assert _compute_cache_key([("a.pdf", b"x")], {}) != _compute_cache_key([("a.pdf", b"y")], {})
+
+
+def test_cache_key_changes_for_options():
+    files = [("a.pdf", b"x")]
+    assert _compute_cache_key(files, {"style": "academic"}) != _compute_cache_key(files, {"style": "casual"})
+
+
+def test_cache_key_stable_for_option_ordering():
+    files = [("a.pdf", b"x")]
+    assert _compute_cache_key(files, {"a": 1, "b": 2}) == _compute_cache_key(files, {"b": 2, "a": 1})
 
 
 def test_select_latest_run_dir(tmp_path: Path):
@@ -46,4 +56,3 @@ def test_select_latest_run_dir_none_when_empty(tmp_path: Path):
     config_dir = tmp_path / "config"
     config_dir.mkdir()
     assert _select_latest_run_dir(config_dir) is None
-

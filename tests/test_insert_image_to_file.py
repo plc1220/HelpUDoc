@@ -5,6 +5,9 @@ Test script for the insert_image_to_file tool
 This script demonstrates how the insert_image_to_file tool works.
 """
 
+import pytest
+pytest.skip("Script-style smoke test (run manually), not part of automated pytest suite.", allow_module_level=True)
+
 import json
 import sys
 from pathlib import Path

@@ -54,3 +54,9 @@ mcp_servers:
     transport: stdio
     command: ./scripts/start_mcp_fs.sh
     description: Example MCP filesystem server
+  - name: toolbox-bq-demo
+    transport: http
+    url: https://toolbox-heboslofda-as.a.run.app/mcp
+    bearer_token_env_var: BQ_ACCESS_TOKEN
+    default_access: allow
+    description: Toolbox BigQuery demo MCP (Streamable HTTP)

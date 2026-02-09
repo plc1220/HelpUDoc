@@ -5,6 +5,9 @@ Test script for the get_image_url tool
 This script tests the get_image_url tool functionality without running the full agent.
 """
 
+import pytest
+pytest.skip("Script-style smoke test (run manually), not part of automated pytest suite.", allow_module_level=True)
+
 import json
 import os
 import sys

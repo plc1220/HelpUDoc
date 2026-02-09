@@ -1,0 +1,47 @@
+sources:
+  bq:
+    kind: bigquery
+    # Jobs are billed to this project. Data can live in other projects if listed
+    # under allowedDatasets.
+    project: my-rd-coe-demo-gen-ai
+    location: us
+
+    # IMPORTANT: This makes Toolbox use the caller's OAuth access token for BigQuery
+    # (read from the HTTP Authorization header). BigQuery will then enforce IAM,
+    # row access policies, and policy tags for that caller.
+    useClientOAuth: true
+
+    # Demo safety: prevent accidental writes (INSERT/UPDATE/DELETE/DDL).
+    writeMode: blocked
+
+    # Limit what can be queried. Keep demo scope tight.
+    allowedDatasets:
+      - bigquery-public-data.thelook_ecommerce
+
+tools:
+  bq_execute_sql:
+    kind: bigquery-execute-sql
+    source: bq
+    description: Execute read-only SQL against the allowed BigQuery datasets.
+
+  bq_list_datasets:
+    kind: bigquery-list-dataset-ids
+    source: bq
+    description: List allowed dataset IDs.
+
+  bq_list_tables:
+    kind: bigquery-list-table-ids
+    source: bq
+    description: List table IDs in a dataset.
+
+  bq_get_table_info:
+    kind: bigquery-get-table-info
+    source: bq
+    description: Get table schema/metadata.
+
+toolsets:
+  default:
+    - bq_list_datasets
+    - bq_list_tables
+    - bq_get_table_info
+    - bq_execute_sql

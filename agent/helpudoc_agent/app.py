@@ -10,19 +10,21 @@ from pathlib import Path
 from uuid import uuid4
 from dotenv import load_dotenv
 
-from fastapi import FastAPI, HTTPException, Body
+from fastapi import FastAPI, HTTPException, Body, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from .configuration import load_settings
 from .graph import AgentRegistry
 from .state import AgentRuntimeState
-from .tools_and_schemas import ToolFactory, GeminiClientManager, MCPServerRegistry
+from .tools_and_schemas import ToolFactory, GeminiClientManager
+from .mcp_manager import describe_mcp_servers
 from .utils import SourceTracker
 from langchain_core.callbacks.base import AsyncCallbackHandler
 from .rag_worker import RagIndexWorker
 from .skills_registry import collect_tool_names, load_skills
 from .paper2slides_runner import run_paper2slides, export_pptx_from_pdf
+from .jwt_utils import decode_and_verify_hs256_jwt
 
 
 logger = logging.getLogger(__name__)
@@ -121,7 +123,7 @@ def create_app() -> FastAPI:
     gemini_manager = GeminiClientManager(settings)
     tool_factory = ToolFactory(settings, source_tracker, gemini_manager)
     registry = AgentRegistry(settings, tool_factory)
-    mcp_registry = MCPServerRegistry(settings)
+    agent_jwt_secret = os.getenv("AGENT_JWT_SECRET", "")
 
     app = FastAPI(title="DeepAgents Service", version="0.2.0")
     rag_worker = RagIndexWorker(settings.backend.workspace_root)
@@ -232,11 +234,39 @@ def create_app() -> FastAPI:
                     "subagents": [],
                 },
             ],
-            "mcpServers": mcp_registry.describe(),
+            "mcpServers": describe_mcp_servers(settings),
         }
 
     def _prepare_payload(message: ChatRequest) -> List[Dict[str, Any]]:
         return message.history or [{"role": "user", "content": message.message}]
+
+    def _extract_request_context(request: Request) -> Dict[str, Any]:
+        """Extract backend-provided context (RBAC policy, user id) from JWT."""
+        if not agent_jwt_secret:
+            return {}
+        raw_auth = request.headers.get("authorization") or ""
+        token = ""
+        if raw_auth.lower().startswith("bearer "):
+            token = raw_auth.split(" ", 1)[1].strip()
+        if not token:
+            return {}
+        payload = decode_and_verify_hs256_jwt(token, agent_jwt_secret)
+        if not payload:
+            return {}
+        context: Dict[str, Any] = {}
+        user_id = payload.get("userId") or payload.get("sub")
+        if isinstance(user_id, str) and user_id.strip():
+            context["user_id"] = user_id.strip()
+        allow_ids = payload.get("mcpServerAllowIds") or []
+        deny_ids = payload.get("mcpServerDenyIds") or []
+        is_admin = bool(payload.get("isAdmin", False))
+        if isinstance(allow_ids, list) or isinstance(deny_ids, list) or isinstance(is_admin, bool):
+            context["mcp_policy"] = {
+                "allowIds": [str(x) for x in (allow_ids or []) if str(x).strip()],
+                "denyIds": [str(x) for x in (deny_ids or []) if str(x).strip()],
+                "isAdmin": is_admin,
+            }
+        return context
 
 
     def _extract_tagged_files(content: str) -> List[str]:
@@ -349,7 +379,12 @@ def create_app() -> FastAPI:
     def _get_thread_id(runtime: AgentRuntimeState, force_reset: bool) -> str:
         context = runtime.workspace_state.context
         if force_reset or not context.get("thread_id"):
-            base = f"{runtime.agent_name}:{runtime.workspace_state.workspace_id}"
+            suffix = ""
+            if isinstance(context, dict):
+                user_id = context.get("user_id")
+                if isinstance(user_id, str) and user_id.strip():
+                    suffix = f":{user_id.strip()}"
+            base = f"{runtime.agent_name}:{runtime.workspace_state.workspace_id}{suffix}"
             if force_reset:
                 thread_id = f"{base}:{uuid4()}"
             else:
@@ -778,9 +813,10 @@ def create_app() -> FastAPI:
             await task
 
     @app.post("/agents/{agent_name}/workspace/{workspace_id}/chat", response_model=ChatResponse)
-    async def chat(agent_name: str, workspace_id: str, chat_request: ChatRequest):
+    async def chat(agent_name: str, workspace_id: str, chat_request: ChatRequest, request: Request):
         try:
-            runtime = registry.get_or_create(agent_name, workspace_id)
+            initial_context = _extract_request_context(request)
+            runtime = await registry.get_or_create(agent_name, workspace_id, initial_context=initial_context)
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -802,9 +838,10 @@ def create_app() -> FastAPI:
         return ChatResponse(reply=result)
 
     @app.post("/agents/{agent_name}/workspace/{workspace_id}/chat/stream")
-    async def chat_stream(agent_name: str, workspace_id: str, chat_request: ChatRequest):
+    async def chat_stream(agent_name: str, workspace_id: str, chat_request: ChatRequest, request: Request):
         try:
-            runtime = registry.get_or_create(agent_name, workspace_id)
+            initial_context = _extract_request_context(request)
+            runtime = await registry.get_or_create(agent_name, workspace_id, initial_context=initial_context)
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 

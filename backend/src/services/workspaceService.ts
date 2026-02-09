@@ -37,6 +37,12 @@ interface MembershipCheckOptions {
   requireEdit?: boolean;
 }
 
+export type McpServerPolicy = {
+  mcpServerAllowIds: string[];
+  mcpServerDenyIds: string[];
+  isAdmin: boolean;
+};
+
 export class WorkspaceService {
   private db: Knex;
   private ragQueueService?: RagQueueService;
@@ -138,6 +144,39 @@ export class WorkspaceService {
     }
 
     return { workspace, membership: normalizedMembership };
+  }
+
+  async getMcpServerPolicy(
+    workspaceId: string,
+    userId: string,
+    options: MembershipCheckOptions = {},
+  ): Promise<McpServerPolicy> {
+    const { membership } = await this.ensureMembership(workspaceId, userId, options);
+    const isAdmin = membership.role === 'owner';
+
+    const allow: string[] = [];
+    const deny: string[] = [];
+    try {
+      const rows = await this.db('mcp_server_grants')
+        .select('serverId', 'effect')
+        .where({ workspaceId, userId });
+      for (const row of rows as any[]) {
+        const serverId = typeof row?.serverId === 'string' ? row.serverId.trim() : '';
+        const effect = typeof row?.effect === 'string' ? row.effect.trim().toLowerCase() : '';
+        if (!serverId) continue;
+        if (effect === 'deny') deny.push(serverId);
+        else if (effect === 'allow') allow.push(serverId);
+      }
+    } catch (error) {
+      // Best-effort: treat as no explicit grants.
+      console.warn('Failed to load mcp_server_grants; continuing without explicit allow/deny', error);
+    }
+
+    return {
+      mcpServerAllowIds: Array.from(new Set(allow)).sort(),
+      mcpServerDenyIds: Array.from(new Set(deny)).sort(),
+      isAdmin,
+    };
   }
 
   async deleteWorkspace(workspaceId: string, userId: string): Promise<void> {

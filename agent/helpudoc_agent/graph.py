@@ -1,7 +1,8 @@
 """Agent graph construction utilities."""
 from __future__ import annotations
 
-from typing import Dict, Tuple
+import json
+from typing import Any, Dict, Tuple
 
 from deepagents import create_deep_agent
 from deepagents.backends import FilesystemBackend
@@ -12,6 +13,7 @@ from .configuration import Settings
 from .state import WorkspaceState, AgentRuntimeState
 from .tools_and_schemas import ToolFactory
 from .skills_registry import collect_tool_names, load_skills, sync_skills_to_workspace
+from .mcp_manager import MCPServerManager
 
 GENERAL_SYSTEM_PROMPT = (
     "You are a general assistant. Use skills for specialized tasks. "
@@ -35,7 +37,7 @@ class AgentRegistry:
         self.tool_factory = tool_factory
         self._models: Dict[str, object] = {}
         self._checkpointer = MemorySaver()
-        self._cache: Dict[Tuple[str, str], AgentRuntimeState] = {}
+        self._cache: Dict[Tuple[str, str, str], AgentRuntimeState] = {}
         self._default_agent_name = "general-assistant"
 
     def _resolve_mode(self, agent_name: str) -> str:
@@ -72,11 +74,19 @@ class AgentRegistry:
         self._models[model_name] = model
         return model
 
-    def get_or_create(self, agent_name: str, workspace_id: str) -> AgentRuntimeState:
+    async def get_or_create(
+        self,
+        agent_name: str,
+        workspace_id: str,
+        initial_context: Dict[str, Any] | None = None,
+    ) -> AgentRuntimeState:
         mode = self._resolve_mode(agent_name)
         model_name = self.settings.model.resolve_chat_model_name(mode)
         resolved_name = f"{self._default_agent_name}:{mode}"
-        key = (resolved_name, workspace_id)
+        context_payload = initial_context or {}
+        policy_key = json.dumps(context_payload.get("mcp_policy", {}) or {}, sort_keys=True, default=str)
+        user_key = str(context_payload.get("user_id") or "")
+        key = (resolved_name, workspace_id, f"{user_key}:{policy_key}")
         if key in self._cache:
             return self._cache[key]
 
@@ -85,6 +95,8 @@ class AgentRegistry:
         workspace_root = workspace_base / workspace_id
         workspace_root.mkdir(parents=True, exist_ok=True)
         workspace_state = WorkspaceState(workspace_id=workspace_id, root_path=workspace_root)
+        if context_payload:
+            workspace_state.context.update(context_payload)
         system_prompt = GENERAL_SYSTEM_PROMPT
         skills_root = self.settings.backend.skills_root
         if skills_root is not None:
@@ -102,7 +114,14 @@ class AgentRegistry:
                 tool_names.append("load_skill")
             if "list_skills" in self.settings.tools and "list_skills" not in tool_names:
                 tool_names.append("list_skills")
-        tools = self.tool_factory.build_tools(tool_names, workspace_state)
+
+        builtin_tools = self.tool_factory.build_tools(tool_names, workspace_state)
+
+        mcp_manager = MCPServerManager(self.settings, workspace_state)
+        await mcp_manager.initialize()
+        mcp_tools = await mcp_manager.get_tools()
+
+        tools = builtin_tools + mcp_tools
         subagents = []
 
         backend = FilesystemBackend(

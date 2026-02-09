@@ -19,6 +19,13 @@ if str(AGENT_DIR) not in sys.path:
 class SettingsStub:
     """Minimal settings object used by the FastAPI app during tests."""
 
+    mcp_servers = {}
+    tools = {}
+    backend = SimpleNamespace(
+        workspace_root=Path("/tmp/helpudoc-agent-tests"),
+        skills_root=None,
+    )
+
     def list_agents(self):
         return []
 
@@ -49,14 +56,6 @@ class ToolFactoryStub:  # pragma: no cover - placeholder for dependency
         pass
 
 
-class MCPServerRegistryStub:
-    def __init__(self, *_, **__):
-        pass
-
-    def describe(self):
-        return []
-
-
 class RegistryStub:
     instance = None
 
@@ -67,7 +66,7 @@ class RegistryStub:
     def set_runtime(self, agent_name: str, workspace_id: str, runtime):
         self.runtimes[(agent_name, workspace_id)] = runtime
 
-    def get_or_create(self, agent_name: str, workspace_id: str):
+    async def get_or_create(self, agent_name: str, workspace_id: str, initial_context=None):
         key = (agent_name, workspace_id)
         if key not in self.runtimes:
             raise ValueError(f"Unknown runtime for {agent_name}/{workspace_id}")
@@ -77,7 +76,8 @@ class RegistryStub:
 class DummyRuntime:
     def __init__(self, workspace_id: str, agent):
         self.agent = agent
-        self.workspace_state = SimpleNamespace(workspace_id=workspace_id)
+        self.agent_name = "test-agent"
+        self.workspace_state = SimpleNamespace(workspace_id=workspace_id, context={})
 
 
 class StreamingAgent:
@@ -228,6 +228,22 @@ def _install_dependency_stubs():
         sys.modules["google.genai"] = genai
         google_pkg.genai = genai
 
+    if "redis" not in sys.modules:
+        redis_pkg = _ensure_module("redis")
+    else:
+        redis_pkg = sys.modules["redis"]
+
+    if "redis.asyncio" not in sys.modules:
+        redis_asyncio = ModuleType("redis.asyncio")
+
+        class _Redis:  # pragma: no cover - placeholder
+            def __init__(self, *_, **__):
+                pass
+
+        redis_asyncio.Redis = _Redis
+        sys.modules["redis.asyncio"] = redis_asyncio
+        redis_pkg.asyncio = redis_asyncio
+
 
 @pytest.fixture
 def client_with_stubs(monkeypatch):
@@ -248,7 +264,6 @@ def client_with_stubs(monkeypatch):
     tools_stub = ModuleType("helpudoc_agent.tools_and_schemas")
     tools_stub.ToolFactory = ToolFactoryStub
     tools_stub.GeminiClientManager = GeminiClientManagerStub
-    tools_stub.MCPServerRegistry = MCPServerRegistryStub
     sys.modules["helpudoc_agent.tools_and_schemas"] = tools_stub
 
     import helpudoc_agent.app as app_module
@@ -258,12 +273,10 @@ def client_with_stubs(monkeypatch):
     SourceTrackerStub.instance = None
 
     monkeypatch.setattr(app_module, "load_settings", lambda: SettingsStub())
-    monkeypatch.setattr(app_module, "PromptStore", PromptStoreStub)
     monkeypatch.setattr(app_module, "SourceTracker", SourceTrackerStub)
     monkeypatch.setattr(app_module, "GeminiClientManager", GeminiClientManagerStub)
     monkeypatch.setattr(app_module, "ToolFactory", ToolFactoryStub)
     monkeypatch.setattr(app_module, "AgentRegistry", RegistryStub)
-    monkeypatch.setattr(app_module, "MCPServerRegistry", MCPServerRegistryStub)
 
     import agent.main as agent_main
 

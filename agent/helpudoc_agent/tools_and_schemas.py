@@ -1,4 +1,4 @@
-"""Tool creation helpers and MCP integration stubs."""
+"""Tool creation helpers."""
 from __future__ import annotations
 
 import concurrent.futures
@@ -835,19 +835,6 @@ def build_gemini_image_tool(
     return gemini_image
 
 
-class MCPServerRegistry:
-    """Placeholder registry for MCP server configs."""
-
-    def __init__(self, settings: Settings):
-        self._servers = settings.mcp_servers
-
-    def describe(self) -> List[Dict[str, Optional[str]]]:
-        return [
-            {
-                "name": cfg.name,
-                "transport": cfg.transport,
-                "endpoint": cfg.endpoint,
-                "description": cfg.description,
-            }
-            for cfg in self._servers.values()
-        ]
+#
+# MCP integration lives in helpudoc_agent.mcp_manager (MCPServerManager).
+#

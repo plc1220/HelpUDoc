@@ -143,8 +143,8 @@ def _decode_file_payload(payload: Dict[str, Any], fallback_name: str) -> Tuple[s
     return safe_name, data
 
 
-def _compute_cache_key(file_entries: Iterable[Tuple[str, bytes]]) -> str:
-    """Return a stable, content-addressed key for the given files.
+def _compute_cache_key(file_entries: Iterable[Tuple[str, bytes]], options: Dict[str, Any]) -> str:
+    """Return a stable, content-addressed key for the given files and options.
 
     Ordering is normalized by sanitized filename.
     """
@@ -154,6 +154,12 @@ def _compute_cache_key(file_entries: Iterable[Tuple[str, bytes]]) -> str:
         digest.update(name.encode("utf-8", errors="ignore"))
         digest.update(b"\0")
         digest.update(blob)
+
+    # Include options in cache key so the same file uploaded with different
+    # configurations doesn't return a stale cached result.
+    options_str = json.dumps(options, sort_keys=True)
+    digest.update(b"\0options\0")
+    digest.update(options_str.encode("utf-8", errors="ignore"))
     return digest.hexdigest()[:32]
 
 
@@ -386,7 +392,7 @@ def run_paper2slides(files: Iterable[Dict[str, Any]], options: Dict[str, Any]) -
     cache_root.mkdir(parents=True, exist_ok=True)
     _evict_old_cache_items(cache_root)
 
-    cache_key = _compute_cache_key(decoded_files)
+    cache_key = _compute_cache_key(decoded_files, options)
     cache_dir = cache_root / cache_key
     inputs_dir = cache_dir / "inputs"
     outputs_root = cache_dir / "outputs"

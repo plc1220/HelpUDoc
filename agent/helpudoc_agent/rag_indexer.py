@@ -19,9 +19,25 @@ from typing import Any, Dict, Optional
 
 import numpy as np
 
-from lightrag import LightRAG
-from lightrag.base import QueryParam, DocStatus
-from lightrag.utils import EmbeddingFunc, compute_mdhash_id
+try:
+    from lightrag import LightRAG  # type: ignore
+    from lightrag.base import QueryParam, DocStatus  # type: ignore
+    from lightrag.utils import EmbeddingFunc, compute_mdhash_id  # type: ignore
+except Exception:  # pragma: no cover - optional dependency for some test environments
+    LightRAG = None  # type: ignore[assignment]
+    QueryParam = None  # type: ignore[assignment]
+    EmbeddingFunc = Any  # type: ignore[assignment]
+
+    class _DocStatus:
+        # Minimal constants so callers can format status payloads.
+        PROCESSING = "processing"
+        PROCESSED = "processed"
+        FAILED = "failed"
+
+    DocStatus = _DocStatus  # type: ignore[assignment]
+
+    def compute_mdhash_id(text: str, prefix: str = "") -> str:  # type: ignore[override]
+        return f"{prefix}{hashlib.md5(text.encode('utf-8')).hexdigest()}"
 
 
 logger = logging.getLogger(__name__)
@@ -242,6 +258,8 @@ class WorkspaceRagStore:
         self._locks: Dict[str, asyncio.Lock] = {}
 
     async def _get_rag(self, workspace_id: str) -> LightRAG:
+        if LightRAG is None:  # pragma: no cover - guarded by optional dependency
+            raise RuntimeError("LightRAG is not installed; RAG tools are unavailable in this environment")
         if workspace_id in self._cache:
             return self._cache[workspace_id]
 

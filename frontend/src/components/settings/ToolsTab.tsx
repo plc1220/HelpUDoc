@@ -15,7 +15,8 @@ interface KeyValue {
 
 interface McpServerFormState {
     name: string;
-    transport: 'stdio' | 'sse';
+    transport: 'stdio' | 'http';
+    defaultAccess: 'allow' | 'deny';
     command: string;
     args: { id: string; value: string }[];
     env: KeyValue[];
@@ -30,6 +31,7 @@ interface McpServerFormState {
 const EmptyMcpForm: McpServerFormState = {
     name: '',
     transport: 'stdio',
+    defaultAccess: 'allow',
     command: '',
     args: [],
     env: [],
@@ -64,6 +66,7 @@ const ToolsTab: React.FC<ToolsTabProps> = ({ config, onSave, isSaving }) => {
             setMcpForm({
                 name: server.name || '',
                 transport: server.transport || 'stdio',
+                defaultAccess: server.default_access || server.defaultAccess || 'allow',
                 command: server.command || '',
                 args: (server.args || []).map((a: string) => ({ id: crypto.randomUUID(), value: a })),
                 env: Object.entries(server.env || {}).map(([k, v]) => ({ id: crypto.randomUUID(), key: k, value: String(v) })),
@@ -105,6 +108,7 @@ const ToolsTab: React.FC<ToolsTabProps> = ({ config, onSave, isSaving }) => {
         const newServerConfig: any = {
             name: mcpForm.name,
             transport: mcpForm.transport,
+            default_access: mcpForm.defaultAccess,
         };
 
         if (mcpForm.transport === 'stdio') {
@@ -317,7 +321,7 @@ const ToolsTab: React.FC<ToolsTabProps> = ({ config, onSave, isSaving }) => {
                                                     <span className="text-[10px] font-mono px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded uppercase tracking-wider">{server.transport || 'stdio'}</span>
                                                 </div>
                                                 <p className="text-xs text-slate-500 font-mono truncate max-w-md">
-                                                    {server.transport === 'sse' ? server.url : server.command}
+                                                    {server.transport === 'stdio' ? server.command : server.url}
                                                 </p>
                                             </div>
                                             <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -373,11 +377,32 @@ const ToolsTab: React.FC<ToolsTabProps> = ({ config, onSave, isSaving }) => {
                                             STDIO
                                         </button>
                                         <button
-                                            onClick={() => setMcpForm(prev => ({ ...prev, transport: 'sse' }))}
-                                            className={`py-1.5 text-sm font-medium rounded-md transition-all ${mcpForm.transport === 'sse' ? 'bg-[#636366] text-white shadow-sm' : 'text-[#8E8E93] hover:text-white'}`}
+                                            onClick={() => setMcpForm(prev => ({ ...prev, transport: 'http' }))}
+                                            className={`py-1.5 text-sm font-medium rounded-md transition-all ${mcpForm.transport === 'http' ? 'bg-[#636366] text-white shadow-sm' : 'text-[#8E8E93] hover:text-white'}`}
                                         >
                                             Streamable HTTP
                                         </button>
+                                    </div>
+
+                                    <div className="space-y-1.5">
+                                        <label className="block text-sm font-medium text-white">Default access</label>
+                                        <div className="grid grid-cols-2 bg-[#2C2C2E] p-1 rounded-lg">
+                                            <button
+                                                onClick={() => setMcpForm(prev => ({ ...prev, defaultAccess: 'allow' }))}
+                                                className={`py-1.5 text-sm font-medium rounded-md transition-all ${mcpForm.defaultAccess === 'allow' ? 'bg-[#636366] text-white shadow-sm' : 'text-[#8E8E93] hover:text-white'}`}
+                                            >
+                                                Allow
+                                            </button>
+                                            <button
+                                                onClick={() => setMcpForm(prev => ({ ...prev, defaultAccess: 'deny' }))}
+                                                className={`py-1.5 text-sm font-medium rounded-md transition-all ${mcpForm.defaultAccess === 'deny' ? 'bg-[#636366] text-white shadow-sm' : 'text-[#8E8E93] hover:text-white'}`}
+                                            >
+                                                Deny
+                                            </button>
+                                        </div>
+                                        <p className="text-xs text-[#8E8E93]">
+                                            For non-admins, servers default to <span className="font-mono">deny</span> require explicit allow.
+                                        </p>
                                     </div>
 
                                     {mcpForm.transport === 'stdio' ? (

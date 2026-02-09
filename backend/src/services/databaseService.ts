@@ -24,6 +24,7 @@ export class DatabaseService {
     await this.createUsersTable();
     await this.createWorkspacesTable();
     await this.createWorkspaceMembersTable();
+    await this.createMcpServerGrantsTable();
     await this.createFilesTable();
     await this.createCollabDocumentsTable();
     await this.createKnowledgeSourcesTable();
@@ -124,6 +125,31 @@ export class DatabaseService {
     } else {
       await this.ensureColumn('workspace_members', 'role', (table) => table.string('role', 32).notNullable().defaultTo('editor'));
       await this.ensureColumn('workspace_members', 'canEdit', (table) => table.boolean('canEdit').notNullable().defaultTo(true));
+    }
+  }
+
+  private async createMcpServerGrantsTable(): Promise<void> {
+    const exists = await this.db.schema.hasTable('mcp_server_grants');
+    if (!exists) {
+      await this.db.schema.createTable('mcp_server_grants', (table) => {
+        table.uuid('workspaceId').notNullable().references('id').inTable('workspaces').onDelete('CASCADE');
+        table.uuid('userId').notNullable().references('id').inTable('users').onDelete('CASCADE');
+        table.string('serverId').notNullable();
+        table.string('effect', 16).notNullable(); // 'allow' | 'deny'
+        table.timestamp('createdAt').notNullable().defaultTo(this.db.fn.now());
+        table.timestamp('updatedAt').notNullable().defaultTo(this.db.fn.now());
+        table.primary(['workspaceId', 'userId', 'serverId']);
+        table.index(['workspaceId', 'userId'], 'mcp_grants_workspace_user_idx');
+      });
+      console.log('Created "mcp_server_grants" table.');
+    } else {
+      await this.ensureColumn('mcp_server_grants', 'serverId', (table) => table.string('serverId').notNullable());
+      await this.ensureColumn('mcp_server_grants', 'effect', (table) => table.string('effect', 16).notNullable());
+      await this.ensureColumn('mcp_server_grants', 'createdAt', (table) => table.timestamp('createdAt').defaultTo(this.db.fn.now()));
+      await this.ensureColumn('mcp_server_grants', 'updatedAt', (table) => table.timestamp('updatedAt').defaultTo(this.db.fn.now()));
+      await this.db.raw(
+        'CREATE INDEX IF NOT EXISTS mcp_grants_workspace_user_idx ON mcp_server_grants ("workspaceId", "userId")',
+      );
     }
   }
 

@@ -43,6 +43,7 @@ export type AgentHistoryEntry = {
 type RunAgentOptions = {
   forceReset?: boolean;
   signal?: AbortSignal;
+  authToken?: string;
 };
 
 export async function runAgent(
@@ -61,7 +62,13 @@ export async function runAgent(
     payload.forceReset = true;
   }
 
-  const res = await client.post(`/agents/${persona}/workspace/${workspaceId}/chat`, payload);
+  const headers: Record<string, string> = {};
+  if (options?.authToken) {
+    headers.Authorization = `Bearer ${options.authToken}`;
+  }
+  const res = await client.post(`/agents/${persona}/workspace/${workspaceId}/chat`, payload, {
+    headers,
+  });
   return res.data;
 }
 
@@ -81,9 +88,14 @@ export async function runAgentStream(
     payload.forceReset = true;
   }
 
+  const headers: Record<string, string> = {};
+  if (options?.authToken) {
+    headers.Authorization = `Bearer ${options.authToken}`;
+  }
   return client.post(`/agents/${persona}/workspace/${workspaceId}/chat/stream`, payload, {
     responseType: "stream",
     signal: options?.signal,
+    headers,
   });
 }
 
