@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import Editor, { type OnMount } from '@monaco-editor/react';
 import type { File } from '../types';
 import { editor } from 'monaco-editor';
+import { Eye, EyeOff } from 'lucide-react';
 import {
   MDXEditor,
   type MDXEditorMethods,
@@ -129,6 +130,7 @@ const FileEditor: React.FC<FileEditorProps> = ({
   const [collabReady, setCollabReady] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState('connecting');
   const [presenceUsers, setPresenceUsers] = useState<Array<{ clientId: number; name: string; color: string }>>([]);
+  const [isRawView, setIsRawView] = useState(false);
   const isDarkMode = colorMode === 'dark';
   const monacoTheme = isDarkMode ? 'helpudoc-nord' : 'vs';
 
@@ -476,40 +478,83 @@ const FileEditor: React.FC<FileEditorProps> = ({
       )}
       <div className="flex-grow overflow-auto">
         {isMarkdown ? (
-          <div className="mdxeditor-root h-full overflow-y-auto" style={{ maxHeight: 'calc(100vh - 200px)' }}>
-            <MDXEditor
-              ref={mdxEditorRef}
-              markdown={fileContent}
-              onChange={(value) => {
-                if (isApplyingRemoteRef.current) return;
-                applyTextUpdate(value);
-              }}
-              plugins={[
-                headingsPlugin(),
-                listsPlugin(),
-                quotePlugin(),
-                thematicBreakPlugin(),
-                toolbarPlugin({
-                  toolbarContents: () => (
-                    <>
-                      <UndoRedo />
-                      <Separator />
-                      <BoldItalicUnderlineToggles />
-                      <Separator />
-                      <ListsToggle />
-                      <Separator />
-                      <BlockTypeSelect />
-                      <Separator />
-                      <CreateLink />
-                      <InsertImage />
-                      <InsertTable />
-                      <Separator />
-                      <CodeToggle />
-                    </>
-                  ),
-                }),
-              ]}
-            />
+          <div className="mdxeditor-root h-full overflow-y-auto flex flex-col" style={{ maxHeight: 'calc(100vh - 200px)' }}>
+            {/* Raw/Rendered Toggle Toolbar */}
+            <div className="flex items-center justify-between px-3 py-2 border-b border-gray-200 bg-gray-50">
+              <span className="text-xs font-medium text-gray-500">
+                {isRawView ? 'Raw Markdown' : 'Rich Editor'}
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  // No need to manually sync content when toggling views
+                  // - When switching to raw: content is already synced via MDXEditor's onChange
+                  // - When switching to rich: MDXEditor will auto-sync from Yjs document via handleTextChange
+                  setIsRawView(!isRawView);
+                }}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium text-gray-600 hover:bg-gray-200 transition-colors"
+                title={isRawView ? 'Switch to Rich Editor' : 'View Raw Markdown'}
+              >
+                {isRawView ? (
+                  <>
+                    <Eye size={14} />
+                    <span>Rich View</span>
+                  </>
+                ) : (
+                  <>
+                    <EyeOff size={14} />
+                    <span>Raw View</span>
+                  </>
+                )}
+              </button>
+            </div>
+            {/* Editor Content */}
+            {isRawView ? (
+              <textarea
+                className="flex-1 w-full h-full p-4 font-mono text-sm border-none resize-none focus:outline-none focus:ring-0 bg-white"
+                value={fileContent}
+                onChange={(e) => {
+                  const newValue = e.target.value;
+                  applyTextUpdate(newValue);
+                }}
+                placeholder="Enter markdown content..."
+                spellCheck={false}
+              />
+            ) : (
+              <MDXEditor
+                ref={mdxEditorRef}
+                markdown={fileContent}
+                onChange={(value) => {
+                  if (isApplyingRemoteRef.current) return;
+                  applyTextUpdate(value);
+                }}
+                plugins={[
+                  headingsPlugin(),
+                  listsPlugin(),
+                  quotePlugin(),
+                  thematicBreakPlugin(),
+                  toolbarPlugin({
+                    toolbarContents: () => (
+                      <>
+                        <UndoRedo />
+                        <Separator />
+                        <BoldItalicUnderlineToggles />
+                        <Separator />
+                        <ListsToggle />
+                        <Separator />
+                        <BlockTypeSelect />
+                        <Separator />
+                        <CreateLink />
+                        <InsertImage />
+                        <InsertTable />
+                        <Separator />
+                        <CodeToggle />
+                      </>
+                    ),
+                  }),
+                ]}
+              />
+            )}
           </div>
         ) : (
           <Editor

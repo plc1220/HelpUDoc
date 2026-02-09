@@ -480,3 +480,100 @@ body {
 :root[data-theme='dark'] .mdxeditor-root .mdxeditor-toolbar svg {
   color: #e6edf3;
 }
+
+/* Prose (ReactMarkdown) dark mode styles for FileRenderer */
+:root[data-theme='dark'] .prose {
+  color: #e6edf3;
+}
+
+:root[data-theme='dark'] .prose h1,
+:root[data-theme='dark'] .prose h2 {
+  color: #9bbcff;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  border-bottom-color: #1f2937;
+}
+
+:root[data-theme='dark'] .prose h3,
+:root[data-theme='dark'] .prose h4,
+:root[data-theme='dark'] .prose h5,
+:root[data-theme='dark'] .prose h6 {
+  color: #a9c3ff;
+  font-weight: 600;
+}
+
+:root[data-theme='dark'] .prose p,
+:root[data-theme='dark'] .prose li,
+:root[data-theme='dark'] .prose td,
+:root[data-theme='dark'] .prose th {
+  color: #e6edf3;
+}
+
+:root[data-theme='dark'] .prose strong {
+  color: #f0f6fc;
+  font-weight: 600;
+}
+
+:root[data-theme='dark'] .prose em {
+  color: #e6edf3;
+}
+
+:root[data-theme='dark'] .prose a {
+  color: #58a6ff;
+  text-decoration: underline;
+}
+
+:root[data-theme='dark'] .prose a:hover {
+  color: #79c0ff;
+}
+
+:root[data-theme='dark'] .prose code {
+  background: #2d333b;
+  border: 1px solid #3a4350;
+  color: #e6edf3;
+  font-family: 'SFMono-Regular', Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  padding: 0.1rem 0.35rem;
+  border-radius: 6px;
+  font-size: 0.85em;
+}
+
+:root[data-theme='dark'] .prose pre {
+  background: #0b1220;
+  border: 1px solid #1f2937;
+  border-radius: 12px;
+  padding: 0.75rem 1rem;
+}
+
+:root[data-theme='dark'] .prose pre code {
+  background: transparent;
+  border: none;
+  padding: 0;
+  font-size: 0.9em;
+  color: #e6edf3;
+}
+
+:root[data-theme='dark'] .prose blockquote {
+  border-left-color: #3a4350;
+  color: #cbd5e1;
+}
+
+:root[data-theme='dark'] .prose hr {
+  border-color: #1f2937;
+}
+
+:root[data-theme='dark'] .prose table {
+  border-color: #1f2937;
+}
+
+:root[data-theme='dark'] .prose thead {
+  border-bottom-color: #1f2937;
+}
+
+:root[data-theme='dark'] .prose tbody tr {
+  border-bottom-color: #1f2937;
+}
+
+:root[data-theme='dark'] .prose ul > li::marker,
+:root[data-theme='dark'] .prose ol > li::marker {
+  color: #94a3b8;
+}
