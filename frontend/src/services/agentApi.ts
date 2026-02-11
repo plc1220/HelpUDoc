@@ -64,7 +64,7 @@ export const streamAgentRun = async (
   const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
   let lastId = afterId;
-  let attempt = 0;
+  let consecutiveFailures = 0;
   const maxAttempts = 5;
 
   const onChunkWithResume = (chunk: AgentStreamChunk & { id?: unknown }) => {
@@ -81,7 +81,7 @@ export const streamAgentRun = async (
       ? `${API_URL}/agent/runs/${runId}/stream?after=${encodeURIComponent(lastId)}`
       : `${API_URL}/agent/runs/${runId}/stream`;
     if (STREAM_DEBUG_ENABLED) {
-      console.debug('[AgentRunStream] connect', { runId, url, attempt });
+      console.debug('[AgentRunStream] connect', { runId, url, consecutiveFailures });
     }
 
     const response = await apiFetch(url, {
@@ -107,6 +107,7 @@ export const streamAgentRun = async (
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
+      let sawChunk = false;
 
       while (true) {
         const { value, done } = await reader.read();
@@ -120,6 +121,7 @@ export const streamAgentRun = async (
             try {
               const chunk = JSON.parse(line);
               onChunkWithResume(chunk);
+              sawChunk = true;
               if (STREAM_DEBUG_ENABLED) {
                 console.debug('[AgentRunStream] chunk', chunk);
               }
@@ -135,6 +137,7 @@ export const streamAgentRun = async (
         try {
           const chunk = JSON.parse(buffer.trim());
           onChunkWithResume(chunk);
+          sawChunk = true;
           if (STREAM_DEBUG_ENABLED) {
             console.debug('[AgentRunStream] chunk', chunk);
           }
@@ -143,17 +146,23 @@ export const streamAgentRun = async (
         }
       }
 
+      // A successful read cycle (especially one that received chunks) should
+      // reset retry accounting so occasional disconnects don't eventually fail
+      // long-running streams.
+      if (sawChunk) {
+        consecutiveFailures = 0;
+      }
       return;
     } catch (error) {
       if (signal?.aborted) {
         throw error;
       }
-      attempt += 1;
-      if (attempt >= maxAttempts) {
+      consecutiveFailures += 1;
+      if (consecutiveFailures >= maxAttempts) {
         throw error;
       }
       // Exponential backoff: 250ms, 500ms, 1s, 2s...
-      await delay(250 * (2 ** (attempt - 1)));
+      await delay(250 * (2 ** (consecutiveFailures - 1)));
       continue;
     }
   }
