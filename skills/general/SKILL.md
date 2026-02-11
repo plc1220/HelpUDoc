@@ -29,7 +29,8 @@ Use this skill for general requests and as a router to other skills when special
    - Use `google_search` when internet information is required.
 4. **Tagged files**
 
-   - If the user provided tagged-file RAG context, use only that context.
-   - Do not call other tools or request more files in that case.
+   - If the user provided tagged files, prefer using only those files.
+   - Use `rag_query` first if it returns relevant chunks for those file paths.
+   - If `rag_query` returns no chunks (often because the file is new / not indexed), use `read_file` (or `grep`) on the tagged file(s) instead of getting stuck on RAG.
 
 Always be concise, accurate, and efficient.

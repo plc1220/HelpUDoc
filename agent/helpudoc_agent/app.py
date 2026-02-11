@@ -118,7 +118,16 @@ def _load_env_files() -> None:
 
 def create_app() -> FastAPI:
     _load_env_files()
-    settings = load_settings()
+    config_path: Optional[Path] = None
+    env_config_path = os.getenv("AGENT_CONFIG_PATH")
+    if env_config_path:
+        candidate = Path(env_config_path)
+        if candidate.exists():
+            config_path = candidate
+        else:
+            logger.warning("AGENT_CONFIG_PATH is set but file does not exist; falling back to built-in config", extra={"path": env_config_path})
+
+    settings = load_settings(config_path)
     source_tracker = SourceTracker()
     gemini_manager = GeminiClientManager(settings)
     tool_factory = ToolFactory(settings, source_tracker, gemini_manager)
@@ -281,7 +290,7 @@ def create_app() -> FastAPI:
                 if in_block:
                     break
                 continue
-            if "Tagged files (use only these for RAG retrieval)" in stripped:
+            if stripped.startswith("Tagged files"):
                 in_block = True
                 continue
             if in_block:
@@ -315,7 +324,11 @@ def create_app() -> FastAPI:
         return None
 
     async def _prefetch_rag_context(workspace_id: str, prompt: str) -> str | None:
-        if not prompt or "Tagged files (use only these for RAG retrieval)" not in prompt:
+        # Use extraction rather than relying on an exact marker string so backend text can evolve.
+        if not prompt:
+            return None
+        tagged_paths = _extract_tagged_files(prompt)
+        if not tagged_paths:
             return None
         try:
             response = await rag_worker.store.query_data(
@@ -684,12 +697,23 @@ def create_app() -> FastAPI:
         payload = _prepare_payload(message)
         tagged_files = _extract_tagged_files(message.message)
         runtime.workspace_state.context["tagged_files"] = tagged_files
-        runtime.workspace_state.context["tagged_files_only"] = bool(tagged_files)
+        # Historical behavior forced "RAG-only" when any tagged files were present, which breaks
+        # when those files aren't indexed yet (e.g., agent-generated artifacts) and blocks basic
+        # file tools. Keep it behind an env flag for compatibility.
+        tagged_files_rag_only = (os.getenv("TAGGED_FILES_RAG_ONLY", "false") or "false").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "y",
+            "on",
+        }
+        runtime.workspace_state.context["tagged_files_only"] = bool(tagged_files) and tagged_files_rag_only
         if tagged_files:
             rag_context = await _prefetch_rag_context(runtime.workspace_state.workspace_id, message.message)
             if rag_context:
                 runtime.workspace_state.context["tagged_rag_context"] = rag_context
-                payload = [{"role": "user", "content": f"{message.message}\n\nRAG_CONTEXT:\n{rag_context}\n\nAnswer using only RAG_CONTEXT."}]
+                if tagged_files_rag_only:
+                    payload = [{"role": "user", "content": f"{message.message}\n\nRAG_CONTEXT:\n{rag_context}\n\nAnswer using only RAG_CONTEXT."}]
         handler = _CallbackStreamingHandler(_message_to_text)
         sentinel = object()
         fallback_chunks: List[Any] = []
@@ -822,16 +846,24 @@ def create_app() -> FastAPI:
 
         tagged_files = _extract_tagged_files(chat_request.message)
         runtime.workspace_state.context["tagged_files"] = tagged_files
-        runtime.workspace_state.context["tagged_files_only"] = bool(tagged_files)
+        tagged_files_rag_only = (os.getenv("TAGGED_FILES_RAG_ONLY", "false") or "false").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "y",
+            "on",
+        }
+        runtime.workspace_state.context["tagged_files_only"] = bool(tagged_files) and tagged_files_rag_only
         if tagged_files:
             rag_context = await _prefetch_rag_context(runtime.workspace_state.workspace_id, chat_request.message)
             if rag_context:
                 runtime.workspace_state.context["tagged_rag_context"] = rag_context
-                chat_request = ChatRequest(
-                    message=f"{chat_request.message}\n\nRAG_CONTEXT:\n{rag_context}\n\nAnswer using only RAG_CONTEXT.",
-                    history=chat_request.history,
-                    forceReset=chat_request.forceReset,
-                )
+                if tagged_files_rag_only:
+                    chat_request = ChatRequest(
+                        message=f"{chat_request.message}\n\nRAG_CONTEXT:\n{rag_context}\n\nAnswer using only RAG_CONTEXT.",
+                        history=chat_request.history,
+                        forceReset=chat_request.forceReset,
+                    )
 
         result = _invoke_agent(runtime, chat_request)
         source_tracker.update_final_report(runtime.workspace_state)

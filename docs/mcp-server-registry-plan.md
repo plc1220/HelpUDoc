@@ -18,6 +18,14 @@ MCP servers are defined in `runtime.yaml` and modeled in [`agent/helpudoc_agent/
 
 ## Proposed Implementation
 
+## Follow-On Plan: Connections + Auth Broker
+This document covers the mechanics of registering MCP server endpoints and attaching
+their tools to the agent.
+
+For production-grade credential handling (per-workspace tokens, per-user OAuth, and
+identity federation), follow the companion plan:
+- [`docs/mcp-connections-auth-plan.md`](./mcp-connections-auth-plan.md)
+
 ### Architecture
 
 ```mermaid

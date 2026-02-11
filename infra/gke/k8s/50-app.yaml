@@ -129,6 +129,8 @@ spec:
           env:
             - name: REDIS_URL
               value: redis://redis:6379
+            - name: AGENT_CONFIG_PATH
+              value: /agent/config/runtime.yaml
             - name: RAG_PARSER_PIPELINE
               value: basic
             - name: PARSER
@@ -201,6 +203,12 @@ spec:
                 secretKeyRef:
                   name: helpudoc-secrets
                   key: MINIO_ROOT_PASSWORD
+            - name: BQ_ACCESS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: BQ_ACCESS_TOKEN
+                  optional: true
           volumeMounts:
             - name: workspace-data
               mountPath: /app/workspaces

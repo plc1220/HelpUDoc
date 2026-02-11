@@ -50,10 +50,6 @@ tools:
     description: Load full skill content from the shared registry
 
 mcp_servers:
-  - name: research_fs
-    transport: stdio
-    command: ./scripts/start_mcp_fs.sh
-    description: Example MCP filesystem server
   - name: toolbox-bq-demo
     transport: http
     url: https://toolbox-heboslofda-as.a.run.app/mcp

@@ -112,6 +112,8 @@ services:
       RAG_OFFLINE: ${RAG_OFFLINE:-true}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       RAG_LLM_API_KEY: ${RAG_LLM_API_KEY:-}
+      # Demo: MCP auth for toolbox-bq-demo.
+      BQ_ACCESS_TOKEN: ${BQ_ACCESS_TOKEN:-}
       LLM_MODEL: ${LLM_MODEL:-gemini-3-flash-preview}
       WORKSPACE_ROOT: /app/workspaces
       S3_ENDPOINT: http://minio:9000

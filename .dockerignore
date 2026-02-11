@@ -1,0 +1,21 @@
+.git
+.github
+.DS_Store
+
+# Local/runtime data (never needed for image builds)
+.minio-data
+.postgres-data
+rag_storage
+
+# Python caches
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+
+# Node artifacts
+**/node_modules
+frontend/dist
+
+# Misc
+**/.env
+**/.env.*

@@ -15,7 +15,12 @@ RUN apt-get update \
     libsm6 \
   && rm -rf /var/lib/apt/lists/*
 
-COPY . .
-RUN pip install --no-cache-dir -r requirements.txt
+# Install deps before copying the rest so the layer caches across code changes.
+COPY agent/requirements.txt /app/agent/requirements.txt
+RUN pip install --no-cache-dir -r /app/agent/requirements.txt
+
+COPY agent/ /app/agent/
+COPY skills/ /app/skills/
+
 EXPOSE 8001
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001"]

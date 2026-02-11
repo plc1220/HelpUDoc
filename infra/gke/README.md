@@ -97,6 +97,8 @@ kubectl -n helpudoc get svc helpudoc-caddy
 - The backend and agent run in a single pod to share `WORKSPACE_ROOT` on a single PVC.
 - MinIO is deployed in-cluster for compatibility with the current S3 code path.
 - Update `infra/gke/k8s/10-secrets.yaml` and `infra/gke/k8s/20-configmap.yaml` with real values before deploying.
+- If you are testing the BigQuery demo MCP (`toolbox-bq-demo`), set `BQ_ACCESS_TOKEN` in `infra/gke/k8s/10-secrets.yaml`
+  (or update the `helpudoc-secrets` Secret in-cluster) so the agent can authenticate to the MCP server.
 - For production, move Postgres/Redis/MinIO to managed services and use a real RWX storage class (Filestore) if you
   split backend and agent into separate pods.
 - gcloud builds submit .

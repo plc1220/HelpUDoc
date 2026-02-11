@@ -19,7 +19,7 @@ from langchain_core.tools import Tool
 try:
     import vertexai
     from google import genai
-    from google.genai.types import GenerateContentConfig, ImageConfig, Modality
+    from google.genai.types import GenerateContentConfig, HttpOptions, ImageConfig, Modality
     from PIL import Image
 except ImportError as exc:  # pragma: no cover
     raise RuntimeError("Gemini dependencies are required") from exc
@@ -31,8 +31,60 @@ from .state import WorkspaceState
 from .utils import SourceTracker, resolve_urls, extract_web_url
 
 logger = logging.getLogger(__name__)
-_DEFAULT_SEARCH_TIMEOUT = int(os.getenv("GOOGLE_SEARCH_TIMEOUT_SECONDS", "30"))
+
+
+def _read_text_truncated(path: Path, max_chars: int) -> str:
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except Exception as exc:  # pragma: no cover - filesystem guard
+        return f"[Error reading file: {exc}]"
+    if max_chars > 0 and len(text) > max_chars:
+        return text[:max_chars] + "\n\n[Truncated]"
+    return text
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None or not str(raw).strip():
+        return default
+    try:
+        return int(str(raw).strip())
+    except ValueError:
+        logger.warning("Invalid int for %s=%r; using default=%s", name, raw, default)
+        return default
+
+
+def _clamp_min(name: str, value: int, minimum: int) -> int:
+    if value < minimum:
+        logger.warning("%s=%s is too small; clamping to %s", name, value, minimum)
+        return minimum
+    return value
+
+
+# Gemini's backend enforces a minimum deadline for some operations (notably search).
+_MIN_GEMINI_TIMEOUT_S = 10
+
+_DEFAULT_SEARCH_TIMEOUT = _clamp_min(
+    "GOOGLE_SEARCH_TIMEOUT_SECONDS",
+    _env_int("GOOGLE_SEARCH_TIMEOUT_SECONDS", 30),
+    _MIN_GEMINI_TIMEOUT_S,
+)
+_DEFAULT_HTTP_TIMEOUT = _clamp_min(
+    "GEMINI_HTTP_TIMEOUT_SECONDS",
+    _env_int("GEMINI_HTTP_TIMEOUT_SECONDS", 180),
+    _MIN_GEMINI_TIMEOUT_S,
+)
+_DEFAULT_SEARCH_HTTP_TIMEOUT = _clamp_min(
+    "GEMINI_SEARCH_HTTP_TIMEOUT_SECONDS",
+    _env_int("GEMINI_SEARCH_HTTP_TIMEOUT_SECONDS", _DEFAULT_SEARCH_TIMEOUT),
+    _MIN_GEMINI_TIMEOUT_S,
+)
 _SEARCH_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=4)
+
+
+def _seconds_to_ms(seconds: int) -> int:
+    # google.genai HttpOptions.timeout is milliseconds (see google.genai._api_client.get_timeout_in_seconds).
+    return int(seconds) * 1000
 
 
 def _generate_with_timeout(
@@ -97,7 +149,17 @@ class GeminiClientManager:
         else:
             client_kwargs["vertexai"] = False
 
-        self.client = genai.Client(**client_kwargs)
+        # Main client: used for most model calls (allow longer runtime).
+        self.client = genai.Client(
+            **client_kwargs,
+            http_options=HttpOptions(timeout=_seconds_to_ms(_DEFAULT_HTTP_TIMEOUT)),
+        )
+        # Search client: used for google_search tool calls (keep timeouts tight so a flaky network
+        # can't stall runs or accumulate hung threads over time).
+        self.search_client = genai.Client(
+            **client_kwargs,
+            http_options=HttpOptions(timeout=_seconds_to_ms(_DEFAULT_SEARCH_HTTP_TIMEOUT)),
+        )
         self.model_name = model_cfg.chat_model_name
         self.image_model_name = model_cfg.image_model_name
 
@@ -151,7 +213,7 @@ class ToolFactory:
         return build_google_search_tool(
             workspace_state=workspace_state,
             source_tracker=self.source_tracker,
-            client=self.gemini_manager.client,
+            client=self.gemini_manager.search_client,
             model_name=self.gemini_manager.model_name,
         )
 
@@ -164,7 +226,7 @@ class ToolFactory:
 
     def _build_google_grounded_search_tool(self, workspace_state: WorkspaceState) -> Tool:
         """Grounded search that also records sources for final reporting."""
-        client = self.gemini_manager.client
+        client = self.gemini_manager.search_client
         model_name = self.gemini_manager.model_name
         tracker = self.source_tracker
 
@@ -539,6 +601,45 @@ class ToolFactory:
                         filtered.append(chunk)
                 chunks = filtered
             if not chunks:
+                # Common case: a tagged file exists on disk but isn't indexed yet (e.g., newly
+                # generated artifacts). When file paths are specified, fall back to raw file
+                # reads for small/text files so the agent can proceed without RAG.
+                if normalized:
+                    workspace_root = workspace_state.root_path.resolve()
+                    max_chars = int(getattr(rag_cfg, "max_text_chars", 250000) or 250000)
+                    max_chars = min(max_chars, 40000)
+                    supported_text_suffixes = {
+                        ".md",
+                        ".txt",
+                        ".json",
+                        ".yaml",
+                        ".yml",
+                        ".toml",
+                        ".csv",
+                        ".ts",
+                        ".tsx",
+                        ".js",
+                        ".jsx",
+                        ".py",
+                        ".sql",
+                    }
+                    parts: List[str] = []
+                    for rel in normalized:
+                        rel_clean = rel.lstrip("/")
+                        candidate = (workspace_root / rel_clean).resolve()
+                        if workspace_root not in candidate.parents and candidate != workspace_root:
+                            continue
+                        if not candidate.exists() or not candidate.is_file():
+                            parts.append(f"[{rel}] [File not found on disk]")
+                            continue
+                        if candidate.suffix.lower() not in supported_text_suffixes:
+                            parts.append(
+                                f"[{rel}] [Not indexed and not a supported text file type for fallback: {candidate.suffix}]"
+                            )
+                            continue
+                        parts.append(f"[{rel}] {_read_text_truncated(candidate, max_chars)}")
+                    if parts:
+                        return "\n\n".join(parts)
                 return (
                     "No relevant context found for the requested file(s)."
                     if normalized
@@ -595,7 +696,7 @@ def build_google_search_tool(
         if error:
             return f"Search failed ({error})."
 
-        summary = response.text
+        summary = response.text or "No results found."
         sources_str = "\n\n--- SOURCES ---"
         sources_found = False
 

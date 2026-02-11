@@ -61,65 +61,100 @@ export const streamAgentRun = async (
   signal?: AbortSignal,
   afterId?: string,
 ) => {
-  const url = afterId ? `${API_URL}/agent/runs/${runId}/stream?after=${encodeURIComponent(afterId)}` : `${API_URL}/agent/runs/${runId}/stream`;
-  if (STREAM_DEBUG_ENABLED) {
-    console.debug('[AgentRunStream] connect', { runId, url });
-  }
-  const response = await apiFetch(url, {
-    method: 'GET',
-    signal,
-  });
+  const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-  if (!response.ok) {
-    if (STREAM_DEBUG_ENABLED) {
-      console.debug('[AgentRunStream] error response', { runId, status: response.status });
+  let lastId = afterId;
+  let attempt = 0;
+  const maxAttempts = 5;
+
+  const onChunkWithResume = (chunk: AgentStreamChunk & { id?: unknown }) => {
+    if (typeof chunk.id === 'string') {
+      lastId = chunk.id;
     }
-    throw new Error('Failed to stream agent run');
-  }
+    onChunk(chunk);
+  };
 
-  if (!response.body) {
-    if (STREAM_DEBUG_ENABLED) {
-      console.debug('[AgentRunStream] missing body', { runId });
-    }
-    throw new Error('Streaming not supported by this browser');
-  }
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-
+  // Retry on transient network failures (e.g., QUIC/HTTP3 stream drops) and resume from the last seen id.
+  // If the client can't resume (no id support), it will behave like the old implementation.
   while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    let newlineIndex = buffer.indexOf('\n');
-    while (newlineIndex >= 0) {
-      const line = buffer.slice(0, newlineIndex).trim();
-      buffer = buffer.slice(newlineIndex + 1);
-      if (line) {
+    const url = lastId
+      ? `${API_URL}/agent/runs/${runId}/stream?after=${encodeURIComponent(lastId)}`
+      : `${API_URL}/agent/runs/${runId}/stream`;
+    if (STREAM_DEBUG_ENABLED) {
+      console.debug('[AgentRunStream] connect', { runId, url, attempt });
+    }
+
+    const response = await apiFetch(url, {
+      method: 'GET',
+      signal,
+    });
+
+    if (!response.ok) {
+      if (STREAM_DEBUG_ENABLED) {
+        console.debug('[AgentRunStream] error response', { runId, status: response.status });
+      }
+      throw new Error('Failed to stream agent run');
+    }
+
+    if (!response.body) {
+      if (STREAM_DEBUG_ENABLED) {
+        console.debug('[AgentRunStream] missing body', { runId });
+      }
+      throw new Error('Streaming not supported by this browser');
+    }
+
+    try {
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let newlineIndex = buffer.indexOf('\n');
+        while (newlineIndex >= 0) {
+          const line = buffer.slice(0, newlineIndex).trim();
+          buffer = buffer.slice(newlineIndex + 1);
+          if (line) {
+            try {
+              const chunk = JSON.parse(line);
+              onChunkWithResume(chunk);
+              if (STREAM_DEBUG_ENABLED) {
+                console.debug('[AgentRunStream] chunk', chunk);
+              }
+            } catch (error) {
+              console.error('Failed to parse stream chunk', error, line);
+            }
+          }
+          newlineIndex = buffer.indexOf('\n');
+        }
+      }
+
+      if (buffer.trim()) {
         try {
-          const chunk = JSON.parse(line);
-          onChunk(chunk);
+          const chunk = JSON.parse(buffer.trim());
+          onChunkWithResume(chunk);
           if (STREAM_DEBUG_ENABLED) {
             console.debug('[AgentRunStream] chunk', chunk);
           }
         } catch (error) {
-          console.error('Failed to parse stream chunk', error, line);
+          console.error('Failed to parse trailing stream chunk', error, buffer);
         }
       }
-      newlineIndex = buffer.indexOf('\n');
-    }
-  }
 
-  if (buffer.trim()) {
-    try {
-      const chunk = JSON.parse(buffer.trim());
-      onChunk(chunk);
-      if (STREAM_DEBUG_ENABLED) {
-        console.debug('[AgentRunStream] chunk', chunk);
-      }
+      return;
     } catch (error) {
-      console.error('Failed to parse trailing stream chunk', error, buffer);
+      if (signal?.aborted) {
+        throw error;
+      }
+      attempt += 1;
+      if (attempt >= maxAttempts) {
+        throw error;
+      }
+      // Exponential backoff: 250ms, 500ms, 1s, 2s...
+      await delay(250 * (2 ** (attempt - 1)));
+      continue;
     }
   }
 };

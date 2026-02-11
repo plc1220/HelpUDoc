@@ -1,62 +1,140 @@
 steps:
-  # 1. Build & Push Backend Image
-  - name: 'gcr.io/cloud-builders/docker'
+  # 1. Build backend/frontend/agent in parallel + reuse layers via BuildKit inline cache.
+  # Note: Docker layer caching only works across builds if we seed it from a previously-pushed image.
+  # We do this by pulling :latest and passing --cache-from, then tagging :latest via add-tag (no duplicate push).
+  - id: pull-backend-cache
+    name: 'gcr.io/cloud-builders/docker'
+    waitFor: ['-']
+    entrypoint: 'bash'
+    args: ['-c', 'docker pull gcr.io/$PROJECT_ID/helpudoc-backend:latest || true']
+
+  - id: pull-frontend-cache
+    name: 'gcr.io/cloud-builders/docker'
+    waitFor: ['-']
+    entrypoint: 'bash'
+    args: ['-c', 'docker pull gcr.io/$PROJECT_ID/helpudoc-frontend:latest || true']
+
+  - id: pull-agent-cache
+    name: 'gcr.io/cloud-builders/docker'
+    waitFor: ['-']
+    entrypoint: 'bash'
+    args: ['-c', 'docker pull gcr.io/$PROJECT_ID/helpudoc-agent:latest || true']
+
+  - id: build-backend
+    name: 'gcr.io/cloud-builders/docker'
+    waitFor: ['pull-backend-cache']
+    env: ['DOCKER_BUILDKIT=1']
     args:
       [
         'build',
         '-f',
         'backend/Dockerfile.gke',
+        '--build-arg',
+        'BUILDKIT_INLINE_CACHE=1',
+        '--cache-from',
+        'gcr.io/$PROJECT_ID/helpudoc-backend:latest',
         '-t',
         'gcr.io/$PROJECT_ID/helpudoc-backend:$BUILD_ID',
-        '-t',
-        'gcr.io/$PROJECT_ID/helpudoc-backend:latest',
         '.',
       ]
-  - name: 'gcr.io/cloud-builders/docker'
-    args: ['push', 'gcr.io/$PROJECT_ID/helpudoc-backend:$BUILD_ID']
-  - name: 'gcr.io/cloud-builders/docker'
-    args: ['push', 'gcr.io/$PROJECT_ID/helpudoc-backend:latest']
 
-  # 2. Build & Push Frontend Image
-  - name: 'gcr.io/cloud-builders/docker'
+  - id: build-frontend
+    name: 'gcr.io/cloud-builders/docker'
+    waitFor: ['pull-frontend-cache']
+    env: ['DOCKER_BUILDKIT=1']
     args:
       [
         'build',
         '-f',
         'frontend/Dockerfile.gke',
         '--build-arg',
+        'BUILDKIT_INLINE_CACHE=1',
+        '--cache-from',
+        'gcr.io/$PROJECT_ID/helpudoc-frontend:latest',
+        '--build-arg',
         'VITE_GOOGLE_CLIENT_ID=$_VITE_GOOGLE_CLIENT_ID',
         '-t',
         'gcr.io/$PROJECT_ID/helpudoc-frontend:$BUILD_ID',
-        '-t',
-        'gcr.io/$PROJECT_ID/helpudoc-frontend:latest',
         'frontend',
       ]
-  - name: 'gcr.io/cloud-builders/docker'
-    args: ['push', 'gcr.io/$PROJECT_ID/helpudoc-frontend:$BUILD_ID']
-  - name: 'gcr.io/cloud-builders/docker'
-    args: ['push', 'gcr.io/$PROJECT_ID/helpudoc-frontend:latest']
 
-  # 3. Build & Push Agent Image
-  - name: 'gcr.io/cloud-builders/docker'
+  - id: build-agent
+    name: 'gcr.io/cloud-builders/docker'
+    waitFor: ['pull-agent-cache']
+    env: ['DOCKER_BUILDKIT=1']
     args:
       [
         'build',
         '-f',
         'agent/Dockerfile.gke',
+        '--build-arg',
+        'BUILDKIT_INLINE_CACHE=1',
+        '--cache-from',
+        'gcr.io/$PROJECT_ID/helpudoc-agent:latest',
         '-t',
         'gcr.io/$PROJECT_ID/helpudoc-agent:$BUILD_ID',
-        '-t',
-        'gcr.io/$PROJECT_ID/helpudoc-agent:latest',
         '.',
       ]
-  - name: 'gcr.io/cloud-builders/docker'
+
+  - id: push-backend
+    name: 'gcr.io/cloud-builders/docker'
+    waitFor: ['build-backend']
+    args: ['push', 'gcr.io/$PROJECT_ID/helpudoc-backend:$BUILD_ID']
+
+  - id: push-frontend
+    name: 'gcr.io/cloud-builders/docker'
+    waitFor: ['build-frontend']
+    args: ['push', 'gcr.io/$PROJECT_ID/helpudoc-frontend:$BUILD_ID']
+
+  - id: push-agent
+    name: 'gcr.io/cloud-builders/docker'
+    waitFor: ['build-agent']
     args: ['push', 'gcr.io/$PROJECT_ID/helpudoc-agent:$BUILD_ID']
-  - name: 'gcr.io/cloud-builders/docker'
-    args: ['push', 'gcr.io/$PROJECT_ID/helpudoc-agent:latest']
+
+  # Tag :latest without pushing the same bytes twice.
+  - id: tag-backend-latest
+    name: 'gcr.io/cloud-builders/gcloud'
+    waitFor: ['push-backend']
+    args:
+      [
+        'container',
+        'images',
+        'add-tag',
+        '--quiet',
+        'gcr.io/$PROJECT_ID/helpudoc-backend:$BUILD_ID',
+        'gcr.io/$PROJECT_ID/helpudoc-backend:latest',
+      ]
+
+  - id: tag-frontend-latest
+    name: 'gcr.io/cloud-builders/gcloud'
+    waitFor: ['push-frontend']
+    args:
+      [
+        'container',
+        'images',
+        'add-tag',
+        '--quiet',
+        'gcr.io/$PROJECT_ID/helpudoc-frontend:$BUILD_ID',
+        'gcr.io/$PROJECT_ID/helpudoc-frontend:latest',
+      ]
+
+  - id: tag-agent-latest
+    name: 'gcr.io/cloud-builders/gcloud'
+    waitFor: ['push-agent']
+    args:
+      [
+        'container',
+        'images',
+        'add-tag',
+        '--quiet',
+        'gcr.io/$PROJECT_ID/helpudoc-agent:$BUILD_ID',
+        'gcr.io/$PROJECT_ID/helpudoc-agent:latest',
+      ]
 
   # 4. Update Image References in Manifests
-  - name: 'ubuntu'
+  - id: rewrite-manifests
+    name: 'ubuntu'
+    waitFor: ['push-backend', 'push-frontend', 'push-agent']
     args:
       - 'bash'
       - '-c'
@@ -67,7 +145,9 @@ steps:
         sed -i -E "s|image: gcr.io/$PROJECT_ID/helpudoc-frontend:[^[:space:]]+|image: gcr.io/$PROJECT_ID/helpudoc-frontend:$BUILD_ID|g" infra/gke/k8s/60-frontend.yaml
 
   # 5. Deploy to GKE
-  - name: 'gcr.io/cloud-builders/gke-deploy'
+  - id: deploy
+    name: 'gcr.io/cloud-builders/gke-deploy'
+    waitFor: ['rewrite-manifests']
     args:
       - 'run'
       - '--filename=infra/gke/k8s/'
@@ -78,6 +158,7 @@ steps:
 
   # 6. E2E check (fails build on mixed-content / localhost assets)
   - name: 'node:20-bookworm'
+    waitFor: ['deploy']
     entrypoint: 'bash'
     args:
       - '-c'

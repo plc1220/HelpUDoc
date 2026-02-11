@@ -44,22 +44,30 @@ Compute effective access for a given user and skill:
 
 Store explicit grants as `(principal, skillId, effect)` where `effect` is `allow|deny`.
 
-### MCP Server Access Rules (Allow-By-Default With Overrides)
-MCP servers follow the same pattern as skills:
+### MCP Access Rules (Servers vs Connections)
+We split MCP into two layers:
+- **MCP servers**: endpoint definitions (transport + URL) in `runtime.yaml` (non-secret).
+- **MCP connections**: per-workspace (and optionally per-user) auth bindings stored in Postgres.
 
-Define a `default_access` per MCP server:
-- Source of truth: `mcp_servers` list field `default_access: allow|deny` in `runtime.yaml` (missing means `allow`).
+RBAC is enforced primarily on **connections** so we do not need to create duplicate MCP
+servers per role/credential.
 
-Compute effective access for a given user and MCP server:
+Companion doc:
+- [`docs/mcp-connections-auth-plan.md`](./mcp-connections-auth-plan.md)
+
+#### MCP Connection Access Rules (Allow-By-Default With Overrides)
+Define `default_access` per MCP connection:
+- Source of truth: `mcp_connections.defaultAccess` (missing means `allow`).
+
+Compute effective access for a given user and MCP connection:
 1. If `user.isAdmin == true`: ALLOW.
 2. If any explicit DENY exists for the user (direct) or any of their groups: DENY.
 3. If `default_access == deny`:
    - ALLOW only if any explicit ALLOW exists for the user or any group.
    - Otherwise DENY.
-4. If `default_access == allow`:
-   - ALLOW.
+4. If `default_access == allow`: ALLOW.
 
-Store explicit grants as `(principal, mcpServerId, effect)` where `effect` is `allow|deny`.
+Store explicit grants as `(principal, connectionId, effect)` where `effect` is `allow|deny`.
 
 ### Tool Allowlist Per Skill (Only When Declared)
 - If a skill declares `tools:` in frontmatter, treat that as its allowed tool set while executing that skill.
@@ -96,14 +104,23 @@ Add tables and columns:
 - `createdAt`, `updatedAt`
 - Unique index on `(principalType, principalId, skillId)`
 
-### 5. `mcp_server_grants` (NEW)
+### 5. `mcp_connection_grants` (NEW)
 - `id bigserial pk`
 - `principalType text not null` enum-like: `user|group`
 - `principalId uuid not null` (references users/groups by type)
-- `mcpServerId text not null`
+- `connectionId uuid not null` (references `mcp_connections.id`)
 - `effect text not null` enum-like: `allow|deny`
 - `createdAt`, `updatedAt`
-- Unique index on `(principalType, principalId, mcpServerId)`
+- Unique index on `(principalType, principalId, connectionId)`
+
+### 6. `mcp_connections` (NEW)
+- `id uuid pk`
+- `workspaceId uuid fk -> workspaces(id) on delete cascade`
+- `name text not null`
+- `serverId text not null` (references `runtime.yaml` server `name`)
+- `authType text not null` (`none|static_header|oauth_delegated|oidc_federation|custom`)
+- `defaultAccess text not null default 'allow'`
+- `createdAt`, `updatedAt`
 
 ---
 
@@ -161,18 +178,24 @@ Add routes under `/api/admin/*` (new router file, mounted in `/Users/cmtest/Docu
 - `PUT /api/admin/skill-grants` upsert a grant (principalType, principalId, skillId, effect)
 - `DELETE /api/admin/skill-grants` delete a grant
 
-#### MCP Server Grants (NEW)
-- `GET /api/admin/mcp-server-grants?mcpServerId=...` list grants for an MCP server
-- `PUT /api/admin/mcp-server-grants` upsert a grant (principalType, principalId, mcpServerId, effect)
-- `DELETE /api/admin/mcp-server-grants` delete a grant
+#### MCP Connections (NEW)
+- `GET /api/admin/mcp-connections?workspaceId=...` list connections
+- `POST /api/admin/mcp-connections` create connection (workspaceId, name, serverId, authType, defaultAccess)
+- `PATCH /api/admin/mcp-connections/:id` update
+- `DELETE /api/admin/mcp-connections/:id` delete
+
+#### MCP Connection Grants (NEW)
+- `GET /api/admin/mcp-connection-grants?connectionId=...` list grants
+- `PUT /api/admin/mcp-connection-grants` upsert a grant (principalType, principalId, connectionId, effect)
+- `DELETE /api/admin/mcp-connection-grants` delete a grant
 
 ### Effective Access Endpoint (Non-Admin)
 Add a non-admin endpoint for runtime use:
 - `GET /api/access/effective` returns the caller's effective skill and MCP server access:
   - `deniedSkillIds`
   - `allowedSkillIdsForDefaultDeny`
-  - `deniedMcpServerIds`
-  - `allowedMcpServerIdsForDefaultDeny`
+  - `deniedMcpConnectionIds`
+  - `allowedMcpConnectionIdsForDefaultDeny`
 
 This supports UI hints and backend→agent policy generation.
 
@@ -190,8 +213,8 @@ Add an internal bearer token that the backend attaches to every request to the a
   - `isAdmin`
   - `skillDenyIds` (array of skill ids)
   - `skillAllowIds` (array of skill ids; only needed for default_access=deny skills)
-  - `mcpServerDenyIds` (array of MCP server ids) **NEW**
-  - `mcpServerAllowIds` (array of MCP server ids) **NEW**
+  - Transitional (server-level only): `mcpServerDenyIds` / `mcpServerAllowIds`
+  - Preferred (connection-level): `mcpConnectionDenyIds` / `mcpConnectionAllowIds`
   - `iat`, `exp` short TTL (5 minutes)
 
 Agent service verifies this JWT on:
@@ -219,13 +242,15 @@ Modify `/Users/cmtest/Documents/HelpUDoc/agent/helpudoc_agent/tools_and_schemas.
 
 This is the core enforcement point that prevents non-admins from discovering/loading restricted skills.
 
-### MCP Server RBAC Enforcement (NEW)
-See separate document: [MCP Server Registry Design](./mcp-server-registry-plan.md)
+### MCP Connections RBAC + Credential Enforcement (NEW)
+See:
+- [`docs/mcp-server-registry-plan.md`](./mcp-server-registry-plan.md) (server registry + tool attachment)
+- [`docs/mcp-connections-auth-plan.md`](./mcp-connections-auth-plan.md) (connections + auth broker)
 
-The enforcement happens inside the new `MCPServerManager` which:
-1. Reads `mcp_policy` from context
-2. Filters the list of MCP servers available to the agent
-3. Only initializes connections to allowed MCP servers via `langchain-mcp-adapters`
+The long-term enforcement happens by:
+1. Backend computing allowed **connectionIds** via grants + defaultAccess.
+2. Backend minting per-request auth headers/tokens for each allowed connection.
+3. Agent using only the allowed connections and only ephemeral credentials.
 
 ---
 

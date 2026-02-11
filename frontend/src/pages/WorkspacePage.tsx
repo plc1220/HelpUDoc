@@ -473,6 +473,48 @@ type FilePreviewPayload = {
   content: string;
 };
 
+const TEXT_PREVIEW_EXTENSIONS = new Set([
+  '.md',
+  '.mermaid',
+  '.txt',
+  '.json',
+  '.html',
+  '.htm',
+  '.css',
+  '.js',
+  '.ts',
+  '.tsx',
+  '.jsx',
+  '.svg',
+  '.csv',
+]);
+
+const normalizeWorkspaceRelativePath = (rawPath: string): string => {
+  return String(rawPath || '')
+    .trim()
+    .replace(/\\/g, '/')
+    .replace(/^\.\/+/, '')
+    .replace(/^\/+/, '');
+};
+
+const inferPreviewEncoding = (fileName: string, mimeType?: string | null): 'text' | 'base64' => {
+  const normalizedMime = (mimeType || '').toLowerCase();
+  if (
+    normalizedMime.startsWith('text/') ||
+    normalizedMime.includes('json') ||
+    normalizedMime.includes('javascript') ||
+    normalizedMime.includes('typescript') ||
+    normalizedMime.includes('markdown') ||
+    normalizedMime.includes('html') ||
+    normalizedMime.includes('xml')
+  ) {
+    return 'text';
+  }
+  const extIndex = fileName.lastIndexOf('.');
+  const ext = extIndex >= 0 ? fileName.slice(extIndex).toLowerCase() : '';
+  return TEXT_PREVIEW_EXTENSIONS.has(ext) ? 'text' : 'base64';
+};
+
 type ActiveRunInfo = {
   runId: string;
   conversationId: string;
@@ -503,24 +545,49 @@ const ToolOutputFilePreview = ({
       return;
     }
     let cancelled = false;
-    setIsLoading(true);
-    setError(null);
-    getWorkspaceFilePreview(workspaceId, file.path)
-      .then((data) => {
+    const loadPreview = async () => {
+      setIsLoading(true);
+      setError(null);
+      const normalizedPath = normalizeWorkspaceRelativePath(file.path);
+      try {
+        const data = await getWorkspaceFilePreview(workspaceId, normalizedPath);
         if (!cancelled) {
           setPreview(data);
         }
-      })
-      .catch(() => {
+        return;
+      } catch {
+        // Fallback below.
+      }
+
+      try {
+        const workspaceFiles: WorkspaceFile[] = await getFiles(workspaceId);
+        const matched = workspaceFiles.find((item) => normalizeWorkspaceRelativePath(item.name) === normalizedPath);
+        if (!matched) {
+          throw new Error('File metadata not found');
+        }
+        const fetched = await getFileContent(workspaceId, String(matched.id));
+        const mimeType = fetched?.mimeType || file.mimeType || null;
+        const encoding = inferPreviewEncoding(normalizedPath, mimeType);
+        const fallbackPreview: FilePreviewPayload = {
+          path: normalizedPath,
+          mimeType,
+          encoding,
+          content: typeof fetched?.content === 'string' ? fetched.content : '',
+        };
+        if (!cancelled) {
+          setPreview(fallbackPreview);
+        }
+      } catch {
         if (!cancelled) {
           setError('Unable to load preview for this artifact.');
         }
-      })
-      .finally(() => {
+      } finally {
         if (!cancelled) {
           setIsLoading(false);
         }
-      });
+      }
+    };
+    void loadPreview();
     return () => {
       cancelled = true;
     };
@@ -545,6 +612,17 @@ const ToolOutputFilePreview = ({
   if (normalizedMime.startsWith('image/')) {
     const dataUrl = encoding === 'base64' ? `data:${normalizedMime};base64,${content}` : content;
     return <img src={dataUrl} alt={file.path} className="mt-2 max-w-full rounded border border-gray-200" />;
+  }
+
+  if (normalizedMime.includes('pdf')) {
+    const dataUrl = encoding === 'base64' ? `data:application/pdf;base64,${content}` : content;
+    return (
+      <iframe
+        title={file.path}
+        className="mt-2 w-full h-64 rounded border border-gray-200"
+        src={dataUrl}
+      />
+    );
   }
 
   if (normalizedMime.includes('html')) {
@@ -1104,6 +1182,36 @@ export default function WorkspacePage() {
           />
         );
       },
+      img({ src, alt }: { src?: string; alt?: string }) {
+        const resolvedSrc = typeof src === 'string' ? src.trim() : '';
+        if (!resolvedSrc) {
+          return null;
+        }
+        if (/^(https?:|data:|blob:)/i.test(resolvedSrc)) {
+          return (
+            <img
+              src={resolvedSrc}
+              alt={alt || 'Image'}
+              className="my-3 max-w-full rounded border border-gray-200"
+            />
+          );
+        }
+        if (!selectedWorkspace?.id) {
+          return (
+            <span className="text-xs text-slate-500">
+              Image path: <code>{resolvedSrc}</code>
+            </span>
+          );
+        }
+        return (
+          <div className="my-3">
+            <ToolOutputFilePreview
+              workspaceId={selectedWorkspace.id}
+              file={{ path: resolvedSrc, mimeType: 'image/*' }}
+            />
+          </div>
+        );
+      },
       code({ inline, className, children, node, ...props }: any) {
         const rawCodeContent = extractCodeText(children);
         const isInline = inferInlineCode(inline, className, rawCodeContent, node);
@@ -1145,7 +1253,7 @@ export default function WorkspacePage() {
         );
       },
     }),
-    [classifyCodeBlockLabel, copiedCodeBlockId, extractCodeText, handleCopyCodeBlock, inferInlineCode]
+    [classifyCodeBlockLabel, copiedCodeBlockId, extractCodeText, handleCopyCodeBlock, inferInlineCode, selectedWorkspace?.id]
   );
 
   const toggleToolActivityVisibility = useCallback((messageId: ConversationMessage['id']) => {

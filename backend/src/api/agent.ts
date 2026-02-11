@@ -240,7 +240,7 @@ export default function(workspaceService: WorkspaceService, fileService: FileSer
       return prompt;
     }
     const fileHint = taggedPaths.length
-      ? `\n\nTagged files (use only these for RAG retrieval):\n${taggedPaths.map((path) => `- ${path}`).join('\n')}`
+      ? `\n\nTagged files (preferred for retrieval):\n${taggedPaths.map((path) => `- ${path}`).join('\n')}`
       : '';
     const urlList = withUrls
       .map((file) => `- ${file.name}: ${file.publicUrl}`)
@@ -432,7 +432,15 @@ export default function(workspaceService: WorkspaceService, fileService: FileSer
     req.on('close', cleanup);
     res.on('close', cleanup);
 
-    res.setHeader('Content-Type', 'application/jsonl');
+    // NDJSON/JSONL streaming over fetch() should not be buffered by proxies.
+    res.status(200);
+    res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    // Nginx-style hint (harmless elsewhere). Helps avoid proxy buffering that can make the UI look "stuck".
+    res.setHeader('X-Accel-Buffering', 'no');
+    // Send headers immediately so the browser starts streaming right away.
+    (res as any).flushHeaders?.();
     if (DEBUG_AGENT_RUN_STREAM) {
       console.info('[agent-run-stream] client connected', { runId, after });
     }
@@ -453,18 +461,43 @@ export default function(workspaceService: WorkspaceService, fileService: FileSer
               for (const message of stream.messages) {
                 const data = message.message.data;
                 if (data && !res.writableEnded) {
-                  res.write(`${data}\n`);
+                  // Attach the Redis stream entry id so clients can resume after transient disconnects.
+                  // Keep backward compatibility by preserving the original payload shape.
+                  let line = String(data);
+                  try {
+                    const parsed = JSON.parse(line);
+                    if (parsed && typeof parsed === 'object') {
+                      if (Array.isArray(parsed)) {
+                        line = JSON.stringify({ id: message.id, data: parsed });
+                      } else if (typeof (parsed as any).id !== 'string') {
+                        (parsed as any).id = message.id;
+                        line = JSON.stringify(parsed);
+                      }
+                    } else {
+                      line = JSON.stringify({ id: message.id, data: parsed });
+                    }
+                  } catch {
+                    // If the payload is not JSON (unexpected), stream it as-is.
+                  }
+
+                  res.write(`${line}\n`);
                   if (DEBUG_AGENT_RUN_STREAM) {
                     console.info('[agent-run-stream] sent', {
                       runId,
                       id: message.id,
-                      bytes: String(data).length,
-                      sample: String(data).slice(0, 160),
+                      bytes: line.length,
+                      sample: line.slice(0, 160),
                     });
                   }
                 }
                 lastId = message.id;
               }
+            }
+          }
+          // Keep the connection active even during long tool calls (some networks/LBs time out idle streams).
+          if (!streams || !streams.length) {
+            if (!res.writableEnded) {
+              res.write('{"type":"keepalive"}\n');
             }
           }
 

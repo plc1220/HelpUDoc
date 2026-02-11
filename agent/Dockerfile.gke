@@ -16,11 +16,14 @@ RUN apt-get update \
     libsm6 \
   && rm -rf /var/lib/apt/lists/*
 
+# Copy dependency manifest first so `pip install` layer caches across code/skills changes.
+COPY agent/requirements.txt /app/agent/requirements.txt
+
+RUN pip install --no-cache-dir -r /app/agent/requirements.txt
+
 # Copy agent code and shared skills into the image so list_skills works in GKE.
 COPY agent/ /app/agent/
 COPY skills/ /app/skills/
-
-RUN pip install --no-cache-dir -r /app/agent/requirements.txt
 
 EXPOSE 8001
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001"]
