@@ -68,6 +68,8 @@ kind: Service
 metadata:
   name: helpudoc-caddy
   namespace: helpudoc
+  annotations:
+    cloud.google.com/backend-config: '{"default":"helpudoc-caddy-backendconfig"}'
 spec:
   type: LoadBalancer
   selector:
