@@ -9,6 +9,7 @@ import type { File } from '../types';
 interface FileRendererProps {
   file: File | null;
   fileContent: string;
+  disableInternalScroll?: boolean;
 }
 
 type MermaidColorMode = 'light' | 'dark';
@@ -144,7 +145,11 @@ const MermaidDiagram: React.FC<{ chart: string; colorMode: MermaidColorMode }> =
   );
 };
 
-const FileRenderer: React.FC<FileRendererProps> = ({ file, fileContent }) => {
+const FileRenderer: React.FC<FileRendererProps> = ({
+  file,
+  fileContent,
+  disableInternalScroll = false,
+}) => {
   const mermaidRef = useRef<HTMLDivElement>(null);
   const mermaidIdRef = useRef(`mermaid-graph-${Math.random().toString(36).slice(2, 11)}`);
   const [isMermaidRendered, setIsMermaidRendered] = useState(false);
@@ -290,13 +295,18 @@ const FileRenderer: React.FC<FileRendererProps> = ({ file, fileContent }) => {
 
   const renderContent = () => {
     if (isMarkdownFile) {
+      const markdownContainerClassName = [
+        'prose max-w-none break-words overflow-x-hidden p-4',
+        disableInternalScroll ? 'h-auto overflow-y-visible' : 'h-full overflow-y-auto',
+      ].join(' ');
+
       return (
-        <div className="prose max-w-none break-words overflow-x-hidden h-full overflow-y-auto p-4">
+        <div className={markdownContainerClassName}>
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
             components={{
               p: ({ children }) => <div className="mb-4 last:mb-0">{children}</div>,
-              img: ({ node, ...props }) => (
+              img: (props) => (
                 <img
                   className="max-w-full h-auto rounded-lg shadow-md"
                   loading="lazy"
@@ -539,7 +549,7 @@ const FileRenderer: React.FC<FileRendererProps> = ({ file, fileContent }) => {
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {data.map((row: any, idx: number) => (
+              {data.map((row: Record<string, unknown>, idx: number) => (
                 <tr key={idx} className="hover:bg-gray-50">
                   {headers.map((header) => (
                     <td

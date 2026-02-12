@@ -45,7 +45,11 @@ const UIBlockRenderer: React.FC<UIBlockRendererProps> = ({ blocks, className, em
           case 'file':
             return (
               <div key={key} className="h-full w-full">
-                <FileRenderer file={block.file} fileContent={block.content} />
+                <FileRenderer
+                  file={block.file}
+                  fileContent={block.content}
+                  disableInternalScroll
+                />
               </div>
             );
           case 'markdown':
@@ -54,6 +58,7 @@ const UIBlockRenderer: React.FC<UIBlockRendererProps> = ({ blocks, className, em
                 <FileRenderer
                   file={createVirtualFile(block.name ?? 'block.md', block.id)}
                   fileContent={block.content}
+                  disableInternalScroll
                 />
               </div>
             );

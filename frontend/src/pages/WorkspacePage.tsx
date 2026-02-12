@@ -4288,7 +4288,7 @@ export default function WorkspacePage() {
                       )}
                     </div>
                   </div>
-                  <div className="flex-1 overflow-y-auto overflow-x-hidden min-h-0">
+                  <div className="flex-1 overflow-hidden min-h-0">
                     {isEditMode && selectedWorkspace && !isA2uiCanvas ? (
                       <FileEditor
                         file={selectedFileDetails || selectedFile}
@@ -4298,7 +4298,7 @@ export default function WorkspacePage() {
                         colorMode={colorMode}
                       />
                     ) : (
-                      <div className="h-full w-full overflow-auto">
+                      <div className="h-full w-full overflow-y-auto overflow-x-hidden">
                         <div
                           className="h-full origin-top-left"
                           style={{
