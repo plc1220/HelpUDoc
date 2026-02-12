@@ -24,6 +24,8 @@ GENERAL_SYSTEM_PROMPT = (
     "Do not assume skills are copied into the workspace. "
     "For proposal/SOW/RFP requests, always load the proposal-writing skill and write "
     "the proposal to workspace markdown files using write_file (and append_to_report if needed). "
+    "Before executing a multi-step skill-driven plan, first call request_plan_approval with a concise plan and checklist. "
+    "Only proceed with side-effecting tools after approval (or after applying user edits). "
     "Reply in chat with brief status updates, not full sections. "
     "If no skill applies, proceed with best-effort behavior."
 )

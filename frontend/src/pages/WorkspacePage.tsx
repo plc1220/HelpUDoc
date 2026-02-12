@@ -2657,6 +2657,33 @@ export default function WorkspacePage() {
     return () => window.clearInterval(interval);
   }, [persistAgentProgress]);
 
+  const formatInterruptNotice = (chunk: Extract<AgentStreamChunk, { type: 'interrupt' }>): string => {
+    const actions = Array.isArray(chunk.actionRequests) ? chunk.actionRequests : [];
+    const reviews = Array.isArray(chunk.reviewConfigs) ? chunk.reviewConfigs : [];
+    const reviewByName = new Map<string, string[]>();
+    reviews.forEach((item) => {
+      const name = typeof item?.action_name === 'string' ? item.action_name : '';
+      const decisions = Array.isArray(item?.allowed_decisions)
+        ? item.allowed_decisions.filter((value): value is string => typeof value === 'string')
+        : [];
+      if (name) {
+        reviewByName.set(name, decisions);
+      }
+    });
+
+    const lines: string[] = ['\n[Human approval required]'];
+    if (!actions.length) {
+      lines.push('- One or more tool actions require review.');
+    }
+    actions.forEach((action, index) => {
+      const toolName = typeof action?.name === 'string' && action.name ? action.name : `tool_${index + 1}`;
+      const allowed = reviewByName.get(toolName) || ['approve', 'edit', 'reject'];
+      lines.push(`- ${toolName} (allowed: ${allowed.join(', ')})`);
+    });
+    lines.push('Use the approval controls to approve, edit, or reject before execution continues.');
+    return lines.join('\n');
+  };
+
   const handleStreamChunk = (conversationId: string, agentMessageIndex: number, chunk: AgentStreamChunk) => {
     if (chunk.type === 'keepalive') {
       setStreamingForConversation(conversationId, true);
@@ -2680,6 +2707,11 @@ export default function WorkspacePage() {
 
     if (chunk.type === 'tool_error') {
       appendToolEnd(conversationId, agentMessageIndex, chunk, 'error');
+      return;
+    }
+
+    if (chunk.type === 'interrupt') {
+      appendAgentChunk(conversationId, agentMessageIndex, formatInterruptNotice(chunk));
       return;
     }
 
