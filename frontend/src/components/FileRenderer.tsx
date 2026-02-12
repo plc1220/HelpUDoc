@@ -11,7 +11,88 @@ interface FileRendererProps {
   fileContent: string;
 }
 
-const MermaidDiagram: React.FC<{ chart: string }> = ({ chart }) => {
+type MermaidColorMode = 'light' | 'dark';
+
+const getColorMode = (): MermaidColorMode => {
+  if (typeof document === 'undefined') {
+    return 'light';
+  }
+  const mode = document.documentElement.getAttribute('data-theme');
+  if (mode === 'dark' || mode === 'light') {
+    return mode;
+  }
+  return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+};
+
+const configureMermaid = (mode: MermaidColorMode) => {
+  mermaid.initialize({
+    startOnLoad: false,
+    securityLevel: 'loose',
+    theme: 'base',
+    themeVariables: mode === 'dark'
+      ? {
+          background: '#0f172a',
+          primaryColor: '#818cf8',
+          primaryBorderColor: '#6366f1',
+          primaryTextColor: '#e2e8f0',
+          secondaryColor: '#1e293b',
+          secondaryBorderColor: '#334155',
+          secondaryTextColor: '#cbd5e1',
+          tertiaryColor: '#111827',
+          tertiaryBorderColor: '#374151',
+          tertiaryTextColor: '#cbd5e1',
+          lineColor: '#94a3b8',
+          textColor: '#e2e8f0',
+          mainBkg: '#0b1220',
+          edgeLabelBackground: '#0b1220',
+          actorBorder: '#6366f1',
+          actorBkg: '#1e293b',
+          actorTextColor: '#e2e8f0',
+          labelBoxBkgColor: '#1e293b',
+          labelBoxBorderColor: '#334155',
+          gridColor: '#334155',
+          section0: '#1e293b',
+          section1: '#1f2937',
+          section2: '#0f172a',
+          sectionBkgColor: '#111827',
+          cScale0: '#818cf8',
+          cScale1: '#60a5fa',
+          cScale2: '#34d399',
+        }
+      : {
+          background: '#ffffff',
+          primaryColor: '#4f46e5',
+          primaryBorderColor: '#3730a3',
+          primaryTextColor: '#0f172a',
+          secondaryColor: '#dbeafe',
+          secondaryBorderColor: '#93c5fd',
+          secondaryTextColor: '#0f172a',
+          tertiaryColor: '#eef2ff',
+          tertiaryBorderColor: '#a5b4fc',
+          tertiaryTextColor: '#0f172a',
+          lineColor: '#334155',
+          textColor: '#0f172a',
+          mainBkg: '#ffffff',
+          edgeLabelBackground: '#f8fafc',
+          actorBorder: '#3730a3',
+          actorBkg: '#c7d2fe',
+          actorTextColor: '#0f172a',
+          labelBoxBkgColor: '#f8fafc',
+          labelBoxBorderColor: '#94a3b8',
+          gridColor: '#cbd5e1',
+          section0: '#e0e7ff',
+          section1: '#f1f5f9',
+          section2: '#e2e8f0',
+          sectionBkgColor: '#f8fafc',
+          cScale0: '#3730a3',
+          cScale1: '#1d4ed8',
+          cScale2: '#0f766e',
+        },
+    fontFamily: 'Inter, "Segoe UI", Arial, sans-serif',
+  });
+};
+
+const MermaidDiagram: React.FC<{ chart: string; colorMode: MermaidColorMode }> = ({ chart, colorMode }) => {
   const diagramRef = useRef<HTMLDivElement>(null);
   const idRef = useRef(`mermaid-md-${Math.random().toString(36).slice(2, 11)}`);
   const [hasError, setHasError] = useState(false);
@@ -26,6 +107,7 @@ const MermaidDiagram: React.FC<{ chart: string }> = ({ chart }) => {
       try {
         setHasError(false);
         diagramRef.current.innerHTML = '';
+        configureMermaid(colorMode);
         // Validate syntax first to avoid mermaid's inline error SVG
         mermaid.parse(chart);
         const renderId = `${idRef.current}-${Date.now()}`;
@@ -46,12 +128,12 @@ const MermaidDiagram: React.FC<{ chart: string }> = ({ chart }) => {
     return () => {
       cancelled = true;
     };
-  }, [chart]);
+  }, [chart, colorMode]);
 
   return (
     <div
       ref={diagramRef}
-      className="mermaid-container my-4 overflow-auto rounded-xl border border-gray-200 bg-white p-4"
+      className={`mermaid-container my-4 overflow-auto rounded-xl border p-4 ${colorMode === 'dark' ? 'border-slate-700 bg-slate-950' : 'border-gray-200 bg-white'}`}
     >
       {hasError && (
         <p className="mb-2 text-sm text-red-600">
@@ -69,6 +151,21 @@ const FileRenderer: React.FC<FileRendererProps> = ({ file, fileContent }) => {
   const [mermaidError, setMermaidError] = useState<string | null>(null);
   const [copyStatus, setCopyStatus] = useState<string | null>(null);
   const [copiedUrl, setCopiedUrl] = useState(false);
+  const [colorMode, setColorMode] = useState<MermaidColorMode>(() => getColorMode());
+
+  useEffect(() => {
+    if (typeof document === 'undefined') {
+      return undefined;
+    }
+    const root = document.documentElement;
+    const observer = new MutationObserver(() => {
+      setColorMode(getColorMode());
+    });
+    observer.observe(root, { attributes: true, attributeFilter: ['data-theme'] });
+    return () => {
+      observer.disconnect();
+    };
+  }, []);
 
   useEffect(() => {
     if (!copyStatus) return;
@@ -110,6 +207,7 @@ const FileRenderer: React.FC<FileRendererProps> = ({ file, fileContent }) => {
         setMermaidError(null);
         try {
           mermaidRef.current.innerHTML = '';
+          configureMermaid(colorMode);
           // Validate syntax before rendering to avoid Mermaid's error SVG
           mermaid.parse(fileContent);
           const renderId = `${mermaidIdRef.current}-${Date.now()}`;
@@ -131,7 +229,7 @@ const FileRenderer: React.FC<FileRendererProps> = ({ file, fileContent }) => {
     return () => {
       cancelled = true;
     };
-  }, [fileContent, isMermaidFile]);
+  }, [colorMode, fileContent, isMermaidFile]);
 
   if (!file) {
     return (
@@ -217,7 +315,7 @@ const FileRenderer: React.FC<FileRendererProps> = ({ file, fileContent }) => {
                   (!language?.[1] && !codeContent.includes('\n'));
 
                 if (!inline && language?.[1] === 'mermaid') {
-                  return <MermaidDiagram chart={codeContent} />;
+                  return <MermaidDiagram chart={codeContent} colorMode={colorMode} />;
                 }
 
                 if (!inline && language?.[1] === 'plotly') {
@@ -290,7 +388,10 @@ const FileRenderer: React.FC<FileRendererProps> = ({ file, fileContent }) => {
     if (isMermaidFile) {
       return (
         <div className="relative h-full">
-          <div ref={mermaidRef} className="mermaid-container w-full h-full"></div>
+          <div
+            ref={mermaidRef}
+            className={`mermaid-container h-full w-full rounded-xl ${colorMode === 'dark' ? 'bg-slate-950' : 'bg-white'}`}
+          ></div>
           {isMermaidRendered && (
             <button
               onClick={handleCopyImage}

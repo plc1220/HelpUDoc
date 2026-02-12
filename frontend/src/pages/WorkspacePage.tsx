@@ -15,7 +15,7 @@ import {
   PictureAsPdf as PdfIcon,
   Image as ImageIcon,
 } from '@mui/icons-material';
-import { CheckSquare, Copy, Edit, Trash, Send, Plus, ChevronRight, ChevronLeft, RotateCcw, Maximize2, Minimize2, X, FileIcon, Printer, Download, Link as LinkIcon, MonitorPlay, StopCircle, Loader2, History } from 'lucide-react';
+import { CheckSquare, Copy, Edit, Trash, Send, Plus, Minus, ChevronRight, ChevronLeft, RotateCcw, Maximize2, Minimize2, X, FileIcon, Printer, Download, Link as LinkIcon, MonitorPlay, StopCircle, Loader2, History } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { getWorkspaces, createWorkspace, deleteWorkspace } from '../services/workspaceApi';
@@ -176,6 +176,9 @@ const SLASH_COMMANDS = [
 
 const SYSTEM_DIR_NAMES = new Set(['__macosx', 'skills']);
 const SYSTEM_FILE_NAMES = new Set(['thumbs.db', 'desktop.ini']);
+const MIN_CANVAS_ZOOM = 0.6;
+const MAX_CANVAS_ZOOM = 2;
+const CANVAS_ZOOM_STEP = 0.1;
 
 const normalizeFilePath = (value: string) => value.replace(/\\/g, '/');
 
@@ -767,6 +770,7 @@ export default function WorkspacePage() {
   const [personas, setPersonas] = useState<AgentPersona[]>([]);
   const [selectedPersona, setSelectedPersona] = useState(DEFAULT_PERSONA_NAME);
   const [isEditMode, setIsEditMode] = useState(false);
+  const [canvasZoom, setCanvasZoom] = useState(1);
   const [isAgentPaneVisible, setIsAgentPaneVisible] = useState(true);
   const [isFilePaneVisible, setIsFilePaneVisible] = useState(true);
   const [showSystemFiles, setShowSystemFiles] = useState(false);
@@ -1424,6 +1428,17 @@ export default function WorkspacePage() {
   const showFileActions = !isA2uiCanvas;
   const showA2uiDraftAction = !isA2uiCanvas && Boolean(a2uiDraft);
   const canViewA2uiFile = Boolean(isA2uiFile && parsedA2uiFile);
+  const canZoomOutCanvas = canvasZoom > MIN_CANVAS_ZOOM;
+  const canZoomInCanvas = canvasZoom < MAX_CANVAS_ZOOM;
+  const handleCanvasZoomIn = useCallback(() => {
+    setCanvasZoom((prev) => Math.min(MAX_CANVAS_ZOOM, Number((prev + CANVAS_ZOOM_STEP).toFixed(2))));
+  }, []);
+  const handleCanvasZoomOut = useCallback(() => {
+    setCanvasZoom((prev) => Math.max(MIN_CANVAS_ZOOM, Number((prev - CANVAS_ZOOM_STEP).toFixed(2))));
+  }, []);
+  const handleCanvasZoomReset = useCallback(() => {
+    setCanvasZoom(1);
+  }, []);
 
   const handleDownloadActiveFile = useCallback(() => {
     if (!activeFile || !(isMarkdownFile || isHtmlFile)) {
@@ -4164,6 +4179,36 @@ export default function WorkspacePage() {
                           Save
                         </button>
                       )}
+                      {!isEditMode && (
+                        <>
+                          <button
+                            type="button"
+                            className="h-9 w-9 inline-flex items-center justify-center rounded-lg hover:bg-gray-200 disabled:opacity-50"
+                            onClick={handleCanvasZoomOut}
+                            disabled={!canZoomOutCanvas}
+                            title="Zoom out canvas"
+                          >
+                            <Minus size={18} className="text-gray-600" />
+                          </button>
+                          <button
+                            type="button"
+                            className="h-9 px-2 inline-flex items-center justify-center rounded-lg text-xs font-semibold text-slate-700 hover:bg-gray-200"
+                            onClick={handleCanvasZoomReset}
+                            title="Reset canvas zoom"
+                          >
+                            {Math.round(canvasZoom * 100)}%
+                          </button>
+                          <button
+                            type="button"
+                            className="h-9 w-9 inline-flex items-center justify-center rounded-lg hover:bg-gray-200 disabled:opacity-50"
+                            onClick={handleCanvasZoomIn}
+                            disabled={!canZoomInCanvas}
+                            title="Zoom in canvas"
+                          >
+                            <Plus size={18} className="text-gray-600" />
+                          </button>
+                        </>
+                      )}
                       {isA2uiCanvas && a2uiDraft && (
                         <>
                           <button
@@ -4221,16 +4266,25 @@ export default function WorkspacePage() {
                         colorMode={colorMode}
                       />
                     ) : (
-                      <div className="h-full w-full">
-                        <UIBlockRenderer
-                          blocks={canvasBlocks}
-                          className="h-full w-full"
-                          emptyState={
-                            <div className="text-center text-gray-400">
-                              <p>Select a file to view its content</p>
-                            </div>
-                          }
-                        />
+                      <div className="h-full w-full overflow-auto">
+                        <div
+                          className="h-full origin-top-left"
+                          style={{
+                            transform: `scale(${canvasZoom})`,
+                            width: `${100 / canvasZoom}%`,
+                            minHeight: `${100 / canvasZoom}%`,
+                          }}
+                        >
+                          <UIBlockRenderer
+                            blocks={canvasBlocks}
+                            className="h-full w-full"
+                            emptyState={
+                              <div className="text-center text-gray-400">
+                                <p>Select a file to view its content</p>
+                              </div>
+                            }
+                          />
+                        </div>
                       </div>
                     )}
                   </div>
