@@ -556,7 +556,11 @@ const FileRenderer: React.FC<FileRendererProps> = ({
                       key={`${idx}-${header}`}
                       className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 border-b border-gray-200"
                     >
-                      {row[header]}
+                      {row[header] == null
+                        ? ''
+                        : typeof row[header] === 'object'
+                          ? JSON.stringify(row[header])
+                          : String(row[header])}
                     </td>
                   ))}
                 </tr>
