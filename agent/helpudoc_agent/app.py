@@ -667,6 +667,33 @@ def create_app() -> FastAPI:
                     return item.get("messages")  # type: ignore[return-value]
         return None
 
+    def _extract_interrupt_payload(chunk: Any) -> Dict[str, Any] | None:
+        if not isinstance(chunk, dict):
+            return None
+        raw = chunk.get("__interrupt__")
+        if not raw or not isinstance(raw, list):
+            return None
+        first = raw[0] if raw else None
+        if first is None:
+            return None
+
+        interrupt_value = None
+        if isinstance(first, dict):
+            interrupt_value = first.get("value")
+        else:
+            interrupt_value = getattr(first, "value", None)
+
+        if not isinstance(interrupt_value, dict):
+            return None
+
+        action_requests = interrupt_value.get("action_requests")
+        review_configs = interrupt_value.get("review_configs")
+        return {
+            "type": "interrupt",
+            "actionRequests": action_requests if isinstance(action_requests, list) else [],
+            "reviewConfigs": review_configs if isinstance(review_configs, list) else [],
+        }
+
     _ASSISTANT_ROLES = {"assistant", "ai", "aimessagechunk"}
     _TOOL_ROLES = {"tool"}
 
@@ -758,6 +785,10 @@ def create_app() -> FastAPI:
                         await handler.queue.put({"type": "error", "message": str(inner_exc)})
                         raise
                     emitted = False
+                    interrupt_payload = _extract_interrupt_payload(fallback_result)
+                    if interrupt_payload:
+                        emitted = True
+                        await handler._emit(interrupt_payload)
                     messages = _extract_messages(fallback_result)
                     if messages:
                         tracker = _DeltaTracker()
@@ -806,6 +837,11 @@ def create_app() -> FastAPI:
                             if delta:
                                 for event_payload in _emit_text(role, delta):
                                     await handler._emit(event_payload)
+                            continue
+
+                        interrupt_payload = _extract_interrupt_payload(chunk)
+                        if interrupt_payload:
+                            await handler._emit(interrupt_payload)
                             continue
 
                         messages = _extract_messages(chunk)

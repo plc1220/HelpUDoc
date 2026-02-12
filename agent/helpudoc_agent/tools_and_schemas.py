@@ -180,6 +180,7 @@ class ToolFactory:
             "rag_query": self._build_rag_query_tool,
             "list_skills": self._build_list_skills_tool,
             "load_skill": self._build_load_skill_tool,
+            "request_plan_approval": self._build_request_plan_approval_tool,
         }
 
     def build_tools(self, tool_names: List[str], workspace_state: WorkspaceState) -> List[Tool]:
@@ -346,6 +347,47 @@ class ToolFactory:
         load_skill.name = "load_skill"
         load_skill.description = "Load the full content of a skill by id or name."
         return load_skill
+
+    def _build_request_plan_approval_tool(self, workspace_state: WorkspaceState) -> Tool:
+        """Request human review for a plan before running execution steps."""
+
+        @tool
+        def request_plan_approval(
+            plan_title: str,
+            plan_summary: str,
+            execution_checklist: str,
+            risky_actions: str = "None",
+        ) -> str:
+            """Request human approval/edit/rejection for a proposed execution plan."""
+            if workspace_state.context.get("tagged_files_only"):
+                return "Tool disabled: tagged files were provided, use rag_query only."
+
+            title = (plan_title or "").strip()
+            summary = (plan_summary or "").strip()
+            checklist = (execution_checklist or "").strip()
+            risks = (risky_actions or "").strip()
+
+            if not title:
+                return "Plan approval blocked: plan_title is required."
+            if not summary:
+                return "Plan approval blocked: plan_summary is required."
+            if not checklist:
+                return "Plan approval blocked: execution_checklist is required."
+
+            return (
+                "PLAN_REVIEW_REQUEST\n"
+                f"Title: {title}\n"
+                f"Summary: {summary}\n"
+                f"Execution checklist: {checklist}\n"
+                f"Risky actions: {risks}\n"
+                "Awaiting human decision: approve, edit, or reject."
+            )
+
+        request_plan_approval.name = "request_plan_approval"
+        request_plan_approval.description = (
+            "Ask human to approve, edit, or reject a proposed plan before execution."
+        )
+        return request_plan_approval
 
     def _build_append_to_report_tool(self, workspace_state: WorkspaceState) -> Tool:
         """Append a section file to the stitched proposal inside the workspace."""

@@ -16,6 +16,8 @@ backend:
   skills_root: skills
   sync_skills_to_workspace: false
   interrupt_on:
+    request_plan_approval:
+      allowed_decisions: [approve, edit, reject]
     write_file: false
     read_file: false
     edit_file: false
@@ -48,6 +50,9 @@ tools:
   - name: load_skill
     kind: builtin
     description: Load full skill content from the shared registry
+  - name: request_plan_approval
+    kind: builtin
+    description: Request human approval for a generated execution plan
 
 mcp_servers:
   - name: toolbox-bq-demo
