@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import yaml
 from pydantic import BaseModel, Field, validator, root_validator
@@ -53,8 +53,11 @@ class BackendConfig(BaseModel):
     virtual_mode: bool = Field(default=True)
     skills_root: Optional[Path] = None
     sync_skills_to_workspace: bool = Field(default=False)
-    interrupt_on: Dict[str, bool] = Field(
+    interrupt_on: Dict[str, Any] = Field(
         default_factory=lambda: {
+            "request_plan_approval": {
+                "allowed_decisions": ["approve", "edit", "reject"],
+            },
             "write_file": True,
             "read_file": False,
             "edit_file": True,
