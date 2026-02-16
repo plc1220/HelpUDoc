@@ -103,7 +103,8 @@ services:
 
   agent:
     build:
-      context: ../agent
+      context: ..
+      dockerfile: agent/Dockerfile
     depends_on:
       backend:
         condition: service_started

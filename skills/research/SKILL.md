@@ -3,6 +3,7 @@ name: research
 description: Produce a sourced, long-form research report in the user's language, using a structured plan, evidence notes, and synthesis before consolidation.
 tools:
   - google_search
+  - request_plan_approval
 source_skills:
   - research-core
   - research-sub_researcher
@@ -45,8 +46,15 @@ This skill emphasizes:
      - Tentative source types (news, academic, government, industry, etc.)
      - Proposed section outline
      - Known uncertainties or ambiguity
-   - Send the plan in chat and explicitly state: **Research will proceed next.**
-   - Do not perform research before the user sees the plan.
+   - Call `request_plan_approval` with:
+     - `plan_title`
+     - `plan_summary`
+     - `execution_checklist`
+     - `risky_actions` (optional)
+   - Wait for the human decision before running any research tool.
+   - If decision is `edit`, update `/research_plan.md` and request approval again.
+   - If decision is `reject`, stop execution.
+   - Do not perform research before plan approval.
 
 3. **Evidence gathering**
    - Use `google_search` to collect sources.

@@ -36,6 +36,7 @@ import {
   getRunStatus,
   startAgentRun,
   streamAgentRun,
+  submitRunDecision,
   type AgentRunStatus,
   type AgentStreamChunk,
 } from '../services/agentApi';
@@ -696,28 +697,35 @@ const mapMessagesToAgentHistory = (messages: ConversationMessage[]) => {
     if (!metadata) {
       return message;
     }
-  const thinkingText = message.thinkingText ?? metadata.thinkingText;
-  const toolEvents = message.toolEvents ?? metadata.toolEvents;
-  if (thinkingText === message.thinkingText && toolEvents === message.toolEvents) {
-    return message;
-  }
-  return {
-    ...message,
-    thinkingText,
-    toolEvents,
+    const thinkingText = message.thinkingText ?? metadata.thinkingText;
+    const toolEvents = message.toolEvents ?? metadata.toolEvents;
+    if (thinkingText === message.thinkingText && toolEvents === message.toolEvents) {
+      return message;
+    }
+    return {
+      ...message,
+      thinkingText,
+      toolEvents,
+    };
   };
-};
 
 const buildMessageMetadata = (message?: ConversationMessage | null): ConversationMessageMetadata | undefined => {
   if (!message) {
     return undefined;
   }
+  const existingMetadata = (message.metadata as ConversationMessageMetadata | null | undefined) || undefined;
   const metadata: ConversationMessageMetadata = {};
   if (message.thinkingText) {
     metadata.thinkingText = message.thinkingText;
   }
   if (message.toolEvents?.length) {
     metadata.toolEvents = message.toolEvents;
+  }
+  if (existingMetadata?.runPolicy) {
+    metadata.runPolicy = existingMetadata.runPolicy;
+  }
+  if (existingMetadata?.pendingInterrupt) {
+    metadata.pendingInterrupt = existingMetadata.pendingInterrupt;
   }
   return Object.keys(metadata).length ? metadata : undefined;
 };
@@ -830,6 +838,9 @@ export default function WorkspacePage() {
   const [ragStatuses, setRagStatuses] = useState<Record<string, { status?: string; updatedAt?: string; error?: string }>>({});
   const [copiedWorkspaceContent, setCopiedWorkspaceContent] = useState(false);
   const [copiedMessageId, setCopiedMessageId] = useState<ConversationMessage['id'] | null>(null);
+  const [approvalReasonByMessageId, setApprovalReasonByMessageId] = useState<Record<string, string>>({});
+  const [approvalEditArgsByMessageId, setApprovalEditArgsByMessageId] = useState<Record<string, string>>({});
+  const [approvalSubmittingByMessageId, setApprovalSubmittingByMessageId] = useState<Record<string, boolean>>({});
   const ragStatusFetchedRef = useRef<Record<string, boolean>>({});
   const resumeInFlightRef = useRef<Set<string>>(new Set());
   const resumeAttemptedRef = useRef<Set<string>>(new Set());
@@ -891,7 +902,10 @@ export default function WorkspacePage() {
       return null;
     }
     const runs = Object.values(activeRunsRef.current);
-    const active = runs.find((run) => run.conversationId === conversationId && run.status === 'running') || null;
+    const active = runs.find((run) =>
+      run.conversationId === conversationId &&
+      (run.status === 'running' || run.status === 'awaiting_approval')
+    ) || null;
     if (!active) {
       return null;
     }
@@ -2389,6 +2403,27 @@ export default function WorkspacePage() {
     });
   };
 
+  const updateMessageMetadataAtIndex = (
+    conversationId: string,
+    index: number,
+    updater: (metadata: ConversationMessageMetadata) => ConversationMessageMetadata,
+  ) => {
+    updateMessagesForConversation(conversationId, (prev) => {
+      const updated = [...prev];
+      const target = updated[index];
+      if (!target) {
+        return updated;
+      }
+      const current = (target.metadata as ConversationMessageMetadata | null | undefined) || {};
+      const nextMetadata = updater({ ...current });
+      updated[index] = {
+        ...target,
+        metadata: nextMetadata,
+      };
+      return updated;
+    });
+  };
+
   const createToolEvent = (name: string, status: ToolEvent['status'] = 'running'): ToolEvent => ({
     id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
     name,
@@ -2705,12 +2740,29 @@ export default function WorkspacePage() {
       return;
     }
 
+    if (chunk.type === 'policy') {
+      updateMessageMetadataAtIndex(conversationId, agentMessageIndex, (metadata) => ({
+        ...metadata,
+        runPolicy: {
+          skill: chunk.skill,
+          requiresHitlPlan: chunk.requiresHitlPlan,
+          requiresArtifacts: chunk.requiresArtifacts,
+          requiredArtifactsMode: chunk.requiredArtifactsMode,
+        },
+      }));
+      return;
+    }
+
     if (chunk.type === 'thought') {
       appendAgentThought(conversationId, agentMessageIndex, chunk.content || '');
       return;
     }
 
     if (chunk.type === 'tool_start') {
+      updateMessageMetadataAtIndex(conversationId, agentMessageIndex, (metadata) => ({
+        ...metadata,
+        pendingInterrupt: undefined,
+      }));
       appendToolStart(conversationId, agentMessageIndex, chunk);
       return;
     }
@@ -2726,15 +2778,34 @@ export default function WorkspacePage() {
     }
 
     if (chunk.type === 'interrupt') {
+      updateMessageMetadataAtIndex(conversationId, agentMessageIndex, (metadata) => ({
+        ...metadata,
+        pendingInterrupt: {
+          actionRequests: chunk.actionRequests,
+          reviewConfigs: chunk.reviewConfigs,
+        },
+      }));
       appendAgentChunk(conversationId, agentMessageIndex, formatInterruptNotice(chunk));
       return;
     }
 
     if (chunk.type === 'token' || chunk.type === 'chunk') {
+      updateMessageMetadataAtIndex(conversationId, agentMessageIndex, (metadata) => ({
+        ...metadata,
+        pendingInterrupt: undefined,
+      }));
       if (chunk.role && chunk.role !== 'assistant') {
         return;
       }
       appendAgentChunk(conversationId, agentMessageIndex, chunk.content || '');
+      return;
+    }
+
+    if (chunk.type === 'contract_error') {
+      appendAgentChunk(conversationId, agentMessageIndex, `\\n${chunk.message || 'Artifact contract failed.'}`);
+      if (Array.isArray(chunk.missing) && chunk.missing.length) {
+        appendAgentChunk(conversationId, agentMessageIndex, `\\nMissing: ${chunk.missing.join(', ')}`);
+      }
       return;
     }
 
@@ -2787,6 +2858,12 @@ export default function WorkspacePage() {
           finalStatus = 'failed';
         }
       } finally {
+        try {
+          const latest = await getRunStatus(runId);
+          finalStatus = latest.status;
+        } catch (statusError) {
+          console.error('Failed to fetch final run status', statusError);
+        }
         if (STREAM_DEBUG_ENABLED) {
           console.debug('[WorkspacePage] stream finished', { runId, status: finalStatus });
         }
@@ -2831,23 +2908,100 @@ export default function WorkspacePage() {
           setIsA2uiPending(false);
           a2uiRunsRef.current.delete(runId);
         }
-        removeActiveRun(runId);
-        const workspaceId = selectedWorkspace?.id;
-        if (workspaceId) {
-          loadFilesForWorkspace(workspaceId);
+        if (finalStatus === 'awaiting_approval') {
+          registerActiveRun({ ...runInfo, status: finalStatus });
+        } else {
+          removeActiveRun(runId);
+          const workspaceId = selectedWorkspace?.id;
+          if (workspaceId) {
+            loadFilesForWorkspace(workspaceId);
+          }
         }
       }
     },
     [
+      registerActiveRun,
       cancelStreamForConversation,
       ensureAgentPlaceholder,
       handleStreamChunk,
       flushBufferedAgentChunks,
       getBufferedAgentText,
+      getRunStatus,
       addLocalSystemMessage,
       removeActiveRun,
       selectedWorkspace?.id,
       loadFilesForWorkspace,
+    ],
+  );
+
+  const handleInterruptDecision = useCallback(
+    async (
+      message: ConversationMessage,
+      decision: 'approve' | 'edit' | 'reject',
+      pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
+    ) => {
+      const runId = (message.metadata as ConversationMessageMetadata | undefined)?.runId;
+      if (!runId) {
+        addLocalSystemMessage('Missing run id for approval action.');
+        return;
+      }
+      const messageKey = String(message.id);
+      setApprovalSubmittingByMessageId((prev) => ({ ...prev, [messageKey]: true }));
+      try {
+        const options: {
+          editedAction?: { name: string; args: Record<string, unknown> };
+          message?: string;
+        } = {};
+        if (decision === 'reject') {
+          options.message = approvalReasonByMessageId[messageKey] || 'Rejected by user';
+        }
+        if (decision === 'edit') {
+          const raw = approvalEditArgsByMessageId[messageKey] || '{}';
+          let parsedArgs: Record<string, unknown> = {};
+          try {
+            const parsed = JSON.parse(raw);
+            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+              parsedArgs = parsed as Record<string, unknown>;
+            }
+          } catch {
+            throw new Error('Edited args must be valid JSON object.');
+          }
+          const firstAction = pendingInterrupt?.actionRequests?.[0];
+          options.editedAction = {
+            name: (firstAction?.name as string) || 'request_plan_approval',
+            args: parsedArgs,
+          };
+        }
+        await submitRunDecision(runId, decision, options);
+        updateMessagesForConversation(message.conversationId, (prev) => {
+          const next = [...prev];
+          const idx = next.findIndex((item) => item.id === message.id);
+          if (idx === -1) return next;
+          const current = next[idx];
+          const metadata = { ...((current.metadata as ConversationMessageMetadata | undefined) || {}) };
+          metadata.pendingInterrupt = undefined;
+          next[idx] = { ...current, metadata };
+          return next;
+        });
+        const runInfo = activeRunsRef.current[runId];
+        if (runInfo) {
+          await streamRunForConversation(runInfo, false);
+        } else {
+          addLocalSystemMessage('Approval saved. Refreshing stream state...');
+        }
+      } catch (error) {
+        console.error('Failed to submit approval decision', error);
+        addLocalSystemMessage(error instanceof Error ? error.message : 'Failed to submit approval decision.');
+      } finally {
+        setApprovalSubmittingByMessageId((prev) => ({ ...prev, [messageKey]: false }));
+      }
+    },
+    [
+      addLocalSystemMessage,
+      approvalEditArgsByMessageId,
+      approvalReasonByMessageId,
+      streamRunForConversation,
+      updateMessagesForConversation,
     ],
   );
 
@@ -2888,6 +3042,8 @@ export default function WorkspacePage() {
               .finally(() => {
                 resumeInFlightRef.current.delete(activeRun.runId);
               });
+          } else if (status.status === 'awaiting_approval') {
+            resumeInFlightRef.current.delete(activeRun.runId);
           } else {
             resumeInFlightRef.current.delete(activeRun.runId);
             const staleMessage = findAgentMessageForRun(
@@ -4470,9 +4626,13 @@ export default function WorkspacePage() {
                 <div className="flex-1 p-4 overflow-y-auto space-y-4 min-h-0">
                   {messages.map((message) => {
                     const isAgentMessage = message.sender === 'agent';
+                    const messageMetadata = (message.metadata as ConversationMessageMetadata | null | undefined) || undefined;
                     const timestampLabel = formatMessageTimestamp(message.updatedAt || message.createdAt);
                     const toolEvents = message.toolEvents || [];
                     const hasToolEvents = toolEvents.length > 0;
+                    const pendingInterrupt = messageMetadata?.pendingInterrupt;
+                    const messageKey = String(message.id);
+                    const decisionBusy = Boolean(approvalSubmittingByMessageId[messageKey]);
                     const isToolActivityExpanded = expandedToolMessages.has(message.id);
                     const isThinkingExpanded = expandedThinkingMessages.has(message.id);
                     const thinkingPreview = buildThinkingPreview(message.thinkingText || '', isThinkingExpanded);
@@ -4528,6 +4688,67 @@ export default function WorkspacePage() {
                                 <span className="mt-3 block text-sm text-slate-500">
                                   {message.thinkingText ? 'Finalizing response…' : 'Thinking…'}
                                 </span>
+                              )}
+                              {pendingInterrupt && (
+                                <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50/70 p-3">
+                                  <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">
+                                    Approval Required
+                                  </p>
+                                  <p className="mt-1 text-xs text-amber-900">
+                                    Review and continue this run.
+                                  </p>
+                                  <div className="mt-2 flex flex-wrap gap-2">
+                                    <button
+                                      type="button"
+                                      disabled={decisionBusy}
+                                      onClick={() => handleInterruptDecision(message, 'approve', pendingInterrupt)}
+                                      className="rounded-md bg-emerald-600 px-2.5 py-1.5 text-xs font-semibold text-white disabled:opacity-60"
+                                    >
+                                      Approve
+                                    </button>
+                                    <button
+                                      type="button"
+                                      disabled={decisionBusy}
+                                      onClick={() => handleInterruptDecision(message, 'edit', pendingInterrupt)}
+                                      className="rounded-md bg-blue-600 px-2.5 py-1.5 text-xs font-semibold text-white disabled:opacity-60"
+                                    >
+                                      Edit
+                                    </button>
+                                    <button
+                                      type="button"
+                                      disabled={decisionBusy}
+                                      onClick={() => handleInterruptDecision(message, 'reject', pendingInterrupt)}
+                                      className="rounded-md bg-red-600 px-2.5 py-1.5 text-xs font-semibold text-white disabled:opacity-60"
+                                    >
+                                      Reject
+                                    </button>
+                                  </div>
+                                  <div className="mt-2 grid gap-2">
+                                    <textarea
+                                      value={approvalEditArgsByMessageId[messageKey] || '{}'}
+                                      onChange={(event) =>
+                                        setApprovalEditArgsByMessageId((prev) => ({
+                                          ...prev,
+                                          [messageKey]: event.target.value,
+                                        }))
+                                      }
+                                      className="w-full rounded-md border border-slate-200 bg-white p-2 text-xs text-slate-700"
+                                      rows={4}
+                                      placeholder='Edited args JSON for "Edit"'
+                                    />
+                                    <input
+                                      value={approvalReasonByMessageId[messageKey] || ''}
+                                      onChange={(event) =>
+                                        setApprovalReasonByMessageId((prev) => ({
+                                          ...prev,
+                                          [messageKey]: event.target.value,
+                                        }))
+                                      }
+                                      className="w-full rounded-md border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700"
+                                      placeholder='Reject message (optional)'
+                                    />
+                                  </div>
+                                </div>
                               )}
                               {hasToolEvents && (
                                 <div className="mt-3">

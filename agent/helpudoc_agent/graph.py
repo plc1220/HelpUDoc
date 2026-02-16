@@ -4,8 +4,12 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, Tuple
 
-from deepagents import create_deep_agent
 from deepagents.backends import FilesystemBackend
+from deepagents.middleware.filesystem import FilesystemMiddleware
+from deepagents.middleware.patch_tool_calls import PatchToolCallsMiddleware
+from langchain.agents import create_agent
+from langchain.agents.middleware import HumanInTheLoopMiddleware, TodoListMiddleware
+from langchain.agents.middleware.summarization import SummarizationMiddleware
 from langgraph.checkpoint.memory import MemorySaver
 from langchain.chat_models import init_chat_model
 
@@ -29,6 +33,8 @@ GENERAL_SYSTEM_PROMPT = (
     "Reply in chat with brief status updates, not full sections. "
     "If no skill applies, proceed with best-effort behavior."
 )
+
+BASE_AGENT_PROMPT = "In order to complete the objective that the user asks of you, you have access to a number of standard tools."
 
 
 class AgentRegistry:
@@ -124,22 +130,33 @@ class AgentRegistry:
         mcp_tools = await mcp_manager.get_tools()
 
         tools = builtin_tools + mcp_tools
-        subagents = []
-
         backend = FilesystemBackend(
             root_dir=str(workspace_state.root_path),
             virtual_mode=self.settings.backend.virtual_mode,
         )
 
-        agent = create_deep_agent(
-            model=self._get_model(model_name),
-            backend=backend,
+        model = self._get_model(model_name)
+        middleware = [
+            TodoListMiddleware(),
+            FilesystemMiddleware(backend=backend),
+            SummarizationMiddleware(
+                model=model,
+                max_tokens_before_summary=170000,
+                messages_to_keep=6,
+            ),
+            PatchToolCallsMiddleware(),
+        ]
+        if self.settings.backend.interrupt_on:
+            middleware.append(HumanInTheLoopMiddleware(interrupt_on=self.settings.backend.interrupt_on))
+
+        full_prompt = system_prompt + "\n\n" + BASE_AGENT_PROMPT if system_prompt else BASE_AGENT_PROMPT
+        agent = create_agent(
+            model=model,
             tools=tools,
-            system_prompt=system_prompt,
-            subagents=subagents,
-            interrupt_on=self.settings.backend.interrupt_on,
+            system_prompt=full_prompt,
+            middleware=middleware,
             checkpointer=self._checkpointer,
-        )
+        ).with_config({"recursion_limit": 1000})
 
         runtime = AgentRuntimeState(agent_name=resolved_name, workspace_state=workspace_state, agent=agent)
         self._cache[key] = runtime

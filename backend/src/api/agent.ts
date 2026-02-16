@@ -17,6 +17,7 @@ import {
   cancelAgentRun,
   getRunMeta,
   getRunStreamKey,
+  resumeAgentRun,
   startAgentRun,
 } from '../services/agentRunService';
 import { blockingRedisClient } from '../services/redisService';
@@ -94,6 +95,16 @@ export default function(workspaceService: WorkspaceService, fileService: FileSer
   const pptxExportSchema = z.object({
     workspaceId: z.string().min(1),
     fileId: z.number().int().positive(),
+  });
+  const runDecisionSchema = z.object({
+    decision: z.enum(['approve', 'edit', 'reject']),
+    editedAction: z
+      .object({
+        name: z.string().min(1),
+        args: z.record(z.string(), z.unknown()).default({}),
+      })
+      .optional(),
+    message: z.string().optional(),
   });
 
   router.get('/personas', async (_req, res) => {
@@ -355,7 +366,14 @@ export default function(workspaceService: WorkspaceService, fileService: FileSer
       const user = requireUserContext(req);
       const { persona, prompt, workspaceId, history, forceReset, turnId } = runAgentSchema.parse(req.body);
       await workspaceService.ensureMembership(workspaceId, user.userId, { requireEdit: true });
+      const policy = await workspaceService.getMcpServerPolicy(workspaceId, user.userId, { requireEdit: true });
       const enrichedPrompt = await injectTaggedFileUrls(prompt, workspaceId, user.userId);
+      const authToken = signAgentContextToken({
+        sub: user.userId,
+        userId: user.userId,
+        workspaceId,
+        ...policy,
+      });
       const { runId, status } = await startAgentRun({
         persona,
         workspaceId,
@@ -363,6 +381,7 @@ export default function(workspaceService: WorkspaceService, fileService: FileSer
         history,
         forceReset,
         turnId,
+        authToken: authToken || undefined,
       });
       res.json({ runId, status });
     } catch (error: any) {
@@ -402,13 +421,49 @@ export default function(workspaceService: WorkspaceService, fileService: FileSer
     }
   });
 
+  router.post('/runs/:runId/decision', async (req, res) => {
+    try {
+      const user = requireUserContext(req);
+      const { runId } = req.params;
+      const meta = await getRunMeta(runId);
+      if (!meta) {
+        return res.status(404).json({ error: 'Run not found' });
+      }
+      await workspaceService.ensureMembership(meta.workspaceId, user.userId, { requireEdit: true });
+      if (meta.status !== 'awaiting_approval') {
+        return res.status(409).json({ error: 'Run is not awaiting approval' });
+      }
+      const payload = runDecisionSchema.parse(req.body);
+      const decisions = [
+        payload.decision === 'edit'
+          ? {
+              type: 'edit' as const,
+              edited_action: {
+                name: payload.editedAction?.name || 'request_plan_approval',
+                args: payload.editedAction?.args || {},
+              },
+            }
+          : payload.decision === 'reject'
+            ? { type: 'reject' as const, message: payload.message || 'Rejected by user' }
+            : { type: 'approve' as const },
+      ];
+      const result = await resumeAgentRun(runId, decisions);
+      res.json(result);
+    } catch (error: any) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: 'Invalid input' });
+      }
+      handleError(res, error, 'Failed to submit run decision');
+    }
+  });
+
   router.get('/runs/:runId/stream', async (req, res) => {
     const { runId } = req.params;
     const after = typeof req.query.after === 'string' && req.query.after.trim() ? req.query.after : '0-0';
     const abortController = new AbortController();
 
     let streamKey: string | null = null;
-    let terminalStatus: 'completed' | 'failed' | 'cancelled' | null = null;
+    let terminalStatus: 'completed' | 'failed' | 'cancelled' | 'awaiting_approval' | null = null;
 
     try {
       const user = requireUserContext(req);
@@ -503,7 +558,12 @@ export default function(workspaceService: WorkspaceService, fileService: FileSer
 
           if (!terminalStatus) {
             const meta = await getRunMeta(runId);
-            if (meta?.status === 'completed' || meta?.status === 'failed' || meta?.status === 'cancelled') {
+            if (
+              meta?.status === 'completed' ||
+              meta?.status === 'failed' ||
+              meta?.status === 'cancelled' ||
+              meta?.status === 'awaiting_approval'
+            ) {
               terminalStatus = meta.status;
             }
           }

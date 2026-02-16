@@ -2,10 +2,13 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Dict, List, AsyncGenerator, Iterable, Sequence, Set
+from typing import Any, Dict, List, AsyncGenerator, Iterable, Sequence, Set, Optional
 import json
 import logging
 import os
+import fnmatch
+import mimetypes
+import re
 from pathlib import Path
 from uuid import uuid4
 from dotenv import load_dotenv
@@ -25,6 +28,7 @@ from .rag_worker import RagIndexWorker
 from .skills_registry import collect_tool_names, load_skills
 from .paper2slides_runner import run_paper2slides, export_pptx_from_pdf
 from .jwt_utils import decode_and_verify_hs256_jwt
+from langgraph.types import Command
 
 
 logger = logging.getLogger(__name__)
@@ -38,6 +42,21 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     reply: Any
+
+
+class Action(BaseModel):
+    name: str
+    args: Dict[str, Any] = Field(default_factory=dict)
+
+
+class Decision(BaseModel):
+    type: str
+    edited_action: Optional[Action] = None
+    message: Optional[str] = None
+
+
+class ResumeChatRequest(BaseModel):
+    decisions: List[Decision]
 
 
 class RagQueryRequest(BaseModel):
@@ -101,6 +120,43 @@ class Paper2SlidesExportResponse(BaseModel):
 
 
 BASE_DIR = Path(__file__).resolve().parent
+
+
+_FILE_RESULT_PATTERNS = [
+    re.compile(r"Updated file (?P<path>/[^\s]+)"),
+    re.compile(r"in '(?P<path>/[^']+)'"),
+    re.compile(r"Appended (?P<src>/[^\s]+) to (?P<dst>/[^\s]+)"),
+]
+
+
+def _infer_mime_type(file_path: str) -> str:
+    guessed, _ = mimetypes.guess_type(file_path)
+    return guessed or "application/octet-stream"
+
+
+def _extract_output_files_from_tool_result(name: str, text: str) -> List[Dict[str, Any]]:
+    if not text:
+        return []
+    outputs: List[Dict[str, Any]] = []
+    if name == "write_file":
+        match = _FILE_RESULT_PATTERNS[0].search(text)
+        if match:
+            path = match.group("path")
+            outputs.append({"path": path.lstrip("/"), "mimeType": _infer_mime_type(path)})
+        return outputs
+    if name == "edit_file":
+        match = _FILE_RESULT_PATTERNS[1].search(text)
+        if match:
+            path = match.group("path")
+            outputs.append({"path": path.lstrip("/"), "mimeType": _infer_mime_type(path)})
+        return outputs
+    if name == "append_to_report":
+        match = _FILE_RESULT_PATTERNS[2].search(text)
+        if match:
+            path = match.group("dst")
+            outputs.append({"path": path.lstrip("/"), "mimeType": _infer_mime_type(path)})
+        return outputs
+    return outputs
 
 
 def _load_env_files() -> None:
@@ -565,9 +621,18 @@ def create_app() -> FastAPI:
                 "name": name,
                 "content": text,
             }
+            output_files = _extract_output_files_from_tool_result(name, text)
             meta = self._tool_meta.pop(run_key, None)
             if meta and meta.get("files"):
-                payload["outputFiles"] = meta["files"]
+                output_files.extend(meta["files"])
+            if output_files:
+                dedup: Dict[str, Dict[str, Any]] = {}
+                for item in output_files:
+                    path = str(item.get("path") or "").strip()
+                    if not path:
+                        continue
+                    dedup[path] = item
+                payload["outputFiles"] = list(dedup.values())
             await self._emit(payload)
 
         async def on_tool_error(self, error, *, run_id, **_: Any) -> None:
@@ -678,21 +743,73 @@ def create_app() -> FastAPI:
             return None
 
         interrupt_value = None
+        interrupt_id = None
         if isinstance(first, dict):
             interrupt_value = first.get("value")
+            interrupt_id = first.get("id")
         else:
             interrupt_value = getattr(first, "value", None)
+            interrupt_id = getattr(first, "id", None)
 
         if not isinstance(interrupt_value, dict):
             return None
 
         action_requests = interrupt_value.get("action_requests")
         review_configs = interrupt_value.get("review_configs")
-        return {
+        payload = {
             "type": "interrupt",
             "actionRequests": action_requests if isinstance(action_requests, list) else [],
             "reviewConfigs": review_configs if isinstance(review_configs, list) else [],
         }
+        if isinstance(interrupt_id, str) and interrupt_id:
+            payload["interruptId"] = interrupt_id
+        return payload
+
+    def _active_skill_policy(runtime: AgentRuntimeState) -> Dict[str, Any]:
+        context = runtime.workspace_state.context or {}
+        raw_policy = context.get("active_skill_policy") or {}
+        if not isinstance(raw_policy, dict):
+            raw_policy = {}
+        return {
+            "skill": context.get("active_skill"),
+            "requiresHitlPlan": bool(raw_policy.get("requires_hitl_plan", False)),
+            "requiresArtifacts": bool(raw_policy.get("requires_workspace_artifacts", False)),
+            "requiredArtifactsMode": raw_policy.get("required_artifacts_mode"),
+        }
+
+    def _missing_required_artifacts(runtime: AgentRuntimeState) -> List[str]:
+        context = runtime.workspace_state.context or {}
+        policy = context.get("active_skill_policy") or {}
+        if not isinstance(policy, dict):
+            return []
+        if not bool(policy.get("requires_workspace_artifacts", False)):
+            return []
+        mode = str(policy.get("required_artifacts_mode") or "").strip().lower()
+        if mode != "full_pack":
+            return []
+
+        root = runtime.workspace_state.root_path
+        required = policy.get("required_artifacts") or []
+        required_items = [str(item).strip() for item in required if str(item).strip()]
+        missing: List[str] = []
+        for item in required_items:
+            if item.startswith("pattern:"):
+                pattern = item[len("pattern:"):].lstrip("/")
+                matched = False
+                for child in root.rglob("*"):
+                    if not child.is_file():
+                        continue
+                    rel = child.relative_to(root).as_posix()
+                    if fnmatch.fnmatch(rel, pattern):
+                        matched = True
+                        break
+                if not matched:
+                    missing.append(item)
+                continue
+            rel = item.lstrip("/")
+            if not (root / rel).exists():
+                missing.append(item)
+        return missing
 
     _ASSISTANT_ROLES = {"assistant", "ai", "aimessagechunk"}
     _TOOL_ROLES = {"tool"}
@@ -711,7 +828,12 @@ def create_app() -> FastAPI:
             ]
         return []
 
-    async def _stream_agent_response(runtime: AgentRuntimeState, message: ChatRequest) -> AsyncGenerator[bytes, None]:
+    async def _stream_agent_response(
+        runtime: AgentRuntimeState,
+        message: ChatRequest,
+        *,
+        resume_decisions: Optional[List[Dict[str, Any]]] = None,
+    ) -> AsyncGenerator[bytes, None]:
         agent = getattr(runtime, "agent", None)
         if agent is None:
             yield _json_line({"type": "error", "message": "Agent not initialized"})
@@ -722,30 +844,31 @@ def create_app() -> FastAPI:
             manager.reset_session()
 
         payload = _prepare_payload(message)
-        tagged_files = _extract_tagged_files(message.message)
-        runtime.workspace_state.context["tagged_files"] = tagged_files
-        # Historical behavior forced "RAG-only" when any tagged files were present, which breaks
-        # when those files aren't indexed yet (e.g., agent-generated artifacts) and blocks basic
-        # file tools. Keep it behind an env flag for compatibility.
-        tagged_files_rag_only = (os.getenv("TAGGED_FILES_RAG_ONLY", "false") or "false").strip().lower() in {
-            "1",
-            "true",
-            "yes",
-            "y",
-            "on",
-        }
-        runtime.workspace_state.context["tagged_files_only"] = bool(tagged_files) and tagged_files_rag_only
-        if tagged_files:
-            rag_context = await _prefetch_rag_context(runtime.workspace_state.workspace_id, message.message)
-            if rag_context:
-                runtime.workspace_state.context["tagged_rag_context"] = rag_context
-                if tagged_files_rag_only:
-                    payload = [{"role": "user", "content": f"{message.message}\n\nRAG_CONTEXT:\n{rag_context}\n\nAnswer using only RAG_CONTEXT."}]
+        if not resume_decisions:
+            tagged_files = _extract_tagged_files(message.message)
+            runtime.workspace_state.context["tagged_files"] = tagged_files
+            # Historical behavior forced "RAG-only" when any tagged files were present, which breaks
+            # when those files aren't indexed yet (e.g., agent-generated artifacts) and blocks basic
+            # file tools. Keep it behind an env flag for compatibility.
+            tagged_files_rag_only = (os.getenv("TAGGED_FILES_RAG_ONLY", "false") or "false").strip().lower() in {
+                "1",
+                "true",
+                "yes",
+                "y",
+                "on",
+            }
+            runtime.workspace_state.context["tagged_files_only"] = bool(tagged_files) and tagged_files_rag_only
+            if tagged_files:
+                rag_context = await _prefetch_rag_context(runtime.workspace_state.workspace_id, message.message)
+                if rag_context:
+                    runtime.workspace_state.context["tagged_rag_context"] = rag_context
+                    if tagged_files_rag_only:
+                        payload = [{"role": "user", "content": f"{message.message}\n\nRAG_CONTEXT:\n{rag_context}\n\nAnswer using only RAG_CONTEXT."}]
         handler = _CallbackStreamingHandler(_message_to_text)
         sentinel = object()
-        fallback_chunks: List[Any] = []
         stream_started = asyncio.get_running_loop().time()
-        raw_chunk_count = 0
+        saw_interrupt = False
+        yield _json_line({"type": "policy", **_active_skill_policy(runtime)})
         logger.info(
             "Agent stream start: agent=%s workspace=%s",
             runtime.agent_name,
@@ -754,106 +877,57 @@ def create_app() -> FastAPI:
 
         async def _agent_runner():
             try:
+                nonlocal saw_interrupt
                 stream_config = _build_agent_config(runtime, message, callbacks=[handler])
-                async for raw_chunk in agent.astream({"messages": payload}, config=stream_config):
-                    fallback_chunks.append(raw_chunk)
-                    nonlocal raw_chunk_count
-                    raw_chunk_count += 1
-                    if raw_chunk_count in {1, 5, 10} or raw_chunk_count % 50 == 0:
-                        logger.info(
-                            "Agent stream chunk %s: agent=%s workspace=%s",
-                            raw_chunk_count,
-                            runtime.agent_name,
-                            runtime.workspace_state.workspace_id,
-                        )
-            except ValueError as exc:
-                message_text = str(exc)
-                if "No generations found in stream" in message_text:
-                    logger.warning(
-                        "Model for agent '%s' workspace '%s' does not support streaming; falling back to sync response",
-                        runtime.agent_name,
-                        runtime.workspace_state.workspace_id,
-                    )
-                    try:
-                        fallback_result = _invoke_agent(runtime, message)
-                    except Exception as inner_exc:  # pragma: no cover - defensive
-                        logger.exception(
-                            "Fallback invoke failed for agent '%s' in workspace '%s'",
-                            runtime.agent_name,
-                            runtime.workspace_state.workspace_id,
-                        )
-                        await handler.queue.put({"type": "error", "message": str(inner_exc)})
-                        raise
-                    emitted = False
-                    interrupt_payload = _extract_interrupt_payload(fallback_result)
-                    if interrupt_payload:
-                        emitted = True
-                        await handler._emit(interrupt_payload)
-                    messages = _extract_messages(fallback_result)
-                    if messages:
-                        tracker = _DeltaTracker()
-                        for msg in messages:
-                            text = _message_to_text(msg)
-                            role = _message_role(msg)
-                            delta = tracker.push(role, text)
-                            if delta:
-                                emitted = True
-                                for event_payload in _emit_text(role, delta):
-                                    await handler._emit(event_payload)
-                    else:
-                        text = _message_to_text(fallback_result)
-                        if text:
+                stream_input: Any = {"messages": payload}
+                if resume_decisions:
+                    stream_input = Command(resume={"decisions": resume_decisions})
+                final_result = await agent.ainvoke(stream_input, config=stream_config)
+
+                emitted = False
+                interrupt_payload = _extract_interrupt_payload(final_result)
+                if interrupt_payload:
+                    saw_interrupt = True
+                    emitted = True
+                    await handler._emit(interrupt_payload)
+
+                messages = _extract_messages(final_result)
+                if messages and not handler.has_assistant_text:
+                    tracker = _DeltaTracker()
+                    for msg in messages:
+                        text = _message_to_text(msg)
+                        role = _message_role(msg)
+                        delta = tracker.push(role, text)
+                        if delta:
                             emitted = True
-                            for event_payload in _emit_text("assistant", text):
+                            for event_payload in _emit_text(role, delta):
                                 await handler._emit(event_payload)
-                    if not emitted:
-                        await handler._emit({"type": "thought", "role": "assistant", "content": "Model returned no output"})
-                    return
-                await handler._emit({"type": "error", "message": message_text})
-                raise
+                elif not handler.has_assistant_text:
+                    text = _message_to_text(final_result)
+                    if text:
+                        emitted = True
+                        for event_payload in _emit_text("assistant", text):
+                            await handler._emit(event_payload)
+
+                if not emitted and not handler.has_events:
+                    await handler._emit(
+                        {
+                            "type": "thought",
+                            "role": "assistant",
+                            "content": "Model returned no output",
+                        }
+                    )
             except Exception as exc:  # pragma: no cover - streaming guard
                 await handler._emit({"type": "error", "message": str(exc)})
                 raise
             finally:
                 elapsed = asyncio.get_running_loop().time() - stream_started
                 logger.info(
-                    "Agent stream finished: agent=%s workspace=%s chunks=%s elapsed=%.2fs",
+                    "Agent stream finished: agent=%s workspace=%s elapsed=%.2fs",
                     runtime.agent_name,
                     runtime.workspace_state.workspace_id,
-                    raw_chunk_count,
                     elapsed,
                 )
-                if not handler.has_assistant_text and fallback_chunks:
-                    tracker = _DeltaTracker()
-                    for raw_chunk in fallback_chunks:
-                        mode, chunk = _parse_multi_mode_chunk(raw_chunk)
-                        if mode == "messages":
-                            message_chunk = chunk
-                            if isinstance(chunk, (list, tuple)) and len(chunk) == 2:
-                                message_chunk = chunk[0]
-                            text = _message_to_text(message_chunk)
-                            role = _message_role(message_chunk)
-                            delta = tracker.push(role, text)
-                            if delta:
-                                for event_payload in _emit_text(role, delta):
-                                    await handler._emit(event_payload)
-                            continue
-
-                        interrupt_payload = _extract_interrupt_payload(chunk)
-                        if interrupt_payload:
-                            await handler._emit(interrupt_payload)
-                            continue
-
-                        messages = _extract_messages(chunk)
-                        if not messages:
-                            continue
-                        last_message = messages[-1]
-                        text = _message_to_text(last_message)
-                        role = _message_role(last_message)
-                        delta = tracker.push(role, text)
-                        if delta:
-                            for event_payload in _emit_text(role, delta):
-                                await handler._emit(event_payload)
                 await handler.queue.put(sentinel)
 
         task = asyncio.create_task(_agent_runner())
@@ -868,6 +942,17 @@ def create_app() -> FastAPI:
                     break
                 yield _json_line(event)
             source_tracker.update_final_report(runtime.workspace_state)
+            if not saw_interrupt:
+                missing = _missing_required_artifacts(runtime)
+                if missing:
+                    runtime.workspace_state.context["artifact_contract_failed"] = True
+                    yield _json_line(
+                        {
+                            "type": "contract_error",
+                            "message": "Artifact contract not satisfied.",
+                            "missing": missing,
+                        }
+                    )
             yield _json_line({"type": "done"})
         finally:
             await task
@@ -914,6 +999,29 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
         stream = _stream_agent_response(runtime, chat_request)
+        return StreamingResponse(stream, media_type="application/jsonl")
+
+    @app.post("/agents/{agent_name}/workspace/{workspace_id}/chat/stream/resume")
+    async def chat_stream_resume(
+        agent_name: str,
+        workspace_id: str,
+        resume_request: ResumeChatRequest,
+        request: Request,
+    ):
+        try:
+            initial_context = _extract_request_context(request)
+            runtime = await registry.get_or_create(agent_name, workspace_id, initial_context=initial_context)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+        decisions_payload: List[Dict[str, Any]] = []
+        for item in resume_request.decisions:
+            if hasattr(item, "model_dump"):
+                decisions_payload.append(item.model_dump(exclude_none=True))  # type: ignore[attr-defined]
+            else:
+                decisions_payload.append(item.dict(exclude_none=True))  # type: ignore[attr-defined]
+        placeholder = ChatRequest(message="", history=None, forceReset=False)
+        stream = _stream_agent_response(runtime, placeholder, resume_decisions=decisions_payload)
         return StreamingResponse(stream, media_type="application/jsonl")
 
     return app

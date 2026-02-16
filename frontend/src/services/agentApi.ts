@@ -9,23 +9,32 @@ const STREAM_DEBUG_ENABLED =
 export type AgentStreamChunk =
   | { type: 'token' | 'chunk'; content?: string; role?: string }
   | { type: 'thought'; content?: string; role?: string }
+  | {
+      type: 'policy';
+      skill?: string;
+      requiresHitlPlan?: boolean;
+      requiresArtifacts?: boolean;
+      requiredArtifactsMode?: string;
+    }
   | { type: 'tool_start'; content?: string; name?: string }
   | { type: 'tool_end'; content?: string; name?: string; outputFiles?: ToolOutputFile[] }
   | { type: 'tool_error'; content?: string; name?: string }
   | {
       type: 'interrupt';
+      interruptId?: string;
       actionRequests?: Array<{ name?: string; args?: Record<string, unknown> }>;
       reviewConfigs?: Array<{ action_name?: string; allowed_decisions?: string[] }>;
     }
   | { type: 'keepalive' }
   | { type: 'done' }
-  | { type: 'error'; message?: string };
+  | { type: 'error'; message?: string }
+  | { type: 'contract_error'; message?: string; missing?: string[] };
 
 type AgentStreamOptions = {
   forceReset?: boolean;
 };
 
-export type AgentRunStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+export type AgentRunStatus = 'queued' | 'running' | 'awaiting_approval' | 'completed' | 'failed' | 'cancelled';
 
 export type AgentRunStartResponse = {
   runId: string;
@@ -187,6 +196,31 @@ export const cancelRun = async (runId: string) => {
   });
   if (!response.ok) {
     throw new Error('Failed to cancel run');
+  }
+  return response.json();
+};
+
+export const submitRunDecision = async (
+  runId: string,
+  decision: 'approve' | 'edit' | 'reject',
+  options?: {
+    editedAction?: { name: string; args: Record<string, unknown> };
+    message?: string;
+  },
+) => {
+  const response = await apiFetch(`${API_URL}/agent/runs/${runId}/decision`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      decision,
+      editedAction: options?.editedAction,
+      message: options?.message,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error('Failed to submit run decision');
   }
   return response.json();
 };

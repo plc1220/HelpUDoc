@@ -50,7 +50,17 @@ export interface ConversationMessageMetadata {
   thinkingText?: string;
   toolEvents?: ToolEvent[];
   runId?: string;
-  status?: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+  status?: 'queued' | 'running' | 'awaiting_approval' | 'completed' | 'failed' | 'cancelled';
+  pendingInterrupt?: {
+    actionRequests?: Array<{ name?: string; args?: Record<string, unknown> }>;
+    reviewConfigs?: Array<{ action_name?: string; allowed_decisions?: string[] }>;
+  };
+  runPolicy?: {
+    skill?: string;
+    requiresHitlPlan?: boolean;
+    requiresArtifacts?: boolean;
+    requiredArtifactsMode?: string;
+  };
 }
 
 export interface ConversationMessage {

@@ -40,6 +40,12 @@ export type AgentHistoryEntry = {
   content: string;
 };
 
+export type AgentDecision = {
+  type: 'approve' | 'edit' | 'reject';
+  edited_action?: { name: string; args: Record<string, unknown> };
+  message?: string;
+};
+
 type RunAgentOptions = {
   forceReset?: boolean;
   signal?: AbortSignal;
@@ -97,6 +103,27 @@ export async function runAgentStream(
     signal: options?.signal,
     headers,
   });
+}
+
+export async function resumeAgentStream(
+  persona: string,
+  workspaceId: string,
+  decisions: AgentDecision[],
+  options?: RunAgentOptions
+): Promise<AxiosResponse<IncomingMessage>> {
+  const headers: Record<string, string> = {};
+  if (options?.authToken) {
+    headers.Authorization = `Bearer ${options.authToken}`;
+  }
+  return client.post(
+    `/agents/${persona}/workspace/${workspaceId}/chat/stream/resume`,
+    { decisions },
+    {
+      responseType: "stream",
+      signal: options?.signal,
+      headers,
+    }
+  );
 }
 
 export async function fetchRagStatuses(

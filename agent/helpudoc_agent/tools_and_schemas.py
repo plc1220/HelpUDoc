@@ -25,12 +25,37 @@ except ImportError as exc:  # pragma: no cover
     raise RuntimeError("Gemini dependencies are required") from exc
 
 from .configuration import Settings, ToolConfig
-from .skills_registry import load_skills
+from .skills_registry import SkillPolicy, load_skills
 from .rag_indexer import RagConfig, WorkspaceRagStore
 from .state import WorkspaceState
 from .utils import SourceTracker, resolve_urls, extract_web_url
 
 logger = logging.getLogger(__name__)
+
+
+def _get_active_skill_policy(workspace_state: WorkspaceState) -> SkillPolicy:
+    raw = workspace_state.context.get("active_skill_policy")
+    if isinstance(raw, SkillPolicy):
+        return raw
+    if isinstance(raw, dict):
+        return SkillPolicy(
+            requires_hitl_plan=bool(raw.get("requires_hitl_plan")),
+            requires_workspace_artifacts=bool(raw.get("requires_workspace_artifacts")),
+            required_artifacts_mode=str(raw.get("required_artifacts_mode") or "") or None,
+            required_artifacts=list(raw.get("required_artifacts") or []) or None,
+        )
+    return SkillPolicy()
+
+
+def _is_plan_approved(workspace_state: WorkspaceState) -> bool:
+    return bool(workspace_state.context.get("plan_approved"))
+
+
+def _plan_gate_message() -> str:
+    return (
+        "Plan approval required before execution. "
+        "Call request_plan_approval with title, summary, and checklist first."
+    )
 
 
 def _read_text_truncated(path: Path, max_chars: int) -> str:
@@ -216,6 +241,9 @@ class ToolFactory:
             source_tracker=self.source_tracker,
             client=self.gemini_manager.search_client,
             model_name=self.gemini_manager.model_name,
+            tool_name="google_search",
+            tool_description="Use Gemini's built-in search to gather fresh information.",
+            search_label="google_search",
         )
 
     def _build_gemini_image_tool(self, workspace_state: WorkspaceState) -> Tool:
@@ -226,74 +254,16 @@ class ToolFactory:
         )
 
     def _build_google_grounded_search_tool(self, workspace_state: WorkspaceState) -> Tool:
-        """Grounded search that also records sources for final reporting."""
-        client = self.gemini_manager.search_client
-        model_name = self.gemini_manager.model_name
-        tracker = self.source_tracker
-
-        @tool
-        def google_grounded_search(query: str) -> str:
-            """Run a Gemini search with citations and store sources."""
-            if workspace_state.context.get("tagged_files_only"):
-                return "Tool disabled: tagged files were provided, use rag_query only."
-            search_prompt = (
-                f"Search the web for information about: {query}\n\n"
-                "Return a comprehensive summary of the search results."
-            )
-            response, error = _generate_with_timeout(
-                client=client,
-                model_name=model_name,
-                contents=search_prompt,
-                config={
-                    "tools": [{"google_search": {}}],
-                    "temperature": 0,
-                },
-                timeout_s=_DEFAULT_SEARCH_TIMEOUT,
-                label="google_grounded_search",
-            )
-            if error:
-                return f"Search failed ({error})."
-
-            summary = response.text or "No results found."
-            sources: List[Dict[str, str]] = []
-            sources_str = "\n\n--- SOURCES ---"
-
-            if response.candidates and response.candidates[0].grounding_metadata:
-                grounding_chunks = response.candidates[0].grounding_metadata.grounding_chunks or []
-                web_chunks = [
-                    chunk for chunk in grounding_chunks
-                    if hasattr(chunk, "web") and chunk.web
-                ]
-                resolved_map = resolve_urls(
-                    web_chunks,
-                    id_seed=abs(hash(query)) % 1_000_000,
-                ) if web_chunks else {}
-
-                seen_urls = set()
-                for chunk in web_chunks:
-                    actual_url = extract_web_url(chunk.web)
-                    if not actual_url or actual_url in seen_urls:
-                        continue
-                    sources.append({
-                        "title": getattr(chunk.web, "title", None) or "Untitled",
-                        "url": actual_url,
-                        "short_url": resolved_map.get(getattr(chunk.web, "uri", ""), ""),
-                    })
-                    seen_urls.add(actual_url)
-
-            if sources:
-                tracker.record(workspace_state, sources)
-                for src in sources:
-                    display_url = src.get("short_url") or src["url"]
-                    sources_str += f"\nTitle: {src['title']}\nURL: {display_url}\n"
-            else:
-                sources_str += "\nNo sources were found for this query."
-
-            return summary + sources_str
-
-        google_grounded_search.name = "google_grounded_search"
-        google_grounded_search.description = "Use Gemini's grounded search with citations."
-        return google_grounded_search
+        """Compatibility alias of google_search for existing prompts/skills."""
+        return build_google_search_tool(
+            workspace_state=workspace_state,
+            source_tracker=self.source_tracker,
+            client=self.gemini_manager.search_client,
+            model_name=self.gemini_manager.model_name,
+            tool_name="google_grounded_search",
+            tool_description="Alias of google_search with citations for backward compatibility.",
+            search_label="google_grounded_search",
+        )
 
     def _build_list_skills_tool(self, workspace_state: WorkspaceState) -> Tool:
         """List available skills from the shared skills registry."""
@@ -340,6 +310,15 @@ class ToolFactory:
                         content = skill.path.read_text(encoding="utf-8")
                     except Exception as exc:  # pragma: no cover - filesystem guard
                         return f"Failed to read skill '{skill.skill_id}': {exc}"
+                    workspace_state.context["active_skill"] = skill.skill_id
+                    workspace_state.context["active_skill_policy"] = {
+                        "requires_hitl_plan": skill.policy.requires_hitl_plan,
+                        "requires_workspace_artifacts": skill.policy.requires_workspace_artifacts,
+                        "required_artifacts_mode": skill.policy.required_artifacts_mode,
+                        "required_artifacts": skill.policy.required_artifacts or [],
+                    }
+                    # Reset plan approval each time a new skill is loaded.
+                    workspace_state.context["plan_approved"] = False
                     return f"Loaded skill: {skill.skill_id}\n\n{content}"
             available = ", ".join(sorted({skill.skill_id for skill in skills}))
             return f"Skill '{normalized}' not found. Available skills: {available}"
@@ -374,13 +353,15 @@ class ToolFactory:
             if not checklist:
                 return "Plan approval blocked: execution_checklist is required."
 
+            workspace_state.context["plan_approved"] = True
+
             return (
-                "PLAN_REVIEW_REQUEST\n"
+                "PLAN_APPROVAL_RECORDED\n"
                 f"Title: {title}\n"
                 f"Summary: {summary}\n"
                 f"Execution checklist: {checklist}\n"
                 f"Risky actions: {risks}\n"
-                "Awaiting human decision: approve, edit, or reject."
+                "Plan decision has been applied. Continue executing the approved plan."
             )
 
         request_plan_approval.name = "request_plan_approval"
@@ -704,25 +685,32 @@ class ToolFactory:
         return rag_query
 
 
-def build_google_search_tool(
+def _build_grounded_google_search_tool(
     workspace_state: WorkspaceState,
     source_tracker: SourceTracker,
-    client=None,
-    model_name: str | None = None,
+    *,
+    client,
+    model_name: str,
+    tool_name: str,
+    tool_description: str,
+    search_label: str,
 ) -> Tool:
-    """Public builder so YAML entrypoints stay accurate."""
-    if client is None or model_name is None:
-        raise ValueError("Gemini client and model name are required")
+    """Create a Gemini-grounded Google search tool and persist discovered sources."""
     tracker = source_tracker
 
     @tool
-    def internet_search(query: str, max_results: int = 5) -> str:
+    def grounded_search(query: str, max_results: int = 5) -> str:
         """Run a Gemini native Google search for the given query."""
         if workspace_state.context.get("tagged_files_only"):
             return "Tool disabled: tagged files were provided, use rag_query only."
+        policy = _get_active_skill_policy(workspace_state)
+        if policy.requires_hitl_plan and not _is_plan_approved(workspace_state):
+            return _plan_gate_message()
+
+        max_results = max(1, int(max_results or 1))
         search_prompt = (
             f"Search the web for information about: {query}\n\n"
-            "Return a comprehensive summary of the search results."
+            f"Return a comprehensive summary, citing up to {max_results} relevant sources."
         )
         response, error = _generate_with_timeout(
             client=client,
@@ -733,53 +721,69 @@ def build_google_search_tool(
                 "temperature": 0,
             },
             timeout_s=_DEFAULT_SEARCH_TIMEOUT,
-            label="internet_search",
+            label=search_label,
         )
         if error:
             return f"Search failed ({error})."
 
         summary = response.text or "No results found."
+        sources: List[Dict[str, str]] = []
         sources_str = "\n\n--- SOURCES ---"
-        sources_found = False
 
         if response.candidates and response.candidates[0].grounding_metadata:
-            sources: List[Dict[str, str]] = []
-            seen_urls = set()
             grounding_chunks = response.candidates[0].grounding_metadata.grounding_chunks or []
-            web_chunks = [
-                chunk for chunk in grounding_chunks
-                if hasattr(chunk, "web") and chunk.web
-            ]
-            resolved_map = resolve_urls(
-                web_chunks,
-                id_seed=abs(hash(query)) % 1_000_000,
-            ) if web_chunks else {}
+            web_chunks = [chunk for chunk in grounding_chunks if hasattr(chunk, "web") and chunk.web]
+            resolve_urls(web_chunks, id_seed=abs(hash(query)) % 1_000_000)
 
+            seen_urls = set()
             for chunk in web_chunks:
                 actual_url = extract_web_url(chunk.web)
                 if not actual_url or actual_url in seen_urls:
                     continue
-                sources.append({
-                    "title": getattr(chunk.web, "title", None) or "Untitled",
-                    "url": actual_url,
-                    "short_url": resolved_map.get(getattr(chunk.web, "uri", ""), ""),
-                })
+                sources.append(
+                    {
+                        "title": getattr(chunk.web, "title", None) or "Untitled",
+                        "url": actual_url,
+                    }
+                )
                 seen_urls.add(actual_url)
 
-            if sources:
-                sources_found = True
-                tracker.record(workspace_state, sources)
-                for src in sources:
-                    sources_str += f"\nTitle: {src['title']}\nURL: {src['url']}\n"
-
-        if not sources_found:
+        if sources:
+            tracker.record(workspace_state, sources)
+            for src in sources[:max_results]:
+                sources_str += f"\nTitle: {src['title']}\nURL: {src['url']}\n"
+        else:
             sources_str += "\nNo sources were found for this query."
 
         return summary + sources_str
 
-    internet_search.name = "internet_search"
-    internet_search.description = "Use Gemini's built-in search to gather fresh information."
-    return internet_search
+    grounded_search.name = tool_name
+    grounded_search.description = tool_description
+    return grounded_search
+
+
+def build_google_search_tool(
+    workspace_state: WorkspaceState,
+    source_tracker: SourceTracker,
+    client=None,
+    model_name: str | None = None,
+    *,
+    tool_name: str = "google_search",
+    tool_description: str = "Use Gemini's built-in search to gather fresh information.",
+    search_label: str = "google_search",
+) -> Tool:
+    """Public builder so YAML entrypoints stay accurate."""
+    if client is None or model_name is None:
+        raise ValueError("Gemini client and model name are required")
+    return _build_grounded_google_search_tool(
+        workspace_state=workspace_state,
+        source_tracker=source_tracker,
+        client=client,
+        model_name=model_name,
+        tool_name=tool_name,
+        tool_description=tool_description,
+        search_label=search_label,
+    )
 
 
 def build_gemini_image_tool(
