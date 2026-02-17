@@ -171,13 +171,13 @@ steps:
         kubectl -n helpudoc rollout status deployment/helpudoc-app --timeout=180s
         kubectl -n helpudoc rollout status deployment/helpudoc-frontend --timeout=180s
 
-        APP_POD="$(kubectl -n helpudoc get pods -l app=helpudoc-app -o jsonpath='{.items[0].metadata.name}')"
-        test -n "${APP_POD}"
-        echo "Checking mounted runtime config and skills in pod: ${APP_POD}"
+        APP_POD="$$(kubectl -n helpudoc get pods -l app=helpudoc-app -o jsonpath='{.items[0].metadata.name}')"
+        test -n "$${APP_POD}"
+        echo "Checking mounted runtime config and skills in pod: $${APP_POD}"
 
-        kubectl -n helpudoc exec "${APP_POD}" -c agent -- sh -lc "grep -q 'request_plan_approval' /agent/config/runtime.yaml"
-        kubectl -n helpudoc exec "${APP_POD}" -c agent -- sh -lc "grep -q 'request_plan_approval' /app/skills/research/SKILL.md"
-        kubectl -n helpudoc exec "${APP_POD}" -c agent -- python -c "import requests; data=requests.get('http://localhost:8001/agents', timeout=10).json(); tools=data['agents'][0]['tools']; assert 'request_plan_approval' in tools, tools; print('request_plan_approval available in /agents')"
+        kubectl -n helpudoc exec "$${APP_POD}" -c agent -- sh -lc "grep -q 'request_plan_approval' /agent/config/runtime.yaml"
+        kubectl -n helpudoc exec "$${APP_POD}" -c agent -- sh -lc "grep -q 'request_plan_approval' /app/skills/research/SKILL.md"
+        kubectl -n helpudoc exec "$${APP_POD}" -c agent -- python -c "import requests; data=requests.get('http://localhost:8001/agents', timeout=10).json(); tools=data['agents'][0]['tools']; assert 'request_plan_approval' in tools, tools; print('request_plan_approval available in /agents')"
 
   # 7. E2E check (fails build on mixed-content / localhost assets)
   - name: 'node:20-bookworm'
