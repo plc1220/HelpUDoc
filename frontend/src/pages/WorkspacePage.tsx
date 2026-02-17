@@ -730,6 +730,35 @@ const buildMessageMetadata = (message?: ConversationMessage | null): Conversatio
   return Object.keys(metadata).length ? metadata : undefined;
 };
 
+const mergePersistedAgentMessage = (
+  persisted: ConversationMessage,
+  existing?: ConversationMessage | null,
+): ConversationMessage => {
+  const hydrated = mergeMessageMetadata(persisted);
+  const persistedMetadata = (hydrated.metadata as ConversationMessageMetadata | null | undefined) || {};
+  const existingMetadata = (existing?.metadata as ConversationMessageMetadata | null | undefined) || {};
+  const effectiveStatus = persistedMetadata.status ?? existingMetadata.status;
+
+  const mergedMetadata: ConversationMessageMetadata = {
+    ...existingMetadata,
+    ...persistedMetadata,
+    runPolicy: persistedMetadata.runPolicy ?? existingMetadata.runPolicy,
+    pendingInterrupt:
+      persistedMetadata.pendingInterrupt !== undefined
+        ? persistedMetadata.pendingInterrupt
+        : effectiveStatus === 'awaiting_approval'
+          ? existingMetadata.pendingInterrupt
+          : undefined,
+  };
+
+  return {
+    ...hydrated,
+    thinkingText: hydrated.thinkingText ?? existing?.thinkingText,
+    toolEvents: hydrated.toolEvents ?? existing?.toolEvents,
+    metadata: Object.keys(mergedMetadata).length ? mergedMetadata : undefined,
+  };
+};
+
 const loadActiveRunsFromStorage = (): Record<string, ActiveRunInfo> => {
   if (typeof window === 'undefined') {
     return {};
@@ -2640,28 +2669,24 @@ export default function WorkspacePage() {
           replaceExisting: true,
           metadata,
         });
-        const hydrated = mergeMessageMetadata(persisted);
         updateMessagesForConversation(conversationId, (prev) => {
           const updated = [...prev];
           const existingIndex = updated.findIndex(
-            (m) => m.id === hydrated.id || (m.sender === 'agent' && m.turnId === hydrated.turnId)
+            (m) => m.id === persisted.id || (m.sender === 'agent' && m.turnId === persisted.turnId)
           );
+          const existing = existingIndex !== -1 ? updated[existingIndex] : undefined;
+          const merged = mergePersistedAgentMessage(persisted, existing);
           if (existingIndex !== -1) {
-            const existing = updated[existingIndex];
-            updated[existingIndex] = {
-              ...hydrated,
-              thinkingText: hydrated.thinkingText ?? existing?.thinkingText,
-              toolEvents: hydrated.toolEvents ?? existing?.toolEvents,
-            };
+            updated[existingIndex] = merged;
           } else {
-            updated.push(hydrated);
+            updated.push(merged);
           }
           return updated;
         });
         lastPersistedAgentTextRef.current[runId] = text;
         lastPersistedStatusRef.current[runId] = nextStatus;
-        agentMessageBufferRef.current.set(hydrated.id, hydrated.text || '');
-        if (placeholderId !== hydrated.id) {
+        agentMessageBufferRef.current.set(persisted.id, persisted.text || '');
+        if (placeholderId !== persisted.id) {
           agentMessageBufferRef.current.delete(placeholderId);
         }
       } catch (error) {
@@ -3275,18 +3300,12 @@ export default function WorkspacePage() {
             replaceExisting: true,
             metadata: { ...metadata, runId },
           });
-          const hydratedPersisted = mergeMessageMetadata(persisted);
           updateMessagesForConversation(conversationId, (prev) => {
             const updated = [...prev];
             if (targetIndex >= 0) {
-              const existing = updated[targetIndex];
-              updated[targetIndex] = {
-                ...hydratedPersisted,
-                thinkingText: hydratedPersisted.thinkingText ?? existing?.thinkingText,
-                toolEvents: hydratedPersisted.toolEvents ?? existing?.toolEvents,
-              };
+              updated[targetIndex] = mergePersistedAgentMessage(persisted, updated[targetIndex]);
             } else {
-              updated.push(hydratedPersisted);
+              updated.push(mergePersistedAgentMessage(persisted));
             }
             return updated;
           });
@@ -3724,18 +3743,12 @@ export default function WorkspacePage() {
             metadata: { ...metadata, runId },
             replaceExisting: true,
           });
-          const hydratedPersisted = mergeMessageMetadata(persisted);
           updateMessagesForConversation(conversationId, (prev) => {
             const updated = [...prev];
             if (targetIndex >= 0) {
-              const existing = updated[targetIndex];
-              updated[targetIndex] = {
-                ...hydratedPersisted,
-                thinkingText: hydratedPersisted.thinkingText ?? existing?.thinkingText,
-                toolEvents: hydratedPersisted.toolEvents ?? existing?.toolEvents,
-              };
+              updated[targetIndex] = mergePersistedAgentMessage(persisted, updated[targetIndex]);
             } else {
-              updated.push(hydratedPersisted);
+              updated.push(mergePersistedAgentMessage(persisted));
             }
             return updated;
           });

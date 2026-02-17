@@ -88,8 +88,24 @@ export default function conversationRoutes(conversationService: ConversationServ
         }).strict()).optional(),
       }).strict()).optional(),
       runId: z.string().optional(),
-      status: z.enum(['running', 'completed', 'failed', 'cancelled']).optional(),
-    }).partial().optional(),
+      status: z.enum(['queued', 'running', 'awaiting_approval', 'completed', 'failed', 'cancelled']).optional(),
+      pendingInterrupt: z.object({
+        actionRequests: z.array(z.object({
+          name: z.string().optional(),
+          args: z.record(z.string(), z.unknown()).optional(),
+        }).passthrough()).optional(),
+        reviewConfigs: z.array(z.object({
+          action_name: z.string().optional(),
+          allowed_decisions: z.array(z.string()).optional(),
+        }).passthrough()).optional(),
+      }).passthrough().optional(),
+      runPolicy: z.object({
+        skill: z.string().optional(),
+        requiresHitlPlan: z.boolean().optional(),
+        requiresArtifacts: z.boolean().optional(),
+        requiredArtifactsMode: z.string().optional(),
+      }).passthrough().optional(),
+    }).passthrough().partial().optional(),
   }).superRefine((payload, ctx) => {
     if (payload.sender === 'user' && payload.text.trim().length === 0) {
       ctx.addIssue({
