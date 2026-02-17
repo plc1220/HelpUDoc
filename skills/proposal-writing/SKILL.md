@@ -13,7 +13,7 @@ description: Create a multi-section Statement of Work (SOW) proposal for data/an
 
 ## Workflow
 ### Phase 1 - Research
-1. Use google_grounded_search for at most 2 queries to gather:
+1. Use google_search for at most 2 queries to gather:
    - Client strategic goals and transformation initiatives.
    - Current stack constraints / technical debt.
    - Relevant reference architecture for the use case (cloud-agnostic unless the user specifies a provider).

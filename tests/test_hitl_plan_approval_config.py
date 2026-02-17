@@ -14,7 +14,7 @@ def test_runtime_config_exposes_request_plan_approval_interrupt() -> None:
 
 def test_runtime_config_does_not_force_search_interrupts() -> None:
     settings = load_settings()
-    assert "internet_search" not in settings.backend.interrupt_on
+    assert "google_search" not in settings.backend.interrupt_on
     assert "google_grounded_search" not in settings.backend.interrupt_on
 
 

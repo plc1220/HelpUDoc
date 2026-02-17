@@ -90,6 +90,6 @@ Format the report in clear markdown with proper structure and include source ref
 
 You have access to a few tools.
 
-## `internet_search`
+## `google_search`
 
 Use this to run an internet search for a given query. This uses Gemini's native search capabilities to find web results and synthesize information.

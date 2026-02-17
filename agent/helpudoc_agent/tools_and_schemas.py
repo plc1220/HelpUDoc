@@ -28,7 +28,7 @@ from .configuration import Settings, ToolConfig
 from .skills_registry import SkillPolicy, load_skills
 from .rag_indexer import RagConfig, WorkspaceRagStore
 from .state import WorkspaceState
-from .utils import SourceTracker, resolve_urls, extract_web_url
+from .utils import SourceTracker, extract_web_url
 
 logger = logging.getLogger(__name__)
 
@@ -707,7 +707,10 @@ def _build_grounded_google_search_tool(
         if policy.requires_hitl_plan and not _is_plan_approved(workspace_state):
             return _plan_gate_message()
 
-        max_results = max(1, int(max_results or 1))
+        try:
+            max_results = max(1, int(max_results or 1))
+        except (TypeError, ValueError):
+            max_results = 5
         search_prompt = (
             f"Search the web for information about: {query}\n\n"
             f"Return a comprehensive summary, citing up to {max_results} relevant sources."
@@ -733,7 +736,6 @@ def _build_grounded_google_search_tool(
         if response.candidates and response.candidates[0].grounding_metadata:
             grounding_chunks = response.candidates[0].grounding_metadata.grounding_chunks or []
             web_chunks = [chunk for chunk in grounding_chunks if hasattr(chunk, "web") and chunk.web]
-            resolve_urls(web_chunks, id_seed=abs(hash(query)) % 1_000_000)
 
             seen_urls = set()
             for chunk in web_chunks:
