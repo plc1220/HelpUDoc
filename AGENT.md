@@ -178,6 +178,20 @@ kubectl -n helpudoc rollout status deployment/helpudoc-app
 kubectl -n helpudoc rollout status deployment/helpudoc-frontend
 ```
 
+PVC drift guard (required for skill/HITL changes):
+
+```bash
+APP_POD="$(kubectl -n helpudoc get pods -l app=helpudoc-app -o jsonpath='{.items[0].metadata.name}')"
+kubectl -n helpudoc exec "$APP_POD" -c agent -- sh -lc "grep -q 'request_plan_approval' /agent/config/runtime.yaml"
+kubectl -n helpudoc exec "$APP_POD" -c agent -- sh -lc "grep -q 'request_plan_approval' /app/skills/research/SKILL.md"
+kubectl -n helpudoc exec "$APP_POD" -c agent -- python -c "import requests; d=requests.get('http://localhost:8001/agents', timeout=10).json(); assert 'request_plan_approval' in d['agents'][0]['tools'], d['agents'][0]['tools']; print('ok')"
+```
+
+Why:
+- `agent-config-pvc` and `skills-pvc` are mounted into running pods.
+- If those PVC contents are stale, deployment can succeed while runtime behavior remains old.
+- Always run drift guard after deployment when changing skills/runtime HITL behavior.
+
 Rollback:
 
 ```bash

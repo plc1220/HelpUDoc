@@ -156,9 +156,32 @@ steps:
       # Pulling the agent image can exceed the default 5m readiness wait (5GB+ image).
       - '--timeout=15m'
 
-  # 6. E2E check (fails build on mixed-content / localhost assets)
-  - name: 'node:20-bookworm'
+  # 6. Post-deploy drift guard (fails if PVC-backed runtime/skills are stale)
+  - id: post-deploy-drift-guard
+    name: 'gcr.io/cloud-builders/kubectl'
     waitFor: ['deploy']
+    env:
+      - 'CLOUDSDK_COMPUTE_ZONE=$_GKE_LOCATION'
+      - 'CLOUDSDK_CONTAINER_CLUSTER=$_GKE_CLUSTER'
+    entrypoint: 'sh'
+    args:
+      - '-c'
+      - |
+        set -eu
+        kubectl -n helpudoc rollout status deployment/helpudoc-app --timeout=180s
+        kubectl -n helpudoc rollout status deployment/helpudoc-frontend --timeout=180s
+
+        APP_POD="$(kubectl -n helpudoc get pods -l app=helpudoc-app -o jsonpath='{.items[0].metadata.name}')"
+        test -n "${APP_POD}"
+        echo "Checking mounted runtime config and skills in pod: ${APP_POD}"
+
+        kubectl -n helpudoc exec "${APP_POD}" -c agent -- sh -lc "grep -q 'request_plan_approval' /agent/config/runtime.yaml"
+        kubectl -n helpudoc exec "${APP_POD}" -c agent -- sh -lc "grep -q 'request_plan_approval' /app/skills/research/SKILL.md"
+        kubectl -n helpudoc exec "${APP_POD}" -c agent -- python -c "import requests; data=requests.get('http://localhost:8001/agents', timeout=10).json(); tools=data['agents'][0]['tools']; assert 'request_plan_approval' in tools, tools; print('request_plan_approval available in /agents')"
+
+  # 7. E2E check (fails build on mixed-content / localhost assets)
+  - name: 'node:20-bookworm'
+    waitFor: ['post-deploy-drift-guard']
     entrypoint: 'bash'
     args:
       - '-c'
