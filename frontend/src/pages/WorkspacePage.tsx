@@ -950,6 +950,26 @@ export default function WorkspacePage() {
     return active;
   }, [removeActiveRun]);
 
+  const findRunIdForMessage = useCallback((message: ConversationMessage): string | undefined => {
+    const metadataRunId = (message.metadata as ConversationMessageMetadata | undefined)?.runId;
+    if (metadataRunId) {
+      return metadataRunId;
+    }
+    const runs = Object.values(activeRunsRef.current);
+    const exactRun = runs.find((run) => run.runId === message.id || run.placeholderId === message.id);
+    if (exactRun?.runId) {
+      return exactRun.runId;
+    }
+    const sameTurnRun = runs.find(
+      (run) => run.conversationId === message.conversationId && message.turnId && run.turnId === message.turnId,
+    );
+    if (sameTurnRun?.runId) {
+      return sameTurnRun.runId;
+    }
+    const sameConversationRun = runs.find((run) => run.conversationId === message.conversationId);
+    return sameConversationRun?.runId;
+  }, []);
+
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', colorMode);
     if (typeof window !== 'undefined') {
@@ -2589,6 +2609,10 @@ export default function WorkspacePage() {
       if (!conversationId) {
         return -1;
       }
+      const inferredRunId =
+        typeof placeholderId === 'string' && placeholderId.startsWith('agent-')
+          ? placeholderId.slice('agent-'.length)
+          : undefined;
       const snapshot = conversationMessagesRef.current[conversationId] || [];
       const existingSnapshotIndex = snapshot.findIndex((message) => message.id === placeholderId);
       const targetIndex = existingSnapshotIndex !== -1 ? existingSnapshotIndex : snapshot.length;
@@ -2596,15 +2620,38 @@ export default function WorkspacePage() {
         const existingIndex = prevMessages.findIndex((message) => message.id === placeholderId);
         if (existingIndex !== -1) {
           const existing = prevMessages[existingIndex];
+          const existingMetadata = (existing?.metadata as ConversationMessageMetadata | undefined) || undefined;
+          const metadata =
+            inferredRunId && (!existingMetadata?.runId || !existingMetadata?.status)
+              ? {
+                ...(existingMetadata || {}),
+                runId: existingMetadata?.runId || inferredRunId,
+                status: existingMetadata?.status || 'running',
+              }
+              : existingMetadata;
           if (resetText && existing) {
-            const resetMessage: ConversationMessage = { ...existing, text: '' };
+            const resetMessage: ConversationMessage = { ...existing, text: '', metadata };
             agentMessageBufferRef.current.set(placeholderId, '');
             const next = [...prevMessages];
             next[existingIndex] = resetMessage;
             return next;
           }
+          if (metadata && metadata !== existingMetadata) {
+            const next = [...prevMessages];
+            next[existingIndex] = {
+              ...existing,
+              metadata,
+            };
+            return next;
+          }
           return prevMessages;
         }
+        const placeholderMetadata = inferredRunId
+          ? ({
+            runId: inferredRunId,
+            status: 'running',
+          } as ConversationMessageMetadata)
+          : undefined;
         const placeholder: ConversationMessage = {
           id: placeholderId,
           conversationId,
@@ -2613,6 +2660,7 @@ export default function WorkspacePage() {
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
           turnId,
+          metadata: placeholderMetadata,
         };
         return [...prevMessages, placeholder];
       });
@@ -2759,6 +2807,27 @@ export default function WorkspacePage() {
     return lines.join('\n');
   };
 
+  const getAllowedDecisions = useCallback((
+    pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
+  ): Array<'approve' | 'edit' | 'reject'> => {
+    const defaults: Array<'approve' | 'edit' | 'reject'> = ['approve', 'edit', 'reject'];
+    const actionRequests = Array.isArray(pendingInterrupt?.actionRequests) ? pendingInterrupt.actionRequests : [];
+    const reviewConfigs = Array.isArray(pendingInterrupt?.reviewConfigs) ? pendingInterrupt.reviewConfigs : [];
+    if (!actionRequests.length || !reviewConfigs.length) {
+      return defaults;
+    }
+    const firstActionName = typeof actionRequests[0]?.name === 'string' ? actionRequests[0]?.name : undefined;
+    if (!firstActionName) {
+      return defaults;
+    }
+    const matchingConfig = reviewConfigs.find((config) => config?.action_name === firstActionName);
+    const allowedRaw = Array.isArray(matchingConfig?.allowed_decisions) ? matchingConfig?.allowed_decisions : [];
+    const allowed = allowedRaw.filter(
+      (value): value is 'approve' | 'edit' | 'reject' => value === 'approve' || value === 'edit' || value === 'reject',
+    );
+    return allowed.length ? allowed : defaults;
+  }, []);
+
   const handleStreamChunk = (conversationId: string, agentMessageIndex: number, chunk: AgentStreamChunk) => {
     if (chunk.type === 'keepalive') {
       setStreamingForConversation(conversationId, true);
@@ -2805,6 +2874,7 @@ export default function WorkspacePage() {
     if (chunk.type === 'interrupt') {
       updateMessageMetadataAtIndex(conversationId, agentMessageIndex, (metadata) => ({
         ...metadata,
+        status: 'awaiting_approval',
         pendingInterrupt: {
           actionRequests: chunk.actionRequests,
           reviewConfigs: chunk.reviewConfigs,
@@ -2965,11 +3035,28 @@ export default function WorkspacePage() {
       decision: 'approve' | 'edit' | 'reject',
       pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
     ) => {
-      const runId = (message.metadata as ConversationMessageMetadata | undefined)?.runId;
+      const allowedDecisions = getAllowedDecisions(pendingInterrupt);
+      if (!allowedDecisions.includes(decision)) {
+        addLocalSystemMessage(`"${decision}" is not allowed for this approval request.`);
+        return;
+      }
+      const runId = findRunIdForMessage(message);
       if (!runId) {
         addLocalSystemMessage('Missing run id for approval action.');
         return;
       }
+      updateMessagesForConversation(message.conversationId, (prev) => {
+        const next = [...prev];
+        const idx = next.findIndex((item) => item.id === message.id);
+        if (idx === -1) return next;
+        const current = next[idx];
+        const metadata = { ...((current.metadata as ConversationMessageMetadata | undefined) || {}) };
+        if (!metadata.runId) {
+          metadata.runId = runId;
+          next[idx] = { ...current, metadata };
+        }
+        return next;
+      });
       const messageKey = String(message.id);
       setApprovalSubmittingByMessageId((prev) => ({ ...prev, [messageKey]: true }));
       try {
@@ -3025,6 +3112,8 @@ export default function WorkspacePage() {
       addLocalSystemMessage,
       approvalEditArgsByMessageId,
       approvalReasonByMessageId,
+      findRunIdForMessage,
+      getAllowedDecisions,
       streamRunForConversation,
       updateMessagesForConversation,
     ],
@@ -4644,6 +4733,7 @@ export default function WorkspacePage() {
                     const toolEvents = message.toolEvents || [];
                     const hasToolEvents = toolEvents.length > 0;
                     const pendingInterrupt = messageMetadata?.pendingInterrupt;
+                    const allowedInterruptDecisions = getAllowedDecisions(pendingInterrupt);
                     const messageKey = String(message.id);
                     const decisionBusy = Boolean(approvalSubmittingByMessageId[messageKey]);
                     const isToolActivityExpanded = expandedToolMessages.has(message.id);
@@ -4703,38 +4793,55 @@ export default function WorkspacePage() {
                                 </span>
                               )}
                               {pendingInterrupt && (
-                                <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50/70 p-3">
-                                  <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">
+                                <div className="mt-4 rounded-2xl border border-sky-200/70 bg-gradient-to-br from-white/75 via-sky-50/70 to-indigo-100/60 p-4 shadow-[0_18px_40px_-28px_rgba(30,64,175,0.75)] backdrop-blur-md">
+                                  <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-700">
                                     Approval Required
                                   </p>
-                                  <p className="mt-1 text-xs text-amber-900">
+                                  <p className="mt-1 text-sm text-slate-700">
                                     Review and continue this run.
                                   </p>
-                                  <div className="mt-2 flex flex-wrap gap-2">
-                                    <button
-                                      type="button"
-                                      disabled={decisionBusy}
-                                      onClick={() => handleInterruptDecision(message, 'approve', pendingInterrupt)}
-                                      className="rounded-md bg-emerald-600 px-2.5 py-1.5 text-xs font-semibold text-white disabled:opacity-60"
-                                    >
-                                      Approve
-                                    </button>
-                                    <button
-                                      type="button"
-                                      disabled={decisionBusy}
-                                      onClick={() => handleInterruptDecision(message, 'edit', pendingInterrupt)}
-                                      className="rounded-md bg-blue-600 px-2.5 py-1.5 text-xs font-semibold text-white disabled:opacity-60"
-                                    >
-                                      Edit
-                                    </button>
-                                    <button
-                                      type="button"
-                                      disabled={decisionBusy}
-                                      onClick={() => handleInterruptDecision(message, 'reject', pendingInterrupt)}
-                                      className="rounded-md bg-red-600 px-2.5 py-1.5 text-xs font-semibold text-white disabled:opacity-60"
-                                    >
-                                      Reject
-                                    </button>
+                                  <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px] uppercase tracking-wide text-slate-500">
+                                    <span>Allowed:</span>
+                                    {allowedInterruptDecisions.map((item) => (
+                                      <span
+                                        key={`${messageKey}-${item}`}
+                                        className="rounded-full border border-slate-200/90 bg-white/70 px-2 py-0.5 font-semibold text-slate-600"
+                                      >
+                                        {item}
+                                      </span>
+                                    ))}
+                                  </div>
+                                  <div className="mt-3 flex flex-wrap gap-2">
+                                    {allowedInterruptDecisions.includes('approve') && (
+                                      <button
+                                        type="button"
+                                        disabled={decisionBusy}
+                                        onClick={() => handleInterruptDecision(message, 'approve', pendingInterrupt)}
+                                        className="rounded-xl border border-emerald-300/80 bg-emerald-500/90 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
+                                      >
+                                        Approve
+                                      </button>
+                                    )}
+                                    {allowedInterruptDecisions.includes('edit') && (
+                                      <button
+                                        type="button"
+                                        disabled={decisionBusy}
+                                        onClick={() => handleInterruptDecision(message, 'edit', pendingInterrupt)}
+                                        className="rounded-xl border border-blue-300/80 bg-blue-500/90 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-60"
+                                      >
+                                        Edit
+                                      </button>
+                                    )}
+                                    {allowedInterruptDecisions.includes('reject') && (
+                                      <button
+                                        type="button"
+                                        disabled={decisionBusy}
+                                        onClick={() => handleInterruptDecision(message, 'reject', pendingInterrupt)}
+                                        className="rounded-xl border border-rose-300/80 bg-rose-500/90 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-rose-500 disabled:cursor-not-allowed disabled:opacity-60"
+                                      >
+                                        Reject
+                                      </button>
+                                    )}
                                   </div>
                                   <div className="mt-2 grid gap-2">
                                     <textarea
@@ -4745,7 +4852,7 @@ export default function WorkspacePage() {
                                           [messageKey]: event.target.value,
                                         }))
                                       }
-                                      className="w-full rounded-md border border-slate-200 bg-white p-2 text-xs text-slate-700"
+                                      className="w-full rounded-xl border border-slate-200/80 bg-white/80 p-2 text-xs text-slate-700 backdrop-blur-sm focus:border-sky-400 focus:outline-none"
                                       rows={4}
                                       placeholder='Edited args JSON for "Edit"'
                                     />
@@ -4757,7 +4864,7 @@ export default function WorkspacePage() {
                                           [messageKey]: event.target.value,
                                         }))
                                       }
-                                      className="w-full rounded-md border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700"
+                                      className="w-full rounded-xl border border-slate-200/80 bg-white/80 px-2 py-1.5 text-xs text-slate-700 backdrop-blur-sm focus:border-sky-400 focus:outline-none"
                                       placeholder='Reject message (optional)'
                                     />
                                   </div>
