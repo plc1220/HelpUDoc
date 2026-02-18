@@ -38,11 +38,17 @@ def _get_active_skill_policy(workspace_state: WorkspaceState) -> SkillPolicy:
     if isinstance(raw, SkillPolicy):
         return raw
     if isinstance(raw, dict):
+        raw_pre_plan_limit = raw.get("pre_plan_search_limit")
+        try:
+            pre_plan_limit = int(raw_pre_plan_limit or 0)
+        except (TypeError, ValueError):
+            pre_plan_limit = 0
         return SkillPolicy(
             requires_hitl_plan=bool(raw.get("requires_hitl_plan")),
             requires_workspace_artifacts=bool(raw.get("requires_workspace_artifacts")),
             required_artifacts_mode=str(raw.get("required_artifacts_mode") or "") or None,
             required_artifacts=list(raw.get("required_artifacts") or []) or None,
+            pre_plan_search_limit=max(0, pre_plan_limit),
         )
     return SkillPolicy()
 
@@ -56,6 +62,13 @@ def _plan_gate_message() -> str:
         "Plan approval required before execution. "
         "Call request_plan_approval with title, summary, and checklist first."
     )
+
+
+def _plan_gate_with_presearch_message(used: int, limit: int) -> str:
+    base = _plan_gate_message()
+    if limit <= 0:
+        return base
+    return f"{base} Pre-plan search limit reached ({used}/{limit})."
 
 
 def _read_text_truncated(path: Path, max_chars: int) -> str:
@@ -316,9 +329,11 @@ class ToolFactory:
                         "requires_workspace_artifacts": skill.policy.requires_workspace_artifacts,
                         "required_artifacts_mode": skill.policy.required_artifacts_mode,
                         "required_artifacts": skill.policy.required_artifacts or [],
+                        "pre_plan_search_limit": max(0, int(skill.policy.pre_plan_search_limit or 0)),
                     }
                     # Reset plan approval each time a new skill is loaded.
                     workspace_state.context["plan_approved"] = False
+                    workspace_state.context["pre_plan_search_count"] = 0
                     return f"Loaded skill: {skill.skill_id}\n\n{content}"
             available = ", ".join(sorted({skill.skill_id for skill in skills}))
             return f"Skill '{normalized}' not found. Available skills: {available}"
@@ -336,6 +351,7 @@ class ToolFactory:
             plan_summary: str,
             execution_checklist: str,
             risky_actions: str = "None",
+            reviewer_feedback: str = "",
         ) -> str:
             """Request human approval/edit/rejection for a proposed execution plan."""
             if workspace_state.context.get("tagged_files_only"):
@@ -345,6 +361,7 @@ class ToolFactory:
             summary = (plan_summary or "").strip()
             checklist = (execution_checklist or "").strip()
             risks = (risky_actions or "").strip()
+            feedback = (reviewer_feedback or "").strip()
 
             if not title:
                 return "Plan approval blocked: plan_title is required."
@@ -354,6 +371,7 @@ class ToolFactory:
                 return "Plan approval blocked: execution_checklist is required."
 
             workspace_state.context["plan_approved"] = True
+            workspace_state.context["last_plan_feedback"] = feedback
 
             return (
                 "PLAN_APPROVAL_RECORDED\n"
@@ -361,6 +379,7 @@ class ToolFactory:
                 f"Summary: {summary}\n"
                 f"Execution checklist: {checklist}\n"
                 f"Risky actions: {risks}\n"
+                f"Reviewer feedback: {feedback or 'None'}\n"
                 "Plan decision has been applied. Continue executing the approved plan."
             )
 
@@ -705,7 +724,16 @@ def _build_grounded_google_search_tool(
             return "Tool disabled: tagged files were provided, use rag_query only."
         policy = _get_active_skill_policy(workspace_state)
         if policy.requires_hitl_plan and not _is_plan_approved(workspace_state):
-            return _plan_gate_message()
+            limit = max(0, int(policy.pre_plan_search_limit or 0))
+            raw_used = workspace_state.context.get("pre_plan_search_count", 0)
+            try:
+                used = max(0, int(raw_used))
+            except (TypeError, ValueError):
+                used = 0
+            if limit <= 0 or used >= limit:
+                return _plan_gate_with_presearch_message(used, limit)
+            # Count attempts before executing the search to prevent infinite retries on failures.
+            workspace_state.context["pre_plan_search_count"] = used + 1
 
         try:
             max_results = max(1, int(max_results or 1))

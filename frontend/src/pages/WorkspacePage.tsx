@@ -867,8 +867,7 @@ export default function WorkspacePage() {
   const [ragStatuses, setRagStatuses] = useState<Record<string, { status?: string; updatedAt?: string; error?: string }>>({});
   const [copiedWorkspaceContent, setCopiedWorkspaceContent] = useState(false);
   const [copiedMessageId, setCopiedMessageId] = useState<ConversationMessage['id'] | null>(null);
-  const [approvalReasonByMessageId, setApprovalReasonByMessageId] = useState<Record<string, string>>({});
-  const [approvalEditArgsByMessageId, setApprovalEditArgsByMessageId] = useState<Record<string, string>>({});
+  const [approvalFeedbackByMessageId, setApprovalFeedbackByMessageId] = useState<Record<string, string>>({});
   const [approvalSubmittingByMessageId, setApprovalSubmittingByMessageId] = useState<Record<string, boolean>>({});
   const ragStatusFetchedRef = useRef<Record<string, boolean>>({});
   const resumeInFlightRef = useRef<Set<string>>(new Set());
@@ -2807,6 +2806,25 @@ export default function WorkspacePage() {
     return lines.join('\n');
   };
 
+  const getPrimaryInterruptAction = useCallback((
+    pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
+  ): { name?: string; args?: Record<string, unknown> } | undefined => {
+    const actionRequests = Array.isArray(pendingInterrupt?.actionRequests) ? pendingInterrupt.actionRequests : [];
+    return actionRequests[0];
+  }, []);
+
+  const isPlanApprovalInterrupt = useCallback((
+    pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
+  ): boolean => {
+    const action = getPrimaryInterruptAction(pendingInterrupt);
+    return action?.name === 'request_plan_approval';
+  }, [getPrimaryInterruptAction]);
+
+  const approvalFieldKey = useCallback((
+    messageKey: string,
+    field: 'feedback' | 'edit-json' | 'reject-note',
+  ): string => `${messageKey}:${field}`, []);
+
   const getAllowedDecisions = useCallback((
     pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
   ): Array<'approve' | 'edit' | 'reject'> => {
@@ -2842,6 +2860,8 @@ export default function WorkspacePage() {
           requiresHitlPlan: chunk.requiresHitlPlan,
           requiresArtifacts: chunk.requiresArtifacts,
           requiredArtifactsMode: chunk.requiredArtifactsMode,
+          prePlanSearchLimit: chunk.prePlanSearchLimit,
+          prePlanSearchUsed: chunk.prePlanSearchUsed,
         },
       }));
       return;
@@ -3058,6 +3078,12 @@ export default function WorkspacePage() {
         return next;
       });
       const messageKey = String(message.id);
+      const primaryAction = getPrimaryInterruptAction(pendingInterrupt);
+      const isPlanApproval = isPlanApprovalInterrupt(pendingInterrupt);
+      const feedbackKey = isPlanApproval
+        ? approvalFieldKey(messageKey, 'feedback')
+        : approvalFieldKey(messageKey, 'reject-note');
+      const rawFeedback = (approvalFeedbackByMessageId[feedbackKey] || '').trim();
       setApprovalSubmittingByMessageId((prev) => ({ ...prev, [messageKey]: true }));
       try {
         const options: {
@@ -3065,24 +3091,38 @@ export default function WorkspacePage() {
           message?: string;
         } = {};
         if (decision === 'reject') {
-          options.message = approvalReasonByMessageId[messageKey] || 'Rejected by user';
+          options.message = rawFeedback || 'Rejected by user';
         }
         if (decision === 'edit') {
-          const raw = approvalEditArgsByMessageId[messageKey] || '{}';
-          let parsedArgs: Record<string, unknown> = {};
-          try {
-            const parsed = JSON.parse(raw);
-            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-              parsedArgs = parsed as Record<string, unknown>;
+          if (isPlanApproval) {
+            const originalArgs =
+              primaryAction?.args && typeof primaryAction.args === 'object' && !Array.isArray(primaryAction.args)
+                ? primaryAction.args
+                : {};
+            options.editedAction = {
+              name: (primaryAction?.name as string) || 'request_plan_approval',
+              args: {
+                ...originalArgs,
+                reviewer_feedback: rawFeedback,
+              },
+            };
+            options.message = rawFeedback || 'User requested edits.';
+          } else {
+            const rawEditArgs = approvalFeedbackByMessageId[approvalFieldKey(messageKey, 'edit-json')] || '{}';
+            let parsedArgs: Record<string, unknown> = {};
+            try {
+              const parsed = JSON.parse(rawEditArgs);
+              if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+                parsedArgs = parsed as Record<string, unknown>;
+              }
+            } catch {
+              throw new Error('Edited args must be valid JSON object.');
             }
-          } catch {
-            throw new Error('Edited args must be valid JSON object.');
+            options.editedAction = {
+              name: (primaryAction?.name as string) || 'request_plan_approval',
+              args: parsedArgs,
+            };
           }
-          const firstAction = pendingInterrupt?.actionRequests?.[0];
-          options.editedAction = {
-            name: (firstAction?.name as string) || 'request_plan_approval',
-            args: parsedArgs,
-          };
         }
         await submitRunDecision(runId, decision, options);
         updateMessagesForConversation(message.conversationId, (prev) => {
@@ -3110,10 +3150,12 @@ export default function WorkspacePage() {
     },
     [
       addLocalSystemMessage,
-      approvalEditArgsByMessageId,
-      approvalReasonByMessageId,
+      approvalFeedbackByMessageId,
+      approvalFieldKey,
       findRunIdForMessage,
+      getPrimaryInterruptAction,
       getAllowedDecisions,
+      isPlanApprovalInterrupt,
       streamRunForConversation,
       updateMessagesForConversation,
     ],
@@ -4734,6 +4776,8 @@ export default function WorkspacePage() {
                     const hasToolEvents = toolEvents.length > 0;
                     const pendingInterrupt = messageMetadata?.pendingInterrupt;
                     const allowedInterruptDecisions = getAllowedDecisions(pendingInterrupt);
+                    const primaryInterruptAction = getPrimaryInterruptAction(pendingInterrupt);
+                    const isPlanApprovalRequest = isPlanApprovalInterrupt(pendingInterrupt);
                     const messageKey = String(message.id);
                     const decisionBusy = Boolean(approvalSubmittingByMessageId[messageKey]);
                     const isToolActivityExpanded = expandedToolMessages.has(message.id);
@@ -4829,7 +4873,7 @@ export default function WorkspacePage() {
                                         onClick={() => handleInterruptDecision(message, 'edit', pendingInterrupt)}
                                         className="rounded-xl border border-blue-300/80 bg-blue-500/90 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-60"
                                       >
-                                        Edit
+                                        {isPlanApprovalRequest ? 'Edit & Revise' : 'Edit'}
                                       </button>
                                     )}
                                     {allowedInterruptDecisions.includes('reject') && (
@@ -4843,31 +4887,63 @@ export default function WorkspacePage() {
                                       </button>
                                     )}
                                   </div>
-                                  <div className="mt-2 grid gap-2">
-                                    <textarea
-                                      value={approvalEditArgsByMessageId[messageKey] || '{}'}
-                                      onChange={(event) =>
-                                        setApprovalEditArgsByMessageId((prev) => ({
-                                          ...prev,
-                                          [messageKey]: event.target.value,
-                                        }))
-                                      }
-                                      className="w-full rounded-xl border border-slate-200/80 bg-white/80 p-2 text-xs text-slate-700 backdrop-blur-sm focus:border-sky-400 focus:outline-none"
-                                      rows={4}
-                                      placeholder='Edited args JSON for "Edit"'
-                                    />
-                                    <input
-                                      value={approvalReasonByMessageId[messageKey] || ''}
-                                      onChange={(event) =>
-                                        setApprovalReasonByMessageId((prev) => ({
-                                          ...prev,
-                                          [messageKey]: event.target.value,
-                                        }))
-                                      }
-                                      className="w-full rounded-xl border border-slate-200/80 bg-white/80 px-2 py-1.5 text-xs text-slate-700 backdrop-blur-sm focus:border-sky-400 focus:outline-none"
-                                      placeholder='Reject message (optional)'
-                                    />
-                                  </div>
+                                  {isPlanApprovalRequest ? (
+                                    <div className="mt-3 grid gap-2">
+                                      {primaryInterruptAction?.args && Object.keys(primaryInterruptAction.args).length > 0 && (
+                                        <div className="max-h-48 overflow-y-auto rounded-xl border border-slate-200/70 bg-white/60 p-3 text-xs text-slate-600">
+                                          <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                                            Plan Details
+                                          </p>
+                                          {Object.entries(primaryInterruptAction.args).map(([key, value]) => (
+                                            <div key={key} className="mb-1">
+                                              <span className="font-semibold text-slate-500">{key}:</span>{' '}
+                                              <span className="whitespace-pre-wrap text-slate-700">
+                                                {typeof value === 'string' ? value : JSON.stringify(value, null, 2)}
+                                              </span>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      )}
+                                      <textarea
+                                        value={approvalFeedbackByMessageId[approvalFieldKey(messageKey, 'feedback')] || ''}
+                                        onChange={(event) =>
+                                          setApprovalFeedbackByMessageId((prev) => ({
+                                            ...prev,
+                                            [approvalFieldKey(messageKey, 'feedback')]: event.target.value,
+                                          }))
+                                        }
+                                        className="w-full rounded-xl border border-slate-200/80 bg-white/80 p-2 text-xs text-slate-700 backdrop-blur-sm focus:border-sky-400 focus:outline-none"
+                                        rows={3}
+                                        placeholder="Your feedback or instructions for the agent (optional)"
+                                      />
+                                    </div>
+                                  ) : (
+                                    <div className="mt-2 grid gap-2">
+                                      <textarea
+                                        value={approvalFeedbackByMessageId[approvalFieldKey(messageKey, 'edit-json')] || '{}'}
+                                        onChange={(event) =>
+                                          setApprovalFeedbackByMessageId((prev) => ({
+                                            ...prev,
+                                            [approvalFieldKey(messageKey, 'edit-json')]: event.target.value,
+                                          }))
+                                        }
+                                        className="w-full rounded-xl border border-slate-200/80 bg-white/80 p-2 text-xs text-slate-700 backdrop-blur-sm focus:border-sky-400 focus:outline-none"
+                                        rows={4}
+                                        placeholder='Edited args JSON for "Edit"'
+                                      />
+                                      <input
+                                        value={approvalFeedbackByMessageId[approvalFieldKey(messageKey, 'reject-note')] || ''}
+                                        onChange={(event) =>
+                                          setApprovalFeedbackByMessageId((prev) => ({
+                                            ...prev,
+                                            [approvalFieldKey(messageKey, 'reject-note')]: event.target.value,
+                                          }))
+                                        }
+                                        className="w-full rounded-xl border border-slate-200/80 bg-white/80 px-2 py-1.5 text-xs text-slate-700 backdrop-blur-sm focus:border-sky-400 focus:outline-none"
+                                        placeholder='Reject message (optional)'
+                                      />
+                                    </div>
+                                  )}
                                 </div>
                               )}
                               {hasToolEvents && (

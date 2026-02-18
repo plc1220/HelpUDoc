@@ -38,7 +38,14 @@ This skill emphasizes:
 1. **Record the question**
    - Write the original user question to `/question.txt`.
 
-2. **Draft and share research plan (before any research)**
+2. **Preliminary search (limited, before plan approval)**
+   - Run `google_search` 2–3 times to capture the latest developments before drafting the plan.
+   - Keep this stage lightweight and exploratory.
+   - Record key findings in `/preliminary_search_notes.md`.
+   - Use these findings to improve scope, key questions, and section outline.
+   - Do not run broad evidence gathering in this stage.
+
+3. **Draft and share research plan**
    - Create `/research_plan.md` including:
      - Scope definition
      - Key research questions
@@ -51,19 +58,20 @@ This skill emphasizes:
      - `plan_summary`
      - `execution_checklist`
      - `risky_actions` (optional)
-   - Wait for the human decision before running any research tool.
-   - If decision is `edit`, update `/research_plan.md` and request approval again.
+      - `reviewer_feedback` (optional; use when editing a previously proposed plan)
+   - A limited pre-plan search (2–3 calls) is allowed before approval, but the main evidence gathering must wait for approval.
+   - If decision is `edit`, update `/research_plan.md` and continue execution using the edited plan.
    - If decision is `reject`, stop execution.
-   - Do not perform research before plan approval.
+   - Do not continue the full research workflow before plan approval.
 
-3. **Evidence gathering**
+4. **Evidence gathering**
    - Use `google_search` to collect sources.
    - Target at least 8 distinct credible sources when possible.
    - Prioritize academic journals, government publications, major news outlets, and primary documents.
    - Avoid low‑quality SEO content or unsourced blogs.
    - If fewer than 5 credible sources are found, explicitly note this limitation in the report.
 
-4. **Structured research notes (mandatory)**
+5. **Structured research notes (mandatory)**
    - Create `/research_notes.md` including:
      - Key claims per source
      - Key statistics
@@ -72,7 +80,7 @@ This skill emphasizes:
      - Open questions or evidence gaps
    - No prose writing should begin before this file is created.
 
-5. **Write each section as a standalone file**
+6. **Write each section as a standalone file**
    - Use zero‑padded filenames: `/01_tldr.md`, `/02_scope.md`, `/03_methodology.md`, `/04_background.md`, etc.
    - Each major section must contain at least 250–400 words (unless clearly narrow).
    - Each section must include at least one explicit claim supported by citation.
@@ -80,7 +88,7 @@ This skill emphasizes:
    - Avoid purely descriptive writing; emphasize analysis.
    - If a section file exists, edit rather than overwrite.
 
-6. **Create knowledge graph**
+7. **Create knowledge graph**
    - Generate `/knowledge_graph.md` with Mermaid:
      - Use `graph TD` or `graph LR`
      - Include at least 5 entities
@@ -88,7 +96,7 @@ This skill emphasizes:
      - Use meaningful edge labels (e.g., "regulates", "funds", "influences", "competes with")
      - Reflect causal or structural relationships, not just grouping
 
-7. **Cross‑source synthesis (required)**
+8. **Cross‑source synthesis (required)**
    - Create `/synthesis.md` including:
      - Patterns across sources
      - Agreements
@@ -97,7 +105,7 @@ This skill emphasizes:
      - Areas of uncertainty
    - This file must exist before consolidation.
 
-8. **Consolidate final report**
+9. **Consolidate final report**
    - Stitch sections in outline order into a final report file.
    - If the user specifies a filename, use that. Otherwise create a new kebab‑case file at workspace root.
    - The final report must include:

@@ -15,6 +15,8 @@ export type AgentStreamChunk =
       requiresHitlPlan?: boolean;
       requiresArtifacts?: boolean;
       requiredArtifactsMode?: string;
+      prePlanSearchLimit?: number;
+      prePlanSearchUsed?: number;
     }
   | { type: 'tool_start'; content?: string; name?: string }
   | { type: 'tool_end'; content?: string; name?: string; outputFiles?: ToolOutputFile[] }

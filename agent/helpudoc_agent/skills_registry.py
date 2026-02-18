@@ -14,6 +14,7 @@ class SkillPolicy:
     requires_workspace_artifacts: bool = False
     required_artifacts_mode: str | None = None
     required_artifacts: List[str] | None = None
+    pre_plan_search_limit: int = 0
 
 
 @dataclass(frozen=True)
@@ -75,6 +76,15 @@ def _infer_skill_policy(skill_id: str, content: str, meta: dict) -> SkillPolicy:
     )
     requires_hitl_plan = has_hitl_keyword or ("request_plan_approval" in tools)
     requires_workspace_artifacts = has_file_keyword or ("write_file" in lower)
+    raw_pre_plan_limit = meta.get("pre_plan_search_limit")
+    pre_plan_search_limit = 0
+    if isinstance(raw_pre_plan_limit, int):
+        pre_plan_search_limit = max(0, raw_pre_plan_limit)
+    elif isinstance(raw_pre_plan_limit, str):
+        try:
+            pre_plan_search_limit = max(0, int(raw_pre_plan_limit.strip()))
+        except ValueError:
+            pre_plan_search_limit = 0
 
     required_artifacts_mode: str | None = None
     required_artifacts: List[str] | None = None
@@ -82,6 +92,7 @@ def _infer_skill_policy(skill_id: str, content: str, meta: dict) -> SkillPolicy:
         required_artifacts_mode = "full_pack"
         required_artifacts = [
             "/question.txt",
+            "/preliminary_search_notes.md",
             "/research_plan.md",
             "/research_notes.md",
             "/knowledge_graph.md",
@@ -91,6 +102,7 @@ def _infer_skill_policy(skill_id: str, content: str, meta: dict) -> SkillPolicy:
         ]
         requires_hitl_plan = True
         requires_workspace_artifacts = True
+        pre_plan_search_limit = pre_plan_search_limit or 3
     elif requires_workspace_artifacts:
         required_artifacts_mode = "minimal"
 
@@ -99,6 +111,7 @@ def _infer_skill_policy(skill_id: str, content: str, meta: dict) -> SkillPolicy:
         requires_workspace_artifacts=requires_workspace_artifacts,
         required_artifacts_mode=required_artifacts_mode,
         required_artifacts=required_artifacts,
+        pre_plan_search_limit=pre_plan_search_limit,
     )
 
 

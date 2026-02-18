@@ -104,6 +104,8 @@ export default function conversationRoutes(conversationService: ConversationServ
         requiresHitlPlan: z.boolean().optional(),
         requiresArtifacts: z.boolean().optional(),
         requiredArtifactsMode: z.string().optional(),
+        prePlanSearchLimit: z.number().int().nonnegative().optional(),
+        prePlanSearchUsed: z.number().int().nonnegative().optional(),
       }).passthrough().optional(),
     }).passthrough().partial().optional(),
   }).superRefine((payload, ctx) => {

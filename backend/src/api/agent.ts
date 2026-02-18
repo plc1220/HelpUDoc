@@ -434,6 +434,12 @@ export default function(workspaceService: WorkspaceService, fileService: FileSer
         return res.status(409).json({ error: 'Run is not awaiting approval' });
       }
       const payload = runDecisionSchema.parse(req.body);
+      console.info('[AgentDecision]', {
+        runId,
+        workspaceId: meta.workspaceId,
+        decision: payload.decision,
+        status: meta.status,
+      });
       const decisions = [
         payload.decision === 'edit'
           ? {
@@ -442,6 +448,7 @@ export default function(workspaceService: WorkspaceService, fileService: FileSer
                 name: payload.editedAction?.name || 'request_plan_approval',
                 args: payload.editedAction?.args || {},
               },
+              message: payload.message,
             }
           : payload.decision === 'reject'
             ? { type: 'reject' as const, message: payload.message || 'Rejected by user' }

@@ -770,11 +770,23 @@ def create_app() -> FastAPI:
         raw_policy = context.get("active_skill_policy") or {}
         if not isinstance(raw_policy, dict):
             raw_policy = {}
+        raw_limit = raw_policy.get("pre_plan_search_limit", 0)
+        raw_used = context.get("pre_plan_search_count", 0)
+        try:
+            pre_plan_search_limit = max(0, int(raw_limit or 0))
+        except (TypeError, ValueError):
+            pre_plan_search_limit = 0
+        try:
+            pre_plan_search_used = max(0, int(raw_used or 0))
+        except (TypeError, ValueError):
+            pre_plan_search_used = 0
         return {
             "skill": context.get("active_skill"),
             "requiresHitlPlan": bool(raw_policy.get("requires_hitl_plan", False)),
             "requiresArtifacts": bool(raw_policy.get("requires_workspace_artifacts", False)),
             "requiredArtifactsMode": raw_policy.get("required_artifacts_mode"),
+            "prePlanSearchLimit": pre_plan_search_limit,
+            "prePlanSearchUsed": pre_plan_search_used,
         }
 
     def _missing_required_artifacts(runtime: AgentRuntimeState) -> List[str]:

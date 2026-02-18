@@ -60,6 +60,8 @@ export interface ConversationMessageMetadata {
     requiresHitlPlan?: boolean;
     requiresArtifacts?: boolean;
     requiredArtifactsMode?: string;
+    prePlanSearchLimit?: number;
+    prePlanSearchUsed?: number;
   };
 }
 
