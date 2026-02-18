@@ -42,6 +42,7 @@ This skill emphasizes:
    - Run `google_search` 2–3 times to capture the latest developments before drafting the plan.
    - Keep this stage lightweight and exploratory.
    - Record key findings in `/preliminary_search_notes.md`.
+   - Explicitly anchor findings to the latest available timeline (current year/month/day where relevant).
    - Use these findings to improve scope, key questions, and section outline.
    - Do not run broad evidence gathering in this stage.
 
@@ -60,12 +61,13 @@ This skill emphasizes:
      - `risky_actions` (optional)
       - `reviewer_feedback` (optional; use when editing a previously proposed plan)
    - A limited pre-plan search (2–3 calls) is allowed before approval, but the main evidence gathering must wait for approval.
-   - If decision is `edit`, update `/research_plan.md` and continue execution using the edited plan.
+   - If decision is `edit`, update `/research_plan.md` and call `request_plan_approval` again for final approval.
    - If decision is `reject`, stop execution.
    - Do not continue the full research workflow before plan approval.
 
 4. **Evidence gathering**
    - Use `google_search` to collect sources.
+   - Prioritize the most recent primary sources first and always confirm timeline-sensitive facts against latest available dates.
    - Target at least 8 distinct credible sources when possible.
    - Prioritize academic journals, government publications, major news outlets, and primary documents.
    - Avoid low‑quality SEO content or unsourced blogs.
@@ -108,6 +110,9 @@ This skill emphasizes:
 9. **Consolidate final report**
    - Stitch sections in outline order into a final report file.
    - If the user specifies a filename, use that. Otherwise create a new kebab‑case file at workspace root.
+   - Build the final report from the existing section files and synthesis files on disk (do not rewrite from memory only).
+   - Preserve section substance from `/01_*.md`, `/02_*.md`, etc.; avoid shortening due to context window pressure.
+   - If needed, consolidate in multiple passes and verify the final report still includes all core section content.
    - The final report must include:
      - Clear Markdown headings
      - Numeric citations `[1]`, `[2]`, ...

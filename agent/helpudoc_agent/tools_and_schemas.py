@@ -370,8 +370,24 @@ class ToolFactory:
             if not checklist:
                 return "Plan approval blocked: execution_checklist is required."
 
-            workspace_state.context["plan_approved"] = True
             workspace_state.context["last_plan_feedback"] = feedback
+
+            # If a reviewer provides edit feedback, require one more approval round.
+            # This prevents immediate continuation after edit and enforces explicit
+            # confirmation of the revised plan.
+            if feedback:
+                workspace_state.context["plan_approved"] = False
+                return (
+                    "PLAN_EDIT_FEEDBACK_RECORDED\n"
+                    f"Title: {title}\n"
+                    f"Summary: {summary}\n"
+                    f"Execution checklist: {checklist}\n"
+                    f"Risky actions: {risks}\n"
+                    f"Reviewer feedback: {feedback}\n"
+                    "Do not execute yet. Revise the plan and call request_plan_approval again for final approval."
+                )
+
+            workspace_state.context["plan_approved"] = True
 
             return (
                 "PLAN_APPROVAL_RECORDED\n"
@@ -379,7 +395,7 @@ class ToolFactory:
                 f"Summary: {summary}\n"
                 f"Execution checklist: {checklist}\n"
                 f"Risky actions: {risks}\n"
-                f"Reviewer feedback: {feedback or 'None'}\n"
+                "Reviewer feedback: None\n"
                 "Plan decision has been applied. Continue executing the approved plan."
             )
 
