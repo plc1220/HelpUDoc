@@ -30,6 +30,7 @@ export function userContextMiddleware(userService: UserService) {
         externalId: userRecord.externalId,
         displayName: userRecord.displayName,
         email: userRecord.email,
+        isAdmin: userRecord.isAdmin,
       };
 
       if (req.session) {

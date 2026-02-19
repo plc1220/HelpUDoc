@@ -5,6 +5,8 @@ import fileRoutes from './files';
 import conversationRoutes from './conversations';
 import settingsRoutes from './settings';
 import knowledgeRoutes from './knowledge';
+import usersRoutes from './users';
+import { requireSystemAdmin } from '../middleware/adminOnly';
 import { DatabaseService } from '../services/databaseService';
 import { WorkspaceService } from '../services/workspaceService';
 import { FileService } from '../services/fileService';
@@ -23,7 +25,8 @@ export default function(dbService: DatabaseService, userService: UserService) {
   const knowledgeService = new KnowledgeService(dbService, workspaceService);
 
   router.use('/agent', agentRoutes(workspaceService, fileService));
-  router.use('/settings', settingsRoutes());
+  router.use('/settings', requireSystemAdmin, settingsRoutes());
+  router.use('/users', requireSystemAdmin, usersRoutes(userService));
   router.use('/workspaces', workspaceRoutes(workspaceService, userService));
   router.use('/workspaces/:workspaceId/files', fileRoutes(fileService));
   router.use('/workspaces/:workspaceId/knowledge', knowledgeRoutes(knowledgeService));
