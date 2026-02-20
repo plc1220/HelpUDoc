@@ -5,5 +5,6 @@ declare module 'express-session' {
   interface SessionData {
     userContext?: UserContext;
     externalId?: string;
+    isAdmin?: boolean;
   }
 }

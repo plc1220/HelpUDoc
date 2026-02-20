@@ -3,4 +3,5 @@ export interface UserContext {
   externalId: string;
   displayName: string;
   email?: string | null;
+  isAdmin: boolean;
 }

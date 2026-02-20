@@ -22,9 +22,14 @@ export class DatabaseService {
 
   public async initialize(): Promise<void> {
     await this.createUsersTable();
+    await this.createGroupsTable();
+    await this.createGroupMembersTable();
+    await this.createSkillGrantsTable();
     await this.createWorkspacesTable();
     await this.createWorkspaceMembersTable();
     await this.createMcpServerGrantsTable();
+    await this.createMcpConnectionsTable();
+    await this.createMcpConnectionGrantsTable();
     await this.createFilesTable();
     await this.createCollabDocumentsTable();
     await this.createKnowledgeSourcesTable();
@@ -82,10 +87,61 @@ export class DatabaseService {
         table.string('externalId').notNullable().unique();
         table.string('email');
         table.string('displayName').notNullable();
+        table.boolean('isAdmin').notNullable().defaultTo(false);
+        table.string('oidcIssuer');
+        table.string('oidcSubject');
         table.timestamp('createdAt').notNullable().defaultTo(this.db.fn.now());
         table.timestamp('updatedAt').notNullable().defaultTo(this.db.fn.now());
       });
       console.log('Created "users" table.');
+    } else {
+      await this.ensureColumn('users', 'isAdmin', (table) => table.boolean('isAdmin').notNullable().defaultTo(false));
+      await this.ensureColumn('users', 'oidcIssuer', (table) => table.string('oidcIssuer'));
+      await this.ensureColumn('users', 'oidcSubject', (table) => table.string('oidcSubject'));
+    }
+  }
+
+  private async createGroupsTable(): Promise<void> {
+    const exists = await this.db.schema.hasTable('groups');
+    if (!exists) {
+      await this.db.schema.createTable('groups', (table) => {
+        table.uuid('id').primary();
+        table.string('name').notNullable().unique();
+        table.timestamp('createdAt').notNullable().defaultTo(this.db.fn.now());
+        table.timestamp('updatedAt').notNullable().defaultTo(this.db.fn.now());
+      });
+      console.log('Created "groups" table.');
+    }
+  }
+
+  private async createGroupMembersTable(): Promise<void> {
+    const exists = await this.db.schema.hasTable('group_members');
+    if (!exists) {
+      await this.db.schema.createTable('group_members', (table) => {
+        table.uuid('groupId').notNullable().references('id').inTable('groups').onDelete('CASCADE');
+        table.uuid('userId').notNullable().references('id').inTable('users').onDelete('CASCADE');
+        table.timestamp('createdAt').notNullable().defaultTo(this.db.fn.now());
+        table.timestamp('updatedAt').notNullable().defaultTo(this.db.fn.now());
+        table.primary(['groupId', 'userId']);
+      });
+      console.log('Created "group_members" table.');
+    }
+  }
+
+  private async createSkillGrantsTable(): Promise<void> {
+    const exists = await this.db.schema.hasTable('skill_grants');
+    if (!exists) {
+      await this.db.schema.createTable('skill_grants', (table) => {
+        table.bigIncrements('id').primary();
+        table.string('principalType').notNullable();
+        table.uuid('principalId').notNullable();
+        table.string('skillId').notNullable();
+        table.string('effect').notNullable();
+        table.timestamp('createdAt').notNullable().defaultTo(this.db.fn.now());
+        table.timestamp('updatedAt').notNullable().defaultTo(this.db.fn.now());
+        table.unique(['principalType', 'principalId', 'skillId']);
+      });
+      console.log('Created "skill_grants" table.');
     }
   }
 
@@ -125,6 +181,40 @@ export class DatabaseService {
     } else {
       await this.ensureColumn('workspace_members', 'role', (table) => table.string('role', 32).notNullable().defaultTo('editor'));
       await this.ensureColumn('workspace_members', 'canEdit', (table) => table.boolean('canEdit').notNullable().defaultTo(true));
+    }
+  }
+
+  private async createMcpConnectionsTable(): Promise<void> {
+    const exists = await this.db.schema.hasTable('mcp_connections');
+    if (!exists) {
+      await this.db.schema.createTable('mcp_connections', (table) => {
+        table.uuid('id').primary();
+        table.uuid('workspaceId').notNullable().references('id').inTable('workspaces').onDelete('CASCADE');
+        table.string('name').notNullable();
+        table.string('serverId').notNullable();
+        table.string('authType').notNullable();
+        table.string('defaultAccess').notNullable().defaultTo('allow');
+        table.timestamp('createdAt').notNullable().defaultTo(this.db.fn.now());
+        table.timestamp('updatedAt').notNullable().defaultTo(this.db.fn.now());
+      });
+      console.log('Created "mcp_connections" table.');
+    }
+  }
+
+  private async createMcpConnectionGrantsTable(): Promise<void> {
+    const exists = await this.db.schema.hasTable('mcp_connection_grants');
+    if (!exists) {
+      await this.db.schema.createTable('mcp_connection_grants', (table) => {
+        table.bigIncrements('id').primary();
+        table.string('principalType').notNullable();
+        table.uuid('principalId').notNullable();
+        table.uuid('connectionId').notNullable().references('id').inTable('mcp_connections').onDelete('CASCADE');
+        table.string('effect').notNullable();
+        table.timestamp('createdAt').notNullable().defaultTo(this.db.fn.now());
+        table.timestamp('updatedAt').notNullable().defaultTo(this.db.fn.now());
+        table.unique(['principalType', 'principalId', 'connectionId']);
+      });
+      console.log('Created "mcp_connection_grants" table.');
     }
   }
 
