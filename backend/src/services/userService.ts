@@ -94,6 +94,10 @@ export class UserService {
       .orderBy('createdAt', 'asc');
   }
 
+  async getUserById(userId: string): Promise<UserRecord | null> {
+    const user = await this.db<UserRecord>('users').where({ id: userId }).first();
+    return user || null;
+  }
   async setUserAdmin(userId: string, isAdmin: boolean): Promise<UserRecord | null> {
     const [updated] = await this.db<UserRecord>('users')
       .where({ id: userId })

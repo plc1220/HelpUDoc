@@ -25,8 +25,8 @@ export default function(dbService: DatabaseService, userService: UserService) {
   const knowledgeService = new KnowledgeService(dbService, workspaceService);
 
   router.use('/agent', agentRoutes(workspaceService, fileService));
-  router.use('/settings', requireSystemAdmin, settingsRoutes());
-  router.use('/users', requireSystemAdmin, usersRoutes(userService));
+  router.use('/settings', requireSystemAdmin(userService), settingsRoutes());
+  router.use('/users', requireSystemAdmin(userService), usersRoutes(userService));
   router.use('/workspaces', workspaceRoutes(workspaceService, userService));
   router.use('/workspaces/:workspaceId/files', fileRoutes(fileService));
   router.use('/workspaces/:workspaceId/knowledge', knowledgeRoutes(knowledgeService));
