@@ -203,6 +203,8 @@ You can iterate on each component separately while still using Docker for the sh
 
 See `docs/environment.md` for the full dev vs. production setup guide.
 
+For roadmap details on the planned mobile companion app (React Native + Expo), see `docs/mobile-app-development-plan.md`.
+
 1. **Spin up databases only**
    ```bash
    docker compose -f infra/docker-compose.minio.yml --env-file env/local/stack.env up -d
