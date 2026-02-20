@@ -1,0 +1,10 @@
+{
+  "name": "@helpudoc/shared",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./types": "./src/types.ts",
+    "./services/agentStream": "./src/services/agentStream.ts"
+  }
+}
