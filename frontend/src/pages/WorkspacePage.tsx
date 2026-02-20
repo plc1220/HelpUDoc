@@ -9,12 +9,6 @@ import {
   createTheme,
   type PaletteMode,
 } from '@mui/material';
-import {
-  Description as MarkdownIcon,
-  Code as HtmlIcon,
-  PictureAsPdf as PdfIcon,
-  Image as ImageIcon,
-} from '@mui/icons-material';
 import { CheckSquare, Copy, Edit, Trash, Send, Plus, Minus, ChevronRight, ChevronLeft, RotateCcw, Maximize2, Minimize2, X, FileIcon, Printer, Download, Link as LinkIcon, MonitorPlay, StopCircle, Loader2, History } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -63,59 +57,20 @@ import FileEditor from '../components/FileEditor';
 import UIBlockRenderer, { type UIBlock } from '../components/UIBlockRenderer';
 import ExpandableSidebar from '../components/ExpandableSidebar';
 import { useAuth } from '../auth/AuthProvider';
+import {
+  CANVAS_ZOOM_STEP,
+  MAX_CANVAS_ZOOM,
+  MIN_CANVAS_ZOOM,
+  PAPER2SLIDES_STAGE_ORDER,
+  PAPER2SLIDES_STYLE_PRESETS,
+  SLASH_COMMANDS,
+} from '../constants/workspace';
+import { extractA2uiPayload } from '../utils/a2ui';
+import { getFileDisplayName, getFileTypeIcon, inferPreviewEncoding, isSystemFile, normalizeFilePath } from '../utils/files';
+import { buildMessageMetadata, mapMessagesToAgentHistory, mergeMessageMetadata } from '../utils/messages';
+import { DEFAULT_PERSONA_NAME, DEFAULT_PERSONAS, normalizePersonaName, normalizePersonas } from '../utils/personas';
 
 const drawerWidth = 280;
-const DEFAULT_PERSONA_NAME = 'fast';
-const DEFAULT_PERSONAS: AgentPersona[] = [
-  {
-    name: 'fast',
-    displayName: 'Fast',
-    description: 'Gemini 3 Flash (Preview)',
-  },
-  {
-    name: 'pro',
-    displayName: 'Pro',
-    description: 'Gemini 3 Pro (Preview)',
-  },
-];
-
-const normalizePersonaName = (name: string): string => {
-  const normalized = name.trim().toLowerCase();
-  if (!normalized) {
-    return DEFAULT_PERSONA_NAME;
-  }
-  if (normalized === 'general-assistant') {
-    return 'fast';
-  }
-  return normalized;
-};
-
-const normalizePersonas = (personas: AgentPersona[]): AgentPersona[] => {
-  const normalized = new Map<string, AgentPersona>();
-  const defaults = new Map(DEFAULT_PERSONAS.map((persona) => [persona.name, persona]));
-
-  personas.forEach((persona) => {
-    const name = normalizePersonaName(persona.name);
-    if (name !== 'fast' && name !== 'pro') {
-      return;
-    }
-    const fallback = defaults.get(name);
-    normalized.set(name, {
-      ...fallback,
-      ...persona,
-      name,
-      displayName: persona.displayName || fallback?.displayName || name,
-    });
-  });
-
-  DEFAULT_PERSONAS.forEach((persona) => {
-    if (!normalized.has(persona.name)) {
-      normalized.set(persona.name, persona);
-    }
-  });
-
-  return DEFAULT_PERSONAS.map((persona) => normalized.get(persona.name) || persona);
-};
 
 const buildTheme = (mode: PaletteMode) =>
   createTheme({
@@ -155,64 +110,6 @@ const buildTheme = (mode: PaletteMode) =>
     },
   });
 
-const THOUGHT_PREVIEW_LIMIT = 320;
-const STREAM_DEBUG_ENABLED =
-  typeof import.meta !== 'undefined' &&
-  typeof import.meta.env !== 'undefined' &&
-  (import.meta.env.VITE_DEBUG_STREAM === '1' || import.meta.env.VITE_DEBUG_STREAM === 'true');
-const PAPER2SLIDES_STAGE_ORDER = ['rag', 'analysis', 'plan', 'generate'] as const;
-const PAPER2SLIDES_STYLE_PRESETS = ['academic', 'doraemon', 'custom'] as const;
-const SLASH_COMMANDS = [
-  {
-    id: 'presentation',
-    command: '/presentation',
-    description: 'Generate slides/posters from @files.',
-  },
-  {
-    id: 'a2ui',
-    command: '/a2ui',
-    description: 'Render an A2UI canvas from your prompt.',
-  },
-];
-
-const SYSTEM_DIR_NAMES = new Set(['__macosx', 'skills']);
-const SYSTEM_FILE_NAMES = new Set(['thumbs.db', 'desktop.ini']);
-const MIN_CANVAS_ZOOM = 0.6;
-const MAX_CANVAS_ZOOM = 2;
-const CANVAS_ZOOM_STEP = 0.1;
-
-const normalizeFilePath = (value: string) => value.replace(/\\/g, '/');
-
-const getFileDisplayName = (value: string) => {
-  if (!value) {
-    return '';
-  }
-  const normalized = normalizeFilePath(value);
-  const parts = normalized.split('/');
-  return parts[parts.length - 1] || normalized;
-};
-
-const getFileTypeIcon = (value: string) => {
-  const normalized = getFileDisplayName(value).toLowerCase();
-  const sharedClass = 'text-slate-400 opacity-70';
-  if (normalized.endsWith('.md') || normalized.endsWith('.markdown')) {
-    return <MarkdownIcon className={sharedClass} fontSize="small" />;
-  }
-  if (normalized.endsWith('.html') || normalized.endsWith('.htm')) {
-    return <HtmlIcon className={sharedClass} fontSize="small" />;
-  }
-  if (normalized.endsWith('.pdf')) {
-    return <PdfIcon className={sharedClass} fontSize="small" />;
-  }
-  if (normalized.endsWith('.jpg') || normalized.endsWith('.jpeg')) {
-    return <ImageIcon className={sharedClass} fontSize="small" />;
-  }
-  if (['.png', '.gif', '.bmp', '.webp', '.svg'].some((ext) => normalized.endsWith(ext))) {
-    return <ImageIcon className={sharedClass} fontSize="small" />;
-  }
-  return <FileIcon size={16} className={sharedClass} />;
-};
-
 const sanitizePresentationLabel = (value: string, fallback: string) => {
   const normalized = normalizeFilePath(value);
   const baseName = normalized.split('/').pop() || '';
@@ -228,183 +125,6 @@ const buildA2uiFileName = (value: string) => {
   return `a2ui/${label}-${timestamp}.a2ui.json`;
 };
 
-const sanitizeJsonSource = (value: string) =>
-  value.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFEFF]/g, '');
-
-const parseJsonIfPossible = (value: string) => {
-  if (!value) return null;
-  try {
-    return JSON.parse(sanitizeJsonSource(value));
-  } catch {
-    return null;
-  }
-};
-
-const A2UI_ALLOWED_MESSAGE_KEYS = new Set([
-  'beginRendering',
-  'surfaceUpdate',
-  'dataModelUpdate',
-  'deleteSurface',
-]);
-
-const normalizeA2uiPayload = (parsed: unknown) => {
-  if (typeof parsed === 'string') {
-    const reparsed = parseJsonIfPossible(parsed);
-    if (reparsed != null) {
-      return normalizeA2uiPayload(reparsed);
-    }
-    return parsed;
-  }
-  if (Array.isArray(parsed)) {
-    return parsed;
-  }
-  if (parsed && typeof parsed === 'object') {
-    const record = parsed as Record<string, unknown>;
-    const nested = record.events ?? record.messages ?? record.a2ui;
-    if (Array.isArray(nested)) {
-      return nested;
-    }
-    const keys = Object.keys(record);
-    if (keys.length === 1 && A2UI_ALLOWED_MESSAGE_KEYS.has(keys[0])) {
-      return [record];
-    }
-  }
-  return parsed;
-};
-
-const parseJsonLines = (value: string) => {
-  const lines = value
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-  if (!lines.length) return null;
-  const events: unknown[] = [];
-  for (const line of lines) {
-    const parsed = parseJsonIfPossible(line);
-    if (!parsed) {
-      return null;
-    }
-    events.push(parsed);
-  }
-  return events.length ? events : null;
-};
-
-const extractJsonSubstring = (value: string) => {
-  const start = value.search(/[{\[]/);
-  if (start < 0) return null;
-  const pairs: Record<string, string> = { '{': '}', '[': ']' };
-  const openers = new Set(Object.keys(pairs));
-  const closers = new Set(Object.values(pairs));
-  const stack: string[] = [];
-  let inString = false;
-  let escape = false;
-  for (let i = start; i < value.length; i += 1) {
-    const ch = value[i];
-    if (inString) {
-      if (escape) {
-        escape = false;
-        continue;
-      }
-      if (ch === '\\') {
-        escape = true;
-        continue;
-      }
-      if (ch === '"') {
-        inString = false;
-      }
-      continue;
-    }
-    if (ch === '"') {
-      inString = true;
-      continue;
-    }
-    if (openers.has(ch)) {
-      stack.push(ch);
-      continue;
-    }
-    if (closers.has(ch)) {
-      const last = stack.pop();
-      if (!last || pairs[last] !== ch) {
-        return null;
-      }
-      if (stack.length === 0) {
-        return value.slice(start, i + 1);
-      }
-    }
-  }
-  return null;
-};
-
-const extractBracketedJson = (value: string) => {
-  const start = value.indexOf('[');
-  const end = value.lastIndexOf(']');
-  if (start < 0 || end < 0 || end <= start) return null;
-  return value.slice(start, end + 1);
-};
-
-type A2uiPayloadResult = {
-  payload: unknown;
-  raw: string;
-};
-
-const extractA2uiPayload = (value: string): A2uiPayloadResult | null => {
-  const trimmed = sanitizeJsonSource(value).trim();
-  if (!trimmed) return null;
-
-  const fenceMatch = trimmed.match(/```(?:json|a2ui|a2ui-json)?\s*([\s\S]*?)```/i);
-  if (fenceMatch?.[1]) {
-    const candidate = fenceMatch[1].trim();
-    const parsed = parseJsonIfPossible(candidate);
-    if (parsed) {
-      return { payload: normalizeA2uiPayload(parsed), raw: candidate };
-    }
-    const jsonLines = parseJsonLines(candidate);
-    if (jsonLines) {
-      return { payload: normalizeA2uiPayload(jsonLines), raw: candidate };
-    }
-  }
-
-  const blockMatch = trimmed.match(/---BEGIN[^-]*---([\s\S]*?)---END[^-]*---/i);
-  if (blockMatch?.[1]) {
-    const candidate = blockMatch[1].trim();
-    const parsed = parseJsonIfPossible(candidate);
-    if (parsed) {
-      return { payload: normalizeA2uiPayload(parsed), raw: candidate };
-    }
-    const jsonLines = parseJsonLines(candidate);
-    if (jsonLines) {
-      return { payload: normalizeA2uiPayload(jsonLines), raw: candidate };
-    }
-  }
-
-  const directParsed = parseJsonIfPossible(trimmed);
-  if (directParsed) {
-    return { payload: normalizeA2uiPayload(directParsed), raw: trimmed };
-  }
-  const jsonLines = parseJsonLines(trimmed);
-  if (jsonLines) {
-    return { payload: normalizeA2uiPayload(jsonLines), raw: trimmed };
-  }
-
-  const substring = extractJsonSubstring(trimmed);
-  const parsed = substring ? parseJsonIfPossible(substring) : null;
-  if (parsed && substring) {
-    return { payload: normalizeA2uiPayload(parsed), raw: substring };
-  }
-  const subJsonLines = substring ? parseJsonLines(substring) : null;
-  if (subJsonLines && substring) {
-    return { payload: normalizeA2uiPayload(subJsonLines), raw: substring };
-  }
-
-  const bracketed = extractBracketedJson(trimmed);
-  const bracketParsed = bracketed ? parseJsonIfPossible(bracketed) : null;
-  if (bracketParsed && bracketed) {
-    return { payload: normalizeA2uiPayload(bracketParsed), raw: bracketed };
-  }
-
-  return null;
-};
-
 const buildA2uiPrompt = (prompt: string, attachmentSummary: string) => {
   const base = prompt.trim();
   const withAttachments = attachmentSummary
@@ -412,31 +132,11 @@ const buildA2uiPrompt = (prompt: string, attachmentSummary: string) => {
     : base;
   return `${withAttachments}\n\n${A2UI_RESPONSE_INSTRUCTIONS}`.trim();
 };
-
-const isSystemFile = (file: WorkspaceFile): boolean => {
-  const name = normalizeFilePath(file.name || '');
-  if (!name) {
-    return false;
-  }
-  const lowerName = name.toLowerCase();
-  const parts = lowerName.split('/');
-  const baseName = parts[parts.length - 1] || '';
-  if (SYSTEM_FILE_NAMES.has(baseName)) {
-    return true;
-  }
-  for (const part of parts) {
-    if (!part) {
-      continue;
-    }
-    if (SYSTEM_DIR_NAMES.has(part)) {
-      return true;
-    }
-    if (part.startsWith('.')) {
-      return true;
-    }
-  }
-  return false;
-};
+const THOUGHT_PREVIEW_LIMIT = 320;
+const STREAM_DEBUG_ENABLED =
+  typeof import.meta !== 'undefined' &&
+  typeof import.meta.env !== 'undefined' &&
+  (import.meta.env.VITE_DEBUG_STREAM === '1' || import.meta.env.VITE_DEBUG_STREAM === 'true');
 
 type Paper2SlidesStage = (typeof PAPER2SLIDES_STAGE_ORDER)[number];
 type Paper2SlidesStylePreset = (typeof PAPER2SLIDES_STYLE_PRESETS)[number];
@@ -477,46 +177,12 @@ type FilePreviewPayload = {
   content: string;
 };
 
-const TEXT_PREVIEW_EXTENSIONS = new Set([
-  '.md',
-  '.mermaid',
-  '.txt',
-  '.json',
-  '.html',
-  '.htm',
-  '.css',
-  '.js',
-  '.ts',
-  '.tsx',
-  '.jsx',
-  '.svg',
-  '.csv',
-]);
-
 const normalizeWorkspaceRelativePath = (rawPath: string): string => {
   return String(rawPath || '')
     .trim()
     .replace(/\\/g, '/')
     .replace(/^\.\/+/, '')
     .replace(/^\/+/, '');
-};
-
-const inferPreviewEncoding = (fileName: string, mimeType?: string | null): 'text' | 'base64' => {
-  const normalizedMime = (mimeType || '').toLowerCase();
-  if (
-    normalizedMime.startsWith('text/') ||
-    normalizedMime.includes('json') ||
-    normalizedMime.includes('javascript') ||
-    normalizedMime.includes('typescript') ||
-    normalizedMime.includes('markdown') ||
-    normalizedMime.includes('html') ||
-    normalizedMime.includes('xml')
-  ) {
-    return 'text';
-  }
-  const extIndex = fileName.lastIndexOf('.');
-  const ext = extIndex >= 0 ? fileName.slice(extIndex).toLowerCase() : '';
-  return TEXT_PREVIEW_EXTENSIONS.has(ext) ? 'text' : 'base64';
 };
 
 type ActiveRunInfo = {
@@ -681,53 +347,6 @@ const generateTurnId = () => {
     return globalThis.crypto.randomUUID();
   }
   return `turn-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-};
-
-const mapMessagesToAgentHistory = (messages: ConversationMessage[]) => {
-  return messages
-    .filter((message) => typeof message.text === 'string' && message.text.trim().length > 0)
-    .map((message) => ({
-      role: message.sender === 'agent' ? 'assistant' : 'user',
-      content: message.text.trim(),
-    }));
-};
-
-  const mergeMessageMetadata = (message: ConversationMessage): ConversationMessage => {
-    const metadata = message.metadata as ConversationMessageMetadata | null | undefined;
-    if (!metadata) {
-      return message;
-    }
-    const thinkingText = message.thinkingText ?? metadata.thinkingText;
-    const toolEvents = message.toolEvents ?? metadata.toolEvents;
-    if (thinkingText === message.thinkingText && toolEvents === message.toolEvents) {
-      return message;
-    }
-    return {
-      ...message,
-      thinkingText,
-      toolEvents,
-    };
-  };
-
-const buildMessageMetadata = (message?: ConversationMessage | null): ConversationMessageMetadata | undefined => {
-  if (!message) {
-    return undefined;
-  }
-  const existingMetadata = (message.metadata as ConversationMessageMetadata | null | undefined) || undefined;
-  const metadata: ConversationMessageMetadata = {};
-  if (message.thinkingText) {
-    metadata.thinkingText = message.thinkingText;
-  }
-  if (message.toolEvents?.length) {
-    metadata.toolEvents = message.toolEvents;
-  }
-  if (existingMetadata?.runPolicy) {
-    metadata.runPolicy = existingMetadata.runPolicy;
-  }
-  if (existingMetadata?.pendingInterrupt) {
-    metadata.pendingInterrupt = existingMetadata.pendingInterrupt;
-  }
-  return Object.keys(metadata).length ? metadata : undefined;
 };
 
 const mergePersistedAgentMessage = (
