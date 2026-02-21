@@ -2,7 +2,6 @@ import React from 'react';
 import type { File } from '../types';
 import FileRenderer from './FileRenderer';
 import PlotlyChart, { type PlotlySpec } from './PlotlyChart';
-import A2UIRenderer from './A2UIRenderer';
 
 type BlockId = string | number;
 
@@ -11,8 +10,7 @@ export type UIBlock =
   | { kind: 'markdown'; id?: BlockId; content: string; name?: string }
   | { kind: 'html'; id?: BlockId; content: string; name?: string }
   | { kind: 'plotly'; id?: BlockId; spec: PlotlySpec; title?: string }
-  | { kind: 'text'; id?: BlockId; content: string; name?: string }
-  | { kind: 'a2ui'; id?: BlockId; payload: unknown; title?: string };
+  | { kind: 'text'; id?: BlockId; content: string; name?: string };
 
 interface UIBlockRendererProps {
   blocks: UIBlock[];
@@ -75,12 +73,6 @@ const UIBlockRenderer: React.FC<UIBlockRendererProps> = ({ blocks, className, em
             return (
               <div key={key} className="h-full w-full">
                 <PlotlyChart spec={block.spec} />
-              </div>
-            );
-          case 'a2ui':
-            return (
-              <div key={key} className="h-full w-full">
-                <A2UIRenderer payload={block.payload} />
               </div>
             );
           case 'text':

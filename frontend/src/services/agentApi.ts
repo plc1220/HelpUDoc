@@ -1,4 +1,3 @@
-import type { AgentPersona } from '../types';
 import { streamAgentRunWithReconnect, type AgentStreamChunk } from '../../../packages/shared/src/services/agentStream';
 export type { AgentStreamChunk };
 import { API_URL, apiFetch } from './apiClient';
@@ -103,14 +102,6 @@ export const submitRunDecision = async (
   });
   if (!response.ok) {
     throw new Error('Failed to submit run decision');
-  }
-  return response.json();
-};
-
-export const fetchPersonas = async (): Promise<AgentPersona[]> => {
-  const response = await apiFetch(`${API_URL}/agent/personas`);
-  if (!response.ok) {
-    throw new Error('Failed to fetch personas');
   }
   return response.json();
 };

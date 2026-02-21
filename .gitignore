@@ -28,6 +28,8 @@ workspaces.db
 .minio-data/
 .postgres-data/
 .redis-data/
+redis-data/
+.roo/
 backend/workspaces.db
 .pytest_cache/
 backend/workspaces/

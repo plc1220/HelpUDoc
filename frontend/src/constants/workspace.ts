@@ -7,11 +7,6 @@ export const SLASH_COMMANDS = [
     command: '/presentation',
     description: 'Generate slides/posters from @files.',
   },
-  {
-    id: 'a2ui',
-    command: '/a2ui',
-    description: 'Render an A2UI canvas from your prompt.',
-  },
 ] as const;
 
 export const SYSTEM_DIR_NAMES = new Set(['__macosx', 'skills']);

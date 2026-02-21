@@ -4,18 +4,6 @@ import type { IncomingMessage } from "http";
 
 const AGENT_URL = process.env.AGENT_URL || "http://localhost:8001";
 
-export interface AgentMetadata {
-  name: string;
-  displayName: string;
-  description?: string;
-  tools?: string[];
-  subagents?: Array<{ name: string; description: string }>;
-}
-
-interface AgentCatalogResponse {
-  agents: AgentMetadata[];
-}
-
 const client = axios.create({
   baseURL: AGENT_URL,
 });
@@ -29,11 +17,6 @@ const resolvePaper2SlidesTimeoutMs = (): number => {
 };
 
 const PAPER2SLIDES_TIMEOUT_MS = resolvePaper2SlidesTimeoutMs();
-
-export async function fetchAgentCatalog(): Promise<AgentCatalogResponse> {
-  const res = await client.get<AgentCatalogResponse>("/agents");
-  return res.data;
-}
 
 export type AgentHistoryEntry = {
   role: string;

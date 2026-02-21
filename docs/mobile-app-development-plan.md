@@ -66,9 +66,9 @@ The **web refactor** (extracting hooks + service layers) directly enables the mo
 - `shared/types/`
   - TypeScript types: `Workspace`, `WorkspaceFile`, `AgentPersona`, `ConversationMessage`, `ToolEvent`, etc.
 - `shared/hooks/`
-  - `useAgentStream`, `useConversation`, `useFileManager`, `usePresentation`, `useA2ui`
+  - `useAgentStream`, `useConversation`, `useFileManager`, `usePresentation`
 - `shared/utils/`
-  - `files.ts`, `messages.ts`, `personas.ts`, `a2ui.ts` (pure functions, no UI deps)
+  - `files.ts`, `messages.ts`, `personas.ts` (pure functions, no UI deps)
 
 ### 3.3 Mobile-Only Layer
 - `mobile/screens/` — screens
@@ -142,13 +142,12 @@ Request only after the user starts their first long-running job (clear value pro
 - **Artifact banner**: non-blocking banner in Chat when a job finishes mid-session.
 - **/command picker**: keyboard accessory bar (above keyboard).
 - **@mention picker**: full bottom sheet (more space; avoids keyboard layout issues).
-- **Open on desktop escape hatch**: for A2UI canvas / interactive HTML — show simplified preview + deep link.
+- **Open on desktop escape hatch**: for interactive HTML — show simplified preview + deep link.
 - **Offline handling**: show clear offline indicator; queue outbound messages and send on reconnect; never fail silently.
 - **State preservation**: hide (don’t unmount) Chat tab to preserve drafts, scroll, and session state.
 
 ### What NOT to Build Initially (Intentional Omissions)
 - File editor / code editing
-- A2UI canvas interaction
 - Full Paper2Slides option configuration
 - Workspace management (create/delete)
 - Multi-file selection

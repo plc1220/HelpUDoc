@@ -55,7 +55,7 @@ steps:
         'VITE_GOOGLE_CLIENT_ID=$_VITE_GOOGLE_CLIENT_ID',
         '-t',
         'gcr.io/$PROJECT_ID/helpudoc-frontend:$BUILD_ID',
-        'frontend',
+        '.',
       ]
 
   - id: build-agent

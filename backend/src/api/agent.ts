@@ -1,10 +1,9 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
-import { fetchAgentCatalog, runAgent, runAgentStream } from '../services/agentService';
+import { runAgent, runAgentStream } from '../services/agentService';
 import { WorkspaceService } from '../services/workspaceService';
 import { FileService } from '../services/fileService';
 import { HttpError } from '../errors';
-import { personas as localPersonas } from '../config/personas';
 import {
   buildPresentationHtmlPrompt,
   extractHtmlFromAgentResponse,
@@ -105,22 +104,6 @@ export default function(workspaceService: WorkspaceService, fileService: FileSer
       })
       .optional(),
     message: z.string().optional(),
-  });
-
-  router.get('/personas', async (_req, res) => {
-    try {
-      const catalog = await fetchAgentCatalog();
-      res.json(catalog.agents);
-    } catch (error) {
-      console.error("Failed to fetch agent catalog, falling back to local personas", error);
-      res.json(
-        localPersonas.map((persona) => ({
-          name: persona.name,
-          displayName: persona.displayName,
-          description: persona.description,
-        })),
-      );
-    }
   });
 
   const requireUserContext = (req: Request) => {
