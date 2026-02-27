@@ -9,7 +9,7 @@ import {
   createTheme,
   type PaletteMode,
 } from '@mui/material';
-import { CheckSquare, Copy, Edit, Trash, Send, Plus, Minus, ChevronRight, ChevronLeft, RotateCcw, Maximize2, Minimize2, X, FileIcon, Printer, Download, Link as LinkIcon, MonitorPlay, StopCircle, Loader2, History } from 'lucide-react';
+import { CheckSquare, Copy, Edit, Trash, Plus, Minus, ChevronLeft, RotateCcw, X, Printer, Download, Link as LinkIcon, Loader2 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { getWorkspaces, createWorkspace, deleteWorkspace } from '../services/workspaceApi';
@@ -20,7 +20,6 @@ import {
   deleteFile,
   getFileContent,
   renameFile,
-  getWorkspaceFilePreview,
   getRagStatuses,
 } from '../services/fileApi';
 import { startPaper2SlidesJob, getPaper2SlidesJob, exportPaper2SlidesPptx } from '../services/paper2SlidesJobApi';
@@ -55,6 +54,8 @@ import CollapsibleDrawer from '../components/CollapsibleDrawer';
 import FileEditor from '../components/FileEditor';
 import UIBlockRenderer, { type UIBlock } from '../components/UIBlockRenderer';
 import ExpandableSidebar from '../components/ExpandableSidebar';
+import AgentChatPane from '../components/chat/AgentChatPane';
+import ToolOutputFilePreview from '../components/chat/ToolOutputFilePreview';
 import { useAuth } from '../auth/AuthProvider';
 import {
   CANVAS_ZOOM_STEP,
@@ -64,7 +65,7 @@ import {
   PAPER2SLIDES_STYLE_PRESETS,
   SLASH_COMMANDS,
 } from '../constants/workspace';
-import { getFileDisplayName, getFileTypeIcon, inferPreviewEncoding, isSystemFile, normalizeFilePath } from '../utils/files';
+import { getFileDisplayName, getFileTypeIcon, isSystemFile, normalizeFilePath } from '../utils/files';
 import { buildMessageMetadata, mapMessagesToAgentHistory, mergeMessageMetadata } from '../utils/messages';
 
 const drawerWidth = 280;
@@ -115,7 +116,6 @@ const sanitizePresentationLabel = (value: string, fallback: string) => {
   return cleaned || fallback;
 };
 
-const THOUGHT_PREVIEW_LIMIT = 320;
 const DEFAULT_PERSONA_NAME = 'fast';
 const DEFAULT_PERSONAS: AgentPersona[] = [
   {
@@ -157,21 +157,6 @@ type PresentationOptionsState = {
   exportPptx: boolean;
 };
 
-type FilePreviewPayload = {
-  path: string;
-  mimeType?: string | null;
-  encoding: 'text' | 'base64';
-  content: string;
-};
-
-const normalizeWorkspaceRelativePath = (rawPath: string): string => {
-  return String(rawPath || '')
-    .trim()
-    .replace(/\\/g, '/')
-    .replace(/^\.\/+/, '')
-    .replace(/^\/+/, '');
-};
-
 type ActiveRunInfo = {
   runId: string;
   conversationId: string;
@@ -184,143 +169,6 @@ type ActiveRunInfo = {
 };
 
 const ACTIVE_RUNS_STORAGE_KEY = 'helpudoc-active-runs';
-
-const ToolOutputFilePreview = ({
-  workspaceId,
-  file,
-}: {
-  workspaceId?: string;
-  file: ToolOutputFile;
-}) => {
-  const [preview, setPreview] = useState<FilePreviewPayload | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!workspaceId) {
-      setPreview(null);
-      return;
-    }
-    let cancelled = false;
-    const loadPreview = async () => {
-      setIsLoading(true);
-      setError(null);
-      const normalizedPath = normalizeWorkspaceRelativePath(file.path);
-      try {
-        const data = await getWorkspaceFilePreview(workspaceId, normalizedPath);
-        if (!cancelled) {
-          setPreview(data);
-        }
-        return;
-      } catch {
-        // Fallback below.
-      }
-
-      try {
-        const workspaceFiles: WorkspaceFile[] = await getFiles(workspaceId);
-        const matched = workspaceFiles.find((item) => normalizeWorkspaceRelativePath(item.name) === normalizedPath);
-        if (!matched) {
-          throw new Error('File metadata not found');
-        }
-        const fetched = await getFileContent(workspaceId, String(matched.id));
-        const mimeType = fetched?.mimeType || file.mimeType || null;
-        const encoding = inferPreviewEncoding(normalizedPath, mimeType);
-        const fallbackPreview: FilePreviewPayload = {
-          path: normalizedPath,
-          mimeType,
-          encoding,
-          content: typeof fetched?.content === 'string' ? fetched.content : '',
-        };
-        if (!cancelled) {
-          setPreview(fallbackPreview);
-        }
-      } catch {
-        if (!cancelled) {
-          setError('Unable to load preview for this artifact.');
-        }
-      } finally {
-        if (!cancelled) {
-          setIsLoading(false);
-        }
-      }
-    };
-    void loadPreview();
-    return () => {
-      cancelled = true;
-    };
-  }, [workspaceId, file.path]);
-
-  if (!workspaceId) {
-    return <p className="text-xs text-gray-500">Select a workspace to preview this file.</p>;
-  }
-  if (isLoading) {
-    return <p className="text-xs text-gray-500">Loading preview…</p>;
-  }
-  if (error) {
-    return <p className="text-xs text-red-500">{error}</p>;
-  }
-  if (!preview) {
-    return null;
-  }
-
-  const { mimeType, encoding, content } = preview;
-  const normalizedMime = mimeType || '';
-
-  if (normalizedMime.startsWith('image/')) {
-    const dataUrl = encoding === 'base64' ? `data:${normalizedMime};base64,${content}` : content;
-    return <img src={dataUrl} alt={file.path} className="mt-2 max-w-full rounded border border-gray-200" />;
-  }
-
-  if (normalizedMime.includes('pdf')) {
-    const dataUrl = encoding === 'base64' ? `data:application/pdf;base64,${content}` : content;
-    return (
-      <iframe
-        title={file.path}
-        className="mt-2 w-full h-64 rounded border border-gray-200"
-        src={dataUrl}
-      />
-    );
-  }
-
-  if (normalizedMime.includes('html')) {
-    return (
-      <iframe
-        title={file.path}
-        className="mt-2 w-full h-64 rounded border border-gray-200"
-        srcDoc={content}
-        sandbox="allow-scripts allow-same-origin"
-      />
-    );
-  }
-
-  if (normalizedMime.includes('markdown')) {
-    return (
-      <div className="mt-2 prose prose-sm max-w-none">
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
-      </div>
-    );
-  }
-
-  if (normalizedMime.includes('json')) {
-    let formatted = content;
-    try {
-      formatted = JSON.stringify(JSON.parse(content), null, 2);
-    } catch {
-      // leave as-is
-    }
-    return (
-      <pre className="mt-2 max-h-64 overflow-auto rounded bg-slate-900 p-3 text-xs text-slate-100">
-        {formatted}
-      </pre>
-    );
-  }
-
-  return (
-    <pre className="mt-2 max-h-64 overflow-auto rounded border border-gray-200 bg-gray-50 p-3 text-xs text-gray-800">
-      {encoding === 'base64' ? 'Binary file preview not available.' : content}
-    </pre>
-  );
-};
 const BLOCK_LEVEL_TAGS = ['div', 'pre', 'table', 'ol', 'ul', 'li', 'blockquote', 'section', 'article'];
 const MARKDOWN_FILE_EXTENSIONS = ['.md'];
 const HTML_FILE_EXTENSIONS = ['.html', '.htm'];
@@ -935,16 +783,6 @@ export default function WorkspacePage() {
       }
       return next;
     });
-  }, []);
-
-  const buildThinkingPreview = useCallback((text: string, expanded: boolean) => {
-    if (!text) {
-      return '';
-    }
-    if (expanded || text.length <= THOUGHT_PREVIEW_LIMIT) {
-      return text;
-    }
-    return `${text.slice(0, THOUGHT_PREVIEW_LIMIT).trimEnd()}…`;
   }, []);
 
   const handleCopyMessageText = useCallback(async (message: ConversationMessage) => {
@@ -1633,7 +1471,7 @@ export default function WorkspacePage() {
         if (message.toolEvents?.length) {
           return true;
         }
-        return message.metadata?.status === 'running';
+        return message.metadata?.status === 'running' || message.metadata?.status === 'awaiting_approval';
       });
       const buffer = agentMessageBufferRef.current;
       filteredMessages.forEach((message) => {
@@ -1645,33 +1483,48 @@ export default function WorkspacePage() {
       const normalizedPersona = normalizePersonaName(detail.conversation.persona);
       setActiveConversationPersona(normalizedPersona);
       setSelectedPersona(normalizedPersona);
-      const runningRunIds = new Set(
+      const activeRunIds = new Set(
         filteredMessages
-          .filter((message) => message.sender === 'agent' && message.metadata?.runId && message.metadata?.status === 'running')
+          .filter((message) =>
+            message.sender === 'agent' &&
+            message.metadata?.runId &&
+            (message.metadata?.status === 'running' || message.metadata?.status === 'awaiting_approval')
+          )
           .map((message) => message.metadata?.runId as string)
       );
-      const runningAgentMessage = filteredMessages.find(
-        (message) => message.sender === 'agent' && message.metadata?.runId && message.metadata?.status === 'running'
-      );
-      if (runningAgentMessage && !activeRunsRef.current[runningAgentMessage.metadata?.runId || '']) {
-        const runId = runningAgentMessage.metadata?.runId as string;
-        const placeholderId = runningAgentMessage.id;
-        const turnId = runningAgentMessage.turnId || generateTurnId();
-        const runInfo: ActiveRunInfo = {
-          runId,
-          conversationId,
-          workspaceId: detail.conversation.workspaceId,
-          persona: detail.conversation.persona,
-          turnId,
-          placeholderId,
-          status: 'running',
-        };
-        registerActiveRun(runInfo);
-      }
+      filteredMessages
+        .filter((message) =>
+          message.sender === 'agent' &&
+          message.metadata?.runId &&
+          (message.metadata?.status === 'running' || message.metadata?.status === 'awaiting_approval')
+        )
+        .forEach((activeAgentMessage) => {
+          const runId = activeAgentMessage.metadata?.runId as string;
+          if (activeRunsRef.current[runId]) {
+            return;
+          }
+          const placeholderId = activeAgentMessage.id;
+          const turnId = activeAgentMessage.turnId || generateTurnId();
+          const status = (activeAgentMessage.metadata?.status || 'running') as AgentRunStatus;
+          const runInfo: ActiveRunInfo = {
+            runId,
+            conversationId,
+            workspaceId: detail.conversation.workspaceId,
+            persona: detail.conversation.persona,
+            turnId,
+            placeholderId,
+            status,
+          };
+          registerActiveRun(runInfo);
+        });
       Object.values(activeRunsRef.current)
-        .filter((run) => run.conversationId === conversationId && run.status === 'running')
+        .filter(
+          (run) =>
+            run.conversationId === conversationId &&
+            (run.status === 'running' || run.status === 'awaiting_approval')
+        )
         .forEach((run) => {
-          if (!runningRunIds.has(run.runId)) {
+          if (!activeRunIds.has(run.runId)) {
             removeActiveRun(run.runId);
           }
         });
@@ -2235,33 +2088,6 @@ export default function WorkspacePage() {
     return () => window.clearInterval(interval);
   }, [persistAgentProgress]);
 
-  const formatInterruptNotice = (chunk: Extract<AgentStreamChunk, { type: 'interrupt' }>): string => {
-    const actions = Array.isArray(chunk.actionRequests) ? chunk.actionRequests : [];
-    const reviews = Array.isArray(chunk.reviewConfigs) ? chunk.reviewConfigs : [];
-    const reviewByName = new Map<string, string[]>();
-    reviews.forEach((item) => {
-      const name = typeof item?.action_name === 'string' ? item.action_name : '';
-      const decisions = Array.isArray(item?.allowed_decisions)
-        ? item.allowed_decisions.filter((value): value is string => typeof value === 'string')
-        : [];
-      if (name) {
-        reviewByName.set(name, decisions);
-      }
-    });
-
-    const lines: string[] = ['\n[Human approval required]'];
-    if (!actions.length) {
-      lines.push('- One or more tool actions require review.');
-    }
-    actions.forEach((action, index) => {
-      const toolName = typeof action?.name === 'string' && action.name ? action.name : `tool_${index + 1}`;
-      const allowed = reviewByName.get(toolName) || ['approve', 'edit', 'reject'];
-      lines.push(`- ${toolName} (allowed: ${allowed.join(', ')})`);
-    });
-    lines.push('Use the approval controls to approve, edit, or reject before execution continues.');
-    return lines.join('\n');
-  };
-
   const getPrimaryInterruptAction = useCallback((
     pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
   ): { name?: string; args?: Record<string, unknown> } | undefined => {
@@ -2272,8 +2098,21 @@ export default function WorkspacePage() {
   const isPlanApprovalInterrupt = useCallback((
     pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
   ): boolean => {
-    const action = getPrimaryInterruptAction(pendingInterrupt);
-    return action?.name === 'request_plan_approval';
+    const actionRequests = Array.isArray(pendingInterrupt?.actionRequests) ? pendingInterrupt.actionRequests : [];
+    const reviewConfigs = Array.isArray(pendingInterrupt?.reviewConfigs) ? pendingInterrupt.reviewConfigs : [];
+    const firstActionName = typeof actionRequests[0]?.name === 'string'
+      ? actionRequests[0].name.trim().toLowerCase()
+      : '';
+    if (firstActionName === 'request_plan_approval') {
+      return true;
+    }
+    if (firstActionName && firstActionName.includes('plan') && firstActionName.includes('approval')) {
+      return true;
+    }
+    return reviewConfigs.some((config) => {
+      const name = typeof config?.action_name === 'string' ? config.action_name.trim().toLowerCase() : '';
+      return name === 'request_plan_approval' || (name.includes('plan') && name.includes('approval'));
+    });
   }, [getPrimaryInterruptAction]);
 
   const approvalFieldKey = useCallback((
@@ -2302,7 +2141,12 @@ export default function WorkspacePage() {
     return allowed.length ? allowed : defaults;
   }, []);
 
-  const handleStreamChunk = (conversationId: string, agentMessageIndex: number, chunk: AgentStreamChunk) => {
+  const handleStreamChunk = (
+    conversationId: string,
+    agentMessageIndex: number,
+    chunk: AgentStreamChunk,
+    runId?: string,
+  ) => {
     if (chunk.type === 'keepalive') {
       setStreamingForConversation(conversationId, true);
       return;
@@ -2311,6 +2155,7 @@ export default function WorkspacePage() {
     if (chunk.type === 'policy') {
       updateMessageMetadataAtIndex(conversationId, agentMessageIndex, (metadata) => ({
         ...metadata,
+        ...(runId ? { runId } : {}),
         runPolicy: {
           skill: chunk.skill,
           requiresHitlPlan: chunk.requiresHitlPlan,
@@ -2331,6 +2176,7 @@ export default function WorkspacePage() {
     if (chunk.type === 'tool_start') {
       updateMessageMetadataAtIndex(conversationId, agentMessageIndex, (metadata) => ({
         ...metadata,
+        ...(runId ? { runId } : {}),
         pendingInterrupt: undefined,
       }));
       appendToolStart(conversationId, agentMessageIndex, chunk);
@@ -2350,19 +2196,20 @@ export default function WorkspacePage() {
     if (chunk.type === 'interrupt') {
       updateMessageMetadataAtIndex(conversationId, agentMessageIndex, (metadata) => ({
         ...metadata,
+        ...(runId ? { runId } : {}),
         status: 'awaiting_approval',
         pendingInterrupt: {
           actionRequests: chunk.actionRequests,
           reviewConfigs: chunk.reviewConfigs,
         },
       }));
-      appendAgentChunk(conversationId, agentMessageIndex, formatInterruptNotice(chunk));
       return;
     }
 
     if (chunk.type === 'token' || chunk.type === 'chunk') {
       updateMessageMetadataAtIndex(conversationId, agentMessageIndex, (metadata) => ({
         ...metadata,
+        ...(runId ? { runId } : {}),
         pendingInterrupt: undefined,
       }));
       if (chunk.role && chunk.role !== 'assistant') {
@@ -2414,7 +2261,7 @@ export default function WorkspacePage() {
         }
         await streamAgentRun(
           runId,
-          (chunk) => handleStreamChunk(conversationId, agentMessageIndex, chunk),
+          (chunk) => handleStreamChunk(conversationId, agentMessageIndex, chunk, runId),
           controller.signal,
           replayFromStart ? undefined : undefined
         );
@@ -2528,15 +2375,22 @@ export default function WorkspacePage() {
             };
             options.message = rawFeedback || 'User requested edits.';
           } else {
-            const rawEditArgs = approvalFeedbackByMessageId[approvalFieldKey(messageKey, 'edit-json')] || '{}';
+            const rawEditArgs = (approvalFeedbackByMessageId[approvalFieldKey(messageKey, 'edit-json')] || '').trim();
             let parsedArgs: Record<string, unknown> = {};
-            try {
-              const parsed = JSON.parse(rawEditArgs);
-              if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-                parsedArgs = parsed as Record<string, unknown>;
+            if (rawEditArgs) {
+              try {
+                const parsed = JSON.parse(rawEditArgs);
+                if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+                  parsedArgs = parsed as Record<string, unknown>;
+                } else {
+                  parsedArgs = { reviewer_feedback: rawEditArgs };
+                }
+              } catch {
+                parsedArgs = { reviewer_feedback: rawEditArgs };
               }
-            } catch {
-              throw new Error('Edited args must be valid JSON object.');
+              if (!options.message) {
+                options.message = 'User requested edits.';
+              }
             }
             options.editedAction = {
               name: (primaryAction?.name as string) || 'request_plan_approval',
@@ -3936,594 +3790,74 @@ export default function WorkspacePage() {
               </div>
             </div>
 
-            {/* Right Pane: Agent Chat */}
-            <div
-              className="bg-white flex flex-col overflow-hidden min-h-0"
-              style={agentPaneStyles}
-            >
-              <div className="p-4 border-b border-gray-200 flex justify-between items-center">
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setIsAgentPaneVisible(!isAgentPaneVisible)}
-                    className="p-2 rounded-lg hover:bg-gray-200"
-                    disabled={isEditMode}
-                  >
-                    <ChevronRight size={18} className={`text-gray-600 transition-transform duration-300 ${isAgentPaneVisible ? '' : 'rotate-180'}`} />
-                  </button>
-                  {isAgentPaneVisible && (
-                    <div className="flex items-center gap-2">
-                      <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                        Mode
-                      </span>
-                      <select
-                        value={normalizePersonaName(activeConversationPersona || selectedPersona || DEFAULT_PERSONA_NAME)}
-                        onChange={handleModeChange}
-                        className="rounded-lg border border-slate-200 bg-slate-100 px-2 py-1 text-sm font-semibold text-slate-700 shadow-sm focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-200"
-                        aria-label="Select agent mode"
-                        disabled={!personas.length}
-                      >
-                        {personas.map((persona) => (
-                          <option key={persona.name} value={persona.name}>
-                            {persona.displayName || persona.name}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
-                </div>
-                {isAgentPaneVisible && (
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setIsHistoryOpen((prev) => !prev)}
-                      className={`p-2 rounded-lg transition ${isHistoryOpen ? 'bg-blue-50 text-blue-600' : 'hover:bg-gray-200 text-gray-600'}`}
-                      title="Recent conversations"
-                      aria-pressed={isHistoryOpen}
-                      aria-label="Toggle recent conversations"
-                    >
-                      <History size={18} />
-                    </button>
-                    <span className="h-5 w-px bg-gray-200" aria-hidden="true" />
-                    <button
-                      onClick={handleNewChat}
-                      className="p-2 rounded-lg hover:bg-gray-200"
-                    >
-                      <Plus size={18} className="text-gray-600" />
-                    </button>
-                    <button
-                      onClick={toggleAgentPaneFullScreen}
-                      className="p-2 rounded-lg hover:bg-gray-200"
-                    >
-                      {isAgentPaneFullScreen ? (
-                        <Minimize2 size={18} className="text-gray-600" />
-                      ) : (
-                        <Maximize2 size={18} className="text-gray-600" />
-                      )}
-                    </button>
-                  </div>
-                )}
-              </div>
-              <div className={`flex-1 flex flex-col overflow-hidden min-h-0 relative ${isAgentPaneFullScreen || isAgentPaneVisible ? 'block' : 'hidden'
-                }`}>
-                {isHistoryOpen && (
-                  <button
-                    type="button"
-                    aria-label="Close history panel"
-                    onClick={() => setIsHistoryOpen(false)}
-                    className="absolute inset-0 z-10 bg-slate-900/20 backdrop-blur-sm"
-                  />
-                )}
-                <div
-                  className={`absolute inset-y-0 right-0 z-20 flex w-80 max-w-[90%] flex-col border-l border-gray-200 bg-white shadow-2xl ring-1 ring-black/10 transition-transform duration-200 ${
-                    isHistoryOpen ? 'translate-x-0' : 'translate-x-full pointer-events-none'
-                  }`}
-                  aria-hidden={!isHistoryOpen}
-                >
-                  <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
-                    <p className="text-sm font-semibold text-gray-700">Recent Conversations</p>
-                    <button
-                      type="button"
-                      onClick={() => setIsHistoryOpen(false)}
-                      className="rounded-full p-1.5 text-gray-500 hover:bg-gray-100"
-                      aria-label="Close history"
-                    >
-                      <X size={16} />
-                    </button>
-                  </div>
-                  <div className="flex-1 overflow-y-auto p-4 space-y-2">
-                    {conversationHistory.length === 0 ? (
-                      <p className="text-xs text-gray-500">No past conversations yet.</p>
-                    ) : (
-                      conversationHistory.map((conversation) => {
-                        const isActive = conversation.id === activeConversationId;
-                        const isConversationStreaming = conversationStreaming[conversation.id];
-                        const normalizedPersona = normalizePersonaName(conversation.persona);
-                        const personaLabel =
-                          personas.find((persona) => persona.name === normalizedPersona)?.displayName ||
-                          normalizedPersona;
-                        return (
-                          <div key={conversation.id} className="relative group">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                handleSelectConversationFromHistory(conversation.id);
-                                setIsHistoryOpen(false);
-                              }}
-                              className={`w-full text-left p-2 pr-9 rounded-lg border transition ${isActive
-                                ? 'border-blue-500 bg-blue-50'
-                                : 'border-gray-200 hover:border-blue-400 hover:bg-blue-50'
-                                }`}
-                            >
-                              <p className="text-sm font-medium text-gray-800 truncate">{conversation.title}</p>
-                              <p className="text-xs text-gray-500 flex items-center gap-1">
-                                {isConversationStreaming && <Loader2 size={12} className="animate-spin text-blue-500" />}
-                                <span>
-                                  Mode: {personaLabel} · {new Date(conversation.updatedAt).toLocaleString()}
-                                </span>
-                              </p>
-                            </button>
-                            <button
-                              type="button"
-                              aria-label="Delete conversation"
-                              className="absolute top-1 right-1 p-1 rounded-md text-gray-400 hover:text-red-600 hover:bg-red-50 opacity-0 group-hover:opacity-100 focus:opacity-100 transition"
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                handleDeleteConversation(conversation.id);
-                              }}
-                            >
-                              <Trash size={14} />
-                            </button>
-                          </div>
-                        );
-                      })
-                    )}
-                  </div>
-                </div>
-                <div className="flex-1 p-4 overflow-y-auto space-y-4 min-h-0">
-                  {messages.map((message) => {
-                    const isAgentMessage = message.sender === 'agent';
-                    const messageMetadata = (message.metadata as ConversationMessageMetadata | null | undefined) || undefined;
-                    const timestampLabel = formatMessageTimestamp(message.updatedAt || message.createdAt);
-                    const toolEvents = message.toolEvents || [];
-                    const hasToolEvents = toolEvents.length > 0;
-                    const pendingInterrupt = messageMetadata?.pendingInterrupt;
-                    const allowedInterruptDecisions = getAllowedDecisions(pendingInterrupt);
-                    const primaryInterruptAction = getPrimaryInterruptAction(pendingInterrupt);
-                    const isPlanApprovalRequest = isPlanApprovalInterrupt(pendingInterrupt);
-                    const messageKey = String(message.id);
-                    const decisionBusy = Boolean(approvalSubmittingByMessageId[messageKey]);
-                    const isToolActivityExpanded = expandedToolMessages.has(message.id);
-                    const isThinkingExpanded = expandedThinkingMessages.has(message.id);
-                    const thinkingPreview = buildThinkingPreview(message.thinkingText || '', isThinkingExpanded);
-                    const showThinkingToggle =
-                      Boolean(message.thinkingText) && (message.thinkingText?.length || 0) > THOUGHT_PREVIEW_LIMIT;
-                    const canCopyMessage =
-                      Boolean((message.text && message.text.trim()) || (message.thinkingText && message.thinkingText.trim()));
-                    const copyTitle = copiedMessageId === message.id ? 'Copied!' : 'Copy message';
-                    const copyButtonPositionClass = message.sender === 'user' ? 'right-10' : 'right-2';
-                    return (
-                      <div
-                        key={message.id}
-                        className={`flex items-start gap-3 group ${isAgentMessage ? '' : 'justify-end'
-                        }`}
-                      >
-                        <div
-                          style={{ width: '100%', maxWidth: messageBubbleMaxWidth }}
-                          className="relative flex-1 md:flex-initial"
-                        >
-                          {isAgentMessage ? (
-                            <div className="w-full rounded-2xl border border-slate-200 bg-gradient-to-br from-white to-slate-50 px-4 py-4 text-slate-800 shadow-lg">
-                              <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-                                <span className="text-slate-600">{personaDisplayName}</span>
-                                {timestampLabel && <span>{timestampLabel}</span>}
-                              </div>
-                              {message.thinkingText && (
-                                <div className="mt-3 rounded-2xl border border-blue-100 bg-blue-50/80 px-3 py-3 text-[13px] text-slate-600 shadow-inner">
-                                  <div className="flex items-center justify-between text-[11px] font-semibold uppercase tracking-wide text-blue-500">
-                                    <span>Thinking</span>
-                                    {showThinkingToggle && (
-                                      <button
-                                        type="button"
-                                        onClick={() => toggleThinkingVisibility(message.id)}
-                                        className="text-blue-600 hover:text-blue-500"
-                                      >
-                                        {isThinkingExpanded ? 'Show less' : 'Expand'}
-                                      </button>
-                                    )}
-                                  </div>
-                                  <div className="mt-2 whitespace-pre-line leading-relaxed">{thinkingPreview}</div>
-                                </div>
-                              )}
-                              {message.text ? (
-                                <div className="agent-markdown mt-3 text-sm">
-                                  <ReactMarkdown
-                                    remarkPlugins={[remarkGfm]}
-                                    components={markdownComponents}
-                                  >
-                                    {message.text}
-                                  </ReactMarkdown>
-                                </div>
-                              ) : (
-                                <span className="mt-3 block text-sm text-slate-500">
-                                  {message.thinkingText ? 'Finalizing response…' : 'Thinking…'}
-                                </span>
-                              )}
-                              {pendingInterrupt && (
-                                <div className="mt-4 rounded-2xl border border-sky-200/70 bg-gradient-to-br from-white/75 via-sky-50/70 to-indigo-100/60 p-4 shadow-[0_18px_40px_-28px_rgba(30,64,175,0.75)] backdrop-blur-md">
-                                  <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-700">
-                                    Approval Required
-                                  </p>
-                                  <p className="mt-1 text-sm text-slate-700">
-                                    Review and continue this run.
-                                  </p>
-                                  <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px] uppercase tracking-wide text-slate-500">
-                                    <span>Allowed:</span>
-                                    {allowedInterruptDecisions.map((item) => (
-                                      <span
-                                        key={`${messageKey}-${item}`}
-                                        className="rounded-full border border-slate-200/90 bg-white/70 px-2 py-0.5 font-semibold text-slate-600"
-                                      >
-                                        {item}
-                                      </span>
-                                    ))}
-                                  </div>
-                                  <div className="mt-3 flex flex-wrap gap-2">
-                                    {allowedInterruptDecisions.includes('approve') && (
-                                      <button
-                                        type="button"
-                                        disabled={decisionBusy}
-                                        onClick={() => handleInterruptDecision(message, 'approve', pendingInterrupt)}
-                                        className="rounded-xl border border-emerald-300/80 bg-emerald-500/90 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
-                                      >
-                                        Approve
-                                      </button>
-                                    )}
-                                    {allowedInterruptDecisions.includes('edit') && (
-                                      <button
-                                        type="button"
-                                        disabled={decisionBusy}
-                                        onClick={() => handleInterruptDecision(message, 'edit', pendingInterrupt)}
-                                        className="rounded-xl border border-blue-300/80 bg-blue-500/90 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-60"
-                                      >
-                                        {isPlanApprovalRequest ? 'Edit & Revise' : 'Edit'}
-                                      </button>
-                                    )}
-                                    {allowedInterruptDecisions.includes('reject') && (
-                                      <button
-                                        type="button"
-                                        disabled={decisionBusy}
-                                        onClick={() => handleInterruptDecision(message, 'reject', pendingInterrupt)}
-                                        className="rounded-xl border border-rose-300/80 bg-rose-500/90 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-rose-500 disabled:cursor-not-allowed disabled:opacity-60"
-                                      >
-                                        Reject
-                                      </button>
-                                    )}
-                                  </div>
-                                  {isPlanApprovalRequest ? (
-                                    <div className="mt-3 grid gap-2">
-                                      {primaryInterruptAction?.args && Object.keys(primaryInterruptAction.args).length > 0 && (
-                                        <div className="max-h-48 overflow-y-auto rounded-xl border border-slate-200/70 bg-white/60 p-3 text-xs text-slate-600">
-                                          <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
-                                            Plan Details
-                                          </p>
-                                          {Object.entries(primaryInterruptAction.args).map(([key, value]) => (
-                                            <div key={key} className="mb-1">
-                                              <span className="font-semibold text-slate-500">{key}:</span>{' '}
-                                              <span className="whitespace-pre-wrap text-slate-700">
-                                                {typeof value === 'string' ? value : JSON.stringify(value, null, 2)}
-                                              </span>
-                                            </div>
-                                          ))}
-                                        </div>
-                                      )}
-                                      <textarea
-                                        value={approvalFeedbackByMessageId[approvalFieldKey(messageKey, 'feedback')] || ''}
-                                        onChange={(event) =>
-                                          setApprovalFeedbackByMessageId((prev) => ({
-                                            ...prev,
-                                            [approvalFieldKey(messageKey, 'feedback')]: event.target.value,
-                                          }))
-                                        }
-                                        className="w-full rounded-xl border border-slate-200/80 bg-white/80 p-2 text-xs text-slate-700 backdrop-blur-sm focus:border-sky-400 focus:outline-none"
-                                        rows={3}
-                                        placeholder="Your feedback or instructions for the agent (optional)"
-                                      />
-                                    </div>
-                                  ) : (
-                                    <div className="mt-2 grid gap-2">
-                                      <textarea
-                                        value={approvalFeedbackByMessageId[approvalFieldKey(messageKey, 'edit-json')] || '{}'}
-                                        onChange={(event) =>
-                                          setApprovalFeedbackByMessageId((prev) => ({
-                                            ...prev,
-                                            [approvalFieldKey(messageKey, 'edit-json')]: event.target.value,
-                                          }))
-                                        }
-                                        className="w-full rounded-xl border border-slate-200/80 bg-white/80 p-2 text-xs text-slate-700 backdrop-blur-sm focus:border-sky-400 focus:outline-none"
-                                        rows={4}
-                                        placeholder='Edited args JSON for "Edit"'
-                                      />
-                                      <input
-                                        value={approvalFeedbackByMessageId[approvalFieldKey(messageKey, 'reject-note')] || ''}
-                                        onChange={(event) =>
-                                          setApprovalFeedbackByMessageId((prev) => ({
-                                            ...prev,
-                                            [approvalFieldKey(messageKey, 'reject-note')]: event.target.value,
-                                          }))
-                                        }
-                                        className="w-full rounded-xl border border-slate-200/80 bg-white/80 px-2 py-1.5 text-xs text-slate-700 backdrop-blur-sm focus:border-sky-400 focus:outline-none"
-                                        placeholder='Reject message (optional)'
-                                      />
-                                    </div>
-                                  )}
-                                </div>
-                              )}
-                              {hasToolEvents && (
-                                <div className="mt-3">
-                                  <button
-                                    type="button"
-                                    onClick={() => toggleToolActivityVisibility(message.id)}
-                                    className="text-xs font-semibold uppercase tracking-wide text-slate-500 hover:text-slate-700"
-                                  >
-                                    {isToolActivityExpanded
-                                      ? 'Hide tool activity'
-                                      : `Show tool activity (${toolEvents.length})`}
-                                  </button>
-                                  {isToolActivityExpanded && (
-                                    <div className="mt-2 rounded-2xl border border-slate-200 bg-white/80 px-3 py-3 text-xs text-slate-600 shadow-inner">
-                                      {toolEvents.map((event, index) => {
-                                        const isLast = index === toolEvents.length - 1;
-                                        return (
-                                          <div key={event.id || `${event.name}-${index}`} className="flex gap-3 pb-3 last:pb-0">
-                                            <div className="flex flex-col items-center">
-                                              <span
-                                                className={`h-2.5 w-2.5 rounded-full ${event.status === 'completed' ? 'bg-emerald-500' : 'bg-amber-400'
-                                                  }`}
-                                              />
-                                              {!isLast && <span className="flex-1 w-px bg-slate-200" />}
-                                            </div>
-                                            <div className="flex-1">
-                                              <p
-                                                className={`text-[11px] font-semibold uppercase tracking-wide ${event.status === 'error' ? 'text-red-500' : 'text-slate-500'
-                                                  }`}
-                                              >
-                                                {event.name}
-                                              </p>
-                                              <p
-                                                className={`text-sm ${event.status === 'error' ? 'text-red-600' : 'text-slate-700'
-                                                  }`}
-                                              >
-                                                {event.summary ||
-                                                  (event.status === 'completed'
-                                                    ? 'Completed'
-                                                    : event.status === 'error'
-                                                      ? 'Failed'
-                                                      : 'In progress…')}
-                                              </p>
-                                              <p className="mt-1 text-[11px] uppercase tracking-wide text-slate-400">
-                                                {formatMessageTimestamp(event.startedAt)}
-                                                {event.finishedAt ? ` • ${formatMessageTimestamp(event.finishedAt)}` : ''}
-                                              </p>
-                                              {event.outputFiles?.length ? (
-                                                <div className="mt-2 space-y-3">
-                                                  {event.outputFiles.map((file) => (
-                                                    <div
-                                                      key={`${event.id}-${file.path}`}
-                                                      className="rounded-lg border border-gray-200 bg-white p-2"
-                                                    >
-                                                      <p className="text-xs font-semibold text-gray-700">{file.path}</p>
-                                                      <ToolOutputFilePreview
-                                                        workspaceId={selectedWorkspace?.id}
-                                                        file={file}
-                                                      />
-                                                    </div>
-                                                  ))}
-                                                </div>
-                                              ) : null}
-                                            </div>
-                                          </div>
-                                        );
-                                      })}
-                                    </div>
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          ) : (
-                            <div className="rounded-2xl bg-gradient-to-br from-blue-600 to-blue-500 px-4 py-3 text-sm text-white shadow-lg">
-                              <p className="whitespace-pre-line leading-relaxed">{message.text}</p>
-                              {timestampLabel && (
-                                <span className="mt-2 block text-[11px] uppercase tracking-wide text-white/70">
-                                  {timestampLabel}
-                                </span>
-                              )}
-                            </div>
-                          )}
-                          <button
-                            type="button"
-                            onClick={() => handleCopyMessageText(message)}
-                            disabled={!canCopyMessage}
-                            title={copyTitle}
-                            aria-label="Copy message text"
-                            className={`absolute -top-2 ${copyButtonPositionClass} rounded-full bg-white p-1.5 text-gray-600 shadow ring-1 ring-slate-200 transition opacity-0 group-hover:opacity-100 hover:bg-gray-50 focus-visible:opacity-100 disabled:opacity-40 disabled:cursor-not-allowed`}
-                          >
-                            <Copy size={14} />
-                          </button>
-                          {message.sender === 'user' && (
-                            <button
-                              type="button"
-                              onClick={() => handleRerunMessage(message.id)}
-                              disabled={isStreaming}
-                              title="Rerun this message"
-                              className={`absolute -top-2 -right-2 rounded-full bg-blue-500 p-1.5 text-white shadow transition-opacity opacity-0 ${isStreaming
-                                ? 'cursor-not-allowed group-hover:opacity-60 hover:opacity-60'
-                                : 'group-hover:opacity-100 hover:opacity-100 focus-visible:opacity-100'
-                                }`}
-                            >
-                              <RotateCcw size={14} />
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-                <div className="p-4 bg-white border-t border-gray-100">
-                  <div className="relative rounded-xl border border-gray-200 bg-white shadow-sm transition-all focus-within:border-blue-500 focus-within:ring-1 focus-within:ring-blue-500">
-                    {chatAttachments.length > 0 && (
-                      <div className="flex flex-wrap gap-2 px-3 pt-3">
-                        {chatAttachments.map((file, index) => (
-                          <div
-                            key={`${file.name}-${index}`}
-                            className="group flex items-center gap-2 rounded-md border border-gray-200 bg-gray-50 px-2 py-1 text-xs font-medium text-gray-700"
-                          >
-                            <span className="truncate max-w-[120px]">{file.name}</span>
-                            <button
-                              type="button"
-                              className="text-gray-400 hover:text-red-500"
-                              onClick={() => handleRemoveChatAttachment(index)}
-                              aria-label={`Remove ${file.name}`}
-                            >
-                              <X size={12} />
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                    <textarea
-                      placeholder="Interact with the agent... (Type / for commands)"
-                      value={chatMessage}
-                      ref={chatInputRef}
-                      onChange={handleChatInputChange}
-                      onKeyDown={handleChatInputKeyDown}
-                      onKeyUp={handleChatInputKeyUp}
-                      onSelect={handleChatInputSelectionChange}
-                      className="w-full max-h-60 bg-transparent px-4 py-3 text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none resize-none"
-                      rows={Math.min(5, Math.max(1, chatMessage.split('\n').length))}
-                      style={{ minHeight: '56px' }}
-                    />
-                    <div className="flex items-center justify-between px-2 pb-2">
-                      <div className="flex items-center gap-1">
-                        <button
-                          type="button"
-                          onClick={handleChatAttachmentButtonClick}
-                          className="p-2 rounded-lg text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700"
-                          title="Attach files"
-                        >
-                          <Plus size={18} />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={handleInsertSlashTrigger}
-                          className="p-2 rounded-lg text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700"
-                          title="Commands"
-                          aria-label="Insert command"
-                        >
-                          <span className="text-xs font-semibold">/</span>
-                        </button>
-                        {showPaper2SlidesControls && (
-                          <>
-                            <div className="w-px h-4 bg-gray-200 mx-1" aria-hidden="true" />
-                            <button
-                              type="button"
-                              onClick={handleOpenPresentationModal}
-                              className={`p-2 rounded-lg transition-colors ${
-                                presentationStatus === 'running'
-                                  ? 'text-blue-600 bg-blue-50'
-                                  : 'text-gray-500 hover:bg-gray-100 hover:text-blue-600'
-                              }`}
-                              title={`Configure Paper2Slides: ${presentationOptionSummary || 'Options'}`}
-                              aria-label="Configure Paper2Slides"
-                            >
-                              <MonitorPlay size={18} />
-                            </button>
-                          </>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-[10px] text-gray-400 hidden sm:inline-block mr-2">
-                          {isStreaming ? 'Generating...' : 'Enter to send'}
-                        </span>
-                        <button
-                          onClick={isStreaming ? handleStopStreaming : handleSendMessage}
-                          disabled={!chatMessage.trim() && !chatAttachments.length && !isStreaming}
-                          className={`p-2 rounded-lg transition-all duration-200 ${
-                            !chatMessage.trim() && !chatAttachments.length && !isStreaming
-                              ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                              : isStreaming
-                                ? 'bg-red-50 text-red-600 hover:bg-red-100'
-                                : 'bg-blue-600 text-white hover:bg-blue-700 shadow-sm'
-                          }`}
-                          title={isStreaming ? 'Stop current agent response' : 'Send message'}
-                        >
-                          {isStreaming ? <StopCircle size={18} /> : <Send size={18} />}
-                        </button>
-                      </div>
-                    </div>
-                    <input
-                      type="file"
-                      ref={attachmentInputRef}
-                      className="hidden"
-                      multiple
-                      accept="image/*,.pdf,.md,.txt,.doc,.docx"
-                      onChange={handleChatAttachmentChange}
-                    />
-                    {isMentionOpen && (
-                      <div className="absolute bottom-full left-0 mb-2 w-64 bg-white border border-gray-200 rounded-lg shadow-xl max-h-48 overflow-y-auto z-20">
-                        {mentionSuggestions.length ? (
-                          mentionSuggestions.map((file, index) => (
-                            <button
-                              key={file.id}
-                              type="button"
-                              onMouseDown={(event) => {
-                                event.preventDefault();
-                                handleSelectMention(file);
-                              }}
-                              className={`w-full flex items-center text-left px-3 py-2 text-xs ${index === mentionSelectedIndex
-                                ? 'bg-blue-50 text-blue-700'
-                                : 'text-gray-700 hover:bg-gray-50'
-                                }`}
-                            >
-                              <FileIcon size={16} className="mr-2 text-gray-500" />
-                              <span className="truncate">{file.name}</span>
-                            </button>
-                          ))
-                        ) : (
-                          <div className="px-3 py-2 text-xs text-gray-500">No matching files</div>
-                        )}
-                      </div>
-                    )}
-                    {isCommandOpen && (
-                      <div className="absolute bottom-full left-0 mb-2 w-72 bg-white border border-gray-200 rounded-lg shadow-xl max-h-48 overflow-y-auto z-20">
-                        {commandSuggestions.length ? (
-                          commandSuggestions.map((command, index) => (
-                            <button
-                              key={command.id}
-                              type="button"
-                              onMouseDown={(event) => {
-                                event.preventDefault();
-                                handleSelectCommand(command);
-                              }}
-                              className={`w-full text-left px-3 py-2 text-xs ${index === commandSelectedIndex
-                                ? 'bg-blue-50 text-blue-700'
-                                : 'text-gray-700 hover:bg-gray-50'
-                                }`}
-                            >
-                              <div className="flex flex-col">
-                                <span className="font-semibold">{command.command}</span>
-                                <span className="text-[11px] text-gray-500">{command.description}</span>
-                              </div>
-                            </button>
-                          ))
-                        ) : (
-                          <div className="px-3 py-2 text-xs text-gray-500">No matching commands</div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
+            <AgentChatPane
+              agentPaneStyles={agentPaneStyles}
+              isAgentPaneVisible={isAgentPaneVisible}
+              isAgentPaneFullScreen={isAgentPaneFullScreen}
+              isEditMode={isEditMode}
+              isHistoryOpen={isHistoryOpen}
+              personas={personas}
+              selectedPersona={normalizePersonaName(activeConversationPersona || selectedPersona || DEFAULT_PERSONA_NAME)}
+              conversationHistory={conversationHistory}
+              activeConversationId={activeConversationId}
+              conversationStreaming={conversationStreaming}
+              messages={messages}
+              isStreaming={isStreaming}
+              personaDisplayName={personaDisplayName}
+              messageBubbleMaxWidth={messageBubbleMaxWidth}
+              markdownComponents={markdownComponents}
+              expandedToolMessages={expandedToolMessages}
+              expandedThinkingMessages={expandedThinkingMessages}
+              copiedMessageId={copiedMessageId}
+              approvalFeedbackByMessageId={approvalFeedbackByMessageId}
+              approvalSubmittingByMessageId={approvalSubmittingByMessageId}
+              chatMessage={chatMessage}
+              chatAttachments={chatAttachments}
+              showPaper2SlidesControls={showPaper2SlidesControls}
+              presentationStatus={presentationStatus}
+              presentationOptionSummary={presentationOptionSummary}
+              isMentionOpen={isMentionOpen}
+              mentionSuggestions={mentionSuggestions}
+              mentionSelectedIndex={mentionSelectedIndex}
+              isCommandOpen={isCommandOpen}
+              commandSuggestions={commandSuggestions}
+              commandSelectedIndex={commandSelectedIndex}
+              chatInputRef={chatInputRef}
+              attachmentInputRef={attachmentInputRef}
+              workspaceId={selectedWorkspace?.id}
+              formatMessageTimestamp={formatMessageTimestamp}
+              approvalFieldKey={approvalFieldKey}
+              getAllowedDecisions={getAllowedDecisions}
+              getPrimaryInterruptAction={getPrimaryInterruptAction}
+              isPlanApprovalInterrupt={isPlanApprovalInterrupt}
+              setApprovalFeedbackByMessageId={setApprovalFeedbackByMessageId}
+              onToggleAgentPaneVisibility={() => setIsAgentPaneVisible((prev) => !prev)}
+              onModeChange={handleModeChange}
+              onToggleHistory={() => setIsHistoryOpen((prev) => !prev)}
+              onNewChat={handleNewChat}
+              onToggleFullScreen={toggleAgentPaneFullScreen}
+              onCloseHistory={() => setIsHistoryOpen(false)}
+              onSelectConversation={handleSelectConversationFromHistory}
+              onDeleteConversation={handleDeleteConversation}
+              onToggleThinkingVisibility={toggleThinkingVisibility}
+              onToggleToolActivityVisibility={toggleToolActivityVisibility}
+              onCopyMessageText={handleCopyMessageText}
+              onRerunMessage={handleRerunMessage}
+              onInterruptDecision={handleInterruptDecision}
+              onChatInputChange={handleChatInputChange}
+              onChatInputKeyDown={handleChatInputKeyDown}
+              onChatInputKeyUp={handleChatInputKeyUp}
+              onChatInputSelectionChange={handleChatInputSelectionChange}
+              onChatAttachmentButtonClick={handleChatAttachmentButtonClick}
+              onInsertSlashTrigger={handleInsertSlashTrigger}
+              onOpenPresentationModal={handleOpenPresentationModal}
+              onStopStreaming={handleStopStreaming}
+              onSendMessage={handleSendMessage}
+              onChatAttachmentChange={handleChatAttachmentChange}
+              onRemoveChatAttachment={handleRemoveChatAttachment}
+              onSelectMention={handleSelectMention}
+              onSelectCommand={(command) => handleSelectCommand(command as SlashCommand)}
+            />
           </div>
         </Box>
       </Box>
