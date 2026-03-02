@@ -9,9 +9,12 @@ COPY tsconfig.json ./
 # Install all dependencies (ts-node lives in devDependencies)
 RUN npm ci --legacy-peer-deps
 
-# Copy the rest of the backend source code (including seed workspace data)
+# Copy the backend source code
 COPY src ./src
-COPY workspaces ./workspaces
+
+# Runtime workspace content is persisted via volume mounts in deploy envs.
+# Ensure directory exists even when no seed data is tracked in git.
+RUN mkdir -p workspaces
 
 ENV NODE_ENV=production \
     PORT=3000
