@@ -156,10 +156,30 @@ steps:
       # Pulling the agent image can exceed the default 5m readiness wait (5GB+ image).
       - '--timeout=15m'
 
-  # 6. Post-deploy drift guard (fails if PVC-backed runtime/skills are stale)
-  - id: post-deploy-drift-guard
+  # 6. Sync repo skills/ into skills PVC (workspace PVC is intentionally untouched).
+  - id: sync-skills-pvc
     name: 'gcr.io/cloud-builders/kubectl'
     waitFor: ['deploy']
+    env:
+      - 'CLOUDSDK_COMPUTE_ZONE=$_GKE_LOCATION'
+      - 'CLOUDSDK_CONTAINER_CLUSTER=$_GKE_CLUSTER'
+    entrypoint: 'sh'
+    args:
+      - '-c'
+      - |
+        set -eu
+        APP_POD="$$(kubectl -n helpudoc get pods -l app=helpudoc-app -o jsonpath='{.items[0].metadata.name}')"
+        test -n "$${APP_POD}"
+        echo "Syncing repo skills/ to /app/skills in pod: $${APP_POD}"
+
+        kubectl -n helpudoc exec "$${APP_POD}" -c backend -- sh -lc "set -eu; mkdir -p /app/skills; find /app/skills -mindepth 1 -maxdepth 1 -exec rm -rf {} +"
+        tar -C skills -cf - . | kubectl -n helpudoc exec -i "$${APP_POD}" -c backend -- sh -lc "tar -xf - -C /app/skills"
+        kubectl -n helpudoc exec "$${APP_POD}" -c backend -- sh -lc "test -f /app/skills/research/SKILL.md"
+
+  # 7. Post-deploy drift guard (fails if PVC-backed runtime/skills are stale)
+  - id: post-deploy-drift-guard
+    name: 'gcr.io/cloud-builders/kubectl'
+    waitFor: ['sync-skills-pvc']
     env:
       - 'CLOUDSDK_COMPUTE_ZONE=$_GKE_LOCATION'
       - 'CLOUDSDK_CONTAINER_CLUSTER=$_GKE_CLUSTER'
@@ -179,7 +199,7 @@ steps:
         kubectl -n helpudoc exec "$${APP_POD}" -c agent -- sh -lc "grep -q 'request_plan_approval' /app/skills/research/SKILL.md"
         kubectl -n helpudoc exec "$${APP_POD}" -c agent -- python -c "import requests; data=requests.get('http://localhost:8001/agents', timeout=10).json(); tools=data['agents'][0]['tools']; assert 'request_plan_approval' in tools, tools; print('request_plan_approval available in /agents')"
 
-  # 7. E2E check (fails build on mixed-content / localhost assets)
+  # 8. E2E check (fails build on mixed-content / localhost assets)
   - name: 'node:20-bookworm'
     waitFor: ['post-deploy-drift-guard']
     entrypoint: 'bash'

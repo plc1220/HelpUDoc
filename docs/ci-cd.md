@@ -16,7 +16,8 @@ It:
 2. Tags each image with both `$BUILD_ID` and `latest`.
 3. Rewrites the image tags in the manifests (in the Cloud Build workspace only) to use `$BUILD_ID`.
 4. Applies `infra/gke/k8s/` via `gke-deploy`.
-5. Optionally runs Playwright E2E to catch mixed-content / localhost-asset regressions.
+5. Syncs repo `skills/` into the mounted `skills-pvc` at `/app/skills`.
+6. Optionally runs Playwright E2E to catch mixed-content / localhost-asset regressions.
 
 Important: the repo manifests intentionally keep `:latest` in git. Cloud Build pins the deployed release to a specific `$BUILD_ID` at deploy time.
 
@@ -84,6 +85,7 @@ GKE storage is defined in `infra/gke/k8s/30-storage.yaml`.
 Key mounts used by the app:
 - `skills-pvc` mounted at `/app/skills` (backend reads this via `SKILLS_ROOT`).
 - `agent-config-pvc` mounted at `/agent/config` (backend reads runtime config via `AGENT_CONFIG_PATH=/agent/config/runtime.yaml`).
+- `workspace-pvc` mounted at `/app/workspaces` (user data; deploy sync does not modify this path).
 
 If the settings pages are broken in a new cluster, confirm these PVCs exist and are mounted into the `helpudoc-app` deployment.
 
