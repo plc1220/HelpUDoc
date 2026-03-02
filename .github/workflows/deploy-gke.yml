@@ -102,9 +102,21 @@ jobs:
 
       - name: Apply manifests
         run: |
+          set -euo pipefail
+
           kubectl apply -f infra/gke/k8s/00-namespace.yaml
-          kubectl apply -f infra/gke/k8s/10-secrets.yaml
-          kubectl apply -f infra/gke/k8s/20-configmap.yaml
+          if [[ -f infra/gke/k8s/10-secrets.yaml ]]; then
+            kubectl apply -f infra/gke/k8s/10-secrets.yaml
+          else
+            echo "Skipping infra/gke/k8s/10-secrets.yaml (not committed)."
+          fi
+          if [[ -f infra/gke/k8s/20-configmap.yaml ]]; then
+            kubectl apply -f infra/gke/k8s/20-configmap.yaml
+          else
+            echo "Skipping infra/gke/k8s/20-configmap.yaml (not committed)."
+          fi
+          kubectl -n helpudoc get secret helpudoc-secrets >/dev/null
+          kubectl -n helpudoc get configmap helpudoc-config >/dev/null
           kubectl apply -f infra/gke/k8s/30-storage.yaml
           kubectl apply -f infra/gke/k8s/40-postgres.yaml
           kubectl apply -f infra/gke/k8s/41-redis.yaml
