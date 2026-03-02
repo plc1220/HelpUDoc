@@ -17,7 +17,8 @@ It:
 3. Rewrites the image tags in the manifests (in the Cloud Build workspace only) to use `$BUILD_ID`.
 4. Applies `infra/gke/k8s/` via `gke-deploy`.
 5. Syncs repo `skills/` into the mounted `skills-pvc` at `/app/skills`.
-6. Optionally runs Playwright E2E to catch mixed-content / localhost-asset regressions.
+6. Optionally bootstraps a default admin user in Postgres (idempotent upsert by `externalId`).
+7. Optionally runs Playwright E2E to catch mixed-content / localhost-asset regressions.
 
 Important: the repo manifests intentionally keep `:latest` in git. Cloud Build pins the deployed release to a specific `$BUILD_ID` at deploy time.
 
@@ -75,6 +76,10 @@ Set up a Cloud Build trigger (in GCP Console) that:
   - `_GKE_LOCATION=asia-southeast1-a` (or your region if the cluster is regional)
   - `_RUN_E2E=false` by default
   - `_E2E_BASE_URL=https://...` only if `_RUN_E2E=true`
+  - Optional first-time admin bootstrap:
+    - `_BOOTSTRAP_ADMIN_EXTERNAL_ID=admin@local.com`
+    - `_BOOTSTRAP_ADMIN_EMAIL=admin@local.com`
+    - `_BOOTSTRAP_ADMIN_NAME=admin`
 
 This gives you "push to master => build => deploy" without running commands locally.
 
@@ -121,6 +126,15 @@ kubectl -n helpudoc rollout status deployment/helpudoc-frontend
 If you need a specific version, redeploy by running Cloud Build again (it will generate a new `$BUILD_ID`) or manually patch images (not recommended as the default workflow).
 
 ## Troubleshooting
+
+### Default admin bootstrap
+
+- Admin bootstrap is optional and disabled by default.
+- It is keyed by `users.externalId` (not email), and performs an upsert + `isAdmin=true`.
+- Recommended practice:
+  1. Use it only for first-time setup.
+  2. Use your real identity provider external ID as the bootstrap value.
+  3. Remove/blank bootstrap values after initialization to avoid persistent backdoor semantics.
 
 ### Cloud Build says FAIL but the cluster is still updating
 

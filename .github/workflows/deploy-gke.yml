@@ -11,6 +11,9 @@ env:
   REGION: ${{ secrets.GCP_REGION }}
   GKE_LOCATION: ${{ secrets.GKE_LOCATION }}
   GKE_CLUSTER: ${{ secrets.GKE_CLUSTER }}
+  BOOTSTRAP_ADMIN_EXTERNAL_ID: ${{ secrets.BOOTSTRAP_ADMIN_EXTERNAL_ID }}
+  BOOTSTRAP_ADMIN_EMAIL: ${{ secrets.BOOTSTRAP_ADMIN_EMAIL }}
+  BOOTSTRAP_ADMIN_NAME: ${{ secrets.BOOTSTRAP_ADMIN_NAME }}
   REGISTRY: ${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/helpudoc
   IMAGE_TAG: ${{ github.sha }}
 
@@ -140,6 +143,41 @@ jobs:
         run: |
           kubectl -n helpudoc rollout status deployment/helpudoc-app
           kubectl -n helpudoc rollout status deployment/helpudoc-frontend
+
+      - name: Bootstrap default admin (optional)
+        run: |
+          set -euo pipefail
+
+          ADMIN_EXTERNAL_ID="${BOOTSTRAP_ADMIN_EXTERNAL_ID:-}"
+          if [[ -z "${ADMIN_EXTERNAL_ID}" ]]; then
+            echo "Skipping admin bootstrap (BOOTSTRAP_ADMIN_EXTERNAL_ID not set)."
+            exit 0
+          fi
+
+          ADMIN_EMAIL="${BOOTSTRAP_ADMIN_EMAIL:-$ADMIN_EXTERNAL_ID}"
+          ADMIN_NAME="${BOOTSTRAP_ADMIN_NAME:-admin}"
+
+          NS="helpudoc"
+          PG_POD="$(kubectl -n "${NS}" get pods -l app=helpudoc-postgres -o jsonpath='{.items[0].metadata.name}')"
+          test -n "${PG_POD}"
+
+          POSTGRES_DB="$(kubectl -n "${NS}" get configmap helpudoc-config -o jsonpath='{.data.POSTGRES_DB}')"
+          POSTGRES_USER="$(kubectl -n "${NS}" get configmap helpudoc-config -o jsonpath='{.data.POSTGRES_USER}')"
+          POSTGRES_PASSWORD="$(kubectl -n "${NS}" get secret helpudoc-secrets -o jsonpath='{.data.POSTGRES_PASSWORD}' | base64 --decode)"
+
+          cat <<'SQL' | kubectl -n "${NS}" exec -i "${PG_POD}" -- env PGPASSWORD="${POSTGRES_PASSWORD}" psql -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" -v ON_ERROR_STOP=1 -v admin_external_id="${ADMIN_EXTERNAL_ID}" -v admin_email="${ADMIN_EMAIL}" -v admin_name="${ADMIN_NAME}"
+          INSERT INTO users (id, "externalId", "displayName", email, "isAdmin")
+          VALUES ((md5(random()::text || clock_timestamp()::text))::uuid, :'admin_external_id', :'admin_name', NULLIF(:'admin_email', ''), true)
+          ON CONFLICT ("externalId") DO UPDATE
+          SET "displayName" = EXCLUDED."displayName",
+              email = EXCLUDED.email,
+              "isAdmin" = true,
+              "updatedAt" = NOW();
+
+          SELECT id, "externalId", email, "displayName", "isAdmin"
+          FROM users
+          WHERE "externalId" = :'admin_external_id';
+          SQL
 
       - name: Sync skills to persistent volume
         run: |

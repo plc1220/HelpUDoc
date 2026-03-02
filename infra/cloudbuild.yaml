@@ -176,10 +176,53 @@ steps:
         tar -C skills -cf - . | kubectl -n helpudoc exec -i "$${APP_POD}" -c backend -- sh -lc "tar -xf - -C /app/skills"
         kubectl -n helpudoc exec "$${APP_POD}" -c backend -- sh -lc "test -f /app/skills/research/SKILL.md"
 
-  # 7. Post-deploy drift guard (fails if PVC-backed runtime/skills are stale)
+  # 7. Bootstrap default admin (optional, idempotent).
+  - id: bootstrap-admin
+    name: 'gcr.io/cloud-builders/kubectl'
+    waitFor: ['deploy']
+    env:
+      - 'CLOUDSDK_COMPUTE_ZONE=$_GKE_LOCATION'
+      - 'CLOUDSDK_CONTAINER_CLUSTER=$_GKE_CLUSTER'
+    entrypoint: 'sh'
+    args:
+      - '-c'
+      - |
+        set -eu
+
+        ADMIN_EXTERNAL_ID="${_BOOTSTRAP_ADMIN_EXTERNAL_ID}"
+        if [ -z "$${ADMIN_EXTERNAL_ID}" ]; then
+          echo "Skipping admin bootstrap (_BOOTSTRAP_ADMIN_EXTERNAL_ID not set)."
+          exit 0
+        fi
+
+        ADMIN_EMAIL="${_BOOTSTRAP_ADMIN_EMAIL:-$${ADMIN_EXTERNAL_ID}}"
+        ADMIN_NAME="${_BOOTSTRAP_ADMIN_NAME:-admin}"
+
+        PG_POD="$$(kubectl -n helpudoc get pods -l app=helpudoc-postgres -o jsonpath='{.items[0].metadata.name}')"
+        test -n "$${PG_POD}"
+
+        POSTGRES_DB="$$(kubectl -n helpudoc get configmap helpudoc-config -o jsonpath='{.data.POSTGRES_DB}')"
+        POSTGRES_USER="$$(kubectl -n helpudoc get configmap helpudoc-config -o jsonpath='{.data.POSTGRES_USER}')"
+        POSTGRES_PASSWORD="$$(kubectl -n helpudoc get secret helpudoc-secrets -o jsonpath='{.data.POSTGRES_PASSWORD}' | base64 --decode)"
+
+        cat <<'SQL' | kubectl -n helpudoc exec -i "$${PG_POD}" -- env PGPASSWORD="$${POSTGRES_PASSWORD}" psql -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}" -v ON_ERROR_STOP=1 -v admin_external_id="$${ADMIN_EXTERNAL_ID}" -v admin_email="$${ADMIN_EMAIL}" -v admin_name="$${ADMIN_NAME}"
+        INSERT INTO users (id, "externalId", "displayName", email, "isAdmin")
+        VALUES ((md5(random()::text || clock_timestamp()::text))::uuid, :'admin_external_id', :'admin_name', NULLIF(:'admin_email', ''), true)
+        ON CONFLICT ("externalId") DO UPDATE
+        SET "displayName" = EXCLUDED."displayName",
+            email = EXCLUDED.email,
+            "isAdmin" = true,
+            "updatedAt" = NOW();
+
+        SELECT id, "externalId", email, "displayName", "isAdmin"
+        FROM users
+        WHERE "externalId" = :'admin_external_id';
+        SQL
+
+  # 8. Post-deploy drift guard (fails if PVC-backed runtime/skills are stale)
   - id: post-deploy-drift-guard
     name: 'gcr.io/cloud-builders/kubectl'
-    waitFor: ['sync-skills-pvc']
+    waitFor: ['sync-skills-pvc', 'bootstrap-admin']
     env:
       - 'CLOUDSDK_COMPUTE_ZONE=$_GKE_LOCATION'
       - 'CLOUDSDK_CONTAINER_CLUSTER=$_GKE_CLUSTER'
@@ -199,7 +242,7 @@ steps:
         kubectl -n helpudoc exec "$${APP_POD}" -c agent -- sh -lc "grep -q 'request_plan_approval' /app/skills/research/SKILL.md"
         kubectl -n helpudoc exec "$${APP_POD}" -c agent -- python -c "import requests; data=requests.get('http://localhost:8001/agents', timeout=10).json(); tools=data['agents'][0]['tools']; assert 'request_plan_approval' in tools, tools; print('request_plan_approval available in /agents')"
 
-  # 8. E2E check (fails build on mixed-content / localhost assets)
+  # 9. E2E check (fails build on mixed-content / localhost assets)
   - name: 'node:20-bookworm'
     waitFor: ['post-deploy-drift-guard']
     entrypoint: 'bash'
@@ -248,6 +291,9 @@ substitutions:
   _GKE_CLUSTER: helpudoc-cluster
   _GKE_LOCATION: asia-southeast1-a
   _VITE_GOOGLE_CLIENT_ID: 16646144790-fvdv7liepgo18aiu20n3btmdr56l33pq.apps.googleusercontent.com
+  _BOOTSTRAP_ADMIN_EXTERNAL_ID: ""
+  _BOOTSTRAP_ADMIN_EMAIL: ""
+  _BOOTSTRAP_ADMIN_NAME: ""
   _RUN_E2E: "true"
   _E2E_BASE_URL: "https://lc-demo.com"
 
