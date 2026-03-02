@@ -85,7 +85,7 @@ jobs:
         run: |
           docker build -t "${REGISTRY}/helpudoc-backend:${IMAGE_TAG}" backend
           docker build -f agent/Dockerfile -t "${REGISTRY}/helpudoc-agent:${IMAGE_TAG}" .
-          docker build --build-arg VITE_API_URL=/api -t "${REGISTRY}/helpudoc-frontend:${IMAGE_TAG}" frontend
+          docker build -f frontend/Dockerfile.gke --build-arg VITE_API_URL=/api -t "${REGISTRY}/helpudoc-frontend:${IMAGE_TAG}" .
 
       - name: Push images
         run: |
