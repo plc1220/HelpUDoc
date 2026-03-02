@@ -86,7 +86,10 @@ jobs:
         run: |
           docker build -t "${REGISTRY}/helpudoc-backend:${IMAGE_TAG}" backend
           docker build -f agent/Dockerfile -t "${REGISTRY}/helpudoc-agent:${IMAGE_TAG}" .
-          docker build -f frontend/Dockerfile.gke --build-arg VITE_API_URL=/api -t "${REGISTRY}/helpudoc-frontend:${IMAGE_TAG}" .
+          docker build -f frontend/Dockerfile.gke \
+            --build-arg VITE_API_URL=/api \
+            --build-arg VITE_GOOGLE_CLIENT_ID="${{ secrets.VITE_GOOGLE_CLIENT_ID }}" \
+            -t "${REGISTRY}/helpudoc-frontend:${IMAGE_TAG}" .
 
       - name: Push images
         run: |
