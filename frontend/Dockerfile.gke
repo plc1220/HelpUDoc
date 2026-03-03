@@ -19,10 +19,10 @@ COPY frontend/tailwind.config.js frontend/postcss.config.js ./frontend/
 COPY frontend/vite.config.ts ./frontend/
 COPY frontend/index.html ./frontend/
 # NO COPY .env* (Secrets handled via GKE ConfigMap/Secrets or build args)
+COPY --from=deps /app/frontend/node_modules ./frontend/node_modules
 COPY frontend/public ./frontend/public
 COPY frontend/src ./frontend/src
 COPY packages/shared ./packages/shared
-COPY --from=deps /app/frontend/node_modules ./frontend/node_modules
 
 WORKDIR /app/frontend
 RUN npm run build

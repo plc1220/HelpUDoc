@@ -1,7 +1,8 @@
 FROM node:20-alpine AS deps
 WORKDIR /app
-COPY package*.json ./
-RUN npm ci
+COPY frontend/package*.json ./frontend/
+COPY packages/shared/package*.json ./packages/shared/
+RUN cd frontend && npm ci
 
 FROM node:20-alpine AS build
 WORKDIR /app
@@ -13,20 +14,21 @@ ENV VITE_GOOGLE_CLIENT_ID=${VITE_GOOGLE_CLIENT_ID}
 # Increase heap for Vite/tsc build inside container
 ENV NODE_OPTIONS=--max-old-space-size=4096
 
-COPY package*.json ./
-COPY tsconfig*.json* ./
-COPY tailwind.config.js postcss.config.js ./
-COPY vite.config.ts ./
-COPY index.html ./
-COPY .env* ./
-COPY public ./public
-COPY src ./src
-COPY --from=deps /app/node_modules ./node_modules
+COPY frontend/package*.json ./frontend/
+COPY frontend/tsconfig*.json* ./frontend/
+COPY frontend/tailwind.config.js frontend/postcss.config.js ./frontend/
+COPY frontend/vite.config.ts ./frontend/
+COPY frontend/index.html ./frontend/
+COPY frontend/.env* ./frontend/
+COPY --from=deps /app/frontend/node_modules ./frontend/node_modules
+COPY frontend/public ./frontend/public
+COPY frontend/src ./frontend/src
+COPY packages/shared ./packages/shared
 
-RUN npm run build
+RUN cd frontend && npm run build
 
 FROM nginx:1.27-alpine
-COPY --from=build /app/dist /usr/share/nginx/html
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=build /app/frontend/dist /usr/share/nginx/html
+COPY frontend/nginx.conf /etc/nginx/conf.d/default.conf
 EXPOSE 80
 CMD ["nginx", "-g", "daemon off;"]
