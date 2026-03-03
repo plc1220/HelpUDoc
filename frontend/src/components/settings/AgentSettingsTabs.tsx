@@ -4,6 +4,7 @@ import { fetchAgentConfig, saveAgentConfig } from '../../services/settingsApi';
 import ToolsTab from './ToolsTab';
 import SkillsRegistryTab from './SkillsRegistryTab';
 import YAML from 'yaml';
+import { getAuthUser } from '../../auth/authStore';
 
 const AgentSettingsTabs = () => {
     const [activeTab, setActiveTab] = useState<'tools' | 'skills'>('skills');
@@ -21,7 +22,14 @@ const AgentSettingsTabs = () => {
             setError(null);
         } catch (err) {
             console.error('Failed to load config', err);
-            setError('Failed to load configuration');
+            const message = err instanceof Error ? err.message : 'Failed to load configuration';
+            if (/admin access required/i.test(message)) {
+                const currentUser = getAuthUser();
+                const identity = currentUser?.email || currentUser?.id || 'unknown';
+                setError(`Admin access required. Current identity: ${identity}`);
+            } else {
+                setError(message);
+            }
         } finally {
             setLoading(false);
         }
@@ -39,7 +47,14 @@ const AgentSettingsTabs = () => {
             setConfig(newConfig);
         } catch (err) {
             console.error('Failed to save config', err);
-            setError('Failed to save configuration');
+            const message = err instanceof Error ? err.message : 'Failed to save configuration';
+            if (/admin access required/i.test(message)) {
+                const currentUser = getAuthUser();
+                const identity = currentUser?.email || currentUser?.id || 'unknown';
+                setError(`Admin access required. Current identity: ${identity}`);
+            } else {
+                setError(message);
+            }
         } finally {
             setSaving(false);
         }

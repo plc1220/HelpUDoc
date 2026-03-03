@@ -17,7 +17,12 @@ export type ManagedGroup = {
 export const fetchAgentConfig = async (): Promise<string> => {
   const response = await apiFetch(`${API_URL}/settings/agent-config`);
   if (!response.ok) {
-    throw new Error('Failed to load runtime config');
+    const data = await response.json().catch(() => ({}));
+    const apiError = typeof data.error === 'string' ? data.error : '';
+    if (response.status === 401 || response.status === 403 || /admin access required/i.test(apiError)) {
+      throw new Error('Admin access required to open Settings.');
+    }
+    throw new Error(apiError || 'Failed to load runtime config');
   }
   const data = await response.json();
   return data.content;
@@ -33,7 +38,12 @@ export const saveAgentConfig = async (content: string) => {
   });
 
   if (!response.ok) {
-    throw new Error('Failed to save runtime config');
+    const data = await response.json().catch(() => ({}));
+    const apiError = typeof data.error === 'string' ? data.error : '';
+    if (response.status === 401 || response.status === 403 || /admin access required/i.test(apiError)) {
+      throw new Error('Admin access required to update Settings.');
+    }
+    throw new Error(apiError || 'Failed to save runtime config');
   }
 };
 
