@@ -99,6 +99,12 @@ services:
       SKILLS_ROOT: /app/skills
       AGENT_CONFIG_PATH: /agent/config/runtime.yaml
       ADMIN_EMAILS: ${ADMIN_EMAILS:-admin@local.com}
+      GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
+      GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET:-}
+      GOOGLE_OAUTH_REDIRECT_URI: ${GOOGLE_OAUTH_REDIRECT_URI:-http://localhost:3000/api/auth/google/callback}
+      GOOGLE_OAUTH_POST_LOGIN_REDIRECT: ${GOOGLE_OAUTH_POST_LOGIN_REDIRECT:-http://localhost:8080/login}
+      GOOGLE_OAUTH_SCOPES: ${GOOGLE_OAUTH_SCOPES:-openid email profile https://www.googleapis.com/auth/bigquery}
+      OAUTH_TOKEN_ENCRYPTION_KEY: ${OAUTH_TOKEN_ENCRYPTION_KEY:-}
     ports:
       - "3000:3000"
     volumes:
@@ -142,6 +148,7 @@ services:
       args:
         VITE_API_URL: ${FRONTEND_API_URL:-/api}
         VITE_GOOGLE_CLIENT_ID: ${VITE_GOOGLE_CLIENT_ID:-16646144790-fvdv7liepgo18aiu20n3btmdr56l33pq.apps.googleusercontent.com}
+        VITE_AUTH_MODE: ${VITE_AUTH_MODE:-headers}
     depends_on:
       backend:
         condition: service_started

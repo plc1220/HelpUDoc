@@ -1,158 +1,103 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { getAuthUser, setAuthUser } from './authStore';
 import type { AuthUser } from './authStore';
-
-declare global {
-  interface Window {
-    google?: any;
-  }
-}
+import { API_URL, AUTH_MODE, apiFetch } from '../services/apiClient';
 
 interface AuthContextValue {
   user: AuthUser | null;
   loading: boolean;
   googleReady: boolean;
   googleError: string | null;
+  authMode: 'oidc' | 'headers';
   signInWithEmail: (email: string, name?: string, userIdOverride?: string) => Promise<AuthUser>;
-  signOut: () => void;
+  signInWithGoogle: (returnTo?: string) => Promise<void>;
+  signOut: () => Promise<void>;
+  refreshSession: () => Promise<void>;
 }
 
-type GoogleCredentialPayload = {
-  sub: string;
-  email?: string;
-  name?: string;
-  picture?: string;
+type AuthMeResponse = {
+  authenticated: boolean;
+  authMode?: string;
+  user?: {
+    userId: string;
+    externalId: string;
+    displayName: string;
+    email?: string | null;
+    isAdmin: boolean;
+  } | null;
 };
-
-type GoogleCredentialResponse = {
-  credential?: string;
-};
-
-const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
-const loadGoogleScript = (() => {
-  let promise: Promise<void> | null = null;
-  return () => {
-    if (promise) return promise;
-    promise = new Promise((resolve, reject) => {
-      if (typeof window === 'undefined') {
-        return reject(new Error('Google auth is only available in the browser'));
-      }
-      if (window.google?.accounts?.id) {
-        return resolve();
-      }
-      const script = document.createElement('script');
-      const timeout = window.setTimeout(() => {
-        reject(new Error('Google auth script load timed out. Check blockers or network.'));
-      }, 8000);
+const normalizeAuthMode = (mode?: string): 'oidc' | 'headers' => {
+  if ((mode || '').toLowerCase() === 'headers') {
+    return 'headers';
+  }
+  return 'oidc';
+};
 
-      script.src = 'https://accounts.google.com/gsi/client';
-      script.async = true;
-      script.defer = true;
-      script.onload = () => {
-        window.clearTimeout(timeout);
-        resolve();
-      };
-      script.onerror = () => {
-        window.clearTimeout(timeout);
-        reject(new Error('Failed to load Google auth script'));
-      };
-      document.head.appendChild(script);
-    });
-    return promise;
-  };
-})();
-
-function decodeGoogleCredential(token: string): GoogleCredentialPayload | null {
-  try {
-    const payload = token.split('.')[1];
-    if (!payload) return null;
-    const normalized = payload.replace(/-/g, '+').replace(/_/g, '/');
-    const decoded = atob(normalized);
-    return JSON.parse(decoded);
-  } catch (error) {
-    console.warn('Failed to parse Google credential', error);
+const toAuthUser = (payload: AuthMeResponse['user']): AuthUser | null => {
+  if (!payload?.userId || !payload.displayName) {
     return null;
   }
-}
+  const provider: AuthUser['provider'] = payload.externalId.startsWith('google-') ? 'google' : 'local';
+  return {
+    id: payload.userId,
+    name: payload.displayName,
+    email: payload.email || null,
+    provider,
+  };
+};
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<AuthUser | null>(() => getAuthUser());
-  const [loading, setLoading] = useState(false);
-  const [googleReady, setGoogleReady] = useState(false);
+  const [authMode, setAuthMode] = useState<'oidc' | 'headers'>(() => normalizeAuthMode(AUTH_MODE));
+  const [user, setUser] = useState<AuthUser | null>(() => (authMode === 'headers' ? getAuthUser() : null));
+  const [loading, setLoading] = useState(authMode === 'oidc');
   const [googleError, setGoogleError] = useState<string | null>(null);
-  const googleInitRef = useRef(false);
 
   const persistUser = useCallback((next: AuthUser | null) => {
     setAuthUser(next);
     setUser(next);
   }, []);
 
-  const handleGoogleCredential = useCallback((response: GoogleCredentialResponse) => {
-    if (!response?.credential) {
-      console.warn('No credential returned from Google.');
+  const refreshSession = useCallback(async () => {
+    if (authMode === 'headers') {
+      persistUser(getAuthUser());
+      setLoading(false);
       return;
     }
-    const payload = decodeGoogleCredential(response.credential);
-    if (!payload?.sub) {
-      console.warn('Unable to parse Google credential.');
-      return;
+
+    setLoading(true);
+    try {
+      const response = await apiFetch(`${API_URL}/auth/me`);
+      if (!response.ok) {
+        persistUser(null);
+        return;
+      }
+      const payload = (await response.json()) as AuthMeResponse;
+      const serverMode = normalizeAuthMode(payload.authMode);
+      setAuthMode(serverMode);
+      if (payload.authenticated && payload.user) {
+        persistUser(toAuthUser(payload.user));
+      } else {
+        persistUser(null);
+      }
+    } catch (error) {
+      console.error('Failed to refresh auth session', error);
+      persistUser(null);
+    } finally {
+      setLoading(false);
     }
-    const userFromGoogle: AuthUser = {
-      id: `google-${payload.sub}`,
-      name: payload.name || payload.email || 'Google User',
-      email: payload.email,
-      avatarUrl: payload.picture || null,
-      provider: 'google',
-    };
-    persistUser(userFromGoogle);
-  }, [persistUser]);
+  }, [authMode, persistUser]);
 
   useEffect(() => {
-    if (!GOOGLE_CLIENT_ID) {
-      setGoogleError('Google Client ID is not configured. Set VITE_GOOGLE_CLIENT_ID.');
-      setGoogleReady(false);
-      return;
-    }
-    let cancelled = false;
-    setGoogleError(null);
-
-    const initGoogle = async () => {
-      try {
-        await loadGoogleScript();
-        if (cancelled) return;
-        if (!window.google?.accounts?.id) {
-          throw new Error('Google auth is unavailable right now');
-        }
-        if (!googleInitRef.current) {
-          window.google.accounts.id.initialize({
-            client_id: GOOGLE_CLIENT_ID,
-            callback: handleGoogleCredential,
-            ux_mode: 'popup',
-          });
-          googleInitRef.current = true;
-        }
-        if (!cancelled) {
-          setGoogleReady(true);
-        }
-      } catch (error) {
-        if (cancelled) return;
-        console.error('Failed to initialize Google auth', error);
-        setGoogleError(error instanceof Error ? error.message : 'Failed to initialize Google auth.');
-        setGoogleReady(false);
-      }
-    };
-
-    initGoogle();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [handleGoogleCredential]);
+    void refreshSession();
+  }, [refreshSession]);
 
   const signInWithEmail = useCallback(async (email: string, name?: string, userIdOverride?: string) => {
+    if (authMode !== 'headers') {
+      throw new Error('Email/header sign-in is disabled in OIDC mode. Use Google sign-in.');
+    }
     setLoading(true);
     try {
       if (!email.trim()) {
@@ -171,20 +116,45 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } finally {
       setLoading(false);
     }
-  }, [persistUser]);
+  }, [authMode, persistUser]);
 
-  const signOut = useCallback(() => {
-    persistUser(null);
-  }, [persistUser]);
+  const signInWithGoogle = useCallback(async (returnTo?: string) => {
+    setGoogleError(null);
+    const url = new URL(`${API_URL}/auth/google/start`, window.location.origin);
+    if (returnTo) {
+      url.searchParams.set('returnTo', returnTo);
+    }
+    window.location.assign(url.toString());
+  }, []);
+
+  const signOut = useCallback(async () => {
+    if (authMode === 'headers') {
+      persistUser(null);
+      return;
+    }
+
+    try {
+      await apiFetch(`${API_URL}/auth/logout`, {
+        method: 'POST',
+      });
+    } catch (error) {
+      console.error('Failed to sign out', error);
+    } finally {
+      persistUser(null);
+    }
+  }, [authMode, persistUser]);
 
   const value = useMemo<AuthContextValue>(() => ({
     user,
     loading,
-    googleReady,
+    googleReady: authMode === 'oidc',
     googleError,
+    authMode,
     signInWithEmail,
+    signInWithGoogle,
     signOut,
-  }), [googleError, googleReady, loading, signInWithEmail, signOut, user]);
+    refreshSession,
+  }), [authMode, googleError, loading, refreshSession, signInWithEmail, signInWithGoogle, signOut, user]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };
