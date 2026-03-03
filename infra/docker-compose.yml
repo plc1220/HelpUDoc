@@ -96,10 +96,15 @@ services:
       S3_PUBLIC_BASE_URL: ${S3_PUBLIC_BASE_URL:-http://localhost:9000/helpudoc}
       S3_FORCE_PATH_STYLE: "true"
       WORKSPACE_ROOT: /app/workspaces
+      SKILLS_ROOT: /app/skills
+      AGENT_CONFIG_PATH: /agent/config/runtime.yaml
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-admin@local.com}
     ports:
       - "3000:3000"
     volumes:
       - workspace_data:/app/workspaces
+      - skills_data:/app/skills
+      - agent_config_data:/agent/config
 
   agent:
     build:
@@ -117,6 +122,7 @@ services:
       BQ_ACCESS_TOKEN: ${BQ_ACCESS_TOKEN:-}
       LLM_MODEL: ${LLM_MODEL:-gemini-3-flash-preview}
       WORKSPACE_ROOT: /app/workspaces
+      AGENT_CONFIG_PATH: /agent/config/runtime.yaml
       S3_ENDPOINT: http://minio:9000
       MINIO_ENDPOINT: http://minio:9000
       S3_BUCKET_NAME: ${S3_BUCKET_NAME:-helpudoc}
@@ -125,13 +131,17 @@ services:
       - "8001:8001"
     volumes:
       - workspace_data:/app/workspaces
+      - skills_data:/app/skills
+      - skills_data:/skills
+      - agent_config_data:/agent/config
 
   frontend:
     build:
-      context: ../frontend
+      context: ..
+      dockerfile: frontend/Dockerfile
       args:
         VITE_API_URL: ${FRONTEND_API_URL:-/api}
-        VITE_GOOGLE_CLIENT_ID: ${VITE_GOOGLE_CLIENT_ID:-}
+        VITE_GOOGLE_CLIENT_ID: ${VITE_GOOGLE_CLIENT_ID:-16646144790-fvdv7liepgo18aiu20n3btmdr56l33pq.apps.googleusercontent.com}
     depends_on:
       backend:
         condition: service_started
@@ -143,3 +153,5 @@ volumes:
   redis_data:
   minio_data:
   workspace_data:
+  skills_data:
+  agent_config_data:
