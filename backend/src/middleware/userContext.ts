@@ -5,7 +5,7 @@ import { UserContext } from '../types/user';
 const DEFAULT_USER_ID = process.env.DEFAULT_USER_ID || 'local-user';
 const DEFAULT_USER_NAME = process.env.DEFAULT_USER_NAME || 'Local User';
 const DEFAULT_USER_EMAIL = process.env.DEFAULT_USER_EMAIL || undefined;
-const AUTH_MODE = (process.env.AUTH_MODE || 'oidc').trim().toLowerCase();
+const AUTH_MODE = (process.env.AUTH_MODE || 'headers').trim().toLowerCase();
 
 export function userContextMiddleware(userService: UserService) {
   return async (req: Request, res: Response, next: NextFunction) => {
