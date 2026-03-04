@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import crypto from 'crypto';
 import { z } from 'zod';
 import { runAgent, runAgentStream } from '../services/agentService';
 import { WorkspaceService } from '../services/workspaceService';
@@ -21,11 +22,14 @@ import {
 } from '../services/agentRunService';
 import { blockingRedisClient } from '../services/redisService';
 import { signAgentContextToken } from '../services/agentToken';
+import { GoogleOAuthService, GoogleOAuthTokenMissingError } from '../services/googleOAuthService';
 
 const DEFAULT_PRESENTATION_PERSONA = 'fast';
 const IMAGE_NAME_PATTERN = /\.(png|jpe?g|gif|bmp|webp|svg)$/i;
 const DEBUG_AGENT_RUN_STREAM =
   process.env.DEBUG_AGENT_RUN_STREAM === '1' || process.env.DEBUG_AGENT_RUN_STREAM === 'true';
+const AUTH_MODE = (process.env.AUTH_MODE || 'headers').trim().toLowerCase();
+const BQ_DELEGATED_MCP_SERVER_ID = 'toolbox-bq-demo';
 
 const extractTextFromAgentReply = (reply: unknown): string => {
   if (reply === null || reply === undefined) {
@@ -59,7 +63,11 @@ const extractTextFromAgentReply = (reply: unknown): string => {
   }
 };
 
-export default function(workspaceService: WorkspaceService, fileService: FileService) {
+export default function(
+  workspaceService: WorkspaceService,
+  fileService: FileService,
+  googleOAuthService: GoogleOAuthService,
+) {
   const router = Router();
   const paper2SlidesService = new Paper2SlidesService(fileService);
   const paper2SlidesJobService = new Paper2SlidesJobService(fileService, workspaceService, paper2SlidesService);
@@ -111,6 +119,74 @@ export default function(workspaceService: WorkspaceService, fileService: FileSer
       throw new HttpError(401, 'Missing user context');
     }
     return req.userContext;
+  };
+
+  const canUseDelegatedServer = (policy: {
+    isAdmin: boolean;
+    mcpServerDenyIds: string[];
+  }): boolean => {
+    if (policy.isAdmin) {
+      return true;
+    }
+    return !policy.mcpServerDenyIds.includes(BQ_DELEGATED_MCP_SERVER_ID);
+  };
+
+  const buildMcpAuthFingerprint = (serverId: string, bearerToken: string, expiresAt: number): string => {
+    const tokenHash = crypto.createHash('sha256').update(bearerToken).digest('hex');
+    const expBucket = Math.floor(expiresAt / 60);
+    return crypto
+      .createHash('sha256')
+      .update(`${serverId}|${expBucket}|${tokenHash}`)
+      .digest('hex');
+  };
+
+  const buildAgentAuthToken = async (input: {
+    userId: string;
+    workspaceId: string;
+    policy: {
+      isAdmin: boolean;
+      mcpServerAllowIds: string[];
+      mcpServerDenyIds: string[];
+    };
+  }): Promise<string | null> => {
+    const payload: Record<string, unknown> = {
+      sub: input.userId,
+      userId: input.userId,
+      workspaceId: input.workspaceId,
+      ...input.policy,
+    };
+
+    if (AUTH_MODE !== 'headers' && canUseDelegatedServer(input.policy)) {
+      try {
+        const delegated = await googleOAuthService.getDelegatedAccessToken(input.userId);
+        const authorization = `Bearer ${delegated.accessToken}`;
+        const fingerprint = buildMcpAuthFingerprint(
+          BQ_DELEGATED_MCP_SERVER_ID,
+          delegated.accessToken,
+          delegated.expiresAt,
+        );
+        payload.mcpAuth = {
+          [BQ_DELEGATED_MCP_SERVER_ID]: {
+            Authorization: authorization,
+          },
+        };
+        payload.mcpAuthFingerprint = fingerprint;
+        console.info('[mcp-auth]', {
+          userId: input.userId,
+          workspaceId: input.workspaceId,
+          serverId: BQ_DELEGATED_MCP_SERVER_ID,
+          tokenSource: delegated.source,
+          expBucket: Math.floor(delegated.expiresAt / 60),
+        });
+      } catch (error) {
+        if (error instanceof GoogleOAuthTokenMissingError) {
+          throw new HttpError(403, 'Google BigQuery access is not connected. Please sign in with Google again.');
+        }
+        throw error;
+      }
+    }
+
+    return signAgentContextToken(payload);
   };
 
   router.post('/paper2slides/jobs', async (req, res) => {
@@ -251,11 +327,10 @@ export default function(workspaceService: WorkspaceService, fileService: FileSer
       const { persona, prompt, workspaceId, history, forceReset } = runAgentSchema.parse(req.body);
       const policy = await workspaceService.getMcpServerPolicy(workspaceId, user.userId, { requireEdit: true });
       const enrichedPrompt = await injectTaggedFileUrls(prompt, workspaceId, user.userId);
-      const authToken = signAgentContextToken({
-        sub: user.userId,
+      const authToken = await buildAgentAuthToken({
         userId: user.userId,
         workspaceId,
-        ...policy,
+        policy,
       });
       const response = await runAgent(persona, workspaceId, enrichedPrompt, history, { forceReset, authToken: authToken || undefined });
       res.json(response);
@@ -295,11 +370,10 @@ export default function(workspaceService: WorkspaceService, fileService: FileSer
       const { persona, prompt, workspaceId, history, forceReset } = runAgentSchema.parse(req.body);
       const policy = await workspaceService.getMcpServerPolicy(workspaceId, user.userId, { requireEdit: true });
       const enrichedPrompt = await injectTaggedFileUrls(prompt, workspaceId, user.userId);
-      const authToken = signAgentContextToken({
-        sub: user.userId,
+      const authToken = await buildAgentAuthToken({
         userId: user.userId,
         workspaceId,
-        ...policy,
+        policy,
       });
       streamResponse = await runAgentStream(persona, workspaceId, enrichedPrompt, history, {
         forceReset,
@@ -351,11 +425,10 @@ export default function(workspaceService: WorkspaceService, fileService: FileSer
       await workspaceService.ensureMembership(workspaceId, user.userId, { requireEdit: true });
       const policy = await workspaceService.getMcpServerPolicy(workspaceId, user.userId, { requireEdit: true });
       const enrichedPrompt = await injectTaggedFileUrls(prompt, workspaceId, user.userId);
-      const authToken = signAgentContextToken({
-        sub: user.userId,
+      const authToken = await buildAgentAuthToken({
         userId: user.userId,
         workspaceId,
-        ...policy,
+        policy,
       });
       const { runId, status } = await startAgentRun({
         persona,

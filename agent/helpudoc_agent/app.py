@@ -298,6 +298,13 @@ def create_app() -> FastAPI:
                     "tools": tool_names,
                     "subagents": [],
                 },
+                {
+                    "name": "skill-builder",
+                    "displayName": "Skill Builder",
+                    "description": "Admin-oriented assistant for creating and updating skills with structured actions.",
+                    "tools": tool_names,
+                    "subagents": [],
+                },
             ],
             "mcpServers": describe_mcp_servers(settings),
         }
@@ -325,12 +332,36 @@ def create_app() -> FastAPI:
         allow_ids = payload.get("mcpServerAllowIds") or []
         deny_ids = payload.get("mcpServerDenyIds") or []
         is_admin = bool(payload.get("isAdmin", False))
+        allow_script_runner = bool(payload.get("allowScriptRunner") or payload.get("allow_script_runner"))
         if isinstance(allow_ids, list) or isinstance(deny_ids, list) or isinstance(is_admin, bool):
             context["mcp_policy"] = {
                 "allowIds": [str(x) for x in (allow_ids or []) if str(x).strip()],
                 "denyIds": [str(x) for x in (deny_ids or []) if str(x).strip()],
                 "isAdmin": is_admin,
             }
+        mcp_auth = payload.get("mcpAuth") or {}
+        if isinstance(mcp_auth, dict):
+            normalized_auth: Dict[str, Dict[str, str]] = {}
+            for server_name, headers in mcp_auth.items():
+                if not isinstance(server_name, str) or not server_name.strip():
+                    continue
+                if not isinstance(headers, dict):
+                    continue
+                normalized_headers: Dict[str, str] = {}
+                for header_name, header_value in headers.items():
+                    if not isinstance(header_name, str) or not header_name.strip():
+                        continue
+                    if isinstance(header_value, str) and header_value.strip():
+                        normalized_headers[header_name] = header_value
+                if normalized_headers:
+                    normalized_auth[server_name.strip()] = normalized_headers
+            if normalized_auth:
+                context["mcp_auth"] = normalized_auth
+        mcp_auth_fingerprint = payload.get("mcpAuthFingerprint")
+        if isinstance(mcp_auth_fingerprint, str) and mcp_auth_fingerprint.strip():
+            context["mcp_auth_fingerprint"] = mcp_auth_fingerprint.strip()
+        if allow_script_runner:
+            context["allow_script_runner"] = True
         return context
 
 

@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import agentRoutes from './agent';
+import authRoutes from './auth';
 import workspaceRoutes from './workspaces';
 import fileRoutes from './files';
 import conversationRoutes from './conversations';
@@ -15,6 +16,8 @@ import { UserService } from '../services/userService';
 import { KnowledgeService } from '../services/knowledgeService';
 import { redisClient } from '../services/redisService';
 import { RagQueueService } from '../services/ragQueueService';
+import { UserOAuthTokenService } from '../services/userOAuthTokenService';
+import { GoogleOAuthService } from '../services/googleOAuthService';
 
 export default function(dbService: DatabaseService, userService: UserService) {
   const router = Router();
@@ -23,8 +26,11 @@ export default function(dbService: DatabaseService, userService: UserService) {
   const fileService = new FileService(dbService, workspaceService, ragQueueService);
   const conversationService = new ConversationService(dbService, workspaceService);
   const knowledgeService = new KnowledgeService(dbService, workspaceService);
+  const userOAuthTokenService = new UserOAuthTokenService(dbService);
+  const googleOAuthService = new GoogleOAuthService(userOAuthTokenService);
 
-  router.use('/agent', agentRoutes(workspaceService, fileService));
+  router.use('/auth', authRoutes(userService, googleOAuthService));
+  router.use('/agent', agentRoutes(workspaceService, fileService, googleOAuthService));
   router.use('/settings', requireSystemAdmin(userService), settingsRoutes());
   router.use('/users', requireSystemAdmin(userService), usersRoutes(userService));
   router.use('/workspaces', workspaceRoutes(workspaceService, userService));

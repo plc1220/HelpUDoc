@@ -22,6 +22,7 @@ export class DatabaseService {
 
   public async initialize(): Promise<void> {
     await this.createUsersTable();
+    await this.createUserOAuthTokensTable();
     await this.createGroupsTable();
     await this.createGroupMembersTable();
     await this.createSkillGrantsTable();
@@ -111,6 +112,30 @@ export class DatabaseService {
         table.timestamp('updatedAt').notNullable().defaultTo(this.db.fn.now());
       });
       console.log('Created "groups" table.');
+    }
+  }
+
+  private async createUserOAuthTokensTable(): Promise<void> {
+    const exists = await this.db.schema.hasTable('user_oauth_tokens');
+    if (!exists) {
+      await this.db.schema.createTable('user_oauth_tokens', (table) => {
+        table.bigIncrements('id').primary();
+        table.uuid('userId').notNullable().references('id').inTable('users').onDelete('CASCADE');
+        table.string('provider', 64).notNullable();
+        table.text('encryptedJson').notNullable();
+        table.timestamp('createdAt').notNullable().defaultTo(this.db.fn.now());
+        table.timestamp('updatedAt').notNullable().defaultTo(this.db.fn.now());
+        table.unique(['userId', 'provider']);
+      });
+      console.log('Created "user_oauth_tokens" table.');
+    } else {
+      await this.ensureColumn('user_oauth_tokens', 'provider', (table) => table.string('provider', 64).notNullable().defaultTo('google'));
+      await this.ensureColumn('user_oauth_tokens', 'encryptedJson', (table) => table.text('encryptedJson').notNullable().defaultTo('{}'));
+      await this.ensureColumn('user_oauth_tokens', 'createdAt', (table) => table.timestamp('createdAt').defaultTo(this.db.fn.now()));
+      await this.ensureColumn('user_oauth_tokens', 'updatedAt', (table) => table.timestamp('updatedAt').defaultTo(this.db.fn.now()));
+      await this.db.raw(
+        'CREATE UNIQUE INDEX IF NOT EXISTS user_oauth_tokens_user_provider_uidx ON user_oauth_tokens ("userId", "provider")',
+      );
     }
   }
 
