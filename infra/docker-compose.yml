@@ -81,6 +81,10 @@ services:
       SESSION_SECRET: ${SESSION_SECRET:-change-me}
       SESSION_NAME: ${SESSION_NAME:-helpudoc.sid}
       SESSION_TTL_SECONDS: ${SESSION_TTL_SECONDS:-604800}
+      AUTH_MODE: ${AUTH_MODE:-headers}
+      DEFAULT_USER_ID: ${DEFAULT_USER_ID:-local-admin@local.com}
+      DEFAULT_USER_NAME: ${DEFAULT_USER_NAME:-admin}
+      DEFAULT_USER_EMAIL: ${DEFAULT_USER_EMAIL:-admin@local.com}
       AGENT_URL: http://agent:8001
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
@@ -96,10 +100,21 @@ services:
       S3_PUBLIC_BASE_URL: ${S3_PUBLIC_BASE_URL:-http://localhost:9000/helpudoc}
       S3_FORCE_PATH_STYLE: "true"
       WORKSPACE_ROOT: /app/workspaces
+      SKILLS_ROOT: /app/skills
+      AGENT_CONFIG_PATH: /agent/config/runtime.yaml
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-admin@local.com}
+      GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
+      GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET:-}
+      GOOGLE_OAUTH_REDIRECT_URI: ${GOOGLE_OAUTH_REDIRECT_URI:-http://localhost:3000/api/auth/google/callback}
+      GOOGLE_OAUTH_POST_LOGIN_REDIRECT: ${GOOGLE_OAUTH_POST_LOGIN_REDIRECT:-http://localhost:8080/login}
+      GOOGLE_OAUTH_SCOPES: ${GOOGLE_OAUTH_SCOPES:-openid email profile https://www.googleapis.com/auth/bigquery}
+      OAUTH_TOKEN_ENCRYPTION_KEY: ${OAUTH_TOKEN_ENCRYPTION_KEY:-}
     ports:
       - "3000:3000"
     volumes:
       - workspace_data:/app/workspaces
+      - skills_data:/app/skills
+      - agent_config_data:/agent/config
 
   agent:
     build:
@@ -117,6 +132,7 @@ services:
       BQ_ACCESS_TOKEN: ${BQ_ACCESS_TOKEN:-}
       LLM_MODEL: ${LLM_MODEL:-gemini-3-flash-preview}
       WORKSPACE_ROOT: /app/workspaces
+      AGENT_CONFIG_PATH: /agent/config/runtime.yaml
       S3_ENDPOINT: http://minio:9000
       MINIO_ENDPOINT: http://minio:9000
       S3_BUCKET_NAME: ${S3_BUCKET_NAME:-helpudoc}
@@ -125,13 +141,17 @@ services:
       - "8001:8001"
     volumes:
       - workspace_data:/app/workspaces
+      - skills_data:/app/skills
+      - skills_data:/skills
+      - agent_config_data:/agent/config
 
   frontend:
     build:
       context: ../frontend
       args:
         VITE_API_URL: ${FRONTEND_API_URL:-/api}
-        VITE_GOOGLE_CLIENT_ID: ${VITE_GOOGLE_CLIENT_ID:-}
+        VITE_GOOGLE_CLIENT_ID: ${VITE_GOOGLE_CLIENT_ID:-16646144790-fvdv7liepgo18aiu20n3btmdr56l33pq.apps.googleusercontent.com}
+        VITE_AUTH_MODE: ${VITE_AUTH_MODE:-headers}
     depends_on:
       backend:
         condition: service_started
@@ -143,3 +163,5 @@ volumes:
   redis_data:
   minio_data:
   workspace_data:
+  skills_data:
+  agent_config_data:
