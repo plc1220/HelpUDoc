@@ -95,9 +95,21 @@ class AgentRegistry:
         policy_key = json.dumps(context_payload.get("mcp_policy", {}) or {}, sort_keys=True, default=str)
         mcp_auth_fingerprint = str(context_payload.get("mcp_auth_fingerprint") or "")
         user_key = str(context_payload.get("user_id") or "")
+        cache_scope_prefix = f"{user_key}:{policy_key}:"
         key = (resolved_name, workspace_id, f"{user_key}:{policy_key}:{mcp_auth_fingerprint}")
         if key in self._cache:
             return self._cache[key]
+        # Prevent unbounded growth when delegated auth fingerprints rotate over time.
+        stale_keys = [
+            cache_key
+            for cache_key in self._cache.keys()
+            if cache_key[0] == resolved_name
+            and cache_key[1] == workspace_id
+            and str(cache_key[2]).startswith(cache_scope_prefix)
+            and cache_key != key
+        ]
+        for stale_key in stale_keys:
+            self._cache.pop(stale_key, None)
 
         workspace_base = self.settings.backend.workspace_root
         workspace_base.mkdir(parents=True, exist_ok=True)
