@@ -28,7 +28,7 @@ const DEFAULT_PRESENTATION_PERSONA = 'fast';
 const IMAGE_NAME_PATTERN = /\.(png|jpe?g|gif|bmp|webp|svg)$/i;
 const DEBUG_AGENT_RUN_STREAM =
   process.env.DEBUG_AGENT_RUN_STREAM === '1' || process.env.DEBUG_AGENT_RUN_STREAM === 'true';
-const AUTH_MODE = (process.env.AUTH_MODE || 'oidc').trim().toLowerCase();
+const AUTH_MODE = (process.env.AUTH_MODE || 'headers').trim().toLowerCase();
 const BQ_DELEGATED_MCP_SERVER_ID = 'toolbox-bq-demo';
 
 const extractTextFromAgentReply = (reply: unknown): string => {
