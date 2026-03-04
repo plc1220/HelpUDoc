@@ -35,6 +35,12 @@ tools:
   - name: data_agent_tools
     entrypoint: helpudoc_agent.data_agent_tools:build_data_agent_tools
     description: Tools for Data Agent (DuckDB, Charts)
+  - name: arxiv_search
+    entrypoint: helpudoc_agent.arxiv_tools:build_arxiv_tools
+    description: Search arXiv and summarize relevant papers
+  - name: run_skill_python_script
+    entrypoint: helpudoc_agent.skill_script_tools:build_skill_script_tools
+    description: Restricted Python script runner for active skill scripts
   - name: get_image_url
     kind: builtin
     description: Get public URLs for images stored in MinIO/S3
@@ -57,7 +63,7 @@ tools:
 mcp_servers:
   - name: toolbox-bq-demo
     transport: http
-    url: https://toolbox-heboslofda-as.a.run.app/mcp
+    url: https://toolbox-452883396851.asia-southeast1.run.app/mcp
     bearer_token_env_var: BQ_ACCESS_TOKEN
     default_access: allow
     description: Toolbox BigQuery demo MCP (Streamable HTTP)

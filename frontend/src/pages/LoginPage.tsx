@@ -1,5 +1,5 @@
 import type { FormEvent } from 'react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Sun, Moon, Mail, Lock, ArrowRight } from 'lucide-react';
 import { useAuth } from '../auth/AuthProvider';
@@ -13,7 +13,7 @@ type PaletteMode = 'light' | 'dark';
 const IS_DEV = import.meta.env.DEV;
 
 const LoginPage = () => {
-  const { user, loading, googleReady, googleError, signInWithEmail } = useAuth();
+  const { user, loading, googleReady, googleError, authMode, signInWithEmail, signInWithGoogle } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [colorMode, setColorMode] = useState<PaletteMode>(() => {
@@ -29,7 +29,6 @@ const LoginPage = () => {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [focusedField, setFocusedField] = useState<string | null>(null);
-  const googleButtonRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', colorMode);
@@ -40,12 +39,19 @@ const LoginPage = () => {
   }, [colorMode]);
 
   useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const authError = params.get('authError');
+    if (authError) {
+      setError(`Google sign-in failed: ${authError}`);
+      return;
+    }
     if (user) {
       const state = location.state as LocationState | null;
-      const redirectTo = state?.from || '/';
+      const returnTo = params.get('returnTo');
+      const redirectTo = (returnTo && returnTo.startsWith('/')) ? returnTo : (state?.from || '/');
       navigate(redirectTo, { replace: true });
     }
-  }, [location.state, navigate, user]);
+  }, [location.search, location.state, navigate, user]);
 
   const handleEmailLogin = async (event: FormEvent) => {
     event.preventDefault();
@@ -75,21 +81,19 @@ const LoginPage = () => {
   };
 
   const heroImage = useMemo(() => (colorMode === 'light' ? '/Day.png' : '/Night.png'), [colorMode]);
-  const googleTheme = colorMode === 'dark' ? 'filled_black' : 'outline';
 
-  useEffect(() => {
-    if (!googleReady || !googleButtonRef.current || !window.google?.accounts?.id) return;
-
-    googleButtonRef.current.innerHTML = '';
-    const width = Math.min(360, googleButtonRef.current.offsetWidth || 340);
-    window.google.accounts.id.renderButton(googleButtonRef.current, {
-      theme: googleTheme,
-      size: 'large',
-      text: 'continue_with',
-      shape: 'pill',
-      width,
-    });
-  }, [googleReady, googleTheme]);
+  const handleGoogleLogin = async () => {
+    setError(null);
+    setSubmitting(true);
+    try {
+      const state = location.state as LocationState | null;
+      await signInWithGoogle(state?.from || '/');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unable to start Google sign-in.';
+      setError(message);
+      setSubmitting(false);
+    }
+  };
 
   return (
     <div className="relative min-h-screen overflow-hidden">
@@ -207,7 +211,7 @@ const LoginPage = () => {
                 {/* Submit button - plain blue */}
                 <button
                   type="submit"
-                  disabled={submitting || loading}
+                  disabled={authMode !== 'headers' || submitting || loading}
                   className="w-full mt-6 py-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold shadow-lg shadow-blue-500/25 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-blue-500/40 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0 flex items-center justify-center gap-2"
                 >
                   {submitting ? (
@@ -220,7 +224,7 @@ const LoginPage = () => {
                     </>
                   ) : (
                     <>
-                      Continue
+                      {authMode === 'headers' ? 'Continue' : 'Local Sign-In Disabled'}
                       <ArrowRight size={18} />
                     </>
                   )}
@@ -241,7 +245,14 @@ const LoginPage = () => {
                     {googleError}
                   </div>
                 ) : (
-                  <div ref={googleButtonRef} className="flex w-full justify-center rounded-full overflow-hidden" />
+                  <button
+                    type="button"
+                    onClick={handleGoogleLogin}
+                    disabled={!googleReady || submitting || loading}
+                    className="w-full mt-1 py-3 rounded-xl border border-slate-300 dark:border-slate-600 bg-white/70 dark:bg-slate-800/70 text-slate-800 dark:text-slate-100 text-sm font-semibold transition-all duration-300 hover:bg-white dark:hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Continue with Google
+                  </button>
                 )}
               </div>
 
@@ -255,7 +266,7 @@ const LoginPage = () => {
       </div>
 
       {/* Dev bypass button */}
-      {IS_DEV && (
+      {IS_DEV && authMode === 'headers' && (
         <button
           type="button"
           onClick={handleBypassLogin}

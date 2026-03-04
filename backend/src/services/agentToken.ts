@@ -14,6 +14,8 @@ export type AgentContextTokenPayload = {
   workspaceId?: string;
   mcpServerAllowIds?: string[];
   mcpServerDenyIds?: string[];
+  mcpAuth?: Record<string, Record<string, string>>;
+  mcpAuthFingerprint?: string;
   isAdmin?: boolean;
   iat?: number;
   exp?: number;
@@ -40,4 +42,3 @@ export function signAgentContextToken(payload: AgentContextTokenPayload): string
   const sigB64 = b64url(sig);
   return `${signingInput}.${sigB64}`;
 }
-

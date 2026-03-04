@@ -35,3 +35,4 @@ backend/workspaces.db
 backend/workspaces/
 agent/outputs/
 rag_storage/
+.local-run/

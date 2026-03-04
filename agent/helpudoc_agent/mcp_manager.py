@@ -94,18 +94,35 @@ class MCPServerManager:
                 "cwd": cfg.cwd,
             }
 
-        headers: Dict[str, str] = dict(cfg.headers or {})
+        runtime_auth = self.workspace_state.context.get("mcp_auth", {}) or {}
+        runtime_headers: Dict[str, str] = {}
+        if isinstance(runtime_auth, dict):
+            candidate = runtime_auth.get(cfg.name)
+            if isinstance(candidate, dict):
+                for header_name, header_value in candidate.items():
+                    if not header_name or not isinstance(header_name, str):
+                        continue
+                    if isinstance(header_value, str) and header_value:
+                        runtime_headers[header_name] = header_value
+
+        headers: Dict[str, str] = dict(runtime_headers)
+        for header_name, header_value in (cfg.headers or {}).items():
+            if not header_name or not isinstance(header_name, str):
+                continue
+            if isinstance(header_value, str) and header_value:
+                headers.setdefault(header_name, header_value)
         # Inject headers from environment variables (value = env var name).
         for header_name, env_var in (cfg.headers_from_env or {}).items():
             if not header_name or not env_var:
                 continue
             value = os.environ.get(str(env_var), "")
             if value:
-                headers[str(header_name)] = value
+                headers.setdefault(str(header_name), value)
 
         if cfg.bearer_token_env_var:
             token = os.environ.get(cfg.bearer_token_env_var, "")
-            if token:
+            has_auth_header = any(str(name).lower() == "authorization" for name in headers.keys())
+            if token and not has_auth_header:
                 headers.setdefault("Authorization", f"Bearer {token}")
 
         return {

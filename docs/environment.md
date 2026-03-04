@@ -83,3 +83,30 @@ gcloud builds submit . --config=infra/cloudbuild.yaml --project=<PROJECT_ID> --s
 Notes:
 - Templates for reference live in `infra/gke/templates/`.
 - For production, store secret values in Google Secret Manager and generate `env/prod/secrets.env` from there instead of committing them.
+
+## Google OAuth + BigQuery MCP
+
+This project now supports per-user Google OAuth delegation for the `toolbox-bq-demo` MCP server.
+
+Required backend env vars:
+
+- `AUTH_MODE=oidc` (use `headers` only for local fallback development)
+- `GOOGLE_OAUTH_CLIENT_ID`
+- `GOOGLE_OAUTH_CLIENT_SECRET`
+- `GOOGLE_OAUTH_REDIRECT_URI`
+- `GOOGLE_OAUTH_POST_LOGIN_REDIRECT`
+- `GOOGLE_OAUTH_SCOPES` (must include `https://www.googleapis.com/auth/bigquery`)
+- `OAUTH_TOKEN_ENCRYPTION_KEY` (32-byte base64url key)
+
+Frontend env vars:
+
+- `VITE_AUTH_MODE` (`oidc` for normal flow, `headers` only for local fallback)
+- `VITE_API_URL`
+
+Operational validation checks:
+
+1. Sign in with Google and verify `GET /api/auth/me` returns `authenticated: true`.
+2. Run BigQuery MCP query `SELECT SESSION_USER()` and verify it matches the logged-in user.
+3. Run a sensitive-column query with two users:
+   - restricted user -> masked values
+   - privileged user -> unmasked values
