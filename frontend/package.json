@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "build:docker": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
     "e2e:install": "playwright install --with-deps chromium",
@@ -51,7 +52,7 @@
     "@types/react": "^19.1.16",
     "@types/react-dom": "^19.1.9",
     "@types/react-plotly.js": "^2.6.3",
-    "@vitejs/plugin-react": "^5.0.4",
+    "@vitejs/plugin-react-swc": "^4.1.0",
     "eslint": "^9.36.0",
     "eslint-plugin-react-hooks": "^5.2.0",
     "eslint-plugin-react-refresh": "^0.4.22",
