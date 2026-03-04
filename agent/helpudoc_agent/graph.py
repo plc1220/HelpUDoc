@@ -93,8 +93,9 @@ class AgentRegistry:
         resolved_name = f"{self._default_agent_name}:{mode}"
         context_payload = initial_context or {}
         policy_key = json.dumps(context_payload.get("mcp_policy", {}) or {}, sort_keys=True, default=str)
+        mcp_auth_fingerprint = str(context_payload.get("mcp_auth_fingerprint") or "")
         user_key = str(context_payload.get("user_id") or "")
-        key = (resolved_name, workspace_id, f"{user_key}:{policy_key}")
+        key = (resolved_name, workspace_id, f"{user_key}:{policy_key}:{mcp_auth_fingerprint}")
         if key in self._cache:
             return self._cache[key]
 
@@ -122,6 +123,9 @@ class AgentRegistry:
                 tool_names.append("load_skill")
             if "list_skills" in self.settings.tools and "list_skills" not in tool_names:
                 tool_names.append("list_skills")
+        allow_script_runner = bool(context_payload.get("allow_script_runner") or context_payload.get("allowScriptRunner"))
+        if allow_script_runner and "run_skill_python_script" in self.settings.tools and "run_skill_python_script" not in tool_names:
+            tool_names.append("run_skill_python_script")
 
         builtin_tools = self.tool_factory.build_tools(tool_names, workspace_state)
 
