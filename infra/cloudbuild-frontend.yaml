@@ -1,26 +1,55 @@
 steps:
-  # 1. Build & Push Frontend Image
-  - name: 'gcr.io/cloud-builders/docker'
+  # 1. Warm Docker layer cache from previously pushed frontend image.
+  - id: pull-frontend-cache
+    name: 'gcr.io/cloud-builders/docker'
+    waitFor: ['-']
+    entrypoint: 'bash'
+    args: ['-c', 'docker pull gcr.io/$PROJECT_ID/helpudoc-frontend:latest || true']
+
+  # 2. Build frontend image with BuildKit inline cache + cache-from.
+  - id: build-frontend
+    name: 'gcr.io/cloud-builders/docker'
+    waitFor: ['pull-frontend-cache']
+    env: ['DOCKER_BUILDKIT=1']
     args:
       [
         'build',
         '-f',
         'frontend/Dockerfile.gke',
         '--build-arg',
+        'BUILDKIT_INLINE_CACHE=1',
+        '--cache-from',
+        'gcr.io/$PROJECT_ID/helpudoc-frontend:latest',
+        '--build-arg',
         'VITE_GOOGLE_CLIENT_ID=$_VITE_GOOGLE_CLIENT_ID',
         '-t',
         'gcr.io/$PROJECT_ID/helpudoc-frontend:$BUILD_ID',
-        '-t',
-        'gcr.io/$PROJECT_ID/helpudoc-frontend:latest',
-        'frontend',
+        '.',
       ]
-  - name: 'gcr.io/cloud-builders/docker'
-    args: ['push', 'gcr.io/$PROJECT_ID/helpudoc-frontend:$BUILD_ID']
-  - name: 'gcr.io/cloud-builders/docker'
-    args: ['push', 'gcr.io/$PROJECT_ID/helpudoc-frontend:latest']
 
-  # 2. Update Image Reference in Frontend Manifest
+  # 3. Push build-id tag.
+  - id: push-frontend
+    name: 'gcr.io/cloud-builders/docker'
+    waitFor: ['build-frontend']
+    args: ['push', 'gcr.io/$PROJECT_ID/helpudoc-frontend:$BUILD_ID']
+
+  # 4. Update :latest tag without duplicate layer upload.
+  - id: tag-frontend-latest
+    name: 'gcr.io/cloud-builders/gcloud'
+    waitFor: ['push-frontend']
+    args:
+      [
+        'container',
+        'images',
+        'add-tag',
+        '--quiet',
+        'gcr.io/$PROJECT_ID/helpudoc-frontend:$BUILD_ID',
+        'gcr.io/$PROJECT_ID/helpudoc-frontend:latest',
+      ]
+
+  # 5. Update Image Reference in Frontend Manifest
   - name: 'ubuntu'
+    waitFor: ['push-frontend']
     args:
       - 'bash'
       - '-c'
@@ -28,7 +57,7 @@ steps:
         # Replace image tags regardless of the current tag (latest or build id) to avoid sticky manifests.
         sed -i -E "s|image: gcr.io/$PROJECT_ID/helpudoc-frontend:[^[:space:]]+|image: gcr.io/$PROJECT_ID/helpudoc-frontend:$BUILD_ID|g" infra/gke/k8s/60-frontend.yaml
 
-  # 3. Deploy Frontend Only to GKE
+  # 6. Deploy Frontend Only to GKE
   #
   # gke-deploy expects a filename (file or dir). We point it at only the frontend manifest
   # to avoid re-applying backend/agent resources.
@@ -40,7 +69,7 @@ steps:
       - '--cluster=$_GKE_CLUSTER'
       - '--timeout=10m'
 
-  # 4. Optional E2E check (fails build on mixed-content / localhost assets)
+  # 7. Optional E2E check (fails build on mixed-content / localhost assets)
   - name: 'node:20-bookworm'
     entrypoint: 'bash'
     args:
@@ -90,5 +119,5 @@ substitutions:
   _E2E_BASE_URL: "https://lc-demo.com"
 
 options:
+  machineType: 'E2_HIGHCPU_8'
   logging: CLOUD_LOGGING_ONLY
-

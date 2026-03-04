@@ -1,9 +1,10 @@
-FROM node:20-alpine AS deps
+# syntax=docker/dockerfile:1.7
+FROM node:20-bookworm-slim AS deps
 WORKDIR /app/frontend
 COPY frontend/package*.json ./
-RUN npm ci
+RUN --mount=type=cache,target=/root/.npm npm ci
 
-FROM node:20-alpine AS build
+FROM node:20-bookworm-slim AS build
 WORKDIR /app
 
 ARG VITE_API_URL=/api
@@ -13,7 +14,7 @@ ENV VITE_API_URL=${VITE_API_URL}
 ENV VITE_GOOGLE_CLIENT_ID=${VITE_GOOGLE_CLIENT_ID}
 ENV VITE_AUTH_MODE=${VITE_AUTH_MODE}
 # Increase heap for Vite/tsc build inside container
-ENV NODE_OPTIONS=--max-old-space-size=4096
+ENV NODE_OPTIONS=--max-old-space-size=6144
 
 COPY frontend/package*.json ./frontend/
 COPY frontend/tsconfig*.json* ./frontend/
@@ -27,7 +28,7 @@ COPY frontend/src ./frontend/src
 COPY packages/shared ./packages/shared
 
 WORKDIR /app/frontend
-RUN npm run build
+RUN npm run build:docker
 
 FROM nginx:1.27-alpine
 COPY --from=build /app/frontend/dist /usr/share/nginx/html
