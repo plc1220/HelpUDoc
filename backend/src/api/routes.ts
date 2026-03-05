@@ -31,7 +31,7 @@ export default function(dbService: DatabaseService, userService: UserService) {
 
   router.use('/auth', authRoutes(userService, googleOAuthService));
   router.use('/agent', agentRoutes(workspaceService, fileService, googleOAuthService));
-  router.use('/settings', requireSystemAdmin(userService), settingsRoutes());
+  router.use('/settings', requireSystemAdmin(userService), settingsRoutes(workspaceService));
   router.use('/users', requireSystemAdmin(userService), usersRoutes(userService));
   router.use('/workspaces', workspaceRoutes(workspaceService, userService));
   router.use('/workspaces/:workspaceId/files', fileRoutes(fileService));
