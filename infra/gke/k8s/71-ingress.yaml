@@ -7,6 +7,7 @@ spec:
   # Replace with your real domain and point its DNS A record at the Ingress IP.
   domains:
     - lc-demo.com
+    - www.lc-demo.com
 ---
 apiVersion: networking.gke.io/v1beta1
 kind: FrontendConfig
@@ -32,6 +33,16 @@ spec:
   ingressClassName: gce
   rules:
     - host: lc-demo.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: helpudoc-caddy
+                port:
+                  number: 80
+    - host: www.lc-demo.com
       http:
         paths:
           - path: /
