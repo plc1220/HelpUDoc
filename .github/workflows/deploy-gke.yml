@@ -5,12 +5,40 @@ on:
     branches:
       - master
       - main
+  workflow_dispatch:
+    inputs:
+      auth_mode:
+        description: Backend auth mode
+        required: true
+        default: hybrid
+        type: choice
+        options:
+          - hybrid
+          - oidc
+          - headers
+      vite_auth_mode:
+        description: Frontend auth mode (build-time)
+        required: true
+        default: hybrid
+        type: choice
+        options:
+          - hybrid
+          - oidc
+          - headers
+      vite_api_url:
+        description: Frontend API base URL (build-time)
+        required: true
+        default: /api
+        type: string
 
 env:
   PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
   REGION: ${{ secrets.GCP_REGION }}
   GKE_LOCATION: ${{ secrets.GKE_LOCATION }}
   GKE_CLUSTER: ${{ secrets.GKE_CLUSTER }}
+  AUTH_MODE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.auth_mode || 'hybrid' }}
+  VITE_AUTH_MODE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.vite_auth_mode || 'hybrid' }}
+  VITE_API_URL: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.vite_api_url || '/api' }}
   BOOTSTRAP_ADMIN_EXTERNAL_ID: ${{ secrets.BOOTSTRAP_ADMIN_EXTERNAL_ID }}
   BOOTSTRAP_ADMIN_EMAIL: ${{ secrets.BOOTSTRAP_ADMIN_EMAIL }}
   BOOTSTRAP_ADMIN_NAME: ${{ secrets.BOOTSTRAP_ADMIN_NAME }}
@@ -90,8 +118,9 @@ jobs:
           docker build -t "${REGISTRY}/helpudoc-backend:${IMAGE_TAG}" backend
           docker build -f agent/Dockerfile -t "${REGISTRY}/helpudoc-agent:${IMAGE_TAG}" .
           docker build -f frontend/Dockerfile.gke \
-            --build-arg VITE_API_URL=/api \
+            --build-arg VITE_API_URL="${VITE_API_URL}" \
             --build-arg VITE_GOOGLE_CLIENT_ID="${{ secrets.VITE_GOOGLE_CLIENT_ID }}" \
+            --build-arg VITE_AUTH_MODE="${VITE_AUTH_MODE}" \
             -t "${REGISTRY}/helpudoc-frontend:${IMAGE_TAG}" .
 
       - name: Push images
@@ -138,6 +167,10 @@ jobs:
             agent="${REGISTRY}/helpudoc-agent:${IMAGE_TAG}"
           kubectl -n helpudoc set image deployment/helpudoc-frontend \
             frontend="${REGISTRY}/helpudoc-frontend:${IMAGE_TAG}"
+
+      - name: Set backend auth mode
+        run: |
+          kubectl -n helpudoc set env deployment/helpudoc-app AUTH_MODE="${AUTH_MODE}"
 
       - name: Rollout status
         run: |
