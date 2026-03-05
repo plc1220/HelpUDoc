@@ -30,6 +30,15 @@ on:
         required: true
         default: /api
         type: string
+      google_oauth_mode:
+        description: Google OAuth runtime mode
+        required: true
+        default: auto
+        type: choice
+        options:
+          - auto
+          - required
+          - disabled
 
 env:
   PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
@@ -39,6 +48,13 @@ env:
   AUTH_MODE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.auth_mode || 'hybrid' }}
   VITE_AUTH_MODE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.vite_auth_mode || 'hybrid' }}
   VITE_API_URL: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.vite_api_url || '/api' }}
+  GOOGLE_OAUTH_MODE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.google_oauth_mode || 'auto' }}
+  GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+  GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+  GOOGLE_OAUTH_REDIRECT_URI: ${{ secrets.GOOGLE_OAUTH_REDIRECT_URI }}
+  GOOGLE_OAUTH_POST_LOGIN_REDIRECT: ${{ secrets.GOOGLE_OAUTH_POST_LOGIN_REDIRECT }}
+  GOOGLE_OAUTH_SCOPES: ${{ secrets.GOOGLE_OAUTH_SCOPES }}
+  OAUTH_TOKEN_ENCRYPTION_KEY: ${{ secrets.OAUTH_TOKEN_ENCRYPTION_KEY }}
   BOOTSTRAP_ADMIN_EXTERNAL_ID: ${{ secrets.BOOTSTRAP_ADMIN_EXTERNAL_ID }}
   BOOTSTRAP_ADMIN_EMAIL: ${{ secrets.BOOTSTRAP_ADMIN_EMAIL }}
   BOOTSTRAP_ADMIN_NAME: ${{ secrets.BOOTSTRAP_ADMIN_NAME }}
@@ -171,6 +187,54 @@ jobs:
       - name: Set backend auth mode
         run: |
           kubectl -n helpudoc set env deployment/helpudoc-app AUTH_MODE="${AUTH_MODE}"
+
+      - name: Configure backend Google OAuth env
+        run: |
+          set -euo pipefail
+
+          mode="${GOOGLE_OAUTH_MODE}"
+          has_required=false
+          if [[ -n "${GOOGLE_OAUTH_CLIENT_ID}" && -n "${GOOGLE_OAUTH_CLIENT_SECRET}" && -n "${GOOGLE_OAUTH_REDIRECT_URI}" ]]; then
+            has_required=true
+          fi
+
+          if [[ "${mode}" == "disabled" ]]; then
+            echo "Disabling Google OAuth env on backend deployment."
+            kubectl -n helpudoc set env deployment/helpudoc-app \
+              GOOGLE_OAUTH_CLIENT_ID- \
+              GOOGLE_OAUTH_CLIENT_SECRET- \
+              GOOGLE_OAUTH_REDIRECT_URI- \
+              GOOGLE_OAUTH_POST_LOGIN_REDIRECT- \
+              GOOGLE_OAUTH_SCOPES- \
+              OAUTH_TOKEN_ENCRYPTION_KEY-
+            exit 0
+          fi
+
+          if [[ "${mode}" == "required" && "${has_required}" != "true" ]]; then
+            echo "google_oauth_mode=required, but required secrets are missing. Set GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET, and GOOGLE_OAUTH_REDIRECT_URI." >&2
+            exit 1
+          fi
+
+          if [[ "${has_required}" != "true" ]]; then
+            echo "Google OAuth secrets are incomplete; leaving Google OAuth disabled for this deploy."
+            kubectl -n helpudoc set env deployment/helpudoc-app \
+              GOOGLE_OAUTH_CLIENT_ID- \
+              GOOGLE_OAUTH_CLIENT_SECRET- \
+              GOOGLE_OAUTH_REDIRECT_URI- \
+              GOOGLE_OAUTH_POST_LOGIN_REDIRECT- \
+              GOOGLE_OAUTH_SCOPES- \
+              OAUTH_TOKEN_ENCRYPTION_KEY-
+            exit 0
+          fi
+
+          echo "Applying Google OAuth env to backend deployment."
+          kubectl -n helpudoc set env deployment/helpudoc-app \
+            GOOGLE_OAUTH_CLIENT_ID="${GOOGLE_OAUTH_CLIENT_ID}" \
+            GOOGLE_OAUTH_CLIENT_SECRET="${GOOGLE_OAUTH_CLIENT_SECRET}" \
+            GOOGLE_OAUTH_REDIRECT_URI="${GOOGLE_OAUTH_REDIRECT_URI}" \
+            GOOGLE_OAUTH_POST_LOGIN_REDIRECT="${GOOGLE_OAUTH_POST_LOGIN_REDIRECT}" \
+            GOOGLE_OAUTH_SCOPES="${GOOGLE_OAUTH_SCOPES}" \
+            OAUTH_TOKEN_ENCRYPTION_KEY="${OAUTH_TOKEN_ENCRYPTION_KEY}"
 
       - name: Rollout status
         run: |
