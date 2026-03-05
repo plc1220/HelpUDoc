@@ -10,6 +10,8 @@ data:
     }
 
     :80 {
+      @apex host lc-demo.com
+      redir @apex https://www.lc-demo.com{uri} permanent
       encode gzip zstd
       @api path /api*
       reverse_proxy @api backend:3000
