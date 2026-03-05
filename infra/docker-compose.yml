@@ -81,7 +81,7 @@ services:
       SESSION_SECRET: ${SESSION_SECRET:-change-me}
       SESSION_NAME: ${SESSION_NAME:-helpudoc.sid}
       SESSION_TTL_SECONDS: ${SESSION_TTL_SECONDS:-604800}
-      AUTH_MODE: ${AUTH_MODE:-headers}
+      AUTH_MODE: ${AUTH_MODE:-hybrid}
       DEFAULT_USER_ID: ${DEFAULT_USER_ID:-local-admin@local.com}
       DEFAULT_USER_NAME: ${DEFAULT_USER_NAME:-admin}
       DEFAULT_USER_EMAIL: ${DEFAULT_USER_EMAIL:-admin@local.com}
@@ -152,7 +152,7 @@ services:
       args:
         VITE_API_URL: ${FRONTEND_API_URL:-/api}
         VITE_GOOGLE_CLIENT_ID: ${VITE_GOOGLE_CLIENT_ID:-16646144790-fvdv7liepgo18aiu20n3btmdr56l33pq.apps.googleusercontent.com}
-        VITE_AUTH_MODE: ${VITE_AUTH_MODE:-headers}
+        VITE_AUTH_MODE: ${VITE_AUTH_MODE:-hybrid}
     depends_on:
       backend:
         condition: service_started

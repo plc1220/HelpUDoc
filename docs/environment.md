@@ -90,7 +90,7 @@ This project now supports per-user Google OAuth delegation for the `toolbox-bq-d
 
 Required backend env vars:
 
-- `AUTH_MODE=oidc` (use `headers` only for local fallback development)
+- `AUTH_MODE=hybrid` (`hybrid` allows both session/OIDC and local header fallback; use `oidc` for strict OIDC-only, `headers` for local-only)
 - `GOOGLE_OAUTH_CLIENT_ID`
 - `GOOGLE_OAUTH_CLIENT_SECRET`
 - `GOOGLE_OAUTH_REDIRECT_URI`
@@ -100,7 +100,7 @@ Required backend env vars:
 
 Frontend env vars:
 
-- `VITE_AUTH_MODE` (`oidc` for normal flow, `headers` only for local fallback)
+- `VITE_AUTH_MODE` (`hybrid` recommended; supports both local and Google sign-in when server is configured)
 - `VITE_API_URL`
 
 Operational validation checks:

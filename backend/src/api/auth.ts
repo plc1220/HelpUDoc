@@ -2,7 +2,17 @@ import { Router } from 'express';
 import { UserService } from '../services/userService';
 import { GoogleOAuthService, GoogleOAuthConfigError } from '../services/googleOAuthService';
 
-const AUTH_MODE = (process.env.AUTH_MODE || 'oidc').trim().toLowerCase();
+type AuthMode = 'headers' | 'oidc' | 'hybrid';
+
+function resolveAuthMode(raw?: string): AuthMode {
+  const normalized = (raw || '').trim().toLowerCase();
+  if (normalized === 'headers' || normalized === 'oidc' || normalized === 'hybrid') {
+    return normalized;
+  }
+  return 'hybrid';
+}
+
+const AUTH_MODE = resolveAuthMode(process.env.AUTH_MODE);
 
 type StartState = {
   state: string;
@@ -28,6 +38,13 @@ export default function authRoutes(userService: UserService, googleOAuthService:
   const router = Router();
 
   router.get('/google/start', async (req, res) => {
+    if (AUTH_MODE === 'headers') {
+      return res.status(400).json({ error: 'Google sign-in is disabled when AUTH_MODE=headers' });
+    }
+    if (!googleOAuthService.isConfigured()) {
+      return res.status(503).json({ error: 'Google OAuth is not configured on this server' });
+    }
+
     try {
       const codeVerifier = googleOAuthService.createPkceVerifier();
       const codeChallenge = googleOAuthService.createPkceChallenge(codeVerifier);
@@ -124,6 +141,7 @@ export default function authRoutes(userService: UserService, googleOAuthService:
     return res.json({
       authenticated: Boolean(user),
       authMode: AUTH_MODE,
+      googleConfigured: googleOAuthService.isConfigured(),
       user,
     });
   });

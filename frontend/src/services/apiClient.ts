@@ -1,11 +1,12 @@
 import { getAuthUser } from '../auth/authStore';
 
 export const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000/api';
-export const AUTH_MODE = (import.meta.env.VITE_AUTH_MODE || 'oidc').toLowerCase();
+export const AUTH_MODE = (import.meta.env.VITE_AUTH_MODE || 'hybrid').toLowerCase();
 
 function mergeAuthHeaders(init?: HeadersInit): Headers {
   const headers = new Headers(init);
-  if (AUTH_MODE !== 'headers') {
+  const shouldUseHeaderAuth = AUTH_MODE === 'headers' || AUTH_MODE === 'hybrid' || AUTH_MODE === 'auto';
+  if (!shouldUseHeaderAuth) {
     return headers;
   }
   const user = getAuthUser();

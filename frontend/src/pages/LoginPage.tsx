@@ -211,7 +211,7 @@ const LoginPage = () => {
                 {/* Submit button - plain blue */}
                 <button
                   type="submit"
-                  disabled={authMode !== 'headers' || submitting || loading}
+                  disabled={authMode === 'oidc' || submitting || loading}
                   className="w-full mt-6 py-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold shadow-lg shadow-blue-500/25 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-blue-500/40 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0 flex items-center justify-center gap-2"
                 >
                   {submitting ? (
@@ -224,7 +224,7 @@ const LoginPage = () => {
                     </>
                   ) : (
                     <>
-                      {authMode === 'headers' ? 'Continue' : 'Local Sign-In Disabled'}
+                      {authMode === 'oidc' ? 'Local Sign-In Disabled' : 'Continue'}
                       <ArrowRight size={18} />
                     </>
                   )}
@@ -266,7 +266,7 @@ const LoginPage = () => {
       </div>
 
       {/* Dev bypass button */}
-      {IS_DEV && authMode === 'headers' && (
+      {IS_DEV && authMode !== 'oidc' && (
         <button
           type="button"
           onClick={handleBypassLogin}

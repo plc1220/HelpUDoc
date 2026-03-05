@@ -66,6 +66,14 @@ function computeExpiryEpoch(expiresInSeconds?: number): number | undefined {
 export class GoogleOAuthService {
   constructor(private readonly tokenStore: UserOAuthTokenService) {}
 
+  isConfigured(): boolean {
+    return Boolean(
+      (process.env.GOOGLE_OAUTH_CLIENT_ID || '').trim()
+      && (process.env.GOOGLE_OAUTH_CLIENT_SECRET || '').trim()
+      && (process.env.GOOGLE_OAUTH_REDIRECT_URI || '').trim(),
+    );
+  }
+
   createPkceVerifier(): string {
     return crypto.randomBytes(48).toString('base64url');
   }

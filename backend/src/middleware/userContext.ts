@@ -5,19 +5,31 @@ import { UserContext } from '../types/user';
 const DEFAULT_USER_ID = process.env.DEFAULT_USER_ID || 'local-user';
 const DEFAULT_USER_NAME = process.env.DEFAULT_USER_NAME || 'Local User';
 const DEFAULT_USER_EMAIL = process.env.DEFAULT_USER_EMAIL || undefined;
-const AUTH_MODE = (process.env.AUTH_MODE || 'headers').trim().toLowerCase();
+type AuthMode = 'headers' | 'oidc' | 'hybrid';
+
+function resolveAuthMode(raw?: string): AuthMode {
+  const normalized = (raw || '').trim().toLowerCase();
+  if (normalized === 'headers' || normalized === 'oidc' || normalized === 'hybrid') {
+    return normalized;
+  }
+  return 'hybrid';
+}
+
+const AUTH_MODE = resolveAuthMode(process.env.AUTH_MODE);
 
 export function userContextMiddleware(userService: UserService) {
   return async (req: Request, res: Response, next: NextFunction) => {
     try {
-      if (AUTH_MODE !== 'headers') {
-        if (req.session?.userContext) {
-          req.userContext = req.session.userContext;
-          res.locals.userContext = req.session.userContext;
-        } else {
-          req.userContext = undefined;
-          res.locals.userContext = undefined;
-        }
+      const useSessionAuth = AUTH_MODE === 'oidc' || AUTH_MODE === 'hybrid';
+      if (useSessionAuth && req.session?.userContext) {
+        req.userContext = req.session.userContext;
+        res.locals.userContext = req.session.userContext;
+        return next();
+      }
+
+      if (AUTH_MODE === 'oidc') {
+        req.userContext = undefined;
+        res.locals.userContext = undefined;
         return next();
       }
 

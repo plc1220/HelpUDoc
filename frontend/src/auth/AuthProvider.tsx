@@ -8,7 +8,7 @@ interface AuthContextValue {
   loading: boolean;
   googleReady: boolean;
   googleError: string | null;
-  authMode: 'oidc' | 'headers';
+  authMode: 'oidc' | 'headers' | 'hybrid';
   signInWithEmail: (email: string, name?: string, userIdOverride?: string) => Promise<AuthUser>;
   signInWithGoogle: (returnTo?: string) => Promise<void>;
   signOut: () => Promise<void>;
@@ -18,6 +18,7 @@ interface AuthContextValue {
 type AuthMeResponse = {
   authenticated: boolean;
   authMode?: string;
+  googleConfigured?: boolean;
   user?: {
     userId: string;
     externalId: string;
@@ -29,11 +30,15 @@ type AuthMeResponse = {
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
-const normalizeAuthMode = (mode?: string): 'oidc' | 'headers' => {
-  if ((mode || '').toLowerCase() === 'headers') {
+const normalizeAuthMode = (mode?: string): 'oidc' | 'headers' | 'hybrid' => {
+  const normalized = (mode || '').toLowerCase();
+  if (normalized === 'headers') {
     return 'headers';
   }
-  return 'oidc';
+  if (normalized === 'oidc') {
+    return 'oidc';
+  }
+  return 'hybrid';
 };
 
 const toAuthUser = (payload: AuthMeResponse['user']): AuthUser | null => {
@@ -50,9 +55,10 @@ const toAuthUser = (payload: AuthMeResponse['user']): AuthUser | null => {
 };
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [authMode, setAuthMode] = useState<'oidc' | 'headers'>(() => normalizeAuthMode(AUTH_MODE));
-  const [user, setUser] = useState<AuthUser | null>(() => (authMode === 'headers' ? getAuthUser() : null));
-  const [loading, setLoading] = useState(authMode === 'oidc');
+  const [authMode, setAuthMode] = useState<'oidc' | 'headers' | 'hybrid'>(() => normalizeAuthMode(AUTH_MODE));
+  const [user, setUser] = useState<AuthUser | null>(() => (authMode === 'oidc' ? null : getAuthUser()));
+  const [loading, setLoading] = useState(authMode !== 'headers');
+  const [googleConfigured, setGoogleConfigured] = useState<boolean>(false);
   const [googleError, setGoogleError] = useState<string | null>(null);
 
   const persistUser = useCallback((next: AuthUser | null) => {
@@ -63,6 +69,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const refreshSession = useCallback(async () => {
     if (authMode === 'headers') {
       persistUser(getAuthUser());
+      setGoogleConfigured(false);
+      setGoogleError(null);
       setLoading(false);
       return;
     }
@@ -77,6 +85,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const payload = (await response.json()) as AuthMeResponse;
       const serverMode = normalizeAuthMode(payload.authMode);
       setAuthMode(serverMode);
+      const googleIsConfigured = Boolean(payload.googleConfigured);
+      setGoogleConfigured(googleIsConfigured);
+      setGoogleError(
+        serverMode !== 'headers' && !googleIsConfigured
+          ? 'Google sign-in is unavailable (server OAuth is not configured).'
+          : null,
+      );
       if (payload.authenticated && payload.user) {
         persistUser(toAuthUser(payload.user));
       } else {
@@ -95,8 +110,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [refreshSession]);
 
   const signInWithEmail = useCallback(async (email: string, name?: string, userIdOverride?: string) => {
-    if (authMode !== 'headers') {
-      throw new Error('Email/header sign-in is disabled in OIDC mode. Use Google sign-in.');
+    if (authMode === 'oidc') {
+      throw new Error('Local sign-in is disabled in OIDC mode.');
     }
     setLoading(true);
     try {
@@ -119,13 +134,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [authMode, persistUser]);
 
   const signInWithGoogle = useCallback(async (returnTo?: string) => {
+    if (authMode === 'headers') {
+      throw new Error('Google sign-in is disabled in header mode.');
+    }
+    if (!googleConfigured) {
+      throw new Error('Google sign-in is unavailable because OAuth is not configured on the server.');
+    }
     setGoogleError(null);
     const url = new URL(`${API_URL}/auth/google/start`, window.location.origin);
     if (returnTo) {
       url.searchParams.set('returnTo', returnTo);
     }
     window.location.assign(url.toString());
-  }, []);
+  }, [authMode, googleConfigured]);
 
   const signOut = useCallback(async () => {
     if (authMode === 'headers') {
@@ -147,14 +168,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const value = useMemo<AuthContextValue>(() => ({
     user,
     loading,
-    googleReady: authMode === 'oidc',
+    googleReady: authMode !== 'headers' && googleConfigured,
     googleError,
     authMode,
     signInWithEmail,
     signInWithGoogle,
     signOut,
     refreshSession,
-  }), [authMode, googleError, loading, refreshSession, signInWithEmail, signInWithGoogle, signOut, user]);
+  }), [authMode, googleConfigured, googleError, loading, refreshSession, signInWithEmail, signInWithGoogle, signOut, user]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };
