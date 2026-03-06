@@ -5,7 +5,6 @@ import { DatabaseService } from '../services/databaseService';
 import { UserService } from '../services/userService';
 import { WorkspaceService } from '../services/workspaceService';
 
-const DEFAULT_USER_ID = process.env.DEFAULT_USER_ID || 'local-user';
 const DEFAULT_USER_NAME = process.env.DEFAULT_USER_NAME || 'Local User';
 const DEFAULT_USER_EMAIL = process.env.DEFAULT_USER_EMAIL || '';
 
@@ -59,7 +58,10 @@ export function startCollabServer(databaseService: DatabaseService, userService:
         throw new Error('Document name mismatch');
       }
 
-      const externalId = (requestParameters.get('userId') || DEFAULT_USER_ID).trim().toLowerCase();
+      const externalId = (requestParameters.get('userId') || '').trim().toLowerCase();
+      if (!externalId) {
+        throw new Error('Missing user identity');
+      }
       const displayName = (requestParameters.get('userName') || DEFAULT_USER_NAME).trim();
       const emailParam = (requestParameters.get('userEmail') || DEFAULT_USER_EMAIL || '').trim();
       const email = emailParam ? emailParam : undefined;

@@ -2,7 +2,6 @@ import { Request, Response, NextFunction } from 'express';
 import { UserService } from '../services/userService';
 import { UserContext } from '../types/user';
 
-const DEFAULT_USER_ID = process.env.DEFAULT_USER_ID || 'local-user';
 const DEFAULT_USER_NAME = process.env.DEFAULT_USER_NAME || 'Local User';
 const DEFAULT_USER_EMAIL = process.env.DEFAULT_USER_EMAIL || undefined;
 type AuthMode = 'headers' | 'oidc' | 'hybrid';
@@ -33,7 +32,14 @@ export function userContextMiddleware(userService: UserService) {
         return next();
       }
 
-      const externalId = (req.header('x-user-id') || DEFAULT_USER_ID).trim().toLowerCase();
+      const rawExternalId = req.header('x-user-id');
+      const externalId = rawExternalId?.trim().toLowerCase() || '';
+      if (!externalId) {
+        req.userContext = undefined;
+        res.locals.userContext = undefined;
+        return next();
+      }
+
       if (req.session?.userContext && req.session.externalId === externalId) {
         req.userContext = req.session.userContext;
         res.locals.userContext = req.session.userContext;
