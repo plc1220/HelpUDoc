@@ -11,6 +11,11 @@ env:
   PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
   GKE_LOCATION: ${{ secrets.GKE_LOCATION }}
   GKE_CLUSTER: ${{ secrets.GKE_CLUSTER }}
+  GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+  GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+  GOOGLE_OAUTH_REDIRECT_URI: ${{ secrets.GOOGLE_OAUTH_REDIRECT_URI }}
+  GOOGLE_OAUTH_POST_LOGIN_REDIRECT: ${{ secrets.GOOGLE_OAUTH_POST_LOGIN_REDIRECT }}
+  OAUTH_TOKEN_ENCRYPTION_KEY: ${{ secrets.OAUTH_TOKEN_ENCRYPTION_KEY }}
   USE_GKE_GCLOUD_AUTH_PLUGIN: "True"
 
 jobs:
@@ -86,6 +91,26 @@ jobs:
           IMAGE_TAG: ${{ github.sha }}
         run: |
           set -euo pipefail
+          test -n "${GOOGLE_OAUTH_CLIENT_ID}"
+          test -n "${GOOGLE_OAUTH_CLIENT_SECRET}"
+          test -n "${GOOGLE_OAUTH_REDIRECT_URI}"
+          test -n "${GOOGLE_OAUTH_POST_LOGIN_REDIRECT}"
+          test -n "${OAUTH_TOKEN_ENCRYPTION_KEY}"
+
           kubectl -n helpudoc apply -f infra/gke/k8s/20-configmap.yaml
+          kubectl -n helpudoc patch configmap helpudoc-config --type merge -p "$(jq -n \
+            --arg auth_mode "hybrid" \
+            --arg cid "${GOOGLE_OAUTH_CLIENT_ID}" \
+            --arg redir "${GOOGLE_OAUTH_REDIRECT_URI}" \
+            --arg post "${GOOGLE_OAUTH_POST_LOGIN_REDIRECT}" \
+            --arg scopes "openid email profile" \
+            --arg domain ".lc-demo.com" \
+            '{data:{AUTH_MODE:$auth_mode,GOOGLE_OAUTH_CLIENT_ID:$cid,GOOGLE_OAUTH_REDIRECT_URI:$redir,GOOGLE_OAUTH_POST_LOGIN_REDIRECT:$post,GOOGLE_OAUTH_SCOPES:$scopes,SESSION_COOKIE_DOMAIN:$domain}}')"
+
+          kubectl -n helpudoc patch secret helpudoc-secrets --type merge -p "$(jq -n \
+            --arg client_secret "${GOOGLE_OAUTH_CLIENT_SECRET}" \
+            --arg enc_key "${OAUTH_TOKEN_ENCRYPTION_KEY}" \
+            '{stringData:{GOOGLE_OAUTH_CLIENT_SECRET:$client_secret,OAUTH_TOKEN_ENCRYPTION_KEY:$enc_key}}')"
+
           kubectl -n helpudoc set image deployment/helpudoc-app backend="gcr.io/${PROJECT_ID}/helpudoc-backend:${IMAGE_TAG}"
           kubectl -n helpudoc rollout status deployment/helpudoc-app --timeout=20m
