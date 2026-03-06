@@ -116,12 +116,6 @@ jobs:
           if [[ -n "${BOOTSTRAP_ADMIN_EXTERNAL_ID}" ]]; then
             substitutions+=("_BOOTSTRAP_ADMIN_EXTERNAL_ID=${BOOTSTRAP_ADMIN_EXTERNAL_ID}")
           fi
-          if [[ -n "${BOOTSTRAP_ADMIN_EMAIL}" ]]; then
-            substitutions+=("_BOOTSTRAP_ADMIN_EMAIL=${BOOTSTRAP_ADMIN_EMAIL}")
-          fi
-          if [[ -n "${BOOTSTRAP_ADMIN_NAME}" ]]; then
-            substitutions+=("_BOOTSTRAP_ADMIN_NAME=${BOOTSTRAP_ADMIN_NAME}")
-          fi
 
           SUBS_CSV="$(IFS=,; echo "${substitutions[*]}")"
 
