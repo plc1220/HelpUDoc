@@ -127,6 +127,24 @@ If you need a specific version, redeploy by running Cloud Build again (it will g
 
 ## Troubleshooting
 
+### Google OAuth callback/state errors
+
+If users see `state_mismatch` or `oauth_callback_failed`, check these first:
+
+1. Canonical callback URI:
+   - `GOOGLE_OAUTH_REDIRECT_URI` should be exactly:
+     - `https://lc-demo.com/api/auth/google/callback`
+2. Post-login redirect:
+   - `GOOGLE_OAUTH_POST_LOGIN_REDIRECT` should be:
+     - `https://lc-demo.com/login`
+3. OAuth secret values:
+   - `GOOGLE_OAUTH_CLIENT_SECRET` must be present
+   - `OAUTH_TOKEN_ENCRYPTION_KEY` must be present
+4. Session cookie domain:
+   - `SESSION_COOKIE_DOMAIN=.lc-demo.com` so apex and `www` share session state.
+5. Caddy proxy header forwarding:
+   - `/api` proxy must forward `X-Forwarded-Proto=https` to backend; otherwise secure cookies may not be set.
+
 ### Default admin bootstrap
 
 - Admin bootstrap is optional and disabled by default.

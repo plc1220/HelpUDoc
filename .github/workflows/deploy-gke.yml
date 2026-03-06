@@ -1,5 +1,9 @@
 name: Deploy to GKE
 
+concurrency:
+  group: deploy-gke-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   push:
     branches:
@@ -7,59 +11,25 @@ on:
       - main
   workflow_dispatch:
     inputs:
-      auth_mode:
-        description: Backend auth mode
+      run_e2e:
+        description: Run post-deploy E2E checks in Cloud Build
         required: true
-        default: hybrid
+        default: "false"
         type: choice
         options:
-          - hybrid
-          - oidc
-          - headers
-      vite_auth_mode:
-        description: Frontend auth mode (build-time)
-        required: true
-        default: hybrid
-        type: choice
-        options:
-          - hybrid
-          - oidc
-          - headers
-      vite_api_url:
-        description: Frontend API base URL (build-time)
-        required: true
-        default: /api
-        type: string
-      google_oauth_mode:
-        description: Google OAuth runtime mode
-        required: true
-        default: auto
-        type: choice
-        options:
-          - auto
-          - required
-          - disabled
+          - "false"
+          - "true"
 
 env:
   PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
-  REGION: ${{ secrets.GCP_REGION }}
   GKE_LOCATION: ${{ secrets.GKE_LOCATION }}
   GKE_CLUSTER: ${{ secrets.GKE_CLUSTER }}
-  AUTH_MODE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.auth_mode || 'hybrid' }}
-  VITE_AUTH_MODE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.vite_auth_mode || 'hybrid' }}
-  VITE_API_URL: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.vite_api_url || '/api' }}
-  GOOGLE_OAUTH_MODE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.google_oauth_mode || 'auto' }}
-  GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
-  GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
-  GOOGLE_OAUTH_REDIRECT_URI: ${{ secrets.GOOGLE_OAUTH_REDIRECT_URI }}
-  GOOGLE_OAUTH_POST_LOGIN_REDIRECT: ${{ secrets.GOOGLE_OAUTH_POST_LOGIN_REDIRECT }}
-  GOOGLE_OAUTH_SCOPES: ${{ secrets.GOOGLE_OAUTH_SCOPES }}
-  OAUTH_TOKEN_ENCRYPTION_KEY: ${{ secrets.OAUTH_TOKEN_ENCRYPTION_KEY }}
+  RUN_E2E: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.run_e2e || 'false' }}
+  E2E_BASE_URL: ${{ vars.E2E_BASE_URL }}
+  VITE_GOOGLE_CLIENT_ID: ${{ secrets.VITE_GOOGLE_CLIENT_ID }}
   BOOTSTRAP_ADMIN_EXTERNAL_ID: ${{ secrets.BOOTSTRAP_ADMIN_EXTERNAL_ID }}
   BOOTSTRAP_ADMIN_EMAIL: ${{ secrets.BOOTSTRAP_ADMIN_EMAIL }}
   BOOTSTRAP_ADMIN_NAME: ${{ secrets.BOOTSTRAP_ADMIN_NAME }}
-  REGISTRY: ${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/helpudoc
-  IMAGE_TAG: ${{ github.sha }}
 
 jobs:
   deploy:
@@ -107,7 +77,7 @@ jobs:
             exit 0
           fi
 
-          echo "Missing GCP auth secrets. Set either GCP_WORKLOAD_PROVIDER + GCP_SERVICE_ACCOUNT, or GCP_CREDENTIALS_JSON. If this run is from a fork/Dependabot, use repo/dependabot secrets or restrict deploy triggers." >&2
+          echo "Missing GCP auth secrets. Set either GCP_WORKLOAD_PROVIDER + GCP_SERVICE_ACCOUNT, or GCP_CREDENTIALS_JSON." >&2
           exit 1
 
       - name: Authenticate to Google Cloud (Workload Identity)
@@ -126,171 +96,33 @@ jobs:
       - name: Set up gcloud
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: Configure Docker auth
-        run: gcloud auth configure-docker "${{ env.REGION }}-docker.pkg.dev"
-
-      - name: Build images
-        run: |
-          docker build -t "${REGISTRY}/helpudoc-backend:${IMAGE_TAG}" backend
-          docker build -f agent/Dockerfile -t "${REGISTRY}/helpudoc-agent:${IMAGE_TAG}" .
-          docker build -f frontend/Dockerfile.gke \
-            --build-arg VITE_API_URL="${VITE_API_URL}" \
-            --build-arg VITE_GOOGLE_CLIENT_ID="${{ secrets.VITE_GOOGLE_CLIENT_ID }}" \
-            --build-arg VITE_AUTH_MODE="${VITE_AUTH_MODE}" \
-            -t "${REGISTRY}/helpudoc-frontend:${IMAGE_TAG}" .
-
-      - name: Push images
-        run: |
-          docker push "${REGISTRY}/helpudoc-backend:${IMAGE_TAG}"
-          docker push "${REGISTRY}/helpudoc-agent:${IMAGE_TAG}"
-          docker push "${REGISTRY}/helpudoc-frontend:${IMAGE_TAG}"
-
-      - name: Get GKE credentials
-        uses: google-github-actions/get-gke-credentials@v2
-        with:
-          cluster_name: ${{ env.GKE_CLUSTER }}
-          location: ${{ env.GKE_LOCATION }}
-
-      - name: Apply manifests
+      - name: Trigger Cloud Build deploy
         run: |
           set -euo pipefail
 
-          kubectl apply -f infra/gke/k8s/00-namespace.yaml
-          if [[ -f infra/gke/k8s/10-secrets.yaml ]]; then
-            kubectl apply -f infra/gke/k8s/10-secrets.yaml
-          else
-            echo "Skipping infra/gke/k8s/10-secrets.yaml (not committed)."
+          gcloud config set project "${PROJECT_ID}"
+
+          substitutions=(
+            "_GKE_LOCATION=${GKE_LOCATION}"
+            "_GKE_CLUSTER=${GKE_CLUSTER}"
+            "_RUN_E2E=${RUN_E2E}"
+            "_E2E_BASE_URL=${E2E_BASE_URL:-https://lc-demo.com}"
+            "_VITE_GOOGLE_CLIENT_ID=${VITE_GOOGLE_CLIENT_ID}"
+          )
+
+          if [[ -n "${BOOTSTRAP_ADMIN_EXTERNAL_ID}" ]]; then
+            substitutions+=("_BOOTSTRAP_ADMIN_EXTERNAL_ID=${BOOTSTRAP_ADMIN_EXTERNAL_ID}")
           fi
-          if [[ -f infra/gke/k8s/20-configmap.yaml ]]; then
-            kubectl apply -f infra/gke/k8s/20-configmap.yaml
-          else
-            echo "Skipping infra/gke/k8s/20-configmap.yaml (not committed)."
+          if [[ -n "${BOOTSTRAP_ADMIN_EMAIL}" ]]; then
+            substitutions+=("_BOOTSTRAP_ADMIN_EMAIL=${BOOTSTRAP_ADMIN_EMAIL}")
           fi
-          kubectl -n helpudoc get secret helpudoc-secrets >/dev/null
-          kubectl -n helpudoc get configmap helpudoc-config >/dev/null
-          kubectl apply -f infra/gke/k8s/30-storage.yaml
-          kubectl apply -f infra/gke/k8s/40-postgres.yaml
-          kubectl apply -f infra/gke/k8s/41-redis.yaml
-          kubectl apply -f infra/gke/k8s/42-minio.yaml
-          kubectl apply -f infra/gke/k8s/43-minio-setup.yaml
-          kubectl apply -f infra/gke/k8s/50-app.yaml
-          kubectl apply -f infra/gke/k8s/60-frontend.yaml
-          kubectl apply -f infra/gke/k8s/70-caddy.yaml
-          kubectl apply -f infra/gke/k8s/71-ingress.yaml
-
-      - name: Update images
-        run: |
-          kubectl -n helpudoc set image deployment/helpudoc-app \
-            backend="${REGISTRY}/helpudoc-backend:${IMAGE_TAG}" \
-            agent="${REGISTRY}/helpudoc-agent:${IMAGE_TAG}"
-          kubectl -n helpudoc set image deployment/helpudoc-frontend \
-            frontend="${REGISTRY}/helpudoc-frontend:${IMAGE_TAG}"
-
-      - name: Set backend auth mode
-        run: |
-          kubectl -n helpudoc set env deployment/helpudoc-app \
-            AUTH_MODE="${AUTH_MODE}" \
-            SESSION_COOKIE_DOMAIN=".lc-demo.com"
-
-      - name: Configure backend Google OAuth env
-        run: |
-          set -euo pipefail
-
-          mode="${GOOGLE_OAUTH_MODE}"
-          has_required=false
-          if [[ -n "${GOOGLE_OAUTH_CLIENT_ID}" && -n "${GOOGLE_OAUTH_CLIENT_SECRET}" && -n "${GOOGLE_OAUTH_REDIRECT_URI}" ]]; then
-            has_required=true
+          if [[ -n "${BOOTSTRAP_ADMIN_NAME}" ]]; then
+            substitutions+=("_BOOTSTRAP_ADMIN_NAME=${BOOTSTRAP_ADMIN_NAME}")
           fi
 
-          if [[ "${mode}" == "disabled" ]]; then
-            echo "Disabling Google OAuth env on backend deployment."
-            kubectl -n helpudoc set env deployment/helpudoc-app \
-              GOOGLE_OAUTH_CLIENT_ID- \
-              GOOGLE_OAUTH_CLIENT_SECRET- \
-              GOOGLE_OAUTH_REDIRECT_URI- \
-              GOOGLE_OAUTH_POST_LOGIN_REDIRECT- \
-              GOOGLE_OAUTH_SCOPES- \
-              OAUTH_TOKEN_ENCRYPTION_KEY-
-            exit 0
-          fi
+          SUBS_CSV="$(IFS=,; echo "${substitutions[*]}")"
 
-          if [[ "${mode}" == "required" && "${has_required}" != "true" ]]; then
-            echo "google_oauth_mode=required, but required secrets are missing. Set GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET, and GOOGLE_OAUTH_REDIRECT_URI." >&2
-            exit 1
-          fi
-
-          if [[ "${has_required}" != "true" ]]; then
-            echo "Google OAuth secrets are incomplete; leaving Google OAuth disabled for this deploy."
-            kubectl -n helpudoc set env deployment/helpudoc-app \
-              GOOGLE_OAUTH_CLIENT_ID- \
-              GOOGLE_OAUTH_CLIENT_SECRET- \
-              GOOGLE_OAUTH_REDIRECT_URI- \
-              GOOGLE_OAUTH_POST_LOGIN_REDIRECT- \
-              GOOGLE_OAUTH_SCOPES- \
-              OAUTH_TOKEN_ENCRYPTION_KEY-
-            exit 0
-          fi
-
-          echo "Applying Google OAuth env to backend deployment."
-          kubectl -n helpudoc set env deployment/helpudoc-app \
-            GOOGLE_OAUTH_CLIENT_ID="${GOOGLE_OAUTH_CLIENT_ID}" \
-            GOOGLE_OAUTH_CLIENT_SECRET="${GOOGLE_OAUTH_CLIENT_SECRET}" \
-            GOOGLE_OAUTH_REDIRECT_URI="${GOOGLE_OAUTH_REDIRECT_URI}" \
-            GOOGLE_OAUTH_POST_LOGIN_REDIRECT="${GOOGLE_OAUTH_POST_LOGIN_REDIRECT}" \
-            GOOGLE_OAUTH_SCOPES="${GOOGLE_OAUTH_SCOPES}" \
-            OAUTH_TOKEN_ENCRYPTION_KEY="${OAUTH_TOKEN_ENCRYPTION_KEY}"
-
-      - name: Rollout status
-        run: |
-          kubectl -n helpudoc rollout status deployment/helpudoc-app
-          kubectl -n helpudoc rollout status deployment/helpudoc-frontend
-
-      - name: Bootstrap default admin (optional)
-        run: |
-          set -euo pipefail
-
-          ADMIN_EXTERNAL_ID="${BOOTSTRAP_ADMIN_EXTERNAL_ID:-}"
-          if [[ -z "${ADMIN_EXTERNAL_ID}" ]]; then
-            echo "Skipping admin bootstrap (BOOTSTRAP_ADMIN_EXTERNAL_ID not set)."
-            exit 0
-          fi
-
-          ADMIN_EMAIL="${BOOTSTRAP_ADMIN_EMAIL:-$ADMIN_EXTERNAL_ID}"
-          ADMIN_NAME="${BOOTSTRAP_ADMIN_NAME:-admin}"
-
-          NS="helpudoc"
-          PG_POD="$(kubectl -n "${NS}" get pods -l app=helpudoc-postgres -o jsonpath='{.items[0].metadata.name}')"
-          test -n "${PG_POD}"
-
-          POSTGRES_DB="$(kubectl -n "${NS}" get configmap helpudoc-config -o jsonpath='{.data.POSTGRES_DB}')"
-          POSTGRES_USER="$(kubectl -n "${NS}" get configmap helpudoc-config -o jsonpath='{.data.POSTGRES_USER}')"
-          POSTGRES_PASSWORD="$(kubectl -n "${NS}" get secret helpudoc-secrets -o jsonpath='{.data.POSTGRES_PASSWORD}' | base64 --decode)"
-
-          cat <<'SQL' | kubectl -n "${NS}" exec -i "${PG_POD}" -- env PGPASSWORD="${POSTGRES_PASSWORD}" psql -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" -v ON_ERROR_STOP=1 -v admin_external_id="${ADMIN_EXTERNAL_ID}" -v admin_email="${ADMIN_EMAIL}" -v admin_name="${ADMIN_NAME}"
-          INSERT INTO users (id, "externalId", "displayName", email, "isAdmin")
-          VALUES ((md5(random()::text || clock_timestamp()::text))::uuid, :'admin_external_id', :'admin_name', NULLIF(:'admin_email', ''), true)
-          ON CONFLICT ("externalId") DO UPDATE
-          SET "displayName" = EXCLUDED."displayName",
-              email = EXCLUDED.email,
-              "isAdmin" = true,
-              "updatedAt" = NOW();
-
-          SELECT id, "externalId", email, "displayName", "isAdmin"
-          FROM users
-          WHERE "externalId" = :'admin_external_id';
-          SQL
-
-      - name: Sync skills to persistent volume
-        run: |
-          set -euo pipefail
-
-          APP_POD="$(kubectl -n helpudoc get pods -l app=helpudoc-app -o jsonpath='{.items[0].metadata.name}')"
-          test -n "${APP_POD}"
-          echo "Syncing repo skills/ to /app/skills in pod ${APP_POD}"
-
-          # Skills are PVC-backed and should mirror the repo on deploy.
-          # Only /app/skills is touched; /app/workspaces (user data) is untouched.
-          kubectl -n helpudoc exec "${APP_POD}" -c backend -- sh -lc 'set -eu; mkdir -p /app/skills; find /app/skills -mindepth 1 -maxdepth 1 -exec rm -rf {} +'
-          tar -C skills -cf - . | kubectl -n helpudoc exec -i "${APP_POD}" -c backend -- sh -lc 'tar -xf - -C /app/skills'
-
-          kubectl -n helpudoc exec "${APP_POD}" -c backend -- sh -lc 'test -f /app/skills/research/SKILL.md'
+          gcloud builds submit . \
+            --config=infra/cloudbuild.yaml \
+            --project="${PROJECT_ID}" \
+            --substitutions="${SUBS_CSV}"

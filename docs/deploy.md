@@ -86,6 +86,13 @@ cp env/prod/config.env.example env/prod/config.env
 # - POSTGRES_PASSWORD
 # - GEMINI_API_KEY / RAG_LLM_API_KEY
 # - S3_PUBLIC_BASE_URL (use /helpudoc when behind HTTPS)
+# - AUTH_MODE=hybrid
+# - SESSION_COOKIE_DOMAIN=.lc-demo.com
+# - GOOGLE_OAUTH_CLIENT_ID
+# - GOOGLE_OAUTH_REDIRECT_URI=https://lc-demo.com/api/auth/google/callback
+# - GOOGLE_OAUTH_POST_LOGIN_REDIRECT=https://lc-demo.com/login
+# - GOOGLE_OAUTH_CLIENT_SECRET (in secrets.env)
+# - OAUTH_TOKEN_ENCRYPTION_KEY (in secrets.env)
 
 kubectl apply -f infra/gke/k8s/00-namespace.yaml
 kubectl -n helpudoc create secret generic helpudoc-secrets --from-env-file=env/prod/secrets.env
@@ -105,6 +112,7 @@ kubectl apply -f infra/gke/k8s/43-minio-setup.yaml
 kubectl apply -f infra/gke/k8s/50-app.yaml
 kubectl apply -f infra/gke/k8s/60-frontend.yaml
 kubectl apply -f infra/gke/k8s/70-caddy.yaml
+kubectl apply -f infra/gke/k8s/71-ingress.yaml
 ```
 
 Storage notes:
