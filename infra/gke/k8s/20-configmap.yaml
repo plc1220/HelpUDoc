@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: helpudoc-config
+  namespace: helpudoc
+data:
+  SESSION_NAME: helpudoc.sid
+  SESSION_TTL_SECONDS: "604800"
+  POSTGRES_DB: helpudoc
+  POSTGRES_USER: helpudoc
+  S3_BUCKET_NAME: helpudoc
+  # Same-origin path; Caddy proxies this to the in-cluster MinIO service.
+  S3_PUBLIC_BASE_URL: /helpudoc
+  S3_FORCE_PATH_STYLE: "true"
+  WORKSPACE_ROOT: /app/workspaces
+  RAG_OFFLINE: "true"
+  LLM_MODEL: gemini-3-flash-preview
+  AUTH_MODE: hybrid
+  SESSION_COOKIE_DOMAIN: .lc-demo.com
+  GOOGLE_OAUTH_CLIENT_ID: 16646144790-fvdv7liepgo18aiu20n3btmdr56l33pq.apps.googleusercontent.com
+  GOOGLE_OAUTH_REDIRECT_URI: https://lc-demo.com/api/auth/google/callback
+  GOOGLE_OAUTH_POST_LOGIN_REDIRECT: https://lc-demo.com/login
+  GOOGLE_OAUTH_SCOPES: openid email profile
