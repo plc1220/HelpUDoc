@@ -108,6 +108,11 @@ spec:
               value: /app/skills
             - name: AGENT_CONFIG_PATH
               value: /agent/config/runtime.yaml
+            - name: AGENT_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: AGENT_JWT_SECRET
             - name: AUTH_MODE
               valueFrom:
                 configMapKeyRef:
@@ -256,6 +261,11 @@ spec:
                   name: helpudoc-secrets
                   key: BQ_ACCESS_TOKEN
                   optional: true
+            - name: AGENT_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: AGENT_JWT_SECRET
             - name: AUTH_MODE
               valueFrom:
                 configMapKeyRef:
