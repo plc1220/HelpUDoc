@@ -92,7 +92,7 @@ jobs:
       - name: Sync Skills PVC
         run: |
           set -euo pipefail
-          APP_POD="$(kubectl -n helpudoc get pods -l app=helpudoc-app -o jsonpath='{.items[0].metadata.name}')"
+          APP_POD="$(kubectl -n helpudoc get pods -l app=helpudoc-app -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.phase}{"\n"}{end}' | awk '$2 == "Running" {print $1; exit}')"
           test -n "${APP_POD}"
           kubectl -n helpudoc exec "${APP_POD}" -c backend -- sh -lc "set -eu; mkdir -p /app/skills; find /app/skills -mindepth 1 -maxdepth 1 -exec rm -rf {} +"
           tar -C skills -cf - . | kubectl -n helpudoc exec -i "${APP_POD}" -c backend -- sh -lc "tar -xf - -C /app/skills"
