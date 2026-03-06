@@ -12,6 +12,7 @@ env:
   GKE_LOCATION: ${{ secrets.GKE_LOCATION }}
   GKE_CLUSTER: ${{ secrets.GKE_CLUSTER }}
   VITE_GOOGLE_CLIENT_ID: ${{ secrets.VITE_GOOGLE_CLIENT_ID }}
+  USE_GKE_GCLOUD_AUTH_PLUGIN: "True"
 
 jobs:
   deploy:
@@ -60,6 +61,8 @@ jobs:
 
       - name: Set up gcloud
         uses: google-github-actions/setup-gcloud@v2
+        with:
+          install_components: gke-gcloud-auth-plugin
 
       - name: Configure Docker Auth
         run: |
