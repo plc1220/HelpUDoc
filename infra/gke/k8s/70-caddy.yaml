@@ -13,7 +13,9 @@ data:
       encode gzip zstd
       route {
         @api path /api*
-        reverse_proxy @api backend:3000
+        reverse_proxy @api backend:3000 {
+          header_up X-Forwarded-Proto https
+        }
         @s3 path /helpudoc*
         reverse_proxy @s3 minio:9000
         @apex host lc-demo.com
