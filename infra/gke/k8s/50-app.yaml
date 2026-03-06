@@ -108,6 +108,53 @@ spec:
               value: /app/skills
             - name: AGENT_CONFIG_PATH
               value: /agent/config/runtime.yaml
+            - name: AUTH_MODE
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: AUTH_MODE
+            - name: SESSION_COOKIE_DOMAIN
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: SESSION_COOKIE_DOMAIN
+                  optional: true
+            - name: GOOGLE_OAUTH_CLIENT_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: GOOGLE_OAUTH_CLIENT_ID
+                  optional: true
+            - name: GOOGLE_OAUTH_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: GOOGLE_OAUTH_CLIENT_SECRET
+                  optional: true
+            - name: GOOGLE_OAUTH_REDIRECT_URI
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: GOOGLE_OAUTH_REDIRECT_URI
+                  optional: true
+            - name: GOOGLE_OAUTH_POST_LOGIN_REDIRECT
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: GOOGLE_OAUTH_POST_LOGIN_REDIRECT
+                  optional: true
+            - name: GOOGLE_OAUTH_SCOPES
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: GOOGLE_OAUTH_SCOPES
+                  optional: true
+            - name: OAUTH_TOKEN_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: OAUTH_TOKEN_ENCRYPTION_KEY
+                  optional: true
           volumeMounts:
             - name: workspace-data
               mountPath: /app/workspaces
@@ -208,6 +255,47 @@ spec:
                 secretKeyRef:
                   name: helpudoc-secrets
                   key: BQ_ACCESS_TOKEN
+                  optional: true
+            - name: AUTH_MODE
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: AUTH_MODE
+            - name: GOOGLE_OAUTH_CLIENT_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: GOOGLE_OAUTH_CLIENT_ID
+                  optional: true
+            - name: GOOGLE_OAUTH_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: GOOGLE_OAUTH_CLIENT_SECRET
+                  optional: true
+            - name: GOOGLE_OAUTH_REDIRECT_URI
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: GOOGLE_OAUTH_REDIRECT_URI
+                  optional: true
+            - name: GOOGLE_OAUTH_POST_LOGIN_REDIRECT
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: GOOGLE_OAUTH_POST_LOGIN_REDIRECT
+                  optional: true
+            - name: GOOGLE_OAUTH_SCOPES
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: GOOGLE_OAUTH_SCOPES
+                  optional: true
+            - name: OAUTH_TOKEN_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: OAUTH_TOKEN_ENCRYPTION_KEY
                   optional: true
           volumeMounts:
             - name: workspace-data

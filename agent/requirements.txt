@@ -1,6 +1,12 @@
 fastapi
 uvicorn
 
+# Force CPU-only PyTorch wheels to avoid pulling multi-GB CUDA runtime deps.
+--index-url https://download.pytorch.org/whl/cpu
+--extra-index-url https://pypi.org/simple
+torch==2.5.1
+torchvision==0.20.1
+
 # LangChain + Gemini stack aligned with pydantic v2
 langchain==1.0.8
 langchain-core==1.1.0
