@@ -17,6 +17,21 @@ from .state import WorkspaceState
 
 logger = logging.getLogger(__name__)
 
+
+def _normalize_auth_header(value: str) -> str:
+    """Normalize bearer auth values and collapse accidental double-prefixes."""
+    raw = (value or "").strip()
+    if not raw:
+        return raw
+    if raw.lower().startswith("bearer "):
+        token = raw[7:].strip()
+        # Guard against malformed values like: "Bearer Bearer <token>".
+        while token.lower().startswith("bearer "):
+            token = token[7:].strip()
+        return f"Bearer {token}" if token else ""
+    return raw
+
+
 def _format_exception(exc: BaseException) -> str:
     """Flatten ExceptionGroup for readable logs."""
     if isinstance(exc, BaseExceptionGroup):  # py>=3.11
@@ -103,14 +118,24 @@ class MCPServerManager:
                     if not header_name or not isinstance(header_name, str):
                         continue
                     if isinstance(header_value, str) and header_value:
-                        runtime_headers[header_name] = header_value
+                        if header_name.lower() == "authorization":
+                            normalized = _normalize_auth_header(header_value)
+                            if normalized:
+                                runtime_headers[header_name] = normalized
+                        else:
+                            runtime_headers[header_name] = header_value
 
         headers: Dict[str, str] = dict(runtime_headers)
         for header_name, header_value in (cfg.headers or {}).items():
             if not header_name or not isinstance(header_name, str):
                 continue
             if isinstance(header_value, str) and header_value:
-                headers.setdefault(header_name, header_value)
+                if header_name.lower() == "authorization":
+                    normalized = _normalize_auth_header(header_value)
+                    if normalized:
+                        headers.setdefault(header_name, normalized)
+                else:
+                    headers.setdefault(header_name, header_value)
         # Inject headers from environment variables (value = env var name).
         for header_name, env_var in (cfg.headers_from_env or {}).items():
             if not header_name or not env_var:
@@ -123,7 +148,9 @@ class MCPServerManager:
             token = os.environ.get(cfg.bearer_token_env_var, "")
             has_auth_header = any(str(name).lower() == "authorization" for name in headers.keys())
             if token and not has_auth_header:
-                headers.setdefault("Authorization", f"Bearer {token}")
+                normalized = _normalize_auth_header(f"Bearer {token}")
+                if normalized:
+                    headers.setdefault("Authorization", normalized)
 
         return {
             "transport": cfg.transport,  # "http" or "sse"
