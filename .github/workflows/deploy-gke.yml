@@ -175,6 +175,8 @@ jobs:
           kubectl apply -f infra/gke/k8s/43-minio-setup.yaml
           kubectl apply -f infra/gke/k8s/50-app.yaml
           kubectl apply -f infra/gke/k8s/60-frontend.yaml
+          kubectl apply -f infra/gke/k8s/70-caddy.yaml
+          kubectl apply -f infra/gke/k8s/71-ingress.yaml
 
       - name: Update images
         run: |
