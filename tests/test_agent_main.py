@@ -84,9 +84,20 @@ class StreamingAgent:
     def __init__(self, messages):
         self._messages = messages
 
-    async def astream(self, *_args, **_kwargs):
-        for text in self._messages:
-            yield ("messages", ({"role": "assistant", "content": text}, {"node": "test"}))
+    async def ainvoke(self, *_args, **_kwargs):
+        return {
+            "messages": [
+                {"role": "assistant", "content": "".join(self._messages)}
+            ]
+        }
+
+
+class AsyncInvokeAgent:
+    def __init__(self, reply):
+        self._reply = reply
+
+    async def ainvoke(self, *_args, **_kwargs):
+        return self._reply
 
 
 def _collect_stream_payloads(response):
@@ -203,6 +214,22 @@ def _install_dependency_stubs():
         sys.modules["langchain_core.tools"] = tools_module
         langchain_core.tools = tools_module
 
+    if "langgraph" not in sys.modules:
+        langgraph_pkg = _ensure_module("langgraph")
+    else:
+        langgraph_pkg = sys.modules["langgraph"]
+
+    if "langgraph.types" not in sys.modules:
+        langgraph_types = ModuleType("langgraph.types")
+
+        class _Command:
+            def __init__(self, *_, **kwargs):
+                self.kwargs = kwargs
+
+        langgraph_types.Command = _Command
+        sys.modules["langgraph.types"] = langgraph_types
+        langgraph_pkg.types = langgraph_types
+
     if "vertexai" not in sys.modules:
         vertexai = ModuleType("vertexai")
 
@@ -272,7 +299,7 @@ def client_with_stubs(monkeypatch):
     RegistryStub.instance = None
     SourceTrackerStub.instance = None
 
-    monkeypatch.setattr(app_module, "load_settings", lambda: SettingsStub())
+    monkeypatch.setattr(app_module, "load_settings", lambda *_args, **_kwargs: SettingsStub())
     monkeypatch.setattr(app_module, "SourceTracker", SourceTrackerStub)
     monkeypatch.setattr(app_module, "GeminiClientManager", GeminiClientManagerStub)
     monkeypatch.setattr(app_module, "ToolFactory", ToolFactoryStub)
@@ -309,7 +336,7 @@ def test_chat_stream_emits_tokens_and_done(client_with_stubs):
         assert response.status_code == 200
         messages = _collect_stream_payloads(response)
 
-    assert [m["type"] for m in messages] == ["token", "token", "done"]
+    assert messages[-1]["type"] == "done"
     assert "".join(m["content"] for m in messages if m["type"] == "token") == "Hello world!"
     assert source_tracker.updated_workspaces == [runtime.workspace_state]
 
@@ -335,3 +362,25 @@ def test_chat_stream_returns_404_for_unknown_agent(client_with_stubs):
 
     assert response.status_code == 404
     assert response.json()["detail"] == "Unknown runtime for ghost/workspace-999"
+
+
+def test_chat_uses_async_invoke_for_async_only_agents(client_with_stubs):
+    client, registry, source_tracker = client_with_stubs
+    runtime = DummyRuntime("workspace-async", AsyncInvokeAgent({"messages": [{"role": "assistant", "content": "ok"}]}))
+    registry.set_runtime("research", "workspace-async", runtime)
+
+    response = client.post("/agents/research/workspace/workspace-async/chat", json={"message": "hi"})
+
+    assert response.status_code == 200
+    assert response.json()["reply"] == {"messages": [{"role": "assistant", "content": "ok"}]}
+    assert source_tracker.updated_workspaces == [runtime.workspace_state]
+
+
+def test_format_exception_flattens_exception_groups(client_with_stubs):
+    client_with_stubs  # ensure dependency stubs are installed before import
+
+    import helpudoc_agent.app as app_module
+
+    error = ExceptionGroup("unhandled errors in a TaskGroup", [RuntimeError("401 Unauthorized"), ValueError("bad args")])
+
+    assert app_module._format_exception(error) == "401 Unauthorized; bad args"

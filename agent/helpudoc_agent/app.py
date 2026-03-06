@@ -34,6 +34,14 @@ from langgraph.types import Command
 logger = logging.getLogger(__name__)
 
 
+def _format_exception(exc: BaseException) -> str:
+    if isinstance(exc, BaseExceptionGroup):
+        parts = [_format_exception(inner) for inner in exc.exceptions]
+        message = "; ".join(part for part in parts if part)
+        return message or (str(exc) or repr(exc))
+    return str(exc) or repr(exc)
+
+
 class ChatRequest(BaseModel):
     message: str
     history: List[Dict[str, Any]] | None = None
@@ -499,7 +507,7 @@ def create_app() -> FastAPI:
             config["callbacks"] = callbacks
         return config
 
-    def _invoke_agent(runtime: AgentRuntimeState, message: ChatRequest):
+    async def _invoke_agent(runtime: AgentRuntimeState, message: ChatRequest):
         agent = getattr(runtime, "agent", None)
         if agent is None:
             raise HTTPException(status_code=500, detail="Agent not initialized")
@@ -509,6 +517,8 @@ def create_app() -> FastAPI:
             manager.reset_session()
         payload = _prepare_payload(message)
         config = _build_agent_config(runtime, message)
+        if hasattr(agent, "ainvoke"):
+            return await agent.ainvoke({"messages": payload}, config=config)
         return agent.invoke({"messages": payload}, config=config)
 
     def _json_line(payload: Dict[str, Any]) -> bytes:
@@ -672,7 +682,7 @@ def create_app() -> FastAPI:
                 {
                     "type": "tool_error",
                     "name": name,
-                    "content": str(error),
+                    "content": _format_exception(error),
                 }
             )
 
@@ -961,7 +971,9 @@ def create_app() -> FastAPI:
                         }
                     )
             except Exception as exc:  # pragma: no cover - streaming guard
-                await handler._emit({"type": "error", "message": str(exc)})
+                error_message = _format_exception(exc)
+                logger.exception("Agent stream error: %s", error_message)
+                await handler._emit({"type": "error", "message": error_message})
                 raise
             finally:
                 elapsed = asyncio.get_running_loop().time() - stream_started
@@ -1029,7 +1041,7 @@ def create_app() -> FastAPI:
                         forceReset=chat_request.forceReset,
                     )
 
-        result = _invoke_agent(runtime, chat_request)
+        result = await _invoke_agent(runtime, chat_request)
         source_tracker.update_final_report(runtime.workspace_state)
         return ChatResponse(reply=result)
 
