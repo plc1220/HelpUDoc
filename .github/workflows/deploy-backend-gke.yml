@@ -112,5 +112,6 @@ jobs:
             --arg enc_key "${OAUTH_TOKEN_ENCRYPTION_KEY}" \
             '{stringData:{GOOGLE_OAUTH_CLIENT_SECRET:$client_secret,OAUTH_TOKEN_ENCRYPTION_KEY:$enc_key}}')"
 
+          kubectl -n helpudoc apply -f infra/gke/k8s/50-app.yaml
           kubectl -n helpudoc set image deployment/helpudoc-app backend="gcr.io/${PROJECT_ID}/helpudoc-backend:${IMAGE_TAG}"
           kubectl -n helpudoc rollout status deployment/helpudoc-app --timeout=20m
