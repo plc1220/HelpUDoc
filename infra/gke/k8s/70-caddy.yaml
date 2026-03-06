@@ -10,14 +10,16 @@ data:
     }
 
     :80 {
-      @apex host lc-demo.com
-      redir @apex https://www.lc-demo.com{uri} permanent
       encode gzip zstd
-      @api path /api*
-      reverse_proxy @api backend:3000
-      @s3 path /helpudoc*
-      reverse_proxy @s3 minio:9000
-      reverse_proxy helpudoc-frontend:80
+      route {
+        @api path /api*
+        reverse_proxy @api backend:3000
+        @s3 path /helpudoc*
+        reverse_proxy @s3 minio:9000
+        @apex host lc-demo.com
+        redir @apex https://www.lc-demo.com{uri} permanent
+        reverse_proxy helpudoc-frontend:80
+      }
     }
 ---
 apiVersion: apps/v1
