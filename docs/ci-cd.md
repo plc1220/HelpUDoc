@@ -1,26 +1,22 @@
-# CI/CD (Cloud Build + GKE)
+# CI/CD (GitHub Actions + GKE)
 
-This document describes how HelpUDoc is built and deployed to GKE using Google Cloud Build and the Kubernetes manifests under `infra/gke/k8s/`.
+This document describes how HelpUDoc is built and deployed to GKE using GitHub Actions and the Kubernetes manifests under `infra/gke/k8s/`.
 
 For local development and one-time cluster setup, start with `docs/deploy.md`.
 
 ## Overview
 
-The deployment pipeline is `infra/cloudbuild.yaml`.
+The primary deploy pipelines are GitHub workflows:
+- `.github/workflows/deploy-gke.yml` (full stack)
+- `.github/workflows/deploy-frontend-gke.yml` (frontend only)
+- `.github/workflows/deploy-backend-gke.yml` (backend only)
+- `.github/workflows/deploy-agent-gke.yml` (agent only)
 
-It:
-1. Builds and pushes three images to `gcr.io/$PROJECT_ID/*`:
-   - `helpudoc-backend`
-   - `helpudoc-agent`
-   - `helpudoc-frontend`
-2. Tags each image with both `$BUILD_ID` and `latest`.
-3. Rewrites the image tags in the manifests (in the Cloud Build workspace only) to use `$BUILD_ID`.
-4. Applies `infra/gke/k8s/` via `gke-deploy`.
-5. Syncs repo `skills/` into the mounted `skills-pvc` at `/app/skills`.
-6. Optionally bootstraps a default admin user in Postgres (idempotent upsert by `externalId`).
-7. Optionally runs Playwright E2E to catch mixed-content / localhost-asset regressions.
-
-Important: the repo manifests intentionally keep `:latest` in git. Cloud Build pins the deployed release to a specific `$BUILD_ID` at deploy time.
+Each workflow:
+1. Authenticates to GCP (WIF or JSON key).
+2. Builds and pushes service images to `gcr.io/$PROJECT_ID/*` tagged by commit SHA.
+3. Gets cluster credentials and deploys via `kubectl`.
+4. Waits for rollout status.
 
 ## One Command Deploy (Manual)
 
@@ -66,22 +62,15 @@ Notes:
 - `gke-deploy` uses a longer `--timeout` because the agent image is large and may take more than 5 minutes to pull on a new node.
 - The manifest rewrite step is tag-agnostic, so it works even if the manifests already contain a previous `$BUILD_ID` (prevents "sticky tags").
 
-## Recommended Cloud Build Trigger (Auto)
+## GitHub Actions Trigger
 
-Set up a Cloud Build trigger (in GCP Console) that:
-- Triggers on pushes to `master`
-- Uses config file: `infra/cloudbuild.yaml`
-- Sets substitutions:
-  - `_GKE_CLUSTER=helpudoc-cluster`
-  - `_GKE_LOCATION=asia-southeast1-a` (or your region if the cluster is regional)
-  - `_RUN_E2E=false` by default
-  - `_E2E_BASE_URL=https://...` only if `_RUN_E2E=true`
-  - Optional first-time admin bootstrap:
-    - `_BOOTSTRAP_ADMIN_EXTERNAL_ID=admin@local.com`
-    - `_BOOTSTRAP_ADMIN_EMAIL=admin@local.com`
-    - `_BOOTSTRAP_ADMIN_NAME=admin`
+All deploy workflows are manual-only (`workflow_dispatch`) to avoid accidental rollouts on every push.
 
-This gives you "push to master => build => deploy" without running commands locally.
+Run one of these in GitHub Actions:
+- `Deploy Full Stack to GKE`
+- `Deploy Frontend to GKE`
+- `Deploy Backend to GKE`
+- `Deploy Agent to GKE`
 
 ## What Gets Persisted (PVCs)
 
@@ -170,6 +159,27 @@ Actions:
    kubectl -n helpudoc get pods -o wide
    kubectl -n helpudoc describe pod <pod-name>
    ```
+
+### `Trigger Cloud Build deploy` fails before the build starts
+
+If GitHub Actions fails in the `gcloud builds submit` step with either of the errors below, the problem is in GCP project configuration, not in the repo:
+
+1. Missing project `environment` tag:
+   ```text
+   Project '...' lacks an 'environment' tag
+   ```
+   Fix by creating the required Resource Manager tag binding on the GCP project. Your organization policy is enforcing this before Cloud Build can run.
+
+2. Forbidden from accessing `[PROJECT_ID]_cloudbuild` bucket:
+   ```text
+   ERROR: (gcloud.builds.submit) The user is forbidden from accessing the bucket [...]
+   ```
+   Fix by granting the identity used by GitHub Actions enough access to submit builds and use the Cloud Build staging bucket. In practice this usually means:
+   - Cloud Build Editor or a custom role that can create builds
+   - Storage access to the Cloud Build staging bucket
+   - `serviceusage.services.use` permission on the project
+
+If you are using Workload Identity Federation, apply those permissions to `${{ secrets.GCP_SERVICE_ACCOUNT }}`. If you are using a JSON key, apply them to that service account instead.
 
 ### Agent image pull is slow on new nodes
 

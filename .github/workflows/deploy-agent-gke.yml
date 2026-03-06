@@ -1,7 +1,7 @@
-name: Deploy Full Stack to GKE
+name: Deploy Agent to GKE
 
 concurrency:
-  group: deploy-gke-${{ github.ref }}
+  group: deploy-gke-agent-${{ github.ref }}
   cancel-in-progress: true
 
 on:
@@ -11,7 +11,6 @@ env:
   PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
   GKE_LOCATION: ${{ secrets.GKE_LOCATION }}
   GKE_CLUSTER: ${{ secrets.GKE_CLUSTER }}
-  VITE_GOOGLE_CLIENT_ID: ${{ secrets.VITE_GOOGLE_CLIENT_ID }}
 
 jobs:
   deploy:
@@ -32,34 +31,17 @@ jobs:
           CREDENTIALS_JSON: ${{ secrets.GCP_CREDENTIALS_JSON }}
         run: |
           set -euo pipefail
-
           has_wif=false
           has_json=false
-
-          if [[ -n "${WIF_PROVIDER}" && -n "${WIF_SERVICE_ACCOUNT}" ]]; then
-            has_wif=true
-          fi
-
-          if [[ -n "${CREDENTIALS_JSON}" ]]; then
-            has_json=true
-          fi
-
+          if [[ -n "${WIF_PROVIDER}" && -n "${WIF_SERVICE_ACCOUNT}" ]]; then has_wif=true; fi
+          if [[ -n "${CREDENTIALS_JSON}" ]]; then has_json=true; fi
           if [[ "${has_wif}" == "true" && "${has_json}" == "true" ]]; then
-            echo "Configure only one auth method: WIF (GCP_WORKLOAD_PROVIDER + GCP_SERVICE_ACCOUNT) OR GCP_CREDENTIALS_JSON." >&2
+            echo "Configure only one auth method: WIF OR JSON key." >&2
             exit 1
           fi
-
-          if [[ "${has_wif}" == "true" ]]; then
-            echo "mode=wif" >> "${GITHUB_OUTPUT}"
-            exit 0
-          fi
-
-          if [[ "${has_json}" == "true" ]]; then
-            echo "mode=json" >> "${GITHUB_OUTPUT}"
-            exit 0
-          fi
-
-          echo "Missing GCP auth secrets. Set either GCP_WORKLOAD_PROVIDER + GCP_SERVICE_ACCOUNT, or GCP_CREDENTIALS_JSON." >&2
+          if [[ "${has_wif}" == "true" ]]; then echo "mode=wif" >> "${GITHUB_OUTPUT}"; exit 0; fi
+          if [[ "${has_json}" == "true" ]]; then echo "mode=json" >> "${GITHUB_OUTPUT}"; exit 0; fi
+          echo "Missing GCP auth secrets." >&2
           exit 1
 
       - name: Authenticate to Google Cloud (Workload Identity)
@@ -78,13 +60,6 @@ jobs:
       - name: Set up gcloud
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: Debug active GCP identity
-        run: |
-          set -euo pipefail
-          echo "Auth mode: ${{ steps.auth_mode.outputs.mode }}"
-          gcloud auth list --filter=status:ACTIVE
-          gcloud config list --format='text(core.account,core.project)'
-
       - name: Configure Docker Auth
         run: |
           set -euo pipefail
@@ -95,35 +70,21 @@ jobs:
           set -euo pipefail
           gcloud container clusters get-credentials "${GKE_CLUSTER}" --location "${GKE_LOCATION}" --project "${PROJECT_ID}"
 
-      - name: Build and Push Images
+      - name: Build and Push Agent Image
         env:
           IMAGE_TAG: ${{ github.sha }}
         run: |
           set -euo pipefail
-
-          docker build -f backend/Dockerfile.gke -t "gcr.io/${PROJECT_ID}/helpudoc-backend:${IMAGE_TAG}" .
-          docker build -f frontend/Dockerfile.gke --build-arg "VITE_GOOGLE_CLIENT_ID=${VITE_GOOGLE_CLIENT_ID}" -t "gcr.io/${PROJECT_ID}/helpudoc-frontend:${IMAGE_TAG}" .
           docker build -f agent/Dockerfile.gke -t "gcr.io/${PROJECT_ID}/helpudoc-agent:${IMAGE_TAG}" .
-
-          docker push "gcr.io/${PROJECT_ID}/helpudoc-backend:${IMAGE_TAG}"
-          docker push "gcr.io/${PROJECT_ID}/helpudoc-frontend:${IMAGE_TAG}"
           docker push "gcr.io/${PROJECT_ID}/helpudoc-agent:${IMAGE_TAG}"
 
-      - name: Apply Base Manifests
-        run: |
-          set -euo pipefail
-          kubectl apply -f infra/gke/k8s/
-
-      - name: Update Images
+      - name: Deploy Agent
         env:
           IMAGE_TAG: ${{ github.sha }}
         run: |
           set -euo pipefail
-          kubectl -n helpudoc set image deployment/helpudoc-app \
-            backend="gcr.io/${PROJECT_ID}/helpudoc-backend:${IMAGE_TAG}" \
-            agent="gcr.io/${PROJECT_ID}/helpudoc-agent:${IMAGE_TAG}"
-          kubectl -n helpudoc set image deployment/helpudoc-frontend \
-            frontend="gcr.io/${PROJECT_ID}/helpudoc-frontend:${IMAGE_TAG}"
+          kubectl -n helpudoc set image deployment/helpudoc-app agent="gcr.io/${PROJECT_ID}/helpudoc-agent:${IMAGE_TAG}"
+          kubectl -n helpudoc rollout status deployment/helpudoc-app --timeout=20m
 
       - name: Sync Skills PVC
         run: |
@@ -133,9 +94,3 @@ jobs:
           kubectl -n helpudoc exec "${APP_POD}" -c backend -- sh -lc "set -eu; mkdir -p /app/skills; find /app/skills -mindepth 1 -maxdepth 1 -exec rm -rf {} +"
           tar -C skills -cf - . | kubectl -n helpudoc exec -i "${APP_POD}" -c backend -- sh -lc "tar -xf - -C /app/skills"
           kubectl -n helpudoc exec "${APP_POD}" -c backend -- sh -lc "test -f /app/skills/research/SKILL.md"
-
-      - name: Wait for Rollout
-        run: |
-          set -euo pipefail
-          kubectl -n helpudoc rollout status deployment/helpudoc-app --timeout=20m
-          kubectl -n helpudoc rollout status deployment/helpudoc-frontend --timeout=10m

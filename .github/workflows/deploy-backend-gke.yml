@@ -1,0 +1,88 @@
+name: Deploy Backend to GKE
+
+concurrency:
+  group: deploy-gke-backend-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  workflow_dispatch:
+
+env:
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  GKE_LOCATION: ${{ secrets.GKE_LOCATION }}
+  GKE_CLUSTER: ${{ secrets.GKE_CLUSTER }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Google auth mode
+        id: auth_mode
+        env:
+          WIF_PROVIDER: ${{ secrets.GCP_WORKLOAD_PROVIDER }}
+          WIF_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+          CREDENTIALS_JSON: ${{ secrets.GCP_CREDENTIALS_JSON }}
+        run: |
+          set -euo pipefail
+          has_wif=false
+          has_json=false
+          if [[ -n "${WIF_PROVIDER}" && -n "${WIF_SERVICE_ACCOUNT}" ]]; then has_wif=true; fi
+          if [[ -n "${CREDENTIALS_JSON}" ]]; then has_json=true; fi
+          if [[ "${has_wif}" == "true" && "${has_json}" == "true" ]]; then
+            echo "Configure only one auth method: WIF OR JSON key." >&2
+            exit 1
+          fi
+          if [[ "${has_wif}" == "true" ]]; then echo "mode=wif" >> "${GITHUB_OUTPUT}"; exit 0; fi
+          if [[ "${has_json}" == "true" ]]; then echo "mode=json" >> "${GITHUB_OUTPUT}"; exit 0; fi
+          echo "Missing GCP auth secrets." >&2
+          exit 1
+
+      - name: Authenticate to Google Cloud (Workload Identity)
+        if: ${{ steps.auth_mode.outputs.mode == 'wif' }}
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Authenticate to Google Cloud (Service Account Key)
+        if: ${{ steps.auth_mode.outputs.mode == 'json' }}
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_CREDENTIALS_JSON }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker Auth
+        run: |
+          set -euo pipefail
+          gcloud auth configure-docker gcr.io --quiet
+
+      - name: Get GKE Credentials
+        run: |
+          set -euo pipefail
+          gcloud container clusters get-credentials "${GKE_CLUSTER}" --location "${GKE_LOCATION}" --project "${PROJECT_ID}"
+
+      - name: Build and Push Backend Image
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          docker build -f backend/Dockerfile.gke -t "gcr.io/${PROJECT_ID}/helpudoc-backend:${IMAGE_TAG}" .
+          docker push "gcr.io/${PROJECT_ID}/helpudoc-backend:${IMAGE_TAG}"
+
+      - name: Apply ConfigMap and Deploy Backend
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          kubectl -n helpudoc apply -f infra/gke/k8s/20-configmap.yaml
+          kubectl -n helpudoc set image deployment/helpudoc-app backend="gcr.io/${PROJECT_ID}/helpudoc-backend:${IMAGE_TAG}"
+          kubectl -n helpudoc rollout status deployment/helpudoc-app --timeout=20m
