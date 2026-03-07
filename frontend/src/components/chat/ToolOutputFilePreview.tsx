@@ -30,6 +30,9 @@ export default function ToolOutputFilePreview({
   file: ToolOutputFile;
   markdownComponents?: Record<string, any>;
 }) {
+  const preBaseClass =
+    'mt-2 w-full max-w-full min-w-0 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded p-3 text-xs';
+
   const [preview, setPreview] = useState<FilePreviewPayload | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -149,18 +152,18 @@ export default function ToolOutputFilePreview({
       // Keep original payload as-is.
     }
     return (
-      <pre className="mt-2 max-h-64 overflow-auto rounded bg-slate-900 p-3 text-xs text-slate-100">
+      <pre className={`${preBaseClass} bg-slate-900 text-slate-100`}>
         {formatted}
       </pre>
     );
   }
 
   return encoding === 'base64' ? (
-    <pre className="mt-2 max-h-64 overflow-auto rounded border border-gray-200 bg-gray-50 p-3 text-xs text-gray-800">
+    <pre className={`${preBaseClass} border border-gray-200 bg-gray-50 text-gray-800`}>
       Binary file preview not available.
     </pre>
   ) : (
-    <pre className="mt-2 max-h-64 overflow-auto rounded border border-gray-200 bg-gray-50 p-3 text-xs text-gray-800">
+    <pre className={`${preBaseClass} border border-gray-200 bg-gray-50 text-gray-800`}>
       {content}
     </pre>
   );

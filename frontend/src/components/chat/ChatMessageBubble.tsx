@@ -397,7 +397,7 @@ export default function ChatMessageBubble({
                     {toolEvents.map((event, index) => {
                       const isLast = index === toolEvents.length - 1;
                       return (
-                        <div key={event.id || `${event.name}-${index}`} className="flex gap-3 pb-3 last:pb-0">
+                        <div key={event.id || `${event.name}-${index}`} className="flex min-w-0 gap-3 pb-3 last:pb-0">
                           <div className="flex flex-col items-center">
                             <span
                               className={`h-2.5 w-2.5 rounded-full ${event.status === 'completed' ? 'bg-emerald-500' : 'bg-amber-400'
@@ -405,15 +405,15 @@ export default function ChatMessageBubble({
                             />
                             {!isLast ? <span className="h-full w-px flex-1 bg-slate-200" /> : null}
                           </div>
-                          <div className="flex-1">
+                          <div className="min-w-0 flex-1">
                             <p
-                              className={`text-[11px] font-semibold uppercase tracking-wide ${event.status === 'error' ? 'text-red-500' : 'text-slate-500'
+                              className={`break-words text-[11px] font-semibold uppercase tracking-wide ${event.status === 'error' ? 'text-red-500' : 'text-slate-500'
                                 }`}
                             >
                               {event.name}
                             </p>
                             <p
-                              className={`text-sm ${event.status === 'error' ? 'text-red-600' : 'text-slate-700'}`}
+                              className={`whitespace-pre-wrap break-words text-sm ${event.status === 'error' ? 'text-red-600' : 'text-slate-700'}`}
                             >
                               {event.summary ||
                                 (event.status === 'completed'
@@ -427,13 +427,13 @@ export default function ChatMessageBubble({
                               {event.finishedAt ? ` • ${formatMessageTimestamp(event.finishedAt)}` : ''}
                             </p>
                             {event.outputFiles?.length ? (
-                              <div className="mt-2 space-y-3">
+                              <div className="mt-2 min-w-0 space-y-3">
                                 {event.outputFiles.map((file) => (
                                   <div
                                     key={`${event.id}-${file.path}`}
-                                    className="rounded-lg border border-slate-200 bg-white p-2"
+                                    className="min-w-0 max-w-full overflow-hidden rounded-lg border border-slate-200 bg-white p-2"
                                   >
-                                    <p className="text-xs font-semibold text-slate-700">{file.path}</p>
+                                    <p className="break-all text-xs font-semibold text-slate-700">{file.path}</p>
                                     <ToolOutputFilePreview workspaceId={workspaceId} file={file} markdownComponents={markdownComponents} />
                                   </div>
                                 ))}
