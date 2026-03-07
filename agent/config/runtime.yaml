@@ -32,6 +32,9 @@ tools:
   - name: gemini_image
     kind: builtin
     description: Generate or edit images using Gemini
+  - name: export_bigquery_query
+    kind: builtin
+    description: Export read-only BigQuery query results to workspace CSV or Parquet
   - name: data_agent_tools
     entrypoint: helpudoc_agent.data_agent_tools:build_data_agent_tools
     description: Tools for Data Agent (DuckDB, Charts)

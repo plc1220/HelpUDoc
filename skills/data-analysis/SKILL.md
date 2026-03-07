@@ -2,6 +2,7 @@
 name: data-analysis
 description: End-to-end data analysis with DuckDB queries, optional Plotly charts, and artifact-aware summaries.
 tools:
+  - export_bigquery_query
   - data_agent_tools
 source_skills:
   - data_agent-core
@@ -17,6 +18,8 @@ source_skills:
 ## Overview
 Use this skill to analyze tabular data in the workspace using DuckDB tools, optionally produce a Plotly visualization, and deliver a concise, evidence-based summary that references any generated artifacts.
 
+If the source data lives in BigQuery and there is no relevant local extract yet, first use `export_bigquery_query` to stage a CSV or Parquet file into `data_exports/`, then continue the normal DuckDB workflow against that staged file.
+
 ## Standards (required)
 - **Summary and insights must be valid Markdown**, not raw paragraphs. Use headings (`###`) and bullet lists (`-`) so the report renders cleanly.
 - **Every insight must cite concrete evidence** from queries (counts, averages, deltas, correlations, percent shares). No speculation.
@@ -31,29 +34,34 @@ Use this skill to analyze tabular data in the workspace using DuckDB tools, opti
 5. **Outliers/variance**: highlight spread changes across segments (box plot or variance stats).
 
 ## Workflow
-1. **Scope & schema**
-   - Use `get_table_schema` to inspect only the tables needed for the question.
+1. **Stage source data when needed**
+   - If the user is asking about BigQuery data and the needed table/extract is not already in the workspace, call `export_bigquery_query` first.
+   - Save staged extracts under `data_exports/` with a clear name. Use `.csv` by default; use `.parquet` for larger extracts.
+   - Prefer a bounded extract (`row_limit`) unless the user explicitly asks for a full pull.
+
+2. **Scope & schema**
+   - Use `get_table_schema` to inspect only the staged/local tables needed for the question.
    - Note relevant tables, key columns, joins, date fields, and metrics before querying.
 
-2. **Query**
+3. **Query**
    - Use `run_sql_query` to answer the question with focused SQL.
    - Always specify columns (no `SELECT *`) and include `LIMIT 1000`.
    - You may run up to 5 queries total; refine only when needed.
    - Prefer a **segmentation query** and at least one **interaction/combination query** when deeper analysis is requested.
    - After each query, briefly interpret results and decide whether another refinement is required.
 
-3. **Chart (optional)**
+4. **Chart (optional)**
    - If a chart helps, use `generate_chart_config` on the latest `df`.
    - Plotly only. Assign a serializable `chart_config` and keep logic deterministic.
    - Plotly outputs will be saved as `.plotly.json` and `.plotly.html` in `charts/`.
    - Use descriptive `chart_title` names (Title_Case_With_Underscores).
    - Do not generate more than 3 charts.
 
-4. **Artifacts (optional)**
+5. **Artifacts (optional)**
    - If artifacts are useful (CSV extracts, HTML previews, Markdown notes), write them to disk using the provided helpers.
    - Keep artifacts minimal and clearly named; explain why each artifact exists.
 
-5. **Summary**
+6. **Summary**
    - Call `generate_summary` once after queries (and any chart).
    - Include tables used, filters, metrics, and artifacts created.
    - Provide at least two concrete insights (or explain if none exist).
@@ -64,7 +72,7 @@ Use this skill to analyze tabular data in the workspace using DuckDB tools, opti
    - Note: `generate_summary` will also create a report file in `reports/` with the analysis steps and outputs.
 
 ## Guardrails
-- Order is mandatory: schema -> SQL -> chart (optional) -> artifacts (optional) -> summary.
+- Order is mandatory: export (when BigQuery is the source) -> schema -> SQL -> chart (optional) -> artifacts (optional) -> summary.
 - No direct file I/O or Python reads of raw data files.
-- Use only the data tools provided (via `data_agent_tools`).
+- Use only the listed data tools (`export_bigquery_query` and `data_agent_tools`).
 - Explain intent briefly before each tool call; stop after `generate_summary` succeeds.

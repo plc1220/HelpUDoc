@@ -24,6 +24,7 @@ try:
 except ImportError as exc:  # pragma: no cover
     raise RuntimeError("Gemini dependencies are required") from exc
 
+from .bigquery_export_tools import build_export_bigquery_query_tool
 from .configuration import Settings, ToolConfig
 from .skills_registry import SkillPolicy, load_skills
 from .rag_indexer import RagConfig, WorkspaceRagStore
@@ -213,6 +214,7 @@ class ToolFactory:
             "google_search": self._build_google_search_tool,
             "gemini_image": self._build_gemini_image_tool,
             "google_grounded_search": self._build_google_grounded_search_tool,
+            "export_bigquery_query": self._build_export_bigquery_query_tool,
             "append_to_report": self._build_append_to_report_tool,
             "get_image_url": self._build_get_image_url_tool,
             "rag_query": self._build_rag_query_tool,
@@ -277,6 +279,9 @@ class ToolFactory:
             tool_description="Alias of google_search with citations for backward compatibility.",
             search_label="google_grounded_search",
         )
+
+    def _build_export_bigquery_query_tool(self, workspace_state: WorkspaceState) -> Tool:
+        return build_export_bigquery_query_tool(workspace_state=workspace_state)
 
     def _build_list_skills_tool(self, workspace_state: WorkspaceState) -> Tool:
         """List available skills from the shared skills registry."""
