@@ -2000,6 +2000,13 @@ export default function WorkspacePage() {
     [findAgentMessageForRun],
   );
 
+  const isAgentMessageEmpty = useCallback((message?: ConversationMessage | null) => {
+    if (!message || message.sender !== 'agent') {
+      return true;
+    }
+    return !message.text && !message.thinkingText && !message.toolEvents?.length;
+  }, []);
+
   const persistAgentProgress = useCallback(
     async (runInfo: ActiveRunInfo, statusOverride?: AgentRunStatus) => {
       const { runId, conversationId, turnId, placeholderId } = runInfo;
@@ -2014,7 +2021,7 @@ export default function WorkspacePage() {
         return;
       }
       const message = findAgentMessageForRun(conversationId, placeholderId, turnId);
-      if (!text && !message?.thinkingText && !message?.toolEvents?.length) {
+      if (!text && !message?.thinkingText && !message?.toolEvents?.length && nextStatus !== 'running') {
         return;
       }
       const metadata = { ...(buildMessageMetadata(message) || {}), runId, status: nextStatus };
@@ -2443,10 +2450,10 @@ export default function WorkspacePage() {
       return;
     }
     const activeRun = getActiveRunForConversation(activeConversationId);
-    if (activeRun) {
-      if (resumeAttemptedRef.current.has(activeRun.runId)) {
-        return;
-      }
+      if (activeRun) {
+        if (resumeAttemptedRef.current.has(activeRun.runId)) {
+          return;
+        }
       if (resumeInFlightRef.current.has(activeRun.runId)) {
         return;
       }
@@ -2460,6 +2467,12 @@ export default function WorkspacePage() {
       }
       getRunStatus(activeRun.runId)
         .then((status) => {
+          const persistedMessage = findAgentMessageForRun(
+            activeRun.conversationId,
+            activeRun.placeholderId,
+            activeRun.turnId
+          );
+          const needsRecovery = isAgentMessageEmpty(persistedMessage);
           if (status.status === 'running' || status.status === 'queued') {
             if (STREAM_DEBUG_ENABLED) {
               console.debug('[WorkspacePage] resume stream', { runId: activeRun.runId });
@@ -2467,6 +2480,15 @@ export default function WorkspacePage() {
             streamRunForConversation(activeRun, true)
               .catch((error) => {
                 console.error('Failed to resume agent stream', error);
+                removeActiveRun(activeRun.runId);
+              })
+              .finally(() => {
+                resumeInFlightRef.current.delete(activeRun.runId);
+              });
+          } else if (needsRecovery) {
+            streamRunForConversation({ ...activeRun, status: status.status }, true)
+              .catch((error) => {
+                console.error('Failed to recover agent stream', error);
                 removeActiveRun(activeRun.runId);
               })
               .finally(() => {
@@ -2524,6 +2546,7 @@ export default function WorkspacePage() {
     conversationStreaming,
     findAgentMessageForRun,
     getActiveRunForConversation,
+    isAgentMessageEmpty,
     removeActiveRun,
     streamRunForConversation,
     updateMessagesForConversation,
