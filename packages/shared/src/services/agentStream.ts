@@ -16,8 +16,23 @@ export type AgentStreamChunk =
   | {
       type: 'interrupt';
       interruptId?: string;
+      kind?: 'approval' | 'clarification';
+      title?: string;
+      description?: string;
+      stepIndex?: number;
+      stepCount?: number;
       actionRequests?: Array<{ name?: string; args?: Record<string, unknown> }>;
       reviewConfigs?: Array<{ action_name?: string; allowed_decisions?: string[] }>;
+      responseSpec?: {
+        inputMode?: 'none' | 'text' | 'choice' | 'text_or_choice';
+        multiple?: boolean;
+        submitLabel?: string;
+        placeholder?: string;
+        allowDismiss?: boolean;
+        dismissLabel?: string;
+        choices?: Array<{ id: string; label: string; description?: string; value: string }>;
+      };
+      displayPayload?: Record<string, unknown>;
     }
   | { type: 'keepalive' }
   | { type: 'done' }
@@ -83,6 +98,7 @@ export const streamAgentRunWithReconnect = async ({
       const decoder = new TextDecoder();
       let buffer = '';
       let sawChunk = false;
+      let sawTerminalChunk = false;
 
       while (true) {
         const { value, done } = await reader.read();
@@ -100,6 +116,9 @@ export const streamAgentRunWithReconnect = async ({
               const chunk = JSON.parse(line);
               onChunkWithResume(chunk);
               sawChunk = true;
+              if (chunk?.type === 'done') {
+                sawTerminalChunk = true;
+              }
               if (debug) {
                 console.debug('[AgentRunStream] chunk', chunk);
               }
@@ -107,21 +126,34 @@ export const streamAgentRunWithReconnect = async ({
               console.error('Failed to parse stream chunk', error, line);
             }
           }
+          if (sawTerminalChunk) {
+            break;
+          }
           newlineIndex = buffer.indexOf('\n');
+        }
+        if (sawTerminalChunk) {
+          break;
         }
       }
 
-      if (buffer.trim()) {
+      if (!sawTerminalChunk && buffer.trim()) {
         try {
           const chunk = JSON.parse(buffer.trim());
           onChunkWithResume(chunk);
           sawChunk = true;
+          if (chunk?.type === 'done') {
+            sawTerminalChunk = true;
+          }
           if (debug) {
             console.debug('[AgentRunStream] trailing chunk', chunk);
           }
         } catch (error) {
           console.error('Failed to parse trailing stream chunk', error, buffer);
         }
+      }
+
+      if (sawTerminalChunk) {
+        await reader.cancel().catch(() => undefined);
       }
 
       if (sawChunk) {

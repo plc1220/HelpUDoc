@@ -46,15 +46,42 @@ export interface ToolOutputFile {
   size?: number;
 }
 
+export interface InterruptChoice {
+  id: string;
+  label: string;
+  description?: string;
+  value: string;
+}
+
+export interface InterruptResponseSpec {
+  inputMode?: 'none' | 'text' | 'choice' | 'text_or_choice';
+  multiple?: boolean;
+  submitLabel?: string;
+  placeholder?: string;
+  allowDismiss?: boolean;
+  dismissLabel?: string;
+  choices?: InterruptChoice[];
+}
+
+export interface PendingInterrupt {
+  kind?: 'approval' | 'clarification';
+  interruptId?: string;
+  title?: string;
+  description?: string;
+  stepIndex?: number;
+  stepCount?: number;
+  actionRequests?: Array<{ name?: string; args?: Record<string, unknown> }>;
+  reviewConfigs?: Array<{ action_name?: string; allowed_decisions?: string[] }>;
+  responseSpec?: InterruptResponseSpec;
+  displayPayload?: Record<string, unknown>;
+}
+
 export interface ConversationMessageMetadata {
   thinkingText?: string;
   toolEvents?: ToolEvent[];
   runId?: string;
   status?: 'queued' | 'running' | 'awaiting_approval' | 'completed' | 'failed' | 'cancelled';
-  pendingInterrupt?: {
-    actionRequests?: Array<{ name?: string; args?: Record<string, unknown> }>;
-    reviewConfigs?: Array<{ action_name?: string; allowed_decisions?: string[] }>;
-  };
+  pendingInterrupt?: PendingInterrupt;
   runPolicy?: {
     skill?: string;
     requiresHitlPlan?: boolean;

@@ -90,6 +90,12 @@ export default function conversationRoutes(conversationService: ConversationServ
       runId: z.string().optional(),
       status: z.enum(['queued', 'running', 'awaiting_approval', 'completed', 'failed', 'cancelled']).optional(),
       pendingInterrupt: z.object({
+        kind: z.enum(['approval', 'clarification']).optional(),
+        interruptId: z.string().optional(),
+        title: z.string().optional(),
+        description: z.string().optional(),
+        stepIndex: z.number().int().nonnegative().optional(),
+        stepCount: z.number().int().positive().optional(),
         actionRequests: z.array(z.object({
           name: z.string().optional(),
           args: z.record(z.string(), z.unknown()).optional(),
@@ -98,6 +104,21 @@ export default function conversationRoutes(conversationService: ConversationServ
           action_name: z.string().optional(),
           allowed_decisions: z.array(z.string()).optional(),
         }).passthrough()).optional(),
+        responseSpec: z.object({
+          inputMode: z.enum(['none', 'text', 'choice', 'text_or_choice']).optional(),
+          multiple: z.boolean().optional(),
+          submitLabel: z.string().optional(),
+          placeholder: z.string().optional(),
+          allowDismiss: z.boolean().optional(),
+          dismissLabel: z.string().optional(),
+          choices: z.array(z.object({
+            id: z.string(),
+            label: z.string(),
+            description: z.string().optional(),
+            value: z.string(),
+          }).passthrough()).optional(),
+        }).passthrough().optional(),
+        displayPayload: z.record(z.string(), z.unknown()).optional(),
       }).passthrough().optional(),
       runPolicy: z.object({
         skill: z.string().optional(),

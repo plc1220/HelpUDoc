@@ -59,6 +59,9 @@ tools:
   - name: request_plan_approval
     kind: builtin
     description: Request human approval for a generated execution plan
+  - name: request_clarification
+    kind: builtin
+    description: Pause the run and ask the human for clarification with optional choices
 
 mcp_servers:
   - name: toolbox-bq-demo

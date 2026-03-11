@@ -1,6 +1,7 @@
 import { streamAgentRunWithReconnect, type AgentStreamChunk } from '../../../packages/shared/src/services/agentStream';
 export type { AgentStreamChunk };
 import { API_URL, apiFetch } from './apiClient';
+import type { ConversationMessageMetadata } from '../types';
 
 const STREAM_DEBUG_ENABLED =
   typeof import.meta !== 'undefined' &&
@@ -63,7 +64,15 @@ export const streamAgentRun = async (
   });
 };
 
-export const getRunStatus = async (runId: string): Promise<{ status: AgentRunStatus; workspaceId: string; persona: string; turnId?: string }> => {
+export const getRunStatus = async (
+  runId: string,
+): Promise<{
+  status: AgentRunStatus;
+  workspaceId: string;
+  persona: string;
+  turnId?: string;
+  pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'];
+}> => {
   const response = await apiFetch(`${API_URL}/agent/runs/${runId}`);
   if (!response.ok) {
     throw new Error('Failed to fetch run status');
@@ -102,6 +111,27 @@ export const submitRunDecision = async (
   });
   if (!response.ok) {
     throw new Error('Failed to submit run decision');
+  }
+  return response.json();
+};
+
+export const submitRunResponse = async (
+  runId: string,
+  payload: {
+    message?: string;
+    selectedChoiceIds?: string[];
+    selectedValues?: string[];
+  },
+) => {
+  const response = await apiFetch(`${API_URL}/agent/runs/${runId}/respond`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    throw new Error('Failed to submit clarification response');
   }
   return response.json();
 };

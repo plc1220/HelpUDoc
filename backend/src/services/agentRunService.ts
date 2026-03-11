@@ -4,7 +4,9 @@ import { redisClient } from './redisService';
 import {
   runAgentStream,
   resumeAgentStream,
+  resumeAgentResponseStream,
   type AgentDecision,
+  type AgentInterruptResponse,
   type AgentHistoryEntry,
 } from './agentService';
 
@@ -26,6 +28,27 @@ type StartRunParams = {
   authToken?: string;
 };
 
+type RunPendingInterrupt = {
+  kind?: 'approval' | 'clarification';
+  interruptId?: string;
+  title?: string;
+  description?: string;
+  stepIndex?: number;
+  stepCount?: number;
+  actionRequests?: Array<{ name?: string; args?: Record<string, unknown> }>;
+  reviewConfigs?: Array<{ action_name?: string; allowed_decisions?: string[] }>;
+  responseSpec?: {
+    inputMode?: 'none' | 'text' | 'choice' | 'text_or_choice';
+    multiple?: boolean;
+    submitLabel?: string;
+    placeholder?: string;
+    allowDismiss?: boolean;
+    dismissLabel?: string;
+    choices?: Array<{ id?: string; label?: string; description?: string; value?: string }>;
+  };
+  displayPayload?: Record<string, unknown>;
+};
+
 type RunMeta = {
   workspaceId: string;
   persona: string;
@@ -35,11 +58,19 @@ type RunMeta = {
   completedAt?: string;
   error?: string;
   turnId?: string;
-  pendingInterrupt?: string;
+  pendingInterrupt?: RunPendingInterrupt;
 };
 
 type RunContext = {
   params: StartRunParams;
+};
+
+type ResumePayload =
+  | { decisions: AgentDecision[]; response?: never }
+  | { response: AgentInterruptResponse; decisions?: never };
+
+type PersistedRunMeta = Omit<RunMeta, 'pendingInterrupt'> & {
+  pendingInterrupt?: string;
 };
 
 const STREAM_TTL_SECONDS = 60 * 60 * 24; // 24h
@@ -52,7 +83,7 @@ const runContexts = new Map<string, RunContext>();
 const buildStreamKey = (runId: string) => `agent:run:${runId}`;
 const buildMetaKey = (runId: string) => `agent:run:${runId}:meta`;
 
-const persistMeta = async (runId: string, meta: Partial<RunMeta>) => {
+const persistMeta = async (runId: string, meta: Partial<PersistedRunMeta>) => {
   const metaKey = buildMetaKey(runId);
   const stringified: Record<string, string> = {};
   Object.entries(meta).forEach(([key, value]) => {
@@ -98,6 +129,52 @@ const buildAgentErrorPayload = (error: any, persona: string): string => {
     return error.message;
   }
   return 'Agent run failed.';
+};
+
+const parsePendingInterrupt = (raw: string | undefined): RunPendingInterrupt | undefined => {
+  if (!raw || !raw.trim()) {
+    return undefined;
+  }
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return undefined;
+    }
+    const payload = parsed as Record<string, unknown>;
+    return {
+      kind:
+        payload.kind === 'clarification' || payload.kind === 'approval'
+          ? payload.kind
+          : undefined,
+      interruptId: typeof payload.interruptId === 'string' ? payload.interruptId : undefined,
+      title: typeof payload.title === 'string' ? payload.title : undefined,
+      description: typeof payload.description === 'string' ? payload.description : undefined,
+      stepIndex: typeof payload.stepIndex === 'number' ? payload.stepIndex : undefined,
+      stepCount: typeof payload.stepCount === 'number' ? payload.stepCount : undefined,
+      actionRequests: Array.isArray(payload.actionRequests)
+        ? payload.actionRequests.filter(
+            (item): item is { name?: string; args?: Record<string, unknown> } =>
+              Boolean(item) && typeof item === 'object' && !Array.isArray(item),
+          )
+        : undefined,
+      reviewConfigs: Array.isArray(payload.reviewConfigs)
+        ? payload.reviewConfigs.filter(
+            (item): item is { action_name?: string; allowed_decisions?: string[] } =>
+              Boolean(item) && typeof item === 'object' && !Array.isArray(item),
+          )
+        : undefined,
+      responseSpec:
+        payload.responseSpec && typeof payload.responseSpec === 'object' && !Array.isArray(payload.responseSpec)
+          ? (payload.responseSpec as RunPendingInterrupt['responseSpec'])
+          : undefined,
+      displayPayload:
+        payload.displayPayload && typeof payload.displayPayload === 'object' && !Array.isArray(payload.displayPayload)
+          ? (payload.displayPayload as Record<string, unknown>)
+          : undefined,
+    };
+  } catch {
+    return undefined;
+  }
 };
 
 const cleanupRun = (runId: string, upstream?: IncomingMessage) => {
@@ -163,7 +240,7 @@ const parseLine = (line: string): Record<string, unknown> | null => {
   }
 };
 
-async function runAgentRunWorker(runId: string, params: StartRunParams, resumeDecisions?: AgentDecision[]) {
+async function runAgentRunWorker(runId: string, params: StartRunParams, resumePayload?: ResumePayload) {
   const controller = new AbortController();
   runAbortControllers.set(runId, controller);
 
@@ -173,7 +250,8 @@ async function runAgentRunWorker(runId: string, params: StartRunParams, resumeDe
       workspaceId: params.workspaceId,
       persona: params.persona,
       hasHistory: Boolean(params.history?.length),
-      resumeDecisions: Boolean(resumeDecisions?.length),
+      resumeDecisions: Boolean(resumePayload && 'decisions' in resumePayload && resumePayload.decisions?.length),
+      resumeResponse: Boolean(resumePayload && 'response' in resumePayload),
     });
   }
 
@@ -243,8 +321,14 @@ async function runAgentRunWorker(runId: string, params: StartRunParams, resumeDe
   };
 
   try {
-    const response = resumeDecisions?.length
-      ? await resumeAgentStream(params.persona, params.workspaceId, resumeDecisions, {
+    const response =
+      resumePayload && 'decisions' in resumePayload && resumePayload.decisions
+      ? await resumeAgentStream(params.persona, params.workspaceId, resumePayload.decisions, {
+          signal: controller.signal,
+          authToken: params.authToken,
+        })
+      : resumePayload && 'response' in resumePayload && resumePayload.response
+      ? await resumeAgentResponseStream(params.persona, params.workspaceId, resumePayload.response, {
           signal: controller.signal,
           authToken: params.authToken,
         })
@@ -326,7 +410,25 @@ export async function resumeAgentRun(
     error: '',
     pendingInterrupt: '',
   });
-  void runAgentRunWorker(runId, context.params, decisions);
+  void runAgentRunWorker(runId, context.params, { decisions });
+  return { runId, status: 'queued' };
+}
+
+export async function resumeAgentRunWithResponse(
+  runId: string,
+  response: AgentInterruptResponse,
+): Promise<{ runId: string; status: AgentRunStatus }> {
+  const context = runContexts.get(runId);
+  if (!context) {
+    throw new Error('Run context not found. Start a new run.');
+  }
+  await persistMeta(runId, {
+    status: 'queued',
+    startedAt: new Date().toISOString(),
+    error: '',
+    pendingInterrupt: '',
+  });
+  void runAgentRunWorker(runId, context.params, { response });
   return { runId, status: 'queued' };
 }
 
@@ -353,7 +455,7 @@ export async function getRunMeta(runId: string): Promise<RunMeta | null> {
     completedAt: meta.completedAt,
     error: meta.error,
     turnId: meta.turnId,
-    pendingInterrupt: meta.pendingInterrupt,
+    pendingInterrupt: parsePendingInterrupt(meta.pendingInterrupt),
   };
 }
 
