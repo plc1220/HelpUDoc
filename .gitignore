@@ -2,6 +2,7 @@
 node_modules/
 dist/
 build/
+output/
 *.log
 .env*
 !.env.example
