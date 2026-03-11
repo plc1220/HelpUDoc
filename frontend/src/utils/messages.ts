@@ -1,5 +1,35 @@
 import type { ConversationMessage, ConversationMessageMetadata } from '../types';
 
+const sanitizeRunPolicy = (
+  runPolicy?: ConversationMessageMetadata['runPolicy'],
+): ConversationMessageMetadata['runPolicy'] | undefined => {
+  if (!runPolicy) {
+    return undefined;
+  }
+
+  const sanitized: NonNullable<ConversationMessageMetadata['runPolicy']> = {};
+  if (typeof runPolicy.skill === 'string' && runPolicy.skill.trim()) {
+    sanitized.skill = runPolicy.skill;
+  }
+  if (typeof runPolicy.requiresHitlPlan === 'boolean') {
+    sanitized.requiresHitlPlan = runPolicy.requiresHitlPlan;
+  }
+  if (typeof runPolicy.requiresArtifacts === 'boolean') {
+    sanitized.requiresArtifacts = runPolicy.requiresArtifacts;
+  }
+  if (typeof runPolicy.requiredArtifactsMode === 'string' && runPolicy.requiredArtifactsMode.trim()) {
+    sanitized.requiredArtifactsMode = runPolicy.requiredArtifactsMode;
+  }
+  if (typeof runPolicy.prePlanSearchLimit === 'number') {
+    sanitized.prePlanSearchLimit = runPolicy.prePlanSearchLimit;
+  }
+  if (typeof runPolicy.prePlanSearchUsed === 'number') {
+    sanitized.prePlanSearchUsed = runPolicy.prePlanSearchUsed;
+  }
+
+  return Object.keys(sanitized).length ? sanitized : undefined;
+};
+
 export const mapMessagesToAgentHistory = (messages: ConversationMessage[]) => {
   return messages
     .filter((message) => typeof message.text === 'string' && message.text.trim().length > 0)
@@ -41,10 +71,15 @@ export const buildMessageMetadata = (
     metadata.toolEvents = message.toolEvents;
   }
   if (existingMetadata?.runPolicy) {
-    metadata.runPolicy = existingMetadata.runPolicy;
+    const sanitizedRunPolicy = sanitizeRunPolicy(existingMetadata.runPolicy);
+    if (sanitizedRunPolicy) {
+      metadata.runPolicy = sanitizedRunPolicy;
+    }
   }
   if (existingMetadata?.pendingInterrupt) {
     metadata.pendingInterrupt = existingMetadata.pendingInterrupt;
   }
   return Object.keys(metadata).length ? metadata : undefined;
 };
+
+export { sanitizeRunPolicy };
