@@ -35,6 +35,17 @@ export type AgentInterruptResponse = {
   selectedValues?: string[];
 };
 
+export type AgentInterruptAction = {
+  id: string;
+  value?: string;
+  payload?: Record<string, unknown>;
+  text?: string;
+};
+
+export type AgentInterruptActionResponse = {
+  action: AgentInterruptAction;
+};
+
 type RunAgentOptions = {
   forceReset?: boolean;
   signal?: AbortSignal;
@@ -128,6 +139,27 @@ export async function resumeAgentResponseStream(
   return client.post(
     `/agents/${persona}/workspace/${workspaceId}/chat/stream/respond`,
     response,
+    {
+      responseType: "stream",
+      signal: options?.signal,
+      headers,
+    }
+  );
+}
+
+export async function resumeAgentActionStream(
+  persona: string,
+  workspaceId: string,
+  actionResponse: AgentInterruptActionResponse,
+  options?: RunAgentOptions
+): Promise<AxiosResponse<IncomingMessage>> {
+  const headers: Record<string, string> = {};
+  if (options?.authToken) {
+    headers.Authorization = `Bearer ${options.authToken}`;
+  }
+  return client.post(
+    `/agents/${persona}/workspace/${workspaceId}/chat/stream/act`,
+    actionResponse,
     {
       responseType: "stream",
       signal: options?.signal,

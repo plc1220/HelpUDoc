@@ -19,6 +19,18 @@ export type AgentRunStartResponse = {
   status: AgentRunStatus;
 };
 
+const readErrorMessage = async (response: Response, fallback: string): Promise<string> => {
+  try {
+    const payload = await response.json();
+    if (payload && typeof payload === 'object' && typeof payload.error === 'string' && payload.error.trim()) {
+      return payload.error;
+    }
+  } catch {
+    // Ignore non-JSON error responses and fall back to the generic message.
+  }
+  return fallback;
+};
+
 export const startAgentRun = async (
   workspaceId: string,
   persona: string,
@@ -110,7 +122,7 @@ export const submitRunDecision = async (
     }),
   });
   if (!response.ok) {
-    throw new Error('Failed to submit run decision');
+    throw new Error(await readErrorMessage(response, 'Failed to submit run decision'));
   }
   return response.json();
 };
@@ -131,7 +143,27 @@ export const submitRunResponse = async (
     body: JSON.stringify(payload),
   });
   if (!response.ok) {
-    throw new Error('Failed to submit clarification response');
+    throw new Error(await readErrorMessage(response, 'Failed to submit clarification response'));
+  }
+  return response.json();
+};
+
+export const submitRunAction = async (
+  runId: string,
+  payload: {
+    actionId: string;
+    text?: string;
+  },
+) => {
+  const response = await apiFetch(`${API_URL}/agent/runs/${runId}/act`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, 'Failed to submit interrupt action'));
   }
   return response.json();
 };

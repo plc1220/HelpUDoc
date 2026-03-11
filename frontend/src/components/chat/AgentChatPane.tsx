@@ -19,6 +19,7 @@ import ChatHeader from './ChatHeader';
 import ChatHistoryPanel from './ChatHistoryPanel';
 import ChatInputArea from './ChatInputArea';
 import ChatMessageList from './ChatMessageList';
+import type { RenderableInterruptAction } from './interruptActions';
 
 type CommandSuggestion = {
   id: string;
@@ -48,8 +49,8 @@ export default function AgentChatPane({
   expandedThinkingMessages,
   copiedMessageId,
   interruptInputByMessageId,
-  interruptSelectedChoicesByMessageId,
   interruptSubmittingByMessageId,
+  interruptErrorByMessageId,
   chatMessage,
   chatAttachments,
   showPaper2SlidesControls,
@@ -66,12 +67,12 @@ export default function AgentChatPane({
   workspaceId,
   formatMessageTimestamp,
   interruptFieldKey,
+  interruptActionFieldKey,
   getInterruptKind,
-  getAllowedDecisions,
+  getInterruptActions,
   getPrimaryInterruptAction,
   isPlanApprovalInterrupt,
   setInterruptInputByMessageId,
-  setInterruptSelectedChoicesByMessageId,
   onToggleAgentPaneVisibility,
   onModeChange,
   onToggleHistory,
@@ -84,8 +85,7 @@ export default function AgentChatPane({
   onToggleToolActivityVisibility,
   onCopyMessageText,
   onRerunMessage,
-  onInterruptDecision,
-  onClarificationResponse,
+  onInterruptAction,
   onChatInputChange,
   onChatInputKeyDown,
   onChatInputKeyUp,
@@ -119,8 +119,8 @@ export default function AgentChatPane({
   expandedThinkingMessages: Set<ConversationMessage['id']>;
   copiedMessageId: ConversationMessage['id'] | null;
   interruptInputByMessageId: Record<string, string>;
-  interruptSelectedChoicesByMessageId: Record<string, string[]>;
   interruptSubmittingByMessageId: Record<string, boolean>;
+  interruptErrorByMessageId: Record<string, string>;
   chatMessage: string;
   chatAttachments: File[];
   showPaper2SlidesControls: boolean;
@@ -140,18 +140,18 @@ export default function AgentChatPane({
     messageKey: string,
     field: 'feedback' | 'edit-json' | 'reject-note' | 'clarification-text',
   ) => string;
+  interruptActionFieldKey: (messageKey: string, actionId: string) => string;
   getInterruptKind: (
     pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
   ) => 'approval' | 'clarification';
-  getAllowedDecisions: (
+  getInterruptActions: (
     pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
-  ) => Array<'approve' | 'edit' | 'reject'>;
+  ) => RenderableInterruptAction[];
   getPrimaryInterruptAction: (
     pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
   ) => { name?: string; args?: Record<string, unknown> } | undefined;
   isPlanApprovalInterrupt: (pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt']) => boolean;
   setInterruptInputByMessageId: Dispatch<SetStateAction<Record<string, string>>>;
-  setInterruptSelectedChoicesByMessageId: Dispatch<SetStateAction<Record<string, string[]>>>;
   onToggleAgentPaneVisibility: () => void;
   onModeChange: (event: ChangeEvent<HTMLSelectElement>) => void;
   onToggleHistory: () => void;
@@ -164,13 +164,9 @@ export default function AgentChatPane({
   onToggleToolActivityVisibility: (messageId: ConversationMessage['id']) => void;
   onCopyMessageText: (message: ConversationMessage) => void;
   onRerunMessage: (messageId: ConversationMessage['id']) => void;
-  onInterruptDecision: (
+  onInterruptAction: (
     message: ConversationMessage,
-    decision: 'approve' | 'edit' | 'reject',
-    pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
-  ) => void;
-  onClarificationResponse: (
-    message: ConversationMessage,
+    action: RenderableInterruptAction,
     pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
   ) => void;
   onChatInputChange: (event: ChangeEvent<HTMLTextAreaElement>) => void;
@@ -228,22 +224,21 @@ export default function AgentChatPane({
           expandedThinkingMessages={expandedThinkingMessages}
           copiedMessageId={copiedMessageId}
           interruptInputByMessageId={interruptInputByMessageId}
-          interruptSelectedChoicesByMessageId={interruptSelectedChoicesByMessageId}
           interruptSubmittingByMessageId={interruptSubmittingByMessageId}
+          interruptErrorByMessageId={interruptErrorByMessageId}
           interruptFieldKey={interruptFieldKey}
+          interruptActionFieldKey={interruptActionFieldKey}
           getInterruptKind={getInterruptKind}
           formatMessageTimestamp={formatMessageTimestamp}
-          getAllowedDecisions={getAllowedDecisions}
+          getInterruptActions={getInterruptActions}
           getPrimaryInterruptAction={getPrimaryInterruptAction}
           isPlanApprovalInterrupt={isPlanApprovalInterrupt}
           setInterruptInputByMessageId={setInterruptInputByMessageId}
-          setInterruptSelectedChoicesByMessageId={setInterruptSelectedChoicesByMessageId}
           toggleThinkingVisibility={onToggleThinkingVisibility}
           toggleToolActivityVisibility={onToggleToolActivityVisibility}
           handleCopyMessageText={onCopyMessageText}
           handleRerunMessage={onRerunMessage}
-          handleInterruptDecision={onInterruptDecision}
-          handleClarificationResponse={onClarificationResponse}
+          handleInterruptAction={onInterruptAction}
           workspaceId={workspaceId}
         />
         <ChatInputArea

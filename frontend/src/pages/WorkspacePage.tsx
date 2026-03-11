@@ -28,6 +28,7 @@ import {
   getRunStatus,
   startAgentRun,
   streamAgentRun,
+  submitRunAction,
   submitRunDecision,
   submitRunResponse,
   type AgentRunStatus,
@@ -50,12 +51,14 @@ import type {
   ToolEvent,
   ToolOutputFile,
   ConversationMessageMetadata,
+  InterruptAction,
 } from '../types';
 import CollapsibleDrawer from '../components/CollapsibleDrawer';
 import FileEditor from '../components/FileEditor';
 import UIBlockRenderer, { type UIBlock } from '../components/UIBlockRenderer';
 import ExpandableSidebar from '../components/ExpandableSidebar';
 import AgentChatPane from '../components/chat/AgentChatPane';
+import type { RenderableInterruptAction } from '../components/chat/interruptActions';
 import ToolOutputFilePreview from '../components/chat/ToolOutputFilePreview';
 import { useAuth } from '../auth/AuthProvider';
 import {
@@ -324,6 +327,7 @@ export default function WorkspacePage() {
   const [interruptInputByMessageId, setInterruptInputByMessageId] = useState<Record<string, string>>({});
   const [interruptSelectedChoicesByMessageId, setInterruptSelectedChoicesByMessageId] = useState<Record<string, string[]>>({});
   const [interruptSubmittingByMessageId, setInterruptSubmittingByMessageId] = useState<Record<string, boolean>>({});
+  const [interruptErrorByMessageId, setInterruptErrorByMessageId] = useState<Record<string, string>>({});
   const ragStatusFetchedRef = useRef<Record<string, boolean>>({});
   const resumeInFlightRef = useRef<Set<string>>(new Set());
   const resumeAttemptedRef = useRef<Set<string>>(new Set());
@@ -424,6 +428,19 @@ export default function WorkspacePage() {
     const sameConversationRun = runs.find((run) => run.conversationId === message.conversationId);
     return sameConversationRun?.runId;
   }, []);
+
+  const rebuildRunInfoForMessage = useCallback(async (message: ConversationMessage, runId: string): Promise<ActiveRunInfo> => {
+    const status = await getRunStatus(runId);
+    return {
+      runId,
+      conversationId: message.conversationId,
+      workspaceId: status.workspaceId,
+      persona: status.persona,
+      turnId: message.turnId || status.turnId || generateTurnId(),
+      placeholderId: message.id,
+      status: status.status,
+    };
+  }, [getRunStatus]);
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', colorMode);
@@ -2155,26 +2172,126 @@ export default function WorkspacePage() {
     field: 'feedback' | 'edit-json' | 'reject-note' | 'clarification-text',
   ): string => `${messageKey}:${field}`, []);
 
+  const interruptActionFieldKey = useCallback((messageKey: string, actionId: string): string => (
+    `${messageKey}:action:${actionId}`
+  ), []);
+
   const getAllowedDecisions = useCallback((
     pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
   ): Array<'approve' | 'edit' | 'reject'> => {
     const defaults: Array<'approve' | 'edit' | 'reject'> = ['approve', 'edit', 'reject'];
+    if (getInterruptKind(pendingInterrupt) === 'clarification') {
+      return [];
+    }
     const actionRequests = Array.isArray(pendingInterrupt?.actionRequests) ? pendingInterrupt.actionRequests : [];
     const reviewConfigs = Array.isArray(pendingInterrupt?.reviewConfigs) ? pendingInterrupt.reviewConfigs : [];
-    if (!actionRequests.length || !reviewConfigs.length) {
-      return defaults;
+    if (reviewConfigs.length) {
+      const firstActionName = typeof actionRequests[0]?.name === 'string' ? actionRequests[0]?.name : undefined;
+      const matchingConfigs = firstActionName
+        ? reviewConfigs.filter((config) => config?.action_name === firstActionName)
+        : reviewConfigs;
+      const allowed = Array.from(
+        new Set(
+          matchingConfigs.flatMap((config) =>
+            Array.isArray(config?.allowed_decisions) ? config.allowed_decisions : [],
+          ),
+        ),
+      ).filter(
+        (value): value is 'approve' | 'edit' | 'reject' => value === 'approve' || value === 'edit' || value === 'reject',
+      );
+      if (allowed.length) {
+        return allowed;
+      }
     }
-    const firstActionName = typeof actionRequests[0]?.name === 'string' ? actionRequests[0]?.name : undefined;
-    if (!firstActionName) {
-      return defaults;
+    return defaults;
+  }, [getInterruptKind]);
+
+  const getInterruptActions = useCallback((
+    pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
+  ): RenderableInterruptAction[] => {
+    const interruptActions = Array.isArray(pendingInterrupt?.actions)
+      ? pendingInterrupt.actions.filter(
+          (action): action is InterruptAction =>
+            Boolean(action) &&
+            typeof action === 'object' &&
+            !Array.isArray(action) &&
+            typeof action.id === 'string' &&
+            typeof action.label === 'string',
+        )
+      : [];
+    if (interruptActions.length) {
+      return interruptActions.map((action) => ({
+        ...action,
+        source: 'dynamic',
+      }));
     }
-    const matchingConfig = reviewConfigs.find((config) => config?.action_name === firstActionName);
-    const allowedRaw = Array.isArray(matchingConfig?.allowed_decisions) ? matchingConfig?.allowed_decisions : [];
-    const allowed = allowedRaw.filter(
-      (value): value is 'approve' | 'edit' | 'reject' => value === 'approve' || value === 'edit' || value === 'reject',
-    );
-    return allowed.length ? allowed : defaults;
-  }, []);
+
+    if (getInterruptKind(pendingInterrupt) === 'clarification') {
+      const responseSpec = pendingInterrupt?.responseSpec;
+      const clarificationChoices = Array.isArray(responseSpec?.choices) ? responseSpec.choices : [];
+      const derivedActions: RenderableInterruptAction[] = clarificationChoices.map((choice) => ({
+        id: `choice:${choice.id}`,
+        label: choice.label,
+        style: 'secondary',
+        inputMode: 'none',
+        value: choice.value,
+        source: 'clarification-choice',
+        choiceId: choice.id,
+      }));
+      const inputMode = responseSpec?.inputMode || 'text';
+      if (inputMode === 'text' || inputMode === 'text_or_choice' || !derivedActions.length) {
+        derivedActions.push({
+          id: 'clarification-text',
+          label: responseSpec?.submitLabel || 'Continue',
+          style: 'primary',
+          inputMode: 'text',
+          placeholder: responseSpec?.placeholder || 'Type your answer for the agent',
+          submitLabel: responseSpec?.submitLabel || 'Continue',
+          source: 'clarification-text',
+        });
+      }
+      return derivedActions;
+    }
+
+    const isPlanApproval = isPlanApprovalInterrupt(pendingInterrupt);
+    return getAllowedDecisions(pendingInterrupt).map((decision) => {
+      if (decision === 'approve') {
+        return {
+          id: 'approve',
+          label: 'Approve',
+          style: 'primary',
+          inputMode: 'none',
+          source: 'approval',
+          legacyDecision: 'approve',
+        } satisfies RenderableInterruptAction;
+      }
+      if (decision === 'edit') {
+        return {
+          id: 'edit',
+          label: 'Edit',
+          style: 'secondary',
+          inputMode: 'text',
+          placeholder: isPlanApproval
+            ? 'Describe the revisions you want before the agent resubmits the plan'
+            : 'Optional edit feedback or updated args JSON',
+          submitLabel: 'Save Changes',
+          source: 'approval',
+          legacyDecision: 'edit',
+        } satisfies RenderableInterruptAction;
+      }
+      return {
+        id: 'reject',
+        label: 'Reject',
+        style: 'danger',
+        inputMode: 'text',
+        placeholder: 'Reason for rejection (optional)',
+        submitLabel: 'Confirm Rejection',
+        confirm: true,
+        source: 'approval',
+        legacyDecision: 'reject',
+      } satisfies RenderableInterruptAction;
+    });
+  }, [getAllowedDecisions, getInterruptKind, isPlanApprovalInterrupt]);
 
   const handleStreamChunk = (
     conversationId: string,
@@ -2241,6 +2358,7 @@ export default function WorkspacePage() {
           description: chunk.description,
           stepIndex: chunk.stepIndex,
           stepCount: chunk.stepCount,
+          actions: chunk.actions,
           actionRequests: chunk.actionRequests,
           reviewConfigs: chunk.reviewConfigs,
           responseSpec: chunk.responseSpec,
@@ -2321,6 +2439,7 @@ export default function WorkspacePage() {
                 description: chunk.description,
                 stepIndex: chunk.stepIndex,
                 stepCount: chunk.stepCount,
+                actions: chunk.actions,
                 actionRequests: chunk.actionRequests,
                 reviewConfigs: chunk.reviewConfigs,
                 responseSpec: chunk.responseSpec,
@@ -2446,6 +2565,12 @@ export default function WorkspacePage() {
         : interruptFieldKey(messageKey, 'reject-note');
       const rawFeedback = (interruptInputByMessageId[feedbackKey] || '').trim();
       setInterruptSubmittingByMessageId((prev) => ({ ...prev, [messageKey]: true }));
+      setInterruptErrorByMessageId((prev) => {
+        if (!prev[messageKey]) return prev;
+        const next = { ...prev };
+        delete next[messageKey];
+        return next;
+      });
       try {
         const options: {
           editedAction?: { name: string; args: Record<string, unknown> };
@@ -2503,7 +2628,21 @@ export default function WorkspacePage() {
           next[idx] = { ...current, metadata };
           return next;
         });
-        const runInfo = activeRunsRef.current[runId];
+        setInterruptInputByMessageId((prev) => {
+          const next = { ...prev };
+          delete next[interruptFieldKey(messageKey, 'feedback')];
+          delete next[interruptFieldKey(messageKey, 'edit-json')];
+          delete next[interruptFieldKey(messageKey, 'reject-note')];
+          return next;
+        });
+        setInterruptErrorByMessageId((prev) => {
+          if (!prev[messageKey]) return prev;
+          const next = { ...prev };
+          delete next[messageKey];
+          return next;
+        });
+        const runInfo = activeRunsRef.current[runId] || await rebuildRunInfoForMessage(message, runId);
+        registerActiveRun(runInfo);
         if (runInfo) {
           await streamRunForConversation(runInfo, false);
         } else {
@@ -2511,7 +2650,10 @@ export default function WorkspacePage() {
         }
       } catch (error) {
         console.error('Failed to submit approval decision', error);
-        addLocalSystemMessage(error instanceof Error ? error.message : 'Failed to submit approval decision.');
+        setInterruptErrorByMessageId((prev) => ({
+          ...prev,
+          [messageKey]: error instanceof Error ? error.message : 'Failed to submit approval decision.',
+        }));
       } finally {
         setInterruptSubmittingByMessageId((prev) => ({ ...prev, [messageKey]: false }));
       }
@@ -2524,6 +2666,8 @@ export default function WorkspacePage() {
       getPrimaryInterruptAction,
       getAllowedDecisions,
       isPlanApprovalInterrupt,
+      rebuildRunInfoForMessage,
+      registerActiveRun,
       streamRunForConversation,
       updateMessagesForConversation,
     ],
@@ -2558,6 +2702,12 @@ export default function WorkspacePage() {
       }
 
       setInterruptSubmittingByMessageId((prev) => ({ ...prev, [messageKey]: true }));
+      setInterruptErrorByMessageId((prev) => {
+        if (!prev[messageKey]) return prev;
+        const next = { ...prev };
+        delete next[messageKey];
+        return next;
+      });
       try {
         await submitRunResponse(runId, {
           message: rawMessage || undefined,
@@ -2584,7 +2734,14 @@ export default function WorkspacePage() {
           delete next[messageKey];
           return next;
         });
-        const runInfo = activeRunsRef.current[runId];
+        setInterruptErrorByMessageId((prev) => {
+          if (!prev[messageKey]) return prev;
+          const next = { ...prev };
+          delete next[messageKey];
+          return next;
+        });
+        const runInfo = activeRunsRef.current[runId] || await rebuildRunInfoForMessage(message, runId);
+        registerActiveRun(runInfo);
         if (runInfo) {
           await streamRunForConversation(runInfo, false);
         } else {
@@ -2592,7 +2749,10 @@ export default function WorkspacePage() {
         }
       } catch (error) {
         console.error('Failed to submit clarification response', error);
-        addLocalSystemMessage(error instanceof Error ? error.message : 'Failed to submit clarification response.');
+        setInterruptErrorByMessageId((prev) => ({
+          ...prev,
+          [messageKey]: error instanceof Error ? error.message : 'Failed to submit clarification response.',
+        }));
       } finally {
         setInterruptSubmittingByMessageId((prev) => ({ ...prev, [messageKey]: false }));
       }
@@ -2604,6 +2764,158 @@ export default function WorkspacePage() {
       interruptFieldKey,
       interruptInputByMessageId,
       interruptSelectedChoicesByMessageId,
+      rebuildRunInfoForMessage,
+      registerActiveRun,
+      streamRunForConversation,
+      updateMessagesForConversation,
+    ],
+  );
+
+  const handleInterruptAction = useCallback(
+    async (
+      message: ConversationMessage,
+      action: RenderableInterruptAction,
+      pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
+    ) => {
+      if (action.source === 'approval' && action.legacyDecision) {
+        await handleInterruptDecision(message, action.legacyDecision, pendingInterrupt);
+        return;
+      }
+
+      if (action.source === 'clarification-text') {
+        await handleClarificationResponse(message, pendingInterrupt);
+        return;
+      }
+
+      const runId = findRunIdForMessage(message);
+      if (!runId) {
+        addLocalSystemMessage('Missing run id for interrupt action.');
+        return;
+      }
+
+      const messageKey = String(message.id);
+      const actionTextKey = interruptActionFieldKey(messageKey, action.id);
+      const actionText = (interruptInputByMessageId[actionTextKey] || '').trim();
+
+      if (action.source === 'clarification-choice') {
+        setInterruptSubmittingByMessageId((prev) => ({ ...prev, [messageKey]: true }));
+        setInterruptErrorByMessageId((prev) => {
+          if (!prev[messageKey]) return prev;
+          const next = { ...prev };
+          delete next[messageKey];
+          return next;
+        });
+        try {
+          await submitRunResponse(runId, {
+            selectedChoiceIds: action.choiceId ? [action.choiceId] : undefined,
+            selectedValues: action.value ? [action.value] : undefined,
+          });
+          updateMessagesForConversation(message.conversationId, (prev) => {
+            const next = [...prev];
+            const idx = next.findIndex((item) => item.id === message.id);
+            if (idx === -1) return next;
+            const current = next[idx];
+            const metadata = { ...((current.metadata as ConversationMessageMetadata | undefined) || {}) };
+            metadata.pendingInterrupt = undefined;
+            next[idx] = { ...current, metadata };
+            return next;
+          });
+          setInterruptErrorByMessageId((prev) => {
+            if (!prev[messageKey]) return prev;
+            const next = { ...prev };
+            delete next[messageKey];
+            return next;
+          });
+          const runInfo = activeRunsRef.current[runId] || await rebuildRunInfoForMessage(message, runId);
+          registerActiveRun(runInfo);
+          if (runInfo) {
+            await streamRunForConversation(runInfo, false);
+          } else {
+            addLocalSystemMessage('Response saved. Refreshing stream state...');
+          }
+        } catch (error) {
+          console.error('Failed to submit clarification choice', error);
+          setInterruptErrorByMessageId((prev) => ({
+            ...prev,
+            [messageKey]: error instanceof Error ? error.message : 'Failed to submit clarification response.',
+          }));
+        } finally {
+          setInterruptSubmittingByMessageId((prev) => ({ ...prev, [messageKey]: false }));
+        }
+        return;
+      }
+
+      if (action.inputMode === 'text' && !actionText) {
+        setInterruptErrorByMessageId((prev) => ({
+          ...prev,
+          [messageKey]: 'This action requires text input before continuing.',
+        }));
+        return;
+      }
+
+      setInterruptSubmittingByMessageId((prev) => ({ ...prev, [messageKey]: true }));
+      setInterruptErrorByMessageId((prev) => {
+        if (!prev[messageKey]) return prev;
+        const next = { ...prev };
+        delete next[messageKey];
+        return next;
+      });
+      try {
+        await submitRunAction(runId, {
+          actionId: action.id,
+          text: actionText || undefined,
+        });
+        updateMessagesForConversation(message.conversationId, (prev) => {
+          const next = [...prev];
+          const idx = next.findIndex((item) => item.id === message.id);
+          if (idx === -1) return next;
+          const current = next[idx];
+          const metadata = { ...((current.metadata as ConversationMessageMetadata | undefined) || {}) };
+          metadata.pendingInterrupt = undefined;
+          next[idx] = { ...current, metadata };
+          return next;
+        });
+        setInterruptInputByMessageId((prev) => {
+          const next = { ...prev };
+          Object.keys(next).forEach((key) => {
+            if (key.startsWith(`${messageKey}:action:`)) {
+              delete next[key];
+            }
+          });
+          return next;
+        });
+        setInterruptErrorByMessageId((prev) => {
+          if (!prev[messageKey]) return prev;
+          const next = { ...prev };
+          delete next[messageKey];
+          return next;
+        });
+        const runInfo = activeRunsRef.current[runId] || await rebuildRunInfoForMessage(message, runId);
+        registerActiveRun(runInfo);
+        if (runInfo) {
+          await streamRunForConversation(runInfo, false);
+        } else {
+          addLocalSystemMessage('Action saved. Refreshing stream state...');
+        }
+      } catch (error) {
+        console.error('Failed to submit interrupt action', error);
+        setInterruptErrorByMessageId((prev) => ({
+          ...prev,
+          [messageKey]: error instanceof Error ? error.message : 'Failed to submit interrupt action.',
+        }));
+      } finally {
+        setInterruptSubmittingByMessageId((prev) => ({ ...prev, [messageKey]: false }));
+      }
+    },
+    [
+      addLocalSystemMessage,
+      findRunIdForMessage,
+      handleClarificationResponse,
+      handleInterruptDecision,
+      interruptActionFieldKey,
+      interruptInputByMessageId,
+      rebuildRunInfoForMessage,
+      registerActiveRun,
       streamRunForConversation,
       updateMessagesForConversation,
     ],
@@ -4023,8 +4335,8 @@ export default function WorkspacePage() {
               expandedThinkingMessages={expandedThinkingMessages}
               copiedMessageId={copiedMessageId}
               interruptInputByMessageId={interruptInputByMessageId}
-              interruptSelectedChoicesByMessageId={interruptSelectedChoicesByMessageId}
               interruptSubmittingByMessageId={interruptSubmittingByMessageId}
+              interruptErrorByMessageId={interruptErrorByMessageId}
               chatMessage={chatMessage}
               chatAttachments={chatAttachments}
               showPaper2SlidesControls={showPaper2SlidesControls}
@@ -4041,12 +4353,12 @@ export default function WorkspacePage() {
               workspaceId={selectedWorkspace?.id}
               formatMessageTimestamp={formatMessageTimestamp}
               interruptFieldKey={interruptFieldKey}
+              interruptActionFieldKey={interruptActionFieldKey}
               getInterruptKind={getInterruptKind}
-              getAllowedDecisions={getAllowedDecisions}
+              getInterruptActions={getInterruptActions}
               getPrimaryInterruptAction={getPrimaryInterruptAction}
               isPlanApprovalInterrupt={isPlanApprovalInterrupt}
               setInterruptInputByMessageId={setInterruptInputByMessageId}
-              setInterruptSelectedChoicesByMessageId={setInterruptSelectedChoicesByMessageId}
               onToggleAgentPaneVisibility={() => setIsAgentPaneVisible((prev) => !prev)}
               onModeChange={handleModeChange}
               onToggleHistory={() => setIsHistoryOpen((prev) => !prev)}
@@ -4059,8 +4371,7 @@ export default function WorkspacePage() {
               onToggleToolActivityVisibility={toggleToolActivityVisibility}
               onCopyMessageText={handleCopyMessageText}
               onRerunMessage={handleRerunMessage}
-              onInterruptDecision={handleInterruptDecision}
-              onClarificationResponse={handleClarificationResponse}
+              onInterruptAction={handleInterruptAction}
               onChatInputChange={handleChatInputChange}
               onChatInputKeyDown={handleChatInputKeyDown}
               onChatInputKeyUp={handleChatInputKeyUp}

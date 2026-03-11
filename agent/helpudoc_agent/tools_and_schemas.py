@@ -10,7 +10,7 @@ import time
 from importlib import import_module
 from io import BytesIO
 from pathlib import Path
-from typing import Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 from uuid import uuid4
 
 from langchain_core.tools import tool
@@ -221,6 +221,7 @@ class ToolFactory:
             "load_skill": self._build_load_skill_tool,
             "request_plan_approval": self._build_request_plan_approval_tool,
             "request_clarification": self._build_request_clarification_tool,
+            "request_human_action": self._build_request_human_action_tool,
         }
 
     def build_tools(self, tool_names: List[str], workspace_state: WorkspaceState) -> List[Tool]:
@@ -486,6 +487,31 @@ class ToolFactory:
                     "description": prompt_description,
                     "step_index": max(0, int(step_index or 0)),
                     "step_count": max(1, int(step_count or 1)),
+                    "actions": [
+                        {
+                            "id": choice["id"],
+                            "label": choice["label"],
+                            "style": "secondary",
+                            "inputMode": "none",
+                            "value": choice["value"],
+                            **({"payload": {"selectedChoiceId": choice["id"]}} if choice.get("id") else {}),
+                        }
+                        for choice in parsed_choices
+                    ]
+                    + (
+                        [
+                            {
+                                "id": "clarification-text",
+                                "label": (submit_label or "Continue").strip() or "Continue",
+                                "style": "primary",
+                                "inputMode": "text",
+                                "placeholder": (placeholder or "").strip(),
+                                "submitLabel": (submit_label or "Continue").strip() or "Continue",
+                            }
+                        ]
+                        if allow_freeform or not parsed_choices
+                        else []
+                    ),
                     "response_spec": {
                         "inputMode": input_mode,
                         "multiple": bool(multi_select),
@@ -506,6 +532,103 @@ class ToolFactory:
             "Use options_json for clickable choices and allow_freeform for typed input."
         )
         return request_clarification
+
+    def _build_request_human_action_tool(self, workspace_state: WorkspaceState) -> Tool:
+        """Pause execution and ask the human to choose from arbitrary actions."""
+
+        @tool
+        def request_human_action(
+            title: str,
+            description: str = "",
+            actions_json: str = "[]",
+            kind: str = "approval",
+            step_index: int = 0,
+            step_count: int = 1,
+            context_json: str = "{}",
+        ) -> str:
+            """Ask the human to choose an action, optionally with scoped text input."""
+            if workspace_state.context.get("tagged_files_only"):
+                return "Tool disabled: tagged files were provided, use rag_query only."
+
+            prompt_title = (title or "").strip()
+            prompt_description = (description or "").strip()
+            interrupt_kind = (kind or "approval").strip().lower()
+            if interrupt_kind not in {"approval", "clarification"}:
+                interrupt_kind = "approval"
+            if not prompt_title:
+                return "Human action request blocked: title is required."
+
+            parsed_actions: List[Dict[str, Any]] = []
+            try:
+                raw_actions = json.loads(actions_json or "[]")
+            except json.JSONDecodeError:
+                raw_actions = []
+
+            if isinstance(raw_actions, list):
+                for index, item in enumerate(raw_actions):
+                    if not isinstance(item, dict):
+                        continue
+                    action_id = str(item.get("id") or f"action-{index + 1}").strip()
+                    label = str(item.get("label") or "").strip()
+                    if not action_id or not label:
+                        continue
+                    style = str(item.get("style") or "secondary").strip().lower()
+                    if style not in {"primary", "secondary", "danger"}:
+                        style = "secondary"
+                    input_mode = str(item.get("inputMode") or "none").strip().lower()
+                    if input_mode not in {"none", "text"}:
+                        input_mode = "none"
+                    action_payload = item.get("payload")
+                    action: Dict[str, Any] = {
+                        "id": action_id,
+                        "label": label,
+                        "style": style,
+                        "inputMode": input_mode,
+                    }
+                    if isinstance(item.get("placeholder"), str) and item["placeholder"].strip():
+                        action["placeholder"] = item["placeholder"].strip()
+                    if isinstance(item.get("submitLabel"), str) and item["submitLabel"].strip():
+                        action["submitLabel"] = item["submitLabel"].strip()
+                    if isinstance(item.get("confirm"), bool):
+                        action["confirm"] = item["confirm"]
+                    if isinstance(item.get("value"), str) and item["value"].strip():
+                        action["value"] = item["value"].strip()
+                    if isinstance(action_payload, dict):
+                        action["payload"] = action_payload
+                    parsed_actions.append(action)
+
+            if not parsed_actions:
+                return "Human action request blocked: provide at least one valid action in actions_json."
+
+            display_payload: Dict[str, Any] = {}
+            try:
+                parsed_context = json.loads(context_json or "{}")
+                if isinstance(parsed_context, dict):
+                    display_payload = parsed_context
+            except json.JSONDecodeError:
+                display_payload = {}
+
+            response = interrupt(
+                {
+                    "kind": interrupt_kind,
+                    "title": prompt_title,
+                    "description": prompt_description,
+                    "step_index": max(0, int(step_index or 0)),
+                    "step_count": max(1, int(step_count or 1)),
+                    "actions": parsed_actions,
+                    "display_payload": display_payload,
+                }
+            )
+            if isinstance(response, dict):
+                return json.dumps(response, ensure_ascii=False)
+            return str(response)
+
+        request_human_action.name = "request_human_action"
+        request_human_action.description = (
+            "Pause execution and ask the human to choose from arbitrary actions. "
+            "Each action can be button-only or require scoped text input."
+        )
+        return request_human_action
 
     def _build_append_to_report_tool(self, workspace_state: WorkspaceState) -> Tool:
         """Append a section file to the stitched proposal inside the workspace."""

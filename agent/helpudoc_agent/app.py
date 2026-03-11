@@ -73,6 +73,17 @@ class InterruptResponseRequest(BaseModel):
     selectedValues: List[str] = Field(default_factory=list)
 
 
+class InterruptAction(BaseModel):
+    id: str
+    value: Optional[str] = None
+    payload: Dict[str, Any] = Field(default_factory=dict)
+    text: Optional[str] = None
+
+
+class InterruptActionRequest(BaseModel):
+    action: InterruptAction
+
+
 class RagQueryRequest(BaseModel):
     query: str
     mode: str = "local"
@@ -803,6 +814,7 @@ def create_app() -> FastAPI:
 
         action_requests = interrupt_value.get("action_requests")
         review_configs = interrupt_value.get("review_configs")
+        actions = interrupt_value.get("actions")
         payload = {
             "type": "interrupt",
             "kind": interrupt_value.get("kind"),
@@ -810,6 +822,7 @@ def create_app() -> FastAPI:
             "description": interrupt_value.get("description"),
             "stepIndex": interrupt_value.get("step_index"),
             "stepCount": interrupt_value.get("step_count"),
+            "actions": actions if isinstance(actions, list) else [],
             "actionRequests": action_requests if isinstance(action_requests, list) else [],
             "reviewConfigs": review_configs if isinstance(review_configs, list) else [],
         }
@@ -1118,6 +1131,27 @@ def create_app() -> FastAPI:
             response_payload = response_request.dict(exclude_none=True)  # type: ignore[attr-defined]
         placeholder = ChatRequest(message="", history=None, forceReset=False)
         stream = _stream_agent_response(runtime, placeholder, resume_value=response_payload)
+        return StreamingResponse(stream, media_type="application/jsonl")
+
+    @app.post("/agents/{agent_name}/workspace/{workspace_id}/chat/stream/act")
+    async def chat_stream_act(
+        agent_name: str,
+        workspace_id: str,
+        action_request: InterruptActionRequest,
+        request: Request,
+    ):
+        try:
+            initial_context = _extract_request_context(request)
+            runtime = await registry.get_or_create(agent_name, workspace_id, initial_context=initial_context)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+        if hasattr(action_request, "model_dump"):
+            action_payload = action_request.model_dump(exclude_none=True)  # type: ignore[attr-defined]
+        else:
+            action_payload = action_request.dict(exclude_none=True)  # type: ignore[attr-defined]
+        placeholder = ChatRequest(message="", history=None, forceReset=False)
+        stream = _stream_agent_response(runtime, placeholder, resume_value=action_payload)
         return StreamingResponse(stream, media_type="application/jsonl")
 
     return app

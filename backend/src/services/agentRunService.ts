@@ -4,8 +4,10 @@ import { redisClient } from './redisService';
 import {
   runAgentStream,
   resumeAgentStream,
+  resumeAgentActionStream,
   resumeAgentResponseStream,
   type AgentDecision,
+  type AgentInterruptActionResponse,
   type AgentInterruptResponse,
   type AgentHistoryEntry,
 } from './agentService';
@@ -35,6 +37,17 @@ type RunPendingInterrupt = {
   description?: string;
   stepIndex?: number;
   stepCount?: number;
+  actions?: Array<{
+    id: string;
+    label: string;
+    style?: 'primary' | 'secondary' | 'danger';
+    inputMode?: 'none' | 'text';
+    placeholder?: string;
+    submitLabel?: string;
+    confirm?: boolean;
+    value?: string;
+    payload?: Record<string, unknown>;
+  }>;
   actionRequests?: Array<{ name?: string; args?: Record<string, unknown> }>;
   reviewConfigs?: Array<{ action_name?: string; allowed_decisions?: string[] }>;
   responseSpec?: {
@@ -65,12 +78,23 @@ type RunContext = {
   params: StartRunParams;
 };
 
+type PersistedRunContext = {
+  workspaceId: string;
+  persona: string;
+  prompt: string;
+  history?: AgentHistoryEntry[];
+  forceReset?: boolean;
+  turnId?: string;
+};
+
 type ResumePayload =
   | { decisions: AgentDecision[]; response?: never }
-  | { response: AgentInterruptResponse; decisions?: never };
+  | { response: AgentInterruptResponse; decisions?: never }
+  | { action: AgentInterruptActionResponse; decisions?: never; response?: never };
 
 type PersistedRunMeta = Omit<RunMeta, 'pendingInterrupt'> & {
   pendingInterrupt?: string;
+  runContext?: string;
 };
 
 const STREAM_TTL_SECONDS = 60 * 60 * 24; // 24h
@@ -151,6 +175,18 @@ const parsePendingInterrupt = (raw: string | undefined): RunPendingInterrupt | u
       description: typeof payload.description === 'string' ? payload.description : undefined,
       stepIndex: typeof payload.stepIndex === 'number' ? payload.stepIndex : undefined,
       stepCount: typeof payload.stepCount === 'number' ? payload.stepCount : undefined,
+      actions: Array.isArray(payload.actions)
+        ? payload.actions.filter(
+            (
+              item,
+            ): item is NonNullable<RunPendingInterrupt['actions']>[number] =>
+              Boolean(item) &&
+              typeof item === 'object' &&
+              !Array.isArray(item) &&
+              typeof (item as { id?: unknown }).id === 'string' &&
+              typeof (item as { label?: unknown }).label === 'string',
+          )
+        : undefined,
       actionRequests: Array.isArray(payload.actionRequests)
         ? payload.actionRequests.filter(
             (item): item is { name?: string; args?: Record<string, unknown> } =>
@@ -177,6 +213,61 @@ const parsePendingInterrupt = (raw: string | undefined): RunPendingInterrupt | u
   }
 };
 
+const serializeRunContext = (params: StartRunParams): string =>
+  JSON.stringify({
+    workspaceId: params.workspaceId,
+    persona: params.persona,
+    prompt: params.prompt,
+    history: params.history,
+    forceReset: params.forceReset,
+    turnId: params.turnId,
+  } satisfies PersistedRunContext);
+
+const parseRunContext = (raw: string | undefined): RunContext | undefined => {
+  if (!raw || !raw.trim()) {
+    return undefined;
+  }
+  try {
+    const parsed = JSON.parse(raw) as PersistedRunContext;
+    if (
+      !parsed ||
+      typeof parsed !== 'object' ||
+      Array.isArray(parsed) ||
+      typeof parsed.workspaceId !== 'string' ||
+      typeof parsed.persona !== 'string' ||
+      typeof parsed.prompt !== 'string'
+    ) {
+      return undefined;
+    }
+    return {
+      params: {
+        workspaceId: parsed.workspaceId,
+        persona: parsed.persona,
+        prompt: parsed.prompt,
+        history: Array.isArray(parsed.history) ? parsed.history : undefined,
+        forceReset: typeof parsed.forceReset === 'boolean' ? parsed.forceReset : undefined,
+        turnId: typeof parsed.turnId === 'string' ? parsed.turnId : undefined,
+      },
+    };
+  } catch {
+    return undefined;
+  }
+};
+
+const loadRunContext = async (runId: string): Promise<RunContext | undefined> => {
+  const inMemory = runContexts.get(runId);
+  if (inMemory) {
+    return inMemory;
+  }
+  const metaKey = buildMetaKey(runId);
+  const persisted = await redisClient.hGet(metaKey, 'runContext');
+  const parsed = parseRunContext(persisted ?? undefined);
+  if (parsed) {
+    runContexts.set(runId, parsed);
+  }
+  return parsed;
+};
+
 const cleanupRun = (runId: string, upstream?: IncomingMessage) => {
   const controller = runAbortControllers.get(runId);
   if (controller) {
@@ -194,6 +285,7 @@ const markRunFinished = async (runId: string, status: AgentRunStatus, error?: st
     completedAt,
     error,
     pendingInterrupt: '',
+    runContext: '',
   });
   if (status === 'completed' || status === 'failed' || status === 'cancelled') {
     runContexts.delete(runId);
@@ -222,6 +314,7 @@ export async function startAgentRun(params: StartRunParams): Promise<{ runId: st
     createdAt: new Date().toISOString(),
     turnId: params.turnId,
     pendingInterrupt: '',
+    runContext: serializeRunContext(params),
   });
   runContexts.set(runId, { params });
 
@@ -252,6 +345,7 @@ async function runAgentRunWorker(runId: string, params: StartRunParams, resumePa
       hasHistory: Boolean(params.history?.length),
       resumeDecisions: Boolean(resumePayload && 'decisions' in resumePayload && resumePayload.decisions?.length),
       resumeResponse: Boolean(resumePayload && 'response' in resumePayload),
+      resumeAction: Boolean(resumePayload && 'action' in resumePayload && resumePayload.action),
     });
   }
 
@@ -332,6 +426,11 @@ async function runAgentRunWorker(runId: string, params: StartRunParams, resumePa
           signal: controller.signal,
           authToken: params.authToken,
         })
+      : resumePayload && 'action' in resumePayload && resumePayload.action
+      ? await resumeAgentActionStream(params.persona, params.workspaceId, resumePayload.action, {
+          signal: controller.signal,
+          authToken: params.authToken,
+        })
       : await runAgentStream(params.persona, params.workspaceId, params.prompt, params.history, {
           forceReset: params.forceReset,
           signal: controller.signal,
@@ -399,36 +498,63 @@ async function runAgentRunWorker(runId: string, params: StartRunParams, resumePa
 export async function resumeAgentRun(
   runId: string,
   decisions: AgentDecision[],
+  options?: { authToken?: string },
 ): Promise<{ runId: string; status: AgentRunStatus }> {
-  const context = runContexts.get(runId);
+  const context = await loadRunContext(runId);
   if (!context) {
     throw new Error('Run context not found. Start a new run.');
   }
+  const nextParams = options?.authToken ? { ...context.params, authToken: options.authToken } : context.params;
+  runContexts.set(runId, { params: nextParams });
   await persistMeta(runId, {
     status: 'queued',
     startedAt: new Date().toISOString(),
     error: '',
     pendingInterrupt: '',
   });
-  void runAgentRunWorker(runId, context.params, { decisions });
+  void runAgentRunWorker(runId, nextParams, { decisions });
   return { runId, status: 'queued' };
 }
 
 export async function resumeAgentRunWithResponse(
   runId: string,
   response: AgentInterruptResponse,
+  options?: { authToken?: string },
 ): Promise<{ runId: string; status: AgentRunStatus }> {
-  const context = runContexts.get(runId);
+  const context = await loadRunContext(runId);
   if (!context) {
     throw new Error('Run context not found. Start a new run.');
   }
+  const nextParams = options?.authToken ? { ...context.params, authToken: options.authToken } : context.params;
+  runContexts.set(runId, { params: nextParams });
   await persistMeta(runId, {
     status: 'queued',
     startedAt: new Date().toISOString(),
     error: '',
     pendingInterrupt: '',
   });
-  void runAgentRunWorker(runId, context.params, { response });
+  void runAgentRunWorker(runId, nextParams, { response });
+  return { runId, status: 'queued' };
+}
+
+export async function resumeAgentRunWithAction(
+  runId: string,
+  action: AgentInterruptActionResponse,
+  options?: { authToken?: string },
+): Promise<{ runId: string; status: AgentRunStatus }> {
+  const context = await loadRunContext(runId);
+  if (!context) {
+    throw new Error('Run context not found. Start a new run.');
+  }
+  const nextParams = options?.authToken ? { ...context.params, authToken: options.authToken } : context.params;
+  runContexts.set(runId, { params: nextParams });
+  await persistMeta(runId, {
+    status: 'queued',
+    startedAt: new Date().toISOString(),
+    error: '',
+    pendingInterrupt: '',
+  });
+  void runAgentRunWorker(runId, nextParams, { action });
   return { runId, status: 'queued' };
 }
 

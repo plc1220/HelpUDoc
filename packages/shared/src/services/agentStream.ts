@@ -21,6 +21,17 @@ export type AgentStreamChunk =
       description?: string;
       stepIndex?: number;
       stepCount?: number;
+      actions?: Array<{
+        id: string;
+        label: string;
+        style?: 'primary' | 'secondary' | 'danger';
+        inputMode?: 'none' | 'text';
+        placeholder?: string;
+        submitLabel?: string;
+        confirm?: boolean;
+        value?: string;
+        payload?: Record<string, unknown>;
+      }>;
       actionRequests?: Array<{ name?: string; args?: Record<string, unknown> }>;
       reviewConfigs?: Array<{ action_name?: string; allowed_decisions?: string[] }>;
       responseSpec?: {
