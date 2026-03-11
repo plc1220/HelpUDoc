@@ -194,10 +194,11 @@ const mergePersistedAgentMessage = (
   const existingMetadata = (existing?.metadata as ConversationMessageMetadata | null | undefined) || {};
   const persistedStatus = persistedMetadata.status;
   const existingStatus = existingMetadata.status;
-  const effectiveStatus =
-    (persistedStatus === 'running' || persistedStatus === 'queued') && existingStatus === 'awaiting_approval'
-      ? 'awaiting_approval'
-      : persistedStatus ?? existingStatus;
+  const shouldPreserveAwaitingApproval =
+    (persistedStatus === 'running' || persistedStatus === 'queued') &&
+    existingStatus === 'awaiting_approval' &&
+    persistedMetadata.pendingInterrupt !== undefined;
+  const effectiveStatus = shouldPreserveAwaitingApproval ? 'awaiting_approval' : persistedStatus ?? existingStatus;
 
   const mergedMetadata: ConversationMessageMetadata = {
     ...existingMetadata,
@@ -2293,6 +2294,64 @@ export default function WorkspacePage() {
     });
   }, [getAllowedDecisions, getInterruptKind, isPlanApprovalInterrupt]);
 
+  const waitForInterruptResumeReady = useCallback(
+    async (
+      runId: string,
+      expected: 'approval' | 'clarification' | 'action',
+    ): Promise<boolean> => {
+      const deadline = Date.now() + 3000;
+      while (Date.now() < deadline) {
+        try {
+          const status = await getRunStatus(runId);
+          if (status.status === 'awaiting_approval') {
+            const interruptKind = getInterruptKind(status.pendingInterrupt);
+            if (expected === 'approval' && interruptKind !== 'clarification') {
+              return true;
+            }
+            if (expected === 'clarification' && interruptKind === 'clarification') {
+              return true;
+            }
+            if (
+              expected === 'action' &&
+              Array.isArray(status.pendingInterrupt?.actions) &&
+              status.pendingInterrupt.actions.length > 0
+            ) {
+              return true;
+            }
+          }
+        } catch (error) {
+          console.error('Failed to poll run status before interrupt retry', error);
+        }
+        await new Promise((resolve) => window.setTimeout(resolve, 200));
+      }
+      return false;
+    },
+    [getInterruptKind],
+  );
+
+  const submitInterruptWithRetry = useCallback(
+    async (
+      runId: string,
+      expected: 'approval' | 'clarification' | 'action',
+      submit: () => Promise<unknown>,
+    ) => {
+      try {
+        return await submit();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error || '');
+        if (!/Run is not awaiting/i.test(message)) {
+          throw error;
+        }
+        const ready = await waitForInterruptResumeReady(runId, expected);
+        if (!ready) {
+          throw error;
+        }
+        return submit();
+      }
+    },
+    [waitForInterruptResumeReady],
+  );
+
   const handleStreamChunk = (
     conversationId: string,
     agentMessageIndex: number,
@@ -2452,16 +2511,22 @@ export default function WorkspacePage() {
           replayFromStart ? undefined : undefined
         );
       } catch (error) {
+        const supersededByNewerStream = streamAbortMapRef.current.get(conversationId) !== controller;
         if ((error as DOMException)?.name === 'AbortError') {
-          const stopLabel = stopRequestedRef.current ? '\n[Stopped by user]' : '\n[Stream cancelled]';
-          appendAgentChunk(conversationId, agentMessageIndex, stopLabel);
-          finalStatus = 'cancelled';
+          if (stopRequestedRef.current) {
+            appendAgentChunk(conversationId, agentMessageIndex, '\n[Stopped by user]');
+            finalStatus = 'cancelled';
+          } else if (!supersededByNewerStream) {
+            appendAgentChunk(conversationId, agentMessageIndex, '\n[Stream cancelled]');
+            finalStatus = 'cancelled';
+          }
         } else {
           console.error('Failed to stream agent run', error);
           appendAgentChunk(conversationId, agentMessageIndex, '\nSorry, something went wrong.');
           finalStatus = 'failed';
         }
       } finally {
+        const supersededByNewerStream = streamAbortMapRef.current.get(conversationId) !== controller;
         let latestRunMeta:
           | Awaited<ReturnType<typeof getRunStatus>>
           | null = null;
@@ -2484,8 +2549,8 @@ export default function WorkspacePage() {
         } catch (statusError) {
           console.error('Failed to fetch final run status', statusError);
         }
-        const effectivePendingInterrupt = latestRunMeta?.pendingInterrupt ?? latestInterrupt;
-        if (effectivePendingInterrupt) {
+        const effectivePendingInterrupt = latestRunMeta ? latestRunMeta.pendingInterrupt : latestInterrupt;
+        if (!supersededByNewerStream && effectivePendingInterrupt) {
             finalStatus = 'awaiting_approval';
             updateMessageMetadataAtIndex(conversationId, agentMessageIndex, (metadata) => ({
               ...metadata,
@@ -2498,9 +2563,14 @@ export default function WorkspacePage() {
           console.debug('[WorkspacePage] stream finished', { runId, status: finalStatus });
         }
         flushBufferedAgentChunks();
+        if (supersededByNewerStream) {
+          return;
+        }
         await persistAgentProgress({ ...runInfo, status: finalStatus }, finalStatus);
         setStreamingForConversation(conversationId, false);
-        streamAbortMapRef.current.delete(conversationId);
+        if (streamAbortMapRef.current.get(conversationId) === controller) {
+          streamAbortMapRef.current.delete(conversationId);
+        }
         stopRequestedRef.current = false;
         resumeInFlightRef.current.delete(runId);
         if (finalStatus === 'awaiting_approval') {
@@ -2617,7 +2687,7 @@ export default function WorkspacePage() {
             };
           }
         }
-        await submitRunDecision(runId, decision, options);
+        await submitInterruptWithRetry(runId, 'approval', () => submitRunDecision(runId, decision, options));
         updateMessagesForConversation(message.conversationId, (prev) => {
           const next = [...prev];
           const idx = next.findIndex((item) => item.id === message.id);
@@ -2668,6 +2738,7 @@ export default function WorkspacePage() {
       isPlanApprovalInterrupt,
       rebuildRunInfoForMessage,
       registerActiveRun,
+      submitInterruptWithRetry,
       streamRunForConversation,
       updateMessagesForConversation,
     ],
@@ -2709,11 +2780,13 @@ export default function WorkspacePage() {
         return next;
       });
       try {
-        await submitRunResponse(runId, {
-          message: rawMessage || undefined,
-          selectedChoiceIds: selectedChoiceIds.length ? selectedChoiceIds : undefined,
-          selectedValues: selectedValues.length ? selectedValues : undefined,
-        });
+        await submitInterruptWithRetry(runId, 'clarification', () =>
+          submitRunResponse(runId, {
+            message: rawMessage || undefined,
+            selectedChoiceIds: selectedChoiceIds.length ? selectedChoiceIds : undefined,
+            selectedValues: selectedValues.length ? selectedValues : undefined,
+          })
+        );
         updateMessagesForConversation(message.conversationId, (prev) => {
           const next = [...prev];
           const idx = next.findIndex((item) => item.id === message.id);
@@ -2766,6 +2839,7 @@ export default function WorkspacePage() {
       interruptSelectedChoicesByMessageId,
       rebuildRunInfoForMessage,
       registerActiveRun,
+      submitInterruptWithRetry,
       streamRunForConversation,
       updateMessagesForConversation,
     ],
@@ -2806,10 +2880,12 @@ export default function WorkspacePage() {
           return next;
         });
         try {
-          await submitRunResponse(runId, {
-            selectedChoiceIds: action.choiceId ? [action.choiceId] : undefined,
-            selectedValues: action.value ? [action.value] : undefined,
-          });
+          await submitInterruptWithRetry(runId, 'clarification', () =>
+            submitRunResponse(runId, {
+              selectedChoiceIds: action.choiceId ? [action.choiceId] : undefined,
+              selectedValues: action.value ? [action.value] : undefined,
+            })
+          );
           updateMessagesForConversation(message.conversationId, (prev) => {
             const next = [...prev];
             const idx = next.findIndex((item) => item.id === message.id);
@@ -2861,10 +2937,12 @@ export default function WorkspacePage() {
         return next;
       });
       try {
-        await submitRunAction(runId, {
-          actionId: action.id,
-          text: actionText || undefined,
-        });
+        await submitInterruptWithRetry(runId, 'action', () =>
+          submitRunAction(runId, {
+            actionId: action.id,
+            text: actionText || undefined,
+          })
+        );
         updateMessagesForConversation(message.conversationId, (prev) => {
           const next = [...prev];
           const idx = next.findIndex((item) => item.id === message.id);
@@ -2916,6 +2994,7 @@ export default function WorkspacePage() {
       interruptInputByMessageId,
       rebuildRunInfoForMessage,
       registerActiveRun,
+      submitInterruptWithRetry,
       streamRunForConversation,
       updateMessagesForConversation,
     ],

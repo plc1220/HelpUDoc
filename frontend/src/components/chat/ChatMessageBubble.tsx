@@ -139,6 +139,7 @@ export default function ChatMessageBubble({
   const isPlanApprovalRequest = isPlanApprovalInterrupt(pendingInterrupt);
   const messageKey = String(message.id);
   const interruptBusy = Boolean(interruptSubmittingByMessageId[messageKey]);
+  const interruptControlsDisabled = interruptBusy || (Boolean(pendingInterrupt) && isStreaming);
   const [activeTextActionId, setActiveTextActionId] = useState<string | null>(null);
   const [confirmActionId, setConfirmActionId] = useState<string | null>(null);
   const [clarificationDismissed, setClarificationDismissed] = useState(false);
@@ -233,7 +234,7 @@ export default function ChatMessageBubble({
   };
 
   const handleActionTrigger = (action: RenderableInterruptAction) => {
-    if (interruptBusy) {
+    if (interruptControlsDisabled) {
       return;
     }
     if (action.inputMode === 'text') {
@@ -303,7 +304,7 @@ export default function ChatMessageBubble({
               {showPrimaryRow ? (
                 <button
                   type="button"
-                  disabled={interruptBusy}
+                  disabled={interruptControlsDisabled}
                   onClick={() => handleActionTrigger(action)}
                   className={
                     numberedChoice
@@ -313,7 +314,7 @@ export default function ChatMessageBubble({
                             : action.style === 'danger'
                               ? 'border-rose-400/25 bg-rose-500/10 text-rose-100 hover:bg-rose-500/15'
                               : 'border-white/10 bg-white/[0.03] text-white/92 hover:border-white/25 hover:bg-white/[0.07]'
-                        } ${interruptBusy ? 'cursor-not-allowed opacity-70' : ''}`
+                        } ${interruptControlsDisabled ? 'cursor-not-allowed opacity-70' : ''}`
                       : getActionButtonClass(action, tone)
                   }
                 >
@@ -336,7 +337,7 @@ export default function ChatMessageBubble({
                 <div className="flex flex-wrap gap-2">
                   <button
                     type="button"
-                    disabled={interruptBusy}
+                    disabled={interruptControlsDisabled}
                     onClick={() => void handleInterruptAction(message, action, pendingInterrupt)}
                     className={getActionButtonClass(
                       {
@@ -351,7 +352,7 @@ export default function ChatMessageBubble({
                   </button>
                   <button
                     type="button"
-                    disabled={interruptBusy}
+                    disabled={interruptControlsDisabled}
                     onClick={handleActionCancel}
                     className={tone === 'dark'
                       ? 'rounded-full px-4 py-2 text-sm font-medium text-white/70 transition-all duration-200 hover:bg-white/[0.06] hover:text-white disabled:cursor-not-allowed disabled:opacity-40'
@@ -368,7 +369,7 @@ export default function ChatMessageBubble({
                     onChange={(event) => setInterruptValue(inputKey, event.target.value)}
                     rows={tone === 'dark' ? 4 : 4}
                     autoFocus
-                    disabled={interruptBusy}
+                    disabled={interruptControlsDisabled}
                     placeholder={action.placeholder || 'Enter your response'}
                     className={tone === 'dark'
                       ? 'w-full rounded-[1.35rem] border border-white/10 bg-white/[0.03] px-5 py-4 text-sm leading-relaxed text-white placeholder:text-white/32 focus:border-white/25 focus:outline-none disabled:cursor-not-allowed disabled:opacity-70'
@@ -377,7 +378,7 @@ export default function ChatMessageBubble({
                   <div className="flex flex-wrap gap-2">
                     <button
                       type="button"
-                      disabled={interruptBusy}
+                      disabled={interruptControlsDisabled}
                       onClick={() => void handleInterruptAction(message, action, pendingInterrupt)}
                       className={getActionButtonClass(
                         {
@@ -399,7 +400,7 @@ export default function ChatMessageBubble({
                     </button>
                     <button
                       type="button"
-                      disabled={interruptBusy}
+                      disabled={interruptControlsDisabled}
                       onClick={handleActionCancel}
                       className={tone === 'dark'
                         ? 'rounded-full px-4 py-2 text-sm font-medium text-white/70 transition-all duration-200 hover:bg-white/[0.06] hover:text-white disabled:cursor-not-allowed disabled:opacity-40'
