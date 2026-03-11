@@ -67,6 +67,12 @@ class ResumeChatRequest(BaseModel):
     decisions: List[Decision]
 
 
+class InterruptResponseRequest(BaseModel):
+    message: Optional[str] = None
+    selectedChoiceIds: List[str] = Field(default_factory=list)
+    selectedValues: List[str] = Field(default_factory=list)
+
+
 class RagQueryRequest(BaseModel):
     query: str
     mode: str = "local"
@@ -799,9 +805,20 @@ def create_app() -> FastAPI:
         review_configs = interrupt_value.get("review_configs")
         payload = {
             "type": "interrupt",
+            "kind": interrupt_value.get("kind"),
+            "title": interrupt_value.get("title"),
+            "description": interrupt_value.get("description"),
+            "stepIndex": interrupt_value.get("step_index"),
+            "stepCount": interrupt_value.get("step_count"),
             "actionRequests": action_requests if isinstance(action_requests, list) else [],
             "reviewConfigs": review_configs if isinstance(review_configs, list) else [],
         }
+        response_spec = interrupt_value.get("response_spec")
+        if isinstance(response_spec, dict):
+            payload["responseSpec"] = response_spec
+        display_payload = interrupt_value.get("display_payload")
+        if isinstance(display_payload, dict):
+            payload["displayPayload"] = display_payload
         if isinstance(interrupt_id, str) and interrupt_id:
             payload["interruptId"] = interrupt_id
         return payload
@@ -886,6 +903,7 @@ def create_app() -> FastAPI:
         message: ChatRequest,
         *,
         resume_decisions: Optional[List[Dict[str, Any]]] = None,
+        resume_value: Any = None,
     ) -> AsyncGenerator[bytes, None]:
         agent = getattr(runtime, "agent", None)
         if agent is None:
@@ -897,7 +915,7 @@ def create_app() -> FastAPI:
             manager.reset_session()
 
         payload = _prepare_payload(message)
-        if not resume_decisions:
+        if resume_decisions is None and resume_value is None:
             tagged_files = _extract_tagged_files(message.message)
             runtime.workspace_state.context["tagged_files"] = tagged_files
             # Historical behavior forced "RAG-only" when any tagged files were present, which breaks
@@ -933,8 +951,10 @@ def create_app() -> FastAPI:
                 nonlocal saw_interrupt
                 stream_config = _build_agent_config(runtime, message, callbacks=[handler])
                 stream_input: Any = {"messages": payload}
-                if resume_decisions:
+                if resume_decisions is not None:
                     stream_input = Command(resume={"decisions": resume_decisions})
+                elif resume_value is not None:
+                    stream_input = Command(resume=resume_value)
                 final_result = await agent.ainvoke(stream_input, config=stream_config)
 
                 emitted = False
@@ -1077,6 +1097,27 @@ def create_app() -> FastAPI:
                 decisions_payload.append(item.dict(exclude_none=True))  # type: ignore[attr-defined]
         placeholder = ChatRequest(message="", history=None, forceReset=False)
         stream = _stream_agent_response(runtime, placeholder, resume_decisions=decisions_payload)
+        return StreamingResponse(stream, media_type="application/jsonl")
+
+    @app.post("/agents/{agent_name}/workspace/{workspace_id}/chat/stream/respond")
+    async def chat_stream_respond(
+        agent_name: str,
+        workspace_id: str,
+        response_request: InterruptResponseRequest,
+        request: Request,
+    ):
+        try:
+            initial_context = _extract_request_context(request)
+            runtime = await registry.get_or_create(agent_name, workspace_id, initial_context=initial_context)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+        if hasattr(response_request, "model_dump"):
+            response_payload = response_request.model_dump(exclude_none=True)  # type: ignore[attr-defined]
+        else:
+            response_payload = response_request.dict(exclude_none=True)  # type: ignore[attr-defined]
+        placeholder = ChatRequest(message="", history=None, forceReset=False)
+        stream = _stream_agent_response(runtime, placeholder, resume_value=response_payload)
         return StreamingResponse(stream, media_type="application/jsonl")
 
     return app

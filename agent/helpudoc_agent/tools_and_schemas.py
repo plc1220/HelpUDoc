@@ -15,6 +15,7 @@ from uuid import uuid4
 
 from langchain_core.tools import tool
 from langchain_core.tools import Tool
+from langgraph.types import interrupt
 
 try:
     import vertexai
@@ -219,6 +220,7 @@ class ToolFactory:
             "list_skills": self._build_list_skills_tool,
             "load_skill": self._build_load_skill_tool,
             "request_plan_approval": self._build_request_plan_approval_tool,
+            "request_clarification": self._build_request_clarification_tool,
         }
 
     def build_tools(self, tool_names: List[str], workspace_state: WorkspaceState) -> List[Tool]:
@@ -404,6 +406,106 @@ class ToolFactory:
             "Ask human to approve, edit, or reject a proposed plan before execution."
         )
         return request_plan_approval
+
+    def _build_request_clarification_tool(self, workspace_state: WorkspaceState) -> Tool:
+        """Pause execution and ask the human a clarification question."""
+
+        @tool
+        def request_clarification(
+            title: str,
+            description: str = "",
+            options_json: str = "[]",
+            allow_freeform: bool = True,
+            multi_select: bool = False,
+            placeholder: str = "",
+            submit_label: str = "Continue",
+            step_index: int = 0,
+            step_count: int = 1,
+            context_json: str = "{}",
+        ) -> str:
+            """Ask the human for clarification with optional selectable choices and typed feedback."""
+            if workspace_state.context.get("tagged_files_only"):
+                return "Tool disabled: tagged files were provided, use rag_query only."
+
+            prompt_title = (title or "").strip()
+            prompt_description = (description or "").strip()
+            if not prompt_title:
+                return "Clarification request blocked: title is required."
+
+            parsed_choices: List[Dict[str, str]] = []
+            try:
+                raw_options = json.loads(options_json or "[]")
+            except json.JSONDecodeError:
+                raw_options = []
+            if isinstance(raw_options, list):
+                for index, item in enumerate(raw_options):
+                    if isinstance(item, str) and item.strip():
+                        parsed_choices.append(
+                            {
+                                "id": f"choice-{index + 1}",
+                                "label": item.strip(),
+                                "value": item.strip(),
+                            }
+                        )
+                    elif isinstance(item, dict):
+                        label = str(item.get("label") or item.get("value") or "").strip()
+                        value = str(item.get("value") or label).strip()
+                        if not label or not value:
+                            continue
+                        parsed_choices.append(
+                            {
+                                "id": str(item.get("id") or f"choice-{index + 1}").strip(),
+                                "label": label,
+                                "value": value,
+                                **(
+                                    {"description": str(item.get("description")).strip()}
+                                    if str(item.get("description") or "").strip()
+                                    else {}
+                                ),
+                            }
+                        )
+
+            input_mode = "text"
+            if parsed_choices and allow_freeform:
+                input_mode = "text_or_choice"
+            elif parsed_choices:
+                input_mode = "choice"
+
+            display_payload: Dict[str, Any] = {}
+            try:
+                parsed_context = json.loads(context_json or "{}")
+                if isinstance(parsed_context, dict):
+                    display_payload = parsed_context
+            except json.JSONDecodeError:
+                display_payload = {}
+
+            response = interrupt(
+                {
+                    "kind": "clarification",
+                    "title": prompt_title,
+                    "description": prompt_description,
+                    "step_index": max(0, int(step_index or 0)),
+                    "step_count": max(1, int(step_count or 1)),
+                    "response_spec": {
+                        "inputMode": input_mode,
+                        "multiple": bool(multi_select),
+                        "submitLabel": (submit_label or "Continue").strip() or "Continue",
+                        "placeholder": (placeholder or "").strip(),
+                        "choices": parsed_choices,
+                    },
+                    "display_payload": display_payload,
+                }
+            )
+            if isinstance(response, dict):
+                return json.dumps(response, ensure_ascii=False)
+            return str(response)
+
+        request_clarification.name = "request_clarification"
+        request_clarification.description = (
+            "Pause execution to ask the human a clarification question. "
+            "Use options_json for clickable choices and allow_freeform for typed input."
+        )
+        return request_clarification
 
     def _build_append_to_report_tool(self, workspace_state: WorkspaceState) -> Tool:
         """Append a section file to the stitched proposal inside the workspace."""

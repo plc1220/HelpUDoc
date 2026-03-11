@@ -18,6 +18,7 @@ import {
   getRunMeta,
   getRunStreamKey,
   resumeAgentRun,
+  resumeAgentRunWithResponse,
   startAgentRun,
 } from '../services/agentRunService';
 import { blockingRedisClient } from '../services/redisService';
@@ -112,6 +113,11 @@ export default function(
       })
       .optional(),
     message: z.string().optional(),
+  });
+  const runResponseSchema = z.object({
+    message: z.string().optional(),
+    selectedChoiceIds: z.array(z.string().min(1)).optional(),
+    selectedValues: z.array(z.string()).optional(),
   });
 
   const requireUserContext = (req: Request) => {
@@ -489,6 +495,9 @@ export default function(
       if (meta.status !== 'awaiting_approval') {
         return res.status(409).json({ error: 'Run is not awaiting approval' });
       }
+      if (meta.pendingInterrupt?.kind === 'clarification') {
+        return res.status(409).json({ error: 'Run is awaiting a clarification response, not an approval decision' });
+      }
       const payload = runDecisionSchema.parse(req.body);
       console.info('[AgentDecision]', {
         runId,
@@ -517,6 +526,40 @@ export default function(
         return res.status(400).json({ error: 'Invalid input' });
       }
       handleError(res, error, 'Failed to submit run decision');
+    }
+  });
+
+  router.post('/runs/:runId/respond', async (req, res) => {
+    try {
+      const user = requireUserContext(req);
+      const { runId } = req.params;
+      const meta = await getRunMeta(runId);
+      if (!meta) {
+        return res.status(404).json({ error: 'Run not found' });
+      }
+      await workspaceService.ensureMembership(meta.workspaceId, user.userId, { requireEdit: true });
+      if (meta.status !== 'awaiting_approval') {
+        return res.status(409).json({ error: 'Run is not awaiting input' });
+      }
+      const interruptKind = meta.pendingInterrupt?.kind ?? 'approval';
+      if (interruptKind !== 'clarification') {
+        return res.status(409).json({ error: 'Run is awaiting an approval decision, not a clarification response' });
+      }
+      const payload = runResponseSchema.parse(req.body);
+      if (!payload.message && !payload.selectedChoiceIds?.length && !payload.selectedValues?.length) {
+        return res.status(400).json({ error: 'Clarification response requires a message or a selected choice' });
+      }
+      const result = await resumeAgentRunWithResponse(runId, {
+        message: payload.message,
+        selectedChoiceIds: payload.selectedChoiceIds,
+        selectedValues: payload.selectedValues,
+      });
+      res.json(result);
+    } catch (error: any) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: 'Invalid input' });
+      }
+      handleError(res, error, 'Failed to submit clarification response');
     }
   });
 
