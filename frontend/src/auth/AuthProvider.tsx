@@ -42,12 +42,13 @@ const normalizeAuthMode = (mode?: string): 'oidc' | 'headers' | 'hybrid' => {
 };
 
 const toAuthUser = (payload: AuthMeResponse['user']): AuthUser | null => {
-  if (!payload?.userId || !payload.displayName) {
+  if (!payload?.externalId || !payload.displayName) {
     return null;
   }
   const provider: AuthUser['provider'] = payload.externalId.startsWith('google-') ? 'google' : 'local';
   return {
-    id: payload.userId,
+    // Header-based auth expects the stable external identity, not the DB primary key.
+    id: payload.externalId,
     name: payload.displayName,
     email: payload.email || null,
     provider,
