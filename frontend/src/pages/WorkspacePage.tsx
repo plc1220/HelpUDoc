@@ -3461,7 +3461,6 @@ export default function WorkspacePage() {
       };
       markRunStreamLaunching(runId);
       registerActiveRun(runInfo);
-      await persistAgentProgress(runInfo, 'running');
       await streamRunForConversation(runInfo, true);
 
       const messagesSnapshot = getConversationMessagesSnapshot(conversationId);
@@ -3872,7 +3871,6 @@ export default function WorkspacePage() {
       };
       markRunStreamLaunching(runId);
       registerActiveRun(runInfo);
-      await persistAgentProgress(runInfo, 'running');
       await streamRunForConversation(runInfo, true);
 
       const messagesSnapshot = getConversationMessagesSnapshot(conversationId);
