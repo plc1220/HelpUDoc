@@ -355,9 +355,16 @@ export default function WorkspacePage() {
     () => (activeConversationId ? conversationMessages[activeConversationId] || [] : []),
     [activeConversationId, conversationMessages],
   );
+  const hasRunningAgentMessage = useMemo(
+    () =>
+      messages.some(
+        (message) => message.sender === 'agent' && message.metadata?.status === 'running',
+      ),
+    [messages],
+  );
   const isStreaming = useMemo(
-    () => (activeConversationId ? conversationStreaming[activeConversationId] || false : false),
-    [activeConversationId, conversationStreaming],
+    () => (activeConversationId ? conversationStreaming[activeConversationId] || false : false) || hasRunningAgentMessage,
+    [activeConversationId, conversationStreaming, hasRunningAgentMessage],
   );
   const systemFiles = useMemo(() => files.filter(isSystemFile), [files]);
   const visibleFiles = useMemo(
@@ -2726,7 +2733,7 @@ export default function WorkspacePage() {
   };
 
   const streamRunForConversation = useCallback(
-    async (runInfo: ActiveRunInfo, replayFromStart = false) => {
+    async (runInfo: ActiveRunInfo, replayFromStart = false, resumeAfterId?: string) => {
       const { conversationId, runId, turnId, placeholderId } = runInfo;
       // Mark the run as actively handled before any state updates land so the
       // resume effect does not start a second stream for the same run.
@@ -2751,6 +2758,7 @@ export default function WorkspacePage() {
       streamAbortMapRef.current.set(conversationId, controller);
       setStreamingForConversation(conversationId, true);
       let finalStatus: AgentRunStatus = 'completed';
+      let lastStreamId = resumeAfterId || runInfo.lastStreamId;
       let latestInterrupt:
         | ConversationMessageMetadata['pendingInterrupt']
         | undefined;
@@ -2762,6 +2770,10 @@ export default function WorkspacePage() {
         await streamAgentRun(
           runId,
           (chunk) => {
+            const resumableChunk = chunk as AgentStreamChunk & { id?: string };
+            if (typeof resumableChunk.id === 'string') {
+              lastStreamId = resumableChunk.id;
+            }
             if (chunk.type === 'interrupt') {
               latestInterrupt = {
                 kind: chunk.kind,
@@ -2780,7 +2792,7 @@ export default function WorkspacePage() {
             handleStreamChunk(conversationId, agentMessageIndex, chunk, runId);
           },
           controller.signal,
-          replayFromStart ? undefined : undefined
+          replayFromStart ? undefined : (resumeAfterId || runInfo.lastStreamId)
         );
       } catch (error) {
         const supersededByNewerStream = streamAbortMapRef.current.get(conversationId) !== controller;
@@ -2846,6 +2858,25 @@ export default function WorkspacePage() {
         }
         flushBufferedAgentChunks();
         if (supersededByNewerStream) {
+          return;
+        }
+        if (finalStatus === 'running' || finalStatus === 'queued') {
+          const resumedRunInfo: ActiveRunInfo = {
+            ...runInfo,
+            status: 'running',
+            lastStreamId,
+          };
+          registerActiveRun(resumedRunInfo);
+          if (streamAbortMapRef.current.get(conversationId) === controller) {
+            streamAbortMapRef.current.delete(conversationId);
+          }
+          window.setTimeout(() => {
+            const activeRun = activeRunsRef.current[runId];
+            if (!activeRun || activeRun.status !== 'running') {
+              return;
+            }
+            void streamRunForConversation(activeRun, false, activeRun.lastStreamId);
+          }, 300);
           return;
         }
         await persistAgentProgress(
