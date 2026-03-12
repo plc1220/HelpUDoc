@@ -207,11 +207,7 @@ const mergePersistedAgentMessage = (
   const existingMetadata = (existing?.metadata as ConversationMessageMetadata | null | undefined) || {};
   const persistedStatus = persistedMetadata.status;
   const existingStatus = existingMetadata.status;
-  const shouldPreserveAwaitingApproval =
-    (persistedStatus === 'running' || persistedStatus === 'queued') &&
-    existingStatus === 'awaiting_approval' &&
-    persistedMetadata.pendingInterrupt !== undefined;
-  const effectiveStatus = shouldPreserveAwaitingApproval ? 'awaiting_approval' : persistedStatus ?? existingStatus;
+  const effectiveStatus = persistedStatus ?? existingStatus;
 
   const mergedMetadata: ConversationMessageMetadata = {
     ...existingMetadata,
@@ -221,7 +217,7 @@ const mergePersistedAgentMessage = (
     pendingInterrupt:
       persistedMetadata.pendingInterrupt !== undefined
         ? persistedMetadata.pendingInterrupt
-        : effectiveStatus === 'awaiting_approval'
+        : persistedStatus === undefined && effectiveStatus === 'awaiting_approval'
           ? existingMetadata.pendingInterrupt
           : undefined,
   };
@@ -2618,6 +2614,12 @@ export default function WorkspacePage() {
     }
 
     if (chunk.type === 'thought') {
+      updateMessageMetadataAtIndex(conversationId, agentMessageIndex, (metadata) => ({
+        ...metadata,
+        ...(runId ? { runId } : {}),
+        status: 'running',
+        pendingInterrupt: undefined,
+      }));
       appendAgentThought(conversationId, agentMessageIndex, chunk.content || '');
       return;
     }
@@ -2626,6 +2628,7 @@ export default function WorkspacePage() {
       updateMessageMetadataAtIndex(conversationId, agentMessageIndex, (metadata) => ({
         ...metadata,
         ...(runId ? { runId } : {}),
+        status: 'running',
         pendingInterrupt: undefined,
       }));
       appendToolStart(conversationId, agentMessageIndex, chunk);
@@ -2633,11 +2636,23 @@ export default function WorkspacePage() {
     }
 
     if (chunk.type === 'tool_end') {
+      updateMessageMetadataAtIndex(conversationId, agentMessageIndex, (metadata) => ({
+        ...metadata,
+        ...(runId ? { runId } : {}),
+        status: 'running',
+        pendingInterrupt: undefined,
+      }));
       appendToolEnd(conversationId, agentMessageIndex, chunk);
       return;
     }
 
     if (chunk.type === 'tool_error') {
+      updateMessageMetadataAtIndex(conversationId, agentMessageIndex, (metadata) => ({
+        ...metadata,
+        ...(runId ? { runId } : {}),
+        status: 'running',
+        pendingInterrupt: undefined,
+      }));
       appendToolEnd(conversationId, agentMessageIndex, chunk, 'error');
       return;
     }
@@ -2668,6 +2683,7 @@ export default function WorkspacePage() {
       updateMessageMetadataAtIndex(conversationId, agentMessageIndex, (metadata) => ({
         ...metadata,
         ...(runId ? { runId } : {}),
+        status: 'running',
         pendingInterrupt: undefined,
       }));
       if (chunk.role && chunk.role !== 'assistant') {
@@ -2948,7 +2964,20 @@ export default function WorkspacePage() {
           delete next[messageKey];
           return next;
         });
-        const runInfo = activeRunsRef.current[runId] || await rebuildRunInfoForMessage(message, runId);
+        const existingRunInfo = activeRunsRef.current[runId];
+        const rebuiltRunInfo = await rebuildRunInfoForMessage(message, runId).catch(() => undefined);
+        const runInfo = {
+          ...(existingRunInfo || rebuiltRunInfo || {
+            runId,
+            conversationId: message.conversationId,
+            workspaceId: selectedWorkspace?.id || '',
+            persona: normalizePersonaName(activeConversationPersona || selectedPersona || DEFAULT_PERSONA_NAME),
+            turnId: message.turnId || generateTurnId(),
+            placeholderId: message.id,
+            status: 'running' as AgentRunStatus,
+          }),
+          status: 'running' as AgentRunStatus,
+        };
         markRunStreamLaunching(runId);
         registerActiveRun(runInfo);
         if (runInfo) {
@@ -3045,7 +3074,20 @@ export default function WorkspacePage() {
           delete next[messageKey];
           return next;
         });
-        const runInfo = activeRunsRef.current[runId] || await rebuildRunInfoForMessage(message, runId);
+        const existingRunInfo = activeRunsRef.current[runId];
+        const rebuiltRunInfo = await rebuildRunInfoForMessage(message, runId).catch(() => undefined);
+        const runInfo = {
+          ...(existingRunInfo || rebuiltRunInfo || {
+            runId,
+            conversationId: message.conversationId,
+            workspaceId: selectedWorkspace?.id || '',
+            persona: normalizePersonaName(activeConversationPersona || selectedPersona || DEFAULT_PERSONA_NAME),
+            turnId: message.turnId || generateTurnId(),
+            placeholderId: message.id,
+            status: 'running' as AgentRunStatus,
+          }),
+          status: 'running' as AgentRunStatus,
+        };
         markRunStreamLaunching(runId);
         registerActiveRun(runInfo);
         if (runInfo) {
@@ -3127,7 +3169,20 @@ export default function WorkspacePage() {
             delete next[messageKey];
             return next;
           });
-          const runInfo = activeRunsRef.current[runId] || await rebuildRunInfoForMessage(message, runId);
+          const existingRunInfo = activeRunsRef.current[runId];
+          const rebuiltRunInfo = await rebuildRunInfoForMessage(message, runId).catch(() => undefined);
+          const runInfo = {
+            ...(existingRunInfo || rebuiltRunInfo || {
+              runId,
+              conversationId: message.conversationId,
+              workspaceId: selectedWorkspace?.id || '',
+              persona: normalizePersonaName(activeConversationPersona || selectedPersona || DEFAULT_PERSONA_NAME),
+              turnId: message.turnId || generateTurnId(),
+              placeholderId: message.id,
+              status: 'running' as AgentRunStatus,
+            }),
+            status: 'running' as AgentRunStatus,
+          };
           markRunStreamLaunching(runId);
           registerActiveRun(runInfo);
           if (runInfo) {
@@ -3185,7 +3240,20 @@ export default function WorkspacePage() {
           delete next[messageKey];
           return next;
         });
-        const runInfo = activeRunsRef.current[runId] || await rebuildRunInfoForMessage(message, runId);
+        const existingRunInfo = activeRunsRef.current[runId];
+        const rebuiltRunInfo = await rebuildRunInfoForMessage(message, runId).catch(() => undefined);
+        const runInfo = {
+          ...(existingRunInfo || rebuiltRunInfo || {
+            runId,
+            conversationId: message.conversationId,
+            workspaceId: selectedWorkspace?.id || '',
+            persona: normalizePersonaName(activeConversationPersona || selectedPersona || DEFAULT_PERSONA_NAME),
+            turnId: message.turnId || generateTurnId(),
+            placeholderId: message.id,
+            status: 'running' as AgentRunStatus,
+          }),
+          status: 'running' as AgentRunStatus,
+        };
         markRunStreamLaunching(runId);
         registerActiveRun(runInfo);
         if (runInfo) {
