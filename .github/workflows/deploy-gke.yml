@@ -110,7 +110,10 @@ jobs:
           set -euo pipefail
 
           docker build -f backend/Dockerfile.gke -t "gcr.io/${PROJECT_ID}/helpudoc-backend:${IMAGE_TAG}" .
-          docker build -f frontend/Dockerfile.gke --build-arg "VITE_GOOGLE_CLIENT_ID=${VITE_GOOGLE_CLIENT_ID}" -t "gcr.io/${PROJECT_ID}/helpudoc-frontend:${IMAGE_TAG}" .
+          docker build -f frontend/Dockerfile.gke \
+            --build-arg "VITE_GOOGLE_CLIENT_ID=${VITE_GOOGLE_CLIENT_ID}" \
+            --build-arg "VITE_AUTH_MODE=hybrid" \
+            -t "gcr.io/${PROJECT_ID}/helpudoc-frontend:${IMAGE_TAG}" .
           docker build -f agent/Dockerfile.gke -t "gcr.io/${PROJECT_ID}/helpudoc-agent:${IMAGE_TAG}" .
 
           docker push "gcr.io/${PROJECT_ID}/helpudoc-backend:${IMAGE_TAG}"
