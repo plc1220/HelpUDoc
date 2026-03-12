@@ -25,11 +25,15 @@ export default function ChatMessageList({
   getPrimaryInterruptAction,
   isPlanApprovalInterrupt,
   setInterruptInputByMessageId,
+  workspaceSkipPlanApprovals,
+  workspaceSettingsBusy,
   toggleThinkingVisibility,
   toggleToolActivityVisibility,
   handleCopyMessageText,
   handleRerunMessage,
+  handlePrepareInterruptAction,
   handleInterruptAction,
+  enableTrustedPlanMode,
   workspaceId,
 }: {
   messages: ConversationMessage[];
@@ -60,15 +64,23 @@ export default function ChatMessageList({
   ) => { name?: string; args?: Record<string, unknown> } | undefined;
   isPlanApprovalInterrupt: (pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt']) => boolean;
   setInterruptInputByMessageId: Dispatch<SetStateAction<Record<string, string>>>;
+  workspaceSkipPlanApprovals: boolean;
+  workspaceSettingsBusy: boolean;
   toggleThinkingVisibility: (messageId: ConversationMessage['id']) => void;
   toggleToolActivityVisibility: (messageId: ConversationMessage['id']) => void;
   handleCopyMessageText: (message: ConversationMessage) => void;
   handleRerunMessage: (messageId: ConversationMessage['id']) => void;
+  handlePrepareInterruptAction: (
+    message: ConversationMessage,
+    action: RenderableInterruptAction,
+    pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
+  ) => void;
   handleInterruptAction: (
     message: ConversationMessage,
     action: RenderableInterruptAction,
     pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
   ) => void;
+  enableTrustedPlanMode: () => Promise<boolean> | boolean;
   workspaceId?: string;
 }) {
   const listRef = useRef<HTMLDivElement | null>(null);
@@ -146,11 +158,15 @@ export default function ChatMessageList({
           getPrimaryInterruptAction={getPrimaryInterruptAction}
           isPlanApprovalInterrupt={isPlanApprovalInterrupt}
           setInterruptInputByMessageId={setInterruptInputByMessageId}
+          workspaceSkipPlanApprovals={workspaceSkipPlanApprovals}
+          workspaceSettingsBusy={workspaceSettingsBusy}
           toggleThinkingVisibility={toggleThinkingVisibility}
           toggleToolActivityVisibility={toggleToolActivityVisibility}
           handleCopyMessageText={handleCopyMessageText}
           handleRerunMessage={handleRerunMessage}
+          handlePrepareInterruptAction={handlePrepareInterruptAction}
           handleInterruptAction={handleInterruptAction}
+          enableTrustedPlanMode={enableTrustedPlanMode}
           isStreaming={isStreaming}
           workspaceId={workspaceId}
         />,
@@ -175,6 +191,8 @@ export default function ChatMessageList({
     handleRerunMessage,
     isPlanApprovalInterrupt,
     isStreaming,
+    workspaceSkipPlanApprovals,
+    workspaceSettingsBusy,
     markdownComponents,
     messageBubbleMaxWidth,
     messages,
@@ -183,6 +201,8 @@ export default function ChatMessageList({
     toggleThinkingVisibility,
     toggleToolActivityVisibility,
     workspaceId,
+    handlePrepareInterruptAction,
+    enableTrustedPlanMode,
   ]);
 
   return (

@@ -117,6 +117,7 @@ const FileEditor: React.FC<FileEditorProps> = ({
 }) => {
   const fileId = file?.id ? String(file.id) : null;
   const fileName = file?.name ?? '';
+  const isDraftFile = Boolean(fileId && fileId.startsWith('draft:'));
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
   const mdxEditorRef = useRef<MDXEditorMethods | null>(null);
   const collabSessionRef = useRef<ReturnType<typeof createCollabSession> | null>(null);
@@ -294,7 +295,7 @@ const FileEditor: React.FC<FileEditorProps> = ({
   }, [fileContent]);
 
   useEffect(() => {
-    if (!fileId) {
+    if (!fileId || isDraftFile) {
       setCollabReady(false);
       setPresenceUsers([]);
       setConnectionStatus('disconnected');
@@ -380,11 +381,11 @@ const FileEditor: React.FC<FileEditorProps> = ({
       setPresenceUsers([]);
       setConnectionStatus('disconnected');
     };
-  }, [fileId, fileName, workspaceId, onContentChange, bindMonaco, ensurePresenceStyles]);
+  }, [fileId, fileName, isDraftFile, workspaceId, onContentChange, bindMonaco, ensurePresenceStyles]);
 
   useEffect(() => {
     const session = collabSessionRef.current;
-    if (!session || !fileId || hasSeededRef.current) return;
+    if (!session || !fileId || isDraftFile || hasSeededRef.current) return;
 
     if (session.yText.length > 0) {
       hasSeededRef.current = true;
@@ -397,7 +398,7 @@ const FileEditor: React.FC<FileEditorProps> = ({
       session.yText.insert(0, fileContent);
     }, syncOriginRef.current);
     hasSeededRef.current = true;
-  }, [fileContent, fileId]);
+  }, [fileContent, fileId, isDraftFile]);
 
   if (!file) {
     return null;

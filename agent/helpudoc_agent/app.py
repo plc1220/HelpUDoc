@@ -387,6 +387,8 @@ def create_app() -> FastAPI:
             context["mcp_auth_fingerprint"] = mcp_auth_fingerprint.strip()
         if allow_script_runner:
             context["allow_script_runner"] = True
+        if isinstance(payload.get("skipPlanApprovals"), bool):
+            context["skip_plan_approvals"] = payload["skipPlanApprovals"]
         return context
 
 

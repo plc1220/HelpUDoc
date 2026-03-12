@@ -55,6 +55,8 @@ def _get_active_skill_policy(workspace_state: WorkspaceState) -> SkillPolicy:
 
 
 def _is_plan_approved(workspace_state: WorkspaceState) -> bool:
+    if workspace_state.context.get("skip_plan_approvals"):
+        return True
     return bool(workspace_state.context.get("plan_approved"))
 
 
@@ -334,8 +336,11 @@ class ToolFactory:
                         "required_artifacts": skill.policy.required_artifacts or [],
                         "pre_plan_search_limit": max(0, int(skill.policy.pre_plan_search_limit or 0)),
                     }
-                    # Reset plan approval each time a new skill is loaded.
-                    workspace_state.context["plan_approved"] = False
+                    # Reset plan approval each time a new skill is loaded unless the
+                    # workspace is explicitly trusted to auto-approve plan reviews.
+                    workspace_state.context["plan_approved"] = bool(
+                        workspace_state.context.get("skip_plan_approvals")
+                    )
                     workspace_state.context["pre_plan_search_count"] = 0
                     return f"Loaded skill: {skill.skill_id}\n\n{content}"
             available = ", ".join(sorted({skill.skill_id for skill in skills}))
@@ -351,10 +356,17 @@ class ToolFactory:
         @tool
         def request_plan_approval(
             plan_title: str,
-            plan_summary: str,
-            execution_checklist: str,
+            plan_summary: str = "",
+            execution_checklist: str = "",
+            plan_summary_markdown: str = "",
+            steps: Optional[List[Dict[str, Any]]] = None,
+            plan_file_path: str = "",
+            status_label: str = "Pending Approval",
+            step_index: int = 0,
+            step_count: int = 1,
             risky_actions: str = "None",
             reviewer_feedback: str = "",
+            edited_plan_content: str = "",
         ) -> str:
             """Request human approval/edit/rejection for a proposed execution plan."""
             if workspace_state.context.get("tagged_files_only"):
@@ -362,18 +374,37 @@ class ToolFactory:
 
             title = (plan_title or "").strip()
             summary = (plan_summary or "").strip()
+            summary_markdown = (plan_summary_markdown or "").strip()
             checklist = (execution_checklist or "").strip()
+            normalized_steps = steps if isinstance(steps, list) else []
+            plan_path = (plan_file_path or "").strip() or "research_plan.md"
+            status = (status_label or "").strip() or "Pending Approval"
             risks = (risky_actions or "").strip()
             feedback = (reviewer_feedback or "").strip()
+            draft_content = (edited_plan_content or "").strip()
 
             if not title:
                 return "Plan approval blocked: plan_title is required."
-            if not summary:
-                return "Plan approval blocked: plan_summary is required."
-            if not checklist:
-                return "Plan approval blocked: execution_checklist is required."
+            if not summary_markdown and not summary:
+                return "Plan approval blocked: plan_summary_markdown or plan_summary is required."
+            if not normalized_steps and not checklist:
+                return "Plan approval blocked: steps or execution_checklist is required."
 
             workspace_state.context["last_plan_feedback"] = feedback
+            workspace_state.context["last_plan_file_path"] = plan_path
+
+            if workspace_state.context.get("skip_plan_approvals"):
+                workspace_state.context["plan_approved"] = True
+                return (
+                    "PLAN_APPROVAL_SKIPPED_TRUSTED_MODE\n"
+                    f"Title: {title}\n"
+                    f"Summary: {summary_markdown or summary}\n"
+                    f"Execution checklist: {checklist or json.dumps(normalized_steps, ensure_ascii=False)}\n"
+                    f"Plan file path: {plan_path}\n"
+                    f"Status label: {status}\n"
+                    f"Risky actions: {risks}\n"
+                    "Workspace trusted mode is enabled, so plan approval was skipped. Continue executing the plan."
+                )
 
             # If a reviewer provides edit feedback, require one more approval round.
             # This prevents immediate continuation after edit and enforces explicit
@@ -383,10 +414,13 @@ class ToolFactory:
                 return (
                     "PLAN_EDIT_FEEDBACK_RECORDED\n"
                     f"Title: {title}\n"
-                    f"Summary: {summary}\n"
-                    f"Execution checklist: {checklist}\n"
+                    f"Summary: {summary_markdown or summary}\n"
+                    f"Execution checklist: {checklist or json.dumps(normalized_steps, ensure_ascii=False)}\n"
+                    f"Plan file path: {plan_path}\n"
+                    f"Status label: {status}\n"
                     f"Risky actions: {risks}\n"
                     f"Reviewer feedback: {feedback}\n"
+                    f"Edited draft included: {'yes' if draft_content else 'no'}\n"
                     "Do not execute yet. Revise the plan and call request_plan_approval again for final approval."
                 )
 
@@ -395,8 +429,10 @@ class ToolFactory:
             return (
                 "PLAN_APPROVAL_RECORDED\n"
                 f"Title: {title}\n"
-                f"Summary: {summary}\n"
-                f"Execution checklist: {checklist}\n"
+                f"Summary: {summary_markdown or summary}\n"
+                f"Execution checklist: {checklist or json.dumps(normalized_steps, ensure_ascii=False)}\n"
+                f"Plan file path: {plan_path}\n"
+                f"Status label: {status}\n"
                 f"Risky actions: {risks}\n"
                 "Reviewer feedback: None\n"
                 "Plan decision has been applied. Continue executing the approved plan."

@@ -2,6 +2,7 @@ export interface Workspace {
   id: string;
   name: string;
   lastUsed: string;
+  skipPlanApprovals?: boolean;
 }
 
 export interface File {

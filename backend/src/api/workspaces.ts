@@ -14,6 +14,10 @@ const collaboratorSchema = z.object({
   role: z.enum(['editor', 'viewer']),
 });
 
+const workspaceSettingsSchema = z.object({
+  skipPlanApprovals: z.boolean(),
+});
+
 export default function workspaceRoutes(workspaceService: WorkspaceService, userService: UserService) {
   const router = Router();
 
@@ -63,6 +67,30 @@ export default function workspaceRoutes(workspaceService: WorkspaceService, user
       res.json(workspace);
     } catch (error) {
       handleError(res, error, 'Failed to load workspace');
+    }
+  });
+
+  router.get('/:workspaceId/settings', async (req, res) => {
+    try {
+      const user = requireUserContext(req);
+      const settings = await workspaceService.getWorkspaceSettings(req.params.workspaceId, user.userId);
+      res.json(settings);
+    } catch (error) {
+      handleError(res, error, 'Failed to load workspace settings');
+    }
+  });
+
+  router.patch('/:workspaceId/settings', async (req, res) => {
+    try {
+      const user = requireUserContext(req);
+      const payload = workspaceSettingsSchema.parse(req.body);
+      const settings = await workspaceService.updateWorkspaceSettings(req.params.workspaceId, user.userId, payload);
+      res.json(settings);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: 'Invalid workspace settings payload' });
+      }
+      handleError(res, error, 'Failed to update workspace settings');
     }
   });
 

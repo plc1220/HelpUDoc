@@ -12,10 +12,11 @@ import {
 import { CheckSquare, Copy, Edit, Trash, Plus, Minus, ChevronLeft, RotateCcw, X, Printer, Download, Link as LinkIcon, Loader2 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { getWorkspaces, createWorkspace, deleteWorkspace } from '../services/workspaceApi';
+import { getWorkspaces, createWorkspace, deleteWorkspace, updateWorkspaceSettings } from '../services/workspaceApi';
 import {
   getFiles,
   createFile,
+  createTextFile,
   updateFileContent,
   deleteFile,
   getFileContent,
@@ -58,6 +59,7 @@ import FileEditor from '../components/FileEditor';
 import UIBlockRenderer, { type UIBlock } from '../components/UIBlockRenderer';
 import ExpandableSidebar from '../components/ExpandableSidebar';
 import AgentChatPane from '../components/chat/AgentChatPane';
+import { buildApprovalDraftContent, buildApprovalReview } from '../components/chat/approvalReview';
 import type { RenderableInterruptAction } from '../components/chat/interruptActions';
 import ToolOutputFilePreview from '../components/chat/ToolOutputFilePreview';
 import { useAuth } from '../auth/AuthProvider';
@@ -185,6 +187,17 @@ const generateTurnId = () => {
   return `turn-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 };
 
+const DEFAULT_PLAN_FILE_PATH = 'research_plan.md';
+
+const normalizeWorkspaceRelativePath = (value?: string): string =>
+  String(value || '')
+    .replace(/\\/g, '/')
+    .replace(/^\/+/, '')
+    .trim();
+
+const isDraftWorkspaceFile = (file?: WorkspaceFile | null): boolean =>
+  Boolean(file && typeof file.id === 'string' && String(file.id).startsWith('draft:'));
+
 const mergePersistedAgentMessage = (
   persisted: ConversationMessage,
   existing?: ConversationMessage | null,
@@ -251,6 +264,7 @@ export default function WorkspacePage() {
   });
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [selectedWorkspace, setSelectedWorkspace] = useState<Workspace | null>(null);
+  const [workspaceSettingsBusy, setWorkspaceSettingsBusy] = useState(false);
   const [files, setFiles] = useState<WorkspaceFile[]>([]);
   const [selectedFile, setSelectedFile] = useState<WorkspaceFile | null>(null);
   const [selectedFileDetails, setSelectedFileDetails] = useState<WorkspaceFile | null>(null);
@@ -1058,6 +1072,20 @@ export default function WorkspacePage() {
 
   const handleDeleteSingleFile = async (file: WorkspaceFile) => {
     if (!selectedWorkspace) return;
+    if (isDraftWorkspaceFile(file)) {
+      setFiles((prev) => prev.filter((item) => item.id !== file.id));
+      setSelectedFiles((prev) => {
+        const next = new Set(prev);
+        next.delete(file.id);
+        return next;
+      });
+      if (selectedFile?.id === file.id) {
+        setSelectedFile(null);
+        setSelectedFileDetails(null);
+        setFileContent('');
+      }
+      return;
+    }
     const confirmed = window.confirm(`Delete ${file.name}?`);
     if (!confirmed) return;
 
@@ -1683,6 +1711,45 @@ export default function WorkspacePage() {
     fetchWorkspaces();
   }, []);
 
+  const applyWorkspacePlanApprovalSetting = useCallback((workspaceId: string, skipPlanApprovals: boolean) => {
+    setWorkspaces((prev) => prev.map((workspace) => (
+      workspace.id === workspaceId ? { ...workspace, skipPlanApprovals } : workspace
+    )));
+    setSelectedWorkspace((prev) => (
+      prev && prev.id === workspaceId ? { ...prev, skipPlanApprovals } : prev
+    ));
+  }, []);
+
+  const handleUpdateWorkspacePlanApprovalSetting = useCallback(
+    async (skipPlanApprovals: boolean, requireConfirm = false) => {
+      if (!selectedWorkspace || workspaceSettingsBusy) {
+        return false;
+      }
+      if (
+        skipPlanApprovals &&
+        requireConfirm &&
+        !window.confirm(
+          'Enable trusted mode for this workspace and skip future plan approvals? You can turn approvals back on from the workspace sidebar.',
+        )
+      ) {
+        return false;
+      }
+      try {
+        setWorkspaceSettingsBusy(true);
+        const settings = await updateWorkspaceSettings(selectedWorkspace.id, { skipPlanApprovals });
+        applyWorkspacePlanApprovalSetting(selectedWorkspace.id, Boolean(settings.skipPlanApprovals));
+        return true;
+      } catch (error) {
+        console.error('Failed to update workspace settings', error);
+        addLocalSystemMessage('Unable to update workspace approval preferences right now.');
+        return false;
+      } finally {
+        setWorkspaceSettingsBusy(false);
+      }
+    },
+    [addLocalSystemMessage, applyWorkspacePlanApprovalSetting, selectedWorkspace, workspaceSettingsBusy],
+  );
+
   useEffect(() => {
     if (selectedWorkspace) {
       loadFilesForWorkspace(selectedWorkspace.id);
@@ -1694,8 +1761,59 @@ export default function WorkspacePage() {
     }
   };
 
+  const openPlanApprovalEditor = useCallback((
+    pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
+  ) => {
+    if (!selectedWorkspace) {
+      return;
+    }
+    const actionRequests = Array.isArray(pendingInterrupt?.actionRequests) ? pendingInterrupt.actionRequests : [];
+    const review = buildApprovalReview(pendingInterrupt, actionRequests[0]);
+    const targetPath = normalizeWorkspaceRelativePath(review?.planFilePath || DEFAULT_PLAN_FILE_PATH) || DEFAULT_PLAN_FILE_PATH;
+    const existingFile = files.find((file) => normalizeWorkspaceRelativePath(file.name || file.path) === targetPath);
+    setIsAgentPaneVisible(true);
+    setIsFilePaneVisible(true);
+    setCanvasZoom(1);
+    setIsEditMode(true);
+
+    if (existingFile) {
+      setSelectedFile(existingFile);
+      setSelectedFileDetails(null);
+      setFileContent('');
+      return;
+    }
+
+    const draftContent = buildApprovalDraftContent(review);
+    const draftFile: WorkspaceFile = {
+      id: `draft:${targetPath}`,
+      name: targetPath,
+      path: targetPath,
+      workspaceId: selectedWorkspace.id,
+      storageType: 'local',
+      mimeType: 'text/markdown',
+      content: draftContent,
+    };
+    setFiles((prev) => {
+      if (prev.some((file) => String(file.id) === draftFile.id)) {
+        return prev;
+      }
+      return [draftFile, ...prev];
+    });
+    setSelectedFile(draftFile);
+    setSelectedFileDetails(draftFile);
+    setFileContent(draftContent);
+    lastAutoSavedContentRef.current = draftContent;
+  }, [files, selectedWorkspace]);
+
   const fetchFileContent = async () => {
     if (selectedFile && selectedWorkspace) {
+      if (isDraftWorkspaceFile(selectedFile)) {
+        const draftContent = selectedFile.content || '';
+        setSelectedFileDetails(selectedFile);
+        setFileContent(draftContent);
+        lastAutoSavedContentRef.current = draftContent;
+        return;
+      }
       try {
         const fileWithContent = await getFileContent(selectedWorkspace.id, selectedFile.id);
         setSelectedFileDetails(fileWithContent);
@@ -2635,6 +2753,13 @@ export default function WorkspacePage() {
       const messageKey = String(message.id);
       const primaryAction = getPrimaryInterruptAction(pendingInterrupt);
       const isPlanApproval = isPlanApprovalInterrupt(pendingInterrupt);
+      const approvalReview = isPlanApproval ? buildApprovalReview(pendingInterrupt, primaryAction) : null;
+      const approvalPlanPath = normalizeWorkspaceRelativePath(approvalReview?.planFilePath || DEFAULT_PLAN_FILE_PATH);
+      const activeEditorPath = normalizeWorkspaceRelativePath(selectedFile?.name || selectedFile?.path);
+      const editedPlanContent =
+        isPlanApproval && approvalPlanPath && activeEditorPath === approvalPlanPath
+          ? fileContent.trim()
+          : '';
       const feedbackKey = isPlanApproval
         ? interruptFieldKey(messageKey, 'feedback')
         : interruptFieldKey(messageKey, 'reject-note');
@@ -2665,6 +2790,8 @@ export default function WorkspacePage() {
               args: {
                 ...originalArgs,
                 reviewer_feedback: rawFeedback,
+                plan_file_path: approvalPlanPath || DEFAULT_PLAN_FILE_PATH,
+                ...(editedPlanContent ? { edited_plan_content: editedPlanContent } : {}),
               },
             };
             options.message = rawFeedback || 'User requested edits.';
@@ -2736,12 +2863,14 @@ export default function WorkspacePage() {
     },
     [
       addLocalSystemMessage,
+      fileContent,
       interruptInputByMessageId,
       interruptFieldKey,
       findRunIdForMessage,
       getPrimaryInterruptAction,
       getAllowedDecisions,
       isPlanApprovalInterrupt,
+      selectedFile,
       rebuildRunInfoForMessage,
       markRunStreamLaunching,
       registerActiveRun,
@@ -3011,6 +3140,16 @@ export default function WorkspacePage() {
       updateMessagesForConversation,
     ],
   );
+
+  const prepareInterruptAction = useCallback((
+    _message: ConversationMessage,
+    action: RenderableInterruptAction,
+    pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
+  ) => {
+    if (action.source === 'approval' && action.legacyDecision === 'edit' && isPlanApprovalInterrupt(pendingInterrupt)) {
+      openPlanApprovalEditor(pendingInterrupt);
+    }
+  }, [isPlanApprovalInterrupt, openPlanApprovalEditor]);
 
   useEffect(() => {
     if (!activeConversationId) {
@@ -3864,20 +4003,38 @@ export default function WorkspacePage() {
     }
   };
 
-  const handleUpdateFile = useCallback(async (id: number, content: string) => {
-    if (!selectedWorkspace) return;
+  const handleUpdateFile = useCallback(async (targetFile: WorkspaceFile | null, content: string) => {
+    if (!selectedWorkspace || !targetFile) return;
 
     try {
-      await updateFileContent(selectedWorkspace.id, id, content);
+      if (isDraftWorkspaceFile(targetFile)) {
+        const createdFile = await createTextFile(selectedWorkspace.id, {
+          name: targetFile.name,
+          content,
+          mimeType: targetFile.mimeType || 'text/markdown',
+        });
+        setFiles((prev) => {
+          const withoutDraft = prev.filter((file) => String(file.id) !== String(targetFile.id));
+          return [createdFile, ...withoutDraft];
+        });
+        const hydratedCreatedFile = {
+          ...createdFile,
+          content,
+        };
+        setSelectedFile(hydratedCreatedFile);
+        setSelectedFileDetails(hydratedCreatedFile);
+      } else {
+        await updateFileContent(selectedWorkspace.id, Number(targetFile.id), content);
+        setSelectedFileDetails((prev) => (prev ? { ...prev, content } : prev));
+      }
       lastAutoSavedContentRef.current = content;
-      // Optionally, you can refetch the file or update it in the state
     } catch (error) {
       console.error('Failed to update file:', error);
     }
   }, [selectedWorkspace]);
 
   useEffect(() => {
-    if (!isEditMode || !selectedWorkspace || !selectedFile) return;
+    if (!isEditMode || !selectedWorkspace || !selectedFile || isDraftWorkspaceFile(selectedFile)) return;
 
     if (autoSaveTimerRef.current) {
       window.clearTimeout(autoSaveTimerRef.current);
@@ -3887,7 +4044,7 @@ export default function WorkspacePage() {
       if (fileContent === lastAutoSavedContentRef.current) {
         return;
       }
-      await handleUpdateFile(Number(selectedFile.id), fileContent);
+      await handleUpdateFile(selectedFile, fileContent);
       lastAutoSavedContentRef.current = fileContent;
     }, 2000);
 
@@ -3910,6 +4067,9 @@ export default function WorkspacePage() {
 
     try {
       for (const fileId of selectedFiles) {
+        if (String(fileId).startsWith('draft:')) {
+          continue;
+        }
         await deleteFile(selectedWorkspace.id, fileId);
       }
       setFiles((prevFiles) =>
@@ -4035,6 +4195,10 @@ export default function WorkspacePage() {
           colorMode={colorMode}
           onToggleColorMode={toggleColorMode}
           onSignOut={handleSignOut}
+          onToggleSkipPlanApprovals={(checked) => {
+            void handleUpdateWorkspacePlanApprovalSetting(checked, checked);
+          }}
+          workspaceSettingsBusy={workspaceSettingsBusy}
         />
         <Box
           component="main"
@@ -4217,7 +4381,7 @@ export default function WorkspacePage() {
                             </div>
                             {!isPendingJob && (
                               <div className={`shrink-0 items-center gap-1 ml-1 ${hoveredFileId === file.id ? 'flex' : 'hidden group-hover:flex'}`}>
-                                {file.publicUrl && (
+                                {file.publicUrl && !isDraftWorkspaceFile(file) && (
                                   <button
                                     type="button"
                                     onClick={(event) => {
@@ -4230,17 +4394,19 @@ export default function WorkspacePage() {
                                     <LinkIcon size={14} className="text-gray-600" />
                                   </button>
                                 )}
-                                <button
-                                  type="button"
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    handleRenameFile(file);
-                                  }}
-                                  className="p-1 rounded hover:bg-gray-200"
-                                  title="Rename"
-                                >
-                                  <Edit size={14} className="text-gray-600" />
-                                </button>
+                                {!isDraftWorkspaceFile(file) ? (
+                                  <button
+                                    type="button"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      handleRenameFile(file);
+                                    }}
+                                    className="p-1 rounded hover:bg-gray-200"
+                                    title="Rename"
+                                  >
+                                    <Edit size={14} className="text-gray-600" />
+                                  </button>
+                                ) : null}
                                 <button
                                   type="button"
                                   onClick={(event) => {
@@ -4335,7 +4501,7 @@ export default function WorkspacePage() {
                       )}
                       <button
                         className="h-9 px-3 inline-flex items-center justify-center rounded-lg text-sm font-medium text-slate-700 hover:bg-gray-200 disabled:opacity-50"
-                        onClick={() => selectedFile && handleUpdateFile(Number(selectedFile.id), fileContent)}
+                        onClick={() => selectedFile && handleUpdateFile(selectedFile, fileContent)}
                         disabled={!isEditMode}
                       >
                         Save
@@ -4452,6 +4618,8 @@ export default function WorkspacePage() {
               getPrimaryInterruptAction={getPrimaryInterruptAction}
               isPlanApprovalInterrupt={isPlanApprovalInterrupt}
               setInterruptInputByMessageId={setInterruptInputByMessageId}
+              workspaceSkipPlanApprovals={Boolean(selectedWorkspace?.skipPlanApprovals)}
+              workspaceSettingsBusy={workspaceSettingsBusy}
               onToggleAgentPaneVisibility={() => setIsAgentPaneVisible((prev) => !prev)}
               onModeChange={handleModeChange}
               onToggleHistory={() => setIsHistoryOpen((prev) => !prev)}
@@ -4464,7 +4632,9 @@ export default function WorkspacePage() {
               onToggleToolActivityVisibility={toggleToolActivityVisibility}
               onCopyMessageText={handleCopyMessageText}
               onRerunMessage={handleRerunMessage}
+              onPrepareInterruptAction={prepareInterruptAction}
               onInterruptAction={handleInterruptAction}
+              onEnableTrustedPlanMode={() => handleUpdateWorkspacePlanApprovalSetting(true, true)}
               onChatInputChange={handleChatInputChange}
               onChatInputKeyDown={handleChatInputKeyDown}
               onChatInputKeyUp={handleChatInputKeyUp}

@@ -19,6 +19,8 @@ interface CollapsibleDrawerProps {
   colorMode: PaletteMode;
   onToggleColorMode: () => void;
   onSignOut?: () => void;
+  onToggleSkipPlanApprovals?: (checked: boolean) => void;
+  workspaceSettingsBusy?: boolean;
 }
 
 const drawerWidth = 280;
@@ -37,6 +39,8 @@ const CollapsibleDrawer: React.FC<CollapsibleDrawerProps> = ({
   colorMode,
   onToggleColorMode,
   onSignOut,
+  onToggleSkipPlanApprovals,
+  workspaceSettingsBusy = false,
 }) => {
   const handleOpenSettingsClick = () => {
     handleDrawerClose();
@@ -161,6 +165,40 @@ const CollapsibleDrawer: React.FC<CollapsibleDrawerProps> = ({
             >
               Agent Settings
             </Button>
+            {selectedWorkspace ? (
+              <Box
+                sx={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  p: 1.5,
+                  borderRadius: 2,
+                  border: (theme) => `1px solid ${theme.palette.divider}`,
+                  backgroundColor: (theme) =>
+                    theme.palette.mode === 'light'
+                      ? 'rgba(15, 23, 42, 0.03)'
+                      : 'rgba(148, 163, 184, 0.08)',
+                }}
+              >
+                <Box sx={{ pr: 1.5 }}>
+                  <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+                    Plan approvals
+                  </Typography>
+                  <Typography variant="body2" sx={{ color: 'text.secondary', lineHeight: 1.2 }}>
+                    {selectedWorkspace.skipPlanApprovals
+                      ? 'Trusted mode is on for this workspace.'
+                      : 'Review research plans before they run.'}
+                  </Typography>
+                </Box>
+                <Switch
+                  size="small"
+                  checked={Boolean(selectedWorkspace.skipPlanApprovals)}
+                  disabled={!onToggleSkipPlanApprovals || workspaceSettingsBusy}
+                  onChange={(event) => onToggleSkipPlanApprovals?.(event.target.checked)}
+                  inputProps={{ 'aria-label': 'Toggle workspace plan approvals' }}
+                />
+              </Box>
+            ) : null}
             <Typography variant="body2" sx={{ color: 'text.secondary', mt: 1 }}>
               Manage skills and tools.
             </Typography>

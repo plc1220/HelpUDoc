@@ -1,4 +1,4 @@
-import { Copy, Loader2, RotateCcw } from 'lucide-react';
+import { CheckCircle2, Copy, FilePenLine, Loader2, RotateCcw, ShieldCheck } from 'lucide-react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from 'react';
@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from
 import type { ConversationMessage, ConversationMessageMetadata } from '../../types';
 import ToolOutputFilePreview from './ToolOutputFilePreview';
 import type { RenderableInterruptAction } from './interruptActions';
+import { buildApprovalReview } from './approvalReview';
 
 const THOUGHT_PREVIEW_LIMIT = 320;
 const THINKING_PLACEHOLDER = 'Formulating a research plan based on your prompt and available context.';
@@ -79,11 +80,15 @@ export default function ChatMessageBubble({
   getPrimaryInterruptAction,
   isPlanApprovalInterrupt,
   setInterruptInputByMessageId,
+  workspaceSkipPlanApprovals,
+  workspaceSettingsBusy,
   toggleThinkingVisibility,
   toggleToolActivityVisibility,
   handleCopyMessageText,
   handleRerunMessage,
+  handlePrepareInterruptAction,
   handleInterruptAction,
+  enableTrustedPlanMode,
   isStreaming,
   workspaceId,
 }: {
@@ -114,15 +119,23 @@ export default function ChatMessageBubble({
   ) => { name?: string; args?: Record<string, unknown> } | undefined;
   isPlanApprovalInterrupt: (pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt']) => boolean;
   setInterruptInputByMessageId: Dispatch<SetStateAction<Record<string, string>>>;
+  workspaceSkipPlanApprovals: boolean;
+  workspaceSettingsBusy: boolean;
   toggleThinkingVisibility: (messageId: ConversationMessage['id']) => void;
   toggleToolActivityVisibility: (messageId: ConversationMessage['id']) => void;
   handleCopyMessageText: (message: ConversationMessage) => void;
   handleRerunMessage: (messageId: ConversationMessage['id']) => void;
+  handlePrepareInterruptAction: (
+    message: ConversationMessage,
+    action: RenderableInterruptAction,
+    pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
+  ) => void;
   handleInterruptAction: (
     message: ConversationMessage,
     action: RenderableInterruptAction,
     pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
   ) => void;
+  enableTrustedPlanMode: () => Promise<boolean> | boolean;
   isStreaming: boolean;
   workspaceId?: string;
 }) {
@@ -200,6 +213,10 @@ export default function ChatMessageBubble({
     }
     return JSON.stringify(args, null, 2);
   }, [primaryInterruptAction?.args]);
+  const approvalReview = useMemo(
+    () => buildApprovalReview(pendingInterrupt, primaryInterruptAction),
+    [pendingInterrupt, primaryInterruptAction],
+  );
 
   useEffect(() => {
     if (!pendingInterrupt) {
@@ -237,6 +254,7 @@ export default function ChatMessageBubble({
     if (interruptControlsDisabled) {
       return;
     }
+    handlePrepareInterruptAction(message, action, pendingInterrupt);
     if (action.inputMode === 'text') {
       setActiveTextActionId(action.id);
       if (action.confirm) {
@@ -259,7 +277,9 @@ export default function ChatMessageBubble({
   };
 
   const clarificationDisplayPayload = renderDisplayPayload(pendingInterrupt?.displayPayload, 'Context', 'dark');
-  const approvalDisplayPayload = renderDisplayPayload(pendingInterrupt?.displayPayload, 'Plan details', 'light');
+  const approvalDisplayPayload = approvalReview
+    ? null
+    : renderDisplayPayload(pendingInterrupt?.displayPayload, 'Plan details', 'light');
   const isDynamicActionInterrupt = Boolean(pendingInterrupt?.actions?.length);
 
   const getActionButtonClass = (action: RenderableInterruptAction, tone: 'light' | 'dark'): string => {
@@ -418,6 +438,20 @@ export default function ChatMessageBubble({
     );
   };
 
+  const approvalCreateImpacts = approvalReview
+    ? approvalReview.steps.flatMap((step) => step.fileImpacts.filter((impact) => impact.action === 'create'))
+    : [];
+  const approvalUpdateImpacts = approvalReview
+    ? approvalReview.steps.flatMap((step) => step.fileImpacts.filter((impact) => impact.action === 'update'))
+    : [];
+
+  const handleEnableTrustedMode = async () => {
+    if (workspaceSkipPlanApprovals || workspaceSettingsBusy) {
+      return;
+    }
+    await Promise.resolve(enableTrustedPlanMode());
+  };
+
   return (
     <div className={`group flex items-start gap-3 motion-safe:animate-[chat-pane-message-in_220ms_ease-out] ${isAgentMessage ? '' : 'justify-end'}`}>
       <div style={{ width: '100%', maxWidth: messageBubbleMaxWidth }} className="relative flex-1 md:flex-initial">
@@ -469,27 +503,187 @@ export default function ChatMessageBubble({
             {pendingInterrupt && !isClarificationInterrupt ? (
               <div className="relative mt-4 pl-4 before:absolute before:-bottom-2 before:left-1 before:top-2 before:w-px before:bg-slate-200">
                 <span className="absolute left-0 top-3 h-2.5 w-2.5 rounded-full border border-indigo-300 bg-indigo-100" />
-                <div className="rounded-2xl border border-sky-200/70 bg-gradient-to-br from-white/75 via-sky-50/70 to-indigo-100/60 p-4 shadow-[0_18px_40px_-28px_rgba(30,64,175,0.75)] backdrop-blur-md">
-                  <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-700">
-                    {pendingInterrupt.title || 'Approval Required'}
-                  </p>
-                  <p className="mt-1 text-sm text-slate-700">
-                    {pendingInterrupt.description || 'Please review the proposed plan below before continuing.'}
-                  </p>
-                  <div className="mt-3 grid gap-2">
-                    {approvalDisplayPayload}
-                    {isPlanApprovalRequest || planText ? (
-                      <div className="max-h-48 overflow-y-auto rounded-xl border border-slate-200/70 bg-white/60 p-3 text-sm whitespace-pre-wrap text-slate-700">
-                        {planText || 'No plan details were provided.'}
+                <div className="rounded-[1.9rem] border border-amber-200/75 bg-[radial-gradient(circle_at_top_left,_rgba(251,191,36,0.12),_transparent_38%),linear-gradient(160deg,rgba(255,255,255,0.98),rgba(248,250,252,0.95))] p-5 shadow-[0_24px_60px_-34px_rgba(120,53,15,0.45)] backdrop-blur-md">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-500">
+                          {approvalReview?.cardTitle || pendingInterrupt.title || 'Review Research Strategy'}
+                        </p>
+                        <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-amber-700">
+                          <CheckCircle2 size={12} />
+                          {approvalReview?.badgeLabel || 'Pending Approval'}
+                        </span>
+                      </div>
+                      <p className="mt-3 text-xl font-semibold tracking-tight text-slate-900">
+                        {approvalReview?.planTitle || 'Proposed plan'}
+                      </p>
+                      <p className="mt-1 text-sm leading-relaxed text-slate-600">
+                        {approvalReview?.description || pendingInterrupt.description || 'Review the proposed research strategy before execution continues.'}
+                      </p>
+                    </div>
+                    {approvalReview?.stepCount && approvalReview.stepCount > 1 ? (
+                      <div className="rounded-full border border-slate-200 bg-white/80 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+                        Step {typeof approvalReview.stepIndex === 'number' ? approvalReview.stepIndex + 1 : 1} of {approvalReview.stepCount}
                       </div>
                     ) : null}
-                    {interruptError ? (
-                      <div className="rounded-xl border border-rose-200/90 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700">
-                        {interruptError}
-                      </div>
-                    ) : null}
-                    {renderInterruptActions('light')}
                   </div>
+
+                  {approvalReview ? (
+                    <div className="mt-4 space-y-4">
+                      <div className="rounded-[1.4rem] border border-slate-200/80 bg-white/80 p-4 shadow-sm">
+                        <div className="flex flex-wrap items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                          <span>Plan File</span>
+                          <span className="rounded-full bg-slate-100 px-2.5 py-1 font-mono text-[10px] normal-case tracking-normal text-slate-700">
+                            {approvalReview.planFilePath}
+                          </span>
+                        </div>
+                        {approvalReview.summaryMarkdown ? (
+                          <div className="agent-markdown mt-3 text-sm text-slate-700">
+                            <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+                              {approvalReview.summaryMarkdown}
+                            </ReactMarkdown>
+                          </div>
+                        ) : null}
+                      </div>
+
+                      {approvalReview.steps.length ? (
+                        <div className="rounded-[1.4rem] border border-slate-200/80 bg-white/72 p-4 shadow-sm">
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                            Execution Map
+                          </p>
+                          <div className="mt-3 space-y-3">
+                            {approvalReview.steps.map((step, index) => (
+                              <div key={`${step.title}-${index}`} className="rounded-[1.2rem] border border-slate-200/80 bg-slate-50/80 p-3">
+                                <div className="flex items-start gap-3">
+                                  <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-900 text-[11px] font-semibold text-white">
+                                    {index + 1}
+                                  </span>
+                                  <div className="min-w-0">
+                                    <p className="text-sm font-semibold text-slate-900">{step.title}</p>
+                                    {step.detail ? (
+                                      <p className="mt-1 text-sm leading-relaxed text-slate-600">{step.detail}</p>
+                                    ) : null}
+                                    {step.toolNames.length ? (
+                                      <div className="mt-3 flex flex-wrap gap-2">
+                                        {step.toolNames.map((toolName) => (
+                                          <span
+                                            key={`${step.title}-${toolName}`}
+                                            className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700 shadow-sm"
+                                          >
+                                            {toolName}
+                                          </span>
+                                        ))}
+                                      </div>
+                                    ) : null}
+                                    {step.fileImpacts.length ? (
+                                      <div className="mt-3 flex flex-wrap gap-2">
+                                        {step.fileImpacts.map((impact) => (
+                                          <span
+                                            key={`${step.title}-${impact.action}-${impact.path}`}
+                                            className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${
+                                              impact.action === 'create'
+                                                ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200'
+                                                : 'bg-blue-50 text-blue-700 ring-1 ring-blue-200'
+                                            }`}
+                                          >
+                                            {impact.action === 'create' ? 'Create' : 'Update'}: {impact.path}
+                                          </span>
+                                        ))}
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+
+                      {approvalCreateImpacts.length || approvalUpdateImpacts.length ? (
+                        <div className="grid gap-3 md:grid-cols-2">
+                          <div className="rounded-[1.3rem] border border-emerald-200/80 bg-emerald-50/70 p-4">
+                            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-emerald-700">Create</p>
+                            <div className="mt-2 space-y-1.5 text-sm text-emerald-900">
+                              {approvalCreateImpacts.length ? approvalCreateImpacts.map((impact, index) => (
+                                <p key={`${impact.path}-${index}`}>{impact.path}</p>
+                              )) : <p className="text-emerald-800/70">No new files.</p>}
+                            </div>
+                          </div>
+                          <div className="rounded-[1.3rem] border border-blue-200/80 bg-blue-50/75 p-4">
+                            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-blue-700">Update</p>
+                            <div className="mt-2 space-y-1.5 text-sm text-blue-900">
+                              {approvalUpdateImpacts.length ? approvalUpdateImpacts.map((impact, index) => (
+                                <p key={`${impact.path}-${index}`}>{impact.path}</p>
+                              )) : <p className="text-blue-800/70">No existing files updated.</p>}
+                            </div>
+                          </div>
+                        </div>
+                      ) : null}
+
+                      {approvalReview.riskyActions ? (
+                        <div className="rounded-[1.3rem] border border-rose-200/80 bg-rose-50/70 p-4">
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-rose-700">Risk Notes</p>
+                          <p className="mt-2 text-sm leading-relaxed text-rose-900">{approvalReview.riskyActions}</p>
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <div className="mt-3 grid gap-2">
+                      {approvalDisplayPayload}
+                      {isPlanApprovalRequest || planText ? (
+                        <div className="max-h-48 overflow-y-auto rounded-xl border border-slate-200/70 bg-white/60 p-3 text-sm whitespace-pre-wrap text-slate-700">
+                          {planText || 'No plan details were provided.'}
+                        </div>
+                      ) : null}
+                    </div>
+                  )}
+
+                  {isPlanApprovalRequest ? (
+                    <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-[1.2rem] border border-slate-200/80 bg-white/75 px-4 py-3">
+                      <label className="flex min-w-0 items-center gap-3 text-sm text-slate-600">
+                        <input
+                          type="checkbox"
+                          checked={workspaceSkipPlanApprovals}
+                          disabled={workspaceSkipPlanApprovals || workspaceSettingsBusy}
+                          onChange={() => { void handleEnableTrustedMode(); }}
+                          className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                        />
+                        <span className="min-w-0">
+                          <span className="font-medium text-slate-700">Don’t ask me again for this workspace</span>
+                          <span className="block text-xs text-slate-500">
+                            Future plan reviews will auto-approve until you switch approvals back on in the sidebar.
+                          </span>
+                        </span>
+                      </label>
+                      {workspaceSkipPlanApprovals ? (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700 ring-1 ring-emerald-200">
+                          <ShieldCheck size={12} />
+                          Trusted mode enabled
+                        </span>
+                      ) : null}
+                    </div>
+                  ) : null}
+
+                  {interruptError ? (
+                    <div className="mt-4 rounded-xl border border-rose-200/90 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700">
+                      {interruptError}
+                    </div>
+                  ) : null}
+
+                  {isPlanApprovalRequest ? (
+                    <div className="mt-3 rounded-[1.2rem] border border-slate-200/80 bg-white/70 px-4 py-3 text-xs text-slate-500">
+                      <div className="flex items-center gap-2 font-semibold uppercase tracking-[0.16em] text-slate-500">
+                        <FilePenLine size={13} />
+                        Edit Behavior
+                      </div>
+                      <p className="mt-2 leading-relaxed text-slate-600">
+                        Selecting <span className="font-semibold text-slate-700">Edit</span> opens the plan file in the editor so you can revise the draft before resubmitting feedback.
+                      </p>
+                    </div>
+                  ) : null}
+
+                  <div className="mt-3">{renderInterruptActions('light')}</div>
                 </div>
               </div>
             ) : null}

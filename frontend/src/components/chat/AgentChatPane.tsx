@@ -73,6 +73,8 @@ export default function AgentChatPane({
   getPrimaryInterruptAction,
   isPlanApprovalInterrupt,
   setInterruptInputByMessageId,
+  workspaceSkipPlanApprovals,
+  workspaceSettingsBusy,
   onToggleAgentPaneVisibility,
   onModeChange,
   onToggleHistory,
@@ -85,7 +87,9 @@ export default function AgentChatPane({
   onToggleToolActivityVisibility,
   onCopyMessageText,
   onRerunMessage,
+  onPrepareInterruptAction,
   onInterruptAction,
+  onEnableTrustedPlanMode,
   onChatInputChange,
   onChatInputKeyDown,
   onChatInputKeyUp,
@@ -152,6 +156,8 @@ export default function AgentChatPane({
   ) => { name?: string; args?: Record<string, unknown> } | undefined;
   isPlanApprovalInterrupt: (pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt']) => boolean;
   setInterruptInputByMessageId: Dispatch<SetStateAction<Record<string, string>>>;
+  workspaceSkipPlanApprovals: boolean;
+  workspaceSettingsBusy: boolean;
   onToggleAgentPaneVisibility: () => void;
   onModeChange: (event: ChangeEvent<HTMLSelectElement>) => void;
   onToggleHistory: () => void;
@@ -164,11 +170,17 @@ export default function AgentChatPane({
   onToggleToolActivityVisibility: (messageId: ConversationMessage['id']) => void;
   onCopyMessageText: (message: ConversationMessage) => void;
   onRerunMessage: (messageId: ConversationMessage['id']) => void;
+  onPrepareInterruptAction: (
+    message: ConversationMessage,
+    action: RenderableInterruptAction,
+    pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
+  ) => void;
   onInterruptAction: (
     message: ConversationMessage,
     action: RenderableInterruptAction,
     pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
   ) => void;
+  onEnableTrustedPlanMode: () => Promise<boolean> | boolean;
   onChatInputChange: (event: ChangeEvent<HTMLTextAreaElement>) => void;
   onChatInputKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
   onChatInputKeyUp: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
@@ -234,11 +246,15 @@ export default function AgentChatPane({
           getPrimaryInterruptAction={getPrimaryInterruptAction}
           isPlanApprovalInterrupt={isPlanApprovalInterrupt}
           setInterruptInputByMessageId={setInterruptInputByMessageId}
+          workspaceSkipPlanApprovals={workspaceSkipPlanApprovals}
+          workspaceSettingsBusy={workspaceSettingsBusy}
           toggleThinkingVisibility={onToggleThinkingVisibility}
           toggleToolActivityVisibility={onToggleToolActivityVisibility}
           handleCopyMessageText={onCopyMessageText}
           handleRerunMessage={onRerunMessage}
+          handlePrepareInterruptAction={onPrepareInterruptAction}
           handleInterruptAction={onInterruptAction}
+          enableTrustedPlanMode={onEnableTrustedPlanMode}
           workspaceId={workspaceId}
         />
         <ChatInputArea
