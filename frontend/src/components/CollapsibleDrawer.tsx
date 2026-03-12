@@ -63,8 +63,18 @@ const CollapsibleDrawer: React.FC<CollapsibleDrawerProps> = ({
       anchor="left"
       open={open}
     >
-      <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', p: 2.5, gap: 2 }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+      <Box
+        sx={{
+          display: 'flex',
+          flexDirection: 'column',
+          height: '100%',
+          minHeight: 0,
+          overflow: 'hidden',
+          p: 2.5,
+          gap: 2,
+        }}
+      >
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
           <Typography variant="h6" sx={{ fontWeight: 600 }}>
             Workspaces
           </Typography>
@@ -77,7 +87,7 @@ const CollapsibleDrawer: React.FC<CollapsibleDrawerProps> = ({
           </IconButton>
         </Box>
 
-        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5, flexShrink: 0 }}>
           <TextField
             placeholder="New workspace"
             variant="outlined"
@@ -104,8 +114,25 @@ const CollapsibleDrawer: React.FC<CollapsibleDrawerProps> = ({
           </Button>
         </Box>
 
-        <Box sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-          <Box sx={{ flexGrow: 1, overflowY: 'auto', pr: 1 }}>
+        <Box
+          sx={{
+            flex: '1 1 0%',
+            display: 'flex',
+            flexDirection: 'column',
+            minHeight: 0,
+            overflow: 'hidden',
+          }}
+        >
+          <Box
+            sx={{
+              flex: '1 1 auto',
+              minHeight: 0,
+              overflowY: 'auto',
+              overflowX: 'hidden',
+              pr: 1,
+              pb: 1,
+            }}
+          >
             <WorkspaceList
               workspaces={workspaces}
               selectedWorkspace={selectedWorkspace}
@@ -115,6 +142,7 @@ const CollapsibleDrawer: React.FC<CollapsibleDrawerProps> = ({
           </Box>
           <Box
             sx={{
+              flexShrink: 0,
               borderTop: (theme) => `1px solid ${theme.palette.divider}`,
               pt: 2,
               mt: 2,
