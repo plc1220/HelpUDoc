@@ -222,8 +222,16 @@ const mergePersistedAgentMessage = (
           : undefined,
   };
 
+  const persistedText = typeof hydrated.text === 'string' ? hydrated.text : '';
+  const existingText = typeof existing?.text === 'string' ? existing.text : '';
+  const mergedText =
+    persistedText.trim().length > 0 || !existingText.trim().length
+      ? persistedText
+      : existingText;
+
   return {
     ...hydrated,
+    text: mergedText,
     thinkingText: hydrated.thinkingText ?? existing?.thinkingText,
     toolEvents: hydrated.toolEvents ?? existing?.toolEvents,
     metadata: Object.keys(mergedMetadata).length ? mergedMetadata : undefined,
