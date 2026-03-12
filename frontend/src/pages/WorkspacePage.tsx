@@ -2209,6 +2209,79 @@ export default function WorkspacePage() {
     [updateMessagesForConversation],
   );
 
+  const clearPendingInterruptForRun = useCallback(
+    (
+      conversationId: string,
+      runId: string,
+      turnId?: string,
+    ) => {
+      updateMessagesForConversation(conversationId, (prev) => {
+        const matchingIndexes = prev
+          .map((message, index) => ({ message, index }))
+          .filter(({ message }) => {
+            if (message.sender !== 'agent') {
+              return false;
+            }
+            const metadata = (message.metadata as ConversationMessageMetadata | undefined) || undefined;
+            return metadata?.runId === runId || Boolean(turnId && message.turnId === turnId);
+          })
+          .map(({ index }) => index);
+
+        if (!matchingIndexes.length) {
+          return prev;
+        }
+
+        const next = [...prev];
+        const chooseScore = (message: ConversationMessage) => (
+          (message.text?.length || 0) * 1000 +
+          (message.thinkingText?.length || 0) * 100 +
+          (message.toolEvents?.length || 0) * 10 +
+          ((((message.metadata as ConversationMessageMetadata | undefined) || {}).pendingInterrupt) ? 5 : 0)
+        );
+
+        const primaryIndex = matchingIndexes.reduce((best, current) => (
+          chooseScore(next[current]) > chooseScore(next[best]) ? current : best
+        ), matchingIndexes[0]);
+
+        const merged = matchingIndexes.reduce((acc, index) => {
+          const candidate = next[index];
+          return {
+            ...acc,
+            text: (candidate.text?.length || 0) > (acc.text?.length || 0) ? candidate.text : acc.text,
+            thinkingText:
+              (candidate.thinkingText?.length || 0) > (acc.thinkingText?.length || 0)
+                ? candidate.thinkingText
+                : acc.thinkingText,
+            toolEvents:
+              (candidate.toolEvents?.length || 0) > (acc.toolEvents?.length || 0)
+                ? candidate.toolEvents
+                : acc.toolEvents,
+          };
+        }, next[primaryIndex]);
+
+        const metadata = {
+          ...(((merged.metadata as ConversationMessageMetadata | undefined) || {})),
+          runId,
+          status: 'running' as AgentRunStatus,
+          pendingInterrupt: undefined,
+        };
+
+        next[primaryIndex] = {
+          ...merged,
+          metadata,
+        };
+
+        if (matchingIndexes.length === 1) {
+          return next;
+        }
+
+        const duplicatesToRemove = new Set(matchingIndexes.filter((index) => index !== primaryIndex));
+        return next.filter((_, index) => !duplicatesToRemove.has(index));
+      });
+    },
+    [updateMessagesForConversation],
+  );
+
   const persistAgentProgress = useCallback(
     async (runInfo: ActiveRunInfo, statusOverride?: AgentRunStatus) => {
       const { runId, conversationId, turnId, placeholderId } = runInfo;
@@ -2861,16 +2934,7 @@ export default function WorkspacePage() {
           }
         }
         await submitInterruptWithRetry(runId, 'approval', () => submitRunDecision(runId, decision, options));
-        updateMessagesForConversation(message.conversationId, (prev) => {
-          const next = [...prev];
-          const idx = next.findIndex((item) => item.id === message.id);
-          if (idx === -1) return next;
-          const current = next[idx];
-          const metadata = { ...((current.metadata as ConversationMessageMetadata | undefined) || {}) };
-          metadata.pendingInterrupt = undefined;
-          next[idx] = { ...current, metadata };
-          return next;
-        });
+        clearPendingInterruptForRun(message.conversationId, runId, message.turnId);
         setInterruptInputByMessageId((prev) => {
           const next = { ...prev };
           delete next[interruptFieldKey(messageKey, 'feedback')];
@@ -2913,11 +2977,11 @@ export default function WorkspacePage() {
       isPlanApprovalInterrupt,
       selectedFile,
       rebuildRunInfoForMessage,
+      clearPendingInterruptForRun,
       markRunStreamLaunching,
       registerActiveRun,
       submitInterruptWithRetry,
       streamRunForConversation,
-      updateMessagesForConversation,
     ],
   );
 
@@ -2964,16 +3028,7 @@ export default function WorkspacePage() {
             selectedValues: selectedValues.length ? selectedValues : undefined,
           })
         );
-        updateMessagesForConversation(message.conversationId, (prev) => {
-          const next = [...prev];
-          const idx = next.findIndex((item) => item.id === message.id);
-          if (idx === -1) return next;
-          const current = next[idx];
-          const metadata = { ...((current.metadata as ConversationMessageMetadata | undefined) || {}) };
-          metadata.pendingInterrupt = undefined;
-          next[idx] = { ...current, metadata };
-          return next;
-        });
+        clearPendingInterruptForRun(message.conversationId, runId, message.turnId);
         setInterruptInputByMessageId((prev) => {
           const next = { ...prev };
           delete next[textKey];
@@ -3016,11 +3071,11 @@ export default function WorkspacePage() {
       interruptInputByMessageId,
       interruptSelectedChoicesByMessageId,
       rebuildRunInfoForMessage,
+      clearPendingInterruptForRun,
       markRunStreamLaunching,
       registerActiveRun,
       submitInterruptWithRetry,
       streamRunForConversation,
-      updateMessagesForConversation,
     ],
   );
 
@@ -3065,16 +3120,7 @@ export default function WorkspacePage() {
               selectedValues: action.value ? [action.value] : undefined,
             })
           );
-          updateMessagesForConversation(message.conversationId, (prev) => {
-            const next = [...prev];
-            const idx = next.findIndex((item) => item.id === message.id);
-            if (idx === -1) return next;
-            const current = next[idx];
-            const metadata = { ...((current.metadata as ConversationMessageMetadata | undefined) || {}) };
-            metadata.pendingInterrupt = undefined;
-            next[idx] = { ...current, metadata };
-            return next;
-          });
+          clearPendingInterruptForRun(message.conversationId, runId, message.turnId);
           setInterruptErrorByMessageId((prev) => {
             if (!prev[messageKey]) return prev;
             const next = { ...prev };
@@ -3123,16 +3169,7 @@ export default function WorkspacePage() {
             text: actionText || undefined,
           })
         );
-        updateMessagesForConversation(message.conversationId, (prev) => {
-          const next = [...prev];
-          const idx = next.findIndex((item) => item.id === message.id);
-          if (idx === -1) return next;
-          const current = next[idx];
-          const metadata = { ...((current.metadata as ConversationMessageMetadata | undefined) || {}) };
-          metadata.pendingInterrupt = undefined;
-          next[idx] = { ...current, metadata };
-          return next;
-        });
+        clearPendingInterruptForRun(message.conversationId, runId, message.turnId);
         setInterruptInputByMessageId((prev) => {
           const next = { ...prev };
           Object.keys(next).forEach((key) => {
@@ -3148,9 +3185,9 @@ export default function WorkspacePage() {
           delete next[messageKey];
           return next;
         });
-          const runInfo = activeRunsRef.current[runId] || await rebuildRunInfoForMessage(message, runId);
-          markRunStreamLaunching(runId);
-          registerActiveRun(runInfo);
+        const runInfo = activeRunsRef.current[runId] || await rebuildRunInfoForMessage(message, runId);
+        markRunStreamLaunching(runId);
+        registerActiveRun(runInfo);
         if (runInfo) {
           await streamRunForConversation(runInfo, false);
         } else {
@@ -3174,11 +3211,11 @@ export default function WorkspacePage() {
       interruptActionFieldKey,
       interruptInputByMessageId,
       rebuildRunInfoForMessage,
+      clearPendingInterruptForRun,
       markRunStreamLaunching,
       registerActiveRun,
       submitInterruptWithRetry,
       streamRunForConversation,
-      updateMessagesForConversation,
     ],
   );
 
