@@ -2158,6 +2158,57 @@ export default function WorkspacePage() {
     return !message.text && !message.thinkingText && !message.toolEvents?.length;
   }, []);
 
+  const upsertPersistedAgentMessage = useCallback(
+    (
+      conversationId: string,
+      persisted: ConversationMessage,
+      options?: {
+        placeholderId?: ConversationMessage['id'];
+        existing?: ConversationMessage | null;
+      },
+    ) => {
+      updateMessagesForConversation(conversationId, (prev) => {
+        const updated = [...prev];
+        const matchingIndexes = updated
+          .map((message, index) => ({ message, index }))
+          .filter(({ message }) => {
+            if (message.sender !== 'agent') {
+              return false;
+            }
+            if (message.id === persisted.id) {
+              return true;
+            }
+            if (options?.placeholderId !== undefined && message.id === options.placeholderId) {
+              return true;
+            }
+            return Boolean(persisted.turnId && message.turnId === persisted.turnId);
+          })
+          .map(({ index }) => index);
+
+        const primaryIndex = matchingIndexes[0] ?? updated.length;
+        const existing =
+          matchingIndexes[0] !== undefined
+            ? updated[matchingIndexes[0]]
+            : options?.existing || undefined;
+        const merged = mergePersistedAgentMessage(persisted, existing);
+
+        if (matchingIndexes[0] !== undefined) {
+          updated[primaryIndex] = merged;
+        } else {
+          updated.push(merged);
+        }
+
+        if (matchingIndexes.length <= 1) {
+          return updated;
+        }
+
+        const duplicatesToRemove = new Set(matchingIndexes.slice(1));
+        return updated.filter((_, index) => !duplicatesToRemove.has(index));
+      });
+    },
+    [updateMessagesForConversation],
+  );
+
   const persistAgentProgress = useCallback(
     async (runInfo: ActiveRunInfo, statusOverride?: AgentRunStatus) => {
       const { runId, conversationId, turnId, placeholderId } = runInfo;
@@ -2191,19 +2242,9 @@ export default function WorkspacePage() {
           replaceExisting: true,
           metadata,
         });
-        updateMessagesForConversation(conversationId, (prev) => {
-          const updated = [...prev];
-          const existingIndex = updated.findIndex(
-            (m) => m.id === persisted.id || (m.sender === 'agent' && m.turnId === persisted.turnId)
-          );
-          const existing = existingIndex !== -1 ? updated[existingIndex] : undefined;
-          const merged = mergePersistedAgentMessage(persisted, existing);
-          if (existingIndex !== -1) {
-            updated[existingIndex] = merged;
-          } else {
-            updated.push(merged);
-          }
-          return updated;
+        upsertPersistedAgentMessage(conversationId, persisted, {
+          placeholderId,
+          existing: message,
         });
         lastPersistedAgentTextRef.current[runId] = text;
         lastPersistedStatusRef.current[runId] = nextStatus;
@@ -2218,7 +2259,7 @@ export default function WorkspacePage() {
         persistInFlightRef.current.delete(runId);
       }
     },
-    [getBufferedAgentText, findAgentMessageForRun, updateMessagesForConversation],
+    [getBufferedAgentText, findAgentMessageForRun, upsertPersistedAgentMessage],
   );
 
   const bufferAgentChunk = (conversationId: string, index: number, chunk: string) => {
@@ -3439,14 +3480,9 @@ export default function WorkspacePage() {
             replaceExisting: true,
             metadata: { ...metadata, runId },
           });
-          updateMessagesForConversation(conversationId, (prev) => {
-            const updated = [...prev];
-            if (targetIndex >= 0) {
-              updated[targetIndex] = mergePersistedAgentMessage(persisted, updated[targetIndex]);
-            } else {
-              updated.push(mergePersistedAgentMessage(persisted));
-            }
-            return updated;
+          upsertPersistedAgentMessage(conversationId, persisted, {
+            placeholderId,
+            existing: agentMessage,
           });
           if (placeholderId !== null && placeholderId !== undefined) {
             agentMessageBufferRef.current.delete(placeholderId);
@@ -3855,14 +3891,9 @@ export default function WorkspacePage() {
             metadata: { ...metadata, runId },
             replaceExisting: true,
           });
-          updateMessagesForConversation(conversationId, (prev) => {
-            const updated = [...prev];
-            if (targetIndex >= 0) {
-              updated[targetIndex] = mergePersistedAgentMessage(persisted, updated[targetIndex]);
-            } else {
-              updated.push(mergePersistedAgentMessage(persisted));
-            }
-            return updated;
+          upsertPersistedAgentMessage(conversationId, persisted, {
+            placeholderId,
+            existing: agentMessage,
           });
           if (placeholderId !== null && placeholderId !== undefined) {
             agentMessageBufferRef.current.delete(placeholderId);
