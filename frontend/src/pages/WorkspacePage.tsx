@@ -2149,6 +2149,31 @@ export default function WorkspacePage() {
     [],
   );
 
+  const findAgentMessageIndexForRun = useCallback(
+    (
+      conversationId: string,
+      placeholderId: ConversationMessage['id'],
+      turnId: string,
+      runId?: string,
+    ) => {
+      const messages = conversationMessagesRef.current[conversationId] || [];
+      if (runId) {
+        const byRunId = messages.findIndex((message) => (
+          message.sender === 'agent' && message.metadata?.runId === runId
+        ));
+        if (byRunId !== -1) {
+          return byRunId;
+        }
+      }
+      const byId = messages.findIndex((message) => message.id === placeholderId);
+      if (byId !== -1) {
+        return byId;
+      }
+      return messages.findIndex((message) => message.sender === 'agent' && message.turnId === turnId);
+    },
+    [],
+  );
+
   const getBufferedAgentText = useCallback(
     (runInfo: ActiveRunInfo) => {
       const { placeholderId, conversationId, turnId } = runInfo;
@@ -2740,8 +2765,8 @@ export default function WorkspacePage() {
       resumeAttemptedRef.current.add(runId);
       resumeInFlightRef.current.add(runId);
       cancelStreamForConversation(conversationId);
-      const agentMessageIndex = ensureAgentPlaceholder(conversationId, placeholderId, turnId, replayFromStart);
-      if (agentMessageIndex < 0) {
+      const initialAgentMessageIndex = ensureAgentPlaceholder(conversationId, placeholderId, turnId, replayFromStart);
+      if (initialAgentMessageIndex < 0) {
         if (STREAM_DEBUG_ENABLED) {
           console.debug('[WorkspacePage] missing placeholder', { runId, conversationId });
         }
@@ -2770,6 +2795,10 @@ export default function WorkspacePage() {
         await streamAgentRun(
           runId,
           (chunk) => {
+            const agentMessageIndex = (() => {
+              const resolved = findAgentMessageIndexForRun(conversationId, placeholderId, turnId, runId);
+              return resolved >= 0 ? resolved : initialAgentMessageIndex;
+            })();
             const resumableChunk = chunk as AgentStreamChunk & { id?: string };
             if (typeof resumableChunk.id === 'string') {
               lastStreamId = resumableChunk.id;
@@ -2796,6 +2825,10 @@ export default function WorkspacePage() {
         );
       } catch (error) {
         const supersededByNewerStream = streamAbortMapRef.current.get(conversationId) !== controller;
+        const agentMessageIndex = (() => {
+          const resolved = findAgentMessageIndexForRun(conversationId, placeholderId, turnId, runId);
+          return resolved >= 0 ? resolved : initialAgentMessageIndex;
+        })();
         if ((error as DOMException)?.name === 'AbortError') {
           if (stopRequestedRef.current) {
             appendAgentChunk(conversationId, agentMessageIndex, '\n[Stopped by user]');
@@ -2845,6 +2878,10 @@ export default function WorkspacePage() {
         }
         const effectivePendingInterrupt = latestRunMeta ? latestRunMeta.pendingInterrupt : latestInterrupt;
         if (!supersededByNewerStream && effectivePendingInterrupt) {
+            const agentMessageIndex = (() => {
+              const resolved = findAgentMessageIndexForRun(conversationId, placeholderId, turnId, runId);
+              return resolved >= 0 ? resolved : initialAgentMessageIndex;
+            })();
             finalStatus = 'awaiting_approval';
             updateMessageMetadataAtIndex(conversationId, agentMessageIndex, (metadata) => ({
               ...metadata,
@@ -2914,6 +2951,7 @@ export default function WorkspacePage() {
       handleStreamChunk,
       flushBufferedAgentChunks,
       getBufferedAgentText,
+      findAgentMessageIndexForRun,
       getRunStatus,
       addLocalSystemMessage,
       removeActiveRun,
