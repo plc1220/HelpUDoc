@@ -1,19 +1,29 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Editor, { type OnMount } from '@monaco-editor/react';
-import type { File } from '../types';
+import type { File as WorkspaceFile } from '../types';
 import { editor } from 'monaco-editor';
 import { Eye, EyeOff } from 'lucide-react';
 import {
   MDXEditor,
+  type CodeBlockEditorDescriptor,
   type MDXEditorMethods,
+  useCodeBlockEditorContext,
   headingsPlugin,
+  imagePlugin,
+  linkDialogPlugin,
+  linkPlugin,
   listsPlugin,
+  markdownShortcutPlugin,
   quotePlugin,
+  tablePlugin,
   thematicBreakPlugin,
   toolbarPlugin,
+  codeBlockPlugin,
+  codeMirrorPlugin,
   UndoRedo,
   BoldItalicUnderlineToggles,
   BlockTypeSelect,
+  InsertCodeBlock,
   CodeToggle,
   CreateLink,
   InsertImage,
@@ -25,6 +35,8 @@ import '@mdxeditor/editor/style.css';
 import { MonacoBinding } from 'y-monaco';
 import { createCollabSession } from '../services/collabClient';
 import { getAuthUser } from '../auth/authStore';
+import { createFile } from '../services/fileApi';
+import { MermaidDiagram, useMermaidColorMode } from './markdown/MarkdownShared';
 
 const COLLAB_COLORS = [
   '#0ea5e9',
@@ -101,12 +113,106 @@ const getLanguage = (fileName: string) => {
 };
 
 interface FileEditorProps {
-  file: File | null;
+  file: WorkspaceFile | null;
   fileContent: string;
   onContentChange: (content: string) => void;
   workspaceId: string;
   colorMode: 'light' | 'dark';
 }
+
+const CODE_BLOCK_LANGUAGES: Record<string, string> = {
+  '': 'Plain text',
+  js: 'JavaScript',
+  ts: 'TypeScript',
+  jsx: 'JSX',
+  tsx: 'TSX',
+  json: 'JSON',
+  css: 'CSS',
+  html: 'HTML',
+  md: 'Markdown',
+  bash: 'Bash',
+  shell: 'Shell',
+  python: 'Python',
+  sql: 'SQL',
+  yaml: 'YAML',
+  mermaid: 'Mermaid',
+};
+
+const MermaidCodeBlockEditor = ({
+  code,
+  focusEmitter,
+}: {
+  code: string;
+  focusEmitter: { subscribe: (cb: () => void) => void };
+}) => {
+  const { lexicalNode, parentEditor, setCode } = useCodeBlockEditorContext();
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const [draft, setDraft] = useState(code);
+  const mermaidColorMode = useMermaidColorMode();
+
+  useEffect(() => {
+    setDraft(code);
+  }, [code]);
+
+  useEffect(() => {
+    focusEmitter.subscribe(() => {
+      textareaRef.current?.focus();
+    });
+  }, [focusEmitter]);
+
+  return (
+    <div className="helpudoc-mermaid-editor not-prose my-4 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+      <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-4 py-2">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Mermaid</p>
+          <p className="text-xs text-slate-500">Edit the diagram source and preview it live.</p>
+        </div>
+        <button
+          type="button"
+          className="rounded-full border border-slate-300 px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100"
+          onClick={() => {
+            parentEditor.update(() => {
+              lexicalNode.remove();
+            });
+          }}
+        >
+          Remove
+        </button>
+      </div>
+      <div className="grid gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+        <label className="flex min-h-[260px] flex-col gap-2">
+          <span className="text-xs font-medium text-slate-600">Source</span>
+          <textarea
+            ref={textareaRef}
+            value={draft}
+            onChange={(event) => {
+              const nextValue = event.target.value;
+              setDraft(nextValue);
+              setCode(nextValue);
+            }}
+            spellCheck={false}
+            className="min-h-[240px] w-full resize-y rounded-xl border border-slate-200 bg-slate-950 p-4 font-mono text-sm leading-relaxed text-slate-100 focus:border-blue-400 focus:outline-none"
+          />
+        </label>
+        <div className="flex min-h-[260px] flex-col gap-2">
+          <span className="text-xs font-medium text-slate-600">Preview</span>
+          <MermaidDiagram
+            chart={draft}
+            colorMode={mermaidColorMode}
+            className={`mermaid-container h-full min-h-[240px] overflow-auto rounded-xl border p-4 ${mermaidColorMode === 'dark' ? 'border-slate-700 bg-slate-950' : 'border-slate-200 bg-white'}`}
+            fallbackClassName="h-full min-h-[240px]"
+          />
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const mermaidCodeBlockDescriptor: CodeBlockEditorDescriptor = {
+  priority: 100,
+  match: (language) => language === 'mermaid',
+  Editor: MermaidCodeBlockEditor,
+};
 
 const FileEditor: React.FC<FileEditorProps> = ({
   file,
@@ -132,8 +238,57 @@ const FileEditor: React.FC<FileEditorProps> = ({
   const [connectionStatus, setConnectionStatus] = useState('connecting');
   const [presenceUsers, setPresenceUsers] = useState<Array<{ clientId: number; name: string; color: string }>>([]);
   const [isRawView, setIsRawView] = useState(false);
+  const [mdxError, setMdxError] = useState<string | null>(null);
   const isDarkMode = colorMode === 'dark';
   const monacoTheme = isDarkMode ? 'helpudoc-nord' : 'vs';
+
+  const handleImageUpload = useCallback(async (image: File) => {
+    const created = await createFile(workspaceId, image);
+    if (!created?.publicUrl) {
+      throw new Error('Image upload did not return a public URL.');
+    }
+    return created.publicUrl;
+  }, [workspaceId]);
+
+  const mdxPlugins = useMemo(
+    () => [
+      headingsPlugin(),
+      listsPlugin(),
+      quotePlugin(),
+      thematicBreakPlugin(),
+      linkPlugin(),
+      linkDialogPlugin(),
+      tablePlugin(),
+      imagePlugin({ imageUploadHandler: handleImageUpload }),
+      codeBlockPlugin({
+        codeBlockEditorDescriptors: [mermaidCodeBlockDescriptor],
+      }),
+      codeMirrorPlugin({
+        codeBlockLanguages: CODE_BLOCK_LANGUAGES,
+      }),
+      markdownShortcutPlugin(),
+      toolbarPlugin({
+        toolbarContents: () => (
+          <>
+            <UndoRedo />
+            <Separator />
+            <BoldItalicUnderlineToggles />
+            <CodeToggle />
+            <Separator />
+            <ListsToggle />
+            <Separator />
+            <BlockTypeSelect />
+            <Separator />
+            <CreateLink />
+            <InsertImage />
+            <InsertTable />
+            <InsertCodeBlock />
+          </>
+        ),
+      }),
+    ],
+    [handleImageUpload]
+  );
 
   useEffect(() => {
     if (isDarkMode) {
@@ -293,6 +448,10 @@ const FileEditor: React.FC<FileEditorProps> = ({
   useEffect(() => {
     lastContentRef.current = fileContent;
   }, [fileContent]);
+
+  useEffect(() => {
+    setMdxError(null);
+  }, [fileId, isRawView]);
 
   useEffect(() => {
     if (!fileId || isDraftFile) {
@@ -479,7 +638,7 @@ const FileEditor: React.FC<FileEditorProps> = ({
       )}
       <div className="flex-grow overflow-auto">
         {isMarkdown ? (
-          <div className="mdxeditor-root h-full overflow-y-auto flex flex-col" style={{ maxHeight: 'calc(100vh - 200px)' }}>
+          <div className="helpudoc-mdxeditor-shell h-full overflow-y-auto flex flex-col" style={{ maxHeight: 'calc(100vh - 200px)' }}>
             {/* Raw/Rendered Toggle Toolbar */}
             <div className="flex items-center justify-between px-3 py-2 border-b border-gray-200 bg-gray-50">
               <span className="text-xs font-medium text-gray-500">
@@ -522,39 +681,29 @@ const FileEditor: React.FC<FileEditorProps> = ({
                 spellCheck={false}
               />
             ) : (
-              <MDXEditor
-                ref={mdxEditorRef}
-                markdown={fileContent}
-                onChange={(value) => {
-                  if (isApplyingRemoteRef.current) return;
-                  applyTextUpdate(value);
-                }}
-                plugins={[
-                  headingsPlugin(),
-                  listsPlugin(),
-                  quotePlugin(),
-                  thematicBreakPlugin(),
-                  toolbarPlugin({
-                    toolbarContents: () => (
-                      <>
-                        <UndoRedo />
-                        <Separator />
-                        <BoldItalicUnderlineToggles />
-                        <Separator />
-                        <ListsToggle />
-                        <Separator />
-                        <BlockTypeSelect />
-                        <Separator />
-                        <CreateLink />
-                        <InsertImage />
-                        <InsertTable />
-                        <Separator />
-                        <CodeToggle />
-                      </>
-                    ),
-                  }),
-                ]}
-              />
+              <>
+                {mdxError && (
+                  <div className="border-b border-rose-200 bg-rose-50 px-4 py-2 text-sm text-rose-700">
+                    {mdxError}
+                  </div>
+                )}
+                <MDXEditor
+                  ref={mdxEditorRef}
+                  markdown={fileContent}
+                  className="mdxeditor helpudoc-mdxeditor flex-1"
+                  contentEditableClassName="prose prose-slate max-w-none helpudoc-markdown helpudoc-markdown-editor mdxeditor-root-contenteditable"
+                  onChange={(value) => {
+                    if (isApplyingRemoteRef.current) return;
+                    setMdxError(null);
+                    applyTextUpdate(value);
+                  }}
+                  onError={({ error, source }) => {
+                    console.error('MDXEditor markdown processing error:', { error, source });
+                    setMdxError(error);
+                  }}
+                  plugins={mdxPlugins}
+                />
+              </>
             )}
           </div>
         ) : (

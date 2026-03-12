@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef, useCallback, useMemo, Children, isValidElement, type ChangeEvent } from 'react';
-import type { CSSProperties, ReactNode } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo, type ChangeEvent } from 'react';
+import type { ComponentProps, CSSProperties } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -61,7 +61,6 @@ import ExpandableSidebar from '../components/ExpandableSidebar';
 import AgentChatPane from '../components/chat/AgentChatPane';
 import { buildApprovalDraftContent, buildApprovalReview } from '../components/chat/approvalReview';
 import type { RenderableInterruptAction } from '../components/chat/interruptActions';
-import ToolOutputFilePreview from '../components/chat/ToolOutputFilePreview';
 import { useAuth } from '../auth/AuthProvider';
 import {
   CANVAS_ZOOM_STEP,
@@ -73,6 +72,7 @@ import {
 } from '../constants/workspace';
 import { getFileDisplayName, getFileTypeIcon, isSystemFile, normalizeFilePath } from '../utils/files';
 import { buildMessageMetadata, mapMessagesToAgentHistory, mergeMessageMetadata, sanitizeRunPolicy } from '../utils/messages';
+import { createMarkdownComponents } from '../components/markdown/MarkdownShared';
 
 const drawerWidth = 280;
 
@@ -175,7 +175,6 @@ type ActiveRunInfo = {
 };
 
 const ACTIVE_RUNS_STORAGE_KEY = 'helpudoc-active-runs';
-const BLOCK_LEVEL_TAGS = ['div', 'pre', 'table', 'ol', 'ul', 'li', 'blockquote', 'section', 'article'];
 const MARKDOWN_FILE_EXTENSIONS = ['.md'];
 const HTML_FILE_EXTENSIONS = ['.html', '.htm'];
 const IMAGE_FILE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp'];
@@ -646,96 +645,37 @@ export default function WorkspacePage() {
     }
   }, []);
 
-  const classifyCodeBlockLabel = useCallback((languageMatch: RegExpExecArray | null, content: string) => {
-    if (languageMatch?.[1]) {
-      return languageMatch[1].toUpperCase();
-    }
-    const trimmed = content.trim();
-    const isSingleLine = !trimmed.includes('\n');
-    if (isSingleLine && /^[\w-]+\.[\w.-]+$/.test(trimmed)) {
-      return 'FILE';
-    }
-    if (isSingleLine && /^[a-z0-9_-]+$/i.test(trimmed)) {
-      return 'TOOL';
-    }
-    return 'CODE';
-  }, []);
-
-  const extractCodeText = useCallback((value: ReactNode): string => {
-    if (value === null || value === undefined) {
-      return '';
-    }
-    if (Array.isArray(value)) {
-      return value.map((child) => extractCodeText(child)).join('');
-    }
-    if (typeof value === 'string' || typeof value === 'number') {
-      return String(value);
-    }
-    return '';
-  }, []);
-
-  const inferInlineCode = useCallback(
-    (inline: boolean | undefined, className: string | undefined, content: string, node?: any) => {
-      if (typeof inline === 'boolean') {
-        return inline;
-      }
-      const startLine = node?.position?.start?.line;
-      const endLine = node?.position?.end?.line;
-      if (typeof startLine === 'number' && typeof endLine === 'number' && endLine > startLine) {
-        return false;
-      }
-      if (className && /language-\w+/i.test(className)) {
-        return false;
-      }
-      if (content.includes('\n')) {
-        return false;
-      }
-      return true;
-    },
-    []
-  );
-
   const markdownComponents = useMemo(
     () => ({
-      p({ children }: { children?: ReactNode }) {
-        const childArray = Children.toArray(children);
-        const containsBlockChild = childArray.some(
-          (child) => {
-            if (!isValidElement(child)) {
-              return false;
-            }
-            const childProps = child.props as {
-              inline?: boolean;
-              node?: { tagName?: string };
-              className?: string;
-              children?: ReactNode;
-            };
-            if (typeof child.type === 'string') {
-              return BLOCK_LEVEL_TAGS.includes(child.type);
-            }
-            if (childProps.inline === false) {
-              return true;
-            }
-            if (childProps.node?.tagName && BLOCK_LEVEL_TAGS.includes(childProps.node.tagName)) {
-              return true;
-            }
-            if (childProps.node?.tagName === 'code') {
-              const content = extractCodeText(childProps.children);
-              const isInline = inferInlineCode(
-                childProps.inline,
-                childProps.className,
-                content,
-                childProps.node
-              );
-              return !isInline;
-            }
-            return false;
-          }
-        );
-        const Element: 'p' | 'div' = containsBlockChild ? 'div' : 'p';
-        return <Element className="mb-4 leading-relaxed text-slate-700">{children}</Element>;
-      },
-      a({ ...props }: any) {
+      ...createMarkdownComponents({
+        workspaceId: selectedWorkspace?.id,
+        colorMode: colorMode === 'dark' ? 'dark' : 'light',
+        paragraphClassName: 'mb-4 leading-relaxed text-slate-700',
+        inlineCodeClassName: 'rounded-md bg-slate-200 px-1.5 py-0.5 font-mono text-xs text-slate-800',
+        codeBlockShell: ({ blockId, codeContent, languageLabel, className, children }) => {
+          const copyLabel = copiedCodeBlockId === blockId ? 'Copied' : 'Copy';
+          return (
+            <div className="mb-4 mt-2 overflow-hidden rounded-2xl border border-slate-200 bg-slate-950/90 text-slate-100 shadow-lg">
+              <div className="flex items-center justify-between border-b border-slate-800 bg-slate-900/60 px-4 py-2 text-[11px] font-semibold tracking-wide uppercase text-slate-300">
+                <span>{languageLabel}</span>
+                <button
+                  type="button"
+                  onClick={() => handleCopyCodeBlock(blockId, codeContent)}
+                  className="flex items-center gap-1 rounded-full border border-slate-600 px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest text-slate-200 hover:border-slate-400"
+                >
+                  {copyLabel}
+                </button>
+              </div>
+              <pre className="overflow-x-auto px-4 py-3 text-xs leading-relaxed whitespace-pre-wrap break-words sm:text-sm">
+                <code className={`font-mono ${className || ''}`.trim()}>
+                  {children}
+                </code>
+              </pre>
+            </div>
+          );
+        },
+      }),
+      a({ ...props }: ComponentProps<'a'>) {
         return (
           <a
             {...props}
@@ -745,78 +685,8 @@ export default function WorkspacePage() {
           />
         );
       },
-      img({ src, alt }: { src?: string; alt?: string }) {
-        const resolvedSrc = typeof src === 'string' ? src.trim() : '';
-        if (!resolvedSrc) {
-          return null;
-        }
-        if (/^(https?:|data:|blob:)/i.test(resolvedSrc)) {
-          return (
-            <img
-              src={resolvedSrc}
-              alt={alt || 'Image'}
-              className="my-3 max-w-full rounded border border-gray-200"
-            />
-          );
-        }
-        if (!selectedWorkspace?.id) {
-          return (
-            <span className="text-xs text-slate-500">
-              Image path: <code>{resolvedSrc}</code>
-            </span>
-          );
-        }
-        return (
-          <div className="my-3">
-            <ToolOutputFilePreview
-              workspaceId={selectedWorkspace.id}
-              file={{ path: resolvedSrc, mimeType: 'image/*' }}
-            />
-          </div>
-        );
-      },
-      code({ inline, className, children, node, ...props }: any) {
-        const rawCodeContent = extractCodeText(children);
-        const isInline = inferInlineCode(inline, className, rawCodeContent, node);
-        if (isInline) {
-          return (
-            <code
-              className={`rounded-md bg-slate-200 px-1.5 py-0.5 font-mono text-xs text-slate-800 ${className || ''}`}
-              {...props}
-            >
-              {children}
-            </code>
-          );
-        }
-
-        const languageMatch = /language-(\w+)/.exec(className || '');
-        const codeContent = rawCodeContent.replace(/\n$/, '');
-        const languageLabel = classifyCodeBlockLabel(languageMatch, codeContent);
-        const blockId = `${languageLabel}-${codeContent.length}-${codeContent.charCodeAt(0) || 0}`;
-        const copyLabel = copiedCodeBlockId === blockId ? 'Copied' : 'Copy';
-
-        return (
-          <div className="mb-4 mt-2 overflow-hidden rounded-2xl border border-slate-200 bg-slate-950/90 text-slate-100 shadow-lg">
-            <div className="flex items-center justify-between border-b border-slate-800 bg-slate-900/60 px-4 py-2 text-[11px] font-semibold tracking-wide uppercase text-slate-300">
-              <span>{languageLabel}</span>
-              <button
-                type="button"
-                onClick={() => handleCopyCodeBlock(blockId, codeContent)}
-                className="flex items-center gap-1 rounded-full border border-slate-600 px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest text-slate-200 hover:border-slate-400"
-              >
-                {copyLabel}
-              </button>
-            </div>
-            <pre className="overflow-x-auto px-4 py-3 text-xs leading-relaxed whitespace-pre-wrap break-words sm:text-sm">
-              <code {...props} className={`font-mono ${className || ''}`}>
-                {children}
-              </code>
-            </pre>
-          </div>
-        );
-      },
     }),
-    [classifyCodeBlockLabel, copiedCodeBlockId, extractCodeText, handleCopyCodeBlock, inferInlineCode, selectedWorkspace?.id]
+    [colorMode, copiedCodeBlockId, handleCopyCodeBlock, selectedWorkspace?.id]
   );
 
   const toggleToolActivityVisibility = useCallback((messageId: ConversationMessage['id']) => {
@@ -4801,6 +4671,7 @@ export default function WorkspacePage() {
                         >
                           <UIBlockRenderer
                             blocks={canvasBlocks}
+                            workspaceId={selectedWorkspace?.id}
                             className="h-full w-full"
                             emptyState={
                               <div className="text-center text-gray-400">

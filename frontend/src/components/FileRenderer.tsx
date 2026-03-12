@@ -5,150 +5,24 @@ import remarkGfm from 'remark-gfm';
 import Papa from 'papaparse';
 import PlotlyChart, { type PlotlySpec } from './PlotlyChart';
 import type { File } from '../types';
+import {
+  configureMermaid,
+  createMarkdownComponents,
+  useMermaidColorMode,
+} from './markdown/MarkdownShared';
 
 interface FileRendererProps {
   file: File | null;
   fileContent: string;
   disableInternalScroll?: boolean;
+  workspaceId?: string;
 }
-
-type MermaidColorMode = 'light' | 'dark';
-
-const getColorMode = (): MermaidColorMode => {
-  if (typeof document === 'undefined') {
-    return 'light';
-  }
-  const mode = document.documentElement.getAttribute('data-theme');
-  if (mode === 'dark' || mode === 'light') {
-    return mode;
-  }
-  return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-};
-
-const configureMermaid = (mode: MermaidColorMode) => {
-  mermaid.initialize({
-    startOnLoad: false,
-    securityLevel: 'loose',
-    theme: 'base',
-    themeVariables: mode === 'dark'
-      ? {
-          background: '#0f172a',
-          primaryColor: '#818cf8',
-          primaryBorderColor: '#6366f1',
-          primaryTextColor: '#e2e8f0',
-          secondaryColor: '#1e293b',
-          secondaryBorderColor: '#334155',
-          secondaryTextColor: '#cbd5e1',
-          tertiaryColor: '#111827',
-          tertiaryBorderColor: '#374151',
-          tertiaryTextColor: '#cbd5e1',
-          lineColor: '#94a3b8',
-          textColor: '#e2e8f0',
-          mainBkg: '#0b1220',
-          edgeLabelBackground: '#0b1220',
-          actorBorder: '#6366f1',
-          actorBkg: '#1e293b',
-          actorTextColor: '#e2e8f0',
-          labelBoxBkgColor: '#1e293b',
-          labelBoxBorderColor: '#334155',
-          gridColor: '#334155',
-          section0: '#1e293b',
-          section1: '#1f2937',
-          section2: '#0f172a',
-          sectionBkgColor: '#111827',
-          cScale0: '#818cf8',
-          cScale1: '#60a5fa',
-          cScale2: '#34d399',
-        }
-      : {
-          background: '#ffffff',
-          primaryColor: '#4f46e5',
-          primaryBorderColor: '#3730a3',
-          primaryTextColor: '#0f172a',
-          secondaryColor: '#dbeafe',
-          secondaryBorderColor: '#93c5fd',
-          secondaryTextColor: '#0f172a',
-          tertiaryColor: '#eef2ff',
-          tertiaryBorderColor: '#a5b4fc',
-          tertiaryTextColor: '#0f172a',
-          lineColor: '#334155',
-          textColor: '#0f172a',
-          mainBkg: '#ffffff',
-          edgeLabelBackground: '#f8fafc',
-          actorBorder: '#3730a3',
-          actorBkg: '#c7d2fe',
-          actorTextColor: '#0f172a',
-          labelBoxBkgColor: '#f8fafc',
-          labelBoxBorderColor: '#94a3b8',
-          gridColor: '#cbd5e1',
-          section0: '#e0e7ff',
-          section1: '#f1f5f9',
-          section2: '#e2e8f0',
-          sectionBkgColor: '#f8fafc',
-          cScale0: '#3730a3',
-          cScale1: '#1d4ed8',
-          cScale2: '#0f766e',
-        },
-    fontFamily: 'Inter, "Segoe UI", Arial, sans-serif',
-  });
-};
-
-const MermaidDiagram: React.FC<{ chart: string; colorMode: MermaidColorMode }> = ({ chart, colorMode }) => {
-  const diagramRef = useRef<HTMLDivElement>(null);
-  const idRef = useRef(`mermaid-md-${Math.random().toString(36).slice(2, 11)}`);
-  const [hasError, setHasError] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    const renderDiagram = async () => {
-      if (!diagramRef.current) {
-        return;
-      }
-      try {
-        setHasError(false);
-        diagramRef.current.innerHTML = '';
-        configureMermaid(colorMode);
-        // Validate syntax first to avoid mermaid's inline error SVG
-        mermaid.parse(chart);
-        const renderId = `${idRef.current}-${Date.now()}`;
-        const { svg } = await mermaid.render(renderId, chart);
-        if (!cancelled && diagramRef.current) {
-          diagramRef.current.innerHTML = svg;
-        }
-      } catch (error) {
-        console.error('Mermaid markdown rendering error:', error);
-        if (!cancelled && diagramRef.current) {
-          setHasError(true);
-          diagramRef.current.textContent = chart;
-        }
-      }
-    };
-
-    renderDiagram();
-    return () => {
-      cancelled = true;
-    };
-  }, [chart, colorMode]);
-
-  return (
-    <div
-      ref={diagramRef}
-      className={`mermaid-container my-4 overflow-auto rounded-xl border p-4 ${colorMode === 'dark' ? 'border-slate-700 bg-slate-950' : 'border-gray-200 bg-white'}`}
-    >
-      {hasError && (
-        <p className="mb-2 text-sm text-red-600">
-          Unable to render diagram, showing source instead.
-        </p>
-      )}
-    </div>
-  );
-};
 
 const FileRenderer: React.FC<FileRendererProps> = ({
   file,
   fileContent,
   disableInternalScroll = false,
+  workspaceId,
 }) => {
   const mermaidRef = useRef<HTMLDivElement>(null);
   const mermaidIdRef = useRef(`mermaid-graph-${Math.random().toString(36).slice(2, 11)}`);
@@ -156,21 +30,7 @@ const FileRenderer: React.FC<FileRendererProps> = ({
   const [mermaidError, setMermaidError] = useState<string | null>(null);
   const [copyStatus, setCopyStatus] = useState<string | null>(null);
   const [copiedUrl, setCopiedUrl] = useState(false);
-  const [colorMode, setColorMode] = useState<MermaidColorMode>(() => getColorMode());
-
-  useEffect(() => {
-    if (typeof document === 'undefined') {
-      return undefined;
-    }
-    const root = document.documentElement;
-    const observer = new MutationObserver(() => {
-      setColorMode(getColorMode());
-    });
-    observer.observe(root, { attributes: true, attributeFilter: ['data-theme'] });
-    return () => {
-      observer.disconnect();
-    };
-  }, []);
+  const colorMode = useMermaidColorMode();
 
   useEffect(() => {
     if (!copyStatus) return;
@@ -235,6 +95,15 @@ const FileRenderer: React.FC<FileRendererProps> = ({
       cancelled = true;
     };
   }, [colorMode, fileContent, isMermaidFile]);
+
+  const markdownComponents = useMemo(
+    () => createMarkdownComponents({
+      workspaceId,
+      colorMode,
+      paragraphClassName: 'mb-4 last:mb-0',
+    }),
+    [workspaceId, colorMode]
+  );
 
   if (!file) {
     return (
@@ -301,77 +170,8 @@ const FileRenderer: React.FC<FileRendererProps> = ({
       ].join(' ');
 
       return (
-        <div className={markdownContainerClassName}>
-          <ReactMarkdown
-            remarkPlugins={[remarkGfm]}
-            components={{
-              p: ({ children }) => <div className="mb-4 last:mb-0">{children}</div>,
-              img: (props) => (
-                <img
-                  className="max-w-full h-auto rounded-lg shadow-md"
-                  loading="lazy"
-                  {...props}
-                  src={props.src || undefined}
-                />
-              ),
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              code: ({ inline, className, children, ...props }: any) => {
-                const language = /language-(\w+)/.exec(className || '');
-                const codeContent = (
-                  Array.isArray(children) ? children.join('') : String(children ?? '')
-                ).replace(/\n$/, '');
-                const isInlineLike =
-                  inline ||
-                  (!language?.[1] && !codeContent.includes('\n'));
-
-                if (!inline && language?.[1] === 'mermaid') {
-                  return <MermaidDiagram chart={codeContent} colorMode={colorMode} />;
-                }
-
-                if (!inline && language?.[1] === 'plotly') {
-                  try {
-                    const spec = JSON.parse(codeContent) as PlotlySpec;
-                    if (!spec || typeof spec !== 'object') {
-                      throw new Error('Plotly spec must be a JSON object.');
-                    }
-                    if (!Array.isArray(spec.data)) {
-                      throw new Error('Plotly spec must include a top-level "data" array.');
-                    }
-                    return (
-                      <div className="my-4 overflow-hidden rounded-xl border border-gray-200 bg-white p-2">
-                        <PlotlyChart spec={spec} minHeight={360} />
-                      </div>
-                    );
-                  } catch (error) {
-                    return (
-                      <pre className="my-4 overflow-x-auto rounded-xl bg-red-50 p-4 text-sm text-red-700">
-                        Invalid Plotly JSON: {error instanceof Error ? error.message : 'Unknown error'}
-                      </pre>
-                    );
-                  }
-                }
-
-                if (isInlineLike) {
-                  return (
-                    <code
-                      className={`inline-code rounded-md px-1.5 py-0.5 font-mono text-xs ${className || ''}`}
-                      {...props}
-                    >
-                      {children}
-                    </code>
-                  );
-                }
-
-                return (
-                  <pre className="my-4 overflow-x-auto rounded-xl bg-gray-900 p-4 text-sm text-gray-100">
-                    <code className={`font-mono ${className || ''}`} {...props}>
-                      {children}
-                    </code>
-                  </pre>
-                );
-              },
-            }}
-          >
+        <div className={`${markdownContainerClassName} helpudoc-markdown`}>
+          <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
             {fileContent}
           </ReactMarkdown>
         </div>
