@@ -896,6 +896,21 @@ def create_app() -> FastAPI:
                 missing.append(item)
         return missing
 
+    def _reset_turn_context(runtime: AgentRuntimeState) -> None:
+        context = runtime.workspace_state.context or {}
+        skip_plan_approvals = bool(context.get("skip_plan_approvals"))
+        # Skill execution state is per top-level user task. Resumes should preserve it,
+        # but a fresh user turn should not inherit approval or active-skill state.
+        context.pop("active_skill", None)
+        context.pop("active_skill_policy", None)
+        context.pop("last_plan_feedback", None)
+        context.pop("last_plan_file_path", None)
+        context.pop("tagged_files", None)
+        context.pop("tagged_rag_context", None)
+        context["tagged_files_only"] = False
+        context["plan_approved"] = skip_plan_approvals
+        context["pre_plan_search_count"] = 0
+
     _ASSISTANT_ROLES = {"assistant", "ai", "aimessagechunk"}
     _TOOL_ROLES = {"tool"}
 
@@ -931,6 +946,7 @@ def create_app() -> FastAPI:
 
         payload = _prepare_payload(message)
         if resume_decisions is None and resume_value is None:
+            _reset_turn_context(runtime)
             tagged_files = _extract_tagged_files(message.message)
             runtime.workspace_state.context["tagged_files"] = tagged_files
             # Historical behavior forced "RAG-only" when any tagged files were present, which breaks
