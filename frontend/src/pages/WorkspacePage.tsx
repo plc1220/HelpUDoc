@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef, useCallback, useMemo, Children, isValidElement, type ChangeEvent } from 'react';
-import type { CSSProperties, ReactNode } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo, type ChangeEvent } from 'react';
+import type { ComponentProps, CSSProperties } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -12,10 +12,11 @@ import {
 import { CheckSquare, Copy, Edit, Trash, Plus, Minus, ChevronLeft, RotateCcw, X, Printer, Download, Link as LinkIcon, Loader2 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { getWorkspaces, createWorkspace, deleteWorkspace } from '../services/workspaceApi';
+import { getWorkspaces, createWorkspace, deleteWorkspace, updateWorkspaceSettings } from '../services/workspaceApi';
 import {
   getFiles,
   createFile,
+  createTextFile,
   updateFileContent,
   deleteFile,
   getFileContent,
@@ -28,6 +29,7 @@ import {
   getRunStatus,
   startAgentRun,
   streamAgentRun,
+  submitRunAction,
   submitRunDecision,
   submitRunResponse,
   type AgentRunStatus,
@@ -50,13 +52,15 @@ import type {
   ToolEvent,
   ToolOutputFile,
   ConversationMessageMetadata,
+  InterruptAction,
 } from '../types';
 import CollapsibleDrawer from '../components/CollapsibleDrawer';
 import FileEditor from '../components/FileEditor';
 import UIBlockRenderer, { type UIBlock } from '../components/UIBlockRenderer';
 import ExpandableSidebar from '../components/ExpandableSidebar';
 import AgentChatPane from '../components/chat/AgentChatPane';
-import ToolOutputFilePreview from '../components/chat/ToolOutputFilePreview';
+import { buildApprovalDraftContent, buildApprovalReview } from '../components/chat/approvalReview';
+import type { RenderableInterruptAction } from '../components/chat/interruptActions';
 import { useAuth } from '../auth/AuthProvider';
 import {
   CANVAS_ZOOM_STEP,
@@ -68,6 +72,7 @@ import {
 } from '../constants/workspace';
 import { getFileDisplayName, getFileTypeIcon, isSystemFile, normalizeFilePath } from '../utils/files';
 import { buildMessageMetadata, mapMessagesToAgentHistory, mergeMessageMetadata, sanitizeRunPolicy } from '../utils/messages';
+import { createMarkdownComponents } from '../components/markdown/MarkdownShared';
 
 const drawerWidth = 280;
 
@@ -170,7 +175,6 @@ type ActiveRunInfo = {
 };
 
 const ACTIVE_RUNS_STORAGE_KEY = 'helpudoc-active-runs';
-const BLOCK_LEVEL_TAGS = ['div', 'pre', 'table', 'ol', 'ul', 'li', 'blockquote', 'section', 'article'];
 const MARKDOWN_FILE_EXTENSIONS = ['.md'];
 const HTML_FILE_EXTENSIONS = ['.html', '.htm'];
 const IMAGE_FILE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp'];
@@ -182,6 +186,17 @@ const generateTurnId = () => {
   return `turn-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 };
 
+const DEFAULT_PLAN_FILE_PATH = 'research_plan.md';
+
+const normalizeWorkspaceRelativePath = (value?: string): string =>
+  String(value || '')
+    .replace(/\\/g, '/')
+    .replace(/^\/+/, '')
+    .trim();
+
+const isDraftWorkspaceFile = (file?: WorkspaceFile | null): boolean =>
+  Boolean(file && typeof file.id === 'string' && String(file.id).startsWith('draft:'));
+
 const mergePersistedAgentMessage = (
   persisted: ConversationMessage,
   existing?: ConversationMessage | null,
@@ -191,10 +206,7 @@ const mergePersistedAgentMessage = (
   const existingMetadata = (existing?.metadata as ConversationMessageMetadata | null | undefined) || {};
   const persistedStatus = persistedMetadata.status;
   const existingStatus = existingMetadata.status;
-  const effectiveStatus =
-    (persistedStatus === 'running' || persistedStatus === 'queued') && existingStatus === 'awaiting_approval'
-      ? 'awaiting_approval'
-      : persistedStatus ?? existingStatus;
+  const effectiveStatus = persistedStatus ?? existingStatus;
 
   const mergedMetadata: ConversationMessageMetadata = {
     ...existingMetadata,
@@ -204,13 +216,21 @@ const mergePersistedAgentMessage = (
     pendingInterrupt:
       persistedMetadata.pendingInterrupt !== undefined
         ? persistedMetadata.pendingInterrupt
-        : effectiveStatus === 'awaiting_approval'
+        : persistedStatus === undefined && effectiveStatus === 'awaiting_approval'
           ? existingMetadata.pendingInterrupt
           : undefined,
   };
 
+  const persistedText = typeof hydrated.text === 'string' ? hydrated.text : '';
+  const existingText = typeof existing?.text === 'string' ? existing.text : '';
+  const mergedText =
+    persistedText.trim().length > 0 || !existingText.trim().length
+      ? persistedText
+      : existingText;
+
   return {
     ...hydrated,
+    text: mergedText,
     thinkingText: hydrated.thinkingText ?? existing?.thinkingText,
     toolEvents: hydrated.toolEvents ?? existing?.toolEvents,
     metadata: Object.keys(mergedMetadata).length ? mergedMetadata : undefined,
@@ -247,6 +267,7 @@ export default function WorkspacePage() {
   });
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [selectedWorkspace, setSelectedWorkspace] = useState<Workspace | null>(null);
+  const [workspaceSettingsBusy, setWorkspaceSettingsBusy] = useState(false);
   const [files, setFiles] = useState<WorkspaceFile[]>([]);
   const [selectedFile, setSelectedFile] = useState<WorkspaceFile | null>(null);
   const [selectedFileDetails, setSelectedFileDetails] = useState<WorkspaceFile | null>(null);
@@ -324,6 +345,7 @@ export default function WorkspacePage() {
   const [interruptInputByMessageId, setInterruptInputByMessageId] = useState<Record<string, string>>({});
   const [interruptSelectedChoicesByMessageId, setInterruptSelectedChoicesByMessageId] = useState<Record<string, string[]>>({});
   const [interruptSubmittingByMessageId, setInterruptSubmittingByMessageId] = useState<Record<string, boolean>>({});
+  const [interruptErrorByMessageId, setInterruptErrorByMessageId] = useState<Record<string, string>>({});
   const ragStatusFetchedRef = useRef<Record<string, boolean>>({});
   const resumeInFlightRef = useRef<Set<string>>(new Set());
   const resumeAttemptedRef = useRef<Set<string>>(new Set());
@@ -332,9 +354,16 @@ export default function WorkspacePage() {
     () => (activeConversationId ? conversationMessages[activeConversationId] || [] : []),
     [activeConversationId, conversationMessages],
   );
+  const hasRunningAgentMessage = useMemo(
+    () =>
+      messages.some(
+        (message) => message.sender === 'agent' && message.metadata?.status === 'running',
+      ),
+    [messages],
+  );
   const isStreaming = useMemo(
-    () => (activeConversationId ? conversationStreaming[activeConversationId] || false : false),
-    [activeConversationId, conversationStreaming],
+    () => (activeConversationId ? conversationStreaming[activeConversationId] || false : false) || hasRunningAgentMessage,
+    [activeConversationId, conversationStreaming, hasRunningAgentMessage],
   );
   const systemFiles = useMemo(() => files.filter(isSystemFile), [files]);
   const visibleFiles = useMemo(
@@ -423,6 +452,24 @@ export default function WorkspacePage() {
     }
     const sameConversationRun = runs.find((run) => run.conversationId === message.conversationId);
     return sameConversationRun?.runId;
+  }, []);
+
+  const rebuildRunInfoForMessage = useCallback(async (message: ConversationMessage, runId: string): Promise<ActiveRunInfo> => {
+    const status = await getRunStatus(runId);
+    return {
+      runId,
+      conversationId: message.conversationId,
+      workspaceId: status.workspaceId,
+      persona: status.persona,
+      turnId: message.turnId || status.turnId || generateTurnId(),
+      placeholderId: message.id,
+      status: status.status,
+    };
+  }, [getRunStatus]);
+
+  const markRunStreamLaunching = useCallback((runId: string) => {
+    resumeAttemptedRef.current.add(runId);
+    resumeInFlightRef.current.add(runId);
   }, []);
 
   useEffect(() => {
@@ -598,96 +645,37 @@ export default function WorkspacePage() {
     }
   }, []);
 
-  const classifyCodeBlockLabel = useCallback((languageMatch: RegExpExecArray | null, content: string) => {
-    if (languageMatch?.[1]) {
-      return languageMatch[1].toUpperCase();
-    }
-    const trimmed = content.trim();
-    const isSingleLine = !trimmed.includes('\n');
-    if (isSingleLine && /^[\w-]+\.[\w.-]+$/.test(trimmed)) {
-      return 'FILE';
-    }
-    if (isSingleLine && /^[a-z0-9_-]+$/i.test(trimmed)) {
-      return 'TOOL';
-    }
-    return 'CODE';
-  }, []);
-
-  const extractCodeText = useCallback((value: ReactNode): string => {
-    if (value === null || value === undefined) {
-      return '';
-    }
-    if (Array.isArray(value)) {
-      return value.map((child) => extractCodeText(child)).join('');
-    }
-    if (typeof value === 'string' || typeof value === 'number') {
-      return String(value);
-    }
-    return '';
-  }, []);
-
-  const inferInlineCode = useCallback(
-    (inline: boolean | undefined, className: string | undefined, content: string, node?: any) => {
-      if (typeof inline === 'boolean') {
-        return inline;
-      }
-      const startLine = node?.position?.start?.line;
-      const endLine = node?.position?.end?.line;
-      if (typeof startLine === 'number' && typeof endLine === 'number' && endLine > startLine) {
-        return false;
-      }
-      if (className && /language-\w+/i.test(className)) {
-        return false;
-      }
-      if (content.includes('\n')) {
-        return false;
-      }
-      return true;
-    },
-    []
-  );
-
   const markdownComponents = useMemo(
     () => ({
-      p({ children }: { children?: ReactNode }) {
-        const childArray = Children.toArray(children);
-        const containsBlockChild = childArray.some(
-          (child) => {
-            if (!isValidElement(child)) {
-              return false;
-            }
-            const childProps = child.props as {
-              inline?: boolean;
-              node?: { tagName?: string };
-              className?: string;
-              children?: ReactNode;
-            };
-            if (typeof child.type === 'string') {
-              return BLOCK_LEVEL_TAGS.includes(child.type);
-            }
-            if (childProps.inline === false) {
-              return true;
-            }
-            if (childProps.node?.tagName && BLOCK_LEVEL_TAGS.includes(childProps.node.tagName)) {
-              return true;
-            }
-            if (childProps.node?.tagName === 'code') {
-              const content = extractCodeText(childProps.children);
-              const isInline = inferInlineCode(
-                childProps.inline,
-                childProps.className,
-                content,
-                childProps.node
-              );
-              return !isInline;
-            }
-            return false;
-          }
-        );
-        const Element: 'p' | 'div' = containsBlockChild ? 'div' : 'p';
-        return <Element className="mb-4 leading-relaxed text-slate-700">{children}</Element>;
-      },
-      a({ ...props }: any) {
+      ...createMarkdownComponents({
+        workspaceId: selectedWorkspace?.id,
+        colorMode: colorMode === 'dark' ? 'dark' : 'light',
+        paragraphClassName: 'mb-4 leading-relaxed text-slate-700',
+        inlineCodeClassName: 'rounded-md bg-slate-200 px-1.5 py-0.5 font-mono text-xs text-slate-800',
+        codeBlockShell: ({ blockId, codeContent, languageLabel, className, children }) => {
+          const copyLabel = copiedCodeBlockId === blockId ? 'Copied' : 'Copy';
+          return (
+            <div className="mb-4 mt-2 overflow-hidden rounded-2xl border border-slate-200 bg-slate-950/90 text-slate-100 shadow-lg">
+              <div className="flex items-center justify-between border-b border-slate-800 bg-slate-900/60 px-4 py-2 text-[11px] font-semibold tracking-wide uppercase text-slate-300">
+                <span>{languageLabel}</span>
+                <button
+                  type="button"
+                  onClick={() => handleCopyCodeBlock(blockId, codeContent)}
+                  className="flex items-center gap-1 rounded-full border border-slate-600 px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest text-slate-200 hover:border-slate-400"
+                >
+                  {copyLabel}
+                </button>
+              </div>
+              <pre className="overflow-x-auto px-4 py-3 text-xs leading-relaxed whitespace-pre-wrap break-words sm:text-sm">
+                <code className={`font-mono ${className || ''}`.trim()}>
+                  {children}
+                </code>
+              </pre>
+            </div>
+          );
+        },
+      }),
+      a({ ...props }: ComponentProps<'a'>) {
         return (
           <a
             {...props}
@@ -697,78 +685,8 @@ export default function WorkspacePage() {
           />
         );
       },
-      img({ src, alt }: { src?: string; alt?: string }) {
-        const resolvedSrc = typeof src === 'string' ? src.trim() : '';
-        if (!resolvedSrc) {
-          return null;
-        }
-        if (/^(https?:|data:|blob:)/i.test(resolvedSrc)) {
-          return (
-            <img
-              src={resolvedSrc}
-              alt={alt || 'Image'}
-              className="my-3 max-w-full rounded border border-gray-200"
-            />
-          );
-        }
-        if (!selectedWorkspace?.id) {
-          return (
-            <span className="text-xs text-slate-500">
-              Image path: <code>{resolvedSrc}</code>
-            </span>
-          );
-        }
-        return (
-          <div className="my-3">
-            <ToolOutputFilePreview
-              workspaceId={selectedWorkspace.id}
-              file={{ path: resolvedSrc, mimeType: 'image/*' }}
-            />
-          </div>
-        );
-      },
-      code({ inline, className, children, node, ...props }: any) {
-        const rawCodeContent = extractCodeText(children);
-        const isInline = inferInlineCode(inline, className, rawCodeContent, node);
-        if (isInline) {
-          return (
-            <code
-              className={`rounded-md bg-slate-200 px-1.5 py-0.5 font-mono text-xs text-slate-800 ${className || ''}`}
-              {...props}
-            >
-              {children}
-            </code>
-          );
-        }
-
-        const languageMatch = /language-(\w+)/.exec(className || '');
-        const codeContent = rawCodeContent.replace(/\n$/, '');
-        const languageLabel = classifyCodeBlockLabel(languageMatch, codeContent);
-        const blockId = `${languageLabel}-${codeContent.length}-${codeContent.charCodeAt(0) || 0}`;
-        const copyLabel = copiedCodeBlockId === blockId ? 'Copied' : 'Copy';
-
-        return (
-          <div className="mb-4 mt-2 overflow-hidden rounded-2xl border border-slate-200 bg-slate-950/90 text-slate-100 shadow-lg">
-            <div className="flex items-center justify-between border-b border-slate-800 bg-slate-900/60 px-4 py-2 text-[11px] font-semibold tracking-wide uppercase text-slate-300">
-              <span>{languageLabel}</span>
-              <button
-                type="button"
-                onClick={() => handleCopyCodeBlock(blockId, codeContent)}
-                className="flex items-center gap-1 rounded-full border border-slate-600 px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest text-slate-200 hover:border-slate-400"
-              >
-                {copyLabel}
-              </button>
-            </div>
-            <pre className="overflow-x-auto px-4 py-3 text-xs leading-relaxed whitespace-pre-wrap break-words sm:text-sm">
-              <code {...props} className={`font-mono ${className || ''}`}>
-                {children}
-              </code>
-            </pre>
-          </div>
-        );
-      },
     }),
-    [classifyCodeBlockLabel, copiedCodeBlockId, extractCodeText, handleCopyCodeBlock, inferInlineCode, selectedWorkspace?.id]
+    [colorMode, copiedCodeBlockId, handleCopyCodeBlock, selectedWorkspace?.id]
   );
 
   const toggleToolActivityVisibility = useCallback((messageId: ConversationMessage['id']) => {
@@ -1035,6 +953,20 @@ export default function WorkspacePage() {
 
   const handleDeleteSingleFile = async (file: WorkspaceFile) => {
     if (!selectedWorkspace) return;
+    if (isDraftWorkspaceFile(file)) {
+      setFiles((prev) => prev.filter((item) => item.id !== file.id));
+      setSelectedFiles((prev) => {
+        const next = new Set(prev);
+        next.delete(file.id);
+        return next;
+      });
+      if (selectedFile?.id === file.id) {
+        setSelectedFile(null);
+        setSelectedFileDetails(null);
+        setFileContent('');
+      }
+      return;
+    }
     const confirmed = window.confirm(`Delete ${file.name}?`);
     if (!confirmed) return;
 
@@ -1660,6 +1592,45 @@ export default function WorkspacePage() {
     fetchWorkspaces();
   }, []);
 
+  const applyWorkspacePlanApprovalSetting = useCallback((workspaceId: string, skipPlanApprovals: boolean) => {
+    setWorkspaces((prev) => prev.map((workspace) => (
+      workspace.id === workspaceId ? { ...workspace, skipPlanApprovals } : workspace
+    )));
+    setSelectedWorkspace((prev) => (
+      prev && prev.id === workspaceId ? { ...prev, skipPlanApprovals } : prev
+    ));
+  }, []);
+
+  const handleUpdateWorkspacePlanApprovalSetting = useCallback(
+    async (skipPlanApprovals: boolean, requireConfirm = false) => {
+      if (!selectedWorkspace || workspaceSettingsBusy) {
+        return false;
+      }
+      if (
+        skipPlanApprovals &&
+        requireConfirm &&
+        !window.confirm(
+          'Enable trusted mode for this workspace and skip future plan approvals? You can turn approvals back on from the workspace sidebar.',
+        )
+      ) {
+        return false;
+      }
+      try {
+        setWorkspaceSettingsBusy(true);
+        const settings = await updateWorkspaceSettings(selectedWorkspace.id, { skipPlanApprovals });
+        applyWorkspacePlanApprovalSetting(selectedWorkspace.id, Boolean(settings.skipPlanApprovals));
+        return true;
+      } catch (error) {
+        console.error('Failed to update workspace settings', error);
+        addLocalSystemMessage('Unable to update workspace approval preferences right now.');
+        return false;
+      } finally {
+        setWorkspaceSettingsBusy(false);
+      }
+    },
+    [addLocalSystemMessage, applyWorkspacePlanApprovalSetting, selectedWorkspace, workspaceSettingsBusy],
+  );
+
   useEffect(() => {
     if (selectedWorkspace) {
       loadFilesForWorkspace(selectedWorkspace.id);
@@ -1671,8 +1642,59 @@ export default function WorkspacePage() {
     }
   };
 
+  const openPlanApprovalEditor = useCallback((
+    pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
+  ) => {
+    if (!selectedWorkspace) {
+      return;
+    }
+    const actionRequests = Array.isArray(pendingInterrupt?.actionRequests) ? pendingInterrupt.actionRequests : [];
+    const review = buildApprovalReview(pendingInterrupt, actionRequests[0]);
+    const targetPath = normalizeWorkspaceRelativePath(review?.planFilePath || DEFAULT_PLAN_FILE_PATH) || DEFAULT_PLAN_FILE_PATH;
+    const existingFile = files.find((file) => normalizeWorkspaceRelativePath(file.name || file.path) === targetPath);
+    setIsAgentPaneVisible(true);
+    setIsFilePaneVisible(true);
+    setCanvasZoom(1);
+    setIsEditMode(true);
+
+    if (existingFile) {
+      setSelectedFile(existingFile);
+      setSelectedFileDetails(null);
+      setFileContent('');
+      return;
+    }
+
+    const draftContent = buildApprovalDraftContent(review);
+    const draftFile: WorkspaceFile = {
+      id: `draft:${targetPath}`,
+      name: targetPath,
+      path: targetPath,
+      workspaceId: selectedWorkspace.id,
+      storageType: 'local',
+      mimeType: 'text/markdown',
+      content: draftContent,
+    };
+    setFiles((prev) => {
+      if (prev.some((file) => String(file.id) === draftFile.id)) {
+        return prev;
+      }
+      return [draftFile, ...prev];
+    });
+    setSelectedFile(draftFile);
+    setSelectedFileDetails(draftFile);
+    setFileContent(draftContent);
+    lastAutoSavedContentRef.current = draftContent;
+  }, [files, selectedWorkspace]);
+
   const fetchFileContent = async () => {
     if (selectedFile && selectedWorkspace) {
+      if (isDraftWorkspaceFile(selectedFile)) {
+        const draftContent = selectedFile.content || '';
+        setSelectedFileDetails(selectedFile);
+        setFileContent(draftContent);
+        lastAutoSavedContentRef.current = draftContent;
+        return;
+      }
       try {
         const fileWithContent = await getFileContent(selectedWorkspace.id, selectedFile.id);
         setSelectedFileDetails(fileWithContent);
@@ -1997,6 +2019,31 @@ export default function WorkspacePage() {
     [],
   );
 
+  const findAgentMessageIndexForRun = useCallback(
+    (
+      conversationId: string,
+      placeholderId: ConversationMessage['id'],
+      turnId: string,
+      runId?: string,
+    ) => {
+      const messages = conversationMessagesRef.current[conversationId] || [];
+      if (runId) {
+        const byRunId = messages.findIndex((message) => (
+          message.sender === 'agent' && message.metadata?.runId === runId
+        ));
+        if (byRunId !== -1) {
+          return byRunId;
+        }
+      }
+      const byId = messages.findIndex((message) => message.id === placeholderId);
+      if (byId !== -1) {
+        return byId;
+      }
+      return messages.findIndex((message) => message.sender === 'agent' && message.turnId === turnId);
+    },
+    [],
+  );
+
   const getBufferedAgentText = useCallback(
     (runInfo: ActiveRunInfo) => {
       const { placeholderId, conversationId, turnId } = runInfo;
@@ -2017,8 +2064,138 @@ export default function WorkspacePage() {
     return !message.text && !message.thinkingText && !message.toolEvents?.length;
   }, []);
 
+  const upsertPersistedAgentMessage = useCallback(
+    (
+      conversationId: string,
+      persisted: ConversationMessage,
+      options?: {
+        placeholderId?: ConversationMessage['id'];
+        existing?: ConversationMessage | null;
+      },
+    ) => {
+      updateMessagesForConversation(conversationId, (prev) => {
+        const updated = [...prev];
+        const matchingIndexes = updated
+          .map((message, index) => ({ message, index }))
+          .filter(({ message }) => {
+            if (message.sender !== 'agent') {
+              return false;
+            }
+            if (message.id === persisted.id) {
+              return true;
+            }
+            if (options?.placeholderId !== undefined && message.id === options.placeholderId) {
+              return true;
+            }
+            return Boolean(persisted.turnId && message.turnId === persisted.turnId);
+          })
+          .map(({ index }) => index);
+
+        const primaryIndex = matchingIndexes[0] ?? updated.length;
+        const existing =
+          matchingIndexes[0] !== undefined
+            ? updated[matchingIndexes[0]]
+            : options?.existing || undefined;
+        const merged = mergePersistedAgentMessage(persisted, existing);
+
+        if (matchingIndexes[0] !== undefined) {
+          updated[primaryIndex] = merged;
+        } else {
+          updated.push(merged);
+        }
+
+        if (matchingIndexes.length <= 1) {
+          return updated;
+        }
+
+        const duplicatesToRemove = new Set(matchingIndexes.slice(1));
+        return updated.filter((_, index) => !duplicatesToRemove.has(index));
+      });
+    },
+    [updateMessagesForConversation],
+  );
+
+  const clearPendingInterruptForRun = useCallback(
+    (
+      conversationId: string,
+      runId: string,
+      turnId?: string,
+    ) => {
+      updateMessagesForConversation(conversationId, (prev) => {
+        const matchingIndexes = prev
+          .map((message, index) => ({ message, index }))
+          .filter(({ message }) => {
+            if (message.sender !== 'agent') {
+              return false;
+            }
+            const metadata = (message.metadata as ConversationMessageMetadata | undefined) || undefined;
+            return metadata?.runId === runId || Boolean(turnId && message.turnId === turnId);
+          })
+          .map(({ index }) => index);
+
+        if (!matchingIndexes.length) {
+          return prev;
+        }
+
+        const next = [...prev];
+        const chooseScore = (message: ConversationMessage) => (
+          (message.text?.length || 0) * 1000 +
+          (message.thinkingText?.length || 0) * 100 +
+          (message.toolEvents?.length || 0) * 10 +
+          ((((message.metadata as ConversationMessageMetadata | undefined) || {}).pendingInterrupt) ? 5 : 0)
+        );
+
+        const primaryIndex = matchingIndexes.reduce((best, current) => (
+          chooseScore(next[current]) > chooseScore(next[best]) ? current : best
+        ), matchingIndexes[0]);
+
+        const merged = matchingIndexes.reduce((acc, index) => {
+          const candidate = next[index];
+          return {
+            ...acc,
+            text: (candidate.text?.length || 0) > (acc.text?.length || 0) ? candidate.text : acc.text,
+            thinkingText:
+              (candidate.thinkingText?.length || 0) > (acc.thinkingText?.length || 0)
+                ? candidate.thinkingText
+                : acc.thinkingText,
+            toolEvents:
+              (candidate.toolEvents?.length || 0) > (acc.toolEvents?.length || 0)
+                ? candidate.toolEvents
+                : acc.toolEvents,
+          };
+        }, next[primaryIndex]);
+
+        const metadata = {
+          ...(((merged.metadata as ConversationMessageMetadata | undefined) || {})),
+          runId,
+          status: 'running' as AgentRunStatus,
+          pendingInterrupt: undefined,
+        };
+
+        next[primaryIndex] = {
+          ...merged,
+          metadata,
+        };
+
+        if (matchingIndexes.length === 1) {
+          return next;
+        }
+
+        const duplicatesToRemove = new Set(matchingIndexes.filter((index) => index !== primaryIndex));
+        return next.filter((_, index) => !duplicatesToRemove.has(index));
+      });
+    },
+    [updateMessagesForConversation],
+  );
+
   const persistAgentProgress = useCallback(
-    async (runInfo: ActiveRunInfo, statusOverride?: AgentRunStatus) => {
+    async (
+      runInfo: ActiveRunInfo,
+      statusOverride?: AgentRunStatus,
+      options?: {
+        metadataOverride?: Partial<ConversationMessageMetadata>;
+      },
+    ) => {
       const { runId, conversationId, turnId, placeholderId } = runInfo;
       if (persistInFlightRef.current.has(runId)) {
         return;
@@ -2028,7 +2205,12 @@ export default function WorkspacePage() {
       const lastText = lastPersistedAgentTextRef.current[runId];
       const nextStatus = statusOverride || message?.metadata?.status || runInfo.status || 'running';
       const lastStatus = lastPersistedStatusRef.current[runId];
-      const metadata = { ...(buildMessageMetadata(message) || {}), runId, status: nextStatus };
+      const metadata = {
+        ...(buildMessageMetadata(message) || {}),
+        ...(options?.metadataOverride || {}),
+        runId,
+        status: nextStatus,
+      } satisfies ConversationMessageMetadata;
       const metadataSignature = JSON.stringify(metadata);
       const lastMetadataSignature = lastPersistedMetadataRef.current[runId];
       if (text === lastText && nextStatus === lastStatus && metadataSignature === lastMetadataSignature) {
@@ -2050,19 +2232,9 @@ export default function WorkspacePage() {
           replaceExisting: true,
           metadata,
         });
-        updateMessagesForConversation(conversationId, (prev) => {
-          const updated = [...prev];
-          const existingIndex = updated.findIndex(
-            (m) => m.id === persisted.id || (m.sender === 'agent' && m.turnId === persisted.turnId)
-          );
-          const existing = existingIndex !== -1 ? updated[existingIndex] : undefined;
-          const merged = mergePersistedAgentMessage(persisted, existing);
-          if (existingIndex !== -1) {
-            updated[existingIndex] = merged;
-          } else {
-            updated.push(merged);
-          }
-          return updated;
+        upsertPersistedAgentMessage(conversationId, persisted, {
+          placeholderId,
+          existing: message,
         });
         lastPersistedAgentTextRef.current[runId] = text;
         lastPersistedStatusRef.current[runId] = nextStatus;
@@ -2077,7 +2249,7 @@ export default function WorkspacePage() {
         persistInFlightRef.current.delete(runId);
       }
     },
-    [getBufferedAgentText, findAgentMessageForRun, updateMessagesForConversation],
+    [getBufferedAgentText, findAgentMessageForRun, upsertPersistedAgentMessage],
   );
 
   const bufferAgentChunk = (conversationId: string, index: number, chunk: string) => {
@@ -2155,26 +2327,184 @@ export default function WorkspacePage() {
     field: 'feedback' | 'edit-json' | 'reject-note' | 'clarification-text',
   ): string => `${messageKey}:${field}`, []);
 
+  const interruptActionFieldKey = useCallback((messageKey: string, actionId: string): string => (
+    `${messageKey}:action:${actionId}`
+  ), []);
+
   const getAllowedDecisions = useCallback((
     pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
   ): Array<'approve' | 'edit' | 'reject'> => {
     const defaults: Array<'approve' | 'edit' | 'reject'> = ['approve', 'edit', 'reject'];
+    if (getInterruptKind(pendingInterrupt) === 'clarification') {
+      return [];
+    }
     const actionRequests = Array.isArray(pendingInterrupt?.actionRequests) ? pendingInterrupt.actionRequests : [];
     const reviewConfigs = Array.isArray(pendingInterrupt?.reviewConfigs) ? pendingInterrupt.reviewConfigs : [];
-    if (!actionRequests.length || !reviewConfigs.length) {
-      return defaults;
+    if (reviewConfigs.length) {
+      const firstActionName = typeof actionRequests[0]?.name === 'string' ? actionRequests[0]?.name : undefined;
+      const matchingConfigs = firstActionName
+        ? reviewConfigs.filter((config) => config?.action_name === firstActionName)
+        : reviewConfigs;
+      const allowed = Array.from(
+        new Set(
+          matchingConfigs.flatMap((config) =>
+            Array.isArray(config?.allowed_decisions) ? config.allowed_decisions : [],
+          ),
+        ),
+      ).filter(
+        (value): value is 'approve' | 'edit' | 'reject' => value === 'approve' || value === 'edit' || value === 'reject',
+      );
+      if (allowed.length) {
+        return allowed;
+      }
     }
-    const firstActionName = typeof actionRequests[0]?.name === 'string' ? actionRequests[0]?.name : undefined;
-    if (!firstActionName) {
-      return defaults;
+    return defaults;
+  }, [getInterruptKind]);
+
+  const getInterruptActions = useCallback((
+    pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
+  ): RenderableInterruptAction[] => {
+    const interruptActions = Array.isArray(pendingInterrupt?.actions)
+      ? pendingInterrupt.actions.filter(
+          (action): action is InterruptAction =>
+            Boolean(action) &&
+            typeof action === 'object' &&
+            !Array.isArray(action) &&
+            typeof action.id === 'string' &&
+            typeof action.label === 'string',
+        )
+      : [];
+    if (interruptActions.length) {
+      return interruptActions.map((action) => ({
+        ...action,
+        source: 'dynamic',
+      }));
     }
-    const matchingConfig = reviewConfigs.find((config) => config?.action_name === firstActionName);
-    const allowedRaw = Array.isArray(matchingConfig?.allowed_decisions) ? matchingConfig?.allowed_decisions : [];
-    const allowed = allowedRaw.filter(
-      (value): value is 'approve' | 'edit' | 'reject' => value === 'approve' || value === 'edit' || value === 'reject',
-    );
-    return allowed.length ? allowed : defaults;
-  }, []);
+
+    if (getInterruptKind(pendingInterrupt) === 'clarification') {
+      const responseSpec = pendingInterrupt?.responseSpec;
+      const clarificationChoices = Array.isArray(responseSpec?.choices) ? responseSpec.choices : [];
+      const derivedActions: RenderableInterruptAction[] = clarificationChoices.map((choice) => ({
+        id: `choice:${choice.id}`,
+        label: choice.label,
+        style: 'secondary',
+        inputMode: 'none',
+        value: choice.value,
+        source: 'clarification-choice',
+        choiceId: choice.id,
+      }));
+      const inputMode = responseSpec?.inputMode || 'text';
+      if (inputMode === 'text' || inputMode === 'text_or_choice' || !derivedActions.length) {
+        derivedActions.push({
+          id: 'clarification-text',
+          label: responseSpec?.submitLabel || 'Continue',
+          style: 'primary',
+          inputMode: 'text',
+          placeholder: responseSpec?.placeholder || 'Type your answer for the agent',
+          submitLabel: responseSpec?.submitLabel || 'Continue',
+          source: 'clarification-text',
+        });
+      }
+      return derivedActions;
+    }
+
+    const isPlanApproval = isPlanApprovalInterrupt(pendingInterrupt);
+    return getAllowedDecisions(pendingInterrupt).map((decision) => {
+      if (decision === 'approve') {
+        return {
+          id: 'approve',
+          label: 'Approve',
+          style: 'primary',
+          inputMode: 'none',
+          source: 'approval',
+          legacyDecision: 'approve',
+        } satisfies RenderableInterruptAction;
+      }
+      if (decision === 'edit') {
+        return {
+          id: 'edit',
+          label: 'Edit',
+          style: 'secondary',
+          inputMode: 'text',
+          placeholder: isPlanApproval
+            ? 'Describe the revisions you want before the agent resubmits the plan'
+            : 'Optional edit feedback or updated args JSON',
+          submitLabel: 'Save Changes',
+          source: 'approval',
+          legacyDecision: 'edit',
+        } satisfies RenderableInterruptAction;
+      }
+      return {
+        id: 'reject',
+        label: 'Reject',
+        style: 'danger',
+        inputMode: 'text',
+        placeholder: 'Reason for rejection (optional)',
+        submitLabel: 'Confirm Rejection',
+        confirm: true,
+        source: 'approval',
+        legacyDecision: 'reject',
+      } satisfies RenderableInterruptAction;
+    });
+  }, [getAllowedDecisions, getInterruptKind, isPlanApprovalInterrupt]);
+
+  const waitForInterruptResumeReady = useCallback(
+    async (
+      runId: string,
+      expected: 'approval' | 'clarification' | 'action',
+    ): Promise<boolean> => {
+      const deadline = Date.now() + 3000;
+      while (Date.now() < deadline) {
+        try {
+          const status = await getRunStatus(runId);
+          if (status.status === 'awaiting_approval') {
+            const interruptKind = getInterruptKind(status.pendingInterrupt);
+            if (expected === 'approval' && interruptKind !== 'clarification') {
+              return true;
+            }
+            if (expected === 'clarification' && interruptKind === 'clarification') {
+              return true;
+            }
+            if (
+              expected === 'action' &&
+              Array.isArray(status.pendingInterrupt?.actions) &&
+              status.pendingInterrupt.actions.length > 0
+            ) {
+              return true;
+            }
+          }
+        } catch (error) {
+          console.error('Failed to poll run status before interrupt retry', error);
+        }
+        await new Promise((resolve) => window.setTimeout(resolve, 200));
+      }
+      return false;
+    },
+    [getInterruptKind],
+  );
+
+  const submitInterruptWithRetry = useCallback(
+    async (
+      runId: string,
+      expected: 'approval' | 'clarification' | 'action',
+      submit: () => Promise<unknown>,
+    ) => {
+      try {
+        return await submit();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error || '');
+        if (!/Run is not awaiting/i.test(message)) {
+          throw error;
+        }
+        const ready = await waitForInterruptResumeReady(runId, expected);
+        if (!ready) {
+          throw error;
+        }
+        return submit();
+      }
+    },
+    [waitForInterruptResumeReady],
+  );
 
   const handleStreamChunk = (
     conversationId: string,
@@ -2205,6 +2535,12 @@ export default function WorkspacePage() {
     }
 
     if (chunk.type === 'thought') {
+      updateMessageMetadataAtIndex(conversationId, agentMessageIndex, (metadata) => ({
+        ...metadata,
+        ...(runId ? { runId } : {}),
+        status: 'running',
+        pendingInterrupt: undefined,
+      }));
       appendAgentThought(conversationId, agentMessageIndex, chunk.content || '');
       return;
     }
@@ -2213,6 +2549,7 @@ export default function WorkspacePage() {
       updateMessageMetadataAtIndex(conversationId, agentMessageIndex, (metadata) => ({
         ...metadata,
         ...(runId ? { runId } : {}),
+        status: 'running',
         pendingInterrupt: undefined,
       }));
       appendToolStart(conversationId, agentMessageIndex, chunk);
@@ -2220,11 +2557,23 @@ export default function WorkspacePage() {
     }
 
     if (chunk.type === 'tool_end') {
+      updateMessageMetadataAtIndex(conversationId, agentMessageIndex, (metadata) => ({
+        ...metadata,
+        ...(runId ? { runId } : {}),
+        status: 'running',
+        pendingInterrupt: undefined,
+      }));
       appendToolEnd(conversationId, agentMessageIndex, chunk);
       return;
     }
 
     if (chunk.type === 'tool_error') {
+      updateMessageMetadataAtIndex(conversationId, agentMessageIndex, (metadata) => ({
+        ...metadata,
+        ...(runId ? { runId } : {}),
+        status: 'running',
+        pendingInterrupt: undefined,
+      }));
       appendToolEnd(conversationId, agentMessageIndex, chunk, 'error');
       return;
     }
@@ -2241,6 +2590,7 @@ export default function WorkspacePage() {
           description: chunk.description,
           stepIndex: chunk.stepIndex,
           stepCount: chunk.stepCount,
+          actions: chunk.actions,
           actionRequests: chunk.actionRequests,
           reviewConfigs: chunk.reviewConfigs,
           responseSpec: chunk.responseSpec,
@@ -2254,6 +2604,7 @@ export default function WorkspacePage() {
       updateMessageMetadataAtIndex(conversationId, agentMessageIndex, (metadata) => ({
         ...metadata,
         ...(runId ? { runId } : {}),
+        status: 'running',
         pendingInterrupt: undefined,
       }));
       if (chunk.role && chunk.role !== 'assistant') {
@@ -2277,15 +2628,15 @@ export default function WorkspacePage() {
   };
 
   const streamRunForConversation = useCallback(
-    async (runInfo: ActiveRunInfo, replayFromStart = false) => {
+    async (runInfo: ActiveRunInfo, replayFromStart = false, resumeAfterId?: string) => {
       const { conversationId, runId, turnId, placeholderId } = runInfo;
       // Mark the run as actively handled before any state updates land so the
       // resume effect does not start a second stream for the same run.
       resumeAttemptedRef.current.add(runId);
       resumeInFlightRef.current.add(runId);
       cancelStreamForConversation(conversationId);
-      const agentMessageIndex = ensureAgentPlaceholder(conversationId, placeholderId, turnId, replayFromStart);
-      if (agentMessageIndex < 0) {
+      const initialAgentMessageIndex = ensureAgentPlaceholder(conversationId, placeholderId, turnId, replayFromStart);
+      if (initialAgentMessageIndex < 0) {
         if (STREAM_DEBUG_ENABLED) {
           console.debug('[WorkspacePage] missing placeholder', { runId, conversationId });
         }
@@ -2302,6 +2653,7 @@ export default function WorkspacePage() {
       streamAbortMapRef.current.set(conversationId, controller);
       setStreamingForConversation(conversationId, true);
       let finalStatus: AgentRunStatus = 'completed';
+      let lastStreamId = resumeAfterId || runInfo.lastStreamId;
       let latestInterrupt:
         | ConversationMessageMetadata['pendingInterrupt']
         | undefined;
@@ -2313,6 +2665,14 @@ export default function WorkspacePage() {
         await streamAgentRun(
           runId,
           (chunk) => {
+            const agentMessageIndex = (() => {
+              const resolved = findAgentMessageIndexForRun(conversationId, placeholderId, turnId, runId);
+              return resolved >= 0 ? resolved : initialAgentMessageIndex;
+            })();
+            const resumableChunk = chunk as AgentStreamChunk & { id?: string };
+            if (typeof resumableChunk.id === 'string') {
+              lastStreamId = resumableChunk.id;
+            }
             if (chunk.type === 'interrupt') {
               latestInterrupt = {
                 kind: chunk.kind,
@@ -2321,6 +2681,7 @@ export default function WorkspacePage() {
                 description: chunk.description,
                 stepIndex: chunk.stepIndex,
                 stepCount: chunk.stepCount,
+                actions: chunk.actions,
                 actionRequests: chunk.actionRequests,
                 reviewConfigs: chunk.reviewConfigs,
                 responseSpec: chunk.responseSpec,
@@ -2330,19 +2691,29 @@ export default function WorkspacePage() {
             handleStreamChunk(conversationId, agentMessageIndex, chunk, runId);
           },
           controller.signal,
-          replayFromStart ? undefined : undefined
+          replayFromStart ? undefined : (resumeAfterId || runInfo.lastStreamId)
         );
       } catch (error) {
+        const supersededByNewerStream = streamAbortMapRef.current.get(conversationId) !== controller;
+        const agentMessageIndex = (() => {
+          const resolved = findAgentMessageIndexForRun(conversationId, placeholderId, turnId, runId);
+          return resolved >= 0 ? resolved : initialAgentMessageIndex;
+        })();
         if ((error as DOMException)?.name === 'AbortError') {
-          const stopLabel = stopRequestedRef.current ? '\n[Stopped by user]' : '\n[Stream cancelled]';
-          appendAgentChunk(conversationId, agentMessageIndex, stopLabel);
-          finalStatus = 'cancelled';
+          if (stopRequestedRef.current) {
+            appendAgentChunk(conversationId, agentMessageIndex, '\n[Stopped by user]');
+            finalStatus = 'cancelled';
+          } else if (!supersededByNewerStream) {
+            appendAgentChunk(conversationId, agentMessageIndex, '\n[Stream cancelled]');
+            finalStatus = 'cancelled';
+          }
         } else {
           console.error('Failed to stream agent run', error);
           appendAgentChunk(conversationId, agentMessageIndex, '\nSorry, something went wrong.');
           finalStatus = 'failed';
         }
       } finally {
+        const supersededByNewerStream = streamAbortMapRef.current.get(conversationId) !== controller;
         let latestRunMeta:
           | Awaited<ReturnType<typeof getRunStatus>>
           | null = null;
@@ -2362,11 +2733,25 @@ export default function WorkspacePage() {
               }
             }
           }
+          if (finalStatus === 'awaiting_approval' && !latestRunMeta?.pendingInterrupt && !latestInterrupt) {
+            for (let attempt = 0; attempt < 8; attempt += 1) {
+              await new Promise((resolve) => window.setTimeout(resolve, 250));
+              latestRunMeta = await getRunStatus(runId);
+              finalStatus = latestRunMeta.status;
+              if (latestRunMeta.pendingInterrupt) {
+                break;
+              }
+            }
+          }
         } catch (statusError) {
           console.error('Failed to fetch final run status', statusError);
         }
-        const effectivePendingInterrupt = latestRunMeta?.pendingInterrupt ?? latestInterrupt;
-        if (effectivePendingInterrupt) {
+        const effectivePendingInterrupt = latestRunMeta ? latestRunMeta.pendingInterrupt : latestInterrupt;
+        if (!supersededByNewerStream && effectivePendingInterrupt) {
+            const agentMessageIndex = (() => {
+              const resolved = findAgentMessageIndexForRun(conversationId, placeholderId, turnId, runId);
+              return resolved >= 0 ? resolved : initialAgentMessageIndex;
+            })();
             finalStatus = 'awaiting_approval';
             updateMessageMetadataAtIndex(conversationId, agentMessageIndex, (metadata) => ({
               ...metadata,
@@ -2379,9 +2764,43 @@ export default function WorkspacePage() {
           console.debug('[WorkspacePage] stream finished', { runId, status: finalStatus });
         }
         flushBufferedAgentChunks();
-        await persistAgentProgress({ ...runInfo, status: finalStatus }, finalStatus);
+        if (supersededByNewerStream) {
+          return;
+        }
+        if (finalStatus === 'running' || finalStatus === 'queued') {
+          const resumedRunInfo: ActiveRunInfo = {
+            ...runInfo,
+            status: 'running',
+            lastStreamId,
+          };
+          registerActiveRun(resumedRunInfo);
+          if (streamAbortMapRef.current.get(conversationId) === controller) {
+            streamAbortMapRef.current.delete(conversationId);
+          }
+          window.setTimeout(() => {
+            const activeRun = activeRunsRef.current[runId];
+            if (!activeRun || activeRun.status !== 'running') {
+              return;
+            }
+            void streamRunForConversation(activeRun, false, activeRun.lastStreamId);
+          }, 300);
+          return;
+        }
+        await persistAgentProgress(
+          { ...runInfo, status: finalStatus },
+          finalStatus,
+          effectivePendingInterrupt
+            ? {
+                metadataOverride: {
+                  pendingInterrupt: effectivePendingInterrupt,
+                },
+              }
+            : undefined,
+        );
         setStreamingForConversation(conversationId, false);
-        streamAbortMapRef.current.delete(conversationId);
+        if (streamAbortMapRef.current.get(conversationId) === controller) {
+          streamAbortMapRef.current.delete(conversationId);
+        }
         stopRequestedRef.current = false;
         resumeInFlightRef.current.delete(runId);
         if (finalStatus === 'awaiting_approval') {
@@ -2402,6 +2821,7 @@ export default function WorkspacePage() {
       handleStreamChunk,
       flushBufferedAgentChunks,
       getBufferedAgentText,
+      findAgentMessageIndexForRun,
       getRunStatus,
       addLocalSystemMessage,
       removeActiveRun,
@@ -2441,11 +2861,24 @@ export default function WorkspacePage() {
       const messageKey = String(message.id);
       const primaryAction = getPrimaryInterruptAction(pendingInterrupt);
       const isPlanApproval = isPlanApprovalInterrupt(pendingInterrupt);
+      const approvalReview = isPlanApproval ? buildApprovalReview(pendingInterrupt, primaryAction) : null;
+      const approvalPlanPath = normalizeWorkspaceRelativePath(approvalReview?.planFilePath || DEFAULT_PLAN_FILE_PATH);
+      const activeEditorPath = normalizeWorkspaceRelativePath(selectedFile?.name || selectedFile?.path);
+      const editedPlanContent =
+        isPlanApproval && approvalPlanPath && activeEditorPath === approvalPlanPath
+          ? fileContent.trim()
+          : '';
       const feedbackKey = isPlanApproval
         ? interruptFieldKey(messageKey, 'feedback')
         : interruptFieldKey(messageKey, 'reject-note');
       const rawFeedback = (interruptInputByMessageId[feedbackKey] || '').trim();
       setInterruptSubmittingByMessageId((prev) => ({ ...prev, [messageKey]: true }));
+      setInterruptErrorByMessageId((prev) => {
+        if (!prev[messageKey]) return prev;
+        const next = { ...prev };
+        delete next[messageKey];
+        return next;
+      });
       try {
         const options: {
           editedAction?: { name: string; args: Record<string, unknown> };
@@ -2465,6 +2898,8 @@ export default function WorkspacePage() {
               args: {
                 ...originalArgs,
                 reviewer_feedback: rawFeedback,
+                plan_file_path: approvalPlanPath || DEFAULT_PLAN_FILE_PATH,
+                ...(editedPlanContent ? { edited_plan_content: editedPlanContent } : {}),
               },
             };
             options.message = rawFeedback || 'User requested edits.';
@@ -2492,18 +2927,37 @@ export default function WorkspacePage() {
             };
           }
         }
-        await submitRunDecision(runId, decision, options);
-        updateMessagesForConversation(message.conversationId, (prev) => {
-          const next = [...prev];
-          const idx = next.findIndex((item) => item.id === message.id);
-          if (idx === -1) return next;
-          const current = next[idx];
-          const metadata = { ...((current.metadata as ConversationMessageMetadata | undefined) || {}) };
-          metadata.pendingInterrupt = undefined;
-          next[idx] = { ...current, metadata };
+        await submitInterruptWithRetry(runId, 'approval', () => submitRunDecision(runId, decision, options));
+        clearPendingInterruptForRun(message.conversationId, runId, message.turnId);
+        setInterruptInputByMessageId((prev) => {
+          const next = { ...prev };
+          delete next[interruptFieldKey(messageKey, 'feedback')];
+          delete next[interruptFieldKey(messageKey, 'edit-json')];
+          delete next[interruptFieldKey(messageKey, 'reject-note')];
           return next;
         });
-        const runInfo = activeRunsRef.current[runId];
+        setInterruptErrorByMessageId((prev) => {
+          if (!prev[messageKey]) return prev;
+          const next = { ...prev };
+          delete next[messageKey];
+          return next;
+        });
+        const existingRunInfo = activeRunsRef.current[runId];
+        const rebuiltRunInfo = await rebuildRunInfoForMessage(message, runId).catch(() => undefined);
+        const runInfo = {
+          ...(existingRunInfo || rebuiltRunInfo || {
+            runId,
+            conversationId: message.conversationId,
+            workspaceId: selectedWorkspace?.id || '',
+            persona: normalizePersonaName(activeConversationPersona || selectedPersona || DEFAULT_PERSONA_NAME),
+            turnId: message.turnId || generateTurnId(),
+            placeholderId: message.id,
+            status: 'running' as AgentRunStatus,
+          }),
+          status: 'running' as AgentRunStatus,
+        };
+        markRunStreamLaunching(runId);
+        registerActiveRun(runInfo);
         if (runInfo) {
           await streamRunForConversation(runInfo, false);
         } else {
@@ -2511,21 +2965,30 @@ export default function WorkspacePage() {
         }
       } catch (error) {
         console.error('Failed to submit approval decision', error);
-        addLocalSystemMessage(error instanceof Error ? error.message : 'Failed to submit approval decision.');
+        setInterruptErrorByMessageId((prev) => ({
+          ...prev,
+          [messageKey]: error instanceof Error ? error.message : 'Failed to submit approval decision.',
+        }));
       } finally {
         setInterruptSubmittingByMessageId((prev) => ({ ...prev, [messageKey]: false }));
       }
     },
     [
       addLocalSystemMessage,
+      fileContent,
       interruptInputByMessageId,
       interruptFieldKey,
       findRunIdForMessage,
       getPrimaryInterruptAction,
       getAllowedDecisions,
       isPlanApprovalInterrupt,
+      selectedFile,
+      rebuildRunInfoForMessage,
+      clearPendingInterruptForRun,
+      markRunStreamLaunching,
+      registerActiveRun,
+      submitInterruptWithRetry,
       streamRunForConversation,
-      updateMessagesForConversation,
     ],
   );
 
@@ -2558,22 +3021,21 @@ export default function WorkspacePage() {
       }
 
       setInterruptSubmittingByMessageId((prev) => ({ ...prev, [messageKey]: true }));
+      setInterruptErrorByMessageId((prev) => {
+        if (!prev[messageKey]) return prev;
+        const next = { ...prev };
+        delete next[messageKey];
+        return next;
+      });
       try {
-        await submitRunResponse(runId, {
-          message: rawMessage || undefined,
-          selectedChoiceIds: selectedChoiceIds.length ? selectedChoiceIds : undefined,
-          selectedValues: selectedValues.length ? selectedValues : undefined,
-        });
-        updateMessagesForConversation(message.conversationId, (prev) => {
-          const next = [...prev];
-          const idx = next.findIndex((item) => item.id === message.id);
-          if (idx === -1) return next;
-          const current = next[idx];
-          const metadata = { ...((current.metadata as ConversationMessageMetadata | undefined) || {}) };
-          metadata.pendingInterrupt = undefined;
-          next[idx] = { ...current, metadata };
-          return next;
-        });
+        await submitInterruptWithRetry(runId, 'clarification', () =>
+          submitRunResponse(runId, {
+            message: rawMessage || undefined,
+            selectedChoiceIds: selectedChoiceIds.length ? selectedChoiceIds : undefined,
+            selectedValues: selectedValues.length ? selectedValues : undefined,
+          })
+        );
+        clearPendingInterruptForRun(message.conversationId, runId, message.turnId);
         setInterruptInputByMessageId((prev) => {
           const next = { ...prev };
           delete next[textKey];
@@ -2584,7 +3046,28 @@ export default function WorkspacePage() {
           delete next[messageKey];
           return next;
         });
-        const runInfo = activeRunsRef.current[runId];
+        setInterruptErrorByMessageId((prev) => {
+          if (!prev[messageKey]) return prev;
+          const next = { ...prev };
+          delete next[messageKey];
+          return next;
+        });
+        const existingRunInfo = activeRunsRef.current[runId];
+        const rebuiltRunInfo = await rebuildRunInfoForMessage(message, runId).catch(() => undefined);
+        const runInfo = {
+          ...(existingRunInfo || rebuiltRunInfo || {
+            runId,
+            conversationId: message.conversationId,
+            workspaceId: selectedWorkspace?.id || '',
+            persona: normalizePersonaName(activeConversationPersona || selectedPersona || DEFAULT_PERSONA_NAME),
+            turnId: message.turnId || generateTurnId(),
+            placeholderId: message.id,
+            status: 'running' as AgentRunStatus,
+          }),
+          status: 'running' as AgentRunStatus,
+        };
+        markRunStreamLaunching(runId);
+        registerActiveRun(runInfo);
         if (runInfo) {
           await streamRunForConversation(runInfo, false);
         } else {
@@ -2592,7 +3075,10 @@ export default function WorkspacePage() {
         }
       } catch (error) {
         console.error('Failed to submit clarification response', error);
-        addLocalSystemMessage(error instanceof Error ? error.message : 'Failed to submit clarification response.');
+        setInterruptErrorByMessageId((prev) => ({
+          ...prev,
+          [messageKey]: error instanceof Error ? error.message : 'Failed to submit clarification response.',
+        }));
       } finally {
         setInterruptSubmittingByMessageId((prev) => ({ ...prev, [messageKey]: false }));
       }
@@ -2604,10 +3090,190 @@ export default function WorkspacePage() {
       interruptFieldKey,
       interruptInputByMessageId,
       interruptSelectedChoicesByMessageId,
+      rebuildRunInfoForMessage,
+      clearPendingInterruptForRun,
+      markRunStreamLaunching,
+      registerActiveRun,
+      submitInterruptWithRetry,
       streamRunForConversation,
-      updateMessagesForConversation,
     ],
   );
+
+  const handleInterruptAction = useCallback(
+    async (
+      message: ConversationMessage,
+      action: RenderableInterruptAction,
+      pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
+    ) => {
+      if (action.source === 'approval' && action.legacyDecision) {
+        await handleInterruptDecision(message, action.legacyDecision, pendingInterrupt);
+        return;
+      }
+
+      if (action.source === 'clarification-text') {
+        await handleClarificationResponse(message, pendingInterrupt);
+        return;
+      }
+
+      const runId = findRunIdForMessage(message);
+      if (!runId) {
+        addLocalSystemMessage('Missing run id for interrupt action.');
+        return;
+      }
+
+      const messageKey = String(message.id);
+      const actionTextKey = interruptActionFieldKey(messageKey, action.id);
+      const actionText = (interruptInputByMessageId[actionTextKey] || '').trim();
+
+      if (action.source === 'clarification-choice') {
+        setInterruptSubmittingByMessageId((prev) => ({ ...prev, [messageKey]: true }));
+        setInterruptErrorByMessageId((prev) => {
+          if (!prev[messageKey]) return prev;
+          const next = { ...prev };
+          delete next[messageKey];
+          return next;
+        });
+        try {
+          await submitInterruptWithRetry(runId, 'clarification', () =>
+            submitRunResponse(runId, {
+              selectedChoiceIds: action.choiceId ? [action.choiceId] : undefined,
+              selectedValues: action.value ? [action.value] : undefined,
+            })
+          );
+          clearPendingInterruptForRun(message.conversationId, runId, message.turnId);
+          setInterruptErrorByMessageId((prev) => {
+            if (!prev[messageKey]) return prev;
+            const next = { ...prev };
+            delete next[messageKey];
+            return next;
+          });
+          const existingRunInfo = activeRunsRef.current[runId];
+          const rebuiltRunInfo = await rebuildRunInfoForMessage(message, runId).catch(() => undefined);
+          const runInfo = {
+            ...(existingRunInfo || rebuiltRunInfo || {
+              runId,
+              conversationId: message.conversationId,
+              workspaceId: selectedWorkspace?.id || '',
+              persona: normalizePersonaName(activeConversationPersona || selectedPersona || DEFAULT_PERSONA_NAME),
+              turnId: message.turnId || generateTurnId(),
+              placeholderId: message.id,
+              status: 'running' as AgentRunStatus,
+            }),
+            status: 'running' as AgentRunStatus,
+          };
+          markRunStreamLaunching(runId);
+          registerActiveRun(runInfo);
+          if (runInfo) {
+            await streamRunForConversation(runInfo, false);
+          } else {
+            addLocalSystemMessage('Response saved. Refreshing stream state...');
+          }
+        } catch (error) {
+          console.error('Failed to submit clarification choice', error);
+          setInterruptErrorByMessageId((prev) => ({
+            ...prev,
+            [messageKey]: error instanceof Error ? error.message : 'Failed to submit clarification response.',
+          }));
+        } finally {
+          setInterruptSubmittingByMessageId((prev) => ({ ...prev, [messageKey]: false }));
+        }
+        return;
+      }
+
+      if (action.inputMode === 'text' && !actionText) {
+        setInterruptErrorByMessageId((prev) => ({
+          ...prev,
+          [messageKey]: 'This action requires text input before continuing.',
+        }));
+        return;
+      }
+
+      setInterruptSubmittingByMessageId((prev) => ({ ...prev, [messageKey]: true }));
+      setInterruptErrorByMessageId((prev) => {
+        if (!prev[messageKey]) return prev;
+        const next = { ...prev };
+        delete next[messageKey];
+        return next;
+      });
+      try {
+        await submitInterruptWithRetry(runId, 'action', () =>
+          submitRunAction(runId, {
+            actionId: action.id,
+            text: actionText || undefined,
+          })
+        );
+        clearPendingInterruptForRun(message.conversationId, runId, message.turnId);
+        setInterruptInputByMessageId((prev) => {
+          const next = { ...prev };
+          Object.keys(next).forEach((key) => {
+            if (key.startsWith(`${messageKey}:action:`)) {
+              delete next[key];
+            }
+          });
+          return next;
+        });
+        setInterruptErrorByMessageId((prev) => {
+          if (!prev[messageKey]) return prev;
+          const next = { ...prev };
+          delete next[messageKey];
+          return next;
+        });
+        const existingRunInfo = activeRunsRef.current[runId];
+        const rebuiltRunInfo = await rebuildRunInfoForMessage(message, runId).catch(() => undefined);
+        const runInfo = {
+          ...(existingRunInfo || rebuiltRunInfo || {
+            runId,
+            conversationId: message.conversationId,
+            workspaceId: selectedWorkspace?.id || '',
+            persona: normalizePersonaName(activeConversationPersona || selectedPersona || DEFAULT_PERSONA_NAME),
+            turnId: message.turnId || generateTurnId(),
+            placeholderId: message.id,
+            status: 'running' as AgentRunStatus,
+          }),
+          status: 'running' as AgentRunStatus,
+        };
+        markRunStreamLaunching(runId);
+        registerActiveRun(runInfo);
+        if (runInfo) {
+          await streamRunForConversation(runInfo, false);
+        } else {
+          addLocalSystemMessage('Action saved. Refreshing stream state...');
+        }
+      } catch (error) {
+        console.error('Failed to submit interrupt action', error);
+        setInterruptErrorByMessageId((prev) => ({
+          ...prev,
+          [messageKey]: error instanceof Error ? error.message : 'Failed to submit interrupt action.',
+        }));
+      } finally {
+        setInterruptSubmittingByMessageId((prev) => ({ ...prev, [messageKey]: false }));
+      }
+    },
+    [
+      addLocalSystemMessage,
+      findRunIdForMessage,
+      handleClarificationResponse,
+      handleInterruptDecision,
+      interruptActionFieldKey,
+      interruptInputByMessageId,
+      rebuildRunInfoForMessage,
+      clearPendingInterruptForRun,
+      markRunStreamLaunching,
+      registerActiveRun,
+      submitInterruptWithRetry,
+      streamRunForConversation,
+    ],
+  );
+
+  const prepareInterruptAction = useCallback((
+    _message: ConversationMessage,
+    action: RenderableInterruptAction,
+    pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
+  ) => {
+    if (action.source === 'approval' && action.legacyDecision === 'edit' && isPlanApprovalInterrupt(pendingInterrupt)) {
+      openPlanApprovalEditor(pendingInterrupt);
+    }
+  }, [isPlanApprovalInterrupt, openPlanApprovalEditor]);
 
   useEffect(() => {
     if (!activeConversationId) {
@@ -2876,8 +3542,8 @@ export default function WorkspacePage() {
         placeholderId,
         status: 'running',
       };
+      markRunStreamLaunching(runId);
       registerActiveRun(runInfo);
-      await persistAgentProgress(runInfo, 'running');
       await streamRunForConversation(runInfo, true);
 
       const messagesSnapshot = getConversationMessagesSnapshot(conversationId);
@@ -2896,14 +3562,9 @@ export default function WorkspacePage() {
             replaceExisting: true,
             metadata: { ...metadata, runId },
           });
-          updateMessagesForConversation(conversationId, (prev) => {
-            const updated = [...prev];
-            if (targetIndex >= 0) {
-              updated[targetIndex] = mergePersistedAgentMessage(persisted, updated[targetIndex]);
-            } else {
-              updated.push(mergePersistedAgentMessage(persisted));
-            }
-            return updated;
+          upsertPersistedAgentMessage(conversationId, persisted, {
+            placeholderId,
+            existing: agentMessage,
           });
           if (placeholderId !== null && placeholderId !== undefined) {
             agentMessageBufferRef.current.delete(placeholderId);
@@ -3291,8 +3952,8 @@ export default function WorkspacePage() {
         placeholderId,
         status: 'running',
       };
+      markRunStreamLaunching(runId);
       registerActiveRun(runInfo);
-      await persistAgentProgress(runInfo, 'running');
       await streamRunForConversation(runInfo, true);
 
       const messagesSnapshot = getConversationMessagesSnapshot(conversationId);
@@ -3311,14 +3972,9 @@ export default function WorkspacePage() {
             metadata: { ...metadata, runId },
             replaceExisting: true,
           });
-          updateMessagesForConversation(conversationId, (prev) => {
-            const updated = [...prev];
-            if (targetIndex >= 0) {
-              updated[targetIndex] = mergePersistedAgentMessage(persisted, updated[targetIndex]);
-            } else {
-              updated.push(mergePersistedAgentMessage(persisted));
-            }
-            return updated;
+          upsertPersistedAgentMessage(conversationId, persisted, {
+            placeholderId,
+            existing: agentMessage,
           });
           if (placeholderId !== null && placeholderId !== undefined) {
             agentMessageBufferRef.current.delete(placeholderId);
@@ -3459,20 +4115,38 @@ export default function WorkspacePage() {
     }
   };
 
-  const handleUpdateFile = useCallback(async (id: number, content: string) => {
-    if (!selectedWorkspace) return;
+  const handleUpdateFile = useCallback(async (targetFile: WorkspaceFile | null, content: string) => {
+    if (!selectedWorkspace || !targetFile) return;
 
     try {
-      await updateFileContent(selectedWorkspace.id, id, content);
+      if (isDraftWorkspaceFile(targetFile)) {
+        const createdFile = await createTextFile(selectedWorkspace.id, {
+          name: targetFile.name,
+          content,
+          mimeType: targetFile.mimeType || 'text/markdown',
+        });
+        setFiles((prev) => {
+          const withoutDraft = prev.filter((file) => String(file.id) !== String(targetFile.id));
+          return [createdFile, ...withoutDraft];
+        });
+        const hydratedCreatedFile = {
+          ...createdFile,
+          content,
+        };
+        setSelectedFile(hydratedCreatedFile);
+        setSelectedFileDetails(hydratedCreatedFile);
+      } else {
+        await updateFileContent(selectedWorkspace.id, Number(targetFile.id), content);
+        setSelectedFileDetails((prev) => (prev ? { ...prev, content } : prev));
+      }
       lastAutoSavedContentRef.current = content;
-      // Optionally, you can refetch the file or update it in the state
     } catch (error) {
       console.error('Failed to update file:', error);
     }
   }, [selectedWorkspace]);
 
   useEffect(() => {
-    if (!isEditMode || !selectedWorkspace || !selectedFile) return;
+    if (!isEditMode || !selectedWorkspace || !selectedFile || isDraftWorkspaceFile(selectedFile)) return;
 
     if (autoSaveTimerRef.current) {
       window.clearTimeout(autoSaveTimerRef.current);
@@ -3482,7 +4156,7 @@ export default function WorkspacePage() {
       if (fileContent === lastAutoSavedContentRef.current) {
         return;
       }
-      await handleUpdateFile(Number(selectedFile.id), fileContent);
+      await handleUpdateFile(selectedFile, fileContent);
       lastAutoSavedContentRef.current = fileContent;
     }, 2000);
 
@@ -3505,6 +4179,9 @@ export default function WorkspacePage() {
 
     try {
       for (const fileId of selectedFiles) {
+        if (String(fileId).startsWith('draft:')) {
+          continue;
+        }
         await deleteFile(selectedWorkspace.id, fileId);
       }
       setFiles((prevFiles) =>
@@ -3630,6 +4307,10 @@ export default function WorkspacePage() {
           colorMode={colorMode}
           onToggleColorMode={toggleColorMode}
           onSignOut={handleSignOut}
+          onToggleSkipPlanApprovals={(checked) => {
+            void handleUpdateWorkspacePlanApprovalSetting(checked, checked);
+          }}
+          workspaceSettingsBusy={workspaceSettingsBusy}
         />
         <Box
           component="main"
@@ -3812,7 +4493,7 @@ export default function WorkspacePage() {
                             </div>
                             {!isPendingJob && (
                               <div className={`shrink-0 items-center gap-1 ml-1 ${hoveredFileId === file.id ? 'flex' : 'hidden group-hover:flex'}`}>
-                                {file.publicUrl && (
+                                {file.publicUrl && !isDraftWorkspaceFile(file) && (
                                   <button
                                     type="button"
                                     onClick={(event) => {
@@ -3825,17 +4506,19 @@ export default function WorkspacePage() {
                                     <LinkIcon size={14} className="text-gray-600" />
                                   </button>
                                 )}
-                                <button
-                                  type="button"
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    handleRenameFile(file);
-                                  }}
-                                  className="p-1 rounded hover:bg-gray-200"
-                                  title="Rename"
-                                >
-                                  <Edit size={14} className="text-gray-600" />
-                                </button>
+                                {!isDraftWorkspaceFile(file) ? (
+                                  <button
+                                    type="button"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      handleRenameFile(file);
+                                    }}
+                                    className="p-1 rounded hover:bg-gray-200"
+                                    title="Rename"
+                                  >
+                                    <Edit size={14} className="text-gray-600" />
+                                  </button>
+                                ) : null}
                                 <button
                                   type="button"
                                   onClick={(event) => {
@@ -3930,7 +4613,7 @@ export default function WorkspacePage() {
                       )}
                       <button
                         className="h-9 px-3 inline-flex items-center justify-center rounded-lg text-sm font-medium text-slate-700 hover:bg-gray-200 disabled:opacity-50"
-                        onClick={() => selectedFile && handleUpdateFile(Number(selectedFile.id), fileContent)}
+                        onClick={() => selectedFile && handleUpdateFile(selectedFile, fileContent)}
                         disabled={!isEditMode}
                       >
                         Save
@@ -3988,6 +4671,7 @@ export default function WorkspacePage() {
                         >
                           <UIBlockRenderer
                             blocks={canvasBlocks}
+                            workspaceId={selectedWorkspace?.id}
                             className="h-full w-full"
                             emptyState={
                               <div className="text-center text-gray-400">
@@ -4023,8 +4707,8 @@ export default function WorkspacePage() {
               expandedThinkingMessages={expandedThinkingMessages}
               copiedMessageId={copiedMessageId}
               interruptInputByMessageId={interruptInputByMessageId}
-              interruptSelectedChoicesByMessageId={interruptSelectedChoicesByMessageId}
               interruptSubmittingByMessageId={interruptSubmittingByMessageId}
+              interruptErrorByMessageId={interruptErrorByMessageId}
               chatMessage={chatMessage}
               chatAttachments={chatAttachments}
               showPaper2SlidesControls={showPaper2SlidesControls}
@@ -4041,12 +4725,14 @@ export default function WorkspacePage() {
               workspaceId={selectedWorkspace?.id}
               formatMessageTimestamp={formatMessageTimestamp}
               interruptFieldKey={interruptFieldKey}
+              interruptActionFieldKey={interruptActionFieldKey}
               getInterruptKind={getInterruptKind}
-              getAllowedDecisions={getAllowedDecisions}
+              getInterruptActions={getInterruptActions}
               getPrimaryInterruptAction={getPrimaryInterruptAction}
               isPlanApprovalInterrupt={isPlanApprovalInterrupt}
               setInterruptInputByMessageId={setInterruptInputByMessageId}
-              setInterruptSelectedChoicesByMessageId={setInterruptSelectedChoicesByMessageId}
+              workspaceSkipPlanApprovals={Boolean(selectedWorkspace?.skipPlanApprovals)}
+              workspaceSettingsBusy={workspaceSettingsBusy}
               onToggleAgentPaneVisibility={() => setIsAgentPaneVisible((prev) => !prev)}
               onModeChange={handleModeChange}
               onToggleHistory={() => setIsHistoryOpen((prev) => !prev)}
@@ -4059,8 +4745,9 @@ export default function WorkspacePage() {
               onToggleToolActivityVisibility={toggleToolActivityVisibility}
               onCopyMessageText={handleCopyMessageText}
               onRerunMessage={handleRerunMessage}
-              onInterruptDecision={handleInterruptDecision}
-              onClarificationResponse={handleClarificationResponse}
+              onPrepareInterruptAction={prepareInterruptAction}
+              onInterruptAction={handleInterruptAction}
+              onEnableTrustedPlanMode={() => handleUpdateWorkspacePlanApprovalSetting(true, true)}
               onChatInputChange={handleChatInputChange}
               onChatInputKeyDown={handleChatInputKeyDown}
               onChatInputKeyUp={handleChatInputKeyUp}

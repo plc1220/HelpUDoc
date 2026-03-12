@@ -28,8 +28,9 @@ GENERAL_SYSTEM_PROMPT = (
     "Do not assume skills are copied into the workspace. "
     "For proposal/SOW/RFP requests, always load the proposal-writing skill and write "
     "the proposal to workspace markdown files using write_file (and append_to_report if needed). "
-    "Before executing a multi-step skill-driven plan, first call request_plan_approval with a concise plan and checklist. "
+    "Before executing a multi-step skill-driven plan, first call request_plan_approval with a concise plan, markdown summary, step list, tool/file impact, and target plan file path when possible. "
     "If execution is blocked on missing user intent or an unresolved choice, call request_clarification instead of guessing. "
+    "If you need the human to choose from arbitrary next-step actions, call request_human_action. "
     "Only proceed with side-effecting tools after approval (or after applying user edits). "
     "Reply in chat with brief status updates, not full sections. "
     "If no skill applies, proceed with best-effort behavior."
@@ -96,8 +97,9 @@ class AgentRegistry:
         policy_key = json.dumps(context_payload.get("mcp_policy", {}) or {}, sort_keys=True, default=str)
         mcp_auth_fingerprint = str(context_payload.get("mcp_auth_fingerprint") or "")
         user_key = str(context_payload.get("user_id") or "")
-        cache_scope_prefix = f"{user_key}:{policy_key}:"
-        key = (resolved_name, workspace_id, f"{user_key}:{policy_key}:{mcp_auth_fingerprint}")
+        trusted_plan_key = "trusted" if bool(context_payload.get("skip_plan_approvals") or context_payload.get("skipPlanApprovals")) else "reviewed"
+        cache_scope_prefix = f"{user_key}:{policy_key}:{trusted_plan_key}:"
+        key = (resolved_name, workspace_id, f"{user_key}:{policy_key}:{trusted_plan_key}:{mcp_auth_fingerprint}")
         if key in self._cache:
             return self._cache[key]
         # Prevent unbounded growth when delegated auth fingerprints rotate over time.
@@ -153,6 +155,10 @@ class AgentRegistry:
         )
 
         model = self._get_model(model_name)
+        interrupt_on = dict(self.settings.backend.interrupt_on or {})
+        if bool(context_payload.get("skip_plan_approvals") or context_payload.get("skipPlanApprovals")):
+            interrupt_on.pop("request_plan_approval", None)
+
         middleware = [
             TodoListMiddleware(),
             FilesystemMiddleware(backend=backend),
@@ -163,8 +169,8 @@ class AgentRegistry:
             ),
             PatchToolCallsMiddleware(),
         ]
-        if self.settings.backend.interrupt_on:
-            middleware.append(HumanInTheLoopMiddleware(interrupt_on=self.settings.backend.interrupt_on))
+        if interrupt_on:
+            middleware.append(HumanInTheLoopMiddleware(interrupt_on=interrupt_on))
 
         full_prompt = system_prompt + "\n\n" + BASE_AGENT_PROMPT if system_prompt else BASE_AGENT_PROMPT
         agent = create_agent(

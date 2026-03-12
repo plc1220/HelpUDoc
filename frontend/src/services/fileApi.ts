@@ -40,6 +40,23 @@ export const createFile = async (workspaceId: string, file: File) => {
   return response.json();
 };
 
+export const createTextFile = async (
+  workspaceId: string,
+  payload: { name: string; content: string; mimeType?: string },
+) => {
+  const response = await apiFetch(`${API_URL}/workspaces/${workspaceId}/files/text`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    throw new Error('Failed to create text file');
+  }
+  return response.json();
+};
+
 export const updateFileContent = async (
   workspaceId: string,
   fileId: number,

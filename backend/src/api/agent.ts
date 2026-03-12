@@ -18,6 +18,7 @@ import {
   getRunMeta,
   getRunStreamKey,
   resumeAgentRun,
+  resumeAgentRunWithAction,
   resumeAgentRunWithResponse,
   startAgentRun,
 } from '../services/agentRunService';
@@ -119,6 +120,10 @@ export default function(
     selectedChoiceIds: z.array(z.string().min(1)).optional(),
     selectedValues: z.array(z.string()).optional(),
   });
+  const runActionSchema = z.object({
+    actionId: z.string().min(1),
+    text: z.string().optional(),
+  });
 
   const requireUserContext = (req: Request) => {
     if (!req.userContext) {
@@ -154,11 +159,13 @@ export default function(
       mcpServerAllowIds: string[];
       mcpServerDenyIds: string[];
     };
+    skipPlanApprovals?: boolean;
   }): Promise<string | null> => {
     const payload: Record<string, unknown> = {
       sub: input.userId,
       userId: input.userId,
       workspaceId: input.workspaceId,
+      skipPlanApprovals: Boolean(input.skipPlanApprovals),
       ...input.policy,
     };
 
@@ -332,11 +339,13 @@ export default function(
       const user = requireUserContext(req);
       const { persona, prompt, workspaceId, history, forceReset } = runAgentSchema.parse(req.body);
       const policy = await workspaceService.getMcpServerPolicy(workspaceId, user.userId, { requireEdit: true });
+      const settings = await workspaceService.getWorkspaceSettings(workspaceId, user.userId, { requireEdit: true });
       const enrichedPrompt = await injectTaggedFileUrls(prompt, workspaceId, user.userId);
       const authToken = await buildAgentAuthToken({
         userId: user.userId,
         workspaceId,
         policy,
+        skipPlanApprovals: settings.skipPlanApprovals,
       });
       const response = await runAgent(persona, workspaceId, enrichedPrompt, history, { forceReset, authToken: authToken || undefined });
       res.json(response);
@@ -375,11 +384,13 @@ export default function(
       const user = requireUserContext(req);
       const { persona, prompt, workspaceId, history, forceReset } = runAgentSchema.parse(req.body);
       const policy = await workspaceService.getMcpServerPolicy(workspaceId, user.userId, { requireEdit: true });
+      const settings = await workspaceService.getWorkspaceSettings(workspaceId, user.userId, { requireEdit: true });
       const enrichedPrompt = await injectTaggedFileUrls(prompt, workspaceId, user.userId);
       const authToken = await buildAgentAuthToken({
         userId: user.userId,
         workspaceId,
         policy,
+        skipPlanApprovals: settings.skipPlanApprovals,
       });
       streamResponse = await runAgentStream(persona, workspaceId, enrichedPrompt, history, {
         forceReset,
@@ -430,11 +441,13 @@ export default function(
       const { persona, prompt, workspaceId, history, forceReset, turnId } = runAgentSchema.parse(req.body);
       await workspaceService.ensureMembership(workspaceId, user.userId, { requireEdit: true });
       const policy = await workspaceService.getMcpServerPolicy(workspaceId, user.userId, { requireEdit: true });
+      const settings = await workspaceService.getWorkspaceSettings(workspaceId, user.userId, { requireEdit: true });
       const enrichedPrompt = await injectTaggedFileUrls(prompt, workspaceId, user.userId);
       const authToken = await buildAgentAuthToken({
         userId: user.userId,
         workspaceId,
         policy,
+        skipPlanApprovals: settings.skipPlanApprovals,
       });
       const { runId, status } = await startAgentRun({
         persona,
@@ -492,6 +505,14 @@ export default function(
         return res.status(404).json({ error: 'Run not found' });
       }
       await workspaceService.ensureMembership(meta.workspaceId, user.userId, { requireEdit: true });
+      const policy = await workspaceService.getMcpServerPolicy(meta.workspaceId, user.userId, { requireEdit: true });
+      const settings = await workspaceService.getWorkspaceSettings(meta.workspaceId, user.userId, { requireEdit: true });
+      const authToken = await buildAgentAuthToken({
+        userId: user.userId,
+        workspaceId: meta.workspaceId,
+        policy,
+        skipPlanApprovals: settings.skipPlanApprovals,
+      });
       if (meta.status !== 'awaiting_approval') {
         return res.status(409).json({ error: 'Run is not awaiting approval' });
       }
@@ -519,7 +540,9 @@ export default function(
             ? { type: 'reject' as const, message: payload.message || 'Rejected by user' }
             : { type: 'approve' as const },
       ];
-      const result = await resumeAgentRun(runId, decisions);
+      const result = await resumeAgentRun(runId, decisions, {
+        authToken: authToken || undefined,
+      });
       res.json(result);
     } catch (error: any) {
       if (error instanceof z.ZodError) {
@@ -538,6 +561,14 @@ export default function(
         return res.status(404).json({ error: 'Run not found' });
       }
       await workspaceService.ensureMembership(meta.workspaceId, user.userId, { requireEdit: true });
+      const policy = await workspaceService.getMcpServerPolicy(meta.workspaceId, user.userId, { requireEdit: true });
+      const settings = await workspaceService.getWorkspaceSettings(meta.workspaceId, user.userId, { requireEdit: true });
+      const authToken = await buildAgentAuthToken({
+        userId: user.userId,
+        workspaceId: meta.workspaceId,
+        policy,
+        skipPlanApprovals: settings.skipPlanApprovals,
+      });
       if (meta.status !== 'awaiting_approval') {
         return res.status(409).json({ error: 'Run is not awaiting input' });
       }
@@ -553,6 +584,8 @@ export default function(
         message: payload.message,
         selectedChoiceIds: payload.selectedChoiceIds,
         selectedValues: payload.selectedValues,
+      }, {
+        authToken: authToken || undefined,
       });
       res.json(result);
     } catch (error: any) {
@@ -560,6 +593,60 @@ export default function(
         return res.status(400).json({ error: 'Invalid input' });
       }
       handleError(res, error, 'Failed to submit clarification response');
+    }
+  });
+
+  router.post('/runs/:runId/act', async (req, res) => {
+    try {
+      const user = requireUserContext(req);
+      const { runId } = req.params;
+      const meta = await getRunMeta(runId);
+      if (!meta) {
+        return res.status(404).json({ error: 'Run not found' });
+      }
+      await workspaceService.ensureMembership(meta.workspaceId, user.userId, { requireEdit: true });
+      const policy = await workspaceService.getMcpServerPolicy(meta.workspaceId, user.userId, { requireEdit: true });
+      const settings = await workspaceService.getWorkspaceSettings(meta.workspaceId, user.userId, { requireEdit: true });
+      const authToken = await buildAgentAuthToken({
+        userId: user.userId,
+        workspaceId: meta.workspaceId,
+        policy,
+        skipPlanApprovals: settings.skipPlanApprovals,
+      });
+      if (meta.status !== 'awaiting_approval') {
+        return res.status(409).json({ error: 'Run is not awaiting human input' });
+      }
+      const payload = runActionSchema.parse(req.body);
+      const interruptActions = Array.isArray(meta.pendingInterrupt?.actions) ? meta.pendingInterrupt.actions : [];
+      const action = interruptActions.find((item) => item.id === payload.actionId);
+      if (!action) {
+        return res.status(404).json({ error: `Interrupt action "${payload.actionId}" was not found` });
+      }
+      if (action.inputMode === 'text' && !payload.text?.trim()) {
+        return res.status(400).json({ error: 'This action requires text input' });
+      }
+      const result = await resumeAgentRunWithAction(
+        runId,
+        {
+          action: {
+            id: action.id,
+            ...(typeof action.value === 'string' ? { value: action.value } : {}),
+            ...(action.payload && typeof action.payload === 'object' && !Array.isArray(action.payload)
+              ? { payload: action.payload }
+              : {}),
+            ...(payload.text?.trim() ? { text: payload.text.trim() } : {}),
+          },
+        },
+        {
+          authToken: authToken || undefined,
+        },
+      );
+      res.json(result);
+    } catch (error: any) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: 'Invalid interrupt action payload' });
+      }
+      handleError(res, error, 'Failed to submit interrupt action');
     }
   });
 

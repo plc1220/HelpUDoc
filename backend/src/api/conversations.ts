@@ -96,6 +96,17 @@ export default function conversationRoutes(conversationService: ConversationServ
         description: z.string().optional(),
         stepIndex: z.number().int().nonnegative().optional(),
         stepCount: z.number().int().positive().optional(),
+        actions: z.array(z.object({
+          id: z.string(),
+          label: z.string(),
+          style: z.enum(['primary', 'secondary', 'danger']).optional(),
+          inputMode: z.enum(['none', 'text']).optional(),
+          placeholder: z.string().optional(),
+          submitLabel: z.string().optional(),
+          confirm: z.boolean().optional(),
+          value: z.string().optional(),
+          payload: z.record(z.string(), z.unknown()).optional(),
+        }).passthrough()).optional(),
         actionRequests: z.array(z.object({
           name: z.string().optional(),
           args: z.record(z.string(), z.unknown()).optional(),

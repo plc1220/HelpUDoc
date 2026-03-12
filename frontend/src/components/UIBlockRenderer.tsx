@@ -16,6 +16,7 @@ interface UIBlockRendererProps {
   blocks: UIBlock[];
   className?: string;
   emptyState?: React.ReactNode;
+  workspaceId?: string;
 }
 
 const createVirtualFile = (name: string, id?: BlockId): File => ({
@@ -26,7 +27,7 @@ const createVirtualFile = (name: string, id?: BlockId): File => ({
 const getBlockKey = (block: UIBlock, index: number) =>
   block.id ? String(block.id) : `${block.kind}-${index}`;
 
-const UIBlockRenderer: React.FC<UIBlockRendererProps> = ({ blocks, className, emptyState }) => {
+const UIBlockRenderer: React.FC<UIBlockRendererProps> = ({ blocks, className, emptyState, workspaceId }) => {
   const containerClassName = [className ?? 'h-full w-full', blocks.length > 1 ? 'space-y-4' : '']
     .filter(Boolean)
     .join(' ');
@@ -47,6 +48,7 @@ const UIBlockRenderer: React.FC<UIBlockRendererProps> = ({ blocks, className, em
                   file={block.file}
                   fileContent={block.content}
                   disableInternalScroll
+                  workspaceId={workspaceId}
                 />
               </div>
             );
@@ -57,6 +59,7 @@ const UIBlockRenderer: React.FC<UIBlockRendererProps> = ({ blocks, className, em
                   file={createVirtualFile(block.name ?? 'block.md', block.id)}
                   fileContent={block.content}
                   disableInternalScroll
+                  workspaceId={workspaceId}
                 />
               </div>
             );
@@ -66,6 +69,7 @@ const UIBlockRenderer: React.FC<UIBlockRendererProps> = ({ blocks, className, em
                 <FileRenderer
                   file={createVirtualFile(block.name ?? 'block.html', block.id)}
                   fileContent={block.content}
+                  workspaceId={workspaceId}
                 />
               </div>
             );

@@ -62,6 +62,9 @@ tools:
   - name: request_clarification
     kind: builtin
     description: Pause the run and ask the human for clarification with optional choices
+  - name: request_human_action
+    kind: builtin
+    description: Pause the run and ask the human to choose from arbitrary actions
 
 mcp_servers:
   - name: toolbox-bq-demo

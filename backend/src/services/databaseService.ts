@@ -179,6 +179,7 @@ export class DatabaseService {
         table.string('slug').notNullable().unique();
         table.uuid('ownerId').notNullable().references('id').inTable('users').onDelete('CASCADE');
         table.uuid('lastModifiedBy').references('id').inTable('users');
+        table.boolean('skipPlanApprovals').notNullable().defaultTo(false);
         table.timestamp('createdAt').notNullable().defaultTo(this.db.fn.now());
         table.timestamp('updatedAt').notNullable().defaultTo(this.db.fn.now());
       });
@@ -187,6 +188,7 @@ export class DatabaseService {
       await this.ensureColumn('workspaces', 'slug', (table) => table.string('slug').notNullable().defaultTo(this.db.raw('md5(random()::text)')));
       await this.ensureColumn('workspaces', 'ownerId', (table) => table.uuid('ownerId'));
       await this.ensureColumn('workspaces', 'lastModifiedBy', (table) => table.uuid('lastModifiedBy'));
+      await this.ensureColumn('workspaces', 'skipPlanApprovals', (table) => table.boolean('skipPlanApprovals').notNullable().defaultTo(false));
     }
   }
 

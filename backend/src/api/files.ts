@@ -14,6 +14,12 @@ export default function(fileService: FileService) {
     version: z.number().int().positive().optional(),
   });
 
+  const createTextFileSchema = z.object({
+    name: z.string().min(1),
+    content: z.string(),
+    mimeType: z.string().min(1).optional(),
+  });
+
   const renameFileSchema = z.object({
     name: z.string().min(1),
     version: z.number().int().positive().optional(),
@@ -114,6 +120,27 @@ export default function(fileService: FileService) {
       }
     },
   );
+
+  router.post('/text', async (req: Request<{ workspaceId: string }>, res: Response) => {
+    try {
+      const { workspaceId } = req.params;
+      const user = requireUserContext(req);
+      const payload = createTextFileSchema.parse(req.body);
+      const created = await fileService.createTextFile(
+        workspaceId,
+        payload.name,
+        payload.content,
+        user.userId,
+        payload.mimeType,
+      );
+      res.status(201).json(created);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: 'Invalid text file payload' });
+      }
+      handleError(res, error, 'Failed to create text file');
+    }
+  });
 
   router.put('/:fileId/content', async (req: Request<{ fileId: string }>, res: Response) => {
     try {

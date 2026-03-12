@@ -1,10 +1,12 @@
-import { Copy, Loader2, RotateCcw } from 'lucide-react';
+import { CheckCircle2, Copy, FilePenLine, Loader2, RotateCcw, ShieldCheck } from 'lucide-react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { useEffect, useMemo, useState, type Dispatch, type KeyboardEvent, type SetStateAction } from 'react';
+import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from 'react';
 
-import type { ConversationMessage, ConversationMessageMetadata, PendingInterrupt } from '../../types';
+import type { ConversationMessage, ConversationMessageMetadata } from '../../types';
 import ToolOutputFilePreview from './ToolOutputFilePreview';
+import type { RenderableInterruptAction } from './interruptActions';
+import { buildApprovalReview } from './approvalReview';
 
 const THOUGHT_PREVIEW_LIMIT = 320;
 const THINKING_PLACEHOLDER = 'Formulating a research plan based on your prompt and available context.';
@@ -59,9 +61,6 @@ const renderDisplayPayload = (
   );
 };
 
-const getClarificationInputMode = (pendingInterrupt?: PendingInterrupt): 'none' | 'text' | 'choice' | 'text_or_choice' =>
-  pendingInterrupt?.responseSpec?.inputMode || 'text';
-
 export default function ChatMessageBubble({
   message,
   personaDisplayName,
@@ -71,22 +70,25 @@ export default function ChatMessageBubble({
   expandedThinkingMessages,
   copiedMessageId,
   interruptInputByMessageId,
-  interruptSelectedChoicesByMessageId,
   interruptSubmittingByMessageId,
+  interruptErrorByMessageId,
   interruptFieldKey,
+  interruptActionFieldKey,
   formatMessageTimestamp,
   getInterruptKind,
-  getAllowedDecisions,
+  getInterruptActions,
   getPrimaryInterruptAction,
   isPlanApprovalInterrupt,
   setInterruptInputByMessageId,
-  setInterruptSelectedChoicesByMessageId,
+  workspaceSkipPlanApprovals,
+  workspaceSettingsBusy,
   toggleThinkingVisibility,
   toggleToolActivityVisibility,
   handleCopyMessageText,
   handleRerunMessage,
-  handleInterruptDecision,
-  handleClarificationResponse,
+  handlePrepareInterruptAction,
+  handleInterruptAction,
+  enableTrustedPlanMode,
   isStreaming,
   workspaceId,
 }: {
@@ -98,38 +100,42 @@ export default function ChatMessageBubble({
   expandedThinkingMessages: Set<ConversationMessage['id']>;
   copiedMessageId: ConversationMessage['id'] | null;
   interruptInputByMessageId: Record<string, string>;
-  interruptSelectedChoicesByMessageId: Record<string, string[]>;
   interruptSubmittingByMessageId: Record<string, boolean>;
+  interruptErrorByMessageId: Record<string, string>;
   interruptFieldKey: (
     messageKey: string,
     field: 'feedback' | 'edit-json' | 'reject-note' | 'clarification-text',
   ) => string;
+  interruptActionFieldKey: (messageKey: string, actionId: string) => string;
   formatMessageTimestamp: (value?: string) => string;
   getInterruptKind: (
     pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
   ) => 'approval' | 'clarification';
-  getAllowedDecisions: (
+  getInterruptActions: (
     pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
-  ) => Array<'approve' | 'edit' | 'reject'>;
+  ) => RenderableInterruptAction[];
   getPrimaryInterruptAction: (
     pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
   ) => { name?: string; args?: Record<string, unknown> } | undefined;
   isPlanApprovalInterrupt: (pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt']) => boolean;
   setInterruptInputByMessageId: Dispatch<SetStateAction<Record<string, string>>>;
-  setInterruptSelectedChoicesByMessageId: Dispatch<SetStateAction<Record<string, string[]>>>;
+  workspaceSkipPlanApprovals: boolean;
+  workspaceSettingsBusy: boolean;
   toggleThinkingVisibility: (messageId: ConversationMessage['id']) => void;
   toggleToolActivityVisibility: (messageId: ConversationMessage['id']) => void;
   handleCopyMessageText: (message: ConversationMessage) => void;
   handleRerunMessage: (messageId: ConversationMessage['id']) => void;
-  handleInterruptDecision: (
+  handlePrepareInterruptAction: (
     message: ConversationMessage,
-    decision: 'approve' | 'edit' | 'reject',
+    action: RenderableInterruptAction,
     pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
   ) => void;
-  handleClarificationResponse: (
+  handleInterruptAction: (
     message: ConversationMessage,
+    action: RenderableInterruptAction,
     pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
   ) => void;
+  enableTrustedPlanMode: () => Promise<boolean> | boolean;
   isStreaming: boolean;
   workspaceId?: string;
 }) {
@@ -141,12 +147,14 @@ export default function ChatMessageBubble({
   const pendingInterrupt = messageMetadata?.pendingInterrupt;
   const interruptKind = getInterruptKind(pendingInterrupt);
   const isClarificationInterrupt = Boolean(pendingInterrupt && interruptKind === 'clarification');
-  const allowedInterruptDecisions = getAllowedDecisions(pendingInterrupt);
+  const interruptActions = getInterruptActions(pendingInterrupt);
   const primaryInterruptAction = getPrimaryInterruptAction(pendingInterrupt);
   const isPlanApprovalRequest = isPlanApprovalInterrupt(pendingInterrupt);
   const messageKey = String(message.id);
   const interruptBusy = Boolean(interruptSubmittingByMessageId[messageKey]);
-  const [interruptMode, setInterruptMode] = useState<'review' | 'editing' | 'rejecting'>('review');
+  const interruptControlsDisabled = interruptBusy || (Boolean(pendingInterrupt) && isStreaming);
+  const [activeTextActionId, setActiveTextActionId] = useState<string | null>(null);
+  const [confirmActionId, setConfirmActionId] = useState<string | null>(null);
   const [clarificationDismissed, setClarificationDismissed] = useState(false);
   const isToolActivityExpanded = expandedToolMessages.has(message.id);
   const isThinkingExpanded = expandedThinkingMessages.has(message.id);
@@ -183,12 +191,7 @@ export default function ChatMessageBubble({
   const genericEditKey = interruptFieldKey(messageKey, 'edit-json');
   const rejectNoteKey = interruptFieldKey(messageKey, 'reject-note');
   const clarificationTextKey = interruptFieldKey(messageKey, 'clarification-text');
-  const clarificationInputMode = getClarificationInputMode(pendingInterrupt);
-  const clarificationAllowsChoices = clarificationInputMode === 'choice' || clarificationInputMode === 'text_or_choice';
-  const clarificationAllowsText = clarificationInputMode === 'text' || clarificationInputMode === 'text_or_choice';
-  const clarificationChoices = pendingInterrupt?.responseSpec?.choices || [];
-  const selectedChoiceIds = interruptSelectedChoicesByMessageId[messageKey] || [];
-  const clarificationValue = interruptInputByMessageId[clarificationTextKey] || '';
+  const interruptError = interruptErrorByMessageId[messageKey] || '';
   const allowDismiss = Boolean(pendingInterrupt?.responseSpec?.allowDismiss);
 
   const planText = useMemo(() => {
@@ -210,13 +213,20 @@ export default function ChatMessageBubble({
     }
     return JSON.stringify(args, null, 2);
   }, [primaryInterruptAction?.args]);
+  const approvalReview = useMemo(
+    () => buildApprovalReview(pendingInterrupt, primaryInterruptAction),
+    [pendingInterrupt, primaryInterruptAction],
+  );
 
   useEffect(() => {
     if (!pendingInterrupt) {
-      setInterruptMode('review');
+      setActiveTextActionId(null);
+      setConfirmActionId(null);
       setClarificationDismissed(false);
       return;
     }
+    setActiveTextActionId(null);
+    setConfirmActionId(null);
     setClarificationDismissed(false);
   }, [pendingInterrupt, messageKey]);
 
@@ -227,66 +237,220 @@ export default function ChatMessageBubble({
     }));
   };
 
-  const setSelectedChoices = (nextChoices: string[]) => {
-    setInterruptSelectedChoicesByMessageId((prev) => ({
-      ...prev,
-      [messageKey]: nextChoices,
-    }));
-  };
-
-  const handleClarificationChoiceToggle = (choiceId: string, choiceValue: string) => {
-    const isMultiple = Boolean(pendingInterrupt?.responseSpec?.multiple);
-    const nextChoices = isMultiple
-      ? selectedChoiceIds.includes(choiceId)
-        ? selectedChoiceIds.filter((value) => value !== choiceId)
-        : [...selectedChoiceIds, choiceId]
-      : [choiceId];
-    setSelectedChoices(nextChoices);
-    if (clarificationInputMode === 'text_or_choice') {
-      setInterruptValue(clarificationTextKey, choiceValue);
+  const getActionInputKey = (action: RenderableInterruptAction): string => {
+    if (action.source === 'approval' && action.legacyDecision === 'edit') {
+      return isPlanApprovalRequest ? planFeedbackKey : genericEditKey;
     }
+    if (action.source === 'approval' && action.legacyDecision === 'reject') {
+      return rejectNoteKey;
+    }
+    if (action.source === 'clarification-text') {
+      return clarificationTextKey;
+    }
+    return interruptActionFieldKey(messageKey, action.id);
   };
 
-  const handleClarificationKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (!pendingInterrupt || clarificationDismissed) {
+  const handleActionTrigger = (action: RenderableInterruptAction) => {
+    if (interruptControlsDisabled) {
       return;
     }
-    const target = event.target as HTMLElement | null;
-    const isTextEntryTarget = target?.tagName === 'TEXTAREA' || target?.tagName === 'INPUT';
-    if (clarificationAllowsChoices && clarificationChoices.length) {
-      if (isTextEntryTarget) {
-        return;
+    handlePrepareInterruptAction(message, action, pendingInterrupt);
+    if (action.inputMode === 'text') {
+      setActiveTextActionId(action.id);
+      if (action.confirm) {
+        setConfirmActionId(action.id);
+      } else {
+        setConfirmActionId(null);
       }
-      const currentIndex = selectedChoiceIds.length
-        ? clarificationChoices.findIndex((choice) => choice.id === selectedChoiceIds[0])
-        : -1;
-      if (event.key === 'ArrowDown') {
-        event.preventDefault();
-        const nextIndex = currentIndex < 0 ? 0 : (currentIndex + 1) % clarificationChoices.length;
-        const nextChoice = clarificationChoices[nextIndex];
-        handleClarificationChoiceToggle(nextChoice.id, nextChoice.value);
-        return;
-      }
-      if (event.key === 'ArrowUp') {
-        event.preventDefault();
-        const nextIndex = currentIndex <= 0 ? clarificationChoices.length - 1 : currentIndex - 1;
-        const nextChoice = clarificationChoices[nextIndex];
-        handleClarificationChoiceToggle(nextChoice.id, nextChoice.value);
-        return;
-      }
+      return;
     }
-    const hasValidResponse =
-      clarificationValue.trim().length > 0 ||
-      selectedChoiceIds.length > 0 ||
-      clarificationInputMode === 'none';
-    if (event.key === 'Enter' && !event.shiftKey && hasValidResponse && !interruptBusy) {
-      event.preventDefault();
-      handleClarificationResponse(message, pendingInterrupt);
+    if (action.confirm && confirmActionId !== action.id) {
+      setConfirmActionId(action.id);
+      return;
     }
+    void handleInterruptAction(message, action, pendingInterrupt);
+  };
+
+  const handleActionCancel = () => {
+    setActiveTextActionId(null);
+    setConfirmActionId(null);
   };
 
   const clarificationDisplayPayload = renderDisplayPayload(pendingInterrupt?.displayPayload, 'Context', 'dark');
-  const approvalDisplayPayload = renderDisplayPayload(pendingInterrupt?.displayPayload, 'Plan details', 'light');
+  const approvalDisplayPayload = approvalReview
+    ? null
+    : renderDisplayPayload(pendingInterrupt?.displayPayload, 'Plan details', 'light');
+  const isDynamicActionInterrupt = Boolean(pendingInterrupt?.actions?.length);
+
+  const getActionButtonClass = (action: RenderableInterruptAction, tone: 'light' | 'dark'): string => {
+    const isPrimary = action.style === 'primary';
+    const isDanger = action.style === 'danger';
+    if (tone === 'dark') {
+      if (isPrimary) {
+        return 'rounded-[1.2rem] border border-[#94c5f8]/70 bg-[#94c5f8] px-4 py-3 text-sm font-semibold text-slate-900 transition-all duration-200 hover:bg-[#a8d2fb] disabled:cursor-not-allowed disabled:opacity-40';
+      }
+      if (isDanger) {
+        return 'rounded-[1.2rem] border border-rose-400/35 bg-rose-500/10 px-4 py-3 text-sm font-semibold text-rose-100 transition-all duration-200 hover:bg-rose-500/15 disabled:cursor-not-allowed disabled:opacity-40';
+      }
+      return 'rounded-[1.2rem] border border-white/10 bg-white/[0.03] px-4 py-3 text-sm font-semibold text-white/92 transition-all duration-200 hover:border-white/25 hover:bg-white/[0.07] disabled:cursor-not-allowed disabled:opacity-40';
+    }
+    if (isPrimary) {
+      return 'rounded-xl border border-emerald-300/80 bg-emerald-500/90 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition-all duration-200 hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-60';
+    }
+    if (isDanger) {
+      return 'rounded-xl border border-rose-200/90 bg-white px-3 py-1.5 text-xs font-semibold text-rose-700 transition-all duration-200 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60';
+    }
+    return 'rounded-xl border border-blue-200/90 bg-white px-3 py-1.5 text-xs font-semibold text-blue-700 transition-all duration-200 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-60';
+  };
+
+  const renderInterruptActions = (tone: 'light' | 'dark') => {
+    if (!interruptActions.length) {
+      return null;
+    }
+
+    return (
+      <div className={tone === 'dark' ? 'mt-5 space-y-3' : 'mt-3 space-y-2'}>
+        {interruptActions.map((action, index) => {
+          const inputKey = getActionInputKey(action);
+          const inputValue = interruptInputByMessageId[inputKey] || '';
+          const isTextMode = activeTextActionId === action.id && action.inputMode === 'text';
+          const needsExplicitConfirm = Boolean(action.confirm && confirmActionId === action.id);
+          const showConfirmationOnly = needsExplicitConfirm && action.inputMode !== 'text';
+          const showPrimaryRow = !isTextMode && !showConfirmationOnly;
+          const numberedChoice = tone === 'dark' && action.source === 'clarification-choice';
+
+          return (
+            <div key={action.id} className={tone === 'dark' ? 'space-y-3' : 'space-y-2'}>
+              {showPrimaryRow ? (
+                <button
+                  type="button"
+                  disabled={interruptControlsDisabled}
+                  onClick={() => handleActionTrigger(action)}
+                  className={
+                    numberedChoice
+                      ? `flex w-full items-start justify-between rounded-[1.35rem] border px-5 py-4 text-left transition-all duration-200 ${
+                          action.style === 'primary'
+                            ? 'border-[#94c5f8]/55 bg-[#94c5f8]/10 text-white hover:bg-[#94c5f8]/15'
+                            : action.style === 'danger'
+                              ? 'border-rose-400/25 bg-rose-500/10 text-rose-100 hover:bg-rose-500/15'
+                              : 'border-white/10 bg-white/[0.03] text-white/92 hover:border-white/25 hover:bg-white/[0.07]'
+                        } ${interruptControlsDisabled ? 'cursor-not-allowed opacity-70' : ''}`
+                      : getActionButtonClass(action, tone)
+                  }
+                >
+                  {numberedChoice ? (
+                    <>
+                      <div className="min-w-0 pr-3">
+                        <div className="flex items-center gap-3">
+                          <span className="text-2xl font-semibold text-white/45">{index + 1}.</span>
+                          <span className="text-[18px] font-semibold leading-snug">{action.label}</span>
+                        </div>
+                      </div>
+                      <span className="mt-1 text-lg text-white/35">{needsExplicitConfirm ? '!' : ''}</span>
+                    </>
+                  ) : (
+                    action.label
+                  )}
+                </button>
+              ) : null}
+              {showConfirmationOnly ? (
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    disabled={interruptControlsDisabled}
+                    onClick={() => void handleInterruptAction(message, action, pendingInterrupt)}
+                    className={getActionButtonClass(
+                      {
+                        ...action,
+                        label: action.submitLabel || `Confirm ${action.label}`,
+                        style: action.style === 'danger' ? 'danger' : 'primary',
+                      },
+                      tone,
+                    )}
+                  >
+                    {action.submitLabel || `Confirm ${action.label}`}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={interruptControlsDisabled}
+                    onClick={handleActionCancel}
+                    className={tone === 'dark'
+                      ? 'rounded-full px-4 py-2 text-sm font-medium text-white/70 transition-all duration-200 hover:bg-white/[0.06] hover:text-white disabled:cursor-not-allowed disabled:opacity-40'
+                      : 'rounded-xl border border-slate-300/80 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition-all duration-200 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60'}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : null}
+              {isTextMode ? (
+                <div className={tone === 'dark' ? 'space-y-3' : 'space-y-2'}>
+                  <textarea
+                    value={inputValue}
+                    onChange={(event) => setInterruptValue(inputKey, event.target.value)}
+                    rows={tone === 'dark' ? 4 : 4}
+                    autoFocus
+                    disabled={interruptControlsDisabled}
+                    placeholder={action.placeholder || 'Enter your response'}
+                    className={tone === 'dark'
+                      ? 'w-full rounded-[1.35rem] border border-white/10 bg-white/[0.03] px-5 py-4 text-sm leading-relaxed text-white placeholder:text-white/32 focus:border-white/25 focus:outline-none disabled:cursor-not-allowed disabled:opacity-70'
+                      : 'w-full rounded-xl border border-slate-200/80 bg-white/85 p-3 text-sm text-slate-700 backdrop-blur-sm focus:border-sky-400 focus:outline-none'}
+                  />
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      disabled={interruptControlsDisabled}
+                      onClick={() => void handleInterruptAction(message, action, pendingInterrupt)}
+                      className={getActionButtonClass(
+                        {
+                          ...action,
+                          label: action.submitLabel || action.label,
+                          style: action.style === 'danger' ? 'danger' : 'primary',
+                        },
+                        tone,
+                      )}
+                    >
+                      {interruptBusy ? (
+                        <span className="inline-flex items-center gap-2">
+                          <Loader2 size={16} className="animate-spin" />
+                          {action.submitLabel || action.label}
+                        </span>
+                      ) : (
+                        action.submitLabel || action.label
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={interruptControlsDisabled}
+                      onClick={handleActionCancel}
+                      className={tone === 'dark'
+                        ? 'rounded-full px-4 py-2 text-sm font-medium text-white/70 transition-all duration-200 hover:bg-white/[0.06] hover:text-white disabled:cursor-not-allowed disabled:opacity-40'
+                        : 'rounded-xl border border-slate-300/80 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition-all duration-200 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60'}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
+  const approvalCreateImpacts = approvalReview
+    ? approvalReview.steps.flatMap((step) => step.fileImpacts.filter((impact) => impact.action === 'create'))
+    : [];
+  const approvalUpdateImpacts = approvalReview
+    ? approvalReview.steps.flatMap((step) => step.fileImpacts.filter((impact) => impact.action === 'update'))
+    : [];
+
+  const handleEnableTrustedMode = async () => {
+    if (workspaceSkipPlanApprovals || workspaceSettingsBusy) {
+      return;
+    }
+    await Promise.resolve(enableTrustedPlanMode());
+  };
 
   return (
     <div className={`group flex items-start gap-3 motion-safe:animate-[chat-pane-message-in_220ms_ease-out] ${isAgentMessage ? '' : 'justify-end'}`}>
@@ -339,282 +503,229 @@ export default function ChatMessageBubble({
             {pendingInterrupt && !isClarificationInterrupt ? (
               <div className="relative mt-4 pl-4 before:absolute before:-bottom-2 before:left-1 before:top-2 before:w-px before:bg-slate-200">
                 <span className="absolute left-0 top-3 h-2.5 w-2.5 rounded-full border border-indigo-300 bg-indigo-100" />
-                <div className="rounded-2xl border border-sky-200/70 bg-gradient-to-br from-white/75 via-sky-50/70 to-indigo-100/60 p-4 shadow-[0_18px_40px_-28px_rgba(30,64,175,0.75)] backdrop-blur-md">
-                  <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-700">
-                    {pendingInterrupt.title || 'Approval Required'}
-                  </p>
-                  <p className="mt-1 text-sm text-slate-700">
-                    {pendingInterrupt.description || 'Please review the proposed plan below before continuing.'}
-                  </p>
-                  {isPlanApprovalRequest ? (
-                    <div className="mt-3 grid gap-2">
-                      {approvalDisplayPayload}
-                      {interruptMode === 'editing' ? (
-                        <textarea
-                          value={interruptInputByMessageId[planFeedbackKey] || ''}
-                          onChange={(event) => setInterruptValue(planFeedbackKey, event.target.value)}
-                          className="w-full rounded-xl border border-slate-200/80 bg-white/85 p-3 text-sm text-slate-700 backdrop-blur-sm focus:border-sky-400 focus:outline-none"
-                          rows={6}
-                          placeholder="Edit this plan before saving changes"
-                        />
-                      ) : (
-                        <div className="max-h-48 overflow-y-auto rounded-xl border border-slate-200/70 bg-white/60 p-3 text-sm text-slate-700 whitespace-pre-wrap">
-                          {planText || 'No plan details were provided.'}
-                        </div>
-                      )}
-                      {interruptMode === 'rejecting' ? (
-                        <input
-                          value={interruptInputByMessageId[rejectNoteKey] || ''}
-                          onChange={(event) => setInterruptValue(rejectNoteKey, event.target.value)}
-                          className="w-full rounded-xl border border-slate-200/80 bg-white/80 px-3 py-2 text-sm text-slate-700 backdrop-blur-sm focus:border-sky-400 focus:outline-none"
-                          placeholder="Reason for rejection (optional)"
-                        />
-                      ) : null}
-                      <div className="mt-1 flex flex-wrap gap-2">
-                        {interruptMode === 'editing' ? (
-                          <>
-                            <button
-                              type="button"
-                              disabled={interruptBusy}
-                              onClick={() => handleInterruptDecision(message, 'edit', pendingInterrupt)}
-                              className="rounded-xl border border-blue-300/80 bg-blue-500/90 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition-all duration-200 hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-60"
-                            >
-                              Save Changes
-                            </button>
-                            <button
-                              type="button"
-                              disabled={interruptBusy}
-                              onClick={() => setInterruptMode('review')}
-                              className="rounded-xl border border-slate-300/80 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition-all duration-200 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-                            >
-                              Cancel
-                            </button>
-                          </>
-                        ) : interruptMode === 'rejecting' ? (
-                          <>
-                            <button
-                              type="button"
-                              disabled={interruptBusy}
-                              onClick={() => handleInterruptDecision(message, 'reject', pendingInterrupt)}
-                              className="rounded-xl border border-rose-300/80 bg-rose-500/90 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition-all duration-200 hover:bg-rose-500 disabled:cursor-not-allowed disabled:opacity-60"
-                            >
-                              Confirm Rejection
-                            </button>
-                            <button
-                              type="button"
-                              disabled={interruptBusy}
-                              onClick={() => setInterruptMode('review')}
-                              className="rounded-xl border border-slate-300/80 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition-all duration-200 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-                            >
-                              Cancel
-                            </button>
-                          </>
-                        ) : (
-                          <>
-                            {allowedInterruptDecisions.includes('approve') ? (
-                              <button
-                                type="button"
-                                disabled={interruptBusy}
-                                onClick={() => handleInterruptDecision(message, 'approve', pendingInterrupt)}
-                                className="rounded-xl border border-emerald-300/80 bg-emerald-500/90 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition-all duration-200 hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
-                              >
-                                Approve
-                              </button>
-                            ) : null}
-                            {allowedInterruptDecisions.includes('edit') ? (
-                              <button
-                                type="button"
-                                disabled={interruptBusy}
-                                onClick={() => {
-                                  if (!(interruptInputByMessageId[planFeedbackKey] || '').trim()) {
-                                    setInterruptValue(planFeedbackKey, planText);
-                                  }
-                                  setInterruptMode('editing');
-                                }}
-                                className="rounded-xl border border-blue-200/90 bg-white px-3 py-1.5 text-xs font-semibold text-blue-700 transition-all duration-200 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-60"
-                              >
-                                Edit
-                              </button>
-                            ) : null}
-                            {allowedInterruptDecisions.includes('reject') ? (
-                              <button
-                                type="button"
-                                disabled={interruptBusy}
-                                onClick={() => setInterruptMode('rejecting')}
-                                className="rounded-xl border border-rose-200/90 bg-white px-3 py-1.5 text-xs font-semibold text-rose-700 transition-all duration-200 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
-                              >
-                                Reject
-                              </button>
-                            ) : null}
-                          </>
-                        )}
+                <div className="rounded-[1.9rem] border border-amber-200/75 bg-[radial-gradient(circle_at_top_left,_rgba(251,191,36,0.12),_transparent_38%),linear-gradient(160deg,rgba(255,255,255,0.98),rgba(248,250,252,0.95))] p-5 shadow-[0_24px_60px_-34px_rgba(120,53,15,0.45)] backdrop-blur-md">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-500">
+                          {approvalReview?.cardTitle || pendingInterrupt.title || 'Review Research Strategy'}
+                        </p>
+                        <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-amber-700">
+                          <CheckCircle2 size={12} />
+                          {approvalReview?.badgeLabel || 'Pending Approval'}
+                        </span>
                       </div>
+                      <p className="mt-3 text-xl font-semibold tracking-tight text-slate-900">
+                        {approvalReview?.planTitle || 'Proposed plan'}
+                      </p>
+                      <p className="mt-1 text-sm leading-relaxed text-slate-600">
+                        {approvalReview?.description || pendingInterrupt.description || 'Review the proposed research strategy before execution continues.'}
+                      </p>
+                    </div>
+                    {approvalReview?.stepCount && approvalReview.stepCount > 1 ? (
+                      <div className="rounded-full border border-slate-200 bg-white/80 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+                        Step {typeof approvalReview.stepIndex === 'number' ? approvalReview.stepIndex + 1 : 1} of {approvalReview.stepCount}
+                      </div>
+                    ) : null}
+                  </div>
+
+                  {approvalReview ? (
+                    <div className="mt-4 space-y-4">
+                      <div className="rounded-[1.4rem] border border-slate-200/80 bg-white/80 p-4 shadow-sm">
+                        <div className="flex flex-wrap items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                          <span>Plan File</span>
+                          <span className="rounded-full bg-slate-100 px-2.5 py-1 font-mono text-[10px] normal-case tracking-normal text-slate-700">
+                            {approvalReview.planFilePath}
+                          </span>
+                        </div>
+                        {approvalReview.summaryMarkdown ? (
+                          <div className="agent-markdown mt-3 text-sm text-slate-700">
+                            <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+                              {approvalReview.summaryMarkdown}
+                            </ReactMarkdown>
+                          </div>
+                        ) : null}
+                      </div>
+
+                      {approvalReview.steps.length ? (
+                        <div className="rounded-[1.4rem] border border-slate-200/80 bg-white/72 p-4 shadow-sm">
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                            Execution Map
+                          </p>
+                          <div className="mt-3 space-y-3">
+                            {approvalReview.steps.map((step, index) => (
+                              <div key={`${step.title}-${index}`} className="rounded-[1.2rem] border border-slate-200/80 bg-slate-50/80 p-3">
+                                <div className="flex items-start gap-3">
+                                  <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-900 text-[11px] font-semibold text-white">
+                                    {index + 1}
+                                  </span>
+                                  <div className="min-w-0">
+                                    <p className="text-sm font-semibold text-slate-900">{step.title}</p>
+                                    {step.detail ? (
+                                      <p className="mt-1 text-sm leading-relaxed text-slate-600">{step.detail}</p>
+                                    ) : null}
+                                    {step.toolNames.length ? (
+                                      <div className="mt-3 flex flex-wrap gap-2">
+                                        {step.toolNames.map((toolName) => (
+                                          <span
+                                            key={`${step.title}-${toolName}`}
+                                            className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700 shadow-sm"
+                                          >
+                                            {toolName}
+                                          </span>
+                                        ))}
+                                      </div>
+                                    ) : null}
+                                    {step.fileImpacts.length ? (
+                                      <div className="mt-3 flex flex-wrap gap-2">
+                                        {step.fileImpacts.map((impact) => (
+                                          <span
+                                            key={`${step.title}-${impact.action}-${impact.path}`}
+                                            className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${
+                                              impact.action === 'create'
+                                                ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200'
+                                                : 'bg-blue-50 text-blue-700 ring-1 ring-blue-200'
+                                            }`}
+                                          >
+                                            {impact.action === 'create' ? 'Create' : 'Update'}: {impact.path}
+                                          </span>
+                                        ))}
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+
+                      {approvalCreateImpacts.length || approvalUpdateImpacts.length ? (
+                        <div className="grid gap-3 md:grid-cols-2">
+                          <div className="rounded-[1.3rem] border border-emerald-200/80 bg-emerald-50/70 p-4">
+                            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-emerald-700">Create</p>
+                            <div className="mt-2 space-y-1.5 text-sm text-emerald-900">
+                              {approvalCreateImpacts.length ? approvalCreateImpacts.map((impact, index) => (
+                                <p key={`${impact.path}-${index}`}>{impact.path}</p>
+                              )) : <p className="text-emerald-800/70">No new files.</p>}
+                            </div>
+                          </div>
+                          <div className="rounded-[1.3rem] border border-blue-200/80 bg-blue-50/75 p-4">
+                            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-blue-700">Update</p>
+                            <div className="mt-2 space-y-1.5 text-sm text-blue-900">
+                              {approvalUpdateImpacts.length ? approvalUpdateImpacts.map((impact, index) => (
+                                <p key={`${impact.path}-${index}`}>{impact.path}</p>
+                              )) : <p className="text-blue-800/70">No existing files updated.</p>}
+                            </div>
+                          </div>
+                        </div>
+                      ) : null}
+
+                      {approvalReview.riskyActions ? (
+                        <div className="rounded-[1.3rem] border border-rose-200/80 bg-rose-50/70 p-4">
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-rose-700">Risk Notes</p>
+                          <p className="mt-2 text-sm leading-relaxed text-rose-900">{approvalReview.riskyActions}</p>
+                        </div>
+                      ) : null}
                     </div>
                   ) : (
-                    <div className="mt-2 grid gap-2">
+                    <div className="mt-3 grid gap-2">
                       {approvalDisplayPayload}
-                      <textarea
-                        value={interruptInputByMessageId[genericEditKey] || ''}
-                        onChange={(event) => setInterruptValue(genericEditKey, event.target.value)}
-                        className="w-full rounded-xl border border-slate-200/80 bg-white/80 p-2 text-xs text-slate-700 backdrop-blur-sm focus:border-sky-400 focus:outline-none"
-                        rows={4}
-                        placeholder="Optional edit feedback or updated args JSON"
-                      />
-                      {interruptMode === 'rejecting' ? (
-                        <input
-                          value={interruptInputByMessageId[rejectNoteKey] || ''}
-                          onChange={(event) => setInterruptValue(rejectNoteKey, event.target.value)}
-                          className="w-full rounded-xl border border-slate-200/80 bg-white/80 px-2 py-1.5 text-xs text-slate-700 backdrop-blur-sm focus:border-sky-400 focus:outline-none"
-                          placeholder="Reason for rejection (optional)"
-                        />
+                      {isPlanApprovalRequest || planText ? (
+                        <div className="max-h-48 overflow-y-auto rounded-xl border border-slate-200/70 bg-white/60 p-3 text-sm whitespace-pre-wrap text-slate-700">
+                          {planText || 'No plan details were provided.'}
+                        </div>
                       ) : null}
-                      <div className="mt-1 flex flex-wrap gap-2">
-                        {allowedInterruptDecisions.includes('approve') ? (
-                          <button
-                            type="button"
-                            disabled={interruptBusy}
-                            onClick={() => handleInterruptDecision(message, 'approve', pendingInterrupt)}
-                            className="rounded-xl border border-emerald-300/80 bg-emerald-500/90 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition-all duration-200 hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
-                          >
-                            Approve
-                          </button>
-                        ) : null}
-                        {allowedInterruptDecisions.includes('edit') ? (
-                          <button
-                            type="button"
-                            disabled={interruptBusy}
-                            onClick={() => handleInterruptDecision(message, 'edit', pendingInterrupt)}
-                            className="rounded-xl border border-blue-200/90 bg-white px-3 py-1.5 text-xs font-semibold text-blue-700 transition-all duration-200 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-60"
-                          >
-                            Edit
-                          </button>
-                        ) : null}
-                        {allowedInterruptDecisions.includes('reject') ? (
-                          interruptMode === 'rejecting' ? (
-                            <>
-                              <button
-                                type="button"
-                                disabled={interruptBusy}
-                                onClick={() => handleInterruptDecision(message, 'reject', pendingInterrupt)}
-                                className="rounded-xl border border-rose-300/80 bg-rose-500/90 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition-all duration-200 hover:bg-rose-500 disabled:cursor-not-allowed disabled:opacity-60"
-                              >
-                                Confirm Rejection
-                              </button>
-                              <button
-                                type="button"
-                                disabled={interruptBusy}
-                                onClick={() => setInterruptMode('review')}
-                                className="rounded-xl border border-slate-300/80 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition-all duration-200 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-                              >
-                                Cancel
-                              </button>
-                            </>
-                          ) : (
-                            <button
-                              type="button"
-                              disabled={interruptBusy}
-                              onClick={() => setInterruptMode('rejecting')}
-                              className="rounded-xl border border-rose-200/90 bg-white px-3 py-1.5 text-xs font-semibold text-rose-700 transition-all duration-200 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
-                            >
-                              Reject
-                            </button>
-                          )
-                        ) : null}
-                      </div>
                     </div>
                   )}
+
+                  {isPlanApprovalRequest ? (
+                    <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-[1.2rem] border border-slate-200/80 bg-white/75 px-4 py-3">
+                      <label className="flex min-w-0 items-center gap-3 text-sm text-slate-600">
+                        <input
+                          type="checkbox"
+                          checked={workspaceSkipPlanApprovals}
+                          disabled={workspaceSkipPlanApprovals || workspaceSettingsBusy}
+                          onChange={() => { void handleEnableTrustedMode(); }}
+                          className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                        />
+                        <span className="min-w-0">
+                          <span className="font-medium text-slate-700">Don’t ask me again for this workspace</span>
+                          <span className="block text-xs text-slate-500">
+                            Future plan reviews will auto-approve until you switch approvals back on in the sidebar.
+                          </span>
+                        </span>
+                      </label>
+                      {workspaceSkipPlanApprovals ? (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700 ring-1 ring-emerald-200">
+                          <ShieldCheck size={12} />
+                          Trusted mode enabled
+                        </span>
+                      ) : null}
+                    </div>
+                  ) : null}
+
+                  {interruptError ? (
+                    <div className="mt-4 rounded-xl border border-rose-200/90 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700">
+                      {interruptError}
+                    </div>
+                  ) : null}
+
+                  {isPlanApprovalRequest ? (
+                    <div className="mt-3 rounded-[1.2rem] border border-slate-200/80 bg-white/70 px-4 py-3 text-xs text-slate-500">
+                      <div className="flex items-center gap-2 font-semibold uppercase tracking-[0.16em] text-slate-500">
+                        <FilePenLine size={13} />
+                        Edit Behavior
+                      </div>
+                      <p className="mt-2 leading-relaxed text-slate-600">
+                        Selecting <span className="font-semibold text-slate-700">Edit</span> opens the plan file in the editor so you can revise the draft before resubmitting feedback.
+                      </p>
+                    </div>
+                  ) : null}
+
+                  <div className="mt-3">{renderInterruptActions('light')}</div>
                 </div>
               </div>
             ) : null}
             {pendingInterrupt && isClarificationInterrupt && !clarificationDismissed ? (
               <div className="mt-5 rounded-[2rem] border border-white/10 bg-[#121212] p-5 text-white shadow-[0_26px_80px_-34px_rgba(0,0,0,0.95)] ring-1 ring-white/10">
-                <div
-                  className="outline-none"
-                  tabIndex={0}
-                  onKeyDown={handleClarificationKeyDown}
-                >
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="min-w-0">
-                      <p className="text-[30px] font-semibold leading-tight tracking-tight text-white">
-                        {pendingInterrupt.title || 'The agent needs clarification'}
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0">
+                    <p className="text-[30px] font-semibold leading-tight tracking-tight text-white">
+                      {pendingInterrupt.title || (isDynamicActionInterrupt ? 'Select the next step' : 'The agent needs clarification')}
+                    </p>
+                    {pendingInterrupt.description ? (
+                      <p className="mt-3 max-w-2xl text-sm leading-relaxed text-white/70">
+                        {pendingInterrupt.description}
                       </p>
-                      {pendingInterrupt.description ? (
-                        <p className="mt-3 max-w-2xl text-sm leading-relaxed text-white/70">
-                          {pendingInterrupt.description}
-                        </p>
-                      ) : null}
-                    </div>
-                    {pendingInterrupt.stepCount && pendingInterrupt.stepCount > 1 ? (
-                      <div className="shrink-0 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-white/75">
-                        {typeof pendingInterrupt.stepIndex === 'number' ? pendingInterrupt.stepIndex + 1 : 1} of {pendingInterrupt.stepCount}
-                      </div>
                     ) : null}
                   </div>
-                  {clarificationDisplayPayload ? <div className="mt-5">{clarificationDisplayPayload}</div> : null}
-                  {clarificationAllowsChoices && clarificationChoices.length ? (
-                    <div className="mt-5 space-y-3">
-                      {clarificationChoices.map((choice, index) => {
-                        const selected = selectedChoiceIds.includes(choice.id);
-                        return (
-                          <button
-                            key={choice.id}
-                            type="button"
-                            disabled={interruptBusy}
-                            onClick={() => handleClarificationChoiceToggle(choice.id, choice.value)}
-                            className={`flex w-full items-start justify-between rounded-[1.35rem] border px-5 py-4 text-left transition-all duration-200 ${
-                              selected
-                                ? 'border-white/70 bg-white/14 text-white shadow-[0_12px_36px_-24px_rgba(255,255,255,0.65)]'
-                                : 'border-white/10 bg-white/[0.03] text-white/92 hover:border-white/25 hover:bg-white/[0.07]'
-                            } ${interruptBusy ? 'cursor-not-allowed opacity-70' : ''}`}
-                          >
-                            <div className="min-w-0 pr-3">
-                              <div className="flex items-center gap-3">
-                                <span className={`text-2xl font-semibold ${selected ? 'text-white' : 'text-white/45'}`}>{index + 1}.</span>
-                                <span className="text-[18px] font-semibold leading-snug">{choice.label}</span>
-                              </div>
-                              {choice.description ? (
-                                <p className="mt-2 pl-11 text-sm leading-relaxed text-white/62">{choice.description}</p>
-                              ) : null}
-                            </div>
-                            <span className={`mt-1 text-lg ${selected ? 'text-white' : 'text-white/35'}`}>{selected ? '↵' : ''}</span>
-                          </button>
-                        );
-                      })}
+                  {pendingInterrupt.stepCount && pendingInterrupt.stepCount > 1 ? (
+                    <div className="shrink-0 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-white/75">
+                      {typeof pendingInterrupt.stepIndex === 'number' ? pendingInterrupt.stepIndex + 1 : 1} of {pendingInterrupt.stepCount}
                     </div>
                   ) : null}
-                  {clarificationAllowsText ? (
-                    <textarea
-                      value={clarificationValue}
-                      onChange={(event) => setInterruptValue(clarificationTextKey, event.target.value)}
-                      rows={4}
-                      disabled={interruptBusy}
-                      placeholder={pendingInterrupt.responseSpec?.placeholder || 'Type your answer for the agent'}
-                      className="mt-5 w-full rounded-[1.35rem] border border-white/10 bg-white/[0.03] px-5 py-4 text-sm leading-relaxed text-white placeholder:text-white/32 focus:border-white/25 focus:outline-none disabled:cursor-not-allowed disabled:opacity-70"
-                    />
-                  ) : null}
-                  <div className="mt-6 flex items-center justify-between gap-4">
-                    <button
-                      type="button"
-                      disabled={!allowDismiss || interruptBusy}
-                      onClick={() => setClarificationDismissed(true)}
-                      className={`rounded-full px-4 py-2 text-sm font-medium transition-all duration-200 ${
-                        allowDismiss
-                          ? 'text-white/70 hover:bg-white/[0.06] hover:text-white'
-                          : 'cursor-not-allowed text-white/25'
-                      }`}
-                    >
-                      {pendingInterrupt.responseSpec?.dismissLabel || 'Dismiss'}
-                    </button>
-                    <button
-                      type="button"
-                      disabled={interruptBusy || (!clarificationValue.trim() && !selectedChoiceIds.length && clarificationInputMode !== 'none')}
-                      onClick={() => handleClarificationResponse(message, pendingInterrupt)}
-                      className="inline-flex items-center gap-2 rounded-full bg-[#94c5f8] px-5 py-3 text-sm font-semibold text-slate-900 transition-all duration-200 hover:bg-[#a8d2fb] disabled:cursor-not-allowed disabled:opacity-40"
-                    >
-                      {interruptBusy ? <Loader2 size={16} className="animate-spin" /> : null}
-                      <span>{pendingInterrupt.responseSpec?.submitLabel || 'Continue'}</span>
-                    </button>
+                </div>
+                {clarificationDisplayPayload ? <div className="mt-5">{clarificationDisplayPayload}</div> : null}
+                {interruptError ? (
+                  <div className="mt-4 rounded-[1.25rem] border border-rose-400/35 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">
+                    {interruptError}
                   </div>
+                ) : null}
+                {renderInterruptActions('dark')}
+                <div className="mt-6 flex items-center justify-between gap-4">
+                  <button
+                    type="button"
+                    disabled={!allowDismiss || interruptBusy}
+                    onClick={() => setClarificationDismissed(true)}
+                    className={`rounded-full px-4 py-2 text-sm font-medium transition-all duration-200 ${
+                      allowDismiss
+                        ? 'text-white/70 hover:bg-white/[0.06] hover:text-white'
+                        : 'cursor-not-allowed text-white/25'
+                    }`}
+                  >
+                    {pendingInterrupt.responseSpec?.dismissLabel || 'Dismiss'}
+                  </button>
                 </div>
               </div>
             ) : null}

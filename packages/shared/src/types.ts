@@ -2,6 +2,7 @@ export interface Workspace {
   id: string;
   name: string;
   lastUsed: string;
+  skipPlanApprovals?: boolean;
 }
 
 export interface File {
@@ -53,6 +54,18 @@ export interface InterruptChoice {
   value: string;
 }
 
+export interface InterruptAction {
+  id: string;
+  label: string;
+  style?: 'primary' | 'secondary' | 'danger';
+  inputMode?: 'none' | 'text';
+  placeholder?: string;
+  submitLabel?: string;
+  confirm?: boolean;
+  value?: string;
+  payload?: Record<string, unknown>;
+}
+
 export interface InterruptResponseSpec {
   inputMode?: 'none' | 'text' | 'choice' | 'text_or_choice';
   multiple?: boolean;
@@ -70,6 +83,7 @@ export interface PendingInterrupt {
   description?: string;
   stepIndex?: number;
   stepCount?: number;
+  actions?: InterruptAction[];
   actionRequests?: Array<{ name?: string; args?: Record<string, unknown> }>;
   reviewConfigs?: Array<{ action_name?: string; allowed_decisions?: string[] }>;
   responseSpec?: InterruptResponseSpec;
