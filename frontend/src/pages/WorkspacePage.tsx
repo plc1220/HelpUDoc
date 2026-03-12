@@ -2287,7 +2287,13 @@ export default function WorkspacePage() {
   );
 
   const persistAgentProgress = useCallback(
-    async (runInfo: ActiveRunInfo, statusOverride?: AgentRunStatus) => {
+    async (
+      runInfo: ActiveRunInfo,
+      statusOverride?: AgentRunStatus,
+      options?: {
+        metadataOverride?: Partial<ConversationMessageMetadata>;
+      },
+    ) => {
       const { runId, conversationId, turnId, placeholderId } = runInfo;
       if (persistInFlightRef.current.has(runId)) {
         return;
@@ -2297,7 +2303,12 @@ export default function WorkspacePage() {
       const lastText = lastPersistedAgentTextRef.current[runId];
       const nextStatus = statusOverride || message?.metadata?.status || runInfo.status || 'running';
       const lastStatus = lastPersistedStatusRef.current[runId];
-      const metadata = { ...(buildMessageMetadata(message) || {}), runId, status: nextStatus };
+      const metadata = {
+        ...(buildMessageMetadata(message) || {}),
+        ...(options?.metadataOverride || {}),
+        runId,
+        status: nextStatus,
+      } satisfies ConversationMessageMetadata;
       const metadataSignature = JSON.stringify(metadata);
       const lastMetadataSignature = lastPersistedMetadataRef.current[runId];
       if (text === lastText && nextStatus === lastStatus && metadataSignature === lastMetadataSignature) {
@@ -2807,6 +2818,16 @@ export default function WorkspacePage() {
               }
             }
           }
+          if (finalStatus === 'awaiting_approval' && !latestRunMeta?.pendingInterrupt && !latestInterrupt) {
+            for (let attempt = 0; attempt < 8; attempt += 1) {
+              await new Promise((resolve) => window.setTimeout(resolve, 250));
+              latestRunMeta = await getRunStatus(runId);
+              finalStatus = latestRunMeta.status;
+              if (latestRunMeta.pendingInterrupt) {
+                break;
+              }
+            }
+          }
         } catch (statusError) {
           console.error('Failed to fetch final run status', statusError);
         }
@@ -2827,7 +2848,17 @@ export default function WorkspacePage() {
         if (supersededByNewerStream) {
           return;
         }
-        await persistAgentProgress({ ...runInfo, status: finalStatus }, finalStatus);
+        await persistAgentProgress(
+          { ...runInfo, status: finalStatus },
+          finalStatus,
+          effectivePendingInterrupt
+            ? {
+                metadataOverride: {
+                  pendingInterrupt: effectivePendingInterrupt,
+                },
+              }
+            : undefined,
+        );
         setStreamingForConversation(conversationId, false);
         if (streamAbortMapRef.current.get(conversationId) === controller) {
           streamAbortMapRef.current.delete(conversationId);
