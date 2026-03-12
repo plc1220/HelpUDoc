@@ -443,6 +443,11 @@ export default function WorkspacePage() {
     };
   }, [getRunStatus]);
 
+  const markRunStreamLaunching = useCallback((runId: string) => {
+    resumeAttemptedRef.current.add(runId);
+    resumeInFlightRef.current.add(runId);
+  }, []);
+
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', colorMode);
     if (typeof window !== 'undefined') {
@@ -2712,6 +2717,7 @@ export default function WorkspacePage() {
           return next;
         });
         const runInfo = activeRunsRef.current[runId] || await rebuildRunInfoForMessage(message, runId);
+        markRunStreamLaunching(runId);
         registerActiveRun(runInfo);
         if (runInfo) {
           await streamRunForConversation(runInfo, false);
@@ -2737,6 +2743,7 @@ export default function WorkspacePage() {
       getAllowedDecisions,
       isPlanApprovalInterrupt,
       rebuildRunInfoForMessage,
+      markRunStreamLaunching,
       registerActiveRun,
       submitInterruptWithRetry,
       streamRunForConversation,
@@ -2814,6 +2821,7 @@ export default function WorkspacePage() {
           return next;
         });
         const runInfo = activeRunsRef.current[runId] || await rebuildRunInfoForMessage(message, runId);
+        markRunStreamLaunching(runId);
         registerActiveRun(runInfo);
         if (runInfo) {
           await streamRunForConversation(runInfo, false);
@@ -2838,6 +2846,7 @@ export default function WorkspacePage() {
       interruptInputByMessageId,
       interruptSelectedChoicesByMessageId,
       rebuildRunInfoForMessage,
+      markRunStreamLaunching,
       registerActiveRun,
       submitInterruptWithRetry,
       streamRunForConversation,
@@ -2903,6 +2912,7 @@ export default function WorkspacePage() {
             return next;
           });
           const runInfo = activeRunsRef.current[runId] || await rebuildRunInfoForMessage(message, runId);
+          markRunStreamLaunching(runId);
           registerActiveRun(runInfo);
           if (runInfo) {
             await streamRunForConversation(runInfo, false);
@@ -2968,8 +2978,9 @@ export default function WorkspacePage() {
           delete next[messageKey];
           return next;
         });
-        const runInfo = activeRunsRef.current[runId] || await rebuildRunInfoForMessage(message, runId);
-        registerActiveRun(runInfo);
+          const runInfo = activeRunsRef.current[runId] || await rebuildRunInfoForMessage(message, runId);
+          markRunStreamLaunching(runId);
+          registerActiveRun(runInfo);
         if (runInfo) {
           await streamRunForConversation(runInfo, false);
         } else {
@@ -2993,6 +3004,7 @@ export default function WorkspacePage() {
       interruptActionFieldKey,
       interruptInputByMessageId,
       rebuildRunInfoForMessage,
+      markRunStreamLaunching,
       registerActiveRun,
       submitInterruptWithRetry,
       streamRunForConversation,
@@ -3267,6 +3279,7 @@ export default function WorkspacePage() {
         placeholderId,
         status: 'running',
       };
+      markRunStreamLaunching(runId);
       registerActiveRun(runInfo);
       await persistAgentProgress(runInfo, 'running');
       await streamRunForConversation(runInfo, true);
@@ -3682,6 +3695,7 @@ export default function WorkspacePage() {
         placeholderId,
         status: 'running',
       };
+      markRunStreamLaunching(runId);
       registerActiveRun(runInfo);
       await persistAgentProgress(runInfo, 'running');
       await streamRunForConversation(runInfo, true);
