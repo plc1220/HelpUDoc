@@ -97,11 +97,13 @@ class AgentRegistry:
         policy_key = json.dumps(context_payload.get("mcp_policy", {}) or {}, sort_keys=True, default=str)
         mcp_auth_fingerprint = str(context_payload.get("mcp_auth_fingerprint") or "")
         user_key = str(context_payload.get("user_id") or "")
-        trusted_plan_key = "trusted" if bool(context_payload.get("skip_plan_approvals") or context_payload.get("skipPlanApprovals")) else "reviewed"
-        cache_scope_prefix = f"{user_key}:{policy_key}:{trusted_plan_key}:"
-        key = (resolved_name, workspace_id, f"{user_key}:{policy_key}:{trusted_plan_key}:{mcp_auth_fingerprint}")
+        cache_scope_prefix = f"{user_key}:{policy_key}:"
+        key = (resolved_name, workspace_id, f"{user_key}:{policy_key}:{mcp_auth_fingerprint}")
         if key in self._cache:
-            return self._cache[key]
+            runtime = self._cache[key]
+            if context_payload:
+                runtime.workspace_state.context.update(context_payload)
+            return runtime
         # Prevent unbounded growth when delegated auth fingerprints rotate over time.
         stale_keys = [
             cache_key

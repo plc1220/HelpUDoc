@@ -2393,6 +2393,15 @@ export default function WorkspacePage() {
         source: 'clarification-choice',
         choiceId: choice.id,
       }));
+      if (responseSpec?.multiple && derivedActions.length) {
+        derivedActions.push({
+          id: 'clarification-submit',
+          label: responseSpec?.submitLabel || 'Continue',
+          style: 'primary',
+          inputMode: 'none',
+          source: 'clarification-text',
+        });
+      }
       const inputMode = responseSpec?.inputMode || 'text';
       if (inputMode === 'text' || inputMode === 'text_or_choice' || !derivedActions.length) {
         derivedActions.push({
@@ -3099,6 +3108,35 @@ export default function WorkspacePage() {
     ],
   );
 
+  const toggleInterruptSelectedChoice = useCallback((messageKey: string, choiceId: string, multiple: boolean) => {
+    setInterruptSelectedChoicesByMessageId((prev) => {
+      const current = prev[messageKey] || [];
+      let nextChoices: string[];
+      if (multiple) {
+        nextChoices = current.includes(choiceId)
+          ? current.filter((id) => id !== choiceId)
+          : [...current, choiceId];
+      } else {
+        nextChoices = current.length === 1 && current[0] === choiceId ? [] : [choiceId];
+      }
+      if (!nextChoices.length) {
+        const next = { ...prev };
+        delete next[messageKey];
+        return next;
+      }
+      return {
+        ...prev,
+        [messageKey]: nextChoices,
+      };
+    });
+    setInterruptErrorByMessageId((prev) => {
+      if (!prev[messageKey]) return prev;
+      const next = { ...prev };
+      delete next[messageKey];
+      return next;
+    });
+  }, []);
+
   const handleInterruptAction = useCallback(
     async (
       message: ConversationMessage,
@@ -3126,6 +3164,10 @@ export default function WorkspacePage() {
       const actionText = (interruptInputByMessageId[actionTextKey] || '').trim();
 
       if (action.source === 'clarification-choice') {
+        if (pendingInterrupt?.responseSpec?.multiple && action.choiceId) {
+          toggleInterruptSelectedChoice(messageKey, action.choiceId, true);
+          return;
+        }
         setInterruptSubmittingByMessageId((prev) => ({ ...prev, [messageKey]: true }));
         setInterruptErrorByMessageId((prev) => {
           if (!prev[messageKey]) return prev;
@@ -3262,6 +3304,7 @@ export default function WorkspacePage() {
       registerActiveRun,
       submitInterruptWithRetry,
       streamRunForConversation,
+      toggleInterruptSelectedChoice,
     ],
   );
 
@@ -4707,6 +4750,7 @@ export default function WorkspacePage() {
               expandedThinkingMessages={expandedThinkingMessages}
               copiedMessageId={copiedMessageId}
               interruptInputByMessageId={interruptInputByMessageId}
+              interruptSelectedChoicesByMessageId={interruptSelectedChoicesByMessageId}
               interruptSubmittingByMessageId={interruptSubmittingByMessageId}
               interruptErrorByMessageId={interruptErrorByMessageId}
               chatMessage={chatMessage}
@@ -4731,6 +4775,7 @@ export default function WorkspacePage() {
               getPrimaryInterruptAction={getPrimaryInterruptAction}
               isPlanApprovalInterrupt={isPlanApprovalInterrupt}
               setInterruptInputByMessageId={setInterruptInputByMessageId}
+              toggleInterruptSelectedChoice={toggleInterruptSelectedChoice}
               workspaceSkipPlanApprovals={Boolean(selectedWorkspace?.skipPlanApprovals)}
               workspaceSettingsBusy={workspaceSettingsBusy}
               onToggleAgentPaneVisibility={() => setIsAgentPaneVisible((prev) => !prev)}

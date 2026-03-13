@@ -15,6 +15,7 @@ export default function ChatMessageList({
   expandedThinkingMessages,
   copiedMessageId,
   interruptInputByMessageId,
+  interruptSelectedChoicesByMessageId,
   interruptSubmittingByMessageId,
   interruptErrorByMessageId,
   interruptFieldKey,
@@ -25,6 +26,7 @@ export default function ChatMessageList({
   getPrimaryInterruptAction,
   isPlanApprovalInterrupt,
   setInterruptInputByMessageId,
+  toggleInterruptSelectedChoice,
   workspaceSkipPlanApprovals,
   workspaceSettingsBusy,
   toggleThinkingVisibility,
@@ -45,6 +47,7 @@ export default function ChatMessageList({
   expandedThinkingMessages: Set<ConversationMessage['id']>;
   copiedMessageId: ConversationMessage['id'] | null;
   interruptInputByMessageId: Record<string, string>;
+  interruptSelectedChoicesByMessageId: Record<string, string[]>;
   interruptSubmittingByMessageId: Record<string, boolean>;
   interruptErrorByMessageId: Record<string, string>;
   interruptFieldKey: (
@@ -64,6 +67,7 @@ export default function ChatMessageList({
   ) => { name?: string; args?: Record<string, unknown> } | undefined;
   isPlanApprovalInterrupt: (pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt']) => boolean;
   setInterruptInputByMessageId: Dispatch<SetStateAction<Record<string, string>>>;
+  toggleInterruptSelectedChoice: (messageKey: string, choiceId: string, multiple: boolean) => void;
   workspaceSkipPlanApprovals: boolean;
   workspaceSettingsBusy: boolean;
   toggleThinkingVisibility: (messageId: ConversationMessage['id']) => void;
@@ -148,6 +152,7 @@ export default function ChatMessageList({
           expandedThinkingMessages={expandedThinkingMessages}
           copiedMessageId={copiedMessageId}
           interruptInputByMessageId={interruptInputByMessageId}
+          interruptSelectedChoicesByMessageId={interruptSelectedChoicesByMessageId}
           interruptSubmittingByMessageId={interruptSubmittingByMessageId}
           interruptErrorByMessageId={interruptErrorByMessageId}
           interruptFieldKey={interruptFieldKey}
@@ -158,6 +163,7 @@ export default function ChatMessageList({
           getPrimaryInterruptAction={getPrimaryInterruptAction}
           isPlanApprovalInterrupt={isPlanApprovalInterrupt}
           setInterruptInputByMessageId={setInterruptInputByMessageId}
+          toggleInterruptSelectedChoice={toggleInterruptSelectedChoice}
           workspaceSkipPlanApprovals={workspaceSkipPlanApprovals}
           workspaceSettingsBusy={workspaceSettingsBusy}
           toggleThinkingVisibility={toggleThinkingVisibility}
@@ -177,6 +183,7 @@ export default function ChatMessageList({
     interruptFieldKey,
     interruptActionFieldKey,
     interruptInputByMessageId,
+    interruptSelectedChoicesByMessageId,
     interruptSubmittingByMessageId,
     interruptErrorByMessageId,
     copiedMessageId,
@@ -198,6 +205,7 @@ export default function ChatMessageList({
     messages,
     personaDisplayName,
     setInterruptInputByMessageId,
+    toggleInterruptSelectedChoice,
     toggleThinkingVisibility,
     toggleToolActivityVisibility,
     workspaceId,

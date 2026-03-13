@@ -70,6 +70,7 @@ export default function ChatMessageBubble({
   expandedThinkingMessages,
   copiedMessageId,
   interruptInputByMessageId,
+  interruptSelectedChoicesByMessageId,
   interruptSubmittingByMessageId,
   interruptErrorByMessageId,
   interruptFieldKey,
@@ -80,6 +81,7 @@ export default function ChatMessageBubble({
   getPrimaryInterruptAction,
   isPlanApprovalInterrupt,
   setInterruptInputByMessageId,
+  toggleInterruptSelectedChoice,
   workspaceSkipPlanApprovals,
   workspaceSettingsBusy,
   toggleThinkingVisibility,
@@ -100,6 +102,7 @@ export default function ChatMessageBubble({
   expandedThinkingMessages: Set<ConversationMessage['id']>;
   copiedMessageId: ConversationMessage['id'] | null;
   interruptInputByMessageId: Record<string, string>;
+  interruptSelectedChoicesByMessageId: Record<string, string[]>;
   interruptSubmittingByMessageId: Record<string, boolean>;
   interruptErrorByMessageId: Record<string, string>;
   interruptFieldKey: (
@@ -119,6 +122,7 @@ export default function ChatMessageBubble({
   ) => { name?: string; args?: Record<string, unknown> } | undefined;
   isPlanApprovalInterrupt: (pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt']) => boolean;
   setInterruptInputByMessageId: Dispatch<SetStateAction<Record<string, string>>>;
+  toggleInterruptSelectedChoice: (messageKey: string, choiceId: string, multiple: boolean) => void;
   workspaceSkipPlanApprovals: boolean;
   workspaceSettingsBusy: boolean;
   toggleThinkingVisibility: (messageId: ConversationMessage['id']) => void;
@@ -193,6 +197,8 @@ export default function ChatMessageBubble({
   const clarificationTextKey = interruptFieldKey(messageKey, 'clarification-text');
   const interruptError = interruptErrorByMessageId[messageKey] || '';
   const allowDismiss = Boolean(pendingInterrupt?.responseSpec?.allowDismiss);
+  const clarificationAllowsMultiple = Boolean(pendingInterrupt?.responseSpec?.multiple);
+  const selectedChoiceIds = interruptSelectedChoicesByMessageId[messageKey] || [];
 
   const planText = useMemo(() => {
     const args = primaryInterruptAction?.args;
@@ -252,6 +258,10 @@ export default function ChatMessageBubble({
 
   const handleActionTrigger = (action: RenderableInterruptAction) => {
     if (interruptControlsDisabled) {
+      return;
+    }
+    if (action.source === 'clarification-choice' && clarificationAllowsMultiple && action.choiceId) {
+      toggleInterruptSelectedChoice(messageKey, action.choiceId, true);
       return;
     }
     handlePrepareInterruptAction(message, action, pendingInterrupt);
@@ -318,6 +328,16 @@ export default function ChatMessageBubble({
           const showConfirmationOnly = needsExplicitConfirm && action.inputMode !== 'text';
           const showPrimaryRow = !isTextMode && !showConfirmationOnly;
           const numberedChoice = tone === 'dark' && action.source === 'clarification-choice';
+          const isSelectedChoice = Boolean(
+            action.source === 'clarification-choice' &&
+            action.choiceId &&
+            selectedChoiceIds.includes(action.choiceId),
+          );
+          const standardChoiceSelectionClass = !numberedChoice && isSelectedChoice
+            ? tone === 'dark'
+              ? 'ring-2 ring-[#94c5f8]/65 ring-offset-0'
+              : 'border-[#94c5f8] bg-blue-50 text-blue-800 shadow-[0_0_0_1px_rgba(148,197,248,0.35)]'
+            : '';
 
           return (
             <div key={action.id} className={tone === 'dark' ? 'space-y-3' : 'space-y-2'}>
@@ -329,13 +349,15 @@ export default function ChatMessageBubble({
                   className={
                     numberedChoice
                       ? `flex w-full items-start justify-between rounded-[1.35rem] border px-5 py-4 text-left transition-all duration-200 ${
-                          action.style === 'primary'
-                            ? 'border-[#94c5f8]/55 bg-[#94c5f8]/10 text-white hover:bg-[#94c5f8]/15'
-                            : action.style === 'danger'
-                              ? 'border-rose-400/25 bg-rose-500/10 text-rose-100 hover:bg-rose-500/15'
-                              : 'border-white/10 bg-white/[0.03] text-white/92 hover:border-white/25 hover:bg-white/[0.07]'
+                          isSelectedChoice
+                            ? 'border-[#94c5f8] bg-[#94c5f8]/18 text-white shadow-[0_0_0_1px_rgba(148,197,248,0.35)]'
+                            : action.style === 'primary'
+                              ? 'border-[#94c5f8]/55 bg-[#94c5f8]/10 text-white hover:bg-[#94c5f8]/15'
+                              : action.style === 'danger'
+                                ? 'border-rose-400/25 bg-rose-500/10 text-rose-100 hover:bg-rose-500/15'
+                                : 'border-white/10 bg-white/[0.03] text-white/92 hover:border-white/25 hover:bg-white/[0.07]'
                         } ${interruptControlsDisabled ? 'cursor-not-allowed opacity-70' : ''}`
-                      : getActionButtonClass(action, tone)
+                      : `${getActionButtonClass(action, tone)} ${standardChoiceSelectionClass}`
                   }
                 >
                   {numberedChoice ? (
@@ -346,7 +368,9 @@ export default function ChatMessageBubble({
                           <span className="text-[18px] font-semibold leading-snug">{action.label}</span>
                         </div>
                       </div>
-                      <span className="mt-1 text-lg text-white/35">{needsExplicitConfirm ? '!' : ''}</span>
+                      <span className="mt-1 text-lg text-white/35">
+                        {isSelectedChoice ? '✓' : needsExplicitConfirm ? '!' : ''}
+                      </span>
                     </>
                   ) : (
                     action.label
