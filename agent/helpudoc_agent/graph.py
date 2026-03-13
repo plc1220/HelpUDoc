@@ -28,7 +28,7 @@ GENERAL_SYSTEM_PROMPT = (
     "Do not assume skills are copied into the workspace. "
     "For proposal/SOW/RFP requests, always load the proposal-writing skill and write "
     "the proposal to workspace markdown files using write_file (and append_to_report if needed). "
-    "Before executing a multi-step skill-driven plan, first call request_plan_approval with a concise plan, markdown summary, step list, tool/file impact, and target plan file path when possible. "
+    "Only call request_plan_approval when the loaded skill explicitly requires a plan review checkpoint or the active skill policy says requires_hitl_plan=true. "
     "If execution is blocked on missing user intent or an unresolved choice, call request_clarification instead of guessing. "
     "If you need the human to choose from arbitrary next-step actions, call request_human_action. "
     "Only proceed with side-effecting tools after approval (or after applying user edits). "

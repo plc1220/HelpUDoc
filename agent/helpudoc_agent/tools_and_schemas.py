@@ -342,7 +342,21 @@ class ToolFactory:
                         workspace_state.context.get("skip_plan_approvals")
                     )
                     workspace_state.context["pre_plan_search_count"] = 0
-                    return f"Loaded skill: {skill.skill_id}\n\n{content}"
+                    policy_lines = [
+                        f"Skill policy for {skill.skill_id}:",
+                        f"- requires_hitl_plan: {'true' if skill.policy.requires_hitl_plan else 'false'}",
+                        f"- requires_workspace_artifacts: {'true' if skill.policy.requires_workspace_artifacts else 'false'}",
+                    ]
+                    if skill.policy.requires_hitl_plan:
+                        policy_lines.append(
+                            "- You must call request_plan_approval before side-effecting execution."
+                        )
+                    else:
+                        policy_lines.append(
+                            "- Do not call request_plan_approval for this skill unless the user explicitly asks for a review gate."
+                        )
+                    policy_lines.append("")
+                    return f"Loaded skill: {skill.skill_id}\n\n" + "\n".join(policy_lines) + f"\n{content}"
             available = ", ".join(sorted({skill.skill_id for skill in skills}))
             return f"Skill '{normalized}' not found. Available skills: {available}"
 
