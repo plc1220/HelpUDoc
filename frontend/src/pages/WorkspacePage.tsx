@@ -254,6 +254,14 @@ const loadActiveRunsFromStorage = (): Record<string, ActiveRunInfo> => {
   return {};
 };
 
+type PersistProgressRequest = {
+  runInfo: ActiveRunInfo;
+  statusOverride?: AgentRunStatus;
+  options?: {
+    metadataOverride?: Partial<ConversationMessageMetadata>;
+  };
+};
+
 export default function WorkspacePage() {
   const navigate = useNavigate();
   const { signOut } = useAuth();
@@ -319,6 +327,7 @@ export default function WorkspacePage() {
   const lastPersistedStatusRef = useRef<Record<string, AgentRunStatus | undefined>>({});
   const lastPersistedMetadataRef = useRef<Record<string, string | undefined>>({});
   const persistInFlightRef = useRef<Set<string>>(new Set());
+  const pendingPersistRef = useRef<Record<string, PersistProgressRequest>>({});
   const stopRequestedRef = useRef(false);
   const chatInputRef = useRef<HTMLTextAreaElement | null>(null);
   const attachmentInputRef = useRef<HTMLInputElement | null>(null);
@@ -2198,6 +2207,7 @@ export default function WorkspacePage() {
     ) => {
       const { runId, conversationId, turnId, placeholderId } = runInfo;
       if (persistInFlightRef.current.has(runId)) {
+        pendingPersistRef.current[runId] = { runInfo, statusOverride, options };
         return;
       }
       const message = findAgentMessageForRun(conversationId, placeholderId, turnId);
@@ -2247,6 +2257,11 @@ export default function WorkspacePage() {
         console.error('Failed to persist agent progress', error);
       } finally {
         persistInFlightRef.current.delete(runId);
+        const pending = pendingPersistRef.current[runId];
+        if (pending) {
+          delete pendingPersistRef.current[runId];
+          void persistAgentProgress(pending.runInfo, pending.statusOverride, pending.options);
+        }
       }
     },
     [getBufferedAgentText, findAgentMessageForRun, upsertPersistedAgentMessage],
@@ -2295,9 +2310,42 @@ export default function WorkspacePage() {
 
   const getInterruptKind = useCallback((
     pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
-  ): 'approval' | 'clarification' => (
-    pendingInterrupt?.kind === 'clarification' ? 'clarification' : 'approval'
-  ), []);
+  ): 'approval' | 'clarification' => {
+    if (pendingInterrupt?.kind === 'clarification') {
+      return 'clarification';
+    }
+
+    const responseSpec =
+      pendingInterrupt?.responseSpec && typeof pendingInterrupt.responseSpec === 'object'
+        ? pendingInterrupt.responseSpec
+        : undefined;
+    if (responseSpec) {
+      return 'clarification';
+    }
+
+    const actions = Array.isArray(pendingInterrupt?.actions) ? pendingInterrupt.actions : [];
+    const actionRequests = Array.isArray(pendingInterrupt?.actionRequests) ? pendingInterrupt.actionRequests : [];
+    const reviewConfigs = Array.isArray(pendingInterrupt?.reviewConfigs) ? pendingInterrupt.reviewConfigs : [];
+    const hasApprovalConfig = actionRequests.length > 0 || reviewConfigs.length > 0;
+    const hasClarificationAction = actions.some((action) => {
+      if (!action || typeof action !== 'object') {
+        return false;
+      }
+      if (action.id === 'clarification-text') {
+        return true;
+      }
+      if (action.payload && typeof action.payload === 'object' && 'selectedChoiceId' in action.payload) {
+        return true;
+      }
+      return false;
+    });
+
+    if (hasClarificationAction && !hasApprovalConfig) {
+      return 'clarification';
+    }
+
+    return 'approval';
+  }, []);
 
   const isPlanApprovalInterrupt = useCallback((
     pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
