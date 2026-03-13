@@ -34,6 +34,28 @@ from .utils import SourceTracker, extract_web_url
 logger = logging.getLogger(__name__)
 
 
+def _dict_has_keys(value: Any, keys: set[str]) -> bool:
+    return isinstance(value, dict) and any(key in value for key in keys)
+
+
+def _interrupt_with_retry(
+    payload: Dict[str, Any],
+    *,
+    valid_keys: set[str],
+    stale_keys: set[str],
+    label: str,
+    attempts: int = 2,
+) -> Any:
+    """Retry once when an interrupt receives a stale resume payload from a prior step."""
+    response: Any = None
+    for attempt in range(attempts):
+        response = interrupt(payload)
+        if not _dict_has_keys(response, stale_keys) or _dict_has_keys(response, valid_keys):
+            return response
+        logger.warning("%s received stale interrupt resume payload on attempt %s; retrying", label, attempt + 1)
+    return response
+
+
 def _get_active_skill_policy(workspace_state: WorkspaceState) -> SkillPolicy:
     raw = workspace_state.context.get("active_skill_policy")
     if isinstance(raw, SkillPolicy):
@@ -530,47 +552,52 @@ class ToolFactory:
             except json.JSONDecodeError:
                 display_payload = {}
 
-            response = interrupt(
-                {
-                    "kind": "clarification",
-                    "title": prompt_title,
-                    "description": prompt_description,
-                    "step_index": max(0, int(step_index or 0)),
-                    "step_count": max(1, int(step_count or 1)),
-                    "actions": [
+            interrupt_payload = {
+                "kind": "clarification",
+                "title": prompt_title,
+                "description": prompt_description,
+                "step_index": max(0, int(step_index or 0)),
+                "step_count": max(1, int(step_count or 1)),
+                "actions": [
+                    {
+                        "id": choice["id"],
+                        "label": choice["label"],
+                        "style": "secondary",
+                        "inputMode": "none",
+                        "value": choice["value"],
+                        **({"payload": {"selectedChoiceId": choice["id"]}} if choice.get("id") else {}),
+                    }
+                    for choice in parsed_choices
+                ]
+                + (
+                    [
                         {
-                            "id": choice["id"],
-                            "label": choice["label"],
-                            "style": "secondary",
-                            "inputMode": "none",
-                            "value": choice["value"],
-                            **({"payload": {"selectedChoiceId": choice["id"]}} if choice.get("id") else {}),
+                            "id": "clarification-text",
+                            "label": (submit_label or "Continue").strip() or "Continue",
+                            "style": "primary",
+                            "inputMode": "text",
+                            "placeholder": (placeholder or "").strip(),
+                            "submitLabel": (submit_label or "Continue").strip() or "Continue",
                         }
-                        for choice in parsed_choices
                     ]
-                    + (
-                        [
-                            {
-                                "id": "clarification-text",
-                                "label": (submit_label or "Continue").strip() or "Continue",
-                                "style": "primary",
-                                "inputMode": "text",
-                                "placeholder": (placeholder or "").strip(),
-                                "submitLabel": (submit_label or "Continue").strip() or "Continue",
-                            }
-                        ]
-                        if allow_freeform or not parsed_choices
-                        else []
-                    ),
-                    "response_spec": {
-                        "inputMode": input_mode,
-                        "multiple": bool(multi_select),
-                        "submitLabel": (submit_label or "Continue").strip() or "Continue",
-                        "placeholder": (placeholder or "").strip(),
-                        "choices": parsed_choices,
-                    },
-                    "display_payload": display_payload,
-                }
+                    if allow_freeform or not parsed_choices
+                    else []
+                ),
+                "response_spec": {
+                    "inputMode": input_mode,
+                    "multiple": bool(multi_select),
+                    "submitLabel": (submit_label or "Continue").strip() or "Continue",
+                    "placeholder": (placeholder or "").strip(),
+                    "choices": parsed_choices,
+                },
+                "display_payload": display_payload,
+            }
+
+            response = _interrupt_with_retry(
+                interrupt_payload,
+                valid_keys={"message", "selectedChoiceIds", "selectedValues"},
+                stale_keys={"decisions", "action"},
+                label="request_clarification",
             )
             if isinstance(response, dict):
                 return json.dumps(response, ensure_ascii=False)
@@ -658,16 +685,21 @@ class ToolFactory:
             except json.JSONDecodeError:
                 display_payload = {}
 
-            response = interrupt(
-                {
-                    "kind": interrupt_kind,
-                    "title": prompt_title,
-                    "description": prompt_description,
-                    "step_index": max(0, int(step_index or 0)),
-                    "step_count": max(1, int(step_count or 1)),
-                    "actions": parsed_actions,
-                    "display_payload": display_payload,
-                }
+            interrupt_payload = {
+                "kind": interrupt_kind,
+                "title": prompt_title,
+                "description": prompt_description,
+                "step_index": max(0, int(step_index or 0)),
+                "step_count": max(1, int(step_count or 1)),
+                "actions": parsed_actions,
+                "display_payload": display_payload,
+            }
+
+            response = _interrupt_with_retry(
+                interrupt_payload,
+                valid_keys={"action"},
+                stale_keys={"decisions", "message", "selectedChoiceIds", "selectedValues"},
+                label="request_human_action",
             )
             if isinstance(response, dict):
                 return json.dumps(response, ensure_ascii=False)

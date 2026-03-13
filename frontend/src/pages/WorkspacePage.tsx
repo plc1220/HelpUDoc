@@ -1064,6 +1064,33 @@ export default function WorkspacePage() {
     stopRequestedRef.current = true;
     const activeRun = getActiveRunForConversation(activeConversationId);
     if (activeRun) {
+      updateMessagesForConversation(activeRun.conversationId, (prev) =>
+        prev.map((message) => {
+          if (message.sender !== 'agent') {
+            return message;
+          }
+          const metadata = (message.metadata as ConversationMessageMetadata | undefined) || undefined;
+          const matchesRun =
+            metadata?.runId === activeRun.runId ||
+            message.id === activeRun.placeholderId ||
+            (activeRun.turnId && message.turnId === activeRun.turnId);
+          if (!matchesRun) {
+            return message;
+          }
+          return {
+            ...message,
+            metadata: {
+              ...(metadata || {}),
+              runId: metadata?.runId || activeRun.runId,
+              status: 'cancelled',
+              pendingInterrupt: undefined,
+            },
+          };
+        }),
+      );
+      removeActiveRun(activeRun.runId);
+      resumeInFlightRef.current.delete(activeRun.runId);
+      resumeAttemptedRef.current.add(activeRun.runId);
       cancelRun(activeRun.runId).catch((error) => {
         console.error('Failed to cancel run', error);
       });

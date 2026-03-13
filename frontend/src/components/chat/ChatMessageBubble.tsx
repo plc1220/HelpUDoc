@@ -9,7 +9,25 @@ import type { RenderableInterruptAction } from './interruptActions';
 import { buildApprovalReview } from './approvalReview';
 
 const THOUGHT_PREVIEW_LIMIT = 320;
-const THINKING_PLACEHOLDER = 'Formulating a research plan based on your prompt and available context.';
+const DEFAULT_THINKING_PLACEHOLDER = 'Working through your request based on the current workspace context.';
+
+const getThinkingPlaceholder = (
+  metadata?: ConversationMessageMetadata,
+  toolEvents: ConversationMessage['toolEvents'] = [],
+): string => {
+  const activeSkill = metadata?.runPolicy?.skill?.trim().toLowerCase();
+  if (activeSkill === 'frontend-slides') {
+    return 'Preparing the presentation workflow from your prompt and workspace content.';
+  }
+  const toolNames = new Set((toolEvents || []).map((event) => event.name?.trim().toLowerCase()).filter(Boolean));
+  if (toolNames.has('request_clarification')) {
+    return 'Waiting for the presentation details needed to continue.';
+  }
+  if (activeSkill === 'research' || toolNames.has('google_search') || toolNames.has('google_grounded_search')) {
+    return 'Formulating a research plan based on your prompt and available context.';
+  }
+  return DEFAULT_THINKING_PLACEHOLDER;
+};
 
 const formatInterruptValue = (value: unknown): string => {
   if (typeof value === 'string') {
@@ -164,7 +182,9 @@ export default function ChatMessageBubble({
   const isThinkingExpanded = expandedThinkingMessages.has(message.id);
   const rawThinkingText = message.thinkingText?.trim() || '';
   const isSystemThinking = /available skills/i.test(rawThinkingText);
-  const displayThinkingText = isSystemThinking ? THINKING_PLACEHOLDER : rawThinkingText;
+  const displayThinkingText = isSystemThinking
+    ? getThinkingPlaceholder(messageMetadata, toolEvents)
+    : rawThinkingText;
   const showThinkingToggle = !isSystemThinking && displayThinkingText.length > THOUGHT_PREVIEW_LIMIT;
   const isThinkingCollapsed = showThinkingToggle && !isThinkingExpanded;
   const sanitizedAgentText = (() => {
