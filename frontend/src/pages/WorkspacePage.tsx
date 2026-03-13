@@ -2596,6 +2596,19 @@ export default function WorkspacePage() {
     chunk: AgentStreamChunk,
     runId?: string,
   ) => {
+    const preserveInterruptState = (
+      metadata: ConversationMessageMetadata | undefined,
+    ): ConversationMessageMetadata => {
+      const nextMetadata = { ...(metadata || {}) };
+      const hasPendingInterrupt = Boolean(nextMetadata.pendingInterrupt);
+      if (runId) {
+        nextMetadata.runId = runId;
+      }
+      nextMetadata.status = hasPendingInterrupt ? 'awaiting_approval' : 'running';
+      nextMetadata.pendingInterrupt = hasPendingInterrupt ? nextMetadata.pendingInterrupt : undefined;
+      return nextMetadata;
+    };
+
     if (chunk.type === 'keepalive') {
       setStreamingForConversation(conversationId, true);
       return;
@@ -2619,45 +2632,25 @@ export default function WorkspacePage() {
     }
 
     if (chunk.type === 'thought') {
-      updateMessageMetadataAtIndex(conversationId, agentMessageIndex, (metadata) => ({
-        ...metadata,
-        ...(runId ? { runId } : {}),
-        status: 'running',
-        pendingInterrupt: undefined,
-      }));
+      updateMessageMetadataAtIndex(conversationId, agentMessageIndex, preserveInterruptState);
       appendAgentThought(conversationId, agentMessageIndex, chunk.content || '');
       return;
     }
 
     if (chunk.type === 'tool_start') {
-      updateMessageMetadataAtIndex(conversationId, agentMessageIndex, (metadata) => ({
-        ...metadata,
-        ...(runId ? { runId } : {}),
-        status: 'running',
-        pendingInterrupt: undefined,
-      }));
+      updateMessageMetadataAtIndex(conversationId, agentMessageIndex, preserveInterruptState);
       appendToolStart(conversationId, agentMessageIndex, chunk);
       return;
     }
 
     if (chunk.type === 'tool_end') {
-      updateMessageMetadataAtIndex(conversationId, agentMessageIndex, (metadata) => ({
-        ...metadata,
-        ...(runId ? { runId } : {}),
-        status: 'running',
-        pendingInterrupt: undefined,
-      }));
+      updateMessageMetadataAtIndex(conversationId, agentMessageIndex, preserveInterruptState);
       appendToolEnd(conversationId, agentMessageIndex, chunk);
       return;
     }
 
     if (chunk.type === 'tool_error') {
-      updateMessageMetadataAtIndex(conversationId, agentMessageIndex, (metadata) => ({
-        ...metadata,
-        ...(runId ? { runId } : {}),
-        status: 'running',
-        pendingInterrupt: undefined,
-      }));
+      updateMessageMetadataAtIndex(conversationId, agentMessageIndex, preserveInterruptState);
       appendToolEnd(conversationId, agentMessageIndex, chunk, 'error');
       return;
     }
@@ -2685,12 +2678,7 @@ export default function WorkspacePage() {
     }
 
     if (chunk.type === 'token' || chunk.type === 'chunk') {
-      updateMessageMetadataAtIndex(conversationId, agentMessageIndex, (metadata) => ({
-        ...metadata,
-        ...(runId ? { runId } : {}),
-        status: 'running',
-        pendingInterrupt: undefined,
-      }));
+      updateMessageMetadataAtIndex(conversationId, agentMessageIndex, preserveInterruptState);
       if (chunk.role && chunk.role !== 'assistant') {
         return;
       }
