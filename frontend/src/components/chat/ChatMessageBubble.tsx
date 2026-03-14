@@ -10,6 +10,149 @@ import { buildApprovalReview } from './approvalReview';
 
 const THOUGHT_PREVIEW_LIMIT = 320;
 const DEFAULT_THINKING_PLACEHOLDER = 'Working through your request based on the current workspace context.';
+const FRONTEND_SLIDES_DISCOVERY_HEADERS = ['purpose', 'length', 'content', 'images', 'editing'] as const;
+
+type ClarificationQuestionOption = {
+  id: string;
+  label: string;
+  value: string;
+  description?: string;
+};
+
+type ClarificationQuestion = {
+  id: string;
+  header: string;
+  question: string;
+  options: ClarificationQuestionOption[];
+};
+
+const FRONTEND_SLIDES_DISCOVERY_QUESTIONS: ClarificationQuestion[] = [
+  {
+    id: 'purpose',
+    header: 'Purpose',
+    question: 'What is this presentation for?',
+    options: [
+      {
+        id: 'purpose-pitch',
+        label: 'Pitch deck',
+        value: 'Pitch deck',
+        description: 'Selling an idea, product, or company to investors or clients.',
+      },
+      {
+        id: 'purpose-teaching',
+        label: 'Teaching / Tutorial',
+        value: 'Teaching / Tutorial',
+        description: 'Explaining concepts, how-to guides, or educational material.',
+      },
+      {
+        id: 'purpose-conference',
+        label: 'Conference talk',
+        value: 'Conference talk',
+        description: 'A keynote, event session, or tech talk.',
+      },
+      {
+        id: 'purpose-internal',
+        label: 'Internal presentation',
+        value: 'Internal presentation',
+        description: 'Team updates, strategy reviews, or company meetings.',
+      },
+    ],
+  },
+  {
+    id: 'length',
+    header: 'Length',
+    question: 'Approximately how many slides should it have?',
+    options: [
+      {
+        id: 'length-short',
+        label: 'Short (5-10)',
+        value: 'Short (5-10)',
+        description: 'Quick pitch or lightning talk.',
+      },
+      {
+        id: 'length-medium',
+        label: 'Medium (10-20)',
+        value: 'Medium (10-20)',
+        description: 'Standard presentation length.',
+      },
+      {
+        id: 'length-long',
+        label: 'Long (20+)',
+        value: 'Long (20+)',
+        description: 'Deep dive or comprehensive talk.',
+      },
+    ],
+  },
+  {
+    id: 'content',
+    header: 'Content',
+    question: 'How ready is the content?',
+    options: [
+      {
+        id: 'content-ready',
+        label: 'All content is ready',
+        value: 'I have all content ready',
+        description: 'Only the presentation design is needed.',
+      },
+      {
+        id: 'content-notes',
+        label: 'Rough notes',
+        value: 'I have rough notes',
+        description: 'Need help organizing the material into slides.',
+      },
+      {
+        id: 'content-topic',
+        label: 'Topic only',
+        value: 'I have a topic only',
+        description: 'Need help creating the full outline.',
+      },
+    ],
+  },
+  {
+    id: 'images',
+    header: 'Images',
+    question: 'What should happen with images?',
+    options: [
+      {
+        id: 'images-none',
+        label: 'No images',
+        value: 'No images',
+        description: 'Use CSS-generated visuals instead.',
+      },
+      {
+        id: 'images-assets',
+        label: 'Use ./assets',
+        value: './assets',
+        description: 'Use the assets folder in the current project.',
+      },
+      {
+        id: 'images-other',
+        label: 'Other path',
+        value: 'Custom image path',
+        description: 'Type or paste another image folder path in the notes field.',
+      },
+    ],
+  },
+  {
+    id: 'editing',
+    header: 'Editing',
+    question: 'Should the generated deck support inline browser editing?',
+    options: [
+      {
+        id: 'editing-yes',
+        label: 'Yes (Recommended)',
+        value: 'Yes',
+        description: 'Edit text in-browser, auto-save locally, and export later.',
+      },
+      {
+        id: 'editing-no',
+        label: 'No',
+        value: 'No',
+        description: 'Presentation only, with a smaller output file.',
+      },
+    ],
+  },
+];
 
 const getThinkingPlaceholder = (
   metadata?: ConversationMessageMetadata,
@@ -77,6 +220,144 @@ const renderDisplayPayload = (
       </div>
     </div>
   );
+};
+
+const parseClarificationQuestions = (
+  pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
+  activeSkill?: string,
+): ClarificationQuestion[] => {
+  const responseQuestions = Array.isArray(pendingInterrupt?.responseSpec?.questions)
+    ? pendingInterrupt.responseSpec.questions
+    : [];
+  if (responseQuestions.length) {
+    return responseQuestions.reduce<ClarificationQuestion[]>((acc, question) => {
+      if (!question || typeof question !== 'object' || !question.question) {
+        return acc;
+      }
+      acc.push({
+        id: question.id,
+        header: question.header,
+        question: question.question,
+        options: Array.isArray(question.options)
+          ? question.options.reduce<ClarificationQuestionOption[]>((optionAcc, option) => {
+              if (!option?.label || !option?.value) {
+                return optionAcc;
+              }
+              optionAcc.push({
+                id: option.id,
+                label: option.label,
+                value: option.value,
+                description: option.description,
+              });
+              return optionAcc;
+            }, [])
+          : [],
+      });
+      return acc;
+    }, []);
+  }
+
+  const rawQuestions = pendingInterrupt?.displayPayload?.questions;
+  if (Array.isArray(rawQuestions)) {
+    const parsedQuestions = rawQuestions
+      .map((item, index) => {
+        if (!item || typeof item !== 'object' || Array.isArray(item)) {
+          return null;
+        }
+        const payload = item as Record<string, unknown>;
+        const header = String(payload.header || payload.title || `Question ${index + 1}`).trim();
+        const question = String(payload.question || payload.prompt || payload.description || '').trim();
+        const rawOptions = Array.isArray(payload.options) ? payload.options : [];
+        const options = rawOptions
+          .map((option, optionIndex) => {
+            if (typeof option === 'string' && option.trim()) {
+              return {
+                id: `${header.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${optionIndex + 1}`,
+                label: option.trim(),
+                value: option.trim(),
+              } satisfies ClarificationQuestionOption;
+            }
+            if (!option || typeof option !== 'object' || Array.isArray(option)) {
+              return null;
+            }
+            const optionPayload = option as Record<string, unknown>;
+            const label = String(optionPayload.label || optionPayload.value || '').trim();
+            const value = String(optionPayload.value || label).trim();
+            if (!label || !value) {
+              return null;
+            }
+            return {
+              id: String(optionPayload.id || `${header.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${optionIndex + 1}`).trim(),
+              label,
+              value,
+              description: String(optionPayload.description || '').trim() || undefined,
+            } satisfies ClarificationQuestionOption;
+          })
+          .filter((option): option is ClarificationQuestionOption => Boolean(option));
+        return {
+          id: String(payload.id || header.toLowerCase().replace(/[^a-z0-9]+/g, '-')).trim(),
+          header,
+          question,
+          options,
+        } satisfies ClarificationQuestion;
+      })
+      .filter((question): question is ClarificationQuestion => question !== null && question.question.length > 0);
+    if (parsedQuestions.length) {
+      return parsedQuestions;
+    }
+  }
+
+  const skill = activeSkill?.trim().toLowerCase();
+  const responseChoices = Array.isArray(pendingInterrupt?.responseSpec?.choices) ? pendingInterrupt?.responseSpec?.choices : [];
+  const normalizedChoiceLabels = responseChoices.map((choice) => choice.label.trim().toLowerCase());
+  const looksLikeFrontendSlidesDiscovery =
+    skill === 'frontend-slides' &&
+    normalizedChoiceLabels.length === FRONTEND_SLIDES_DISCOVERY_HEADERS.length &&
+    normalizedChoiceLabels.every((label) => FRONTEND_SLIDES_DISCOVERY_HEADERS.includes(label as (typeof FRONTEND_SLIDES_DISCOVERY_HEADERS)[number]));
+
+  return looksLikeFrontendSlidesDiscovery ? FRONTEND_SLIDES_DISCOVERY_QUESTIONS : [];
+};
+
+const buildClarificationTemplate = (questions: ClarificationQuestion[]): string =>
+  questions
+    .map((question) => `${question.header}:`)
+    .join('\n');
+
+const readStructuredAnswerMap = (
+  value: string,
+  questions: ClarificationQuestion[],
+): Record<string, string> => {
+  const answers: Record<string, string> = {};
+  const lines = value.split('\n');
+  questions.forEach((question) => {
+    const prefix = `${question.header.toLowerCase()}:`;
+    const matchingLine = lines.find((line) => line.trim().toLowerCase().startsWith(prefix));
+    if (matchingLine) {
+      answers[question.id] = matchingLine.slice(matchingLine.indexOf(':') + 1).trim();
+    }
+  });
+  return answers;
+};
+
+const upsertStructuredAnswer = (
+  value: string,
+  question: ClarificationQuestion,
+  answer: string,
+  questions: ClarificationQuestion[],
+): string => {
+  const existingLines = value
+    ? value.split('\n')
+    : buildClarificationTemplate(questions).split('\n');
+  const prefix = `${question.header}:`;
+  const nextLines = [...existingLines];
+  const lineIndex = nextLines.findIndex((line) => line.trim().toLowerCase().startsWith(prefix.toLowerCase()));
+  const nextLine = `${prefix} ${answer}`.trimEnd();
+  if (lineIndex >= 0) {
+    nextLines[lineIndex] = nextLine;
+  } else {
+    nextLines.push(nextLine);
+  }
+  return nextLines.join('\n').trim();
 };
 
 export default function ChatMessageBubble({
@@ -181,6 +462,7 @@ export default function ChatMessageBubble({
   const isToolActivityExpanded = expandedToolMessages.has(message.id);
   const isThinkingExpanded = expandedThinkingMessages.has(message.id);
   const rawThinkingText = message.thinkingText?.trim() || '';
+  const activeSkill = messageMetadata?.runPolicy?.skill?.trim().toLowerCase();
   const isSystemThinking = /available skills/i.test(rawThinkingText);
   const displayThinkingText = isSystemThinking
     ? getThinkingPlaceholder(messageMetadata, toolEvents)
@@ -219,6 +501,17 @@ export default function ChatMessageBubble({
   const allowDismiss = Boolean(pendingInterrupt?.responseSpec?.allowDismiss);
   const clarificationAllowsMultiple = Boolean(pendingInterrupt?.responseSpec?.multiple);
   const selectedChoiceIds = interruptSelectedChoicesByMessageId[messageKey] || [];
+  const structuredClarificationQuestions = useMemo(
+    () => parseClarificationQuestions(pendingInterrupt, activeSkill),
+    [activeSkill, pendingInterrupt],
+  );
+  const hasStructuredClarificationForm = isClarificationInterrupt && structuredClarificationQuestions.length > 0;
+  const clarificationDraftValue = interruptInputByMessageId[clarificationTextKey] || '';
+  const structuredClarificationSubmitActions = interruptActions.filter((action) => action.inputMode === 'text');
+  const structuredAnswerMap = useMemo(
+    () => readStructuredAnswerMap(clarificationDraftValue, structuredClarificationQuestions),
+    [clarificationDraftValue, structuredClarificationQuestions],
+  );
 
   const planText = useMemo(() => {
     const args = primaryInterruptAction?.args;
@@ -306,7 +599,15 @@ export default function ChatMessageBubble({
     setConfirmActionId(null);
   };
 
-  const clarificationDisplayPayload = renderDisplayPayload(pendingInterrupt?.displayPayload, 'Context', 'dark');
+  const clarificationDisplayPayload = renderDisplayPayload(
+    pendingInterrupt?.displayPayload && typeof pendingInterrupt.displayPayload === 'object'
+      ? Object.fromEntries(
+          Object.entries(pendingInterrupt.displayPayload).filter(([key]) => key !== 'questions'),
+        )
+      : undefined,
+    'Context',
+    'light',
+  );
   const approvalDisplayPayload = approvalReview
     ? null
     : renderDisplayPayload(pendingInterrupt?.displayPayload, 'Plan details', 'light');
@@ -393,7 +694,14 @@ export default function ChatMessageBubble({
                       </span>
                     </>
                   ) : (
-                    action.label
+                    <span className="min-w-0 text-left">
+                      <span className="block">{action.label}</span>
+                      {action.description ? (
+                        <span className={tone === 'dark' ? 'mt-1 block text-xs font-normal text-white/58' : 'mt-1 block text-[11px] font-normal leading-relaxed text-slate-500'}>
+                          {action.description}
+                        </span>
+                      ) : null}
+                    </span>
                   )}
                 </button>
               ) : null}
@@ -732,31 +1040,127 @@ export default function ChatMessageBubble({
               </div>
             ) : null}
             {pendingInterrupt && isClarificationInterrupt && !clarificationDismissed ? (
-              <div className="mt-5 rounded-[2rem] border border-white/10 bg-[#121212] p-5 text-white shadow-[0_26px_80px_-34px_rgba(0,0,0,0.95)] ring-1 ring-white/10">
+              <div className="mt-5 rounded-[2rem] border border-slate-200/80 bg-gradient-to-br from-white via-slate-50 to-sky-50/55 p-5 text-slate-900 shadow-[0_26px_80px_-34px_rgba(15,23,42,0.32)] ring-1 ring-white/70">
                 <div className="flex items-start justify-between gap-4">
                   <div className="min-w-0">
-                    <p className="text-[30px] font-semibold leading-tight tracking-tight text-white">
+                    <p className="text-[30px] font-semibold leading-tight tracking-tight text-slate-900">
                       {pendingInterrupt.title || (isDynamicActionInterrupt ? 'Select the next step' : 'The agent needs clarification')}
                     </p>
                     {pendingInterrupt.description ? (
-                      <p className="mt-3 max-w-2xl text-sm leading-relaxed text-white/70">
+                      <p className="mt-3 max-w-2xl text-sm leading-relaxed text-slate-600">
                         {pendingInterrupt.description}
                       </p>
                     ) : null}
                   </div>
                   {pendingInterrupt.stepCount && pendingInterrupt.stepCount > 1 ? (
-                    <div className="shrink-0 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-white/75">
+                    <div className="shrink-0 rounded-full border border-slate-200 bg-white/80 px-4 py-2 text-sm font-medium text-slate-600">
                       {typeof pendingInterrupt.stepIndex === 'number' ? pendingInterrupt.stepIndex + 1 : 1} of {pendingInterrupt.stepCount}
                     </div>
                   ) : null}
                 </div>
                 {clarificationDisplayPayload ? <div className="mt-5">{clarificationDisplayPayload}</div> : null}
                 {interruptError ? (
-                  <div className="mt-4 rounded-[1.25rem] border border-rose-400/35 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">
+                  <div className="mt-4 rounded-[1.25rem] border border-rose-200/90 bg-rose-50 px-4 py-3 text-sm text-rose-700">
                     {interruptError}
                   </div>
                 ) : null}
-                {renderInterruptActions('dark')}
+                {hasStructuredClarificationForm ? (
+                  <div className="mt-5 space-y-5">
+                    <div className="grid gap-4 md:grid-cols-2">
+                      {structuredClarificationQuestions.map((question) => (
+                        <div key={question.id} className="rounded-[1.5rem] border border-slate-200/80 bg-white/85 p-4 shadow-sm">
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-400">
+                            {question.header}
+                          </p>
+                          <p className="mt-2 text-sm font-medium leading-relaxed text-slate-700">
+                            {question.question}
+                          </p>
+                          {question.options.length ? (
+                            <div className="mt-3 space-y-2">
+                              {question.options.map((option) => {
+                                const currentAnswer = (structuredAnswerMap[question.id] || '').trim().toLowerCase();
+                                const isSelected = currentAnswer === option.value.trim().toLowerCase();
+                                return (
+                                  <button
+                                    key={option.id}
+                                    type="button"
+                                    disabled={interruptControlsDisabled}
+                                    onClick={() => {
+                                      const nextValue = upsertStructuredAnswer(
+                                        clarificationDraftValue,
+                                        question,
+                                        option.value,
+                                        structuredClarificationQuestions,
+                                      );
+                                      setInterruptValue(clarificationTextKey, nextValue);
+                                    }}
+                                    className={`w-full rounded-[1.15rem] border px-3 py-3 text-left transition-all duration-200 ${
+                                      isSelected
+                                        ? 'border-sky-300 bg-sky-50 text-sky-900 shadow-[0_0_0_1px_rgba(14,165,233,0.12)]'
+                                        : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50'
+                                    } ${interruptControlsDisabled ? 'cursor-not-allowed opacity-60' : ''}`}
+                                  >
+                                    <span className="block text-sm font-semibold">{option.label}</span>
+                                    {option.description ? (
+                                      <span className="mt-1 block text-xs leading-relaxed text-slate-500">
+                                        {option.description}
+                                      </span>
+                                    ) : null}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          ) : null}
+                        </div>
+                      ))}
+                    </div>
+                    <div className="rounded-[1.5rem] border border-slate-200/80 bg-white/90 p-4 shadow-sm">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                        <div>
+                          <p className="text-sm font-semibold text-slate-800">Notes for the agent</p>
+                          <p className="mt-1 text-xs text-slate-500">Adjust any suggestion or add your own details, then continue.</p>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {structuredClarificationSubmitActions.map((action) => (
+                            <button
+                              key={action.id}
+                              type="button"
+                              disabled={interruptControlsDisabled || !clarificationDraftValue.trim()}
+                              onClick={() => void handleInterruptAction(message, action, pendingInterrupt)}
+                              className={getActionButtonClass(
+                                {
+                                  ...action,
+                                  label: action.submitLabel || action.label,
+                                  style: 'primary',
+                                },
+                                'light',
+                              )}
+                            >
+                              {interruptBusy ? (
+                                <span className="inline-flex items-center gap-2">
+                                  <Loader2 size={16} className="animate-spin" />
+                                  {action.submitLabel || action.label}
+                                </span>
+                              ) : (
+                                action.submitLabel || action.label
+                              )}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      <textarea
+                        value={clarificationDraftValue}
+                        onChange={(event) => setInterruptValue(clarificationTextKey, event.target.value)}
+                        rows={Math.max(6, structuredClarificationQuestions.length + 1)}
+                        disabled={interruptControlsDisabled}
+                        placeholder={buildClarificationTemplate(structuredClarificationQuestions)}
+                        className="mt-3 w-full rounded-[1.35rem] border border-slate-200 bg-white px-4 py-3 text-sm leading-relaxed text-slate-700 placeholder:text-slate-400 focus:border-sky-400 focus:outline-none disabled:cursor-not-allowed disabled:opacity-70"
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  renderInterruptActions('light')
+                )}
                 <div className="mt-6 flex items-center justify-between gap-4">
                   <button
                     type="button"
@@ -764,8 +1168,8 @@ export default function ChatMessageBubble({
                     onClick={() => setClarificationDismissed(true)}
                     className={`rounded-full px-4 py-2 text-sm font-medium transition-all duration-200 ${
                       allowDismiss
-                        ? 'text-white/70 hover:bg-white/[0.06] hover:text-white'
-                        : 'cursor-not-allowed text-white/25'
+                        ? 'text-slate-500 hover:bg-slate-100 hover:text-slate-700'
+                        : 'cursor-not-allowed text-slate-300'
                     }`}
                   >
                     {pendingInterrupt.responseSpec?.dismissLabel || 'Dismiss'}

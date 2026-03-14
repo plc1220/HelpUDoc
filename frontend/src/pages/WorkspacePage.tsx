@@ -402,10 +402,31 @@ export default function WorkspacePage() {
     }
   }, []);
 
+  const removeConflictingRuns = useCallback((runs: Record<string, ActiveRunInfo>, runInfo: ActiveRunInfo) => {
+    const next = { ...runs };
+    Object.entries(next).forEach(([candidateRunId, candidate]) => {
+      if (candidateRunId === runInfo.runId) {
+        return;
+      }
+      if (candidate.conversationId === runInfo.conversationId && candidate.turnId === runInfo.turnId) {
+        delete next[candidateRunId];
+        delete lastPersistedAgentTextRef.current[candidateRunId];
+        delete lastPersistedStatusRef.current[candidateRunId];
+        delete lastPersistedMetadataRef.current[candidateRunId];
+        resumeInFlightRef.current.delete(candidateRunId);
+        resumeAttemptedRef.current.delete(candidateRunId);
+      }
+    });
+    return next;
+  }, []);
+
   const registerActiveRun = useCallback((runInfo: ActiveRunInfo) => {
-    const next = { ...activeRunsRef.current, [runInfo.runId]: runInfo };
+    const next = {
+      ...removeConflictingRuns(activeRunsRef.current, runInfo),
+      [runInfo.runId]: runInfo,
+    };
     persistActiveRuns(next);
-  }, [persistActiveRuns]);
+  }, [persistActiveRuns, removeConflictingRuns]);
 
   const removeActiveRun = useCallback((runId: string) => {
     if (!activeRunsRef.current[runId]) return;
@@ -417,6 +438,31 @@ export default function WorkspacePage() {
     delete lastPersistedMetadataRef.current[runId];
     resumeInFlightRef.current.delete(runId);
     resumeAttemptedRef.current.delete(runId);
+  }, [persistActiveRuns]);
+
+  const removeActiveRunsForTurn = useCallback((conversationId: string, turnId?: string, keepRunId?: string) => {
+    if (!turnId) {
+      return;
+    }
+    const next = { ...activeRunsRef.current };
+    let changed = false;
+    Object.entries(next).forEach(([candidateRunId, candidate]) => {
+      if (candidateRunId === keepRunId) {
+        return;
+      }
+      if (candidate.conversationId === conversationId && candidate.turnId === turnId) {
+        delete next[candidateRunId];
+        delete lastPersistedAgentTextRef.current[candidateRunId];
+        delete lastPersistedStatusRef.current[candidateRunId];
+        delete lastPersistedMetadataRef.current[candidateRunId];
+        resumeInFlightRef.current.delete(candidateRunId);
+        resumeAttemptedRef.current.delete(candidateRunId);
+        changed = true;
+      }
+    });
+    if (changed) {
+      persistActiveRuns(next);
+    }
   }, [persistActiveRuns]);
 
   const getActiveRunForConversation = useCallback((conversationId: string | null) => {
@@ -2097,6 +2143,10 @@ export default function WorkspacePage() {
     if (!message || message.sender !== 'agent') {
       return true;
     }
+    const metadata = (message.metadata as ConversationMessageMetadata | undefined) || undefined;
+    if (metadata?.pendingInterrupt || metadata?.status === 'awaiting_approval') {
+      return false;
+    }
     return !message.text && !message.thinkingText && !message.toolEvents?.length;
   }, []);
 
@@ -2450,8 +2500,14 @@ export default function WorkspacePage() {
         )
       : [];
     if (interruptActions.length) {
+      const responseSpec = pendingInterrupt?.responseSpec;
+      const clarificationChoices = Array.isArray(responseSpec?.choices) ? responseSpec.choices : [];
       return interruptActions.map((action) => ({
         ...action,
+        description:
+          typeof action.payload?.selectedChoiceId === 'string'
+            ? clarificationChoices.find((choice) => choice.id === action.payload?.selectedChoiceId)?.description
+            : clarificationChoices.find((choice) => choice.id === action.id)?.description,
         source: 'dynamic',
       }));
     }
@@ -2462,6 +2518,7 @@ export default function WorkspacePage() {
       const derivedActions: RenderableInterruptAction[] = clarificationChoices.map((choice) => ({
         id: `choice:${choice.id}`,
         label: choice.label,
+        description: choice.description,
         style: 'secondary',
         inputMode: 'none',
         value: choice.value,
@@ -2879,6 +2936,7 @@ export default function WorkspacePage() {
           registerActiveRun({ ...runInfo, status: finalStatus });
         } else {
           removeActiveRun(runId);
+          removeActiveRunsForTurn(conversationId, turnId);
           const workspaceId = selectedWorkspace?.id;
           if (workspaceId) {
             loadFilesForWorkspace(workspaceId);
@@ -2897,6 +2955,7 @@ export default function WorkspacePage() {
       getRunStatus,
       addLocalSystemMessage,
       removeActiveRun,
+      removeActiveRunsForTurn,
       selectedWorkspace?.id,
       loadFilesForWorkspace,
     ],
@@ -3211,7 +3270,7 @@ export default function WorkspacePage() {
         return;
       }
 
-      if (action.source === 'clarification-text') {
+      if (getInterruptKind(pendingInterrupt) === 'clarification' && action.inputMode === 'text') {
         await handleClarificationResponse(message, pendingInterrupt);
         return;
       }
@@ -3424,25 +3483,29 @@ export default function WorkspacePage() {
               .finally(() => {
                 resumeInFlightRef.current.delete(activeRun.runId);
               });
-          } else if (needsRecovery) {
-            streamRunForConversation({ ...activeRun, status: status.status }, true)
-              .catch((error) => {
-                console.error('Failed to recover agent stream', error);
-                removeActiveRun(activeRun.runId);
-              })
-              .finally(() => {
-                resumeInFlightRef.current.delete(activeRun.runId);
-              });
           } else if (status.status === 'awaiting_approval') {
             const targetMessage = findAgentMessageForRun(
               activeRun.conversationId,
               activeRun.placeholderId,
               activeRun.turnId
             );
-            if (targetMessage?.metadata?.runId || status.pendingInterrupt) {
+            if (!targetMessage && status.pendingInterrupt) {
+              ensureAgentPlaceholder(
+                activeRun.conversationId,
+                activeRun.placeholderId,
+                activeRun.turnId,
+                true,
+              );
+            }
+            const resolvedTargetMessage = findAgentMessageForRun(
+              activeRun.conversationId,
+              activeRun.placeholderId,
+              activeRun.turnId
+            );
+            if (resolvedTargetMessage?.metadata?.runId || status.pendingInterrupt) {
               updateMessagesForConversation(activeRun.conversationId, (prev) => {
                 const updated = [...prev];
-                const idx = updated.findIndex((message) => message.id === targetMessage?.id);
+                const idx = updated.findIndex((message) => message.id === resolvedTargetMessage?.id);
                 if (idx === -1) {
                   return updated;
                 }
@@ -3458,6 +3521,15 @@ export default function WorkspacePage() {
               });
             }
             resumeInFlightRef.current.delete(activeRun.runId);
+          } else if (needsRecovery) {
+            streamRunForConversation({ ...activeRun, status: status.status }, true)
+              .catch((error) => {
+                console.error('Failed to recover agent stream', error);
+                removeActiveRun(activeRun.runId);
+              })
+              .finally(() => {
+                resumeInFlightRef.current.delete(activeRun.runId);
+              });
           } else {
             resumeInFlightRef.current.delete(activeRun.runId);
             const staleMessage = findAgentMessageForRun(

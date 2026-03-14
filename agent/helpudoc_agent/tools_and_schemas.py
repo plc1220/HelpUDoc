@@ -488,6 +488,7 @@ class ToolFactory:
             title: str,
             description: str = "",
             options_json: str = "[]",
+            questions_json: str = "[]",
             allow_freeform: bool = True,
             multi_select: bool = False,
             placeholder: str = "",
@@ -538,11 +539,63 @@ class ToolFactory:
                             }
                         )
 
+            parsed_questions: List[Dict[str, Any]] = []
+            try:
+                raw_questions = json.loads(questions_json or "[]")
+            except json.JSONDecodeError:
+                raw_questions = []
+            if isinstance(raw_questions, list):
+                for index, item in enumerate(raw_questions):
+                    if not isinstance(item, dict):
+                        continue
+                    header = str(item.get("header") or item.get("title") or f"Question {index + 1}").strip()
+                    question = str(item.get("question") or item.get("prompt") or item.get("description") or "").strip()
+                    if not header or not question:
+                        continue
+                    parsed_question_options: List[Dict[str, str]] = []
+                    raw_question_options = item.get("options")
+                    if isinstance(raw_question_options, list):
+                        for option_index, option in enumerate(raw_question_options):
+                            if isinstance(option, str) and option.strip():
+                                parsed_question_options.append(
+                                    {
+                                        "id": f"{header.lower().replace(' ', '-')}-{option_index + 1}",
+                                        "label": option.strip(),
+                                        "value": option.strip(),
+                                    }
+                                )
+                            elif isinstance(option, dict):
+                                label = str(option.get("label") or option.get("value") or "").strip()
+                                value = str(option.get("value") or label).strip()
+                                if not label or not value:
+                                    continue
+                                parsed_question_options.append(
+                                    {
+                                        "id": str(option.get("id") or f"{header.lower().replace(' ', '-')}-{option_index + 1}").strip(),
+                                        "label": label,
+                                        "value": value,
+                                        **(
+                                            {"description": str(option.get("description")).strip()}
+                                            if str(option.get("description") or "").strip()
+                                            else {}
+                                        ),
+                                    }
+                                )
+                    parsed_questions.append(
+                        {
+                            "id": str(item.get("id") or header.lower().replace(" ", "-")).strip(),
+                            "header": header,
+                            "question": question,
+                            **({"options": parsed_question_options} if parsed_question_options else {}),
+                        }
+                    )
+
             input_mode = "text"
-            if parsed_choices and allow_freeform:
-                input_mode = "text_or_choice"
-            elif parsed_choices:
-                input_mode = "choice"
+            if not parsed_questions:
+                if parsed_choices and allow_freeform:
+                    input_mode = "text_or_choice"
+                elif parsed_choices:
+                    input_mode = "choice"
 
             display_payload: Dict[str, Any] = {}
             try:
@@ -552,6 +605,7 @@ class ToolFactory:
             except json.JSONDecodeError:
                 display_payload = {}
 
+            action_choices = [] if parsed_questions else parsed_choices
             interrupt_payload = {
                 "kind": "clarification",
                 "title": prompt_title,
@@ -567,7 +621,7 @@ class ToolFactory:
                         "value": choice["value"],
                         **({"payload": {"selectedChoiceId": choice["id"]}} if choice.get("id") else {}),
                     }
-                    for choice in parsed_choices
+                    for choice in action_choices
                 ]
                 + (
                     [
@@ -589,6 +643,7 @@ class ToolFactory:
                     "submitLabel": (submit_label or "Continue").strip() or "Continue",
                     "placeholder": (placeholder or "").strip(),
                     "choices": parsed_choices,
+                    **({"questions": parsed_questions} if parsed_questions else {}),
                 },
                 "display_payload": display_payload,
             }
@@ -606,7 +661,10 @@ class ToolFactory:
         request_clarification.name = "request_clarification"
         request_clarification.description = (
             "Pause execution to ask the human a clarification question. "
-            "Use options_json for clickable choices and allow_freeform for typed input."
+            "Use options_json for clickable suggestions and allow_freeform for typed input. "
+            "For multi-question discovery forms, pass questions_json with objects like "
+            '{"header":"Purpose","question":"What is this presentation for?","options":[{"label":"Pitch deck","value":"Pitch deck","description":"Selling an idea to investors"}]}. '
+            "Do not pass section headers like Purpose or Length as the only options."
         )
         return request_clarification
 
