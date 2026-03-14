@@ -54,6 +54,20 @@ export interface InterruptChoice {
   value: string;
 }
 
+export interface InterruptQuestionOption {
+  id: string;
+  label: string;
+  description?: string;
+  value: string;
+}
+
+export interface InterruptQuestion {
+  id: string;
+  header: string;
+  question: string;
+  options?: InterruptQuestionOption[];
+}
+
 export interface InterruptAction {
   id: string;
   label: string;
@@ -74,6 +88,7 @@ export interface InterruptResponseSpec {
   allowDismiss?: boolean;
   dismissLabel?: string;
   choices?: InterruptChoice[];
+  questions?: InterruptQuestion[];
 }
 
 export interface PendingInterrupt {

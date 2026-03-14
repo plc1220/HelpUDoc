@@ -28,10 +28,12 @@ from .rag_worker import RagIndexWorker
 from .skills_registry import collect_tool_names, load_skills
 from .paper2slides_runner import run_paper2slides, export_pptx_from_pdf
 from .jwt_utils import decode_and_verify_hs256_jwt
+from langgraph.errors import GraphInterrupt
 from langgraph.types import Command
 
 
 logger = logging.getLogger(__name__)
+_INTERRUPT_TOOL_NAMES: Set[str] = {"request_clarification", "request_human_action"}
 
 
 def _format_exception(exc: BaseException) -> str:
@@ -676,6 +678,9 @@ def create_app() -> FastAPI:
             run_key = str(run_id)
             name = self._tool_names.pop(run_key, "tool")
             text = self._to_text(output)
+            if name in _INTERRUPT_TOOL_NAMES and text.strip().startswith("Interrupt(value="):
+                self._tool_meta.pop(run_key, None)
+                return
             payload: Dict[str, Any] = {
                 "type": "tool_end",
                 "name": name,
@@ -696,7 +701,11 @@ def create_app() -> FastAPI:
             await self._emit(payload)
 
         async def on_tool_error(self, error, *, run_id, **_: Any) -> None:
-            name = self._tool_names.pop(str(run_id), "tool")
+            run_key = str(run_id)
+            name = self._tool_names.pop(run_key, "tool")
+            if _extract_interrupt_from_exception(error):
+                self._tool_meta.pop(run_key, None)
+                return
             await self._emit(
                 {
                     "type": "tool_error",
@@ -792,11 +801,8 @@ def create_app() -> FastAPI:
                     return item.get("messages")  # type: ignore[return-value]
         return None
 
-    def _extract_interrupt_payload(chunk: Any) -> Dict[str, Any] | None:
-        if not isinstance(chunk, dict):
-            return None
-        raw = chunk.get("__interrupt__")
-        if not raw or not isinstance(raw, list):
+    def _build_interrupt_payload(raw: Any) -> Dict[str, Any] | None:
+        if not raw or not isinstance(raw, (list, tuple)):
             return None
         first = raw[0] if raw else None
         if first is None:
@@ -837,6 +843,22 @@ def create_app() -> FastAPI:
         if isinstance(interrupt_id, str) and interrupt_id:
             payload["interruptId"] = interrupt_id
         return payload
+
+    def _extract_interrupt_payload(chunk: Any) -> Dict[str, Any] | None:
+        if not isinstance(chunk, dict):
+            return None
+        return _build_interrupt_payload(chunk.get("__interrupt__"))
+
+    def _extract_interrupt_from_exception(error: BaseException) -> Dict[str, Any] | None:
+        if isinstance(error, BaseExceptionGroup):
+            for inner in error.exceptions:
+                payload = _extract_interrupt_from_exception(inner)
+                if payload:
+                    return payload
+            return None
+        if isinstance(error, GraphInterrupt):
+            return _build_interrupt_payload(error.args[0] if error.args else None)
+        return None
 
     def _active_skill_policy(runtime: AgentRuntimeState) -> Dict[str, Any]:
         context = runtime.workspace_state.context or {}
@@ -1021,6 +1043,13 @@ def create_app() -> FastAPI:
                             "content": "Model returned no output",
                         }
                     )
+            except GraphInterrupt as exc:
+                interrupt_payload = _extract_interrupt_from_exception(exc)
+                if interrupt_payload:
+                    saw_interrupt = True
+                    await handler._emit(interrupt_payload)
+                    return
+                raise
             except Exception as exc:  # pragma: no cover - streaming guard
                 error_message = _format_exception(exc)
                 logger.exception("Agent stream error: %s", error_message)

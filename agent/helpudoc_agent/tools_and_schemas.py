@@ -34,6 +34,28 @@ from .utils import SourceTracker, extract_web_url
 logger = logging.getLogger(__name__)
 
 
+def _dict_has_keys(value: Any, keys: set[str]) -> bool:
+    return isinstance(value, dict) and any(key in value for key in keys)
+
+
+def _interrupt_with_retry(
+    payload: Dict[str, Any],
+    *,
+    valid_keys: set[str],
+    stale_keys: set[str],
+    label: str,
+    attempts: int = 2,
+) -> Any:
+    """Retry once when an interrupt receives a stale resume payload from a prior step."""
+    response: Any = None
+    for attempt in range(attempts):
+        response = interrupt(payload)
+        if not _dict_has_keys(response, stale_keys) or _dict_has_keys(response, valid_keys):
+            return response
+        logger.warning("%s received stale interrupt resume payload on attempt %s; retrying", label, attempt + 1)
+    return response
+
+
 def _get_active_skill_policy(workspace_state: WorkspaceState) -> SkillPolicy:
     raw = workspace_state.context.get("active_skill_policy")
     if isinstance(raw, SkillPolicy):
@@ -342,7 +364,21 @@ class ToolFactory:
                         workspace_state.context.get("skip_plan_approvals")
                     )
                     workspace_state.context["pre_plan_search_count"] = 0
-                    return f"Loaded skill: {skill.skill_id}\n\n{content}"
+                    policy_lines = [
+                        f"Skill policy for {skill.skill_id}:",
+                        f"- requires_hitl_plan: {'true' if skill.policy.requires_hitl_plan else 'false'}",
+                        f"- requires_workspace_artifacts: {'true' if skill.policy.requires_workspace_artifacts else 'false'}",
+                    ]
+                    if skill.policy.requires_hitl_plan:
+                        policy_lines.append(
+                            "- You must call request_plan_approval before side-effecting execution."
+                        )
+                    else:
+                        policy_lines.append(
+                            "- Do not call request_plan_approval for this skill unless the user explicitly asks for a review gate."
+                        )
+                    policy_lines.append("")
+                    return f"Loaded skill: {skill.skill_id}\n\n" + "\n".join(policy_lines) + f"\n{content}"
             available = ", ".join(sorted({skill.skill_id for skill in skills}))
             return f"Skill '{normalized}' not found. Available skills: {available}"
 
@@ -452,6 +488,7 @@ class ToolFactory:
             title: str,
             description: str = "",
             options_json: str = "[]",
+            questions_json: str = "[]",
             allow_freeform: bool = True,
             multi_select: bool = False,
             placeholder: str = "",
@@ -502,11 +539,63 @@ class ToolFactory:
                             }
                         )
 
+            parsed_questions: List[Dict[str, Any]] = []
+            try:
+                raw_questions = json.loads(questions_json or "[]")
+            except json.JSONDecodeError:
+                raw_questions = []
+            if isinstance(raw_questions, list):
+                for index, item in enumerate(raw_questions):
+                    if not isinstance(item, dict):
+                        continue
+                    header = str(item.get("header") or item.get("title") or f"Question {index + 1}").strip()
+                    question = str(item.get("question") or item.get("prompt") or item.get("description") or "").strip()
+                    if not header or not question:
+                        continue
+                    parsed_question_options: List[Dict[str, str]] = []
+                    raw_question_options = item.get("options")
+                    if isinstance(raw_question_options, list):
+                        for option_index, option in enumerate(raw_question_options):
+                            if isinstance(option, str) and option.strip():
+                                parsed_question_options.append(
+                                    {
+                                        "id": f"{header.lower().replace(' ', '-')}-{option_index + 1}",
+                                        "label": option.strip(),
+                                        "value": option.strip(),
+                                    }
+                                )
+                            elif isinstance(option, dict):
+                                label = str(option.get("label") or option.get("value") or "").strip()
+                                value = str(option.get("value") or label).strip()
+                                if not label or not value:
+                                    continue
+                                parsed_question_options.append(
+                                    {
+                                        "id": str(option.get("id") or f"{header.lower().replace(' ', '-')}-{option_index + 1}").strip(),
+                                        "label": label,
+                                        "value": value,
+                                        **(
+                                            {"description": str(option.get("description")).strip()}
+                                            if str(option.get("description") or "").strip()
+                                            else {}
+                                        ),
+                                    }
+                                )
+                    parsed_questions.append(
+                        {
+                            "id": str(item.get("id") or header.lower().replace(" ", "-")).strip(),
+                            "header": header,
+                            "question": question,
+                            **({"options": parsed_question_options} if parsed_question_options else {}),
+                        }
+                    )
+
             input_mode = "text"
-            if parsed_choices and allow_freeform:
-                input_mode = "text_or_choice"
-            elif parsed_choices:
-                input_mode = "choice"
+            if not parsed_questions:
+                if parsed_choices and allow_freeform:
+                    input_mode = "text_or_choice"
+                elif parsed_choices:
+                    input_mode = "choice"
 
             display_payload: Dict[str, Any] = {}
             try:
@@ -516,47 +605,54 @@ class ToolFactory:
             except json.JSONDecodeError:
                 display_payload = {}
 
-            response = interrupt(
-                {
-                    "kind": "clarification",
-                    "title": prompt_title,
-                    "description": prompt_description,
-                    "step_index": max(0, int(step_index or 0)),
-                    "step_count": max(1, int(step_count or 1)),
-                    "actions": [
+            action_choices = [] if parsed_questions else parsed_choices
+            interrupt_payload = {
+                "kind": "clarification",
+                "title": prompt_title,
+                "description": prompt_description,
+                "step_index": max(0, int(step_index or 0)),
+                "step_count": max(1, int(step_count or 1)),
+                "actions": [
+                    {
+                        "id": choice["id"],
+                        "label": choice["label"],
+                        "style": "secondary",
+                        "inputMode": "none",
+                        "value": choice["value"],
+                        **({"payload": {"selectedChoiceId": choice["id"]}} if choice.get("id") else {}),
+                    }
+                    for choice in action_choices
+                ]
+                + (
+                    [
                         {
-                            "id": choice["id"],
-                            "label": choice["label"],
-                            "style": "secondary",
-                            "inputMode": "none",
-                            "value": choice["value"],
-                            **({"payload": {"selectedChoiceId": choice["id"]}} if choice.get("id") else {}),
+                            "id": "clarification-text",
+                            "label": (submit_label or "Continue").strip() or "Continue",
+                            "style": "primary",
+                            "inputMode": "text",
+                            "placeholder": (placeholder or "").strip(),
+                            "submitLabel": (submit_label or "Continue").strip() or "Continue",
                         }
-                        for choice in parsed_choices
                     ]
-                    + (
-                        [
-                            {
-                                "id": "clarification-text",
-                                "label": (submit_label or "Continue").strip() or "Continue",
-                                "style": "primary",
-                                "inputMode": "text",
-                                "placeholder": (placeholder or "").strip(),
-                                "submitLabel": (submit_label or "Continue").strip() or "Continue",
-                            }
-                        ]
-                        if allow_freeform or not parsed_choices
-                        else []
-                    ),
-                    "response_spec": {
-                        "inputMode": input_mode,
-                        "multiple": bool(multi_select),
-                        "submitLabel": (submit_label or "Continue").strip() or "Continue",
-                        "placeholder": (placeholder or "").strip(),
-                        "choices": parsed_choices,
-                    },
-                    "display_payload": display_payload,
-                }
+                    if allow_freeform or not parsed_choices
+                    else []
+                ),
+                "response_spec": {
+                    "inputMode": input_mode,
+                    "multiple": bool(multi_select),
+                    "submitLabel": (submit_label or "Continue").strip() or "Continue",
+                    "placeholder": (placeholder or "").strip(),
+                    "choices": parsed_choices,
+                    **({"questions": parsed_questions} if parsed_questions else {}),
+                },
+                "display_payload": display_payload,
+            }
+
+            response = _interrupt_with_retry(
+                interrupt_payload,
+                valid_keys={"message", "selectedChoiceIds", "selectedValues"},
+                stale_keys={"decisions", "action"},
+                label="request_clarification",
             )
             if isinstance(response, dict):
                 return json.dumps(response, ensure_ascii=False)
@@ -565,7 +661,10 @@ class ToolFactory:
         request_clarification.name = "request_clarification"
         request_clarification.description = (
             "Pause execution to ask the human a clarification question. "
-            "Use options_json for clickable choices and allow_freeform for typed input."
+            "Use options_json for clickable suggestions and allow_freeform for typed input. "
+            "For multi-question discovery forms, pass questions_json with objects like "
+            '{"header":"Purpose","question":"What is this presentation for?","options":[{"label":"Pitch deck","value":"Pitch deck","description":"Selling an idea to investors"}]}. '
+            "Do not pass section headers like Purpose or Length as the only options."
         )
         return request_clarification
 
@@ -644,16 +743,21 @@ class ToolFactory:
             except json.JSONDecodeError:
                 display_payload = {}
 
-            response = interrupt(
-                {
-                    "kind": interrupt_kind,
-                    "title": prompt_title,
-                    "description": prompt_description,
-                    "step_index": max(0, int(step_index or 0)),
-                    "step_count": max(1, int(step_count or 1)),
-                    "actions": parsed_actions,
-                    "display_payload": display_payload,
-                }
+            interrupt_payload = {
+                "kind": interrupt_kind,
+                "title": prompt_title,
+                "description": prompt_description,
+                "step_index": max(0, int(step_index or 0)),
+                "step_count": max(1, int(step_count or 1)),
+                "actions": parsed_actions,
+                "display_payload": display_payload,
+            }
+
+            response = _interrupt_with_retry(
+                interrupt_payload,
+                valid_keys={"action"},
+                stale_keys={"decisions", "message", "selectedChoiceIds", "selectedValues"},
+                label="request_human_action",
             )
             if isinstance(response, dict):
                 return json.dumps(response, ensure_ascii=False)

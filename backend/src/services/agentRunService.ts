@@ -58,6 +58,12 @@ type RunPendingInterrupt = {
     allowDismiss?: boolean;
     dismissLabel?: string;
     choices?: Array<{ id?: string; label?: string; description?: string; value?: string }>;
+    questions?: Array<{
+      id?: string;
+      header?: string;
+      question?: string;
+      options?: Array<{ id?: string; label?: string; description?: string; value?: string }>;
+    }>;
   };
   displayPayload?: Record<string, unknown>;
 };

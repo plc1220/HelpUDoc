@@ -50,9 +50,23 @@ def _normalize_tools(value: object) -> List[str]:
     return []
 
 
+def _normalize_optional_bool(value: object) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "y", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "n", "off"}:
+            return False
+    return None
+
+
 def _infer_skill_policy(skill_id: str, content: str, meta: dict) -> SkillPolicy:
     tools = _normalize_tools(meta.get("tools"))
     lower = content.lower()
+    explicit_requires_hitl_plan = _normalize_optional_bool(meta.get("requires_hitl_plan"))
+    explicit_requires_workspace_artifacts = _normalize_optional_bool(meta.get("requires_workspace_artifacts"))
     has_hitl_keyword = any(
         keyword in lower
         for keyword in (
@@ -74,8 +88,16 @@ def _infer_skill_policy(skill_id: str, content: str, meta: dict) -> SkillPolicy:
             "consolidate final report",
         )
     )
-    requires_hitl_plan = has_hitl_keyword or ("request_plan_approval" in tools)
-    requires_workspace_artifacts = has_file_keyword or ("write_file" in lower)
+    requires_hitl_plan = (
+        explicit_requires_hitl_plan
+        if explicit_requires_hitl_plan is not None
+        else has_hitl_keyword or ("request_plan_approval" in tools)
+    )
+    requires_workspace_artifacts = (
+        explicit_requires_workspace_artifacts
+        if explicit_requires_workspace_artifacts is not None
+        else has_file_keyword or ("write_file" in lower)
+    )
     raw_pre_plan_limit = meta.get("pre_plan_search_limit")
     pre_plan_search_limit = 0
     if isinstance(raw_pre_plan_limit, int):

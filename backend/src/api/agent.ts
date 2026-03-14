@@ -761,7 +761,7 @@ export default function(
             }
           }
 
-          if (terminalStatus && (!streams || !streams.length)) {
+          if (terminalStatus) {
             break;
           }
         }
