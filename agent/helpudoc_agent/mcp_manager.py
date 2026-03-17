@@ -53,6 +53,7 @@ def describe_mcp_servers(settings: Settings) -> List[Dict[str, Any]]:
                 "transport": cfg.transport,
                 "endpoint": endpoint,
                 "description": cfg.description,
+                "delegated_auth_provider": getattr(cfg, "delegated_auth_provider", None),
                 "default_access": getattr(cfg, "default_access", "allow"),
             }
         )

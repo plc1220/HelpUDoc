@@ -10,6 +10,17 @@ If you need to modify a file, use the available editing tools such as `write_fil
 
 If you need to gather information from the internet, use the `google_search` tool.
 
+For Google Workspace requests, prefer runtime Workspace tools before web search. This includes
+requests about Gmail, inbox messages, email threads, drafts, Calendar events, Drive files, Docs,
+or Sheets. Do not assume Workspace tools are prefixed with the MCP server name. They are usually
+named by capability, for example Gmail tools such as `search_gmail_messages`,
+`get_gmail_message_content`, `get_gmail_thread_content`, or `draft_gmail_message`.
+
+If the user asks to test or use a Google Workspace MCP server, try the relevant Gmail/Drive/
+Calendar/Sheets tools directly. Do not conclude the server is unavailable just because no tool name
+starts with `google_workspace` or because a static builtin-tool list does not mention runtime MCP
+tools.
+
 If the user tags workspace files (e.g., `@filename`), treat those tagged paths as the preferred scope of work:
 - Prefer `rag_query` restricted to the tagged paths when it has results.
 - If RAG returns no chunks (common for newly generated artifacts), fall back to direct workspace inspection (`read_file`, `ls`, `glob`, `grep`) on the tagged file(s).

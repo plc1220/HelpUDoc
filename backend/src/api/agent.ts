@@ -1,6 +1,10 @@
 import { Router, Request, Response } from 'express';
 import crypto from 'crypto';
+import path from 'path';
+import { promises as fs } from 'fs';
+import { existsSync } from 'fs';
 import { z } from 'zod';
+import { parse as parseYaml } from 'yaml';
 import { runAgent, runAgentStream } from '../services/agentService';
 import { WorkspaceService } from '../services/workspaceService';
 import { FileService } from '../services/fileService';
@@ -32,6 +36,21 @@ const DEBUG_AGENT_RUN_STREAM =
   process.env.DEBUG_AGENT_RUN_STREAM === '1' || process.env.DEBUG_AGENT_RUN_STREAM === 'true';
 const AUTH_MODE = (process.env.AUTH_MODE || 'headers').trim().toLowerCase();
 const BQ_DELEGATED_MCP_SERVER_ID = 'toolbox-bq-demo';
+const repoRoot = path.resolve(__dirname, '../../..');
+const defaultAgentConfigDir = existsSync('/agent/config')
+  ? '/agent/config'
+  : path.join(repoRoot, 'agent', 'config');
+const agentConfigPath = process.env.AGENT_CONFIG_PATH
+  || path.join(process.env.AGENT_CONFIG_DIR || defaultAgentConfigDir, 'runtime.yaml');
+
+type RuntimeMcpServerConfig = {
+  name: string;
+  transport?: string;
+  default_access?: string;
+  defaultAccess?: string;
+  delegated_auth_provider?: string;
+  delegatedAuthProvider?: string;
+};
 
 const extractTextFromAgentReply = (reply: unknown): string => {
   if (reply === null || reply === undefined) {
@@ -62,6 +81,44 @@ const extractTextFromAgentReply = (reply: unknown): string => {
     return JSON.stringify(reply);
   } catch {
     return String(reply);
+  }
+};
+
+const normalizeDelegatedAuthProvider = (value: unknown): string | null => {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const normalized = value.trim().toLowerCase();
+  return normalized || null;
+};
+
+const normalizeDefaultAccess = (value: unknown): 'allow' | 'deny' => {
+  const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return normalized === 'deny' ? 'deny' : 'allow';
+};
+
+const loadRuntimeMcpServers = async (): Promise<RuntimeMcpServerConfig[]> => {
+  try {
+    const content = await fs.readFile(agentConfigPath, 'utf-8');
+    const parsed = parseYaml(content) as { mcp_servers?: unknown } | null;
+    const rawServers = parsed?.mcp_servers;
+    if (!Array.isArray(rawServers)) {
+      return [];
+    }
+    return rawServers
+      .filter((entry): entry is RuntimeMcpServerConfig => Boolean(entry && typeof entry === 'object' && (entry as any).name));
+  } catch (error: any) {
+    if (error?.code !== 'ENOENT') {
+      console.warn('Failed to read runtime MCP config; falling back to BigQuery delegated MCP server only', error);
+    }
+    return [
+      {
+        name: BQ_DELEGATED_MCP_SERVER_ID,
+        transport: 'http',
+        delegated_auth_provider: 'google',
+        default_access: 'allow',
+      },
+    ];
   }
 };
 
@@ -132,22 +189,54 @@ export default function(
     return req.userContext;
   };
 
-  const canUseDelegatedServer = (policy: {
+  const getAllowedDelegatedGoogleServerIds = async (policy: {
     isAdmin: boolean;
+    mcpServerAllowIds: string[];
     mcpServerDenyIds: string[];
-  }): boolean => {
-    if (policy.isAdmin) {
-      return true;
-    }
-    return !policy.mcpServerDenyIds.includes(BQ_DELEGATED_MCP_SERVER_ID);
+  }): Promise<string[]> => {
+    const configuredServers = await loadRuntimeMcpServers();
+    const allowIds = new Set(policy.mcpServerAllowIds || []);
+    const denyIds = new Set(policy.mcpServerDenyIds || []);
+
+    return configuredServers
+      .filter((server) => {
+        const serverId = typeof server.name === 'string' ? server.name.trim() : '';
+        if (!serverId) {
+          return false;
+        }
+        const transport = typeof server.transport === 'string' ? server.transport.trim().toLowerCase() : '';
+        if (transport !== 'http') {
+          return false;
+        }
+        if (normalizeDelegatedAuthProvider(server.delegated_auth_provider ?? server.delegatedAuthProvider) !== 'google') {
+          return false;
+        }
+        if (policy.isAdmin) {
+          return true;
+        }
+        if (denyIds.has(serverId)) {
+          return false;
+        }
+        if (normalizeDefaultAccess(server.default_access ?? server.defaultAccess) === 'deny' && !allowIds.has(serverId)) {
+          return false;
+        }
+        return true;
+      })
+      .map((server) => server.name.trim())
+      .sort();
   };
 
-  const buildMcpAuthFingerprint = (serverId: string, bearerToken: string, expiresAt: number): string => {
+  const buildMcpAuthFingerprint = (
+    provider: string,
+    serverIds: string[],
+    bearerToken: string,
+    expiresAt: number,
+  ): string => {
     const tokenHash = crypto.createHash('sha256').update(bearerToken).digest('hex');
     const expBucket = Math.floor(expiresAt / 60);
     return crypto
       .createHash('sha256')
-      .update(`${serverId}|${expBucket}|${tokenHash}`)
+      .update(`${provider}|${serverIds.join(',')}|${expBucket}|${tokenHash}`)
       .digest('hex');
   };
 
@@ -169,31 +258,43 @@ export default function(
       ...input.policy,
     };
 
-    if (AUTH_MODE !== 'headers' && canUseDelegatedServer(input.policy)) {
+    if (AUTH_MODE !== 'headers') {
       try {
+        const delegatedServerIds = await getAllowedDelegatedGoogleServerIds(input.policy);
+        if (!delegatedServerIds.length) {
+          return signAgentContextToken(payload);
+        }
         const delegated = await googleOAuthService.getDelegatedAccessToken(input.userId);
         const authorization = `Bearer ${delegated.accessToken}`;
         const fingerprint = buildMcpAuthFingerprint(
-          BQ_DELEGATED_MCP_SERVER_ID,
+          'google',
+          delegatedServerIds,
           delegated.accessToken,
           delegated.expiresAt,
         );
-        payload.mcpAuth = {
-          [BQ_DELEGATED_MCP_SERVER_ID]: {
-            Authorization: authorization,
-          },
-        };
+        payload.mcpAuth = Object.fromEntries(
+          delegatedServerIds.map((serverId) => [
+            serverId,
+            {
+              Authorization: authorization,
+            },
+          ]),
+        );
         payload.mcpAuthFingerprint = fingerprint;
         console.info('[mcp-auth]', {
           userId: input.userId,
           workspaceId: input.workspaceId,
-          serverId: BQ_DELEGATED_MCP_SERVER_ID,
+          provider: 'google',
+          serverIds: delegatedServerIds,
           tokenSource: delegated.source,
           expBucket: Math.floor(delegated.expiresAt / 60),
         });
       } catch (error) {
         if (error instanceof GoogleOAuthTokenMissingError) {
-          throw new HttpError(403, 'Google BigQuery access is not connected. Please sign in with Google again.');
+          throw new HttpError(
+            403,
+            'Google access for MCP tools is not connected or is missing required permissions. Please sign in with Google again.',
+          );
         }
         throw error;
       }

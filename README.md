@@ -153,7 +153,7 @@ HelpUDoc/
 │   └── specs/                     # UI spec + OpenAPI contract
 ├── infra/                         # Docker Compose stacks
 │   ├── docker-compose.yml
-│   └── docker-compose.minio.yml
+│   └── docker-compose.dependencies.yml
 ├── scripts/                       # Helper scripts
 │   ├── start_agent.sh
 │   └── test_paper2slides.sh
@@ -207,7 +207,7 @@ For roadmap details on the planned mobile companion app (React Native + Expo), s
 
 1. **Spin up databases only**
    ```bash
-   docker compose -f infra/docker-compose.minio.yml --env-file env/local/stack.env up -d
+   docker compose -f infra/docker-compose.dependencies.yml --env-file env/local/stack.env up -d
    ```
 2. **Backend API**
    ```bash

@@ -105,6 +105,7 @@ class MCPServerConfig(BaseModel):
     headers: Dict[str, str] = Field(default_factory=dict)
     headers_from_env: Dict[str, str] = Field(default_factory=dict)
     bearer_token_env_var: Optional[str] = None
+    delegated_auth_provider: Optional[str] = None
 
     # RBAC metadata
     default_access: str = Field(default="allow")  # "allow" | "deny"
@@ -120,6 +121,7 @@ class MCPServerConfig(BaseModel):
             "envPassthrough": "env_passthrough",
             "headersFromEnv": "headers_from_env",
             "bearerTokenEnvVar": "bearer_token_env_var",
+            "delegatedAuthProvider": "delegated_auth_provider",
             "defaultAccess": "default_access",
         }
         for src, dst in mapping.items():
@@ -144,6 +146,17 @@ class MCPServerConfig(BaseModel):
         normalized = (value or "").strip().lower()
         if normalized not in {"stdio", "http", "sse"}:
             raise ValueError("transport must be 'stdio', 'http', or 'sse'")
+        return normalized
+
+    @validator("delegated_auth_provider")
+    def _validate_delegated_auth_provider(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        normalized = value.strip().lower()
+        if not normalized:
+            return None
+        if normalized not in {"google"}:
+            raise ValueError("delegated_auth_provider must be 'google'")
         return normalized
 
 

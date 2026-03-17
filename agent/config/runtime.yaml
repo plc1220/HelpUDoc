@@ -6,10 +6,8 @@ model:
   image_name: gemini-3-pro-image-preview
   project: my-rd-coe-demo-gen-ai
   location: us-central1
-  #api_key: ${GOOGLE_CLOUD_API_KEY}
   api_key: ${GEMINI_API_KEY}
   use_vertex_ai: false
-
 backend:
   workspace_root: backend/workspaces
   virtual_mode: true
@@ -17,11 +15,13 @@ backend:
   sync_skills_to_workspace: false
   interrupt_on:
     request_plan_approval:
-      allowed_decisions: [approve, edit, reject]
+      allowed_decisions:
+        - approve
+        - edit
+        - reject
     write_file: false
     read_file: false
     edit_file: false
-
 tools:
   - name: google_search
     kind: builtin
@@ -65,11 +65,15 @@ tools:
   - name: request_human_action
     kind: builtin
     description: Pause the run and ask the human to choose from arbitrary actions
-
 mcp_servers:
   - name: toolbox-bq-demo
     transport: http
     url: https://toolbox-452883396851.asia-southeast1.run.app/mcp
-    bearer_token_env_var: BQ_ACCESS_TOKEN
+    delegated_auth_provider: google
     default_access: allow
     description: Toolbox BigQuery demo MCP (Streamable HTTP)
+  - name: google-workspace
+    transport: http
+    default_access: allow
+    url: http://127.0.0.1:8000/mcp
+    delegatedAuthProvider: google

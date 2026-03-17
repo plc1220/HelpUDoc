@@ -17,6 +17,7 @@ interface McpServerFormState {
     name: string;
     transport: 'stdio' | 'http';
     defaultAccess: 'allow' | 'deny';
+    delegatedAuthProvider: '' | 'google';
     command: string;
     args: { id: string; value: string }[];
     env: KeyValue[];
@@ -32,6 +33,7 @@ const EmptyMcpForm: McpServerFormState = {
     name: '',
     transport: 'stdio',
     defaultAccess: 'allow',
+    delegatedAuthProvider: '',
     command: '',
     args: [],
     env: [],
@@ -67,6 +69,7 @@ const ToolsTab: React.FC<ToolsTabProps> = ({ config, onSave, isSaving }) => {
                 name: server.name || '',
                 transport: server.transport || 'stdio',
                 defaultAccess: server.default_access || server.defaultAccess || 'allow',
+                delegatedAuthProvider: server.delegated_auth_provider || server.delegatedAuthProvider || '',
                 command: server.command || '',
                 args: (server.args || []).map((a: string) => ({ id: crypto.randomUUID(), value: a })),
                 env: Object.entries(server.env || {}).map(([k, v]) => ({ id: crypto.randomUUID(), key: k, value: String(v) })),
@@ -125,6 +128,7 @@ const ToolsTab: React.FC<ToolsTabProps> = ({ config, onSave, isSaving }) => {
         } else {
             newServerConfig.url = mcpForm.url;
             if (mcpForm.bearerTokenEnvVar) newServerConfig.bearerTokenEnvVar = mcpForm.bearerTokenEnvVar;
+            if (mcpForm.delegatedAuthProvider) newServerConfig.delegatedAuthProvider = mcpForm.delegatedAuthProvider;
             if (mcpForm.headers.length > 0) {
                 newServerConfig.headers = mcpForm.headers.reduce((acc, curr) => {
                     if (curr.key) acc[curr.key] = curr.value;
@@ -525,6 +529,21 @@ const ToolsTab: React.FC<ToolsTabProps> = ({ config, onSave, isSaving }) => {
                                                     placeholder="MCP_BEARER_TOKEN"
                                                     className="w-full px-3 py-2.5 rounded-lg border border-[#3A3A3C] bg-[#2C2C2E] text-white placeholder-[#8E8E93] focus:border-[#0A84FF] focus:ring-1 focus:ring-[#0A84FF] outline-none transition-all text-sm font-mono"
                                                 />
+                                            </div>
+
+                                            <div className="space-y-1.5">
+                                                <label className="block text-sm font-medium text-white">Delegated auth provider</label>
+                                                <select
+                                                    value={mcpForm.delegatedAuthProvider}
+                                                    onChange={(e) => setMcpForm(prev => ({ ...prev, delegatedAuthProvider: e.target.value as '' | 'google' }))}
+                                                    className="w-full px-3 py-2.5 rounded-lg border border-[#3A3A3C] bg-[#2C2C2E] text-white focus:border-[#0A84FF] focus:ring-1 focus:ring-[#0A84FF] outline-none transition-all text-sm"
+                                                >
+                                                    <option value="">None</option>
+                                                    <option value="google">Google</option>
+                                                </select>
+                                                <p className="text-xs text-[#8E8E93]">
+                                                    Use delegated auth to forward the signed-in user&apos;s OAuth token to this MCP server.
+                                                </p>
                                             </div>
 
                                             <div className="space-y-1.5">

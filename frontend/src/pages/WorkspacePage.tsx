@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo, type ChangeEvent } f
 import type { ComponentProps, CSSProperties } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { useNavigate } from 'react-router-dom';
+import YAML from 'yaml';
 import {
   Box,
   CssBaseline,
@@ -53,6 +54,7 @@ import type {
   ToolOutputFile,
   ConversationMessageMetadata,
   InterruptAction,
+  SkillDefinition,
 } from '../types';
 import CollapsibleDrawer from '../components/CollapsibleDrawer';
 import FileEditor from '../components/FileEditor';
@@ -73,6 +75,7 @@ import {
 import { getFileDisplayName, getFileTypeIcon, isSystemFile, normalizeFilePath } from '../utils/files';
 import { buildMessageMetadata, mapMessagesToAgentHistory, mergeMessageMetadata, sanitizeRunPolicy } from '../utils/messages';
 import { createMarkdownComponents } from '../components/markdown/MarkdownShared';
+import { fetchAgentConfig, fetchSkills } from '../services/settingsApi';
 
 const drawerWidth = 280;
 
@@ -149,7 +152,17 @@ const STREAM_DEBUG_ENABLED =
 
 type Paper2SlidesStage = (typeof PAPER2SLIDES_STAGE_ORDER)[number];
 type Paper2SlidesStylePreset = (typeof PAPER2SLIDES_STYLE_PRESETS)[number];
-type SlashCommand = (typeof SLASH_COMMANDS)[number];
+type CommandSuggestion = {
+  id: string;
+  command: string;
+  description: string;
+};
+
+type ParsedSlashDirective =
+  | { kind: 'presentation'; prompt: string; raw: string }
+  | { kind: 'skill'; skillId: string; prompt: string; raw: string }
+  | { kind: 'mcp'; serverId: string; prompt: string; raw: string }
+  | { kind: 'none'; prompt: string; raw: string };
 
 type PresentationOptionsState = {
   output: 'slides' | 'poster';
@@ -351,6 +364,8 @@ export default function WorkspacePage() {
   const [ragStatuses, setRagStatuses] = useState<Record<string, { status?: string; updatedAt?: string; error?: string }>>({});
   const [copiedWorkspaceContent, setCopiedWorkspaceContent] = useState(false);
   const [copiedMessageId, setCopiedMessageId] = useState<ConversationMessage['id'] | null>(null);
+  const [availableSkills, setAvailableSkills] = useState<SkillDefinition[]>([]);
+  const [availableMcpServers, setAvailableMcpServers] = useState<Array<{ name: string; description?: string }>>([]);
   const [interruptInputByMessageId, setInterruptInputByMessageId] = useState<Record<string, string>>({});
   const [interruptSelectedChoicesByMessageId, setInterruptSelectedChoicesByMessageId] = useState<Record<string, string[]>>({});
   const [interruptSubmittingByMessageId, setInterruptSubmittingByMessageId] = useState<Record<string, boolean>>({});
@@ -579,19 +594,68 @@ export default function WorkspacePage() {
     return filtered.slice(0, 8);
   }, [visibleFiles, isMentionOpen, mentionQuery]);
 
+  const availableSkillMap = useMemo(() => {
+    const map = new Map<string, SkillDefinition>();
+    availableSkills.forEach((skill) => {
+      const skillId = typeof skill.id === 'string' ? skill.id.trim() : '';
+      if (skillId) {
+        map.set(skillId.toLowerCase(), skill);
+      }
+    });
+    return map;
+  }, [availableSkills]);
+
+  const availableMcpServerMap = useMemo(() => {
+    const map = new Map<string, { name: string; description?: string }>();
+    availableMcpServers.forEach((server) => {
+      const serverId = typeof server.name === 'string' ? server.name.trim() : '';
+      if (serverId) {
+        map.set(serverId.toLowerCase(), server);
+      }
+    });
+    return map;
+  }, [availableMcpServers]);
+
   const commandSuggestions = useMemo(() => {
     if (!isCommandOpen) {
-      return [] as SlashCommand[];
+      return [] as CommandSuggestion[];
     }
-    const normalized = commandQuery.trim().toLowerCase();
-    return SLASH_COMMANDS.filter((command) => {
-      if (!normalized) {
-        return true;
-      }
-      const commandValue = command.command.slice(1).toLowerCase();
-      return commandValue.startsWith(normalized) || command.command.toLowerCase().includes(normalized);
-    });
-  }, [commandQuery, isCommandOpen]);
+    const rawQuery = commandQuery.toLowerCase();
+    const normalized = rawQuery.trim();
+    const skillMatch = rawQuery.match(/^skill(?:\s+(.*))?$/);
+    if (skillMatch) {
+      const filter = (skillMatch[1] || '').trim();
+      return availableSkills
+        .filter((skill) => !filter || skill.id.toLowerCase().includes(filter) || (skill.name || '').toLowerCase().includes(filter))
+        .slice(0, 8)
+        .map((skill) => ({
+          id: `skill:${skill.id}`,
+          command: `/skill ${skill.id}`,
+          description: skill.description || `Use the ${skill.id} skill`,
+        }));
+    }
+    const mcpMatch = rawQuery.match(/^mcp(?:\s+(.*))?$/);
+    if (mcpMatch) {
+      const filter = (mcpMatch[1] || '').trim();
+      return availableMcpServers
+        .filter((server) => !filter || server.name.toLowerCase().includes(filter))
+        .slice(0, 8)
+        .map((server) => ({
+          id: `mcp:${server.name}`,
+          command: `/mcp ${server.name}`,
+          description: server.description || `Prefer tools from ${server.name}`,
+        }));
+    }
+    return SLASH_COMMANDS
+      .filter((command) => {
+        if (!normalized) {
+          return true;
+        }
+        const commandValue = command.command.slice(1).toLowerCase();
+        return commandValue.startsWith(normalized) || command.command.toLowerCase().includes(normalized);
+      })
+      .map((command) => ({ ...command }));
+  }, [availableMcpServers, availableSkills, commandQuery, isCommandOpen]);
 
   const personaDisplayName = useMemo(() => {
     const personaId = activeConversationPersona || selectedPersona;
@@ -1283,6 +1347,42 @@ export default function WorkspacePage() {
     }
   }, [commandSuggestions.length]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadSlashMetadata = async () => {
+      try {
+        const [skills, agentConfigContent] = await Promise.all([
+          fetchSkills(),
+          fetchAgentConfig(),
+        ]);
+        if (cancelled) {
+          return;
+        }
+        setAvailableSkills(skills);
+        const parsed = YAML.parse(agentConfigContent) as { mcp_servers?: Array<Record<string, unknown>> } | null;
+        const servers = Array.isArray(parsed?.mcp_servers)
+          ? parsed.mcp_servers
+              .filter((entry) => entry && typeof entry === 'object' && typeof entry.name === 'string')
+              .map((entry) => ({
+                name: String(entry.name).trim(),
+                description: typeof entry.description === 'string' ? entry.description : undefined,
+              }))
+              .filter((entry) => entry.name)
+          : [];
+        setAvailableMcpServers(servers);
+      } catch (error) {
+        console.error('Failed to load slash metadata', error);
+      }
+    };
+
+    void loadSlashMetadata();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const isFileEditable = (fileName: string): boolean => {
     const editableExtensions = [
       '.md', '.mermaid', '.txt', '.json', '.html', '.css', '.js', '.ts', '.tsx', '.jsx',
@@ -1373,7 +1473,7 @@ export default function WorkspacePage() {
         return false;
       }
       const textBeforeCursor = value.slice(0, cursor);
-      const commandMatch = textBeforeCursor.match(/(^|[\s([{])\/([^\s/]*)$/);
+      const commandMatch = textBeforeCursor.match(/(^|[\s([{])\/([^\n/]*)$/);
       if (!commandMatch) {
         closeCommand();
         return false;
@@ -1426,7 +1526,7 @@ export default function WorkspacePage() {
   );
 
   const handleSelectCommand = useCallback(
-    (command: SlashCommand) => {
+    (command: CommandSuggestion) => {
       if (commandTriggerIndex === null || commandCursorPosition === null) {
         closeCommand();
         return;
@@ -1447,6 +1547,90 @@ export default function WorkspacePage() {
     },
     [chatMessage, closeCommand, commandCursorPosition, commandTriggerIndex],
   );
+
+  const parseSlashDirective = useCallback((rawMessage: string): ParsedSlashDirective => {
+    const trimmed = rawMessage.trim();
+    const presentationMatch = trimmed.match(/^\/presentation\b([\s\S]*)$/i);
+    if (presentationMatch) {
+      return {
+        kind: 'presentation',
+        prompt: (presentationMatch[1] || '').trim(),
+        raw: trimmed,
+      };
+    }
+    const skillMatch = trimmed.match(/^\/skill\s+([^\s]+)(?:\s+([\s\S]*))?$/i);
+    if (skillMatch) {
+      return {
+        kind: 'skill',
+        skillId: (skillMatch[1] || '').trim(),
+        prompt: (skillMatch[2] || '').trim(),
+        raw: trimmed,
+      };
+    }
+    const mcpMatch = trimmed.match(/^\/mcp\s+([^\s]+)(?:\s+([\s\S]*))?$/i);
+    if (mcpMatch) {
+      return {
+        kind: 'mcp',
+        serverId: (mcpMatch[1] || '').trim(),
+        prompt: (mcpMatch[2] || '').trim(),
+        raw: trimmed,
+      };
+    }
+    return {
+      kind: 'none',
+      prompt: trimmed,
+      raw: trimmed,
+    };
+  }, []);
+
+  const buildAgentPromptFromDirective = useCallback((directive: ParsedSlashDirective): string => {
+    switch (directive.kind) {
+      case 'skill':
+        return [
+          `Use the "${directive.skillId}" skill for this task.`,
+          `First call load_skill with "${directive.skillId}" to load the skill instructions, then follow that skill closely.`,
+          directive.prompt ? `User request:\n${directive.prompt}` : 'User request:\nContinue with the selected skill.',
+        ].join('\n\n');
+      case 'mcp': {
+        const prefersGoogleWorkspace = directive.serverId.trim().toLowerCase() === 'google-workspace';
+        return [
+          `Prefer tools from the MCP server "${directive.serverId}" for this task.`,
+          prefersGoogleWorkspace
+            ? 'Use Gmail, Calendar, Drive, and Sheets tools from that server before falling back to web search or saying access is unavailable.'
+            : 'Before saying the capability is unavailable, inspect and use the runtime tools exposed by that server.',
+          directive.prompt ? `User request:\n${directive.prompt}` : `User request:\nUse ${directive.serverId} for this task.`,
+        ].join('\n\n');
+      }
+      case 'presentation':
+      case 'none':
+      default:
+        return directive.raw;
+    }
+  }, []);
+
+  const commandTags = useMemo(() => {
+    const directive = parseSlashDirective(chatMessage);
+    if (directive.kind === 'skill' && directive.skillId) {
+      return [{ id: 'skill', label: `Skill: ${directive.skillId}` }];
+    }
+    if (directive.kind === 'mcp' && directive.serverId) {
+      return [{ id: 'mcp', label: `MCP: ${directive.serverId}` }];
+    }
+    return [] as Array<{ id: string; label: string }>;
+  }, [chatMessage, parseSlashDirective]);
+
+  const handleRemoveCommandTag = useCallback((tagId: string) => {
+    const directive = parseSlashDirective(chatMessage);
+    if (tagId === 'skill' && directive.kind === 'skill') {
+      setChatMessage(directive.prompt);
+      closeCommand();
+      return;
+    }
+    if (tagId === 'mcp' && directive.kind === 'mcp') {
+      setChatMessage(directive.prompt);
+      closeCommand();
+    }
+  }, [chatMessage, closeCommand, parseSlashDirective]);
 
   const findMentionedFiles = useCallback(
     (value: string): WorkspaceFile[] => {
@@ -2915,6 +3099,18 @@ export default function WorkspacePage() {
           }, 300);
           return;
         }
+        {
+          const agentMessageIndex = (() => {
+            const resolved = findAgentMessageIndexForRun(conversationId, placeholderId, turnId, runId);
+            return resolved >= 0 ? resolved : initialAgentMessageIndex;
+          })();
+          updateMessageMetadataAtIndex(conversationId, agentMessageIndex, (metadata) => ({
+            ...metadata,
+            ...(runId ? { runId } : {}),
+            status: finalStatus,
+            pendingInterrupt: finalStatus === 'awaiting_approval' ? effectivePendingInterrupt : undefined,
+          }));
+        }
         await persistAgentProgress(
           { ...runInfo, status: finalStatus },
           finalStatus,
@@ -3615,7 +3811,8 @@ export default function WorkspacePage() {
       addLocalSystemMessage('Cannot rerun an empty message.');
       return;
     }
-    const isPresentationCommand = /^\/presentation\b/i.test(trimmed);
+    const directive = parseSlashDirective(trimmed);
+    const isPresentationCommand = directive.kind === 'presentation';
     const mentionedFiles = isPresentationCommand ? findMentionedFiles(trimmed) : [];
     const presentationFileIds = isPresentationCommand
       ? Array.from(
@@ -3626,7 +3823,27 @@ export default function WorkspacePage() {
         ),
       )
       : [];
-    const presentationBrief = isPresentationCommand ? trimmed.replace(/^\/presentation\b/i, '').trim() : '';
+    const presentationBrief = isPresentationCommand ? directive.prompt : '';
+    if (directive.kind === 'skill') {
+      if (!directive.skillId || !directive.prompt) {
+        addLocalSystemMessage('Use /skill <skill-id> <task>. Example: /skill sales prep me for tomorrow\'s call.');
+        return;
+      }
+      if (!availableSkillMap.has(directive.skillId.toLowerCase())) {
+        addLocalSystemMessage(`Skill "${directive.skillId}" is not available in this workspace.`);
+        return;
+      }
+    }
+    if (directive.kind === 'mcp') {
+      if (!directive.serverId || !directive.prompt) {
+        addLocalSystemMessage('Use /mcp <server-id> <task>. Example: /mcp google-workspace search my inbox for BMMB.');
+        return;
+      }
+      if (!availableMcpServerMap.has(directive.serverId.toLowerCase())) {
+        addLocalSystemMessage(`MCP server "${directive.serverId}" is not configured.`);
+        return;
+      }
+    }
     if (isPresentationCommand && !presentationFileIds.length) {
       addLocalSystemMessage('Tag at least one file using @filename before rerunning /presentation.');
       return;
@@ -3699,7 +3916,7 @@ export default function WorkspacePage() {
     }
 
     try {
-      const agentPrompt = trimmed;
+      const agentPrompt = buildAgentPromptFromDirective(directive);
       const { runId } = await startAgentRun(
         selectedWorkspace.id,
         persona,
@@ -4017,7 +4234,8 @@ export default function WorkspacePage() {
     if (!trimmed && !hasAttachments) return;
 
     stopRequestedRef.current = false;
-    const isPresentationCommand = /^\/presentation\b/i.test(trimmed);
+    const directive = parseSlashDirective(trimmed);
+    const isPresentationCommand = directive.kind === 'presentation';
     const mentionedFiles = isPresentationCommand ? findMentionedFiles(trimmed) : [];
     const presentationFileIds = isPresentationCommand
       ? Array.from(
@@ -4028,11 +4246,39 @@ export default function WorkspacePage() {
         ),
       )
       : [];
-    const presentationBrief = isPresentationCommand ? trimmed.replace(/^\/presentation\b/i, '').trim() : '';
+    const presentationBrief = isPresentationCommand ? directive.prompt : '';
 
     if (isPresentationCommand && hasAttachments) {
       addLocalSystemMessage('Attachments are not supported for /presentation. Please tag files using @filename instead.');
       return;
+    }
+    if (directive.kind === 'skill') {
+      if (hasAttachments) {
+        addLocalSystemMessage('Attachments are not supported with /skill yet. Please upload files to the workspace first and reference them in your request.');
+        return;
+      }
+      if (!directive.skillId || !directive.prompt) {
+        addLocalSystemMessage('Use /skill <skill-id> <task>. Example: /skill sales draft follow-up from today\'s call.');
+        return;
+      }
+      if (!availableSkillMap.has(directive.skillId.toLowerCase())) {
+        addLocalSystemMessage(`Skill "${directive.skillId}" is not available.`);
+        return;
+      }
+    }
+    if (directive.kind === 'mcp') {
+      if (hasAttachments) {
+        addLocalSystemMessage('Attachments are not supported with /mcp yet. Please upload files to the workspace first if needed.');
+        return;
+      }
+      if (!directive.serverId || !directive.prompt) {
+        addLocalSystemMessage('Use /mcp <server-id> <task>. Example: /mcp google-workspace search my inbox for BMMB.');
+        return;
+      }
+      if (!availableMcpServerMap.has(directive.serverId.toLowerCase())) {
+        addLocalSystemMessage(`MCP server "${directive.serverId}" is not configured.`);
+        return;
+      }
     }
     if (isPresentationCommand && !presentationFileIds.length) {
       addLocalSystemMessage('Tag at least one file using @filename before requesting a presentation.');
@@ -4044,7 +4290,7 @@ export default function WorkspacePage() {
     const messageContent = hasAttachments
       ? `${trimmed}${trimmed ? '\n\n' : ''}[${attachmentSummary}]`
       : trimmed;
-    const agentPrompt = messageContent;
+    const agentPrompt = buildAgentPromptFromDirective(directive);
 
     if (!selectedWorkspace) {
       addLocalSystemMessage('Please select a workspace before chatting with an agent.');
@@ -4893,6 +5139,7 @@ export default function WorkspacePage() {
               showPaper2SlidesControls={showPaper2SlidesControls}
               presentationStatus={presentationStatus}
               presentationOptionSummary={presentationOptionSummary}
+              commandTags={commandTags}
               isMentionOpen={isMentionOpen}
               mentionSuggestions={mentionSuggestions}
               mentionSelectedIndex={mentionSelectedIndex}
@@ -4939,8 +5186,9 @@ export default function WorkspacePage() {
               onSendMessage={handleSendMessage}
               onChatAttachmentChange={handleChatAttachmentChange}
               onRemoveChatAttachment={handleRemoveChatAttachment}
+              onRemoveCommandTag={handleRemoveCommandTag}
               onSelectMention={handleSelectMention}
-              onSelectCommand={(command) => handleSelectCommand(command as SlashCommand)}
+              onSelectCommand={handleSelectCommand}
             />
           </div>
         </Box>

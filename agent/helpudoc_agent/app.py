@@ -34,6 +34,17 @@ from langgraph.types import Command
 
 logger = logging.getLogger(__name__)
 _INTERRUPT_TOOL_NAMES: Set[str] = {"request_clarification", "request_human_action"}
+_LOCAL_DEV_AGENT_JWT_SECRET = "helpudoc-local-dev-agent-jwt-secret"
+
+
+def _get_agent_jwt_secret() -> str:
+    configured = os.getenv("AGENT_JWT_SECRET", "").strip()
+    if configured:
+        return configured
+    env = os.getenv("NODE_ENV", "").strip().lower()
+    if not env or env == "development":
+        return _LOCAL_DEV_AGENT_JWT_SECRET
+    return ""
 
 
 def _format_exception(exc: BaseException) -> str:
@@ -215,7 +226,7 @@ def create_app() -> FastAPI:
     gemini_manager = GeminiClientManager(settings)
     tool_factory = ToolFactory(settings, source_tracker, gemini_manager)
     registry = AgentRegistry(settings, tool_factory)
-    agent_jwt_secret = os.getenv("AGENT_JWT_SECRET", "")
+    agent_jwt_secret = _get_agent_jwt_secret()
 
     app = FastAPI(title="DeepAgents Service", version="0.2.0")
     rag_worker = RagIndexWorker(settings.backend.workspace_root)

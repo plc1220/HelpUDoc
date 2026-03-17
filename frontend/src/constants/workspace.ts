@@ -7,6 +7,16 @@ export const SLASH_COMMANDS = [
     command: '/presentation',
     description: 'Generate slides/posters from @files.',
   },
+  {
+    id: 'skill',
+    command: '/skill',
+    description: 'Load and follow a specific skill, e.g. /skill sales',
+  },
+  {
+    id: 'mcp',
+    command: '/mcp',
+    description: 'Prefer tools from a specific MCP server, e.g. /mcp google-workspace',
+  },
 ] as const;
 
 export const SYSTEM_DIR_NAMES = new Set(['__macosx', 'skills']);

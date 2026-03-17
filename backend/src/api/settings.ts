@@ -24,8 +24,13 @@ const workspaceRoot = process.env.WORKSPACE_ROOT
   : path.join(repoRoot, 'workspaces');
 
 // In production containers, the repo layout does not exist. Use explicit env vars.
+// In local dev, fall back to the checked-in agent config so the Settings UI reflects
+// the same runtime.yaml the Python agent actually loads.
+const defaultAgentConfigDir = existsSync('/agent/config')
+  ? '/agent/config'
+  : path.join(repoRoot, 'agent', 'config');
 const agentConfigPath = process.env.AGENT_CONFIG_PATH
-  || path.join(process.env.AGENT_CONFIG_DIR || '/agent/config', 'runtime.yaml');
+  || path.join(process.env.AGENT_CONFIG_DIR || defaultAgentConfigDir, 'runtime.yaml');
 const skillsRoot = process.env.SKILLS_ROOT || path.join(repoRoot, 'skills');
 
 const skillBuilderStorageRoot = path.join(repoRoot, '.local-run', 'skill-builder');
