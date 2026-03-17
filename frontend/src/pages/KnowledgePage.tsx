@@ -2,6 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { FileIcon, Loader2, NotebookPen, Plus, RotateCcw, Trash } from 'lucide-react';
 import SettingsShell from '../components/settings/SettingsShell';
+import {
+  SettingsEmptyState,
+  SettingsLoadingState,
+  SettingsNotice,
+  SettingsSectionHeader,
+  SettingsSurface,
+} from '../components/settings/SettingsScaffold';
 import { getWorkspaces } from '../services/workspaceApi';
 import { createKnowledge, deleteKnowledge, listKnowledge } from '../services/knowledgeApi';
 import { createFile, getRagStatuses } from '../services/fileApi';
@@ -360,30 +367,20 @@ const KnowledgePage = () => {
     >
       <div className="space-y-6">
         {!selectedWorkspace && !loadingWorkspaces ? (
-          <div className="rounded-3xl border border-amber-200 bg-amber-50 p-6 text-sm text-amber-700 shadow-sm">
-            Create or select a workspace to manage knowledge sources.
-          </div>
+          <SettingsNotice variant="warning">Create or select a workspace to manage knowledge sources.</SettingsNotice>
         ) : null}
 
         {errorMessage ? (
-          <div className="rounded-3xl border border-rose-200 bg-rose-50 p-6 text-sm text-rose-700 shadow-sm">
-            {errorMessage}
-          </div>
+          <SettingsNotice variant="error">{errorMessage}</SettingsNotice>
         ) : null}
 
         <div className="grid gap-6 lg:grid-cols-[1.05fr_1.95fr]">
-          <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-            <div className="flex items-start gap-4">
-              <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100 text-slate-700">
-                <NotebookPen size={22} />
-              </span>
-              <div>
-                <p className="text-lg font-semibold text-slate-900">Add knowledge</p>
-                <p className="text-sm text-slate-600">
-                  Upload files and we will index supported documents automatically.
-                </p>
-              </div>
-            </div>
+          <SettingsSurface>
+            <SettingsSectionHeader
+              eyebrow="Ingest"
+              title="Add knowledge"
+              description="Upload files and we’ll index supported documents automatically."
+            />
 
             <div className="mt-6 rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center">
               <input
@@ -397,7 +394,7 @@ const KnowledgePage = () => {
                 type="button"
                 onClick={handleUploadClick}
                 disabled={!selectedWorkspaceId || uploading}
-                className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-slate-800 disabled:opacity-60"
+                className="inline-flex items-center gap-2 rounded-2xl bg-slate-900 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-slate-800 disabled:opacity-60"
               >
                 {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus size={16} />}
                 Upload files
@@ -410,7 +407,7 @@ const KnowledgePage = () => {
               ) : null}
             </div>
 
-            <div className="mt-6 rounded-2xl border border-slate-100 bg-white/70 p-4">
+            <div className="mt-6 rounded-[24px] border border-slate-100 bg-white/70 p-5">
               <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Tips</p>
               <ul className="mt-2 space-y-2 text-sm text-slate-600">
                 <li>RAG indexing runs for PDF, DOC/DOCX, and Markdown files.</li>
@@ -419,42 +416,39 @@ const KnowledgePage = () => {
                 <li>Use the workspace selector above to target a different knowledge base.</li>
               </ul>
             </div>
-          </section>
+          </SettingsSurface>
 
-          <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-              <div>
-                <p className="text-lg font-semibold text-slate-900">Knowledge sources</p>
-                <p className="text-sm text-slate-600">
-                  {selectedWorkspace ? `Workspace: ${selectedWorkspace.name}` : 'No workspace selected'}
-                </p>
-              </div>
-              <div className="flex items-center gap-2 text-xs text-slate-500">
-                {loadingKnowledge ? 'Loading sources...' : `${knowledgeSources.length} sources`}
-              </div>
-            </div>
-
-            <div className="mt-4 space-y-3">
-              {loadingKnowledge ? (
-                <div className="flex items-center gap-3 rounded-2xl border border-slate-100 bg-slate-50 p-4 text-sm text-slate-600">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Loading knowledge sources...
+          <SettingsSurface>
+            <SettingsSectionHeader
+              title="Knowledge sources"
+              description={selectedWorkspace ? `Workspace: ${selectedWorkspace.name}` : 'No workspace selected'}
+              actions={(
+                <div className="flex items-center gap-2 text-xs text-slate-500">
+                  {loadingKnowledge ? 'Loading sources...' : `${knowledgeSources.length} sources`}
                 </div>
+              )}
+            />
+
+            <div className="mt-6 space-y-3">
+              {loadingKnowledge ? (
+                <SettingsLoadingState label="Loading knowledge sources..." />
               ) : null}
 
               {!loadingKnowledge && knowledgeSources.length === 0 ? (
-                <div className="rounded-2xl border border-slate-100 bg-slate-50 p-6 text-center text-sm text-slate-600">
-                  Upload files to start building your knowledge library.
-                </div>
+                <SettingsEmptyState
+                  title="No knowledge sources yet"
+                  description="Upload files to start building your workspace knowledge library."
+                  icon={NotebookPen}
+                />
               ) : null}
 
               {knowledgeSources.map((item) => (
                 <div
                   key={item.id}
-                  className="rounded-2xl border border-slate-100 bg-white p-4 shadow-[0_8px_18px_rgba(15,23,42,0.06)]"
+                  className="rounded-[24px] border border-slate-200 bg-slate-50/70 p-4 shadow-[0_10px_22px_rgba(15,23,42,0.06)]"
                 >
                   <div className="flex items-start gap-4">
-                    <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-slate-700">
+                    <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-white text-slate-700 ring-1 ring-slate-200">
                       <FileIcon size={18} />
                     </span>
                     <div className="flex-1 space-y-2">
@@ -470,7 +464,7 @@ const KnowledgePage = () => {
                           {renderStatusBadge(item.file?.name)}
                           <button
                             type="button"
-                            className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50"
+                            className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-600 transition hover:bg-slate-50"
                             onClick={() => handleDeleteKnowledge(item)}
                           >
                             <Trash size={12} />
@@ -485,23 +479,23 @@ const KnowledgePage = () => {
                 </div>
               ))}
             </div>
-          </section>
+          </SettingsSurface>
         </div>
 
-        <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-semibold text-slate-900">Need to tune skills?</p>
-              <p className="text-sm text-slate-600">Keep skills and tools aligned for best results.</p>
-            </div>
-            <Link
-              to="/settings/agents"
-              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-900 px-3 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-slate-800"
-            >
-              Configure skills
-            </Link>
-          </div>
-        </div>
+        <SettingsSurface>
+          <SettingsSectionHeader
+            title="Need to tune skills?"
+            description="Keep skills and tools aligned for best results."
+            actions={(
+              <Link
+                to="/settings/agents"
+                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-900 px-3 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-slate-800"
+              >
+                Configure skills
+              </Link>
+            )}
+          />
+        </SettingsSurface>
       </div>
     </SettingsShell>
   );
