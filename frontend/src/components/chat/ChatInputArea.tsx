@@ -9,6 +9,11 @@ type CommandSuggestion = {
   description: string;
 };
 
+type CommandTag = {
+  id: string;
+  label: string;
+};
+
 export default function ChatInputArea({
   chatMessage,
   chatAttachments,
@@ -18,6 +23,7 @@ export default function ChatInputArea({
   showPaper2SlidesControls,
   presentationStatus,
   presentationOptionSummary,
+  commandTags,
   isMentionOpen,
   mentionSuggestions,
   mentionSelectedIndex,
@@ -35,6 +41,7 @@ export default function ChatInputArea({
   onSendMessage,
   onChatAttachmentChange,
   onRemoveChatAttachment,
+  onRemoveCommandTag,
   onSelectMention,
   onSelectCommand,
 }: {
@@ -46,6 +53,7 @@ export default function ChatInputArea({
   showPaper2SlidesControls: boolean;
   presentationStatus: 'idle' | 'running' | 'success' | 'error';
   presentationOptionSummary: string;
+  commandTags: CommandTag[];
   isMentionOpen: boolean;
   mentionSuggestions: WorkspaceFile[];
   mentionSelectedIndex: number;
@@ -63,6 +71,7 @@ export default function ChatInputArea({
   onSendMessage: () => void;
   onChatAttachmentChange: (event: ChangeEvent<HTMLInputElement>) => void;
   onRemoveChatAttachment: (index: number) => void;
+  onRemoveCommandTag: (tagId: string) => void;
   onSelectMention: (file: WorkspaceFile) => void;
   onSelectCommand: (command: CommandSuggestion) => void;
 }) {
@@ -89,8 +98,28 @@ export default function ChatInputArea({
             ))}
           </div>
         )}
+        {commandTags.length > 0 && (
+          <div className="flex flex-wrap gap-2 px-3 pt-3">
+            {commandTags.map((tag) => (
+              <div
+                key={tag.id}
+                className="group flex items-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700"
+              >
+                <span>{tag.label}</span>
+                <button
+                  type="button"
+                  className="text-blue-400 transition-all duration-200 hover:text-red-500"
+                  onClick={() => onRemoveCommandTag(tag.id)}
+                  aria-label={`Remove ${tag.label}`}
+                >
+                  <X size={12} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
         <textarea
-          placeholder="Interact with the agent... (Type / for commands)"
+          placeholder="Interact with the agent... (Type / for commands, skills, and MCP servers)"
           value={chatMessage}
           ref={chatInputRef}
           onChange={onChatInputChange}
@@ -217,7 +246,7 @@ export default function ChatInputArea({
                 </button>
               ))
             ) : (
-              <div className="px-3 py-2 text-xs text-slate-500">No matching commands</div>
+              <div className="px-3 py-2 text-xs text-slate-500">No matching commands, skills, or MCP servers</div>
             )}
           </div>
         )}

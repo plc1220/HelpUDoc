@@ -14,7 +14,7 @@ cp env/local/stack.env.example env/local/stack.env
 2) Start shared infra (Postgres, Redis, MinIO):
 
 ```bash
-docker compose -f infra/docker-compose.yml --env-file env/local/stack.env up -d postgres redis minio minio-setup
+docker compose -f infra/docker-compose.dependencies.yml --env-file env/local/stack.env up -d
 ```
 
 3) Export env vars for dev shells:
@@ -84,9 +84,9 @@ Notes:
 - Templates for reference live in `infra/gke/templates/`.
 - For production, store secret values in Google Secret Manager and generate `env/prod/secrets.env` from there instead of committing them.
 
-## Google OAuth + BigQuery MCP
+## Google OAuth + Google-Delegated MCP
 
-This project now supports per-user Google OAuth delegation for the `toolbox-bq-demo` MCP server.
+This project supports per-user Google OAuth delegation for Google-backed MCP servers such as `toolbox-bq-demo` and `google-workspace`.
 
 Required backend env vars:
 
@@ -95,8 +95,11 @@ Required backend env vars:
 - `GOOGLE_OAUTH_CLIENT_SECRET`
 - `GOOGLE_OAUTH_REDIRECT_URI`
 - `GOOGLE_OAUTH_POST_LOGIN_REDIRECT`
-- `GOOGLE_OAUTH_SCOPES` (must include `https://www.googleapis.com/auth/bigquery`)
+- `GOOGLE_OAUTH_SCOPES` (must include BigQuery plus the Gmail, Calendar, Drive, and Sheets scopes used by delegated Google Workspace MCP access)
+- `GOOGLE_WORKSPACE_MCP_URL` (HTTP endpoint for the hosted Google Workspace MCP server)
 - `OAUTH_TOKEN_ENCRYPTION_KEY` (32-byte base64url key)
+
+If you expand `GOOGLE_OAUTH_SCOPES`, existing users must sign in with Google again so the backend can store a refresh token with the new grants.
 
 Frontend env vars:
 
@@ -106,7 +109,8 @@ Frontend env vars:
 Operational validation checks:
 
 1. Sign in with Google and verify `GET /api/auth/me` returns `authenticated: true`.
-2. Run BigQuery MCP query `SELECT SESSION_USER()` and verify it matches the logged-in user.
-3. Run a sensitive-column query with two users:
+2. Run a BigQuery MCP query such as `SELECT SESSION_USER()` and verify it matches the logged-in user.
+3. Run a Google Workspace MCP action that reads Gmail, Calendar, Drive, or Sheets with the same signed-in identity.
+4. Run a sensitive-column query with two users:
    - restricted user -> masked values
    - privileged user -> unmasked values

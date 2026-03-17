@@ -27,6 +27,11 @@ type CommandSuggestion = {
   description: string;
 };
 
+type CommandTag = {
+  id: string;
+  label: string;
+};
+
 type ConversationStreamingMap = Record<string, boolean>;
 
 export default function AgentChatPane({
@@ -57,6 +62,7 @@ export default function AgentChatPane({
   showPaper2SlidesControls,
   presentationStatus,
   presentationOptionSummary,
+  commandTags,
   isMentionOpen,
   mentionSuggestions,
   mentionSelectedIndex,
@@ -103,6 +109,7 @@ export default function AgentChatPane({
   onSendMessage,
   onChatAttachmentChange,
   onRemoveChatAttachment,
+  onRemoveCommandTag,
   onSelectMention,
   onSelectCommand,
 }: {
@@ -133,6 +140,7 @@ export default function AgentChatPane({
   showPaper2SlidesControls: boolean;
   presentationStatus: 'idle' | 'running' | 'success' | 'error';
   presentationOptionSummary: string;
+  commandTags: CommandTag[];
   isMentionOpen: boolean;
   mentionSuggestions: WorkspaceFile[];
   mentionSelectedIndex: number;
@@ -196,6 +204,7 @@ export default function AgentChatPane({
   onSendMessage: () => void;
   onChatAttachmentChange: (event: ChangeEvent<HTMLInputElement>) => void;
   onRemoveChatAttachment: (index: number) => void;
+  onRemoveCommandTag: (tagId: string) => void;
   onSelectMention: (file: WorkspaceFile) => void;
   onSelectCommand: (command: CommandSuggestion) => void;
 }) {
@@ -272,6 +281,7 @@ export default function AgentChatPane({
           showPaper2SlidesControls={showPaper2SlidesControls}
           presentationStatus={presentationStatus}
           presentationOptionSummary={presentationOptionSummary}
+          commandTags={commandTags}
           isMentionOpen={isMentionOpen}
           mentionSuggestions={mentionSuggestions}
           mentionSelectedIndex={mentionSelectedIndex}
@@ -289,6 +299,7 @@ export default function AgentChatPane({
           onSendMessage={onSendMessage}
           onChatAttachmentChange={onChatAttachmentChange}
           onRemoveChatAttachment={onRemoveChatAttachment}
+          onRemoveCommandTag={onRemoveCommandTag}
           onSelectMention={onSelectMention}
           onSelectCommand={onSelectCommand}
         />

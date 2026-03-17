@@ -65,6 +65,26 @@ services:
       mc anonymous set download local/"$${S3_BUCKET_NAME}";
       exit 0;
 
+  google-workspace-mcp:
+    image: python:3.13-slim
+    restart: unless-stopped
+    environment:
+      GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
+      GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET:-}
+      MCP_ENABLE_OAUTH21: "true"
+      EXTERNAL_OAUTH21_PROVIDER: "true"
+      WORKSPACE_MCP_STATELESS_MODE: "true"
+      WORKSPACE_MCP_HOST: 0.0.0.0
+      WORKSPACE_MCP_PORT: 8000
+      WORKSPACE_MCP_BASE_URI: http://google-workspace-mcp
+      PORT: 8000
+    command:
+      - /bin/sh
+      - -lc
+      - pip install --no-cache-dir workspace-mcp && workspace-mcp --transport streamable-http --tools gmail drive calendar sheets
+    ports:
+      - "8000:8000"
+
   backend:
     build:
       context: ../backend
@@ -107,7 +127,7 @@ services:
       GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET:-}
       GOOGLE_OAUTH_REDIRECT_URI: ${GOOGLE_OAUTH_REDIRECT_URI:-http://localhost:3000/api/auth/google/callback}
       GOOGLE_OAUTH_POST_LOGIN_REDIRECT: ${GOOGLE_OAUTH_POST_LOGIN_REDIRECT:-http://localhost:8080/login}
-      GOOGLE_OAUTH_SCOPES: ${GOOGLE_OAUTH_SCOPES:-openid email profile https://www.googleapis.com/auth/bigquery}
+      GOOGLE_OAUTH_SCOPES: ${GOOGLE_OAUTH_SCOPES:-openid email profile https://www.googleapis.com/auth/bigquery https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/spreadsheets.readonly}
       OAUTH_TOKEN_ENCRYPTION_KEY: ${OAUTH_TOKEN_ENCRYPTION_KEY:-}
     ports:
       - "3000:3000"
@@ -130,6 +150,7 @@ services:
       RAG_LLM_API_KEY: ${RAG_LLM_API_KEY:-}
       # Demo: MCP auth for toolbox-bq-demo.
       BQ_ACCESS_TOKEN: ${BQ_ACCESS_TOKEN:-}
+      GOOGLE_WORKSPACE_MCP_URL: ${GOOGLE_WORKSPACE_MCP_URL:-http://google-workspace-mcp:8000/mcp}
       LLM_MODEL: ${LLM_MODEL:-gemini-3-flash-preview}
       WORKSPACE_ROOT: /app/workspaces
       AGENT_CONFIG_PATH: /agent/config/runtime.yaml

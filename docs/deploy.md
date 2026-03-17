@@ -19,7 +19,7 @@ If you want the "CI/CD and Cloud Build" view (triggers, build tags, rollback, tr
 cp env/local/dev.env.example env/local/dev.env
 cp env/local/stack.env.example env/local/stack.env
 
-docker compose -f infra/docker-compose.yml --env-file env/local/stack.env up -d postgres redis minio minio-setup
+docker compose -f infra/docker-compose.dependencies.yml --env-file env/local/stack.env up -d
 
 set -a; source env/local/dev.env; set +a
 

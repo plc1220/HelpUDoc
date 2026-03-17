@@ -154,6 +154,12 @@ spec:
                   name: helpudoc-config
                   key: GOOGLE_OAUTH_SCOPES
                   optional: true
+            - name: GOOGLE_WORKSPACE_MCP_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: GOOGLE_WORKSPACE_MCP_URL
+                  optional: true
             - name: OAUTH_TOKEN_ENCRYPTION_KEY
               valueFrom:
                 secretKeyRef:
@@ -300,6 +306,12 @@ spec:
                 configMapKeyRef:
                   name: helpudoc-config
                   key: GOOGLE_OAUTH_SCOPES
+                  optional: true
+            - name: GOOGLE_WORKSPACE_MCP_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: GOOGLE_WORKSPACE_MCP_URL
                   optional: true
             - name: OAUTH_TOKEN_ENCRYPTION_KEY
               valueFrom:

@@ -11,6 +11,11 @@ const DEFAULT_SCOPES = [
   'email',
   'profile',
   'https://www.googleapis.com/auth/bigquery',
+  'https://www.googleapis.com/auth/gmail.readonly',
+  'https://www.googleapis.com/auth/gmail.compose',
+  'https://www.googleapis.com/auth/calendar.readonly',
+  'https://www.googleapis.com/auth/drive.readonly',
+  'https://www.googleapis.com/auth/spreadsheets.readonly',
 ];
 
 export type GoogleProfile = {
@@ -61,6 +66,46 @@ function computeExpiryEpoch(expiresInSeconds?: number): number | undefined {
     return undefined;
   }
   return Math.floor(Date.now() / 1000) + Math.floor(expiresInSeconds);
+}
+
+function splitScopes(raw?: string): Set<string> {
+  if (!raw) {
+    return new Set();
+  }
+  return new Set(
+    raw
+      .split(/\s+/)
+      .map((entry) => entry.trim())
+      .filter(Boolean),
+  );
+}
+
+const SCOPE_EQUIVALENTS: Record<string, string[]> = {
+  email: ['email', 'https://www.googleapis.com/auth/userinfo.email'],
+  profile: ['profile', 'https://www.googleapis.com/auth/userinfo.profile'],
+};
+
+function hasRequiredScope(granted: Set<string>, required: string): boolean {
+  const equivalents = SCOPE_EQUIVALENTS[required];
+  if (!equivalents) {
+    return granted.has(required);
+  }
+  return equivalents.some((scope) => granted.has(scope));
+}
+
+function getMissingScopes(grantedScope?: string): string[] {
+  const granted = splitScopes(grantedScope);
+  return getScopes().filter((scope) => !hasRequiredScope(granted, scope));
+}
+
+function ensureRequiredScopes(grantedScope?: string): void {
+  const missingScopes = getMissingScopes(grantedScope);
+  if (!missingScopes.length) {
+    return;
+  }
+  throw new GoogleOAuthTokenMissingError(
+    `Google account is missing required scopes. Please sign in with Google again to grant: ${missingScopes.join(', ')}`,
+  );
 }
 
 export class GoogleOAuthService {
@@ -236,6 +281,8 @@ export class GoogleOAuthService {
       throw new GoogleOAuthTokenMissingError('Google account is not connected for this user');
     }
 
+    ensureRequiredScopes(existing.scope);
+
     const now = Math.floor(Date.now() / 1000);
     if (existing.accessToken && existing.expiryDate && existing.expiryDate > now + 60) {
       return {
@@ -278,12 +325,14 @@ export class GoogleOAuthService {
 
     const expiresIn = toNumber(data.expires_in);
     const expiryDate = computeExpiryEpoch(expiresIn);
+    const grantedScope = typeof data.scope === 'string' ? data.scope : existing.scope;
+    ensureRequiredScopes(grantedScope);
 
     await this.tokenStore.upsertToken(userId, 'google', {
       refreshToken: existing.refreshToken,
       accessToken,
       expiryDate,
-      scope: typeof data.scope === 'string' ? data.scope : existing.scope,
+      scope: grantedScope,
       tokenType: typeof data.token_type === 'string' ? data.token_type : existing.tokenType,
     });
 
