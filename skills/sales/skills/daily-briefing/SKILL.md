@@ -1,237 +1,163 @@
 ---
 name: daily-briefing
-description: Start your day with a prioritized sales briefing. Works standalone when you tell me your meetings and priorities, and becomes Google Workspace-first when Calendar, Gmail, Drive, and Sheets are connected. Trigger with "morning briefing", "daily brief", "what's on my plate today", "prep my day", or "start my day".
+description: Start your day with a prioritized sales briefing. Works standalone when you tell me your meetings and priorities, and becomes Google Workspace-first when Calendar, Gmail, Drive, Sheets, and tagged workspace files are connected.
 ---
 
 # Daily Sales Briefing
 
-Get a clear view of what matters most today. This skill works with whatever you tell me, and gets richer when you connect your tools.
+Get a clear view of what matters most today. This skill should work with whatever the seller gives you, but succeed best when Calendar and Gmail are available. Keep it operational, concise, and useful in under two minutes of reading.
 
 ## How It Works
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────┐
-│                      DAILY BRIEFING                              │
+│                      DAILY BRIEFING                             │
 ├─────────────────────────────────────────────────────────────────┤
-│  ALWAYS (works standalone)                                       │
-│  ✓ You tell me: today's meetings, key deals, priorities         │
-│  ✓ I organize: prioritized action plan for your day             │
-│  ✓ Output: scannable 2-minute briefing                          │
+│  ALWAYS (works standalone)                                      │
+│  ✓ You tell me today's meetings, deals, and priorities         │
+│  ✓ I organize a prioritized action plan                        │
+│  ✓ Output is a scannable daily briefing                        │
 ├─────────────────────────────────────────────────────────────────┤
-│  SUPERCHARGED (when you connect your tools)                      │
-│  + Calendar: auto-pull today's meetings with attendees          │
-│  + Gmail: unread buyer messages, waiting on replies             │
-│  + Drive: today's prep docs, notes, proposal files              │
-│  + Sheets: pipeline trackers or account spreadsheets            │
-│  + CRM: pipeline alerts, tasks, deal health                     │
+│  GWS-FIRST (preferred path)                                     │
+│  + Calendar: today's meetings and attendees                    │
+│  + Gmail: urgent replies, no-reply threads, recap emails       │
+│  + Drive: prep docs, decks, notes, proposals                   │
+│  + Sheets: trackers and account plans                          │
+│  + Tagged files: workspace context via rag_query               │
+│  + CRM: optional pipeline alerts and task context              │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
----
-
 ## Getting Started
 
-When you run this skill, I'll ask for what I need:
+When you run this skill, only ask for what is still missing.
 
-**If no calendar connected:**
-> "What meetings do you have today? (Just paste your calendar or list them)"
+**If no calendar context exists:**
+"What meetings do you have today?"
 
-**If no CRM or Sheets connected:**
-> "What deals are you focused on this week? Any that need attention?"
+**If no Sheets or CRM context exists:**
+"What deals or accounts need attention this week?"
 
-**If you have connectors:**
-I'll pull everything automatically and just show you the briefing.
+**If tools are connected:**
+Pull the context automatically and produce the briefing.
 
----
+## Retrieval Order
 
-## Connectors (Optional)
-
-Connect your tools to supercharge this skill:
-
-| Connector | What It Adds |
-|-----------|--------------|
-| **Calendar** | Today's meetings with attendees, times, and context |
-| **Gmail** | Unread from opportunity contacts, emails waiting on replies, transcript recap emails |
-| **Drive** | Today's prep docs, decks, notes, proposals |
-| **Sheets** | Pipeline trackers, account plans, next-step sheets |
-| **CRM** | Open pipeline, deals closing soon, overdue tasks, stale deals |
-
-> **No connectors?** No problem. Tell me your meetings and deals, and I'll create your briefing.
-
----
+1. Google Calendar for today's meetings
+2. Gmail for urgent inbound and no-reply follow-ups
+3. Google Drive for prep docs, decks, and recap materials
+4. Tagged workspace files via `rag_query`
+5. Google Sheets for trackers or account plans
+6. CRM if connected
+7. Google Search only when a priority account needs same-day external context
 
 ## Output Format
 
 ```markdown
 # Daily Briefing | [Day, Month Date]
 
----
-
 ## #1 Priority
-
 **[Most important thing to do today]**
-[Why it matters and what to do about it]
-
----
+[Why it matters and what to do]
 
 ## Today's Numbers
-
 | Open Pipeline | Closing This Month | Meetings Today | Action Items |
-|---------------|-------------------|----------------|--------------|
+|---|---|---|---|
 | $[X] | $[X] | [N] | [N] |
 
----
-
 ## Today's Meetings
-
 ### [Time] — [Company] ([Meeting Type])
 **Attendees:** [Names]
-**Context:** [One-line: deal status, last touch, what's at stake]
-**Prep:** [Quick action before this meeting]
-
-### [Time] — [Company] ([Meeting Type])
-**Attendees:** [Names]
-**Context:** [One-line context]
+**Context:** [Deal status or last touch]
 **Prep:** [Quick action]
 
-*Run `call-prep [company]` for detailed meeting prep*
-
----
-
-## Pipeline Alerts
-
-### Needs Attention
-| Deal | Stage | Amount | Alert | Action |
-|------|-------|--------|-------|--------|
-| [Deal] | [Stage] | $[X] | [Why flagged] | [What to do] |
-
-### Closing This Week
-| Deal | Close Date | Amount | Confidence | Blocker |
-|------|------------|--------|------------|---------|
-| [Deal] | [Date] | $[X] | [H/M/L] | [If any] |
-
----
-
 ## Email Priorities
-
 ### Needs Response
 | From | Subject | Received |
-|------|---------|----------|
-| [Name @ Company] | [Subject] | [Time] |
+|---|---|---|
 
 ### Waiting On Reply
 | To | Subject | Sent | Days Waiting |
-|----|---------|------|--------------|
-| [Name @ Company] | [Subject] | [Date] | [N] |
+|---|---|---|---|
 
----
+## Prep Materials
+- [Doc / deck / note]
 
 ## Suggested Actions
-
 1. **[Action]** — [Why now]
 2. **[Action]** — [Why now]
 3. **[Action]** — [Why now]
-
----
-
-*Run `call-prep [company]` before your meetings*
-*Run `call-summary` after each call*
 ```
 
----
+Only include pipeline or forecast sections when Sheets or CRM data actually exists.
 
 ## Execution Flow
 
-### Step 1: Gather Context
+### Step 1: Gather the day's internal context
 
-**If connectors available:**
-```
-1. Calendar → Get today's events
-   - Filter to external meetings (non-company attendees)
-   - Pull: time, title, attendees, description
+Use Calendar:
 
-2. Gmail → Check priority messages
-   - Unread from opportunity contact domains
-   - Sent messages with no reply (3+ days)
+- list external-facing meetings
+- capture attendees, times, and short descriptions
 
-3. Drive → Search today's prep materials
-   - Pull: notes, decks, proposals, transcript docs/files tied to today's accounts
+Use Gmail:
 
-4. Sheets → Check trackers (if available)
-   - Pull: account plans, pipeline spreadsheets, next-step trackers
+- find unread buyer or stakeholder emails
+- identify sent-without-reply threads that matter today
+- find recap or transcript emails tied to today's accounts
 
-5. CRM → Query your pipeline
-   - Open opportunities owned by you
-   - Flag: closing this week, no activity 7+ days, slipped dates
-   - Get: overdue tasks, upcoming tasks
-```
+Use Drive:
 
-**If no connectors:**
-```
-Ask user:
-1. "What meetings do you have today?"
-2. "What deals are you focused on? Any closing soon or needing attention?"
-3. "Anything urgent I should know about?"
+- find decks, notes, proposals, or recap docs connected to today's meetings
 
-Work with whatever they provide.
-```
+Use Sheets or CRM only if they add real prioritization value:
+
+- pipeline trackers
+- account plans
+- close dates
+- overdue tasks
 
 ### Step 2: Prioritize
 
-```
-Priority ranking:
-1. URGENT: Deal closing today/tomorrow not yet won
-2. HIGH: Meeting today with high-value opportunity
-3. HIGH: Unread email from decision-maker
-4. MEDIUM: Deal closing this week
-5. MEDIUM: Stale deal (7+ days no activity)
-6. LOW: Tasks due this week
+Default ranking:
 
-Select #1 Priority:
-- If meeting with >$50K deal today → prep that
-- If deal closing today → focus on close
-- If urgent email from buyer → respond first
-- Else → highest-value stale deal
-```
+1. urgent meeting prep for a live account conversation
+2. urgent buyer reply or blocker
+3. close-date or next-step risk from Sheets or CRM
+4. stale follow-up that needs action today
 
-### Step 3: Generate Briefing
+### Step 3: Generate the briefing
 
-```
-Assemble sections based on available data:
+Assemble only the sections supported by real data:
 
-1. #1 Priority — Always include (even if simple)
-2. Today's Numbers — If CRM or Sheets connected, otherwise skip
-3. Today's Meetings — From calendar or user input
-4. Pipeline Alerts — If CRM connected
-5. Email Priorities — If Gmail connected
-6. Suggested Actions — Always include top 3 actions
-```
-
----
+1. #1 Priority
+2. Today's Meetings
+3. Email Priorities
+4. Prep Materials
+5. Suggested Actions
+6. Today's Numbers or Pipeline Alerts if Sheets or CRM adds them
 
 ## Quick Mode
 
-Say "quick brief" or "tldr my day" for abbreviated version:
+If the user asks for "quick brief" or "tl;dr my day", return:
 
 ```markdown
 # Quick Brief | [Date]
 
 **#1:** [Priority action]
 
-**Meetings:** [N] — [Company 1], [Company 2], [Company 3]
+**Meetings:** [N] — [Company 1], [Company 2]
 
 **Alerts:**
 - [Alert 1]
 - [Alert 2]
 
-**Do Now:** [Single most important action]
+**Do Now:** [Most important action]
 ```
 
----
+## End Of Day Mode
 
-## End of Day Mode
-
-Say "wrap up my day" or "end of day summary" after your last meeting:
+If the user asks for "wrap up my day" or "end of day summary":
 
 ```markdown
 # End of Day | [Date]
@@ -240,29 +166,29 @@ Say "wrap up my day" or "end of day summary" after your last meeting:
 - [Meeting 1] — [Outcome]
 - [Meeting 2] — [Outcome]
 
-**Pipeline Changes:**
-- [Deal] moved to [Stage]
-
 **Tomorrow's Focus:**
 - [Priority 1]
 - [Priority 2]
 
 **Open Loops:**
-- [ ] [Unfinished item needing follow-up]
+- [ ] [Follow-up item]
 ```
 
----
+## Handoff Rules
+
+Stay operational by default.
+
+If one account clearly needs deeper same-day context:
+
+- hand off to `research` for a focused account, market, or industry brief
+
+### Example handoff
+
+If the daily briefing reveals a high-stakes meeting with a fast-changing account, produce the daily brief first, then route the missing deep background to `research` rather than turning the daily brief into a long report.
 
 ## Tips
 
-1. **Connect Calendar and Gmail first** — Biggest time saver
-2. **Add Drive or Sheets next** — Unlocks prep docs and pipeline trackers
-3. **Add CRM if you have one** — Best for stage hygiene and forecast context
-
----
-
-## Related Skills
-
-- **call-prep** — Deep prep for any specific meeting
-- **call-summary** — Process notes after calls
-- **account-research** — Research a company before first meeting
+1. Calendar and Gmail are the biggest time savers.
+2. Drive and Sheets add useful prep and tracker context.
+3. CRM helps, but the workflow should still work well without it.
+4. Google Search is enrichment, not the starting point.

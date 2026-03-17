@@ -1,443 +1,256 @@
 ---
 name: draft-outreach
-description: Research a prospect then draft personalized outreach. Uses web research by default, and becomes Google Workspace-first when Gmail, Drive, and Sheets are available for context and draft creation. Trigger with "draft outreach to [person/company]", "write cold email to [prospect]", "reach out to [name]".
+description: Research a prospect then draft personalized outreach. Prefer Gmail, Drive, Sheets, and tagged files before web search, and create a Gmail draft when possible.
 ---
 
 # Draft Outreach
 
-Research first, then draft. This skill never sends generic outreach - it always researches the prospect first to personalize the message. Works standalone with web search, supercharged when you connect your tools.
+Research first, then draft. This skill should never send generic outreach. Start with the seller's internal context, then enrich externally only where it improves the message.
 
 ## Connectors (Optional)
 
 | Connector | What It Adds |
 |-----------|--------------|
-| **Gmail** | Create a draft directly in your inbox and inspect prior threads |
-| **Drive** | Reuse notes, decks, or account plans related to the target |
-| **Sheets** | Pull territory or account-tracker context when relevant |
+| **Gmail** | Create a draft directly in the inbox and inspect prior threads |
+| **Drive** | Reuse notes, decks, battlecards, or account plans |
+| **Sheets** | Pull territory or account-tracker context |
 | **CRM** | Prior relationship context, existing contacts |
 | **Enrichment** | Verified email, phone, background details |
 
-> **No connectors?** Web research works great. I'll output the email text for you to copy.
-
----
+> No connectors? The workflow still works. Return the email text and LinkedIn fallback.
 
 ## How It Works
 
-```
+```text
 +------------------------------------------------------------------+
-|                      DRAFT OUTREACH                               |
-|                                                                   |
+|                      DRAFT OUTREACH                              |
+|                                                                  |
 |  Step 1: RESEARCH (always happens first)                         |
-|  - Web search (default)                                           |
-|  - + Drive / Sheets context (if connected)                       |
-|  - + CRM or enrichment (if connected)                            |
-|                                                                   |
-|  Step 2: DRAFT (based on research)                               |
-|  - Personalized opening (from research)                          |
-|  - Relevant hook (their priorities)                              |
-|  - Clear CTA                                                      |
-|                                                                   |
-|  Step 3: DELIVER (based on connectors)                           |
-|  - Gmail draft (if Gmail connected)                              |
-|  - Copy for LinkedIn (always)                                    |
-|  - Output to user (always)                                        |
+|  - Gmail, Drive, Sheets, tagged files                            |
+|  - Google Search only after internal review                      |
+|  - CRM or enrichment if available                                |
+|                                                                  |
+|  Step 2: DRAFT                                                   |
+|  - Personalized opening from real context                        |
+|  - Relevant hook tied to priorities                              |
+|  - Clear proof and CTA                                           |
+|                                                                  |
+|  Step 3: DELIVER                                                 |
+|  - Gmail draft if available                                      |
+|  - Plain-text output always                                      |
+|  - LinkedIn fallback if no email                                 |
 +------------------------------------------------------------------+
 ```
 
----
+## Retrieval Order
+
+1. Gmail for prior threads and open loops
+2. Google Drive for notes, decks, proposals, and account plans
+3. Tagged workspace files via `rag_query`
+4. Google Sheets for territory or account-tracker context
+5. Google Search for current company, role, or market updates
+6. CRM or enrichment only if available
 
 ## Output Format
 
 ```markdown
 # Outreach Draft: [Person] @ [Company]
-**Generated:** [Date] | **Research Sources:** [Web, Drive, Sheets, Enrichment, CRM]
-
----
+**Generated:** [Date] | **Research Sources:** [Gmail, Drive, Sheets, Web, CRM]
 
 ## Research Summary
-
 **Target:** [Name], [Title] at [Company]
-**Hook:** [Why reaching out now - the personalized angle]
-**Goal:** [What you want from this outreach]
+**Hook:** [Why reaching out now]
+**Goal:** [Desired outcome]
 
----
+## Outreach Brief
+- Relationship status:
+- Why now:
+- Proof points to reference:
+- Ask / CTA:
 
 ## Email Draft
-
-**To:** [email if known, or "find email" note]
+**To:** [email if known]
 **Subject:** [Personalized subject line]
-
----
 
 [Email body]
 
----
-
-**Subject Line Alternatives:**
+## Subject Line Alternatives
 1. [Option 2]
 2. [Option 3]
 
----
-
 ## LinkedIn Message (if no email)
+**Connection Request (<300 chars):**
+[Short connection request]
 
-**Connection Request (< 300 chars):**
-[Short, no-pitch connection request]
-
-**Follow-up Message (after connected):**
+**Follow-up Message:**
 [Value-first message]
 
----
-
 ## Why This Approach
-
 | Element | Based On |
-|---------|----------|
+|---|---|
 | Opening | [Research finding that makes it personal] |
-| Hook | [Their priority/pain point] |
+| Hook | [Their priority or pain point] |
 | Proof | [Relevant customer story] |
 | CTA | [Low-friction ask] |
-
----
-
-## Email Draft Status
-
-[Draft created - check ~~email]
-[Email not connected - copy email above]
-[No email found - use LinkedIn approach]
-
----
-
-## Follow-up Sequence (Optional)
-
-**Day 3 - Follow-up 1:**
-[Short, new angle]
-
-**Day 7 - Follow-up 2:**
-[Different value prop]
-
-**Day 14 - Break-up:**
-[Final attempt]
 ```
-
----
 
 ## Execution Flow
 
-### Step 1: Parse Request
+### Step 1: Check internal relationship context
 
-```
-Input patterns:
-- "draft outreach to John Smith at Acme" → Person + company
-- "write cold email to Acme's CTO" → Role + company
-- "reach out to sarah@acme.com" → Email provided
-- "LinkedIn message to [LinkedIn URL]" → Profile provided
-```
+Use Gmail first:
 
-### Step 2: Research First (Always)
+- search for prior conversations with the contact or domain
+- detect whether this is cold, warm, or reactivation outreach
+- note open loops or prior commitments
 
-**Use research-prospect skill internally:**
-```
-1. Web search for company + person
-2. If Drive or Sheets connected: Check account plans, notes, or territory trackers
-3. If CRM connected: Check for prior relationship
-4. If Enrichment connected: Get verified contact info, background
-```
+Use Drive and tagged files next:
 
-**Must find before drafting:**
-- Who they are (title, background)
-- What the company does
-- Recent news or trigger
-- Personalization hook
+- look for notes, battlecards, call summaries, decks, and proposal drafts
+- reuse the customer's language when it exists
 
-### Step 3: Identify Hook
+Use Sheets if relevant:
 
-```
-Priority order for hooks:
-1. Trigger event (funding, hiring, news) → Most timely
-2. Mutual connection → Social proof
-3. Their content (post, article, talk) → Shows you did research
-4. Company initiative → Relevant to their priorities
-5. Role-based pain point → Least personal but still relevant
-```
+- territory notes
+- account status
+- next-step tracker rows
 
-### Step 4: Draft Message
+### Step 2: Enrich externally only when useful
 
-**Email Structure (AIDA):**
-```
-SUBJECT: [Personalized, <50 chars, no spam words]
+Use Google Search after internal review:
 
-[Opening: Personal hook - shows you researched them]
+- recent company news
+- leadership or org change
+- initiative or launch tied to the outreach angle
 
-[Interest: Their problem/opportunity in 1-2 sentences]
+Keep external research short and specific. Do not pad the message with generic facts.
 
-[Desire: Brief proof point - similar company result]
+### Step 3: Identify the hook
 
-[Action: Clear, low-friction CTA]
+Priority order:
 
-[Signature]
-```
+1. Trigger event such as funding, hiring, or launch
+2. Prior thread or warm relationship context
+3. Their content or public statement
+4. Company initiative
+5. Role-based pain point
 
-**LinkedIn Connection Request (<300 chars):**
-```
-Hi [Name], [Mutual connection/shared interest/genuine compliment].
-Would love to connect. [No pitch]
+### Step 4: Draft the message
+
+**Email structure**
+
+```text
+SUBJECT: [Personalized, short, non-spammy]
+
+[Opening: personal hook]
+
+[Interest: likely problem or opportunity]
+
+[Desire: brief proof point]
+
+[Action: clear CTA]
 ```
 
-**LinkedIn Follow-up Message:**
-```
-Thanks for connecting! [Value-first: insight, article, observation]
+**LinkedIn connection request**
 
-[Soft transition to why you reached out]
-
-[Question, not pitch]
+```text
+Hi [Name], [genuine context]. Would love to connect.
 ```
 
-### Step 5: Create Email Draft
+## Message Templates By Scenario
 
-```
-If Gmail connector available:
-1. Create draft with to, subject, body
-2. Return draft link
-3. Note: "Draft created - review and send"
+### Cold Outreach
 
-If not available:
-1. Output email text
-2. Note: "Copy to your email client"
-```
-
----
-
-## Capability by Connector
-
-| Capability | Web Only | + Enrichment | + CRM | + Email |
-|------------|----------|--------------|-------|---------|
-| Personalized opening | Basic | Deep | With history | Same |
-| Verified email | No | Yes | Yes | Yes |
-| Background details | Public only | Full | Full | Full |
-| Prior relationship | No | No | Yes | Yes |
-| Auto-create draft | No | No | No | Yes |
-
----
-
-## Message Templates by Scenario
-
-### Cold Outreach (No Prior Relationship)
-
-```
+```text
 Subject: [Their initiative] + [your angle]
 
 Hi [Name],
 
-[Personal hook based on research - news, content, mutual connection].
+[Personal hook based on research].
 
-[1 sentence on their likely challenge based on role/company].
+[1 sentence on likely challenge].
 
-[Brief proof: "We helped [Similar Company] achieve [Result]".]
+[Brief proof point].
 
 Worth a 15-min call to see if relevant?
-
-[Signature]
 ```
 
-### Warm Outreach (Have Met / Mutual Connection)
+### Warm Outreach
 
-```
+```text
 Subject: Following up from [context]
 
 Hi [Name],
 
-[Reference to how you know them / who connected you].
+[Reference to how you know them].
 
-[Why reaching out now - their trigger].
+[Why reaching out now].
 
 [Specific value you can offer].
 
 [CTA]
 ```
 
-### Re-Engagement (Went Dark)
+### Re-Engagement
 
-```
+```text
 Subject: [Short, curiosity-driven]
 
 Hi [Name],
 
-[Acknowledge time passed without being guilt-trippy].
+[Acknowledge time passed].
 
-[New reason to reconnect - their news or your news].
+[New reason to reconnect].
 
-[Simple question to re-open dialogue].
-
-[Signature]
+[Simple question to reopen dialogue].
 ```
 
-### Post-Event Follow-up
+### Post-Event Follow-Up
 
-```
+```text
 Subject: Great meeting you at [Event]
 
 Hi [Name],
 
 [Specific memory from conversation].
 
-[Value-add: article, intro, resource related to what you discussed].
+[Value-add or resource].
 
 [Soft CTA for next conversation].
 ```
 
----
-
 ## Email Style Guidelines
 
-1. **Be concise but informative** — Get to the point quickly. Busy people skim.
-2. **No markdown formatting** — Never use asterisks, bold (**text**), or other markdown. Write plain text that looks natural in any email client.
-3. **Short paragraphs** — 2-3 sentences max per paragraph. White space is your friend.
-4. **Simple lists** — If listing items, use plain dashes. No fancy formatting.
+1. Be concise but informative.
+2. No markdown formatting.
+3. Use short paragraphs.
+4. Keep the CTA low-friction.
 
-**Good:**
-```
-Here's what I can share:
-- Case study from a similar company
-- 15-min intro call this week
-- Quick demo if helpful
-```
+## Handoff Rules
 
-**Bad:**
-```
-**What I Can Offer:**
-- **Case study** from a similar company
-- **Intro call** this week
-```
+Stay outreach-first by default.
 
----
+Escalate only when the ask clearly becomes a larger asset:
 
-## What NOT to Do
+- hand off to `proposal-writing` if the outreach is really a proposal or commercial follow-up
+- hand off to `frontend-slides` if the user needs a pitch deck, visual narrative, or presentation asset
 
-**Generic openers:**
-- "I hope this email finds you well"
-- "I'm reaching out because..."
-- "I wanted to introduce myself"
+When handing off, include:
 
-**Feature dumps:**
-- Long paragraphs about your product
-- Multiple value props at once
-- No clear CTA
+- target account and contact
+- deal stage or outreach objective
+- proof points and pain points
+- desired call to action
 
-**Fake personalization:**
-- "I noticed you work at [Company]" (obviously)
-- "Congrats on your role" (without context)
+### Example handoff: proposal-led outreach
 
-**Markdown in emails:**
-- Using **bold** or *italic* asterisks
-- Headers or formatted lists that won't render
+If the seller says, "Write the follow-up and include a proposal next step," draft the outreach here first, then hand off the commercial document creation to `proposal-writing`.
 
-**Instead:**
-- Lead with something specific you learned
-- One clear value prop
-- One clear ask
-- Plain text formatting only
+### Example handoff: pitch narrative
 
----
+If the seller says, "Draft outreach and make me a deck for the meeting," draft the message here, then pass the story, audience, and hook into `frontend-slides`.
 
-## Channel Selection
+## Notes
 
-```
-IF verified email available:
-  → Email preferred (higher response rate)
-  → Also provide LinkedIn backup
-
-IF no email:
-  → LinkedIn connection request
-  → Follow-up message template for after connection
-
-IF warm intro possible:
-  → Suggest mutual connection outreach first
-```
-
----
-
-## Company Configuration [CUSTOMIZE]
-
-```markdown
-## Outreach Settings
-
-- My name: [Your Name]
-- My title: [Your Title]
-- My company: [Company Name]
-- Value prop: [One sentence - what you help with]
-
-## Signature
-[Your preferred email signature]
-
-## Proof Points
-- [Customer 1]: [Result]
-- [Customer 2]: [Result]
-- [Customer 3]: [Result]
-
-## CTA Options
-- Default: "Worth a 15-min call?"
-- Softer: "Open to learning more?"
-- Specific: "Can I send over a quick demo?"
-
-## Tone
-- [Professional / Casual / Direct]
-- Industry-specific language: [Yes/No]
-```
-
----
-
-## Example
-
-**Input:** "draft outreach to the Head of Engineering at Notion"
-
-**Research finds:**
-- Name: David Tibbitts
-- Recent news: Notion launched AI features
-- Hiring: 5 ML engineer roles open
-- Background: Ex-Facebook, Stanford CS
-
-**Output:**
-
-```markdown
-# Outreach Draft: David Tibbitts @ Notion
-
-## Research Summary
-**Target:** David Tibbitts, Head of Engineering at Notion
-**Hook:** They're scaling AI features and hiring ML talent
-**Goal:** Intro call about AI infrastructure
-
----
-
-## Email Draft
-
-**To:** david@notion.so
-**Subject:** Notion's AI scaling + a thought
-
----
-
-Hi David,
-
-Saw Notion's AI rollout is gaining serious traction - congrats.
-With 5 ML roles open, seems like you're scaling fast.
-
-Curious how you're thinking about inference infrastructure
-as usage grows. We helped [Similar Company] cut their AI
-serving costs 40% while improving latency.
-
-Worth a 15-min call to see if relevant to your roadmap?
-
-Best,
-[Name]
-
----
-
-**Subject Alternatives:**
-1. Notion AI + scaling question
-2. Quick thought on Notion's ML hiring
-
----
-
-## Email Draft Status
-Draft created - check ~~email
-```
+- Gmail drafts are preferred, but plain-text output is an acceptable fallback.
+- Do not default to Google Search before checking internal context.

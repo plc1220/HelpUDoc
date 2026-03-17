@@ -5,7 +5,14 @@ description: Generate tailored sales assets (landing pages, decks, one-pagers, w
 
 # Create an Asset
 
-Generate custom sales assets tailored to your prospect, audience, and goals. Supports interactive landing pages, presentation decks, executive one-pagers, and workflow/architecture demos.
+Generate custom sales assets tailored to your prospect, audience, and goals. Use this when the sales workflow has already identified the audience, purpose, and account context and the next step is a polished customer-facing asset.
+
+This skill should complement, not replace, the broader workflow:
+
+- use `call-prep`, `call-summary`, `draft-outreach`, or `account-research` to gather seller context first
+- use `frontend-slides` when the ask is specifically a presentation or slide deck workflow
+- use `proposal-writing` when the ask is specifically a proposal, SOW, or commercial document
+- use `create-an-asset` when the deliverable is a more custom customer-facing asset such as a one-pager, landing page, or interactive demo
 
 ---
 
@@ -27,6 +34,16 @@ This skill creates professional sales assets by gathering context about:
 - **(d) The Format** — landing page, deck, one-pager, or workflow demo
 
 The skill then researches, structures, and builds a polished, branded asset ready to share with customers.
+
+## Handoff Contract
+
+Before building, make sure the workflow has captured:
+
+- target account and audience
+- deal stage and purpose
+- pain points, objections, and priorities
+- desired call to action
+- any existing notes, transcripts, proposals, or decks worth reusing
 
 ---
 

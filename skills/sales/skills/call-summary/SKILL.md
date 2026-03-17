@@ -1,18 +1,37 @@
 ---
 name: call-summary
-description: Process call notes or a transcript — extract action items, draft follow-up email, and generate an internal summary. Prefer Gmail, Drive, and Calendar context when available, especially for transcript lookup and follow-up drafts.
+description: Process call notes or a transcript to extract action items, draft a follow-up email, and generate an internal summary. Prefer Gmail, Drive, Calendar, and tagged files first, then hand off to proposal or presentation workflows only when the user actually needs them.
 argument-hint: "<call notes or transcript>"
 ---
 
 # /call-summary
 
-> If you see unfamiliar placeholders or need to check which tools are connected, see [CONNECTORS.md](../../CONNECTORS.md).
+Turn a meeting into clean next steps. This skill should summarize what happened, surface what changed, and prepare the follow-up path without overproducing documents by default.
 
-Process call notes or a transcript to extract action items, draft follow-up communications, and update records.
+## How It Works
+
+```text
+┌─────────────────────────────────────────────────────────────────┐
+│                      CALL SUMMARY                               │
+├─────────────────────────────────────────────────────────────────┤
+│  STANDALONE (always works)                                      │
+│  ✓ Paste call notes or transcript                              │
+│  ✓ Extract decisions, action items, concerns, and next steps   │
+│  ✓ Draft a customer-facing follow-up                           │
+│  ✓ Generate internal recap for the team                        │
+├─────────────────────────────────────────────────────────────────┤
+│  GWS-FIRST (preferred path)                                     │
+│  + Calendar: match the meeting and attendees                   │
+│  + Gmail: find recap threads, transcript emails, draft follow-up│
+│  + Drive: find transcript docs/files, notes, decks             │
+│  + Tagged files: use workspace-specific context                │
+│  + CRM: optional update path                                   │
+└─────────────────────────────────────────────────────────────────┘
+```
 
 ## Usage
 
-```
+```text
 /call-summary <notes or transcript>
 ```
 
@@ -20,84 +39,66 @@ Process these call notes: $ARGUMENTS
 
 If a file is referenced: @$1
 
----
-
-## How It Works
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                      CALL SUMMARY                                │
-├─────────────────────────────────────────────────────────────────┤
-│  STANDALONE (always works)                                       │
-│  ✓ Paste call notes or transcript                               │
-│  ✓ Extract key discussion points and decisions                  │
-│  ✓ Identify action items with owners and due dates              │
-│  ✓ Surface objections, concerns, and open questions             │
-│  ✓ Draft customer-facing follow-up email                        │
-│  ✓ Generate internal summary for your team                      │
-├─────────────────────────────────────────────────────────────────┤
-│  SUPERCHARGED (when you connect your tools)                      │
-│  + Gmail: find recap threads, transcript emails, draft follow-up│
-│  + Drive: find transcript docs/files, notes, decks              │
-│  + Calendar: link to meeting, attendee context, meeting timing  │
-│  + CRM: update opportunity, log activity, create tasks          │
-└─────────────────────────────────────────────────────────────────┘
-```
-
----
-
 ## What I Need From You
 
-**Option 1: Paste your notes**
-Just paste whatever you have — bullet points, rough notes, stream of consciousness. I'll structure it.
+**Option 1: Paste notes**
+Use rough notes, bullets, or stream-of-consciousness text.
 
 **Option 2: Paste a transcript**
-If you have a full transcript from your meeting tool, Gemini recap email, or a transcript doc from Drive, paste it. I'll extract the key moments.
+Use a Gemini recap email, transcript doc, or call transcript text.
 
 **Option 3: Describe the call**
-Tell me what happened: "Had a discovery call with Acme Corp. Met with their VP Eng and CTO. They're evaluating us vs Competitor X. Main concern is integration timeline."
+Example: "Had a discovery call with Acme. Met with their CTO and VP Eng. They're evaluating us against Competitor X. Main concern is integration timeline."
 
----
+If likely transcript artifacts already exist in Gmail or Drive, use those before asking for more input.
+
+## Retrieval Order
+
+1. User-provided notes or transcript, if present
+2. Google Calendar to identify the meeting shell
+3. Gmail for recap emails, follow-up threads, and transcript emails
+4. Google Drive for transcript docs, notes, decks, and proposal files
+5. Tagged workspace files via `rag_query`
+6. CRM only if connected or explicitly requested
 
 ## Output
 
 ### Internal Summary
+
 ```markdown
 ## Call Summary: [Company] — [Date]
 
 **Attendees:** [Names and titles]
 **Call Type:** [Discovery / Demo / Negotiation / Check-in]
-**Duration:** [If known]
+**Source Reviewed:** [Notes / Gmail recap / Drive transcript / mixed]
 
 ### Key Discussion Points
 1. [Topic] — [What was discussed, decisions made]
 2. [Topic] — [Summary]
 
 ### Customer Priorities
-- [Priority 1 they expressed]
+- [Priority 1]
 - [Priority 2]
 
-### Objections / Concerns Raised
-- [Concern] — [How you addressed it / status]
+### Risks / Objections Raised
+- [Concern] — [Status or response]
 
 ### Competitive Intel
-- [Any competitor mentions, what was said]
+- [Any competitor mention]
 
 ### Action Items
 | Owner | Action | Due |
-|-------|--------|-----|
+|---|---|---|
 | [You] | [Task] | [Date] |
 | [Customer] | [Task] | [Date] |
 
-### Next Steps
+### Recommended Next Step
 - [Agreed next step with timeline]
-
-### Deal Impact
-- [How this call affects the opportunity — stage change, risk, acceleration]
 ```
 
 ### Customer Follow-Up Email
-```
+
+```text
 Subject: [Meeting recap + next steps]
 
 Hi [Name],
@@ -114,58 +115,98 @@ Best,
 [You]
 ```
 
----
-
 ## Email Style Guidelines
 
 When drafting customer-facing emails:
 
-1. **Be concise but informative** — Get to the point quickly. Customers are busy.
-2. **No markdown formatting** — Don't use asterisks, bold, or other markdown syntax. Write in plain text that looks natural in any email client.
-3. **Use simple structure** — Short paragraphs, line breaks between sections. No headers or bullet formatting unless the customer's email client will render it.
-4. **Keep it scannable** — If listing items, use plain dashes or numbers, not fancy formatting.
+1. Be concise but informative.
+2. Do not use markdown formatting.
+3. Use short paragraphs and simple lists.
+4. Keep the email easy to skim.
 
-**Good:**
-```
+**Good**
+
+```text
 Here's what we discussed:
 - Quote for 20 seats at $480/seat/year
 - W9 and supplier onboarding docs
 - Point of contact for the contract
 ```
 
-**Bad:**
-```
+**Bad**
+
+```text
 **What You Need from Us:**
 - Quote for 20 seats at $480/seat/year
 ```
 
----
+## Execution Flow
 
-## If Connectors Available
+### Step 1: Resolve the meeting context
 
-**Gmail or Drive connected:**
-- I'll search for transcript emails, recap threads, and transcript docs/files tied to the meeting
-- Pull relevant notes or transcript excerpts
-- Extract key moments, decisions, and follow-up commitments
+If the user pasted notes, use them. Then enrich with:
 
-**CRM connected:**
-- I'll offer to update the opportunity stage
-- Log the call as an activity
-- Create tasks for action items
-- Update next steps field
+- Calendar metadata for timing and attendees
+- Gmail recap or transcript emails
+- Drive notes or transcript files
+- tagged files already in the workspace
 
-**Email connected:**
-- I'll offer to create a draft in ~~email
-- Or send directly if you approve
+Transcript policy:
 
-**Calendar connected:**
-- I'll use the meeting title, time, and attendees to match the right thread or transcript artifact
+1. search Gmail first
+2. search Drive second
+3. use Calendar details to confirm the right meeting
+4. do not assume Meet-native transcript APIs
 
----
+### Step 2: Extract the business signal
+
+Always capture:
+
+- decisions made
+- customer priorities
+- risks or objections raised
+- competitor mentions
+- action items with owners and timing
+- what should happen next in the deal or account
+
+### Step 3: Draft the outputs
+
+- create the internal recap
+- draft the customer follow-up
+- create a Gmail draft when available; otherwise provide the plain-text draft inline
+
+## Handoff Rules
+
+Stay recap-first by default.
+
+If the meeting clearly creates a larger downstream task:
+
+- hand off to `proposal-writing` for proposals, SOWs, scopes, or commercials
+- hand off to `frontend-slides` for recap decks, exec summaries, or customer-facing presentation material
+
+The handoff brief should include:
+
+- the deal or account context
+- meeting outcomes and decisions
+- priorities, objections, and requested deliverable
+- any missing commercial or technical details
+
+### Example handoff: proposal follow-up
+
+If the meeting ends with "please send a proposal," first produce the recap and clear next-step summary here, then pass the commercial and scope context into `proposal-writing`.
+
+### Example handoff: executive recap deck
+
+If the user asks for a call summary plus an executive readout deck, first create the recap and action table here, then hand off the story, audience, and key outcomes to `frontend-slides`.
 
 ## Tips
 
-1. **More detail = better output** — Even rough notes help. "They seemed concerned about X" is useful context.
-2. **Name the attendees** — Helps me structure the summary and assign action items.
-3. **Flag what matters** — If something was important, tell me: "The big thing was..."
-4. **Tell me the deal stage** — Helps me tailor the follow-up tone and next steps.
+1. Rough notes are enough if they contain the signal.
+2. Attendee names make summaries and action items more accurate.
+3. If something mattered a lot, call it out explicitly.
+4. Deal stage helps tune the follow-up tone and next-step recommendation.
+
+## Notes
+
+- Do not ask for pasted notes if Gmail or Drive already contains likely transcript artifacts.
+- Do not claim CRM updates happened unless the CRM path actually exists and was used.
