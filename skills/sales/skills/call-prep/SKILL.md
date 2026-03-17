@@ -1,66 +1,61 @@
 ---
 name: call-prep
-description: Prepare for a sales call with account context, attendee research, and suggested agenda. Works standalone with user input and web research, and becomes Google Workspace-first when Calendar, Gmail, Drive, and Sheets are connected. Trigger with "prep me for my call with [company]", "I'm meeting with [company] prep me", "call prep [company]", or "get me ready for [meeting]".
+description: Prepare for a sales call with account context, attendee research, and a suggested agenda. Works standalone with user input and targeted web research, and becomes Google Workspace-first when Calendar, Gmail, Drive, Sheets, and tagged workspace files are available.
 ---
 
 # Call Prep
 
-Get fully prepared for any sales call in minutes. This skill works with whatever context you provide, and gets significantly better when you connect your sales tools.
+Get fully prepared for a sales call without rebuilding the whole account story from scratch. This skill should work as the seller workflow entrypoint: gather internal context first, add external context second, and produce a concise prep brief that can later hand off into deeper research or a presentation workflow if needed.
 
 ## How It Works
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────┐
-│                        CALL PREP                                 │
+│                        CALL PREP                                │
 ├─────────────────────────────────────────────────────────────────┤
-│  ALWAYS (works standalone)                                       │
-│  ✓ You tell me: company, meeting type, attendees                │
-│  ✓ Web search: recent news, funding, leadership changes         │
-│  ✓ Company research: what they do, size, industry               │
-│  ✓ Output: prep brief with agenda and questions                 │
+│  ALWAYS (works standalone)                                      │
+│  ✓ You tell me: company, meeting type, attendees               │
+│  ✓ I build: agenda, questions, objections, prep checklist      │
+│  ✓ I add: web research if internal context is limited          │
 ├─────────────────────────────────────────────────────────────────┤
-│  SUPERCHARGED (when you connect your tools)                      │
-│  + Calendar: auto-find meeting, pull attendees and notes        │
-│  + Gmail: recent threads, open questions, commitments           │
-│  + Drive: decks, notes, proposals, transcript artifacts         │
-│  + Sheets: account plans or pipeline trackers when relevant     │
-│  + CRM: account history, contacts, opportunities, activities    │
+│  GWS-FIRST (preferred path)                                     │
+│  + Calendar: meeting shell, attendees, timing, notes           │
+│  + Gmail: recent threads, commitments, unanswered questions    │
+│  + Drive: decks, notes, proposals, transcript artifacts        │
+│  + Sheets: account plans and trackers when relevant            │
+│  + Tagged files: workspace-specific context via rag_query      │
+│  + CRM: optional history and deal context                      │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
----
-
 ## Getting Started
 
-When you run this skill, I'll ask for what I need:
+When you run this skill, gather only what is still missing.
 
-**Required:**
+**Required if tools do not already provide it:**
 - Company or contact name
-- Meeting type (discovery, demo, negotiation, check-in, etc.)
+- Meeting type
 
-**Helpful if you have it:**
-- Who's attending (names and titles)
-- Any context you want me to know (paste prior notes, emails, etc.)
+**Helpful if available:**
+- Attendee names and titles
+- Your goal for the call
+- Any pasted notes, emails, or transcript snippets
 
-If you've connected Calendar, Gmail, Drive, Sheets, or CRM tools, I'll pull context automatically and skip the questions.
+If Calendar, Gmail, Drive, Sheets, or tagged files are available, use them before asking the user to restate obvious context.
 
----
+## Retrieval Order
 
-## Connectors (Optional)
+Follow this order every time:
 
-Connect your tools to supercharge this skill:
+1. Google Calendar for the meeting shell
+2. Gmail for recent threads and unanswered questions
+3. Google Drive for notes, decks, proposals, and transcript artifacts
+4. Tagged workspace files via `rag_query`
+5. Google Sheets for account plans or trackers when relevant
+6. Google Search for current company, market, or attendee context
+7. CRM only if connected or clearly requested
 
-| Connector | What It Adds |
-|-----------|--------------|
-| **Calendar** | Auto-find the meeting, pull attendees, description, and timing |
-| **Gmail** | Recent threads with the company, open questions, commitments, transcript emails |
-| **Drive** | Meeting notes, decks, proposals, transcript docs/files |
-| **Sheets** | Account plans, deal trackers, or territory spreadsheets |
-| **CRM** | Account details, contact history, open deals, recent activities |
-
-> **No connectors?** No problem. Just tell me about the meeting and paste any context you have. I'll research the rest.
-
----
+If a source is missing, keep going. Do not block the workflow because CRM or a transcript system is absent.
 
 ## Output Format
 
@@ -80,7 +75,7 @@ Connect your tools to supercharge this skill:
 | **Company** | [Name] |
 | **Industry** | [Industry] |
 | **Size** | [Employees / Revenue if known] |
-| **Status** | [New prospect / Active opportunity / Customer] |
+| **Status** | [Prospect / Active opportunity / Customer] |
 | **Last Touch** | [Date and summary] |
 
 ---
@@ -88,13 +83,10 @@ Connect your tools to supercharge this skill:
 ## Who You're Meeting
 
 ### [Name] — [Title]
-- **Background:** [Career history, education if found]
-- **LinkedIn:** [URL]
+- **Background:** [Relevant background]
 - **Role in Deal:** [Decision maker / Champion / Evaluator / etc.]
 - **Last Interaction:** [Summary if known]
-- **Talking Point:** [Something personal/professional to reference]
-
-[Repeat for each attendee]
+- **Talking Point:** [Something useful to reference]
 
 ---
 
@@ -103,9 +95,9 @@ Connect your tools to supercharge this skill:
 **What's happened so far:**
 - [Key point from prior interactions]
 - [Open commitments or action items]
-- [Any concerns or objections raised]
+- [Concerns or objections raised]
 
-**Recent news about [Company]:**
+**Recent updates about [Company]:**
 - [News item 1 — why it matters]
 - [News item 2 — why it matters]
 
@@ -114,22 +106,18 @@ Connect your tools to supercharge this skill:
 ## Suggested Agenda
 
 1. **Open** — [Reference last conversation or trigger event]
-2. **[Topic 1]** — [Discovery question or value discussion]
-3. **[Topic 2]** — [Address known concern or explore priority]
-4. **[Topic 3]** — [Demo section / Proposal review / etc.]
-5. **Next Steps** — [Propose clear follow-up with timeline]
+2. **Discovery / Review** — [Topic]
+3. **Objection Handling** — [Known concern]
+4. **Next Steps** — [Specific alignment ask]
 
 ---
 
 ## Discovery Questions
 
-Ask these to fill gaps in your understanding:
-
-1. [Question about their current situation]
+1. [Question about current situation]
 2. [Question about pain points or priorities]
-3. [Question about decision process and timeline]
+3. [Question about decision process]
 4. [Question about success criteria]
-5. [Question about other stakeholders]
 
 ---
 
@@ -137,124 +125,132 @@ Ask these to fill gaps in your understanding:
 
 | Objection | Suggested Response |
 |-----------|-------------------|
-| [Likely objection based on context] | [How to address it] |
+| [Likely objection] | [How to address it] |
 | [Common objection for this stage] | [How to address it] |
 
 ---
 
-## Internal Notes
+## Pre-Call Checklist
 
-[Any Gmail, Drive, CRM, or internal chat context relevant to the meeting]
-
----
-
-## After the Call
-
-Run **call-summary** to:
-- Extract action items
-- Update your CRM
-- Draft a follow-up in Gmail or plain text
+- Read: [notes, deck, proposal, transcript]
+- Confirm: [goal, next step, stakeholder]
+- Bring: [proof point, example, pricing context]
 ```
-
----
 
 ## Execution Flow
 
-### Step 1: Gather Context
+### Step 1: Resolve the meeting
 
-**If connectors available:**
-```
-1. Calendar → Find upcoming meeting matching company name
-   - Pull: title, time, attendees, description, links
+Use Calendar first whenever possible:
 
-2. Gmail → Search recent threads
-   - Query: emails with attendee names or company domain (last 30 days)
-   - Extract: key topics, open questions, commitments, attachments mentioned
+- find the most likely upcoming meeting
+- capture title, time, attendee emails, description, and links
+- infer the company or account from attendee domains and event title
 
-3. Drive → Search account materials
-   - Pull: decks, notes, proposals, account plans, transcript docs/files
-   - Extract: prior commitments, current proposal status, transcript highlights
+If no meeting is available, ask only for the minimum:
 
-4. Sheets → Search account trackers when relevant
-   - Pull: pipeline rows, account plan notes, next-step trackers
+- company or contact name
+- meeting type
+- timing if known
 
-5. CRM → Query account
-   - Pull: account details, contacts, open opportunities, recent activities
+### Step 2: Pull internal account context
 
-6. Chat → Search internal discussions if available
-   - Query: company name mentions (last 30 days)
-   - Extract: colleague insights, competitive intel
-```
+Use Gmail next:
 
-**If no connectors:**
-```
-1. Ask user:
-   - "What company are you meeting with?"
-   - "What type of meeting is this?"
-   - "Who's attending? (names and titles if you know)"
-   - "Any context you want me to know? (paste notes, emails, etc.)"
+- search recent messages and threads tied to attendee domains or company name
+- identify open loops, prior commitments, objections, and attachments referenced
+- note important unanswered messages or unresolved asks
 
-2. Accept whatever they provide and work with it
-```
+Use Drive next:
 
-### Step 2: Research Supplement
+- search for notes, decks, proposals, recap docs, and transcript files
+- extract the latest relevant context instead of listing every file
 
-**Always run (web search):**
-```
-1. "[Company] news" — last 30 days
-2. "[Company] funding" — recent announcements
-3. "[Company] leadership" — executive changes
-4. "[Company] + [industry] trends" — relevant context
-5. Attendee LinkedIn profiles — background research
-```
+Use `rag_query` for any tagged files:
 
-### Step 3: Synthesize & Generate
+- prefer tagged files before broad search
+- treat them as high-trust context for this ask
 
-```
-1. Combine all sources into unified context
-2. Identify gaps in understanding → generate discovery questions
-3. Anticipate objections based on stage and history
-4. Create suggested agenda tailored to meeting type
-5. Output formatted prep brief
-```
+Use Sheets if relevant:
 
----
+- account plans
+- pipeline trackers
+- next-step checklists
+
+### Step 3: Fill external gaps
+
+Only after internal context is reviewed:
+
+- search for recent news, funding, hiring, leadership changes, or product launches
+- look up attendee backgrounds when that helps the meeting plan
+- keep external enrichment short and decision-relevant
+
+### Step 4: Synthesize
+
+Combine all sources into a single prep brief:
+
+- what we know
+- what changed recently
+- what matters in this meeting
+- what to ask
+- what could go wrong
 
 ## Meeting Type Variations
 
 ### Discovery Call
-- Focus on: Understanding their world, pain points, priorities
-- Agenda emphasis: Questions > Talking
-- Key output: Qualification signals, next step proposal
+- Focus on understanding pain, priority, and process
+- Agenda emphasis: questions over talking
+- Key output: qualification signals and a next step
 
 ### Demo / Presentation
-- Focus on: Their specific use case, tailored examples
-- Agenda emphasis: Show relevant features, get feedback
-- Key output: Technical requirements, decision timeline
+- Focus on relevant use cases and proof points
+- Agenda emphasis: tailored walkthrough and feedback
+- Key output: technical requirements and decision timeline
 
 ### Negotiation / Proposal Review
-- Focus on: Addressing concerns, justifying value
-- Agenda emphasis: Handle objections, close gaps
-- Key output: Path to agreement, clear next steps
+- Focus on concerns, value justification, and path to agreement
+- Agenda emphasis: objection handling and next-step alignment
+- Key output: blockers and close plan
 
 ### Check-in / QBR
-- Focus on: Value delivered, expansion opportunities
-- Agenda emphasis: Review wins, surface new needs
-- Key output: Renewal confidence, upsell pipeline
+- Focus on value delivered and new opportunities
+- Agenda emphasis: outcomes, gaps, and expansion signals
+- Key output: follow-up plan and stakeholder map
 
----
+## Handoff Rules
+
+This skill should stay brief-first by default.
+
+Hand off only when the user clearly wants a bigger artifact:
+
+- use `research` for a deeper account, industry, or market deep dive
+- use `frontend-slides` when the user wants a call deck, QBR deck, or presentation
+
+The handoff package should include:
+
+- account and meeting summary
+- key contacts and roles
+- known priorities, objections, and goals
+- the specific deliverable requested
+- unresolved questions that still need input
+
+### Example handoff: deeper account research
+
+If the user says, "Prep me for tomorrow's Acme meeting and also give me a deeper view of their industry pressure," first produce the prep brief, then hand off the missing industry-depth portion to `research`.
+
+### Example handoff: meeting deck
+
+If the user says, "Prep me for the QBR and make a deck for it," first gather the Calendar, Gmail, Drive, and account context here, then pass the summary and audience goal into `frontend-slides`.
 
 ## Tips for Better Prep
 
-1. **More context = better prep** — Paste emails, notes, or transcript links if you already have them
-2. **Name the attendees** — Even just titles help me research
-3. **State your goal** — "I want to get them to agree to a pilot"
-4. **Flag concerns** — "They mentioned budget is tight"
+1. More context still helps. Pasted notes, emails, or transcript snippets improve the brief.
+2. Naming attendees improves the talking points and stakeholder analysis.
+3. Stating the meeting goal makes the agenda better.
+4. Flagging known concerns helps tailor the objection section.
 
----
+## Notes
 
-## Related Skills
-
-- **account-research** — Deep dive on a company before first contact
-- **call-summary** — Process call notes and execute post-call workflow
-- **draft-outreach** — Write personalized outreach after research
+- Transcript lookup should prefer Gmail recap emails, then Drive docs/files.
+- Do not assume direct Google Meet transcript APIs.
+- Do not jump straight to Google Search before checking internal context.
