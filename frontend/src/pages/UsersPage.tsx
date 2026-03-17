@@ -2,6 +2,13 @@ import { useEffect, useMemo, useState } from 'react';
 import { Plus, ShieldCheck, ShieldOff, Trash2, Users2 } from 'lucide-react';
 import SettingsShell from '../components/settings/SettingsShell';
 import {
+  SettingsEmptyState,
+  SettingsLoadingState,
+  SettingsNotice,
+  SettingsSectionHeader,
+  SettingsSurface,
+} from '../components/settings/SettingsScaffold';
+import {
   addGroupMember,
   createGroup,
   deleteGroup,
@@ -138,6 +145,8 @@ const UsersPage = () => {
   };
 
   const selectableUsers = users.filter((user) => !groupMembers.some((member) => member.id === user.id));
+  const usersSummary = `${users.length} user${users.length === 1 ? '' : 's'}`;
+  const groupsSummary = `${groups.length} group${groups.length === 1 ? '' : 's'}`;
 
   return (
     <SettingsShell
@@ -145,127 +154,179 @@ const UsersPage = () => {
       title="User & Group Management"
       description="Manage system administrators and in-app user groups for RBAC rollout."
     >
-      {error && (
-        <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-          {error}
-        </div>
-      )}
+      <div className="space-y-6">
+        {error ? <SettingsNotice variant="error">{error}</SettingsNotice> : null}
 
-      <div className="grid gap-6 lg:grid-cols-2">
-        <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-          <div className="mb-4 flex items-center gap-3">
-            <Users2 size={20} className="text-slate-700" />
-            <h3 className="text-lg font-semibold text-slate-900">Users</h3>
-          </div>
-
-          {loading ? (
-            <p className="text-sm text-slate-600">Loading users…</p>
-          ) : (
-            <div className="space-y-3">
-              {users.map((user) => (
-                <div key={user.id} className="flex items-center justify-between rounded-xl border border-slate-200 px-3 py-2">
-                  <div>
-                    <p className="text-sm font-medium text-slate-900">{user.displayName}</p>
-                    <p className="text-xs text-slate-500">{user.email || user.externalId}</p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => handleToggleAdmin(user)}
-                    className={`inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-xs font-semibold ${user.isAdmin
-                      ? 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200'
-                      : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                      }`}
-                  >
-                    {user.isAdmin ? <ShieldCheck size={14} /> : <ShieldOff size={14} />}
-                    {user.isAdmin ? 'Admin' : 'Member'}
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </section>
-
-        <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h3 className="text-lg font-semibold text-slate-900">Groups</h3>
-
-          <div className="mt-4 flex gap-2">
-            <input
-              value={newGroupName}
-              onChange={(event) => setNewGroupName(event.target.value)}
-              placeholder="Create group (e.g. analysts)"
-              className="flex-1 rounded-xl border border-slate-300 px-3 py-2 text-sm"
+        <div className="grid gap-6 xl:grid-cols-[1.05fr_1.15fr]">
+          <SettingsSurface>
+            <SettingsSectionHeader
+              eyebrow="Access"
+              title="Users"
+              description="Promote administrators and review who currently has access to this workspace."
+              actions={<span className="text-sm font-medium text-slate-500">{loading ? 'Loading...' : usersSummary}</span>}
             />
-            <button
-              type="button"
-              onClick={handleCreateGroup}
-              className="inline-flex items-center gap-1 rounded-xl bg-slate-900 px-3 py-2 text-sm font-semibold text-white"
-            >
-              <Plus size={14} />
-              Add
-            </button>
-          </div>
 
-          <div className="mt-4 space-y-2">
-            {groups.map((group) => (
-              <div key={group.id} className={`flex items-center justify-between rounded-xl border px-3 py-2 ${group.id === selectedGroupId ? 'border-slate-700 bg-slate-50' : 'border-slate-200'}`}>
-                <button
-                  type="button"
-                  className="text-sm font-medium text-slate-900"
-                  onClick={() => setSelectedGroupId(group.id)}
-                >
-                  {group.name}
-                </button>
-                <button
-                  type="button"
-                  className="rounded-md p-1 text-rose-600 hover:bg-rose-50"
-                  onClick={() => handleDeleteGroup(group.id)}
-                >
-                  <Trash2 size={14} />
-                </button>
-              </div>
-            ))}
-          </div>
+            <div className="mt-6 space-y-3">
+              {loading ? <SettingsLoadingState label="Loading users..." /> : null}
 
-          {selectedGroup && (
-            <div className="mt-6 rounded-2xl border border-slate-200 p-4">
-              <p className="text-sm font-semibold text-slate-900">Members: {selectedGroup.name}</p>
-              <div className="mt-3 flex gap-2">
-                <select
-                  className="flex-1 rounded-xl border border-slate-300 px-3 py-2 text-sm"
-                  value={selectedUserId}
-                  onChange={(event) => setSelectedUserId(event.target.value)}
-                >
-                  <option value="">Select user</option>
-                  {selectableUsers.map((user) => (
-                    <option key={user.id} value={user.id}>{user.displayName}</option>
-                  ))}
-                </select>
-                <button
-                  type="button"
-                  onClick={handleAddMember}
-                  className="rounded-xl bg-slate-900 px-3 py-2 text-sm font-semibold text-white"
-                >
-                  Add member
-                </button>
-              </div>
+              {!loading && users.length === 0 ? (
+                <SettingsEmptyState
+                  title="No users found"
+                  description="Users will appear here once they have authenticated or been provisioned."
+                  icon={Users2}
+                />
+              ) : null}
 
-              <div className="mt-3 space-y-2">
-                {groupMembers.map((member) => (
-                  <div key={member.id} className="flex items-center justify-between rounded-lg border border-slate-200 px-3 py-2">
-                    <span className="text-sm text-slate-800">{member.displayName}</span>
+              {!loading &&
+                users.map((user) => (
+                  <div
+                    key={user.id}
+                    className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50/70 px-4 py-3"
+                  >
+                    <div>
+                      <p className="text-sm font-medium text-slate-900">{user.displayName}</p>
+                      <p className="text-xs text-slate-500">{user.email || user.externalId}</p>
+                    </div>
                     <button
                       type="button"
-                      onClick={() => handleRemoveMember(member.id)}
-                      className="text-xs font-semibold text-rose-600"
+                      onClick={() => handleToggleAdmin(user)}
+                      className={`inline-flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold transition ${user.isAdmin
+                        ? 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200'
+                        : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                        }`}
                     >
-                      Remove
+                      {user.isAdmin ? <ShieldCheck size={14} /> : <ShieldOff size={14} />}
+                      {user.isAdmin ? 'Admin' : 'Member'}
                     </button>
                   </div>
                 ))}
-              </div>
             </div>
-          )}
-        </section>
+          </SettingsSurface>
+
+          <SettingsSurface>
+            <SettingsSectionHeader
+              eyebrow="Groups"
+              title="Group membership"
+              description="Create RBAC groups, inspect membership, and keep assignments up to date."
+              actions={<span className="text-sm font-medium text-slate-500">{groupsSummary}</span>}
+            />
+
+            <div className="mt-6 space-y-6">
+              <div className="flex flex-col gap-3 sm:flex-row">
+                <input
+                  value={newGroupName}
+                  onChange={(event) => setNewGroupName(event.target.value)}
+                  placeholder="Create group (e.g. analysts)"
+                  className="flex-1 rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm shadow-sm outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-900/5"
+                />
+                <button
+                  type="button"
+                  onClick={handleCreateGroup}
+                  className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
+                >
+                  <Plus size={14} />
+                  Add group
+                </button>
+              </div>
+
+              {groups.length === 0 ? (
+                <SettingsEmptyState
+                  title="No groups created yet"
+                  description="Create your first group to start organizing users for permissions and rollout controls."
+                  icon={Plus}
+                  align="left"
+                />
+              ) : (
+                <div className="space-y-3">
+                  {groups.map((group) => (
+                    <div
+                      key={group.id}
+                      className={`flex items-center justify-between rounded-2xl border px-4 py-3 transition ${group.id === selectedGroupId
+                        ? 'border-slate-900 bg-slate-100'
+                        : 'border-slate-200 bg-slate-50/70'
+                        }`}
+                    >
+                      <button
+                        type="button"
+                        className="text-sm font-medium text-slate-900"
+                        onClick={() => setSelectedGroupId(group.id)}
+                      >
+                        {group.name}
+                      </button>
+                      <button
+                        type="button"
+                        className="rounded-lg p-1.5 text-rose-600 transition hover:bg-rose-50"
+                        onClick={() => handleDeleteGroup(group.id)}
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {selectedGroup ? (
+                <div className="rounded-[24px] border border-slate-200 bg-slate-50/80 p-5">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+                    <div>
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">Selected group</p>
+                      <p className="mt-1 text-base font-semibold text-slate-900">{selectedGroup.name}</p>
+                    </div>
+                    <p className="text-sm text-slate-500">
+                      {groupMembers.length} member{groupMembers.length === 1 ? '' : 's'}
+                    </p>
+                  </div>
+
+                  <div className="mt-4 flex flex-col gap-3 sm:flex-row">
+                    <select
+                      className="flex-1 rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm shadow-sm outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-900/5"
+                      value={selectedUserId}
+                      onChange={(event) => setSelectedUserId(event.target.value)}
+                    >
+                      <option value="">Select user</option>
+                      {selectableUsers.map((user) => (
+                        <option key={user.id} value={user.id}>{user.displayName}</option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={handleAddMember}
+                      className="rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
+                    >
+                      Add member
+                    </button>
+                  </div>
+
+                  <div className="mt-4 space-y-2">
+                    {groupMembers.length === 0 ? (
+                      <SettingsEmptyState
+                        title="No members yet"
+                        description="Add users to this group to start testing or enforcing access boundaries."
+                        align="left"
+                      />
+                    ) : (
+                      groupMembers.map((member) => (
+                        <div
+                          key={member.id}
+                          className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white px-4 py-3"
+                        >
+                          <span className="text-sm text-slate-800">{member.displayName}</span>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveMember(member.id)}
+                            className="text-xs font-semibold text-rose-600 transition hover:text-rose-700"
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          </SettingsSurface>
+        </div>
       </div>
     </SettingsShell>
   );
