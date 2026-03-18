@@ -248,7 +248,7 @@ const LoginPage = () => {
                   <button
                     type="button"
                     onClick={handleGoogleLogin}
-                    disabled={!googleReady || submitting}
+                    disabled={!googleReady || submitting || loading}
                     className="w-full mt-1 py-3 rounded-xl border border-slate-300 dark:border-slate-600 bg-white/70 dark:bg-slate-800/70 text-slate-800 dark:text-slate-100 text-sm font-semibold transition-all duration-300 hover:bg-white dark:hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     Continue with Google

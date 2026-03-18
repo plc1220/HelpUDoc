@@ -169,7 +169,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const value = useMemo<AuthContextValue>(() => ({
     user,
     loading,
-    googleReady: authMode !== 'headers',
+    googleReady: authMode !== 'headers' && googleConfigured,
     googleError,
     authMode,
     signInWithEmail,
