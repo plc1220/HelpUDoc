@@ -35,4 +35,4 @@ jobs:
       - run: gcloud container clusters get-credentials "${GKE_CLUSTER}" --location "${GKE_LOCATION}" --project "${PROJECT_ID}"
       - run: |
           APP_POD="$(kubectl -n helpudoc get pods -l app=helpudoc-app -o jsonpath='{.items[0].metadata.name}')"
-          kubectl -n helpudoc logs "$APP_POD" -c agent --tail 200
+          kubectl -n helpudoc exec "$APP_POD" -c agent -- env | grep -E "AGENT_JWT_SECRET|GEMINI_API_KEY"
