@@ -1,20 +1,24 @@
-
 import ast
 import base64
+import hashlib
 import html
 import json
 import logging
 import mimetypes
 import re
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Set, Tuple
 
 import duckdb
 import numpy as np
 import pandas as pd
+import requests
+import yaml
 from langchain_core.callbacks import CallbackManagerForToolRun
 from langchain_core.tools import Tool, tool
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from .state import WorkspaceState
 
@@ -46,21 +50,73 @@ ALLOWED_ARTIFACT_EXTENSIONS = {
     ".csv": "text/csv",
     ".txt": "text/plain",
     ".md": "text/markdown",
+    ".parquet": "application/octet-stream",
 }
 MAX_RESULT_ROWS = 20
 MAX_SESSION_ROWS = 1000
+# Documented guardrail limits enforced in code.
+MAX_QUERY_COUNT = 10
+MAX_CHART_COUNT = 5
+DEFAULT_CACHE_TTL_HOURS = 24
+MAX_MATERIALIZED_ROWS = 100000
+BIGQUERY_MCP_SERVER = "toolbox-bq-demo"
+_WRITE_SQL_PATTERN = re.compile(
+    r"\b(insert|update|delete|merge|create|alter|drop|truncate|grant|revoke)\b",
+    re.IGNORECASE,
+)
+
+
+@dataclass
+class _QueryRecord:
+    """One SQL execution captured during a run."""
+    sql: str
+    row_count: int
+    preview: "pd.DataFrame"  # head(MAX_RESULT_ROWS) snapshot
+
+
+@dataclass
+class _ChartRecord:
+    """Metadata for one chart produced during a run."""
+    title: str
+    artifact_paths: List[str]  # workspace-relative paths
+
+@dataclass
+class _MaterializationRecord:
+    """Metadata for a warehouse export materialized into the workspace."""
+
+    cache_key: str
+    sql: str
+    parquet_path: str
+    metadata_path: str
+    row_count: int
+    connector: str
+    cached: bool
+    expires_at: str
 
 
 class DataAgentSessionState:
-    """Holds per-run guardrails for the data agent tools."""
+    """Holds per-run guardrails and full history for the data agent tools.
+
+    A *run* begins when the session is reset (typically at the start of each
+    agent invocation).  All history lists are cleared on reset so that
+    reports and dashboards only reflect the current run.
+    """
 
     def __init__(self) -> None:
         self.reset()
 
     def reset(self) -> None:
-        self.schema_inspected = False
-        self.query_count = 0
-        self.summary_generated = False
+        self.schema_inspected: bool = False
+        self.query_count: int = 0
+        self.chart_count: int = 0
+        self.summary_generated: bool = False
+        self.dashboard_generated: bool = False
+        # Full history for the current run
+        self.query_history: List[_QueryRecord] = []
+        self.chart_history: List[_ChartRecord] = []
+        self.materialization_history: List[_MaterializationRecord] = []
+        self.run_artifacts: List[Dict[str, Any]] = []
+        # Convenience references to the most recent entry
         self.last_query_result: Optional[pd.DataFrame] = None
         self.last_query_sql: Optional[str] = None
 
@@ -253,6 +309,227 @@ def _json_default(value: Any) -> Any:
 def _json_dump(payload: Any) -> str:
     return json.dumps(payload, default=_json_default, ensure_ascii=False)
 
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _safe_cache_slug(value: str) -> str:
+    cleaned = re.sub(r"[^a-zA-Z0-9_-]+", "_", (value or "").strip())
+    return cleaned[:64].strip("_") or "warehouse_slice"
+
+
+def _normalize_sql(sql_query: str) -> str:
+    return re.sub(r"\s+", " ", (sql_query or "").strip()).strip().rstrip(";")
+
+
+def _cache_key_for_query(
+    *,
+    sql_query: str,
+    connector: str,
+    workspace_id: str,
+    cache_key_hint: str = "",
+) -> str:
+    normalized = _normalize_sql(sql_query)
+    payload = "::".join(
+        [
+            connector.strip().lower(),
+            workspace_id.strip(),
+            cache_key_hint.strip().lower(),
+            normalized,
+        ]
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
+def _toolbox_defaults() -> Dict[str, str]:
+    defaults = {"project": "", "location": "US"}
+    toolbox_path = Path(__file__).resolve().parents[2] / "toolbox" / "tools.yaml"
+    if not toolbox_path.exists():
+        return defaults
+    try:
+        payload = yaml.safe_load(toolbox_path.read_text(encoding="utf-8")) or {}
+    except Exception:  # pragma: no cover - best effort discovery
+        return defaults
+    source = ((payload.get("sources") or {}).get("bq") or {}) if isinstance(payload, dict) else {}
+    project = source.get("project")
+    location = source.get("location")
+    if isinstance(project, str) and project.strip():
+        defaults["project"] = project.strip()
+    if isinstance(location, str) and location.strip():
+        defaults["location"] = location.strip()
+    return defaults
+
+
+def _bigquery_runtime_defaults(workspace_state: WorkspaceState) -> Dict[str, str]:
+    defaults = _toolbox_defaults()
+    model_project = workspace_state.context.get("bigquery_project") or workspace_state.context.get("bq_project")
+    model_location = workspace_state.context.get("bigquery_location") or workspace_state.context.get("bq_location")
+    if isinstance(model_project, str) and model_project.strip():
+        defaults["project"] = model_project.strip()
+    if isinstance(model_location, str) and model_location.strip():
+        defaults["location"] = model_location.strip()
+    return defaults
+
+
+def _extract_bigquery_bearer_token(workspace_state: WorkspaceState) -> str:
+    runtime_auth = workspace_state.context.get("mcp_auth", {}) or {}
+    if not isinstance(runtime_auth, dict):
+        return ""
+    candidate = runtime_auth.get(BIGQUERY_MCP_SERVER)
+    if not isinstance(candidate, dict):
+        return ""
+    raw_header = candidate.get("Authorization") or candidate.get("authorization")
+    if not isinstance(raw_header, str):
+        return ""
+    header = raw_header.strip()
+    if not header.lower().startswith("bearer "):
+        return ""
+    return header.split(" ", 1)[1].strip()
+
+
+def _forbid_write_sql(sql_query: str) -> None:
+    if _WRITE_SQL_PATTERN.search(sql_query or ""):
+        raise ValueError("Only read-only BigQuery SQL is supported for warehouse materialization.")
+
+
+def _bigquery_value_from_cell(field_schema: Dict[str, Any], cell: Dict[str, Any]) -> Any:
+    mode = str(field_schema.get("mode") or "NULLABLE").upper()
+    field_type = str(field_schema.get("type") or "STRING").upper()
+    value = cell.get("v") if isinstance(cell, dict) else None
+    if value is None:
+        return [] if mode == "REPEATED" else None
+    if mode == "REPEATED":
+        items = value if isinstance(value, list) else []
+        return [_bigquery_value_from_cell({**field_schema, "mode": "NULLABLE"}, item) for item in items]
+    if field_type == "RECORD":
+        nested_fields = field_schema.get("fields") or []
+        nested_cells = value.get("f") if isinstance(value, dict) else []
+        nested: Dict[str, Any] = {}
+        for nested_schema, nested_cell in zip(nested_fields, nested_cells):
+            nested[str(nested_schema.get("name") or "")] = _bigquery_value_from_cell(nested_schema, nested_cell)
+        return nested
+    if field_type in {"INTEGER", "INT64"}:
+        return int(value)
+    if field_type in {"FLOAT", "FLOAT64"}:
+        return float(value)
+    if field_type in {"BOOLEAN", "BOOL"}:
+        return str(value).lower() == "true"
+    if field_type == "TIMESTAMP":
+        return pd.to_datetime(float(value), unit="s", utc=True)
+    if field_type == "DATE":
+        return pd.to_datetime(value).date()
+    if field_type == "DATETIME":
+        return pd.to_datetime(value)
+    if field_type == "TIME":
+        return str(value)
+    return value
+
+
+def _rows_to_dataframe(schema: List[Dict[str, Any]], rows: List[Dict[str, Any]]) -> pd.DataFrame:
+    columns = [str(field.get("name") or "") for field in schema]
+    records: List[Dict[str, Any]] = []
+    for row in rows:
+        cells = row.get("f") if isinstance(row, dict) else []
+        record: Dict[str, Any] = {}
+        for field_schema, cell in zip(schema, cells):
+            record[str(field_schema.get("name") or "")] = _bigquery_value_from_cell(field_schema, cell)
+        records.append(record)
+    return pd.DataFrame(records, columns=columns)
+
+
+def _execute_bigquery_query(
+    *,
+    workspace_state: WorkspaceState,
+    sql_query: str,
+    project: str,
+    location: str,
+    max_rows: int,
+) -> Tuple[pd.DataFrame, List[Dict[str, Any]]]:
+    bearer_token = _extract_bigquery_bearer_token(workspace_state)
+    if not bearer_token:
+        raise ValueError(
+            "Missing delegated BigQuery credentials. Sign in and ensure MCP auth for toolbox-bq-demo is available."
+        )
+    if not project:
+        raise ValueError("Unable to resolve a BigQuery project for materialization.")
+
+    session = requests.Session()
+    session.headers.update(
+        {
+            "Authorization": f"Bearer {bearer_token}",
+            "Content-Type": "application/json",
+        }
+    )
+
+    response = session.post(
+        f"https://bigquery.googleapis.com/bigquery/v2/projects/{project}/queries",
+        json={
+            "query": sql_query,
+            "useLegacySql": False,
+            "timeoutMs": 30000,
+            "location": location,
+            "maxResults": min(max_rows, 10000),
+        },
+        timeout=90,
+    )
+    response.raise_for_status()
+    payload = response.json()
+
+    job_complete = bool(payload.get("jobComplete"))
+    job_ref = payload.get("jobReference") or {}
+    job_id = str(job_ref.get("jobId") or "")
+    all_rows = list(payload.get("rows") or [])
+    schema = list(((payload.get("schema") or {}).get("fields")) or [])
+    page_token = payload.get("pageToken")
+
+    while not job_complete:
+        if not job_id:
+            raise ValueError("BigQuery query did not return a job id.")
+        poll = session.get(
+            f"https://bigquery.googleapis.com/bigquery/v2/projects/{project}/queries/{job_id}",
+            params={"location": location, "maxResults": min(max_rows, 10000)},
+            timeout=90,
+        )
+        poll.raise_for_status()
+        payload = poll.json()
+        job_complete = bool(payload.get("jobComplete"))
+        if not schema:
+            schema = list(((payload.get("schema") or {}).get("fields")) or [])
+        all_rows.extend(list(payload.get("rows") or []))
+        page_token = payload.get("pageToken")
+        if len(all_rows) > max_rows:
+            raise ValueError(
+                f"Materialized result exceeded the v1 safety cap of {max_rows} rows. "
+                "Add filters or aggregation before exporting."
+            )
+
+    while page_token:
+        if not job_id:
+            raise ValueError("BigQuery query did not return a job id.")
+        page = session.get(
+            f"https://bigquery.googleapis.com/bigquery/v2/projects/{project}/queries/{job_id}",
+            params={
+                "location": location,
+                "pageToken": page_token,
+                "maxResults": min(max_rows, 10000),
+            },
+            timeout=90,
+        )
+        page.raise_for_status()
+        payload = page.json()
+        if not schema:
+            schema = list(((payload.get("schema") or {}).get("fields")) or [])
+        all_rows.extend(list(payload.get("rows") or []))
+        if len(all_rows) > max_rows:
+            raise ValueError(
+                f"Materialized result exceeded the v1 safety cap of {max_rows} rows. "
+                "Add filters or aggregation before exporting."
+            )
+        page_token = payload.get("pageToken")
+
+    return _rows_to_dataframe(schema, all_rows), schema
+
 def _coerce_plotly_spec(payload: Any) -> Optional[Dict[str, Any]]:
     """Attempt to coerce a payload into a Plotly JSON-serializable dict."""
     if payload is None:
@@ -340,11 +617,40 @@ class DuckDBManager:
 
     def run_query(self, query: str) -> pd.DataFrame:
         """Executes a SQL query and returns the result as a DataFrame."""
+        if self.session.query_count >= MAX_QUERY_COUNT:
+            raise ValueError(
+                f"Query budget exhausted: at most {MAX_QUERY_COUNT} queries are allowed per run. "
+                "Consolidate your remaining questions into already-run results."
+            )
         df = self.con.execute(query).df()
         self.session.query_count += 1
         self.session.last_query_result = df
         self.session.last_query_sql = query
+        # Record in full history
+        record = _QueryRecord(
+            sql=query,
+            row_count=len(df),
+            preview=df.head(MAX_RESULT_ROWS).copy(),
+        )
+        self.session.query_history.append(record)
         return df
+
+    def record_chart(self, title: str, artifact_paths: List[str]) -> None:
+        """Record chart metadata into session history."""
+        self.session.chart_count += 1
+        self.session.chart_history.append(_ChartRecord(title=title, artifact_paths=artifact_paths))
+
+    def record_materialization(self, record: _MaterializationRecord) -> None:
+        """Record a warehouse materialization event for the current run."""
+        self.session.materialization_history.append(record)
+
+    def register_artifact(self, artifact: Dict[str, Any]) -> None:
+        """Add an artifact to the run-scoped artifact list."""
+        self.session.run_artifacts.append(artifact)
+
+    def refresh_registered_files(self) -> None:
+        """Refresh DuckDB table registration for newly materialized files."""
+        self._register_files()
 
     def require_schema_check(self) -> None:
         if not self.session.schema_inspected:
@@ -358,12 +664,29 @@ class DuckDBManager:
                 "Run at least one SQL query before generating a chart."
             )
 
+    def require_chart_budget(self) -> None:
+        if self.session.chart_count >= MAX_CHART_COUNT:
+            raise ValueError(
+                f"Chart budget exhausted: at most {MAX_CHART_COUNT} charts are allowed per run."
+            )
+
     def ensure_single_summary(self) -> None:
+        if self.session.dashboard_generated:
+            raise ValueError("A dashboard has already been generated for this run.")
         if self.session.summary_generated:
             raise ValueError("A summary has already been generated for this run.")
 
+    def ensure_single_dashboard(self) -> None:
+        if self.session.summary_generated:
+            raise ValueError("A summary has already been generated for this run.")
+        if self.session.dashboard_generated:
+            raise ValueError("A dashboard has already been generated for this run.")
+
     def mark_summary_generated(self) -> None:
         self.session.summary_generated = True
+
+    def mark_dashboard_generated(self) -> None:
+        self.session.dashboard_generated = True
 
     def get_limited_result(self) -> Optional[pd.DataFrame]:
         result = self.session.last_query_result
@@ -483,6 +806,185 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
             return f"Error executing query: {str(e)}"
 
     @tool
+    def materialize_bigquery_to_parquet(
+        sql_query: str = Field(description="Read-only BigQuery SQL query to materialize into workspace-local Parquet."),
+        cache_key_hint: str = Field(
+            default="",
+            description="Optional stable label such as dataset purpose or date range to make cache files easier to recognize.",
+        ),
+        ttl_hours: int = Field(
+            default=DEFAULT_CACHE_TTL_HOURS,
+            description="Hours before the cached Parquet is considered stale and should be refreshed.",
+        ),
+        force_refresh: bool = Field(
+            default=False,
+            description="When true, ignore any cached Parquet and re-run the warehouse query.",
+        ),
+        max_rows: int = Field(
+            default=MAX_MATERIALIZED_ROWS,
+            description="Safety cap for exported rows. Keep results scoped for iterative analysis.",
+        ),
+        callbacks: Optional[CallbackManagerForToolRun] = None,
+    ) -> str:
+        """
+        Execute a scoped BigQuery query and persist the result as workspace-local Parquet.
+
+        The exported Parquet is immediately registered with DuckDB so downstream local
+        analysis can continue in the same run without re-hitting BigQuery.
+        """
+        try:
+            normalized_sql = _normalize_sql(sql_query)
+            if not normalized_sql:
+                return "Provide a non-empty SQL query to materialize."
+            _forbid_write_sql(normalized_sql)
+        except ValueError as exc:
+            return str(exc)
+
+        ttl_hours = max(1, int(ttl_hours or DEFAULT_CACHE_TTL_HOURS))
+        max_rows = max(1, min(int(max_rows or MAX_MATERIALIZED_ROWS), MAX_MATERIALIZED_ROWS))
+
+        defaults = _bigquery_runtime_defaults(workspace_state)
+        connector = BIGQUERY_MCP_SERVER
+        cache_key = _cache_key_for_query(
+            sql_query=normalized_sql,
+            connector=connector,
+            workspace_id=workspace_state.workspace_id,
+            cache_key_hint=cache_key_hint,
+        )
+        slug = _safe_cache_slug(cache_key_hint or f"bq_export_{cache_key}")
+        cache_dir = workspace_state.root_path / "data_cache" / "bigquery"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        parquet_path = cache_dir / f"{slug}_{cache_key}.parquet"
+        metadata_path = cache_dir / f"{slug}_{cache_key}.metadata.json"
+
+        cached = False
+        cached_metadata: Dict[str, Any] = {}
+        now = _utc_now()
+        if not force_refresh and parquet_path.exists() and metadata_path.exists():
+            try:
+                cached_metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+                expires_at_raw = str(cached_metadata.get("expiresAt") or "").strip()
+                expires_at = datetime.fromisoformat(expires_at_raw.replace("Z", "+00:00")) if expires_at_raw else None
+                if expires_at and expires_at > now:
+                    cached = True
+            except Exception:  # pragma: no cover - cache corruption falls back to refresh
+                cached = False
+                cached_metadata = {}
+
+        schema_summary: List[Dict[str, Any]] = []
+        row_count = 0
+        if cached:
+            try:
+                row_count = int(cached_metadata.get("rowCount") or 0)
+                schema_summary = list(cached_metadata.get("schema") or [])
+            except Exception:
+                row_count = 0
+                schema_summary = []
+        else:
+            try:
+                df, schema = _execute_bigquery_query(
+                    workspace_state=workspace_state,
+                    sql_query=normalized_sql,
+                    project=defaults["project"],
+                    location=defaults["location"],
+                    max_rows=max_rows,
+                )
+            except requests.HTTPError as exc:
+                body = exc.response.text if exc.response is not None else str(exc)
+                return f"BigQuery materialization failed: {body}"
+            except Exception as exc:  # pragma: no cover - defensive
+                return f"BigQuery materialization failed: {exc}"
+
+            row_count = len(df)
+            schema_summary = [
+                {
+                    "name": str(field.get("name") or ""),
+                    "type": str(field.get("type") or "STRING"),
+                    "mode": str(field.get("mode") or "NULLABLE"),
+                }
+                for field in schema
+            ]
+            try:
+                db_manager.con.register("_materialized_bigquery_export", df)
+                safe_path = str(parquet_path).replace("'", "''")
+                db_manager.con.execute(
+                    f"COPY _materialized_bigquery_export TO '{safe_path}' (FORMAT PARQUET)"
+                )
+                db_manager.con.unregister("_materialized_bigquery_export")
+            except Exception as exc:  # pragma: no cover - defensive
+                return f"Failed to write Parquet export: {exc}"
+
+            expires_at = now + timedelta(hours=ttl_hours)
+            cached_metadata = {
+                "cacheKey": cache_key,
+                "cacheKeyHint": cache_key_hint or "",
+                "connector": connector,
+                "project": defaults["project"],
+                "location": defaults["location"],
+                "sourceSql": normalized_sql,
+                "rowCount": row_count,
+                "schema": schema_summary,
+                "materializedAt": now.isoformat().replace("+00:00", "Z"),
+                "expiresAt": expires_at.isoformat().replace("+00:00", "Z"),
+                "ttlHours": ttl_hours,
+                "parquetPath": parquet_path.relative_to(workspace_state.root_path).as_posix(),
+                "tableName": parquet_path.stem,
+            }
+            metadata_path.write_text(_json_dump(cached_metadata), encoding="utf-8")
+
+        db_manager.refresh_registered_files()
+
+        artifacts = []
+        for path in (parquet_path, metadata_path):
+            ext = path.suffix.lower()
+            mime = ALLOWED_ARTIFACT_EXTENSIONS.get(ext)
+            if not mime or not path.exists():
+                continue
+            artifact = {
+                "path": path.relative_to(workspace_state.root_path).as_posix(),
+                "mimeType": mime,
+                "size": path.stat().st_size,
+            }
+            db_manager.register_artifact(artifact)
+            artifacts.append(artifact)
+
+        record = _MaterializationRecord(
+            cache_key=cache_key,
+            sql=normalized_sql,
+            parquet_path=parquet_path.relative_to(workspace_state.root_path).as_posix(),
+            metadata_path=metadata_path.relative_to(workspace_state.root_path).as_posix(),
+            row_count=row_count,
+            connector=connector,
+            cached=cached,
+            expires_at=str(cached_metadata.get("expiresAt") or ""),
+        )
+        db_manager.record_materialization(record)
+
+        if callbacks and artifacts:
+            try:
+                run_id = getattr(callbacks, "run_id", None)
+                if run_id is not None:
+                    callbacks.on_custom_event("tool_artifacts", {"files": artifacts}, run_id=run_id)
+                else:
+                    callbacks.on_custom_event("tool_artifacts", {"files": artifacts})
+            except Exception:  # pragma: no cover - best effort
+                logger.warning("Failed to dispatch tool_artifacts event", exc_info=True)
+
+        payload = {
+            "cache_key": cache_key,
+            "cached": cached,
+            "connector": connector,
+            "row_count": row_count,
+            "schema": schema_summary,
+            "parquet_path": parquet_path.relative_to(workspace_state.root_path).as_posix(),
+            "metadata_path": metadata_path.relative_to(workspace_state.root_path).as_posix(),
+            "duckdb_table_name": parquet_path.stem,
+            "expires_at": cached_metadata.get("expiresAt"),
+            "ttl_hours": ttl_hours,
+        }
+        return _json_dump(payload)
+
+    @tool
     def generate_chart_config(
         chart_title: str = Field(description="The title of the chart"),
         python_code: str = Field(
@@ -515,6 +1017,10 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
         """
         try:
             db_manager.require_query_before_chart()
+        except ValueError as exc:
+            return str(exc)
+        try:
+            db_manager.require_chart_budget()
         except ValueError as exc:
             return str(exc)
 
@@ -622,6 +1128,12 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
 
         if chart_config is None and plotly_payload is None and not artifacts:
             return "No chart_config variable created and no artifacts produced."
+
+        # Record chart metadata into run history
+        artifact_paths = [a["path"] for a in artifacts]
+        db_manager.record_chart(chart_title, artifact_paths)
+        for a in artifacts:
+            db_manager.register_artifact(a)
 
         if callbacks and artifacts:
             try:
@@ -736,42 +1248,64 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
             "    </div>",
         ]
 
-        # Add SQL query information
-        if db_manager.session.last_query_sql:
-            sql = db_manager.session.last_query_sql
-            report_lines.extend(
-                [
-                    "    <div class=\"card\">",
-                    "      <h2>SQL Query</h2>",
-                    "      <pre><code>",
-                    sql,
-                    "      </code></pre>",
-                    "    </div>",
-                ]
-            )
-
-        # Add query results info
-        if db_manager.session.last_query_result is not None:
-            df = db_manager.session.last_query_result
-            report_lines.extend(
-                [
-                    "    <div class=\"card\">",
-                    "      <h2>Query Results</h2>",
-                    f"      <p><strong>Rows returned:</strong> {len(df)}<br /><strong>Columns:</strong> {', '.join(df.columns.tolist())}</p>",
-                ]
-            )
-            if not df.empty:
-                report_lines.append("      <h3>Sample Data</h3>")
-                report_lines.append(df.head(10).to_html(index=False, border=0))
+        if db_manager.session.materialization_history:
+            report_lines.extend([
+                "    <div class=\"card\">",
+                "      <h2>Warehouse Materializations</h2>",
+            ])
+            for item in db_manager.session.materialization_history:
+                report_lines.extend(
+                    [
+                        f"      <p><strong>Connector:</strong> {html.escape(item.connector)}<br />"
+                        f"<strong>Rows:</strong> {item.row_count}<br />"
+                        f"<strong>Cached:</strong> {'yes' if item.cached else 'no'}<br />"
+                        f"<strong>Parquet:</strong> <code>{html.escape(item.parquet_path)}</code><br />"
+                        f"<strong>Metadata:</strong> <code>{html.escape(item.metadata_path)}</code><br />"
+                        f"<strong>Expires:</strong> {html.escape(item.expires_at or 'n/a')}</p>",
+                        f"      <pre><code>{html.escape(item.sql)}</code></pre>",
+                    ]
+                )
             report_lines.append("    </div>")
 
-        # Visualizations
+        # Add SQL query history (all queries in the current run)
+        if db_manager.session.query_history:
+            report_lines.extend([
+                "    <div class=\"card\">",
+                "      <h2>SQL Queries</h2>",
+            ])
+            for i, qr in enumerate(db_manager.session.query_history, start=1):
+                report_lines.append(f"      <h3>Query {i} <span class=\"meta\">({qr.row_count} rows)</span></h3>")
+                report_lines.append(f"      <pre><code>{html.escape(qr.sql)}</code></pre>")
+                if not qr.preview.empty:
+                    report_lines.append("      <h4>Sample Data</h4>")
+                    report_lines.append(qr.preview.to_html(index=False, border=0))
+            report_lines.append("    </div>")
+
+
+        # Visualizations — only include charts produced in this run
+        run_chart_paths: List[str] = []
+        for cr in db_manager.session.chart_history:
+            run_chart_paths.extend(cr.artifact_paths)
+
         charts_dir = workspace_state.root_path / "charts"
-        if charts_dir.exists():
-            png_files = sorted(charts_dir.glob("*.png"))
-            plotly_html_files = sorted(charts_dir.glob("*.plotly.html"))
-            plotly_json_files = sorted(charts_dir.glob("*.plotly.json"))
-            if png_files or plotly_html_files or plotly_json_files:
+        if run_chart_paths and charts_dir.exists():
+            plotly_json_files = sorted(
+                p for p in (workspace_state.root_path / rel for rel in run_chart_paths
+                             if rel.endswith(".plotly.json"))
+                if p.exists()
+            )
+            plotly_html_files = sorted(
+                p for p in (workspace_state.root_path / rel for rel in run_chart_paths
+                             if rel.endswith(".plotly.html"))
+                if p.exists() and not any(rel.endswith(".plotly.json") for rel in run_chart_paths
+                                          if workspace_state.root_path / rel == p)
+            )
+            png_files = sorted(
+                p for p in (workspace_state.root_path / rel for rel in run_chart_paths
+                             if rel.endswith(".png"))
+                if p.exists()
+            )
+            if plotly_json_files or plotly_html_files or png_files:
                 report_lines.append("    <div class=\"card\">")
                 report_lines.append("      <h2>Visualizations</h2>")
 
@@ -801,7 +1335,6 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
                         except Exception:  # pragma: no cover - best effort
                             logger.warning("Failed to embed Plotly HTML %s", html_path, exc_info=True)
 
-                # Embed PNGs as base64 after Plotly embeds
                 for png_path in png_files:
                     try:
                         encoded = base64.b64encode(png_path.read_bytes()).decode("utf-8")
@@ -812,6 +1345,7 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
                         logger.warning("Failed to embed PNG %s", png_path, exc_info=True)
 
                 report_lines.append("    </div>")
+
 
         report_lines.extend(
             [
@@ -866,4 +1400,207 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
             logger.warning("Failed to save HTML report: %s", e)
             return f"Summary: {summary}\nInsights: {insights}\n\n(Note: Failed to save report file: {e})"
 
-    return [get_table_schema, run_sql_query, generate_chart_config, generate_summary]
+    @tool
+    def generate_dashboard(
+        title: str = Field(description="The dashboard title shown in the HTML header"),
+        description: str = Field(
+            description="Short paragraph describing what this dashboard shows and who it's for"
+        ),
+        section_titles: List[str] = Field(
+            description=(
+                "Ordered list of section headings (one per chart produced in this run). "
+                "Must match the number of charts; pass an empty list to use chart titles."
+            ),
+            default_factory=list,
+        ),
+        callbacks: Optional[CallbackManagerForToolRun] = None,
+    ) -> str:
+        """
+        Assemble all charts and queries from the current run into one self-contained
+        interactive HTML dashboard artifact.
+
+        Rules:
+        - Only charts and queries from the current run are included
+            (artifacts from prior runs are excluded).
+        - Results in exactly one HTML file written to dashboards/<safe_title>.html.
+        - Emits a tool_artifacts event so the frontend can surface the file.
+        - Can only be called once per run; subsequent calls return an error.
+        """
+        if db_manager.session.query_count == 0:
+            return "Run at least one SQL query before building a dashboard."
+        if not db_manager.session.chart_history:
+            return "Generate at least one chart before building a dashboard."
+        try:
+            db_manager.ensure_single_dashboard()
+        except ValueError as exc:
+            return str(exc)
+        db_manager.mark_dashboard_generated()
+
+        from datetime import datetime
+
+        safe_title = re.sub(r"[^a-zA-Z0-9_-]+", "_", title.strip() or "dashboard")
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        # Gather run-scoped chart artifacts
+        run_chart_paths: List[str] = []
+        for cr in db_manager.session.chart_history:
+            run_chart_paths.extend(cr.artifact_paths)
+
+        # Resolve which Plotly JSON / PNG files we have for this run
+        ws = workspace_state.root_path
+        plotly_json_files = [
+            ws / rel for rel in run_chart_paths
+            if rel.endswith(".plotly.json") and (ws / rel).exists()
+        ]
+        png_files = [
+            ws / rel for rel in run_chart_paths
+            if rel.endswith(".png") and (ws / rel).exists()
+        ]
+
+        CSS = """
+    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0f172a;color:#f1f5f9;margin:0;padding:0}
+    .header{background:linear-gradient(135deg,#1e3a5f,#0f172a);padding:36px 40px 28px;border-bottom:1px solid #1e293b}
+    .header h1{margin:0 0 6px;font-size:1.8rem;color:#f1f5f9}
+    .header p{margin:0;color:#94a3b8;font-size:0.95rem}
+    .header .meta{font-size:0.8rem;color:#475569;margin-top:8px}
+    .container{max-width:1100px;margin:0 auto;padding:32px 24px 56px}
+    .section{background:#1e293b;border:1px solid #334155;border-radius:16px;padding:22px 24px;margin-bottom:24px}
+    .section h2{margin:0 0 16px;font-size:1.1rem;color:#e2e8f0}
+    .section .query-block{background:#0f172a;border-radius:10px;padding:14px 16px;font-family:monospace;font-size:0.85rem;color:#94a3b8;overflow-x:auto;margin-bottom:14px;white-space:pre-wrap}
+    .section .query-meta{font-size:0.8rem;color:#64748b;margin-bottom:6px}
+    .chart-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(480px,1fr));gap:20px;margin-top:12px}
+    .chart-card{background:#0f172a;border:1px solid #1e293b;border-radius:12px;padding:16px;min-height:380px}
+    .chart-card h3{margin:0 0 10px;font-size:0.95rem;color:#cbd5e1}
+    .plotly-embed{width:100%;height:360px}
+    img.chart-img{max-width:100%;border-radius:8px;margin-top:6px}
+    .footer{text-align:center;color:#475569;font-size:0.8rem;padding:24px}
+    """
+
+        lines: List[str] = [
+            "<!doctype html>",
+            '<html lang="en">',
+            "<head>",
+            '  <meta charset="utf-8" />',
+            '  <meta name="viewport" content="width=device-width, initial-scale=1" />',
+            f"  <title>{html.escape(title)}</title>",
+            f"  <style>{CSS}</style>",
+            '  <script src="https://cdn.plot.ly/plotly-3.3.0.min.js"></script>',
+            "</head>",
+            "<body>",
+            f'  <div class="header"><h1>{html.escape(title)}</h1>',
+            f'  <p>{html.escape(description)}</p>',
+            f'  <div class="meta">Generated: {timestamp}</div></div>',
+            '  <div class="container">',
+        ]
+
+        # --- Queries section ---
+        if db_manager.session.query_history:
+            lines.append('  <div class="section">')
+            lines.append('    <h2>Queries</h2>')
+            for i, qr in enumerate(db_manager.session.query_history, start=1):
+                lines.append(f'    <div class="query-meta">Query {i} &mdash; {qr.row_count} rows returned</div>')
+                lines.append(f'    <div class="query-block">{html.escape(qr.sql)}</div>')
+            lines.append("  </div>")
+
+        # --- Charts section ---
+        chart_cards: List[str] = []
+        for idx, json_path in enumerate(plotly_json_files, start=1):
+            section_title = (
+                section_titles[idx - 1]
+                if section_titles and idx - 1 < len(section_titles)
+                else _chart_title_from_path(json_path)
+            )
+            try:
+                fig_json = json.loads(json_path.read_text(encoding="utf-8"))
+                script_payload = json.dumps(fig_json)
+                div_id = f"db-chart-{idx}"
+                card = (
+                    f'<div class="chart-card">'
+                    f'<h3>{html.escape(section_title)}</h3>'
+                    f'<div id="{div_id}" class="plotly-embed"></div>'
+                    f"<script>const dbSpec{idx}={script_payload};"
+                    f"const dbData{idx}=dbSpec{idx}.data||[];const dbLayout{idx}=dbSpec{idx}.layout||{{}};const dbCfg{idx}=dbSpec{idx}.config||{{}};"
+                    f"Plotly.newPlot('{div_id}',dbData{idx},dbLayout{idx},dbCfg{idx});</script>"
+                    "</div>"
+                )
+                chart_cards.append(card)
+            except Exception:  # pragma: no cover - best effort
+                logger.warning("Dashboard: failed to embed plotly JSON %s", json_path, exc_info=True)
+
+        for idx, png_path in enumerate(png_files, start=len(plotly_json_files) + 1):
+            section_title = (
+                section_titles[idx - 1]
+                if section_titles and idx - 1 < len(section_titles)
+                else _chart_title_from_path(png_path)
+            )
+            try:
+                encoded = base64.b64encode(png_path.read_bytes()).decode("utf-8")
+                card = (
+                    f'<div class="chart-card">'
+                    f'<h3>{html.escape(section_title)}</h3>'
+                    f'<img class="chart-img" src="data:image/png;base64,{encoded}" alt="{html.escape(png_path.stem)}" />'
+                    "</div>"
+                )
+                chart_cards.append(card)
+            except Exception:  # pragma: no cover - best effort
+                logger.warning("Dashboard: failed to embed PNG %s", png_path, exc_info=True)
+
+        if chart_cards:
+            lines.append('  <div class="section">')
+            lines.append('    <h2>Charts</h2>')
+            lines.append('    <div class="chart-grid">')
+            lines.extend(f"      {c}" for c in chart_cards)
+            lines.append("    </div>")
+            lines.append("  </div>")
+
+        lines.extend([
+            f'  <div class="footer">Generated by HelpUDoc data agent &mdash; {timestamp}</div>',
+            "  </div>",  # /container
+            "</body>",
+            "</html>",
+        ])
+
+        dashboard_content = "\n".join(lines)
+
+        try:
+            dashboards_dir = ws / "dashboards"
+            dashboards_dir.mkdir(exist_ok=True)
+            dashboard_path = dashboards_dir / f"{safe_title}.html"
+            dashboard_path.write_text(dashboard_content, encoding="utf-8")
+
+            artifact = {
+                "path": dashboard_path.relative_to(ws).as_posix(),
+                "mimeType": ALLOWED_ARTIFACT_EXTENSIONS[".html"],
+                "size": dashboard_path.stat().st_size,
+            }
+            db_manager.register_artifact(artifact)
+
+            if callbacks:
+                try:
+                    run_id = getattr(callbacks, "run_id", None)
+                    if run_id is not None:
+                        callbacks.on_custom_event(
+                            "tool_artifacts", {"files": [artifact]}, run_id=run_id
+                        )
+                    else:
+                        callbacks.on_custom_event("tool_artifacts", {"files": [artifact]})
+                except Exception:  # pragma: no cover - best effort
+                    logger.warning("Failed to dispatch tool_artifacts event", exc_info=True)
+
+            rel_path = dashboard_path.relative_to(ws).as_posix()
+            return (
+                f"✅ Dashboard saved to: {rel_path}\n"
+                f"Charts embedded: {len(chart_cards)} | Queries embedded: {len(db_manager.session.query_history)}"
+            )
+        except Exception as e:  # pragma: no cover - defensive
+            logger.warning("Failed to save dashboard: %s", e)
+            return f"(Note: Failed to save dashboard file: {e})"
+
+    return [
+        get_table_schema,
+        run_sql_query,
+        materialize_bigquery_to_parquet,
+        generate_chart_config,
+        generate_summary,
+        generate_dashboard,
+    ]

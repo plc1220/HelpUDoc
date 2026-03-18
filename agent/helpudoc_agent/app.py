@@ -935,6 +935,7 @@ def create_app() -> FastAPI:
         # Skill execution state is per top-level user task. Resumes should preserve it,
         # but a fresh user turn should not inherit approval or active-skill state.
         context.pop("active_skill", None)
+        context.pop("active_skill_scope", None)
         context.pop("active_skill_policy", None)
         context.pop("last_plan_feedback", None)
         context.pop("last_plan_file_path", None)
