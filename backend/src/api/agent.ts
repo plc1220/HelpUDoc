@@ -37,6 +37,7 @@ const DEBUG_AGENT_RUN_STREAM =
 const AUTH_MODE = (process.env.AUTH_MODE || 'headers').trim().toLowerCase();
 const BQ_DELEGATED_MCP_SERVER_ID = 'toolbox-bq-demo';
 const repoRoot = path.resolve(__dirname, '../../..');
+const skillsRoot = process.env.SKILLS_ROOT || path.join(repoRoot, 'skills');
 const defaultAgentConfigDir = existsSync('/agent/config')
   ? '/agent/config'
   : path.join(repoRoot, 'agent', 'config');
@@ -50,6 +51,67 @@ type RuntimeMcpServerConfig = {
   defaultAccess?: string;
   delegated_auth_provider?: string;
   delegatedAuthProvider?: string;
+};
+
+type SlashSkillMetadata = {
+  id: string;
+  name: string;
+  description?: string;
+  valid: boolean;
+  error?: string;
+  warning?: string;
+};
+
+const extractFrontmatterString = (frontmatter: Record<string, unknown>, key: string): string | undefined => {
+  const value = frontmatter[key];
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+};
+
+const parseSkillFrontmatter = (content: string): Record<string, unknown> => {
+  if (!content.startsWith('---')) {
+    return {};
+  }
+  const closingIndex = content.indexOf('\n---', 3);
+  if (closingIndex < 0) {
+    return {};
+  }
+  const frontmatter = content.slice(3, closingIndex).trim();
+  const parsed = parseYaml(frontmatter);
+  return parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : {};
+};
+
+const collectSkillIds = async (rootDir: string, relativeDir = ''): Promise<string[]> => {
+  const entries = await fs.readdir(path.join(rootDir, relativeDir), { withFileTypes: true });
+  const results: string[] = [];
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) {
+      continue;
+    }
+    const relPath = path.join(relativeDir, entry.name);
+    const skillFile = path.join(rootDir, relPath, 'SKILL.md');
+    if (existsSync(skillFile)) {
+      results.push(relPath.replace(/\\/g, '/'));
+    }
+    const nested = await collectSkillIds(rootDir, relPath);
+    results.push(...nested);
+  }
+
+  return Array.from(new Set(results)).sort((a, b) => a.localeCompare(b));
+};
+
+const getSkillMetadata = async (skillId: string): Promise<SlashSkillMetadata> => {
+  const skillPath = path.join(skillsRoot, skillId, 'SKILL.md');
+  const content = await fs.readFile(skillPath, 'utf-8');
+  const frontmatter = parseSkillFrontmatter(content);
+  const description = extractFrontmatterString(frontmatter, 'description');
+  const name = extractFrontmatterString(frontmatter, 'name') || skillId;
+  return {
+    id: skillId,
+    name,
+    description,
+    valid: true,
+  };
 };
 
 const extractTextFromAgentReply = (reply: unknown): string => {
@@ -188,6 +250,43 @@ export default function(
     }
     return req.userContext;
   };
+
+  router.get('/slash-metadata', async (req, res) => {
+    try {
+      requireUserContext(req);
+      await fs.mkdir(skillsRoot, { recursive: true });
+      const skillIds = await collectSkillIds(skillsRoot);
+      const skills: SlashSkillMetadata[] = [];
+      for (const skillId of skillIds) {
+        try {
+          skills.push(await getSkillMetadata(skillId));
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'Failed to read skill';
+          skills.push({
+            id: skillId,
+            name: skillId,
+            valid: false,
+            error: message,
+          });
+        }
+      }
+
+      const mcpServers = (await loadRuntimeMcpServers())
+        .map((server) => ({
+          name: typeof server.name === 'string' ? server.name.trim() : '',
+          description: undefined as string | undefined,
+        }))
+        .filter((server) => server.name);
+
+      res.json({ skills, mcpServers });
+    } catch (error) {
+      if (error instanceof HttpError) {
+        return res.status(error.statusCode).json({ error: error.message, details: error.details });
+      }
+      console.error('Failed to load slash metadata', error);
+      return res.status(500).json({ error: 'Failed to load slash metadata' });
+    }
+  });
 
   const getAllowedDelegatedGoogleServerIds = async (policy: {
     isAdmin: boolean;
