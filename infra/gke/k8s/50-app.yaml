@@ -363,7 +363,7 @@ spec:
             - name: WORKSPACE_MCP_PORT
               value: "8000"
             - name: WORKSPACE_MCP_BASE_URI
-              value: "http://localhost:8000"
+              value: "http://localhost"
             - name: PORT
               value: "8000"
           command:
