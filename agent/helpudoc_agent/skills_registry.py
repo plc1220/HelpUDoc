@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List
+from typing import Any, Iterable, List
 import shutil
 import yaml
 
@@ -23,6 +23,7 @@ class SkillMetadata:
     name: str
     description: str | None
     tools: List[str]
+    mcp_servers: List[str]
     policy: SkillPolicy
     path: Path
 
@@ -110,7 +111,9 @@ def _infer_skill_policy(skill_id: str, content: str, meta: dict) -> SkillPolicy:
 
     required_artifacts_mode: str | None = None
     required_artifacts: List[str] | None = None
-    if skill_id == "research":
+    # Canonical skill id for policy matching (strip leading "data/" etc.)
+    base_id = skill_id.split("/")[-1] if "/" in skill_id else skill_id
+    if base_id == "research" or skill_id == "research":
         required_artifacts_mode = "full_pack"
         required_artifacts = [
             "/question.txt",
@@ -137,25 +140,46 @@ def _infer_skill_policy(skill_id: str, content: str, meta: dict) -> SkillPolicy:
     )
 
 
+def _skill_id_from_path(skills_root: Path, skill_dir: Path) -> str:
+    """Return a POSIX-relative skill id such as 'data' or 'data/analyze'."""
+    rel = skill_dir.relative_to(skills_root)
+    return rel.as_posix()
+
+
 def load_skills(skills_root: Path) -> List[SkillMetadata]:
+    """Recursively discover all SKILL.md files under *skills_root*.
+
+    Nested skills (e.g. ``skills/data/analyze/SKILL.md``) receive ids like
+    ``data/analyze``.  Top-level skills continue to use their directory name.
+    """
     skills: List[SkillMetadata] = []
     if not skills_root.exists():
         return skills
-    for entry in sorted(skills_root.iterdir()):
-        if not entry.is_dir():
+
+    # rglob finds every SKILL.md at any depth; sorted gives stable ordering.
+    skill_files = sorted(skills_root.rglob("SKILL.md"))
+
+    # Deduplicate by resolved path (symlinks) just in case.
+    seen_paths: set[Path] = set()
+    for skill_file in skill_files:
+        resolved = skill_file.resolve()
+        if resolved in seen_paths:
             continue
-        skill_file = entry / "SKILL.md"
-        if not skill_file.exists():
-            continue
+        seen_paths.add(resolved)
+
+        skill_dir = skill_file.parent
+        skill_id = _skill_id_from_path(skills_root, skill_dir)
+
         try:
             content = skill_file.read_text(encoding="utf-8")
         except Exception:
             continue
+
         meta = _parse_frontmatter(content)
-        skill_id = entry.name
         name = str(meta.get("name") or skill_id)
         description = meta.get("description")
         tools = _normalize_tools(meta.get("tools"))
+        mcp_servers = _normalize_tools(meta.get("mcp_servers"))
         policy = _infer_skill_policy(skill_id, content, meta)
         skills.append(
             SkillMetadata(
@@ -163,6 +187,7 @@ def load_skills(skills_root: Path) -> List[SkillMetadata]:
                 name=name,
                 description=description,
                 tools=tools,
+                mcp_servers=mcp_servers,
                 policy=policy,
                 path=skill_file,
             )
@@ -186,6 +211,73 @@ def collect_tool_names(skills: Iterable[SkillMetadata]) -> List[str]:
         if skill.policy.requires_hitl_plan:
             _append("request_plan_approval")
     return ordered
+
+
+# ---------------------------------------------------------------------------
+# Runtime enforcement helpers
+# ---------------------------------------------------------------------------
+
+#: Tools that are always permitted regardless of the active skill's declared scope.
+ALWAYS_ALLOWED_TOOLS: frozenset[str] = frozenset(
+    {
+        "list_skills",
+        "load_skill",
+        # Human-in-the-loop / clarification
+        "request_plan_approval",
+        "request_clarification",
+        "request_human_action",
+    }
+)
+
+
+def _coerce_active_skill_scope(active_skill: SkillMetadata | dict[str, Any] | None) -> SkillMetadata | None:
+    if active_skill is None:
+        return None
+    if isinstance(active_skill, SkillMetadata):
+        return active_skill
+    if isinstance(active_skill, dict):
+        raw_skill_id = str(active_skill.get("skill_id") or active_skill.get("id") or "").strip()
+        tools = _normalize_tools(active_skill.get("tools"))
+        mcp_servers = _normalize_tools(active_skill.get("mcp_servers"))
+        if not raw_skill_id and not tools and not mcp_servers:
+            return None
+        return SkillMetadata(
+            skill_id=raw_skill_id or "<active-skill>",
+            name=str(active_skill.get("name") or raw_skill_id or "<active-skill>"),
+            description=active_skill.get("description") if isinstance(active_skill.get("description"), str) else None,
+            tools=tools,
+            mcp_servers=mcp_servers,
+            policy=SkillPolicy(),
+            path=Path(str(active_skill.get("path") or ".")),
+        )
+    return None
+
+
+def is_tool_allowed(
+    tool_name: str,
+    active_skill: SkillMetadata | dict[str, Any] | None,
+    tool_mcp_server: str | None = None,
+) -> bool:
+    """Return True if *tool_name* is permitted given the *active_skill* scope.
+
+    Rules (in priority order):
+    1. Always-allowed tools are unconditionally permitted.
+    2. If no skill is active, every tool is permitted.
+    3. Built-in tools (``tool_mcp_server`` is None) are permitted only if
+       declared in the skill's ``tools`` list.
+    4. MCP tools are permitted only if their originating server name is declared
+       in the skill's ``mcp_servers`` list.
+    """
+    if tool_name in ALWAYS_ALLOWED_TOOLS:
+        return True
+    active_skill = _coerce_active_skill_scope(active_skill)
+    if active_skill is None:
+        return True
+    if tool_mcp_server is None:
+        # Built-in tool – check tools list.
+        return tool_name in active_skill.tools
+    # MCP tool – check mcp_servers list.
+    return tool_mcp_server in active_skill.mcp_servers
 
 
 def sync_skills_to_workspace(skills_root: Path, workspace_root: Path) -> None:

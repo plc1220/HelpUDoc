@@ -351,6 +351,12 @@ class ToolFactory:
                     except Exception as exc:  # pragma: no cover - filesystem guard
                         return f"Failed to read skill '{skill.skill_id}': {exc}"
                     workspace_state.context["active_skill"] = skill.skill_id
+                    workspace_state.context["active_skill_scope"] = {
+                        "skill_id": skill.skill_id,
+                        "name": skill.name,
+                        "tools": list(skill.tools),
+                        "mcp_servers": list(skill.mcp_servers),
+                    }
                     workspace_state.context["active_skill_policy"] = {
                         "requires_hitl_plan": skill.policy.requires_hitl_plan,
                         "requires_workspace_artifacts": skill.policy.requires_workspace_artifacts,
@@ -368,6 +374,8 @@ class ToolFactory:
                         f"Skill policy for {skill.skill_id}:",
                         f"- requires_hitl_plan: {'true' if skill.policy.requires_hitl_plan else 'false'}",
                         f"- requires_workspace_artifacts: {'true' if skill.policy.requires_workspace_artifacts else 'false'}",
+                        f"- tools: {', '.join(skill.tools) if skill.tools else '(none declared)'}",
+                        f"- mcp_servers: {', '.join(skill.mcp_servers) if skill.mcp_servers else '(none declared)'}",
                     ]
                     if skill.policy.requires_hitl_plan:
                         policy_lines.append(
