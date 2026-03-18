@@ -1,7 +1,6 @@
-import type { FormEvent } from 'react';
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Sun, Moon, Mail, Lock, ArrowRight } from 'lucide-react';
+import { Sun, Moon } from 'lucide-react';
 import { useAuth } from '../auth/AuthProvider';
 
 interface LocationState {
@@ -10,10 +9,8 @@ interface LocationState {
 
 type PaletteMode = 'light' | 'dark';
 
-const IS_DEV = import.meta.env.DEV;
-
 const LoginPage = () => {
-  const { user, loading, googleReady, googleError, authMode, signInWithEmail, signInWithGoogle } = useAuth();
+  const { user, googleReady, googleError, signInWithGoogle } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [colorMode, setColorMode] = useState<PaletteMode>(() => {
@@ -24,11 +21,8 @@ const LoginPage = () => {
     }
     return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
   });
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [focusedField, setFocusedField] = useState<string | null>(null);
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', colorMode);
@@ -52,33 +46,6 @@ const LoginPage = () => {
       navigate(redirectTo, { replace: true });
     }
   }, [location.search, location.state, navigate, user]);
-
-  const handleEmailLogin = async (event: FormEvent) => {
-    event.preventDefault();
-    setError(null);
-    setSubmitting(true);
-    try {
-      await signInWithEmail(email, password);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unable to sign in.';
-      setError(message);
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const handleBypassLogin = async () => {
-    setError(null);
-    setSubmitting(true);
-    try {
-      await signInWithEmail('local-user@example.com', 'Local User', 'local-user');
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Bypass failed.';
-      setError(message);
-    } finally {
-      setSubmitting(false);
-    }
-  };
 
   const heroImage = useMemo(() => (colorMode === 'light' ? '/Day.png' : '/Night.png'), [colorMode]);
 
@@ -164,78 +131,8 @@ const LoginPage = () => {
                 </div>
               )}
 
-              {/* Login form */}
-              <form onSubmit={handleEmailLogin} className="space-y-5">
-                {/* Email field */}
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-slate-700 dark:text-slate-200 flex items-center gap-2" htmlFor="email">
-                    <Mail size={14} className="text-blue-600 dark:text-blue-400" />
-                    Email address
-                  </label>
-                  <div className={`relative transition-all duration-300 ${focusedField === 'email' ? 'scale-[1.02]' : ''}`}>
-                    <input
-                      id="email"
-                      type="email"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      onFocus={() => setFocusedField('email')}
-                      onBlur={() => setFocusedField(null)}
-                      placeholder="you@company.com"
-                      className="w-full rounded-xl bg-slate-50 dark:bg-slate-800/50 backdrop-blur-sm border border-slate-200 dark:border-slate-600/50 px-4 py-3.5 text-sm text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all duration-300"
-                      required
-                    />
-                  </div>
-                </div>
-
-                {/* Password field */}
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-slate-700 dark:text-slate-200 flex items-center gap-2" htmlFor="password">
-                    <Lock size={14} className="text-blue-600 dark:text-blue-400" />
-                    Password
-                  </label>
-                  <div className={`relative transition-all duration-300 ${focusedField === 'password' ? 'scale-[1.02]' : ''}`}>
-                    <input
-                      id="password"
-                      type="password"
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      onFocus={() => setFocusedField('password')}
-                      onBlur={() => setFocusedField(null)}
-                      placeholder="Enter your password"
-                      className="w-full rounded-xl bg-slate-50 dark:bg-slate-800/50 backdrop-blur-sm border border-slate-200 dark:border-slate-600/50 px-4 py-3.5 text-sm text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all duration-300"
-                      required
-                    />
-                  </div>
-                </div>
-
-                {/* Submit button - plain blue */}
-                <button
-                  type="submit"
-                  disabled={authMode === 'oidc' || submitting || loading}
-                  className="w-full mt-6 py-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold shadow-lg shadow-blue-500/25 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-blue-500/40 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0 flex items-center justify-center gap-2"
-                >
-                  {submitting ? (
-                    <>
-                      <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                      </svg>
-                      Signing in...
-                    </>
-                  ) : (
-                    <>
-                      {authMode === 'oidc' ? 'Local Sign-In Disabled' : 'Continue'}
-                      <ArrowRight size={18} />
-                    </>
-                  )}
-                </button>
-              </form>
-
-              {/* Divider */}
-              <div className="my-6 flex items-center gap-4">
-                <div className="flex-1 h-px bg-slate-300/50 dark:bg-slate-600/50" />
-                <span className="text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider">or</span>
-                <div className="flex-1 h-px bg-slate-300/50 dark:bg-slate-600/50" />
+              <div className="mb-6 rounded-2xl bg-slate-100/70 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700/50 px-4 py-3 text-sm text-slate-600 dark:text-slate-300 text-center">
+                Sign in with your Google account to access HelpUDoc.
               </div>
 
               {/* Google button */}
@@ -248,7 +145,7 @@ const LoginPage = () => {
                   <button
                     type="button"
                     onClick={handleGoogleLogin}
-                    disabled={!googleReady || submitting || loading}
+                    disabled={!googleReady || submitting}
                     className="w-full mt-1 py-3 rounded-xl border border-slate-300 dark:border-slate-600 bg-white/70 dark:bg-slate-800/70 text-slate-800 dark:text-slate-100 text-sm font-semibold transition-all duration-300 hover:bg-white dark:hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     Continue with Google
@@ -264,17 +161,6 @@ const LoginPage = () => {
           </div>
         </div>
       </div>
-
-      {/* Dev bypass button */}
-      {IS_DEV && authMode !== 'oidc' && (
-        <button
-          type="button"
-          onClick={handleBypassLogin}
-          className="fixed bottom-6 left-6 z-50 px-4 py-2 rounded-full bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-white dark:hover:bg-slate-700 transition-all duration-300 shadow-lg"
-        >
-          🚀 Dev Bypass
-        </button>
-      )}
 
       {/* Custom CSS animations */}
       <style>{`
