@@ -328,6 +328,48 @@ spec:
               mountPath: /skills
             - name: agent-config-data
               mountPath: /agent/config
+        - name: google-workspace-mcp
+          image: python:3.13-slim
+          ports:
+            - containerPort: 8000
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "250m"
+              memory: "256Mi"
+          env:
+            - name: GOOGLE_OAUTH_CLIENT_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: GOOGLE_OAUTH_CLIENT_ID
+                  optional: true
+            - name: GOOGLE_OAUTH_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: GOOGLE_OAUTH_CLIENT_SECRET
+                  optional: true
+            - name: MCP_ENABLE_OAUTH21
+              value: "true"
+            - name: EXTERNAL_OAUTH21_PROVIDER
+              value: "true"
+            - name: WORKSPACE_MCP_STATELESS_MODE
+              value: "true"
+            - name: WORKSPACE_MCP_HOST
+              value: "0.0.0.0"
+            - name: WORKSPACE_MCP_PORT
+              value: "8000"
+            - name: WORKSPACE_MCP_BASE_URI
+              value: "http://localhost:8000"
+            - name: PORT
+              value: "8000"
+          command:
+            - /bin/sh
+            - -lc
+            - pip install --no-cache-dir workspace-mcp && workspace-mcp --transport streamable-http --tools gmail drive calendar sheets
       volumes:
         - name: workspace-data
           persistentVolumeClaim:
