@@ -621,6 +621,53 @@ class TestDashboardTool:
         # Should include query block  
         assert "42" in content  # the SELECT 42 result
 
+    def test_dashboard_accepts_structured_layout_inputs(self, tmp_path: Path) -> None:
+        tools = self._run_analysis_and_chart(tmp_path)
+        tools["generate_dashboard"].invoke({
+            "title": "Structured Dashboard",
+            "description": "Uses custom dashboard metadata.",
+            "section_titles": ["Insight-Led Title"],
+            "kpis": [
+                {"label": "Risk", "value": "15.2%", "note": "Highest observed cancellation rate"},
+            ],
+            "filters": [
+                {
+                    "id": "risk-search",
+                    "label": "Search",
+                    "type": "search",
+                    "target": "title_search",
+                    "placeholder": "Find a chart",
+                    "default": "",
+                },
+                {
+                    "id": "audience-filter",
+                    "label": "Audience",
+                    "type": "select",
+                    "target": "chart_tag",
+                    "default": "all",
+                    "options": [
+                        {"label": "All", "value": "all"},
+                        {"label": "Exec", "value": "exec"},
+                    ],
+                },
+            ],
+            "sections": [
+                {
+                    "title": "Executive View",
+                    "description": "Top-level findings only.",
+                    "chart_indexes": [1],
+                },
+            ],
+            "chart_tags": [["exec", "priority"]],
+        })
+        html_files = list((tmp_path / "dashboards").glob("*.html"))
+        content = html_files[0].read_text(encoding="utf-8")
+        assert "Risk" in content
+        assert "15.2%" in content
+        assert "Executive View" in content
+        assert "audience-filter" in content
+        assert "priority" in content.lower()
+
     def test_dashboard_requires_at_least_one_query(self, tmp_path: Path) -> None:
         from agent.helpudoc_agent.data_agent_tools import build_data_agent_tools
         from unittest.mock import MagicMock

@@ -292,6 +292,10 @@ def _chart_title_from_path(path: Path) -> str:
     return title.replace("_", " ")
 
 
+def _slugify_text(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", (value or "").strip().lower()).strip("-") or "item"
+
+
 def _json_default(value: Any) -> Any:
     if isinstance(value, (np.integer,)):
         return int(value)
@@ -1413,6 +1417,34 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
             ),
             default_factory=list,
         ),
+        kpis: List[Dict[str, str]] = Field(
+            description=(
+                "Optional KPI cards for the hero area. Each item should include "
+                "'label', 'value', and optional 'note'."
+            ),
+            default_factory=list,
+        ),
+        filters: List[Dict[str, Any]] = Field(
+            description=(
+                "Optional dashboard controls. Supported targets include "
+                "'title_search', 'chart_type', 'chart_tag', and 'appendix_visibility'."
+            ),
+            default_factory=list,
+        ),
+        sections: List[Dict[str, Any]] = Field(
+            description=(
+                "Optional chart section groups. Each item may include 'title', "
+                "'description', and 'chart_indexes' (1-based chart positions)."
+            ),
+            default_factory=list,
+        ),
+        chart_tags: List[List[str]] = Field(
+            description=(
+                "Optional chart tags aligned to chart order. Each inner list becomes tag chips "
+                "and can be used by chart_tag filters."
+            ),
+            default_factory=list,
+        ),
         callbacks: Optional[CallbackManagerForToolRun] = None,
     ) -> str:
         """
@@ -1458,23 +1490,373 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
         ]
 
         CSS = """
-    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0f172a;color:#f1f5f9;margin:0;padding:0}
-    .header{background:linear-gradient(135deg,#1e3a5f,#0f172a);padding:36px 40px 28px;border-bottom:1px solid #1e293b}
-    .header h1{margin:0 0 6px;font-size:1.8rem;color:#f1f5f9}
-    .header p{margin:0;color:#94a3b8;font-size:0.95rem}
-    .header .meta{font-size:0.8rem;color:#475569;margin-top:8px}
-    .container{max-width:1100px;margin:0 auto;padding:32px 24px 56px}
-    .section{background:#1e293b;border:1px solid #334155;border-radius:16px;padding:22px 24px;margin-bottom:24px}
-    .section h2{margin:0 0 16px;font-size:1.1rem;color:#e2e8f0}
-    .section .query-block{background:#0f172a;border-radius:10px;padding:14px 16px;font-family:monospace;font-size:0.85rem;color:#94a3b8;overflow-x:auto;margin-bottom:14px;white-space:pre-wrap}
-    .section .query-meta{font-size:0.8rem;color:#64748b;margin-bottom:6px}
-    .chart-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(480px,1fr));gap:20px;margin-top:12px}
-    .chart-card{background:#0f172a;border:1px solid #1e293b;border-radius:12px;padding:16px;min-height:380px}
-    .chart-card h3{margin:0 0 10px;font-size:0.95rem;color:#cbd5e1}
-    .plotly-embed{width:100%;height:360px}
-    img.chart-img{max-width:100%;border-radius:8px;margin-top:6px}
-    .footer{text-align:center;color:#475569;font-size:0.8rem;padding:24px}
+    :root{
+      --bg:#f4f1ea;
+      --panel:#fffdf8;
+      --panel-strong:#ffffff;
+      --ink:#1f2937;
+      --muted:#6b7280;
+      --line:#e7dfd2;
+      --accent:#1f4d3a;
+      --accent-soft:#dcece5;
+      --accent-warm:#9a3412;
+      --shadow:0 16px 40px rgba(68,50,28,0.08);
+      --radius-xl:28px;
+      --radius-lg:20px;
+      --radius-md:14px;
+    }
+    *{box-sizing:border-box}
+    html{scroll-behavior:smooth}
+    body{
+      font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+      background:
+        radial-gradient(circle at top left, rgba(31,77,58,0.09), transparent 28%),
+        radial-gradient(circle at top right, rgba(154,52,18,0.08), transparent 24%),
+        linear-gradient(180deg,#f7f4ee 0%,#f4f1ea 100%);
+      color:var(--ink);
+      margin:0;
+      padding:0;
+    }
+    a{color:inherit}
+    .shell{max-width:1320px;margin:0 auto;padding:28px 22px 56px}
+    .hero{
+      background:linear-gradient(135deg,rgba(255,253,248,0.96),rgba(247,242,234,0.96));
+      border:1px solid rgba(231,223,210,0.95);
+      box-shadow:var(--shadow);
+      border-radius:var(--radius-xl);
+      padding:34px 36px 28px;
+      position:relative;
+      overflow:hidden;
+    }
+    .hero:before{
+      content:"";
+      position:absolute;
+      inset:auto -120px -140px auto;
+      width:320px;
+      height:320px;
+      background:radial-gradient(circle, rgba(31,77,58,0.10), transparent 68%);
+      pointer-events:none;
+    }
+    .eyebrow{
+      display:inline-flex;
+      align-items:center;
+      gap:8px;
+      background:var(--accent-soft);
+      color:var(--accent);
+      border-radius:999px;
+      padding:8px 12px;
+      font-size:12px;
+      font-weight:700;
+      letter-spacing:0.08em;
+      text-transform:uppercase;
+    }
+    .hero h1{
+      margin:14px 0 10px;
+      font-size:clamp(2rem,4vw,3.2rem);
+      line-height:1.02;
+      letter-spacing:-0.04em;
+      max-width:10ch;
+    }
+    .hero p{
+      margin:0;
+      max-width:760px;
+      color:#4b5563;
+      font-size:1rem;
+      line-height:1.65;
+    }
+    .hero-meta{
+      margin-top:18px;
+      color:var(--muted);
+      font-size:0.88rem;
+    }
+    .kpi-row{
+      display:grid;
+      grid-template-columns:repeat(auto-fit,minmax(180px,1fr));
+      gap:16px;
+      margin:22px 0 0;
+    }
+    .kpi{
+      background:rgba(255,255,255,0.82);
+      border:1px solid rgba(231,223,210,0.95);
+      border-radius:18px;
+      padding:18px 18px 16px;
+      min-height:104px;
+    }
+    .kpi-label{
+      color:var(--muted);
+      text-transform:uppercase;
+      letter-spacing:0.08em;
+      font-size:0.72rem;
+      font-weight:700;
+    }
+    .kpi-value{
+      margin-top:8px;
+      font-size:2rem;
+      line-height:1;
+      letter-spacing:-0.04em;
+      color:var(--ink);
+      font-weight:800;
+    }
+    .kpi-note{
+      margin-top:10px;
+      color:#4b5563;
+      font-size:0.86rem;
+    }
+    .controls{
+      margin-top:22px;
+      display:grid;
+      grid-template-columns:repeat(auto-fit,minmax(180px,1fr));
+      gap:12px;
+      align-items:end;
+    }
+    .control{
+      display:flex;
+      flex-direction:column;
+      gap:6px;
+    }
+    .control label{
+      color:var(--muted);
+      font-size:0.78rem;
+      font-weight:700;
+      letter-spacing:0.06em;
+      text-transform:uppercase;
+    }
+    .control input,.control select{
+      width:100%;
+      border:1px solid var(--line);
+      background:#fff;
+      color:var(--ink);
+      border-radius:12px;
+      padding:12px 14px;
+      font:inherit;
+      outline:none;
+    }
+    .control input:focus,.control select:focus{
+      border-color:#b7cbbf;
+      box-shadow:0 0 0 4px rgba(31,77,58,0.10);
+    }
+    .control-actions{
+      display:flex;
+      gap:10px;
+      align-items:center;
+      flex-wrap:wrap;
+    }
+    .button{
+      border:none;
+      border-radius:999px;
+      padding:12px 16px;
+      background:var(--accent);
+      color:#fff;
+      font:inherit;
+      font-weight:700;
+      cursor:pointer;
+    }
+    .button.secondary{
+      background:#efe7da;
+      color:var(--ink);
+    }
+    .filter-status{
+      color:var(--muted);
+      font-size:0.88rem;
+    }
+    .section{
+      margin-top:22px;
+      background:rgba(255,253,248,0.92);
+      border:1px solid rgba(231,223,210,0.95);
+      box-shadow:var(--shadow);
+      border-radius:var(--radius-xl);
+      padding:26px 28px 30px;
+    }
+    .section-header{
+      display:flex;
+      justify-content:space-between;
+      align-items:end;
+      gap:16px;
+      margin-bottom:18px;
+    }
+    .section h2{
+      margin:0;
+      font-size:1.35rem;
+      letter-spacing:-0.03em;
+    }
+    .section-intro{
+      margin:6px 0 0;
+      color:var(--muted);
+      font-size:0.95rem;
+    }
+    .chart-grid{
+      display:grid;
+      grid-template-columns:repeat(auto-fit,minmax(320px,1fr));
+      gap:18px;
+    }
+    .chart-card{
+      background:linear-gradient(180deg,#fffefb 0%,#fbf8f2 100%);
+      border:1px solid var(--line);
+      border-radius:var(--radius-lg);
+      padding:18px 18px 10px;
+      min-height:408px;
+    }
+    .chart-card.is-hidden{display:none}
+    .chart-card h3{
+      margin:0 0 6px;
+      font-size:1rem;
+      line-height:1.35;
+      letter-spacing:-0.02em;
+    }
+    .chart-meta{
+      display:flex;
+      gap:8px;
+      flex-wrap:wrap;
+      margin-bottom:10px;
+    }
+    .tag{
+      display:inline-flex;
+      align-items:center;
+      border-radius:999px;
+      padding:5px 9px;
+      background:#f2ece1;
+      color:#6b5b45;
+      font-size:0.74rem;
+      font-weight:700;
+      letter-spacing:0.03em;
+      text-transform:uppercase;
+    }
+    .chart-subtitle{
+      color:var(--muted);
+      font-size:0.88rem;
+      margin-bottom:12px;
+    }
+    .plotly-embed{width:100%;height:330px}
+    img.chart-img{
+      width:100%;
+      border-radius:12px;
+      margin-top:8px;
+      border:1px solid var(--line);
+      background:#fff;
+    }
+    details.appendix{
+      border-top:1px solid var(--line);
+      padding-top:18px;
+    }
+    details.appendix summary{
+      cursor:pointer;
+      list-style:none;
+      font-weight:700;
+      font-size:1rem;
+    }
+    details.appendix summary::-webkit-details-marker{display:none}
+    .query-list{margin-top:16px;display:grid;gap:14px}
+    .query-item{
+      background:#faf7f1;
+      border:1px solid var(--line);
+      border-radius:16px;
+      padding:16px;
+    }
+    .query-meta{
+      font-size:0.82rem;
+      color:var(--accent-warm);
+      font-weight:700;
+      letter-spacing:0.03em;
+      text-transform:uppercase;
+      margin-bottom:8px;
+    }
+    .query-block{
+      margin:0;
+      background:#fff;
+      border:1px solid var(--line);
+      border-radius:12px;
+      padding:14px 16px;
+      overflow-x:auto;
+      white-space:pre-wrap;
+      color:#374151;
+      font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,'Liberation Mono',monospace;
+      font-size:0.84rem;
+      line-height:1.55;
+    }
+    .footer{
+      text-align:center;
+      color:var(--muted);
+      font-size:0.82rem;
+      padding:22px 8px 0;
+    }
+    @media (max-width: 768px){
+      .shell{padding:16px 14px 42px}
+      .hero,.section{padding:22px 18px}
+      .section-header{display:block}
+      .chart-grid{grid-template-columns:1fr}
+      .plotly-embed{height:300px}
+    }
+    @media print{
+      body{background:#fff}
+      .shell{max-width:none;padding:0}
+      .hero,.section{box-shadow:none;background:#fff}
+    }
     """
+
+        chart_count = len(plotly_json_files) + len(png_files)
+        query_count = len(db_manager.session.query_history)
+
+        hero_kpis = kpis or [
+            {
+                "label": "Charts",
+                "value": str(chart_count),
+                "note": "Curated visuals embedded in this report",
+            },
+            {
+                "label": "Queries",
+                "value": str(query_count),
+                "note": "Source queries included in the appendix",
+            },
+            {
+                "label": "Format",
+                "value": "HTML",
+                "note": "Portable, browser-openable artifact",
+            },
+        ]
+
+        filter_specs = filters or [
+            {
+                "id": "chart-search",
+                "label": "Search Charts",
+                "type": "search",
+                "target": "title_search",
+                "placeholder": "Search chart titles or subtitles",
+                "default": "",
+            },
+            {
+                "id": "chart-type-filter",
+                "label": "Chart Type",
+                "type": "select",
+                "target": "chart_type",
+                "default": "all",
+                "options": [
+                    {"label": "All chart types", "value": "all"},
+                    {"label": "Interactive", "value": "interactive"},
+                    {"label": "Static", "value": "static"},
+                ],
+            },
+            {
+                "id": "appendix-toggle",
+                "label": "Appendix",
+                "type": "select",
+                "target": "appendix_visibility",
+                "default": "show",
+                "options": [
+                    {"label": "Show appendix", "value": "show"},
+                    {"label": "Hide appendix", "value": "hide"},
+                ],
+            },
+        ]
+        normalized_filter_specs: List[Dict[str, Any]] = []
+        for idx, spec in enumerate(filter_specs, start=1):
+            normalized = dict(spec)
+            normalized["id"] = str(normalized.get("id") or f"dashboard-filter-{idx}")
+            normalized["label"] = str(normalized.get("label") or "Filter")
+            normalized["type"] = str(normalized.get("type") or "select").lower()
+            normalized["target"] = str(normalized.get("target") or normalized["id"])
+            normalized["default"] = str(normalized.get("default") or "")
+            normalized_filter_specs.append(normalized)
+        filter_specs = normalized_filter_specs
 
         lines: List[str] = [
             "<!doctype html>",
@@ -1487,23 +1869,74 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
             '  <script src="https://cdn.plot.ly/plotly-3.3.0.min.js"></script>',
             "</head>",
             "<body>",
-            f'  <div class="header"><h1>{html.escape(title)}</h1>',
-            f'  <p>{html.escape(description)}</p>',
-            f'  <div class="meta">Generated: {timestamp}</div></div>',
-            '  <div class="container">',
+            '  <div class="shell">',
+            '    <section class="hero">',
+            '      <div class="eyebrow">Interactive dashboard</div>',
+            f'      <h1>{html.escape(title)}</h1>',
+            f'      <p>{html.escape(description)}</p>',
+            f'      <div class="hero-meta">Generated {timestamp}</div>',
+            '      <div class="kpi-row">',
         ]
 
-        # --- Queries section ---
-        if db_manager.session.query_history:
-            lines.append('  <div class="section">')
-            lines.append('    <h2>Queries</h2>')
-            for i, qr in enumerate(db_manager.session.query_history, start=1):
-                lines.append(f'    <div class="query-meta">Query {i} &mdash; {qr.row_count} rows returned</div>')
-                lines.append(f'    <div class="query-block">{html.escape(qr.sql)}</div>')
-            lines.append("  </div>")
+        for item in hero_kpis:
+            label = html.escape(str(item.get("label", "")).strip() or "Metric")
+            value = html.escape(str(item.get("value", "")).strip() or "-")
+            note = html.escape(str(item.get("note", "")).strip() or "")
+            lines.append(
+                f'        <div class="kpi"><div class="kpi-label">{label}</div><div class="kpi-value">{value}</div><div class="kpi-note">{note}</div></div>'
+            )
+
+        lines.extend([
+            '      </div>',
+            '      <div class="controls" aria-label="Dashboard filters">',
+        ])
+
+        control_html: List[str] = []
+        for idx, spec in enumerate(filter_specs, start=1):
+            control_id = html.escape(str(spec.get("id") or f"dashboard-filter-{idx}"))
+            label = html.escape(str(spec.get("label") or "Filter"))
+            control_type = str(spec.get("type") or "select").lower()
+            default_value = str(spec.get("default") or "")
+            if control_type == "search":
+                placeholder = html.escape(str(spec.get("placeholder") or "Search"))
+                control_html.append(
+                    f'        <div class="control"><label for="{control_id}">{label}</label>'
+                    f'<input id="{control_id}" data-filter-target="{html.escape(str(spec.get("target") or ""))}" '
+                    f'type="search" placeholder="{placeholder}" value="{html.escape(default_value)}" /></div>'
+                )
+            else:
+                options = spec.get("options") or []
+                option_html: List[str] = []
+                for option in options:
+                    if isinstance(option, dict):
+                        option_label = html.escape(str(option.get("label", option.get("value", ""))))
+                        option_value = html.escape(str(option.get("value", "")))
+                    else:
+                        option_label = html.escape(str(option))
+                        option_value = option_label
+                    selected = ' selected="selected"' if str(option_value) == default_value else ""
+                    option_html.append(f'<option value="{option_value}"{selected}>{option_label}</option>')
+                control_html.append(
+                    f'        <div class="control"><label for="{control_id}">{label}</label>'
+                    f'<select id="{control_id}" data-filter-target="{html.escape(str(spec.get("target") or ""))}">'
+                    f'{"".join(option_html)}</select></div>'
+                )
+
+        lines.extend(control_html)
+        lines.extend([
+            '        <div class="control">',
+            '          <label>Actions</label>',
+            '          <div class="control-actions">',
+            '            <button type="button" class="button secondary" id="reset-filters">Reset filters</button>',
+            '            <span class="filter-status" id="filter-status"></span>',
+            '          </div>',
+            '        </div>',
+            '      </div>',
+            '    </section>',
+        ])
 
         # --- Charts section ---
-        chart_cards: List[str] = []
+        chart_entries: List[Dict[str, Any]] = []
         for idx, json_path in enumerate(plotly_json_files, start=1):
             section_title = (
                 section_titles[idx - 1]
@@ -1514,16 +1947,35 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
                 fig_json = json.loads(json_path.read_text(encoding="utf-8"))
                 script_payload = json.dumps(fig_json)
                 div_id = f"db-chart-{idx}"
+                tags = [str(tag).strip() for tag in (chart_tags[idx - 1] if idx - 1 < len(chart_tags) else []) if str(tag).strip()]
+                tag_html = ''.join(f'<span class="tag">{html.escape(tag)}</span>' for tag in (["Interactive", "Plotly"] + tags))
                 card = (
-                    f'<div class="chart-card">'
+                    f'<div class="chart-card" data-chart-type="interactive" data-title="{html.escape(section_title.lower())}" '
+                    f'data-subtitle="interactive chart with hover detail and responsive resizing" '
+                    f'data-tags="{html.escape("|".join(tag.lower() for tag in tags))}">'
                     f'<h3>{html.escape(section_title)}</h3>'
+                    f'<div class="chart-meta">{tag_html}</div>'
+                    f'<div class="chart-subtitle">Interactive chart with hover detail and responsive resizing.</div>'
                     f'<div id="{div_id}" class="plotly-embed"></div>'
-                    f"<script>const dbSpec{idx}={script_payload};"
-                    f"const dbData{idx}=dbSpec{idx}.data||[];const dbLayout{idx}=dbSpec{idx}.layout||{{}};const dbCfg{idx}=dbSpec{idx}.config||{{}};"
-                    f"Plotly.newPlot('{div_id}',dbData{idx},dbLayout{idx},dbCfg{idx});</script>"
+                    f"<script>"
+                    f"const dbSpec{idx}={script_payload};"
+                    f"const dbData{idx}=dbSpec{idx}.data||[];"
+                    f"const dbLayout{idx}=Object.assign({{"
+                    f"paper_bgcolor:'rgba(0,0,0,0)',plot_bgcolor:'#fffefb',"
+                    f"font:{{family:'Inter, ui-sans-serif, system-ui, sans-serif',color:'#374151',size:12}},"
+                    f"margin:{{t:56,r:24,b:56,l:56}},"
+                    f"colorway:['#1f4d3a','#b45309','#2563eb','#b91c1c','#7c3aed','#0f766e'],"
+                    f"xaxis:{{gridcolor:'#ebe4d8',linecolor:'#d7d0c4',tickcolor:'#d7d0c4',zeroline:false,title:{{standoff:10}}}},"
+                    f"yaxis:{{gridcolor:'#ebe4d8',linecolor:'#d7d0c4',tickcolor:'#d7d0c4',zeroline:false,title:{{standoff:10}}}},"
+                    f"legend:{{orientation:'h',yanchor:'bottom',y:1.02,xanchor:'left',x:0}},"
+                    f"hoverlabel:{{bgcolor:'#1f2937',bordercolor:'#1f2937',font:{{color:'#fff'}}}}"
+                    f"}},dbSpec{idx}.layout||{{}});"
+                    f"const dbCfg{idx}=Object.assign({{responsive:true,displayModeBar:false}},dbSpec{idx}.config||{{}});"
+                    f"Plotly.newPlot('{div_id}',dbData{idx},dbLayout{idx},dbCfg{idx});"
+                    f"</script>"
                     "</div>"
                 )
-                chart_cards.append(card)
+                chart_entries.append({"index": idx, "card": card})
             except Exception:  # pragma: no cover - best effort
                 logger.warning("Dashboard: failed to embed plotly JSON %s", json_path, exc_info=True)
 
@@ -1535,27 +1987,123 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
             )
             try:
                 encoded = base64.b64encode(png_path.read_bytes()).decode("utf-8")
+                tags = [str(tag).strip() for tag in (chart_tags[idx - 1] if idx - 1 < len(chart_tags) else []) if str(tag).strip()]
+                tag_html = ''.join(f'<span class="tag">{html.escape(tag)}</span>' for tag in (["Static", "Image"] + tags))
                 card = (
-                    f'<div class="chart-card">'
+                    f'<div class="chart-card" data-chart-type="static" data-title="{html.escape(section_title.lower())}" '
+                    f'data-subtitle="static image artifact embedded directly in the dashboard" '
+                    f'data-tags="{html.escape("|".join(tag.lower() for tag in tags))}">'
                     f'<h3>{html.escape(section_title)}</h3>'
+                    f'<div class="chart-meta">{tag_html}</div>'
+                    f'<div class="chart-subtitle">Static image artifact embedded directly in the dashboard.</div>'
                     f'<img class="chart-img" src="data:image/png;base64,{encoded}" alt="{html.escape(png_path.stem)}" />'
                     "</div>"
                 )
-                chart_cards.append(card)
+                chart_entries.append({"index": idx, "card": card})
             except Exception:  # pragma: no cover - best effort
                 logger.warning("Dashboard: failed to embed PNG %s", png_path, exc_info=True)
 
-        if chart_cards:
-            lines.append('  <div class="section">')
-            lines.append('    <h2>Charts</h2>')
-            lines.append('    <div class="chart-grid">')
-            lines.extend(f"      {c}" for c in chart_cards)
-            lines.append("    </div>")
-            lines.append("  </div>")
+        if chart_entries:
+            entry_by_index = {entry["index"]: entry["card"] for entry in chart_entries}
+            rendered_indexes: Set[int] = set()
+            section_specs = sections or [{
+                "title": "Analysis Views",
+                "description": "A curated set of visuals from this analysis run, arranged for fast review.",
+                "chart_indexes": [entry["index"] for entry in chart_entries],
+            }]
+
+            for sec_idx, spec in enumerate(section_specs, start=1):
+                raw_indexes = spec.get("chart_indexes") or []
+                chart_indexes = [
+                    int(idx) for idx in raw_indexes
+                    if isinstance(idx, (int, str)) and str(idx).isdigit() and int(idx) in entry_by_index
+                ]
+                if not chart_indexes:
+                    continue
+                rendered_indexes.update(chart_indexes)
+                section_id = html.escape(str(spec.get("id") or f"section-{sec_idx}"))
+                section_title = html.escape(str(spec.get("title") or f"Section {sec_idx}"))
+                section_desc = html.escape(str(spec.get("description") or ""))
+                lines.append(f'  <section class="section" data-section-id="{section_id}">')
+                lines.append('    <div class="section-header">')
+                lines.append('      <div>')
+                lines.append(f'        <h2>{section_title}</h2>')
+                if section_desc:
+                    lines.append(f'        <p class="section-intro">{section_desc}</p>')
+                lines.append('      </div>')
+                lines.append('    </div>')
+                lines.append('    <div class="chart-grid">')
+                lines.extend(f'      {entry_by_index[idx]}' for idx in chart_indexes)
+                lines.append("    </div>")
+                lines.append("  </section>")
+
+            remaining = [entry["index"] for entry in chart_entries if entry["index"] not in rendered_indexes]
+            if remaining:
+                lines.append('  <section class="section" data-section-id="remaining-charts">')
+                lines.append('    <div class="section-header"><div><h2>Additional Views</h2><p class="section-intro">Charts not assigned to a custom section.</p></div></div>')
+                lines.append('    <div class="chart-grid">')
+                lines.extend(f'      {entry_by_index[idx]}' for idx in remaining)
+                lines.append("    </div>")
+                lines.append("  </section>")
+
+        # --- Queries appendix ---
+        if db_manager.session.query_history:
+            lines.append('  <section class="section">')
+            lines.append('    <details class="appendix">')
+            lines.append('      <summary>Technical Appendix: Source Queries</summary>')
+            lines.append('      <p class="section-intro">SQL used to produce the analysis is included here for auditability and handoff.</p>')
+            lines.append('      <div class="query-list">')
+            for i, qr in enumerate(db_manager.session.query_history, start=1):
+                lines.append('        <div class="query-item">')
+                lines.append(f'          <div class="query-meta">Query {i} | {qr.row_count} rows returned</div>')
+                lines.append(f'          <pre class="query-block">{html.escape(qr.sql)}</pre>')
+                lines.append('        </div>')
+            lines.append('      </div>')
+            lines.append('    </details>')
+            lines.append('  </section>')
 
         lines.extend([
-            f'  <div class="footer">Generated by HelpUDoc data agent &mdash; {timestamp}</div>',
-            "  </div>",  # /container
+            f'  <div class="footer">Generated by HelpUDoc data agent | {timestamp}</div>',
+            "  </div>",  # /shell
+            "  <script>",
+            "    (function(){",
+            f"      const filterSpecs={json.dumps(filter_specs, default=_json_default)};",
+            "      const filterElements=filterSpecs.map((spec)=>({ spec, el: document.getElementById(spec.id) })).filter((item)=>item.el);",
+            "      const resetEl=document.getElementById('reset-filters');",
+            "      const statusEl=document.getElementById('filter-status');",
+            "      const cards=Array.from(document.querySelectorAll('.chart-card'));",
+            "      const appendix=document.querySelector('details.appendix');",
+            "      function applyFilters(){",
+            "        const state={};",
+            "        filterElements.forEach(({spec,el})=>{ state[spec.target||spec.id]=(el.value||'').trim().toLowerCase(); });",
+            "        let visible=0;",
+            "        cards.forEach((card)=>{",
+            "          const title=(card.dataset.title||'').toLowerCase();",
+            "          const subtitle=(card.dataset.subtitle||'').toLowerCase();",
+            "          const chartType=(card.dataset.chartType||'').toLowerCase();",
+            "          const tags=(card.dataset.tags||'').toLowerCase().split('|').filter(Boolean);",
+            "          const search=state.title_search||'';",
+            "          const chartTag=state.chart_tag||'all';",
+            "          const type=state.chart_type||'all';",
+            "          const matchesSearch=!search || title.includes(search) || subtitle.includes(search) || tags.some((tag)=>tag.includes(search));",
+            "          const matchesType=(type==='all') || chartType===type;",
+            "          const matchesTag=(chartTag==='all') || tags.includes(chartTag);",
+            "          const show=matchesSearch && matchesType && matchesTag;",
+            "          card.classList.toggle('is-hidden',!show);",
+            "          if(show){visible+=1;}",
+            "        });",
+            "        if(statusEl){statusEl.textContent=`Showing ${visible} of ${cards.length} charts`;}",
+            "        if(appendix){",
+            "          const appendixSetting=state.appendix_visibility || 'show';",
+            "          appendix.open=appendixSetting==='show';",
+            "          appendix.closest('.section').style.display=appendixSetting==='hide' ? 'none' : '';",
+            "        }",
+            "      }",
+            "      filterElements.forEach(({el})=>{ el.addEventListener('input',applyFilters); el.addEventListener('change',applyFilters); });",
+            "      if(resetEl){ resetEl.addEventListener('click',()=>{ filterElements.forEach(({spec,el})=>{ el.value=spec.default ?? ''; }); applyFilters(); }); }",
+            "      applyFilters();",
+            "    })();",
+            "  </script>",
             "</body>",
             "</html>",
         ])
@@ -1590,7 +2138,7 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
             rel_path = dashboard_path.relative_to(ws).as_posix()
             return (
                 f"✅ Dashboard saved to: {rel_path}\n"
-                f"Charts embedded: {len(chart_cards)} | Queries embedded: {len(db_manager.session.query_history)}"
+                f"Charts embedded: {len(chart_entries)} | Queries embedded: {len(db_manager.session.query_history)}"
             )
         except Exception as e:  # pragma: no cover - defensive
             logger.warning("Failed to save dashboard: %s", e)
