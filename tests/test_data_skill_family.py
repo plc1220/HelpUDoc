@@ -184,6 +184,18 @@ class TestRuntimeEnforcement:
         skill = self._make_skill(tools=["data_agent_tools", "run_sql_query"], mcp_servers=[])
         assert is_tool_allowed("run_sql_query", skill, tool_mcp_server=None) is True
 
+    def test_factory_tool_alias_expands_to_runtime_tool_names(self) -> None:
+        from agent.helpudoc_agent.skills_registry import expand_runtime_tool_names
+
+        expanded = expand_runtime_tool_names(["data_agent_tools"])
+        assert "data_agent_tools" in expanded
+        assert "get_table_schema" in expanded
+        assert "run_sql_query" in expanded
+        assert "materialize_bigquery_to_parquet" in expanded
+        assert "generate_chart_config" in expanded
+        assert "generate_summary" in expanded
+        assert "generate_dashboard" in expanded
+
     def test_builtin_tool_denied_when_not_declared(self) -> None:
         from agent.helpudoc_agent.skills_registry import is_tool_allowed
 
@@ -200,6 +212,28 @@ class TestRuntimeEnforcement:
         }
         assert is_tool_allowed("run_sql_query", active_scope, tool_mcp_server=None) is True
         assert is_tool_allowed("generate_dashboard", active_scope, tool_mcp_server=None) is False
+
+    def test_activate_skill_context_uses_expanded_runtime_tools(self, tmp_path: Path) -> None:
+        from agent.helpudoc_agent.skills_registry import activate_skill_context, load_skills
+
+        skill_dir = tmp_path / "data" / "analyze"
+        skill_dir.mkdir(parents=True)
+        (tmp_path / "data" / "SKILL.md").write_text(_make_skill_md("data"), encoding="utf-8")
+        (skill_dir / "SKILL.md").write_text(
+            _make_skill_md("data/analyze", tools=["data_agent_tools"], mcp_servers=["toolbox-bq-demo"]),
+            encoding="utf-8",
+        )
+        skills = {skill.skill_id: skill for skill in load_skills(tmp_path)}
+        context: Dict[str, Any] = {}
+
+        activate_skill_context(context, skills["data/analyze"])
+
+        assert context["active_skill"] == "data/analyze"
+        active_scope = context["active_skill_scope"]
+        assert "data_agent_tools" in active_scope["tools"]
+        assert "run_sql_query" in active_scope["tools"]
+        assert "generate_summary" in active_scope["tools"]
+        assert active_scope["declared_tools"] == ["data_agent_tools"]
 
     def test_mcp_tool_allowed_when_server_declared(self) -> None:
         from agent.helpudoc_agent.skills_registry import is_tool_allowed
@@ -218,6 +252,18 @@ class TestRuntimeEnforcement:
 
         assert is_tool_allowed("anything", None, tool_mcp_server=None) is True
         assert is_tool_allowed("mcp_tool", None, tool_mcp_server="some-server") is True
+
+    def test_empty_builtin_allowlist_means_unrestricted_for_legacy_skills(self) -> None:
+        from agent.helpudoc_agent.skills_registry import is_tool_allowed
+
+        skill = self._make_skill(tools=[], mcp_servers=["toolbox-bq-demo"])
+        assert is_tool_allowed("write_file", skill, tool_mcp_server=None) is True
+
+    def test_empty_mcp_allowlist_means_unrestricted_for_legacy_skills(self) -> None:
+        from agent.helpudoc_agent.skills_registry import is_tool_allowed
+
+        skill = self._make_skill(tools=["write_file"], mcp_servers=[])
+        assert is_tool_allowed("bq_execute_sql", skill, tool_mcp_server="toolbox-bq-demo") is True
 
 
 class TestGuardedTool:

@@ -10,6 +10,7 @@ interface AuthContextValue {
   googleError: string | null;
   authMode: 'oidc' | 'headers' | 'hybrid';
   signInWithGoogle: (returnTo?: string) => Promise<void>;
+  signInWithHeaders: (profile: { name: string; email?: string | null }) => Promise<void>;
   signOut: () => Promise<void>;
   refreshSession: () => Promise<void>;
 }
@@ -51,6 +52,18 @@ const toAuthUser = (payload: AuthMeResponse['user']): AuthUser | null => {
     name: payload.displayName,
     email: payload.email || null,
     provider,
+  };
+};
+
+const buildHeaderAuthUser = (profile: { name: string; email?: string | null }): AuthUser => {
+  const normalizedName = profile.name.trim() || 'Local User';
+  const normalizedEmail = profile.email?.trim() || null;
+  const stableId = normalizedEmail || `local-${normalizedName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+  return {
+    id: stableId,
+    name: normalizedName,
+    email: normalizedEmail,
+    provider: 'local',
   };
 };
 
@@ -121,6 +134,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     window.location.assign(url.toString());
   }, [authMode, googleConfigured]);
 
+  const signInWithHeaders = useCallback(async (profile: { name: string; email?: string | null }) => {
+    persistUser(buildHeaderAuthUser(profile));
+    setGoogleError(null);
+  }, [persistUser]);
+
   const signOut = useCallback(async () => {
     if (authMode === 'headers') {
       persistUser(null);
@@ -145,9 +163,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     googleError,
     authMode,
     signInWithGoogle,
+    signInWithHeaders,
     signOut,
     refreshSession,
-  }), [authMode, googleConfigured, googleError, loading, refreshSession, signInWithGoogle, signOut, user]);
+  }), [authMode, googleConfigured, googleError, loading, refreshSession, signInWithGoogle, signInWithHeaders, signOut, user]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };

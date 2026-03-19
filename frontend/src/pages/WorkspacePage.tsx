@@ -1627,20 +1627,18 @@ export default function WorkspacePage() {
     switch (directive.kind) {
       case 'skill':
         return [
-          `Use the "${directive.skillId}" skill for this task.`,
-          `First call load_skill with "${directive.skillId}" to load the skill instructions, then follow that skill closely.`,
-          directive.prompt ? `User request:\n${directive.prompt}` : 'User request:\nContinue with the selected skill.',
-        ].join('\n\n');
-      case 'mcp': {
-        const prefersGoogleWorkspace = directive.serverId.trim().toLowerCase() === 'google-workspace';
+          '<<<HELPUDOC_DIRECTIVE',
+          JSON.stringify({ kind: 'skill', skillId: directive.skillId }),
+          '>>>',
+          directive.prompt || 'Continue with the selected skill.',
+        ].join('\n');
+      case 'mcp':
         return [
-          `Prefer tools from the MCP server "${directive.serverId}" for this task.`,
-          prefersGoogleWorkspace
-            ? 'Use Gmail, Calendar, Drive, and Sheets tools from that server before falling back to web search or saying access is unavailable.'
-            : 'Before saying the capability is unavailable, inspect and use the runtime tools exposed by that server.',
-          directive.prompt ? `User request:\n${directive.prompt}` : `User request:\nUse ${directive.serverId} for this task.`,
-        ].join('\n\n');
-      }
+          '<<<HELPUDOC_DIRECTIVE',
+          JSON.stringify({ kind: 'mcp', serverId: directive.serverId }),
+          '>>>',
+          directive.prompt || `Use ${directive.serverId} for this task.`,
+        ].join('\n');
       case 'presentation':
       case 'none':
       default:

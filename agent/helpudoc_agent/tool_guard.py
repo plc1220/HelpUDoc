@@ -99,12 +99,26 @@ class GuardedTool(BaseTool):
                 )
         raise exc
 
+    def _unwrap_runtime_input(self, input: Any) -> Any:
+        if not isinstance(input, dict):
+            return input
+        if input.get("type") != "tool_call":
+            return input
+        raw_args = input.get("args")
+        if isinstance(raw_args, dict):
+            return raw_args
+        return {
+            key: value
+            for key, value in input.items()
+            if key not in {"id", "name", "type"}
+        }
+
     def invoke(self, input: Any, config: Any = None, **kwargs: Any) -> Any:
         error = self._guard()
         if error:
             return self._blocked_result(input, error)
         try:
-            return self.wrapped_tool.invoke(input, config=config, **kwargs)
+            return self.wrapped_tool.invoke(self._unwrap_runtime_input(input), config=config, **kwargs)
         except Exception as exc:
             return self._exception_result(input, exc)
 
@@ -113,9 +127,10 @@ class GuardedTool(BaseTool):
         if error:
             return self._blocked_result(input, error)
         try:
+            wrapped_input = self._unwrap_runtime_input(input)
             if hasattr(self.wrapped_tool, "ainvoke"):
-                return await self.wrapped_tool.ainvoke(input, config=config, **kwargs)
-            return self.wrapped_tool.invoke(input, config=config, **kwargs)
+                return await self.wrapped_tool.ainvoke(wrapped_input, config=config, **kwargs)
+            return self.wrapped_tool.invoke(wrapped_input, config=config, **kwargs)
         except Exception as exc:
             return self._exception_result(input, exc)
 

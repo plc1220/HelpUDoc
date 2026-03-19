@@ -1426,14 +1426,14 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
         - Emits a tool_artifacts event so the frontend can surface the file.
         - Can only be called once per run; subsequent calls return an error.
         """
-        if db_manager.session.query_count == 0:
-            return "Run at least one SQL query before building a dashboard."
-        if not db_manager.session.chart_history:
-            return "Generate at least one chart before building a dashboard."
         try:
             db_manager.ensure_single_dashboard()
         except ValueError as exc:
             return str(exc)
+        if db_manager.session.query_count == 0:
+            return "Run at least one SQL query before building a dashboard."
+        if not db_manager.session.chart_history:
+            return "Generate at least one chart before building a dashboard."
         db_manager.mark_dashboard_generated()
 
         from datetime import datetime

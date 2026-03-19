@@ -28,6 +28,18 @@ class SkillMetadata:
     path: Path
 
 
+TOOL_FACTORY_EXPANSIONS: dict[str, tuple[str, ...]] = {
+    "data_agent_tools": (
+        "get_table_schema",
+        "run_sql_query",
+        "materialize_bigquery_to_parquet",
+        "generate_chart_config",
+        "generate_summary",
+        "generate_dashboard",
+    ),
+}
+
+
 def _parse_frontmatter(text: str) -> dict:
     if not text.startswith("---"):
         return {}
@@ -213,6 +225,93 @@ def collect_tool_names(skills: Iterable[SkillMetadata]) -> List[str]:
     return ordered
 
 
+def find_skill(skills_root: Path | None, skill_id_or_name: str) -> SkillMetadata | None:
+    if skills_root is None or not skills_root.exists():
+        return None
+    normalized = str(skill_id_or_name or "").strip()
+    if not normalized:
+        return None
+    for skill in load_skills(skills_root):
+        if normalized in {skill.skill_id, skill.name}:
+            return skill
+    return None
+
+
+def expand_runtime_tool_names(tool_names: Iterable[str]) -> List[str]:
+    seen: set[str] = set()
+    expanded: List[str] = []
+    for raw_tool_name in tool_names:
+        tool_name = str(raw_tool_name or "").strip()
+        if not tool_name:
+            continue
+        if tool_name not in seen:
+            seen.add(tool_name)
+            expanded.append(tool_name)
+        for runtime_tool_name in TOOL_FACTORY_EXPANSIONS.get(tool_name, ()):
+            if runtime_tool_name in seen:
+                continue
+            seen.add(runtime_tool_name)
+            expanded.append(runtime_tool_name)
+    return expanded
+
+
+def activate_skill_context(context: dict[str, Any], skill: SkillMetadata) -> None:
+    runtime_tools = expand_runtime_tool_names(skill.tools)
+    context["active_skill"] = skill.skill_id
+    context["active_skill_scope"] = {
+        "skill_id": skill.skill_id,
+        "name": skill.name,
+        "tools": runtime_tools,
+        "declared_tools": list(skill.tools),
+        "mcp_servers": list(skill.mcp_servers),
+    }
+    context["active_skill_policy"] = {
+        "requires_hitl_plan": skill.policy.requires_hitl_plan,
+        "requires_workspace_artifacts": skill.policy.requires_workspace_artifacts,
+        "required_artifacts_mode": skill.policy.required_artifacts_mode,
+        "required_artifacts": skill.policy.required_artifacts or [],
+        "pre_plan_search_limit": max(0, int(skill.policy.pre_plan_search_limit or 0)),
+    }
+    # Plan approval is per top-level task; a newly activated skill starts fresh unless
+    # the workspace is explicitly configured to auto-approve plan reviews.
+    context["plan_approved"] = bool(context.get("skip_plan_approvals"))
+    context["pre_plan_search_count"] = 0
+
+
+def read_skill_content(skill: SkillMetadata) -> str:
+    return skill.path.read_text(encoding="utf-8")
+
+
+def build_skill_policy_lines(skill: SkillMetadata) -> List[str]:
+    declared_tools = list(skill.tools)
+    runtime_tools = expand_runtime_tool_names(declared_tools)
+    policy_lines = [
+        f"Skill policy for {skill.skill_id}:",
+        f"- requires_hitl_plan: {'true' if skill.policy.requires_hitl_plan else 'false'}",
+        f"- requires_workspace_artifacts: {'true' if skill.policy.requires_workspace_artifacts else 'false'}",
+        f"- tools: {', '.join(declared_tools) if declared_tools else '(none declared)'}",
+    ]
+    if runtime_tools != declared_tools:
+        policy_lines.append(f"- resolved_tools: {', '.join(runtime_tools)}")
+    policy_lines.append(
+        f"- mcp_servers: {', '.join(skill.mcp_servers) if skill.mcp_servers else '(none declared)'}"
+    )
+    if skill.policy.requires_hitl_plan:
+        policy_lines.append(
+            "- You must call request_plan_approval before side-effecting execution."
+        )
+    else:
+        policy_lines.append(
+            "- Do not call request_plan_approval for this skill unless the user explicitly asks for a review gate."
+        )
+    return policy_lines
+
+
+def build_loaded_skill_text(skill: SkillMetadata, content: str) -> str:
+    policy_lines = build_skill_policy_lines(skill)
+    return f"Loaded skill: {skill.skill_id}\n\n" + "\n".join(policy_lines) + f"\n\n{content}"
+
+
 # ---------------------------------------------------------------------------
 # Runtime enforcement helpers
 # ---------------------------------------------------------------------------
@@ -274,9 +373,15 @@ def is_tool_allowed(
     if active_skill is None:
         return True
     if tool_mcp_server is None:
-        # Built-in tool – check tools list.
+        # Empty tool allowlists are intentionally treated as unrestricted access
+        # for backwards compatibility with older skills that omit `tools:`.
+        if not active_skill.tools:
+            return True
         return tool_name in active_skill.tools
-    # MCP tool – check mcp_servers list.
+    # Empty MCP allowlists are likewise unrestricted for skills that omit
+    # `mcp_servers:` entirely.
+    if not active_skill.mcp_servers:
+        return True
     return tool_mcp_server in active_skill.mcp_servers
 
 

@@ -10,7 +10,7 @@ interface LocationState {
 type PaletteMode = 'light' | 'dark';
 
 const LoginPage = () => {
-  const { user, googleReady, googleError, signInWithGoogle } = useAuth();
+  const { user, googleReady, googleError, authMode, signInWithGoogle, signInWithHeaders } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [colorMode, setColorMode] = useState<PaletteMode>(() => {
@@ -23,6 +23,8 @@ const LoginPage = () => {
   });
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [headerName, setHeaderName] = useState('');
+  const [headerEmail, setHeaderEmail] = useState('');
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', colorMode);
@@ -57,6 +59,26 @@ const LoginPage = () => {
       await signInWithGoogle(state?.from || '/');
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unable to start Google sign-in.';
+      setError(message);
+      setSubmitting(false);
+    }
+  };
+
+  const handleHeaderLogin = async () => {
+    const trimmedName = headerName.trim();
+    if (!trimmedName) {
+      setError('Enter a display name to continue in header auth mode.');
+      return;
+    }
+    setError(null);
+    setSubmitting(true);
+    try {
+      await signInWithHeaders({
+        name: trimmedName,
+        email: headerEmail.trim() || null,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unable to start header-mode sign-in.';
       setError(message);
       setSubmitting(false);
     }
@@ -131,27 +153,61 @@ const LoginPage = () => {
                 </div>
               )}
 
-              <div className="mb-6 rounded-2xl bg-slate-100/70 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700/50 px-4 py-3 text-sm text-slate-600 dark:text-slate-300 text-center">
-                Sign in with your Google account to access HelpUDoc.
-              </div>
-
-              {/* Google button */}
-              <div className="relative">
-                {googleError ? (
-                  <div className="text-center text-xs text-red-600 dark:text-red-400 p-3 rounded-xl bg-red-100/80 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20">
-                    {googleError}
+              {authMode === 'headers' ? (
+                <>
+                  <div className="mb-6 rounded-2xl bg-slate-100/70 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700/50 px-4 py-3 text-sm text-slate-600 dark:text-slate-300 text-center">
+                    Header auth mode is enabled. Enter a local identity to seed the `X-User-*` headers for this browser.
                   </div>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={handleGoogleLogin}
-                    disabled={!googleReady || submitting}
-                    className="w-full mt-1 py-3 rounded-xl border border-slate-300 dark:border-slate-600 bg-white/70 dark:bg-slate-800/70 text-slate-800 dark:text-slate-100 text-sm font-semibold transition-all duration-300 hover:bg-white dark:hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    Continue with Google
-                  </button>
-                )}
-              </div>
+
+                  <div className="space-y-3">
+                    <input
+                      type="text"
+                      value={headerName}
+                      onChange={(event) => setHeaderName(event.target.value)}
+                      placeholder="Display name"
+                      className="w-full rounded-xl border border-slate-300 dark:border-slate-600 bg-white/70 dark:bg-slate-800/70 px-4 py-3 text-sm text-slate-900 dark:text-slate-100 outline-none focus:border-blue-500"
+                    />
+                    <input
+                      type="email"
+                      value={headerEmail}
+                      onChange={(event) => setHeaderEmail(event.target.value)}
+                      placeholder="Email (optional)"
+                      className="w-full rounded-xl border border-slate-300 dark:border-slate-600 bg-white/70 dark:bg-slate-800/70 px-4 py-3 text-sm text-slate-900 dark:text-slate-100 outline-none focus:border-blue-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleHeaderLogin}
+                      disabled={submitting}
+                      className="w-full mt-1 py-3 rounded-xl border border-slate-300 dark:border-slate-600 bg-white/70 dark:bg-slate-800/70 text-slate-800 dark:text-slate-100 text-sm font-semibold transition-all duration-300 hover:bg-white dark:hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Continue in Header Mode
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="mb-6 rounded-2xl bg-slate-100/70 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700/50 px-4 py-3 text-sm text-slate-600 dark:text-slate-300 text-center">
+                    Sign in with your Google account to access HelpUDoc.
+                  </div>
+
+                  <div className="relative">
+                    {googleError ? (
+                      <div className="text-center text-xs text-red-600 dark:text-red-400 p-3 rounded-xl bg-red-100/80 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20">
+                        {googleError}
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={handleGoogleLogin}
+                        disabled={!googleReady || submitting}
+                        className="w-full mt-1 py-3 rounded-xl border border-slate-300 dark:border-slate-600 bg-white/70 dark:bg-slate-800/70 text-slate-800 dark:text-slate-100 text-sm font-semibold transition-all duration-300 hover:bg-white dark:hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Continue with Google
+                      </button>
+                    )}
+                  </div>
+                </>
+              )}
 
               {/* Footer text */}
               <p className="mt-8 text-center text-xs text-slate-500 dark:text-slate-400">
