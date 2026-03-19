@@ -2,7 +2,6 @@ import { useState, useEffect, useRef, useCallback, useMemo, type ChangeEvent } f
 import type { ComponentProps, CSSProperties } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { useNavigate } from 'react-router-dom';
-import YAML from 'yaml';
 import {
   Box,
   CssBaseline,
@@ -27,6 +26,7 @@ import {
 import { startPaper2SlidesJob, getPaper2SlidesJob, exportPaper2SlidesPptx } from '../services/paper2SlidesJobApi';
 import {
   cancelRun,
+  fetchSlashMetadata,
   getRunStatus,
   startAgentRun,
   streamAgentRun,
@@ -75,7 +75,6 @@ import {
 import { getFileDisplayName, getFileTypeIcon, isSystemFile, normalizeFilePath } from '../utils/files';
 import { buildMessageMetadata, mapMessagesToAgentHistory, mergeMessageMetadata, sanitizeRunPolicy } from '../utils/messages';
 import { createMarkdownComponents } from '../components/markdown/MarkdownShared';
-import { fetchAgentConfig, fetchSkills } from '../services/settingsApi';
 
 const drawerWidth = 280;
 
@@ -622,6 +621,20 @@ export default function WorkspacePage() {
     }
     const rawQuery = commandQuery.toLowerCase();
     const normalized = rawQuery.trim();
+    if (!normalized) {
+      const rootCommands = SLASH_COMMANDS.map((command) => ({ ...command }));
+      const featuredSkills = availableSkills.slice(0, 5).map((skill) => ({
+        id: `skill:${skill.id}`,
+        command: `/skill ${skill.id}`,
+        description: skill.description || `Use the ${skill.id} skill`,
+      }));
+      const featuredMcpServers = availableMcpServers.slice(0, 3).map((server) => ({
+        id: `mcp:${server.name}`,
+        command: `/mcp ${server.name}`,
+        description: server.description || `Prefer tools from ${server.name}`,
+      }));
+      return [...rootCommands, ...featuredSkills, ...featuredMcpServers];
+    }
     const skillMatch = rawQuery.match(/^skill(?:\s+(.*))?$/);
     if (skillMatch) {
       const filter = (skillMatch[1] || '').trim();
@@ -646,15 +659,33 @@ export default function WorkspacePage() {
           description: server.description || `Prefer tools from ${server.name}`,
         }));
     }
-    return SLASH_COMMANDS
+    const matches = SLASH_COMMANDS
       .filter((command) => {
-        if (!normalized) {
-          return true;
-        }
         const commandValue = command.command.slice(1).toLowerCase();
         return commandValue.startsWith(normalized) || command.command.toLowerCase().includes(normalized);
       })
       .map((command) => ({ ...command }));
+    if (normalized.startsWith('skill')) {
+      return [
+        ...matches,
+        ...availableSkills.slice(0, 8).map((skill) => ({
+          id: `skill:${skill.id}`,
+          command: `/skill ${skill.id}`,
+          description: skill.description || `Use the ${skill.id} skill`,
+        })),
+      ];
+    }
+    if (normalized.startsWith('mcp')) {
+      return [
+        ...matches,
+        ...availableMcpServers.slice(0, 8).map((server) => ({
+          id: `mcp:${server.name}`,
+          command: `/mcp ${server.name}`,
+          description: server.description || `Prefer tools from ${server.name}`,
+        })),
+      ];
+    }
+    return matches;
   }, [availableMcpServers, availableSkills, commandQuery, isCommandOpen]);
 
   const personaDisplayName = useMemo(() => {
@@ -1352,25 +1383,12 @@ export default function WorkspacePage() {
 
     const loadSlashMetadata = async () => {
       try {
-        const [skills, agentConfigContent] = await Promise.all([
-          fetchSkills(),
-          fetchAgentConfig(),
-        ]);
+        const { skills, mcpServers } = await fetchSlashMetadata();
         if (cancelled) {
           return;
         }
         setAvailableSkills(skills);
-        const parsed = YAML.parse(agentConfigContent) as { mcp_servers?: Array<Record<string, unknown>> } | null;
-        const servers = Array.isArray(parsed?.mcp_servers)
-          ? parsed.mcp_servers
-              .filter((entry) => entry && typeof entry === 'object' && typeof entry.name === 'string')
-              .map((entry) => ({
-                name: String(entry.name).trim(),
-                description: typeof entry.description === 'string' ? entry.description : undefined,
-              }))
-              .filter((entry) => entry.name)
-          : [];
-        setAvailableMcpServers(servers);
+        setAvailableMcpServers(mcpServers);
       } catch (error) {
         console.error('Failed to load slash metadata', error);
       }
@@ -1473,6 +1491,22 @@ export default function WorkspacePage() {
         return false;
       }
       const textBeforeCursor = value.slice(0, cursor);
+      const resolvedDirectiveMatch = textBeforeCursor.match(/^\s*\/(skill|mcp)\s+([^\s]+)(?:\s+([\s\S]*))?$/i);
+      if (resolvedDirectiveMatch) {
+        const kind = resolvedDirectiveMatch[1]?.toLowerCase();
+        const targetId = (resolvedDirectiveMatch[2] || '').trim().toLowerCase();
+        const trailingPrompt = resolvedDirectiveMatch[3] || '';
+        const targetExists =
+          kind === 'skill'
+            ? availableSkillMap.has(targetId)
+            : kind === 'mcp'
+              ? availableMcpServerMap.has(targetId)
+              : false;
+        if (targetExists && (trailingPrompt.trim().length > 0 || /\s$/.test(textBeforeCursor))) {
+          closeCommand();
+          return false;
+        }
+      }
       const commandMatch = textBeforeCursor.match(/(^|[\s([{])\/([^\n/]*)$/);
       if (!commandMatch) {
         closeCommand();
@@ -1488,7 +1522,7 @@ export default function WorkspacePage() {
       closeMention();
       return true;
     },
-    [closeCommand, closeMention],
+    [availableMcpServerMap, availableSkillMap, closeCommand, closeMention],
   );
 
   const updateAutocompleteState = useCallback(
@@ -1533,19 +1567,25 @@ export default function WorkspacePage() {
       }
       const before = chatMessage.slice(0, commandTriggerIndex);
       const after = chatMessage.slice(commandCursorPosition);
-      const needsSpace = after.length === 0 || after.startsWith(' ') ? '' : ' ';
-      const nextValue = `${before}${command.command}${needsSpace}${after}`;
+      const shouldKeepCommandMenuOpen = command.command === '/skill' || command.command === '/mcp';
+      const insertedCommand = shouldKeepCommandMenuOpen ? `${command.command} ` : command.command;
+      const needsSpace = after.length === 0 || after.startsWith(' ') || shouldKeepCommandMenuOpen ? '' : ' ';
+      const nextValue = `${before}${insertedCommand}${needsSpace}${after}`;
       setChatMessage(nextValue);
-      closeCommand();
       requestAnimationFrame(() => {
+        const cursorPosition = before.length + insertedCommand.length + (needsSpace ? 1 : 0);
         if (chatInputRef.current) {
-          const cursorPosition = before.length + command.command.length + (needsSpace ? 1 : 0);
           chatInputRef.current.focus();
           chatInputRef.current.setSelectionRange(cursorPosition, cursorPosition);
         }
+        if (shouldKeepCommandMenuOpen) {
+          updateCommandState(nextValue, cursorPosition);
+        } else {
+          closeCommand();
+        }
       });
     },
-    [chatMessage, closeCommand, commandCursorPosition, commandTriggerIndex],
+    [chatMessage, closeCommand, commandCursorPosition, commandTriggerIndex, updateCommandState],
   );
 
   const parseSlashDirective = useCallback((rawMessage: string): ParsedSlashDirective => {
@@ -1587,20 +1627,18 @@ export default function WorkspacePage() {
     switch (directive.kind) {
       case 'skill':
         return [
-          `Use the "${directive.skillId}" skill for this task.`,
-          `First call load_skill with "${directive.skillId}" to load the skill instructions, then follow that skill closely.`,
-          directive.prompt ? `User request:\n${directive.prompt}` : 'User request:\nContinue with the selected skill.',
-        ].join('\n\n');
-      case 'mcp': {
-        const prefersGoogleWorkspace = directive.serverId.trim().toLowerCase() === 'google-workspace';
+          '<<<HELPUDOC_DIRECTIVE',
+          JSON.stringify({ kind: 'skill', skillId: directive.skillId }),
+          '>>>',
+          directive.prompt || 'Continue with the selected skill.',
+        ].join('\n');
+      case 'mcp':
         return [
-          `Prefer tools from the MCP server "${directive.serverId}" for this task.`,
-          prefersGoogleWorkspace
-            ? 'Use Gmail, Calendar, Drive, and Sheets tools from that server before falling back to web search or saying access is unavailable.'
-            : 'Before saying the capability is unavailable, inspect and use the runtime tools exposed by that server.',
-          directive.prompt ? `User request:\n${directive.prompt}` : `User request:\nUse ${directive.serverId} for this task.`,
-        ].join('\n\n');
-      }
+          '<<<HELPUDOC_DIRECTIVE',
+          JSON.stringify({ kind: 'mcp', serverId: directive.serverId }),
+          '>>>',
+          directive.prompt || `Use ${directive.serverId} for this task.`,
+        ].join('\n');
       case 'presentation':
       case 'none':
       default:

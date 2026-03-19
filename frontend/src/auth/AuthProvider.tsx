@@ -9,8 +9,8 @@ interface AuthContextValue {
   googleReady: boolean;
   googleError: string | null;
   authMode: 'oidc' | 'headers' | 'hybrid';
-  signInWithEmail: (email: string, name?: string, userIdOverride?: string) => Promise<AuthUser>;
   signInWithGoogle: (returnTo?: string) => Promise<void>;
+  signInWithHeaders: (profile: { name: string; email?: string | null }) => Promise<void>;
   signOut: () => Promise<void>;
   refreshSession: () => Promise<void>;
 }
@@ -52,6 +52,18 @@ const toAuthUser = (payload: AuthMeResponse['user']): AuthUser | null => {
     name: payload.displayName,
     email: payload.email || null,
     provider,
+  };
+};
+
+const buildHeaderAuthUser = (profile: { name: string; email?: string | null }): AuthUser => {
+  const normalizedName = profile.name.trim() || 'Local User';
+  const normalizedEmail = profile.email?.trim() || null;
+  const stableId = normalizedEmail || `local-${normalizedName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+  return {
+    id: stableId,
+    name: normalizedName,
+    email: normalizedEmail,
+    provider: 'local',
   };
 };
 
@@ -110,36 +122,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     void refreshSession();
   }, [refreshSession]);
 
-  const signInWithEmail = useCallback(async (email: string, name?: string, userIdOverride?: string) => {
-    if (authMode === 'oidc') {
-      throw new Error('Local sign-in is disabled in OIDC mode.');
-    }
-    setLoading(true);
-    try {
-      if (!email.trim()) {
-        throw new Error('Email is required');
-      }
-      const normalizedEmail = email.trim().toLowerCase();
-      const displayName = (name || normalizedEmail).trim();
-      const authedUser: AuthUser = {
-        id: userIdOverride?.trim() || `local-${normalizedEmail}`,
-        name: displayName,
-        email: normalizedEmail,
-        provider: 'local',
-      };
-      persistUser(authedUser);
-      return authedUser;
-    } finally {
-      setLoading(false);
-    }
-  }, [authMode, persistUser]);
-
   const signInWithGoogle = useCallback(async (returnTo?: string) => {
     if (authMode === 'headers') {
       throw new Error('Google sign-in is disabled in header mode.');
-    }
-    if (!googleConfigured) {
-      throw new Error('Google sign-in is unavailable because OAuth is not configured on the server.');
     }
     setGoogleError(null);
     const url = new URL(`${API_URL}/auth/google/start`, window.location.origin);
@@ -148,6 +133,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
     window.location.assign(url.toString());
   }, [authMode, googleConfigured]);
+
+  const signInWithHeaders = useCallback(async (profile: { name: string; email?: string | null }) => {
+    persistUser(buildHeaderAuthUser(profile));
+    setGoogleError(null);
+  }, [persistUser]);
 
   const signOut = useCallback(async () => {
     if (authMode === 'headers') {
@@ -169,14 +159,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const value = useMemo<AuthContextValue>(() => ({
     user,
     loading,
-    googleReady: authMode !== 'headers' && googleConfigured,
+    googleReady: authMode !== 'headers',
     googleError,
     authMode,
-    signInWithEmail,
     signInWithGoogle,
+    signInWithHeaders,
     signOut,
     refreshSession,
-  }), [authMode, googleConfigured, googleError, loading, refreshSession, signInWithEmail, signInWithGoogle, signOut, user]);
+  }), [authMode, googleConfigured, googleError, loading, refreshSession, signInWithGoogle, signInWithHeaders, signOut, user]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };

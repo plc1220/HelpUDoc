@@ -75,5 +75,5 @@ mcp_servers:
   - name: google-workspace
     transport: http
     default_access: allow
-    url: http://127.0.0.1:8000/mcp
+    url: ${GOOGLE_WORKSPACE_MCP_URL}
     delegatedAuthProvider: google

@@ -2,6 +2,7 @@ import { streamAgentRunWithReconnect, type AgentStreamChunk } from '../../../pac
 export type { AgentStreamChunk };
 import { API_URL, apiFetch } from './apiClient';
 import type { ConversationMessageMetadata } from '../types';
+import type { SkillDefinition } from '../types';
 
 const STREAM_DEBUG_ENABLED =
   typeof import.meta !== 'undefined' &&
@@ -13,6 +14,11 @@ type AgentStreamOptions = {
 };
 
 export type AgentRunStatus = 'queued' | 'running' | 'awaiting_approval' | 'completed' | 'failed' | 'cancelled';
+
+export type SlashMetadataResponse = {
+  skills: SkillDefinition[];
+  mcpServers: Array<{ name: string; description?: string }>;
+};
 
 export type AgentRunStartResponse = {
   runId: string;
@@ -55,6 +61,14 @@ export const startAgentRun = async (
   });
   if (!response.ok) {
     throw new Error('Failed to start agent run');
+  }
+  return response.json();
+};
+
+export const fetchSlashMetadata = async (): Promise<SlashMetadataResponse> => {
+  const response = await apiFetch(`${API_URL}/agent/slash-metadata`);
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, 'Failed to load slash metadata'));
   }
   return response.json();
 };

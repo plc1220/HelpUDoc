@@ -26,7 +26,14 @@ except ImportError as exc:  # pragma: no cover
     raise RuntimeError("Gemini dependencies are required") from exc
 
 from .configuration import Settings, ToolConfig
-from .skills_registry import SkillPolicy, load_skills
+from .skills_registry import (
+    SkillPolicy,
+    activate_skill_context,
+    build_loaded_skill_text,
+    find_skill,
+    load_skills,
+    read_skill_content,
+)
 from .rag_indexer import RagConfig, WorkspaceRagStore
 from .state import WorkspaceState
 from .utils import SourceTracker, extract_web_url
@@ -344,41 +351,14 @@ class ToolFactory:
             if not skills:
                 return "No skills found."
             normalized = skill_id.strip()
-            for skill in skills:
-                if normalized in {skill.skill_id, skill.name}:
-                    try:
-                        content = skill.path.read_text(encoding="utf-8")
-                    except Exception as exc:  # pragma: no cover - filesystem guard
-                        return f"Failed to read skill '{skill.skill_id}': {exc}"
-                    workspace_state.context["active_skill"] = skill.skill_id
-                    workspace_state.context["active_skill_policy"] = {
-                        "requires_hitl_plan": skill.policy.requires_hitl_plan,
-                        "requires_workspace_artifacts": skill.policy.requires_workspace_artifacts,
-                        "required_artifacts_mode": skill.policy.required_artifacts_mode,
-                        "required_artifacts": skill.policy.required_artifacts or [],
-                        "pre_plan_search_limit": max(0, int(skill.policy.pre_plan_search_limit or 0)),
-                    }
-                    # Reset plan approval each time a new skill is loaded unless the
-                    # workspace is explicitly trusted to auto-approve plan reviews.
-                    workspace_state.context["plan_approved"] = bool(
-                        workspace_state.context.get("skip_plan_approvals")
-                    )
-                    workspace_state.context["pre_plan_search_count"] = 0
-                    policy_lines = [
-                        f"Skill policy for {skill.skill_id}:",
-                        f"- requires_hitl_plan: {'true' if skill.policy.requires_hitl_plan else 'false'}",
-                        f"- requires_workspace_artifacts: {'true' if skill.policy.requires_workspace_artifacts else 'false'}",
-                    ]
-                    if skill.policy.requires_hitl_plan:
-                        policy_lines.append(
-                            "- You must call request_plan_approval before side-effecting execution."
-                        )
-                    else:
-                        policy_lines.append(
-                            "- Do not call request_plan_approval for this skill unless the user explicitly asks for a review gate."
-                        )
-                    policy_lines.append("")
-                    return f"Loaded skill: {skill.skill_id}\n\n" + "\n".join(policy_lines) + f"\n{content}"
+            skill = find_skill(skills_root, normalized)
+            if skill is not None:
+                try:
+                    content = read_skill_content(skill)
+                except Exception as exc:  # pragma: no cover - filesystem guard
+                    return f"Failed to read skill '{skill.skill_id}': {exc}"
+                activate_skill_context(workspace_state.context, skill)
+                return build_loaded_skill_text(skill, content)
             available = ", ".join(sorted({skill.skill_id for skill in skills}))
             return f"Skill '{normalized}' not found. Available skills: {available}"
 

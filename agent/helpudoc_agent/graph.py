@@ -18,6 +18,7 @@ from .state import WorkspaceState, AgentRuntimeState
 from .tools_and_schemas import ToolFactory
 from .skills_registry import collect_tool_names, load_skills, sync_skills_to_workspace
 from .mcp_manager import MCPServerManager
+from .tool_guard import GuardedTool
 
 GENERAL_SYSTEM_PROMPT = (
     "You are a general assistant. Use skills for specialized tasks. "
@@ -25,6 +26,8 @@ GENERAL_SYSTEM_PROMPT = (
     "then load_skill for only the matching SKILL.md and follow its instructions. "
     "If tools are listed in a skill frontmatter, use only those tools while executing that skill; "
     "if no tools are listed, you may use any appropriate tools. "
+    "Once a skill is loaded, stay within that skill's workflow until its completion criteria are met "
+    "(for example: report requests should end with the report artifact tool, dashboard requests should end with the dashboard tool). "
     "Do not assume skills are copied into the workspace. "
     "For proposal/SOW/RFP requests, always load the proposal-writing skill and write "
     "the proposal to workspace markdown files using write_file (and append_to_report if needed). "
@@ -144,11 +147,23 @@ class AgentRegistry:
         if allow_script_runner and "run_skill_python_script" in self.settings.tools and "run_skill_python_script" not in tool_names:
             tool_names.append("run_skill_python_script")
 
-        builtin_tools = self.tool_factory.build_tools(tool_names, workspace_state)
+        builtin_tools = [
+            GuardedTool.from_tool(tool, workspace_state=workspace_state)
+            for tool in self.tool_factory.build_tools(tool_names, workspace_state)
+        ]
 
         mcp_manager = MCPServerManager(self.settings, workspace_state)
         await mcp_manager.initialize()
-        mcp_tools = await mcp_manager.get_tools()
+        mcp_tools = []
+        for server_name, server_tools in mcp_manager.get_tools_by_server().items():
+            for tool in server_tools:
+                mcp_tools.append(
+                    GuardedTool.from_tool(
+                        tool,
+                        workspace_state=workspace_state,
+                        tool_mcp_server=server_name,
+                    )
+                )
 
         tools = builtin_tools + mcp_tools
         backend = FilesystemBackend(

@@ -23,6 +23,28 @@ import { startCollabServer } from './collab/collabServer';
 const app = express();
 const port = process.env.PORT || 3000;
 
+function resolveCookieSecure(): boolean {
+  const raw = (process.env.SESSION_COOKIE_SECURE || '').trim().toLowerCase();
+  if (raw === 'true') {
+    return true;
+  }
+  if (raw === 'false') {
+    return false;
+  }
+  return process.env.NODE_ENV === 'production';
+}
+
+function resolveSaveUninitialized(): boolean {
+  const raw = (process.env.SESSION_SAVE_UNINITIALIZED || '').trim().toLowerCase();
+  if (raw === 'true') {
+    return true;
+  }
+  if (raw === 'false') {
+    return false;
+  }
+  return false;
+}
+
 async function startServer() {
   const databaseService = new DatabaseService();
   await databaseService.initialize();
@@ -50,13 +72,13 @@ async function startServer() {
     }),
     secret: process.env.SESSION_SECRET || 'dev-secret-change-me',
     resave: false,
-    saveUninitialized: false,
+    saveUninitialized: resolveSaveUninitialized(),
     rolling: true,
     cookie: {
       maxAge: sessionMaxAgeSeconds * 1000,
       httpOnly: true,
       sameSite: 'lax',
-      secure: process.env.NODE_ENV === 'production',
+      secure: resolveCookieSecure(),
       domain: process.env.SESSION_COOKIE_DOMAIN || undefined,
     },
   }));

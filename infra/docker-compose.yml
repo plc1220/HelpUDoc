@@ -101,11 +101,14 @@ services:
       SESSION_SECRET: ${SESSION_SECRET:-change-me}
       SESSION_NAME: ${SESSION_NAME:-helpudoc.sid}
       SESSION_TTL_SECONDS: ${SESSION_TTL_SECONDS:-604800}
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
+      SESSION_SAVE_UNINITIALIZED: ${SESSION_SAVE_UNINITIALIZED:-}
       AUTH_MODE: ${AUTH_MODE:-hybrid}
+      AGENT_JWT_SECRET: ${AGENT_JWT_SECRET:-helpudoc-local-dev-agent-jwt-secret}
       DEFAULT_USER_ID: ${DEFAULT_USER_ID:-local-admin@local.com}
       DEFAULT_USER_NAME: ${DEFAULT_USER_NAME:-admin}
       DEFAULT_USER_EMAIL: ${DEFAULT_USER_EMAIL:-admin@local.com}
-      AGENT_URL: http://agent:8001
+      AGENT_URL: ${AGENT_URL:-http://agent:8001}
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
       POSTGRES_DB: ${POSTGRES_DB:-helpudoc}
@@ -134,7 +137,7 @@ services:
     volumes:
       - workspace_data:/app/workspaces
       - skills_data:/app/skills
-      - agent_config_data:/agent/config
+      - ../agent/config:/agent/config
 
   agent:
     build:
@@ -152,6 +155,7 @@ services:
       BQ_ACCESS_TOKEN: ${BQ_ACCESS_TOKEN:-}
       GOOGLE_WORKSPACE_MCP_URL: ${GOOGLE_WORKSPACE_MCP_URL:-http://google-workspace-mcp:8000/mcp}
       LLM_MODEL: ${LLM_MODEL:-gemini-3-flash-preview}
+      AGENT_JWT_SECRET: ${AGENT_JWT_SECRET:-helpudoc-local-dev-agent-jwt-secret}
       WORKSPACE_ROOT: /app/workspaces
       AGENT_CONFIG_PATH: /agent/config/runtime.yaml
       S3_ENDPOINT: http://minio:9000
@@ -164,7 +168,7 @@ services:
       - workspace_data:/app/workspaces
       - skills_data:/app/skills
       - skills_data:/skills
-      - agent_config_data:/agent/config
+      - ../agent/config:/agent/config
 
   frontend:
     build:
@@ -186,4 +190,3 @@ volumes:
   minio_data:
   workspace_data:
   skills_data:
-  agent_config_data:
