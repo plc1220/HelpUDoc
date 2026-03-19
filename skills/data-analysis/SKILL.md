@@ -1,6 +1,6 @@
 ---
 name: data-analysis
-description: End-to-end data analysis with DuckDB queries, optional Plotly charts, and artifact-aware summaries.
+description: End-to-end data analysis with DuckDB queries, optional Plotly charts, dashboard artifacts, and artifact-aware summaries.
 tools:
   - export_bigquery_query
   - data_agent_tools
@@ -16,9 +16,13 @@ source_skills:
 # data-analysis
 
 ## Overview
-Use this skill to analyze tabular data in the workspace using DuckDB tools, optionally produce a Plotly visualization, and deliver a concise, evidence-based summary that references any generated artifacts.
+Use this skill to analyze tabular data in the workspace using DuckDB tools, optionally produce Plotly visualizations, build a dashboard artifact, and deliver a concise, evidence-based summary that references generated artifacts.
 
-If the source data lives in BigQuery and there is no relevant local extract yet, first use `export_bigquery_query` to stage a CSV or Parquet file into `data_exports/`, then continue the normal DuckDB workflow against that staged file.
+If the source data lives in BigQuery and there is no relevant local extract yet, either:
+- use `export_bigquery_query` to stage a CSV or Parquet file into `data_exports/` for ad hoc analysis, or
+- use `materialize_bigquery_to_parquet` to publish a stable Parquet snapshot for recurring refresh workflows.
+
+If the user asks for a scheduled refresh job, a daily snapshot, or a recurring dashboard/report update, switch to `data/refresh`.
 
 ## Standards (required)
 - **Summary and insights must be valid Markdown**, not raw paragraphs. Use headings (`###`) and bullet lists (`-`) so the report renders cleanly.
@@ -57,11 +61,16 @@ If the source data lives in BigQuery and there is no relevant local extract yet,
    - Use descriptive `chart_title` names (Title_Case_With_Underscores).
    - Do not generate more than 3 charts.
 
-5. **Artifacts (optional)**
+5. **Dashboard (optional)**
+   - If the user wants a shareable HTML dashboard, call `generate_dashboard`.
+   - Pass a clear `title`, stakeholder-friendly `description`, and optional `section_titles`.
+   - Use `output_path` when the user wants the same HTML file refreshed on a schedule.
+
+6. **Artifacts (optional)**
    - If artifacts are useful (CSV extracts, HTML previews, Markdown notes), write them to disk using the provided helpers.
    - Keep artifacts minimal and clearly named; explain why each artifact exists.
 
-6. **Summary**
+7. **Summary**
    - Call `generate_summary` once after queries (and any chart).
    - Include tables used, filters, metrics, and artifacts created.
    - Provide at least two concrete insights (or explain if none exist).
@@ -70,9 +79,10 @@ If the source data lives in BigQuery and there is no relevant local extract yet,
      - `### Key Insights` with 3-6 bullets
    - Mention any artifacts (charts/files) explicitly so the user knows what to open.
    - Note: `generate_summary` will also create a report file in `reports/` with the analysis steps and outputs.
+   - Use `output_path` when the user wants the same report HTML refreshed on a schedule.
 
 ## Guardrails
-- Order is mandatory: export (when BigQuery is the source) -> schema -> SQL -> chart (optional) -> artifacts (optional) -> summary.
+- Order is mandatory: export/materialize (when BigQuery is the source) -> schema -> SQL -> chart (optional) -> dashboard or summary -> optional follow-up artifacts.
 - No direct file I/O or Python reads of raw data files.
 - Use only the listed data tools (`export_bigquery_query` and `data_agent_tools`).
 - Explain intent briefly before each tool call; stop after `generate_summary` succeeds.

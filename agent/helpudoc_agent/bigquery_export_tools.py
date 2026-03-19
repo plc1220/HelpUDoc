@@ -116,14 +116,15 @@ def resolve_output_path(workspace_root: Path, output_path: Optional[str], export
     candidate = Path(raw)
     if candidate.is_absolute():
         candidate = Path(str(candidate).lstrip("/"))
-    resolved = (workspace_root / candidate).resolve()
-    workspace_root = workspace_root.resolve()
-    if workspace_root not in resolved.parents and resolved != workspace_root:
+    workspace_root_resolved = workspace_root.resolve()
+    raw_destination = workspace_root / candidate
+    resolved_destination = raw_destination.resolve()
+    if workspace_root_resolved not in resolved_destination.parents and resolved_destination != workspace_root_resolved:
         raise ValueError("output_path must remain inside the workspace.")
-    return resolved
+    return raw_destination
 
 
-def _extract_bearer_header(workspace_state: WorkspaceState, preferred_server: str) -> Optional[str]:
+def extract_bearer_header(workspace_state: WorkspaceState, preferred_server: str) -> Optional[str]:
     auth_map = workspace_state.context.get("mcp_auth") or {}
     if isinstance(auth_map, dict):
         candidates: List[str] = []
@@ -352,7 +353,7 @@ def build_export_bigquery_query_tool(workspace_state: WorkspaceState) -> Tool:
         except ValueError as exc:
             return str(exc)
 
-        auth_header = _extract_bearer_header(workspace_state, preferred_server)
+        auth_header = extract_bearer_header(workspace_state, preferred_server)
         if not auth_header:
             return (
                 "BigQuery export is unavailable because no delegated BigQuery access token was found. "

@@ -1,21 +1,31 @@
-
 import ast
 import base64
+import hashlib
 import html
 import json
 import logging
-import mimetypes
 import re
+import shutil
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional, Set, Tuple
+from typing import Annotated, Any, Dict, List, Optional, Set, Tuple
 
 import duckdb
 import numpy as np
 import pandas as pd
 from langchain_core.callbacks import CallbackManagerForToolRun
 from langchain_core.tools import Tool, tool
-from pydantic import BaseModel, Field
+from pydantic import Field
 
+from .bigquery_export_tools import (
+    extract_bearer_header,
+    load_bigquery_toolbox_config,
+    resolve_output_path,
+    run_bigquery_query,
+    validate_read_only_sql,
+    write_export_dataframe,
+)
 from .state import WorkspaceState
 
 logger = logging.getLogger(__name__)
@@ -46,13 +56,43 @@ ALLOWED_ARTIFACT_EXTENSIONS = {
     ".csv": "text/csv",
     ".txt": "text/plain",
     ".md": "text/markdown",
+    ".parquet": "application/octet-stream",
 }
 MAX_RESULT_ROWS = 20
 MAX_SESSION_ROWS = 1000
+MAX_QUERY_COUNT = 10
+MAX_CHART_COUNT = 5
+DEFAULT_CACHE_TTL_HOURS = 24
+MAX_MATERIALIZED_ROWS = 100000
+
+
+@dataclass
+class _QueryRecord:
+    sql: str
+    row_count: int
+    preview: "pd.DataFrame"
+
+
+@dataclass
+class _ChartRecord:
+    title: str
+    artifact_paths: List[str]
+
+
+@dataclass
+class _MaterializationRecord:
+    cache_key: str
+    sql: str
+    parquet_path: str
+    metadata_path: str
+    row_count: int
+    connector: str
+    cached: bool
+    expires_at: str
 
 
 class DataAgentSessionState:
-    """Holds per-run guardrails for the data agent tools."""
+    """Holds per-run guardrails and history for the data agent tools."""
 
     def __init__(self) -> None:
         self.reset()
@@ -60,9 +100,15 @@ class DataAgentSessionState:
     def reset(self) -> None:
         self.schema_inspected = False
         self.query_count = 0
+        self.chart_count = 0
         self.summary_generated = False
+        self.dashboard_generated = False
         self.last_query_result: Optional[pd.DataFrame] = None
         self.last_query_sql: Optional[str] = None
+        self.query_history: List[_QueryRecord] = []
+        self.chart_history: List[_ChartRecord] = []
+        self.materialization_history: List[_MaterializationRecord] = []
+        self.run_artifacts: List[Dict[str, Any]] = []
 
 
 class SafePandasProxy:
@@ -108,6 +154,19 @@ def _build_safe_builtins() -> Dict[str, Any]:
         "type": type,
         "__import__": __import__,
     }
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _workspace_rel(path: Path, root: Path) -> str:
+    return path.relative_to(root).as_posix()
+
+
+def _safe_slug(value: str, default: str) -> str:
+    slug = re.sub(r"[^a-zA-Z0-9_-]+", "_", (value or "").strip()).strip("_")
+    return slug or default
 
 
 def _snapshot_workspace(root: Path) -> Dict[str, Tuple[int, int]]:
@@ -172,7 +231,7 @@ def _markdown_to_html(markdown_text: str) -> str:
 
     code_blocks: List[Tuple[str, str]] = []
 
-    def _capture_code_block(match: re.Match) -> str:
+    def _capture_code_block(match: re.Match[str]) -> str:
         lang = match.group(1) or ""
         code = match.group(2) or ""
         idx = len(code_blocks)
@@ -247,11 +306,16 @@ def _json_default(value: Any) -> Any:
         return value.tolist()
     if isinstance(value, pd.Timestamp):
         return value.isoformat()
+    if isinstance(value, Path):
+        return value.as_posix()
+    if isinstance(value, datetime):
+        return value.isoformat()
     raise TypeError(f"Object of type {type(value)} is not JSON serializable")
 
 
 def _json_dump(payload: Any) -> str:
     return json.dumps(payload, default=_json_default, ensure_ascii=False)
+
 
 def _coerce_plotly_spec(payload: Any) -> Optional[Dict[str, Any]]:
     """Attempt to coerce a payload into a Plotly JSON-serializable dict."""
@@ -276,9 +340,115 @@ def _coerce_plotly_spec(payload: Any) -> Optional[Dict[str, Any]]:
         logger.warning("Failed to coerce Plotly spec", exc_info=True)
     return None
 
+
+def _coerce_text_arg(value: Any, default: str = "") -> str:
+    if value is None:
+        return default
+    if isinstance(value, str):
+        return value
+    return str(value)
+
+
+def _coerce_int_arg(
+    value: Any,
+    default: int,
+    *,
+    minimum: Optional[int] = None,
+    maximum: Optional[int] = None,
+) -> int:
+    try:
+        coerced = int(value if value is not None else default)
+    except (TypeError, ValueError):
+        coerced = int(default)
+    if minimum is not None:
+        coerced = max(minimum, coerced)
+    if maximum is not None:
+        coerced = min(maximum, coerced)
+    return coerced
+
+
+def _coerce_bool_arg(value: Any, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "y", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "n", "off"}:
+            return False
+    return bool(default if value is None else value)
+
+
+def _resolve_workspace_html_path(
+    workspace_root: Path,
+    output_path: str,
+    *,
+    default_dir: str,
+    default_stem: str,
+) -> Path:
+    raw = (output_path or "").strip()
+    if not raw:
+        raw = f"{default_dir}/{default_stem}.html"
+    elif raw.endswith("/"):
+        raw = f"{raw}{default_stem}.html"
+    elif Path(raw).suffix.lower() not in {".html", ".htm"}:
+        raw = f"{raw}.html"
+
+    candidate = Path(raw)
+    if candidate.is_absolute():
+        candidate = Path(str(candidate).lstrip("/"))
+    resolved = (workspace_root / candidate).resolve()
+    root_resolved = workspace_root.resolve()
+    if root_resolved not in resolved.parents and resolved != root_resolved:
+        raise ValueError("output_path must remain inside the workspace.")
+    return resolved
+
+
+def _cache_key_for_query(sql_query: str, workspace_id: str, cache_key_hint: str) -> str:
+    digest = hashlib.sha256(
+        f"{workspace_id}\n{cache_key_hint}\n{sql_query}".encode("utf-8")
+    ).hexdigest()
+    return digest[:12]
+
+
+def _schema_summary_from_dataframe(df: pd.DataFrame) -> List[Dict[str, Any]]:
+    return [
+        {
+            "name": str(column),
+            "type": str(dtype),
+            "mode": "NULLABLE",
+        }
+        for column, dtype in df.dtypes.items()
+    ]
+
+
+def _load_dataframe_from_parquet(connection: duckdb.DuckDBPyConnection, parquet_path: Path) -> pd.DataFrame:
+    safe_path = parquet_path.as_posix().replace("'", "''")
+    return connection.execute(f"SELECT * FROM read_parquet('{safe_path}')").df()
+
+
+def _emit_artifacts(
+    callbacks: Optional[CallbackManagerForToolRun],
+    artifacts: List[Dict[str, Any]],
+) -> None:
+    if not callbacks or not artifacts:
+        return
+    try:
+        run_id = getattr(callbacks, "run_id", None)
+        payload = {"files": artifacts}
+        if run_id is not None:
+            callbacks.on_custom_event("tool_artifacts", payload, run_id=run_id)
+        else:
+            callbacks.on_custom_event("tool_artifacts", payload)
+    except Exception:  # pragma: no cover - best effort
+        logger.warning("Failed to dispatch tool_artifacts event", exc_info=True)
+
+
 class DuckDBManager:
     """Manages DuckDB connection and file registration."""
-    
+
     def __init__(self, workspace_state: WorkspaceState):
         self.workspace_state = workspace_state
         self.con = duckdb.connect(database=":memory:")
@@ -289,36 +459,44 @@ class DuckDBManager:
     def reset_session(self):
         """Reset per-run guardrails."""
         self.session.reset()
-        # Refresh tables so new workspace files become available to DuckDB.
         self._register_files()
 
     def _register_files(self):
         """Scans workspace for CSV and Parquet files and registers them as tables."""
         self._registered_tables.clear()
         root = self.workspace_state.root_path
-        csv_files = list(root.rglob("*.csv"))
         parquet_files = list(root.rglob("*.parquet"))
-        for file_path in csv_files + parquet_files:
-            table_name = file_path.stem
-            table_name = re.sub(r'[^a-zA-Z0-9_]', '_', table_name)
+        csv_files = list(root.rglob("*.csv"))
+        used_names: Set[str] = set()
+        for file_path in parquet_files + csv_files:
+            relative_stem = file_path.relative_to(root).with_suffix("").as_posix()
+            base_name = re.sub(r"[^a-zA-Z0-9_]", "_", file_path.stem)
+            path_name = re.sub(r"[^a-zA-Z0-9_]", "_", relative_stem)
+            ext_name = f"{base_name}_{file_path.suffix.lstrip('.').lower()}"
+            table_name = base_name
+            if table_name in used_names:
+                table_name = path_name or ext_name
+            if table_name in used_names:
+                table_name = ext_name
+            safe_path = file_path.as_posix().replace("'", "''")
             try:
                 if file_path.suffix.lower() == ".csv":
                     self.con.execute(
                         f"CREATE OR REPLACE TABLE {table_name} "
-                        f"AS SELECT * FROM read_csv_auto('{file_path}')"
+                        f"AS SELECT * FROM read_csv_auto('{safe_path}')"
                     )
                 else:
                     self.con.execute(
                         f"CREATE OR REPLACE TABLE {table_name} "
-                        f"AS SELECT * FROM read_parquet('{file_path}')"
+                        f"AS SELECT * FROM read_parquet('{safe_path}')"
                     )
+                used_names.add(table_name)
                 self._registered_tables.add(table_name)
                 logger.info("Registered table %s from %s", table_name, file_path)
-            except Exception as e:
-                logger.error("Failed to register %s: %s", file_path, e)
+            except Exception as exc:
+                logger.error("Failed to register %s: %s", file_path, exc)
 
     def get_schema(self, table_names: Optional[List[str]] = None) -> str:
-        """Returns the schema of registered tables."""
         tables = self.con.execute("SHOW TABLES").fetchall()
         if not tables:
             return "No tables found in the workspace."
@@ -328,23 +506,45 @@ class DuckDBManager:
             table_name = table[0]
             if table_names and table_name not in table_names:
                 continue
-            
+
             schema_str += f"Table: {table_name}\n"
             columns = self.con.execute(f"DESCRIBE {table_name}").fetchall()
             for col in columns:
-                # column_name, column_type, null, key, default, extra
                 schema_str += f"  - {col[0]} ({col[1]})\n"
             schema_str += "\n"
-        
+
         return schema_str
 
     def run_query(self, query: str) -> pd.DataFrame:
-        """Executes a SQL query and returns the result as a DataFrame."""
+        if self.session.query_count >= MAX_QUERY_COUNT:
+            raise ValueError(
+                f"Query budget exhausted: at most {MAX_QUERY_COUNT} queries are allowed per run."
+            )
         df = self.con.execute(query).df()
         self.session.query_count += 1
         self.session.last_query_result = df
         self.session.last_query_sql = query
+        self.session.query_history.append(
+            _QueryRecord(
+                sql=query,
+                row_count=len(df),
+                preview=df.head(MAX_RESULT_ROWS).copy(),
+            )
+        )
         return df
+
+    def record_chart(self, title: str, artifact_paths: List[str]) -> None:
+        self.session.chart_count += 1
+        self.session.chart_history.append(_ChartRecord(title=title, artifact_paths=artifact_paths))
+
+    def record_materialization(self, record: _MaterializationRecord) -> None:
+        self.session.materialization_history.append(record)
+
+    def register_artifact(self, artifact: Dict[str, Any]) -> None:
+        self.session.run_artifacts.append(artifact)
+
+    def refresh_registered_files(self) -> None:
+        self._register_files()
 
     def require_schema_check(self) -> None:
         if not self.session.schema_inspected:
@@ -354,16 +554,31 @@ class DuckDBManager:
 
     def require_query_before_chart(self) -> None:
         if self.session.last_query_result is None:
+            raise ValueError("Run at least one SQL query before generating a chart.")
+
+    def require_chart_budget(self) -> None:
+        if self.session.chart_count >= MAX_CHART_COUNT:
             raise ValueError(
-                "Run at least one SQL query before generating a chart."
+                f"Chart budget exhausted: at most {MAX_CHART_COUNT} charts are allowed per run."
             )
 
     def ensure_single_summary(self) -> None:
+        if self.session.dashboard_generated:
+            raise ValueError("A dashboard has already been generated for this run.")
         if self.session.summary_generated:
             raise ValueError("A summary has already been generated for this run.")
 
+    def ensure_single_dashboard(self) -> None:
+        if self.session.summary_generated:
+            raise ValueError("A summary has already been generated for this run.")
+        if self.session.dashboard_generated:
+            raise ValueError("A dashboard has already been generated for this run.")
+
     def mark_summary_generated(self) -> None:
         self.session.summary_generated = True
+
+    def mark_dashboard_generated(self) -> None:
+        self.session.dashboard_generated = True
 
     def get_limited_result(self) -> Optional[pd.DataFrame]:
         result = self.session.last_query_result
@@ -389,14 +604,13 @@ def _rewrite_virtual_paths(query: str, workspace_root: Path) -> str:
 
     return _STRING_LITERAL_PATTERN.sub(replacer, query)
 
+
 def sanitize_python_code(code: str) -> str:
     """Sanitize Python code to prevent malicious execution."""
-    # Remove comments and normalize whitespace
     code = re.sub(r"#.*$", "", code, flags=re.MULTILINE)
     code = re.sub(r'"""[\s\S]*?"""', "", code)
     code = re.sub(r"'''[\s\S]*?'''", "", code)
 
-    # Forbidden patterns
     forbidden_patterns = [
         r"import\s+os", r"import\s+sys", r"import\s+subprocess", r"import\s+__builtins__",
         r"eval\s*\(", r"exec\s*\(", r"open\s*\(", r"file\s*\(",
@@ -412,7 +626,6 @@ def sanitize_python_code(code: str) -> str:
         if re.search(pattern, code, re.IGNORECASE):
             raise ValueError(f"Forbidden pattern detected: {pattern}")
 
-    # Only allow basic pandas operations and chart config generation
     allowed_imports = [
         "pandas",
         "pd",
@@ -439,10 +652,11 @@ def sanitize_python_code(code: str) -> str:
             elif isinstance(node, ast.ImportFrom):
                 if node.module not in allowed_imports:
                     raise ValueError(f"Forbidden import from: {node.module}")
-    except SyntaxError as e:
-        raise ValueError(f"Invalid Python syntax: {e}")
+    except SyntaxError as exc:
+        raise ValueError(f"Invalid Python syntax: {exc}")
 
     return code
+
 
 def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any = None) -> List[Tool]:
     db_manager = DuckDBManager(workspace_state)
@@ -479,8 +693,259 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
 
             df = db_manager.run_query(cleaned_query)
             return _format_dataframe_markdown(df)
-        except Exception as e:  # pragma: no cover - defensive
-            return f"Error executing query: {str(e)}"
+        except Exception as exc:  # pragma: no cover - defensive
+            return f"Error executing query: {str(exc)}"
+
+    @tool
+    def materialize_bigquery_to_parquet(
+        sql_query: Annotated[
+            str,
+            Field(description="Read-only BigQuery SQL query to materialize into workspace-local Parquet."),
+        ],
+        cache_key_hint: Annotated[
+            str,
+            Field(description="Optional stable label to make cache files easier to recognize."),
+        ] = "",
+        ttl_hours: Annotated[
+            int,
+            Field(description="Hours before the cached Parquet is considered stale and should be refreshed."),
+        ] = DEFAULT_CACHE_TTL_HOURS,
+        force_refresh: Annotated[
+            bool,
+            Field(description="When true, ignore any cached Parquet and re-run the warehouse query."),
+        ] = False,
+        max_rows: Annotated[
+            int,
+            Field(description="Safety cap for exported rows. Keep results scoped for iterative analysis."),
+        ] = MAX_MATERIALIZED_ROWS,
+        target_path: Annotated[
+            str,
+            Field(description="Optional stable parquet path such as datasets/orders/latest.parquet."),
+        ] = "",
+        emit_csv: Annotated[
+            bool,
+            Field(description="When true, also publish a CSV mirror of the refreshed dataset."),
+        ] = False,
+        csv_path: Annotated[
+            str,
+            Field(description="Optional stable CSV path such as datasets/orders/latest.csv."),
+        ] = "",
+        callbacks: Optional[CallbackManagerForToolRun] = None,
+    ) -> str:
+        """Materialize a read-only BigQuery query into cached and optionally stable workspace Parquet."""
+        if workspace_state.context.get("tagged_files_only"):
+            return "Tool disabled: tagged files were provided, use rag_query only."
+
+        normalized_sql = _coerce_text_arg(sql_query).strip().rstrip(";")
+        if not normalized_sql:
+            return "SQL query is required."
+
+        try:
+            validate_read_only_sql(normalized_sql)
+        except ValueError as exc:
+            return str(exc)
+
+        hint = _coerce_text_arg(cache_key_hint).strip()
+        ttl_value = _coerce_int_arg(ttl_hours, DEFAULT_CACHE_TTL_HOURS, minimum=1)
+        row_cap = _coerce_int_arg(
+            max_rows,
+            MAX_MATERIALIZED_ROWS,
+            minimum=1,
+            maximum=MAX_MATERIALIZED_ROWS,
+        )
+        refresh = _coerce_bool_arg(force_refresh, False)
+        publish_csv = _coerce_bool_arg(emit_csv, False)
+        toolbox_defaults = load_bigquery_toolbox_config()
+        preferred_server = str(toolbox_defaults.get("server_name") or "toolbox-bq-demo")
+        project = _coerce_text_arg(
+            workspace_state.context.get("bigquery_project")
+            or workspace_state.context.get("bq_project")
+            or toolbox_defaults.get("project")
+        ).strip()
+        location = _coerce_text_arg(
+            workspace_state.context.get("bigquery_location")
+            or workspace_state.context.get("bq_location")
+            or toolbox_defaults.get("location")
+        ).strip()
+
+        auth_header = extract_bearer_header(workspace_state, preferred_server)
+        if not auth_header:
+            return (
+                "BigQuery materialization is unavailable because no delegated BigQuery access token was found. "
+                f"Expected MCP auth for server '{preferred_server}' or BQ_ACCESS_TOKEN."
+            )
+
+        cache_key = _cache_key_for_query(
+            normalized_sql,
+            _coerce_text_arg(getattr(workspace_state, "workspace_id", "")),
+            hint,
+        )
+        cache_slug = _safe_slug(hint or "bq_export", "bq_export")
+        cache_dir = workspace_state.root_path / "data_cache" / "bigquery"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        cache_parquet_path = cache_dir / f"{cache_slug}_{cache_key}.parquet"
+        cache_metadata_path = cache_dir / f"{cache_slug}_{cache_key}.metadata.json"
+
+        now = _utc_now()
+        cached = False
+        metadata_payload: Dict[str, Any] = {}
+        df: Optional[pd.DataFrame] = None
+
+        if not refresh and cache_parquet_path.exists() and cache_metadata_path.exists():
+            try:
+                metadata_payload = json.loads(cache_metadata_path.read_text(encoding="utf-8"))
+                expires_at_raw = _coerce_text_arg(metadata_payload.get("expiresAt")).strip()
+                expires_at = datetime.fromisoformat(expires_at_raw.replace("Z", "+00:00")) if expires_at_raw else None
+                if expires_at and expires_at > now:
+                    cached = True
+            except Exception:
+                cached = False
+                metadata_payload = {}
+
+        if not cached:
+            try:
+                df = run_bigquery_query(
+                    sql=normalized_sql,
+                    project=project,
+                    location=location,
+                    auth_header=auth_header,
+                    row_limit=row_cap,
+                )
+                write_export_dataframe(df, cache_parquet_path, "parquet")
+            except Exception as exc:  # pragma: no cover - network/filesystem guard
+                logger.exception("BigQuery materialization failed")
+                return f"BigQuery materialization failed: {exc}"
+
+            expires_at = now + timedelta(hours=ttl_value)
+            metadata_payload = {
+                "cacheKey": cache_key,
+                "cacheKeyHint": hint,
+                "connector": preferred_server,
+                "project": project,
+                "location": location,
+                "sourceSql": normalized_sql,
+                "rowCount": len(df),
+                "schema": _schema_summary_from_dataframe(df),
+                "refreshedAt": now.isoformat().replace("+00:00", "Z"),
+                "materializedAt": now.isoformat().replace("+00:00", "Z"),
+                "expiresAt": expires_at.isoformat().replace("+00:00", "Z"),
+                "ttlHours": ttl_value,
+                "parquetPath": _workspace_rel(cache_parquet_path, workspace_state.root_path),
+                "csvPath": "",
+                "artifactTargets": {"dashboard": "", "report": ""},
+            }
+            cache_metadata_path.write_text(_json_dump(metadata_payload), encoding="utf-8")
+
+        stable_parquet_path: Optional[Path] = None
+        stable_csv_path: Optional[Path] = None
+        manifest_path = cache_metadata_path
+        artifact_paths: List[Path] = [cache_parquet_path, cache_metadata_path]
+
+        if target_path.strip():
+            try:
+                stable_parquet_path = resolve_output_path(
+                    workspace_state.root_path,
+                    target_path,
+                    "parquet",
+                )
+            except ValueError as exc:
+                return str(exc)
+            stable_parquet_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(cache_parquet_path, stable_parquet_path)
+            manifest_path = stable_parquet_path.parent / "manifest.json"
+            artifact_paths.append(stable_parquet_path)
+
+        if publish_csv:
+            if df is None:
+                df = _load_dataframe_from_parquet(db_manager.con, cache_parquet_path)
+            raw_csv_path = csv_path.strip()
+            if not raw_csv_path and stable_parquet_path is not None:
+                raw_csv_path = (stable_parquet_path.parent / "latest.csv").relative_to(
+                    workspace_state.root_path
+                ).as_posix()
+            try:
+                stable_csv_path = resolve_output_path(
+                    workspace_state.root_path,
+                    raw_csv_path,
+                    "csv",
+                )
+            except ValueError as exc:
+                return str(exc)
+            write_export_dataframe(df, stable_csv_path, "csv")
+            artifact_paths.append(stable_csv_path)
+
+        if stable_parquet_path is not None:
+            stable_metadata = dict(metadata_payload)
+            stable_metadata["parquetPath"] = _workspace_rel(stable_parquet_path, workspace_state.root_path)
+            stable_metadata["csvPath"] = (
+                _workspace_rel(stable_csv_path, workspace_state.root_path)
+                if stable_csv_path is not None
+                else ""
+            )
+            stable_metadata["artifactTargets"] = {
+                "dashboard": "",
+                "report": "",
+            }
+            manifest_path.write_text(_json_dump(stable_metadata), encoding="utf-8")
+            artifact_paths.append(manifest_path)
+        else:
+            if stable_csv_path is not None:
+                metadata_payload["csvPath"] = _workspace_rel(stable_csv_path, workspace_state.root_path)
+                cache_metadata_path.write_text(_json_dump(metadata_payload), encoding="utf-8")
+
+        db_manager.refresh_registered_files()
+
+        registered_artifacts: List[Dict[str, Any]] = []
+        for artifact_path in artifact_paths:
+            if not artifact_path.exists():
+                continue
+            mime_type = ALLOWED_ARTIFACT_EXTENSIONS.get(artifact_path.suffix.lower())
+            if not mime_type:
+                continue
+            artifact_payload = {
+                "path": _workspace_rel(artifact_path, workspace_state.root_path),
+                "mimeType": mime_type,
+                "size": artifact_path.stat().st_size,
+            }
+            db_manager.register_artifact(artifact_payload)
+            registered_artifacts.append(artifact_payload)
+
+        published_parquet = stable_parquet_path or cache_parquet_path
+        published_metadata = manifest_path
+        db_manager.record_materialization(
+            _MaterializationRecord(
+                cache_key=cache_key,
+                sql=normalized_sql,
+                parquet_path=_workspace_rel(published_parquet, workspace_state.root_path),
+                metadata_path=_workspace_rel(published_metadata, workspace_state.root_path),
+                row_count=_coerce_int_arg(metadata_payload.get("rowCount"), 0, minimum=0),
+                connector=preferred_server,
+                cached=cached,
+                expires_at=_coerce_text_arg(metadata_payload.get("expiresAt")),
+            )
+        )
+        _emit_artifacts(callbacks, registered_artifacts)
+
+        payload = {
+            "cache_key": cache_key,
+            "cached": cached,
+            "connector": preferred_server,
+            "row_count": _coerce_int_arg(metadata_payload.get("rowCount"), 0, minimum=0),
+            "schema": list(metadata_payload.get("schema") or []),
+            "parquet_path": _workspace_rel(published_parquet, workspace_state.root_path),
+            "metadata_path": _workspace_rel(published_metadata, workspace_state.root_path),
+            "csv_path": (
+                _workspace_rel(stable_csv_path, workspace_state.root_path)
+                if stable_csv_path is not None
+                else _coerce_text_arg(metadata_payload.get("csvPath"))
+            ),
+            "duckdb_table_name": published_parquet.stem,
+            "expires_at": metadata_payload.get("expiresAt"),
+            "ttl_hours": ttl_value,
+            "cache_parquet_path": _workspace_rel(cache_parquet_path, workspace_state.root_path),
+            "cache_metadata_path": _workspace_rel(cache_metadata_path, workspace_state.root_path),
+        }
+        return _json_dump(payload)
 
     @tool
     def generate_chart_config(
@@ -496,25 +961,10 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
         ),
         callbacks: Optional[CallbackManagerForToolRun] = None,
     ) -> str:
-        """
-        Generate visualizations from the last SQL query result.
-        
-        The Python sandbox has access to:
-        - df: pandas DataFrame with the last query result
-        - np: numpy for numerical operations
-        - json: for creating Plotly configs
-        
-        Use Plotly for interactive specs:
-           chart_config = {
-               "data": [{"x": df['category'].tolist(), "y": df['value'].tolist(), "type": "bar"}],
-               "layout": {"title": chart_title},
-           }
-           # Auto-saved as .plotly.json in charts/ directory
-           
-        Returns JSON with chart metadata and output file paths.
-        """
+        """Generate visualizations from the last SQL query result."""
         try:
             db_manager.require_query_before_chart()
+            db_manager.require_chart_budget()
         except ValueError as exc:
             return str(exc)
 
@@ -523,14 +973,13 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
             return "No query results available to visualize."
 
         charts_dir = workspace_state.root_path / "charts"
-        safe_title = re.sub(r"[^a-zA-Z0-9_-]+", "_", chart_title.strip() or "chart")
+        safe_title = _safe_slug(chart_title, "chart")
         before_snapshot = _snapshot_workspace(workspace_state.root_path)
         safe_globals: Dict[str, Any] = {
             "__builtins__": _build_safe_builtins(),
             "pd": SafePandasProxy(pd),
             "np": np,
             "json": json,
-            # Expose key builtins directly to avoid NameError in some exec contexts
             "isinstance": isinstance,
             "len": len,
             "range": range,
@@ -559,10 +1008,7 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
             logger.exception("Chart config execution failed: %s", exc)
             return f"Failed to execute chart code: {exc}"
 
-        chart_config = (
-            exec_namespace.get("chart_config")
-            or safe_globals.get("chart_config")
-        )
+        chart_config = exec_namespace.get("chart_config") or safe_globals.get("chart_config")
         plotly_payload = _coerce_plotly_spec(chart_config)
         if plotly_payload is None:
             plotly_payload = _coerce_plotly_spec(
@@ -583,9 +1029,7 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
                 plotly_config_path.write_text(_json_dump(plotly_payload), encoding="utf-8")
                 artifacts.append(
                     {
-                        "path": plotly_config_path.relative_to(
-                            workspace_state.root_path
-                        ).as_posix(),
+                        "path": _workspace_rel(plotly_config_path, workspace_state.root_path),
                         "mimeType": ALLOWED_ARTIFACT_EXTENSIONS[".json"],
                         "size": plotly_config_path.stat().st_size,
                     }
@@ -608,9 +1052,7 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
                     plotly_html_path.write_text(html_content, encoding="utf-8")
                     artifacts.append(
                         {
-                            "path": plotly_html_path.relative_to(
-                                workspace_state.root_path
-                            ).as_posix(),
+                            "path": _workspace_rel(plotly_html_path, workspace_state.root_path),
                             "mimeType": ALLOWED_ARTIFACT_EXTENSIONS[".html"],
                             "size": plotly_html_path.stat().st_size,
                         }
@@ -623,33 +1065,22 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
         if chart_config is None and plotly_payload is None and not artifacts:
             return "No chart_config variable created and no artifacts produced."
 
-        if callbacks and artifacts:
-            try:
-                run_id = getattr(callbacks, "run_id", None)
-                if run_id is not None:
-                    callbacks.on_custom_event(
-                        "tool_artifacts",
-                        {"files": artifacts},
-                        run_id=run_id,
-                    )
-                else:
-                    callbacks.on_custom_event(
-                        "tool_artifacts",
-                        {"files": artifacts},
-                    )
-            except Exception:  # pragma: no cover - best effort
-                logger.warning("Failed to dispatch tool_artifacts event", exc_info=True)
+        artifact_paths = [artifact["path"] for artifact in artifacts]
+        db_manager.record_chart(chart_title, artifact_paths)
+        for artifact in artifacts:
+            db_manager.register_artifact(artifact)
+        _emit_artifacts(callbacks, artifacts)
 
         payload = {
             "chart_title": chart_title,
             "chart_config": plotly_payload if plotly_payload is not None else chart_config,
             "plotly_config_path": (
-                plotly_config_path.relative_to(workspace_state.root_path).as_posix()
+                _workspace_rel(plotly_config_path, workspace_state.root_path)
                 if plotly_config_path
                 else None
             ),
             "plotly_html_path": (
-                plotly_html_path.relative_to(workspace_state.root_path).as_posix()
+                _workspace_rel(plotly_html_path, workspace_state.root_path)
                 if plotly_html_path
                 else None
             ),
@@ -664,19 +1095,15 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
 
     @tool
     def generate_summary(
-        summary: str = Field(description="The summary of the actions performed"),
-        insights: str = Field(description="The insights from the data"),
+        summary: Annotated[str, Field(description="The summary of the actions performed")],
+        insights: Annotated[str, Field(description="The insights from the data")],
+        output_path: Annotated[
+            str,
+            Field(description="Optional stable HTML output path such as reports/orders_daily.html."),
+        ] = "",
         callbacks: Optional[CallbackManagerForToolRun] = None,
     ) -> str:
-        """
-        Produce a summary of the results retrieved and save it as a self-contained HTML report.
-        
-        The report embeds:
-        - Summary and insights
-        - SQL queries executed
-        - Sample data
-        - Inline PNGs (base64) and Plotly charts (from .plotly.html or .plotly.json)
-        """
+        """Produce a summary of the results and save it as a self-contained HTML report."""
         if db_manager.session.query_count == 0:
             return "Run at least one SQL query before summarizing the findings."
         try:
@@ -684,9 +1111,6 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
         except ValueError as exc:
             return str(exc)
         db_manager.mark_summary_generated()
-
-        # Create HTML report
-        from datetime import datetime
 
         report_lines = [
             "<!doctype html>",
@@ -707,16 +1131,10 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
             "    table thead { background:#f3f4f6; }",
             "    table th, table td { border:1px solid #e5e7eb; padding:8px 10px; text-align:left; font-size: 0.95rem; }",
             "    ul { padding-left: 20px; }",
-            "    pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:12px; overflow-x:auto; }",
+            "    pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:12px; overflow-x:auto; white-space:pre-wrap; }",
             "    img { max-width: 100%; height: auto; display: block; margin: 12px 0; border-radius:12px; border:1px solid #e5e7eb; }",
             "    .plotly-embed { margin: 16px 0; }",
-            "    .list-inline code { background:#f3f4f6; padding:2px 6px; border-radius:6px; }",
             "    .agent-markdown { line-height: 1.7; font-size: 0.98rem; }",
-            "    .agent-markdown p { margin: 0 0 1rem; }",
-            "    .agent-markdown p:last-child { margin-bottom: 0; }",
-            "    .agent-markdown ul, .agent-markdown ol { margin: 0.5rem 0 1rem; padding-left: 1.25rem; }",
-            "    .agent-markdown li { margin-bottom: 0.35rem; }",
-            "    .agent-markdown code { background:#f3f4f6; padding:2px 6px; border-radius:6px; }",
             "  </style>",
             "  <script src=\"https://cdn.plot.ly/plotly-3.3.0.min.js\"></script>",
             "</head>",
@@ -726,144 +1144,330 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
             f"    <div class=\"meta\">Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</div>",
             "    <div class=\"card\">",
             "      <h2>Summary</h2>",
-            "      <div class=\"agent-markdown\">",
-            _markdown_to_html(summary) or "<p>No summary provided.</p>",
-            "      </div>",
+            f"      <div class=\"agent-markdown\">{_markdown_to_html(summary) or '<p>No summary provided.</p>'}</div>",
             "      <h2>Key Insights</h2>",
-            "      <div class=\"agent-markdown\">",
-            _markdown_to_html(insights) or "<p>No insights provided.</p>",
-            "      </div>",
+            f"      <div class=\"agent-markdown\">{_markdown_to_html(insights) or '<p>No insights provided.</p>'}</div>",
             "    </div>",
         ]
 
-        # Add SQL query information
-        if db_manager.session.last_query_sql:
-            sql = db_manager.session.last_query_sql
+        if db_manager.session.materialization_history:
             report_lines.extend(
                 [
                     "    <div class=\"card\">",
-                    "      <h2>SQL Query</h2>",
-                    "      <pre><code>",
-                    sql,
-                    "      </code></pre>",
-                    "    </div>",
+                    "      <h2>Warehouse Materializations</h2>",
                 ]
             )
-
-        # Add query results info
-        if db_manager.session.last_query_result is not None:
-            df = db_manager.session.last_query_result
-            report_lines.extend(
-                [
-                    "    <div class=\"card\">",
-                    "      <h2>Query Results</h2>",
-                    f"      <p><strong>Rows returned:</strong> {len(df)}<br /><strong>Columns:</strong> {', '.join(df.columns.tolist())}</p>",
-                ]
-            )
-            if not df.empty:
-                report_lines.append("      <h3>Sample Data</h3>")
-                report_lines.append(df.head(10).to_html(index=False, border=0))
+            for item in db_manager.session.materialization_history:
+                report_lines.extend(
+                    [
+                        f"      <p><strong>Connector:</strong> {html.escape(item.connector)}<br />"
+                        f"<strong>Rows:</strong> {item.row_count}<br />"
+                        f"<strong>Cached:</strong> {'yes' if item.cached else 'no'}<br />"
+                        f"<strong>Parquet:</strong> <code>{html.escape(item.parquet_path)}</code><br />"
+                        f"<strong>Metadata:</strong> <code>{html.escape(item.metadata_path)}</code><br />"
+                        f"<strong>Expires:</strong> {html.escape(item.expires_at or 'n/a')}</p>",
+                        f"      <pre><code>{html.escape(item.sql)}</code></pre>",
+                    ]
+                )
             report_lines.append("    </div>")
 
-        # Visualizations
-        charts_dir = workspace_state.root_path / "charts"
-        if charts_dir.exists():
-            png_files = sorted(charts_dir.glob("*.png"))
-            plotly_html_files = sorted(charts_dir.glob("*.plotly.html"))
-            plotly_json_files = sorted(charts_dir.glob("*.plotly.json"))
-            if png_files or plotly_html_files or plotly_json_files:
-                report_lines.append("    <div class=\"card\">")
-                report_lines.append("      <h2>Visualizations</h2>")
+        if db_manager.session.query_history:
+            report_lines.extend(
+                [
+                    "    <div class=\"card\">",
+                    "      <h2>SQL Queries</h2>",
+                ]
+            )
+            for idx, query_record in enumerate(db_manager.session.query_history, start=1):
+                report_lines.append(
+                    f"      <h3>Query {idx} <span class=\"meta\">({query_record.row_count} rows)</span></h3>"
+                )
+                report_lines.append(f"      <pre><code>{html.escape(query_record.sql)}</code></pre>")
+                if not query_record.preview.empty:
+                    report_lines.append("      <h4>Sample Data</h4>")
+                    report_lines.append(query_record.preview.to_html(index=False, border=0))
+            report_lines.append("    </div>")
 
-                if plotly_json_files:
-                    for idx, json_path in enumerate(plotly_json_files, start=1):
-                        try:
-                            fig_json = json.loads(json_path.read_text(encoding="utf-8"))
-                            script_payload = json.dumps(fig_json)
-                            div_id = f"plotly-json-{idx}"
-                            report_lines.append(f"      <h3>{_chart_title_from_path(json_path)}</h3>")
-                            report_lines.append(f"      <div id=\"{div_id}\" class=\"plotly-embed\" style=\"height:420px;\"></div>")
-                            report_lines.append(
-                                "      <script>"
-                                f"const spec{idx} = {script_payload};"
-                                f"const data{idx} = spec{idx}.data || []; const layout{idx} = spec{idx}.layout || {{}}; const config{idx} = spec{idx}.config || {{}}; const frames{idx} = spec{idx}.frames || undefined;"
-                                f"Plotly.newPlot('{div_id}', data{idx}, layout{idx}, config{idx}).then(() => {{ if (frames{idx} && frames{idx}.length) {{ Plotly.addFrames('{div_id}', frames{idx}); }} }});"
-                                "</script>"
-                            )
-                        except Exception:  # pragma: no cover - best effort
-                            logger.warning("Failed to embed Plotly JSON %s", json_path, exc_info=True)
-                else:
-                    for html_path in plotly_html_files:
-                        try:
-                            html_fragment = html_path.read_text(encoding="utf-8")
-                            report_lines.append(f"      <h3>{_chart_title_from_path(html_path)}</h3>")
-                            report_lines.append(f"      <div class=\"plotly-embed\">{html_fragment}</div>")
-                        except Exception:  # pragma: no cover - best effort
-                            logger.warning("Failed to embed Plotly HTML %s", html_path, exc_info=True)
+        run_chart_paths: List[str] = []
+        for chart_record in db_manager.session.chart_history:
+            run_chart_paths.extend(chart_record.artifact_paths)
 
-                # Embed PNGs as base64 after Plotly embeds
-                for png_path in png_files:
-                    try:
-                        encoded = base64.b64encode(png_path.read_bytes()).decode("utf-8")
-                        report_lines.append(
-                            f"      <h3>{_chart_title_from_path(png_path)}</h3><img src=\"data:image/png;base64,{encoded}\" alt=\"{png_path.stem}\" />"
-                        )
-                    except Exception:  # pragma: no cover - best effort
-                        logger.warning("Failed to embed PNG %s", png_path, exc_info=True)
-
-                report_lines.append("    </div>")
-
-        report_lines.extend(
-            [
-                "  </div>",
-                "</body>",
-                "</html>",
-            ]
+        plotly_json_files = sorted(
+            p for p in (workspace_state.root_path / rel for rel in run_chart_paths if rel.endswith(".plotly.json"))
+            if p.exists()
         )
+        plotly_html_files = sorted(
+            p for p in (workspace_state.root_path / rel for rel in run_chart_paths if rel.endswith(".plotly.html"))
+            if p.exists()
+        )
+        png_files = sorted(
+            p for p in (workspace_state.root_path / rel for rel in run_chart_paths if rel.endswith(".png"))
+            if p.exists()
+        )
+        if plotly_json_files or plotly_html_files or png_files:
+            report_lines.append("    <div class=\"card\">")
+            report_lines.append("      <h2>Visualizations</h2>")
 
-        # Save the report
+            for idx, json_path in enumerate(plotly_json_files, start=1):
+                try:
+                    fig_json = json.loads(json_path.read_text(encoding="utf-8"))
+                    script_payload = json.dumps(fig_json)
+                    div_id = f"plotly-json-{idx}"
+                    report_lines.append(f"      <h3>{_chart_title_from_path(json_path)}</h3>")
+                    report_lines.append(f"      <div id=\"{div_id}\" class=\"plotly-embed\" style=\"height:420px;\"></div>")
+                    report_lines.append(
+                        "      <script>"
+                        f"const spec{idx} = {script_payload};"
+                        f"const data{idx} = spec{idx}.data || []; const layout{idx} = spec{idx}.layout || {{}}; const config{idx} = spec{idx}.config || {{}}; const frames{idx} = spec{idx}.frames || undefined;"
+                        f"Plotly.newPlot('{div_id}', data{idx}, layout{idx}, config{idx}).then(() => {{ if (frames{idx} && frames{idx}.length) {{ Plotly.addFrames('{div_id}', frames{idx}); }} }});"
+                        "</script>"
+                    )
+                except Exception:
+                    logger.warning("Failed to embed Plotly JSON %s", json_path, exc_info=True)
+
+            for html_path in plotly_html_files:
+                try:
+                    html_fragment = html_path.read_text(encoding="utf-8")
+                    report_lines.append(f"      <h3>{_chart_title_from_path(html_path)}</h3>")
+                    report_lines.append(f"      <div class=\"plotly-embed\">{html_fragment}</div>")
+                except Exception:
+                    logger.warning("Failed to embed Plotly HTML %s", html_path, exc_info=True)
+
+            for png_path in png_files:
+                try:
+                    encoded = base64.b64encode(png_path.read_bytes()).decode("utf-8")
+                    report_lines.append(
+                        f"      <h3>{_chart_title_from_path(png_path)}</h3><img src=\"data:image/png;base64,{encoded}\" alt=\"{png_path.stem}\" />"
+                    )
+                except Exception:
+                    logger.warning("Failed to embed PNG %s", png_path, exc_info=True)
+
+            report_lines.append("    </div>")
+
+        report_lines.extend(["  </div>", "</body>", "</html>"])
+
         try:
             reports_dir = workspace_state.root_path / "reports"
             reports_dir.mkdir(exist_ok=True)
+            if output_path.strip():
+                report_path = _resolve_workspace_html_path(
+                    workspace_state.root_path,
+                    output_path,
+                    default_dir="reports",
+                    default_stem="analysis_report",
+                )
+            else:
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                report_path = reports_dir / f"analysis_report_{timestamp}.html"
+            report_path.parent.mkdir(parents=True, exist_ok=True)
+            report_path.write_text("\n".join(report_lines), encoding="utf-8")
 
-            # Create filename with timestamp
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            report_path = reports_dir / f"analysis_report_{timestamp}.html"
-
-            report_content = "\n".join(report_lines)
-            report_path.write_text(report_content, encoding="utf-8")
-
-            # Notify about the artifact
             artifact = {
-                "path": report_path.relative_to(workspace_state.root_path).as_posix(),
+                "path": _workspace_rel(report_path, workspace_state.root_path),
                 "mimeType": ALLOWED_ARTIFACT_EXTENSIONS[".html"],
                 "size": report_path.stat().st_size,
             }
-
-            if callbacks:
-                try:
-                    run_id = getattr(callbacks, "run_id", None)
-                    if run_id is not None:
-                        callbacks.on_custom_event(
-                            "tool_artifacts",
-                            {"files": [artifact]},
-                            run_id=run_id,
-                        )
-                    else:
-                        callbacks.on_custom_event(
-                            "tool_artifacts",
-                            {"files": [artifact]},
-                        )
-                except Exception:  # pragma: no cover - best effort
-                    logger.warning("Failed to dispatch tool_artifacts event", exc_info=True)
-
+            db_manager.register_artifact(artifact)
+            _emit_artifacts(callbacks, [artifact])
             return (
                 f"Summary: {summary}\n"
                 f"Insights: {insights}\n\n"
-                f"📄 Full report saved to: {report_path.relative_to(workspace_state.root_path).as_posix()}"
+                f"📄 Full report saved to: {_workspace_rel(report_path, workspace_state.root_path)}"
             )
-        except Exception as e:  # pragma: no cover - defensive
-            logger.warning("Failed to save HTML report: %s", e)
-            return f"Summary: {summary}\nInsights: {insights}\n\n(Note: Failed to save report file: {e})"
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("Failed to save HTML report: %s", exc)
+            return f"Summary: {summary}\nInsights: {insights}\n\n(Note: Failed to save report file: {exc})"
 
-    return [get_table_schema, run_sql_query, generate_chart_config, generate_summary]
+    @tool
+    def generate_dashboard(
+        title: Annotated[str, Field(description="The dashboard title shown in the HTML header")],
+        description: Annotated[
+            str,
+            Field(description="Short paragraph describing what this dashboard shows and who it's for"),
+        ],
+        section_titles: Annotated[
+            Optional[List[str]],
+            Field(description="Optional ordered list of section headings, one per chart produced in this run."),
+        ] = None,
+        output_path: Annotated[
+            str,
+            Field(description="Optional stable HTML output path such as dashboards/orders_overview.html."),
+        ] = "",
+        callbacks: Optional[CallbackManagerForToolRun] = None,
+    ) -> str:
+        """Assemble all charts and query history from the current run into one HTML dashboard."""
+        try:
+            db_manager.ensure_single_dashboard()
+        except ValueError as exc:
+            return str(exc)
+        if db_manager.session.query_count == 0:
+            return "Run at least one SQL query before building a dashboard."
+        if not db_manager.session.chart_history:
+            return "Generate at least one chart before building a dashboard."
+        db_manager.mark_dashboard_generated()
+
+        stable_title = _safe_slug(title, "dashboard")
+        dashboard_path = _resolve_workspace_html_path(
+            workspace_state.root_path,
+            output_path,
+            default_dir="dashboards",
+            default_stem=stable_title,
+        )
+
+        run_chart_paths: List[str] = []
+        for chart_record in db_manager.session.chart_history:
+            run_chart_paths.extend(chart_record.artifact_paths)
+
+        plotly_json_files = sorted(
+            p for p in (workspace_state.root_path / rel for rel in run_chart_paths if rel.endswith(".plotly.json"))
+            if p.exists()
+        )
+        plotly_html_files = sorted(
+            p for p in (workspace_state.root_path / rel for rel in run_chart_paths if rel.endswith(".plotly.html"))
+            if p.exists()
+        )
+        png_files = sorted(
+            p for p in (workspace_state.root_path / rel for rel in run_chart_paths if rel.endswith(".png"))
+            if p.exists()
+        )
+
+        chosen_titles = list(section_titles or [])
+        chart_cards: List[str] = []
+        chart_index = 0
+
+        for json_path in plotly_json_files:
+            chart_index += 1
+            section_title = chosen_titles[chart_index - 1] if chart_index - 1 < len(chosen_titles) else _chart_title_from_path(json_path)
+            try:
+                fig_json = json.loads(json_path.read_text(encoding="utf-8"))
+                script_payload = json.dumps(fig_json)
+                div_id = f"dashboard-chart-{chart_index}"
+                chart_cards.append(
+                    f"<article class=\"chart-card\">"
+                    f"<h3>{html.escape(section_title)}</h3>"
+                    f"<p class=\"chart-meta\">Interactive Plotly chart</p>"
+                    f"<div id=\"{div_id}\" class=\"plotly-embed\"></div>"
+                    f"<script>"
+                    f"const dashboardSpec{chart_index} = {script_payload};"
+                    f"Plotly.newPlot('{div_id}', dashboardSpec{chart_index}.data || [], dashboardSpec{chart_index}.layout || {{}}, Object.assign({{responsive:true,displayModeBar:false}}, dashboardSpec{chart_index}.config || {{}}));"
+                    f"</script>"
+                    f"</article>"
+                )
+            except Exception:
+                logger.warning("Failed to embed Plotly JSON %s", json_path, exc_info=True)
+
+        for html_path in plotly_html_files:
+            chart_index += 1
+            section_title = chosen_titles[chart_index - 1] if chart_index - 1 < len(chosen_titles) else _chart_title_from_path(html_path)
+            try:
+                chart_cards.append(
+                    f"<article class=\"chart-card\">"
+                    f"<h3>{html.escape(section_title)}</h3>"
+                    f"<p class=\"chart-meta\">Interactive Plotly chart</p>"
+                    f"{html_path.read_text(encoding='utf-8')}"
+                    f"</article>"
+                )
+            except Exception:
+                logger.warning("Failed to embed Plotly HTML %s", html_path, exc_info=True)
+
+        for png_path in png_files:
+            chart_index += 1
+            section_title = chosen_titles[chart_index - 1] if chart_index - 1 < len(chosen_titles) else _chart_title_from_path(png_path)
+            try:
+                encoded = base64.b64encode(png_path.read_bytes()).decode("utf-8")
+                chart_cards.append(
+                    f"<article class=\"chart-card\">"
+                    f"<h3>{html.escape(section_title)}</h3>"
+                    f"<p class=\"chart-meta\">Static image artifact</p>"
+                    f"<img class=\"chart-img\" src=\"data:image/png;base64,{encoded}\" alt=\"{html.escape(png_path.stem)}\" />"
+                    f"</article>"
+                )
+            except Exception:
+                logger.warning("Failed to embed PNG %s", png_path, exc_info=True)
+
+        query_items = []
+        for idx, query_record in enumerate(db_manager.session.query_history, start=1):
+            query_items.append(
+                "<div class=\"query-item\">"
+                f"<div class=\"query-meta\">Query {idx} • {query_record.row_count} rows</div>"
+                f"<pre class=\"query-block\">{html.escape(query_record.sql)}</pre>"
+                "</div>"
+            )
+
+        html_lines = [
+            "<!doctype html>",
+            "<html lang=\"en\">",
+            "<head>",
+            "  <meta charset=\"utf-8\" />",
+            "  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />",
+            f"  <title>{html.escape(title)}</title>",
+            "  <style>",
+            "    :root{--bg:#f4f1ea;--panel:#fffdf8;--ink:#1f2937;--muted:#6b7280;--line:#e7dfd2;--accent:#1f4d3a;--shadow:0 16px 40px rgba(68,50,28,0.08);}",
+            "    *{box-sizing:border-box}",
+            "    body{margin:0;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:linear-gradient(180deg,#f7f4ee 0%,#f4f1ea 100%);color:var(--ink);}",
+            "    .shell{max-width:1320px;margin:0 auto;padding:28px 22px 56px}",
+            "    .hero,.section{background:rgba(255,253,248,0.96);border:1px solid rgba(231,223,210,0.95);box-shadow:var(--shadow);border-radius:28px;padding:28px 30px;}",
+            "    .hero h1{margin:0 0 10px;font-size:clamp(2rem,4vw,3.2rem);line-height:1.02;letter-spacing:-0.04em;}",
+            "    .hero p{margin:0;color:#4b5563;line-height:1.65;max-width:760px}",
+            "    .hero-meta{margin-top:16px;color:var(--muted);font-size:0.9rem}",
+            "    .section{margin-top:22px}",
+            "    .chart-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:18px}",
+            "    .chart-card{background:linear-gradient(180deg,#fffefb 0%,#fbf8f2 100%);border:1px solid var(--line);border-radius:20px;padding:18px}",
+            "    .chart-card h3{margin:0 0 8px;font-size:1.05rem}",
+            "    .chart-meta{margin:0 0 12px;color:var(--muted);font-size:0.88rem}",
+            "    .plotly-embed{width:100%;height:340px}",
+            "    img.chart-img{width:100%;border-radius:12px;border:1px solid var(--line)}",
+            "    details.appendix{margin-top:18px}",
+            "    .query-item{background:#faf7f1;border:1px solid var(--line);border-radius:16px;padding:16px;margin-top:12px}",
+            "    .query-meta{font-size:0.82rem;color:#9a3412;font-weight:700;letter-spacing:0.03em;text-transform:uppercase;margin-bottom:8px}",
+            "    .query-block{margin:0;background:#fff;border:1px solid var(--line);border-radius:12px;padding:14px 16px;overflow-x:auto;white-space:pre-wrap;color:#374151}",
+            "    @media (max-width: 768px){.shell{padding:16px 14px 42px}.hero,.section{padding:22px 18px}.chart-grid{grid-template-columns:1fr}.plotly-embed{height:300px}}",
+            "  </style>",
+            "  <script src=\"https://cdn.plot.ly/plotly-3.3.0.min.js\"></script>",
+            "</head>",
+            "<body>",
+            "  <div class=\"shell\">",
+            "    <section class=\"hero\">",
+            "      <div>Interactive dashboard</div>",
+            f"      <h1>{html.escape(title)}</h1>",
+            f"      <p>{html.escape(description)}</p>",
+            f"      <div class=\"hero-meta\">Generated {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} • Charts embedded: {len(chart_cards)} • Queries embedded: {len(db_manager.session.query_history)}</div>",
+            "    </section>",
+            "    <section class=\"section\">",
+            "      <h2>Highlights</h2>",
+            "      <div class=\"chart-grid\">",
+            *chart_cards,
+            "      </div>",
+            "      <details class=\"appendix\">",
+            "        <summary>Technical appendix</summary>",
+            *query_items,
+            "      </details>",
+            "    </section>",
+            "  </div>",
+            "</body>",
+            "</html>",
+        ]
+
+        try:
+            dashboard_path.parent.mkdir(parents=True, exist_ok=True)
+            dashboard_path.write_text("\n".join(html_lines), encoding="utf-8")
+            artifact = {
+                "path": _workspace_rel(dashboard_path, workspace_state.root_path),
+                "mimeType": ALLOWED_ARTIFACT_EXTENSIONS[".html"],
+                "size": dashboard_path.stat().st_size,
+            }
+            db_manager.register_artifact(artifact)
+            _emit_artifacts(callbacks, [artifact])
+            return f"Dashboard saved to: {_workspace_rel(dashboard_path, workspace_state.root_path)}"
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("Failed to save dashboard HTML: %s", exc)
+            return f"Failed to save dashboard file: {exc}"
+
+    return [
+        get_table_schema,
+        run_sql_query,
+        materialize_bigquery_to_parquet,
+        generate_chart_config,
+        generate_summary,
+        generate_dashboard,
+    ]
