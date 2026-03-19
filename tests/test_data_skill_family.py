@@ -342,6 +342,42 @@ class TestGuardedTool:
         assert runtime_result.status == "error"
         assert "ambiguous" in str(runtime_result.content).lower()
 
+    def test_guarded_tool_wraps_runtime_list_results_as_toolmessage(self, tmp_path: Path) -> None:
+        from langchain_core.messages import ToolMessage
+        from langchain_core.tools import tool
+
+        from agent.helpudoc_agent.state import WorkspaceState
+        from agent.helpudoc_agent.tool_guard import GuardedTool
+
+        @tool
+        def bq_list_tables(dataset: str) -> list[dict[str, str]]:
+            """List tables."""
+            return [{"text": f"orders in {dataset}"}, {"text": "users"}]
+
+        workspace_state = WorkspaceState(workspace_id="w", root_path=tmp_path)
+        workspace_state.context["active_skill_scope"] = {
+            "skill_id": "data/analyze",
+            "tools": [],
+            "mcp_servers": ["toolbox-bq-demo"],
+        }
+
+        guarded = GuardedTool.from_tool(
+            bq_list_tables,
+            workspace_state=workspace_state,
+            tool_mcp_server="toolbox-bq-demo",
+        )
+        runtime_result = guarded.invoke(
+            {
+                "id": "tool-call-3",
+                "name": "bq_list_tables",
+                "type": "tool_call",
+                "dataset": "thelook_ecommerce",
+            }
+        )
+        assert isinstance(runtime_result, ToolMessage)
+        assert runtime_result.status == "success"
+        assert "orders in thelook_ecommerce" in str(runtime_result.content)
+
 
 # ---------------------------------------------------------------------------
 # data_agent_tools tests

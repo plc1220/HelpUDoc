@@ -1,6 +1,7 @@
 """Tool wrappers that enforce active-skill scope at invocation time."""
 from __future__ import annotations
 
+import json
 from typing import Any, Optional
 
 from langchain_core.messages import ToolMessage
@@ -99,6 +100,56 @@ class GuardedTool(BaseTool):
                 )
         raise exc
 
+    def _tool_call_id(self, input: Any) -> str | None:
+        if not isinstance(input, dict):
+            return None
+        tool_call_id = input.get("id")
+        if isinstance(tool_call_id, str) and tool_call_id.strip():
+            return tool_call_id.strip()
+        return None
+
+    def _stringify_result(self, result: Any) -> str:
+        if result is None:
+            return ""
+        if isinstance(result, str):
+            return result
+        if isinstance(result, dict):
+            if isinstance(result.get("text"), str):
+                return result["text"]
+            if isinstance(result.get("content"), str):
+                return result["content"]
+            return json.dumps(result, ensure_ascii=False, default=str)
+        if isinstance(result, list):
+            parts: list[str] = []
+            for item in result:
+                if item is None:
+                    continue
+                if isinstance(item, str):
+                    parts.append(item)
+                    continue
+                if isinstance(item, dict):
+                    if isinstance(item.get("text"), str):
+                        parts.append(item["text"])
+                        continue
+                    if isinstance(item.get("content"), str):
+                        parts.append(item["content"])
+                        continue
+                parts.append(json.dumps(item, ensure_ascii=False, default=str) if isinstance(item, (dict, list)) else str(item))
+            return "\n".join(part for part in parts if part).strip()
+        return str(result)
+
+    def _success_result(self, input: Any, result: Any) -> Any:
+        tool_call_id = self._tool_call_id(input)
+        if tool_call_id is None:
+            return result
+        if isinstance(result, ToolMessage):
+            return result
+        return ToolMessage(
+            content=self._stringify_result(result),
+            name=self.name,
+            tool_call_id=tool_call_id,
+        )
+
     def _unwrap_runtime_input(self, input: Any) -> Any:
         if not isinstance(input, dict):
             return input
@@ -118,7 +169,8 @@ class GuardedTool(BaseTool):
         if error:
             return self._blocked_result(input, error)
         try:
-            return self.wrapped_tool.invoke(self._unwrap_runtime_input(input), config=config, **kwargs)
+            result = self.wrapped_tool.invoke(self._unwrap_runtime_input(input), config=config, **kwargs)
+            return self._success_result(input, result)
         except Exception as exc:
             return self._exception_result(input, exc)
 
@@ -129,8 +181,10 @@ class GuardedTool(BaseTool):
         try:
             wrapped_input = self._unwrap_runtime_input(input)
             if hasattr(self.wrapped_tool, "ainvoke"):
-                return await self.wrapped_tool.ainvoke(wrapped_input, config=config, **kwargs)
-            return self.wrapped_tool.invoke(wrapped_input, config=config, **kwargs)
+                result = await self.wrapped_tool.ainvoke(wrapped_input, config=config, **kwargs)
+            else:
+                result = self.wrapped_tool.invoke(wrapped_input, config=config, **kwargs)
+            return self._success_result(input, result)
         except Exception as exc:
             return self._exception_result(input, exc)
 
