@@ -2197,6 +2197,28 @@ export default function WorkspacePage() {
     });
   };
 
+  const combineBufferedAgentText = useCallback(
+    (conversationId: string, existingText: string, nextChunk: string): string => {
+      if (!nextChunk) {
+        return existingText;
+      }
+      let sanitizedChunk = nextChunk;
+      const userPrompt = (lastUserMessageMapRef.current[conversationId] || '').trim();
+      if (!existingText && userPrompt) {
+        const chunkNoLeading = sanitizedChunk.replace(/^\s+/, '');
+        if (chunkNoLeading.startsWith(userPrompt)) {
+          const remainder = chunkNoLeading.slice(userPrompt.length).replace(/^\s+/, '');
+          if (!remainder) {
+            return existingText;
+          }
+          sanitizedChunk = remainder;
+        }
+      }
+      return `${existingText}${sanitizedChunk}`;
+    },
+    [],
+  );
+
   const flushBufferedAgentChunks = useCallback(() => {
     if (!agentChunkBufferRef.current.size) {
       return;
@@ -2217,19 +2239,10 @@ export default function WorkspacePage() {
           if (!target) {
             return;
           }
-          let nextChunk = chunkText;
-          const userPrompt = (lastUserMessageMapRef.current[conversationId] || '').trim();
-          if (!target.text && userPrompt) {
-            const chunkNoLeading = nextChunk.replace(/^\s+/, '');
-            if (chunkNoLeading.startsWith(userPrompt)) {
-              const remainder = chunkNoLeading.slice(userPrompt.length).replace(/^\s+/, '');
-              if (!remainder) {
-                return;
-              }
-              nextChunk = remainder;
-            }
+          const combinedText = combineBufferedAgentText(conversationId, target.text || '', chunkText);
+          if (combinedText === (target.text || '')) {
+            return;
           }
-          const combinedText = `${target.text || ''}${nextChunk}`;
           const updatedMessage: ConversationMessage = {
             ...target,
             text: combinedText,
@@ -2246,7 +2259,7 @@ export default function WorkspacePage() {
         return updated;
       });
     });
-  }, [updateMessagesForConversation]);
+  }, [combineBufferedAgentText, updateMessagesForConversation]);
 
   const ensureAgentPlaceholder = useCallback(
     (conversationId: string, placeholderId: ConversationMessage['id'], turnId: string, resetText = false) => {
@@ -2348,17 +2361,31 @@ export default function WorkspacePage() {
     [],
   );
 
-  const getBufferedAgentText = useCallback(
+  const getBufferedAgentState = useCallback(
     (runInfo: ActiveRunInfo) => {
-      const { placeholderId, conversationId, turnId } = runInfo;
-      const buffered = agentMessageBufferRef.current.get(placeholderId);
-      if (buffered !== undefined) {
-        return buffered;
-      }
+      const { placeholderId, conversationId, turnId, runId } = runInfo;
       const message = findAgentMessageForRun(conversationId, placeholderId, turnId);
-      return message?.text || '';
+      const messageIndex = findAgentMessageIndexForRun(conversationId, placeholderId, turnId, runId);
+      const baseText =
+        agentMessageBufferRef.current.get(placeholderId) ??
+        (message ? agentMessageBufferRef.current.get(message.id) : undefined) ??
+        message?.text ??
+        '';
+      if (messageIndex < 0) {
+        return {
+          text: baseText,
+          messageIndex,
+          pendingChunk: '',
+        };
+      }
+      const pendingChunk = agentChunkBufferRef.current.get(conversationId)?.get(messageIndex) || '';
+      return {
+        text: combineBufferedAgentText(conversationId, baseText, pendingChunk),
+        messageIndex,
+        pendingChunk,
+      };
     },
-    [findAgentMessageForRun],
+    [combineBufferedAgentText, findAgentMessageForRun, findAgentMessageIndexForRun],
   );
 
   const isAgentMessageEmpty = useCallback((message?: ConversationMessage | null) => {
@@ -2510,7 +2537,8 @@ export default function WorkspacePage() {
         return;
       }
       const message = findAgentMessageForRun(conversationId, placeholderId, turnId);
-      const text = getBufferedAgentText(runInfo);
+      const bufferedState = getBufferedAgentState(runInfo);
+      const text = bufferedState.text;
       const lastText = lastPersistedAgentTextRef.current[runId];
       const nextStatus = statusOverride || message?.metadata?.status || runInfo.status || 'running';
       const lastStatus = lastPersistedStatusRef.current[runId];
@@ -2545,6 +2573,17 @@ export default function WorkspacePage() {
           placeholderId,
           existing: message,
         });
+        if (bufferedState.pendingChunk && bufferedState.messageIndex >= 0) {
+          const conversationBuffer = agentChunkBufferRef.current.get(conversationId);
+          if (conversationBuffer?.has(bufferedState.messageIndex)) {
+            conversationBuffer.delete(bufferedState.messageIndex);
+            if (conversationBuffer.size) {
+              agentChunkBufferRef.current.set(conversationId, conversationBuffer);
+            } else {
+              agentChunkBufferRef.current.delete(conversationId);
+            }
+          }
+        }
         lastPersistedAgentTextRef.current[runId] = text;
         lastPersistedStatusRef.current[runId] = nextStatus;
         lastPersistedMetadataRef.current[runId] = metadataSignature;
@@ -2563,7 +2602,7 @@ export default function WorkspacePage() {
         }
       }
     },
-    [getBufferedAgentText, findAgentMessageForRun, upsertPersistedAgentMessage],
+    [findAgentMessageForRun, getBufferedAgentState, upsertPersistedAgentMessage],
   );
 
   const bufferAgentChunk = (conversationId: string, index: number, chunk: string) => {
@@ -3184,7 +3223,7 @@ export default function WorkspacePage() {
       ensureAgentPlaceholder,
       handleStreamChunk,
       flushBufferedAgentChunks,
-      getBufferedAgentText,
+      getBufferedAgentState,
       findAgentMessageIndexForRun,
       getRunStatus,
       addLocalSystemMessage,
