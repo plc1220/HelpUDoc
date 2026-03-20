@@ -39,6 +39,10 @@ class BigQueryExportToolTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_read_only_sql("DELETE FROM demo.table WHERE id = 1")
 
+    def test_validate_read_only_sql_allows_keywords_inside_literals(self) -> None:
+        validate_read_only_sql("SELECT * FROM events WHERE action = 'export'")
+        validate_read_only_sql('SELECT * FROM events WHERE note = "drop"')
+
     def test_resolve_output_path_blocks_workspace_escape(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -46,6 +50,12 @@ class BigQueryExportToolTest(unittest.TestCase):
             self.assertEqual(resolved, root / "data_exports" / "orders.csv")
             with self.assertRaises(ValueError):
                 resolve_output_path(root, "../outside.csv", "csv")
+
+    def test_resolve_output_path_rewrites_existing_suffix_to_match_format(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            resolved = resolve_output_path(root, "datasets/orders/latest.csv", "parquet")
+            self.assertEqual(resolved, root / "datasets" / "orders" / "latest.parquet")
 
     @patch("helpudoc_agent.bigquery_export_tools.time.sleep", return_value=None)
     @patch("helpudoc_agent.bigquery_export_tools.requests.get")
@@ -133,6 +143,35 @@ class BigQueryExportToolTest(unittest.TestCase):
             self.assertEqual(payload["rowCount"], 2)
             self.assertTrue(output_file.exists())
             self.assertIn("order_id", output_file.read_text(encoding="utf-8"))
+
+    @patch("helpudoc_agent.bigquery_export_tools.run_bigquery_query")
+    def test_export_tool_uses_workspace_bigquery_project_and_location(self, mock_query) -> None:
+        mock_query.return_value = pd.DataFrame({"order_id": [1]})
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workspace = WorkspaceState(
+                workspace_id="ws-1",
+                root_path=Path(tmpdir),
+                context={
+                    "mcp_auth": {"toolbox-bq-demo": {"Authorization": "Bearer token"}},
+                    "bigquery_project": "workspace-project",
+                    "bigquery_location": "asia-southeast1",
+                },
+            )
+            tool = build_export_bigquery_query_tool(workspace)
+            raw = tool.invoke(
+                {
+                    "sql": "SELECT order_id FROM dataset.orders",
+                    "output_path": "data_exports/orders_extract",
+                    "format": "csv",
+                }
+            )
+
+            payload = json.loads(raw)
+            self.assertEqual(payload["project"], "workspace-project")
+            self.assertEqual(payload["location"], "asia-southeast1")
+            mock_query.assert_called_once()
+            self.assertEqual(mock_query.call_args.kwargs["project"], "workspace-project")
+            self.assertEqual(mock_query.call_args.kwargs["location"], "asia-southeast1")
 
 
 if __name__ == "__main__":

@@ -30,6 +30,9 @@ _DEFAULT_ROW_LIMIT = 10000
 _PAGE_SIZE = 1000
 _SQL_COMMENT_BLOCK = re.compile(r"/\*.*?\*/", flags=re.DOTALL)
 _SQL_COMMENT_LINE = re.compile(r"--.*?$", flags=re.MULTILINE)
+_SQL_SINGLE_QUOTE = re.compile(r"'(?:''|\\'|[^'])*'")
+_SQL_DOUBLE_QUOTE = re.compile(r'"(?:""|\\\"|[^"])*"')
+_SQL_BACKTICK_QUOTE = re.compile(r"`(?:``|[^`])*`")
 _READ_ONLY_START = re.compile(r"^\s*(select|with)\b", flags=re.IGNORECASE)
 _FORBIDDEN_SQL = re.compile(
     r"\b(insert|update|delete|merge|create|alter|drop|truncate|grant|revoke|call|export|load)\b",
@@ -79,14 +82,22 @@ def _strip_sql_comments(sql: str) -> str:
     return _SQL_COMMENT_LINE.sub(" ", no_blocks)
 
 
+def _strip_sql_literals(sql: str) -> str:
+    stripped = _SQL_SINGLE_QUOTE.sub("''", sql or "")
+    stripped = _SQL_DOUBLE_QUOTE.sub('""', stripped)
+    stripped = _SQL_BACKTICK_QUOTE.sub("``", stripped)
+    return stripped
+
+
 def validate_read_only_sql(sql: str) -> None:
     """Reject write/DDL statements; v1 only supports SELECT/WITH queries."""
     cleaned = _strip_sql_comments(sql).strip().rstrip(";").strip()
+    keyword_scan = _strip_sql_literals(cleaned)
     if not cleaned:
         raise ValueError("SQL query is required.")
     if not _READ_ONLY_START.match(cleaned):
         raise ValueError("Only read-only SELECT/WITH queries are supported.")
-    if _FORBIDDEN_SQL.search(cleaned):
+    if _FORBIDDEN_SQL.search(keyword_scan):
         raise ValueError("Only read-only SELECT/WITH queries are supported.")
 
 
@@ -112,6 +123,8 @@ def resolve_output_path(workspace_root: Path, output_path: Optional[str], export
         raw = f"{raw}bigquery_export_{uuid4().hex[:8]}{suffix}"
     elif not Path(raw).suffix:
         raw = f"{raw}{suffix}"
+    else:
+        raw = f"{Path(raw).with_suffix(suffix).as_posix()}"
 
     candidate = Path(raw)
     if candidate.is_absolute():
@@ -353,6 +366,17 @@ def build_export_bigquery_query_tool(workspace_state: WorkspaceState) -> Tool:
         except ValueError as exc:
             return str(exc)
 
+        project = str(
+            workspace_state.context.get("bigquery_project")
+            or workspace_state.context.get("bq_project")
+            or default_project
+        ).strip()
+        location = str(
+            workspace_state.context.get("bigquery_location")
+            or workspace_state.context.get("bq_location")
+            or default_location
+        ).strip()
+
         auth_header = extract_bearer_header(workspace_state, preferred_server)
         if not auth_header:
             return (
@@ -372,8 +396,8 @@ def build_export_bigquery_query_tool(workspace_state: WorkspaceState) -> Tool:
         try:
             df = run_bigquery_query(
                 sql=sql,
-                project=default_project,
-                location=default_location,
+                project=project,
+                location=location,
                 auth_header=auth_header,
                 row_limit=limit_value,
             )
@@ -406,8 +430,8 @@ def build_export_bigquery_query_tool(workspace_state: WorkspaceState) -> Tool:
                 "bytesWritten": artifact["size"],
                 "rowCount": artifact["rowCount"],
                 "format": export_format,
-                "project": default_project,
-                "location": default_location,
+                "project": project,
+                "location": location,
             },
             ensure_ascii=False,
         )
