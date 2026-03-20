@@ -10,8 +10,8 @@ interface CollapsibleDrawerProps {
   handleDrawerClose: () => void;
   workspaces: Workspace[];
   selectedWorkspace: Workspace | null;
-  newWorkspaceName: string;
-  setNewWorkspaceName: (name: string) => void;
+  workspaceSearchQuery: string;
+  setWorkspaceSearchQuery: (name: string) => void;
   handleCreateWorkspace: () => void;
   handleDeleteWorkspace: (id: string) => void;
   onSelectWorkspace: (workspace: Workspace) => void;
@@ -19,6 +19,8 @@ interface CollapsibleDrawerProps {
   colorMode: PaletteMode;
   onToggleColorMode: () => void;
   onSignOut?: () => void;
+  onToggleSkipPlanApprovals?: (checked: boolean) => void;
+  workspaceSettingsBusy?: boolean;
 }
 
 const drawerWidth = 280;
@@ -28,8 +30,8 @@ const CollapsibleDrawer: React.FC<CollapsibleDrawerProps> = ({
   handleDrawerClose,
   workspaces,
   selectedWorkspace,
-  newWorkspaceName,
-  setNewWorkspaceName,
+  workspaceSearchQuery,
+  setWorkspaceSearchQuery,
   handleCreateWorkspace,
   handleDeleteWorkspace,
   onSelectWorkspace,
@@ -37,6 +39,8 @@ const CollapsibleDrawer: React.FC<CollapsibleDrawerProps> = ({
   colorMode,
   onToggleColorMode,
   onSignOut,
+  onToggleSkipPlanApprovals,
+  workspaceSettingsBusy = false,
 }) => {
   const handleOpenSettingsClick = () => {
     handleDrawerClose();
@@ -59,8 +63,18 @@ const CollapsibleDrawer: React.FC<CollapsibleDrawerProps> = ({
       anchor="left"
       open={open}
     >
-      <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', p: 2.5, gap: 2 }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+      <Box
+        sx={{
+          display: 'flex',
+          flexDirection: 'column',
+          height: '100%',
+          minHeight: 0,
+          overflow: 'hidden',
+          p: 2.5,
+          gap: 2,
+        }}
+      >
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
           <Typography variant="h6" sx={{ fontWeight: 600 }}>
             Workspaces
           </Typography>
@@ -73,14 +87,14 @@ const CollapsibleDrawer: React.FC<CollapsibleDrawerProps> = ({
           </IconButton>
         </Box>
 
-        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5, flexShrink: 0 }}>
           <TextField
-            placeholder="New workspace"
+            placeholder="Search workspaces"
             variant="outlined"
             fullWidth
             size="small"
-            value={newWorkspaceName}
-            onChange={(e) => setNewWorkspaceName(e.target.value)}
+            value={workspaceSearchQuery}
+            onChange={(e) => setWorkspaceSearchQuery(e.target.value)}
             InputProps={{
               sx: {
                 borderRadius: 2,
@@ -96,12 +110,29 @@ const CollapsibleDrawer: React.FC<CollapsibleDrawerProps> = ({
             startIcon={<Add />}
             sx={{ borderRadius: 2, textTransform: 'none', fontWeight: 600 }}
           >
-            Create
+            + Create
           </Button>
         </Box>
 
-        <Box sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-          <Box sx={{ flexGrow: 1, overflowY: 'auto', pr: 1 }}>
+        <Box
+          sx={{
+            flex: '1 1 0%',
+            display: 'flex',
+            flexDirection: 'column',
+            minHeight: 0,
+            overflow: 'hidden',
+          }}
+        >
+          <Box
+            sx={{
+              flex: '1 1 auto',
+              minHeight: 0,
+              overflowY: 'auto',
+              overflowX: 'hidden',
+              pr: 1,
+              pb: 1,
+            }}
+          >
             <WorkspaceList
               workspaces={workspaces}
               selectedWorkspace={selectedWorkspace}
@@ -111,6 +142,7 @@ const CollapsibleDrawer: React.FC<CollapsibleDrawerProps> = ({
           </Box>
           <Box
             sx={{
+              flexShrink: 0,
               borderTop: (theme) => `1px solid ${theme.palette.divider}`,
               pt: 2,
               mt: 2,
@@ -161,6 +193,40 @@ const CollapsibleDrawer: React.FC<CollapsibleDrawerProps> = ({
             >
               Agent Settings
             </Button>
+            {selectedWorkspace ? (
+              <Box
+                sx={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  p: 1.5,
+                  borderRadius: 2,
+                  border: (theme) => `1px solid ${theme.palette.divider}`,
+                  backgroundColor: (theme) =>
+                    theme.palette.mode === 'light'
+                      ? 'rgba(15, 23, 42, 0.03)'
+                      : 'rgba(148, 163, 184, 0.08)',
+                }}
+              >
+                <Box sx={{ pr: 1.5 }}>
+                  <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+                    Plan approvals
+                  </Typography>
+                  <Typography variant="body2" sx={{ color: 'text.secondary', lineHeight: 1.2 }}>
+                    {selectedWorkspace.skipPlanApprovals
+                      ? 'Trusted mode is on for this workspace.'
+                      : 'Review research plans before they run.'}
+                  </Typography>
+                </Box>
+                <Switch
+                  size="small"
+                  checked={Boolean(selectedWorkspace.skipPlanApprovals)}
+                  disabled={!onToggleSkipPlanApprovals || workspaceSettingsBusy}
+                  onChange={(event) => onToggleSkipPlanApprovals?.(event.target.checked)}
+                  inputProps={{ 'aria-label': 'Toggle workspace plan approvals' }}
+                />
+              </Box>
+            ) : null}
             <Typography variant="body2" sx={{ color: 'text.secondary', mt: 1 }}>
               Manage skills and tools.
             </Typography>

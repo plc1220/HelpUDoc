@@ -2,6 +2,12 @@ export interface Workspace {
   id: string;
   name: string;
   lastUsed: string;
+  slug?: string;
+  role?: 'owner' | 'editor' | 'viewer';
+  canEdit?: boolean;
+  skipPlanApprovals?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface File {
@@ -46,15 +52,70 @@ export interface ToolOutputFile {
   size?: number;
 }
 
+export interface InterruptChoice {
+  id: string;
+  label: string;
+  description?: string;
+  value: string;
+}
+
+export interface InterruptQuestionOption {
+  id: string;
+  label: string;
+  description?: string;
+  value: string;
+}
+
+export interface InterruptQuestion {
+  id: string;
+  header: string;
+  question: string;
+  options?: InterruptQuestionOption[];
+}
+
+export interface InterruptAction {
+  id: string;
+  label: string;
+  style?: 'primary' | 'secondary' | 'danger';
+  inputMode?: 'none' | 'text';
+  placeholder?: string;
+  submitLabel?: string;
+  confirm?: boolean;
+  value?: string;
+  payload?: Record<string, unknown>;
+}
+
+export interface InterruptResponseSpec {
+  inputMode?: 'none' | 'text' | 'choice' | 'text_or_choice';
+  multiple?: boolean;
+  submitLabel?: string;
+  placeholder?: string;
+  allowDismiss?: boolean;
+  dismissLabel?: string;
+  choices?: InterruptChoice[];
+  questions?: InterruptQuestion[];
+}
+
+export interface PendingInterrupt {
+  kind?: 'approval' | 'clarification';
+  interruptId?: string;
+  title?: string;
+  description?: string;
+  stepIndex?: number;
+  stepCount?: number;
+  actions?: InterruptAction[];
+  actionRequests?: Array<{ name?: string; args?: Record<string, unknown> }>;
+  reviewConfigs?: Array<{ action_name?: string; allowed_decisions?: string[] }>;
+  responseSpec?: InterruptResponseSpec;
+  displayPayload?: Record<string, unknown>;
+}
+
 export interface ConversationMessageMetadata {
   thinkingText?: string;
   toolEvents?: ToolEvent[];
   runId?: string;
   status?: 'queued' | 'running' | 'awaiting_approval' | 'completed' | 'failed' | 'cancelled';
-  pendingInterrupt?: {
-    actionRequests?: Array<{ name?: string; args?: Record<string, unknown> }>;
-    reviewConfigs?: Array<{ action_name?: string; allowed_decisions?: string[] }>;
-  };
+  pendingInterrupt?: PendingInterrupt;
   runPolicy?: {
     skill?: string;
     requiresHitlPlan?: boolean;

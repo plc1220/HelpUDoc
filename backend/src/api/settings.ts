@@ -24,8 +24,13 @@ const workspaceRoot = process.env.WORKSPACE_ROOT
   : path.join(repoRoot, 'workspaces');
 
 // In production containers, the repo layout does not exist. Use explicit env vars.
+// In local dev, fall back to the checked-in agent config so the Settings UI reflects
+// the same runtime.yaml the Python agent actually loads.
+const defaultAgentConfigDir = existsSync('/agent/config')
+  ? '/agent/config'
+  : path.join(repoRoot, 'agent', 'config');
 const agentConfigPath = process.env.AGENT_CONFIG_PATH
-  || path.join(process.env.AGENT_CONFIG_DIR || '/agent/config', 'runtime.yaml');
+  || path.join(process.env.AGENT_CONFIG_DIR || defaultAgentConfigDir, 'runtime.yaml');
 const skillsRoot = process.env.SKILLS_ROOT || path.join(repoRoot, 'skills');
 
 const skillBuilderStorageRoot = path.join(repoRoot, '.local-run', 'skill-builder');
@@ -203,14 +208,34 @@ async function pathExists(targetPath: string) {
   }
 }
 
-const isValidSkillId = (id: string) => /^[a-zA-Z0-9_-]+$/.test(id);
+const isValidSkillId = (id: string) => /^[a-zA-Z0-9_-]+(?:\/[a-zA-Z0-9_-]+)*$/.test(id);
+
+const normalizeSkillId = (id: string) => id.trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
 
 function resolveSkillDir(id: string) {
-  const normalizedId = id.trim();
+  const normalizedId = normalizeSkillId(id);
   if (!isValidSkillId(normalizedId)) {
     throw new Error('Invalid skill id');
   }
   return path.join(skillsRoot, normalizedId);
+}
+
+async function collectSkillIds(rootDir: string, relativeDir = ''): Promise<string[]> {
+  const entries = await fs.readdir(rootDir, { withFileTypes: true });
+  let ids: string[] = [];
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const relPath = relativeDir ? path.posix.join(relativeDir, entry.name) : entry.name;
+    const fullPath = path.join(rootDir, entry.name);
+    const skillFile = path.join(fullPath, 'SKILL.md');
+    if (await pathExists(skillFile)) {
+      ids.push(relPath);
+    }
+    ids = ids.concat(await collectSkillIds(fullPath, relPath));
+  }
+
+  return ids.sort((a, b) => a.localeCompare(b));
 }
 
 function isAllowedActionPath(relativePath: string, prefixes = ACTION_ALLOWED_PREFIXES): boolean {
@@ -555,17 +580,16 @@ export default function settingsRoutes(_workspaceService: WorkspaceService) {
   router.get('/skills', async (_req, res) => {
     try {
       await fs.mkdir(skillsRoot, { recursive: true });
-      const entries = await fs.readdir(skillsRoot, { withFileTypes: true });
+      const skillIds = await collectSkillIds(skillsRoot);
       const skills: SkillMetadata[] = [];
 
-      for (const entry of entries) {
-        if (!entry.isDirectory()) continue;
+      for (const skillId of skillIds) {
         try {
-          const metadata = await getSkillMetadata(entry.name);
+          const metadata = await getSkillMetadata(skillId);
           skills.push(metadata);
         } catch (error: unknown) {
           const message = error instanceof Error ? error.message : 'Failed to read skill';
-          skills.push({ id: entry.name, name: entry.name, valid: false, error: message });
+          skills.push({ id: skillId, name: skillId, valid: false, error: message });
         }
       }
 
@@ -592,9 +616,10 @@ export default function settingsRoutes(_workspaceService: WorkspaceService) {
     }
   });
 
-  router.get('/skills/:id/files', async (req, res) => {
+  router.get(/^\/skills\/(.+)\/files$/, async (req, res) => {
     try {
-      const skillDir = resolveSkillDir(req.params.id);
+      const skillId = req.params[0];
+      const skillDir = resolveSkillDir(skillId);
       if (!await pathExists(skillDir)) {
         return res.status(404).json({ error: 'Skill not found' });
       }
@@ -610,14 +635,15 @@ export default function settingsRoutes(_workspaceService: WorkspaceService) {
     }
   });
 
-  router.get('/skills/:id/content', async (req, res) => {
+  router.get(/^\/skills\/(.+)\/content$/, async (req, res) => {
     const filePath = req.query.path;
     if (typeof filePath !== 'string' || !filePath) {
       return res.status(400).json({ error: 'Path query required' });
     }
 
     try {
-      const fullPath = resolveSkillFile(req.params.id, filePath, IMPORT_ALLOWED_PREFIXES);
+      const skillId = req.params[0];
+      const fullPath = resolveSkillFile(skillId, filePath, IMPORT_ALLOWED_PREFIXES);
       if (!await pathExists(fullPath)) {
         return res.status(404).json({ error: 'File not found' });
       }
@@ -633,10 +659,11 @@ export default function settingsRoutes(_workspaceService: WorkspaceService) {
     }
   });
 
-  router.put('/skills/:id/content', async (req, res) => {
+  router.put(/^\/skills\/(.+)\/content$/, async (req, res) => {
     try {
       const { path: filePath, content } = updateSkillContentSchema.parse(req.body);
-      const fullPath = resolveSkillFile(req.params.id, filePath, IMPORT_ALLOWED_PREFIXES);
+      const skillId = req.params[0];
+      const fullPath = resolveSkillFile(skillId, filePath, IMPORT_ALLOWED_PREFIXES);
       await fs.mkdir(path.dirname(fullPath), { recursive: true });
       await fs.writeFile(fullPath, content, 'utf-8');
       res.json({ success: true });

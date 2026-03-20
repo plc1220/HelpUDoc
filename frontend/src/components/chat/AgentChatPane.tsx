@@ -19,11 +19,17 @@ import ChatHeader from './ChatHeader';
 import ChatHistoryPanel from './ChatHistoryPanel';
 import ChatInputArea from './ChatInputArea';
 import ChatMessageList from './ChatMessageList';
+import type { RenderableInterruptAction } from './interruptActions';
 
 type CommandSuggestion = {
   id: string;
   command: string;
   description: string;
+};
+
+type CommandTag = {
+  id: string;
+  label: string;
 };
 
 type ConversationStreamingMap = Record<string, boolean>;
@@ -47,13 +53,16 @@ export default function AgentChatPane({
   expandedToolMessages,
   expandedThinkingMessages,
   copiedMessageId,
-  approvalFeedbackByMessageId,
-  approvalSubmittingByMessageId,
+  interruptInputByMessageId,
+  interruptSelectedChoicesByMessageId,
+  interruptSubmittingByMessageId,
+  interruptErrorByMessageId,
   chatMessage,
   chatAttachments,
   showPaper2SlidesControls,
   presentationStatus,
   presentationOptionSummary,
+  commandTags,
   isMentionOpen,
   mentionSuggestions,
   mentionSelectedIndex,
@@ -64,11 +73,16 @@ export default function AgentChatPane({
   attachmentInputRef,
   workspaceId,
   formatMessageTimestamp,
-  approvalFieldKey,
-  getAllowedDecisions,
+  interruptFieldKey,
+  interruptActionFieldKey,
+  getInterruptKind,
+  getInterruptActions,
   getPrimaryInterruptAction,
   isPlanApprovalInterrupt,
-  setApprovalFeedbackByMessageId,
+  setInterruptInputByMessageId,
+  toggleInterruptSelectedChoice,
+  workspaceSkipPlanApprovals,
+  workspaceSettingsBusy,
   onToggleAgentPaneVisibility,
   onModeChange,
   onToggleHistory,
@@ -81,7 +95,9 @@ export default function AgentChatPane({
   onToggleToolActivityVisibility,
   onCopyMessageText,
   onRerunMessage,
-  onInterruptDecision,
+  onPrepareInterruptAction,
+  onInterruptAction,
+  onEnableTrustedPlanMode,
   onChatInputChange,
   onChatInputKeyDown,
   onChatInputKeyUp,
@@ -93,6 +109,7 @@ export default function AgentChatPane({
   onSendMessage,
   onChatAttachmentChange,
   onRemoveChatAttachment,
+  onRemoveCommandTag,
   onSelectMention,
   onSelectCommand,
 }: {
@@ -114,13 +131,16 @@ export default function AgentChatPane({
   expandedToolMessages: Set<ConversationMessage['id']>;
   expandedThinkingMessages: Set<ConversationMessage['id']>;
   copiedMessageId: ConversationMessage['id'] | null;
-  approvalFeedbackByMessageId: Record<string, string>;
-  approvalSubmittingByMessageId: Record<string, boolean>;
+  interruptInputByMessageId: Record<string, string>;
+  interruptSelectedChoicesByMessageId: Record<string, string[]>;
+  interruptSubmittingByMessageId: Record<string, boolean>;
+  interruptErrorByMessageId: Record<string, string>;
   chatMessage: string;
   chatAttachments: File[];
   showPaper2SlidesControls: boolean;
   presentationStatus: 'idle' | 'running' | 'success' | 'error';
   presentationOptionSummary: string;
+  commandTags: CommandTag[];
   isMentionOpen: boolean;
   mentionSuggestions: WorkspaceFile[];
   mentionSelectedIndex: number;
@@ -131,15 +151,25 @@ export default function AgentChatPane({
   attachmentInputRef: RefObject<HTMLInputElement | null>;
   workspaceId?: string;
   formatMessageTimestamp: (value?: string) => string;
-  approvalFieldKey: (messageKey: string, field: 'feedback' | 'edit-json' | 'reject-note') => string;
-  getAllowedDecisions: (
+  interruptFieldKey: (
+    messageKey: string,
+    field: 'feedback' | 'edit-json' | 'reject-note' | 'clarification-text',
+  ) => string;
+  interruptActionFieldKey: (messageKey: string, actionId: string) => string;
+  getInterruptKind: (
     pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
-  ) => Array<'approve' | 'edit' | 'reject'>;
+  ) => 'approval' | 'clarification';
+  getInterruptActions: (
+    pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
+  ) => RenderableInterruptAction[];
   getPrimaryInterruptAction: (
     pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
   ) => { name?: string; args?: Record<string, unknown> } | undefined;
   isPlanApprovalInterrupt: (pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt']) => boolean;
-  setApprovalFeedbackByMessageId: Dispatch<SetStateAction<Record<string, string>>>;
+  setInterruptInputByMessageId: Dispatch<SetStateAction<Record<string, string>>>;
+  toggleInterruptSelectedChoice: (messageKey: string, choiceId: string, multiple: boolean) => void;
+  workspaceSkipPlanApprovals: boolean;
+  workspaceSettingsBusy: boolean;
   onToggleAgentPaneVisibility: () => void;
   onModeChange: (event: ChangeEvent<HTMLSelectElement>) => void;
   onToggleHistory: () => void;
@@ -152,11 +182,17 @@ export default function AgentChatPane({
   onToggleToolActivityVisibility: (messageId: ConversationMessage['id']) => void;
   onCopyMessageText: (message: ConversationMessage) => void;
   onRerunMessage: (messageId: ConversationMessage['id']) => void;
-  onInterruptDecision: (
+  onPrepareInterruptAction: (
     message: ConversationMessage,
-    decision: 'approve' | 'edit' | 'reject',
+    action: RenderableInterruptAction,
     pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
   ) => void;
+  onInterruptAction: (
+    message: ConversationMessage,
+    action: RenderableInterruptAction,
+    pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
+  ) => void;
+  onEnableTrustedPlanMode: () => Promise<boolean> | boolean;
   onChatInputChange: (event: ChangeEvent<HTMLTextAreaElement>) => void;
   onChatInputKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
   onChatInputKeyUp: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
@@ -168,6 +204,7 @@ export default function AgentChatPane({
   onSendMessage: () => void;
   onChatAttachmentChange: (event: ChangeEvent<HTMLInputElement>) => void;
   onRemoveChatAttachment: (index: number) => void;
+  onRemoveCommandTag: (tagId: string) => void;
   onSelectMention: (file: WorkspaceFile) => void;
   onSelectCommand: (command: CommandSuggestion) => void;
 }) {
@@ -211,19 +248,28 @@ export default function AgentChatPane({
           expandedToolMessages={expandedToolMessages}
           expandedThinkingMessages={expandedThinkingMessages}
           copiedMessageId={copiedMessageId}
-          approvalFeedbackByMessageId={approvalFeedbackByMessageId}
-          approvalSubmittingByMessageId={approvalSubmittingByMessageId}
-          approvalFieldKey={approvalFieldKey}
+          interruptInputByMessageId={interruptInputByMessageId}
+          interruptSelectedChoicesByMessageId={interruptSelectedChoicesByMessageId}
+          interruptSubmittingByMessageId={interruptSubmittingByMessageId}
+          interruptErrorByMessageId={interruptErrorByMessageId}
+          interruptFieldKey={interruptFieldKey}
+          interruptActionFieldKey={interruptActionFieldKey}
+          getInterruptKind={getInterruptKind}
           formatMessageTimestamp={formatMessageTimestamp}
-          getAllowedDecisions={getAllowedDecisions}
+          getInterruptActions={getInterruptActions}
           getPrimaryInterruptAction={getPrimaryInterruptAction}
           isPlanApprovalInterrupt={isPlanApprovalInterrupt}
-          setApprovalFeedbackByMessageId={setApprovalFeedbackByMessageId}
+          setInterruptInputByMessageId={setInterruptInputByMessageId}
+          toggleInterruptSelectedChoice={toggleInterruptSelectedChoice}
+          workspaceSkipPlanApprovals={workspaceSkipPlanApprovals}
+          workspaceSettingsBusy={workspaceSettingsBusy}
           toggleThinkingVisibility={onToggleThinkingVisibility}
           toggleToolActivityVisibility={onToggleToolActivityVisibility}
           handleCopyMessageText={onCopyMessageText}
           handleRerunMessage={onRerunMessage}
-          handleInterruptDecision={onInterruptDecision}
+          handlePrepareInterruptAction={onPrepareInterruptAction}
+          handleInterruptAction={onInterruptAction}
+          enableTrustedPlanMode={onEnableTrustedPlanMode}
           workspaceId={workspaceId}
         />
         <ChatInputArea
@@ -235,6 +281,7 @@ export default function AgentChatPane({
           showPaper2SlidesControls={showPaper2SlidesControls}
           presentationStatus={presentationStatus}
           presentationOptionSummary={presentationOptionSummary}
+          commandTags={commandTags}
           isMentionOpen={isMentionOpen}
           mentionSuggestions={mentionSuggestions}
           mentionSelectedIndex={mentionSelectedIndex}
@@ -252,6 +299,7 @@ export default function AgentChatPane({
           onSendMessage={onSendMessage}
           onChatAttachmentChange={onChatAttachmentChange}
           onRemoveChatAttachment={onRemoveChatAttachment}
+          onRemoveCommandTag={onRemoveCommandTag}
           onSelectMention={onSelectMention}
           onSelectCommand={onSelectCommand}
         />

@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Wrench, Loader2, Library } from 'lucide-react';
+import { Wrench, Library, Loader2 } from 'lucide-react';
 import { fetchAgentConfig, saveAgentConfig } from '../../services/settingsApi';
 import ToolsTab from './ToolsTab';
 import SkillsRegistryTab from './SkillsRegistryTab';
+import { SettingsEmptyState, SettingsLoadingState, SettingsTabPanel, SettingsTabs } from './SettingsScaffold';
 import YAML from 'yaml';
 import { getAuthUser } from '../../auth/authStore';
 
@@ -36,7 +37,7 @@ const AgentSettingsTabs = () => {
     }, []);
 
     useEffect(() => {
-        loadConfig();
+        void loadConfig();
     }, [loadConfig]);
 
     const handleSave = async (newConfig: any) => {
@@ -62,59 +63,52 @@ const AgentSettingsTabs = () => {
 
     if (loading) {
         return (
-            <div className="flex items-center justify-center h-64">
-                <Loader2 className="animate-spin text-slate-400" size={32} />
-            </div>
+            <SettingsTabPanel className="flex min-h-[320px] items-center justify-center">
+                <SettingsLoadingState label="Loading agent configuration..." />
+            </SettingsTabPanel>
         );
     }
 
     if (error) {
         return (
-            <div className="p-6 text-center">
-                <p className="text-rose-600 mb-4">{error}</p>
-                <button
-                    onClick={loadConfig}
-                    className="px-4 py-2 bg-slate-900 text-white rounded-lg hover:bg-slate-800"
-                >
-                    Retry
-                </button>
-            </div>
+            <SettingsTabPanel className="flex min-h-[320px] items-center">
+                <SettingsEmptyState
+                    title="Unable to load settings"
+                    description={error}
+                    icon={Loader2}
+                    action={
+                        <button
+                            type="button"
+                            onClick={loadConfig}
+                            className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800"
+                        >
+                            Retry
+                        </button>
+                    }
+                />
+            </SettingsTabPanel>
         );
     }
 
     return (
         <div className="space-y-6">
-            <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl w-fit">
-                <button
-                    onClick={() => setActiveTab('tools')}
-                    className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${activeTab === 'tools'
-                            ? 'bg-white text-slate-900 shadow-sm'
-                            : 'text-slate-600 hover:text-slate-900'
-                        }`}
-                >
-                    <Wrench size={16} />
-                    Tools & MCP
-                </button>
-                <button
-                    onClick={() => setActiveTab('skills')}
-                    className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${activeTab === 'skills'
-                            ? 'bg-white text-slate-900 shadow-sm'
-                            : 'text-slate-600 hover:text-slate-900'
-                        }`}
-                >
-                    <Library size={16} />
-                    Skill Registry
-                </button>
-            </div>
+            <SettingsTabs
+                tabs={[
+                    { id: 'skills', label: 'Skill Registry', icon: Library },
+                    { id: 'tools', label: 'Tools & MCP', icon: Wrench },
+                ]}
+                value={activeTab}
+                onChange={setActiveTab}
+            />
 
-            <div className="bg-white rounded-3xl border border-slate-200 shadow-sm p-6 min-h-[500px]">
+            <SettingsTabPanel>
                 {activeTab === 'tools' && (
                     <ToolsTab config={config} onSave={handleSave} isSaving={saving} />
                 )}
                 {activeTab === 'skills' && (
                     <SkillsRegistryTab />
                 )}
-            </div>
+            </SettingsTabPanel>
         </div>
     );
 };

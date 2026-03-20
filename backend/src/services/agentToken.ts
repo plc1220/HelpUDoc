@@ -2,6 +2,20 @@ import crypto from 'crypto';
 
 type JsonRecord = Record<string, unknown>;
 
+const LOCAL_DEV_AGENT_JWT_SECRET = 'helpudoc-local-dev-agent-jwt-secret';
+
+function getAgentJwtSecret(): string {
+  const configured = process.env.AGENT_JWT_SECRET || '';
+  if (configured.trim()) {
+    return configured;
+  }
+  const env = (process.env.NODE_ENV || '').trim().toLowerCase();
+  if (!env || env === 'development') {
+    return LOCAL_DEV_AGENT_JWT_SECRET;
+  }
+  return '';
+}
+
 const b64url = (input: Buffer | string): string => {
   const buf = Buffer.isBuffer(input) ? input : Buffer.from(input, 'utf-8');
   // Node supports base64url directly.
@@ -22,7 +36,7 @@ export type AgentContextTokenPayload = {
 } & JsonRecord;
 
 export function signAgentContextToken(payload: AgentContextTokenPayload): string | null {
-  const secret = process.env.AGENT_JWT_SECRET || '';
+  const secret = getAgentJwtSecret();
   if (!secret) {
     return null;
   }

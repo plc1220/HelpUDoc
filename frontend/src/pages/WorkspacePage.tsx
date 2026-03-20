@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef, useCallback, useMemo, Children, isValidElement, type ChangeEvent } from 'react';
-import type { CSSProperties, ReactNode } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo, type ChangeEvent } from 'react';
+import type { ComponentProps, CSSProperties } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -12,10 +12,11 @@ import {
 import { CheckSquare, Copy, Edit, Trash, Plus, Minus, ChevronLeft, RotateCcw, X, Printer, Download, Link as LinkIcon, Loader2 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { getWorkspaces, createWorkspace, deleteWorkspace } from '../services/workspaceApi';
+import { getWorkspaces, createWorkspace, deleteWorkspace, renameWorkspace, updateWorkspaceSettings } from '../services/workspaceApi';
 import {
   getFiles,
   createFile,
+  createTextFile,
   updateFileContent,
   deleteFile,
   getFileContent,
@@ -25,10 +26,13 @@ import {
 import { startPaper2SlidesJob, getPaper2SlidesJob, exportPaper2SlidesPptx } from '../services/paper2SlidesJobApi';
 import {
   cancelRun,
+  fetchSlashMetadata,
   getRunStatus,
   startAgentRun,
   streamAgentRun,
+  submitRunAction,
   submitRunDecision,
+  submitRunResponse,
   type AgentRunStatus,
   type AgentStreamChunk,
 } from '../services/agentApi';
@@ -49,13 +53,16 @@ import type {
   ToolEvent,
   ToolOutputFile,
   ConversationMessageMetadata,
+  InterruptAction,
+  SkillDefinition,
 } from '../types';
 import CollapsibleDrawer from '../components/CollapsibleDrawer';
 import FileEditor from '../components/FileEditor';
 import UIBlockRenderer, { type UIBlock } from '../components/UIBlockRenderer';
 import ExpandableSidebar from '../components/ExpandableSidebar';
 import AgentChatPane from '../components/chat/AgentChatPane';
-import ToolOutputFilePreview from '../components/chat/ToolOutputFilePreview';
+import { buildApprovalDraftContent, buildApprovalReview } from '../components/chat/approvalReview';
+import type { RenderableInterruptAction } from '../components/chat/interruptActions';
 import { useAuth } from '../auth/AuthProvider';
 import {
   CANVAS_ZOOM_STEP,
@@ -66,7 +73,8 @@ import {
   SLASH_COMMANDS,
 } from '../constants/workspace';
 import { getFileDisplayName, getFileTypeIcon, isSystemFile, normalizeFilePath } from '../utils/files';
-import { buildMessageMetadata, mapMessagesToAgentHistory, mergeMessageMetadata } from '../utils/messages';
+import { buildMessageMetadata, mapMessagesToAgentHistory, mergeMessageMetadata, sanitizeRunPolicy } from '../utils/messages';
+import { createMarkdownComponents } from '../components/markdown/MarkdownShared';
 
 const drawerWidth = 280;
 
@@ -143,7 +151,17 @@ const STREAM_DEBUG_ENABLED =
 
 type Paper2SlidesStage = (typeof PAPER2SLIDES_STAGE_ORDER)[number];
 type Paper2SlidesStylePreset = (typeof PAPER2SLIDES_STYLE_PRESETS)[number];
-type SlashCommand = (typeof SLASH_COMMANDS)[number];
+type CommandSuggestion = {
+  id: string;
+  command: string;
+  description: string;
+};
+
+type ParsedSlashDirective =
+  | { kind: 'presentation'; prompt: string; raw: string }
+  | { kind: 'skill'; skillId: string; prompt: string; raw: string }
+  | { kind: 'mcp'; serverId: string; prompt: string; raw: string }
+  | { kind: 'none'; prompt: string; raw: string };
 
 type PresentationOptionsState = {
   output: 'slides' | 'poster';
@@ -169,7 +187,6 @@ type ActiveRunInfo = {
 };
 
 const ACTIVE_RUNS_STORAGE_KEY = 'helpudoc-active-runs';
-const BLOCK_LEVEL_TAGS = ['div', 'pre', 'table', 'ol', 'ul', 'li', 'blockquote', 'section', 'article'];
 const MARKDOWN_FILE_EXTENSIONS = ['.md'];
 const HTML_FILE_EXTENSIONS = ['.html', '.htm'];
 const IMAGE_FILE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp'];
@@ -181,6 +198,43 @@ const generateTurnId = () => {
   return `turn-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 };
 
+const DEFAULT_PLAN_FILE_PATH = 'research_plan.md';
+
+const formatWorkspaceLastUsed = (updatedAt?: string) => {
+  if (!updatedAt) {
+    return 'Recently';
+  }
+  const timestamp = new Date(updatedAt).getTime();
+  if (Number.isNaN(timestamp)) {
+    return 'Recently';
+  }
+  const diffMs = Date.now() - timestamp;
+  if (diffMs < 60_000) {
+    return 'Just now';
+  }
+  if (diffMs < 86_400_000) {
+    return 'Today';
+  }
+  if (diffMs < 172_800_000) {
+    return 'Yesterday';
+  }
+  return new Date(updatedAt).toLocaleDateString();
+};
+
+const hydrateWorkspace = (workspace: Omit<Workspace, 'lastUsed'> & { lastUsed?: string }): Workspace => ({
+  ...workspace,
+  lastUsed: workspace.lastUsed ?? formatWorkspaceLastUsed(workspace.updatedAt),
+});
+
+const normalizeWorkspaceRelativePath = (value?: string): string =>
+  String(value || '')
+    .replace(/\\/g, '/')
+    .replace(/^\/+/, '')
+    .trim();
+
+const isDraftWorkspaceFile = (file?: WorkspaceFile | null): boolean =>
+  Boolean(file && typeof file.id === 'string' && String(file.id).startsWith('draft:'));
+
 const mergePersistedAgentMessage = (
   persisted: ConversationMessage,
   existing?: ConversationMessage | null,
@@ -188,22 +242,33 @@ const mergePersistedAgentMessage = (
   const hydrated = mergeMessageMetadata(persisted);
   const persistedMetadata = (hydrated.metadata as ConversationMessageMetadata | null | undefined) || {};
   const existingMetadata = (existing?.metadata as ConversationMessageMetadata | null | undefined) || {};
-  const effectiveStatus = persistedMetadata.status ?? existingMetadata.status;
+  const persistedStatus = persistedMetadata.status;
+  const existingStatus = existingMetadata.status;
+  const effectiveStatus = persistedStatus ?? existingStatus;
 
   const mergedMetadata: ConversationMessageMetadata = {
     ...existingMetadata,
     ...persistedMetadata,
+    status: effectiveStatus,
     runPolicy: persistedMetadata.runPolicy ?? existingMetadata.runPolicy,
     pendingInterrupt:
       persistedMetadata.pendingInterrupt !== undefined
         ? persistedMetadata.pendingInterrupt
-        : effectiveStatus === 'awaiting_approval'
+        : persistedStatus === undefined && effectiveStatus === 'awaiting_approval'
           ? existingMetadata.pendingInterrupt
           : undefined,
   };
 
+  const persistedText = typeof hydrated.text === 'string' ? hydrated.text : '';
+  const existingText = typeof existing?.text === 'string' ? existing.text : '';
+  const mergedText =
+    persistedText.trim().length > 0 || !existingText.trim().length
+      ? persistedText
+      : existingText;
+
   return {
     ...hydrated,
+    text: mergedText,
     thinkingText: hydrated.thinkingText ?? existing?.thinkingText,
     toolEvents: hydrated.toolEvents ?? existing?.toolEvents,
     metadata: Object.keys(mergedMetadata).length ? mergedMetadata : undefined,
@@ -227,6 +292,14 @@ const loadActiveRunsFromStorage = (): Record<string, ActiveRunInfo> => {
   return {};
 };
 
+type PersistProgressRequest = {
+  runInfo: ActiveRunInfo;
+  statusOverride?: AgentRunStatus;
+  options?: {
+    metadataOverride?: Partial<ConversationMessageMetadata>;
+  };
+};
+
 export default function WorkspacePage() {
   const navigate = useNavigate();
   const { signOut } = useAuth();
@@ -240,12 +313,16 @@ export default function WorkspacePage() {
   });
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [selectedWorkspace, setSelectedWorkspace] = useState<Workspace | null>(null);
+  const [workspaceSettingsBusy, setWorkspaceSettingsBusy] = useState(false);
+  const [workspaceSearchQuery, setWorkspaceSearchQuery] = useState('');
+  const [isWorkspaceRenameActive, setIsWorkspaceRenameActive] = useState(false);
+  const [workspaceNameDraft, setWorkspaceNameDraft] = useState('');
+  const [workspaceRenameBusy, setWorkspaceRenameBusy] = useState(false);
   const [files, setFiles] = useState<WorkspaceFile[]>([]);
   const [selectedFile, setSelectedFile] = useState<WorkspaceFile | null>(null);
   const [selectedFileDetails, setSelectedFileDetails] = useState<WorkspaceFile | null>(null);
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
   const [fileContent, setFileContent] = useState('');
-  const [newWorkspaceName, setNewWorkspaceName] = useState('');
   const [conversationMessages, setConversationMessages] = useState<Record<string, ConversationMessage[]>>({});
   const [chatMessage, setChatMessage] = useState('');
   const [chatAttachments, setChatAttachments] = useState<File[]>([]);
@@ -289,10 +366,13 @@ export default function WorkspacePage() {
   const activeRunsRef = useRef<Record<string, ActiveRunInfo>>({});
   const lastPersistedAgentTextRef = useRef<Record<string, string>>({});
   const lastPersistedStatusRef = useRef<Record<string, AgentRunStatus | undefined>>({});
+  const lastPersistedMetadataRef = useRef<Record<string, string | undefined>>({});
   const persistInFlightRef = useRef<Set<string>>(new Set());
+  const pendingPersistRef = useRef<Record<string, PersistProgressRequest>>({});
   const stopRequestedRef = useRef(false);
   const chatInputRef = useRef<HTMLTextAreaElement | null>(null);
   const attachmentInputRef = useRef<HTMLInputElement | null>(null);
+  const workspaceNameInputRef = useRef<HTMLInputElement | null>(null);
   const autoSaveTimerRef = useRef<number | null>(null);
   const lastAutoSavedContentRef = useRef<string>('');
   const [isMentionOpen, setIsMentionOpen] = useState(false);
@@ -308,13 +388,25 @@ export default function WorkspacePage() {
   const [expandedToolMessages, setExpandedToolMessages] = useState<Set<ConversationMessage['id']>>(new Set());
   const [expandedThinkingMessages, setExpandedThinkingMessages] = useState<Set<ConversationMessage['id']>>(new Set());
   const [copiedCodeBlockId, setCopiedCodeBlockId] = useState<string | null>(null);
+
+  const filteredWorkspaces = useMemo(() => {
+    const query = workspaceSearchQuery.trim().toLowerCase();
+    if (!query) {
+      return workspaces;
+    }
+    return workspaces.filter((workspace) => workspace.name.toLowerCase().includes(query));
+  }, [workspaceSearchQuery, workspaces]);
   const [copiedImageUrl, setCopiedImageUrl] = useState(false);
   const [copiedFileUrlId, setCopiedFileUrlId] = useState<string | null>(null);
   const [ragStatuses, setRagStatuses] = useState<Record<string, { status?: string; updatedAt?: string; error?: string }>>({});
   const [copiedWorkspaceContent, setCopiedWorkspaceContent] = useState(false);
   const [copiedMessageId, setCopiedMessageId] = useState<ConversationMessage['id'] | null>(null);
-  const [approvalFeedbackByMessageId, setApprovalFeedbackByMessageId] = useState<Record<string, string>>({});
-  const [approvalSubmittingByMessageId, setApprovalSubmittingByMessageId] = useState<Record<string, boolean>>({});
+  const [availableSkills, setAvailableSkills] = useState<SkillDefinition[]>([]);
+  const [availableMcpServers, setAvailableMcpServers] = useState<Array<{ name: string; description?: string }>>([]);
+  const [interruptInputByMessageId, setInterruptInputByMessageId] = useState<Record<string, string>>({});
+  const [interruptSelectedChoicesByMessageId, setInterruptSelectedChoicesByMessageId] = useState<Record<string, string[]>>({});
+  const [interruptSubmittingByMessageId, setInterruptSubmittingByMessageId] = useState<Record<string, boolean>>({});
+  const [interruptErrorByMessageId, setInterruptErrorByMessageId] = useState<Record<string, string>>({});
   const ragStatusFetchedRef = useRef<Record<string, boolean>>({});
   const resumeInFlightRef = useRef<Set<string>>(new Set());
   const resumeAttemptedRef = useRef<Set<string>>(new Set());
@@ -323,9 +415,16 @@ export default function WorkspacePage() {
     () => (activeConversationId ? conversationMessages[activeConversationId] || [] : []),
     [activeConversationId, conversationMessages],
   );
+  const hasRunningAgentMessage = useMemo(
+    () =>
+      messages.some(
+        (message) => message.sender === 'agent' && message.metadata?.status === 'running',
+      ),
+    [messages],
+  );
   const isStreaming = useMemo(
-    () => (activeConversationId ? conversationStreaming[activeConversationId] || false : false),
-    [activeConversationId, conversationStreaming],
+    () => (activeConversationId ? conversationStreaming[activeConversationId] || false : false) || hasRunningAgentMessage,
+    [activeConversationId, conversationStreaming, hasRunningAgentMessage],
   );
   const systemFiles = useMemo(() => files.filter(isSystemFile), [files]);
   const visibleFiles = useMemo(
@@ -355,10 +454,31 @@ export default function WorkspacePage() {
     }
   }, []);
 
+  const removeConflictingRuns = useCallback((runs: Record<string, ActiveRunInfo>, runInfo: ActiveRunInfo) => {
+    const next = { ...runs };
+    Object.entries(next).forEach(([candidateRunId, candidate]) => {
+      if (candidateRunId === runInfo.runId) {
+        return;
+      }
+      if (candidate.conversationId === runInfo.conversationId && candidate.turnId === runInfo.turnId) {
+        delete next[candidateRunId];
+        delete lastPersistedAgentTextRef.current[candidateRunId];
+        delete lastPersistedStatusRef.current[candidateRunId];
+        delete lastPersistedMetadataRef.current[candidateRunId];
+        resumeInFlightRef.current.delete(candidateRunId);
+        resumeAttemptedRef.current.delete(candidateRunId);
+      }
+    });
+    return next;
+  }, []);
+
   const registerActiveRun = useCallback((runInfo: ActiveRunInfo) => {
-    const next = { ...activeRunsRef.current, [runInfo.runId]: runInfo };
+    const next = {
+      ...removeConflictingRuns(activeRunsRef.current, runInfo),
+      [runInfo.runId]: runInfo,
+    };
     persistActiveRuns(next);
-  }, [persistActiveRuns]);
+  }, [persistActiveRuns, removeConflictingRuns]);
 
   const removeActiveRun = useCallback((runId: string) => {
     if (!activeRunsRef.current[runId]) return;
@@ -367,8 +487,34 @@ export default function WorkspacePage() {
     persistActiveRuns(next);
     delete lastPersistedAgentTextRef.current[runId];
     delete lastPersistedStatusRef.current[runId];
+    delete lastPersistedMetadataRef.current[runId];
     resumeInFlightRef.current.delete(runId);
     resumeAttemptedRef.current.delete(runId);
+  }, [persistActiveRuns]);
+
+  const removeActiveRunsForTurn = useCallback((conversationId: string, turnId?: string, keepRunId?: string) => {
+    if (!turnId) {
+      return;
+    }
+    const next = { ...activeRunsRef.current };
+    let changed = false;
+    Object.entries(next).forEach(([candidateRunId, candidate]) => {
+      if (candidateRunId === keepRunId) {
+        return;
+      }
+      if (candidate.conversationId === conversationId && candidate.turnId === turnId) {
+        delete next[candidateRunId];
+        delete lastPersistedAgentTextRef.current[candidateRunId];
+        delete lastPersistedStatusRef.current[candidateRunId];
+        delete lastPersistedMetadataRef.current[candidateRunId];
+        resumeInFlightRef.current.delete(candidateRunId);
+        resumeAttemptedRef.current.delete(candidateRunId);
+        changed = true;
+      }
+    });
+    if (changed) {
+      persistActiveRuns(next);
+    }
   }, [persistActiveRuns]);
 
   const getActiveRunForConversation = useCallback((conversationId: string | null) => {
@@ -413,6 +559,24 @@ export default function WorkspacePage() {
     }
     const sameConversationRun = runs.find((run) => run.conversationId === message.conversationId);
     return sameConversationRun?.runId;
+  }, []);
+
+  const rebuildRunInfoForMessage = useCallback(async (message: ConversationMessage, runId: string): Promise<ActiveRunInfo> => {
+    const status = await getRunStatus(runId);
+    return {
+      runId,
+      conversationId: message.conversationId,
+      workspaceId: status.workspaceId,
+      persona: status.persona,
+      turnId: message.turnId || status.turnId || generateTurnId(),
+      placeholderId: message.id,
+      status: status.status,
+    };
+  }, [getRunStatus]);
+
+  const markRunStreamLaunching = useCallback((runId: string) => {
+    resumeAttemptedRef.current.add(runId);
+    resumeInFlightRef.current.add(runId);
   }, []);
 
   useEffect(() => {
@@ -467,19 +631,100 @@ export default function WorkspacePage() {
     return filtered.slice(0, 8);
   }, [visibleFiles, isMentionOpen, mentionQuery]);
 
+  const availableSkillMap = useMemo(() => {
+    const map = new Map<string, SkillDefinition>();
+    availableSkills.forEach((skill) => {
+      const skillId = typeof skill.id === 'string' ? skill.id.trim() : '';
+      if (skillId) {
+        map.set(skillId.toLowerCase(), skill);
+      }
+    });
+    return map;
+  }, [availableSkills]);
+
+  const availableMcpServerMap = useMemo(() => {
+    const map = new Map<string, { name: string; description?: string }>();
+    availableMcpServers.forEach((server) => {
+      const serverId = typeof server.name === 'string' ? server.name.trim() : '';
+      if (serverId) {
+        map.set(serverId.toLowerCase(), server);
+      }
+    });
+    return map;
+  }, [availableMcpServers]);
+
   const commandSuggestions = useMemo(() => {
     if (!isCommandOpen) {
-      return [] as SlashCommand[];
+      return [] as CommandSuggestion[];
     }
-    const normalized = commandQuery.trim().toLowerCase();
-    return SLASH_COMMANDS.filter((command) => {
-      if (!normalized) {
-        return true;
-      }
-      const commandValue = command.command.slice(1).toLowerCase();
-      return commandValue.startsWith(normalized) || command.command.toLowerCase().includes(normalized);
-    });
-  }, [commandQuery, isCommandOpen]);
+    const rawQuery = commandQuery.toLowerCase();
+    const normalized = rawQuery.trim();
+    if (!normalized) {
+      const rootCommands = SLASH_COMMANDS.map((command) => ({ ...command }));
+      const featuredSkills = availableSkills.slice(0, 5).map((skill) => ({
+        id: `skill:${skill.id}`,
+        command: `/skill ${skill.id}`,
+        description: skill.description || `Use the ${skill.id} skill`,
+      }));
+      const featuredMcpServers = availableMcpServers.slice(0, 3).map((server) => ({
+        id: `mcp:${server.name}`,
+        command: `/mcp ${server.name}`,
+        description: server.description || `Prefer tools from ${server.name}`,
+      }));
+      return [...rootCommands, ...featuredSkills, ...featuredMcpServers];
+    }
+    const skillMatch = rawQuery.match(/^skill(?:\s+(.*))?$/);
+    if (skillMatch) {
+      const filter = (skillMatch[1] || '').trim();
+      return availableSkills
+        .filter((skill) => !filter || skill.id.toLowerCase().includes(filter) || (skill.name || '').toLowerCase().includes(filter))
+        .slice(0, 8)
+        .map((skill) => ({
+          id: `skill:${skill.id}`,
+          command: `/skill ${skill.id}`,
+          description: skill.description || `Use the ${skill.id} skill`,
+        }));
+    }
+    const mcpMatch = rawQuery.match(/^mcp(?:\s+(.*))?$/);
+    if (mcpMatch) {
+      const filter = (mcpMatch[1] || '').trim();
+      return availableMcpServers
+        .filter((server) => !filter || server.name.toLowerCase().includes(filter))
+        .slice(0, 8)
+        .map((server) => ({
+          id: `mcp:${server.name}`,
+          command: `/mcp ${server.name}`,
+          description: server.description || `Prefer tools from ${server.name}`,
+        }));
+    }
+    const matches = SLASH_COMMANDS
+      .filter((command) => {
+        const commandValue = command.command.slice(1).toLowerCase();
+        return commandValue.startsWith(normalized) || command.command.toLowerCase().includes(normalized);
+      })
+      .map((command) => ({ ...command }));
+    if (normalized.startsWith('skill')) {
+      return [
+        ...matches,
+        ...availableSkills.slice(0, 8).map((skill) => ({
+          id: `skill:${skill.id}`,
+          command: `/skill ${skill.id}`,
+          description: skill.description || `Use the ${skill.id} skill`,
+        })),
+      ];
+    }
+    if (normalized.startsWith('mcp')) {
+      return [
+        ...matches,
+        ...availableMcpServers.slice(0, 8).map((server) => ({
+          id: `mcp:${server.name}`,
+          command: `/mcp ${server.name}`,
+          description: server.description || `Prefer tools from ${server.name}`,
+        })),
+      ];
+    }
+    return matches;
+  }, [availableMcpServers, availableSkills, commandQuery, isCommandOpen]);
 
   const personaDisplayName = useMemo(() => {
     const personaId = activeConversationPersona || selectedPersona;
@@ -588,96 +833,37 @@ export default function WorkspacePage() {
     }
   }, []);
 
-  const classifyCodeBlockLabel = useCallback((languageMatch: RegExpExecArray | null, content: string) => {
-    if (languageMatch?.[1]) {
-      return languageMatch[1].toUpperCase();
-    }
-    const trimmed = content.trim();
-    const isSingleLine = !trimmed.includes('\n');
-    if (isSingleLine && /^[\w-]+\.[\w.-]+$/.test(trimmed)) {
-      return 'FILE';
-    }
-    if (isSingleLine && /^[a-z0-9_-]+$/i.test(trimmed)) {
-      return 'TOOL';
-    }
-    return 'CODE';
-  }, []);
-
-  const extractCodeText = useCallback((value: ReactNode): string => {
-    if (value === null || value === undefined) {
-      return '';
-    }
-    if (Array.isArray(value)) {
-      return value.map((child) => extractCodeText(child)).join('');
-    }
-    if (typeof value === 'string' || typeof value === 'number') {
-      return String(value);
-    }
-    return '';
-  }, []);
-
-  const inferInlineCode = useCallback(
-    (inline: boolean | undefined, className: string | undefined, content: string, node?: any) => {
-      if (typeof inline === 'boolean') {
-        return inline;
-      }
-      const startLine = node?.position?.start?.line;
-      const endLine = node?.position?.end?.line;
-      if (typeof startLine === 'number' && typeof endLine === 'number' && endLine > startLine) {
-        return false;
-      }
-      if (className && /language-\w+/i.test(className)) {
-        return false;
-      }
-      if (content.includes('\n')) {
-        return false;
-      }
-      return true;
-    },
-    []
-  );
-
   const markdownComponents = useMemo(
     () => ({
-      p({ children }: { children?: ReactNode }) {
-        const childArray = Children.toArray(children);
-        const containsBlockChild = childArray.some(
-          (child) => {
-            if (!isValidElement(child)) {
-              return false;
-            }
-            const childProps = child.props as {
-              inline?: boolean;
-              node?: { tagName?: string };
-              className?: string;
-              children?: ReactNode;
-            };
-            if (typeof child.type === 'string') {
-              return BLOCK_LEVEL_TAGS.includes(child.type);
-            }
-            if (childProps.inline === false) {
-              return true;
-            }
-            if (childProps.node?.tagName && BLOCK_LEVEL_TAGS.includes(childProps.node.tagName)) {
-              return true;
-            }
-            if (childProps.node?.tagName === 'code') {
-              const content = extractCodeText(childProps.children);
-              const isInline = inferInlineCode(
-                childProps.inline,
-                childProps.className,
-                content,
-                childProps.node
-              );
-              return !isInline;
-            }
-            return false;
-          }
-        );
-        const Element: 'p' | 'div' = containsBlockChild ? 'div' : 'p';
-        return <Element className="mb-4 leading-relaxed text-slate-700">{children}</Element>;
-      },
-      a({ ...props }: any) {
+      ...createMarkdownComponents({
+        workspaceId: selectedWorkspace?.id,
+        colorMode: colorMode === 'dark' ? 'dark' : 'light',
+        paragraphClassName: 'mb-4 leading-relaxed text-slate-700',
+        inlineCodeClassName: 'rounded-md bg-slate-200 px-1.5 py-0.5 font-mono text-xs text-slate-800',
+        codeBlockShell: ({ blockId, codeContent, languageLabel, className, children }) => {
+          const copyLabel = copiedCodeBlockId === blockId ? 'Copied' : 'Copy';
+          return (
+            <div className="mb-4 mt-2 overflow-hidden rounded-2xl border border-slate-200 bg-slate-950/90 text-slate-100 shadow-lg">
+              <div className="flex items-center justify-between border-b border-slate-800 bg-slate-900/60 px-4 py-2 text-[11px] font-semibold tracking-wide uppercase text-slate-300">
+                <span>{languageLabel}</span>
+                <button
+                  type="button"
+                  onClick={() => handleCopyCodeBlock(blockId, codeContent)}
+                  className="flex items-center gap-1 rounded-full border border-slate-600 px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest text-slate-200 hover:border-slate-400"
+                >
+                  {copyLabel}
+                </button>
+              </div>
+              <pre className="overflow-x-auto px-4 py-3 text-xs leading-relaxed whitespace-pre-wrap break-words sm:text-sm">
+                <code className={`font-mono ${className || ''}`.trim()}>
+                  {children}
+                </code>
+              </pre>
+            </div>
+          );
+        },
+      }),
+      a({ ...props }: ComponentProps<'a'>) {
         return (
           <a
             {...props}
@@ -687,78 +873,8 @@ export default function WorkspacePage() {
           />
         );
       },
-      img({ src, alt }: { src?: string; alt?: string }) {
-        const resolvedSrc = typeof src === 'string' ? src.trim() : '';
-        if (!resolvedSrc) {
-          return null;
-        }
-        if (/^(https?:|data:|blob:)/i.test(resolvedSrc)) {
-          return (
-            <img
-              src={resolvedSrc}
-              alt={alt || 'Image'}
-              className="my-3 max-w-full rounded border border-gray-200"
-            />
-          );
-        }
-        if (!selectedWorkspace?.id) {
-          return (
-            <span className="text-xs text-slate-500">
-              Image path: <code>{resolvedSrc}</code>
-            </span>
-          );
-        }
-        return (
-          <div className="my-3">
-            <ToolOutputFilePreview
-              workspaceId={selectedWorkspace.id}
-              file={{ path: resolvedSrc, mimeType: 'image/*' }}
-            />
-          </div>
-        );
-      },
-      code({ inline, className, children, node, ...props }: any) {
-        const rawCodeContent = extractCodeText(children);
-        const isInline = inferInlineCode(inline, className, rawCodeContent, node);
-        if (isInline) {
-          return (
-            <code
-              className={`rounded-md bg-slate-200 px-1.5 py-0.5 font-mono text-xs text-slate-800 ${className || ''}`}
-              {...props}
-            >
-              {children}
-            </code>
-          );
-        }
-
-        const languageMatch = /language-(\w+)/.exec(className || '');
-        const codeContent = rawCodeContent.replace(/\n$/, '');
-        const languageLabel = classifyCodeBlockLabel(languageMatch, codeContent);
-        const blockId = `${languageLabel}-${codeContent.length}-${codeContent.charCodeAt(0) || 0}`;
-        const copyLabel = copiedCodeBlockId === blockId ? 'Copied' : 'Copy';
-
-        return (
-          <div className="mb-4 mt-2 overflow-hidden rounded-2xl border border-slate-200 bg-slate-950/90 text-slate-100 shadow-lg">
-            <div className="flex items-center justify-between border-b border-slate-800 bg-slate-900/60 px-4 py-2 text-[11px] font-semibold tracking-wide uppercase text-slate-300">
-              <span>{languageLabel}</span>
-              <button
-                type="button"
-                onClick={() => handleCopyCodeBlock(blockId, codeContent)}
-                className="flex items-center gap-1 rounded-full border border-slate-600 px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest text-slate-200 hover:border-slate-400"
-              >
-                {copyLabel}
-              </button>
-            </div>
-            <pre className="overflow-x-auto px-4 py-3 text-xs leading-relaxed whitespace-pre-wrap break-words sm:text-sm">
-              <code {...props} className={`font-mono ${className || ''}`}>
-                {children}
-              </code>
-            </pre>
-          </div>
-        );
-      },
     }),
-    [classifyCodeBlockLabel, copiedCodeBlockId, extractCodeText, handleCopyCodeBlock, inferInlineCode, selectedWorkspace?.id]
+    [colorMode, copiedCodeBlockId, handleCopyCodeBlock, selectedWorkspace?.id]
   );
 
   const toggleToolActivityVisibility = useCallback((messageId: ConversationMessage['id']) => {
@@ -1025,6 +1141,20 @@ export default function WorkspacePage() {
 
   const handleDeleteSingleFile = async (file: WorkspaceFile) => {
     if (!selectedWorkspace) return;
+    if (isDraftWorkspaceFile(file)) {
+      setFiles((prev) => prev.filter((item) => item.id !== file.id));
+      setSelectedFiles((prev) => {
+        const next = new Set(prev);
+        next.delete(file.id);
+        return next;
+      });
+      if (selectedFile?.id === file.id) {
+        setSelectedFile(null);
+        setSelectedFileDetails(null);
+        setFileContent('');
+      }
+      return;
+    }
     const confirmed = window.confirm(`Delete ${file.name}?`);
     if (!confirmed) return;
 
@@ -1113,6 +1243,33 @@ export default function WorkspacePage() {
     stopRequestedRef.current = true;
     const activeRun = getActiveRunForConversation(activeConversationId);
     if (activeRun) {
+      updateMessagesForConversation(activeRun.conversationId, (prev) =>
+        prev.map((message) => {
+          if (message.sender !== 'agent') {
+            return message;
+          }
+          const metadata = (message.metadata as ConversationMessageMetadata | undefined) || undefined;
+          const matchesRun =
+            metadata?.runId === activeRun.runId ||
+            message.id === activeRun.placeholderId ||
+            (activeRun.turnId && message.turnId === activeRun.turnId);
+          if (!matchesRun) {
+            return message;
+          }
+          return {
+            ...message,
+            metadata: {
+              ...(metadata || {}),
+              runId: metadata?.runId || activeRun.runId,
+              status: 'cancelled',
+              pendingInterrupt: undefined,
+            },
+          };
+        }),
+      );
+      removeActiveRun(activeRun.runId);
+      resumeInFlightRef.current.delete(activeRun.runId);
+      resumeAttemptedRef.current.add(activeRun.runId);
       cancelRun(activeRun.runId).catch((error) => {
         console.error('Failed to cancel run', error);
       });
@@ -1259,6 +1416,29 @@ export default function WorkspacePage() {
     }
   }, [commandSuggestions.length]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadSlashMetadata = async () => {
+      try {
+        const { skills, mcpServers } = await fetchSlashMetadata();
+        if (cancelled) {
+          return;
+        }
+        setAvailableSkills(skills);
+        setAvailableMcpServers(mcpServers);
+      } catch (error) {
+        console.error('Failed to load slash metadata', error);
+      }
+    };
+
+    void loadSlashMetadata();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const isFileEditable = (fileName: string): boolean => {
     const editableExtensions = [
       '.md', '.mermaid', '.txt', '.json', '.html', '.css', '.js', '.ts', '.tsx', '.jsx',
@@ -1349,7 +1529,23 @@ export default function WorkspacePage() {
         return false;
       }
       const textBeforeCursor = value.slice(0, cursor);
-      const commandMatch = textBeforeCursor.match(/(^|[\s([{])\/([^\s/]*)$/);
+      const resolvedDirectiveMatch = textBeforeCursor.match(/^\s*\/(skill|mcp)\s+([^\s]+)(?:\s+([\s\S]*))?$/i);
+      if (resolvedDirectiveMatch) {
+        const kind = resolvedDirectiveMatch[1]?.toLowerCase();
+        const targetId = (resolvedDirectiveMatch[2] || '').trim().toLowerCase();
+        const trailingPrompt = resolvedDirectiveMatch[3] || '';
+        const targetExists =
+          kind === 'skill'
+            ? availableSkillMap.has(targetId)
+            : kind === 'mcp'
+              ? availableMcpServerMap.has(targetId)
+              : false;
+        if (targetExists && (trailingPrompt.trim().length > 0 || /\s$/.test(textBeforeCursor))) {
+          closeCommand();
+          return false;
+        }
+      }
+      const commandMatch = textBeforeCursor.match(/(^|[\s([{])\/([^\n/]*)$/);
       if (!commandMatch) {
         closeCommand();
         return false;
@@ -1364,7 +1560,7 @@ export default function WorkspacePage() {
       closeMention();
       return true;
     },
-    [closeCommand, closeMention],
+    [availableMcpServerMap, availableSkillMap, closeCommand, closeMention],
   );
 
   const updateAutocompleteState = useCallback(
@@ -1402,27 +1598,115 @@ export default function WorkspacePage() {
   );
 
   const handleSelectCommand = useCallback(
-    (command: SlashCommand) => {
+    (command: CommandSuggestion) => {
       if (commandTriggerIndex === null || commandCursorPosition === null) {
         closeCommand();
         return;
       }
       const before = chatMessage.slice(0, commandTriggerIndex);
       const after = chatMessage.slice(commandCursorPosition);
-      const needsSpace = after.length === 0 || after.startsWith(' ') ? '' : ' ';
-      const nextValue = `${before}${command.command}${needsSpace}${after}`;
+      const shouldKeepCommandMenuOpen = command.command === '/skill' || command.command === '/mcp';
+      const insertedCommand = shouldKeepCommandMenuOpen ? `${command.command} ` : command.command;
+      const needsSpace = after.length === 0 || after.startsWith(' ') || shouldKeepCommandMenuOpen ? '' : ' ';
+      const nextValue = `${before}${insertedCommand}${needsSpace}${after}`;
       setChatMessage(nextValue);
-      closeCommand();
       requestAnimationFrame(() => {
+        const cursorPosition = before.length + insertedCommand.length + (needsSpace ? 1 : 0);
         if (chatInputRef.current) {
-          const cursorPosition = before.length + command.command.length + (needsSpace ? 1 : 0);
           chatInputRef.current.focus();
           chatInputRef.current.setSelectionRange(cursorPosition, cursorPosition);
         }
+        if (shouldKeepCommandMenuOpen) {
+          updateCommandState(nextValue, cursorPosition);
+        } else {
+          closeCommand();
+        }
       });
     },
-    [chatMessage, closeCommand, commandCursorPosition, commandTriggerIndex],
+    [chatMessage, closeCommand, commandCursorPosition, commandTriggerIndex, updateCommandState],
   );
+
+  const parseSlashDirective = useCallback((rawMessage: string): ParsedSlashDirective => {
+    const trimmed = rawMessage.trim();
+    const presentationMatch = trimmed.match(/^\/presentation\b([\s\S]*)$/i);
+    if (presentationMatch) {
+      return {
+        kind: 'presentation',
+        prompt: (presentationMatch[1] || '').trim(),
+        raw: trimmed,
+      };
+    }
+    const skillMatch = trimmed.match(/^\/skill\s+([^\s]+)(?:\s+([\s\S]*))?$/i);
+    if (skillMatch) {
+      return {
+        kind: 'skill',
+        skillId: (skillMatch[1] || '').trim(),
+        prompt: (skillMatch[2] || '').trim(),
+        raw: trimmed,
+      };
+    }
+    const mcpMatch = trimmed.match(/^\/mcp\s+([^\s]+)(?:\s+([\s\S]*))?$/i);
+    if (mcpMatch) {
+      return {
+        kind: 'mcp',
+        serverId: (mcpMatch[1] || '').trim(),
+        prompt: (mcpMatch[2] || '').trim(),
+        raw: trimmed,
+      };
+    }
+    return {
+      kind: 'none',
+      prompt: trimmed,
+      raw: trimmed,
+    };
+  }, []);
+
+  const buildAgentPromptFromDirective = useCallback((directive: ParsedSlashDirective): string => {
+    switch (directive.kind) {
+      case 'skill':
+        return [
+          '<<<HELPUDOC_DIRECTIVE',
+          JSON.stringify({ kind: 'skill', skillId: directive.skillId }),
+          '>>>',
+          directive.prompt || 'Continue with the selected skill.',
+        ].join('\n');
+      case 'mcp':
+        return [
+          '<<<HELPUDOC_DIRECTIVE',
+          JSON.stringify({ kind: 'mcp', serverId: directive.serverId }),
+          '>>>',
+          directive.prompt || `Use ${directive.serverId} for this task.`,
+        ].join('\n');
+      case 'presentation':
+      case 'none':
+      default:
+        return directive.raw;
+    }
+  }, []);
+
+  const commandTags = useMemo(() => {
+    const directive = parseSlashDirective(chatMessage);
+    if (directive.kind === 'skill' && directive.skillId) {
+      return [{ id: 'skill', label: `Skill: ${directive.skillId}` }];
+    }
+    if (directive.kind === 'mcp' && directive.serverId) {
+      return [{ id: 'mcp', label: `MCP: ${directive.serverId}` }];
+    }
+    return [] as Array<{ id: string; label: string }>;
+  }, [chatMessage, parseSlashDirective]);
+
+  const handleRemoveCommandTag = useCallback((tagId: string) => {
+    const directive = parseSlashDirective(chatMessage);
+    if (tagId === 'skill' && directive.kind === 'skill') {
+      setChatMessage(directive.prompt);
+      closeCommand();
+      return;
+    }
+    if (tagId === 'mcp' && directive.kind === 'mcp') {
+      setChatMessage(directive.prompt);
+      closeCommand();
+    }
+  }, [chatMessage, closeCommand, parseSlashDirective]);
 
   const findMentionedFiles = useCallback(
     (value: string): WorkspaceFile[] => {
@@ -1640,15 +1924,108 @@ export default function WorkspacePage() {
 
   useEffect(() => {
     const fetchWorkspaces = async () => {
-      const workspaces = await getWorkspaces();
-      const workspacesWithMockData = workspaces.map((ws: Omit<Workspace, 'lastUsed'>) => ({
-        ...ws,
-        lastUsed: 'Yesterday',
-      }));
-      setWorkspaces(workspacesWithMockData);
+      const fetchedWorkspaces = await getWorkspaces();
+      setWorkspaces((fetchedWorkspaces || []).map((ws: Omit<Workspace, 'lastUsed'>) => hydrateWorkspace(ws)));
     };
     fetchWorkspaces();
   }, []);
+
+  useEffect(() => {
+    if (!selectedWorkspace) {
+      setWorkspaceNameDraft('');
+      setIsWorkspaceRenameActive(false);
+      return;
+    }
+    setWorkspaceNameDraft(selectedWorkspace.name);
+  }, [selectedWorkspace]);
+
+  useEffect(() => {
+    if (isWorkspaceRenameActive && workspaceNameInputRef.current) {
+      workspaceNameInputRef.current.focus();
+      workspaceNameInputRef.current.select();
+    }
+  }, [isWorkspaceRenameActive]);
+
+  const applyWorkspacePlanApprovalSetting = useCallback((workspaceId: string, skipPlanApprovals: boolean) => {
+    setWorkspaces((prev) => prev.map((workspace) => (
+      workspace.id === workspaceId ? { ...workspace, skipPlanApprovals } : workspace
+    )));
+    setSelectedWorkspace((prev) => (
+      prev && prev.id === workspaceId ? { ...prev, skipPlanApprovals } : prev
+    ));
+  }, []);
+
+  const commitWorkspaceRename = useCallback(async () => {
+    if (!selectedWorkspace || !selectedWorkspace.canEdit || workspaceRenameBusy) {
+      return;
+    }
+
+    const nextName = workspaceNameDraft.trim();
+    if (!nextName || nextName === selectedWorkspace.name) {
+      setWorkspaceNameDraft(selectedWorkspace.name);
+      setIsWorkspaceRenameActive(false);
+      return;
+    }
+
+    setWorkspaceRenameBusy(true);
+    try {
+      const renamedWorkspace = hydrateWorkspace(await renameWorkspace(selectedWorkspace.id, nextName));
+      setWorkspaces((prev) => prev.map((workspace) => (
+        workspace.id === renamedWorkspace.id ? { ...workspace, ...renamedWorkspace } : workspace
+      )));
+      setSelectedWorkspace((prev) => (
+        prev && prev.id === renamedWorkspace.id ? { ...prev, ...renamedWorkspace } : prev
+      ));
+      setWorkspaceNameDraft(renamedWorkspace.name);
+    } catch (error) {
+      console.error('Failed to rename workspace:', error);
+      setWorkspaceNameDraft(selectedWorkspace.name);
+    } finally {
+      setWorkspaceRenameBusy(false);
+      setIsWorkspaceRenameActive(false);
+    }
+  }, [selectedWorkspace, workspaceNameDraft, workspaceRenameBusy]);
+
+  const cancelWorkspaceRename = useCallback(() => {
+    setWorkspaceNameDraft(selectedWorkspace?.name || '');
+    setIsWorkspaceRenameActive(false);
+  }, [selectedWorkspace]);
+
+  const handleSelectWorkspace = useCallback((workspace: Workspace) => {
+    setIsWorkspaceRenameActive(false);
+    setWorkspaceNameDraft(workspace.name);
+    setSelectedWorkspace(workspace);
+  }, []);
+
+  const handleUpdateWorkspacePlanApprovalSetting = useCallback(
+    async (skipPlanApprovals: boolean, requireConfirm = false) => {
+      if (!selectedWorkspace || workspaceSettingsBusy) {
+        return false;
+      }
+      if (
+        skipPlanApprovals &&
+        requireConfirm &&
+        !window.confirm(
+          'Enable trusted mode for this workspace and skip future plan approvals? You can turn approvals back on from the workspace sidebar.',
+        )
+      ) {
+        return false;
+      }
+      try {
+        setWorkspaceSettingsBusy(true);
+        const settings = await updateWorkspaceSettings(selectedWorkspace.id, { skipPlanApprovals });
+        applyWorkspacePlanApprovalSetting(selectedWorkspace.id, Boolean(settings.skipPlanApprovals));
+        return true;
+      } catch (error) {
+        console.error('Failed to update workspace settings', error);
+        addLocalSystemMessage('Unable to update workspace approval preferences right now.');
+        return false;
+      } finally {
+        setWorkspaceSettingsBusy(false);
+      }
+    },
+    [addLocalSystemMessage, applyWorkspacePlanApprovalSetting, selectedWorkspace, workspaceSettingsBusy],
+  );
 
   useEffect(() => {
     if (selectedWorkspace) {
@@ -1661,8 +2038,59 @@ export default function WorkspacePage() {
     }
   };
 
+  const openPlanApprovalEditor = useCallback((
+    pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
+  ) => {
+    if (!selectedWorkspace) {
+      return;
+    }
+    const actionRequests = Array.isArray(pendingInterrupt?.actionRequests) ? pendingInterrupt.actionRequests : [];
+    const review = buildApprovalReview(pendingInterrupt, actionRequests[0]);
+    const targetPath = normalizeWorkspaceRelativePath(review?.planFilePath || DEFAULT_PLAN_FILE_PATH) || DEFAULT_PLAN_FILE_PATH;
+    const existingFile = files.find((file) => normalizeWorkspaceRelativePath(file.name || file.path) === targetPath);
+    setIsAgentPaneVisible(true);
+    setIsFilePaneVisible(true);
+    setCanvasZoom(1);
+    setIsEditMode(true);
+
+    if (existingFile) {
+      setSelectedFile(existingFile);
+      setSelectedFileDetails(null);
+      setFileContent('');
+      return;
+    }
+
+    const draftContent = buildApprovalDraftContent(review);
+    const draftFile: WorkspaceFile = {
+      id: `draft:${targetPath}`,
+      name: targetPath,
+      path: targetPath,
+      workspaceId: selectedWorkspace.id,
+      storageType: 'local',
+      mimeType: 'text/markdown',
+      content: draftContent,
+    };
+    setFiles((prev) => {
+      if (prev.some((file) => String(file.id) === draftFile.id)) {
+        return prev;
+      }
+      return [draftFile, ...prev];
+    });
+    setSelectedFile(draftFile);
+    setSelectedFileDetails(draftFile);
+    setFileContent(draftContent);
+    lastAutoSavedContentRef.current = draftContent;
+  }, [files, selectedWorkspace]);
+
   const fetchFileContent = async () => {
     if (selectedFile && selectedWorkspace) {
+      if (isDraftWorkspaceFile(selectedFile)) {
+        const draftContent = selectedFile.content || '';
+        setSelectedFileDetails(selectedFile);
+        setFileContent(draftContent);
+        lastAutoSavedContentRef.current = draftContent;
+        return;
+      }
       try {
         const fileWithContent = await getFileContent(selectedWorkspace.id, selectedFile.id);
         setSelectedFileDetails(fileWithContent);
@@ -1686,14 +2114,19 @@ export default function WorkspacePage() {
   }, [selectedFile, selectedWorkspace]);
 
   const handleCreateWorkspace = async () => {
-    if (newWorkspaceName.trim()) {
-      const newWorkspaceData = await createWorkspace(newWorkspaceName);
-      const newWorkspace: Workspace = {
-        ...newWorkspaceData,
-        lastUsed: 'Just now',
+    try {
+      const newWorkspace = {
+        ...hydrateWorkspace(await createWorkspace()),
+        canEdit: true,
+        role: 'owner' as const,
       };
-      setWorkspaces([...workspaces, newWorkspace]);
-      setNewWorkspaceName('');
+      setWorkspaces((prev) => [newWorkspace, ...prev]);
+      setSelectedWorkspace(newWorkspace);
+      setWorkspaceSearchQuery('');
+      setWorkspaceNameDraft(newWorkspace.name);
+      setIsWorkspaceRenameActive(true);
+    } catch (error) {
+      console.error('Failed to create workspace:', error);
     }
   };
 
@@ -1861,6 +2294,28 @@ export default function WorkspacePage() {
     });
   };
 
+  const combineBufferedAgentText = useCallback(
+    (conversationId: string, existingText: string, nextChunk: string): string => {
+      if (!nextChunk) {
+        return existingText;
+      }
+      let sanitizedChunk = nextChunk;
+      const userPrompt = (lastUserMessageMapRef.current[conversationId] || '').trim();
+      if (!existingText && userPrompt) {
+        const chunkNoLeading = sanitizedChunk.replace(/^\s+/, '');
+        if (chunkNoLeading.startsWith(userPrompt)) {
+          const remainder = chunkNoLeading.slice(userPrompt.length).replace(/^\s+/, '');
+          if (!remainder) {
+            return existingText;
+          }
+          sanitizedChunk = remainder;
+        }
+      }
+      return `${existingText}${sanitizedChunk}`;
+    },
+    [],
+  );
+
   const flushBufferedAgentChunks = useCallback(() => {
     if (!agentChunkBufferRef.current.size) {
       return;
@@ -1881,19 +2336,10 @@ export default function WorkspacePage() {
           if (!target) {
             return;
           }
-          let nextChunk = chunkText;
-          const userPrompt = (lastUserMessageMapRef.current[conversationId] || '').trim();
-          if (!target.text && userPrompt) {
-            const chunkNoLeading = nextChunk.replace(/^\s+/, '');
-            if (chunkNoLeading.startsWith(userPrompt)) {
-              const remainder = chunkNoLeading.slice(userPrompt.length).replace(/^\s+/, '');
-              if (!remainder) {
-                return;
-              }
-              nextChunk = remainder;
-            }
+          const combinedText = combineBufferedAgentText(conversationId, target.text || '', chunkText);
+          if (combinedText === (target.text || '')) {
+            return;
           }
-          const combinedText = `${target.text || ''}${nextChunk}`;
           const updatedMessage: ConversationMessage = {
             ...target,
             text: combinedText,
@@ -1910,7 +2356,7 @@ export default function WorkspacePage() {
         return updated;
       });
     });
-  }, [updateMessagesForConversation]);
+  }, [combineBufferedAgentText, updateMessagesForConversation]);
 
   const ensureAgentPlaceholder = useCallback(
     (conversationId: string, placeholderId: ConversationMessage['id'], turnId: string, resetText = false) => {
@@ -1987,37 +2433,232 @@ export default function WorkspacePage() {
     [],
   );
 
-  const getBufferedAgentText = useCallback(
-    (runInfo: ActiveRunInfo) => {
-      const { placeholderId, conversationId, turnId } = runInfo;
-      const buffered = agentMessageBufferRef.current.get(placeholderId);
-      if (buffered !== undefined) {
-        return buffered;
+  const findAgentMessageIndexForRun = useCallback(
+    (
+      conversationId: string,
+      placeholderId: ConversationMessage['id'],
+      turnId: string,
+      runId?: string,
+    ) => {
+      const messages = conversationMessagesRef.current[conversationId] || [];
+      if (runId) {
+        const byRunId = messages.findIndex((message) => (
+          message.sender === 'agent' && message.metadata?.runId === runId
+        ));
+        if (byRunId !== -1) {
+          return byRunId;
+        }
       }
-      const message = findAgentMessageForRun(conversationId, placeholderId, turnId);
-      return message?.text || '';
+      const byId = messages.findIndex((message) => message.id === placeholderId);
+      if (byId !== -1) {
+        return byId;
+      }
+      return messages.findIndex((message) => message.sender === 'agent' && message.turnId === turnId);
     },
-    [findAgentMessageForRun],
+    [],
+  );
+
+  const getBufferedAgentState = useCallback(
+    (runInfo: ActiveRunInfo) => {
+      const { placeholderId, conversationId, turnId, runId } = runInfo;
+      const message = findAgentMessageForRun(conversationId, placeholderId, turnId);
+      const messageIndex = findAgentMessageIndexForRun(conversationId, placeholderId, turnId, runId);
+      const baseText =
+        agentMessageBufferRef.current.get(placeholderId) ??
+        (message ? agentMessageBufferRef.current.get(message.id) : undefined) ??
+        message?.text ??
+        '';
+      if (messageIndex < 0) {
+        return {
+          text: baseText,
+          messageIndex,
+          pendingChunk: '',
+        };
+      }
+      const pendingChunk = agentChunkBufferRef.current.get(conversationId)?.get(messageIndex) || '';
+      return {
+        text: combineBufferedAgentText(conversationId, baseText, pendingChunk),
+        messageIndex,
+        pendingChunk,
+      };
+    },
+    [combineBufferedAgentText, findAgentMessageForRun, findAgentMessageIndexForRun],
+  );
+
+  const isAgentMessageEmpty = useCallback((message?: ConversationMessage | null) => {
+    if (!message || message.sender !== 'agent') {
+      return true;
+    }
+    const metadata = (message.metadata as ConversationMessageMetadata | undefined) || undefined;
+    if (metadata?.pendingInterrupt || metadata?.status === 'awaiting_approval') {
+      return false;
+    }
+    return !message.text && !message.thinkingText && !message.toolEvents?.length;
+  }, []);
+
+  const upsertPersistedAgentMessage = useCallback(
+    (
+      conversationId: string,
+      persisted: ConversationMessage,
+      options?: {
+        placeholderId?: ConversationMessage['id'];
+        existing?: ConversationMessage | null;
+      },
+    ) => {
+      updateMessagesForConversation(conversationId, (prev) => {
+        const updated = [...prev];
+        const matchingIndexes = updated
+          .map((message, index) => ({ message, index }))
+          .filter(({ message }) => {
+            if (message.sender !== 'agent') {
+              return false;
+            }
+            if (message.id === persisted.id) {
+              return true;
+            }
+            if (options?.placeholderId !== undefined && message.id === options.placeholderId) {
+              return true;
+            }
+            return Boolean(persisted.turnId && message.turnId === persisted.turnId);
+          })
+          .map(({ index }) => index);
+
+        const primaryIndex = matchingIndexes[0] ?? updated.length;
+        const existing =
+          matchingIndexes[0] !== undefined
+            ? updated[matchingIndexes[0]]
+            : options?.existing || undefined;
+        const merged = mergePersistedAgentMessage(persisted, existing);
+
+        if (matchingIndexes[0] !== undefined) {
+          updated[primaryIndex] = merged;
+        } else {
+          updated.push(merged);
+        }
+
+        if (matchingIndexes.length <= 1) {
+          return updated;
+        }
+
+        const duplicatesToRemove = new Set(matchingIndexes.slice(1));
+        return updated.filter((_, index) => !duplicatesToRemove.has(index));
+      });
+    },
+    [updateMessagesForConversation],
+  );
+
+  const clearPendingInterruptForRun = useCallback(
+    (
+      conversationId: string,
+      runId: string,
+      turnId?: string,
+    ) => {
+      updateMessagesForConversation(conversationId, (prev) => {
+        const matchingIndexes = prev
+          .map((message, index) => ({ message, index }))
+          .filter(({ message }) => {
+            if (message.sender !== 'agent') {
+              return false;
+            }
+            const metadata = (message.metadata as ConversationMessageMetadata | undefined) || undefined;
+            return metadata?.runId === runId || Boolean(turnId && message.turnId === turnId);
+          })
+          .map(({ index }) => index);
+
+        if (!matchingIndexes.length) {
+          return prev;
+        }
+
+        const next = [...prev];
+        const chooseScore = (message: ConversationMessage) => (
+          (message.text?.length || 0) * 1000 +
+          (message.thinkingText?.length || 0) * 100 +
+          (message.toolEvents?.length || 0) * 10 +
+          ((((message.metadata as ConversationMessageMetadata | undefined) || {}).pendingInterrupt) ? 5 : 0)
+        );
+
+        const primaryIndex = matchingIndexes.reduce((best, current) => (
+          chooseScore(next[current]) > chooseScore(next[best]) ? current : best
+        ), matchingIndexes[0]);
+
+        const merged = matchingIndexes.reduce((acc, index) => {
+          const candidate = next[index];
+          return {
+            ...acc,
+            text: (candidate.text?.length || 0) > (acc.text?.length || 0) ? candidate.text : acc.text,
+            thinkingText:
+              (candidate.thinkingText?.length || 0) > (acc.thinkingText?.length || 0)
+                ? candidate.thinkingText
+                : acc.thinkingText,
+            toolEvents:
+              (candidate.toolEvents?.length || 0) > (acc.toolEvents?.length || 0)
+                ? candidate.toolEvents
+                : acc.toolEvents,
+          };
+        }, next[primaryIndex]);
+
+        const metadata = {
+          ...(((merged.metadata as ConversationMessageMetadata | undefined) || {})),
+          runId,
+          status: 'running' as AgentRunStatus,
+          pendingInterrupt: undefined,
+        };
+
+        next[primaryIndex] = {
+          ...merged,
+          metadata,
+        };
+
+        if (matchingIndexes.length === 1) {
+          return next;
+        }
+
+        const duplicatesToRemove = new Set(matchingIndexes.filter((index) => index !== primaryIndex));
+        return next.filter((_, index) => !duplicatesToRemove.has(index));
+      });
+    },
+    [updateMessagesForConversation],
   );
 
   const persistAgentProgress = useCallback(
-    async (runInfo: ActiveRunInfo, statusOverride?: AgentRunStatus) => {
+    async (
+      runInfo: ActiveRunInfo,
+      statusOverride?: AgentRunStatus,
+      options?: {
+        metadataOverride?: Partial<ConversationMessageMetadata>;
+      },
+    ) => {
       const { runId, conversationId, turnId, placeholderId } = runInfo;
       if (persistInFlightRef.current.has(runId)) {
-        return;
-      }
-      const text = getBufferedAgentText(runInfo);
-      const lastText = lastPersistedAgentTextRef.current[runId];
-      const nextStatus = statusOverride || 'running';
-      const lastStatus = lastPersistedStatusRef.current[runId];
-      if (text === lastText && nextStatus === lastStatus) {
+        pendingPersistRef.current[runId] = { runInfo, statusOverride, options };
         return;
       }
       const message = findAgentMessageForRun(conversationId, placeholderId, turnId);
-      if (!text && !message?.thinkingText && !message?.toolEvents?.length) {
+      const bufferedState = getBufferedAgentState(runInfo);
+      const text = bufferedState.text;
+      const lastText = lastPersistedAgentTextRef.current[runId];
+      const nextStatus = statusOverride || message?.metadata?.status || runInfo.status || 'running';
+      const lastStatus = lastPersistedStatusRef.current[runId];
+      const metadata = {
+        ...(buildMessageMetadata(message) || {}),
+        ...(options?.metadataOverride || {}),
+        runId,
+        status: nextStatus,
+      } satisfies ConversationMessageMetadata;
+      const metadataSignature = JSON.stringify(metadata);
+      const lastMetadataSignature = lastPersistedMetadataRef.current[runId];
+      if (text === lastText && nextStatus === lastStatus && metadataSignature === lastMetadataSignature) {
         return;
       }
-      const metadata = { ...(buildMessageMetadata(message) || {}), runId, status: nextStatus };
+      if (
+        !text &&
+        !message?.thinkingText &&
+        !message?.toolEvents?.length &&
+        !message?.metadata?.pendingInterrupt &&
+        nextStatus !== 'running'
+      ) {
+        return;
+      }
       persistInFlightRef.current.add(runId);
       try {
         const persisted = await appendConversationMessage(conversationId, 'agent', text, {
@@ -2025,22 +2666,24 @@ export default function WorkspacePage() {
           replaceExisting: true,
           metadata,
         });
-        updateMessagesForConversation(conversationId, (prev) => {
-          const updated = [...prev];
-          const existingIndex = updated.findIndex(
-            (m) => m.id === persisted.id || (m.sender === 'agent' && m.turnId === persisted.turnId)
-          );
-          const existing = existingIndex !== -1 ? updated[existingIndex] : undefined;
-          const merged = mergePersistedAgentMessage(persisted, existing);
-          if (existingIndex !== -1) {
-            updated[existingIndex] = merged;
-          } else {
-            updated.push(merged);
-          }
-          return updated;
+        upsertPersistedAgentMessage(conversationId, persisted, {
+          placeholderId,
+          existing: message,
         });
+        if (bufferedState.pendingChunk && bufferedState.messageIndex >= 0) {
+          const conversationBuffer = agentChunkBufferRef.current.get(conversationId);
+          if (conversationBuffer?.has(bufferedState.messageIndex)) {
+            conversationBuffer.delete(bufferedState.messageIndex);
+            if (conversationBuffer.size) {
+              agentChunkBufferRef.current.set(conversationId, conversationBuffer);
+            } else {
+              agentChunkBufferRef.current.delete(conversationId);
+            }
+          }
+        }
         lastPersistedAgentTextRef.current[runId] = text;
         lastPersistedStatusRef.current[runId] = nextStatus;
+        lastPersistedMetadataRef.current[runId] = metadataSignature;
         agentMessageBufferRef.current.set(persisted.id, persisted.text || '');
         if (placeholderId !== persisted.id) {
           agentMessageBufferRef.current.delete(placeholderId);
@@ -2049,9 +2692,14 @@ export default function WorkspacePage() {
         console.error('Failed to persist agent progress', error);
       } finally {
         persistInFlightRef.current.delete(runId);
+        const pending = pendingPersistRef.current[runId];
+        if (pending) {
+          delete pendingPersistRef.current[runId];
+          void persistAgentProgress(pending.runInfo, pending.statusOverride, pending.options);
+        }
       }
     },
-    [getBufferedAgentText, findAgentMessageForRun, updateMessagesForConversation],
+    [findAgentMessageForRun, getBufferedAgentState, upsertPersistedAgentMessage],
   );
 
   const bufferAgentChunk = (conversationId: string, index: number, chunk: string) => {
@@ -2095,9 +2743,51 @@ export default function WorkspacePage() {
     return actionRequests[0];
   }, []);
 
+  const getInterruptKind = useCallback((
+    pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
+  ): 'approval' | 'clarification' => {
+    if (pendingInterrupt?.kind === 'clarification') {
+      return 'clarification';
+    }
+
+    const responseSpec =
+      pendingInterrupt?.responseSpec && typeof pendingInterrupt.responseSpec === 'object'
+        ? pendingInterrupt.responseSpec
+        : undefined;
+    if (responseSpec) {
+      return 'clarification';
+    }
+
+    const actions = Array.isArray(pendingInterrupt?.actions) ? pendingInterrupt.actions : [];
+    const actionRequests = Array.isArray(pendingInterrupt?.actionRequests) ? pendingInterrupt.actionRequests : [];
+    const reviewConfigs = Array.isArray(pendingInterrupt?.reviewConfigs) ? pendingInterrupt.reviewConfigs : [];
+    const hasApprovalConfig = actionRequests.length > 0 || reviewConfigs.length > 0;
+    const hasClarificationAction = actions.some((action) => {
+      if (!action || typeof action !== 'object') {
+        return false;
+      }
+      if (action.id === 'clarification-text') {
+        return true;
+      }
+      if (action.payload && typeof action.payload === 'object' && 'selectedChoiceId' in action.payload) {
+        return true;
+      }
+      return false;
+    });
+
+    if (hasClarificationAction && !hasApprovalConfig) {
+      return 'clarification';
+    }
+
+    return 'approval';
+  }, []);
+
   const isPlanApprovalInterrupt = useCallback((
     pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
   ): boolean => {
+    if (getInterruptKind(pendingInterrupt) === 'clarification') {
+      return false;
+    }
     const actionRequests = Array.isArray(pendingInterrupt?.actionRequests) ? pendingInterrupt.actionRequests : [];
     const reviewConfigs = Array.isArray(pendingInterrupt?.reviewConfigs) ? pendingInterrupt.reviewConfigs : [];
     const firstActionName = typeof actionRequests[0]?.name === 'string'
@@ -2113,33 +2803,207 @@ export default function WorkspacePage() {
       const name = typeof config?.action_name === 'string' ? config.action_name.trim().toLowerCase() : '';
       return name === 'request_plan_approval' || (name.includes('plan') && name.includes('approval'));
     });
-  }, [getPrimaryInterruptAction]);
+  }, [getInterruptKind, getPrimaryInterruptAction]);
 
-  const approvalFieldKey = useCallback((
+  const interruptFieldKey = useCallback((
     messageKey: string,
-    field: 'feedback' | 'edit-json' | 'reject-note',
+    field: 'feedback' | 'edit-json' | 'reject-note' | 'clarification-text',
   ): string => `${messageKey}:${field}`, []);
+
+  const interruptActionFieldKey = useCallback((messageKey: string, actionId: string): string => (
+    `${messageKey}:action:${actionId}`
+  ), []);
 
   const getAllowedDecisions = useCallback((
     pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
   ): Array<'approve' | 'edit' | 'reject'> => {
     const defaults: Array<'approve' | 'edit' | 'reject'> = ['approve', 'edit', 'reject'];
+    if (getInterruptKind(pendingInterrupt) === 'clarification') {
+      return [];
+    }
     const actionRequests = Array.isArray(pendingInterrupt?.actionRequests) ? pendingInterrupt.actionRequests : [];
     const reviewConfigs = Array.isArray(pendingInterrupt?.reviewConfigs) ? pendingInterrupt.reviewConfigs : [];
-    if (!actionRequests.length || !reviewConfigs.length) {
-      return defaults;
+    if (reviewConfigs.length) {
+      const firstActionName = typeof actionRequests[0]?.name === 'string' ? actionRequests[0]?.name : undefined;
+      const matchingConfigs = firstActionName
+        ? reviewConfigs.filter((config) => config?.action_name === firstActionName)
+        : reviewConfigs;
+      const allowed = Array.from(
+        new Set(
+          matchingConfigs.flatMap((config) =>
+            Array.isArray(config?.allowed_decisions) ? config.allowed_decisions : [],
+          ),
+        ),
+      ).filter(
+        (value): value is 'approve' | 'edit' | 'reject' => value === 'approve' || value === 'edit' || value === 'reject',
+      );
+      if (allowed.length) {
+        return allowed;
+      }
     }
-    const firstActionName = typeof actionRequests[0]?.name === 'string' ? actionRequests[0]?.name : undefined;
-    if (!firstActionName) {
-      return defaults;
+    return defaults;
+  }, [getInterruptKind]);
+
+  const getInterruptActions = useCallback((
+    pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
+  ): RenderableInterruptAction[] => {
+    const interruptActions = Array.isArray(pendingInterrupt?.actions)
+      ? pendingInterrupt.actions.filter(
+          (action): action is InterruptAction =>
+            Boolean(action) &&
+            typeof action === 'object' &&
+            !Array.isArray(action) &&
+            typeof action.id === 'string' &&
+            typeof action.label === 'string',
+        )
+      : [];
+    if (interruptActions.length) {
+      const responseSpec = pendingInterrupt?.responseSpec;
+      const clarificationChoices = Array.isArray(responseSpec?.choices) ? responseSpec.choices : [];
+      return interruptActions.map((action) => ({
+        ...action,
+        description:
+          typeof action.payload?.selectedChoiceId === 'string'
+            ? clarificationChoices.find((choice) => choice.id === action.payload?.selectedChoiceId)?.description
+            : clarificationChoices.find((choice) => choice.id === action.id)?.description,
+        source: 'dynamic',
+      }));
     }
-    const matchingConfig = reviewConfigs.find((config) => config?.action_name === firstActionName);
-    const allowedRaw = Array.isArray(matchingConfig?.allowed_decisions) ? matchingConfig?.allowed_decisions : [];
-    const allowed = allowedRaw.filter(
-      (value): value is 'approve' | 'edit' | 'reject' => value === 'approve' || value === 'edit' || value === 'reject',
-    );
-    return allowed.length ? allowed : defaults;
-  }, []);
+
+    if (getInterruptKind(pendingInterrupt) === 'clarification') {
+      const responseSpec = pendingInterrupt?.responseSpec;
+      const clarificationChoices = Array.isArray(responseSpec?.choices) ? responseSpec.choices : [];
+      const derivedActions: RenderableInterruptAction[] = clarificationChoices.map((choice) => ({
+        id: `choice:${choice.id}`,
+        label: choice.label,
+        description: choice.description,
+        style: 'secondary',
+        inputMode: 'none',
+        value: choice.value,
+        source: 'clarification-choice',
+        choiceId: choice.id,
+      }));
+      if (responseSpec?.multiple && derivedActions.length) {
+        derivedActions.push({
+          id: 'clarification-submit',
+          label: responseSpec?.submitLabel || 'Continue',
+          style: 'primary',
+          inputMode: 'none',
+          source: 'clarification-text',
+        });
+      }
+      const inputMode = responseSpec?.inputMode || 'text';
+      if (inputMode === 'text' || inputMode === 'text_or_choice' || !derivedActions.length) {
+        derivedActions.push({
+          id: 'clarification-text',
+          label: responseSpec?.submitLabel || 'Continue',
+          style: 'primary',
+          inputMode: 'text',
+          placeholder: responseSpec?.placeholder || 'Type your answer for the agent',
+          submitLabel: responseSpec?.submitLabel || 'Continue',
+          source: 'clarification-text',
+        });
+      }
+      return derivedActions;
+    }
+
+    const isPlanApproval = isPlanApprovalInterrupt(pendingInterrupt);
+    return getAllowedDecisions(pendingInterrupt).map((decision) => {
+      if (decision === 'approve') {
+        return {
+          id: 'approve',
+          label: 'Approve',
+          style: 'primary',
+          inputMode: 'none',
+          source: 'approval',
+          legacyDecision: 'approve',
+        } satisfies RenderableInterruptAction;
+      }
+      if (decision === 'edit') {
+        return {
+          id: 'edit',
+          label: 'Edit',
+          style: 'secondary',
+          inputMode: 'text',
+          placeholder: isPlanApproval
+            ? 'Describe the revisions you want before the agent resubmits the plan'
+            : 'Optional edit feedback or updated args JSON',
+          submitLabel: 'Save Changes',
+          source: 'approval',
+          legacyDecision: 'edit',
+        } satisfies RenderableInterruptAction;
+      }
+      return {
+        id: 'reject',
+        label: 'Reject',
+        style: 'danger',
+        inputMode: 'text',
+        placeholder: 'Reason for rejection (optional)',
+        submitLabel: 'Confirm Rejection',
+        confirm: true,
+        source: 'approval',
+        legacyDecision: 'reject',
+      } satisfies RenderableInterruptAction;
+    });
+  }, [getAllowedDecisions, getInterruptKind, isPlanApprovalInterrupt]);
+
+  const waitForInterruptResumeReady = useCallback(
+    async (
+      runId: string,
+      expected: 'approval' | 'clarification' | 'action',
+    ): Promise<boolean> => {
+      const deadline = Date.now() + 3000;
+      while (Date.now() < deadline) {
+        try {
+          const status = await getRunStatus(runId);
+          if (status.status === 'awaiting_approval') {
+            const interruptKind = getInterruptKind(status.pendingInterrupt);
+            if (expected === 'approval' && interruptKind !== 'clarification') {
+              return true;
+            }
+            if (expected === 'clarification' && interruptKind === 'clarification') {
+              return true;
+            }
+            if (
+              expected === 'action' &&
+              Array.isArray(status.pendingInterrupt?.actions) &&
+              status.pendingInterrupt.actions.length > 0
+            ) {
+              return true;
+            }
+          }
+        } catch (error) {
+          console.error('Failed to poll run status before interrupt retry', error);
+        }
+        await new Promise((resolve) => window.setTimeout(resolve, 200));
+      }
+      return false;
+    },
+    [getInterruptKind],
+  );
+
+  const submitInterruptWithRetry = useCallback(
+    async (
+      runId: string,
+      expected: 'approval' | 'clarification' | 'action',
+      submit: () => Promise<unknown>,
+    ) => {
+      try {
+        return await submit();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error || '');
+        if (!/Run is not awaiting/i.test(message)) {
+          throw error;
+        }
+        const ready = await waitForInterruptResumeReady(runId, expected);
+        if (!ready) {
+          throw error;
+        }
+        return submit();
+      }
+    },
+    [waitForInterruptResumeReady],
+  );
 
   const handleStreamChunk = (
     conversationId: string,
@@ -2147,48 +3011,61 @@ export default function WorkspacePage() {
     chunk: AgentStreamChunk,
     runId?: string,
   ) => {
+    const preserveInterruptState = (
+      metadata: ConversationMessageMetadata | undefined,
+    ): ConversationMessageMetadata => {
+      const nextMetadata = { ...(metadata || {}) };
+      const hasPendingInterrupt = Boolean(nextMetadata.pendingInterrupt);
+      if (runId) {
+        nextMetadata.runId = runId;
+      }
+      nextMetadata.status = hasPendingInterrupt ? 'awaiting_approval' : 'running';
+      nextMetadata.pendingInterrupt = hasPendingInterrupt ? nextMetadata.pendingInterrupt : undefined;
+      return nextMetadata;
+    };
+
     if (chunk.type === 'keepalive') {
       setStreamingForConversation(conversationId, true);
       return;
     }
 
     if (chunk.type === 'policy') {
+      const nextRunPolicy = sanitizeRunPolicy({
+        skill: chunk.skill,
+        requiresHitlPlan: chunk.requiresHitlPlan,
+        requiresArtifacts: chunk.requiresArtifacts,
+        requiredArtifactsMode: chunk.requiredArtifactsMode,
+        prePlanSearchLimit: chunk.prePlanSearchLimit,
+        prePlanSearchUsed: chunk.prePlanSearchUsed,
+      });
       updateMessageMetadataAtIndex(conversationId, agentMessageIndex, (metadata) => ({
         ...metadata,
         ...(runId ? { runId } : {}),
-        runPolicy: {
-          skill: chunk.skill,
-          requiresHitlPlan: chunk.requiresHitlPlan,
-          requiresArtifacts: chunk.requiresArtifacts,
-          requiredArtifactsMode: chunk.requiredArtifactsMode,
-          prePlanSearchLimit: chunk.prePlanSearchLimit,
-          prePlanSearchUsed: chunk.prePlanSearchUsed,
-        },
+        runPolicy: nextRunPolicy,
       }));
       return;
     }
 
     if (chunk.type === 'thought') {
+      updateMessageMetadataAtIndex(conversationId, agentMessageIndex, preserveInterruptState);
       appendAgentThought(conversationId, agentMessageIndex, chunk.content || '');
       return;
     }
 
     if (chunk.type === 'tool_start') {
-      updateMessageMetadataAtIndex(conversationId, agentMessageIndex, (metadata) => ({
-        ...metadata,
-        ...(runId ? { runId } : {}),
-        pendingInterrupt: undefined,
-      }));
+      updateMessageMetadataAtIndex(conversationId, agentMessageIndex, preserveInterruptState);
       appendToolStart(conversationId, agentMessageIndex, chunk);
       return;
     }
 
     if (chunk.type === 'tool_end') {
+      updateMessageMetadataAtIndex(conversationId, agentMessageIndex, preserveInterruptState);
       appendToolEnd(conversationId, agentMessageIndex, chunk);
       return;
     }
 
     if (chunk.type === 'tool_error') {
+      updateMessageMetadataAtIndex(conversationId, agentMessageIndex, preserveInterruptState);
       appendToolEnd(conversationId, agentMessageIndex, chunk, 'error');
       return;
     }
@@ -2199,19 +3076,24 @@ export default function WorkspacePage() {
         ...(runId ? { runId } : {}),
         status: 'awaiting_approval',
         pendingInterrupt: {
+          kind: chunk.kind,
+          interruptId: chunk.interruptId,
+          title: chunk.title,
+          description: chunk.description,
+          stepIndex: chunk.stepIndex,
+          stepCount: chunk.stepCount,
+          actions: chunk.actions,
           actionRequests: chunk.actionRequests,
           reviewConfigs: chunk.reviewConfigs,
+          responseSpec: chunk.responseSpec,
+          displayPayload: chunk.displayPayload,
         },
       }));
       return;
     }
 
     if (chunk.type === 'token' || chunk.type === 'chunk') {
-      updateMessageMetadataAtIndex(conversationId, agentMessageIndex, (metadata) => ({
-        ...metadata,
-        ...(runId ? { runId } : {}),
-        pendingInterrupt: undefined,
-      }));
+      updateMessageMetadataAtIndex(conversationId, agentMessageIndex, preserveInterruptState);
       if (chunk.role && chunk.role !== 'assistant') {
         return;
       }
@@ -2233,11 +3115,15 @@ export default function WorkspacePage() {
   };
 
   const streamRunForConversation = useCallback(
-    async (runInfo: ActiveRunInfo, replayFromStart = false) => {
+    async (runInfo: ActiveRunInfo, replayFromStart = false, resumeAfterId?: string) => {
       const { conversationId, runId, turnId, placeholderId } = runInfo;
+      // Mark the run as actively handled before any state updates land so the
+      // resume effect does not start a second stream for the same run.
+      resumeAttemptedRef.current.add(runId);
+      resumeInFlightRef.current.add(runId);
       cancelStreamForConversation(conversationId);
-      const agentMessageIndex = ensureAgentPlaceholder(conversationId, placeholderId, turnId, replayFromStart);
-      if (agentMessageIndex < 0) {
+      const initialAgentMessageIndex = ensureAgentPlaceholder(conversationId, placeholderId, turnId, replayFromStart);
+      if (initialAgentMessageIndex < 0) {
         if (STREAM_DEBUG_ENABLED) {
           console.debug('[WorkspacePage] missing placeholder', { runId, conversationId });
         }
@@ -2254,6 +3140,10 @@ export default function WorkspacePage() {
       streamAbortMapRef.current.set(conversationId, controller);
       setStreamingForConversation(conversationId, true);
       let finalStatus: AgentRunStatus = 'completed';
+      let lastStreamId = resumeAfterId || runInfo.lastStreamId;
+      let latestInterrupt:
+        | ConversationMessageMetadata['pendingInterrupt']
+        | undefined;
 
       try {
         if (STREAM_DEBUG_ENABLED) {
@@ -2261,39 +3151,162 @@ export default function WorkspacePage() {
         }
         await streamAgentRun(
           runId,
-          (chunk) => handleStreamChunk(conversationId, agentMessageIndex, chunk, runId),
+          (chunk) => {
+            const agentMessageIndex = (() => {
+              const resolved = findAgentMessageIndexForRun(conversationId, placeholderId, turnId, runId);
+              return resolved >= 0 ? resolved : initialAgentMessageIndex;
+            })();
+            const resumableChunk = chunk as AgentStreamChunk & { id?: string };
+            if (typeof resumableChunk.id === 'string') {
+              lastStreamId = resumableChunk.id;
+            }
+            if (chunk.type === 'interrupt') {
+              latestInterrupt = {
+                kind: chunk.kind,
+                interruptId: chunk.interruptId,
+                title: chunk.title,
+                description: chunk.description,
+                stepIndex: chunk.stepIndex,
+                stepCount: chunk.stepCount,
+                actions: chunk.actions,
+                actionRequests: chunk.actionRequests,
+                reviewConfigs: chunk.reviewConfigs,
+                responseSpec: chunk.responseSpec,
+                displayPayload: chunk.displayPayload,
+              };
+            }
+            handleStreamChunk(conversationId, agentMessageIndex, chunk, runId);
+          },
           controller.signal,
-          replayFromStart ? undefined : undefined
+          replayFromStart ? undefined : (resumeAfterId || runInfo.lastStreamId)
         );
       } catch (error) {
+        const supersededByNewerStream = streamAbortMapRef.current.get(conversationId) !== controller;
+        const agentMessageIndex = (() => {
+          const resolved = findAgentMessageIndexForRun(conversationId, placeholderId, turnId, runId);
+          return resolved >= 0 ? resolved : initialAgentMessageIndex;
+        })();
         if ((error as DOMException)?.name === 'AbortError') {
-          const stopLabel = stopRequestedRef.current ? '\n[Stopped by user]' : '\n[Stream cancelled]';
-          appendAgentChunk(conversationId, agentMessageIndex, stopLabel);
-          finalStatus = 'cancelled';
+          if (stopRequestedRef.current) {
+            appendAgentChunk(conversationId, agentMessageIndex, '\n[Stopped by user]');
+            finalStatus = 'cancelled';
+          } else if (!supersededByNewerStream) {
+            appendAgentChunk(conversationId, agentMessageIndex, '\n[Stream cancelled]');
+            finalStatus = 'cancelled';
+          }
         } else {
           console.error('Failed to stream agent run', error);
           appendAgentChunk(conversationId, agentMessageIndex, '\nSorry, something went wrong.');
           finalStatus = 'failed';
         }
       } finally {
+        const supersededByNewerStream = streamAbortMapRef.current.get(conversationId) !== controller;
+        let latestRunMeta:
+          | Awaited<ReturnType<typeof getRunStatus>>
+          | null = null;
         try {
-          const latest = await getRunStatus(runId);
-          finalStatus = latest.status;
+          latestRunMeta = await getRunStatus(runId);
+          finalStatus = latestRunMeta.status;
+          // The stream can close before the backend worker updates Redis from
+          // "running" to its settled terminal/approval state. Poll briefly so
+          // we don't persist a stale running bubble and drop the pending interrupt.
+          if (finalStatus === 'running' || finalStatus === 'queued') {
+            for (let attempt = 0; attempt < 8; attempt += 1) {
+              await new Promise((resolve) => window.setTimeout(resolve, 250));
+              latestRunMeta = await getRunStatus(runId);
+              finalStatus = latestRunMeta.status;
+              if (finalStatus !== 'running' && finalStatus !== 'queued') {
+                break;
+              }
+            }
+          }
+          if (finalStatus === 'awaiting_approval' && !latestRunMeta?.pendingInterrupt && !latestInterrupt) {
+            for (let attempt = 0; attempt < 8; attempt += 1) {
+              await new Promise((resolve) => window.setTimeout(resolve, 250));
+              latestRunMeta = await getRunStatus(runId);
+              finalStatus = latestRunMeta.status;
+              if (latestRunMeta.pendingInterrupt) {
+                break;
+              }
+            }
+          }
         } catch (statusError) {
           console.error('Failed to fetch final run status', statusError);
+        }
+        const effectivePendingInterrupt = latestRunMeta ? latestRunMeta.pendingInterrupt : latestInterrupt;
+        if (!supersededByNewerStream && effectivePendingInterrupt) {
+            const agentMessageIndex = (() => {
+              const resolved = findAgentMessageIndexForRun(conversationId, placeholderId, turnId, runId);
+              return resolved >= 0 ? resolved : initialAgentMessageIndex;
+            })();
+            finalStatus = 'awaiting_approval';
+            updateMessageMetadataAtIndex(conversationId, agentMessageIndex, (metadata) => ({
+              ...metadata,
+              ...(runId ? { runId } : {}),
+              status: 'awaiting_approval',
+              pendingInterrupt: effectivePendingInterrupt,
+            }));
         }
         if (STREAM_DEBUG_ENABLED) {
           console.debug('[WorkspacePage] stream finished', { runId, status: finalStatus });
         }
         flushBufferedAgentChunks();
-        await persistAgentProgress({ ...runInfo, status: finalStatus }, finalStatus);
+        if (supersededByNewerStream) {
+          return;
+        }
+        if (finalStatus === 'running' || finalStatus === 'queued') {
+          const resumedRunInfo: ActiveRunInfo = {
+            ...runInfo,
+            status: 'running',
+            lastStreamId,
+          };
+          registerActiveRun(resumedRunInfo);
+          if (streamAbortMapRef.current.get(conversationId) === controller) {
+            streamAbortMapRef.current.delete(conversationId);
+          }
+          window.setTimeout(() => {
+            const activeRun = activeRunsRef.current[runId];
+            if (!activeRun || activeRun.status !== 'running') {
+              return;
+            }
+            void streamRunForConversation(activeRun, false, activeRun.lastStreamId);
+          }, 300);
+          return;
+        }
+        {
+          const agentMessageIndex = (() => {
+            const resolved = findAgentMessageIndexForRun(conversationId, placeholderId, turnId, runId);
+            return resolved >= 0 ? resolved : initialAgentMessageIndex;
+          })();
+          updateMessageMetadataAtIndex(conversationId, agentMessageIndex, (metadata) => ({
+            ...metadata,
+            ...(runId ? { runId } : {}),
+            status: finalStatus,
+            pendingInterrupt: finalStatus === 'awaiting_approval' ? effectivePendingInterrupt : undefined,
+          }));
+        }
+        await persistAgentProgress(
+          { ...runInfo, status: finalStatus },
+          finalStatus,
+          effectivePendingInterrupt
+            ? {
+                metadataOverride: {
+                  pendingInterrupt: effectivePendingInterrupt,
+                },
+              }
+            : undefined,
+        );
         setStreamingForConversation(conversationId, false);
-        streamAbortMapRef.current.delete(conversationId);
+        if (streamAbortMapRef.current.get(conversationId) === controller) {
+          streamAbortMapRef.current.delete(conversationId);
+        }
         stopRequestedRef.current = false;
+        resumeInFlightRef.current.delete(runId);
         if (finalStatus === 'awaiting_approval') {
           registerActiveRun({ ...runInfo, status: finalStatus });
         } else {
           removeActiveRun(runId);
+          removeActiveRunsForTurn(conversationId, turnId);
           const workspaceId = selectedWorkspace?.id;
           if (workspaceId) {
             loadFilesForWorkspace(workspaceId);
@@ -2307,10 +3320,12 @@ export default function WorkspacePage() {
       ensureAgentPlaceholder,
       handleStreamChunk,
       flushBufferedAgentChunks,
-      getBufferedAgentText,
+      getBufferedAgentState,
+      findAgentMessageIndexForRun,
       getRunStatus,
       addLocalSystemMessage,
       removeActiveRun,
+      removeActiveRunsForTurn,
       selectedWorkspace?.id,
       loadFilesForWorkspace,
     ],
@@ -2347,11 +3362,24 @@ export default function WorkspacePage() {
       const messageKey = String(message.id);
       const primaryAction = getPrimaryInterruptAction(pendingInterrupt);
       const isPlanApproval = isPlanApprovalInterrupt(pendingInterrupt);
+      const approvalReview = isPlanApproval ? buildApprovalReview(pendingInterrupt, primaryAction) : null;
+      const approvalPlanPath = normalizeWorkspaceRelativePath(approvalReview?.planFilePath || DEFAULT_PLAN_FILE_PATH);
+      const activeEditorPath = normalizeWorkspaceRelativePath(selectedFile?.name || selectedFile?.path);
+      const editedPlanContent =
+        isPlanApproval && approvalPlanPath && activeEditorPath === approvalPlanPath
+          ? fileContent.trim()
+          : '';
       const feedbackKey = isPlanApproval
-        ? approvalFieldKey(messageKey, 'feedback')
-        : approvalFieldKey(messageKey, 'reject-note');
-      const rawFeedback = (approvalFeedbackByMessageId[feedbackKey] || '').trim();
-      setApprovalSubmittingByMessageId((prev) => ({ ...prev, [messageKey]: true }));
+        ? interruptFieldKey(messageKey, 'feedback')
+        : interruptFieldKey(messageKey, 'reject-note');
+      const rawFeedback = (interruptInputByMessageId[feedbackKey] || '').trim();
+      setInterruptSubmittingByMessageId((prev) => ({ ...prev, [messageKey]: true }));
+      setInterruptErrorByMessageId((prev) => {
+        if (!prev[messageKey]) return prev;
+        const next = { ...prev };
+        delete next[messageKey];
+        return next;
+      });
       try {
         const options: {
           editedAction?: { name: string; args: Record<string, unknown> };
@@ -2371,11 +3399,13 @@ export default function WorkspacePage() {
               args: {
                 ...originalArgs,
                 reviewer_feedback: rawFeedback,
+                plan_file_path: approvalPlanPath || DEFAULT_PLAN_FILE_PATH,
+                ...(editedPlanContent ? { edited_plan_content: editedPlanContent } : {}),
               },
             };
             options.message = rawFeedback || 'User requested edits.';
           } else {
-            const rawEditArgs = (approvalFeedbackByMessageId[approvalFieldKey(messageKey, 'edit-json')] || '').trim();
+            const rawEditArgs = (interruptInputByMessageId[interruptFieldKey(messageKey, 'edit-json')] || '').trim();
             let parsedArgs: Record<string, unknown> = {};
             if (rawEditArgs) {
               try {
@@ -2398,18 +3428,37 @@ export default function WorkspacePage() {
             };
           }
         }
-        await submitRunDecision(runId, decision, options);
-        updateMessagesForConversation(message.conversationId, (prev) => {
-          const next = [...prev];
-          const idx = next.findIndex((item) => item.id === message.id);
-          if (idx === -1) return next;
-          const current = next[idx];
-          const metadata = { ...((current.metadata as ConversationMessageMetadata | undefined) || {}) };
-          metadata.pendingInterrupt = undefined;
-          next[idx] = { ...current, metadata };
+        await submitInterruptWithRetry(runId, 'approval', () => submitRunDecision(runId, decision, options));
+        clearPendingInterruptForRun(message.conversationId, runId, message.turnId);
+        setInterruptInputByMessageId((prev) => {
+          const next = { ...prev };
+          delete next[interruptFieldKey(messageKey, 'feedback')];
+          delete next[interruptFieldKey(messageKey, 'edit-json')];
+          delete next[interruptFieldKey(messageKey, 'reject-note')];
           return next;
         });
-        const runInfo = activeRunsRef.current[runId];
+        setInterruptErrorByMessageId((prev) => {
+          if (!prev[messageKey]) return prev;
+          const next = { ...prev };
+          delete next[messageKey];
+          return next;
+        });
+        const existingRunInfo = activeRunsRef.current[runId];
+        const rebuiltRunInfo = await rebuildRunInfoForMessage(message, runId).catch(() => undefined);
+        const runInfo = {
+          ...(existingRunInfo || rebuiltRunInfo || {
+            runId,
+            conversationId: message.conversationId,
+            workspaceId: selectedWorkspace?.id || '',
+            persona: normalizePersonaName(activeConversationPersona || selectedPersona || DEFAULT_PERSONA_NAME),
+            turnId: message.turnId || generateTurnId(),
+            placeholderId: message.id,
+            status: 'running' as AgentRunStatus,
+          }),
+          status: 'running' as AgentRunStatus,
+        };
+        markRunStreamLaunching(runId);
+        registerActiveRun(runInfo);
         if (runInfo) {
           await streamRunForConversation(runInfo, false);
         } else {
@@ -2417,23 +3466,349 @@ export default function WorkspacePage() {
         }
       } catch (error) {
         console.error('Failed to submit approval decision', error);
-        addLocalSystemMessage(error instanceof Error ? error.message : 'Failed to submit approval decision.');
+        setInterruptErrorByMessageId((prev) => ({
+          ...prev,
+          [messageKey]: error instanceof Error ? error.message : 'Failed to submit approval decision.',
+        }));
       } finally {
-        setApprovalSubmittingByMessageId((prev) => ({ ...prev, [messageKey]: false }));
+        setInterruptSubmittingByMessageId((prev) => ({ ...prev, [messageKey]: false }));
       }
     },
     [
       addLocalSystemMessage,
-      approvalFeedbackByMessageId,
-      approvalFieldKey,
+      fileContent,
+      interruptInputByMessageId,
+      interruptFieldKey,
       findRunIdForMessage,
       getPrimaryInterruptAction,
       getAllowedDecisions,
       isPlanApprovalInterrupt,
+      selectedFile,
+      rebuildRunInfoForMessage,
+      clearPendingInterruptForRun,
+      markRunStreamLaunching,
+      registerActiveRun,
+      submitInterruptWithRetry,
       streamRunForConversation,
-      updateMessagesForConversation,
     ],
   );
+
+  const handleClarificationResponse = useCallback(
+    async (
+      message: ConversationMessage,
+      pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
+    ) => {
+      if (getInterruptKind(pendingInterrupt) !== 'clarification') {
+        addLocalSystemMessage('This interruption expects an approval decision, not a clarification response.');
+        return;
+      }
+      const runId = findRunIdForMessage(message);
+      if (!runId) {
+        addLocalSystemMessage('Missing run id for clarification response.');
+        return;
+      }
+      const messageKey = String(message.id);
+      const textKey = interruptFieldKey(messageKey, 'clarification-text');
+      const rawMessage = (interruptInputByMessageId[textKey] || '').trim();
+      const selectedChoiceIds = interruptSelectedChoicesByMessageId[messageKey] || [];
+      const choices = pendingInterrupt?.responseSpec?.choices || [];
+      const selectedValues = selectedChoiceIds
+        .map((choiceId) => choices.find((choice) => choice.id === choiceId)?.value)
+        .filter((value): value is string => typeof value === 'string');
+
+      if (!rawMessage && !selectedChoiceIds.length && !selectedValues.length) {
+        addLocalSystemMessage('Choose an option or enter a clarification response before continuing.');
+        return;
+      }
+
+      setInterruptSubmittingByMessageId((prev) => ({ ...prev, [messageKey]: true }));
+      setInterruptErrorByMessageId((prev) => {
+        if (!prev[messageKey]) return prev;
+        const next = { ...prev };
+        delete next[messageKey];
+        return next;
+      });
+      try {
+        await submitInterruptWithRetry(runId, 'clarification', () =>
+          submitRunResponse(runId, {
+            message: rawMessage || undefined,
+            selectedChoiceIds: selectedChoiceIds.length ? selectedChoiceIds : undefined,
+            selectedValues: selectedValues.length ? selectedValues : undefined,
+          })
+        );
+        clearPendingInterruptForRun(message.conversationId, runId, message.turnId);
+        setInterruptInputByMessageId((prev) => {
+          const next = { ...prev };
+          delete next[textKey];
+          return next;
+        });
+        setInterruptSelectedChoicesByMessageId((prev) => {
+          const next = { ...prev };
+          delete next[messageKey];
+          return next;
+        });
+        setInterruptErrorByMessageId((prev) => {
+          if (!prev[messageKey]) return prev;
+          const next = { ...prev };
+          delete next[messageKey];
+          return next;
+        });
+        const existingRunInfo = activeRunsRef.current[runId];
+        const rebuiltRunInfo = await rebuildRunInfoForMessage(message, runId).catch(() => undefined);
+        const runInfo = {
+          ...(existingRunInfo || rebuiltRunInfo || {
+            runId,
+            conversationId: message.conversationId,
+            workspaceId: selectedWorkspace?.id || '',
+            persona: normalizePersonaName(activeConversationPersona || selectedPersona || DEFAULT_PERSONA_NAME),
+            turnId: message.turnId || generateTurnId(),
+            placeholderId: message.id,
+            status: 'running' as AgentRunStatus,
+          }),
+          status: 'running' as AgentRunStatus,
+        };
+        markRunStreamLaunching(runId);
+        registerActiveRun(runInfo);
+        if (runInfo) {
+          await streamRunForConversation(runInfo, false);
+        } else {
+          addLocalSystemMessage('Response saved. Refreshing stream state...');
+        }
+      } catch (error) {
+        console.error('Failed to submit clarification response', error);
+        setInterruptErrorByMessageId((prev) => ({
+          ...prev,
+          [messageKey]: error instanceof Error ? error.message : 'Failed to submit clarification response.',
+        }));
+      } finally {
+        setInterruptSubmittingByMessageId((prev) => ({ ...prev, [messageKey]: false }));
+      }
+    },
+    [
+      addLocalSystemMessage,
+      findRunIdForMessage,
+      getInterruptKind,
+      interruptFieldKey,
+      interruptInputByMessageId,
+      interruptSelectedChoicesByMessageId,
+      rebuildRunInfoForMessage,
+      clearPendingInterruptForRun,
+      markRunStreamLaunching,
+      registerActiveRun,
+      submitInterruptWithRetry,
+      streamRunForConversation,
+    ],
+  );
+
+  const toggleInterruptSelectedChoice = useCallback((messageKey: string, choiceId: string, multiple: boolean) => {
+    setInterruptSelectedChoicesByMessageId((prev) => {
+      const current = prev[messageKey] || [];
+      let nextChoices: string[];
+      if (multiple) {
+        nextChoices = current.includes(choiceId)
+          ? current.filter((id) => id !== choiceId)
+          : [...current, choiceId];
+      } else {
+        nextChoices = current.length === 1 && current[0] === choiceId ? [] : [choiceId];
+      }
+      if (!nextChoices.length) {
+        const next = { ...prev };
+        delete next[messageKey];
+        return next;
+      }
+      return {
+        ...prev,
+        [messageKey]: nextChoices,
+      };
+    });
+    setInterruptErrorByMessageId((prev) => {
+      if (!prev[messageKey]) return prev;
+      const next = { ...prev };
+      delete next[messageKey];
+      return next;
+    });
+  }, []);
+
+  const handleInterruptAction = useCallback(
+    async (
+      message: ConversationMessage,
+      action: RenderableInterruptAction,
+      pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
+    ) => {
+      if (action.source === 'approval' && action.legacyDecision) {
+        await handleInterruptDecision(message, action.legacyDecision, pendingInterrupt);
+        return;
+      }
+
+      if (getInterruptKind(pendingInterrupt) === 'clarification' && action.inputMode === 'text') {
+        await handleClarificationResponse(message, pendingInterrupt);
+        return;
+      }
+
+      const runId = findRunIdForMessage(message);
+      if (!runId) {
+        addLocalSystemMessage('Missing run id for interrupt action.');
+        return;
+      }
+
+      const messageKey = String(message.id);
+      const actionTextKey = interruptActionFieldKey(messageKey, action.id);
+      const actionText = (interruptInputByMessageId[actionTextKey] || '').trim();
+
+      if (action.source === 'clarification-choice') {
+        if (pendingInterrupt?.responseSpec?.multiple && action.choiceId) {
+          toggleInterruptSelectedChoice(messageKey, action.choiceId, true);
+          return;
+        }
+        setInterruptSubmittingByMessageId((prev) => ({ ...prev, [messageKey]: true }));
+        setInterruptErrorByMessageId((prev) => {
+          if (!prev[messageKey]) return prev;
+          const next = { ...prev };
+          delete next[messageKey];
+          return next;
+        });
+        try {
+          await submitInterruptWithRetry(runId, 'clarification', () =>
+            submitRunResponse(runId, {
+              selectedChoiceIds: action.choiceId ? [action.choiceId] : undefined,
+              selectedValues: action.value ? [action.value] : undefined,
+            })
+          );
+          clearPendingInterruptForRun(message.conversationId, runId, message.turnId);
+          setInterruptErrorByMessageId((prev) => {
+            if (!prev[messageKey]) return prev;
+            const next = { ...prev };
+            delete next[messageKey];
+            return next;
+          });
+          const existingRunInfo = activeRunsRef.current[runId];
+          const rebuiltRunInfo = await rebuildRunInfoForMessage(message, runId).catch(() => undefined);
+          const runInfo = {
+            ...(existingRunInfo || rebuiltRunInfo || {
+              runId,
+              conversationId: message.conversationId,
+              workspaceId: selectedWorkspace?.id || '',
+              persona: normalizePersonaName(activeConversationPersona || selectedPersona || DEFAULT_PERSONA_NAME),
+              turnId: message.turnId || generateTurnId(),
+              placeholderId: message.id,
+              status: 'running' as AgentRunStatus,
+            }),
+            status: 'running' as AgentRunStatus,
+          };
+          markRunStreamLaunching(runId);
+          registerActiveRun(runInfo);
+          if (runInfo) {
+            await streamRunForConversation(runInfo, false);
+          } else {
+            addLocalSystemMessage('Response saved. Refreshing stream state...');
+          }
+        } catch (error) {
+          console.error('Failed to submit clarification choice', error);
+          setInterruptErrorByMessageId((prev) => ({
+            ...prev,
+            [messageKey]: error instanceof Error ? error.message : 'Failed to submit clarification response.',
+          }));
+        } finally {
+          setInterruptSubmittingByMessageId((prev) => ({ ...prev, [messageKey]: false }));
+        }
+        return;
+      }
+
+      if (action.inputMode === 'text' && !actionText) {
+        setInterruptErrorByMessageId((prev) => ({
+          ...prev,
+          [messageKey]: 'This action requires text input before continuing.',
+        }));
+        return;
+      }
+
+      setInterruptSubmittingByMessageId((prev) => ({ ...prev, [messageKey]: true }));
+      setInterruptErrorByMessageId((prev) => {
+        if (!prev[messageKey]) return prev;
+        const next = { ...prev };
+        delete next[messageKey];
+        return next;
+      });
+      try {
+        await submitInterruptWithRetry(runId, 'action', () =>
+          submitRunAction(runId, {
+            actionId: action.id,
+            text: actionText || undefined,
+          })
+        );
+        clearPendingInterruptForRun(message.conversationId, runId, message.turnId);
+        setInterruptInputByMessageId((prev) => {
+          const next = { ...prev };
+          Object.keys(next).forEach((key) => {
+            if (key.startsWith(`${messageKey}:action:`)) {
+              delete next[key];
+            }
+          });
+          return next;
+        });
+        setInterruptErrorByMessageId((prev) => {
+          if (!prev[messageKey]) return prev;
+          const next = { ...prev };
+          delete next[messageKey];
+          return next;
+        });
+        const existingRunInfo = activeRunsRef.current[runId];
+        const rebuiltRunInfo = await rebuildRunInfoForMessage(message, runId).catch(() => undefined);
+        const runInfo = {
+          ...(existingRunInfo || rebuiltRunInfo || {
+            runId,
+            conversationId: message.conversationId,
+            workspaceId: selectedWorkspace?.id || '',
+            persona: normalizePersonaName(activeConversationPersona || selectedPersona || DEFAULT_PERSONA_NAME),
+            turnId: message.turnId || generateTurnId(),
+            placeholderId: message.id,
+            status: 'running' as AgentRunStatus,
+          }),
+          status: 'running' as AgentRunStatus,
+        };
+        markRunStreamLaunching(runId);
+        registerActiveRun(runInfo);
+        if (runInfo) {
+          await streamRunForConversation(runInfo, false);
+        } else {
+          addLocalSystemMessage('Action saved. Refreshing stream state...');
+        }
+      } catch (error) {
+        console.error('Failed to submit interrupt action', error);
+        setInterruptErrorByMessageId((prev) => ({
+          ...prev,
+          [messageKey]: error instanceof Error ? error.message : 'Failed to submit interrupt action.',
+        }));
+      } finally {
+        setInterruptSubmittingByMessageId((prev) => ({ ...prev, [messageKey]: false }));
+      }
+    },
+    [
+      addLocalSystemMessage,
+      findRunIdForMessage,
+      handleClarificationResponse,
+      handleInterruptDecision,
+      interruptActionFieldKey,
+      interruptInputByMessageId,
+      rebuildRunInfoForMessage,
+      clearPendingInterruptForRun,
+      markRunStreamLaunching,
+      registerActiveRun,
+      submitInterruptWithRetry,
+      streamRunForConversation,
+      toggleInterruptSelectedChoice,
+    ],
+  );
+
+  const prepareInterruptAction = useCallback((
+    _message: ConversationMessage,
+    action: RenderableInterruptAction,
+    pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
+  ) => {
+    if (action.source === 'approval' && action.legacyDecision === 'edit' && isPlanApprovalInterrupt(pendingInterrupt)) {
+      openPlanApprovalEditor(pendingInterrupt);
+    }
+  }, [isPlanApprovalInterrupt, openPlanApprovalEditor]);
 
   useEffect(() => {
     if (!activeConversationId) {
@@ -2460,6 +3835,12 @@ export default function WorkspacePage() {
       }
       getRunStatus(activeRun.runId)
         .then((status) => {
+          const persistedMessage = findAgentMessageForRun(
+            activeRun.conversationId,
+            activeRun.placeholderId,
+            activeRun.turnId
+          );
+          const needsRecovery = isAgentMessageEmpty(persistedMessage);
           if (status.status === 'running' || status.status === 'queued') {
             if (STREAM_DEBUG_ENABLED) {
               console.debug('[WorkspacePage] resume stream', { runId: activeRun.runId });
@@ -2473,7 +3854,52 @@ export default function WorkspacePage() {
                 resumeInFlightRef.current.delete(activeRun.runId);
               });
           } else if (status.status === 'awaiting_approval') {
+            const targetMessage = findAgentMessageForRun(
+              activeRun.conversationId,
+              activeRun.placeholderId,
+              activeRun.turnId
+            );
+            if (!targetMessage && status.pendingInterrupt) {
+              ensureAgentPlaceholder(
+                activeRun.conversationId,
+                activeRun.placeholderId,
+                activeRun.turnId,
+                true,
+              );
+            }
+            const resolvedTargetMessage = findAgentMessageForRun(
+              activeRun.conversationId,
+              activeRun.placeholderId,
+              activeRun.turnId
+            );
+            if (resolvedTargetMessage?.metadata?.runId || status.pendingInterrupt) {
+              updateMessagesForConversation(activeRun.conversationId, (prev) => {
+                const updated = [...prev];
+                const idx = updated.findIndex((message) => message.id === resolvedTargetMessage?.id);
+                if (idx === -1) {
+                  return updated;
+                }
+                const current = updated[idx];
+                const metadata = { ...((current.metadata as ConversationMessageMetadata | undefined) || {}) };
+                metadata.runId = metadata.runId || activeRun.runId;
+                metadata.status = 'awaiting_approval';
+                if (status.pendingInterrupt) {
+                  metadata.pendingInterrupt = status.pendingInterrupt;
+                }
+                updated[idx] = { ...current, metadata };
+                return updated;
+              });
+            }
             resumeInFlightRef.current.delete(activeRun.runId);
+          } else if (needsRecovery) {
+            streamRunForConversation({ ...activeRun, status: status.status }, true)
+              .catch((error) => {
+                console.error('Failed to recover agent stream', error);
+                removeActiveRun(activeRun.runId);
+              })
+              .finally(() => {
+                resumeInFlightRef.current.delete(activeRun.runId);
+              });
           } else {
             resumeInFlightRef.current.delete(activeRun.runId);
             const staleMessage = findAgentMessageForRun(
@@ -2524,6 +3950,7 @@ export default function WorkspacePage() {
     conversationStreaming,
     findAgentMessageForRun,
     getActiveRunForConversation,
+    isAgentMessageEmpty,
     removeActiveRun,
     streamRunForConversation,
     updateMessagesForConversation,
@@ -2558,7 +3985,8 @@ export default function WorkspacePage() {
       addLocalSystemMessage('Cannot rerun an empty message.');
       return;
     }
-    const isPresentationCommand = /^\/presentation\b/i.test(trimmed);
+    const directive = parseSlashDirective(trimmed);
+    const isPresentationCommand = directive.kind === 'presentation';
     const mentionedFiles = isPresentationCommand ? findMentionedFiles(trimmed) : [];
     const presentationFileIds = isPresentationCommand
       ? Array.from(
@@ -2569,7 +3997,27 @@ export default function WorkspacePage() {
         ),
       )
       : [];
-    const presentationBrief = isPresentationCommand ? trimmed.replace(/^\/presentation\b/i, '').trim() : '';
+    const presentationBrief = isPresentationCommand ? directive.prompt : '';
+    if (directive.kind === 'skill') {
+      if (!directive.skillId || !directive.prompt) {
+        addLocalSystemMessage('Use /skill <skill-id> <task>. Example: /skill sales prep me for tomorrow\'s call.');
+        return;
+      }
+      if (!availableSkillMap.has(directive.skillId.toLowerCase())) {
+        addLocalSystemMessage(`Skill "${directive.skillId}" is not available in this workspace.`);
+        return;
+      }
+    }
+    if (directive.kind === 'mcp') {
+      if (!directive.serverId || !directive.prompt) {
+        addLocalSystemMessage('Use /mcp <server-id> <task>. Example: /mcp google-workspace search my inbox for BMMB.');
+        return;
+      }
+      if (!availableMcpServerMap.has(directive.serverId.toLowerCase())) {
+        addLocalSystemMessage(`MCP server "${directive.serverId}" is not configured.`);
+        return;
+      }
+    }
     if (isPresentationCommand && !presentationFileIds.length) {
       addLocalSystemMessage('Tag at least one file using @filename before rerunning /presentation.');
       return;
@@ -2642,7 +4090,7 @@ export default function WorkspacePage() {
     }
 
     try {
-      const agentPrompt = trimmed;
+      const agentPrompt = buildAgentPromptFromDirective(directive);
       const { runId } = await startAgentRun(
         selectedWorkspace.id,
         persona,
@@ -2663,8 +4111,8 @@ export default function WorkspacePage() {
         placeholderId,
         status: 'running',
       };
+      markRunStreamLaunching(runId);
       registerActiveRun(runInfo);
-      await persistAgentProgress(runInfo, 'running');
       await streamRunForConversation(runInfo, true);
 
       const messagesSnapshot = getConversationMessagesSnapshot(conversationId);
@@ -2683,14 +4131,9 @@ export default function WorkspacePage() {
             replaceExisting: true,
             metadata: { ...metadata, runId },
           });
-          updateMessagesForConversation(conversationId, (prev) => {
-            const updated = [...prev];
-            if (targetIndex >= 0) {
-              updated[targetIndex] = mergePersistedAgentMessage(persisted, updated[targetIndex]);
-            } else {
-              updated.push(mergePersistedAgentMessage(persisted));
-            }
-            return updated;
+          upsertPersistedAgentMessage(conversationId, persisted, {
+            placeholderId,
+            existing: agentMessage,
           });
           if (placeholderId !== null && placeholderId !== undefined) {
             agentMessageBufferRef.current.delete(placeholderId);
@@ -2965,7 +4408,8 @@ export default function WorkspacePage() {
     if (!trimmed && !hasAttachments) return;
 
     stopRequestedRef.current = false;
-    const isPresentationCommand = /^\/presentation\b/i.test(trimmed);
+    const directive = parseSlashDirective(trimmed);
+    const isPresentationCommand = directive.kind === 'presentation';
     const mentionedFiles = isPresentationCommand ? findMentionedFiles(trimmed) : [];
     const presentationFileIds = isPresentationCommand
       ? Array.from(
@@ -2976,11 +4420,39 @@ export default function WorkspacePage() {
         ),
       )
       : [];
-    const presentationBrief = isPresentationCommand ? trimmed.replace(/^\/presentation\b/i, '').trim() : '';
+    const presentationBrief = isPresentationCommand ? directive.prompt : '';
 
     if (isPresentationCommand && hasAttachments) {
       addLocalSystemMessage('Attachments are not supported for /presentation. Please tag files using @filename instead.');
       return;
+    }
+    if (directive.kind === 'skill') {
+      if (hasAttachments) {
+        addLocalSystemMessage('Attachments are not supported with /skill yet. Please upload files to the workspace first and reference them in your request.');
+        return;
+      }
+      if (!directive.skillId || !directive.prompt) {
+        addLocalSystemMessage('Use /skill <skill-id> <task>. Example: /skill sales draft follow-up from today\'s call.');
+        return;
+      }
+      if (!availableSkillMap.has(directive.skillId.toLowerCase())) {
+        addLocalSystemMessage(`Skill "${directive.skillId}" is not available.`);
+        return;
+      }
+    }
+    if (directive.kind === 'mcp') {
+      if (hasAttachments) {
+        addLocalSystemMessage('Attachments are not supported with /mcp yet. Please upload files to the workspace first if needed.');
+        return;
+      }
+      if (!directive.serverId || !directive.prompt) {
+        addLocalSystemMessage('Use /mcp <server-id> <task>. Example: /mcp google-workspace search my inbox for BMMB.');
+        return;
+      }
+      if (!availableMcpServerMap.has(directive.serverId.toLowerCase())) {
+        addLocalSystemMessage(`MCP server "${directive.serverId}" is not configured.`);
+        return;
+      }
     }
     if (isPresentationCommand && !presentationFileIds.length) {
       addLocalSystemMessage('Tag at least one file using @filename before requesting a presentation.');
@@ -2992,7 +4464,7 @@ export default function WorkspacePage() {
     const messageContent = hasAttachments
       ? `${trimmed}${trimmed ? '\n\n' : ''}[${attachmentSummary}]`
       : trimmed;
-    const agentPrompt = messageContent;
+    const agentPrompt = buildAgentPromptFromDirective(directive);
 
     if (!selectedWorkspace) {
       addLocalSystemMessage('Please select a workspace before chatting with an agent.');
@@ -3078,8 +4550,8 @@ export default function WorkspacePage() {
         placeholderId,
         status: 'running',
       };
+      markRunStreamLaunching(runId);
       registerActiveRun(runInfo);
-      await persistAgentProgress(runInfo, 'running');
       await streamRunForConversation(runInfo, true);
 
       const messagesSnapshot = getConversationMessagesSnapshot(conversationId);
@@ -3098,14 +4570,9 @@ export default function WorkspacePage() {
             metadata: { ...metadata, runId },
             replaceExisting: true,
           });
-          updateMessagesForConversation(conversationId, (prev) => {
-            const updated = [...prev];
-            if (targetIndex >= 0) {
-              updated[targetIndex] = mergePersistedAgentMessage(persisted, updated[targetIndex]);
-            } else {
-              updated.push(mergePersistedAgentMessage(persisted));
-            }
-            return updated;
+          upsertPersistedAgentMessage(conversationId, persisted, {
+            placeholderId,
+            existing: agentMessage,
           });
           if (placeholderId !== null && placeholderId !== undefined) {
             agentMessageBufferRef.current.delete(placeholderId);
@@ -3246,20 +4713,38 @@ export default function WorkspacePage() {
     }
   };
 
-  const handleUpdateFile = useCallback(async (id: number, content: string) => {
-    if (!selectedWorkspace) return;
+  const handleUpdateFile = useCallback(async (targetFile: WorkspaceFile | null, content: string) => {
+    if (!selectedWorkspace || !targetFile) return;
 
     try {
-      await updateFileContent(selectedWorkspace.id, id, content);
+      if (isDraftWorkspaceFile(targetFile)) {
+        const createdFile = await createTextFile(selectedWorkspace.id, {
+          name: targetFile.name,
+          content,
+          mimeType: targetFile.mimeType || 'text/markdown',
+        });
+        setFiles((prev) => {
+          const withoutDraft = prev.filter((file) => String(file.id) !== String(targetFile.id));
+          return [createdFile, ...withoutDraft];
+        });
+        const hydratedCreatedFile = {
+          ...createdFile,
+          content,
+        };
+        setSelectedFile(hydratedCreatedFile);
+        setSelectedFileDetails(hydratedCreatedFile);
+      } else {
+        await updateFileContent(selectedWorkspace.id, Number(targetFile.id), content);
+        setSelectedFileDetails((prev) => (prev ? { ...prev, content } : prev));
+      }
       lastAutoSavedContentRef.current = content;
-      // Optionally, you can refetch the file or update it in the state
     } catch (error) {
       console.error('Failed to update file:', error);
     }
   }, [selectedWorkspace]);
 
   useEffect(() => {
-    if (!isEditMode || !selectedWorkspace || !selectedFile) return;
+    if (!isEditMode || !selectedWorkspace || !selectedFile || isDraftWorkspaceFile(selectedFile)) return;
 
     if (autoSaveTimerRef.current) {
       window.clearTimeout(autoSaveTimerRef.current);
@@ -3269,7 +4754,7 @@ export default function WorkspacePage() {
       if (fileContent === lastAutoSavedContentRef.current) {
         return;
       }
-      await handleUpdateFile(Number(selectedFile.id), fileContent);
+      await handleUpdateFile(selectedFile, fileContent);
       lastAutoSavedContentRef.current = fileContent;
     }, 2000);
 
@@ -3292,6 +4777,9 @@ export default function WorkspacePage() {
 
     try {
       for (const fileId of selectedFiles) {
+        if (String(fileId).startsWith('draft:')) {
+          continue;
+        }
         await deleteFile(selectedWorkspace.id, fileId);
       }
       setFiles((prevFiles) =>
@@ -3406,17 +4894,21 @@ export default function WorkspacePage() {
         <CollapsibleDrawer
           open={drawerOpen}
           handleDrawerClose={handleDrawerToggle}
-          workspaces={workspaces}
+          workspaces={filteredWorkspaces}
           selectedWorkspace={selectedWorkspace}
-          newWorkspaceName={newWorkspaceName}
-          setNewWorkspaceName={setNewWorkspaceName}
+          workspaceSearchQuery={workspaceSearchQuery}
+          setWorkspaceSearchQuery={setWorkspaceSearchQuery}
           handleCreateWorkspace={handleCreateWorkspace}
           handleDeleteWorkspace={handleDeleteWorkspace}
-          onSelectWorkspace={setSelectedWorkspace}
+          onSelectWorkspace={handleSelectWorkspace}
           onOpenSettings={handleOpenAgentSettings}
           colorMode={colorMode}
           onToggleColorMode={toggleColorMode}
           onSignOut={handleSignOut}
+          onToggleSkipPlanApprovals={(checked) => {
+            void handleUpdateWorkspacePlanApprovalSetting(checked, checked);
+          }}
+          workspaceSettingsBusy={workspaceSettingsBusy}
         />
         <Box
           component="main"
@@ -3456,9 +4948,47 @@ export default function WorkspacePage() {
             >
               {/* Workspace Header */}
               <div className="p-4 border-b border-gray-200 flex justify-between items-center">
-                <h2 className="text-xl font-semibold text-gray-800">
-                  {selectedWorkspace ? selectedWorkspace.name : 'No workspace selected'}
-                </h2>
+                {selectedWorkspace ? (
+                  isWorkspaceRenameActive && selectedWorkspace.canEdit ? (
+                    <input
+                      ref={workspaceNameInputRef}
+                      value={workspaceNameDraft}
+                      onChange={(event) => setWorkspaceNameDraft(event.target.value)}
+                      onBlur={() => {
+                        void commitWorkspaceRename();
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') {
+                          event.preventDefault();
+                          void commitWorkspaceRename();
+                        } else if (event.key === 'Escape') {
+                          event.preventDefault();
+                          cancelWorkspaceRename();
+                        }
+                      }}
+                      disabled={workspaceRenameBusy}
+                      aria-label="Workspace name"
+                      className="w-full max-w-[28rem] rounded-lg border border-blue-200 bg-white px-3 py-1.5 text-xl font-semibold text-gray-800 outline-none ring-2 ring-blue-100 disabled:cursor-wait"
+                    />
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!selectedWorkspace.canEdit) return;
+                        setWorkspaceNameDraft(selectedWorkspace.name);
+                        setIsWorkspaceRenameActive(true);
+                      }}
+                      className={`flex items-center gap-2 text-left text-xl font-semibold ${
+                        selectedWorkspace.canEdit ? 'text-gray-800 hover:text-blue-700' : 'cursor-default text-gray-800'
+                      }`}
+                    >
+                      <span>{selectedWorkspace.name}</span>
+                      {selectedWorkspace.canEdit ? <Edit size={16} className="text-gray-400" /> : null}
+                    </button>
+                  )
+                ) : (
+                  <h2 className="text-xl font-semibold text-gray-800">No workspace selected</h2>
+                )}
               </div>
               <div className="flex-1 flex min-h-0">
                 {/* File Explorer */}
@@ -3599,7 +5129,7 @@ export default function WorkspacePage() {
                             </div>
                             {!isPendingJob && (
                               <div className={`shrink-0 items-center gap-1 ml-1 ${hoveredFileId === file.id ? 'flex' : 'hidden group-hover:flex'}`}>
-                                {file.publicUrl && (
+                                {file.publicUrl && !isDraftWorkspaceFile(file) && (
                                   <button
                                     type="button"
                                     onClick={(event) => {
@@ -3612,17 +5142,19 @@ export default function WorkspacePage() {
                                     <LinkIcon size={14} className="text-gray-600" />
                                   </button>
                                 )}
-                                <button
-                                  type="button"
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    handleRenameFile(file);
-                                  }}
-                                  className="p-1 rounded hover:bg-gray-200"
-                                  title="Rename"
-                                >
-                                  <Edit size={14} className="text-gray-600" />
-                                </button>
+                                {!isDraftWorkspaceFile(file) ? (
+                                  <button
+                                    type="button"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      handleRenameFile(file);
+                                    }}
+                                    className="p-1 rounded hover:bg-gray-200"
+                                    title="Rename"
+                                  >
+                                    <Edit size={14} className="text-gray-600" />
+                                  </button>
+                                ) : null}
                                 <button
                                   type="button"
                                   onClick={(event) => {
@@ -3717,7 +5249,7 @@ export default function WorkspacePage() {
                       )}
                       <button
                         className="h-9 px-3 inline-flex items-center justify-center rounded-lg text-sm font-medium text-slate-700 hover:bg-gray-200 disabled:opacity-50"
-                        onClick={() => selectedFile && handleUpdateFile(Number(selectedFile.id), fileContent)}
+                        onClick={() => selectedFile && handleUpdateFile(selectedFile, fileContent)}
                         disabled={!isEditMode}
                       >
                         Save
@@ -3775,6 +5307,7 @@ export default function WorkspacePage() {
                         >
                           <UIBlockRenderer
                             blocks={canvasBlocks}
+                            workspaceId={selectedWorkspace?.id}
                             className="h-full w-full"
                             emptyState={
                               <div className="text-center text-gray-400">
@@ -3809,13 +5342,16 @@ export default function WorkspacePage() {
               expandedToolMessages={expandedToolMessages}
               expandedThinkingMessages={expandedThinkingMessages}
               copiedMessageId={copiedMessageId}
-              approvalFeedbackByMessageId={approvalFeedbackByMessageId}
-              approvalSubmittingByMessageId={approvalSubmittingByMessageId}
+              interruptInputByMessageId={interruptInputByMessageId}
+              interruptSelectedChoicesByMessageId={interruptSelectedChoicesByMessageId}
+              interruptSubmittingByMessageId={interruptSubmittingByMessageId}
+              interruptErrorByMessageId={interruptErrorByMessageId}
               chatMessage={chatMessage}
               chatAttachments={chatAttachments}
               showPaper2SlidesControls={showPaper2SlidesControls}
               presentationStatus={presentationStatus}
               presentationOptionSummary={presentationOptionSummary}
+              commandTags={commandTags}
               isMentionOpen={isMentionOpen}
               mentionSuggestions={mentionSuggestions}
               mentionSelectedIndex={mentionSelectedIndex}
@@ -3826,11 +5362,16 @@ export default function WorkspacePage() {
               attachmentInputRef={attachmentInputRef}
               workspaceId={selectedWorkspace?.id}
               formatMessageTimestamp={formatMessageTimestamp}
-              approvalFieldKey={approvalFieldKey}
-              getAllowedDecisions={getAllowedDecisions}
+              interruptFieldKey={interruptFieldKey}
+              interruptActionFieldKey={interruptActionFieldKey}
+              getInterruptKind={getInterruptKind}
+              getInterruptActions={getInterruptActions}
               getPrimaryInterruptAction={getPrimaryInterruptAction}
               isPlanApprovalInterrupt={isPlanApprovalInterrupt}
-              setApprovalFeedbackByMessageId={setApprovalFeedbackByMessageId}
+              setInterruptInputByMessageId={setInterruptInputByMessageId}
+              toggleInterruptSelectedChoice={toggleInterruptSelectedChoice}
+              workspaceSkipPlanApprovals={Boolean(selectedWorkspace?.skipPlanApprovals)}
+              workspaceSettingsBusy={workspaceSettingsBusy}
               onToggleAgentPaneVisibility={() => setIsAgentPaneVisible((prev) => !prev)}
               onModeChange={handleModeChange}
               onToggleHistory={() => setIsHistoryOpen((prev) => !prev)}
@@ -3843,7 +5384,9 @@ export default function WorkspacePage() {
               onToggleToolActivityVisibility={toggleToolActivityVisibility}
               onCopyMessageText={handleCopyMessageText}
               onRerunMessage={handleRerunMessage}
-              onInterruptDecision={handleInterruptDecision}
+              onPrepareInterruptAction={prepareInterruptAction}
+              onInterruptAction={handleInterruptAction}
+              onEnableTrustedPlanMode={() => handleUpdateWorkspacePlanApprovalSetting(true, true)}
               onChatInputChange={handleChatInputChange}
               onChatInputKeyDown={handleChatInputKeyDown}
               onChatInputKeyUp={handleChatInputKeyUp}
@@ -3855,8 +5398,9 @@ export default function WorkspacePage() {
               onSendMessage={handleSendMessage}
               onChatAttachmentChange={handleChatAttachmentChange}
               onRemoveChatAttachment={handleRemoveChatAttachment}
+              onRemoveCommandTag={handleRemoveCommandTag}
               onSelectMention={handleSelectMention}
-              onSelectCommand={(command) => handleSelectCommand(command as SlashCommand)}
+              onSelectCommand={handleSelectCommand}
             />
           </div>
         </Box>

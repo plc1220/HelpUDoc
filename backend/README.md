@@ -58,12 +58,12 @@ The collaboration WebSocket server listens on `ws://localhost:1234` by default.
 
 ### Running dependencies locally
 
-This repository includes `infra/docker-compose.minio.yml`, which provisions PostgreSQL, Redis, and MinIO and creates a public `helpudoc` bucket.
+This repository includes `infra/docker-compose.dependencies.yml`, which provisions PostgreSQL, Redis, and MinIO and creates a public `helpudoc` bucket.
 
 From the repository root run:
 
 ```bash
-docker compose -f infra/docker-compose.minio.yml --env-file env/local/stack.env up -d
+docker compose -f infra/docker-compose.dependencies.yml --env-file env/local/stack.env up -d
 ```
 
 By default MinIO listens on:

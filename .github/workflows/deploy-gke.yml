@@ -110,7 +110,10 @@ jobs:
           set -euo pipefail
 
           docker build -f backend/Dockerfile.gke -t "gcr.io/${PROJECT_ID}/helpudoc-backend:${IMAGE_TAG}" .
-          docker build -f frontend/Dockerfile.gke --build-arg "VITE_GOOGLE_CLIENT_ID=${VITE_GOOGLE_CLIENT_ID}" -t "gcr.io/${PROJECT_ID}/helpudoc-frontend:${IMAGE_TAG}" .
+          docker build -f frontend/Dockerfile.gke \
+            --build-arg "VITE_GOOGLE_CLIENT_ID=${VITE_GOOGLE_CLIENT_ID}" \
+            --build-arg "VITE_AUTH_MODE=hybrid" \
+            -t "gcr.io/${PROJECT_ID}/helpudoc-frontend:${IMAGE_TAG}" .
           docker build -f agent/Dockerfile.gke -t "gcr.io/${PROJECT_ID}/helpudoc-agent:${IMAGE_TAG}" .
 
           docker push "gcr.io/${PROJECT_ID}/helpudoc-backend:${IMAGE_TAG}"
@@ -137,7 +140,7 @@ jobs:
             --arg cid "${GOOGLE_OAUTH_CLIENT_ID}" \
             --arg redir "${GOOGLE_OAUTH_REDIRECT_URI}" \
             --arg post "${GOOGLE_OAUTH_POST_LOGIN_REDIRECT}" \
-            --arg scopes "openid email profile" \
+            --arg scopes "openid email profile https://www.googleapis.com/auth/bigquery https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/spreadsheets.readonly" \
             --arg domain ".lc-demo.com" \
             '{data:{AUTH_MODE:$auth_mode,GOOGLE_OAUTH_CLIENT_ID:$cid,GOOGLE_OAUTH_REDIRECT_URI:$redir,GOOGLE_OAUTH_POST_LOGIN_REDIRECT:$post,GOOGLE_OAUTH_SCOPES:$scopes,SESSION_COOKIE_DOMAIN:$domain}}')"
 
@@ -171,3 +174,11 @@ jobs:
           kubectl -n helpudoc exec "${APP_POD}" -c backend -- sh -lc "set -eu; mkdir -p /app/skills; find /app/skills -mindepth 1 -maxdepth 1 -exec rm -rf {} +"
           tar -C skills -cf - . | kubectl -n helpudoc exec -i "${APP_POD}" -c backend -- sh -lc "tar -xf - -C /app/skills"
           kubectl -n helpudoc exec "${APP_POD}" -c backend -- sh -lc "test -f /app/skills/research/SKILL.md"
+
+      - name: Sync Agent Config PVC
+        run: |
+          set -euo pipefail
+          APP_POD="$(kubectl -n helpudoc get pods -l app=helpudoc-app -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.phase}{"\n"}{end}' | awk '$2 == "Running" {print $1; exit}')"
+          test -n "${APP_POD}"
+          kubectl -n helpudoc exec "${APP_POD}" -c backend -- sh -lc "mkdir -p /agent/config"
+          kubectl -n helpudoc exec -i "${APP_POD}" -c backend -- sh -lc "cat > /agent/config/runtime.yaml" < agent/config/runtime.yaml

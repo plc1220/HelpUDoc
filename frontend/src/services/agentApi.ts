@@ -1,6 +1,8 @@
 import { streamAgentRunWithReconnect, type AgentStreamChunk } from '../../../packages/shared/src/services/agentStream';
 export type { AgentStreamChunk };
 import { API_URL, apiFetch } from './apiClient';
+import type { ConversationMessageMetadata } from '../types';
+import type { SkillDefinition } from '../types';
 
 const STREAM_DEBUG_ENABLED =
   typeof import.meta !== 'undefined' &&
@@ -13,9 +15,26 @@ type AgentStreamOptions = {
 
 export type AgentRunStatus = 'queued' | 'running' | 'awaiting_approval' | 'completed' | 'failed' | 'cancelled';
 
+export type SlashMetadataResponse = {
+  skills: SkillDefinition[];
+  mcpServers: Array<{ name: string; description?: string }>;
+};
+
 export type AgentRunStartResponse = {
   runId: string;
   status: AgentRunStatus;
+};
+
+const readErrorMessage = async (response: Response, fallback: string): Promise<string> => {
+  try {
+    const payload = await response.json();
+    if (payload && typeof payload === 'object' && typeof payload.error === 'string' && payload.error.trim()) {
+      return payload.error;
+    }
+  } catch {
+    // Ignore non-JSON error responses and fall back to the generic message.
+  }
+  return fallback;
 };
 
 export const startAgentRun = async (
@@ -46,6 +65,14 @@ export const startAgentRun = async (
   return response.json();
 };
 
+export const fetchSlashMetadata = async (): Promise<SlashMetadataResponse> => {
+  const response = await apiFetch(`${API_URL}/agent/slash-metadata`);
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, 'Failed to load slash metadata'));
+  }
+  return response.json();
+};
+
 export const streamAgentRun = async (
   runId: string,
   onChunk: (chunk: AgentStreamChunk) => void,
@@ -63,7 +90,15 @@ export const streamAgentRun = async (
   });
 };
 
-export const getRunStatus = async (runId: string): Promise<{ status: AgentRunStatus; workspaceId: string; persona: string; turnId?: string }> => {
+export const getRunStatus = async (
+  runId: string,
+): Promise<{
+  status: AgentRunStatus;
+  workspaceId: string;
+  persona: string;
+  turnId?: string;
+  pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'];
+}> => {
   const response = await apiFetch(`${API_URL}/agent/runs/${runId}`);
   if (!response.ok) {
     throw new Error('Failed to fetch run status');
@@ -101,7 +136,48 @@ export const submitRunDecision = async (
     }),
   });
   if (!response.ok) {
-    throw new Error('Failed to submit run decision');
+    throw new Error(await readErrorMessage(response, 'Failed to submit run decision'));
+  }
+  return response.json();
+};
+
+export const submitRunResponse = async (
+  runId: string,
+  payload: {
+    message?: string;
+    selectedChoiceIds?: string[];
+    selectedValues?: string[];
+  },
+) => {
+  const response = await apiFetch(`${API_URL}/agent/runs/${runId}/respond`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, 'Failed to submit clarification response'));
+  }
+  return response.json();
+};
+
+export const submitRunAction = async (
+  runId: string,
+  payload: {
+    actionId: string;
+    text?: string;
+  },
+) => {
+  const response = await apiFetch(`${API_URL}/agent/runs/${runId}/act`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, 'Failed to submit interrupt action'));
   }
   return response.json();
 };

@@ -4,6 +4,8 @@ description: Produce a sourced, long-form research report in the user's language
 tools:
   - google_search
   - request_plan_approval
+  - request_clarification
+  - request_human_action
 source_skills:
   - research-core
   - research-sub_researcher

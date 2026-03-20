@@ -79,7 +79,10 @@ jobs:
           IMAGE_TAG: ${{ github.sha }}
         run: |
           set -euo pipefail
-          docker build -f frontend/Dockerfile.gke --build-arg "VITE_GOOGLE_CLIENT_ID=${VITE_GOOGLE_CLIENT_ID}" -t "gcr.io/${PROJECT_ID}/helpudoc-frontend:${IMAGE_TAG}" .
+          docker build -f frontend/Dockerfile.gke \
+            --build-arg "VITE_GOOGLE_CLIENT_ID=${VITE_GOOGLE_CLIENT_ID}" \
+            --build-arg "VITE_AUTH_MODE=hybrid" \
+            -t "gcr.io/${PROJECT_ID}/helpudoc-frontend:${IMAGE_TAG}" .
           docker push "gcr.io/${PROJECT_ID}/helpudoc-frontend:${IMAGE_TAG}"
 
       - name: Deploy Frontend

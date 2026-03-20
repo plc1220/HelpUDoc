@@ -1,6 +1,10 @@
 import { Router, Request, Response } from 'express';
 import crypto from 'crypto';
+import path from 'path';
+import { promises as fs } from 'fs';
+import { existsSync } from 'fs';
 import { z } from 'zod';
+import { parse as parseYaml } from 'yaml';
 import { runAgent, runAgentStream } from '../services/agentService';
 import { WorkspaceService } from '../services/workspaceService';
 import { FileService } from '../services/fileService';
@@ -18,6 +22,8 @@ import {
   getRunMeta,
   getRunStreamKey,
   resumeAgentRun,
+  resumeAgentRunWithAction,
+  resumeAgentRunWithResponse,
   startAgentRun,
 } from '../services/agentRunService';
 import { blockingRedisClient } from '../services/redisService';
@@ -30,6 +36,83 @@ const DEBUG_AGENT_RUN_STREAM =
   process.env.DEBUG_AGENT_RUN_STREAM === '1' || process.env.DEBUG_AGENT_RUN_STREAM === 'true';
 const AUTH_MODE = (process.env.AUTH_MODE || 'headers').trim().toLowerCase();
 const BQ_DELEGATED_MCP_SERVER_ID = 'toolbox-bq-demo';
+const repoRoot = path.resolve(__dirname, '../../..');
+const skillsRoot = process.env.SKILLS_ROOT || path.join(repoRoot, 'skills');
+const defaultAgentConfigDir = existsSync('/agent/config')
+  ? '/agent/config'
+  : path.join(repoRoot, 'agent', 'config');
+const agentConfigPath = process.env.AGENT_CONFIG_PATH
+  || path.join(process.env.AGENT_CONFIG_DIR || defaultAgentConfigDir, 'runtime.yaml');
+
+type RuntimeMcpServerConfig = {
+  name: string;
+  transport?: string;
+  default_access?: string;
+  defaultAccess?: string;
+  delegated_auth_provider?: string;
+  delegatedAuthProvider?: string;
+};
+
+type SlashSkillMetadata = {
+  id: string;
+  name: string;
+  description?: string;
+  valid: boolean;
+  error?: string;
+  warning?: string;
+};
+
+const extractFrontmatterString = (frontmatter: Record<string, unknown>, key: string): string | undefined => {
+  const value = frontmatter[key];
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+};
+
+const parseSkillFrontmatter = (content: string): Record<string, unknown> => {
+  if (!content.startsWith('---')) {
+    return {};
+  }
+  const closingIndex = content.indexOf('\n---', 3);
+  if (closingIndex < 0) {
+    return {};
+  }
+  const frontmatter = content.slice(3, closingIndex).trim();
+  const parsed = parseYaml(frontmatter);
+  return parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : {};
+};
+
+const collectSkillIds = async (rootDir: string, relativeDir = ''): Promise<string[]> => {
+  const entries = await fs.readdir(path.join(rootDir, relativeDir), { withFileTypes: true });
+  const results: string[] = [];
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) {
+      continue;
+    }
+    const relPath = path.join(relativeDir, entry.name);
+    const skillFile = path.join(rootDir, relPath, 'SKILL.md');
+    if (existsSync(skillFile)) {
+      results.push(relPath.replace(/\\/g, '/'));
+    }
+    const nested = await collectSkillIds(rootDir, relPath);
+    results.push(...nested);
+  }
+
+  return Array.from(new Set(results)).sort((a, b) => a.localeCompare(b));
+};
+
+const getSkillMetadata = async (skillId: string): Promise<SlashSkillMetadata> => {
+  const skillPath = path.join(skillsRoot, skillId, 'SKILL.md');
+  const content = await fs.readFile(skillPath, 'utf-8');
+  const frontmatter = parseSkillFrontmatter(content);
+  const description = extractFrontmatterString(frontmatter, 'description');
+  const name = extractFrontmatterString(frontmatter, 'name') || skillId;
+  return {
+    id: skillId,
+    name,
+    description,
+    valid: true,
+  };
+};
 
 const extractTextFromAgentReply = (reply: unknown): string => {
   if (reply === null || reply === undefined) {
@@ -60,6 +143,44 @@ const extractTextFromAgentReply = (reply: unknown): string => {
     return JSON.stringify(reply);
   } catch {
     return String(reply);
+  }
+};
+
+const normalizeDelegatedAuthProvider = (value: unknown): string | null => {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const normalized = value.trim().toLowerCase();
+  return normalized || null;
+};
+
+const normalizeDefaultAccess = (value: unknown): 'allow' | 'deny' => {
+  const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return normalized === 'deny' ? 'deny' : 'allow';
+};
+
+const loadRuntimeMcpServers = async (): Promise<RuntimeMcpServerConfig[]> => {
+  try {
+    const content = await fs.readFile(agentConfigPath, 'utf-8');
+    const parsed = parseYaml(content) as { mcp_servers?: unknown } | null;
+    const rawServers = parsed?.mcp_servers;
+    if (!Array.isArray(rawServers)) {
+      return [];
+    }
+    return rawServers
+      .filter((entry): entry is RuntimeMcpServerConfig => Boolean(entry && typeof entry === 'object' && (entry as any).name));
+  } catch (error: any) {
+    if (error?.code !== 'ENOENT') {
+      console.warn('Failed to read runtime MCP config; falling back to BigQuery delegated MCP server only', error);
+    }
+    return [
+      {
+        name: BQ_DELEGATED_MCP_SERVER_ID,
+        transport: 'http',
+        delegated_auth_provider: 'google',
+        default_access: 'allow',
+      },
+    ];
   }
 };
 
@@ -113,6 +234,15 @@ export default function(
       .optional(),
     message: z.string().optional(),
   });
+  const runResponseSchema = z.object({
+    message: z.string().optional(),
+    selectedChoiceIds: z.array(z.string().min(1)).optional(),
+    selectedValues: z.array(z.string()).optional(),
+  });
+  const runActionSchema = z.object({
+    actionId: z.string().min(1),
+    text: z.string().optional(),
+  });
 
   const requireUserContext = (req: Request) => {
     if (!req.userContext) {
@@ -121,22 +251,91 @@ export default function(
     return req.userContext;
   };
 
-  const canUseDelegatedServer = (policy: {
-    isAdmin: boolean;
-    mcpServerDenyIds: string[];
-  }): boolean => {
-    if (policy.isAdmin) {
-      return true;
+  router.get('/slash-metadata', async (req, res) => {
+    try {
+      requireUserContext(req);
+      await fs.mkdir(skillsRoot, { recursive: true });
+      const skillIds = await collectSkillIds(skillsRoot);
+      const skills: SlashSkillMetadata[] = [];
+      for (const skillId of skillIds) {
+        try {
+          skills.push(await getSkillMetadata(skillId));
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'Failed to read skill';
+          skills.push({
+            id: skillId,
+            name: skillId,
+            valid: false,
+            error: message,
+          });
+        }
+      }
+
+      const mcpServers = (await loadRuntimeMcpServers())
+        .map((server) => ({
+          name: typeof server.name === 'string' ? server.name.trim() : '',
+          description: undefined as string | undefined,
+        }))
+        .filter((server) => server.name);
+
+      res.json({ skills, mcpServers });
+    } catch (error) {
+      if (error instanceof HttpError) {
+        return res.status(error.statusCode).json({ error: error.message, details: error.details });
+      }
+      console.error('Failed to load slash metadata', error);
+      return res.status(500).json({ error: 'Failed to load slash metadata' });
     }
-    return !policy.mcpServerDenyIds.includes(BQ_DELEGATED_MCP_SERVER_ID);
+  });
+
+  const getAllowedDelegatedGoogleServerIds = async (policy: {
+    isAdmin: boolean;
+    mcpServerAllowIds: string[];
+    mcpServerDenyIds: string[];
+  }): Promise<string[]> => {
+    const configuredServers = await loadRuntimeMcpServers();
+    const allowIds = new Set(policy.mcpServerAllowIds || []);
+    const denyIds = new Set(policy.mcpServerDenyIds || []);
+
+    return configuredServers
+      .filter((server) => {
+        const serverId = typeof server.name === 'string' ? server.name.trim() : '';
+        if (!serverId) {
+          return false;
+        }
+        const transport = typeof server.transport === 'string' ? server.transport.trim().toLowerCase() : '';
+        if (transport !== 'http') {
+          return false;
+        }
+        if (normalizeDelegatedAuthProvider(server.delegated_auth_provider ?? server.delegatedAuthProvider) !== 'google') {
+          return false;
+        }
+        if (policy.isAdmin) {
+          return true;
+        }
+        if (denyIds.has(serverId)) {
+          return false;
+        }
+        if (normalizeDefaultAccess(server.default_access ?? server.defaultAccess) === 'deny' && !allowIds.has(serverId)) {
+          return false;
+        }
+        return true;
+      })
+      .map((server) => server.name.trim())
+      .sort();
   };
 
-  const buildMcpAuthFingerprint = (serverId: string, bearerToken: string, expiresAt: number): string => {
+  const buildMcpAuthFingerprint = (
+    provider: string,
+    serverIds: string[],
+    bearerToken: string,
+    expiresAt: number,
+  ): string => {
     const tokenHash = crypto.createHash('sha256').update(bearerToken).digest('hex');
     const expBucket = Math.floor(expiresAt / 60);
     return crypto
       .createHash('sha256')
-      .update(`${serverId}|${expBucket}|${tokenHash}`)
+      .update(`${provider}|${serverIds.join(',')}|${expBucket}|${tokenHash}`)
       .digest('hex');
   };
 
@@ -148,39 +347,53 @@ export default function(
       mcpServerAllowIds: string[];
       mcpServerDenyIds: string[];
     };
+    skipPlanApprovals?: boolean;
   }): Promise<string | null> => {
     const payload: Record<string, unknown> = {
       sub: input.userId,
       userId: input.userId,
       workspaceId: input.workspaceId,
+      skipPlanApprovals: Boolean(input.skipPlanApprovals),
       ...input.policy,
     };
 
-    if (AUTH_MODE !== 'headers' && canUseDelegatedServer(input.policy)) {
+    if (AUTH_MODE !== 'headers') {
       try {
+        const delegatedServerIds = await getAllowedDelegatedGoogleServerIds(input.policy);
+        if (!delegatedServerIds.length) {
+          return signAgentContextToken(payload);
+        }
         const delegated = await googleOAuthService.getDelegatedAccessToken(input.userId);
         const authorization = `Bearer ${delegated.accessToken}`;
         const fingerprint = buildMcpAuthFingerprint(
-          BQ_DELEGATED_MCP_SERVER_ID,
+          'google',
+          delegatedServerIds,
           delegated.accessToken,
           delegated.expiresAt,
         );
-        payload.mcpAuth = {
-          [BQ_DELEGATED_MCP_SERVER_ID]: {
-            Authorization: authorization,
-          },
-        };
+        payload.mcpAuth = Object.fromEntries(
+          delegatedServerIds.map((serverId) => [
+            serverId,
+            {
+              Authorization: authorization,
+            },
+          ]),
+        );
         payload.mcpAuthFingerprint = fingerprint;
         console.info('[mcp-auth]', {
           userId: input.userId,
           workspaceId: input.workspaceId,
-          serverId: BQ_DELEGATED_MCP_SERVER_ID,
+          provider: 'google',
+          serverIds: delegatedServerIds,
           tokenSource: delegated.source,
           expBucket: Math.floor(delegated.expiresAt / 60),
         });
       } catch (error) {
         if (error instanceof GoogleOAuthTokenMissingError) {
-          throw new HttpError(403, 'Google BigQuery access is not connected. Please sign in with Google again.');
+          throw new HttpError(
+            403,
+            'Google access for MCP tools is not connected or is missing required permissions. Please sign in with Google again.',
+          );
         }
         throw error;
       }
@@ -326,11 +539,13 @@ export default function(
       const user = requireUserContext(req);
       const { persona, prompt, workspaceId, history, forceReset } = runAgentSchema.parse(req.body);
       const policy = await workspaceService.getMcpServerPolicy(workspaceId, user.userId, { requireEdit: true });
+      const settings = await workspaceService.getWorkspaceSettings(workspaceId, user.userId, { requireEdit: true });
       const enrichedPrompt = await injectTaggedFileUrls(prompt, workspaceId, user.userId);
       const authToken = await buildAgentAuthToken({
         userId: user.userId,
         workspaceId,
         policy,
+        skipPlanApprovals: settings.skipPlanApprovals,
       });
       const response = await runAgent(persona, workspaceId, enrichedPrompt, history, { forceReset, authToken: authToken || undefined });
       res.json(response);
@@ -369,11 +584,13 @@ export default function(
       const user = requireUserContext(req);
       const { persona, prompt, workspaceId, history, forceReset } = runAgentSchema.parse(req.body);
       const policy = await workspaceService.getMcpServerPolicy(workspaceId, user.userId, { requireEdit: true });
+      const settings = await workspaceService.getWorkspaceSettings(workspaceId, user.userId, { requireEdit: true });
       const enrichedPrompt = await injectTaggedFileUrls(prompt, workspaceId, user.userId);
       const authToken = await buildAgentAuthToken({
         userId: user.userId,
         workspaceId,
         policy,
+        skipPlanApprovals: settings.skipPlanApprovals,
       });
       streamResponse = await runAgentStream(persona, workspaceId, enrichedPrompt, history, {
         forceReset,
@@ -424,11 +641,13 @@ export default function(
       const { persona, prompt, workspaceId, history, forceReset, turnId } = runAgentSchema.parse(req.body);
       await workspaceService.ensureMembership(workspaceId, user.userId, { requireEdit: true });
       const policy = await workspaceService.getMcpServerPolicy(workspaceId, user.userId, { requireEdit: true });
+      const settings = await workspaceService.getWorkspaceSettings(workspaceId, user.userId, { requireEdit: true });
       const enrichedPrompt = await injectTaggedFileUrls(prompt, workspaceId, user.userId);
       const authToken = await buildAgentAuthToken({
         userId: user.userId,
         workspaceId,
         policy,
+        skipPlanApprovals: settings.skipPlanApprovals,
       });
       const { runId, status } = await startAgentRun({
         persona,
@@ -486,8 +705,19 @@ export default function(
         return res.status(404).json({ error: 'Run not found' });
       }
       await workspaceService.ensureMembership(meta.workspaceId, user.userId, { requireEdit: true });
+      const policy = await workspaceService.getMcpServerPolicy(meta.workspaceId, user.userId, { requireEdit: true });
+      const settings = await workspaceService.getWorkspaceSettings(meta.workspaceId, user.userId, { requireEdit: true });
+      const authToken = await buildAgentAuthToken({
+        userId: user.userId,
+        workspaceId: meta.workspaceId,
+        policy,
+        skipPlanApprovals: settings.skipPlanApprovals,
+      });
       if (meta.status !== 'awaiting_approval') {
         return res.status(409).json({ error: 'Run is not awaiting approval' });
+      }
+      if (meta.pendingInterrupt?.kind === 'clarification') {
+        return res.status(409).json({ error: 'Run is awaiting a clarification response, not an approval decision' });
       }
       const payload = runDecisionSchema.parse(req.body);
       console.info('[AgentDecision]', {
@@ -510,13 +740,113 @@ export default function(
             ? { type: 'reject' as const, message: payload.message || 'Rejected by user' }
             : { type: 'approve' as const },
       ];
-      const result = await resumeAgentRun(runId, decisions);
+      const result = await resumeAgentRun(runId, decisions, {
+        authToken: authToken || undefined,
+      });
       res.json(result);
     } catch (error: any) {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ error: 'Invalid input' });
       }
       handleError(res, error, 'Failed to submit run decision');
+    }
+  });
+
+  router.post('/runs/:runId/respond', async (req, res) => {
+    try {
+      const user = requireUserContext(req);
+      const { runId } = req.params;
+      const meta = await getRunMeta(runId);
+      if (!meta) {
+        return res.status(404).json({ error: 'Run not found' });
+      }
+      await workspaceService.ensureMembership(meta.workspaceId, user.userId, { requireEdit: true });
+      const policy = await workspaceService.getMcpServerPolicy(meta.workspaceId, user.userId, { requireEdit: true });
+      const settings = await workspaceService.getWorkspaceSettings(meta.workspaceId, user.userId, { requireEdit: true });
+      const authToken = await buildAgentAuthToken({
+        userId: user.userId,
+        workspaceId: meta.workspaceId,
+        policy,
+        skipPlanApprovals: settings.skipPlanApprovals,
+      });
+      if (meta.status !== 'awaiting_approval') {
+        return res.status(409).json({ error: 'Run is not awaiting input' });
+      }
+      const interruptKind = meta.pendingInterrupt?.kind ?? 'approval';
+      if (interruptKind !== 'clarification') {
+        return res.status(409).json({ error: 'Run is awaiting an approval decision, not a clarification response' });
+      }
+      const payload = runResponseSchema.parse(req.body);
+      if (!payload.message && !payload.selectedChoiceIds?.length && !payload.selectedValues?.length) {
+        return res.status(400).json({ error: 'Clarification response requires a message or a selected choice' });
+      }
+      const result = await resumeAgentRunWithResponse(runId, {
+        message: payload.message,
+        selectedChoiceIds: payload.selectedChoiceIds,
+        selectedValues: payload.selectedValues,
+      }, {
+        authToken: authToken || undefined,
+      });
+      res.json(result);
+    } catch (error: any) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: 'Invalid input' });
+      }
+      handleError(res, error, 'Failed to submit clarification response');
+    }
+  });
+
+  router.post('/runs/:runId/act', async (req, res) => {
+    try {
+      const user = requireUserContext(req);
+      const { runId } = req.params;
+      const meta = await getRunMeta(runId);
+      if (!meta) {
+        return res.status(404).json({ error: 'Run not found' });
+      }
+      await workspaceService.ensureMembership(meta.workspaceId, user.userId, { requireEdit: true });
+      const policy = await workspaceService.getMcpServerPolicy(meta.workspaceId, user.userId, { requireEdit: true });
+      const settings = await workspaceService.getWorkspaceSettings(meta.workspaceId, user.userId, { requireEdit: true });
+      const authToken = await buildAgentAuthToken({
+        userId: user.userId,
+        workspaceId: meta.workspaceId,
+        policy,
+        skipPlanApprovals: settings.skipPlanApprovals,
+      });
+      if (meta.status !== 'awaiting_approval') {
+        return res.status(409).json({ error: 'Run is not awaiting human input' });
+      }
+      const payload = runActionSchema.parse(req.body);
+      const interruptActions = Array.isArray(meta.pendingInterrupt?.actions) ? meta.pendingInterrupt.actions : [];
+      const action = interruptActions.find((item) => item.id === payload.actionId);
+      if (!action) {
+        return res.status(404).json({ error: `Interrupt action "${payload.actionId}" was not found` });
+      }
+      if (action.inputMode === 'text' && !payload.text?.trim()) {
+        return res.status(400).json({ error: 'This action requires text input' });
+      }
+      const result = await resumeAgentRunWithAction(
+        runId,
+        {
+          action: {
+            id: action.id,
+            ...(typeof action.value === 'string' ? { value: action.value } : {}),
+            ...(action.payload && typeof action.payload === 'object' && !Array.isArray(action.payload)
+              ? { payload: action.payload }
+              : {}),
+            ...(payload.text?.trim() ? { text: payload.text.trim() } : {}),
+          },
+        },
+        {
+          authToken: authToken || undefined,
+        },
+      );
+      res.json(result);
+    } catch (error: any) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: 'Invalid interrupt action payload' });
+      }
+      handleError(res, error, 'Failed to submit interrupt action');
     }
   });
 
@@ -631,7 +961,7 @@ export default function(
             }
           }
 
-          if (terminalStatus && (!streams || !streams.length)) {
+          if (terminalStatus) {
             break;
           }
         }

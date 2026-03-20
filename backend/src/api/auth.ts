@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Request, Router } from 'express';
 import { UserService } from '../services/userService';
 import { GoogleOAuthService, GoogleOAuthConfigError } from '../services/googleOAuthService';
 
@@ -21,6 +21,42 @@ type StartState = {
   createdAt: number;
 };
 
+const OAUTH_STATE_COOKIE = 'helpudoc.oauth.state';
+const OAUTH_VERIFIER_COOKIE = 'helpudoc.oauth.verifier';
+const OAUTH_RETURN_TO_COOKIE = 'helpudoc.oauth.return_to';
+const OAUTH_COOKIE_MAX_AGE_MS = 10 * 60 * 1000;
+
+function cookieSecure(): boolean {
+  const raw = (process.env.SESSION_COOKIE_SECURE || '').trim().toLowerCase();
+  if (raw === 'true') {
+    return true;
+  }
+  if (raw === 'false') {
+    return false;
+  }
+  return process.env.NODE_ENV === 'production';
+}
+
+function parseCookieHeader(header?: string): Record<string, string> {
+  if (!header) {
+    return {};
+  }
+  return header.split(';').reduce<Record<string, string>>((acc, part) => {
+    const [rawKey, ...rawValueParts] = part.split('=');
+    const key = rawKey?.trim();
+    if (!key) {
+      return acc;
+    }
+    const rawValue = rawValueParts.join('=').trim();
+    try {
+      acc[key] = decodeURIComponent(rawValue);
+    } catch {
+      acc[key] = rawValue;
+    }
+    return acc;
+  }, {});
+}
+
 function sanitizeReturnPath(raw?: string): string | undefined {
   if (!raw) {
     return undefined;
@@ -36,6 +72,21 @@ function sanitizeReturnPath(raw?: string): string | undefined {
 
 export default function authRoutes(userService: UserService, googleOAuthService: GoogleOAuthService) {
   const router = Router();
+
+  const saveSession = (req: Request) =>
+    new Promise<void>((resolve, reject) => {
+      if (!req.session) {
+        reject(new Error('Session middleware is not configured'));
+        return;
+      }
+      req.session.save((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve();
+      });
+    });
 
   router.get('/google/start', async (req, res) => {
     if (AUTH_MODE === 'headers') {
@@ -63,6 +114,34 @@ export default function authRoutes(userService: UserService, googleOAuthService:
       }
 
       req.session.googleOAuth = statePayload;
+      await saveSession(req);
+      const secure = cookieSecure();
+      res.cookie(OAUTH_STATE_COOKIE, state, {
+        httpOnly: true,
+        sameSite: 'lax',
+        secure,
+        maxAge: OAUTH_COOKIE_MAX_AGE_MS,
+      });
+      res.cookie(OAUTH_VERIFIER_COOKIE, codeVerifier, {
+        httpOnly: true,
+        sameSite: 'lax',
+        secure,
+        maxAge: OAUTH_COOKIE_MAX_AGE_MS,
+      });
+      if (returnTo) {
+        res.cookie(OAUTH_RETURN_TO_COOKIE, returnTo, {
+          httpOnly: true,
+          sameSite: 'lax',
+          secure,
+          maxAge: OAUTH_COOKIE_MAX_AGE_MS,
+        });
+      } else {
+        res.clearCookie(OAUTH_RETURN_TO_COOKIE, {
+          httpOnly: true,
+          sameSite: 'lax',
+          secure,
+        });
+      }
       const redirectUrl = googleOAuthService.getAuthStartUrl({ state, codeChallenge });
       return res.redirect(302, redirectUrl);
     } catch (error) {
@@ -92,7 +171,18 @@ export default function authRoutes(userService: UserService, googleOAuthService:
         return redirectWithError('missing_code_or_state');
       }
 
-      const oauthState = req.session?.googleOAuth;
+      const cookies = parseCookieHeader(req.headers.cookie);
+      const sessionState = req.session?.googleOAuth;
+      const oauthState = sessionState || (
+        cookies[OAUTH_STATE_COOKIE] && cookies[OAUTH_VERIFIER_COOKIE]
+          ? {
+              state: cookies[OAUTH_STATE_COOKIE],
+              codeVerifier: cookies[OAUTH_VERIFIER_COOKIE],
+              returnTo: cookies[OAUTH_RETURN_TO_COOKIE],
+              createdAt: Date.now(),
+            }
+          : undefined
+      );
       if (!oauthState || oauthState.state !== state) {
         return redirectWithError('state_mismatch');
       }
@@ -122,6 +212,10 @@ export default function authRoutes(userService: UserService, googleOAuthService:
         req.session.externalId = user.externalId;
         req.session.googleOAuth = undefined;
       }
+      const secure = cookieSecure();
+      res.clearCookie(OAUTH_STATE_COOKIE, { httpOnly: true, sameSite: 'lax', secure });
+      res.clearCookie(OAUTH_VERIFIER_COOKIE, { httpOnly: true, sameSite: 'lax', secure });
+      res.clearCookie(OAUTH_RETURN_TO_COOKIE, { httpOnly: true, sameSite: 'lax', secure });
 
       const base = googleOAuthService.getPostLoginRedirectUrl();
       const url = new URL(base);

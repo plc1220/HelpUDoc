@@ -245,6 +245,23 @@ export class FileService {
     return newFile;
   }
 
+  async createTextFile(
+    workspaceId: string,
+    fileName: string,
+    content: string,
+    userId: string,
+    mimeType = 'text/markdown',
+  ) {
+    return this.createFile(
+      workspaceId,
+      fileName,
+      Buffer.from(content, 'utf-8'),
+      mimeType,
+      userId,
+      { forceLocal: true },
+    );
+  }
+
   async getFileContent(fileId: number, userId: string) {
     const file = await this.db('files').where({ id: fileId }).first();
     if (!file) {

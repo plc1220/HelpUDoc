@@ -21,7 +21,6 @@ COPY frontend/tsconfig*.json* ./frontend/
 COPY frontend/tailwind.config.js frontend/postcss.config.js ./frontend/
 COPY frontend/vite.config.ts ./frontend/
 COPY frontend/index.html ./frontend/
-COPY frontend/.env* ./frontend/
 COPY --from=deps /app/frontend/node_modules ./frontend/node_modules
 COPY frontend/public ./frontend/public
 COPY frontend/src ./frontend/src

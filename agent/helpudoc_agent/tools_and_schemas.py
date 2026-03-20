@@ -10,11 +10,12 @@ import time
 from importlib import import_module
 from io import BytesIO
 from pathlib import Path
-from typing import Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 from uuid import uuid4
 
 from langchain_core.tools import tool
 from langchain_core.tools import Tool
+from langgraph.types import interrupt
 
 try:
     import vertexai
@@ -26,12 +27,41 @@ except ImportError as exc:  # pragma: no cover
 
 from .bigquery_export_tools import build_export_bigquery_query_tool
 from .configuration import Settings, ToolConfig
-from .skills_registry import SkillPolicy, load_skills
+from .skills_registry import (
+    SkillPolicy,
+    activate_skill_context,
+    build_loaded_skill_text,
+    find_skill,
+    load_skills,
+    read_skill_content,
+)
 from .rag_indexer import RagConfig, WorkspaceRagStore
 from .state import WorkspaceState
 from .utils import SourceTracker, extract_web_url
 
 logger = logging.getLogger(__name__)
+
+
+def _dict_has_keys(value: Any, keys: set[str]) -> bool:
+    return isinstance(value, dict) and any(key in value for key in keys)
+
+
+def _interrupt_with_retry(
+    payload: Dict[str, Any],
+    *,
+    valid_keys: set[str],
+    stale_keys: set[str],
+    label: str,
+    attempts: int = 2,
+) -> Any:
+    """Retry once when an interrupt receives a stale resume payload from a prior step."""
+    response: Any = None
+    for attempt in range(attempts):
+        response = interrupt(payload)
+        if not _dict_has_keys(response, stale_keys) or _dict_has_keys(response, valid_keys):
+            return response
+        logger.warning("%s received stale interrupt resume payload on attempt %s; retrying", label, attempt + 1)
+    return response
 
 
 def _get_active_skill_policy(workspace_state: WorkspaceState) -> SkillPolicy:
@@ -55,6 +85,8 @@ def _get_active_skill_policy(workspace_state: WorkspaceState) -> SkillPolicy:
 
 
 def _is_plan_approved(workspace_state: WorkspaceState) -> bool:
+    if workspace_state.context.get("skip_plan_approvals"):
+        return True
     return bool(workspace_state.context.get("plan_approved"))
 
 
@@ -221,6 +253,8 @@ class ToolFactory:
             "list_skills": self._build_list_skills_tool,
             "load_skill": self._build_load_skill_tool,
             "request_plan_approval": self._build_request_plan_approval_tool,
+            "request_clarification": self._build_request_clarification_tool,
+            "request_human_action": self._build_request_human_action_tool,
         }
 
     def build_tools(self, tool_names: List[str], workspace_state: WorkspaceState) -> List[Tool]:
@@ -322,24 +356,14 @@ class ToolFactory:
             if not skills:
                 return "No skills found."
             normalized = skill_id.strip()
-            for skill in skills:
-                if normalized in {skill.skill_id, skill.name}:
-                    try:
-                        content = skill.path.read_text(encoding="utf-8")
-                    except Exception as exc:  # pragma: no cover - filesystem guard
-                        return f"Failed to read skill '{skill.skill_id}': {exc}"
-                    workspace_state.context["active_skill"] = skill.skill_id
-                    workspace_state.context["active_skill_policy"] = {
-                        "requires_hitl_plan": skill.policy.requires_hitl_plan,
-                        "requires_workspace_artifacts": skill.policy.requires_workspace_artifacts,
-                        "required_artifacts_mode": skill.policy.required_artifacts_mode,
-                        "required_artifacts": skill.policy.required_artifacts or [],
-                        "pre_plan_search_limit": max(0, int(skill.policy.pre_plan_search_limit or 0)),
-                    }
-                    # Reset plan approval each time a new skill is loaded.
-                    workspace_state.context["plan_approved"] = False
-                    workspace_state.context["pre_plan_search_count"] = 0
-                    return f"Loaded skill: {skill.skill_id}\n\n{content}"
+            skill = find_skill(skills_root, normalized)
+            if skill is not None:
+                try:
+                    content = read_skill_content(skill)
+                except Exception as exc:  # pragma: no cover - filesystem guard
+                    return f"Failed to read skill '{skill.skill_id}': {exc}"
+                activate_skill_context(workspace_state.context, skill)
+                return build_loaded_skill_text(skill, content)
             available = ", ".join(sorted({skill.skill_id for skill in skills}))
             return f"Skill '{normalized}' not found. Available skills: {available}"
 
@@ -353,10 +377,17 @@ class ToolFactory:
         @tool
         def request_plan_approval(
             plan_title: str,
-            plan_summary: str,
-            execution_checklist: str,
+            plan_summary: str = "",
+            execution_checklist: str = "",
+            plan_summary_markdown: str = "",
+            steps: Optional[List[Dict[str, Any]]] = None,
+            plan_file_path: str = "",
+            status_label: str = "Pending Approval",
+            step_index: int = 0,
+            step_count: int = 1,
             risky_actions: str = "None",
             reviewer_feedback: str = "",
+            edited_plan_content: str = "",
         ) -> str:
             """Request human approval/edit/rejection for a proposed execution plan."""
             if workspace_state.context.get("tagged_files_only"):
@@ -364,18 +395,37 @@ class ToolFactory:
 
             title = (plan_title or "").strip()
             summary = (plan_summary or "").strip()
+            summary_markdown = (plan_summary_markdown or "").strip()
             checklist = (execution_checklist or "").strip()
+            normalized_steps = steps if isinstance(steps, list) else []
+            plan_path = (plan_file_path or "").strip() or "research_plan.md"
+            status = (status_label or "").strip() or "Pending Approval"
             risks = (risky_actions or "").strip()
             feedback = (reviewer_feedback or "").strip()
+            draft_content = (edited_plan_content or "").strip()
 
             if not title:
                 return "Plan approval blocked: plan_title is required."
-            if not summary:
-                return "Plan approval blocked: plan_summary is required."
-            if not checklist:
-                return "Plan approval blocked: execution_checklist is required."
+            if not summary_markdown and not summary:
+                return "Plan approval blocked: plan_summary_markdown or plan_summary is required."
+            if not normalized_steps and not checklist:
+                return "Plan approval blocked: steps or execution_checklist is required."
 
             workspace_state.context["last_plan_feedback"] = feedback
+            workspace_state.context["last_plan_file_path"] = plan_path
+
+            if workspace_state.context.get("skip_plan_approvals"):
+                workspace_state.context["plan_approved"] = True
+                return (
+                    "PLAN_APPROVAL_SKIPPED_TRUSTED_MODE\n"
+                    f"Title: {title}\n"
+                    f"Summary: {summary_markdown or summary}\n"
+                    f"Execution checklist: {checklist or json.dumps(normalized_steps, ensure_ascii=False)}\n"
+                    f"Plan file path: {plan_path}\n"
+                    f"Status label: {status}\n"
+                    f"Risky actions: {risks}\n"
+                    "Workspace trusted mode is enabled, so plan approval was skipped. Continue executing the plan."
+                )
 
             # If a reviewer provides edit feedback, require one more approval round.
             # This prevents immediate continuation after edit and enforces explicit
@@ -385,10 +435,13 @@ class ToolFactory:
                 return (
                     "PLAN_EDIT_FEEDBACK_RECORDED\n"
                     f"Title: {title}\n"
-                    f"Summary: {summary}\n"
-                    f"Execution checklist: {checklist}\n"
+                    f"Summary: {summary_markdown or summary}\n"
+                    f"Execution checklist: {checklist or json.dumps(normalized_steps, ensure_ascii=False)}\n"
+                    f"Plan file path: {plan_path}\n"
+                    f"Status label: {status}\n"
                     f"Risky actions: {risks}\n"
                     f"Reviewer feedback: {feedback}\n"
+                    f"Edited draft included: {'yes' if draft_content else 'no'}\n"
                     "Do not execute yet. Revise the plan and call request_plan_approval again for final approval."
                 )
 
@@ -397,8 +450,10 @@ class ToolFactory:
             return (
                 "PLAN_APPROVAL_RECORDED\n"
                 f"Title: {title}\n"
-                f"Summary: {summary}\n"
-                f"Execution checklist: {checklist}\n"
+                f"Summary: {summary_markdown or summary}\n"
+                f"Execution checklist: {checklist or json.dumps(normalized_steps, ensure_ascii=False)}\n"
+                f"Plan file path: {plan_path}\n"
+                f"Status label: {status}\n"
                 f"Risky actions: {risks}\n"
                 "Reviewer feedback: None\n"
                 "Plan decision has been applied. Continue executing the approved plan."
@@ -409,6 +464,296 @@ class ToolFactory:
             "Ask human to approve, edit, or reject a proposed plan before execution."
         )
         return request_plan_approval
+
+    def _build_request_clarification_tool(self, workspace_state: WorkspaceState) -> Tool:
+        """Pause execution and ask the human a clarification question."""
+
+        @tool
+        def request_clarification(
+            title: str,
+            description: str = "",
+            options_json: str = "[]",
+            questions_json: str = "[]",
+            allow_freeform: bool = True,
+            multi_select: bool = False,
+            placeholder: str = "",
+            submit_label: str = "Continue",
+            step_index: int = 0,
+            step_count: int = 1,
+            context_json: str = "{}",
+        ) -> str:
+            """Ask the human for clarification with optional selectable choices and typed feedback."""
+            if workspace_state.context.get("tagged_files_only"):
+                return "Tool disabled: tagged files were provided, use rag_query only."
+
+            prompt_title = (title or "").strip()
+            prompt_description = (description or "").strip()
+            if not prompt_title:
+                return "Clarification request blocked: title is required."
+
+            parsed_choices: List[Dict[str, str]] = []
+            try:
+                raw_options = json.loads(options_json or "[]")
+            except json.JSONDecodeError:
+                raw_options = []
+            if isinstance(raw_options, list):
+                for index, item in enumerate(raw_options):
+                    if isinstance(item, str) and item.strip():
+                        parsed_choices.append(
+                            {
+                                "id": f"choice-{index + 1}",
+                                "label": item.strip(),
+                                "value": item.strip(),
+                            }
+                        )
+                    elif isinstance(item, dict):
+                        label = str(item.get("label") or item.get("value") or "").strip()
+                        value = str(item.get("value") or label).strip()
+                        if not label or not value:
+                            continue
+                        parsed_choices.append(
+                            {
+                                "id": str(item.get("id") or f"choice-{index + 1}").strip(),
+                                "label": label,
+                                "value": value,
+                                **(
+                                    {"description": str(item.get("description")).strip()}
+                                    if str(item.get("description") or "").strip()
+                                    else {}
+                                ),
+                            }
+                        )
+
+            parsed_questions: List[Dict[str, Any]] = []
+            try:
+                raw_questions = json.loads(questions_json or "[]")
+            except json.JSONDecodeError:
+                raw_questions = []
+            if isinstance(raw_questions, list):
+                for index, item in enumerate(raw_questions):
+                    if not isinstance(item, dict):
+                        continue
+                    header = str(item.get("header") or item.get("title") or f"Question {index + 1}").strip()
+                    question = str(item.get("question") or item.get("prompt") or item.get("description") or "").strip()
+                    if not header or not question:
+                        continue
+                    parsed_question_options: List[Dict[str, str]] = []
+                    raw_question_options = item.get("options")
+                    if isinstance(raw_question_options, list):
+                        for option_index, option in enumerate(raw_question_options):
+                            if isinstance(option, str) and option.strip():
+                                parsed_question_options.append(
+                                    {
+                                        "id": f"{header.lower().replace(' ', '-')}-{option_index + 1}",
+                                        "label": option.strip(),
+                                        "value": option.strip(),
+                                    }
+                                )
+                            elif isinstance(option, dict):
+                                label = str(option.get("label") or option.get("value") or "").strip()
+                                value = str(option.get("value") or label).strip()
+                                if not label or not value:
+                                    continue
+                                parsed_question_options.append(
+                                    {
+                                        "id": str(option.get("id") or f"{header.lower().replace(' ', '-')}-{option_index + 1}").strip(),
+                                        "label": label,
+                                        "value": value,
+                                        **(
+                                            {"description": str(option.get("description")).strip()}
+                                            if str(option.get("description") or "").strip()
+                                            else {}
+                                        ),
+                                    }
+                                )
+                    parsed_questions.append(
+                        {
+                            "id": str(item.get("id") or header.lower().replace(" ", "-")).strip(),
+                            "header": header,
+                            "question": question,
+                            **({"options": parsed_question_options} if parsed_question_options else {}),
+                        }
+                    )
+
+            input_mode = "text"
+            if not parsed_questions:
+                if parsed_choices and allow_freeform:
+                    input_mode = "text_or_choice"
+                elif parsed_choices:
+                    input_mode = "choice"
+
+            display_payload: Dict[str, Any] = {}
+            try:
+                parsed_context = json.loads(context_json or "{}")
+                if isinstance(parsed_context, dict):
+                    display_payload = parsed_context
+            except json.JSONDecodeError:
+                display_payload = {}
+
+            action_choices = [] if parsed_questions else parsed_choices
+            interrupt_payload = {
+                "kind": "clarification",
+                "title": prompt_title,
+                "description": prompt_description,
+                "step_index": max(0, int(step_index or 0)),
+                "step_count": max(1, int(step_count or 1)),
+                "actions": [
+                    {
+                        "id": choice["id"],
+                        "label": choice["label"],
+                        "style": "secondary",
+                        "inputMode": "none",
+                        "value": choice["value"],
+                        **({"payload": {"selectedChoiceId": choice["id"]}} if choice.get("id") else {}),
+                    }
+                    for choice in action_choices
+                ]
+                + (
+                    [
+                        {
+                            "id": "clarification-text",
+                            "label": (submit_label or "Continue").strip() or "Continue",
+                            "style": "primary",
+                            "inputMode": "text",
+                            "placeholder": (placeholder or "").strip(),
+                            "submitLabel": (submit_label or "Continue").strip() or "Continue",
+                        }
+                    ]
+                    if allow_freeform or not parsed_choices
+                    else []
+                ),
+                "response_spec": {
+                    "inputMode": input_mode,
+                    "multiple": bool(multi_select),
+                    "submitLabel": (submit_label or "Continue").strip() or "Continue",
+                    "placeholder": (placeholder or "").strip(),
+                    "choices": parsed_choices,
+                    **({"questions": parsed_questions} if parsed_questions else {}),
+                },
+                "display_payload": display_payload,
+            }
+
+            response = _interrupt_with_retry(
+                interrupt_payload,
+                valid_keys={"message", "selectedChoiceIds", "selectedValues"},
+                stale_keys={"decisions", "action"},
+                label="request_clarification",
+            )
+            if isinstance(response, dict):
+                return json.dumps(response, ensure_ascii=False)
+            return str(response)
+
+        request_clarification.name = "request_clarification"
+        request_clarification.description = (
+            "Pause execution to ask the human a clarification question. "
+            "Use options_json for clickable suggestions and allow_freeform for typed input. "
+            "For multi-question discovery forms, pass questions_json with objects like "
+            '{"header":"Purpose","question":"What is this presentation for?","options":[{"label":"Pitch deck","value":"Pitch deck","description":"Selling an idea to investors"}]}. '
+            "Do not pass section headers like Purpose or Length as the only options."
+        )
+        return request_clarification
+
+    def _build_request_human_action_tool(self, workspace_state: WorkspaceState) -> Tool:
+        """Pause execution and ask the human to choose from arbitrary actions."""
+
+        @tool
+        def request_human_action(
+            title: str,
+            description: str = "",
+            actions_json: str = "[]",
+            kind: str = "approval",
+            step_index: int = 0,
+            step_count: int = 1,
+            context_json: str = "{}",
+        ) -> str:
+            """Ask the human to choose an action, optionally with scoped text input."""
+            if workspace_state.context.get("tagged_files_only"):
+                return "Tool disabled: tagged files were provided, use rag_query only."
+
+            prompt_title = (title or "").strip()
+            prompt_description = (description or "").strip()
+            interrupt_kind = (kind or "approval").strip().lower()
+            if interrupt_kind not in {"approval", "clarification"}:
+                interrupt_kind = "approval"
+            if not prompt_title:
+                return "Human action request blocked: title is required."
+
+            parsed_actions: List[Dict[str, Any]] = []
+            try:
+                raw_actions = json.loads(actions_json or "[]")
+            except json.JSONDecodeError:
+                raw_actions = []
+
+            if isinstance(raw_actions, list):
+                for index, item in enumerate(raw_actions):
+                    if not isinstance(item, dict):
+                        continue
+                    action_id = str(item.get("id") or f"action-{index + 1}").strip()
+                    label = str(item.get("label") or "").strip()
+                    if not action_id or not label:
+                        continue
+                    style = str(item.get("style") or "secondary").strip().lower()
+                    if style not in {"primary", "secondary", "danger"}:
+                        style = "secondary"
+                    input_mode = str(item.get("inputMode") or "none").strip().lower()
+                    if input_mode not in {"none", "text"}:
+                        input_mode = "none"
+                    action_payload = item.get("payload")
+                    action: Dict[str, Any] = {
+                        "id": action_id,
+                        "label": label,
+                        "style": style,
+                        "inputMode": input_mode,
+                    }
+                    if isinstance(item.get("placeholder"), str) and item["placeholder"].strip():
+                        action["placeholder"] = item["placeholder"].strip()
+                    if isinstance(item.get("submitLabel"), str) and item["submitLabel"].strip():
+                        action["submitLabel"] = item["submitLabel"].strip()
+                    if isinstance(item.get("confirm"), bool):
+                        action["confirm"] = item["confirm"]
+                    if isinstance(item.get("value"), str) and item["value"].strip():
+                        action["value"] = item["value"].strip()
+                    if isinstance(action_payload, dict):
+                        action["payload"] = action_payload
+                    parsed_actions.append(action)
+
+            if not parsed_actions:
+                return "Human action request blocked: provide at least one valid action in actions_json."
+
+            display_payload: Dict[str, Any] = {}
+            try:
+                parsed_context = json.loads(context_json or "{}")
+                if isinstance(parsed_context, dict):
+                    display_payload = parsed_context
+            except json.JSONDecodeError:
+                display_payload = {}
+
+            interrupt_payload = {
+                "kind": interrupt_kind,
+                "title": prompt_title,
+                "description": prompt_description,
+                "step_index": max(0, int(step_index or 0)),
+                "step_count": max(1, int(step_count or 1)),
+                "actions": parsed_actions,
+                "display_payload": display_payload,
+            }
+
+            response = _interrupt_with_retry(
+                interrupt_payload,
+                valid_keys={"action"},
+                stale_keys={"decisions", "message", "selectedChoiceIds", "selectedValues"},
+                label="request_human_action",
+            )
+            if isinstance(response, dict):
+                return json.dumps(response, ensure_ascii=False)
+            return str(response)
+
+        request_human_action.name = "request_human_action"
+        request_human_action.description = (
+            "Pause execution and ask the human to choose from arbitrary actions. "
+            "Each action can be button-only or require scoped text input."
+        )
+        return request_human_action
 
     def _build_append_to_report_tool(self, workspace_state: WorkspaceState) -> Tool:
         """Append a section file to the stitched proposal inside the workspace."""

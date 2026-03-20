@@ -156,7 +156,7 @@ export const createSkill = async (payload: { id: string; name?: string; descript
 };
 
 export const fetchSkillFiles = async (id: string): Promise<string[]> => {
-  const response = await apiFetch(`${API_URL}/settings/skills/${id}/files`);
+  const response = await apiFetch(`${API_URL}/settings/skills/${encodeURIComponent(id)}/files`);
   if (!response.ok) {
     throw new Error('Failed to load skill files');
   }
@@ -165,7 +165,7 @@ export const fetchSkillFiles = async (id: string): Promise<string[]> => {
 };
 
 export const fetchSkillContent = async (id: string, filePath: string): Promise<string> => {
-  const response = await apiFetch(`${API_URL}/settings/skills/${id}/content?path=${encodeURIComponent(filePath)}`);
+  const response = await apiFetch(`${API_URL}/settings/skills/${encodeURIComponent(id)}/content?path=${encodeURIComponent(filePath)}`);
   if (!response.ok) {
     throw new Error('Failed to load skill content');
   }
@@ -174,7 +174,7 @@ export const fetchSkillContent = async (id: string, filePath: string): Promise<s
 };
 
 export const saveSkillContent = async (id: string, filePath: string, content: string) => {
-  const response = await apiFetch(`${API_URL}/settings/skills/${id}/content`, {
+  const response = await apiFetch(`${API_URL}/settings/skills/${encodeURIComponent(id)}/content`, {
     method: 'PUT',
     headers: {
       'Content-Type': 'application/json',

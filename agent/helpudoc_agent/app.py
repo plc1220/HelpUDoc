@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Dict, List, AsyncGenerator, Iterable, Sequence, Set, Optional
+from typing import Any, Dict, List, AsyncGenerator, Iterable, Sequence, Set, Optional, Tuple
 import json
 import logging
 import os
@@ -25,13 +25,33 @@ from .mcp_manager import describe_mcp_servers
 from .utils import SourceTracker
 from langchain_core.callbacks.base import AsyncCallbackHandler
 from .rag_worker import RagIndexWorker
-from .skills_registry import collect_tool_names, load_skills
+from .skills_registry import (
+    activate_skill_context,
+    build_loaded_skill_text,
+    collect_tool_names,
+    find_skill,
+    load_skills,
+    read_skill_content,
+)
 from .paper2slides_runner import run_paper2slides, export_pptx_from_pdf
 from .jwt_utils import decode_and_verify_hs256_jwt
+from langgraph.errors import GraphInterrupt
 from langgraph.types import Command
 
 
 logger = logging.getLogger(__name__)
+_INTERRUPT_TOOL_NAMES: Set[str] = {"request_clarification", "request_human_action"}
+_LOCAL_DEV_AGENT_JWT_SECRET = "helpudoc-local-dev-agent-jwt-secret"
+
+
+def _get_agent_jwt_secret() -> str:
+    configured = os.getenv("AGENT_JWT_SECRET", "").strip()
+    if configured:
+        return configured
+    env = os.getenv("NODE_ENV", "").strip().lower()
+    if not env or env == "development":
+        return _LOCAL_DEV_AGENT_JWT_SECRET
+    return ""
 
 
 def _format_exception(exc: BaseException) -> str:
@@ -65,6 +85,23 @@ class Decision(BaseModel):
 
 class ResumeChatRequest(BaseModel):
     decisions: List[Decision]
+
+
+class InterruptResponseRequest(BaseModel):
+    message: Optional[str] = None
+    selectedChoiceIds: List[str] = Field(default_factory=list)
+    selectedValues: List[str] = Field(default_factory=list)
+
+
+class InterruptAction(BaseModel):
+    id: str
+    value: Optional[str] = None
+    payload: Dict[str, Any] = Field(default_factory=dict)
+    text: Optional[str] = None
+
+
+class InterruptActionRequest(BaseModel):
+    action: InterruptAction
 
 
 class RagQueryRequest(BaseModel):
@@ -127,6 +164,12 @@ class Paper2SlidesExportResponse(BaseModel):
     pptxB64: str
 
 
+class EmbeddedDirective(BaseModel):
+    kind: str
+    skillId: Optional[str] = None
+    serverId: Optional[str] = None
+
+
 BASE_DIR = Path(__file__).resolve().parent
 
 
@@ -135,6 +178,29 @@ _FILE_RESULT_PATTERNS = [
     re.compile(r"in '(?P<path>/[^']+)'"),
     re.compile(r"Appended (?P<src>/[^\s]+) to (?P<dst>/[^\s]+)"),
 ]
+_DIRECTIVE_BLOCK_RE = re.compile(
+    r"^\s*<<<HELPUDOC_DIRECTIVE\s*\n(?P<payload>\{.*?\})\n>>>\s*(?P<rest>[\s\S]*)$",
+    re.DOTALL,
+)
+_RAW_SKILL_DIRECTIVE_RE = re.compile(
+    r"^\s*/skill\s+(?P<skill_id>[^\s]+)(?:\s+(?P<prompt>[\s\S]*))?$",
+    re.IGNORECASE,
+)
+_RAW_MCP_DIRECTIVE_RE = re.compile(
+    r"^\s*/mcp\s+(?P<server_id>[^\s]+)(?:\s+(?P<prompt>[\s\S]*))?$",
+    re.IGNORECASE,
+)
+_LEGACY_SKILL_PROMPT_RE = re.compile(
+    r'^\s*Use the "(?P<skill_id>[^"]+)" skill for this task\.\s*'
+    r'First call load_skill with "(?P=skill_id)" to load the skill instructions, then follow that skill closely\.\s*'
+    r'(?:User request:\s*(?P<prompt>[\s\S]*))?$',
+    re.IGNORECASE,
+)
+_LEGACY_MCP_PROMPT_RE = re.compile(
+    r'^\s*Prefer tools from the MCP server "(?P<server_id>[^"]+)" for this task\.\s*'
+    r'[\s\S]*?(?:User request:\s*(?P<prompt>[\s\S]*))?$',
+    re.IGNORECASE,
+)
 
 
 def _infer_mime_type(file_path: str) -> str:
@@ -196,7 +262,7 @@ def create_app() -> FastAPI:
     gemini_manager = GeminiClientManager(settings)
     tool_factory = ToolFactory(settings, source_tracker, gemini_manager)
     registry = AgentRegistry(settings, tool_factory)
-    agent_jwt_secret = os.getenv("AGENT_JWT_SECRET", "")
+    agent_jwt_secret = _get_agent_jwt_secret()
 
     app = FastAPI(title="DeepAgents Service", version="0.2.0")
     rag_worker = RagIndexWorker(settings.backend.workspace_root)
@@ -318,7 +384,129 @@ def create_app() -> FastAPI:
         }
 
     def _prepare_payload(message: ChatRequest) -> List[Dict[str, Any]]:
-        return message.history or [{"role": "user", "content": message.message}]
+        if message.history:
+            payload: List[Dict[str, Any]] = []
+            for item in message.history:
+                if isinstance(item, dict):
+                    payload.append(dict(item))
+                else:
+                    payload.append({"role": "user", "content": str(item)})
+            return payload
+        return [{"role": "user", "content": message.message}]
+
+    def _extract_directive_from_text(text: str) -> Tuple[EmbeddedDirective | None, str]:
+        if not text:
+            return None, ""
+
+        block_match = _DIRECTIVE_BLOCK_RE.match(text)
+        if block_match:
+            payload = block_match.group("payload")
+            rest = (block_match.group("rest") or "").strip()
+            try:
+                directive = EmbeddedDirective.model_validate_json(payload)
+            except Exception:
+                return None, rest or text
+            return directive, rest
+
+        raw_skill_match = _RAW_SKILL_DIRECTIVE_RE.match(text)
+        if raw_skill_match:
+            return (
+                EmbeddedDirective(kind="skill", skillId=(raw_skill_match.group("skill_id") or "").strip()),
+                (raw_skill_match.group("prompt") or "").strip(),
+            )
+
+        raw_mcp_match = _RAW_MCP_DIRECTIVE_RE.match(text)
+        if raw_mcp_match:
+            return (
+                EmbeddedDirective(kind="mcp", serverId=(raw_mcp_match.group("server_id") or "").strip()),
+                (raw_mcp_match.group("prompt") or "").strip(),
+            )
+
+        legacy_skill_match = _LEGACY_SKILL_PROMPT_RE.match(text)
+        if legacy_skill_match:
+            return (
+                EmbeddedDirective(kind="skill", skillId=(legacy_skill_match.group("skill_id") or "").strip()),
+                (legacy_skill_match.group("prompt") or "").strip(),
+            )
+
+        legacy_mcp_match = _LEGACY_MCP_PROMPT_RE.match(text)
+        if legacy_mcp_match:
+            return (
+                EmbeddedDirective(kind="mcp", serverId=(legacy_mcp_match.group("server_id") or "").strip()),
+                (legacy_mcp_match.group("prompt") or "").strip(),
+            )
+
+        return None, text
+
+    def _build_preloaded_skill_prompt(
+        runtime: AgentRuntimeState,
+        skill_id: str,
+        user_request: str,
+    ) -> str:
+        fallback_request = user_request.strip() or "Continue with the selected skill."
+        skill = find_skill(settings.backend.skills_root, skill_id)
+        if skill is None:
+            return (
+                f"The user explicitly selected skill '{skill_id}', but it was not found in the configured skills registry.\n\n"
+                f"User request:\n{fallback_request}"
+            )
+        try:
+            content = read_skill_content(skill)
+        except Exception as exc:
+            return (
+                f"The user explicitly selected skill '{skill_id}', but the skill could not be read: {exc}\n\n"
+                f"User request:\n{fallback_request}"
+            )
+
+        activate_skill_context(runtime.workspace_state.context, skill)
+        return "\n\n".join(
+            [
+                f"The selected skill '{skill.skill_id}' is already loaded and active for this turn.",
+                "Do not call list_skills or load_skill again unless you need to switch to a different skill.",
+                build_loaded_skill_text(skill, content),
+                f"User request:\n{fallback_request}",
+            ]
+        )
+
+    def _build_preferred_mcp_prompt(server_id: str, user_request: str) -> str:
+        normalized_server_id = str(server_id or "").strip()
+        fallback_request = user_request.strip() or f"Use MCP server '{normalized_server_id}' for this task."
+        return "\n\n".join(
+            [
+                f"The preferred MCP server for this turn is '{normalized_server_id}'.",
+                "Prefer tools from that server before unrelated MCP servers or general web search when they can satisfy the request.",
+                f"User request:\n{fallback_request}",
+            ]
+        )
+
+    def _apply_embedded_directives(
+        runtime: AgentRuntimeState,
+        payload: List[Dict[str, Any]],
+    ) -> Tuple[List[Dict[str, Any]], str]:
+        latest_user_text = ""
+        for index in range(len(payload) - 1, -1, -1):
+            message = payload[index]
+            role = str(message.get("role") or "").strip().lower()
+            if role not in {"user", "human"}:
+                continue
+            content = message.get("content")
+            if not isinstance(content, str):
+                break
+            directive, stripped_text = _extract_directive_from_text(content)
+            latest_user_text = stripped_text
+            if directive is None:
+                message["content"] = stripped_text
+                break
+            if directive.kind == "skill" and directive.skillId:
+                runtime.workspace_state.context.pop("preferred_mcp_server", None)
+                message["content"] = _build_preloaded_skill_prompt(runtime, directive.skillId, stripped_text)
+            elif directive.kind == "mcp" and directive.serverId:
+                runtime.workspace_state.context["preferred_mcp_server"] = directive.serverId
+                message["content"] = _build_preferred_mcp_prompt(directive.serverId, stripped_text)
+            else:
+                message["content"] = stripped_text
+            break
+        return payload, latest_user_text
 
     def _extract_request_context(request: Request) -> Dict[str, Any]:
         """Extract backend-provided context (RBAC policy, user id) from JWT."""
@@ -370,6 +558,8 @@ def create_app() -> FastAPI:
             context["mcp_auth_fingerprint"] = mcp_auth_fingerprint.strip()
         if allow_script_runner:
             context["allow_script_runner"] = True
+        if isinstance(payload.get("skipPlanApprovals"), bool):
+            context["skip_plan_approvals"] = payload["skipPlanApprovals"]
         return context
 
 
@@ -515,7 +705,7 @@ def create_app() -> FastAPI:
         manager = context.get("data_agent_manager") if isinstance(context, dict) else None
         if manager and hasattr(manager, "reset_session"):
             manager.reset_session()
-        payload = _prepare_payload(message)
+        payload = await _prepare_turn_payload(runtime, message, fresh_turn=True)
         config = _build_agent_config(runtime, message)
         if hasattr(agent, "ainvoke"):
             return await agent.ainvoke({"messages": payload}, config=config)
@@ -657,6 +847,9 @@ def create_app() -> FastAPI:
             run_key = str(run_id)
             name = self._tool_names.pop(run_key, "tool")
             text = self._to_text(output)
+            if name in _INTERRUPT_TOOL_NAMES and text.strip().startswith("Interrupt(value="):
+                self._tool_meta.pop(run_key, None)
+                return
             payload: Dict[str, Any] = {
                 "type": "tool_end",
                 "name": name,
@@ -677,7 +870,11 @@ def create_app() -> FastAPI:
             await self._emit(payload)
 
         async def on_tool_error(self, error, *, run_id, **_: Any) -> None:
-            name = self._tool_names.pop(str(run_id), "tool")
+            run_key = str(run_id)
+            name = self._tool_names.pop(run_key, "tool")
+            if _extract_interrupt_from_exception(error):
+                self._tool_meta.pop(run_key, None)
+                return
             await self._emit(
                 {
                     "type": "tool_error",
@@ -773,11 +970,8 @@ def create_app() -> FastAPI:
                     return item.get("messages")  # type: ignore[return-value]
         return None
 
-    def _extract_interrupt_payload(chunk: Any) -> Dict[str, Any] | None:
-        if not isinstance(chunk, dict):
-            return None
-        raw = chunk.get("__interrupt__")
-        if not raw or not isinstance(raw, list):
+    def _build_interrupt_payload(raw: Any) -> Dict[str, Any] | None:
+        if not raw or not isinstance(raw, (list, tuple)):
             return None
         first = raw[0] if raw else None
         if first is None:
@@ -797,14 +991,43 @@ def create_app() -> FastAPI:
 
         action_requests = interrupt_value.get("action_requests")
         review_configs = interrupt_value.get("review_configs")
+        actions = interrupt_value.get("actions")
         payload = {
             "type": "interrupt",
+            "kind": interrupt_value.get("kind"),
+            "title": interrupt_value.get("title"),
+            "description": interrupt_value.get("description"),
+            "stepIndex": interrupt_value.get("step_index"),
+            "stepCount": interrupt_value.get("step_count"),
+            "actions": actions if isinstance(actions, list) else [],
             "actionRequests": action_requests if isinstance(action_requests, list) else [],
             "reviewConfigs": review_configs if isinstance(review_configs, list) else [],
         }
+        response_spec = interrupt_value.get("response_spec")
+        if isinstance(response_spec, dict):
+            payload["responseSpec"] = response_spec
+        display_payload = interrupt_value.get("display_payload")
+        if isinstance(display_payload, dict):
+            payload["displayPayload"] = display_payload
         if isinstance(interrupt_id, str) and interrupt_id:
             payload["interruptId"] = interrupt_id
         return payload
+
+    def _extract_interrupt_payload(chunk: Any) -> Dict[str, Any] | None:
+        if not isinstance(chunk, dict):
+            return None
+        return _build_interrupt_payload(chunk.get("__interrupt__"))
+
+    def _extract_interrupt_from_exception(error: BaseException) -> Dict[str, Any] | None:
+        if isinstance(error, BaseExceptionGroup):
+            for inner in error.exceptions:
+                payload = _extract_interrupt_from_exception(inner)
+                if payload:
+                    return payload
+            return None
+        if isinstance(error, GraphInterrupt):
+            return _build_interrupt_payload(error.args[0] if error.args else None)
+        return None
 
     def _active_skill_policy(runtime: AgentRuntimeState) -> Dict[str, Any]:
         context = runtime.workspace_state.context or {}
@@ -864,6 +1087,59 @@ def create_app() -> FastAPI:
                 missing.append(item)
         return missing
 
+    def _reset_turn_context(runtime: AgentRuntimeState) -> None:
+        context = runtime.workspace_state.context or {}
+        skip_plan_approvals = bool(context.get("skip_plan_approvals"))
+        # Skill execution state is per top-level user task. Resumes should preserve it,
+        # but a fresh user turn should not inherit approval or active-skill state.
+        context.pop("active_skill", None)
+        context.pop("active_skill_scope", None)
+        context.pop("active_skill_policy", None)
+        context.pop("last_plan_feedback", None)
+        context.pop("last_plan_file_path", None)
+        context.pop("preferred_mcp_server", None)
+        context.pop("tagged_files", None)
+        context.pop("tagged_rag_context", None)
+        context["tagged_files_only"] = False
+        context["plan_approved"] = skip_plan_approvals
+        context["pre_plan_search_count"] = 0
+
+    async def _prepare_turn_payload(
+        runtime: AgentRuntimeState,
+        message: ChatRequest,
+        *,
+        fresh_turn: bool,
+    ) -> List[Dict[str, Any]]:
+        payload = _prepare_payload(message)
+        if fresh_turn:
+            _reset_turn_context(runtime)
+        payload, latest_user_text = _apply_embedded_directives(runtime, payload)
+
+        prompt_for_tagged_files = latest_user_text or message.message or ""
+        tagged_files = _extract_tagged_files(prompt_for_tagged_files)
+        runtime.workspace_state.context["tagged_files"] = tagged_files
+        tagged_files_rag_only = (os.getenv("TAGGED_FILES_RAG_ONLY", "false") or "false").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "y",
+            "on",
+        }
+        runtime.workspace_state.context["tagged_files_only"] = bool(tagged_files) and tagged_files_rag_only
+        if tagged_files:
+            rag_context = await _prefetch_rag_context(runtime.workspace_state.workspace_id, prompt_for_tagged_files)
+            if rag_context:
+                runtime.workspace_state.context["tagged_rag_context"] = rag_context
+                if tagged_files_rag_only:
+                    for index in range(len(payload) - 1, -1, -1):
+                        role = str(payload[index].get("role") or "").strip().lower()
+                        if role in {"user", "human"}:
+                            payload[index]["content"] = (
+                                f"{prompt_for_tagged_files}\n\nRAG_CONTEXT:\n{rag_context}\n\nAnswer using only RAG_CONTEXT."
+                            )
+                            break
+        return payload
+
     _ASSISTANT_ROLES = {"assistant", "ai", "aimessagechunk"}
     _TOOL_ROLES = {"tool"}
 
@@ -886,6 +1162,7 @@ def create_app() -> FastAPI:
         message: ChatRequest,
         *,
         resume_decisions: Optional[List[Dict[str, Any]]] = None,
+        resume_value: Any = None,
     ) -> AsyncGenerator[bytes, None]:
         agent = getattr(runtime, "agent", None)
         if agent is None:
@@ -896,27 +1173,10 @@ def create_app() -> FastAPI:
         if manager and hasattr(manager, "reset_session"):
             manager.reset_session()
 
-        payload = _prepare_payload(message)
-        if not resume_decisions:
-            tagged_files = _extract_tagged_files(message.message)
-            runtime.workspace_state.context["tagged_files"] = tagged_files
-            # Historical behavior forced "RAG-only" when any tagged files were present, which breaks
-            # when those files aren't indexed yet (e.g., agent-generated artifacts) and blocks basic
-            # file tools. Keep it behind an env flag for compatibility.
-            tagged_files_rag_only = (os.getenv("TAGGED_FILES_RAG_ONLY", "false") or "false").strip().lower() in {
-                "1",
-                "true",
-                "yes",
-                "y",
-                "on",
-            }
-            runtime.workspace_state.context["tagged_files_only"] = bool(tagged_files) and tagged_files_rag_only
-            if tagged_files:
-                rag_context = await _prefetch_rag_context(runtime.workspace_state.workspace_id, message.message)
-                if rag_context:
-                    runtime.workspace_state.context["tagged_rag_context"] = rag_context
-                    if tagged_files_rag_only:
-                        payload = [{"role": "user", "content": f"{message.message}\n\nRAG_CONTEXT:\n{rag_context}\n\nAnswer using only RAG_CONTEXT."}]
+        if resume_decisions is None and resume_value is None:
+            payload = await _prepare_turn_payload(runtime, message, fresh_turn=True)
+        else:
+            payload = _prepare_payload(message)
         handler = _CallbackStreamingHandler(_message_to_text)
         sentinel = object()
         stream_started = asyncio.get_running_loop().time()
@@ -933,8 +1193,10 @@ def create_app() -> FastAPI:
                 nonlocal saw_interrupt
                 stream_config = _build_agent_config(runtime, message, callbacks=[handler])
                 stream_input: Any = {"messages": payload}
-                if resume_decisions:
+                if resume_decisions is not None:
                     stream_input = Command(resume={"decisions": resume_decisions})
+                elif resume_value is not None:
+                    stream_input = Command(resume=resume_value)
                 final_result = await agent.ainvoke(stream_input, config=stream_config)
 
                 emitted = False
@@ -970,6 +1232,13 @@ def create_app() -> FastAPI:
                             "content": "Model returned no output",
                         }
                     )
+            except GraphInterrupt as exc:
+                interrupt_payload = _extract_interrupt_from_exception(exc)
+                if interrupt_payload:
+                    saw_interrupt = True
+                    await handler._emit(interrupt_payload)
+                    return
+                raise
             except Exception as exc:  # pragma: no cover - streaming guard
                 error_message = _format_exception(exc)
                 logger.exception("Agent stream error: %s", error_message)
@@ -1020,27 +1289,6 @@ def create_app() -> FastAPI:
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
-        tagged_files = _extract_tagged_files(chat_request.message)
-        runtime.workspace_state.context["tagged_files"] = tagged_files
-        tagged_files_rag_only = (os.getenv("TAGGED_FILES_RAG_ONLY", "false") or "false").strip().lower() in {
-            "1",
-            "true",
-            "yes",
-            "y",
-            "on",
-        }
-        runtime.workspace_state.context["tagged_files_only"] = bool(tagged_files) and tagged_files_rag_only
-        if tagged_files:
-            rag_context = await _prefetch_rag_context(runtime.workspace_state.workspace_id, chat_request.message)
-            if rag_context:
-                runtime.workspace_state.context["tagged_rag_context"] = rag_context
-                if tagged_files_rag_only:
-                    chat_request = ChatRequest(
-                        message=f"{chat_request.message}\n\nRAG_CONTEXT:\n{rag_context}\n\nAnswer using only RAG_CONTEXT.",
-                        history=chat_request.history,
-                        forceReset=chat_request.forceReset,
-                    )
-
         result = await _invoke_agent(runtime, chat_request)
         source_tracker.update_final_report(runtime.workspace_state)
         return ChatResponse(reply=result)
@@ -1077,6 +1325,48 @@ def create_app() -> FastAPI:
                 decisions_payload.append(item.dict(exclude_none=True))  # type: ignore[attr-defined]
         placeholder = ChatRequest(message="", history=None, forceReset=False)
         stream = _stream_agent_response(runtime, placeholder, resume_decisions=decisions_payload)
+        return StreamingResponse(stream, media_type="application/jsonl")
+
+    @app.post("/agents/{agent_name}/workspace/{workspace_id}/chat/stream/respond")
+    async def chat_stream_respond(
+        agent_name: str,
+        workspace_id: str,
+        response_request: InterruptResponseRequest,
+        request: Request,
+    ):
+        try:
+            initial_context = _extract_request_context(request)
+            runtime = await registry.get_or_create(agent_name, workspace_id, initial_context=initial_context)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+        if hasattr(response_request, "model_dump"):
+            response_payload = response_request.model_dump(exclude_none=True)  # type: ignore[attr-defined]
+        else:
+            response_payload = response_request.dict(exclude_none=True)  # type: ignore[attr-defined]
+        placeholder = ChatRequest(message="", history=None, forceReset=False)
+        stream = _stream_agent_response(runtime, placeholder, resume_value=response_payload)
+        return StreamingResponse(stream, media_type="application/jsonl")
+
+    @app.post("/agents/{agent_name}/workspace/{workspace_id}/chat/stream/act")
+    async def chat_stream_act(
+        agent_name: str,
+        workspace_id: str,
+        action_request: InterruptActionRequest,
+        request: Request,
+    ):
+        try:
+            initial_context = _extract_request_context(request)
+            runtime = await registry.get_or_create(agent_name, workspace_id, initial_context=initial_context)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+        if hasattr(action_request, "model_dump"):
+            action_payload = action_request.model_dump(exclude_none=True)  # type: ignore[attr-defined]
+        else:
+            action_payload = action_request.dict(exclude_none=True)  # type: ignore[attr-defined]
+        placeholder = ChatRequest(message="", history=None, forceReset=False)
+        stream = _stream_agent_response(runtime, placeholder, resume_value=action_payload)
         return StreamingResponse(stream, media_type="application/jsonl")
 
     return app

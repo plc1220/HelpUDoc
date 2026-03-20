@@ -3,6 +3,7 @@ import { type Dispatch, type ReactNode, type SetStateAction, useEffect, useMemo,
 
 import type { ConversationMessage, ConversationMessageMetadata } from '../../types';
 import ChatMessageBubble from './ChatMessageBubble';
+import type { RenderableInterruptAction } from './interruptActions';
 
 export default function ChatMessageList({
   messages,
@@ -13,19 +14,28 @@ export default function ChatMessageList({
   expandedToolMessages,
   expandedThinkingMessages,
   copiedMessageId,
-  approvalFeedbackByMessageId,
-  approvalSubmittingByMessageId,
-  approvalFieldKey,
+  interruptInputByMessageId,
+  interruptSelectedChoicesByMessageId,
+  interruptSubmittingByMessageId,
+  interruptErrorByMessageId,
+  interruptFieldKey,
+  interruptActionFieldKey,
   formatMessageTimestamp,
-  getAllowedDecisions,
+  getInterruptKind,
+  getInterruptActions,
   getPrimaryInterruptAction,
   isPlanApprovalInterrupt,
-  setApprovalFeedbackByMessageId,
+  setInterruptInputByMessageId,
+  toggleInterruptSelectedChoice,
+  workspaceSkipPlanApprovals,
+  workspaceSettingsBusy,
   toggleThinkingVisibility,
   toggleToolActivityVisibility,
   handleCopyMessageText,
   handleRerunMessage,
-  handleInterruptDecision,
+  handlePrepareInterruptAction,
+  handleInterruptAction,
+  enableTrustedPlanMode,
   workspaceId,
 }: {
   messages: ConversationMessage[];
@@ -36,27 +46,45 @@ export default function ChatMessageList({
   expandedToolMessages: Set<ConversationMessage['id']>;
   expandedThinkingMessages: Set<ConversationMessage['id']>;
   copiedMessageId: ConversationMessage['id'] | null;
-  approvalFeedbackByMessageId: Record<string, string>;
-  approvalSubmittingByMessageId: Record<string, boolean>;
-  approvalFieldKey: (messageKey: string, field: 'feedback' | 'edit-json' | 'reject-note') => string;
+  interruptInputByMessageId: Record<string, string>;
+  interruptSelectedChoicesByMessageId: Record<string, string[]>;
+  interruptSubmittingByMessageId: Record<string, boolean>;
+  interruptErrorByMessageId: Record<string, string>;
+  interruptFieldKey: (
+    messageKey: string,
+    field: 'feedback' | 'edit-json' | 'reject-note' | 'clarification-text',
+  ) => string;
+  interruptActionFieldKey: (messageKey: string, actionId: string) => string;
   formatMessageTimestamp: (value?: string) => string;
-  getAllowedDecisions: (
+  getInterruptKind: (
     pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
-  ) => Array<'approve' | 'edit' | 'reject'>;
+  ) => 'approval' | 'clarification';
+  getInterruptActions: (
+    pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
+  ) => RenderableInterruptAction[];
   getPrimaryInterruptAction: (
     pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
   ) => { name?: string; args?: Record<string, unknown> } | undefined;
   isPlanApprovalInterrupt: (pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt']) => boolean;
-  setApprovalFeedbackByMessageId: Dispatch<SetStateAction<Record<string, string>>>;
+  setInterruptInputByMessageId: Dispatch<SetStateAction<Record<string, string>>>;
+  toggleInterruptSelectedChoice: (messageKey: string, choiceId: string, multiple: boolean) => void;
+  workspaceSkipPlanApprovals: boolean;
+  workspaceSettingsBusy: boolean;
   toggleThinkingVisibility: (messageId: ConversationMessage['id']) => void;
   toggleToolActivityVisibility: (messageId: ConversationMessage['id']) => void;
   handleCopyMessageText: (message: ConversationMessage) => void;
   handleRerunMessage: (messageId: ConversationMessage['id']) => void;
-  handleInterruptDecision: (
+  handlePrepareInterruptAction: (
     message: ConversationMessage,
-    decision: 'approve' | 'edit' | 'reject',
+    action: RenderableInterruptAction,
     pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
   ) => void;
+  handleInterruptAction: (
+    message: ConversationMessage,
+    action: RenderableInterruptAction,
+    pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
+  ) => void;
+  enableTrustedPlanMode: () => Promise<boolean> | boolean;
   workspaceId?: string;
 }) {
   const listRef = useRef<HTMLDivElement | null>(null);
@@ -123,19 +151,28 @@ export default function ChatMessageList({
           expandedToolMessages={expandedToolMessages}
           expandedThinkingMessages={expandedThinkingMessages}
           copiedMessageId={copiedMessageId}
-          approvalFeedbackByMessageId={approvalFeedbackByMessageId}
-          approvalSubmittingByMessageId={approvalSubmittingByMessageId}
-          approvalFieldKey={approvalFieldKey}
+          interruptInputByMessageId={interruptInputByMessageId}
+          interruptSelectedChoicesByMessageId={interruptSelectedChoicesByMessageId}
+          interruptSubmittingByMessageId={interruptSubmittingByMessageId}
+          interruptErrorByMessageId={interruptErrorByMessageId}
+          interruptFieldKey={interruptFieldKey}
+          interruptActionFieldKey={interruptActionFieldKey}
           formatMessageTimestamp={formatMessageTimestamp}
-          getAllowedDecisions={getAllowedDecisions}
+          getInterruptKind={getInterruptKind}
+          getInterruptActions={getInterruptActions}
           getPrimaryInterruptAction={getPrimaryInterruptAction}
           isPlanApprovalInterrupt={isPlanApprovalInterrupt}
-          setApprovalFeedbackByMessageId={setApprovalFeedbackByMessageId}
+          setInterruptInputByMessageId={setInterruptInputByMessageId}
+          toggleInterruptSelectedChoice={toggleInterruptSelectedChoice}
+          workspaceSkipPlanApprovals={workspaceSkipPlanApprovals}
+          workspaceSettingsBusy={workspaceSettingsBusy}
           toggleThinkingVisibility={toggleThinkingVisibility}
           toggleToolActivityVisibility={toggleToolActivityVisibility}
           handleCopyMessageText={handleCopyMessageText}
           handleRerunMessage={handleRerunMessage}
-          handleInterruptDecision={handleInterruptDecision}
+          handlePrepareInterruptAction={handlePrepareInterruptAction}
+          handleInterruptAction={handleInterruptAction}
+          enableTrustedPlanMode={enableTrustedPlanMode}
           isStreaming={isStreaming}
           workspaceId={workspaceId}
         />,
@@ -143,28 +180,37 @@ export default function ChatMessageList({
     });
     return nodes;
   }, [
-    approvalFeedbackByMessageId,
-    approvalFieldKey,
-    approvalSubmittingByMessageId,
+    interruptFieldKey,
+    interruptActionFieldKey,
+    interruptInputByMessageId,
+    interruptSelectedChoicesByMessageId,
+    interruptSubmittingByMessageId,
+    interruptErrorByMessageId,
     copiedMessageId,
     expandedThinkingMessages,
     expandedToolMessages,
     formatMessageTimestamp,
-    getAllowedDecisions,
+    getInterruptKind,
+    getInterruptActions,
     getPrimaryInterruptAction,
     handleCopyMessageText,
-    handleInterruptDecision,
+    handleInterruptAction,
     handleRerunMessage,
     isPlanApprovalInterrupt,
     isStreaming,
+    workspaceSkipPlanApprovals,
+    workspaceSettingsBusy,
     markdownComponents,
     messageBubbleMaxWidth,
     messages,
     personaDisplayName,
-    setApprovalFeedbackByMessageId,
+    setInterruptInputByMessageId,
+    toggleInterruptSelectedChoice,
     toggleThinkingVisibility,
     toggleToolActivityVisibility,
     workspaceId,
+    handlePrepareInterruptAction,
+    enableTrustedPlanMode,
   ]);
 
   return (
