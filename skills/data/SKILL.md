@@ -3,7 +3,7 @@ name: data
 description: >
   Data analysis skill hub. Routes to the right specialist subskill depending on the
   request — exploration, query writing, end-to-end analysis, visualization, validation,
-  or interactive dashboard assembly.
+  interactive dashboard assembly, or recurring snapshot refresh.
 tools:
   - data_agent_tools
   - get_table_schema
@@ -32,6 +32,7 @@ analysis tasks.
 | "Chart / visualize this…" | `data/visualize` |
 | "Check / validate this analysis before I share it" | `data/validate` |
 | "Build me a dashboard" | `data/dashboard` |
+| "Refresh this every day / keep this report in sync" | `data/refresh` |
 
 ## Connector selection (apply in every subskill)
 
@@ -40,11 +41,15 @@ Choose the right data connector for the source:
 - **Warehouse (managed datasets, large tables)** — use the BigQuery MCP server
   (`toolbox-bq-demo`) for discovery and the initial scoped query. If the task will
   require iterative follow-up analysis, materialize the scoped result with
-  `materialize_bigquery_to_parquet` and continue in DuckDB.
+  `materialize_bigquery_to_parquet` and continue in DuckDB. Treat BigQuery as the
+  system of record and DuckDB over workspace snapshots as the local serving layer.
 - **Local files (CSV / Parquet in the workspace)** — use `data_agent_tools`.
   Available tools: `get_table_schema`, `run_sql_query`,
   `materialize_bigquery_to_parquet`, `generate_chart_config`, `generate_summary`,
   `generate_dashboard`.
+- **Recurring dashboards / canned reports** — use `data/refresh` to publish a stable
+  snapshot such as `datasets/<slug>/latest.parquet`, optionally mirror it to CSV, and
+  regenerate a stable HTML artifact in `dashboards/` or `reports/`.
 - **Do not attempt cross-source SQL joins in v1.** Orchestrate at the workflow level
   (query each source separately; combine in Python / summary prose).
 

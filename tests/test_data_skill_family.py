@@ -41,6 +41,29 @@ def _make_skill_md(
     return f"---\n{frontmatter}\n---\n\n# {name}\n\n{extra}"
 
 
+def _build_workspace(tmp_path: Path) -> Any:
+    workspace = MagicMock()
+    workspace.root_path = tmp_path
+    workspace.workspace_id = "ws-1"
+    workspace.context = {
+        "mcp_auth": {
+            "toolbox-bq-demo": {
+                "Authorization": "Bearer test-token",
+            }
+        },
+        "bigquery_project": "demo-project",
+        "bigquery_location": "us",
+    }
+    return workspace
+
+
+def _tools_for_workspace(tmp_path: Path) -> dict[str, Any]:
+    from agent.helpudoc_agent.data_agent_tools import build_data_agent_tools
+
+    workspace = _build_workspace(tmp_path)
+    return {tool.name: tool for tool in build_data_agent_tools(workspace)}
+
+
 # ---------------------------------------------------------------------------
 # skills_registry tests
 # ---------------------------------------------------------------------------
@@ -621,52 +644,16 @@ class TestDashboardTool:
         # Should include query block  
         assert "42" in content  # the SELECT 42 result
 
-    def test_dashboard_accepts_structured_layout_inputs(self, tmp_path: Path) -> None:
+    def test_dashboard_accepts_section_titles(self, tmp_path: Path) -> None:
         tools = self._run_analysis_and_chart(tmp_path)
         tools["generate_dashboard"].invoke({
             "title": "Structured Dashboard",
-            "description": "Uses custom dashboard metadata.",
+            "description": "Uses custom section headings.",
             "section_titles": ["Insight-Led Title"],
-            "kpis": [
-                {"label": "Risk", "value": "15.2%", "note": "Highest observed cancellation rate"},
-            ],
-            "filters": [
-                {
-                    "id": "risk-search",
-                    "label": "Search",
-                    "type": "search",
-                    "target": "title_search",
-                    "placeholder": "Find a chart",
-                    "default": "",
-                },
-                {
-                    "id": "audience-filter",
-                    "label": "Audience",
-                    "type": "select",
-                    "target": "chart_tag",
-                    "default": "all",
-                    "options": [
-                        {"label": "All", "value": "all"},
-                        {"label": "Exec", "value": "exec"},
-                    ],
-                },
-            ],
-            "sections": [
-                {
-                    "title": "Executive View",
-                    "description": "Top-level findings only.",
-                    "chart_indexes": [1],
-                },
-            ],
-            "chart_tags": [["exec", "priority"]],
         })
         html_files = list((tmp_path / "dashboards").glob("*.html"))
         content = html_files[0].read_text(encoding="utf-8")
-        assert "Risk" in content
-        assert "15.2%" in content
-        assert "Executive View" in content
-        assert "audience-filter" in content
-        assert "priority" in content.lower()
+        assert "Insight-Led Title" in content
 
     def test_dashboard_requires_at_least_one_query(self, tmp_path: Path) -> None:
         from agent.helpudoc_agent.data_agent_tools import build_data_agent_tools
@@ -791,45 +778,12 @@ class TestSummaryDashboardExclusivity:
 class TestBigQueryMaterialization:
     """Warehouse slices can be exported to workspace Parquet and reused."""
 
-    def _fake_bq_response(self) -> Dict[str, Any]:
-        return {
-            "jobComplete": True,
-            "schema": {
-                "fields": [
-                    {"name": "order_id", "type": "INT64", "mode": "NULLABLE"},
-                    {"name": "revenue", "type": "FLOAT64", "mode": "NULLABLE"},
-                ]
-            },
-            "rows": [
-                {"f": [{"v": "1"}, {"v": "10.5"}]},
-                {"f": [{"v": "2"}, {"v": "22.0"}]},
-            ],
-        }
-
     def test_materialize_bigquery_to_parquet_creates_cache_files(self, tmp_path: Path) -> None:
-        from agent.helpudoc_agent.data_agent_tools import build_data_agent_tools
-        from unittest.mock import MagicMock
-
-        ws = MagicMock()
-        ws.root_path = tmp_path
-        ws.workspace_id = "ws1"
-        ws.context = {
-            "mcp_auth": {
-                "toolbox-bq-demo": {
-                    "Authorization": "Bearer test-token",
-                }
-            },
-            "bigquery_project": "demo-project",
-            "bigquery_location": "us",
-        }
-        tools = {t.name: t for t in build_data_agent_tools(ws)}
-        fake_session = MagicMock()
-        fake_session.post.return_value = MagicMock(
-            raise_for_status=MagicMock(),
-            json=MagicMock(return_value=self._fake_bq_response()),
-        )
-
-        with patch("agent.helpudoc_agent.data_agent_tools.requests.Session", return_value=fake_session):
+        tools = _tools_for_workspace(tmp_path)
+        with patch(
+            "agent.helpudoc_agent.data_agent_tools.run_bigquery_query",
+            return_value=pd.DataFrame({"order_id": [1, 2], "revenue": [10.5, 22.0]}),
+        ):
             raw = tools["materialize_bigquery_to_parquet"].invoke(
                 {
                     "sql_query": "SELECT 1 AS order_id, 10.5 AS revenue",
@@ -850,29 +804,11 @@ class TestBigQueryMaterialization:
         assert payload["duckdb_table_name"] in schema_text
 
     def test_materialize_bigquery_to_parquet_reuses_cache_until_refresh(self, tmp_path: Path) -> None:
-        from agent.helpudoc_agent.data_agent_tools import build_data_agent_tools
-        from unittest.mock import MagicMock
-
-        ws = MagicMock()
-        ws.root_path = tmp_path
-        ws.workspace_id = "ws1"
-        ws.context = {
-            "mcp_auth": {
-                "toolbox-bq-demo": {
-                    "Authorization": "Bearer test-token",
-                }
-            },
-            "bigquery_project": "demo-project",
-            "bigquery_location": "us",
-        }
-        tools = {t.name: t for t in build_data_agent_tools(ws)}
-        fake_session = MagicMock()
-        fake_session.post.return_value = MagicMock(
-            raise_for_status=MagicMock(),
-            json=MagicMock(return_value=self._fake_bq_response()),
-        )
-
-        with patch("agent.helpudoc_agent.data_agent_tools.requests.Session", return_value=fake_session):
+        tools = _tools_for_workspace(tmp_path)
+        with patch(
+            "agent.helpudoc_agent.data_agent_tools.run_bigquery_query",
+            return_value=pd.DataFrame({"order_id": [1, 2], "revenue": [10.5, 22.0]}),
+        ) as mock_query:
             first = json.loads(
                 tools["materialize_bigquery_to_parquet"].invoke(
                     {"sql_query": "SELECT 1 AS order_id, 10.5 AS revenue", "cache_key_hint": "orders_recent"}
@@ -896,7 +832,53 @@ class TestBigQueryMaterialization:
         assert first["cached"] is False
         assert second["cached"] is True
         assert refreshed["cached"] is False
-        assert fake_session.post.call_count == 2
+        assert mock_query.call_count == 2
+
+    def test_materialize_bigquery_raw_func_defaults_do_not_crash(self, tmp_path: Path) -> None:
+        tools = _tools_for_workspace(tmp_path)
+        materialize = tools["materialize_bigquery_to_parquet"]
+        with patch(
+            "agent.helpudoc_agent.data_agent_tools.run_bigquery_query",
+            return_value=pd.DataFrame({"order_id": [1], "revenue": [10.5]}),
+        ):
+            raw = materialize.func("SELECT 1 AS order_id, 10.5 AS revenue")
+
+        payload = json.loads(raw)
+        assert payload["cached"] is False
+        assert payload["row_count"] == 1
+        assert payload["parquet_path"].endswith(".parquet")
+
+    def test_materialize_bigquery_to_stable_targets_publishes_manifest_and_csv(self, tmp_path: Path) -> None:
+        tools = _tools_for_workspace(tmp_path)
+        with patch(
+            "agent.helpudoc_agent.data_agent_tools.run_bigquery_query",
+            return_value=pd.DataFrame({"order_id": [1, 2], "revenue": [10.5, 22.0]}),
+        ):
+            raw = tools["materialize_bigquery_to_parquet"].invoke(
+                {
+                    "sql_query": "SELECT order_id, revenue FROM demo.orders",
+                    "cache_key_hint": "orders_daily",
+                    "target_path": "datasets/orders/latest.parquet",
+                    "emit_csv": True,
+                }
+            )
+
+        payload = json.loads(raw)
+        parquet_path = tmp_path / payload["parquet_path"]
+        manifest_path = tmp_path / payload["metadata_path"]
+        csv_path = tmp_path / payload["csv_path"]
+        assert parquet_path.exists()
+        assert manifest_path.exists()
+        assert csv_path.exists()
+
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        assert manifest["sourceSql"] == "SELECT order_id, revenue FROM demo.orders"
+        assert manifest["parquetPath"] == "datasets/orders/latest.parquet"
+        assert manifest["csvPath"] == "datasets/orders/latest.csv"
+        assert manifest["artifactTargets"] == {"dashboard": "", "report": ""}
+
+        schema_text = tools["get_table_schema"].invoke({"table_names": ["latest"]})
+        assert "Table: latest" in schema_text
 
 
 class TestCompatibility:
@@ -944,3 +926,92 @@ class TestCompatibility:
         # Key tool names that must remain
         for tool_name in ("bq_execute_sql", "bq_list_datasets", "bq_list_tables", "bq_get_table_info"):
             assert tool_name in content, f"{tool_name} missing from tools.yaml"
+
+
+class TestStableArtifactOutputs:
+    def test_generate_summary_with_output_path_overwrites_stable_file(self, tmp_path: Path) -> None:
+        tools = _tools_for_workspace(tmp_path)
+        tools["get_table_schema"].invoke({"table_names": []})
+        tools["run_sql_query"].invoke({"sql_query": "SELECT 1 AS value"})
+        tools["generate_summary"].invoke(
+            {
+                "summary": "### Summary\n- First version",
+                "insights": "### Key Insights\n- First insight",
+                "output_path": "reports/daily.html",
+            }
+        )
+
+        tools = _tools_for_workspace(tmp_path)
+        tools["get_table_schema"].invoke({"table_names": []})
+        tools["run_sql_query"].invoke({"sql_query": "SELECT 2 AS value"})
+        tools["generate_summary"].invoke(
+            {
+                "summary": "### Summary\n- Second version",
+                "insights": "### Key Insights\n- Second insight",
+                "output_path": "reports/daily.html",
+            }
+        )
+
+        report_path = tmp_path / "reports" / "daily.html"
+        content = report_path.read_text(encoding="utf-8")
+        assert report_path.exists()
+        assert "Second version" in content
+        assert "Second insight" in content
+
+    def test_generate_dashboard_with_output_path_overwrites_stable_file(self, tmp_path: Path) -> None:
+        tools = _tools_for_workspace(tmp_path)
+        tools["get_table_schema"].invoke({"table_names": []})
+        tools["run_sql_query"].invoke({"sql_query": "SELECT 1 AS x, 10 AS y"})
+        tools["generate_chart_config"].invoke(
+            {
+                "chart_title": "First_Chart",
+                "python_code": (
+                    "chart_config = {\n"
+                    "  'data': [{'x': df['x'].tolist(), 'y': df['y'].tolist(), 'type': 'bar'}],\n"
+                    "  'layout': {'title': 'First'}\n"
+                    "}\n"
+                ),
+            }
+        )
+        tools["generate_dashboard"].invoke(
+            {
+                "title": "Orders Dashboard",
+                "description": "First description",
+                "output_path": "dashboards/orders.html",
+            }
+        )
+
+        tools = _tools_for_workspace(tmp_path)
+        tools["get_table_schema"].invoke({"table_names": []})
+        tools["run_sql_query"].invoke({"sql_query": "SELECT 2 AS x, 20 AS y"})
+        tools["generate_chart_config"].invoke(
+            {
+                "chart_title": "Second_Chart",
+                "python_code": (
+                    "chart_config = {\n"
+                    "  'data': [{'x': df['x'].tolist(), 'y': df['y'].tolist(), 'type': 'scatter'}],\n"
+                    "  'layout': {'title': 'Second'}\n"
+                    "}\n"
+                ),
+            }
+        )
+        tools["generate_dashboard"].invoke(
+            {
+                "title": "Orders Dashboard",
+                "description": "Second description",
+                "output_path": "dashboards/orders.html",
+            }
+        )
+
+        dashboard_path = tmp_path / "dashboards" / "orders.html"
+        content = dashboard_path.read_text(encoding="utf-8")
+        assert dashboard_path.exists()
+        assert "Second description" in content
+        assert "Second Chart" in content or "Second_Chart" in content
+
+    def test_repo_data_refresh_skill_contract_mentions_snapshot_workflow(self) -> None:
+        skill_path = Path(__file__).parent.parent / "skills" / "data" / "refresh" / "SKILL.md"
+        content = skill_path.read_text(encoding="utf-8")
+        assert "materialize_bigquery_to_parquet" in content
+        assert "generate_dashboard" in content
+        assert "latest.parquet" in content

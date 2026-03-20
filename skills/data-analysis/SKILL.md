@@ -31,6 +31,7 @@ mcp_servers:
 | Create a chart or visualization | `data/visualize` |
 | QA / validate before sharing | `data/validate` |
 | Build a shareable dashboard | `data/dashboard` |
+| Keep a report/dashboard refreshed on a schedule | `data/refresh` |
 
 ## Legacy behaviour (unchanged)
 
@@ -41,6 +42,13 @@ in full parity with the prior `data-analysis` behaviour:
 2. **Query**: up to 5 focused SQL queries with `LIMIT 1000`.
 3. **Chart (optional)**: `generate_chart_config` with Plotly, max 3 charts.
 4. **Summary**: call `generate_summary` once to produce the HTML report.
+
+If the user is happy with a dashboard or canned report and wants it kept current,
+switch to `data/refresh` so the workflow becomes:
+
+1. `materialize_bigquery_to_parquet` publishes a stable snapshot such as `datasets/orders/latest.parquet`.
+2. DuckDB queries the refreshed workspace snapshot locally.
+3. `generate_dashboard` or `generate_summary` overwrites the same stable HTML output path.
 
 ## Standards
 - Every insight must cite concrete evidence (counts, averages, %, deltas).
