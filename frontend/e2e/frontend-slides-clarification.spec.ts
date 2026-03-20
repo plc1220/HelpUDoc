@@ -24,8 +24,6 @@ const REPORT_CONTENT = `# Operation Epic Fury
 
 test('frontend-slides pauses on clarification instead of approval', async ({ page, baseURL }) => {
   const resolvedBaseUrl = baseURL || 'https://lc-demo.com';
-  const workspaceName = `e2e-slides-${Date.now()}`;
-
   page.on('console', (message) => {
     console.log(`[browser:${message.type()}] ${message.text()}`);
   });
@@ -52,10 +50,8 @@ test('frontend-slides pauses on clarification instead of approval', async ({ pag
   // Open the workspace drawer.
   await page.getByRole('button').first().click();
 
-  // Create and select a disposable workspace.
-  await page.getByPlaceholder('New workspace').fill(workspaceName);
-  await page.getByRole('button', { name: /^Create$/ }).click();
-  await page.getByRole('button', { name: new RegExp(workspaceName) }).click();
+  // Create and auto-select a disposable workspace.
+  await page.getByRole('button', { name: /\+ Create/i }).click();
   await page.getByRole('button').first().click();
 
   // Upload the source markdown through the workspace file input.

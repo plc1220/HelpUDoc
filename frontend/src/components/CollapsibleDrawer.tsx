@@ -10,8 +10,8 @@ interface CollapsibleDrawerProps {
   handleDrawerClose: () => void;
   workspaces: Workspace[];
   selectedWorkspace: Workspace | null;
-  newWorkspaceName: string;
-  setNewWorkspaceName: (name: string) => void;
+  workspaceSearchQuery: string;
+  setWorkspaceSearchQuery: (name: string) => void;
   handleCreateWorkspace: () => void;
   handleDeleteWorkspace: (id: string) => void;
   onSelectWorkspace: (workspace: Workspace) => void;
@@ -30,8 +30,8 @@ const CollapsibleDrawer: React.FC<CollapsibleDrawerProps> = ({
   handleDrawerClose,
   workspaces,
   selectedWorkspace,
-  newWorkspaceName,
-  setNewWorkspaceName,
+  workspaceSearchQuery,
+  setWorkspaceSearchQuery,
   handleCreateWorkspace,
   handleDeleteWorkspace,
   onSelectWorkspace,
@@ -89,12 +89,12 @@ const CollapsibleDrawer: React.FC<CollapsibleDrawerProps> = ({
 
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5, flexShrink: 0 }}>
           <TextField
-            placeholder="New workspace"
+            placeholder="Search workspaces"
             variant="outlined"
             fullWidth
             size="small"
-            value={newWorkspaceName}
-            onChange={(e) => setNewWorkspaceName(e.target.value)}
+            value={workspaceSearchQuery}
+            onChange={(e) => setWorkspaceSearchQuery(e.target.value)}
             InputProps={{
               sx: {
                 borderRadius: 2,
@@ -110,7 +110,7 @@ const CollapsibleDrawer: React.FC<CollapsibleDrawerProps> = ({
             startIcon={<Add />}
             sx={{ borderRadius: 2, textTransform: 'none', fontWeight: 600 }}
           >
-            Create
+            + Create
           </Button>
         </Box>
 

@@ -75,10 +75,9 @@ test('does not generate localhost:9000 public URLs (no mixed content)', async ({
 
     await page.goto(resolvedBaseUrl, { waitUntil: 'domcontentloaded' });
 
-    // Open workspace list and select our workspace (create via UI to ensure list refreshes).
+    // Open workspace list, search for our existing workspace, and select it.
     await page.getByRole('button').first().click();
-    await page.getByPlaceholder('New workspace').fill(workspaceName);
-    await page.getByRole('button', { name: /^Create$/ }).click();
+    await page.getByPlaceholder('Search workspaces').fill(workspaceName);
     await page.getByRole('button', { name: new RegExp(workspaceName) }).click();
 
     // Click the media file in the file pane (displayed by basename).

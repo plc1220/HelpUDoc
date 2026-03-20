@@ -12,7 +12,7 @@ import {
 import { CheckSquare, Copy, Edit, Trash, Plus, Minus, ChevronLeft, RotateCcw, X, Printer, Download, Link as LinkIcon, Loader2 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { getWorkspaces, createWorkspace, deleteWorkspace, updateWorkspaceSettings } from '../services/workspaceApi';
+import { getWorkspaces, createWorkspace, deleteWorkspace, renameWorkspace, updateWorkspaceSettings } from '../services/workspaceApi';
 import {
   getFiles,
   createFile,
@@ -200,6 +200,32 @@ const generateTurnId = () => {
 
 const DEFAULT_PLAN_FILE_PATH = 'research_plan.md';
 
+const formatWorkspaceLastUsed = (updatedAt?: string) => {
+  if (!updatedAt) {
+    return 'Recently';
+  }
+  const timestamp = new Date(updatedAt).getTime();
+  if (Number.isNaN(timestamp)) {
+    return 'Recently';
+  }
+  const diffMs = Date.now() - timestamp;
+  if (diffMs < 60_000) {
+    return 'Just now';
+  }
+  if (diffMs < 86_400_000) {
+    return 'Today';
+  }
+  if (diffMs < 172_800_000) {
+    return 'Yesterday';
+  }
+  return new Date(updatedAt).toLocaleDateString();
+};
+
+const hydrateWorkspace = (workspace: Omit<Workspace, 'lastUsed'> & { lastUsed?: string }): Workspace => ({
+  ...workspace,
+  lastUsed: workspace.lastUsed ?? formatWorkspaceLastUsed(workspace.updatedAt),
+});
+
 const normalizeWorkspaceRelativePath = (value?: string): string =>
   String(value || '')
     .replace(/\\/g, '/')
@@ -288,12 +314,15 @@ export default function WorkspacePage() {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [selectedWorkspace, setSelectedWorkspace] = useState<Workspace | null>(null);
   const [workspaceSettingsBusy, setWorkspaceSettingsBusy] = useState(false);
+  const [workspaceSearchQuery, setWorkspaceSearchQuery] = useState('');
+  const [isWorkspaceRenameActive, setIsWorkspaceRenameActive] = useState(false);
+  const [workspaceNameDraft, setWorkspaceNameDraft] = useState('');
+  const [workspaceRenameBusy, setWorkspaceRenameBusy] = useState(false);
   const [files, setFiles] = useState<WorkspaceFile[]>([]);
   const [selectedFile, setSelectedFile] = useState<WorkspaceFile | null>(null);
   const [selectedFileDetails, setSelectedFileDetails] = useState<WorkspaceFile | null>(null);
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
   const [fileContent, setFileContent] = useState('');
-  const [newWorkspaceName, setNewWorkspaceName] = useState('');
   const [conversationMessages, setConversationMessages] = useState<Record<string, ConversationMessage[]>>({});
   const [chatMessage, setChatMessage] = useState('');
   const [chatAttachments, setChatAttachments] = useState<File[]>([]);
@@ -343,6 +372,7 @@ export default function WorkspacePage() {
   const stopRequestedRef = useRef(false);
   const chatInputRef = useRef<HTMLTextAreaElement | null>(null);
   const attachmentInputRef = useRef<HTMLInputElement | null>(null);
+  const workspaceNameInputRef = useRef<HTMLInputElement | null>(null);
   const autoSaveTimerRef = useRef<number | null>(null);
   const lastAutoSavedContentRef = useRef<string>('');
   const [isMentionOpen, setIsMentionOpen] = useState(false);
@@ -358,6 +388,14 @@ export default function WorkspacePage() {
   const [expandedToolMessages, setExpandedToolMessages] = useState<Set<ConversationMessage['id']>>(new Set());
   const [expandedThinkingMessages, setExpandedThinkingMessages] = useState<Set<ConversationMessage['id']>>(new Set());
   const [copiedCodeBlockId, setCopiedCodeBlockId] = useState<string | null>(null);
+
+  const filteredWorkspaces = useMemo(() => {
+    const query = workspaceSearchQuery.trim().toLowerCase();
+    if (!query) {
+      return workspaces;
+    }
+    return workspaces.filter((workspace) => workspace.name.toLowerCase().includes(query));
+  }, [workspaceSearchQuery, workspaces]);
   const [copiedImageUrl, setCopiedImageUrl] = useState(false);
   const [copiedFileUrlId, setCopiedFileUrlId] = useState<string | null>(null);
   const [ragStatuses, setRagStatuses] = useState<Record<string, { status?: string; updatedAt?: string; error?: string }>>({});
@@ -1886,15 +1924,27 @@ export default function WorkspacePage() {
 
   useEffect(() => {
     const fetchWorkspaces = async () => {
-      const workspaces = await getWorkspaces();
-      const workspacesWithMockData = workspaces.map((ws: Omit<Workspace, 'lastUsed'>) => ({
-        ...ws,
-        lastUsed: 'Yesterday',
-      }));
-      setWorkspaces(workspacesWithMockData);
+      const fetchedWorkspaces = await getWorkspaces();
+      setWorkspaces((fetchedWorkspaces || []).map((ws: Omit<Workspace, 'lastUsed'>) => hydrateWorkspace(ws)));
     };
     fetchWorkspaces();
   }, []);
+
+  useEffect(() => {
+    if (!selectedWorkspace) {
+      setWorkspaceNameDraft('');
+      setIsWorkspaceRenameActive(false);
+      return;
+    }
+    setWorkspaceNameDraft(selectedWorkspace.name);
+  }, [selectedWorkspace]);
+
+  useEffect(() => {
+    if (isWorkspaceRenameActive && workspaceNameInputRef.current) {
+      workspaceNameInputRef.current.focus();
+      workspaceNameInputRef.current.select();
+    }
+  }, [isWorkspaceRenameActive]);
 
   const applyWorkspacePlanApprovalSetting = useCallback((workspaceId: string, skipPlanApprovals: boolean) => {
     setWorkspaces((prev) => prev.map((workspace) => (
@@ -1904,6 +1954,42 @@ export default function WorkspacePage() {
       prev && prev.id === workspaceId ? { ...prev, skipPlanApprovals } : prev
     ));
   }, []);
+
+  const commitWorkspaceRename = useCallback(async () => {
+    if (!selectedWorkspace || !selectedWorkspace.canEdit || workspaceRenameBusy) {
+      return;
+    }
+
+    const nextName = workspaceNameDraft.trim();
+    if (!nextName || nextName === selectedWorkspace.name) {
+      setWorkspaceNameDraft(selectedWorkspace.name);
+      setIsWorkspaceRenameActive(false);
+      return;
+    }
+
+    setWorkspaceRenameBusy(true);
+    try {
+      const renamedWorkspace = hydrateWorkspace(await renameWorkspace(selectedWorkspace.id, nextName));
+      setWorkspaces((prev) => prev.map((workspace) => (
+        workspace.id === renamedWorkspace.id ? { ...workspace, ...renamedWorkspace } : workspace
+      )));
+      setSelectedWorkspace((prev) => (
+        prev && prev.id === renamedWorkspace.id ? { ...prev, ...renamedWorkspace } : prev
+      ));
+      setWorkspaceNameDraft(renamedWorkspace.name);
+    } catch (error) {
+      console.error('Failed to rename workspace:', error);
+      setWorkspaceNameDraft(selectedWorkspace.name);
+    } finally {
+      setWorkspaceRenameBusy(false);
+      setIsWorkspaceRenameActive(false);
+    }
+  }, [selectedWorkspace, workspaceNameDraft, workspaceRenameBusy]);
+
+  const cancelWorkspaceRename = useCallback(() => {
+    setWorkspaceNameDraft(selectedWorkspace?.name || '');
+    setIsWorkspaceRenameActive(false);
+  }, [selectedWorkspace]);
 
   const handleUpdateWorkspacePlanApprovalSetting = useCallback(
     async (skipPlanApprovals: boolean, requireConfirm = false) => {
@@ -2022,14 +2108,19 @@ export default function WorkspacePage() {
   }, [selectedFile, selectedWorkspace]);
 
   const handleCreateWorkspace = async () => {
-    if (newWorkspaceName.trim()) {
-      const newWorkspaceData = await createWorkspace(newWorkspaceName);
-      const newWorkspace: Workspace = {
-        ...newWorkspaceData,
-        lastUsed: 'Just now',
+    try {
+      const newWorkspace = {
+        ...hydrateWorkspace(await createWorkspace()),
+        canEdit: true,
+        role: 'owner' as const,
       };
-      setWorkspaces([...workspaces, newWorkspace]);
-      setNewWorkspaceName('');
+      setWorkspaces((prev) => [newWorkspace, ...prev]);
+      setSelectedWorkspace(newWorkspace);
+      setWorkspaceSearchQuery('');
+      setWorkspaceNameDraft(newWorkspace.name);
+      setIsWorkspaceRenameActive(true);
+    } catch (error) {
+      console.error('Failed to create workspace:', error);
     }
   };
 
@@ -4797,10 +4888,10 @@ export default function WorkspacePage() {
         <CollapsibleDrawer
           open={drawerOpen}
           handleDrawerClose={handleDrawerToggle}
-          workspaces={workspaces}
+          workspaces={filteredWorkspaces}
           selectedWorkspace={selectedWorkspace}
-          newWorkspaceName={newWorkspaceName}
-          setNewWorkspaceName={setNewWorkspaceName}
+          workspaceSearchQuery={workspaceSearchQuery}
+          setWorkspaceSearchQuery={setWorkspaceSearchQuery}
           handleCreateWorkspace={handleCreateWorkspace}
           handleDeleteWorkspace={handleDeleteWorkspace}
           onSelectWorkspace={setSelectedWorkspace}
@@ -4851,9 +4942,47 @@ export default function WorkspacePage() {
             >
               {/* Workspace Header */}
               <div className="p-4 border-b border-gray-200 flex justify-between items-center">
-                <h2 className="text-xl font-semibold text-gray-800">
-                  {selectedWorkspace ? selectedWorkspace.name : 'No workspace selected'}
-                </h2>
+                {selectedWorkspace ? (
+                  isWorkspaceRenameActive && selectedWorkspace.canEdit ? (
+                    <input
+                      ref={workspaceNameInputRef}
+                      value={workspaceNameDraft}
+                      onChange={(event) => setWorkspaceNameDraft(event.target.value)}
+                      onBlur={() => {
+                        void commitWorkspaceRename();
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') {
+                          event.preventDefault();
+                          void commitWorkspaceRename();
+                        } else if (event.key === 'Escape') {
+                          event.preventDefault();
+                          cancelWorkspaceRename();
+                        }
+                      }}
+                      disabled={workspaceRenameBusy}
+                      aria-label="Workspace name"
+                      className="w-full max-w-[28rem] rounded-lg border border-blue-200 bg-white px-3 py-1.5 text-xl font-semibold text-gray-800 outline-none ring-2 ring-blue-100 disabled:cursor-wait"
+                    />
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!selectedWorkspace.canEdit) return;
+                        setWorkspaceNameDraft(selectedWorkspace.name);
+                        setIsWorkspaceRenameActive(true);
+                      }}
+                      className={`flex items-center gap-2 text-left text-xl font-semibold ${
+                        selectedWorkspace.canEdit ? 'text-gray-800 hover:text-blue-700' : 'cursor-default text-gray-800'
+                      }`}
+                    >
+                      <span>{selectedWorkspace.name}</span>
+                      {selectedWorkspace.canEdit ? <Edit size={16} className="text-gray-400" /> : null}
+                    </button>
+                  )
+                ) : (
+                  <h2 className="text-xl font-semibold text-gray-800">No workspace selected</h2>
+                )}
               </div>
               <div className="flex-1 flex min-h-0">
                 {/* File Explorer */}
