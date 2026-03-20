@@ -1991,6 +1991,12 @@ export default function WorkspacePage() {
     setIsWorkspaceRenameActive(false);
   }, [selectedWorkspace]);
 
+  const handleSelectWorkspace = useCallback((workspace: Workspace) => {
+    setIsWorkspaceRenameActive(false);
+    setWorkspaceNameDraft(workspace.name);
+    setSelectedWorkspace(workspace);
+  }, []);
+
   const handleUpdateWorkspacePlanApprovalSetting = useCallback(
     async (skipPlanApprovals: boolean, requireConfirm = false) => {
       if (!selectedWorkspace || workspaceSettingsBusy) {
@@ -4894,7 +4900,7 @@ export default function WorkspacePage() {
           setWorkspaceSearchQuery={setWorkspaceSearchQuery}
           handleCreateWorkspace={handleCreateWorkspace}
           handleDeleteWorkspace={handleDeleteWorkspace}
-          onSelectWorkspace={setSelectedWorkspace}
+          onSelectWorkspace={handleSelectWorkspace}
           onOpenSettings={handleOpenAgentSettings}
           colorMode={colorMode}
           onToggleColorMode={toggleColorMode}
