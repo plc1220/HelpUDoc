@@ -5,7 +5,11 @@ import { UserService } from '../services/userService';
 import { HttpError } from '../errors';
 
 const createWorkspaceSchema = z.object({
-  name: z.string().min(1).max(255),
+  name: z.string().trim().max(255).optional(),
+});
+
+const renameWorkspaceSchema = z.object({
+  name: z.string().trim().min(1).max(255),
 });
 
 const collaboratorSchema = z.object({
@@ -57,6 +61,20 @@ export default function workspaceRoutes(workspaceService: WorkspaceService, user
         return res.status(400).json({ error: 'Invalid input' });
       }
       handleError(res, error, 'Failed to create workspace');
+    }
+  });
+
+  router.patch('/:workspaceId', async (req, res) => {
+    try {
+      const user = requireUserContext(req);
+      const payload = renameWorkspaceSchema.parse(req.body);
+      const workspace = await workspaceService.renameWorkspace(req.params.workspaceId, user.userId, payload.name);
+      res.json(workspace);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: 'Invalid workspace payload' });
+      }
+      handleError(res, error, 'Failed to rename workspace');
     }
   });
 

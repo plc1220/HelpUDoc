@@ -89,13 +89,14 @@ export class WorkspaceService {
     }));
   }
 
-  async createWorkspace(user: UserContext, name: string): Promise<WorkspaceRecord> {
+  async createWorkspace(user: UserContext, name?: string): Promise<WorkspaceRecord> {
     const workspaceId = uuidv4();
-    const slug = await this.generateUniqueSlug(name);
+    const resolvedName = await this.resolveWorkspaceNameForCreate(user.userId, name);
+    const slug = await this.generateUniqueSlug(resolvedName);
     const [workspace] = await this.db<WorkspaceRecord>('workspaces')
       .insert({
         id: workspaceId,
-        name,
+        name: resolvedName,
         slug,
         ownerId: user.userId,
         lastModifiedBy: user.userId,
@@ -112,6 +113,28 @@ export class WorkspaceService {
 
     await this.createWorkspaceDirectory(workspaceId);
 
+    return workspace;
+  }
+
+  async renameWorkspace(workspaceId: string, userId: string, name: string): Promise<WorkspaceRecord> {
+    await this.ensureMembership(workspaceId, userId, { requireEdit: true });
+    const normalizedName = this.normalizeWorkspaceName(name);
+    if (!normalizedName) {
+      throw new Error('Workspace name cannot be empty');
+    }
+
+    await this.db<WorkspaceRecord>('workspaces')
+      .where({ id: workspaceId })
+      .update({
+        name: normalizedName,
+        updatedAt: this.db.fn.now(),
+        lastModifiedBy: userId,
+      });
+
+    const workspace = await this.db<WorkspaceRecord>('workspaces').where({ id: workspaceId }).first();
+    if (!workspace) {
+      throw new NotFoundError('Workspace not found');
+    }
     return workspace;
   }
 
@@ -306,6 +329,37 @@ export class WorkspaceService {
   private async createWorkspaceDirectory(workspaceId: string): Promise<void> {
     const workspacePath = path.join(WORKSPACE_DIR, workspaceId);
     await fs.mkdir(workspacePath, { recursive: true });
+  }
+
+  private normalizeWorkspaceName(name?: string | null): string {
+    return String(name ?? '').trim().slice(0, 255);
+  }
+
+  private async resolveWorkspaceNameForCreate(userId: string, name?: string): Promise<string> {
+    const normalized = this.normalizeWorkspaceName(name);
+    if (normalized) {
+      return normalized;
+    }
+    return this.generateNextUntitledName(userId);
+  }
+
+  private async generateNextUntitledName(userId: string): Promise<string> {
+    const rows = await this.db('workspace_members')
+      .join('workspaces', 'workspace_members.workspaceId', 'workspaces.id')
+      .select('workspaces.name')
+      .where('workspace_members.userId', userId)
+      .andWhere('workspaces.name', 'like', 'Untitled-%');
+
+    let maxSuffix = 0;
+    for (const row of rows as Array<{ name?: string }>) {
+      const match = /^Untitled-(\d+)$/.exec(String(row?.name || '').trim());
+      if (!match) continue;
+      const value = Number.parseInt(match[1], 10);
+      if (Number.isFinite(value)) {
+        maxSuffix = Math.max(maxSuffix, value);
+      }
+    }
+    return `Untitled-${maxSuffix + 1}`;
   }
 
   private slugify(name: string): string {

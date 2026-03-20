@@ -2,7 +2,12 @@ export interface Workspace {
   id: string;
   name: string;
   lastUsed: string;
+  slug?: string;
+  role?: 'owner' | 'editor' | 'viewer';
+  canEdit?: boolean;
   skipPlanApprovals?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface File {

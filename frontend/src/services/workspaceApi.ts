@@ -24,16 +24,30 @@ export const getWorkspaceSettings = async (workspaceId: string) => {
 };
 
 
-export const createWorkspace = async (name: string) => {
+export const createWorkspace = async (name?: string) => {
   const response = await apiFetch(`${API_URL}/workspaces`, {
     method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(name !== undefined ? { name } : {}),
+  });
+  if (!response.ok) {
+    throw new Error('Failed to create workspace');
+  }
+  return response.json();
+};
+
+export const renameWorkspace = async (workspaceId: string, name: string) => {
+  const response = await apiFetch(`${API_URL}/workspaces/${workspaceId}`, {
+    method: 'PATCH',
     headers: {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({ name }),
   });
   if (!response.ok) {
-    throw new Error('Failed to create workspace');
+    throw new Error('Failed to rename workspace');
   }
   return response.json();
 };
