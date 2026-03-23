@@ -1,141 +1,132 @@
 # HelpUDoc Frontend
 
-The frontend is a React + Vite application that provides the collaborative workspace UI, editors, and data visualizations for HelpUDoc.
+The frontend is a React 19 + Vite application that powers the main HelpUDoc user experience.
+It currently includes:
 
-## Getting started
+- authenticated workspace access
+- file browsing, editing, and rendering
+- streaming agent chat with approvals and interrupt actions
+- paper-to-slides job creation and export flow
+- settings pages for agent configuration, skills, users, and operations surfaces
 
-### Prerequisites
+## Prerequisites
 
-- Node.js 20.x
-- npm (or yarn)
+- Node.js 20+
+- npm
 
-### Installation
+## Installation
 
 ```bash
 cd frontend
 npm install
 ```
 
-### Environment variables
+## Environment variables
 
-Set the variables in your shell (recommended) or create `frontend/.env.local` with:
+The app reads Vite-style `VITE_*` variables from your shell, `.env.local`, or Docker build args.
 
-- `VITE_API_URL` (default: `http://localhost:3000/api`)
-- `VITE_COLLAB_URL` (default: `ws://localhost:1234`)
-- `VITE_GOOGLE_CLIENT_ID` (optional, for Google auth)
+| Variable | Default | Purpose |
+| -------- | ------- | ------- |
+| `VITE_API_URL` | `http://localhost:3000/api` | Base URL for backend API calls in local development. |
+| `VITE_COLLAB_URL` | `ws://localhost:1234` | Collaboration WebSocket endpoint. |
+| `VITE_AUTH_MODE` | `hybrid` | Matches backend auth mode and controls login behavior. |
+| `VITE_GOOGLE_CLIENT_ID` | unset | Enables Google sign-in UI when provided. |
+| `VITE_DEBUG_STREAM` | unset | Enables extra client-side stream debugging helpers. |
 
-### Running the application
+## Running locally
 
 ```bash
 npm run dev
 ```
 
-The dev server will be available at `http://localhost:5173` by default.
+Vite dev server: `http://localhost:5173`
 
-## Project structure
+## Available scripts
 
-```
-src/
-├── auth/                 # Local + Google auth state and helpers
-├── components/           # Reusable UI widgets and app chrome
-│   └── settings/         # Settings pages tabs + shell
-├── pages/                # Route-level screens
-├── services/             # API clients and HTTP helpers
-├── index.css             # Tailwind entry + theme variables
-├── theme.ts              # Theme helpers for charts or UI
-├── types.ts              # Shared frontend types
-├── App.tsx               # Route definitions and auth guard
-└── main.tsx              # App bootstrap
+```bash
+npm run dev
+npm run build
+npm run build:docker
+npm run lint
+npm run preview
+npm run e2e:install
+npm run e2e
 ```
 
-## Routing overview
+## App structure
 
-- `main.tsx` wraps the app with `AuthProvider` and `BrowserRouter`.
-- `App.tsx` defines all routes and enforces auth gating through `RequireAuth`.
+| Path | Purpose |
+| ---- | ------- |
+| `src/auth/` | Auth provider and persisted auth state. |
+| `src/pages/` | Route-level screens like workspace, login, dashboard, and settings pages. |
+| `src/components/` | Workspace UI, chat UI, file rendering, markdown helpers, and settings widgets. |
+| `src/services/` | API clients for workspaces, files, conversations, agent runs, paper-to-slides, settings, and auth-aware fetches. |
+| `src/constants/` | Shared UI constants such as slash commands and paper-to-slides presets. |
+| `src/utils/` | File, message, and rendering helpers. |
 
-Routes:
-- `/` → Workspace experience (`WorkspacePage`)
-- `/login` → Login and onboarding (`LoginPage`)
-- `/settings/*` → Admin/settings portal (`DashboardPage`, `AgentSettingsPage`, `KnowledgePage`, `UsersPage`, `BillingPage`)
+## Routing
 
-## Component guide
+The current route map is:
 
-### Workspace + file experience
+- `/login` -> login page
+- `/` -> authenticated workspace
+- `/settings` -> dashboard overview
+- `/settings/agents` -> agent config and skills tools
+- `/settings/knowledge` -> knowledge/settings surface
+- `/settings/users` -> user management surface
+- `/settings/billing` -> billing placeholder surface
 
-- `components/CollapsibleDrawer.tsx`
-  - Left drawer housing workspace list, create controls, and appearance toggle.
-  - Bridges settings navigation and sign-out actions.
-- `components/ExpandableSidebar.tsx`
-  - Compact sidebar shown when the drawer is collapsed.
-  - Provides quick access to workspace drawer and settings.
-- `components/WorkspaceList.tsx`
-  - Workspace list with selection and delete actions.
-- `components/FileList.tsx`
-  - File list with icon inference for markdown, images, PDFs, HTML, etc.
-- `components/FileEditor.tsx`
-  - Monaco editor for code/text files and MDXEditor for markdown files.
-  - Provides lightweight formatting toolbar for non-markdown files.
-- `components/FileRenderer.tsx`
-  - Viewer for markdown, HTML, images, PDFs, CSV, Plotly specs, and Mermaid diagrams.
-  - Supports Markdown rendering with `react-markdown` + GFM, CSV tables via PapaParse, Plotly JSON charts, and Mermaid rendering (with copy-to-image support).
-- `components/PlotlyChart.tsx`
-  - Thin wrapper around `react-plotly.js` to render Plotly charts responsively.
+Unauthenticated users are redirected to `/login`.
 
-### Agent settings portal
+## Core user flows
 
-- `components/settings/SettingsShell.tsx`
-  - Shared layout for the settings portal, including left nav and header.
-- `components/settings/AgentSettingsTabs.tsx`
-  - Tab switcher for core agents, subagents, and tools configuration.
-- `components/settings/CoreAgentsTab.tsx`
-  - Editor for core agent personas and prompt/tool configuration.
-- `components/settings/SubagentsTab.tsx`
-  - Editor for subagent definitions and wiring.
-- `components/settings/ToolsTab.tsx`
-  - Configuration UI for tools and MCP servers.
+### Workspace and files
 
-### Auth
+The workspace page combines:
 
-- `auth/AuthProvider.tsx`
-  - Central auth state and helpers (Google OAuth or local email login).
-- `auth/authStore.ts`
-  - Local storage persistence for `AuthUser` (used to supply identity headers).
+- workspace list and selection
+- file list with type-aware icons
+- Monaco or markdown editing depending on file type
+- rich rendering for markdown, HTML, images, PDFs, CSV, Plotly JSON, and Mermaid diagrams
 
-## Pages
+### Agent runs
 
-- `pages/WorkspacePage.tsx`
-  - Main workspace experience: drawers, file list/editor, agent chat, and run status.
-  - Integrates file CRUD, agent runs, and conversation history.
-- `pages/LoginPage.tsx`
-  - Login experience with Google OAuth and local email login fallback.
-- `pages/DashboardPage.tsx`
-  - Overview for settings/operations status.
-- `pages/AgentSettingsPage.tsx`
-  - Hosts `AgentSettingsTabs` inside the settings shell.
-- `pages/KnowledgePage.tsx`, `pages/UsersPage.tsx`, `pages/BillingPage.tsx`
-  - Placeholder pages for future management surfaces.
+The frontend talks to the backend's run APIs to support:
 
-## Services
+- starting runs and streaming assistant output
+- approval and clarification interrupts
+- run cancellation and resume flows
+- slash-command metadata discovery
+- conversation history persistence
 
-API helpers live in `src/services/` and share a common wrapper:
+### Paper-to-slides
 
-- `apiClient.ts` sets `API_URL` and injects identity headers (`X-User-*`) from `authStore`.
-- `workspaceApi.ts`, `fileApi.ts`, `knowledgeApi.ts`, `presentationApi.ts`, `conversationApi.ts` provide CRUD helpers.
-- `agentApi.ts` supports agent runs (including streaming updates and cancellation).
-- `paper2SlidesJobApi.ts` triggers and polls the paper-to-slides pipeline.
-- `settingsApi.ts` fetches/saves agent configuration YAML.
+The workspace page also exposes the paper-to-slides workflow, including:
 
-## Styling & theming
+- job creation
+- job polling
+- stage/status display
+- PDF/PPTX export handoff
 
-- Tailwind is used for utility styles (`index.css` bootstraps base + utilities).
-- CSS variables in `index.css` drive light/dark themes and normalize frequently used Tailwind color classes.
-- MUI components are used for the workspace shell and lists (see `WorkspacePage.tsx` and drawer components).
+### Settings and admin tools
 
-## API references
+The settings API client supports:
 
-- OpenAPI contract: `docs/specs/001-a-custom-ui/contracts/openapi.yaml`
-- The frontend assumes the backend API is available at `/api` in Docker, or at `VITE_API_URL` in local dev.
+- editing `runtime.yaml`
+- browsing and editing bundled skills
+- GitHub skill import flows
+- skill-builder sessions with streamed runs
+- user and group administration
 
-## Notes on file rendering
+## Rendering notes
 
-`FileRenderer.tsx` uses an iframe for `.html` previews. The sandbox allows `allow-scripts allow-same-origin` so embedded Plotly/Chart.js content can execute while still isolating the preview from the parent page.
+- HTML previews are sandboxed in an iframe.
+- Markdown uses `react-markdown` with GFM support.
+- Plotly and Mermaid are rendered client-side.
+- Collaboration uses Hocuspocus/Yjs via `@hocuspocus/provider`.
+
+## Related docs
+
+- [../README.md](../README.md)
+- [../backend/README.md](../backend/README.md)
+- [../docs/environment.md](../docs/environment.md)
