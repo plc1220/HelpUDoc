@@ -1,70 +1,86 @@
-# GKE deployment (prototype)
+# HelpUDoc GKE deployment
 
-This folder provides a simple GKE deployment for the full HelpUDoc stack based on the existing Docker Compose setup.
-It is aimed at a working prototype. For production, consider managed services (Cloud SQL, Memorystore, and GCS) and a
-separate image build/release process.
+This directory contains the Kubernetes assets for running HelpUDoc on Google Kubernetes Engine.
 
-## Why GKE over Cloud Run for this repo
+It is organized around two kinds of files:
 
-- The app is multi-service (backend, agent, frontend) plus stateful dependencies (Postgres, Redis, MinIO).
-- The backend and agent share a workspace folder; GKE lets us mount a shared volume in a single pod.
-- Cloud Run would require externalizing all state and reworking the local workspace dependency.
+- `k8s/`: manifests that are meant to be applied to a cluster
+- `templates/`: reference templates for config data that should be turned into real Secrets and ConfigMaps
 
-## Quick start (manual deploy)
+## What gets deployed
 
-1) Set GCP project + region
+The GKE setup covers the same services as local Compose:
 
-```sh
-export PROJECT_ID=my-rd-coe-demo-gen-ai
-export REGION=asia-southeast1
-```
+- backend API
+- agent service
+- frontend
+- PostgreSQL
+- Redis
+- MinIO
+- Caddy ingress/proxy components
 
-2) Create a GKE cluster (zonal)
+The backend and agent are intentionally co-located around shared workspace/config volumes to match the current application architecture.
 
-```sh
-gcloud container clusters create helpudoc \ 
-  --project "${PROJECT_ID}" \ 
-  --region "${REGION}" \ 
-  --num-nodes 2
-```
+## Directory map
 
-3) Configure kubectl
+| Path | Purpose |
+| ---- | ------- |
+| `k8s/00-namespace.yaml` | Namespace creation |
+| `k8s/30-storage.yaml` | PVCs for workspaces, agent config, and skills |
+| `k8s/40-postgres.yaml` | PostgreSQL workload |
+| `k8s/41-redis.yaml` | Redis workload |
+| `k8s/42-minio.yaml` | MinIO workload |
+| `k8s/43-minio-setup.yaml` | Bucket/bootstrap job |
+| `k8s/50-app.yaml` | Combined backend + agent application deployment |
+| `k8s/60-frontend.yaml` | Frontend deployment/service |
+| `k8s/70-caddy.yaml` | Caddy proxy deployment/service |
+| `k8s/71-ingress.yaml` | GKE ingress |
+| `k8s/72-backendconfig.yaml` | GKE BackendConfig |
+| `templates/10-secrets.yaml` | Example secret template |
+| `templates/20-configmap.yaml` | Example config template |
 
-```sh
-gcloud container clusters get-credentials helpudoc --region "${REGION}" --project "${PROJECT_ID}"
-```
+## Prerequisites
 
-4) Create a Docker Artifact Registry repo
+- `gcloud`, `kubectl`, and Docker
+- a GCP project with Artifact Registry and GKE enabled
+- a created GKE cluster
+- production env files prepared from `env/prod/*.example`
 
-```sh
-gcloud artifacts repositories create helpudoc \ 
-  --project "${PROJECT_ID}" \ 
-  --location "${REGION}" \ 
-  --repository-format docker
-```
+## Recommended deploy path: Cloud Build
 
-5) Build + push images
+From the repo root, the most reliable path is:
 
-```sh
-export REGISTRY="${REGION}-docker.pkg.dev/${PROJECT_ID}/helpudoc"
+1. Create production env files:
+   ```bash
+   cp env/prod/secrets.env.example env/prod/secrets.env
+   cp env/prod/config.env.example env/prod/config.env
+   ```
+2. Fill in the real values for database passwords, session secrets, OAuth settings, Gemini keys, and storage URLs.
+3. Authenticate to the cluster:
+   ```bash
+   gcloud container clusters get-credentials <CLUSTER> --region <REGION> --project <PROJECT_ID>
+   ```
+4. Create namespace and config objects:
+   ```bash
+   kubectl apply -f infra/gke/k8s/00-namespace.yaml
+   kubectl -n helpudoc create secret generic helpudoc-secrets --from-env-file=env/prod/secrets.env
+   kubectl -n helpudoc create configmap helpudoc-config --from-env-file=env/prod/config.env
+   ```
+5. Submit the build and deploy pipeline:
+   ```bash
+   gcloud builds submit . \
+     --config=infra/cloudbuild.yaml \
+     --project=<PROJECT_ID> \
+     --substitutions=_GKE_LOCATION=<REGION_OR_ZONE>,_GKE_CLUSTER=<CLUSTER>,_RUN_E2E=false
+   ```
 
-docker build -t "${REGISTRY}/helpudoc-backend:manual" backend
-docker build -t "${REGISTRY}/helpudoc-agent:manual" agent
-docker build -t "${REGISTRY}/helpudoc-frontend:manual" frontend
+Cloud Build handles image builds and applies the manifests in `infra/gke/k8s/`.
 
-gcloud auth configure-docker "${REGION}-docker.pkg.dev"
+## Manual manifest apply
 
-docker push "${REGISTRY}/helpudoc-backend:manual"
-docker push "${REGISTRY}/helpudoc-agent:manual"
-docker push "${REGISTRY}/helpudoc-frontend:manual"
-```
+If you need to apply manifests yourself after images already exist, apply them in this order:
 
-6) Apply Kubernetes manifests
-
-```sh
-kubectl apply -f infra/gke/k8s/00-namespace.yaml
-kubectl apply -f infra/gke/k8s/10-secrets.yaml
-kubectl apply -f infra/gke/k8s/20-configmap.yaml
+```bash
 kubectl apply -f infra/gke/k8s/30-storage.yaml
 kubectl apply -f infra/gke/k8s/40-postgres.yaml
 kubectl apply -f infra/gke/k8s/41-redis.yaml
@@ -73,80 +89,34 @@ kubectl apply -f infra/gke/k8s/43-minio-setup.yaml
 kubectl apply -f infra/gke/k8s/50-app.yaml
 kubectl apply -f infra/gke/k8s/60-frontend.yaml
 kubectl apply -f infra/gke/k8s/70-caddy.yaml
+kubectl apply -f infra/gke/k8s/71-ingress.yaml
+kubectl apply -f infra/gke/k8s/72-backendconfig.yaml
 ```
 
-7) Update app images
+If you are not using Cloud Build's image-tag rewriting, update the deployment image references yourself with `kubectl set image` or by editing the manifests before apply.
 
-```sh
-kubectl -n helpudoc set image deployment/helpudoc-app \
-  backend="${REGISTRY}/helpudoc-backend:manual" \
-  agent="${REGISTRY}/helpudoc-agent:manual"
+## Storage and config notes
 
-kubectl -n helpudoc set image deployment/helpudoc-frontend \
-  frontend="${REGISTRY}/helpudoc-frontend:manual"
-```
+- `30-storage.yaml` provisions PVCs used by workspaces, agent config, and shared skills.
+- The backend settings UI expects a writable skills mount and a writable `runtime.yaml` mount.
+- `templates/` files are examples only; the live cluster normally gets `helpudoc-secrets` and `helpudoc-config` from `kubectl create ... --from-env-file`.
 
-8) Get the Caddy (public) URL
+## Verification
 
-```sh
+Check the main public entrypoint:
+
+```bash
 kubectl -n helpudoc get svc helpudoc-caddy
 ```
 
-## Notes
+Then verify rollout state:
 
-- The backend and agent run in a single pod to share `WORKSPACE_ROOT` on a single PVC.
-- MinIO is deployed in-cluster for compatibility with the current S3 code path.
-- Update `infra/gke/k8s/10-secrets.yaml` and `infra/gke/k8s/20-configmap.yaml` with real values before deploying.
-- If you are testing the BigQuery demo MCP (`toolbox-bq-demo`), set `BQ_ACCESS_TOKEN` in `infra/gke/k8s/10-secrets.yaml`
-  (or update the `helpudoc-secrets` Secret in-cluster) so the agent can authenticate to the MCP server.
-- For production, move Postgres/Redis/MinIO to managed services and use a real RWX storage class (Filestore) if you
-  split backend and agent into separate pods.
-- gcloud builds submit .
-  --config=infra/cloudbuild.yaml
-  --project=my-rd-coe-demo-gen-ai
-  --substitutions=_GKE_LOCATION=asia-southeast1-a,_VITE_GOOGLE_CLIENT_ID=16646144790-fvdv7liepgo18aiu20n3btmdr56l33pq.apps.googleusercontent.com
-
-## GitHub Actions (optional)
-
-If you want GitHub Actions to deploy automatically, see `.github/workflows/deploy-gke.yml`.
-It uses Workload Identity Federation. Create a Workload Identity Provider + Service Account and add repository secrets:
-
-- `GCP_PROJECT_ID` (e.g. `my-rd-coe-demo-gen-ai`)
-- `GCP_REGION` (e.g. `asia-southeast1`)
-- `GKE_CLUSTER` (e.g. `helpudoc`)
-- `GCP_WORKLOAD_PROVIDER` (the full provider resource name)
-- `GCP_SERVICE_ACCOUNT` (service account email)
-
-Example setup commands:
-
-```sh
-export PROJECT_ID=my-rd-coe-demo-gen-ai
-export REGION=asia-southeast1
-export SA_NAME=helpudoc-github
-
-# Service account
-gcloud iam service-accounts create "${SA_NAME}" --project "${PROJECT_ID}"
-
-# Grant minimal roles
-gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
-  --member "serviceAccount:${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com" \
-  --role roles/container.developer
-gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
-  --member "serviceAccount:${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com" \
-  --role roles/artifactregistry.writer
-
-# Create Workload Identity pool/provider (example)
-gcloud iam workload-identity-pools create "github-pool" --project "${PROJECT_ID}" --location="global"
-gcloud iam workload-identity-pools providers create-oidc "github-provider" \
-  --project "${PROJECT_ID}" --location="global" --workload-identity-pool="github-pool" \
-  --issuer-uri="https://token.actions.githubusercontent.com" \
-  --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository"
-
-# Allow GitHub repo to impersonate SA
-gcloud iam service-accounts add-iam-policy-binding \
-  "${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com" \
-  --role="roles/iam.workloadIdentityUser" \
-  --member="principalSet://iam.googleapis.com/projects/${PROJECT_ID}/locations/global/workloadIdentityPools/github-pool/attribute.repository/ORG/REPO"
+```bash
+kubectl -n helpudoc get deploy,pods
 ```
 
-Replace `ORG/REPO` with your GitHub org/repo.
+## Related docs
+
+- [../../docs/deploy.md](../../docs/deploy.md)
+- [../../docs/ci-cd.md](../../docs/ci-cd.md)
+- [../../docs/environment.md](../../docs/environment.md)

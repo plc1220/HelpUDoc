@@ -1,31 +1,35 @@
 # HelpUDoc Agent Service
 
-The agent service is a Python FastAPI application that orchestrates Gemini-powered agents for research, data analysis, and proposal creation. It also includes the `paper2slides` pipeline for turning source documents into presentation slides.
+The agent service is a FastAPI application that runs HelpUDoc's Gemini-powered assistant workflows.
+It is responsible for:
+
+- general assistant chat and streaming responses
+- skill-aware execution using the repo's bundled `skills/` catalog
+- RAG status and query endpoints for workspace files
+- the `paper2slides` pipeline and PPTX export helpers
+- interrupt handling for human approvals, clarifications, and follow-up actions
 
 ## Layout
 
-- `helpudoc_agent/`: FastAPI app, runtime state, tools, and RAG worker.
-- `paper2slides/`: end-to-end pipeline for extracting summaries and generating slides.
-- `prompts/`: system prompt templates (general router prompt is active).
-- `config/runtime.yaml`: model, backend, tool registry, and MCP configuration.
-- `skills/`: reusable skills the general assistant can load on demand.
-- `docs/`: internal documentation for image tools and workflows.
-- `lightrag_server/`: optional LightRAG server config and notes.
+| Path | Purpose |
+| ---- | ------- |
+| `main.py` | FastAPI entry point used by local dev and Docker. |
+| `helpudoc_agent/` | App factory, runtime state, tool loading, MCP integration, JWT checks, and chat orchestration. |
+| `paper2slides/` | Multi-stage paper-to-slides pipeline and export utilities. |
+| `prompts/` | Prompt catalog for the general assistant and specialized prompt families. |
+| `config/runtime.yaml` | Runtime configuration for models, tools, MCP servers, and agent behavior. |
+| `docs/` | Supporting notes for image tools and internal agent workflows. |
+| `lightrag_server/` | Optional local LightRAG helper config. |
 
-## Skills-first routing
+The shared skill catalog lives at the repo root in `skills/`. In Docker and production it is mounted into the agent runtime so the backend settings UI can edit it.
 
-The service runs a single general assistant. Specialized behavior is implemented as skills
-under `skills/<skill-id>/SKILL.md`. Each skill can declare the tools it needs in frontmatter,
-and the assistant loads only the relevant skills per request.
-
-## Getting started
-
-### Prerequisites
+## Prerequisites
 
 - Python 3.10+
 - `pip`
+- Access to Gemini credentials (`GEMINI_API_KEY` or `GOOGLE_CLOUD_API_KEY`)
 
-### Installation
+## Installation
 
 ```bash
 cd agent
@@ -34,42 +38,77 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### Environment variables
+## Running locally
 
-The service reads variables from `ENV_FILE` if provided; otherwise it falls back to `agent/.env`.
-For local development, copy `env/local/dev.env.example` to `env/local/dev.env` and export it:
-
-```bash
-set -a; source ../env/local/dev.env; set +a
-```
-
-Required values:
-
-- `GEMINI_API_KEY` or `GOOGLE_CLOUD_API_KEY`
-- `RAG_LLM_API_KEY` (if running the RAG worker)
-- `LLM_MODEL` (for example `gemini-3-flash-preview`)
-
-When running with Docker Compose, additional variables are provided automatically, such as `REDIS_URL`, `S3_ENDPOINT`, and `S3_BUCKET_NAME`.
-
-### Running the application
+The agent reads `ENV_FILE` if provided; otherwise it falls back to `agent/.env`.
 
 ```bash
 ENV_FILE=../env/local/dev.env uvicorn main:app --host 0.0.0.0 --port 8001 --reload
 ```
 
-The service will be available at `http://localhost:8001`.
+Service URL: `http://localhost:8001`
+
+## Important environment variables
+
+| Variable | What it controls |
+| -------- | ---------------- |
+| `GEMINI_API_KEY` / `GOOGLE_CLOUD_API_KEY` | Primary model credentials. |
+| `RAG_LLM_API_KEY` | Optional RAG-specific LLM credential. |
+| `LLM_MODEL` | Default model identifier used by the runtime. |
+| `AGENT_CONFIG_PATH` | Runtime config file path, usually `agent/config/runtime.yaml`. |
+| `AGENT_JWT_SECRET` | Shared secret used to validate backend-issued agent requests. |
+| `WORKSPACE_ROOT` | Workspace file root shared with the backend. |
+| `REDIS_URL` | Redis connection used by RAG worker flows. |
+| `S3_ENDPOINT`, `S3_BUCKET_NAME`, `S3_PUBLIC_BASE_URL` | Shared object storage settings for generated artifacts. |
+| `GOOGLE_WORKSPACE_MCP_URL` | Hosted Google Workspace MCP endpoint when delegated tools are enabled. |
+
+## Main API surfaces
+
+### Agent discovery and chat
+
+- `GET /agents`
+- `POST /agents/{agent_name}/workspace/{workspace_id}/chat`
+- `POST /agents/{agent_name}/workspace/{workspace_id}/chat/stream`
+- `POST /agents/{agent_name}/workspace/{workspace_id}/chat/stream/resume`
+- `POST /agents/{agent_name}/workspace/{workspace_id}/chat/stream/respond`
+- `POST /agents/{agent_name}/workspace/{workspace_id}/chat/stream/act`
+
+### RAG helpers
+
+- `POST /rag/workspaces/{workspace_id}/query`
+- `POST /rag/workspaces/{workspace_id}/status`
+
+### Paper-to-slides
+
+- `POST /paper2slides/run`
+- `POST /paper2slides/export-pptx`
+
+## Paper-to-slides notes
+
+`paper2slides` is a staged pipeline that can:
+
+- ingest uploaded source files
+- run RAG-backed analysis
+- generate slide content and assets
+- return a PDF payload and optional PPTX export
+
+The frontend wraps this through backend job endpoints, while the agent service performs the actual generation work.
 
 ## Running with Docker Compose
 
 From the repo root:
 
 ```bash
-docker compose -f infra/docker-compose.yml up --build agent
+docker compose -f infra/docker-compose.yml --env-file env/local/stack.env up --build agent
 ```
-
-Compose will connect the agent to the shared Redis and MinIO services using `env/local/stack.env` if provided.
 
 ## Useful scripts
 
-- `scripts/start_agent.sh` starts the agent in the background and writes logs to `logs/agent.log`.
-- `scripts/test_paper2slides.sh` runs the `paper2slides` pipeline on a local Markdown file.
+- `scripts/start_agent.sh`: starts the agent in the background and writes logs to `logs/agent.log`
+- `scripts/test_paper2slides.sh`: exercises the paper-to-slides pipeline on a local input file
+
+## Related docs
+
+- [../README.md](../README.md)
+- [../docs/environment.md](../docs/environment.md)
+- [lightrag_server/README.md](lightrag_server/README.md)
