@@ -110,7 +110,7 @@ const CollapsibleDrawer: React.FC<CollapsibleDrawerProps> = ({
             startIcon={<Add />}
             sx={{ borderRadius: 2, textTransform: 'none', fontWeight: 600 }}
           >
-            + Create
+            Create
           </Button>
         </Box>
 
