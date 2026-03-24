@@ -1,334 +1,92 @@
-# RBAC For Skills and MCP Servers (Single-Tenant, In-App Groups, OIDC)
+# RBAC For Skills and MCP Servers
 
 ## Summary
-Implement enforceable RBAC for both the repo-wide skills registry (the `SKILL.md` folders under `/Users/cmtest/Documents/HelpUDoc/skills`) AND MCP servers (defined in `runtime.yaml` and managed via the Admin Portal) by:
-1. Upgrading identity to production-grade OIDC on the Node backend (no more trusting `X-User-*` headers for auth).
-2. Adding in-app groups and per-skill/per-MCP-server allow/deny grants stored in Postgres.
-3. Enforcing skill and MCP server visibility/access inside the Python agent service, using a backend-signed internal token so RBAC cannot be bypassed by calling the agent directly.
-4. Locking down the existing "Admin Portal" settings endpoints and UI (skills + MCP servers + runtime config editing) to system admins.
+This document describes the current, preferred RBAC model for HelpUDoc:
 
-## Goals And Non-Goals
-- **Goal**: Admin can control which users/groups can see/use specific skills (global per-user/group, not per-workspace).
-- **Goal**: Admin can control which users/groups can use specific MCP servers.
-- **Goal**: RBAC is enforced server-side (not spoofable by client headers).
-- **Goal**: Admin UI exists for users/groups/skill grants/MCP server grants.
-- **Non-goal**: Restrict tool usage globally (tools remain broadly available); tool allowlists are enforced only as part of skill governance where a skill declares `tools:`.
+1. Admins manage users and in-app groups from the Admin Portal.
+2. Groups control which skills and MCP servers are available to prompting users.
+3. The backend computes effective access from group membership and signs it into the agent token.
+4. The Python agent enforces the policy when listing or loading skills and when exposing MCP servers.
 
----
+This is intentionally simpler than a full deny/default-access model. The goal is to keep the admin experience easy to reason about: "Sales" can get sales skills, "HR" can get HR skills, and a user gets the union of all groups they belong to.
 
-## Authorization Model (Decision Complete)
+## Goals
+- Admin can create multiple groups for different functions or teams.
+- Admin can assign users to one or more groups.
+- Admin can tie relevant skills to each group.
+- Admin can tie relevant MCP servers to each group.
+- The policy is enforced server-side and inside the agent runtime.
+
+## Current Model
 
 ### Principals
-- **User**: authenticated via OIDC, stored in `users` table.
-- **Group**: in-app managed group, stored in `groups` + `group_members`.
-
-### Roles
-- `system_admin`: can manage skills registry, MCP servers, runtime config, users/groups, and grants.
-- Regular users: can use skills/MCP servers subject to grants.
-
-**Bootstrap rule (admin seed)**:
-- Backend env var `ADMIN_EMAILS` (comma-separated) grants `system_admin` on first login, and can be changed later via admin UI.
-
-### Skill Access Rules (Allow-By-Default With Overrides)
-Define a `default_access` per skill:
-- Source of truth: `SKILL.md` frontmatter field `default_access: allow|deny` (missing means `allow`).
-
-Compute effective access for a given user and skill:
-1. If `user.isAdmin == true`: ALLOW.
-2. If any explicit DENY exists for the user (direct) or any of their groups: DENY.
-3. If `default_access == deny`:
-   - ALLOW only if any explicit ALLOW exists for the user or any group.
-   - Otherwise DENY.
-4. If `default_access == allow`:
-   - ALLOW.
-
-Store explicit grants as `(principal, skillId, effect)` where `effect` is `allow|deny`.
-
-### MCP Access Rules (Servers vs Connections)
-We split MCP into two layers:
-- **MCP servers**: endpoint definitions (transport + URL) in `runtime.yaml` (non-secret).
-- **MCP connections**: per-workspace (and optionally per-user) auth bindings stored in Postgres.
-
-RBAC is enforced primarily on **connections** so we do not need to create duplicate MCP
-servers per role/credential.
-
-Companion doc:
-- [`docs/mcp-connections-auth-plan.md`](./mcp-connections-auth-plan.md)
-
-#### MCP Connection Access Rules (Allow-By-Default With Overrides)
-Define `default_access` per MCP connection:
-- Source of truth: `mcp_connections.defaultAccess` (missing means `allow`).
-
-Compute effective access for a given user and MCP connection:
-1. If `user.isAdmin == true`: ALLOW.
-2. If any explicit DENY exists for the user (direct) or any of their groups: DENY.
-3. If `default_access == deny`:
-   - ALLOW only if any explicit ALLOW exists for the user or any group.
-   - Otherwise DENY.
-4. If `default_access == allow`: ALLOW.
-
-Store explicit grants as `(principal, connectionId, effect)` where `effect` is `allow|deny`.
-
-### Tool Allowlist Per Skill (Only When Declared)
-- If a skill declares `tools:` in frontmatter, treat that as its allowed tool set while executing that skill.
-- If a skill does not declare `tools:`, do not enforce a tool allowlist (compatibility with existing skills like `proposal-writing`).
-
----
-
-## Data Model Changes (Backend Postgres)
-Implement via `/Users/cmtest/Documents/HelpUDoc/backend/src/services/databaseService.ts` (this repo uses "create tables on startup", not migrations).
-
-Add tables and columns:
-
-### 1. `users`
-- Add `isAdmin boolean not null default false`
-- Add `oidcIssuer text` and `oidcSubject text` (or store them combined in `externalId`; recommended is `externalId = issuer|sub` and keep these optional for debugging/audit)
-
-### 2. `groups`
-- `id uuid pk`
-- `name text unique not null`
-- `createdAt`, `updatedAt`
-
-### 3. `group_members`
-- `groupId uuid fk -> groups(id) on delete cascade`
-- `userId uuid fk -> users(id) on delete cascade`
-- `createdAt`, `updatedAt`
-- PK `(groupId, userId)`
-
-### 4. `skill_grants`
-- `id bigserial pk` (or composite PK; bigserial is simplest for updates)
-- `principalType text not null` enum-like: `user|group`
-- `principalId uuid not null` (references users/groups by type)
-- `skillId text not null`
-- `effect text not null` enum-like: `allow|deny`
-- `createdAt`, `updatedAt`
-- Unique index on `(principalType, principalId, skillId)`
-
-### 5. `mcp_connection_grants` (NEW)
-- `id bigserial pk`
-- `principalType text not null` enum-like: `user|group`
-- `principalId uuid not null` (references users/groups by type)
-- `connectionId uuid not null` (references `mcp_connections.id`)
-- `effect text not null` enum-like: `allow|deny`
-- `createdAt`, `updatedAt`
-- Unique index on `(principalType, principalId, connectionId)`
-
-### 6. `mcp_connections` (NEW)
-- `id uuid pk`
-- `workspaceId uuid fk -> workspaces(id) on delete cascade`
-- `name text not null`
-- `serverId text not null` (references `runtime.yaml` server `name`)
-- `authType text not null` (`none|static_header|oauth_delegated|oidc_federation|custom`)
-- `defaultAccess text not null default 'allow'`
-- `createdAt`, `updatedAt`
-
----
-
-## Backend API Changes (Node)
-
-### Authentication (OIDC)
-Add routes under `/api/auth/*` in a new file, e.g. `/Users/cmtest/Documents/HelpUDoc/backend/src/api/auth.ts`, and mount from `/Users/cmtest/Documents/HelpUDoc/backend/src/api/routes.ts`.
-
-Use `openid-client` (recommended) and `express-session` (already present in `/Users/cmtest/Documents/HelpUDoc/backend/src/index.ts`) to implement:
-- `GET /api/auth/login`: redirect to IdP authorize endpoint (PKCE).
-- `GET /api/auth/callback`: exchange code, validate ID token, upsert user, set `req.session.userContext`.
-- `POST /api/auth/logout`: destroy session.
-- `GET /api/auth/me`: return current user context + `isAdmin`.
-
-Config env vars:
-- `OIDC_ISSUER_URL`
-- `OIDC_CLIENT_ID`
-- `OIDC_CLIENT_SECRET` (if needed by IdP)
-- `OIDC_REDIRECT_URL`
-- `OIDC_POST_LOGOUT_REDIRECT_URL`
-- `ADMIN_EMAILS`
-
-Keep current header-based user context only for dev via a flag:
-- `AUTH_MODE=oidc|headers` (default `oidc` in production, `headers` for local dev if desired).
-- In `headers` mode, continue honoring `X-User-*` in `/Users/cmtest/Documents/HelpUDoc/backend/src/middleware/userContext.ts`.
-- In `oidc` mode, ignore headers and require session user.
-
-### Admin Enforcement Middleware
-Add:
-- `requireAuth(req)` ensures `req.userContext` exists.
-- `requireAdmin(req)` ensures current user has `isAdmin`.
-
-Apply `requireAdmin` to all existing settings endpoints in `/Users/cmtest/Documents/HelpUDoc/backend/src/api/settings.ts`:
-- `/settings/agent-config` read/write
-- `/settings/skills` CRUD and file edits
-- `/settings/mcp-servers` CRUD (NEW section below)
-
-### RBAC Admin APIs (Groups + Grants)
-Add routes under `/api/admin/*` (new router file, mounted in `/Users/cmtest/Documents/HelpUDoc/backend/src/api/routes.ts`), all protected by `requireAdmin`:
-
-#### Users
-- `GET /api/admin/users` list users
-- `PATCH /api/admin/users/:userId` set `isAdmin` true/false
-
-#### Groups
-- `GET /api/admin/groups` list groups with member counts
-- `POST /api/admin/groups` create group
-- `DELETE /api/admin/groups/:groupId` delete group
-- `GET /api/admin/groups/:groupId/members` list members
-- `POST /api/admin/groups/:groupId/members` add member by userId (and optionally by email lookup)
-- `DELETE /api/admin/groups/:groupId/members/:userId` remove member
-
-#### Skill Grants
-- `GET /api/admin/skill-grants?skillId=...` list grants for a skill
-- `PUT /api/admin/skill-grants` upsert a grant (principalType, principalId, skillId, effect)
-- `DELETE /api/admin/skill-grants` delete a grant
-
-#### MCP Connections (NEW)
-- `GET /api/admin/mcp-connections?workspaceId=...` list connections
-- `POST /api/admin/mcp-connections` create connection (workspaceId, name, serverId, authType, defaultAccess)
-- `PATCH /api/admin/mcp-connections/:id` update
-- `DELETE /api/admin/mcp-connections/:id` delete
-
-#### MCP Connection Grants (NEW)
-- `GET /api/admin/mcp-connection-grants?connectionId=...` list grants
-- `PUT /api/admin/mcp-connection-grants` upsert a grant (principalType, principalId, connectionId, effect)
-- `DELETE /api/admin/mcp-connection-grants` delete a grant
-
-### Effective Access Endpoint (Non-Admin)
-Add a non-admin endpoint for runtime use:
-- `GET /api/access/effective` returns the caller's effective skill and MCP server access:
-  - `deniedSkillIds`
-  - `allowedSkillIdsForDefaultDeny`
-  - `deniedMcpConnectionIds`
-  - `allowedMcpConnectionIdsForDefaultDeny`
-
-This supports UI hints and backend→agent policy generation.
-
----
-
-## Agent Service Enforcement (Python FastAPI)
-
-### Internal Auth Between Backend And Agent
-Goal: prevent bypass by direct calls to the agent service.
-
-Add an internal bearer token that the backend attaches to every request to the agent:
-- Backend signs a JWT with `AGENT_INTERNAL_JWT_SECRET` (HS256) including:
-  - `userExternalId` (or backend userId)
-  - `workspaceId`
-  - `isAdmin`
-  - `skillDenyIds` (array of skill ids)
-  - `skillAllowIds` (array of skill ids; only needed for default_access=deny skills)
-  - Transitional (server-level only): `mcpServerDenyIds` / `mcpServerAllowIds`
-  - Preferred (connection-level): `mcpConnectionDenyIds` / `mcpConnectionAllowIds`
-  - `iat`, `exp` short TTL (5 minutes)
-
-Agent service verifies this JWT on:
-- `/agents/{agent_name}/workspace/{workspace_id}/chat`
-- `/agents/{agent_name}/workspace/{workspace_id}/chat/stream`
-- (Optional but recommended) `/rag/workspaces/{workspace_id}/query` and `/rag/workspaces/{workspace_id}/status` if those are reachable outside the cluster.
-
-Implementation touchpoints:
-- `/Users/cmtest/Documents/HelpUDoc/backend/src/services/agentService.ts` to attach `Authorization: Bearer <jwt>` to axios requests.
-- `/Users/cmtest/Documents/HelpUDoc/agent/helpudoc_agent/app.py` to validate the JWT and extract the policy into `runtime.workspace_state.context`, for example:
-  - `runtime.workspace_state.context["skill_policy"] = {...}`
-  - `runtime.workspace_state.context["mcp_policy"] = {...}`
-
-Dependencies:
-- Add `pyjwt` to `/Users/cmtest/Documents/HelpUDoc/agent/requirements.txt`.
-
-### Skill RBAC Enforcement Inside Tools
-Modify `/Users/cmtest/Documents/HelpUDoc/agent/helpudoc_agent/tools_and_schemas.py`:
-- In `_build_list_skills_tool`:
-  - Load skills from disk as today.
-  - Filter to skills the current user is allowed to access using `skill_policy` from context plus per-skill `default_access` parsed from SKILL.md frontmatter.
-- In `_build_load_skill_tool`:
-  - Deny loading content for disallowed skills (return a clear "Access denied" message).
-  - If allowed, return the content.
-
-This is the core enforcement point that prevents non-admins from discovering/loading restricted skills.
-
-### MCP Connections RBAC + Credential Enforcement (NEW)
-See:
-- [`docs/mcp-server-registry-plan.md`](./mcp-server-registry-plan.md) (server registry + tool attachment)
-- [`docs/mcp-connections-auth-plan.md`](./mcp-connections-auth-plan.md) (connections + auth broker)
-
-The long-term enforcement happens by:
-1. Backend computing allowed **connectionIds** via grants + defaultAccess.
-2. Backend minting per-request auth headers/tokens for each allowed connection.
-3. Agent using only the allowed connections and only ephemeral credentials.
-
----
-
-## Frontend Changes (Admin UI + OIDC)
-
-### Auth UI
-Update `/Users/cmtest/Documents/HelpUDoc/frontend/src/auth/AuthProvider.tsx` and `/Users/cmtest/Documents/HelpUDoc/frontend/src/pages/LoginPage.tsx`:
-- Replace localStorage-based "user identity" with cookie session:
-  - On app load, call `/api/auth/me` via `/Users/cmtest/Documents/HelpUDoc/frontend/src/services/apiClient.ts`.
-  - If 401, show LoginPage with a "Continue" button that navigates to `/api/auth/login`.
-- Keep a dev-only bypass if desired behind `import.meta.env.DEV`.
-
-Update `/Users/cmtest/Documents/HelpUDoc/frontend/src/services/apiClient.ts`:
-- Remove `X-User-*` headers in OIDC mode (or keep only when `AUTH_MODE=headers`).
-
-### Admin Pages
-Implement the previously "coming soon" Users page and add group/grant management.
-
-Recommended placement:
-- Keep `/settings/agents` for skill registry editing (admin-only anyway).
-- Implement `/settings/users` as "Access Control":
-  - Users table: email, display name, isAdmin toggle.
-  - Groups panel: create/delete group, add/remove members.
-  - Skill access panel: select skill, view current grants, add allow/deny grants for groups/users.
-  - MCP server access panel: select MCP server, view current grants, add allow/deny grants for groups/users. **NEW**
-
-Frontend touchpoints:
-- `/Users/cmtest/Documents/HelpUDoc/frontend/src/pages/UsersPage.tsx` (replace placeholder).
-- Add new service module `/Users/cmtest/Documents/HelpUDoc/frontend/src/services/adminRbacApi.ts` for the new endpoints.
-
-Also add route guards:
-- If user is not admin and tries to navigate to `/settings/*`, show a 403 page or redirect to `/`.
-
----
-
-## Tests
-
-### Backend (Node)
-Add unit tests for skill/MCP server access evaluation logic (pure function):
-- Cases:
-  - admin overrides everything
-  - default allow + deny grant denies
-  - default deny + allow grant allows
-  - user grant overrides group grant (deny wins if both present)
-
-If no Node test runner exists yet, add a minimal one (recommended: `vitest`) or keep tests as lightweight TypeScript scripts invoked by CI.
-
-### Agent (Python)
-Add tests under `/Users/cmtest/Documents/HelpUDoc/tests`:
-- `list_skills` filters restricted skills when policy denies
-- `load_skill` denies restricted skill
-- `load_skill` allows permitted skill
-- MCP server filtering respects policy
-- JWT verification rejects missing/expired/invalid token (for chat endpoints)
-
-### E2E (Frontend)
-Extend Playwright spec(s) to validate:
-- Non-admin cannot open `/settings/agents` and cannot fetch `/api/settings/skills`.
-- Admin can open and edit skills.
-- Non-admin cannot see restricted MCP servers in agent responses.
-
----
-
-## Rollout Plan
-1. Land OIDC auth + `AUTH_MODE` toggle (keep headers mode for local dev).
-2. Add `isAdmin` and admin enforcement on existing settings endpoints.
-3. Add groups + grants tables and admin APIs (skills + MCP servers).
-4. Add Admin UI for users/groups/grants (including MCP servers).
-5. Add backend→agent internal JWT + skill filtering in agent tools.
-6. Implement MCP server registry with `langchain-mcp-adapters` integration.
-7. Add MCP server filtering based on `mcp_policy` in agent.
-8. Harden: optionally require internal JWT for RAG endpoints too, if externally reachable.
-
----
-
-## Assumptions And Defaults
-- Single-tenant instance, so no `tenantId` column is required.
-- Skills live on a shared filesystem across users (current behavior).
-- Default skill access is `allow` unless `default_access: deny` is set in SKILL.md frontmatter.
-- Default MCP server access is `allow` unless `default_access: deny` is set in runtime.yaml config.
-- Tools are globally allowed; RBAC is primarily about skill visibility/access, MCP server access, and admin-only skill/MCP registry editing.
+- `user`: stored in `users`
+- `group`: stored in `groups`
+- `group_members`: joins users to groups
+
+### Access Rules
+- If `users.isAdmin == true`, the user can access all skills and all MCP servers.
+- Otherwise, the effective access is the union of all skill grants and MCP server grants attached to the user’s groups.
+- There are no deny rules in the current implementation.
+- A user with no grants sees no restricted skills or MCP servers.
+
+### Storage
+- `skill_grants` stores group skill allowlists using `principalType = 'group'`.
+- `mcp_server_group_grants` stores group MCP server allowlists.
+- Grants are normalized and deduplicated before save.
+
+## Backend Flow
+
+### Effective Access
+- `UserService.getEffectivePromptAccess(userId)` resolves:
+  - whether the user is a system admin
+  - allowed skill ids from all group memberships
+  - allowed MCP server ids from all group memberships
+
+### Slash Metadata
+- `/api/agent/slash-metadata` filters available skills and MCP servers by the caller’s effective access.
+- Admins see the full catalog.
+- Non-admins see only what their groups allow.
+
+### Runtime Token
+- The backend signs the effective access into the agent JWT.
+- The token includes `skillAllowIds` plus the resolved MCP policy.
+- The agent does not infer RBAC from client headers.
+
+### User Deletion
+- Admins can delete users from `/settings/users`.
+- Deletion removes owned workspaces, memberships, OAuth tokens, and authored references.
+- Shared records keep history, but user references are detached where needed.
+
+## Agent Enforcement
+
+### Skills
+- `list_skills` only returns allowed skills.
+- `load_skill` denies loading a skill that is not allowed for the current user.
+- Embedded `/skill` directives are rejected if the selected skill is not allowed.
+
+### MCP Servers
+- The runtime only exposes MCP servers that the backend marked as allowed for the user.
+- The Python agent uses the signed policy from the backend, not raw request headers.
+
+## Admin UI
+- `/settings/users` is the control surface for:
+  - system admin toggles
+  - user deletion
+  - group creation/deletion
+  - group membership
+  - group skill allowlists
+  - group MCP server allowlists
+- `/settings/agents` remains the skill registry and tools settings area.
+
+## Assumptions
+- Single-tenant deployment.
+- Group-based allowlists are enough for v1.
+- Skills are global across the workspace and are not workspace-specific.
+- MCP server access is also global for prompting users in this implementation.
+- Existing workspace-level MCP policies remain separate from group-based prompt RBAC.
+
+## Follow-Up Ideas
+- Add deny rules later only if we have a concrete product need.
+- Add audit events for grant changes and user deletion.
+- Consider a read-only "effective access" view for debugging group membership and grant issues.
