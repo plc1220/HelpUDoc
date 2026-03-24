@@ -30,6 +30,7 @@ from .skills_registry import (
     build_loaded_skill_text,
     collect_tool_names,
     find_skill,
+    is_skill_allowed,
     load_skills,
     read_skill_content,
 )
@@ -450,6 +451,11 @@ def create_app() -> FastAPI:
                 f"The user explicitly selected skill '{skill_id}', but it was not found in the configured skills registry.\n\n"
                 f"User request:\n{fallback_request}"
             )
+        if not is_skill_allowed(skill, runtime.workspace_state.context):
+            return (
+                f"The user explicitly selected skill '{skill.skill_id}', but it is not allowed for this user.\n\n"
+                f"User request:\n{fallback_request}"
+            )
         try:
             content = read_skill_content(skill)
         except Exception as exc:
@@ -525,6 +531,9 @@ def create_app() -> FastAPI:
         user_id = payload.get("userId") or payload.get("sub")
         if isinstance(user_id, str) and user_id.strip():
             context["user_id"] = user_id.strip()
+        skill_allow_ids = payload.get("skillAllowIds") or []
+        if isinstance(skill_allow_ids, list):
+            context["skill_allow_ids"] = [str(x).strip() for x in skill_allow_ids if str(x).strip()]
         allow_ids = payload.get("mcpServerAllowIds") or []
         deny_ids = payload.get("mcpServerDenyIds") or []
         is_admin = bool(payload.get("isAdmin", False))

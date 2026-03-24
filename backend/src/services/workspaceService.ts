@@ -245,20 +245,16 @@ export class WorkspaceService {
       throw new AccessDeniedError('Only workspace owners can delete a workspace');
     }
 
-    await this.db('workspaces').where({ id: workspace.id }).del();
+    await this.performWorkspaceDeletion(workspace.id);
+  }
 
-    const workspacePath = path.join(WORKSPACE_DIR, workspace.id);
-    await fs.rm(workspacePath, { recursive: true, force: true });
-    try {
-      await this.s3Service.deletePrefix(`${workspace.id}/`);
-    } catch (error) {
-      console.error(`Failed to delete S3 objects for workspace: ${workspace.id}`, error);
+  async deleteWorkspaceForCleanup(workspaceId: string): Promise<boolean> {
+    const workspace = await this.db<WorkspaceRecord>('workspaces').where({ id: workspaceId }).first();
+    if (!workspace) {
+      return false;
     }
-    try {
-      await this.ragQueueService?.enqueueWorkspaceDelete({ workspaceId: workspace.id });
-    } catch (error) {
-      console.error(`Failed to enqueue RAG workspace delete job: ${workspace.id}`, error);
-    }
+    await this.performWorkspaceDeletion(workspace.id);
+    return true;
   }
 
   async addCollaborator(
@@ -329,6 +325,30 @@ export class WorkspaceService {
   private async createWorkspaceDirectory(workspaceId: string): Promise<void> {
     const workspacePath = path.join(WORKSPACE_DIR, workspaceId);
     await fs.mkdir(workspacePath, { recursive: true });
+  }
+
+  async cleanupWorkspaceArtifacts(workspaceId: string): Promise<void> {
+    await this.performWorkspaceCleanup(workspaceId);
+  }
+
+  private async performWorkspaceDeletion(workspaceId: string): Promise<void> {
+    await this.db('workspaces').where({ id: workspaceId }).del();
+    await this.performWorkspaceCleanup(workspaceId);
+  }
+
+  private async performWorkspaceCleanup(workspaceId: string): Promise<void> {
+    const workspacePath = path.join(WORKSPACE_DIR, workspaceId);
+    await fs.rm(workspacePath, { recursive: true, force: true });
+    try {
+      await this.s3Service.deletePrefix(`${workspaceId}/`);
+    } catch (error) {
+      console.error(`Failed to delete S3 objects for workspace: ${workspaceId}`, error);
+    }
+    try {
+      await this.ragQueueService?.enqueueWorkspaceDelete({ workspaceId });
+    } catch (error) {
+      console.error(`Failed to enqueue RAG workspace delete job: ${workspaceId}`, error);
+    }
   }
 
   private normalizeWorkspaceName(name?: string | null): string {

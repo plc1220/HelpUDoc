@@ -29,6 +29,7 @@ import {
 import { blockingRedisClient } from '../services/redisService';
 import { signAgentContextToken } from '../services/agentToken';
 import { GoogleOAuthService, GoogleOAuthTokenMissingError } from '../services/googleOAuthService';
+import { UserService } from '../services/userService';
 
 const DEFAULT_PRESENTATION_PERSONA = 'fast';
 const IMAGE_NAME_PATTERN = /\.(png|jpe?g|gif|bmp|webp|svg)$/i;
@@ -61,6 +62,15 @@ type SlashSkillMetadata = {
   error?: string;
   warning?: string;
 };
+
+type EffectiveAgentPolicy = {
+  isAdmin: boolean;
+  skillAllowIds: string[];
+  mcpServerAllowIds: string[];
+  mcpServerDenyIds: string[];
+};
+
+const normalizeUniqueIds = (values: string[]) => Array.from(new Set(values.map((value) => value.trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b));
 
 const extractFrontmatterString = (frontmatter: Record<string, unknown>, key: string): string | undefined => {
   const value = frontmatter[key];
@@ -188,6 +198,7 @@ export default function(
   workspaceService: WorkspaceService,
   fileService: FileService,
   googleOAuthService: GoogleOAuthService,
+  userService: UserService,
 ) {
   const router = Router();
   const paper2SlidesService = new Paper2SlidesService(fileService);
@@ -253,11 +264,19 @@ export default function(
 
   router.get('/slash-metadata', async (req, res) => {
     try {
-      requireUserContext(req);
+      const user = requireUserContext(req);
+      const promptAccess = await userService.getEffectivePromptAccess(user.userId);
+      if (!promptAccess) {
+        throw new HttpError(401, 'User not found');
+      }
       await fs.mkdir(skillsRoot, { recursive: true });
       const skillIds = await collectSkillIds(skillsRoot);
       const skills: SlashSkillMetadata[] = [];
+      const allowedSkillIds = new Set(promptAccess.skillIds);
       for (const skillId of skillIds) {
+        if (!promptAccess.isAdmin && !allowedSkillIds.has(skillId)) {
+          continue;
+        }
         try {
           skills.push(await getSkillMetadata(skillId));
         } catch (error) {
@@ -271,11 +290,13 @@ export default function(
         }
       }
 
+      const allowedMcpServerIds = new Set(promptAccess.mcpServerIds);
       const mcpServers = (await loadRuntimeMcpServers())
         .map((server) => ({
           name: typeof server.name === 'string' ? server.name.trim() : '',
           description: undefined as string | undefined,
         }))
+        .filter((server) => promptAccess.isAdmin || allowedMcpServerIds.has(server.name))
         .filter((server) => server.name);
 
       res.json({ skills, mcpServers });
@@ -342,11 +363,7 @@ export default function(
   const buildAgentAuthToken = async (input: {
     userId: string;
     workspaceId: string;
-    policy: {
-      isAdmin: boolean;
-      mcpServerAllowIds: string[];
-      mcpServerDenyIds: string[];
-    };
+    policy: EffectiveAgentPolicy;
     skipPlanApprovals?: boolean;
   }): Promise<string | null> => {
     const payload: Record<string, unknown> = {
@@ -400,6 +417,61 @@ export default function(
     }
 
     return signAgentContextToken(payload);
+  };
+
+  const resolveEffectiveAgentPolicy = async (
+    userId: string,
+    workspacePolicy: {
+      mcpServerAllowIds: string[];
+      mcpServerDenyIds: string[];
+    },
+  ): Promise<EffectiveAgentPolicy> => {
+    const promptAccess = await userService.getEffectivePromptAccess(userId);
+    if (!promptAccess) {
+      throw new HttpError(401, 'User not found');
+    }
+    if (promptAccess.isAdmin) {
+      return {
+        isAdmin: true,
+        skillAllowIds: [],
+        mcpServerAllowIds: [],
+        mcpServerDenyIds: [],
+      };
+    }
+
+    const configuredServers = await loadRuntimeMcpServers();
+    const groupAllowedServerIds = new Set(promptAccess.mcpServerIds);
+    const workspaceAllowIds = new Set(normalizeUniqueIds(workspacePolicy.mcpServerAllowIds || []));
+    const workspaceDenyIds = new Set(normalizeUniqueIds(workspacePolicy.mcpServerDenyIds || []));
+    const finalAllowIds = new Set<string>();
+    const finalDenyIds = new Set<string>(workspaceDenyIds);
+
+    configuredServers.forEach((server) => {
+      const serverId = typeof server.name === 'string' ? server.name.trim() : '';
+      if (!serverId) {
+        return;
+      }
+      if (!groupAllowedServerIds.has(serverId)) {
+        finalDenyIds.add(serverId);
+        return;
+      }
+      if (workspaceDenyIds.has(serverId)) {
+        finalDenyIds.add(serverId);
+        return;
+      }
+      if (normalizeDefaultAccess(server.default_access ?? server.defaultAccess) === 'deny' && !workspaceAllowIds.has(serverId)) {
+        finalDenyIds.add(serverId);
+        return;
+      }
+      finalAllowIds.add(serverId);
+    });
+
+    return {
+      isAdmin: false,
+      skillAllowIds: normalizeUniqueIds(promptAccess.skillIds),
+      mcpServerAllowIds: Array.from(finalAllowIds).sort((a, b) => a.localeCompare(b)),
+      mcpServerDenyIds: Array.from(finalDenyIds).sort((a, b) => a.localeCompare(b)),
+    };
   };
 
   router.post('/paper2slides/jobs', async (req, res) => {
@@ -538,7 +610,8 @@ export default function(
     try {
       const user = requireUserContext(req);
       const { persona, prompt, workspaceId, history, forceReset } = runAgentSchema.parse(req.body);
-      const policy = await workspaceService.getMcpServerPolicy(workspaceId, user.userId, { requireEdit: true });
+      const workspacePolicy = await workspaceService.getMcpServerPolicy(workspaceId, user.userId, { requireEdit: true });
+      const policy = await resolveEffectiveAgentPolicy(user.userId, workspacePolicy);
       const settings = await workspaceService.getWorkspaceSettings(workspaceId, user.userId, { requireEdit: true });
       const enrichedPrompt = await injectTaggedFileUrls(prompt, workspaceId, user.userId);
       const authToken = await buildAgentAuthToken({
@@ -583,7 +656,8 @@ export default function(
     try {
       const user = requireUserContext(req);
       const { persona, prompt, workspaceId, history, forceReset } = runAgentSchema.parse(req.body);
-      const policy = await workspaceService.getMcpServerPolicy(workspaceId, user.userId, { requireEdit: true });
+      const workspacePolicy = await workspaceService.getMcpServerPolicy(workspaceId, user.userId, { requireEdit: true });
+      const policy = await resolveEffectiveAgentPolicy(user.userId, workspacePolicy);
       const settings = await workspaceService.getWorkspaceSettings(workspaceId, user.userId, { requireEdit: true });
       const enrichedPrompt = await injectTaggedFileUrls(prompt, workspaceId, user.userId);
       const authToken = await buildAgentAuthToken({
@@ -640,7 +714,8 @@ export default function(
       const user = requireUserContext(req);
       const { persona, prompt, workspaceId, history, forceReset, turnId } = runAgentSchema.parse(req.body);
       await workspaceService.ensureMembership(workspaceId, user.userId, { requireEdit: true });
-      const policy = await workspaceService.getMcpServerPolicy(workspaceId, user.userId, { requireEdit: true });
+      const workspacePolicy = await workspaceService.getMcpServerPolicy(workspaceId, user.userId, { requireEdit: true });
+      const policy = await resolveEffectiveAgentPolicy(user.userId, workspacePolicy);
       const settings = await workspaceService.getWorkspaceSettings(workspaceId, user.userId, { requireEdit: true });
       const enrichedPrompt = await injectTaggedFileUrls(prompt, workspaceId, user.userId);
       const authToken = await buildAgentAuthToken({
@@ -705,7 +780,8 @@ export default function(
         return res.status(404).json({ error: 'Run not found' });
       }
       await workspaceService.ensureMembership(meta.workspaceId, user.userId, { requireEdit: true });
-      const policy = await workspaceService.getMcpServerPolicy(meta.workspaceId, user.userId, { requireEdit: true });
+      const workspacePolicy = await workspaceService.getMcpServerPolicy(meta.workspaceId, user.userId, { requireEdit: true });
+      const policy = await resolveEffectiveAgentPolicy(user.userId, workspacePolicy);
       const settings = await workspaceService.getWorkspaceSettings(meta.workspaceId, user.userId, { requireEdit: true });
       const authToken = await buildAgentAuthToken({
         userId: user.userId,
@@ -761,7 +837,8 @@ export default function(
         return res.status(404).json({ error: 'Run not found' });
       }
       await workspaceService.ensureMembership(meta.workspaceId, user.userId, { requireEdit: true });
-      const policy = await workspaceService.getMcpServerPolicy(meta.workspaceId, user.userId, { requireEdit: true });
+      const workspacePolicy = await workspaceService.getMcpServerPolicy(meta.workspaceId, user.userId, { requireEdit: true });
+      const policy = await resolveEffectiveAgentPolicy(user.userId, workspacePolicy);
       const settings = await workspaceService.getWorkspaceSettings(meta.workspaceId, user.userId, { requireEdit: true });
       const authToken = await buildAgentAuthToken({
         userId: user.userId,
@@ -805,7 +882,8 @@ export default function(
         return res.status(404).json({ error: 'Run not found' });
       }
       await workspaceService.ensureMembership(meta.workspaceId, user.userId, { requireEdit: true });
-      const policy = await workspaceService.getMcpServerPolicy(meta.workspaceId, user.userId, { requireEdit: true });
+      const workspacePolicy = await workspaceService.getMcpServerPolicy(meta.workspaceId, user.userId, { requireEdit: true });
+      const policy = await resolveEffectiveAgentPolicy(user.userId, workspacePolicy);
       const settings = await workspaceService.getWorkspaceSettings(meta.workspaceId, user.userId, { requireEdit: true });
       const authToken = await buildAgentAuthToken({
         userId: user.userId,

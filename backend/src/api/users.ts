@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { UserService } from '../services/userService';
+import { WorkspaceService } from '../services/workspaceService';
 
 const updateAdminSchema = z.object({
   isAdmin: z.boolean(),
@@ -14,7 +15,12 @@ const groupMemberSchema = z.object({
   userId: z.string().uuid(),
 });
 
-export default function usersRoutes(userService: UserService) {
+const groupPromptAccessSchema = z.object({
+  skillIds: z.array(z.string().min(1)).default([]),
+  mcpServerIds: z.array(z.string().min(1)).default([]),
+});
+
+export default function usersRoutes(userService: UserService, workspaceService: WorkspaceService) {
   const router = Router();
 
   router.get('/', async (_req, res) => {
@@ -41,6 +47,51 @@ export default function usersRoutes(userService: UserService) {
       }
       console.error('Failed to update admin role', error);
       res.status(500).json({ error: 'Failed to update admin role' });
+    }
+  });
+
+  router.get('/:userId/deletion-impact', async (req, res) => {
+    try {
+      const impact = await userService.getUserDeletionImpact(req.params.userId);
+      if (!impact) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+      res.json(impact);
+    } catch (error) {
+      console.error('Failed to load user deletion impact', error);
+      res.status(500).json({ error: 'Failed to load user deletion impact' });
+    }
+  });
+
+  router.delete('/:userId', async (req, res) => {
+    try {
+      if (!req.userContext) {
+        return res.status(401).json({ error: 'Missing user context' });
+      }
+      if (req.userContext.userId === req.params.userId) {
+        return res.status(400).json({ error: 'You cannot delete your own account from the admin portal' });
+      }
+
+      const user = await userService.getUserById(req.params.userId);
+      if (!user) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+
+      const ownedWorkspaces = await userService.listOwnedWorkspaces(user.id);
+      await userService.deleteUser(user.id);
+
+      for (const workspace of ownedWorkspaces) {
+        try {
+          await workspaceService.cleanupWorkspaceArtifacts(workspace.id);
+        } catch (error) {
+          console.error(`Failed to clean up workspace artifacts for deleted user workspace: ${workspace.id}`, error);
+        }
+      }
+
+      res.status(204).send();
+    } catch (error) {
+      console.error('Failed to delete user', error);
+      res.status(500).json({ error: 'Failed to delete user' });
     }
   });
 
@@ -78,6 +129,36 @@ export default function usersRoutes(userService: UserService) {
     } catch (error) {
       console.error('Failed to delete group', error);
       res.status(500).json({ error: 'Failed to delete group' });
+    }
+  });
+
+  router.get('/groups/:groupId/access', async (req, res) => {
+    try {
+      const access = await userService.getGroupPromptAccess(req.params.groupId);
+      if (!access) {
+        return res.status(404).json({ error: 'Group not found' });
+      }
+      res.json(access);
+    } catch (error) {
+      console.error('Failed to load group access', error);
+      res.status(500).json({ error: 'Failed to load group access' });
+    }
+  });
+
+  router.put('/groups/:groupId/access', async (req, res) => {
+    try {
+      const payload = groupPromptAccessSchema.parse(req.body);
+      const access = await userService.replaceGroupPromptAccess(req.params.groupId, payload);
+      if (!access) {
+        return res.status(404).json({ error: 'Group not found' });
+      }
+      res.json(access);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: error.issues[0]?.message || 'Invalid payload' });
+      }
+      console.error('Failed to update group access', error);
+      res.status(500).json({ error: 'Failed to update group access' });
     }
   });
 

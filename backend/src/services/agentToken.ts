@@ -26,6 +26,7 @@ export type AgentContextTokenPayload = {
   sub?: string;
   userId?: string;
   workspaceId?: string;
+  skillAllowIds?: string[];
   mcpServerAllowIds?: string[];
   mcpServerDenyIds?: string[];
   mcpAuth?: Record<string, Record<string, string>>;

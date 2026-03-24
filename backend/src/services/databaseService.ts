@@ -26,6 +26,7 @@ export class DatabaseService {
     await this.createGroupsTable();
     await this.createGroupMembersTable();
     await this.createSkillGrantsTable();
+    await this.createMcpServerGroupGrantsTable();
     await this.createWorkspacesTable();
     await this.createWorkspaceMembersTable();
     await this.createMcpServerGrantsTable();
@@ -189,6 +190,24 @@ export class DatabaseService {
       await this.ensureColumn('workspaces', 'ownerId', (table) => table.uuid('ownerId'));
       await this.ensureColumn('workspaces', 'lastModifiedBy', (table) => table.uuid('lastModifiedBy'));
       await this.ensureColumn('workspaces', 'skipPlanApprovals', (table) => table.boolean('skipPlanApprovals').notNullable().defaultTo(false));
+    }
+  }
+
+  private async createMcpServerGroupGrantsTable(): Promise<void> {
+    const exists = await this.db.schema.hasTable('mcp_server_group_grants');
+    if (!exists) {
+      await this.db.schema.createTable('mcp_server_group_grants', (table) => {
+        table.uuid('groupId').notNullable().references('id').inTable('groups').onDelete('CASCADE');
+        table.string('serverId').notNullable();
+        table.timestamp('createdAt').notNullable().defaultTo(this.db.fn.now());
+        table.timestamp('updatedAt').notNullable().defaultTo(this.db.fn.now());
+        table.primary(['groupId', 'serverId']);
+      });
+      console.log('Created "mcp_server_group_grants" table.');
+    } else {
+      await this.ensureColumn('mcp_server_group_grants', 'serverId', (table) => table.string('serverId').notNullable());
+      await this.ensureColumn('mcp_server_group_grants', 'createdAt', (table) => table.timestamp('createdAt').defaultTo(this.db.fn.now()));
+      await this.ensureColumn('mcp_server_group_grants', 'updatedAt', (table) => table.timestamp('updatedAt').defaultTo(this.db.fn.now()));
     }
   }
 
