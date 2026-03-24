@@ -78,11 +78,16 @@ export default function usersRoutes(userService: UserService, workspaceService: 
       }
 
       const ownedWorkspaces = await userService.listOwnedWorkspaces(user.id);
+      await userService.deleteUser(user.id);
+
       for (const workspace of ownedWorkspaces) {
-        await workspaceService.deleteWorkspaceForCleanup(workspace.id);
+        try {
+          await workspaceService.cleanupWorkspaceArtifacts(workspace.id);
+        } catch (error) {
+          console.error(`Failed to clean up workspace artifacts for deleted user workspace: ${workspace.id}`, error);
+        }
       }
 
-      await userService.deleteUser(user.id);
       res.status(204).send();
     } catch (error) {
       console.error('Failed to delete user', error);

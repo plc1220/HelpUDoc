@@ -105,10 +105,11 @@ const UsersPage = () => {
       setUsers(loadedUsers);
       setGroups(loadedGroups);
       if (loadedGroups.length) {
-        const nextGroupId = selectedGroupId && loadedGroups.some((group) => group.id === selectedGroupId)
-          ? selectedGroupId
-          : loadedGroups[0].id;
-        setSelectedGroupId(nextGroupId);
+        setSelectedGroupId((currentGroupId) => (
+          currentGroupId && loadedGroups.some((group) => group.id === currentGroupId)
+            ? currentGroupId
+            : loadedGroups[0].id
+        ));
       } else {
         setSelectedGroupId('');
         setGroupMembers([]);
@@ -120,7 +121,7 @@ const UsersPage = () => {
     } finally {
       setLoading(false);
     }
-  }, [selectedGroupId]);
+  }, []);
 
   const loadPromptCatalog = useCallback(async () => {
     setCatalogLoading(true);
