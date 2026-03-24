@@ -352,6 +352,25 @@ def _coerce_active_skill_scope(active_skill: SkillMetadata | dict[str, Any] | No
     return None
 
 
+def is_skill_allowed(
+    skill: SkillMetadata | str,
+    context: dict[str, Any] | None,
+) -> bool:
+    if not isinstance(context, dict):
+        return True
+    mcp_policy = context.get("mcp_policy")
+    if isinstance(mcp_policy, dict) and bool(mcp_policy.get("isAdmin", False)):
+        return True
+    allowed_skill_ids = context.get("skill_allow_ids")
+    if not isinstance(allowed_skill_ids, list):
+        return True
+    normalized_allowed = {str(item).strip() for item in allowed_skill_ids if str(item).strip()}
+    if not normalized_allowed:
+        return False
+    skill_id = skill.skill_id if isinstance(skill, SkillMetadata) else str(skill).strip()
+    return skill_id in normalized_allowed
+
+
 def is_tool_allowed(
     tool_name: str,
     active_skill: SkillMetadata | dict[str, Any] | None,

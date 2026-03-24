@@ -19,6 +19,27 @@ export interface GroupRecord {
   updatedAt: string;
 }
 
+export interface GroupPromptAccess {
+  skillIds: string[];
+  mcpServerIds: string[];
+}
+
+export interface EffectivePromptAccess extends GroupPromptAccess {
+  isAdmin: boolean;
+}
+
+export interface UserDeletionImpact {
+  user: Pick<UserRecord, 'id' | 'displayName' | 'email' | 'externalId' | 'isAdmin'>;
+  ownedWorkspaces: Array<{ id: string; name: string }>;
+  sharedWorkspaceCount: number;
+  groupMembershipCount: number;
+  oauthTokenCount: number;
+  authoredFileCount: number;
+  authoredKnowledgeCount: number;
+  authoredConversationCount: number;
+  authoredMessageCount: number;
+}
+
 interface UserProfileInput {
   externalId: string;
   displayName?: string | null;
@@ -26,6 +47,7 @@ interface UserProfileInput {
 }
 
 const normalizeEmail = (email?: string | null) => email?.trim().toLowerCase() || null;
+const normalizeUniqueStrings = (values: string[]) => Array.from(new Set(values.map((value) => value.trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b));
 
 const parseAdminEmails = () => new Set(
   (process.env.ADMIN_EMAILS || '')
@@ -98,6 +120,7 @@ export class UserService {
     const user = await this.db<UserRecord>('users').where({ id: userId }).first();
     return user || null;
   }
+
   async setUserAdmin(userId: string, isAdmin: boolean): Promise<UserRecord | null> {
     const [updated] = await this.db<UserRecord>('users')
       .where({ id: userId })
@@ -116,6 +139,11 @@ export class UserService {
       .orderBy('name', 'asc');
   }
 
+  async getGroupById(groupId: string): Promise<GroupRecord | null> {
+    const group = await this.db<GroupRecord>('groups').where({ id: groupId }).first();
+    return group || null;
+  }
+
   async createGroup(name: string): Promise<GroupRecord> {
     const [group] = await this.db<GroupRecord>('groups')
       .insert({
@@ -127,7 +155,12 @@ export class UserService {
   }
 
   async deleteGroup(groupId: string): Promise<number> {
-    return this.db<GroupRecord>('groups').where({ id: groupId }).del();
+    return this.db.transaction(async (tx) => {
+      await tx('skill_grants').where({ principalType: 'group', principalId: groupId }).del();
+      await tx('mcp_server_group_grants').where({ groupId }).del();
+      const deleted = await tx<GroupRecord>('groups').where({ id: groupId }).del();
+      return Number(deleted || 0);
+    });
   }
 
   async listGroupMembers(groupId: string): Promise<UserRecord[]> {
@@ -150,5 +183,220 @@ export class UserService {
 
   async removeGroupMember(groupId: string, userId: string): Promise<number> {
     return this.db('group_members').where({ groupId, userId }).del();
+  }
+
+  async getGroupPromptAccess(groupId: string): Promise<GroupPromptAccess | null> {
+    const group = await this.getGroupById(groupId);
+    if (!group) {
+      return null;
+    }
+    const [skillRows, mcpRows] = await Promise.all([
+      this.db('skill_grants')
+        .select('skillId')
+        .where({ principalType: 'group', principalId: groupId, effect: 'allow' }),
+      this.db('mcp_server_group_grants')
+        .select('serverId')
+        .where({ groupId }),
+    ]);
+
+    return {
+      skillIds: normalizeUniqueStrings((skillRows as Array<{ skillId?: string }>).map((row) => String(row.skillId || ''))),
+      mcpServerIds: normalizeUniqueStrings((mcpRows as Array<{ serverId?: string }>).map((row) => String(row.serverId || ''))),
+    };
+  }
+
+  async replaceGroupPromptAccess(groupId: string, access: GroupPromptAccess): Promise<GroupPromptAccess | null> {
+    const skillIds = normalizeUniqueStrings(access.skillIds || []);
+    const mcpServerIds = normalizeUniqueStrings(access.mcpServerIds || []);
+
+    return this.db.transaction(async (tx) => {
+      const group = await tx<GroupRecord>('groups').where({ id: groupId }).first();
+      if (!group) {
+        return null;
+      }
+
+      await tx('skill_grants').where({ principalType: 'group', principalId: groupId }).del();
+      if (skillIds.length) {
+        await tx('skill_grants').insert(
+          skillIds.map((skillId) => ({
+            principalType: 'group',
+            principalId: groupId,
+            skillId,
+            effect: 'allow',
+          })),
+        );
+      }
+
+      await tx('mcp_server_group_grants').where({ groupId }).del();
+      if (mcpServerIds.length) {
+        await tx('mcp_server_group_grants').insert(
+          mcpServerIds.map((serverId) => ({
+            groupId,
+            serverId,
+          })),
+        );
+      }
+
+      return {
+        skillIds,
+        mcpServerIds,
+      };
+    });
+  }
+
+  async getEffectivePromptAccess(userId: string): Promise<EffectivePromptAccess | null> {
+    const user = await this.getUserById(userId);
+    if (!user) {
+      return null;
+    }
+    if (user.isAdmin) {
+      return {
+        isAdmin: true,
+        skillIds: [],
+        mcpServerIds: [],
+      };
+    }
+
+    const memberships = await this.db('group_members').select('groupId').where({ userId });
+    const groupIds = normalizeUniqueStrings((memberships as Array<{ groupId?: string }>).map((row) => String(row.groupId || '')));
+    if (!groupIds.length) {
+      return {
+        isAdmin: false,
+        skillIds: [],
+        mcpServerIds: [],
+      };
+    }
+
+    const [skillRows, mcpRows] = await Promise.all([
+      this.db('skill_grants')
+        .select('skillId')
+        .where({ principalType: 'group', effect: 'allow' })
+        .whereIn('principalId', groupIds),
+      this.db('mcp_server_group_grants')
+        .select('serverId')
+        .whereIn('groupId', groupIds),
+    ]);
+
+    return {
+      isAdmin: false,
+      skillIds: normalizeUniqueStrings((skillRows as Array<{ skillId?: string }>).map((row) => String(row.skillId || ''))),
+      mcpServerIds: normalizeUniqueStrings((mcpRows as Array<{ serverId?: string }>).map((row) => String(row.serverId || ''))),
+    };
+  }
+
+  async listOwnedWorkspaces(userId: string): Promise<Array<{ id: string; name: string }>> {
+    const rows = await this.db('workspaces')
+      .select('id', 'name')
+      .where({ ownerId: userId })
+      .orderBy('name', 'asc');
+    return (rows as Array<{ id: string; name: string }>).map((row) => ({ id: row.id, name: row.name }));
+  }
+
+  async getUserDeletionImpact(userId: string): Promise<UserDeletionImpact | null> {
+    const user = await this.getUserById(userId);
+    if (!user) {
+      return null;
+    }
+
+    const ownedWorkspaces = await this.listOwnedWorkspaces(userId);
+    const [sharedWorkspaceCount, groupMembershipCount, oauthTokenCount, authoredFileCount, authoredKnowledgeCount, authoredConversationCount, authoredMessageCount] = await Promise.all([
+      this.countSharedWorkspaceMemberships(userId),
+      this.countRows('group_members', { userId }),
+      this.countRows('user_oauth_tokens', { userId }),
+      this.countDistinctReferences('files', 'id', ['createdBy', 'updatedBy'], userId),
+      this.countDistinctReferences('knowledge_sources', 'id', ['createdBy', 'updatedBy'], userId),
+      this.countDistinctReferences('conversations', 'id', ['createdBy', 'updatedBy'], userId),
+      this.countDistinctReferences('conversation_messages', 'id', ['authorId'], userId),
+    ]);
+
+    return {
+      user: {
+        id: user.id,
+        displayName: user.displayName,
+        email: user.email,
+        externalId: user.externalId,
+        isAdmin: user.isAdmin,
+      },
+      ownedWorkspaces,
+      sharedWorkspaceCount,
+      groupMembershipCount,
+      oauthTokenCount,
+      authoredFileCount,
+      authoredKnowledgeCount,
+      authoredConversationCount,
+      authoredMessageCount,
+    };
+  }
+
+  async deleteUser(userId: string): Promise<boolean> {
+    const user = await this.getUserById(userId);
+    if (!user) {
+      return false;
+    }
+
+    await this.db.transaction(async (tx) => {
+      await this.detachUserReferences(tx, userId);
+      await tx('group_members').where({ userId }).del();
+      await tx('workspace_members').where({ userId }).del();
+      await tx('user_oauth_tokens').where({ userId }).del();
+      await tx('mcp_server_grants').where({ userId }).del();
+      await tx('skill_grants').where({ principalType: 'user', principalId: userId }).del();
+      await tx('mcp_connection_grants').where({ principalType: 'user', principalId: userId }).del();
+      await tx<UserRecord>('users').where({ id: userId }).del();
+    });
+
+    return true;
+  }
+
+  private async detachUserReferences(tx: Knex.Transaction, userId: string): Promise<void> {
+    await Promise.all([
+      tx('workspaces').where({ lastModifiedBy: userId }).update({ lastModifiedBy: null, updatedAt: this.db.fn.now() }),
+      tx('files').where({ createdBy: userId }).update({ createdBy: null, updatedAt: this.db.fn.now() }),
+      tx('files').where({ updatedBy: userId }).update({ updatedBy: null, updatedAt: this.db.fn.now() }),
+      tx('knowledge_sources').where({ createdBy: userId }).update({ createdBy: null, updatedAt: this.db.fn.now() }),
+      tx('knowledge_sources').where({ updatedBy: userId }).update({ updatedBy: null, updatedAt: this.db.fn.now() }),
+      tx('conversations').where({ createdBy: userId }).update({ createdBy: null, updatedAt: this.db.fn.now() }),
+      tx('conversations').where({ updatedBy: userId }).update({ updatedBy: null, updatedAt: this.db.fn.now() }),
+      tx('conversation_messages').where({ authorId: userId }).update({ authorId: null, updatedAt: this.db.fn.now() }),
+    ]);
+  }
+
+  private async countRows(tableName: string, where: Record<string, unknown>): Promise<number> {
+    const row = await this.db(tableName).where(where).count<{ count: string }>('count(*) as count').first();
+    return Number(row?.count || 0);
+  }
+
+  private async countSharedWorkspaceMemberships(userId: string): Promise<number> {
+    const row = await this.db('workspace_members as wm')
+      .join('workspaces as w', 'wm.workspaceId', 'w.id')
+      .where('wm.userId', userId)
+      .andWhere('w.ownerId', '<>', userId)
+      .count<{ count: string }>('wm.workspaceId as count')
+      .first();
+    return Number(row?.count || 0);
+  }
+
+  private async countDistinctReferences(
+    tableName: string,
+    idColumn: string,
+    referenceColumns: string[],
+    userId: string,
+  ): Promise<number> {
+    if (!referenceColumns.length) {
+      return 0;
+    }
+
+    const query = this.db(tableName).where((builder) => {
+      referenceColumns.forEach((column, index) => {
+        if (index === 0) {
+          builder.where(column, userId);
+        } else {
+          builder.orWhere(column, userId);
+        }
+      });
+    });
+
+    const row = await query.countDistinct<{ count: string }>(`${idColumn} as count`).first();
+    return Number(row?.count || 0);
   }
 }

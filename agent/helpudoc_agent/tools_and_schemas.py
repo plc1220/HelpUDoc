@@ -32,6 +32,7 @@ from .skills_registry import (
     activate_skill_context,
     build_loaded_skill_text,
     find_skill,
+    is_skill_allowed,
     load_skills,
     read_skill_content,
 )
@@ -328,7 +329,7 @@ class ToolFactory:
                 return "Tool disabled: tagged files were provided, use rag_query only."
             if skills_root is None or not skills_root.exists():
                 return "No skills directory configured."
-            skills = load_skills(skills_root)
+            skills = [skill for skill in load_skills(skills_root) if is_skill_allowed(skill, workspace_state.context)]
             if not skills:
                 return "No skills found."
             lines = []
@@ -352,12 +353,14 @@ class ToolFactory:
                 return "Tool disabled: tagged files were provided, use rag_query only."
             if skills_root is None or not skills_root.exists():
                 return "No skills directory configured."
-            skills = load_skills(skills_root)
+            skills = [skill for skill in load_skills(skills_root) if is_skill_allowed(skill, workspace_state.context)]
             if not skills:
                 return "No skills found."
             normalized = skill_id.strip()
             skill = find_skill(skills_root, normalized)
             if skill is not None:
+                if not is_skill_allowed(skill, workspace_state.context):
+                    return f"Skill '{skill.skill_id}' is not allowed for this user."
                 try:
                     content = read_skill_content(skill)
                 except Exception as exc:  # pragma: no cover - filesystem guard

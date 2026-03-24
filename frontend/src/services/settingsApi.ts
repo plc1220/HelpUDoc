@@ -15,6 +15,23 @@ export type ManagedGroup = {
   name: string;
 };
 
+export type UserDeletionImpact = {
+  user: Pick<ManagedUser, 'id' | 'displayName' | 'email' | 'externalId' | 'isAdmin'>;
+  ownedWorkspaces: Array<{ id: string; name: string }>;
+  sharedWorkspaceCount: number;
+  groupMembershipCount: number;
+  oauthTokenCount: number;
+  authoredFileCount: number;
+  authoredKnowledgeCount: number;
+  authoredConversationCount: number;
+  authoredMessageCount: number;
+};
+
+export type GroupPromptAccess = {
+  skillIds: string[];
+  mcpServerIds: string[];
+};
+
 export type SkillBuilderAction =
   | {
       type: 'create_skill';
@@ -432,6 +449,25 @@ export const setUserAdmin = async (userId: string, isAdmin: boolean): Promise<Ma
   return data.user;
 };
 
+export const fetchUserDeletionImpact = async (userId: string): Promise<UserDeletionImpact> => {
+  const response = await apiFetch(`${API_URL}/users/${userId}/deletion-impact`);
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || 'Failed to load deletion impact');
+  }
+  return response.json();
+};
+
+export const deleteUser = async (userId: string): Promise<void> => {
+  const response = await apiFetch(`${API_URL}/users/${userId}`, {
+    method: 'DELETE',
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || 'Failed to delete user');
+  }
+};
+
 export const fetchGroups = async (): Promise<ManagedGroup[]> => {
   const response = await apiFetch(`${API_URL}/users/groups/list`);
   if (!response.ok) {
@@ -500,4 +536,28 @@ export const removeGroupMember = async (groupId: string, userId: string): Promis
     const data = await response.json().catch(() => ({}));
     throw new Error(data.error || 'Failed to remove member');
   }
+};
+
+export const fetchGroupPromptAccess = async (groupId: string): Promise<GroupPromptAccess> => {
+  const response = await apiFetch(`${API_URL}/users/groups/${groupId}/access`);
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || 'Failed to load group access');
+  }
+  return response.json();
+};
+
+export const saveGroupPromptAccess = async (groupId: string, payload: GroupPromptAccess): Promise<GroupPromptAccess> => {
+  const response = await apiFetch(`${API_URL}/users/groups/${groupId}/access`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || 'Failed to update group access');
+  }
+  return response.json();
 };

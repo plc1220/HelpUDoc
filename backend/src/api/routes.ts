@@ -30,9 +30,9 @@ export default function(dbService: DatabaseService, userService: UserService) {
   const googleOAuthService = new GoogleOAuthService(userOAuthTokenService);
 
   router.use('/auth', authRoutes(userService, googleOAuthService));
-  router.use('/agent', agentRoutes(workspaceService, fileService, googleOAuthService));
+  router.use('/agent', agentRoutes(workspaceService, fileService, googleOAuthService, userService));
   router.use('/settings', requireSystemAdmin(userService), settingsRoutes(workspaceService));
-  router.use('/users', requireSystemAdmin(userService), usersRoutes(userService));
+  router.use('/users', requireSystemAdmin(userService), usersRoutes(userService, workspaceService));
   router.use('/workspaces', workspaceRoutes(workspaceService, userService));
   router.use('/workspaces/:workspaceId/files', fileRoutes(fileService));
   router.use('/workspaces/:workspaceId/knowledge', knowledgeRoutes(knowledgeService));
