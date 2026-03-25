@@ -106,6 +106,10 @@ export class FileService {
       .replace(/^(\.\.\/)+/, '')
       .replace(/^\/+/, '')
       .replace(/\/+$/, '');
+    const parts = normalized.split('/').filter(Boolean);
+    if (parts.includes('..')) {
+      throw new ConflictError('Invalid folder path');
+    }
     if (!normalized || normalized === '.') {
       return '';
     }
