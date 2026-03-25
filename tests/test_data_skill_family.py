@@ -564,6 +564,8 @@ class TestRunScopedHistory:
         # Both queries must appear in the report
         assert "first_query" in content
         assert "second_query" in content
+        assert "Executive Snapshot" in content
+        assert "Queries Run" in content
 
     def test_stale_charts_not_included_in_new_run(self, tmp_path: Path) -> None:
         """Charts from a prior run do not appear in a fresh run's report."""
@@ -643,6 +645,8 @@ class TestDashboardTool:
         assert "<!doctype html>" in content.lower()
         # Should include query block  
         assert "42" in content  # the SELECT 42 result
+        assert "Quick Pulse" in content
+        assert "Charts Embedded" in content
 
     def test_dashboard_accepts_section_titles(self, tmp_path: Path) -> None:
         tools = self._run_analysis_and_chart(tmp_path)

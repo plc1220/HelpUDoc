@@ -27,6 +27,7 @@ from .bigquery_export_tools import (
     validate_read_only_sql,
     write_export_dataframe,
 )
+from .data_report_renderers import render_dashboard_html, render_summary_html
 from .state import WorkspaceState
 
 logger = logging.getLogger(__name__)
@@ -206,6 +207,7 @@ def _iter_workspace_files(
     *,
     allowed_extensions: Optional[Set[str]] = None,
     preferred_dirs: Tuple[str, ...] = (),
+    include_root_recursive: bool = False,
 ) -> List[Path]:
     seen: Set[Path] = set()
     files: List[Path] = []
@@ -243,7 +245,7 @@ def _iter_workspace_files(
 
     for base in preferred_roots:
         _scan_recursive(base)
-    if not preferred_roots or len(files) == 0:
+    if include_root_recursive or not preferred_roots:
         _scan_recursive(root)
     return files
 
@@ -254,6 +256,7 @@ def _snapshot_workspace(root: Path) -> Dict[str, Tuple[int, int]]:
         root,
         allowed_extensions=set(ALLOWED_ARTIFACT_EXTENSIONS.keys()),
         preferred_dirs=("charts", "reports", "dashboards", "exports", "data_exports"),
+        include_root_recursive=True,
     ):
         rel = path.relative_to(root).as_posix()
         try:
@@ -354,20 +357,10 @@ def _format_numeric_summary(df: pd.DataFrame) -> str:
 def _query_looks_aggregated(query: str) -> bool:
     if re.search(r"\bover\s*\(", query, re.IGNORECASE):
         return False
-    if re.search(r"\bgroup\s+by\b", query, re.IGNORECASE):
-        return True
-    if re.search(r"\bhaving\b", query, re.IGNORECASE):
-        return True
-
-    aggregate_markers = [
-        r"\bcount\s*\(",
-        r"\bsum\s*\(",
-        r"\bavg\s*\(",
-        r"\bmean\s*\(",
-        r"\bmin\s*\(",
-        r"\bmax\s*\(",
-    ]
-    return any(re.search(pattern, query, re.IGNORECASE) for pattern in aggregate_markers)
+    return bool(
+        re.search(r"\bgroup\s+by\b", query, re.IGNORECASE)
+        or re.search(r"\bhaving\b", query, re.IGNORECASE)
+    )
 
 
 def _markdown_to_html(markdown_text: str) -> str:
@@ -1404,87 +1397,40 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
         except ValueError as exc:
             return str(exc)
         db_manager.mark_summary_generated()
-
-        report_lines = [
-            "<!doctype html>",
-            "<html lang=\"en\">",
-            "<head>",
-            "  <meta charset=\"utf-8\" />",
-            "  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />",
-            "  <title>Data Analysis Report</title>",
-            "  <style>",
-            "    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background:#f7f7f8; color:#1f2933; margin:0; padding:0; }",
-            "    .container { max-width: 960px; margin: 0 auto; padding: 32px 20px 48px; }",
-            "    h1 { margin: 0 0 8px; }",
-            "    h2 { margin-top: 28px; margin-bottom: 12px; }",
-            "    h3 { margin-top: 20px; margin-bottom: 10px; }",
-            "    .card { background:#fff; border:1px solid #e5e7eb; border-radius:14px; padding:18px 20px; box-shadow:0 1px 2px rgba(0,0,0,0.04); margin-top:12px; }",
-            "    .meta { color:#6b7280; font-size: 0.95rem; margin-bottom: 6px; }",
-            "    table { border-collapse: collapse; width: 100%; }",
-            "    table thead { background:#f3f4f6; }",
-            "    table th, table td { border:1px solid #e5e7eb; padding:8px 10px; text-align:left; font-size: 0.95rem; }",
-            "    ul { padding-left: 20px; }",
-            "    pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:12px; overflow-x:auto; white-space:pre-wrap; }",
-            "    img { max-width: 100%; height: auto; display: block; margin: 12px 0; border-radius:12px; border:1px solid #e5e7eb; }",
-            "    .plotly-embed { margin: 16px 0; }",
-            "    .agent-markdown { line-height: 1.7; font-size: 0.98rem; }",
-            "  </style>",
-            "  <script src=\"https://cdn.plot.ly/plotly-3.3.0.min.js\"></script>",
-            "</head>",
-            "<body>",
-            "  <div class=\"container\">",
-            "    <h1>Data Analysis Report</h1>",
-            f"    <div class=\"meta\">Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</div>",
-            "    <div class=\"card\">",
-            "      <h2>Summary</h2>",
-            f"      <div class=\"agent-markdown\">{_markdown_to_html(summary) or '<p>No summary provided.</p>'}</div>",
-            "      <h2>Key Insights</h2>",
-            f"      <div class=\"agent-markdown\">{_markdown_to_html(insights) or '<p>No insights provided.</p>'}</div>",
-            "    </div>",
-        ]
+        generated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        materialization_items: List[str] = []
+        query_items: List[str] = []
+        visualization_items: List[str] = []
 
         if db_manager.session.materialization_history:
-            report_lines.extend(
-                [
-                    "    <div class=\"card\">",
-                    "      <h2>Warehouse Materializations</h2>",
-                ]
-            )
             for item in db_manager.session.materialization_history:
-                report_lines.extend(
-                    [
-                        f"      <p><strong>Connector:</strong> {html.escape(item.connector)}<br />"
-                        f"<strong>Rows:</strong> {item.row_count}<br />"
-                        f"<strong>Cached:</strong> {'yes' if item.cached else 'no'}<br />"
-                        f"<strong>Parquet:</strong> <code>{html.escape(item.parquet_path)}</code><br />"
-                        f"<strong>Metadata:</strong> <code>{html.escape(item.metadata_path)}</code><br />"
-                        f"<strong>Expires:</strong> {html.escape(item.expires_at or 'n/a')}</p>",
-                        f"      <pre><code>{html.escape(item.sql)}</code></pre>",
-                    ]
+                materialization_items.append(
+                    "<article class=\"stack-item\">"
+                    f"<div class=\"stack-meta\">Connector {html.escape(item.connector)} • Rows {item.row_count} • Cached {'yes' if item.cached else 'no'}</div>"
+                    f"<p><strong>Parquet:</strong> <code>{html.escape(item.parquet_path)}</code><br />"
+                    f"<strong>Metadata:</strong> <code>{html.escape(item.metadata_path)}</code><br />"
+                    f"<strong>Expires:</strong> {html.escape(item.expires_at or 'n/a')}</p>"
+                    f"<pre><code>{html.escape(item.sql)}</code></pre>"
+                    "</article>"
                 )
-            report_lines.append("    </div>")
 
         if db_manager.session.query_history:
-            report_lines.extend(
-                [
-                    "    <div class=\"card\">",
-                    "      <h2>SQL Queries</h2>",
-                ]
-            )
             for idx, query_record in enumerate(db_manager.session.query_history, start=1):
                 row_label = (
                     f"{query_record.row_count}+ rows previewed"
                     if query_record.truncated
                     else f"{query_record.row_count} rows"
                 )
-                report_lines.append(
-                    f"      <h3>Query {idx} <span class=\"meta\">({row_label})</span></h3>"
-                )
-                report_lines.append(f"      <pre><code>{html.escape(query_record.sql)}</code></pre>")
+                query_block = [
+                    "<article class=\"stack-item\">",
+                    f"<div class=\"stack-meta\">Query {idx} • {row_label}</div>",
+                    f"<pre><code>{html.escape(query_record.sql)}</code></pre>",
+                ]
                 if not query_record.preview.empty:
-                    report_lines.append("      <h4>Sample Data</h4>")
-                    report_lines.append(query_record.preview.to_html(index=False, border=0))
-            report_lines.append("    </div>")
+                    query_block.append("<h4>Sample Data</h4>")
+                    query_block.append(query_record.preview.to_html(index=False, border=0))
+                query_block.append("</article>")
+                query_items.append("".join(query_block))
 
         run_chart_paths: List[str] = []
         for chart_record in db_manager.session.chart_history:
@@ -1503,22 +1449,21 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
             if p.exists()
         )
         if plotly_json_files or plotly_html_files or png_files:
-            report_lines.append("    <div class=\"card\">")
-            report_lines.append("      <h2>Visualizations</h2>")
-
             for idx, json_path in enumerate(plotly_json_files, start=1):
                 try:
                     fig_json = json.loads(json_path.read_text(encoding="utf-8"))
                     script_payload = json.dumps(fig_json)
                     div_id = f"plotly-json-{idx}"
-                    report_lines.append(f"      <h3>{_chart_title_from_path(json_path)}</h3>")
-                    report_lines.append(f"      <div id=\"{div_id}\" class=\"plotly-embed\" style=\"height:420px;\"></div>")
-                    report_lines.append(
-                        "      <script>"
+                    visualization_items.append(
+                        "<article class=\"stack-item\">"
+                        f"<h3>{_chart_title_from_path(json_path)}</h3>"
+                        f"<div id=\"{div_id}\" class=\"plotly-embed\"></div>"
+                        "<script>"
                         f"const spec{idx} = {script_payload};"
                         f"const data{idx} = spec{idx}.data || []; const layout{idx} = spec{idx}.layout || {{}}; const config{idx} = spec{idx}.config || {{}}; const frames{idx} = spec{idx}.frames || undefined;"
                         f"Plotly.newPlot('{div_id}', data{idx}, layout{idx}, config{idx}).then(() => {{ if (frames{idx} && frames{idx}.length) {{ Plotly.addFrames('{div_id}', frames{idx}); }} }});"
                         "</script>"
+                        "</article>"
                     )
                 except Exception:
                     logger.warning("Failed to embed Plotly JSON %s", json_path, exc_info=True)
@@ -1526,23 +1471,63 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
             for html_path in plotly_html_files:
                 try:
                     html_fragment = html_path.read_text(encoding="utf-8")
-                    report_lines.append(f"      <h3>{_chart_title_from_path(html_path)}</h3>")
-                    report_lines.append(f"      <div class=\"plotly-embed\">{html_fragment}</div>")
+                    visualization_items.append(
+                        "<article class=\"stack-item\">"
+                        f"<h3>{_chart_title_from_path(html_path)}</h3>"
+                        f"<div class=\"plotly-embed\">{html_fragment}</div>"
+                        "</article>"
+                    )
                 except Exception:
                     logger.warning("Failed to embed Plotly HTML %s", html_path, exc_info=True)
 
             for png_path in png_files:
                 try:
                     encoded = base64.b64encode(png_path.read_bytes()).decode("utf-8")
-                    report_lines.append(
-                        f"      <h3>{_chart_title_from_path(png_path)}</h3><img src=\"data:image/png;base64,{encoded}\" alt=\"{png_path.stem}\" />"
+                    visualization_items.append(
+                        "<article class=\"stack-item\">"
+                        f"<h3>{_chart_title_from_path(png_path)}</h3>"
+                        f"<img src=\"data:image/png;base64,{encoded}\" alt=\"{png_path.stem}\" />"
+                        "</article>"
                     )
                 except Exception:
                     logger.warning("Failed to embed PNG %s", png_path, exc_info=True)
+        summary_metric_cards = [
+            {
+                "label": "Queries Run",
+                "value": str(len(db_manager.session.query_history)),
+                "meta": "SQL steps captured in this report",
+            },
+            {
+                "label": "Charts Embedded",
+                "value": str(len(visualization_items)),
+                "meta": "Visual artifacts included below",
+            },
+            {
+                "label": "Warehouse Pulls",
+                "value": str(len(db_manager.session.materialization_history)),
+                "meta": "Materializations cached or refreshed",
+            },
+        ]
+        if db_manager.session.query_history:
+            latest_query = db_manager.session.query_history[-1]
+            summary_metric_cards.append(
+                {
+                    "label": "Latest Result",
+                    "value": str(latest_query.row_count),
+                    "meta": "Rows in the final SQL step",
+                }
+            )
 
-            report_lines.append("    </div>")
-
-        report_lines.extend(["  </div>", "</body>", "</html>"])
+        report_html = render_summary_html(
+            title="Data Analysis Report",
+            generated_at=generated_at,
+            summary_html=_markdown_to_html(summary),
+            insights_html=_markdown_to_html(insights),
+            metric_cards=summary_metric_cards,
+            materialization_items=materialization_items,
+            query_items=query_items,
+            visualization_items=visualization_items,
+        )
 
         try:
             reports_dir = workspace_state.root_path / "reports"
@@ -1558,7 +1543,7 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 report_path = reports_dir / f"analysis_report_{timestamp}.html"
             report_path.parent.mkdir(parents=True, exist_ok=True)
-            report_path.write_text("\n".join(report_lines), encoding="utf-8")
+            report_path.write_text(report_html, encoding="utf-8")
 
             artifact = {
                 "path": _workspace_rel(report_path, workspace_state.root_path),
@@ -1795,473 +1780,67 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
                 f"<pre class=\"query-block\">{html.escape(query_record.sql)}</pre>"
                 "</div>"
             )
-
-        html_lines = [
-            "<!doctype html>",
-            "<html lang=\"en\">",
-            "<head>",
-            "  <meta charset=\"utf-8\" />",
-            "  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />",
-            f"  <title>{html.escape(title)}</title>",
-            "  <style>",
-            "    :root{--bg:#f4f1ea;--panel:#fffdf8;--ink:#1f2937;--muted:#6b7280;--line:#e7dfd2;--accent:#1f4d3a;--shadow:0 16px 40px rgba(68,50,28,0.08);}",
-            "    *{box-sizing:border-box}",
-            "    body{margin:0;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:linear-gradient(180deg,#f7f4ee 0%,#f4f1ea 100%);color:var(--ink);}",
-            "    .shell{max-width:1320px;margin:0 auto;padding:28px 22px 56px}",
-            "    .hero,.section{background:rgba(255,253,248,0.96);border:1px solid rgba(231,223,210,0.95);box-shadow:var(--shadow);border-radius:28px;padding:28px 30px;}",
-            "    .hero h1{margin:0 0 10px;font-size:clamp(2rem,4vw,3.2rem);line-height:1.02;letter-spacing:-0.04em;}",
-            "    .hero p{margin:0;color:#4b5563;line-height:1.65;max-width:760px}",
-            "    .hero-meta{margin-top:16px;color:var(--muted);font-size:0.9rem}",
-            "    .section{margin-top:22px}",
-            "    .chart-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:18px}",
-            "    .chart-card{background:linear-gradient(180deg,#fffefb 0%,#fbf8f2 100%);border:1px solid var(--line);border-radius:20px;padding:18px}",
-            "    .chart-card h3{margin:0 0 8px;font-size:1.05rem}",
-            "    .chart-meta{margin:0 0 12px;color:var(--muted);font-size:0.88rem}",
-            "    .chart-note{margin:10px 0 0;color:#4b5563;font-size:0.9rem;line-height:1.4}",
-            "    .plotly-embed{width:100%;height:340px}",
-            "    img.chart-img{width:100%;border-radius:12px;border:1px solid var(--line)}",
-            "    .filter-bar{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin-top:22px}",
-            "    .filter-card{background:rgba(255,253,248,0.96);border:1px solid rgba(231,223,210,0.95);box-shadow:var(--shadow);border-radius:20px;padding:18px}",
-            "    .filter-card h2{margin:0 0 6px;font-size:1rem}",
-            "    .filter-card p{margin:0 0 12px;color:var(--muted);font-size:0.9rem;line-height:1.5}",
-            "    .filter-controls{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}",
-            "    .filter-control{display:flex;flex-direction:column;gap:6px}",
-            "    .filter-control label{font-size:0.88rem;font-weight:600;color:#374151}",
-            "    .filter-control select,.filter-control input,.filter-actions button{border:1px solid var(--line);border-radius:12px;padding:10px 12px;background:#fff;color:var(--ink)}",
-            "    .filter-actions{display:flex;gap:10px;align-items:end}",
-            "    .filter-actions button{cursor:pointer;background:var(--accent);color:#fff;font-weight:600}",
-            "    .filter-actions button.secondary{background:#fff;color:var(--ink)}",
-            "    .dataset-meta{margin-top:14px;color:var(--muted);font-size:0.85rem}",
-            "    details.appendix{margin-top:18px}",
-            "    .query-item{background:#faf7f1;border:1px solid var(--line);border-radius:16px;padding:16px;margin-top:12px}",
-            "    .query-meta{font-size:0.82rem;color:#9a3412;font-weight:700;letter-spacing:0.03em;text-transform:uppercase;margin-bottom:8px}",
-            "    .query-block{margin:0;background:#fff;border:1px solid var(--line);border-radius:12px;padding:14px 16px;overflow-x:auto;white-space:pre-wrap;color:#374151}",
-            "    @media (max-width: 768px){.shell{padding:16px 14px 42px}.hero,.section,.filter-card{padding:22px 18px}.chart-grid{grid-template-columns:1fr}.plotly-embed{height:300px}}",
-            "  </style>",
-            "  <script src=\"https://cdn.plot.ly/plotly-3.3.0.min.js\"></script>",
-            "</head>",
-            "<body>",
-            "  <div class=\"shell\">",
-            "    <section class=\"hero\">",
-            "      <div>Interactive dashboard</div>",
-            f"      <h1>{html.escape(title)}</h1>",
-            f"      <p>{html.escape(description)}</p>",
-            f"      <div class=\"hero-meta\">Generated {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} • Charts embedded: {len(bound_cards) + len(static_cards)} • Queries embedded: {len(db_manager.session.query_history)}</div>",
-            "    </section>",
-        ]
-
-        if data_filtering_enabled:
-            html_lines.extend(
-                [
-                    "    <section class=\"filter-bar\">",
-                    "      <div class=\"filter-card\">",
-                    "        <h2>Shared data filters</h2>",
-                    "        <p>These controls update all compatible charts from the embedded dashboard dataset.</p>",
-                    "        <div id=\"dashboard-filter-controls\" class=\"filter-controls\"></div>",
-                    "        <div class=\"filter-actions\">",
-                    "          <button type=\"button\" id=\"dashboard-apply-filters\" class=\"secondary\">Apply filters</button>",
-                    "          <button type=\"button\" id=\"dashboard-reset-filters\">Reset filters</button>",
-                    "        </div>",
-                    f"        <div class=\"dataset-meta\">Dataset: {html.escape(dashboard_dataset_path)} • Rows embedded: {len(dataset_records)} • Format: {html.escape(dataset_format)}</div>",
-                    "      </div>",
-                    "    </section>",
-                ]
-            )
-
-        html_lines.extend(
-            [
-            "    <section class=\"section\">",
-            "      <h2>Highlights</h2>" if bound_cards else "      <h2>Charts</h2>",
-            "      <div class=\"chart-grid\">",
-            *(bound_cards or static_cards),
-            "      </div>",
-        ]
+        generated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        hero_meta = (
+            f"Charts embedded: {len(bound_cards) + len(static_cards)} • "
+            f"Queries embedded: {len(db_manager.session.query_history)}"
         )
-
-        if bound_cards and static_cards:
-            html_lines.extend(
-                [
-                    "      <details class=\"appendix\">",
-                    "        <summary>Static appendix charts</summary>",
-                    "        <div class=\"chart-grid\">",
-                    *static_cards,
-                    "        </div>",
-                    "      </details>",
-                ]
-            )
-
-        html_lines.extend(
-            [
-            "      <details class=\"appendix\">",
-            "        <summary>Technical appendix</summary>",
-            *query_items,
-            "      </details>",
-            "    </section>",
-            "  </div>",
-            "  <script>",
-            f"    const DASHBOARD_DATASET = {_json_dump(dataset_records)};",
-            f"    const DASHBOARD_FILTER_SCHEMA = {_json_dump(filter_config)};",
-            f"    const DASHBOARD_CHART_DEFS = {_json_dump(chart_runtime_defs)};",
-            f"    const DASHBOARD_DATASET_SCHEMA = {_json_dump(dataset_schema)};",
-            """
-    (function() {
-      if (!DASHBOARD_DATASET.length || !DASHBOARD_FILTER_SCHEMA.length || !DASHBOARD_CHART_DEFS.length) {
-        return;
-      }
-
-      const controlHost = document.getElementById('dashboard-filter-controls');
-      const applyButton = document.getElementById('dashboard-apply-filters');
-      const resetButton = document.getElementById('dashboard-reset-filters');
-      const fieldTypes = Object.fromEntries((DASHBOARD_DATASET_SCHEMA || []).map((item) => [item.name, String(item.type || '').toLowerCase()]));
-
-      function inferFieldType(filterDef) {
-        if (filterDef.type === 'numeric' || filterDef.type === 'date' || filterDef.type === 'datetime') {
-          return filterDef.type;
-        }
-        const raw = fieldTypes[filterDef.field] || '';
-        if (raw.includes('date') || raw.includes('time')) return 'date';
-        if (raw.includes('int') || raw.includes('float') || raw.includes('double') || raw.includes('decimal')) return 'numeric';
-        return 'categorical';
-      }
-
-      function parseDateValue(value) {
-        if (value === null || value === undefined || value === '') return null;
-        const parsed = new Date(value);
-        return Number.isNaN(parsed.getTime()) ? null : parsed;
-      }
-
-      function parseNumericValue(value) {
-        if (value === null || value === undefined || value === '') return null;
-        const parsed = Number(value);
-        return Number.isFinite(parsed) ? parsed : null;
-      }
-
-      function normalizeComparable(value, type) {
-        if (type === 'date' || type === 'datetime') {
-          const parsed = parseDateValue(value);
-          return parsed ? parsed.getTime() : null;
-        }
-        if (type === 'numeric') {
-          return parseNumericValue(value);
-        }
-        return value;
-      }
-
-      function distinctValues(field) {
-        const values = [];
-        const seen = new Set();
-        DASHBOARD_DATASET.forEach((row) => {
-          const value = row[field];
-          const key = value === null || value === undefined ? '__null__' : String(value);
-          if (!seen.has(key) && value !== null && value !== undefined && value !== '') {
-            seen.add(key);
-            values.push(value);
-          }
-        });
-        return values.sort((a, b) => String(a).localeCompare(String(b)));
-      }
-
-      function fieldExtent(field, type) {
-        let min = null;
-        let max = null;
-        DASHBOARD_DATASET.forEach((row) => {
-          const value = normalizeComparable(row[field], type);
-          if (value === null) return;
-          if (min === null || value < min) min = value;
-          if (max === null || value > max) max = value;
-        });
-        return { min, max };
-      }
-
-      function createControl(filterDef) {
-        const wrapper = document.createElement('div');
-        wrapper.className = 'filter-control';
-        const label = document.createElement('label');
-        label.textContent = filterDef.label;
-        wrapper.appendChild(label);
-        const fieldType = inferFieldType(filterDef);
-        filterDef.resolvedType = fieldType;
-
-        if (fieldType === 'categorical') {
-          const select = document.createElement('select');
-          select.id = filterDef.id;
-          if (filterDef.multi) select.multiple = true;
-          const values = (filterDef.options && filterDef.options.length ? filterDef.options : distinctValues(filterDef.field));
-          values.forEach((value) => {
-            const option = document.createElement('option');
-            option.value = String(value);
-            option.textContent = String(value);
-            select.appendChild(option);
-          });
-          wrapper.appendChild(select);
-          return wrapper;
-        }
-
-        if (fieldType === 'date' || fieldType === 'datetime') {
-          const extent = fieldExtent(filterDef.field, 'date');
-          const preset = document.createElement('select');
-          preset.id = filterDef.id + '__preset';
-          ['', 'last_30_days', 'last_90_days', 'last_180_days'].forEach((value) => {
-            const option = document.createElement('option');
-            option.value = value;
-            option.textContent = value ? value.replaceAll('_', ' ') : 'Custom range';
-            preset.appendChild(option);
-          });
-          wrapper.appendChild(preset);
-          const startInput = document.createElement('input');
-          startInput.type = 'date';
-          startInput.id = filterDef.id + '__start';
-          const endInput = document.createElement('input');
-          endInput.type = 'date';
-          endInput.id = filterDef.id + '__end';
-          if (extent.min !== null) startInput.value = new Date(extent.min).toISOString().slice(0, 10);
-          if (extent.max !== null) endInput.value = new Date(extent.max).toISOString().slice(0, 10);
-          preset.addEventListener('change', () => {
-            if (!preset.value || extent.max === null) return;
-            const end = new Date(extent.max);
-            const start = new Date(end);
-            const days = preset.value === 'last_30_days' ? 30 : preset.value === 'last_90_days' ? 90 : 180;
-            start.setDate(start.getDate() - days);
-            startInput.value = start.toISOString().slice(0, 10);
-            endInput.value = end.toISOString().slice(0, 10);
-          });
-          wrapper.appendChild(startInput);
-          wrapper.appendChild(endInput);
-          return wrapper;
-        }
-
-        const extent = fieldExtent(filterDef.field, 'numeric');
-        const minInput = document.createElement('input');
-        minInput.type = 'number';
-        minInput.id = filterDef.id + '__min';
-        minInput.placeholder = extent.min === null ? 'Min' : String(extent.min);
-        const maxInput = document.createElement('input');
-        maxInput.type = 'number';
-        maxInput.id = filterDef.id + '__max';
-        maxInput.placeholder = extent.max === null ? 'Max' : String(extent.max);
-        wrapper.appendChild(minInput);
-        wrapper.appendChild(maxInput);
-        return wrapper;
-      }
-
-      function readFilterValue(filterDef) {
-        const type = filterDef.resolvedType || inferFieldType(filterDef);
-        if (type === 'categorical') {
-          const select = document.getElementById(filterDef.id);
-          return Array.from(select ? select.selectedOptions : []).map((option) => option.value);
-        }
-        if (type === 'date' || type === 'datetime') {
-          return {
-            start: document.getElementById(filterDef.id + '__start')?.value || '',
-            end: document.getElementById(filterDef.id + '__end')?.value || '',
-          };
-        }
-        return {
-          min: document.getElementById(filterDef.id + '__min')?.value || '',
-          max: document.getElementById(filterDef.id + '__max')?.value || '',
-        };
-      }
-
-      function rowMatchesFilter(row, filterDef, value) {
-        const type = filterDef.resolvedType || inferFieldType(filterDef);
-        const rowValue = row[filterDef.field];
-        if (type === 'categorical') {
-          if (!value || !value.length) return true;
-          return value.includes(String(rowValue));
-        }
-        if (type === 'date' || type === 'datetime') {
-          const rowTime = normalizeComparable(rowValue, 'date');
-          if (rowTime === null) return false;
-          const start = value.start ? parseDateValue(value.start) : null;
-          const end = value.end ? parseDateValue(value.end) : null;
-          if (start && rowTime < start.getTime()) return false;
-          if (end) {
-            const inclusiveEnd = new Date(end);
-            inclusiveEnd.setHours(23, 59, 59, 999);
-            if (rowTime > inclusiveEnd.getTime()) return false;
-          }
-          return true;
-        }
-        const numericValue = normalizeComparable(rowValue, 'numeric');
-        if (numericValue === null) return false;
-        const minValue = parseNumericValue(value.min);
-        const maxValue = parseNumericValue(value.max);
-        if (minValue !== null && numericValue < minValue) return false;
-        if (maxValue !== null && numericValue > maxValue) return false;
-        return true;
-      }
-
-      function aggregateRows(rows, chartDef) {
-        const map = new Map();
-        rows.forEach((row) => {
-          const xValue = row[chartDef.xField];
-          const seriesValue = chartDef.seriesField ? row[chartDef.seriesField] : '__single__';
-          const key = JSON.stringify([xValue, seriesValue]);
-          if (!map.has(key)) {
-            map.set(key, { x: xValue, series: seriesValue, count: 0, sum: 0, min: null, max: null, values: [] });
-          }
-          const bucket = map.get(key);
-          bucket.count += 1;
-          const yRaw = chartDef.yField ? parseNumericValue(row[chartDef.yField]) : null;
-          if (yRaw !== null) {
-            bucket.sum += yRaw;
-            bucket.min = bucket.min === null ? yRaw : Math.min(bucket.min, yRaw);
-            bucket.max = bucket.max === null ? yRaw : Math.max(bucket.max, yRaw);
-            bucket.values.push(yRaw);
-          }
-        });
-
-        const points = Array.from(map.values()).map((bucket) => {
-          let yValue = bucket.count;
-          switch (chartDef.aggregation) {
-            case 'sum':
-              yValue = bucket.sum;
-              break;
-            case 'avg':
-            case 'mean':
-              yValue = bucket.values.length ? bucket.sum / bucket.values.length : 0;
-              break;
-            case 'min':
-              yValue = bucket.min === null ? 0 : bucket.min;
-              break;
-            case 'max':
-              yValue = bucket.max === null ? 0 : bucket.max;
-              break;
-            case 'nunique':
-            case 'count_distinct':
-              yValue = new Set(bucket.values).size;
-              break;
-            case 'count':
-            default:
-              yValue = bucket.count;
-              break;
-          }
-          return { x: bucket.x, y: yValue, series: bucket.series };
-        });
-
-        points.sort((left, right) => {
-          const direction = chartDef.sortDirection === 'asc' ? 1 : -1;
-          const leftValue = chartDef.sortBy === 'x' ? String(left.x ?? '') : Number(left.y ?? 0);
-          const rightValue = chartDef.sortBy === 'x' ? String(right.x ?? '') : Number(right.y ?? 0);
-          if (leftValue < rightValue) return -1 * direction;
-          if (leftValue > rightValue) return 1 * direction;
-          return 0;
-        });
-
-        return chartDef.limit > 0 ? points.slice(0, chartDef.limit) : points;
-      }
-
-      function buildPlotlyPayload(rows, chartDef) {
-        const grouped = aggregateRows(rows, chartDef);
-        const seriesValues = chartDef.seriesField
-          ? [...new Set(grouped.map((item) => item.series))]
-          : ['__single__'];
-        const traces = seriesValues.map((seriesKey) => {
-          const points = grouped.filter((item) => item.series === seriesKey);
-          const trace = {
-            type: chartDef.chartType === 'area' ? 'scatter' : chartDef.chartType,
-            name: seriesKey === '__single__' ? chartDef.title : String(seriesKey),
-            x: points.map((item) => item.x),
-            y: points.map((item) => item.y),
-          };
-          if (chartDef.chartType === 'line' || chartDef.chartType === 'area') {
-            trace.type = 'scatter';
-            trace.mode = chartDef.mode || 'lines+markers';
-            if (chartDef.chartType === 'area') trace.fill = 'tozeroy';
-          }
-          if (chartDef.chartType === 'scatter') {
-            trace.mode = chartDef.mode || 'markers';
-          }
-          if (chartDef.chartType === 'bar' && chartDef.orientation === 'h') {
-            trace.orientation = 'h';
-            trace.x = points.map((item) => item.y);
-            trace.y = points.map((item) => item.x);
-          }
-          if (chartDef.chartType === 'pie') {
-            trace.type = 'pie';
-            trace.labels = points.map((item) => item.x);
-            trace.values = points.map((item) => item.y);
-            delete trace.x;
-            delete trace.y;
-          }
-          return trace;
-        });
-        return {
-          data: traces,
-          layout: {
-            title: chartDef.title,
-            paper_bgcolor: 'rgba(0,0,0,0)',
-            plot_bgcolor: 'rgba(0,0,0,0)',
-            margin: { t: 56, r: 24, b: 56, l: 56 },
-            xaxis: chartDef.chartType === 'pie' ? undefined : { title: chartDef.xTitle || chartDef.xField },
-            yaxis: chartDef.chartType === 'pie' ? undefined : { title: chartDef.yTitle || chartDef.yField || chartDef.aggregation },
-            legend: { orientation: 'h' },
-          },
-          config: { responsive: true, displayModeBar: false },
-        };
-      }
-
-      function renderCharts() {
-        const filterState = Object.fromEntries(DASHBOARD_FILTER_SCHEMA.map((filterDef) => [filterDef.id, readFilterValue(filterDef)]));
-        const filteredRows = DASHBOARD_DATASET.filter((row) =>
-          DASHBOARD_FILTER_SCHEMA.every((filterDef) => rowMatchesFilter(row, filterDef, filterState[filterDef.id]))
-        );
-
-        DASHBOARD_CHART_DEFS.forEach((chartDef) => {
-          const statusNode = document.getElementById(chartDef.divId + '-status');
-          const plotNode = document.getElementById(chartDef.divId);
-          if (!plotNode) return;
-          const payload = buildPlotlyPayload(filteredRows, chartDef);
-          if (!payload.data.length || !payload.data.some((trace) => (trace.x && trace.x.length) || (trace.labels && trace.labels.length))) {
-            Plotly.purge(plotNode);
-            if (statusNode) statusNode.textContent = 'No data matches the current filters for this chart.';
-            return;
-          }
-          Plotly.newPlot(plotNode, payload.data, payload.layout, payload.config);
-          if (statusNode) statusNode.textContent = filteredRows.length + ' rows match the current filters.';
-        });
-      }
-
-      DASHBOARD_FILTER_SCHEMA.forEach((filterDef) => {
-        controlHost.appendChild(createControl(filterDef));
-      });
-      if (applyButton) applyButton.addEventListener('click', renderCharts);
-      if (resetButton) {
-        resetButton.addEventListener('click', () => {
-          DASHBOARD_FILTER_SCHEMA.forEach((filterDef) => {
-            const type = filterDef.resolvedType || inferFieldType(filterDef);
-            if (type === 'categorical') {
-              const select = document.getElementById(filterDef.id);
-              if (select) Array.from(select.options).forEach((option) => { option.selected = false; });
-            } else if (type === 'date' || type === 'datetime') {
-              const preset = document.getElementById(filterDef.id + '__preset');
-              const start = document.getElementById(filterDef.id + '__start');
-              const end = document.getElementById(filterDef.id + '__end');
-              if (preset) preset.value = '';
-              if (start) start.value = '';
-              if (end) end.value = '';
-            } else {
-              const minInput = document.getElementById(filterDef.id + '__min');
-              const maxInput = document.getElementById(filterDef.id + '__max');
-              if (minInput) minInput.value = '';
-              if (maxInput) maxInput.value = '';
-            }
-          });
-          renderCharts();
-        });
-      }
-      renderCharts();
-    })();
-            """,
-            "  </script>",
-            "</body>",
-            "</html>",
+        dashboard_metric_cards = [
+            {
+                "label": "Charts Embedded",
+                "value": str(len(bound_cards) + len(static_cards)),
+                "meta": "Across live and appendix sections",
+            },
+            {
+                "label": "Filter-Aware",
+                "value": str(len(bound_cards)),
+                "meta": "Charts bound to the canonical dataset",
+            },
+            {
+                "label": "Static Appendix",
+                "value": str(len(static_cards)),
+                "meta": "Snapshot-only visual artifacts",
+            },
+            {
+                "label": "Dataset Rows",
+                "value": str(len(dataset_records)) if dataset_records else "n/a",
+                "meta": "Browser-side filter dataset payload",
+            },
         ]
+        filter_panel_html = ""
+        if data_filtering_enabled:
+            filter_panel_html = (
+                "<section class=\"filter-card\">"
+                "<h2>Shared data filters</h2>"
+                "<p>These controls update all compatible charts from the embedded dashboard dataset.</p>"
+                "<div id=\"dashboard-filter-controls\" class=\"filter-controls\"></div>"
+                "<div class=\"filter-actions\">"
+                "<button type=\"button\" id=\"dashboard-apply-filters\" class=\"secondary\">Apply filters</button>"
+                "<button type=\"button\" id=\"dashboard-reset-filters\">Reset filters</button>"
+                "</div>"
+                f"<div class=\"dataset-meta\">Dataset: {html.escape(dashboard_dataset_path)} • Rows embedded: {len(dataset_records)} • Format: {html.escape(dataset_format)}</div>"
+                "</section>"
+            )
+        html_output = render_dashboard_html(
+            title=title,
+            description=description,
+            generated_at=generated_at,
+            hero_meta=hero_meta,
+            metric_cards=dashboard_metric_cards,
+            filter_panel_html=filter_panel_html,
+            primary_cards=bound_cards or static_cards,
+            appendix_cards=static_cards if bound_cards and static_cards else [],
+            query_items=query_items,
+            dataset_records=dataset_records,
+            filter_config=filter_config,
+            chart_runtime_defs=chart_runtime_defs,
+            dataset_schema=dataset_schema,
+            highlights_heading="Highlights" if bound_cards else "Charts",
         )
 
         try:
             dashboard_path.parent.mkdir(parents=True, exist_ok=True)
-            dashboard_path.write_text("\n".join(html_lines), encoding="utf-8")
+            dashboard_path.write_text(html_output, encoding="utf-8")
             artifact = {
                 "path": _workspace_rel(dashboard_path, workspace_state.root_path),
                 "mimeType": ALLOWED_ARTIFACT_EXTENSIONS[".html"],

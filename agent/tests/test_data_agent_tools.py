@@ -36,6 +36,19 @@ class DataAgentToolsTest(unittest.TestCase):
             self.assertIn("charts/plot.png", snapshot)
             self.assertNotIn("node_modules/pkg/ignored.png", snapshot)
 
+    def test_snapshot_workspace_falls_back_to_full_scan_for_off_path_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "reports").mkdir()
+            (root / "reports" / "summary.html").write_text("<h1>ok</h1>", encoding="utf-8")
+            (root / "README.md").write_text("readme", encoding="utf-8")
+            (root / "custom_artifacts").mkdir()
+            (root / "custom_artifacts" / "chart.png").write_bytes(b"png")
+
+            snapshot = _snapshot_workspace(root)
+
+            self.assertIn("custom_artifacts/chart.png", snapshot)
+
     def test_register_files_prefers_data_directories(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -148,6 +161,35 @@ class DataAgentToolsTest(unittest.TestCase):
                 {
                     "sql_query": (
                         "SELECT order_id, MAX(revenue) OVER () AS max_revenue "
+                        "FROM orders"
+                    )
+                }
+            )
+
+            self.assertIn("Execution was safety-capped at 1000 rows.", raw)
+            manager = workspace.context["data_agent_manager"]
+            self.assertEqual(len(manager.session.last_query_result), 1000)
+            self.assertTrue(manager.session.query_history[-1].truncated)
+
+    def test_run_sql_query_caps_scalar_subquery_aggregate_results(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "datasets").mkdir()
+            rows = ["order_id,revenue"]
+            rows.extend(f"{i},{i * 10}" for i in range(1105))
+            (root / "datasets" / "orders.csv").write_text(
+                "\n".join(rows) + "\n",
+                encoding="utf-8",
+            )
+            workspace = self._workspace(root)
+            tools = self._tool_map(workspace)
+
+            tools["get_table_schema"].invoke({"table_names": ["orders"]})
+            raw = tools["run_sql_query"].invoke(
+                {
+                    "sql_query": (
+                        "SELECT order_id, "
+                        "(SELECT COUNT(*) FROM orders) AS total_orders "
                         "FROM orders"
                     )
                 }
