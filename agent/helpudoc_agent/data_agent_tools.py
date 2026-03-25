@@ -4,12 +4,14 @@ import hashlib
 import html
 import json
 import logging
+import multiprocessing as mp
 import os
 import re
 import shutil
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from queue import Empty
 from typing import Annotated, Any, Dict, List, Optional, Set, Tuple
 
 import duckdb
@@ -67,6 +69,7 @@ MAX_CHART_COUNT = 5
 DEFAULT_CACHE_TTL_HOURS = 24
 MAX_MATERIALIZED_ROWS = 100000
 MAX_QUERY_RESULT_ROWS = MAX_SESSION_ROWS + 1
+CHART_EXECUTION_TIMEOUT_SECONDS = 5.0
 WORKSPACE_SCAN_EXCLUDED_DIRS = {
     ".git",
     ".hg",
@@ -289,6 +292,22 @@ def _detect_new_files(
     return artifacts
 
 
+def _cleanup_new_files(
+    root: Path,
+    before: Dict[str, Tuple[int, int]],
+    after: Dict[str, Tuple[int, int]],
+) -> None:
+    for rel in after:
+        if rel in before:
+            continue
+        path = root / rel
+        try:
+            if path.exists():
+                path.unlink()
+        except OSError:
+            logger.warning("Failed to clean up artifact %s", path, exc_info=True)
+
+
 def _format_dataframe_markdown(df: pd.DataFrame, *, truncated: bool = False) -> str:
     if df.empty:
         return "Query executed successfully but returned no data."
@@ -361,6 +380,154 @@ def _query_looks_aggregated(query: str) -> bool:
         re.search(r"\bgroup\s+by\b", query, re.IGNORECASE)
         or re.search(r"\bhaving\b", query, re.IGNORECASE)
     )
+
+
+def _json_safe_chart_value(value: Any) -> Any:
+    if value is None:
+        return None
+    try:
+        json.dumps(value)
+        return value
+    except TypeError:
+        return str(value)
+
+
+def _chart_payload(
+    chart_title: str,
+    *,
+    status: str,
+    message: str,
+    row_count: int,
+    chart_config: Any = None,
+    plotly_config_path: Optional[str] = None,
+    output_files: Optional[List[Dict[str, Any]]] = None,
+    error_type: Optional[str] = None,
+    available_columns: Optional[List[str]] = None,
+) -> str:
+    payload: Dict[str, Any] = {
+        "status": status,
+        "message": message,
+        "chart_title": chart_title,
+        "chart_config": _json_safe_chart_value(chart_config),
+        "plotly_config_path": plotly_config_path,
+        "plotly_html_path": None,
+        "output_files": output_files or [],
+        "row_count": row_count,
+    }
+    if error_type:
+        payload["error_type"] = error_type
+    if available_columns is not None:
+        payload["available_columns"] = available_columns
+    return _json_dump(payload)
+
+
+def _execute_chart_code_worker(
+    result_queue: "mp.Queue[Dict[str, Any]]",
+    sanitized_code: str,
+    chart_title: str,
+    df_context: pd.DataFrame,
+) -> None:
+    safe_globals: Dict[str, Any] = {
+        "__builtins__": _build_safe_builtins(),
+        "pd": SafePandasProxy(pd),
+        "np": np,
+        "json": json,
+        "isinstance": isinstance,
+        "len": len,
+        "range": range,
+        "enumerate": enumerate,
+        "chart_config": None,
+        "chart_title": chart_title,
+        "df": df_context,
+    }
+    if plt is not None:
+        safe_globals["plt"] = plt
+    if sns is not None:
+        safe_globals["sns"] = sns
+
+    exec_namespace: Dict[str, Any] = {}
+    try:
+        exec(sanitized_code, safe_globals, exec_namespace)
+    except KeyError as exc:
+        result_queue.put(
+            {
+                "status": "error",
+                "error_type": "missing_column",
+                "message": f"Column {str(exc)} not found in query result.",
+                "available_columns": list(df_context.columns),
+            }
+        )
+        return
+    except Exception as exc:
+        result_queue.put(
+            {
+                "status": "error",
+                "error_type": "execution_error",
+                "message": f"Failed to execute chart code: {exc}",
+            }
+        )
+        return
+
+    chart_config = exec_namespace.get("chart_config") or safe_globals.get("chart_config")
+    plotly_payload = _coerce_plotly_spec(chart_config)
+    if plotly_payload is None:
+        plotly_payload = _coerce_plotly_spec(
+            exec_namespace.get("plotly_fig") or exec_namespace.get("fig")
+        )
+
+    result_queue.put(
+        {
+            "status": "success",
+            "chart_config": _json_safe_chart_value(chart_config),
+            "plotly_payload": plotly_payload,
+        }
+    )
+
+
+def _run_chart_code_in_subprocess(
+    sanitized_code: str,
+    chart_title: str,
+    df_context: pd.DataFrame,
+    *,
+    timeout_seconds: Optional[float] = None,
+) -> Dict[str, Any]:
+    effective_timeout = timeout_seconds or CHART_EXECUTION_TIMEOUT_SECONDS
+    ctx = mp.get_context("spawn")
+    result_queue: "mp.Queue[Dict[str, Any]]" = ctx.Queue()
+    try:
+        process = ctx.Process(
+            target=_execute_chart_code_worker,
+            args=(result_queue, sanitized_code, chart_title, df_context),
+        )
+        process.start()
+        process.join(effective_timeout)
+
+        if process.is_alive():
+            process.terminate()
+            process.join(1)
+            if process.is_alive():
+                process.kill()
+                process.join(1)
+            return {
+                "status": "error",
+                "error_type": "timeout",
+                "message": f"Chart execution timed out after {effective_timeout:g} seconds.",
+            }
+
+        try:
+            result = result_queue.get_nowait()
+        except Empty:
+            result = None
+        if result is None:
+            return {
+                "status": "error",
+                "error_type": "execution_error",
+                "message": "Chart subprocess exited without returning a result.",
+            }
+        return result
+    finally:
+        result_queue.close()
+        result_queue.join_thread()
 
 
 def _markdown_to_html(markdown_text: str) -> str:
@@ -1289,45 +1456,38 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
         charts_dir = workspace_state.root_path / "charts"
         safe_title = _safe_slug(chart_title, "chart")
         before_snapshot = _snapshot_workspace(workspace_state.root_path)
-        safe_globals: Dict[str, Any] = {
-            "__builtins__": _build_safe_builtins(),
-            "pd": SafePandasProxy(pd),
-            "np": np,
-            "json": json,
-            "isinstance": isinstance,
-            "len": len,
-            "range": range,
-            "enumerate": enumerate,
-            "chart_config": None,
-            "chart_title": chart_title,
-            "df": df_context,
-        }
 
         try:
             sanitized_code = sanitize_python_code(python_code)
         except ValueError as exc:
-            return str(exc)
-
-        exec_namespace: Dict[str, Any] = {}
-        try:
-            exec(sanitized_code, safe_globals, exec_namespace)
-        except KeyError as exc:
-            missing_col = str(exc)
-            available_cols = list(df_context.columns)
-            return (
-                f"Column {missing_col} not found in query result. "
-                f"Available columns: {available_cols}"
+            return _chart_payload(
+                chart_title,
+                status="error",
+                message=str(exc),
+                row_count=len(df_context),
+                error_type="sanitization_error",
+                available_columns=list(df_context.columns),
             )
-        except Exception as exc:
-            logger.exception("Chart config execution failed: %s", exc)
-            return f"Failed to execute chart code: {exc}"
 
-        chart_config = exec_namespace.get("chart_config") or safe_globals.get("chart_config")
-        plotly_payload = _coerce_plotly_spec(chart_config)
-        if plotly_payload is None:
-            plotly_payload = _coerce_plotly_spec(
-                exec_namespace.get("plotly_fig") or exec_namespace.get("fig")
+        execution_result = _run_chart_code_in_subprocess(
+            sanitized_code,
+            chart_title,
+            df_context,
+        )
+        if execution_result.get("status") != "success":
+            after_snapshot = _snapshot_workspace(workspace_state.root_path)
+            _cleanup_new_files(workspace_state.root_path, before_snapshot, after_snapshot)
+            return _chart_payload(
+                chart_title,
+                status="error",
+                message=execution_result.get("message") or "Chart execution failed.",
+                row_count=len(df_context),
+                error_type=execution_result.get("error_type") or "execution_error",
+                available_columns=execution_result.get("available_columns"),
             )
+
+        chart_config = execution_result.get("chart_config")
+        plotly_payload = execution_result.get("plotly_payload")
 
         after_snapshot = _snapshot_workspace(workspace_state.root_path)
         artifacts = _detect_new_files(
@@ -1351,7 +1511,14 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
                 logger.warning("Failed to persist Plotly config", exc_info=True)
 
         if chart_config is None and plotly_payload is None and not artifacts:
-            return "No chart_config variable created and no artifacts produced."
+            return _chart_payload(
+                chart_title,
+                status="error",
+                message="No chart_config variable created and no artifacts produced.",
+                row_count=len(df_context),
+                error_type="empty_result",
+                available_columns=list(df_context.columns),
+            )
 
         artifact_paths = [artifact["path"] for artifact in artifacts]
         db_manager.record_chart(chart_title, artifact_paths)
@@ -1359,25 +1526,19 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
             db_manager.register_artifact(artifact)
         _emit_artifacts(callbacks, artifacts)
 
-        payload = {
-            "chart_title": chart_title,
-            "chart_config": plotly_payload if plotly_payload is not None else chart_config,
-            "plotly_config_path": (
+        return _chart_payload(
+            chart_title,
+            status="success",
+            message="Chart generated successfully.",
+            row_count=len(df_context),
+            chart_config=plotly_payload if plotly_payload is not None else chart_config,
+            plotly_config_path=(
                 _workspace_rel(plotly_config_path, workspace_state.root_path)
                 if plotly_config_path
                 else None
             ),
-            "plotly_html_path": (
-                None
-            ),
-            "output_files": artifacts,
-            "row_count": len(df_context),
-        }
-        try:
-            return _json_dump(payload)
-        except TypeError:  # pragma: no cover - defensive
-            payload["chart_config"] = str(chart_config)
-            return _json_dump(payload)
+            output_files=artifacts,
+        )
 
     @tool
     def generate_summary(
