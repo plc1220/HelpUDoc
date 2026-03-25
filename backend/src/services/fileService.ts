@@ -100,6 +100,18 @@ export class FileService {
     return normalized;
   }
 
+  private normalizeRelativeFolderPath(folderPath: string): string {
+    const normalized = path.posix
+      .normalize((folderPath || '').replace(/\\/g, '/'))
+      .replace(/^(\.\.\/)+/, '')
+      .replace(/^\/+/, '')
+      .replace(/\/+$/, '');
+    if (!normalized || normalized === '.') {
+      return '';
+    }
+    return normalized;
+  }
+
   private getLocalPath(workspaceId: string, fileName: string): string {
     const relative = this.normalizeRelativePath(fileName);
     return path.join(WORKSPACE_DIR, workspaceId, relative);
@@ -407,30 +419,58 @@ export class FileService {
     }
   }
 
-  async renameFile(fileId: number, newName: string, userId: string, expectedVersion?: number) {
+  async renameFile(
+    fileId: number,
+    target: { name?: string; path?: string },
+    userId: string,
+    expectedVersion?: number,
+  ) {
     const file = await this.db('files').where({ id: fileId }).first();
     if (!file) {
       throw new NotFoundError('File not found');
     }
 
-    const normalizedNewName = this.normalizeRelativePath(newName);
     await this.workspaceService.ensureMembership(file.workspaceId, userId, { requireEdit: true });
     const currentVersion = this.assertVersion(file.version, expectedVersion);
     const nextVersion = currentVersion + 1;
+    const currentRelativePath = this.normalizeRelativePath(file.name);
+    const wasRagIndexable = this.isRagIndexable(currentRelativePath);
+    const destinationRelativePath = target.path !== undefined
+      ? (() => {
+          const destinationFolder = this.normalizeRelativeFolderPath(target.path || '');
+          const baseName = path.posix.basename(currentRelativePath);
+          return destinationFolder ? path.posix.join(destinationFolder, baseName) : baseName;
+        })()
+      : (() => {
+          if (!target.name) {
+            throw new ConflictError('Missing destination name');
+          }
+          const normalizedNewName = this.normalizeRelativePath(target.name);
+          const currentDir = path.posix.dirname(currentRelativePath);
+          return currentDir === '.'
+            ? normalizedNewName
+            : path.posix.join(currentDir, normalizedNewName);
+        })();
+    const isDestinationRagIndexable = this.isRagIndexable(destinationRelativePath);
+
+    if (destinationRelativePath === currentRelativePath) {
+      return file;
+    }
 
     if (file.storageType === 'local') {
-      const targetDir = path.dirname(file.path);
-      const newPath = path.join(targetDir, normalizedNewName);
+      const currentLocalPath = this.getLocalPath(file.workspaceId, currentRelativePath);
+      const newPath = this.getLocalPath(file.workspaceId, destinationRelativePath);
 
       try {
-        await fs.rename(file.path, newPath);
+        await fs.mkdir(path.dirname(newPath), { recursive: true });
+        await fs.rename(currentLocalPath, newPath);
       } catch (error) {
         console.error('Failed to rename file on disk:', error);
         throw error;
       }
 
       await this.db('files').where({ id: fileId }).update({
-        name: normalizedNewName,
+        name: destinationRelativePath,
         path: newPath,
         updatedBy: userId,
         updatedAt: this.db.fn.now(),
@@ -438,12 +478,9 @@ export class FileService {
       });
     } else {
       const currentKey = file.path.replace(/\\/g, '/');
-      const currentLocalPath = this.getLocalPath(file.workspaceId, file.name);
-      const newLocalPath = this.getLocalPath(file.workspaceId, normalizedNewName);
-      const currentDir = path.posix.dirname(currentKey);
-      const newKey = currentDir === '.'
-        ? normalizedNewName
-        : `${currentDir}/${normalizedNewName}`;
+      const currentLocalPath = this.getLocalPath(file.workspaceId, currentRelativePath);
+      const newLocalPath = this.getLocalPath(file.workspaceId, destinationRelativePath);
+      const newKey = normalizeS3Key(file.workspaceId, destinationRelativePath);
       await this.s3Service.copyFile(currentKey, newKey);
       await this.s3Service.deleteFile(currentKey);
       const publicUrl = this.s3Service.getPublicUrl(newKey);
@@ -455,7 +492,7 @@ export class FileService {
       }
 
       await this.db('files').where({ id: fileId }).update({
-        name: normalizedNewName,
+        name: destinationRelativePath,
         path: newKey,
         publicUrl,
         updatedBy: userId,
@@ -465,6 +502,32 @@ export class FileService {
     }
 
     await this.workspaceService.touchWorkspace(file.workspaceId, userId);
+
+    if (wasRagIndexable) {
+      try {
+        await this.ragQueueService?.enqueueFileDelete({
+          workspaceId: file.workspaceId,
+          relativePath: currentRelativePath,
+        });
+      } catch (error) {
+        console.error('Failed to enqueue RAG delete job after file move/rename', error);
+      }
+    }
+
+    if (isDestinationRagIndexable) {
+      try {
+        await this.ragQueueService?.enqueueFileUpsert({
+          workspaceId: file.workspaceId,
+          fileId: file.id,
+          relativePath: destinationRelativePath,
+          mimeType: file.mimeType ?? null,
+          storageType: file.storageType,
+          publicUrl: file.storageType === 's3' ? this.s3Service.getPublicUrl(normalizeS3Key(file.workspaceId, destinationRelativePath)) : null,
+        });
+      } catch (error) {
+        console.error('Failed to enqueue RAG upsert job after file move/rename', error);
+      }
+    }
 
     return this.db('files').where({ id: fileId }).first();
   }
