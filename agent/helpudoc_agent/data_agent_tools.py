@@ -4,6 +4,7 @@ import hashlib
 import html
 import json
 import logging
+import os
 import re
 import shutil
 from dataclasses import dataclass
@@ -64,6 +65,30 @@ MAX_QUERY_COUNT = 10
 MAX_CHART_COUNT = 5
 DEFAULT_CACHE_TTL_HOURS = 24
 MAX_MATERIALIZED_ROWS = 100000
+MAX_QUERY_RESULT_ROWS = MAX_SESSION_ROWS + 1
+WORKSPACE_SCAN_EXCLUDED_DIRS = {
+    ".git",
+    ".hg",
+    ".svn",
+    ".venv",
+    "__pycache__",
+    "node_modules",
+    "dist",
+    "build",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".tox",
+    ".idea",
+    ".vscode",
+}
+DATA_FILE_EXTENSIONS = {".csv", ".parquet"}
+DATA_DISCOVERY_DIR_CANDIDATES = (
+    "data",
+    "datasets",
+    "exports",
+    "data_exports",
+)
 
 
 @dataclass
@@ -71,6 +96,7 @@ class _QueryRecord:
     sql: str
     row_count: int
     preview: "pd.DataFrame"
+    truncated: bool = False
 
 
 @dataclass
@@ -169,11 +195,66 @@ def _safe_slug(value: str, default: str) -> str:
     return slug or default
 
 
+def _should_skip_directory(name: str) -> bool:
+    if name in WORKSPACE_SCAN_EXCLUDED_DIRS:
+        return True
+    return name.startswith(".")
+
+
+def _iter_workspace_files(
+    root: Path,
+    *,
+    allowed_extensions: Optional[Set[str]] = None,
+    preferred_dirs: Tuple[str, ...] = (),
+) -> List[Path]:
+    seen: Set[Path] = set()
+    files: List[Path] = []
+
+    def _append_file(path: Path) -> None:
+        if allowed_extensions and path.suffix.lower() not in allowed_extensions:
+            return
+        resolved = path.resolve()
+        if resolved in seen:
+            return
+        seen.add(resolved)
+        files.append(path)
+
+    for child in root.iterdir():
+        if child.is_file():
+            _append_file(child)
+
+    preferred_roots: List[Path] = []
+    for dirname in preferred_dirs:
+        candidate = root / dirname
+        if candidate.exists() and candidate.is_dir():
+            preferred_roots.append(candidate)
+
+    def _scan_recursive(base: Path) -> None:
+        for current_root, dirnames, filenames in os.walk(base):
+            current_path = Path(current_root)
+            if current_path != base and _should_skip_directory(current_path.name):
+                dirnames[:] = []
+                continue
+            dirnames[:] = [
+                dirname for dirname in dirnames if not _should_skip_directory(dirname)
+            ]
+            for filename in filenames:
+                _append_file(current_path / filename)
+
+    for base in preferred_roots:
+        _scan_recursive(base)
+    if not preferred_roots or len(files) == 0:
+        _scan_recursive(root)
+    return files
+
+
 def _snapshot_workspace(root: Path) -> Dict[str, Tuple[int, int]]:
     snapshot: Dict[str, Tuple[int, int]] = {}
-    for path in root.rglob("*"):
-        if not path.is_file():
-            continue
+    for path in _iter_workspace_files(
+        root,
+        allowed_extensions=set(ALLOWED_ARTIFACT_EXTENSIONS.keys()),
+        preferred_dirs=("charts", "reports", "dashboards", "exports", "data_exports"),
+    ):
         rel = path.relative_to(root).as_posix()
         try:
             stat = path.stat()
@@ -205,14 +286,24 @@ def _detect_new_files(
     return artifacts
 
 
-def _format_dataframe_markdown(df: pd.DataFrame) -> str:
+def _format_dataframe_markdown(df: pd.DataFrame, *, truncated: bool = False) -> str:
     if df.empty:
         return "Query executed successfully but returned no data."
 
     display_df = df.head(MAX_RESULT_ROWS)
-    message_lines = [
-        f"The query returned {len(df)} rows.",
-    ]
+    message_lines = [f"Result shape: {len(df)} rows x {len(df.columns)} columns."]
+    if truncated:
+        message_lines.append(
+            f"Execution was safety-capped at {MAX_SESSION_ROWS} rows. Refine the query for the full result."
+        )
+    if len(df.columns):
+        columns = ", ".join(f"`{column}`" for column in df.columns[:10])
+        if len(df.columns) > 10:
+            columns += ", ..."
+        message_lines.append(f"Columns: {columns}")
+    numeric_summary = _format_numeric_summary(df)
+    if numeric_summary:
+        message_lines.append(f"Numeric summary: {numeric_summary}")
     if len(df) > MAX_RESULT_ROWS:
         message_lines.append(f"Showing the first {MAX_RESULT_ROWS} rows below.")
     message_lines.append(display_df.to_markdown())
@@ -220,6 +311,48 @@ def _format_dataframe_markdown(df: pd.DataFrame) -> str:
     if len(rendered) > 4000:
         return rendered[:4000] + "\n... (Output truncated due to length)"
     return rendered
+
+
+def _format_sample_value(value: Any) -> str:
+    if pd.isna(value):
+        return "null"
+    if isinstance(value, str):
+        compact = value if len(value) <= 32 else value[:29] + "..."
+        return repr(compact)
+    if isinstance(value, (datetime, pd.Timestamp)):
+        return value.isoformat()
+    return str(value)
+
+
+def _format_numeric_summary(df: pd.DataFrame) -> str:
+    numeric_df = df.select_dtypes(include=["number"])
+    if numeric_df.empty:
+        return ""
+
+    summaries: List[str] = []
+    for column in numeric_df.columns[:3]:
+        series = numeric_df[column].dropna()
+        if series.empty:
+            continue
+        summaries.append(
+            f"`{column}` min={series.min():.3g}, median={series.median():.3g}, max={series.max():.3g}"
+        )
+    return "; ".join(summaries)
+
+
+def _query_looks_aggregated(query: str) -> bool:
+    aggregate_markers = [
+        r"\bgroup\s+by\b",
+        r"\bdistinct\b",
+        r"\bhaving\b",
+        r"\bcount\s*\(",
+        r"\bsum\s*\(",
+        r"\bavg\s*\(",
+        r"\bmean\s*\(",
+        r"\bmin\s*\(",
+        r"\bmax\s*\(",
+    ]
+    return any(re.search(pattern, query, re.IGNORECASE) for pattern in aggregate_markers)
 
 
 def _markdown_to_html(markdown_text: str) -> str:
@@ -595,10 +728,18 @@ class DuckDBManager:
         """Scans workspace for CSV and Parquet files and registers them as tables."""
         self._registered_tables.clear()
         root = self.workspace_state.root_path
-        parquet_files = list(root.rglob("*.parquet"))
-        csv_files = list(root.rglob("*.csv"))
+        preferred_dirs = tuple(
+            dirname
+            for dirname in DATA_DISCOVERY_DIR_CANDIDATES
+            if (root / dirname).exists()
+        )
+        data_files = _iter_workspace_files(
+            root,
+            allowed_extensions=DATA_FILE_EXTENSIONS,
+            preferred_dirs=preferred_dirs,
+        )
         used_names: Set[str] = set()
-        for file_path in parquet_files + csv_files:
+        for file_path in sorted(data_files):
             relative_stem = file_path.relative_to(root).with_suffix("").as_posix()
             base_name = re.sub(r"[^a-zA-Z0-9_]", "_", file_path.stem)
             path_name = re.sub(r"[^a-zA-Z0-9_]", "_", relative_stem)
@@ -631,21 +772,40 @@ class DuckDBManager:
         if not tables:
             return "No tables found in the workspace."
 
-        schema_str = ""
+        schema_lines: List[str] = []
         for table in tables:
             table_name = table[0]
             if table_names and table_name not in table_names:
                 continue
 
-            schema_str += f"Table: {table_name}\n"
+            schema_lines.append(f"Table: {table_name}")
             columns = self.con.execute(f"DESCRIBE {table_name}").fetchall()
+            sample_rows = self.con.execute(f"SELECT * FROM {table_name} LIMIT 3").df()
             for col in columns:
-                schema_str += f"  - {col[0]} ({col[1]})\n"
-            schema_str += "\n"
+                sample_values: List[str] = []
+                if not sample_rows.empty and col[0] in sample_rows.columns:
+                    non_null = sample_rows[col[0]].dropna().tolist()
+                    for value in non_null:
+                        formatted = _format_sample_value(value)
+                        if formatted not in sample_values:
+                            sample_values.append(formatted)
+                        if len(sample_values) == 2:
+                            break
+                sample_suffix = (
+                    f" [examples: {', '.join(sample_values)}]" if sample_values else ""
+                )
+                schema_lines.append(f"  - {col[0]} ({col[1]}){sample_suffix}")
+            schema_lines.append("")
 
-        return schema_str
+        return "\n".join(schema_lines).strip()
 
-    def run_query(self, query: str) -> pd.DataFrame:
+    def run_query(
+        self,
+        query: str,
+        *,
+        record_sql: Optional[str] = None,
+        truncated: bool = False,
+    ) -> pd.DataFrame:
         if self.session.query_count >= MAX_QUERY_COUNT:
             raise ValueError(
                 f"Query budget exhausted: at most {MAX_QUERY_COUNT} queries are allowed per run."
@@ -653,12 +813,14 @@ class DuckDBManager:
         df = self.con.execute(query).df()
         self.session.query_count += 1
         self.session.last_query_result = df
-        self.session.last_query_sql = query
+        stored_sql = record_sql or query
+        self.session.last_query_sql = stored_sql
         self.session.query_history.append(
             _QueryRecord(
-                sql=query,
+                sql=stored_sql,
                 row_count=len(df),
                 preview=df.head(MAX_RESULT_ROWS).copy(),
+                truncated=truncated,
             )
         )
         return df
@@ -803,7 +965,7 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
 
     @tool
     def run_sql_query(
-        sql_query: str = Field(description="The SQL query to run. Always limit rows to 1000."),
+        sql_query: str = Field(description="The SQL query to run."),
     ) -> str:
         """Run a SQL query against the database and return the results."""
         try:
@@ -818,11 +980,25 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
             cleaned_query = _rewrite_virtual_paths(
                 cleaned_query, db_manager.workspace_state.root_path
             )
-            if not re.search(r"\blimit\s+\d+\b", cleaned_query, re.IGNORECASE):
-                cleaned_query = f"{cleaned_query} LIMIT 1000"
+            truncated = False
+            executed_query = cleaned_query
+            safety_capped = not _query_looks_aggregated(cleaned_query)
+            if safety_capped:
+                executed_query = (
+                    f"SELECT * FROM ({cleaned_query}) AS helpudoc_query_preview "
+                    f"LIMIT {MAX_QUERY_RESULT_ROWS}"
+                )
 
-            df = db_manager.run_query(cleaned_query)
-            return _format_dataframe_markdown(df)
+            df = db_manager.run_query(executed_query, record_sql=cleaned_query)
+            if safety_capped and len(df) > MAX_SESSION_ROWS:
+                truncated = True
+                df = df.head(MAX_SESSION_ROWS).copy()
+                db_manager.session.last_query_result = df
+                if db_manager.session.query_history:
+                    db_manager.session.query_history[-1].row_count = len(df)
+                    db_manager.session.query_history[-1].preview = df.head(MAX_RESULT_ROWS).copy()
+                    db_manager.session.query_history[-1].truncated = True
+            return _format_dataframe_markdown(df, truncated=truncated)
         except Exception as exc:  # pragma: no cover - defensive
             return f"Error executing query: {str(exc)}"
 
@@ -1281,8 +1457,13 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
                 ]
             )
             for idx, query_record in enumerate(db_manager.session.query_history, start=1):
+                row_label = (
+                    f"{query_record.row_count}+ rows previewed"
+                    if query_record.truncated
+                    else f"{query_record.row_count} rows"
+                )
                 report_lines.append(
-                    f"      <h3>Query {idx} <span class=\"meta\">({query_record.row_count} rows)</span></h3>"
+                    f"      <h3>Query {idx} <span class=\"meta\">({row_label})</span></h3>"
                 )
                 report_lines.append(f"      <pre><code>{html.escape(query_record.sql)}</code></pre>")
                 if not query_record.preview.empty:
@@ -1588,9 +1769,14 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
 
         query_items = []
         for idx, query_record in enumerate(db_manager.session.query_history, start=1):
+            row_label = (
+                f"{query_record.row_count}+ rows previewed"
+                if query_record.truncated
+                else f"{query_record.row_count} rows"
+            )
             query_items.append(
                 "<div class=\"query-item\">"
-                f"<div class=\"query-meta\">Query {idx} • {query_record.row_count} rows</div>"
+                f"<div class=\"query-meta\">Query {idx} • {row_label}</div>"
                 f"<pre class=\"query-block\">{html.escape(query_record.sql)}</pre>"
                 "</div>"
             )
