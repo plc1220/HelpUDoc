@@ -1137,5 +1137,11 @@ class TestStableArtifactOutputs:
         skill_path = Path(__file__).parent.parent / "skills" / "data" / "refresh" / "SKILL.md"
         content = skill_path.read_text(encoding="utf-8")
         assert "materialize_bigquery_to_parquet" in content
+
+    def test_dashboard_skill_contract_mentions_clarification_for_filterable_dashboards(self) -> None:
+        skill_path = Path(__file__).parent.parent / "skills" / "data" / "dashboard" / "SKILL.md"
+        content = skill_path.read_text(encoding="utf-8")
+        assert "request_clarification" in content
+        assert "frontend-slides" in content
+        assert "True filterable dashboard" in content
         assert "generate_dashboard" in content
-        assert "latest.parquet" in content
