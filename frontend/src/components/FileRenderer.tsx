@@ -18,6 +18,78 @@ interface FileRendererProps {
   workspaceId?: string;
 }
 
+type TabularPreview = {
+  headers: string[];
+  rows: string[][];
+  totalRows: number;
+  totalColumns: number;
+  truncatedRows: boolean;
+  truncatedColumns: boolean;
+};
+
+const PARQUET_PREVIEW_MAX_ROWS = 100;
+const PARQUET_PREVIEW_MAX_COLUMNS = 20;
+let parquetRuntimePromise: Promise<{
+  readParquet: (buffer: Uint8Array, options?: { limit?: number }) => {
+    intoIPCStream: () => Uint8Array;
+    free: () => void;
+  };
+  tableFromIPC: (input: Uint8Array) => {
+    schema: { fields: Array<{ name: string }> };
+    numRows: number;
+    toArray: () => Record<string, unknown>[];
+  };
+}> | null = null;
+
+const loadParquetRuntime = async () => {
+  if (!parquetRuntimePromise) {
+    parquetRuntimePromise = (async () => {
+      const [parquetModule, arrowModule, wasmModule] = await Promise.all([
+        import('parquet-wasm'),
+        import('apache-arrow'),
+        import('parquet-wasm/esm/parquet_wasm_bg.wasm?url'),
+      ]);
+
+      await parquetModule.default(wasmModule.default);
+
+      return {
+        readParquet: parquetModule.readParquet,
+        tableFromIPC: arrowModule.tableFromIPC,
+      };
+    })();
+  }
+
+  return parquetRuntimePromise;
+};
+
+const decodeBase64ToUint8Array = (value: string) => {
+  const normalized = value.trim();
+  const binary = window.atob(normalized);
+  const bytes = new Uint8Array(binary.length);
+
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+
+  return bytes;
+};
+
+const formatPreviewCell = (value: unknown): string => {
+  if (value == null) return '';
+  if (typeof value === 'bigint') return value.toString();
+  if (value instanceof Date) return value.toISOString();
+  if (ArrayBuffer.isView(value)) return `[${value.constructor.name}]`;
+  if (value instanceof Map) return JSON.stringify(Object.fromEntries(value));
+  if (typeof value === 'object') {
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
+  }
+  return String(value);
+};
+
 const FileRenderer: React.FC<FileRendererProps> = ({
   file,
   fileContent,
@@ -47,11 +119,18 @@ const FileRenderer: React.FC<FileRendererProps> = ({
   );
   const isPdfFile = lowerName.endsWith('.pdf') || file?.mimeType === 'application/pdf';
   const isCsvFile = lowerName.endsWith('.csv');
+  const isParquetFile =
+    lowerName.endsWith('.parquet') ||
+    lowerName.endsWith('.pq') ||
+    (file?.mimeType || '').toLowerCase().includes('parquet');
   const isPlotlyFile =
     lowerName.endsWith('.plotly.json') ||
     lowerName.endsWith('.plot.json') ||
     lowerName.endsWith('.chart.json') ||
     lowerName.endsWith('.plotly');
+  const [parquetPreview, setParquetPreview] = useState<TabularPreview | null>(null);
+  const [parquetError, setParquetError] = useState<string | null>(null);
+  const [isParquetLoading, setIsParquetLoading] = useState(false);
 
   const parsedCsv = useMemo(() => {
     if (!isCsvFile || !fileContent.trim()) return null;
@@ -95,6 +174,80 @@ const FileRenderer: React.FC<FileRendererProps> = ({
       cancelled = true;
     };
   }, [colorMode, fileContent, isMermaidFile]);
+
+  useEffect(() => {
+    if (!isParquetFile) {
+      setParquetPreview(null);
+      setParquetError(null);
+      setIsParquetLoading(false);
+      return;
+    }
+
+    if (!fileContent.trim()) {
+      setParquetPreview(null);
+      setParquetError(null);
+      setIsParquetLoading(true);
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadParquetPreview = async () => {
+      setIsParquetLoading(true);
+      setParquetError(null);
+
+      try {
+        const { readParquet, tableFromIPC } = await loadParquetRuntime();
+
+        const parquetBytes = decodeBase64ToUint8Array(fileContent);
+        const wasmTable = readParquet(parquetBytes, {
+          limit: PARQUET_PREVIEW_MAX_ROWS,
+        });
+
+        try {
+          const arrowTable = tableFromIPC(wasmTable.intoIPCStream());
+          const fields = arrowTable.schema.fields;
+          const visibleFields = fields.slice(0, PARQUET_PREVIEW_MAX_COLUMNS);
+          const rawRows = arrowTable.toArray() as Record<string, unknown>[];
+          const headers = visibleFields.map((field) => field.name);
+          const rows = rawRows.map((row) =>
+            headers.map((header) => formatPreviewCell(row?.[header])),
+          );
+
+          if (!cancelled) {
+            setParquetPreview({
+              headers,
+              rows,
+              totalRows: arrowTable.numRows,
+              totalColumns: fields.length,
+              truncatedRows: arrowTable.numRows >= PARQUET_PREVIEW_MAX_ROWS,
+              truncatedColumns: fields.length > PARQUET_PREVIEW_MAX_COLUMNS,
+            });
+          }
+        } finally {
+          wasmTable.free();
+        }
+      } catch (error) {
+        console.error('Parquet parse error', error);
+        if (!cancelled) {
+          setParquetPreview(null);
+          setParquetError(
+            error instanceof Error ? error.message : 'Failed to parse Parquet preview.',
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setIsParquetLoading(false);
+        }
+      }
+    };
+
+    void loadParquetPreview();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [fileContent, isParquetFile]);
 
   const markdownComponents = useMemo(
     () => createMarkdownComponents({
@@ -367,6 +520,82 @@ const FileRenderer: React.FC<FileRendererProps> = ({
               ))}
             </tbody>
           </table>
+        </div>
+      );
+    }
+    if (isParquetFile) {
+      if (isParquetLoading) {
+        return (
+          <div className="flex h-full items-center justify-center text-sm text-gray-500">
+            Loading Parquet preview...
+          </div>
+        );
+      }
+      if (parquetError) {
+        return (
+          <div className="flex h-full items-center justify-center px-4 text-sm text-red-600">
+            Failed to parse Parquet: {parquetError}
+          </div>
+        );
+      }
+      if (!parquetPreview || parquetPreview.headers.length === 0) {
+        return (
+          <div className="flex h-full items-center justify-center text-sm text-gray-500">
+            Empty or unsupported Parquet file.
+          </div>
+        );
+      }
+
+      const summary = [
+        `${parquetPreview.totalRows} row${parquetPreview.totalRows === 1 ? '' : 's'}`,
+        `${parquetPreview.totalColumns} column${parquetPreview.totalColumns === 1 ? '' : 's'}`,
+      ].join(' • ');
+
+      const truncationLabel = [
+        parquetPreview.truncatedRows ? `showing first ${PARQUET_PREVIEW_MAX_ROWS} rows` : null,
+        parquetPreview.truncatedColumns
+          ? `first ${PARQUET_PREVIEW_MAX_COLUMNS} columns visible`
+          : null,
+      ]
+        .filter(Boolean)
+        .join(' • ');
+
+      return (
+        <div className="flex h-full min-h-0 flex-col">
+          <div className="border-b border-gray-200 px-4 py-3 text-xs text-gray-500">
+            <span className="font-medium text-gray-700">Parquet preview</span> • {summary}
+            {truncationLabel ? ` • ${truncationLabel}` : ''}
+          </div>
+          <div className="min-h-0 flex-1 overflow-auto">
+            <table className="min-w-full divide-y divide-gray-200 border-collapse">
+              <thead className="sticky top-0 z-10 bg-gray-50">
+                <tr>
+                  {parquetPreview.headers.map((header) => (
+                    <th
+                      key={header}
+                      className="border-b border-gray-200 bg-gray-50 px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500"
+                    >
+                      {header}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-200 bg-white">
+                {parquetPreview.rows.map((row, rowIndex) => (
+                  <tr key={rowIndex} className="hover:bg-gray-50">
+                    {row.map((cell, cellIndex) => (
+                      <td
+                        key={`${rowIndex}-${parquetPreview.headers[cellIndex]}`}
+                        className="border-b border-gray-200 px-6 py-4 text-sm text-gray-900"
+                      >
+                        <div className="max-w-md whitespace-pre-wrap break-words">{cell}</div>
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       );
     }
