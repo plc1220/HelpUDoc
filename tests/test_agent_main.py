@@ -56,6 +56,29 @@ class ToolFactoryStub:  # pragma: no cover - placeholder for dependency
         pass
 
 
+class RagWorkerStoreStub:
+    def __init__(self):
+        self.query_data_calls = []
+
+    async def query_data(self, *args, **kwargs):
+        self.query_data_calls.append((args, kwargs))
+        return {"data": {"chunks": []}}
+
+
+class RagIndexWorkerStub:
+    last_instance = None
+
+    def __init__(self, *_args, **_kwargs):
+        self.store = RagWorkerStoreStub()
+        RagIndexWorkerStub.last_instance = self
+
+    async def start(self):
+        return None
+
+    async def stop(self):
+        return None
+
+
 class RegistryStub:
     instance = None
 
@@ -230,6 +253,16 @@ def _install_dependency_stubs():
         sys.modules["langgraph.types"] = langgraph_types
         langgraph_pkg.types = langgraph_types
 
+    if "langgraph.errors" not in sys.modules:
+        langgraph_errors = ModuleType("langgraph.errors")
+
+        class _GraphInterrupt(Exception):
+            pass
+
+        langgraph_errors.GraphInterrupt = _GraphInterrupt
+        sys.modules["langgraph.errors"] = langgraph_errors
+        langgraph_pkg.errors = langgraph_errors
+
     if "vertexai" not in sys.modules:
         vertexai = ModuleType("vertexai")
 
@@ -304,6 +337,7 @@ def client_with_stubs(monkeypatch):
     monkeypatch.setattr(app_module, "GeminiClientManager", GeminiClientManagerStub)
     monkeypatch.setattr(app_module, "ToolFactory", ToolFactoryStub)
     monkeypatch.setattr(app_module, "AgentRegistry", RegistryStub)
+    monkeypatch.setattr(app_module, "RagIndexWorker", RagIndexWorkerStub)
 
     import agent.main as agent_main
 
@@ -384,3 +418,24 @@ def test_format_exception_flattens_exception_groups(client_with_stubs):
     error = ExceptionGroup("unhandled errors in a TaskGroup", [RuntimeError("401 Unauthorized"), ValueError("bad args")])
 
     assert app_module._format_exception(error) == "401 Unauthorized; bad args"
+
+
+def test_chat_stream_skips_rag_prefetch_for_tagged_parquet(client_with_stubs):
+    client, registry, source_tracker = client_with_stubs
+    runtime = DummyRuntime("workspace-parquet", StreamingAgent(["Clarify please"]))
+    registry.set_runtime("research", "workspace-parquet", runtime)
+
+    payload = {
+        "message": "Use /skill data/dashboard to generate a dashboard\n\nTagged files:\n- datasets/order_cancellations_6m.parquet\n",
+        "history": [],
+    }
+    with client.stream("POST", "/agents/research/workspace/workspace-parquet/chat/stream", json=payload) as response:
+        assert response.status_code == 200
+        messages = _collect_stream_payloads(response)
+
+    rag_worker = RagIndexWorkerStub.last_instance
+    assert rag_worker is not None
+    assert rag_worker.store.query_data_calls == []
+    assert messages[0]["type"] == "policy"
+    assert messages[-1]["type"] == "done"
+    assert source_tracker.updated_workspaces == [runtime.workspace_state]

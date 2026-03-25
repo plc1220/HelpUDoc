@@ -43,6 +43,7 @@ from langgraph.types import Command
 logger = logging.getLogger(__name__)
 _INTERRUPT_TOOL_NAMES: Set[str] = {"request_clarification", "request_human_action"}
 _LOCAL_DEV_AGENT_JWT_SECRET = "helpudoc-local-dev-agent-jwt-secret"
+_RAG_PREFETCHABLE_EXTENSIONS: Set[str] = {".pdf", ".doc", ".docx", ".md"}
 
 
 def _get_agent_jwt_secret() -> str:
@@ -61,6 +62,20 @@ def _format_exception(exc: BaseException) -> str:
         message = "; ".join(part for part in parts if part)
         return message or (str(exc) or repr(exc))
     return str(exc) or repr(exc)
+
+
+def _filter_rag_prefetchable_tagged_files(tagged_paths: Sequence[str]) -> List[str]:
+    candidates: List[str] = []
+    for raw in tagged_paths:
+        if not isinstance(raw, str):
+            continue
+        cleaned = raw.strip()
+        if not cleaned:
+            continue
+        suffix = Path(cleaned).suffix.lower()
+        if suffix in _RAG_PREFETCHABLE_EXTENSIONS:
+            candidates.append(cleaned)
+    return candidates
 
 
 class ChatRequest(BaseModel):
@@ -622,12 +637,22 @@ def create_app() -> FastAPI:
         if not prompt:
             return None
         tagged_paths = _extract_tagged_files(prompt)
-        if not tagged_paths:
+        rag_tagged_paths = _filter_rag_prefetchable_tagged_files(tagged_paths)
+        if not rag_tagged_paths:
             return None
+        rag_prompt = prompt
+        if len(rag_tagged_paths) != len(tagged_paths):
+            filtered_lines = ["Tagged files:"] + [f"- {path}" for path in rag_tagged_paths]
+            rag_prompt = re.sub(
+                r"(^|\n)Tagged files:\n(?:- .*(?:\n|$))+",
+                ("\n" if "\nTagged files:" in prompt else "") + "\n".join(filtered_lines) + "\n",
+                prompt,
+                count=1,
+            )
         try:
             response = await rag_worker.store.query_data(
                 workspace_id,
-                prompt,
+                rag_prompt,
                 mode="naive",
                 include_references=False,
             )
@@ -654,7 +679,7 @@ def create_app() -> FastAPI:
                     return "\n\n".join(lines)
             response = await rag_worker.store.query_data(
                 workspace_id,
-                prompt,
+                rag_prompt,
                 mode="hybrid",
                 include_references=False,
             )
@@ -674,8 +699,7 @@ def create_app() -> FastAPI:
                         non_textual += 1
                 if non_textual < len(lines):
                     return "\n\n".join(lines)
-            tagged_paths = _extract_tagged_files(prompt)
-            mineru_text = _load_mineru_text(workspace_id, tagged_paths)
+            mineru_text = _load_mineru_text(workspace_id, rag_tagged_paths)
             if mineru_text:
                 return mineru_text[:12000]
             return None
