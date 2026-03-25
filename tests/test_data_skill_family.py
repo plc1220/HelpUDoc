@@ -701,6 +701,126 @@ class TestDashboardTool:
         })
         assert "already been generated" in result2.lower() or "dashboard" in result2.lower()
 
+    def test_dashboard_supports_data_backed_filters_and_static_appendix(self, tmp_path: Path) -> None:
+        tools = _tools_for_workspace(tmp_path)
+        dataset_path = tmp_path / "datasets" / "order_cancellations.csv"
+        dataset_path.parent.mkdir(parents=True, exist_ok=True)
+        dataset_path.write_text(
+            "\n".join(
+                [
+                    "order_date,country,device,cancellation_rate,orders",
+                    "2025-10-01,US,mobile,0.21,120",
+                    "2025-11-15,US,desktop,0.14,90",
+                    "2025-12-20,UK,mobile,0.32,75",
+                    "2026-01-10,DE,desktop,0.11,88",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        tools["get_table_schema"].invoke({"table_names": []})
+        tools["run_sql_query"].invoke({"sql_query": "SELECT 'US' AS country, 0.21 AS cancellation_rate, 120 AS orders"})
+        tools["generate_chart_config"].invoke(
+            {
+                "chart_title": "Country_Rate",
+                "python_code": textwrap.dedent("""\
+                    chart_config = {
+                        "data": [{"x": ["US"], "y": [0.21], "type": "bar"}],
+                        "layout": {"title": "Country Rate"},
+                    }
+                """),
+            }
+        )
+        tools["generate_chart_config"].invoke(
+            {
+                "chart_title": "Device_Orders",
+                "python_code": textwrap.dedent("""\
+                    chart_config = {
+                        "data": [{"x": ["mobile"], "y": [120], "type": "bar"}],
+                        "layout": {"title": "Device Orders"},
+                    }
+                """),
+            }
+        )
+
+        tools["generate_dashboard"].invoke(
+            {
+                "title": "Order Cancellation Dashboard",
+                "description": "Cross-filtered dashboard",
+                "dashboard_dataset_path": "datasets/order_cancellations.csv",
+                "filter_schema": [
+                    {"field": "order_date", "label": "Order date", "type": "date"},
+                    {"field": "country", "label": "Country", "type": "categorical", "multi": True},
+                    {"field": "cancellation_rate", "label": "Cancellation rate", "type": "numeric"},
+                ],
+                "chart_bindings": [
+                    {
+                        "chart_index": 1,
+                        "chart_type": "bar",
+                        "x_field": "country",
+                        "y_field": "cancellation_rate",
+                        "aggregation": "avg",
+                    }
+                ],
+            }
+        )
+
+        html_files = list((tmp_path / "dashboards").glob("*.html"))
+        content = html_files[0].read_text(encoding="utf-8")
+        assert "Shared data filters" in content
+        assert "dashboard-filter-controls" in content
+        assert "datasets/order_cancellations.csv" in content
+        assert "Static appendix charts" in content
+        assert "Filter-aware chart bound to the canonical dashboard dataset" in content
+        assert "Device Orders" in content
+
+    def test_dashboard_without_filter_schema_stays_static(self, tmp_path: Path) -> None:
+        tools = _tools_for_workspace(tmp_path)
+        dataset_path = tmp_path / "datasets" / "orders.csv"
+        dataset_path.parent.mkdir(parents=True, exist_ok=True)
+        dataset_path.write_text("order_date,country\n2025-10-01,US\n", encoding="utf-8")
+        tools["get_table_schema"].invoke({"table_names": []})
+        tools["run_sql_query"].invoke({"sql_query": "SELECT 42 AS val"})
+        tools["generate_chart_config"].invoke({
+            "chart_title": "Static_Chart",
+            "python_code": textwrap.dedent("""\
+                chart_config = {
+                    "data": [{"x": [1, 2], "y": [3, 4], "type": "scatter"}],
+                    "layout": {"title": "Test"},
+                }
+            """),
+        })
+        tools["generate_dashboard"].invoke(
+            {
+                "title": "No Filters Dashboard",
+                "description": "Static only",
+                "dashboard_dataset_path": "datasets/orders.csv",
+            }
+        )
+        html_files = list((tmp_path / "dashboards").glob("*.html"))
+        content = html_files[0].read_text(encoding="utf-8")
+        assert "Shared data filters" not in content
+
+    def test_generate_chart_config_persists_plotly_json_only_by_default(self, tmp_path: Path) -> None:
+        tools = _tools_for_workspace(tmp_path)
+        tools["get_table_schema"].invoke({"table_names": []})
+        tools["run_sql_query"].invoke({"sql_query": "SELECT 1 AS x, 2 AS y"})
+        raw = tools["generate_chart_config"].invoke(
+            {
+                "chart_title": "Json_Only_Chart",
+                "python_code": textwrap.dedent("""\
+                    chart_config = {
+                        "data": [{"x": df["x"].tolist(), "y": df["y"].tolist(), "type": "bar"}],
+                        "layout": {"title": "JSON Only"},
+                    }
+                """),
+            }
+        )
+        payload = json.loads(raw)
+        output_paths = [item["path"] for item in payload["output_files"]]
+        assert any(path.endswith(".plotly.json") for path in output_paths)
+        assert not any(path.endswith(".plotly.html") for path in output_paths)
+
     def test_dashboard_excludes_stale_charts(self, tmp_path: Path) -> None:
         """A chart written in a prior run should not appear in a fresh run's dashboard."""
         from agent.helpudoc_agent.data_agent_tools import DuckDBManager

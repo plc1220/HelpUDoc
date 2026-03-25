@@ -406,6 +406,136 @@ def _resolve_workspace_html_path(
     return resolved
 
 
+def _resolve_workspace_data_path(workspace_root: Path, raw_path: str) -> Path:
+    candidate = Path((raw_path or "").strip())
+    if not str(candidate):
+        raise ValueError("dashboard_dataset_path is required for data-backed filtering.")
+    if candidate.is_absolute():
+        candidate = Path(str(candidate).lstrip("/"))
+    resolved = (workspace_root / candidate).resolve()
+    root_resolved = workspace_root.resolve()
+    if root_resolved not in resolved.parents and resolved != root_resolved:
+        raise ValueError("dashboard_dataset_path must remain inside the workspace.")
+    return resolved
+
+
+def _normalize_record_value(value: Any) -> Any:
+    if value is None or pd.isna(value):
+        return None
+    if isinstance(value, (pd.Timestamp, datetime)):
+        return value.isoformat()
+    if isinstance(value, np.generic):
+        return value.item()
+    return value
+
+
+def _load_dashboard_dataset(workspace_root: Path, dataset_path: str) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], str]:
+    resolved = _resolve_workspace_data_path(workspace_root, dataset_path)
+    if not resolved.exists():
+        raise ValueError(f"Dashboard dataset not found: {dataset_path}")
+
+    suffix = resolved.suffix.lower()
+    if suffix == ".parquet":
+        df = pd.read_parquet(resolved)
+        format_name = "parquet"
+    elif suffix == ".csv":
+        df = pd.read_csv(resolved)
+        format_name = "csv"
+    elif suffix in {".json", ".jsonl", ".ndjson"}:
+        format_name = "json"
+        if suffix == ".json":
+            payload = json.loads(resolved.read_text(encoding="utf-8"))
+            if isinstance(payload, dict):
+                if isinstance(payload.get("rows"), list):
+                    rows = payload.get("rows") or []
+                elif isinstance(payload.get("data"), list):
+                    rows = payload.get("data") or []
+                else:
+                    rows = [payload]
+            elif isinstance(payload, list):
+                rows = payload
+            else:
+                raise ValueError("JSON dashboard datasets must contain an object or list.")
+        else:
+            rows = [
+                json.loads(line)
+                for line in resolved.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+        df = pd.DataFrame(rows)
+    else:
+        raise ValueError(
+            "dashboard_dataset_path must point to a .parquet, .csv, .json, .jsonl, or .ndjson file."
+        )
+
+    records = [
+        {str(key): _normalize_record_value(value) for key, value in row.items()}
+        for row in df.replace({np.nan: None}).to_dict(orient="records")
+    ]
+    schema = [
+        {
+            "name": str(column),
+            "type": str(dtype),
+        }
+        for column, dtype in df.dtypes.items()
+    ]
+    return records, schema, format_name
+
+
+def _normalize_filter_schema(raw_filters: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+    normalized: List[Dict[str, Any]] = []
+    for idx, raw in enumerate(raw_filters or [], start=1):
+        if not isinstance(raw, dict):
+            continue
+        field_name = _coerce_text_arg(raw.get("field")).strip()
+        filter_type = _coerce_text_arg(raw.get("type"), "categorical").strip().lower()
+        if not field_name:
+            continue
+        normalized.append(
+            {
+                "id": _coerce_text_arg(raw.get("id"), f"filter_{idx}").strip() or f"filter_{idx}",
+                "field": field_name,
+                "label": _coerce_text_arg(raw.get("label"), field_name.replace("_", " ").title()).strip()
+                or field_name.replace("_", " ").title(),
+                "type": filter_type if filter_type in {"categorical", "date", "datetime", "numeric"} else "categorical",
+                "operators": list(raw.get("operators") or []),
+                "multi": _coerce_bool_arg(raw.get("multi"), True),
+                "options": list(raw.get("options") or []),
+                "applies_to": list(raw.get("applies_to") or []),
+                "default": raw.get("default"),
+                "presets": list(raw.get("presets") or []),
+                "step": raw.get("step"),
+            }
+        )
+    return normalized
+
+
+def _normalize_chart_bindings(raw_bindings: Optional[List[Dict[str, Any]]]) -> Dict[int, Dict[str, Any]]:
+    normalized: Dict[int, Dict[str, Any]] = {}
+    for idx, raw in enumerate(raw_bindings or [], start=1):
+        if not isinstance(raw, dict):
+            continue
+        chart_index = _coerce_int_arg(raw.get("chart_index"), idx, minimum=1)
+        normalized[chart_index] = {
+            "chart_index": chart_index,
+            "chart_type": _coerce_text_arg(raw.get("chart_type"), "bar").strip().lower() or "bar",
+            "x_field": _coerce_text_arg(raw.get("x_field")).strip(),
+            "y_field": _coerce_text_arg(raw.get("y_field")).strip(),
+            "aggregation": _coerce_text_arg(raw.get("aggregation"), "count").strip().lower() or "count",
+            "series_field": _coerce_text_arg(raw.get("series_field")).strip(),
+            "orientation": _coerce_text_arg(raw.get("orientation")).strip().lower(),
+            "sort_by": _coerce_text_arg(raw.get("sort_by"), "y").strip().lower() or "y",
+            "sort_direction": _coerce_text_arg(raw.get("sort_direction"), "desc").strip().lower() or "desc",
+            "limit": _coerce_int_arg(raw.get("limit"), 0, minimum=0),
+            "mode": _coerce_text_arg(raw.get("mode"), "lines+markers").strip(),
+            "title": _coerce_text_arg(raw.get("title")).strip(),
+            "x_title": _coerce_text_arg(raw.get("x_title")).strip(),
+            "y_title": _coerce_text_arg(raw.get("y_title")).strip(),
+            "static_reason": _coerce_text_arg(raw.get("static_reason")).strip(),
+        }
+    return normalized
+
+
 def _cache_key_for_query(sql_query: str, workspace_id: str, cache_key_hint: str) -> str:
     digest = hashlib.sha256(
         f"{workspace_id}\n{cache_key_hint}\n{sql_query}".encode("utf-8")
@@ -1021,7 +1151,6 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
         )
 
         plotly_config_path: Optional[Path] = None
-        plotly_html_path: Optional[Path] = None
         if plotly_payload is not None:
             try:
                 charts_dir.mkdir(exist_ok=True)
@@ -1032,33 +1161,8 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
                         "path": _workspace_rel(plotly_config_path, workspace_state.root_path),
                         "mimeType": ALLOWED_ARTIFACT_EXTENSIONS[".json"],
                         "size": plotly_config_path.stat().st_size,
-                    }
-                )
-                try:  # pragma: no cover - optional dependency
-                    import plotly.io as pio  # type: ignore
-
-                    fig_for_html = plotly_payload
-                    if isinstance(plotly_payload, dict):
-                        try:
-                            fig_for_html = pio.from_json(_json_dump(plotly_payload))
-                        except Exception:
-                            fig_for_html = plotly_payload
-                    html_content = pio.to_html(
-                        fig_for_html,
-                        include_plotlyjs="inline",
-                        full_html=False,
-                    )
-                    plotly_html_path = charts_dir / f"{safe_title}.plotly.html"
-                    plotly_html_path.write_text(html_content, encoding="utf-8")
-                    artifacts.append(
-                        {
-                            "path": _workspace_rel(plotly_html_path, workspace_state.root_path),
-                            "mimeType": ALLOWED_ARTIFACT_EXTENSIONS[".html"],
-                            "size": plotly_html_path.stat().st_size,
                         }
                     )
-                except Exception:  # pragma: no cover - best effort
-                    logger.warning("Failed to persist Plotly HTML", exc_info=True)
             except Exception:  # pragma: no cover - best effort persistence
                 logger.warning("Failed to persist Plotly config", exc_info=True)
 
@@ -1080,9 +1184,7 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
                 else None
             ),
             "plotly_html_path": (
-                _workspace_rel(plotly_html_path, workspace_state.root_path)
-                if plotly_html_path
-                else None
+                None
             ),
             "output_files": artifacts,
             "row_count": len(df_context),
@@ -1293,6 +1395,33 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
             str,
             Field(description="Optional stable HTML output path such as dashboards/orders_overview.html."),
         ] = "",
+        dashboard_dataset_path: Annotated[
+            str,
+            Field(
+                description=(
+                    "Optional workspace-relative path to a canonical Parquet/CSV/JSON dataset used for "
+                    "data-backed cross-filtering."
+                )
+            ),
+        ] = "",
+        filter_schema: Annotated[
+            Optional[List[Dict[str, Any]]],
+            Field(
+                description=(
+                    "Optional filter definitions. Each item may include id, field, label, type "
+                    "(categorical/date/datetime/numeric), multi, options, presets, and applies_to."
+                )
+            ),
+        ] = None,
+        chart_bindings: Annotated[
+            Optional[List[Dict[str, Any]]],
+            Field(
+                description=(
+                    "Optional per-chart bindings aligned by chart order or chart_index. Each binding may include "
+                    "chart_type, x_field, y_field, aggregation, series_field, orientation, sort settings, and titles."
+                )
+            ),
+        ] = None,
         callbacks: Optional[CallbackManagerForToolRun] = None,
     ) -> str:
         """Assemble all charts and query history from the current run into one HTML dashboard."""
@@ -1314,76 +1443,148 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
             default_stem=stable_title,
         )
 
-        run_chart_paths: List[str] = []
-        for chart_record in db_manager.session.chart_history:
-            run_chart_paths.extend(chart_record.artifact_paths)
-
-        plotly_json_files = sorted(
-            p for p in (workspace_state.root_path / rel for rel in run_chart_paths if rel.endswith(".plotly.json"))
-            if p.exists()
-        )
-        plotly_html_files = sorted(
-            p for p in (workspace_state.root_path / rel for rel in run_chart_paths if rel.endswith(".plotly.html"))
-            if p.exists()
-        )
-        png_files = sorted(
-            p for p in (workspace_state.root_path / rel for rel in run_chart_paths if rel.endswith(".png"))
-            if p.exists()
-        )
-
+        chart_entries: List[Dict[str, Any]] = []
         chosen_titles = list(section_titles or [])
-        chart_cards: List[str] = []
-        chart_index = 0
+        normalized_bindings = _normalize_chart_bindings(chart_bindings)
 
-        for json_path in plotly_json_files:
-            chart_index += 1
-            section_title = chosen_titles[chart_index - 1] if chart_index - 1 < len(chosen_titles) else _chart_title_from_path(json_path)
-            try:
-                fig_json = json.loads(json_path.read_text(encoding="utf-8"))
-                script_payload = json.dumps(fig_json)
+        for chart_index, chart_record in enumerate(db_manager.session.chart_history, start=1):
+            preferred_path: Optional[Path] = None
+            preferred_kind = ""
+            for suffix, kind in (
+                (".plotly.json", "plotly_json"),
+                (".plotly.html", "plotly_html"),
+                (".png", "png"),
+            ):
+                for rel_path in chart_record.artifact_paths:
+                    if not rel_path.endswith(suffix):
+                        continue
+                    candidate = workspace_state.root_path / rel_path
+                    if candidate.exists():
+                        preferred_path = candidate
+                        preferred_kind = kind
+                        break
+                if preferred_path is not None:
+                    break
+            if preferred_path is None:
+                continue
+            section_title = (
+                chosen_titles[chart_index - 1]
+                if chart_index - 1 < len(chosen_titles)
+                else chart_record.title
+                or _chart_title_from_path(preferred_path)
+            )
+            chart_entries.append(
+                {
+                    "chart_index": chart_index,
+                    "title": section_title,
+                    "path": preferred_path,
+                    "kind": preferred_kind,
+                    "binding": normalized_bindings.get(chart_index),
+                }
+            )
+
+        filter_config = _normalize_filter_schema(filter_schema)
+        dataset_records: List[Dict[str, Any]] = []
+        dataset_schema: List[Dict[str, Any]] = []
+        dataset_format = ""
+        data_filtering_enabled = False
+        if dashboard_dataset_path.strip():
+            dataset_records, dataset_schema, dataset_format = _load_dashboard_dataset(
+                workspace_state.root_path,
+                dashboard_dataset_path,
+            )
+            data_filtering_enabled = bool(dataset_records and filter_config)
+
+        bound_cards: List[str] = []
+        static_cards: List[str] = []
+        chart_runtime_defs: List[Dict[str, Any]] = []
+
+        for entry in chart_entries:
+            chart_index = entry["chart_index"]
+            section_title = entry["title"]
+            chart_path = entry["path"]
+            chart_kind = entry["kind"]
+            binding = entry.get("binding") or {}
+            binding_is_compatible = bool(
+                data_filtering_enabled
+                and binding
+                and binding.get("x_field")
+                and (binding.get("aggregation") == "count" or binding.get("y_field"))
+            )
+
+            if binding_is_compatible:
                 div_id = f"dashboard-chart-{chart_index}"
-                chart_cards.append(
-                    f"<article class=\"chart-card\">"
+                chart_runtime_defs.append(
+                    {
+                        "chartIndex": chart_index,
+                        "divId": div_id,
+                        "title": section_title,
+                        "chartType": binding.get("chart_type") or "bar",
+                        "xField": binding.get("x_field"),
+                        "yField": binding.get("y_field"),
+                        "aggregation": binding.get("aggregation") or "count",
+                        "seriesField": binding.get("series_field") or "",
+                        "orientation": binding.get("orientation") or "",
+                        "sortBy": binding.get("sort_by") or "y",
+                        "sortDirection": binding.get("sort_direction") or "desc",
+                        "limit": binding.get("limit") or 0,
+                        "mode": binding.get("mode") or "lines+markers",
+                        "xTitle": binding.get("x_title") or "",
+                        "yTitle": binding.get("y_title") or "",
+                    }
+                )
+                bound_cards.append(
+                    f"<article class=\"chart-card filter-aware\" data-chart-index=\"{chart_index}\">"
                     f"<h3>{html.escape(section_title)}</h3>"
-                    f"<p class=\"chart-meta\">Interactive Plotly chart</p>"
+                    f"<p class=\"chart-meta\">Filter-aware chart bound to the canonical dashboard dataset</p>"
                     f"<div id=\"{div_id}\" class=\"plotly-embed\"></div>"
-                    f"<script>"
-                    f"const dashboardSpec{chart_index} = {script_payload};"
-                    f"Plotly.newPlot('{div_id}', dashboardSpec{chart_index}.data || [], dashboardSpec{chart_index}.layout || {{}}, Object.assign({{responsive:true,displayModeBar:false}}, dashboardSpec{chart_index}.config || {{}}));"
-                    f"</script>"
+                    f"<p class=\"chart-note\" id=\"{div_id}-status\"></p>"
                     f"</article>"
                 )
-            except Exception:
-                logger.warning("Failed to embed Plotly JSON %s", json_path, exc_info=True)
+                continue
 
-        for html_path in plotly_html_files:
-            chart_index += 1
-            section_title = chosen_titles[chart_index - 1] if chart_index - 1 < len(chosen_titles) else _chart_title_from_path(html_path)
+            static_reason = (
+                _coerce_text_arg(binding.get("static_reason"))
+                or "Static appendix artifact because this chart is not bound to the dashboard dataset."
+            )
             try:
-                chart_cards.append(
-                    f"<article class=\"chart-card\">"
-                    f"<h3>{html.escape(section_title)}</h3>"
-                    f"<p class=\"chart-meta\">Interactive Plotly chart</p>"
-                    f"{html_path.read_text(encoding='utf-8')}"
-                    f"</article>"
-                )
+                if chart_kind == "plotly_json":
+                    fig_json = json.loads(chart_path.read_text(encoding="utf-8"))
+                    script_payload = json.dumps(fig_json)
+                    div_id = f"dashboard-static-chart-{chart_index}"
+                    static_cards.append(
+                        f"<article class=\"chart-card static-card\">"
+                        f"<h3>{html.escape(section_title)}</h3>"
+                        f"<p class=\"chart-meta\">Static appendix chart</p>"
+                        f"<p class=\"chart-note\">{html.escape(static_reason)}</p>"
+                        f"<div id=\"{div_id}\" class=\"plotly-embed\"></div>"
+                        f"<script>"
+                        f"const dashboardStaticSpec{chart_index} = {script_payload};"
+                        f"Plotly.newPlot('{div_id}', dashboardStaticSpec{chart_index}.data || [], dashboardStaticSpec{chart_index}.layout || {{}}, Object.assign({{responsive:true,displayModeBar:false}}, dashboardStaticSpec{chart_index}.config || {{}}));"
+                        f"</script>"
+                        f"</article>"
+                    )
+                elif chart_kind == "plotly_html":
+                    static_cards.append(
+                        f"<article class=\"chart-card static-card\">"
+                        f"<h3>{html.escape(section_title)}</h3>"
+                        f"<p class=\"chart-meta\">Static appendix chart</p>"
+                        f"<p class=\"chart-note\">{html.escape(static_reason)}</p>"
+                        f"{chart_path.read_text(encoding='utf-8')}"
+                        f"</article>"
+                    )
+                elif chart_kind == "png":
+                    encoded = base64.b64encode(chart_path.read_bytes()).decode("utf-8")
+                    static_cards.append(
+                        f"<article class=\"chart-card static-card\">"
+                        f"<h3>{html.escape(section_title)}</h3>"
+                        f"<p class=\"chart-meta\">Static image artifact</p>"
+                        f"<p class=\"chart-note\">{html.escape(static_reason)}</p>"
+                        f"<img class=\"chart-img\" src=\"data:image/png;base64,{encoded}\" alt=\"{html.escape(chart_path.stem)}\" />"
+                        f"</article>"
+                    )
             except Exception:
-                logger.warning("Failed to embed Plotly HTML %s", html_path, exc_info=True)
-
-        for png_path in png_files:
-            chart_index += 1
-            section_title = chosen_titles[chart_index - 1] if chart_index - 1 < len(chosen_titles) else _chart_title_from_path(png_path)
-            try:
-                encoded = base64.b64encode(png_path.read_bytes()).decode("utf-8")
-                chart_cards.append(
-                    f"<article class=\"chart-card\">"
-                    f"<h3>{html.escape(section_title)}</h3>"
-                    f"<p class=\"chart-meta\">Static image artifact</p>"
-                    f"<img class=\"chart-img\" src=\"data:image/png;base64,{encoded}\" alt=\"{html.escape(png_path.stem)}\" />"
-                    f"</article>"
-                )
-            except Exception:
-                logger.warning("Failed to embed PNG %s", png_path, exc_info=True)
+                logger.warning("Failed to embed dashboard artifact %s", chart_path, exc_info=True)
 
         query_items = []
         for idx, query_record in enumerate(db_manager.session.query_history, start=1):
@@ -1415,13 +1616,26 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
             "    .chart-card{background:linear-gradient(180deg,#fffefb 0%,#fbf8f2 100%);border:1px solid var(--line);border-radius:20px;padding:18px}",
             "    .chart-card h3{margin:0 0 8px;font-size:1.05rem}",
             "    .chart-meta{margin:0 0 12px;color:var(--muted);font-size:0.88rem}",
+            "    .chart-note{margin:10px 0 0;color:#4b5563;font-size:0.9rem;line-height:1.4}",
             "    .plotly-embed{width:100%;height:340px}",
             "    img.chart-img{width:100%;border-radius:12px;border:1px solid var(--line)}",
+            "    .filter-bar{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin-top:22px}",
+            "    .filter-card{background:rgba(255,253,248,0.96);border:1px solid rgba(231,223,210,0.95);box-shadow:var(--shadow);border-radius:20px;padding:18px}",
+            "    .filter-card h2{margin:0 0 6px;font-size:1rem}",
+            "    .filter-card p{margin:0 0 12px;color:var(--muted);font-size:0.9rem;line-height:1.5}",
+            "    .filter-controls{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}",
+            "    .filter-control{display:flex;flex-direction:column;gap:6px}",
+            "    .filter-control label{font-size:0.88rem;font-weight:600;color:#374151}",
+            "    .filter-control select,.filter-control input,.filter-actions button{border:1px solid var(--line);border-radius:12px;padding:10px 12px;background:#fff;color:var(--ink)}",
+            "    .filter-actions{display:flex;gap:10px;align-items:end}",
+            "    .filter-actions button{cursor:pointer;background:var(--accent);color:#fff;font-weight:600}",
+            "    .filter-actions button.secondary{background:#fff;color:var(--ink)}",
+            "    .dataset-meta{margin-top:14px;color:var(--muted);font-size:0.85rem}",
             "    details.appendix{margin-top:18px}",
             "    .query-item{background:#faf7f1;border:1px solid var(--line);border-radius:16px;padding:16px;margin-top:12px}",
             "    .query-meta{font-size:0.82rem;color:#9a3412;font-weight:700;letter-spacing:0.03em;text-transform:uppercase;margin-bottom:8px}",
             "    .query-block{margin:0;background:#fff;border:1px solid var(--line);border-radius:12px;padding:14px 16px;overflow-x:auto;white-space:pre-wrap;color:#374151}",
-            "    @media (max-width: 768px){.shell{padding:16px 14px 42px}.hero,.section{padding:22px 18px}.chart-grid{grid-template-columns:1fr}.plotly-embed{height:300px}}",
+            "    @media (max-width: 768px){.shell{padding:16px 14px 42px}.hero,.section,.filter-card{padding:22px 18px}.chart-grid{grid-template-columns:1fr}.plotly-embed{height:300px}}",
             "  </style>",
             "  <script src=\"https://cdn.plot.ly/plotly-3.3.0.min.js\"></script>",
             "</head>",
@@ -1431,22 +1645,418 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
             "      <div>Interactive dashboard</div>",
             f"      <h1>{html.escape(title)}</h1>",
             f"      <p>{html.escape(description)}</p>",
-            f"      <div class=\"hero-meta\">Generated {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} • Charts embedded: {len(chart_cards)} • Queries embedded: {len(db_manager.session.query_history)}</div>",
+            f"      <div class=\"hero-meta\">Generated {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} • Charts embedded: {len(bound_cards) + len(static_cards)} • Queries embedded: {len(db_manager.session.query_history)}</div>",
             "    </section>",
+        ]
+
+        if data_filtering_enabled:
+            html_lines.extend(
+                [
+                    "    <section class=\"filter-bar\">",
+                    "      <div class=\"filter-card\">",
+                    "        <h2>Shared data filters</h2>",
+                    "        <p>These controls update all compatible charts from the embedded dashboard dataset.</p>",
+                    "        <div id=\"dashboard-filter-controls\" class=\"filter-controls\"></div>",
+                    "        <div class=\"filter-actions\">",
+                    "          <button type=\"button\" id=\"dashboard-apply-filters\" class=\"secondary\">Apply filters</button>",
+                    "          <button type=\"button\" id=\"dashboard-reset-filters\">Reset filters</button>",
+                    "        </div>",
+                    f"        <div class=\"dataset-meta\">Dataset: {html.escape(dashboard_dataset_path)} • Rows embedded: {len(dataset_records)} • Format: {html.escape(dataset_format)}</div>",
+                    "      </div>",
+                    "    </section>",
+                ]
+            )
+
+        html_lines.extend(
+            [
             "    <section class=\"section\">",
-            "      <h2>Highlights</h2>",
+            "      <h2>Highlights</h2>" if bound_cards else "      <h2>Charts</h2>",
             "      <div class=\"chart-grid\">",
-            *chart_cards,
+            *(bound_cards or static_cards),
             "      </div>",
+        ]
+        )
+
+        if bound_cards and static_cards:
+            html_lines.extend(
+                [
+                    "      <details class=\"appendix\">",
+                    "        <summary>Static appendix charts</summary>",
+                    "        <div class=\"chart-grid\">",
+                    *static_cards,
+                    "        </div>",
+                    "      </details>",
+                ]
+            )
+
+        html_lines.extend(
+            [
             "      <details class=\"appendix\">",
             "        <summary>Technical appendix</summary>",
             *query_items,
             "      </details>",
             "    </section>",
             "  </div>",
+            "  <script>",
+            f"    const DASHBOARD_DATASET = {_json_dump(dataset_records)};",
+            f"    const DASHBOARD_FILTER_SCHEMA = {_json_dump(filter_config)};",
+            f"    const DASHBOARD_CHART_DEFS = {_json_dump(chart_runtime_defs)};",
+            f"    const DASHBOARD_DATASET_SCHEMA = {_json_dump(dataset_schema)};",
+            """
+    (function() {
+      if (!DASHBOARD_DATASET.length || !DASHBOARD_FILTER_SCHEMA.length || !DASHBOARD_CHART_DEFS.length) {
+        return;
+      }
+
+      const controlHost = document.getElementById('dashboard-filter-controls');
+      const applyButton = document.getElementById('dashboard-apply-filters');
+      const resetButton = document.getElementById('dashboard-reset-filters');
+      const fieldTypes = Object.fromEntries((DASHBOARD_DATASET_SCHEMA || []).map((item) => [item.name, String(item.type || '').toLowerCase()]));
+
+      function inferFieldType(filterDef) {
+        if (filterDef.type === 'numeric' || filterDef.type === 'date' || filterDef.type === 'datetime') {
+          return filterDef.type;
+        }
+        const raw = fieldTypes[filterDef.field] || '';
+        if (raw.includes('date') || raw.includes('time')) return 'date';
+        if (raw.includes('int') || raw.includes('float') || raw.includes('double') || raw.includes('decimal')) return 'numeric';
+        return 'categorical';
+      }
+
+      function parseDateValue(value) {
+        if (value === null || value === undefined || value === '') return null;
+        const parsed = new Date(value);
+        return Number.isNaN(parsed.getTime()) ? null : parsed;
+      }
+
+      function parseNumericValue(value) {
+        if (value === null || value === undefined || value === '') return null;
+        const parsed = Number(value);
+        return Number.isFinite(parsed) ? parsed : null;
+      }
+
+      function normalizeComparable(value, type) {
+        if (type === 'date' || type === 'datetime') {
+          const parsed = parseDateValue(value);
+          return parsed ? parsed.getTime() : null;
+        }
+        if (type === 'numeric') {
+          return parseNumericValue(value);
+        }
+        return value;
+      }
+
+      function distinctValues(field) {
+        const values = [];
+        const seen = new Set();
+        DASHBOARD_DATASET.forEach((row) => {
+          const value = row[field];
+          const key = value === null || value === undefined ? '__null__' : String(value);
+          if (!seen.has(key) && value !== null && value !== undefined && value !== '') {
+            seen.add(key);
+            values.push(value);
+          }
+        });
+        return values.sort((a, b) => String(a).localeCompare(String(b)));
+      }
+
+      function fieldExtent(field, type) {
+        let min = null;
+        let max = null;
+        DASHBOARD_DATASET.forEach((row) => {
+          const value = normalizeComparable(row[field], type);
+          if (value === null) return;
+          if (min === null || value < min) min = value;
+          if (max === null || value > max) max = value;
+        });
+        return { min, max };
+      }
+
+      function createControl(filterDef) {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'filter-control';
+        const label = document.createElement('label');
+        label.textContent = filterDef.label;
+        wrapper.appendChild(label);
+        const fieldType = inferFieldType(filterDef);
+        filterDef.resolvedType = fieldType;
+
+        if (fieldType === 'categorical') {
+          const select = document.createElement('select');
+          select.id = filterDef.id;
+          if (filterDef.multi) select.multiple = true;
+          const values = (filterDef.options && filterDef.options.length ? filterDef.options : distinctValues(filterDef.field));
+          values.forEach((value) => {
+            const option = document.createElement('option');
+            option.value = String(value);
+            option.textContent = String(value);
+            select.appendChild(option);
+          });
+          wrapper.appendChild(select);
+          return wrapper;
+        }
+
+        if (fieldType === 'date' || fieldType === 'datetime') {
+          const extent = fieldExtent(filterDef.field, 'date');
+          const preset = document.createElement('select');
+          preset.id = filterDef.id + '__preset';
+          ['', 'last_30_days', 'last_90_days', 'last_180_days'].forEach((value) => {
+            const option = document.createElement('option');
+            option.value = value;
+            option.textContent = value ? value.replaceAll('_', ' ') : 'Custom range';
+            preset.appendChild(option);
+          });
+          wrapper.appendChild(preset);
+          const startInput = document.createElement('input');
+          startInput.type = 'date';
+          startInput.id = filterDef.id + '__start';
+          const endInput = document.createElement('input');
+          endInput.type = 'date';
+          endInput.id = filterDef.id + '__end';
+          if (extent.min !== null) startInput.value = new Date(extent.min).toISOString().slice(0, 10);
+          if (extent.max !== null) endInput.value = new Date(extent.max).toISOString().slice(0, 10);
+          preset.addEventListener('change', () => {
+            if (!preset.value || extent.max === null) return;
+            const end = new Date(extent.max);
+            const start = new Date(end);
+            const days = preset.value === 'last_30_days' ? 30 : preset.value === 'last_90_days' ? 90 : 180;
+            start.setDate(start.getDate() - days);
+            startInput.value = start.toISOString().slice(0, 10);
+            endInput.value = end.toISOString().slice(0, 10);
+          });
+          wrapper.appendChild(startInput);
+          wrapper.appendChild(endInput);
+          return wrapper;
+        }
+
+        const extent = fieldExtent(filterDef.field, 'numeric');
+        const minInput = document.createElement('input');
+        minInput.type = 'number';
+        minInput.id = filterDef.id + '__min';
+        minInput.placeholder = extent.min === null ? 'Min' : String(extent.min);
+        const maxInput = document.createElement('input');
+        maxInput.type = 'number';
+        maxInput.id = filterDef.id + '__max';
+        maxInput.placeholder = extent.max === null ? 'Max' : String(extent.max);
+        wrapper.appendChild(minInput);
+        wrapper.appendChild(maxInput);
+        return wrapper;
+      }
+
+      function readFilterValue(filterDef) {
+        const type = filterDef.resolvedType || inferFieldType(filterDef);
+        if (type === 'categorical') {
+          const select = document.getElementById(filterDef.id);
+          return Array.from(select ? select.selectedOptions : []).map((option) => option.value);
+        }
+        if (type === 'date' || type === 'datetime') {
+          return {
+            start: document.getElementById(filterDef.id + '__start')?.value || '',
+            end: document.getElementById(filterDef.id + '__end')?.value || '',
+          };
+        }
+        return {
+          min: document.getElementById(filterDef.id + '__min')?.value || '',
+          max: document.getElementById(filterDef.id + '__max')?.value || '',
+        };
+      }
+
+      function rowMatchesFilter(row, filterDef, value) {
+        const type = filterDef.resolvedType || inferFieldType(filterDef);
+        const rowValue = row[filterDef.field];
+        if (type === 'categorical') {
+          if (!value || !value.length) return true;
+          return value.includes(String(rowValue));
+        }
+        if (type === 'date' || type === 'datetime') {
+          const rowTime = normalizeComparable(rowValue, 'date');
+          if (rowTime === null) return false;
+          const start = value.start ? parseDateValue(value.start) : null;
+          const end = value.end ? parseDateValue(value.end) : null;
+          if (start && rowTime < start.getTime()) return false;
+          if (end) {
+            const inclusiveEnd = new Date(end);
+            inclusiveEnd.setHours(23, 59, 59, 999);
+            if (rowTime > inclusiveEnd.getTime()) return false;
+          }
+          return true;
+        }
+        const numericValue = normalizeComparable(rowValue, 'numeric');
+        if (numericValue === null) return false;
+        const minValue = parseNumericValue(value.min);
+        const maxValue = parseNumericValue(value.max);
+        if (minValue !== null && numericValue < minValue) return false;
+        if (maxValue !== null && numericValue > maxValue) return false;
+        return true;
+      }
+
+      function aggregateRows(rows, chartDef) {
+        const map = new Map();
+        rows.forEach((row) => {
+          const xValue = row[chartDef.xField];
+          const seriesValue = chartDef.seriesField ? row[chartDef.seriesField] : '__single__';
+          const key = JSON.stringify([xValue, seriesValue]);
+          if (!map.has(key)) {
+            map.set(key, { x: xValue, series: seriesValue, count: 0, sum: 0, min: null, max: null, values: [] });
+          }
+          const bucket = map.get(key);
+          bucket.count += 1;
+          const yRaw = chartDef.yField ? parseNumericValue(row[chartDef.yField]) : null;
+          if (yRaw !== null) {
+            bucket.sum += yRaw;
+            bucket.min = bucket.min === null ? yRaw : Math.min(bucket.min, yRaw);
+            bucket.max = bucket.max === null ? yRaw : Math.max(bucket.max, yRaw);
+            bucket.values.push(yRaw);
+          }
+        });
+
+        const points = Array.from(map.values()).map((bucket) => {
+          let yValue = bucket.count;
+          switch (chartDef.aggregation) {
+            case 'sum':
+              yValue = bucket.sum;
+              break;
+            case 'avg':
+            case 'mean':
+              yValue = bucket.values.length ? bucket.sum / bucket.values.length : 0;
+              break;
+            case 'min':
+              yValue = bucket.min === null ? 0 : bucket.min;
+              break;
+            case 'max':
+              yValue = bucket.max === null ? 0 : bucket.max;
+              break;
+            case 'nunique':
+            case 'count_distinct':
+              yValue = new Set(bucket.values).size;
+              break;
+            case 'count':
+            default:
+              yValue = bucket.count;
+              break;
+          }
+          return { x: bucket.x, y: yValue, series: bucket.series };
+        });
+
+        points.sort((left, right) => {
+          const direction = chartDef.sortDirection === 'asc' ? 1 : -1;
+          const leftValue = chartDef.sortBy === 'x' ? String(left.x ?? '') : Number(left.y ?? 0);
+          const rightValue = chartDef.sortBy === 'x' ? String(right.x ?? '') : Number(right.y ?? 0);
+          if (leftValue < rightValue) return -1 * direction;
+          if (leftValue > rightValue) return 1 * direction;
+          return 0;
+        });
+
+        return chartDef.limit > 0 ? points.slice(0, chartDef.limit) : points;
+      }
+
+      function buildPlotlyPayload(rows, chartDef) {
+        const grouped = aggregateRows(rows, chartDef);
+        const seriesValues = chartDef.seriesField
+          ? [...new Set(grouped.map((item) => item.series))]
+          : ['__single__'];
+        const traces = seriesValues.map((seriesKey) => {
+          const points = grouped.filter((item) => item.series === seriesKey);
+          const trace = {
+            type: chartDef.chartType === 'area' ? 'scatter' : chartDef.chartType,
+            name: seriesKey === '__single__' ? chartDef.title : String(seriesKey),
+            x: points.map((item) => item.x),
+            y: points.map((item) => item.y),
+          };
+          if (chartDef.chartType === 'line' || chartDef.chartType === 'area') {
+            trace.type = 'scatter';
+            trace.mode = chartDef.mode || 'lines+markers';
+            if (chartDef.chartType === 'area') trace.fill = 'tozeroy';
+          }
+          if (chartDef.chartType === 'scatter') {
+            trace.mode = chartDef.mode || 'markers';
+          }
+          if (chartDef.chartType === 'bar' && chartDef.orientation === 'h') {
+            trace.orientation = 'h';
+            trace.x = points.map((item) => item.y);
+            trace.y = points.map((item) => item.x);
+          }
+          if (chartDef.chartType === 'pie') {
+            trace.type = 'pie';
+            trace.labels = points.map((item) => item.x);
+            trace.values = points.map((item) => item.y);
+            delete trace.x;
+            delete trace.y;
+          }
+          return trace;
+        });
+        return {
+          data: traces,
+          layout: {
+            title: chartDef.title,
+            paper_bgcolor: 'rgba(0,0,0,0)',
+            plot_bgcolor: 'rgba(0,0,0,0)',
+            margin: { t: 56, r: 24, b: 56, l: 56 },
+            xaxis: chartDef.chartType === 'pie' ? undefined : { title: chartDef.xTitle || chartDef.xField },
+            yaxis: chartDef.chartType === 'pie' ? undefined : { title: chartDef.yTitle || chartDef.yField || chartDef.aggregation },
+            legend: { orientation: 'h' },
+          },
+          config: { responsive: true, displayModeBar: false },
+        };
+      }
+
+      function renderCharts() {
+        const filterState = Object.fromEntries(DASHBOARD_FILTER_SCHEMA.map((filterDef) => [filterDef.id, readFilterValue(filterDef)]));
+        const filteredRows = DASHBOARD_DATASET.filter((row) =>
+          DASHBOARD_FILTER_SCHEMA.every((filterDef) => rowMatchesFilter(row, filterDef, filterState[filterDef.id]))
+        );
+
+        DASHBOARD_CHART_DEFS.forEach((chartDef) => {
+          const statusNode = document.getElementById(chartDef.divId + '-status');
+          const plotNode = document.getElementById(chartDef.divId);
+          if (!plotNode) return;
+          const payload = buildPlotlyPayload(filteredRows, chartDef);
+          if (!payload.data.length || !payload.data.some((trace) => (trace.x && trace.x.length) || (trace.labels && trace.labels.length))) {
+            Plotly.purge(plotNode);
+            if (statusNode) statusNode.textContent = 'No data matches the current filters for this chart.';
+            return;
+          }
+          Plotly.newPlot(plotNode, payload.data, payload.layout, payload.config);
+          if (statusNode) statusNode.textContent = filteredRows.length + ' rows match the current filters.';
+        });
+      }
+
+      DASHBOARD_FILTER_SCHEMA.forEach((filterDef) => {
+        controlHost.appendChild(createControl(filterDef));
+      });
+      if (applyButton) applyButton.addEventListener('click', renderCharts);
+      if (resetButton) {
+        resetButton.addEventListener('click', () => {
+          DASHBOARD_FILTER_SCHEMA.forEach((filterDef) => {
+            const type = filterDef.resolvedType || inferFieldType(filterDef);
+            if (type === 'categorical') {
+              const select = document.getElementById(filterDef.id);
+              if (select) Array.from(select.options).forEach((option) => { option.selected = false; });
+            } else if (type === 'date' || type === 'datetime') {
+              const preset = document.getElementById(filterDef.id + '__preset');
+              const start = document.getElementById(filterDef.id + '__start');
+              const end = document.getElementById(filterDef.id + '__end');
+              if (preset) preset.value = '';
+              if (start) start.value = '';
+              if (end) end.value = '';
+            } else {
+              const minInput = document.getElementById(filterDef.id + '__min');
+              const maxInput = document.getElementById(filterDef.id + '__max');
+              if (minInput) minInput.value = '';
+              if (maxInput) maxInput.value = '';
+            }
+          });
+          renderCharts();
+        });
+      }
+      renderCharts();
+    })();
+            """,
+            "  </script>",
             "</body>",
             "</html>",
         ]
+        )
 
         try:
             dashboard_path.parent.mkdir(parents=True, exist_ok=True)

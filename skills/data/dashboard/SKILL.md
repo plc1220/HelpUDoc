@@ -41,6 +41,30 @@ live warehouse connections.
 
 ## Workflow
 
+### 0. Clarify when true filtering is requested but under-specified
+If the user is asking for a genuinely filterable dashboard, do not guess past missing inputs that would change the implementation.
+
+Call `request_clarification` when the request implies shared data filters but one or more of these are missing or ambiguous:
+- the canonical dataset path to power filtering
+- the time/date field for timeframe filters
+- the main categorical or numeric fields the user wants exposed as filters
+- whether the user wants true cross-filtering or a static dashboard built from existing chart artifacts
+
+Do **not** interrupt for routine dashboard generation when a static/shareable dashboard is sufficient.
+
+Use clarification especially in cases like:
+- the user references only a report HTML and asks for timeframe/country/device/range filters
+- the request says "add filters" but does not specify the dataset that should power them
+- multiple plausible date or metric fields exist and choosing the wrong one would change the result
+
+Preferred clarification pattern:
+- explain the tradeoff briefly
+- offer a static-dashboard path and a true-filtered-dashboard path
+- ask for the dataset path and intended filter fields if true filtering is desired
+
+Example clarification:
+- "I can build a static dashboard from the report as-is, or a truly filterable dashboard if you provide the canonical dataset and the fields to filter on."
+
 ### 1. Ensure analysis is complete
 - All SQL queries for the dashboard should already be done.
 - All charts (`generate_chart_config`) should already be generated.
@@ -106,8 +130,12 @@ Call `generate_dashboard` with:
 - `section_titles`: ordered list of polished section headings, one per chart. Do not pass
   raw file names or generic placeholders.
 - `kpis` (optional): explicit KPI cards for the hero area.
-- `filters` (optional): structured dashboard controls such as title search, chart type,
-  chart tag, or appendix visibility.
+- `dashboard_dataset_path` (optional but required for true shared data filters): a canonical
+  Parquet/CSV/JSON dataset materialized for this run.
+- `filter_schema` (optional): structured filter definitions describing field, label, type,
+  options, presets, and applicability.
+- `chart_bindings` (optional): per-chart bindings that map charts to dataset fields and
+  aggregations so they can re-render from filtered rows.
 - `sections` (optional): named chart groups with `chart_indexes` to control narrative flow.
 - `chart_tags` (optional): tags aligned to chart order so controls can filter charts by theme
   or audience.
@@ -147,10 +175,14 @@ Filtering is required for dashboards.
 - Preferred behavior:
   - Dimension filters such as region, category, channel, date range, or segment
   - All charts update together from shared filter state
+- For true shared data filters:
+  - embed a reusable canonical dataset or pre-aggregated table
+  - provide `filter_schema` and `chart_bindings`
+  - only charts with valid bindings should claim to be filter-aware
 - If the run only contains finished chart artifacts and no reusable underlying dataset:
-  - Still provide dashboard-level controls such as chart search, section filtering, chart-type
-    filtering, or visibility toggles
-  - Tell the user that richer cross-filtering requires embedding a canonical dataset or
+  - the dashboard may still be generated, but those charts should be treated as static appendix
+    content rather than pretending to support shared data filtering
+  - tell the user that richer cross-filtering requires embedding a canonical dataset or
     pre-aggregated tables instead of only chart outputs
 
 ## Quality bar

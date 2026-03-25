@@ -12,7 +12,7 @@ Never skip steps, never reorder them, and never open raw data files via Python h
 ## Tools
 1. **get_table_schema** – list the tables/columns you plan to use. Call this before your first query.
 2. **run_sql_query** – execute a DuckDB query. You must keep row limits ≤ 1000 and select only needed columns.
-3. **generate_chart_config** – run lightweight Python against the latest query result (`df`). Set a `chart_config` variable and, if helpful, write artifacts (JSON/PNG/HTML/CSV/Markdown) using the provided helpers; metadata about those files is streamed back to the UI automatically.
+3. **generate_chart_config** – run lightweight Python against the latest query result (`df`). Set a `chart_config` variable; Plotly JSON is the canonical chart artifact, and PNG remains appropriate for static images. Avoid generating extra chart-side HTML unless the task explicitly needs it.
 4. **generate_summary** – final response describing the analysis procedure and the insights. This tool can only be called once per user request and only after SQL exploration (and any charts) are complete.
 
 ## Guardrails
