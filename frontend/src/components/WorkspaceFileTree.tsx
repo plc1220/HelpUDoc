@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ChevronDown,
   ChevronRight,
@@ -49,6 +49,45 @@ const getRagStatus = (
   return typeof file.name === 'string' ? ragStatuses[file.name] : undefined;
 };
 
+const SlidingFileName: React.FC<{ name: string }> = ({ name }) => {
+  const viewportRef = useRef<HTMLSpanElement | null>(null);
+  const textRef = useRef<HTMLSpanElement | null>(null);
+  const [overflowOffset, setOverflowOffset] = useState(0);
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    const text = textRef.current;
+    if (!viewport || !text) {
+      return;
+    }
+
+    const updateOverflow = () => {
+      const nextOverflow = Math.max(0, Math.ceil(text.scrollWidth - viewport.clientWidth));
+      setOverflowOffset((prev) => (prev === nextOverflow ? prev : nextOverflow));
+    };
+
+    updateOverflow();
+
+    const observer = new ResizeObserver(updateOverflow);
+    observer.observe(viewport);
+    observer.observe(text);
+
+    return () => observer.disconnect();
+  }, [name]);
+
+  return (
+    <span ref={viewportRef} className="block min-w-0 overflow-hidden whitespace-nowrap">
+      <span
+        ref={textRef}
+        className="block w-max max-w-full truncate text-sm leading-snug text-slate-800 transition-transform duration-500 ease-out group-hover:truncate-none group-focus-within:truncate-none"
+        style={overflowOffset > 0 ? { transform: `translateX(calc(${overflowOffset * -1}px * var(--file-name-slide, 0)))` } : undefined}
+      >
+        {name}
+      </span>
+    </span>
+  );
+};
+
 const TreeFileRow: React.FC<{
   node: WorkspaceFileTreeLeafNode;
   selected: boolean;
@@ -93,10 +132,9 @@ const TreeFileRow: React.FC<{
 
   return (
     <div
-      className={`group flex items-start gap-2 rounded-lg px-2 py-2 transition-colors ${
-        selected ? 'bg-blue-50 ring-1 ring-blue-100' : 'hover:bg-slate-100/80'
+      className={`group relative flex items-start gap-2 rounded-lg px-2 py-2 transition-colors ${
+        selected ? 'bg-blue-50/80' : 'hover:bg-slate-100/80'
       } ${isBeingDragged ? 'opacity-40' : ''}`}
-      title={file.name}
       draggable={isDraggable}
       onDragStart={(event) => {
         if (!isDraggable) {
@@ -138,11 +176,11 @@ const TreeFileRow: React.FC<{
           <span className="shrink-0" aria-hidden="true">
             {fileIcon}
           </span>
-          <span className="min-w-0 break-words text-sm leading-snug text-slate-800">{displayName}</span>
+          <SlidingFileName name={displayName} />
         </div>
       </button>
       {!isPendingJob && (
-        <div className="ml-1 flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+        <div className="pointer-events-none absolute right-2 top-1/2 z-10 flex -translate-y-1/2 items-center gap-1 rounded-lg border border-slate-200/80 bg-white/95 pl-2 shadow-sm opacity-0 backdrop-blur-sm transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
           {file.publicUrl && !isDraft && (
             <button
               type="button"
@@ -150,7 +188,7 @@ const TreeFileRow: React.FC<{
                 event.stopPropagation();
                 onCopyPublicUrl(file);
               }}
-              className="rounded p-1.5 text-slate-500 hover:bg-slate-200 hover:text-slate-700"
+              className="pointer-events-auto rounded p-1.5 text-slate-500 hover:bg-slate-200 hover:text-slate-700"
               title={file.publicUrl}
             >
               <LinkIcon size={14} />
@@ -163,7 +201,7 @@ const TreeFileRow: React.FC<{
                 event.stopPropagation();
                 onMoveFile(file);
               }}
-              className="rounded p-1.5 text-slate-500 hover:bg-slate-200 hover:text-slate-700"
+              className="pointer-events-auto rounded p-1.5 text-slate-500 hover:bg-slate-200 hover:text-slate-700"
               title="Move"
             >
               <MoveRight size={14} />
@@ -176,7 +214,7 @@ const TreeFileRow: React.FC<{
                 event.stopPropagation();
                 onRenameFile(file);
               }}
-              className="rounded p-1.5 text-slate-500 hover:bg-slate-200 hover:text-slate-700"
+              className="pointer-events-auto rounded p-1.5 text-slate-500 hover:bg-slate-200 hover:text-slate-700"
               title="Rename"
             >
               <Edit size={14} />
@@ -188,7 +226,7 @@ const TreeFileRow: React.FC<{
               event.stopPropagation();
               onDeleteFile(file);
             }}
-            className="rounded p-1.5 text-slate-500 hover:bg-slate-200 hover:text-slate-700"
+            className="pointer-events-auto rounded p-1.5 text-slate-500 hover:bg-slate-200 hover:text-slate-700"
             title="Delete"
           >
             <Trash size={14} />
@@ -432,7 +470,7 @@ export default function WorkspaceFileTree({
 
   return (
     <div
-      className="flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-slate-200/80 bg-white/90 shadow-sm"
+      className={`flex h-full min-h-0 flex-col overflow-hidden ${draggedFileId ? 'bg-blue-50/30' : ''}`}
       onDragOver={(event) => {
         if (!draggedFileId) {
           return;
@@ -442,14 +480,7 @@ export default function WorkspaceFileTree({
       }}
       onDrop={handleRootDrop}
     >
-      <div
-        className={`border-b border-dashed px-4 py-2 text-xs transition-colors ${
-          draggedFileId ? 'border-blue-200 bg-blue-50/60 text-blue-700' : 'border-transparent text-slate-400'
-        }`}
-      >
-        {draggedFileId ? 'Drop here to move a file to the workspace root.' : 'Drag a file onto a folder to move it. Drop here to move to the workspace root.'}
-      </div>
-      <div className="flex-1 overflow-y-auto px-3 py-3">
+      <div className="flex-1 overflow-y-auto px-1 py-1">
         {tree.children.length ? (
           <div className="space-y-1">
             {renderTreeNodes(tree.children, {
