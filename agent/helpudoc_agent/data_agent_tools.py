@@ -314,7 +314,18 @@ def _format_dataframe_markdown(df: pd.DataFrame, *, truncated: bool = False) -> 
 
 
 def _format_sample_value(value: Any) -> str:
-    if pd.isna(value):
+    if isinstance(value, np.ndarray):
+        value = value.tolist()
+    if isinstance(value, pd.Series):
+        value = value.tolist()
+    if isinstance(value, (list, tuple, set, dict)):
+        structured = json.dumps(value, default=str)
+        return structured if len(structured) <= 32 else structured[:29] + "..."
+    try:
+        is_null = pd.isna(value)
+    except (TypeError, ValueError):
+        is_null = False
+    if is_null:
         return "null"
     if isinstance(value, str):
         compact = value if len(value) <= 32 else value[:29] + "..."
@@ -341,10 +352,14 @@ def _format_numeric_summary(df: pd.DataFrame) -> str:
 
 
 def _query_looks_aggregated(query: str) -> bool:
+    if re.search(r"\bover\s*\(", query, re.IGNORECASE):
+        return False
+    if re.search(r"\bgroup\s+by\b", query, re.IGNORECASE):
+        return True
+    if re.search(r"\bhaving\b", query, re.IGNORECASE):
+        return True
+
     aggregate_markers = [
-        r"\bgroup\s+by\b",
-        r"\bdistinct\b",
-        r"\bhaving\b",
         r"\bcount\s*\(",
         r"\bsum\s*\(",
         r"\bavg\s*\(",

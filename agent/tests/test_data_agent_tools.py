@@ -6,6 +6,7 @@ from pathlib import Path
 
 from helpudoc_agent.data_agent_tools import (
     DuckDBManager,
+    _format_sample_value,
     _snapshot_workspace,
     build_data_agent_tools,
 )
@@ -72,6 +73,11 @@ class DataAgentToolsTest(unittest.TestCase):
             self.assertIn("[examples: 'active', 'pending']", raw)
             self.assertIn("revenue (BIGINT)", raw)
 
+    def test_format_sample_value_handles_non_scalar_values(self) -> None:
+        rendered = _format_sample_value({"segments": ["vip", "trial"]})
+        self.assertIn("segments", rendered)
+        self.assertIn("vip", rendered)
+
     def test_run_sql_query_keeps_aggregate_results_intact(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -120,6 +126,34 @@ class DataAgentToolsTest(unittest.TestCase):
             self.assertIn("Result shape: 1000 rows x 2 columns.", raw)
             self.assertIn("Execution was safety-capped at 1000 rows.", raw)
             self.assertIn("Numeric summary:", raw)
+            manager = workspace.context["data_agent_manager"]
+            self.assertEqual(len(manager.session.last_query_result), 1000)
+            self.assertTrue(manager.session.query_history[-1].truncated)
+
+    def test_run_sql_query_caps_window_function_results(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "datasets").mkdir()
+            rows = ["order_id,revenue"]
+            rows.extend(f"{i},{i * 10}" for i in range(1105))
+            (root / "datasets" / "orders.csv").write_text(
+                "\n".join(rows) + "\n",
+                encoding="utf-8",
+            )
+            workspace = self._workspace(root)
+            tools = self._tool_map(workspace)
+
+            tools["get_table_schema"].invoke({"table_names": ["orders"]})
+            raw = tools["run_sql_query"].invoke(
+                {
+                    "sql_query": (
+                        "SELECT order_id, MAX(revenue) OVER () AS max_revenue "
+                        "FROM orders"
+                    )
+                }
+            )
+
+            self.assertIn("Execution was safety-capped at 1000 rows.", raw)
             manager = workspace.context["data_agent_manager"]
             self.assertEqual(len(manager.session.last_query_result), 1000)
             self.assertTrue(manager.session.query_history[-1].truncated)
