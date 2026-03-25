@@ -207,6 +207,7 @@ def _iter_workspace_files(
     *,
     allowed_extensions: Optional[Set[str]] = None,
     preferred_dirs: Tuple[str, ...] = (),
+    include_root_recursive: bool = False,
 ) -> List[Path]:
     seen: Set[Path] = set()
     files: List[Path] = []
@@ -244,7 +245,7 @@ def _iter_workspace_files(
 
     for base in preferred_roots:
         _scan_recursive(base)
-    if not preferred_roots or len(files) == 0:
+    if include_root_recursive or not preferred_roots:
         _scan_recursive(root)
     return files
 
@@ -255,6 +256,7 @@ def _snapshot_workspace(root: Path) -> Dict[str, Tuple[int, int]]:
         root,
         allowed_extensions=set(ALLOWED_ARTIFACT_EXTENSIONS.keys()),
         preferred_dirs=("charts", "reports", "dashboards", "exports", "data_exports"),
+        include_root_recursive=True,
     ):
         rel = path.relative_to(root).as_posix()
         try:
@@ -355,20 +357,10 @@ def _format_numeric_summary(df: pd.DataFrame) -> str:
 def _query_looks_aggregated(query: str) -> bool:
     if re.search(r"\bover\s*\(", query, re.IGNORECASE):
         return False
-    if re.search(r"\bgroup\s+by\b", query, re.IGNORECASE):
-        return True
-    if re.search(r"\bhaving\b", query, re.IGNORECASE):
-        return True
-
-    aggregate_markers = [
-        r"\bcount\s*\(",
-        r"\bsum\s*\(",
-        r"\bavg\s*\(",
-        r"\bmean\s*\(",
-        r"\bmin\s*\(",
-        r"\bmax\s*\(",
-    ]
-    return any(re.search(pattern, query, re.IGNORECASE) for pattern in aggregate_markers)
+    return bool(
+        re.search(r"\bgroup\s+by\b", query, re.IGNORECASE)
+        or re.search(r"\bhaving\b", query, re.IGNORECASE)
+    )
 
 
 def _markdown_to_html(markdown_text: str) -> str:
