@@ -90,7 +90,11 @@ export const deleteFile = async (workspaceId: string, fileId: string) => {
   }
 };
 
-export const renameFile = async (workspaceId: string, fileId: string, name: string) => {
+export const renameFile = async (
+  workspaceId: string,
+  fileId: string,
+  payload: { name?: string; path?: string; version?: number },
+) => {
   const response = await apiFetch(
     `${API_URL}/workspaces/${workspaceId}/files/${fileId}`,
     {
@@ -98,7 +102,7 @@ export const renameFile = async (workspaceId: string, fileId: string, name: stri
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ name }),
+      body: JSON.stringify(payload),
     },
   );
   if (!response.ok) {

@@ -21,8 +21,11 @@ export default function(fileService: FileService) {
   });
 
   const renameFileSchema = z.object({
-    name: z.string().min(1),
+    name: z.string().min(1).optional(),
+    path: z.string().optional(),
     version: z.number().int().positive().optional(),
+  }).refine((value) => value.name !== undefined || value.path !== undefined, {
+    message: 'Missing destination name',
   });
 
   const ragStatusSchema = z.object({
@@ -169,8 +172,16 @@ export default function(fileService: FileService) {
     try {
       const { fileId } = req.params;
       const user = requireUserContext(req);
-      const { name, version } = renameFileSchema.parse(req.body);
-      const updatedFile = await fileService.renameFile(parseInt(fileId, 10), name, user.userId, version);
+      const { name, path: destinationPath, version } = renameFileSchema.parse(req.body);
+      const updatedFile = await fileService.renameFile(
+        parseInt(fileId, 10),
+        {
+          name,
+          path: destinationPath,
+        },
+        user.userId,
+        version,
+      );
       res.json(updatedFile);
     } catch (error) {
       handleError(res, error, 'Failed to rename file');

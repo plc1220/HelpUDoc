@@ -60,6 +60,7 @@ import CollapsibleDrawer from '../components/CollapsibleDrawer';
 import FileEditor from '../components/FileEditor';
 import UIBlockRenderer, { type UIBlock } from '../components/UIBlockRenderer';
 import ExpandableSidebar from '../components/ExpandableSidebar';
+import WorkspaceFileTree from '../components/WorkspaceFileTree';
 import AgentChatPane from '../components/chat/AgentChatPane';
 import { buildApprovalDraftContent, buildApprovalReview } from '../components/chat/approvalReview';
 import type { RenderableInterruptAction } from '../components/chat/interruptActions';
@@ -72,7 +73,12 @@ import {
   PAPER2SLIDES_STYLE_PRESETS,
   SLASH_COMMANDS,
 } from '../constants/workspace';
-import { getFileDisplayName, getFileTypeIcon, isSystemFile, normalizeFilePath } from '../utils/files';
+import { isSystemFile, normalizeFilePath } from '../utils/files';
+import {
+  buildWorkspaceDestinationPath,
+  getWorkspaceParentFolderPath,
+  normalizeWorkspaceFolderPath,
+} from '../utils/workspaceFileTree';
 import { buildMessageMetadata, mapMessagesToAgentHistory, mergeMessageMetadata, sanitizeRunPolicy } from '../utils/messages';
 import { createMarkdownComponents } from '../components/markdown/MarkdownShared';
 
@@ -327,7 +333,6 @@ export default function WorkspacePage() {
   const [chatMessage, setChatMessage] = useState('');
   const [chatAttachments, setChatAttachments] = useState<File[]>([]);
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [hoveredFileId, setHoveredFileId] = useState<string | null>(null);
   const personas = DEFAULT_PERSONAS;
   const [selectedPersona, setSelectedPersona] = useState(DEFAULT_PERSONA_NAME);
   const [isEditMode, setIsEditMode] = useState(false);
@@ -397,7 +402,6 @@ export default function WorkspacePage() {
     return workspaces.filter((workspace) => workspace.name.toLowerCase().includes(query));
   }, [workspaceSearchQuery, workspaces]);
   const [copiedImageUrl, setCopiedImageUrl] = useState(false);
-  const [copiedFileUrlId, setCopiedFileUrlId] = useState<string | null>(null);
   const [ragStatuses, setRagStatuses] = useState<Record<string, { status?: string; updatedAt?: string; error?: string }>>({});
   const [copiedWorkspaceContent, setCopiedWorkspaceContent] = useState(false);
   const [copiedMessageId, setCopiedMessageId] = useState<ConversationMessage['id'] | null>(null);
@@ -1112,10 +1116,33 @@ export default function WorkspacePage() {
     }
     try {
       await navigator.clipboard.writeText(file.publicUrl);
-      setCopiedFileUrlId(file.id);
-      window.setTimeout(() => setCopiedFileUrlId((current) => (current === file.id ? null : current)), 1500);
     } catch (error) {
       console.error('Failed to copy file public URL', error);
+    }
+  }, []);
+
+  const applyWorkspaceFileUpdate = useCallback((previousName: string, updated: WorkspaceFile) => {
+    const mergeFile = (current: WorkspaceFile) => ({
+      ...current,
+      ...updated,
+      content: updated.content ?? current.content,
+    });
+
+    setFiles((prev) => prev.map((item) => (item.id === updated.id ? mergeFile(item) : item)));
+    setSelectedFile((prev) => (prev?.id === updated.id ? mergeFile(prev) : prev));
+    setSelectedFileDetails((prev) => (prev?.id === updated.id ? mergeFile(prev) : prev));
+
+    if (previousName !== updated.name) {
+      setRagStatuses((prev) => {
+        const existing = prev[previousName];
+        if (!existing) {
+          return prev;
+        }
+        const next = { ...prev };
+        next[updated.name] = existing;
+        delete next[previousName];
+        return next;
+      });
     }
   }, []);
 
@@ -1127,25 +1154,59 @@ export default function WorkspacePage() {
     }
 
     try {
-      const updated = await renameFile(selectedWorkspace.id, file.id, proposedName);
-      setFiles((prev) =>
-        prev.map((item) => (item.id === file.id ? { ...item, name: updated.name } : item))
-      );
-      if (selectedFile?.id === file.id) {
-        setSelectedFile((prev) => (prev ? { ...prev, name: updated.name } : prev));
-      }
+      const updated = await renameFile(selectedWorkspace.id, file.id, { name: proposedName });
+      applyWorkspaceFileUpdate(file.name, updated);
     } catch (error) {
       console.error('Failed to rename file:', error);
     }
   };
 
+  const handleMoveFile = async (file: WorkspaceFile, destinationFolderPath?: string) => {
+    if (!selectedWorkspace || isDraftWorkspaceFile(file)) {
+      return;
+    }
+
+    const currentFolder = getWorkspaceParentFolderPath(file.name);
+    const nextFolderPath = destinationFolderPath !== undefined
+      ? destinationFolderPath
+      : window.prompt(
+          'Move file to folder',
+          currentFolder,
+        )?.trim();
+
+    if (nextFolderPath === undefined || nextFolderPath === null) {
+      return;
+    }
+
+    const normalizedFolder = normalizeWorkspaceFolderPath(nextFolderPath);
+    const destinationPath = buildWorkspaceDestinationPath(file.name, normalizedFolder);
+    if (destinationPath === file.name) {
+      return;
+    }
+
+    try {
+      const updated = await renameFile(selectedWorkspace.id, file.id, { path: normalizedFolder });
+      applyWorkspaceFileUpdate(file.name, updated);
+    } catch (error) {
+      console.error('Failed to move file:', error);
+    }
+  };
+
   const handleDeleteSingleFile = async (file: WorkspaceFile) => {
     if (!selectedWorkspace) return;
-    if (isDraftWorkspaceFile(file)) {
+    const removeFromState = () => {
       setFiles((prev) => prev.filter((item) => item.id !== file.id));
       setSelectedFiles((prev) => {
         const next = new Set(prev);
         next.delete(file.id);
+        return next;
+      });
+      setRagStatuses((prev) => {
+        if (!prev[file.name]) {
+          return prev;
+        }
+        const next = { ...prev };
+        delete next[file.name];
         return next;
       });
       if (selectedFile?.id === file.id) {
@@ -1153,6 +1214,10 @@ export default function WorkspacePage() {
         setSelectedFileDetails(null);
         setFileContent('');
       }
+    };
+
+    if (isDraftWorkspaceFile(file)) {
+      removeFromState();
       return;
     }
     const confirmed = window.confirm(`Delete ${file.name}?`);
@@ -1160,17 +1225,7 @@ export default function WorkspacePage() {
 
     try {
       await deleteFile(selectedWorkspace.id, file.id);
-      setFiles((prev) => prev.filter((item) => item.id !== file.id));
-      setSelectedFiles((prev) => {
-        const next = new Set(prev);
-        next.delete(file.id);
-        return next;
-      });
-      if (selectedFile?.id === file.id) {
-        setSelectedFile(null);
-        setSelectedFileDetails(null);
-        setFileContent('');
-      }
+      removeFromState();
     } catch (error) {
       console.error('Failed to delete file:', error);
     }
@@ -4785,6 +4840,15 @@ export default function WorkspacePage() {
       setFiles((prevFiles) =>
         prevFiles.filter((file) => !selectedFiles.has(file.id))
       );
+      setRagStatuses((prev) => {
+        const next = { ...prev };
+        for (const file of files) {
+          if (selectedFiles.has(file.id)) {
+            delete next[file.name];
+          }
+        }
+        return next;
+      });
       setSelectedFiles(new Set());
       setSelectedFile(null);
       setSelectedFileDetails(null);
@@ -5073,105 +5137,30 @@ export default function WorkspacePage() {
                     </div>
                   )}
                   <div
-                    className={`flex-1 px-4 py-3 overflow-y-auto min-h-0 transition-opacity duration-200 ${isFilePaneVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'
+                    className={`flex-1 overflow-hidden min-h-0 transition-opacity duration-200 ${isFilePaneVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'
                       }`}
                     aria-hidden={!isFilePaneVisible}
                   >
-                    {visibleFiles.map((file) => {
-                      const isPendingJob = file.mimeType === 'application/vnd.helpudoc.paper2slides-job';
-                      const ragStatus = typeof file.name === 'string' ? ragStatuses[file.name] : undefined;
-                      const ragState = ragStatus?.status ? String(ragStatus.status).toLowerCase() : '';
-                      const isIndexing =
-                        !isPendingJob &&
-                        ['pending', 'processing', 'preprocessed'].includes(ragState);
-                      const displayName = getFileDisplayName(file.name || '');
-                      const fileIcon = getFileTypeIcon(file.name || '');
-                      return (
-                        <div
-                          key={file.id}
-                          className={`group flex items-center p-2 rounded-lg cursor-pointer transition-colors ${selectedFile?.id === file.id ? 'bg-blue-50' : 'hover:bg-gray-100'
-                            }`}
-                          onMouseEnter={() => setHoveredFileId(file.id)}
-                          onMouseLeave={() => setHoveredFileId((current) => (current === file.id ? null : current))}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={selectedFiles.has(file.id)}
-                            disabled={isPendingJob}
-                            onChange={() => handleFileSelect(file.id)}
-                            className="mr-3"
-                          />
-                          <div
-                            onClick={() => {
-                            if (isPendingJob) {
-                              return;
-                            }
-                            setSelectedFile(file);
-                            setSelectedFileDetails(null);
-                            setFileContent('');
-                            setIsEditMode(shouldForceEditMode(file.name));
-                          }}
-                            className="flex-1 flex items-start justify-between gap-2 min-w-0"
-                          >
-                            <div className="flex items-center gap-2 min-w-0">
-                              {(isPendingJob || isIndexing) && (
-                                <Loader2 size={14} className="text-blue-500 animate-spin shrink-0" />
-                              )}
-                              <span className="shrink-0" aria-hidden="true">
-                                {fileIcon}
-                              </span>
-                              <span
-                                className="text-sm text-gray-800 break-words leading-snug"
-                                title={file.name}
-                              >
-                                {displayName}
-                              </span>
-                            </div>
-                            {!isPendingJob && (
-                              <div className={`shrink-0 items-center gap-1 ml-1 ${hoveredFileId === file.id ? 'flex' : 'hidden group-hover:flex'}`}>
-                                {file.publicUrl && !isDraftWorkspaceFile(file) && (
-                                  <button
-                                    type="button"
-                                    onClick={(event) => {
-                                      event.stopPropagation();
-                                      handleCopyFilePublicUrl(file);
-                                    }}
-                                    className="p-1 rounded hover:bg-gray-200"
-                                    title={copiedFileUrlId === file.id ? 'Copied!' : file.publicUrl}
-                                  >
-                                    <LinkIcon size={14} className="text-gray-600" />
-                                  </button>
-                                )}
-                                {!isDraftWorkspaceFile(file) ? (
-                                  <button
-                                    type="button"
-                                    onClick={(event) => {
-                                      event.stopPropagation();
-                                      handleRenameFile(file);
-                                    }}
-                                    className="p-1 rounded hover:bg-gray-200"
-                                    title="Rename"
-                                  >
-                                    <Edit size={14} className="text-gray-600" />
-                                  </button>
-                                ) : null}
-                                <button
-                                  type="button"
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    handleDeleteSingleFile(file);
-                                  }}
-                                  className="p-1 rounded hover:bg-gray-200"
-                                  title="Delete"
-                                >
-                                  <Trash size={14} className="text-gray-600" />
-                                </button>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
+                    <div className="h-full min-h-0 px-4 py-3">
+                      <WorkspaceFileTree
+                        files={visibleFiles}
+                        selectedFileId={selectedFile?.id || null}
+                        selectedFiles={selectedFiles}
+                        ragStatuses={ragStatuses}
+                        isDraftWorkspaceFile={isDraftWorkspaceFile}
+                        onSelectFile={(file) => {
+                          setSelectedFile(file);
+                          setSelectedFileDetails(null);
+                          setFileContent('');
+                          setIsEditMode(shouldForceEditMode(file.name));
+                        }}
+                        onToggleFileSelection={handleFileSelect}
+                        onCopyPublicUrl={handleCopyFilePublicUrl}
+                        onRenameFile={handleRenameFile}
+                        onDeleteFile={handleDeleteSingleFile}
+                        onMoveFile={handleMoveFile}
+                      />
+                    </div>
                   </div>
                 </div>
 
