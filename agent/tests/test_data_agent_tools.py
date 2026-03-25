@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from helpudoc_agent.data_agent_tools import (
     DuckDBManager,
@@ -123,6 +125,84 @@ class DataAgentToolsTest(unittest.TestCase):
             manager = workspace.context["data_agent_manager"]
             self.assertEqual(len(manager.session.last_query_result), 1000)
             self.assertTrue(manager.session.query_history[-1].truncated)
+
+    def test_generate_chart_config_returns_success_payload(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            workspace = self._workspace(root)
+            tools = self._tool_map(workspace)
+
+            tools["get_table_schema"].invoke({"table_names": []})
+            tools["run_sql_query"].invoke({"sql_query": "SELECT 1 AS x, 2 AS y"})
+            raw = tools["generate_chart_config"].invoke(
+                {
+                    "chart_title": "Revenue_Chart",
+                    "python_code": (
+                        "chart_config = {\n"
+                        "  'data': [{'x': df['x'].tolist(), 'y': df['y'].tolist(), 'type': 'bar'}],\n"
+                        "  'layout': {'title': 'Revenue'}\n"
+                        "}\n"
+                    ),
+                }
+            )
+
+            payload = json.loads(raw)
+            self.assertEqual(payload["status"], "success")
+            self.assertEqual(payload["message"], "Chart generated successfully.")
+            self.assertEqual(payload["chart_title"], "Revenue_Chart")
+            self.assertTrue(payload["plotly_config_path"].endswith(".plotly.json"))
+            self.assertTrue(payload["output_files"])
+
+    def test_generate_chart_config_returns_missing_column_error_payload(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            workspace = self._workspace(root)
+            tools = self._tool_map(workspace)
+
+            tools["get_table_schema"].invoke({"table_names": []})
+            tools["run_sql_query"].invoke({"sql_query": "SELECT 1 AS x, 2 AS y"})
+            raw = tools["generate_chart_config"].invoke(
+                {
+                    "chart_title": "Broken_Chart",
+                    "python_code": (
+                        "chart_config = {\n"
+                        "  'data': [{'x': df['missing'].tolist(), 'y': df['y'].tolist(), 'type': 'bar'}],\n"
+                        "  'layout': {'title': 'Broken'}\n"
+                        "}\n"
+                    ),
+                }
+            )
+
+            payload = json.loads(raw)
+            self.assertEqual(payload["status"], "error")
+            self.assertEqual(payload["error_type"], "missing_column")
+            self.assertIn("available_columns", payload)
+            self.assertEqual(payload["output_files"], [])
+            manager = workspace.context["data_agent_manager"]
+            self.assertFalse(manager.session.chart_history)
+
+    @patch("helpudoc_agent.data_agent_tools.CHART_EXECUTION_TIMEOUT_SECONDS", 0.2)
+    def test_generate_chart_config_times_out_in_subprocess(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            workspace = self._workspace(root)
+            tools = self._tool_map(workspace)
+
+            tools["get_table_schema"].invoke({"table_names": []})
+            tools["run_sql_query"].invoke({"sql_query": "SELECT 1 AS x"})
+            raw = tools["generate_chart_config"].invoke(
+                {
+                    "chart_title": "Slow_Chart",
+                    "python_code": "while 1:\n    pass\n",
+                }
+            )
+
+            payload = json.loads(raw)
+            self.assertEqual(payload["status"], "error")
+            self.assertEqual(payload["error_type"], "timeout")
+            self.assertEqual(payload["output_files"], [])
+            manager = workspace.context["data_agent_manager"]
+            self.assertFalse(manager.session.chart_history)
 
 
 if __name__ == "__main__":
