@@ -333,7 +333,18 @@ def _format_dataframe_markdown(df: pd.DataFrame, *, truncated: bool = False) -> 
 
 
 def _format_sample_value(value: Any) -> str:
-    if pd.isna(value):
+    if isinstance(value, np.ndarray):
+        value = value.tolist()
+    if isinstance(value, pd.Series):
+        value = value.tolist()
+    if isinstance(value, (list, tuple, set, dict)):
+        structured = json.dumps(value, default=str)
+        return structured if len(structured) <= 32 else structured[:29] + "..."
+    try:
+        is_null = pd.isna(value)
+    except (TypeError, ValueError):
+        is_null = False
+    if is_null:
         return "null"
     if isinstance(value, str):
         compact = value if len(value) <= 32 else value[:29] + "..."
@@ -486,40 +497,40 @@ def _run_chart_code_in_subprocess(
     effective_timeout = timeout_seconds or CHART_EXECUTION_TIMEOUT_SECONDS
     ctx = mp.get_context("spawn")
     result_queue: "mp.Queue[Dict[str, Any]]" = ctx.Queue()
-    process = ctx.Process(
-        target=_execute_chart_code_worker,
-        args=(result_queue, sanitized_code, chart_title, df_context),
-    )
-    process.start()
-    process.join(effective_timeout)
-
-    if process.is_alive():
-        process.terminate()
-        process.join(1)
-        if process.is_alive():
-            process.kill()
-            process.join(1)
-        return {
-            "status": "error",
-            "error_type": "timeout",
-            "message": f"Chart execution timed out after {effective_timeout:g} seconds.",
-        }
-
     try:
-        result = result_queue.get_nowait()
-    except Empty:
-        result = None
+        process = ctx.Process(
+            target=_execute_chart_code_worker,
+            args=(result_queue, sanitized_code, chart_title, df_context),
+        )
+        process.start()
+        process.join(effective_timeout)
+
+        if process.is_alive():
+            process.terminate()
+            process.join(1)
+            if process.is_alive():
+                process.kill()
+                process.join(1)
+            return {
+                "status": "error",
+                "error_type": "timeout",
+                "message": f"Chart execution timed out after {effective_timeout:g} seconds.",
+            }
+
+        try:
+            result = result_queue.get_nowait()
+        except Empty:
+            result = None
+        if result is None:
+            return {
+                "status": "error",
+                "error_type": "execution_error",
+                "message": "Chart subprocess exited without returning a result.",
+            }
+        return result
     finally:
         result_queue.close()
         result_queue.join_thread()
-
-    if result is None:
-        return {
-            "status": "error",
-            "error_type": "execution_error",
-            "message": "Chart subprocess exited without returning a result.",
-        }
-    return result
 
 
 def _markdown_to_html(markdown_text: str) -> str:

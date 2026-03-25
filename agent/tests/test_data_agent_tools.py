@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from helpudoc_agent.data_agent_tools import (
     DuckDBManager,
+    _format_sample_value,
     _snapshot_workspace,
     build_data_agent_tools,
 )
@@ -73,6 +74,11 @@ class DataAgentToolsTest(unittest.TestCase):
             self.assertIn("status (VARCHAR)", raw)
             self.assertIn("[examples: 'active', 'pending']", raw)
             self.assertIn("revenue (BIGINT)", raw)
+
+    def test_format_sample_value_handles_non_scalar_values(self) -> None:
+        rendered = _format_sample_value({"segments": ["vip", "trial"]})
+        self.assertIn("segments", rendered)
+        self.assertIn("vip", rendered)
 
     def test_run_sql_query_keeps_aggregate_results_intact(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
