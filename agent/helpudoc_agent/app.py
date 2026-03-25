@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 from typing import Any, Dict, List, AsyncGenerator, Iterable, Sequence, Set, Optional, Tuple
+import html as html_lib
 import json
 import logging
 import os
@@ -43,8 +44,9 @@ from langgraph.types import Command
 logger = logging.getLogger(__name__)
 _INTERRUPT_TOOL_NAMES: Set[str] = {"request_clarification", "request_human_action"}
 _LOCAL_DEV_AGENT_JWT_SECRET = "helpudoc-local-dev-agent-jwt-secret"
-_RAG_PREFETCHABLE_EXTENSIONS: Set[str] = {".pdf", ".doc", ".docx", ".md"}
+_RAG_PREFETCHABLE_EXTENSIONS: Set[str] = {".pdf", ".doc", ".docx", ".md", ".html", ".htm"}
 _TAGGED_HTML_EXTENSIONS: Set[str] = {".html", ".htm"}
+_TAGGED_RAG_CONTEXT_CHAR_BUDGET = 6000
 
 
 def _get_agent_jwt_secret() -> str:
@@ -77,6 +79,122 @@ def _filter_rag_prefetchable_tagged_files(tagged_paths: Sequence[str]) -> List[s
         if suffix in _RAG_PREFETCHABLE_EXTENSIONS:
             candidates.append(cleaned)
     return candidates
+
+
+def _normalize_tagged_file_paths(tagged_paths: Sequence[str]) -> List[str]:
+    normalized: List[str] = []
+    for raw in tagged_paths:
+        if not isinstance(raw, str):
+            continue
+        cleaned = raw.strip().replace("\\", "/")
+        if not cleaned:
+            continue
+        if not cleaned.startswith("/"):
+            cleaned = f"/{cleaned.lstrip('/')}"
+        normalized.append(cleaned)
+    return sorted(set(normalized))
+
+
+def _build_tagged_rag_keywords(prompt: str, tagged_paths: Sequence[str]) -> List[str]:
+    keywords: List[str] = []
+    if isinstance(prompt, str) and prompt.strip():
+        keywords.append(prompt.strip())
+    for item in _normalize_tagged_file_paths(tagged_paths):
+        keywords.append(item)
+        name = Path(item).name
+        if name:
+            keywords.append(name)
+    deduped: List[str] = []
+    seen: Set[str] = set()
+    for item in keywords:
+        if item not in seen:
+            seen.add(item)
+            deduped.append(item)
+    return deduped
+
+
+def _filter_rag_chunks_to_tagged_paths(chunks: Sequence[Dict[str, Any]], tagged_paths: Sequence[str]) -> List[Dict[str, Any]]:
+    normalized = _normalize_tagged_file_paths(tagged_paths)
+    if not normalized:
+        return list(chunks)
+    basenames = {Path(item).name for item in normalized}
+    filtered: List[Dict[str, Any]] = []
+    for chunk in chunks:
+        file_path = str(chunk.get("file_path") or "").strip().replace("\\", "/")
+        if file_path and not file_path.startswith("/"):
+            file_path = f"/{file_path.lstrip('/')}"
+        if file_path in normalized or Path(file_path).name in basenames:
+            filtered.append(chunk)
+    return filtered
+
+
+def _compress_tagged_context_lines(lines: Sequence[str], *, max_chars: int = _TAGGED_RAG_CONTEXT_CHAR_BUDGET) -> str | None:
+    collected: List[str] = []
+    total = 0
+    for raw in lines:
+        content = str(raw or "").strip()
+        if not content:
+            continue
+        piece = content if not collected else f"\n\n{content}"
+        if total + len(piece) > max_chars:
+            remaining = max_chars - total
+            if remaining > 64:
+                collected.append(piece[:remaining].rstrip() + "\n\n[Truncated]")
+            break
+        collected.append(piece if not collected else content)
+        total += len(piece)
+    if not collected:
+        return None
+    return "\n\n".join(collected)[:max_chars]
+
+
+def _strip_html_fragment(fragment: str) -> str:
+    text = re.sub(r"(?is)<[^>]+>", " ", fragment or "")
+    text = html_lib.unescape(text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+def _extract_html_outline_from_path(path: Path, *, max_chars: int = _TAGGED_RAG_CONTEXT_CHAR_BUDGET) -> str | None:
+    try:
+        raw = path.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        logger.exception("Failed reading tagged HTML outline: %s", path)
+        return None
+    sanitized = re.sub(r"(?is)<script\b[^>]*>.*?</script>", " ", raw)
+    sanitized = re.sub(r"(?is)<style\b[^>]*>.*?</style>", " ", sanitized)
+    sanitized = re.sub(r"(?is)<!--.*?-->", " ", sanitized)
+
+    outline_parts: List[str] = []
+    title_match = re.search(r"(?is)<title[^>]*>(.*?)</title>", sanitized)
+    title_text = _strip_html_fragment(title_match.group(1)) if title_match else ""
+    if title_text:
+        outline_parts.append(f"TITLE: {title_text}")
+
+    headings = [
+        _strip_html_fragment(match)
+        for match in re.findall(r"(?is)<h[1-3][^>]*>(.*?)</h[1-3]>", sanitized)
+    ]
+    headings = [item for item in headings if item]
+    if headings:
+        outline_parts.append("HEADINGS:")
+        outline_parts.extend(f"- {item}" for item in headings[:12])
+
+    paragraphs = [
+        _strip_html_fragment(match)
+        for match in re.findall(r"(?is)<p[^>]*>(.*?)</p>", sanitized)
+    ]
+    paragraphs = [item for item in paragraphs if item]
+    if paragraphs:
+        outline_parts.append("EXCERPTS:")
+        outline_parts.extend(paragraphs[:8])
+
+    if not outline_parts:
+        fallback_text = _strip_html_fragment(sanitized)
+        if fallback_text:
+            outline_parts.append(fallback_text)
+
+    return _compress_tagged_context_lines(outline_parts, max_chars=max_chars)
 
 
 def _append_tagged_file_guidance(prompt: str, tagged_paths: Sequence[str]) -> str:
@@ -653,6 +771,24 @@ def create_app() -> FastAPI:
                 return text
         return None
 
+    def _load_tagged_html_outline(workspace_id: str, tagged_paths: List[str]) -> str | None:
+        workspace_root = Path(settings.backend.workspace_root).resolve() / workspace_id
+        for raw in tagged_paths:
+            if not raw:
+                continue
+            normalized = str(raw).strip().lstrip("/").replace("\\", "/")
+            if Path(normalized).suffix.lower() not in _TAGGED_HTML_EXTENSIONS:
+                continue
+            candidate = (workspace_root / normalized).resolve()
+            if workspace_root not in candidate.parents and candidate != workspace_root:
+                continue
+            if not candidate.exists() or not candidate.is_file():
+                continue
+            outline = _extract_html_outline_from_path(candidate)
+            if outline:
+                return outline
+        return None
+
     async def _prefetch_rag_context(workspace_id: str, prompt: str) -> str | None:
         # Use extraction rather than relying on an exact marker string so backend text can evolve.
         if not prompt:
@@ -661,6 +797,7 @@ def create_app() -> FastAPI:
         rag_tagged_paths = _filter_rag_prefetchable_tagged_files(tagged_paths)
         if not rag_tagged_paths:
             return None
+        keywords = _build_tagged_rag_keywords(prompt, rag_tagged_paths)
         rag_prompt = prompt
         if len(rag_tagged_paths) != len(tagged_paths):
             filtered_lines = ["Tagged files:"] + [f"- {path}" for path in rag_tagged_paths]
@@ -676,9 +813,12 @@ def create_app() -> FastAPI:
                 rag_prompt,
                 mode="naive",
                 include_references=False,
+                hl_keywords=keywords,
+                ll_keywords=keywords,
             )
             data = response.get("data") if isinstance(response, dict) else None
             chunks = data.get("chunks", []) if isinstance(data, dict) else []
+            chunks = _filter_rag_chunks_to_tagged_paths(chunks, rag_tagged_paths)
             lines: List[str] = []
             for chunk in chunks:
                 content = chunk.get("content") or ""
@@ -697,15 +837,20 @@ def create_app() -> FastAPI:
                     if lowered.startswith("table analysis:") or lowered.startswith("discarded content analysis:"):
                         non_textual += 1
                 if non_textual < len(lines):
-                    return "\n\n".join(lines)
+                    compressed = _compress_tagged_context_lines(lines)
+                    if compressed:
+                        return compressed
             response = await rag_worker.store.query_data(
                 workspace_id,
                 rag_prompt,
                 mode="hybrid",
                 include_references=False,
+                hl_keywords=keywords,
+                ll_keywords=keywords,
             )
             data = response.get("data") if isinstance(response, dict) else None
             chunks = data.get("chunks", []) if isinstance(data, dict) else []
+            chunks = _filter_rag_chunks_to_tagged_paths(chunks, rag_tagged_paths)
             lines = []
             for chunk in chunks:
                 content = (chunk.get("content") or "").strip()
@@ -719,10 +864,17 @@ def create_app() -> FastAPI:
                     if lowered.startswith("table analysis:") or lowered.startswith("discarded content analysis:"):
                         non_textual += 1
                 if non_textual < len(lines):
-                    return "\n\n".join(lines)
+                    compressed = _compress_tagged_context_lines(lines)
+                    if compressed:
+                        return compressed
             mineru_text = _load_mineru_text(workspace_id, rag_tagged_paths)
             if mineru_text:
-                return mineru_text[:12000]
+                compressed = _compress_tagged_context_lines([mineru_text])
+                if compressed:
+                    return compressed
+            html_outline = _load_tagged_html_outline(workspace_id, rag_tagged_paths)
+            if html_outline:
+                return html_outline
             return None
         except Exception:
             logger.exception("Failed to prefetch RAG context for tagged files.")

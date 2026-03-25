@@ -89,6 +89,7 @@ When the user tags a report HTML for story guidance, do **not** read the full ra
 
 Use these rules:
 - treat tagged `.html` report files as reference artifacts, not primary context dumps
+- prefer RAG retrieval first; if that fails, use compact outline extraction
 - prefer the tagged dataset as the source of truth for filtering and chart bindings
 - inspect only targeted parts of the report when needed for narrative cues
 - do not repeatedly read large HTML chunks into the model context

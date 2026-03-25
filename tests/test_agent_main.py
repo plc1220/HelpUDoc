@@ -57,12 +57,14 @@ class ToolFactoryStub:  # pragma: no cover - placeholder for dependency
 
 
 class RagWorkerStoreStub:
+    next_response = {"data": {"chunks": []}}
+
     def __init__(self):
         self.query_data_calls = []
 
     async def query_data(self, *args, **kwargs):
         self.query_data_calls.append((args, kwargs))
-        return {"data": {"chunks": []}}
+        return RagWorkerStoreStub.next_response
 
 
 class RagIndexWorkerStub:
@@ -435,6 +437,54 @@ def test_append_tagged_file_guidance_warns_for_html(client_with_stubs):
     assert "Do not read an entire report HTML" in guided
 
 
+def test_filter_rag_prefetchable_tagged_files_includes_html(client_with_stubs):
+    client_with_stubs
+
+    import helpudoc_agent.app as app_module
+
+    filtered = app_module._filter_rag_prefetchable_tagged_files(
+        ["reports/story.html", "reports/notes.md", "datasets/orders.parquet"]
+    )
+    assert "reports/story.html" in filtered
+    assert "reports/notes.md" in filtered
+    assert "datasets/orders.parquet" not in filtered
+
+
+def test_extract_html_outline_from_path_strips_markup(client_with_stubs, tmp_path):
+    client_with_stubs
+
+    import helpudoc_agent.app as app_module
+
+    html_path = tmp_path / "report.html"
+    html_path.write_text(
+        """
+        <html>
+          <head>
+            <title>Order Cancellation Story</title>
+            <style>.hidden { display:none; }</style>
+            <script>console.log('ignore me');</script>
+          </head>
+          <body>
+            <h1>Main Heading</h1>
+            <h2>Drivers</h2>
+            <p>Cancellation rates rose in Spain and Belgium.</p>
+            <p>Mobile web contributed disproportionate losses.</p>
+          </body>
+        </html>
+        """,
+        encoding="utf-8",
+    )
+
+    outline = app_module._extract_html_outline_from_path(html_path, max_chars=400)
+    assert outline is not None
+    assert "TITLE: Order Cancellation Story" in outline
+    assert "Main Heading" in outline
+    assert "Drivers" in outline
+    assert "Cancellation rates rose in Spain and Belgium." in outline
+    assert "console.log" not in outline
+    assert ".hidden" not in outline
+
+
 def test_chat_stream_skips_rag_prefetch_for_tagged_parquet(client_with_stubs):
     client, registry, source_tracker = client_with_stubs
     runtime = DummyRuntime("workspace-parquet", StreamingAgent(["Clarify please"]))
@@ -452,5 +502,37 @@ def test_chat_stream_skips_rag_prefetch_for_tagged_parquet(client_with_stubs):
     assert rag_worker is not None
     assert rag_worker.store.query_data_calls == []
     assert messages[0]["type"] == "policy"
+    assert messages[-1]["type"] == "done"
+    assert source_tracker.updated_workspaces == [runtime.workspace_state]
+
+
+def test_chat_stream_prefetches_tagged_html_with_scoped_keywords(client_with_stubs):
+    client, registry, source_tracker = client_with_stubs
+    RagWorkerStoreStub.next_response = {
+        "data": {
+            "chunks": [
+                {"file_path": "/reports/order_cancellations_analysis.html", "content": "Story chunk"},
+                {"file_path": "/reports/other.html", "content": "Ignore chunk"},
+            ]
+        }
+    }
+    runtime = DummyRuntime("workspace-html", StreamingAgent(["OK"]))
+    registry.set_runtime("research", "workspace-html", runtime)
+
+    payload = {
+        "message": "Use /skill data/dashboard\n\nTagged files:\n- reports/order_cancellations_analysis.html\n",
+        "history": [],
+    }
+    with client.stream("POST", "/agents/research/workspace/workspace-html/chat/stream", json=payload) as response:
+        assert response.status_code == 200
+        messages = _collect_stream_payloads(response)
+
+    rag_worker = RagIndexWorkerStub.last_instance
+    assert rag_worker is not None
+    assert len(rag_worker.store.query_data_calls) >= 1
+    _args, kwargs = rag_worker.store.query_data_calls[0]
+    assert "/reports/order_cancellations_analysis.html" in kwargs["hl_keywords"]
+    assert "order_cancellations_analysis.html" in kwargs["ll_keywords"]
+    assert runtime.workspace_state.context["tagged_rag_context"] == "Story chunk"
     assert messages[-1]["type"] == "done"
     assert source_tracker.updated_workspaces == [runtime.workspace_state]
