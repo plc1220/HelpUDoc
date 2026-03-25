@@ -30,31 +30,25 @@ type TabularPreview = {
 const PARQUET_PREVIEW_MAX_ROWS = 100;
 const PARQUET_PREVIEW_MAX_COLUMNS = 20;
 let parquetRuntimePromise: Promise<{
-  readParquet: (buffer: Uint8Array, options?: { limit?: number }) => {
-    intoIPCStream: () => Uint8Array;
-    free: () => void;
-  };
-  tableFromIPC: (input: Uint8Array) => {
-    schema: { fields: Array<{ name: string }> };
-    numRows: number;
-    toArray: () => Record<string, unknown>[];
-  };
+  parquetMetadataAsync: any;
+  parquetReadObjects: any;
+  parquetSchema: any;
+  compressors: any;
 }> | null = null;
 
 const loadParquetRuntime = async () => {
   if (!parquetRuntimePromise) {
     parquetRuntimePromise = (async () => {
-      const [parquetModule, arrowModule, wasmModule] = await Promise.all([
-        import('parquet-wasm'),
-        import('apache-arrow'),
-        import('parquet-wasm/esm/parquet_wasm_bg.wasm?url'),
+      const [parquetModule, compressorModule] = await Promise.all([
+        import('hyparquet'),
+        import('hyparquet-compressors'),
       ]);
 
-      await parquetModule.default(wasmModule.default);
-
       return {
-        readParquet: parquetModule.readParquet,
-        tableFromIPC: arrowModule.tableFromIPC,
+        parquetMetadataAsync: parquetModule.parquetMetadataAsync,
+        parquetReadObjects: parquetModule.parquetReadObjects,
+        parquetSchema: parquetModule.parquetSchema,
+        compressors: compressorModule.compressors,
       };
     })();
   }
@@ -62,7 +56,7 @@ const loadParquetRuntime = async () => {
   return parquetRuntimePromise;
 };
 
-const decodeBase64ToUint8Array = (value: string) => {
+const decodeBase64ToArrayBuffer = (value: string) => {
   const normalized = value.trim();
   const binary = window.atob(normalized);
   const bytes = new Uint8Array(binary.length);
@@ -71,7 +65,7 @@ const decodeBase64ToUint8Array = (value: string) => {
     bytes[index] = binary.charCodeAt(index);
   }
 
-  return bytes;
+  return bytes.buffer;
 };
 
 const formatPreviewCell = (value: unknown): string => {
@@ -197,35 +191,35 @@ const FileRenderer: React.FC<FileRendererProps> = ({
       setParquetError(null);
 
       try {
-        const { readParquet, tableFromIPC } = await loadParquetRuntime();
+        const { parquetMetadataAsync, parquetReadObjects, parquetSchema, compressors } = await loadParquetRuntime();
 
-        const parquetBytes = decodeBase64ToUint8Array(fileContent);
-        const wasmTable = readParquet(parquetBytes, {
-          limit: PARQUET_PREVIEW_MAX_ROWS,
+        const parquetBuffer = decodeBase64ToArrayBuffer(fileContent);
+        const metadata = await parquetMetadataAsync(parquetBuffer);
+        const schema = parquetSchema(metadata);
+        const rows = await parquetReadObjects({
+          file: parquetBuffer,
+          rowFormat: 'object',
+          rowStart: 0,
+          rowEnd: PARQUET_PREVIEW_MAX_ROWS,
+          compressors,
         });
+        const allHeaders = (schema.children as Array<{ element: { name: string } }>).map(
+          (field) => field.element.name,
+        );
+        const headers = allHeaders.slice(0, PARQUET_PREVIEW_MAX_COLUMNS);
+        const previewRows = (rows as Record<string, unknown>[]).map((row) =>
+          headers.map((header) => formatPreviewCell(row?.[header])),
+        );
 
-        try {
-          const arrowTable = tableFromIPC(wasmTable.intoIPCStream());
-          const fields = arrowTable.schema.fields;
-          const visibleFields = fields.slice(0, PARQUET_PREVIEW_MAX_COLUMNS);
-          const rawRows = arrowTable.toArray() as Record<string, unknown>[];
-          const headers = visibleFields.map((field) => field.name);
-          const rows = rawRows.map((row) =>
-            headers.map((header) => formatPreviewCell(row?.[header])),
-          );
-
-          if (!cancelled) {
-            setParquetPreview({
-              headers,
-              rows,
-              totalRows: arrowTable.numRows,
-              totalColumns: fields.length,
-              truncatedRows: arrowTable.numRows >= PARQUET_PREVIEW_MAX_ROWS,
-              truncatedColumns: fields.length > PARQUET_PREVIEW_MAX_COLUMNS,
-            });
-          }
-        } finally {
-          wasmTable.free();
+        if (!cancelled) {
+          setParquetPreview({
+            headers,
+            rows: previewRows,
+            totalRows: Number(metadata.num_rows),
+            totalColumns: allHeaders.length,
+            truncatedRows: Number(metadata.num_rows) > PARQUET_PREVIEW_MAX_ROWS,
+            truncatedColumns: allHeaders.length > PARQUET_PREVIEW_MAX_COLUMNS,
+          });
         }
       } catch (error) {
         console.error('Parquet parse error', error);
