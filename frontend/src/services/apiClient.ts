@@ -3,10 +3,34 @@ import { getAuthUser } from '../auth/authStore';
 export const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000/api';
 export const AUTH_MODE = (import.meta.env.VITE_AUTH_MODE || 'hybrid').toLowerCase();
 
+function shouldAttachHeaderIdentity() {
+  if (AUTH_MODE === 'headers') {
+    return true;
+  }
+  if (AUTH_MODE !== 'hybrid' && AUTH_MODE !== 'auto') {
+    return false;
+  }
+
+  const user = getAuthUser();
+  if (!user) {
+    return false;
+  }
+
+  if (user.provider === 'google') {
+    return false;
+  }
+
+  if (user.provider === 'local') {
+    return true;
+  }
+
+  // Older stored auth payloads may not have a provider; treat google-* identities as OIDC users.
+  return !user.id.startsWith('google-');
+}
+
 function mergeAuthHeaders(init?: HeadersInit): Headers {
   const headers = new Headers(init);
-  const shouldUseHeaderAuth = AUTH_MODE === 'headers' || AUTH_MODE === 'hybrid' || AUTH_MODE === 'auto';
-  if (!shouldUseHeaderAuth) {
+  if (!shouldAttachHeaderIdentity()) {
     return headers;
   }
   const user = getAuthUser();

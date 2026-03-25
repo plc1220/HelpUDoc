@@ -25,6 +25,7 @@ const OAUTH_STATE_COOKIE = 'helpudoc.oauth.state';
 const OAUTH_VERIFIER_COOKIE = 'helpudoc.oauth.verifier';
 const OAUTH_RETURN_TO_COOKIE = 'helpudoc.oauth.return_to';
 const OAUTH_COOKIE_MAX_AGE_MS = 10 * 60 * 1000;
+const SESSION_COOKIE_NAME = process.env.SESSION_NAME || 'helpudoc.sid';
 
 function cookieSecure(): boolean {
   const raw = (process.env.SESSION_COOKIE_SECURE || '').trim().toLowerCase();
@@ -72,6 +73,12 @@ function sanitizeReturnPath(raw?: string): string | undefined {
 
 export default function authRoutes(userService: UserService, googleOAuthService: GoogleOAuthService) {
   const router = Router();
+  const sessionCookieOptions = {
+    httpOnly: true,
+    sameSite: 'lax' as const,
+    secure: cookieSecure(),
+    domain: process.env.SESSION_COOKIE_DOMAIN || undefined,
+  };
 
   const saveSession = (req: Request) =>
     new Promise<void>((resolve, reject) => {
@@ -242,10 +249,12 @@ export default function authRoutes(userService: UserService, googleOAuthService:
 
   router.post('/logout', async (req, res) => {
     if (AUTH_MODE === 'headers') {
+      res.clearCookie(SESSION_COOKIE_NAME, sessionCookieOptions);
       return res.status(200).json({ success: true });
     }
 
     if (!req.session) {
+      res.clearCookie(SESSION_COOKIE_NAME, sessionCookieOptions);
       return res.status(200).json({ success: true });
     }
 
@@ -254,6 +263,7 @@ export default function authRoutes(userService: UserService, googleOAuthService:
         console.error('Failed to destroy session', error);
         return res.status(500).json({ error: 'Failed to logout' });
       }
+      res.clearCookie(SESSION_COOKIE_NAME, sessionCookieOptions);
       return res.status(200).json({ success: true });
     });
   });

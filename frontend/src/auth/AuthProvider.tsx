@@ -140,19 +140,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [persistUser]);
 
   const signOut = useCallback(async () => {
+    persistUser(null);
     if (authMode === 'headers') {
-      persistUser(null);
       return;
     }
 
     try {
-      await apiFetch(`${API_URL}/auth/logout`, {
+      const response = await apiFetch(`${API_URL}/auth/logout`, {
         method: 'POST',
       });
+      if (!response.ok) {
+        console.error('Failed to sign out', response.status, response.statusText);
+      }
     } catch (error) {
       console.error('Failed to sign out', error);
-    } finally {
-      persistUser(null);
     }
   }, [authMode, persistUser]);
 

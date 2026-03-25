@@ -1527,9 +1527,9 @@ export default function WorkspacePage() {
     navigate('/settings');
   }, [navigate]);
 
-  const handleSignOut = useCallback(() => {
+  const handleSignOut = useCallback(async () => {
     setDrawerOpen(false);
-    signOut();
+    await signOut();
     navigate('/login', { replace: true });
   }, [navigate, signOut]);
 
