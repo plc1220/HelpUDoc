@@ -380,6 +380,97 @@ DASHBOARD_CSS = """
       background: #fff;
       color: var(--ink);
     }
+    .filter-panel {
+      padding: 0;
+      overflow: hidden;
+    }
+    .filter-panel-summary {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 24px 30px;
+      color: var(--ink);
+    }
+    .filter-panel-summary::after {
+      content: "Show filters";
+      color: var(--accent);
+      font-size: 0.9rem;
+      font-weight: 700;
+    }
+    .filter-panel[open] .filter-panel-summary::after {
+      content: "Hide filters";
+    }
+    .filter-panel-body {
+      padding: 0 30px 28px;
+      border-top: 1px solid var(--line);
+    }
+    .filter-summary-copy {
+      color: #455467;
+      line-height: 1.65;
+    }
+    .filter-summary-copy strong {
+      display: block;
+      margin-bottom: 4px;
+      font-size: 1.15rem;
+      color: var(--ink);
+    }
+    .filter-dropdown {
+      position: relative;
+    }
+    .filter-dropdown summary {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      min-height: 44px;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #fff;
+      color: var(--ink);
+    }
+    .filter-dropdown summary::after {
+      content: "▾";
+      color: var(--muted);
+      font-size: 0.86rem;
+    }
+    .filter-dropdown[open] summary::after {
+      content: "▴";
+    }
+    .filter-dropdown-label {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .filter-dropdown-menu {
+      position: absolute;
+      z-index: 20;
+      top: calc(100% + 8px);
+      left: 0;
+      right: 0;
+      max-height: 260px;
+      overflow: auto;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: var(--panel-strong);
+      box-shadow: 0 18px 32px rgba(36, 49, 63, 0.12);
+    }
+    .filter-dropdown-option {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 6px;
+      border-radius: 10px;
+      cursor: pointer;
+    }
+    .filter-dropdown-option:hover {
+      background: rgba(15, 92, 77, 0.06);
+    }
+    .filter-dropdown-option input {
+      margin: 0;
+    }
     .dataset-meta { margin-top: 14px; color: var(--muted); font-size: 0.86rem; }
     details.appendix { margin-top: 18px; }
     summary {
@@ -417,6 +508,9 @@ DASHBOARD_CSS = """
     @media (max-width: 768px) {
       .shell { padding: 16px 14px 40px; }
       .hero, .section, .filter-card { padding: 22px 18px; border-radius: 22px; }
+      .filter-panel { padding: 0; }
+      .filter-panel-summary { padding: 20px 18px; }
+      .filter-panel-body { padding: 0 18px 22px; }
       .chart-grid { grid-template-columns: 1fr; }
       .plotly-embed { height: 300px; }
     }
@@ -492,6 +586,22 @@ DASHBOARD_FILTER_SCRIPT = """
         return { min, max };
       }
 
+      function categoricalSummary(values, totalCount) {
+        if (!values.length) return 'All values';
+        if (values.length === 1) return values[0];
+        if (values.length === totalCount) return 'All values';
+        if (values.length <= 2) return values.join(', ');
+        return values.length + ' selected';
+      }
+
+      function updateCategoricalSummary(filterDef) {
+        const labelNode = document.getElementById(filterDef.id + '__label');
+        if (!labelNode) return;
+        const checkedValues = Array.from(document.querySelectorAll('input[name=\"' + filterDef.id + '__option\"]:checked'))
+          .map((input) => input.value);
+        labelNode.textContent = categoricalSummary(checkedValues, filterDef._optionCount || 0);
+      }
+
       function createControl(filterDef) {
         const wrapper = document.createElement('div');
         wrapper.className = 'filter-control';
@@ -502,17 +612,37 @@ DASHBOARD_FILTER_SCRIPT = """
         filterDef.resolvedType = fieldType;
 
         if (fieldType === 'categorical') {
-          const select = document.createElement('select');
-          select.id = filterDef.id;
-          if (filterDef.multi) select.multiple = true;
           const values = (filterDef.options && filterDef.options.length ? filterDef.options : distinctValues(filterDef.field));
-          values.forEach((value) => {
-            const option = document.createElement('option');
-            option.value = String(value);
-            option.textContent = String(value);
-            select.appendChild(option);
+          filterDef._optionCount = values.length;
+          const dropdown = document.createElement('details');
+          dropdown.className = 'filter-dropdown';
+          dropdown.id = filterDef.id + '__dropdown';
+          const summary = document.createElement('summary');
+          const summaryLabel = document.createElement('span');
+          summaryLabel.className = 'filter-dropdown-label';
+          summaryLabel.id = filterDef.id + '__label';
+          summaryLabel.textContent = 'All values';
+          summary.appendChild(summaryLabel);
+          dropdown.appendChild(summary);
+          const menu = document.createElement('div');
+          menu.className = 'filter-dropdown-menu';
+          values.forEach((value, index) => {
+            const optionLabel = document.createElement('label');
+            optionLabel.className = 'filter-dropdown-option';
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.name = filterDef.id + '__option';
+            checkbox.id = filterDef.id + '__option_' + index;
+            checkbox.value = String(value);
+            checkbox.addEventListener('change', () => updateCategoricalSummary(filterDef));
+            const textNode = document.createElement('span');
+            textNode.textContent = String(value);
+            optionLabel.appendChild(checkbox);
+            optionLabel.appendChild(textNode);
+            menu.appendChild(optionLabel);
           });
-          wrapper.appendChild(select);
+          dropdown.appendChild(menu);
+          wrapper.appendChild(dropdown);
           return wrapper;
         }
 
@@ -566,8 +696,7 @@ DASHBOARD_FILTER_SCRIPT = """
       function readFilterValue(filterDef) {
         const type = filterDef.resolvedType || inferFieldType(filterDef);
         if (type === 'categorical') {
-          const select = document.getElementById(filterDef.id);
-          return Array.from(select ? select.selectedOptions : []).map((option) => option.value);
+          return Array.from(document.querySelectorAll('input[name=\"' + filterDef.id + '__option\"]:checked')).map((input) => input.value);
         }
         if (type === 'date' || type === 'datetime') {
           return {
@@ -711,7 +840,7 @@ DASHBOARD_FILTER_SCRIPT = """
             title: chartDef.title,
             template: 'plotly_white',
             colorway: ['#0f5c4d', '#c9792b', '#2f6db0', '#7b5ea7', '#d35f5f'],
-            font: { family: '"Avenir Next", "Segoe UI", sans-serif', color: '#24313f' },
+            font: { family: '\"Avenir Next\", \"Segoe UI\", sans-serif', color: '#24313f' },
             paper_bgcolor: 'rgba(0,0,0,0)',
             plot_bgcolor: 'rgba(0,0,0,0)',
             margin: { t: 56, r: 24, b: 56, l: 56 },
@@ -753,8 +882,12 @@ DASHBOARD_FILTER_SCRIPT = """
           DASHBOARD_FILTER_SCHEMA.forEach((filterDef) => {
             const type = filterDef.resolvedType || inferFieldType(filterDef);
             if (type === 'categorical') {
-              const select = document.getElementById(filterDef.id);
-              if (select) Array.from(select.options).forEach((option) => { option.selected = false; });
+              Array.from(document.querySelectorAll('input[name=\"' + filterDef.id + '__option\"]')).forEach((input) => {
+                input.checked = false;
+              });
+              const dropdown = document.getElementById(filterDef.id + '__dropdown');
+              if (dropdown) dropdown.removeAttribute('open');
+              updateCategoricalSummary(filterDef);
             } else if (type === 'date' || type === 'datetime') {
               const preset = document.getElementById(filterDef.id + '__preset');
               const start = document.getElementById(filterDef.id + '__start');
@@ -772,6 +905,13 @@ DASHBOARD_FILTER_SCRIPT = """
           renderCharts();
         });
       }
+      document.addEventListener('click', (event) => {
+        document.querySelectorAll('.filter-dropdown[open]').forEach((node) => {
+          if (!node.contains(event.target)) {
+            node.removeAttribute('open');
+          }
+        });
+      });
       renderCharts();
     })();
 """

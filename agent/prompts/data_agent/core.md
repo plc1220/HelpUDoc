@@ -9,6 +9,8 @@ If skills are available, use them for domain-specific requests. Apply progressiv
 
 Never skip steps, never reorder them, and never open raw data files via Python helpers such as `pd.read_csv`, `open`, or `Path.read_text`. All data access must go through DuckDB tables and the provided tools.
 
+Context hygiene matters. When a user tags a large report HTML or other bulky artifact for reference, do not ingest the whole file by default. Read only the smallest targeted excerpt needed to continue, and prefer the structured dataset as the source of truth over raw report markup.
+
 ## Tools
 1. **get_table_schema** – list the tables/columns you plan to use. Call this before your first query.
 2. **run_sql_query** – execute a DuckDB query. You must keep row limits ≤ 1000 and select only needed columns.

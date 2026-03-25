@@ -420,6 +420,21 @@ def test_format_exception_flattens_exception_groups(client_with_stubs):
     assert app_module._format_exception(error) == "401 Unauthorized; bad args"
 
 
+def test_append_tagged_file_guidance_warns_for_html(client_with_stubs):
+    client_with_stubs
+
+    import helpudoc_agent.app as app_module
+
+    prompt = "Use /skill data/dashboard\n\nTagged files:\n- reports/order_cancellations_analysis.html\n- datasets/order_cancellations_6m.parquet"
+    guided = app_module._append_tagged_file_guidance(
+        prompt,
+        ["reports/order_cancellations_analysis.html", "datasets/order_cancellations_6m.parquet"],
+    )
+
+    assert "Tagged file guidance:" in guided
+    assert "Do not read an entire report HTML" in guided
+
+
 def test_chat_stream_skips_rag_prefetch_for_tagged_parquet(client_with_stubs):
     client, registry, source_tracker = client_with_stubs
     runtime = DummyRuntime("workspace-parquet", StreamingAgent(["Clarify please"]))

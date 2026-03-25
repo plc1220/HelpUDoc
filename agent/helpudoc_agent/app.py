@@ -44,6 +44,7 @@ logger = logging.getLogger(__name__)
 _INTERRUPT_TOOL_NAMES: Set[str] = {"request_clarification", "request_human_action"}
 _LOCAL_DEV_AGENT_JWT_SECRET = "helpudoc-local-dev-agent-jwt-secret"
 _RAG_PREFETCHABLE_EXTENSIONS: Set[str] = {".pdf", ".doc", ".docx", ".md"}
+_TAGGED_HTML_EXTENSIONS: Set[str] = {".html", ".htm"}
 
 
 def _get_agent_jwt_secret() -> str:
@@ -76,6 +77,26 @@ def _filter_rag_prefetchable_tagged_files(tagged_paths: Sequence[str]) -> List[s
         if suffix in _RAG_PREFETCHABLE_EXTENSIONS:
             candidates.append(cleaned)
     return candidates
+
+
+def _append_tagged_file_guidance(prompt: str, tagged_paths: Sequence[str]) -> str:
+    if not prompt:
+        return prompt
+    if "Tagged file guidance:" in prompt:
+        return prompt
+    has_html = any(
+        isinstance(raw, str) and Path(raw.strip()).suffix.lower() in _TAGGED_HTML_EXTENSIONS
+        for raw in tagged_paths
+    )
+    if not has_html:
+        return prompt
+    guidance = (
+        "Tagged file guidance:\n"
+        "- Treat tagged .html files as reference artifacts, not raw context to ingest in full.\n"
+        "- Do not read an entire report HTML unless absolutely necessary.\n"
+        "- Prefer the canonical dataset as the source of truth and inspect only targeted report sections if needed."
+    )
+    return f"{prompt.rstrip()}\n\n{guidance}"
 
 
 class ChatRequest(BaseModel):
@@ -1150,6 +1171,14 @@ def create_app() -> FastAPI:
 
         prompt_for_tagged_files = latest_user_text or message.message or ""
         tagged_files = _extract_tagged_files(prompt_for_tagged_files)
+        guided_prompt = _append_tagged_file_guidance(prompt_for_tagged_files, tagged_files)
+        if guided_prompt != prompt_for_tagged_files:
+            for index in range(len(payload) - 1, -1, -1):
+                role = str(payload[index].get("role") or "").strip().lower()
+                if role in {"user", "human"}:
+                    payload[index]["content"] = guided_prompt
+                    break
+            prompt_for_tagged_files = guided_prompt
         runtime.workspace_state.context["tagged_files"] = tagged_files
         tagged_files_rag_only = (os.getenv("TAGGED_FILES_RAG_ONLY", "false") or "false").strip().lower() in {
             "1",

@@ -9,7 +9,7 @@ import os
 import re
 import shutil
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from queue import Empty
 from typing import Annotated, Any, Dict, List, Optional, Set, Tuple
@@ -730,8 +730,10 @@ def _resolve_workspace_data_path(workspace_root: Path, raw_path: str) -> Path:
 def _normalize_record_value(value: Any) -> Any:
     if value is None or pd.isna(value):
         return None
-    if isinstance(value, (pd.Timestamp, datetime)):
+    if isinstance(value, (pd.Timestamp, datetime, date)):
         return value.isoformat()
+    if isinstance(value, np.datetime64):
+        return pd.Timestamp(value).isoformat()
     if isinstance(value, np.generic):
         return value.item()
     return value
@@ -1775,7 +1777,6 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
             return "Run at least one SQL query before building a dashboard."
         if not db_manager.session.chart_history:
             return "Generate at least one chart before building a dashboard."
-        db_manager.mark_dashboard_generated()
 
         stable_title = _safe_slug(title, "dashboard")
         dashboard_path = _resolve_workspace_html_path(
@@ -1971,16 +1972,22 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
         filter_panel_html = ""
         if data_filtering_enabled:
             filter_panel_html = (
-                "<section class=\"filter-card\">"
-                "<h2>Shared data filters</h2>"
-                "<p>These controls update all compatible charts from the embedded dashboard dataset.</p>"
+                "<details class=\"filter-card filter-panel\" open>"
+                "<summary class=\"filter-panel-summary\">"
+                "<div class=\"filter-summary-copy\">"
+                "<strong>Shared data filters</strong>"
+                "<span>Use collapsible controls to update every compatible chart from the embedded dashboard dataset.</span>"
+                "</div>"
+                "</summary>"
+                "<div class=\"filter-panel-body\">"
                 "<div id=\"dashboard-filter-controls\" class=\"filter-controls\"></div>"
                 "<div class=\"filter-actions\">"
                 "<button type=\"button\" id=\"dashboard-apply-filters\" class=\"secondary\">Apply filters</button>"
                 "<button type=\"button\" id=\"dashboard-reset-filters\">Reset filters</button>"
                 "</div>"
                 f"<div class=\"dataset-meta\">Dataset: {html.escape(dashboard_dataset_path)} • Rows embedded: {len(dataset_records)} • Format: {html.escape(dataset_format)}</div>"
-                "</section>"
+                "</div>"
+                "</details>"
             )
         html_output = render_dashboard_html(
             title=title,
@@ -2002,6 +2009,7 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
         try:
             dashboard_path.parent.mkdir(parents=True, exist_ok=True)
             dashboard_path.write_text(html_output, encoding="utf-8")
+            db_manager.mark_dashboard_generated()
             artifact = {
                 "path": _workspace_rel(dashboard_path, workspace_state.root_path),
                 "mimeType": ALLOWED_ARTIFACT_EXTENSIONS[".html"],

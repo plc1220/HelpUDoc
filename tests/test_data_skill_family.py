@@ -773,6 +773,8 @@ class TestDashboardTool:
         content = html_files[0].read_text(encoding="utf-8")
         assert "Shared data filters" in content
         assert "dashboard-filter-controls" in content
+        assert "filter-panel-summary" in content
+        assert "filter-dropdown" in content
         assert "datasets/order_cancellations.csv" in content
         assert "Static appendix charts" in content
         assert "Filter-aware chart bound to the canonical dashboard dataset" in content
@@ -804,6 +806,100 @@ class TestDashboardTool:
         html_files = list((tmp_path / "dashboards").glob("*.html"))
         content = html_files[0].read_text(encoding="utf-8")
         assert "Shared data filters" not in content
+
+    def test_dashboard_serializes_date_filter_dataset_values(self, tmp_path: Path) -> None:
+        tools = _tools_for_workspace(tmp_path)
+        dataset_path = tmp_path / "datasets" / "orders_dates.csv"
+        dataset_path.parent.mkdir(parents=True, exist_ok=True)
+        dataset_path.write_text(
+            "\n".join(
+                [
+                    "order_date,country,cancellation_rate",
+                    "2025-10-01,US,0.21",
+                    "2025-10-02,UK,0.18",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        tools["get_table_schema"].invoke({"table_names": []})
+        tools["run_sql_query"].invoke({"sql_query": "SELECT 'US' AS country, 0.21 AS cancellation_rate"})
+        tools["generate_chart_config"].invoke(
+            {
+                "chart_title": "Date_Safe_Chart",
+                "python_code": textwrap.dedent("""\
+                    chart_config = {
+                        "data": [{"x": ["US"], "y": [0.21], "type": "bar"}],
+                        "layout": {"title": "Date Safe"},
+                    }
+                """),
+            }
+        )
+        result = tools["generate_dashboard"].invoke(
+            {
+                "title": "Date Safe Dashboard",
+                "description": "Should serialize date-backed datasets cleanly",
+                "dashboard_dataset_path": "datasets/orders_dates.csv",
+                "filter_schema": [
+                    {"field": "order_date", "label": "Order date", "type": "date"},
+                    {"field": "country", "label": "Country", "type": "categorical", "multi": True},
+                ],
+                "chart_bindings": [
+                    {
+                        "chart_index": 1,
+                        "chart_type": "bar",
+                        "x_field": "country",
+                        "y_field": "cancellation_rate",
+                        "aggregation": "avg",
+                    }
+                ],
+            }
+        )
+        assert "Dashboard saved to:" in result
+
+    def test_dashboard_failure_does_not_consume_single_dashboard_budget(self, tmp_path: Path, monkeypatch) -> None:
+        tools = _tools_for_workspace(tmp_path)
+        tools["get_table_schema"].invoke({"table_names": []})
+        tools["run_sql_query"].invoke({"sql_query": "SELECT 'US' AS country, 0.21 AS cancellation_rate"})
+        tools["generate_chart_config"].invoke(
+            {
+                "chart_title": "Retryable_Chart",
+                "python_code": textwrap.dedent("""\
+                    chart_config = {
+                        "data": [{"x": ["US"], "y": [0.21], "type": "bar"}],
+                        "layout": {"title": "Retryable"},
+                    }
+                """),
+            }
+        )
+        import agent.helpudoc_agent.data_agent_tools as data_agent_tools
+
+        original_render = data_agent_tools.render_dashboard_html
+        calls = {"count": 0}
+
+        def flaky_render(*args, **kwargs):
+            calls["count"] += 1
+            if calls["count"] == 1:
+                raise TypeError("boom")
+            return original_render(*args, **kwargs)
+
+        monkeypatch.setattr(data_agent_tools, "render_dashboard_html", flaky_render)
+        with pytest.raises(TypeError):
+            tools["generate_dashboard"].invoke(
+                {
+                    "title": "Retry Dashboard",
+                    "description": "first call fails",
+                    "section_titles": [],
+                }
+            )
+
+        second = tools["generate_dashboard"].invoke(
+            {
+                "title": "Retry Dashboard",
+                "description": "second call succeeds",
+                "section_titles": [],
+            }
+        )
+        assert "Dashboard saved to:" in second
 
     def test_generate_chart_config_persists_plotly_json_only_by_default(self, tmp_path: Path) -> None:
         tools = _tools_for_workspace(tmp_path)

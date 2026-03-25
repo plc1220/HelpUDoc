@@ -84,6 +84,20 @@ Preferred clarification framing:
 Example clarification description:
 - `I can build a static dashboard from the existing report/charts, or a truly filterable dashboard if you confirm the canonical dataset and the fields to filter on.`
 
+### 0.2 Tagged HTML hygiene
+When the user tags a report HTML for story guidance, do **not** read the full raw HTML into context unless absolutely necessary.
+
+Use these rules:
+- treat tagged `.html` report files as reference artifacts, not primary context dumps
+- prefer the tagged dataset as the source of truth for filtering and chart bindings
+- inspect only targeted parts of the report when needed for narrative cues
+- do not repeatedly read large HTML chunks into the model context
+
+If the report is large, extract only the minimum needed story elements:
+- headline/theme
+- chart titles or section headings
+- 2-4 key takeaways
+
 ### 1. Ensure analysis is complete
 - All SQL queries for the dashboard should already be done.
 - All charts (`generate_chart_config`) should already be generated.
