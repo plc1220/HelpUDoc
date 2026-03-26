@@ -6,37 +6,15 @@ type ProtectedShellModule = {
   default: ComponentType;
 };
 
-type ManifestEntry = {
-  file: string;
-  src?: string;
-};
-
-const runtimeImport = new Function('url', 'return import(url)') as (url: string) => Promise<ProtectedShellModule>;
-
-const manifestPromise = fetch('/.vite/manifest.json')
-  .then((response) => {
-    if (!response.ok) {
-      throw new Error(`Failed to load manifest: ${response.status}`);
-    }
-    return response.json() as Promise<Record<string, ManifestEntry>>;
-  })
-  .catch((error) => {
-    console.error('Failed to load protected shell manifest', error);
-    return null;
-  });
+const protectedShellModules = import.meta.glob<ProtectedShellModule>('./ProtectedShell.tsx');
 
 const loadProtectedShell = async (): Promise<ProtectedShellModule> => {
-  const manifest = await manifestPromise;
-  if (!manifest) {
-    throw new Error('Protected shell manifest unavailable.');
-  }
-
-  const entry = Object.values(manifest).find((value) => value.src?.replace(/\\/g, '/').endsWith('src/ProtectedShell.tsx'));
-  if (!entry) {
+  const loader = protectedShellModules['./ProtectedShell.tsx'];
+  if (!loader) {
     throw new Error('Unable to resolve protected shell module.');
   }
 
-  return runtimeImport(`/${entry.file}`);
+  return loader();
 };
 
 const ProtectedShellView: FC = () => {
