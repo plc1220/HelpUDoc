@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
+import PlotlyChart, { type PlotlySpec } from '../PlotlyChart';
 import { getFiles, getFileContent, getWorkspaceFilePreview } from '../../services/fileApi';
 import type { File as WorkspaceFile, ToolOutputFile } from '../../types';
 import { inferPreviewEncoding } from '../../utils/files';
@@ -106,6 +107,13 @@ export default function ToolOutputFilePreview({
 
   const { mimeType, encoding, content } = preview;
   const normalizedMime = mimeType || '';
+  const normalizedPath = normalizeWorkspaceRelativePath(preview.path || file.path);
+  const lowerPath = normalizedPath.toLowerCase();
+  const isPlotlyJson =
+    lowerPath.endsWith('.plotly.json') ||
+    lowerPath.endsWith('.plot.json') ||
+    lowerPath.endsWith('.chart.json') ||
+    lowerPath.endsWith('.plotly');
 
   if (normalizedMime.startsWith('image/')) {
     const dataUrl = encoding === 'base64' ? `data:${normalizedMime};base64,${content}` : content;
@@ -142,6 +150,22 @@ export default function ToolOutputFilePreview({
         </ReactMarkdown>
       </div>
     );
+  }
+
+  if (isPlotlyJson) {
+    try {
+      const spec = JSON.parse(content) as PlotlySpec;
+      if (!spec || typeof spec !== 'object' || !Array.isArray(spec.data)) {
+        throw new Error('Plotly spec must include a top-level data array.');
+      }
+      return (
+        <div className="mt-2 rounded border border-gray-200 bg-white p-2">
+          <PlotlyChart spec={spec} minHeight={280} />
+        </div>
+      );
+    } catch {
+      // Fall back to formatted JSON below so the raw artifact is still inspectable.
+    }
   }
 
   if (normalizedMime.includes('json')) {

@@ -1504,7 +1504,16 @@ export default function WorkspacePage() {
   };
 
   const shouldForceEditMode = (fileName: string): boolean => {
-    const ext = fileName.slice(fileName.lastIndexOf('.')).toLowerCase();
+    const normalizedName = normalizeFilePath(fileName).toLowerCase();
+    if (
+      normalizedName.endsWith('.plotly.json') ||
+      normalizedName.endsWith('.plot.json') ||
+      normalizedName.endsWith('.chart.json') ||
+      normalizedName.endsWith('.plotly')
+    ) {
+      return false;
+    }
+    const ext = normalizedName.slice(normalizedName.lastIndexOf('.'));
     // Code files that are NOT md or html
     const codeExtensions = [
       '.js', '.ts', '.tsx', '.jsx', '.py', '.java', '.c', '.cpp', '.go', '.rs', '.php', '.rb', '.sh', '.yaml', '.yml', '.xml', '.sql', '.json', '.css'

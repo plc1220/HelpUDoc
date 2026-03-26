@@ -5,7 +5,6 @@ import {
   Folder,
   FolderOpen,
   Link as LinkIcon,
-  MoveRight,
   Trash,
   Edit,
 } from 'lucide-react';
@@ -99,7 +98,6 @@ const TreeFileRow: React.FC<{
   onCopyPublicUrl: (file: WorkspaceFile) => void;
   onRenameFile: (file: WorkspaceFile) => void;
   onDeleteFile: (file: WorkspaceFile) => void;
-  onMoveFile: (file: WorkspaceFile, destinationFolderPath?: string) => void;
   draggedFileId: string | null;
   setDraggedFileId: (fileId: string | null) => void;
   setDropTargetPath: (path: string | null) => void;
@@ -114,7 +112,6 @@ const TreeFileRow: React.FC<{
   onCopyPublicUrl,
   onRenameFile,
   onDeleteFile,
-  onMoveFile,
   draggedFileId,
   setDraggedFileId,
   setDropTargetPath,
@@ -192,19 +189,6 @@ const TreeFileRow: React.FC<{
               title={file.publicUrl}
             >
               <LinkIcon size={14} />
-            </button>
-          )}
-          {!isDraft && (
-            <button
-              type="button"
-              onClick={(event) => {
-                event.stopPropagation();
-                onMoveFile(file);
-              }}
-              className="pointer-events-auto rounded p-1.5 text-slate-500 hover:bg-slate-200 hover:text-slate-700"
-              title="Move"
-            >
-              <MoveRight size={14} />
             </button>
           )}
           {!isDraft && (
@@ -333,7 +317,6 @@ const renderTreeNodes = (
     onCopyPublicUrl: (file: WorkspaceFile) => void;
     onRenameFile: (file: WorkspaceFile) => void;
     onDeleteFile: (file: WorkspaceFile) => void;
-    onMoveFile: (file: WorkspaceFile, destinationFolderPath?: string) => void;
     onToggleFolder: (folderPath: string) => void;
     onDropFileToFolder: (fileId: string, folderPath: string) => void;
     draggedFileId: string | null;
@@ -374,7 +357,6 @@ const renderTreeNodes = (
         onCopyPublicUrl={options.onCopyPublicUrl}
         onRenameFile={options.onRenameFile}
         onDeleteFile={options.onDeleteFile}
-        onMoveFile={options.onMoveFile}
         draggedFileId={options.draggedFileId}
         setDraggedFileId={options.setDraggedFileId}
         setDropTargetPath={options.setDropTargetPath}
@@ -494,7 +476,6 @@ export default function WorkspaceFileTree({
               onCopyPublicUrl,
               onRenameFile,
               onDeleteFile,
-              onMoveFile,
               onToggleFolder: handleToggleFolder,
               onDropFileToFolder: handleDropFileToFolder,
               draggedFileId,
