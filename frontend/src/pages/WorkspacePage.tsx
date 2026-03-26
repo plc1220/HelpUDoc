@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo, type ChangeEvent } from 'react';
+import { lazy, Suspense, useState, useEffect, useRef, useCallback, useMemo, type ChangeEvent } from 'react';
 import type { ComponentProps, CSSProperties } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { useNavigate } from 'react-router-dom';
@@ -56,8 +56,7 @@ import type {
   SkillDefinition,
 } from '../types';
 import CollapsibleDrawer from '../components/CollapsibleDrawer';
-import FileEditor from '../components/FileEditor';
-import UIBlockRenderer, { type UIBlock } from '../components/UIBlockRenderer';
+import type { UIBlock } from '../components/UIBlockRenderer';
 import ExpandableSidebar from '../components/ExpandableSidebar';
 import WorkspaceFileTree from '../components/WorkspaceFileTree';
 import AgentChatPane from '../components/chat/AgentChatPane';
@@ -81,6 +80,9 @@ import {
 import { buildMessageMetadata, mapMessagesToAgentHistory, mergeMessageMetadata, sanitizeRunPolicy } from '../utils/messages';
 import { createMarkdownComponents } from '../components/markdown/MarkdownShared';
 import { applyColorModeToDocument, buildAppTheme, resolveInitialColorMode } from '../theme';
+
+const FileEditor = lazy(() => import('../components/FileEditor'));
+const UIBlockRenderer = lazy(() => import('../components/UIBlockRenderer'));
 
 const drawerWidth = 280;
 
@@ -116,6 +118,18 @@ const STREAM_DEBUG_ENABLED =
   typeof import.meta !== 'undefined' &&
   typeof import.meta.env !== 'undefined' &&
   (import.meta.env.VITE_DEBUG_STREAM === '1' || import.meta.env.VITE_DEBUG_STREAM === 'true');
+
+const editorLoadingFallback = (
+  <div className="flex h-full items-center justify-center text-sm text-slate-500">
+    Loading editor…
+  </div>
+);
+
+const canvasLoadingFallback = (
+  <div className="flex h-full items-center justify-center text-sm text-slate-500">
+    Loading preview…
+  </div>
+);
 
 type Paper2SlidesStage = (typeof PAPER2SLIDES_STAGE_ORDER)[number];
 type Paper2SlidesStylePreset = (typeof PAPER2SLIDES_STYLE_PRESETS)[number];
@@ -5238,13 +5252,15 @@ export default function WorkspacePage() {
                   </div>
                   <div className="flex-1 overflow-hidden min-h-0">
                     {isEditMode && selectedWorkspace ? (
-                      <FileEditor
-                        file={selectedFileDetails || selectedFile}
-                        fileContent={fileContent}
-                        onContentChange={setFileContent}
-                        workspaceId={selectedWorkspace.id}
-                        colorMode={colorMode}
-                      />
+                      <Suspense fallback={editorLoadingFallback}>
+                        <FileEditor
+                          file={selectedFileDetails || selectedFile}
+                          fileContent={fileContent}
+                          onContentChange={setFileContent}
+                          workspaceId={selectedWorkspace.id}
+                          colorMode={colorMode}
+                        />
+                      </Suspense>
                     ) : (
                       <div className="h-full w-full overflow-y-auto overflow-x-hidden">
                         <div
@@ -5255,16 +5271,18 @@ export default function WorkspacePage() {
                             minHeight: `${100 / canvasZoom}%`,
                           }}
                         >
-                          <UIBlockRenderer
-                            blocks={canvasBlocks}
-                            workspaceId={selectedWorkspace?.id}
-                            className="h-full w-full"
-                            emptyState={
-                              <div className="text-center text-gray-400">
-                                <p>Select a file to view its content</p>
-                              </div>
-                            }
-                          />
+                          <Suspense fallback={canvasLoadingFallback}>
+                            <UIBlockRenderer
+                              blocks={canvasBlocks}
+                              workspaceId={selectedWorkspace?.id}
+                              className="h-full w-full"
+                              emptyState={
+                                <div className="text-center text-gray-400">
+                                  <p>Select a file to view its content</p>
+                                </div>
+                              }
+                            />
+                          </Suspense>
                         </div>
                       </div>
                     )}

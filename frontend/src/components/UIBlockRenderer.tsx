@@ -1,7 +1,9 @@
-import React from 'react';
+import React, { Suspense, lazy } from 'react';
 import type { File } from '../types';
 import FileRenderer from './FileRenderer';
-import PlotlyChart, { type PlotlySpec } from './PlotlyChart';
+import type { PlotlySpec } from './PlotlyChart';
+
+const PlotlyChart = lazy(() => import('./PlotlyChart'));
 
 type BlockId = string | number;
 
@@ -76,7 +78,9 @@ const UIBlockRenderer: React.FC<UIBlockRendererProps> = ({ blocks, className, em
           case 'plotly':
             return (
               <div key={key} className="h-full w-full">
-                <PlotlyChart spec={block.spec} />
+                <Suspense fallback={<div className="flex h-full items-center justify-center text-sm text-slate-500">Loading chart…</div>}>
+                  <PlotlyChart spec={block.spec} />
+                </Suspense>
               </div>
             );
           case 'text':

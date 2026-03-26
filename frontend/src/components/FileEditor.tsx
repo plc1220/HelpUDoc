@@ -1,42 +1,15 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import Editor, { type OnMount } from '@monaco-editor/react';
-import type { File as WorkspaceFile } from '../types';
-import { editor } from 'monaco-editor';
+import React, { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import type { editor as MonacoEditorNamespace } from 'monaco-editor';
 import { Eye, EyeOff } from 'lucide-react';
-import {
-  MDXEditor,
-  type CodeBlockEditorDescriptor,
-  type MDXEditorMethods,
-  useCodeBlockEditorContext,
-  headingsPlugin,
-  imagePlugin,
-  linkDialogPlugin,
-  linkPlugin,
-  listsPlugin,
-  markdownShortcutPlugin,
-  quotePlugin,
-  tablePlugin,
-  thematicBreakPlugin,
-  toolbarPlugin,
-  codeBlockPlugin,
-  codeMirrorPlugin,
-  UndoRedo,
-  BoldItalicUnderlineToggles,
-  BlockTypeSelect,
-  InsertCodeBlock,
-  CodeToggle,
-  CreateLink,
-  InsertImage,
-  InsertTable,
-  ListsToggle,
-  Separator,
-} from '@mdxeditor/editor';
-import '@mdxeditor/editor/style.css';
-import { MonacoBinding } from 'y-monaco';
-import { createCollabSession } from '../services/collabClient';
+import type { File as WorkspaceFile } from '../types';
 import { getAuthUser } from '../auth/authStore';
 import { createFile } from '../services/fileApi';
-import { MermaidDiagram, useMermaidColorMode } from './markdown/MarkdownShared';
+import { createCollabSession } from '../services/collabClient';
+import EditorLoadingState from './EditorLoadingState';
+import type { MarkdownRichEditorHandle } from './MarkdownRichEditor';
+
+const MonacoEditor = lazy(() => import('@monaco-editor/react'));
+const MarkdownRichEditor = lazy(() => import('./MarkdownRichEditor'));
 
 const COLLAB_COLORS = [
   '#0ea5e9',
@@ -120,100 +93,6 @@ interface FileEditorProps {
   colorMode: 'light' | 'dark';
 }
 
-const CODE_BLOCK_LANGUAGES: Record<string, string> = {
-  '': 'Plain text',
-  js: 'JavaScript',
-  ts: 'TypeScript',
-  jsx: 'JSX',
-  tsx: 'TSX',
-  json: 'JSON',
-  css: 'CSS',
-  html: 'HTML',
-  md: 'Markdown',
-  bash: 'Bash',
-  shell: 'Shell',
-  python: 'Python',
-  sql: 'SQL',
-  yaml: 'YAML',
-  mermaid: 'Mermaid',
-};
-
-const MermaidCodeBlockEditor = ({
-  code,
-  focusEmitter,
-}: {
-  code: string;
-  focusEmitter: { subscribe: (cb: () => void) => void };
-}) => {
-  const { lexicalNode, parentEditor, setCode } = useCodeBlockEditorContext();
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const [draft, setDraft] = useState(code);
-  const mermaidColorMode = useMermaidColorMode();
-
-  useEffect(() => {
-    setDraft(code);
-  }, [code]);
-
-  useEffect(() => {
-    focusEmitter.subscribe(() => {
-      textareaRef.current?.focus();
-    });
-  }, [focusEmitter]);
-
-  return (
-    <div className="helpudoc-mermaid-editor not-prose my-4 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-      <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-4 py-2">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Mermaid</p>
-          <p className="text-xs text-slate-500">Edit the diagram source and preview it live.</p>
-        </div>
-        <button
-          type="button"
-          className="rounded-full border border-slate-300 px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100"
-          onClick={() => {
-            parentEditor.update(() => {
-              lexicalNode.remove();
-            });
-          }}
-        >
-          Remove
-        </button>
-      </div>
-      <div className="grid gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-        <label className="flex min-h-[260px] flex-col gap-2">
-          <span className="text-xs font-medium text-slate-600">Source</span>
-          <textarea
-            ref={textareaRef}
-            value={draft}
-            onChange={(event) => {
-              const nextValue = event.target.value;
-              setDraft(nextValue);
-              setCode(nextValue);
-            }}
-            spellCheck={false}
-            className="min-h-[240px] w-full resize-y rounded-xl border border-slate-200 bg-slate-950 p-4 font-mono text-sm leading-relaxed text-slate-100 focus:border-blue-400 focus:outline-none"
-          />
-        </label>
-        <div className="flex min-h-[260px] flex-col gap-2">
-          <span className="text-xs font-medium text-slate-600">Preview</span>
-          <MermaidDiagram
-            chart={draft}
-            colorMode={mermaidColorMode}
-            className={`mermaid-container h-full min-h-[240px] overflow-auto rounded-xl border p-4 ${mermaidColorMode === 'dark' ? 'border-slate-700 bg-slate-950' : 'border-slate-200 bg-white'}`}
-            fallbackClassName="h-full min-h-[240px]"
-          />
-        </div>
-      </div>
-    </div>
-  );
-};
-
-const mermaidCodeBlockDescriptor: CodeBlockEditorDescriptor = {
-  priority: 100,
-  match: (language) => language === 'mermaid',
-  Editor: MermaidCodeBlockEditor,
-};
-
 const FileEditor: React.FC<FileEditorProps> = ({
   file,
   fileContent,
@@ -224,10 +103,10 @@ const FileEditor: React.FC<FileEditorProps> = ({
   const fileId = file?.id ? String(file.id) : null;
   const fileName = file?.name ?? '';
   const isDraftFile = Boolean(fileId && fileId.startsWith('draft:'));
-  const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
-  const mdxEditorRef = useRef<MDXEditorMethods | null>(null);
+  const editorRef = useRef<MonacoEditorNamespace.IStandaloneCodeEditor | null>(null);
+  const mdxEditorRef = useRef<MarkdownRichEditorHandle | null>(null);
   const collabSessionRef = useRef<ReturnType<typeof createCollabSession> | null>(null);
-  const monacoBindingRef = useRef<MonacoBinding | null>(null);
+  const monacoBindingRef = useRef<{ destroy: () => void } | null>(null);
   const presenceStyleRef = useRef<HTMLStyleElement | null>(null);
   const lastContentRef = useRef<string>(fileContent);
   const isApplyingRemoteRef = useRef(false);
@@ -250,93 +129,68 @@ const FileEditor: React.FC<FileEditorProps> = ({
     return created.publicUrl;
   }, [workspaceId]);
 
-  const mdxPlugins = useMemo(
-    () => [
-      headingsPlugin(),
-      listsPlugin(),
-      quotePlugin(),
-      thematicBreakPlugin(),
-      linkPlugin(),
-      linkDialogPlugin(),
-      tablePlugin(),
-      imagePlugin({ imageUploadHandler: handleImageUpload }),
-      codeBlockPlugin({
-        codeBlockEditorDescriptors: [mermaidCodeBlockDescriptor],
-      }),
-      codeMirrorPlugin({
-        codeBlockLanguages: CODE_BLOCK_LANGUAGES,
-      }),
-      markdownShortcutPlugin(),
-      toolbarPlugin({
-        toolbarContents: () => (
-          <>
-            <UndoRedo />
-            <Separator />
-            <BoldItalicUnderlineToggles />
-            <CodeToggle />
-            <Separator />
-            <ListsToggle />
-            <Separator />
-            <BlockTypeSelect />
-            <Separator />
-            <CreateLink />
-            <InsertImage />
-            <InsertTable />
-            <InsertCodeBlock />
-          </>
-        ),
-      }),
-    ],
-    [handleImageUpload]
-  );
-
   useEffect(() => {
-    if (isDarkMode) {
-      editor.defineTheme('helpudoc-nord', {
-        base: 'vs-dark',
-        inherit: true,
-        rules: [
-          { token: 'comment', foreground: '4c566a' },
-          { token: 'string', foreground: 'a3be8c' },
-          { token: 'number', foreground: 'b48ead' },
-          { token: 'keyword', foreground: '81a1c1' },
-          { token: 'type.identifier', foreground: '8fbcbb' },
-          { token: 'delimiter', foreground: 'd8dee9' },
-          { token: 'tag', foreground: '81a1c1' },
-          { token: 'attribute.name', foreground: '88c0d0' },
-          { token: 'attribute.value', foreground: 'a3be8c' },
-        ],
-        colors: {
-          'editor.background': '#2e3440',
-          'editor.foreground': '#d8dee9',
-          'editorLineNumber.foreground': '#4c566a',
-          'editorLineNumber.activeForeground': '#eceff4',
-          'editorCursor.foreground': '#d8dee9',
-          'editor.selectionBackground': '#434c5e',
-          'editor.inactiveSelectionBackground': '#3b4252',
-          'editorIndentGuide.background': '#3b4252',
-          'editorIndentGuide.activeBackground': '#4c566a',
-        },
-      });
-      editor.setTheme('helpudoc-nord');
-    } else {
-      editor.setTheme('vs');
-    }
-  }, [isDarkMode]);
+    let cancelled = false;
 
-  const handleEditorDidMount: OnMount = (editorInstance) => {
+    if (!fileName || getLanguage(fileName) === 'markdown') {
+      return undefined;
+    }
+
+    void import('monaco-editor').then(({ editor }) => {
+      if (cancelled) return;
+
+      if (isDarkMode) {
+        editor.defineTheme('helpudoc-nord', {
+          base: 'vs-dark',
+          inherit: true,
+          rules: [
+            { token: 'comment', foreground: '4c566a' },
+            { token: 'string', foreground: 'a3be8c' },
+            { token: 'number', foreground: 'b48ead' },
+            { token: 'keyword', foreground: '81a1c1' },
+            { token: 'type.identifier', foreground: '8fbcbb' },
+            { token: 'delimiter', foreground: 'd8dee9' },
+            { token: 'tag', foreground: '81a1c1' },
+            { token: 'attribute.name', foreground: '88c0d0' },
+            { token: 'attribute.value', foreground: 'a3be8c' },
+          ],
+          colors: {
+            'editor.background': '#2e3440',
+            'editor.foreground': '#d8dee9',
+            'editorLineNumber.foreground': '#4c566a',
+            'editorLineNumber.activeForeground': '#eceff4',
+            'editorCursor.foreground': '#d8dee9',
+            'editor.selectionBackground': '#434c5e',
+            'editor.inactiveSelectionBackground': '#3b4252',
+            'editorIndentGuide.background': '#3b4252',
+            'editorIndentGuide.activeBackground': '#4c566a',
+          },
+        });
+        editor.setTheme('helpudoc-nord');
+        return;
+      }
+
+      editor.setTheme('vs');
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [fileName, isDarkMode]);
+
+  const handleEditorDidMount = (editorInstance: MonacoEditorNamespace.IStandaloneCodeEditor) => {
     editorRef.current = editorInstance;
-    bindMonaco();
+    void bindMonaco();
   };
 
   const applyFormat = (format: 'bold' | 'italic' | 'heading') => {
-    const editor = editorRef.current;
-    if (!editor) return;
+    const editorInstance = editorRef.current;
+    if (!editorInstance) return;
 
-    const selection = editor.getSelection();
+    const selection = editorInstance.getSelection();
     if (!selection) return;
 
-    const model = editor.getModel();
+    const model = editorInstance.getModel();
     if (!model) return;
 
     const text = model.getValueInRange(selection);
@@ -354,7 +208,7 @@ const FileEditor: React.FC<FileEditorProps> = ({
         break;
     }
 
-    editor.executeEdits('toolbar', [
+    editorInstance.executeEdits('toolbar', [
       {
         range: selection,
         text: formattedText,
@@ -377,6 +231,7 @@ const FileEditor: React.FC<FileEditorProps> = ({
       onContentChange(nextValue);
       return;
     }
+
     const yText = session.yText;
     const current = yText.toString();
     if (current === nextValue) {
@@ -420,14 +275,14 @@ const FileEditor: React.FC<FileEditorProps> = ({
     }
     const rules = users
       .map((user) => (
-        `.yRemoteSelection-${user.clientId} { background-color: ${user.color}33; }` +
-        `.yRemoteSelectionHead-${user.clientId} { border-left: 2px solid ${user.color}; border-right: 2px solid ${user.color}; }`
+        `.yRemoteSelection-${user.clientId} { background-color: ${user.color}33; }`
+        + `.yRemoteSelectionHead-${user.clientId} { border-left: 2px solid ${user.color}; border-right: 2px solid ${user.color}; }`
       ))
       .join('\n');
     presenceStyleRef.current.textContent = rules;
   }, []);
 
-  const bindMonaco = useCallback(() => {
+  const bindMonaco = useCallback(async () => {
     if (!fileName || getLanguage(fileName) === 'markdown') return;
     const session = collabSessionRef.current;
     if (!session) return;
@@ -436,13 +291,23 @@ const FileEditor: React.FC<FileEditorProps> = ({
     const model = editorInstance.getModel();
     if (!model) return;
 
-    monacoBindingRef.current?.destroy();
-    monacoBindingRef.current = new MonacoBinding(
-      session.yText,
-      model,
-      new Set([editorInstance]),
-      session.provider.awareness ?? undefined,
-    );
+    try {
+      const { MonacoBinding } = await import('y-monaco');
+      if (collabSessionRef.current !== session || editorRef.current !== editorInstance) {
+        return;
+      }
+
+      monacoBindingRef.current?.destroy();
+      monacoBindingRef.current = new MonacoBinding(
+        session.yText,
+        model,
+        new Set([editorInstance]),
+        session.provider.awareness ?? undefined,
+      );
+      setCollabReady(true);
+    } catch (error) {
+      console.error('Failed to initialize Monaco collaboration binding', error);
+    }
   }, [fileName]);
 
   useEffect(() => {
@@ -463,7 +328,7 @@ const FileEditor: React.FC<FileEditorProps> = ({
 
     const session = createCollabSession(workspaceId, fileId);
     collabSessionRef.current = session;
-    setCollabReady(true);
+    setCollabReady(false);
     setConnectionStatus('connecting');
     hasSeededRef.current = false;
 
@@ -523,7 +388,7 @@ const FileEditor: React.FC<FileEditorProps> = ({
     };
 
     yText.observe(handleTextChange);
-    bindMonaco();
+    void bindMonaco();
     updatePresence();
     session.provider.on('status', handleStatus);
     session.provider.on('awarenessChange', handleAwarenessChange);
@@ -639,7 +504,6 @@ const FileEditor: React.FC<FileEditorProps> = ({
       <div className="flex-grow overflow-auto">
         {isMarkdown ? (
           <div className="helpudoc-mdxeditor-shell h-full overflow-y-auto flex flex-col" style={{ maxHeight: 'calc(100vh - 200px)' }}>
-            {/* Raw/Rendered Toggle Toolbar */}
             <div className="flex items-center justify-between px-3 py-2 border-b border-gray-200 bg-gray-50">
               <span className="text-xs font-medium text-gray-500">
                 {isRawView ? 'Raw Markdown' : 'Rich Editor'}
@@ -647,9 +511,6 @@ const FileEditor: React.FC<FileEditorProps> = ({
               <button
                 type="button"
                 onClick={() => {
-                  // No need to manually sync content when toggling views
-                  // - When switching to raw: content is already synced via MDXEditor's onChange
-                  // - When switching to rich: MDXEditor will auto-sync from Yjs document via handleTextChange
                   setIsRawView(!isRawView);
                 }}
                 className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium text-gray-600 hover:bg-gray-200 transition-colors"
@@ -668,14 +529,12 @@ const FileEditor: React.FC<FileEditorProps> = ({
                 )}
               </button>
             </div>
-            {/* Editor Content */}
             {isRawView ? (
               <textarea
                 className="flex-1 w-full h-full p-4 font-mono text-sm border-none resize-none focus:outline-none focus:ring-0 bg-white"
                 value={fileContent}
-                onChange={(e) => {
-                  const newValue = e.target.value;
-                  applyTextUpdate(newValue);
+                onChange={(event) => {
+                  applyTextUpdate(event.target.value);
                 }}
                 placeholder="Enter markdown content..."
                 spellCheck={false}
@@ -687,45 +546,45 @@ const FileEditor: React.FC<FileEditorProps> = ({
                     {mdxError}
                   </div>
                 )}
-                <MDXEditor
-                  ref={mdxEditorRef}
-                  markdown={fileContent}
-                  className="mdxeditor helpudoc-mdxeditor flex-1"
-                  contentEditableClassName="prose prose-slate max-w-none helpudoc-markdown helpudoc-markdown-editor mdxeditor-root-contenteditable"
-                  onChange={(value) => {
-                    if (isApplyingRemoteRef.current) return;
-                    setMdxError(null);
-                    applyTextUpdate(value);
-                  }}
-                  onError={({ error, source }) => {
-                    console.error('MDXEditor markdown processing error:', { error, source });
-                    setMdxError(error);
-                  }}
-                  plugins={mdxPlugins}
-                />
+                <Suspense fallback={<EditorLoadingState className="min-h-[320px] flex-1" label="Loading rich editor..." />}>
+                  <MarkdownRichEditor
+                    ref={mdxEditorRef}
+                    markdown={fileContent}
+                    onChange={(value) => {
+                      if (isApplyingRemoteRef.current) return;
+                      setMdxError(null);
+                      applyTextUpdate(value);
+                    }}
+                    onError={setMdxError}
+                    onImageUpload={handleImageUpload}
+                  />
+                </Suspense>
               </>
             )}
           </div>
         ) : (
-          <Editor
-            height="100%"
-            language={getLanguage(file.name)}
-            defaultValue={fileContent}
-            value={collabReady ? undefined : fileContent}
-            onMount={handleEditorDidMount}
-            onChange={(value) => {
-              if (collabReady) return;
-              onContentChange(value || '');
-            }}
-            theme={monacoTheme}
-            options={{
-              wordWrap: 'on',
-              wrappingIndent: 'indent',
-              minimap: { enabled: false },
-              lineHeight: 22,
-              fontSize: 14,
-            }}
-          />
+          <Suspense fallback={<EditorLoadingState />}>
+          <MonacoEditor
+              height="100%"
+              language={getLanguage(file.name)}
+              defaultValue={fileContent}
+              value={collabReady ? undefined : fileContent}
+              onMount={handleEditorDidMount}
+              onChange={(value) => {
+                if (collabReady) return;
+                onContentChange(value || '');
+              }}
+              theme={monacoTheme}
+              options={{
+                readOnly: !collabReady,
+                wordWrap: 'on',
+                wrappingIndent: 'indent',
+                minimap: { enabled: false },
+                lineHeight: 22,
+                fontSize: 14,
+              }}
+            />
+          </Suspense>
         )}
       </div>
     </div>
