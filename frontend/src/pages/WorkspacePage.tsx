@@ -6,7 +6,6 @@ import {
   Box,
   CssBaseline,
   ThemeProvider,
-  createTheme,
   type PaletteMode,
 } from '@mui/material';
 import { CheckSquare, Copy, Edit, Trash, Plus, Minus, ChevronLeft, RotateCcw, X, Printer, Download, Link as LinkIcon, Loader2 } from 'lucide-react';
@@ -81,46 +80,9 @@ import {
 } from '../utils/workspaceFileTree';
 import { buildMessageMetadata, mapMessagesToAgentHistory, mergeMessageMetadata, sanitizeRunPolicy } from '../utils/messages';
 import { createMarkdownComponents } from '../components/markdown/MarkdownShared';
+import { applyColorModeToDocument, buildAppTheme, resolveInitialColorMode } from '../theme';
 
 const drawerWidth = 280;
-
-const buildTheme = (mode: PaletteMode) =>
-  createTheme({
-    palette: {
-      mode,
-      primary: {
-        main: mode === 'light' ? '#2563eb' : '#60a5fa',
-      },
-      background: {
-        default: mode === 'light' ? '#f8fafc' : '#0b1220',
-        paper: mode === 'light' ? '#ffffff' : '#0f172a',
-      },
-      text: {
-        primary: mode === 'light' ? '#0f172a' : '#e2e8f0',
-        secondary: mode === 'light' ? '#475569' : '#cbd5e1',
-      },
-      divider: mode === 'light' ? '#e2e8f0' : '#1f2937',
-    },
-    shape: {
-      borderRadius: 12,
-    },
-    components: {
-      MuiDrawer: {
-        styleOverrides: {
-          paper: {
-            backgroundColor: mode === 'light' ? '#f8fafc' : '#0f172a',
-          },
-        },
-      },
-      MuiPaper: {
-        styleOverrides: {
-          root: {
-            backgroundImage: 'none',
-          },
-        },
-      },
-    },
-  });
 
 const sanitizePresentationLabel = (value: string, fallback: string) => {
   const normalized = normalizeFilePath(value);
@@ -309,14 +271,7 @@ type PersistProgressRequest = {
 export default function WorkspacePage() {
   const navigate = useNavigate();
   const { signOut } = useAuth();
-  const [colorMode, setColorMode] = useState<PaletteMode>(() => {
-    if (typeof window === 'undefined') return 'light';
-    const stored = window.localStorage.getItem('helpudoc-color-mode');
-    if (stored === 'light' || stored === 'dark') {
-      return stored;
-    }
-    return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-  });
+  const [colorMode, setColorMode] = useState<PaletteMode>(resolveInitialColorMode);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [selectedWorkspace, setSelectedWorkspace] = useState<Workspace | null>(null);
   const [workspaceSettingsBusy, setWorkspaceSettingsBusy] = useState(false);
@@ -414,7 +369,7 @@ export default function WorkspacePage() {
   const ragStatusFetchedRef = useRef<Record<string, boolean>>({});
   const resumeInFlightRef = useRef<Set<string>>(new Set());
   const resumeAttemptedRef = useRef<Set<string>>(new Set());
-  const theme = useMemo(() => buildTheme(colorMode), [colorMode]);
+  const theme = useMemo(() => buildAppTheme(colorMode), [colorMode]);
   const messages = useMemo(
     () => (activeConversationId ? conversationMessages[activeConversationId] || [] : []),
     [activeConversationId, conversationMessages],
@@ -584,10 +539,7 @@ export default function WorkspacePage() {
   }, []);
 
   useEffect(() => {
-    document.documentElement.setAttribute('data-theme', colorMode);
-    if (typeof window !== 'undefined') {
-      window.localStorage.setItem('helpudoc-color-mode', colorMode);
-    }
+    applyColorModeToDocument(colorMode);
   }, [colorMode]);
 
   useEffect(() => {

@@ -24,6 +24,22 @@
   --slate-900: #0f172a;
   --slate-950: #020617;
   --indigo-500: #6366f1;
+  --admin-shell-bg: radial-gradient(circle at top left, rgba(37, 99, 235, 0.14), transparent 32%),
+    radial-gradient(circle at top right, rgba(14, 165, 233, 0.12), transparent 24%),
+    linear-gradient(180deg, #f8fafc 0%, #eef4fb 100%);
+  --admin-sidebar-bg: rgba(255, 255, 255, 0.78);
+  --admin-panel-bg: rgba(255, 255, 255, 0.82);
+  --admin-surface-bg: rgba(255, 255, 255, 0.74);
+  --admin-surface-muted: rgba(241, 245, 249, 0.88);
+  --admin-card-bg: linear-gradient(135deg, rgba(255, 255, 255, 0.86) 0%, rgba(241, 245, 249, 0.94) 100%);
+  --admin-border-subtle: rgba(148, 163, 184, 0.22);
+  --admin-border-strong: rgba(148, 163, 184, 0.34);
+  --admin-shadow-soft: 0 22px 55px rgba(15, 23, 42, 0.08);
+  --admin-shadow-strong: 0 28px 80px rgba(15, 23, 42, 0.14);
+  --admin-ring: rgba(37, 99, 235, 0.18);
+  --admin-accent-soft: rgba(37, 99, 235, 0.1);
+  --admin-icon-bg: rgba(15, 23, 42, 0.92);
+  --admin-icon-muted-bg: rgba(15, 23, 42, 0.06);
 }
 
 :root[data-theme='dark'] {
@@ -48,6 +64,22 @@
   --slate-900: #0b1220;
   --slate-950: #050b16;
   --indigo-500: #a5b4ff;
+  --admin-shell-bg: radial-gradient(circle at top left, rgba(59, 130, 246, 0.18), transparent 32%),
+    radial-gradient(circle at top right, rgba(56, 189, 248, 0.16), transparent 24%),
+    linear-gradient(180deg, #060d19 0%, #0b1220 42%, #0d1629 100%);
+  --admin-sidebar-bg: rgba(5, 11, 22, 0.82);
+  --admin-panel-bg: rgba(11, 18, 32, 0.74);
+  --admin-surface-bg: rgba(15, 23, 42, 0.82);
+  --admin-surface-muted: rgba(17, 24, 39, 0.9);
+  --admin-card-bg: linear-gradient(135deg, rgba(15, 23, 42, 0.96) 0%, rgba(27, 38, 56, 0.94) 100%);
+  --admin-border-subtle: rgba(51, 65, 85, 0.54);
+  --admin-border-strong: rgba(71, 85, 105, 0.68);
+  --admin-shadow-soft: 0 22px 55px rgba(2, 6, 23, 0.44);
+  --admin-shadow-strong: 0 28px 80px rgba(2, 6, 23, 0.6);
+  --admin-ring: rgba(96, 165, 250, 0.24);
+  --admin-accent-soft: rgba(59, 130, 246, 0.18);
+  --admin-icon-bg: rgba(59, 130, 246, 0.18);
+  --admin-icon-muted-bg: rgba(148, 163, 184, 0.12);
 }
 
 body {
@@ -302,6 +334,379 @@ body {
 
 .to-slate-100 {
   --tw-gradient-to: var(--surface-subtle);
+}
+
+.settings-portal {
+  background: var(--admin-shell-bg);
+}
+
+.settings-portal-sidebar {
+  background: var(--admin-sidebar-bg);
+  border-color: var(--admin-border-subtle) !important;
+  box-shadow: inset -1px 0 0 var(--admin-border-subtle);
+  backdrop-filter: blur(28px);
+}
+
+.settings-portal-header {
+  background: var(--admin-panel-bg);
+  border: 1px solid var(--admin-border-subtle);
+  box-shadow: var(--admin-shadow-soft);
+  backdrop-filter: blur(24px);
+}
+
+.settings-portal-surface {
+  background: var(--admin-surface-bg);
+  border: 1px solid var(--admin-border-subtle);
+  box-shadow: var(--admin-shadow-soft);
+  backdrop-filter: blur(24px);
+}
+
+.settings-portal-surface-muted {
+  background: var(--admin-surface-muted);
+}
+
+.settings-portal-card {
+  background: var(--admin-card-bg);
+  border: 1px solid var(--admin-border-strong);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 16px 38px rgba(15, 23, 42, 0.08);
+}
+
+:root[data-theme='dark'] .settings-portal-card {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03), 0 16px 38px rgba(2, 6, 23, 0.35);
+}
+
+.settings-portal-chip {
+  background: var(--admin-accent-soft);
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
+  color: var(--accent);
+}
+
+.settings-portal-button-secondary {
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  border: 1px solid var(--admin-border-subtle);
+  color: var(--text-primary);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.settings-portal-button-secondary:hover {
+  background: color-mix(in srgb, var(--surface-hover) 82%, transparent);
+  border-color: var(--admin-border-strong);
+}
+
+.settings-portal-nav-item {
+  border: 1px solid transparent;
+  color: var(--text-secondary);
+}
+
+.settings-portal-nav-item:hover {
+  background: color-mix(in srgb, var(--surface-hover) 74%, transparent);
+  border-color: var(--admin-border-subtle);
+  color: var(--text-primary);
+}
+
+.settings-portal-nav-item-active {
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface) 88%);
+  border-color: color-mix(in srgb, var(--accent) 24%, var(--admin-border-strong));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  color: var(--text-primary);
+}
+
+.settings-portal-icon {
+  background: var(--admin-icon-bg);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.18);
+  color: #f8fafc;
+}
+
+:root[data-theme='dark'] .settings-portal-icon {
+  color: #dbeafe;
+}
+
+.settings-portal-icon-muted {
+  background: var(--admin-icon-muted-bg);
+  color: var(--accent);
+}
+
+.settings-control {
+  background: color-mix(in srgb, var(--surface) 90%, transparent);
+  border: 1px solid var(--admin-border-strong);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 8px 24px rgba(15, 23, 42, 0.05);
+  color: var(--text-primary);
+}
+
+.settings-control::placeholder {
+  color: var(--text-muted);
+}
+
+.settings-control:focus {
+  border-color: color-mix(in srgb, var(--accent) 34%, var(--admin-border-strong));
+  box-shadow: 0 0 0 4px var(--admin-ring);
+  outline: none;
+}
+
+.settings-button-primary {
+  background: color-mix(in srgb, var(--slate-950) 86%, var(--accent) 14%);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.16);
+  color: #f8fafc;
+}
+
+.settings-button-primary:hover {
+  background: color-mix(in srgb, var(--slate-950) 80%, var(--accent) 20%);
+}
+
+.settings-button-danger {
+  background: color-mix(in srgb, var(--danger) 14%, var(--surface) 86%);
+  border: 1px solid color-mix(in srgb, var(--danger) 28%, transparent);
+  color: var(--danger);
+}
+
+.settings-button-danger:hover {
+  background: color-mix(in srgb, var(--danger) 18%, var(--surface) 82%);
+}
+
+.settings-button-danger-solid {
+  background: color-mix(in srgb, var(--danger) 82%, #020617 18%);
+  box-shadow: 0 10px 24px rgba(244, 63, 94, 0.18);
+  color: #fff1f2;
+}
+
+.settings-button-danger-solid:hover {
+  background: color-mix(in srgb, var(--danger) 88%, #020617 12%);
+}
+
+.settings-soft-panel {
+  background: var(--admin-surface-muted);
+  border: 1px solid var(--admin-border-subtle);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.settings-selection-card {
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  border: 1px solid var(--admin-border-subtle);
+}
+
+.settings-selection-card:hover {
+  background: color-mix(in srgb, var(--surface-hover) 84%, transparent);
+  border-color: var(--admin-border-strong);
+}
+
+.settings-selection-card-active {
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface) 88%);
+  border-color: color-mix(in srgb, var(--accent) 24%, var(--admin-border-strong));
+}
+
+.settings-modal-overlay {
+  background: rgba(2, 6, 23, 0.55);
+  backdrop-filter: blur(10px);
+}
+
+.settings-modal-panel {
+  background: var(--admin-panel-bg);
+  border: 1px solid var(--admin-border-strong);
+  box-shadow: var(--admin-shadow-strong);
+  backdrop-filter: blur(24px);
+}
+
+.settings-workbench-column,
+.settings-workbench-pane,
+.settings-tools-panel {
+  background: var(--admin-surface-bg);
+  border: 1px solid var(--admin-border-subtle);
+  box-shadow: var(--admin-shadow-soft);
+  backdrop-filter: blur(20px);
+}
+
+.settings-workbench-pane {
+  overflow: hidden;
+}
+
+.settings-workbench-editor {
+  background: color-mix(in srgb, var(--slate-950) 92%, transparent);
+}
+
+.settings-tools input[type='text'],
+.settings-tools select,
+.settings-workbench input[type='text'],
+.settings-workbench input[type='password'],
+.settings-workbench select,
+.settings-workbench textarea {
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  border: 1px solid var(--admin-border-strong);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  color: var(--text-primary);
+}
+
+.settings-tools input[type='text']::placeholder,
+.settings-workbench input[type='text']::placeholder,
+.settings-workbench input[type='password']::placeholder,
+.settings-workbench textarea::placeholder {
+  color: var(--text-muted);
+}
+
+.settings-tools input[type='text']:focus,
+.settings-tools select:focus,
+.settings-workbench input[type='text']:focus,
+.settings-workbench input[type='password']:focus,
+.settings-workbench select:focus,
+.settings-workbench textarea:focus {
+  border-color: color-mix(in srgb, var(--accent) 34%, var(--admin-border-strong));
+  box-shadow: 0 0 0 4px var(--admin-ring);
+  outline: none;
+}
+
+.settings-tools [class*='bg-[#1C1C1E]'],
+.settings-tools [class*='bg-[#2C2C2E]'],
+.settings-tools [class*='bg-[#F2F2F7]'] {
+  background: var(--admin-surface-muted) !important;
+}
+
+.settings-tools [class*='border-[#2C2C2E]'],
+.settings-tools [class*='border-[#3A3A3C]'] {
+  border-color: var(--admin-border-strong) !important;
+}
+
+.settings-tools [class*='bg-[#636366]'] {
+  background: color-mix(in srgb, var(--accent) 22%, var(--surface) 78%) !important;
+}
+
+.settings-tools [class*='text-[#8E8E93]'] {
+  color: var(--text-muted) !important;
+}
+
+.settings-tools [class*='text-black'] {
+  color: var(--text-primary) !important;
+}
+
+.settings-portal .bg-white {
+  background-color: color-mix(in srgb, var(--surface) 92%, transparent) !important;
+}
+
+.settings-portal .bg-white\/70 {
+  background-color: color-mix(in srgb, var(--surface) 70%, transparent) !important;
+}
+
+.settings-portal .bg-white\/92 {
+  background-color: color-mix(in srgb, var(--surface) 92%, transparent) !important;
+}
+
+.settings-portal .bg-slate-50 {
+  background-color: color-mix(in srgb, var(--surface-subtle) 90%, transparent) !important;
+}
+
+.settings-portal .bg-slate-50\/70 {
+  background-color: color-mix(in srgb, var(--surface-subtle) 70%, transparent) !important;
+}
+
+.settings-portal .bg-slate-50\/80 {
+  background-color: color-mix(in srgb, var(--surface-subtle) 80%, transparent) !important;
+}
+
+.settings-portal .bg-slate-50\/90 {
+  background-color: color-mix(in srgb, var(--surface-subtle) 90%, transparent) !important;
+}
+
+.settings-portal .bg-slate-100\/90 {
+  background-color: color-mix(in srgb, var(--surface-strong) 90%, transparent) !important;
+}
+
+.settings-portal .bg-slate-100 {
+  background-color: color-mix(in srgb, var(--surface-strong) 88%, transparent) !important;
+}
+
+.settings-portal .bg-amber-50 {
+  background-color: color-mix(in srgb, #f59e0b 12%, var(--surface) 88%) !important;
+}
+
+.settings-portal .bg-rose-50 {
+  background-color: color-mix(in srgb, #f43f5e 11%, var(--surface) 89%) !important;
+}
+
+.settings-portal .bg-emerald-50 {
+  background-color: color-mix(in srgb, #10b981 11%, var(--surface) 89%) !important;
+}
+
+.settings-portal .bg-emerald-100 {
+  background-color: color-mix(in srgb, #10b981 16%, var(--surface) 84%) !important;
+}
+
+.settings-portal .bg-rose-100 {
+  background-color: color-mix(in srgb, #f43f5e 15%, var(--surface) 85%) !important;
+}
+
+.settings-portal .border-amber-100,
+.settings-portal .border-amber-200 {
+  border-color: color-mix(in srgb, #f59e0b 26%, transparent) !important;
+}
+
+.settings-portal .border-rose-100,
+.settings-portal .border-rose-200 {
+  border-color: color-mix(in srgb, #f43f5e 26%, transparent) !important;
+}
+
+.settings-portal .border-emerald-100 {
+  border-color: color-mix(in srgb, #10b981 26%, transparent) !important;
+}
+
+.settings-portal .text-amber-700,
+.settings-portal .text-amber-800 {
+  color: color-mix(in srgb, #f59e0b 74%, var(--text-primary) 26%) !important;
+}
+
+.settings-portal .text-rose-700,
+.settings-portal .text-rose-800,
+.settings-portal .text-rose-600 {
+  color: color-mix(in srgb, #f43f5e 78%, var(--text-primary) 22%) !important;
+}
+
+.settings-portal .text-emerald-700,
+.settings-portal .text-emerald-800 {
+  color: color-mix(in srgb, #10b981 78%, var(--text-primary) 22%) !important;
+}
+
+.settings-portal .border-slate-300,
+.settings-portal .hover\:border-slate-300:hover,
+.settings-portal .focus\:border-slate-400:focus {
+  border-color: var(--admin-border-strong) !important;
+}
+
+.settings-portal .focus\:ring-slate-900\/5:focus,
+.settings-portal .focus\:ring-slate-900\/10:focus {
+  --tw-ring-color: var(--admin-ring) !important;
+}
+
+.settings-portal .hover\:bg-white:hover {
+  background-color: color-mix(in srgb, var(--surface) 96%, transparent) !important;
+}
+
+.settings-portal .hover\:bg-slate-50:hover {
+  background-color: color-mix(in srgb, var(--surface-subtle) 92%, transparent) !important;
+}
+
+.settings-portal .hover\:bg-slate-100:hover {
+  background-color: color-mix(in srgb, var(--surface-strong) 92%, transparent) !important;
+}
+
+.settings-portal .hover\:bg-slate-200:hover {
+  background-color: color-mix(in srgb, var(--surface-strong-hover) 92%, transparent) !important;
+}
+
+.settings-portal .hover\:bg-rose-50:hover {
+  background-color: color-mix(in srgb, #f43f5e 16%, var(--surface) 84%) !important;
+}
+
+.settings-portal .bg-slate-900 {
+  background-color: color-mix(in srgb, var(--slate-950) 86%, var(--accent) 14%) !important;
+}
+
+.settings-portal .hover\:bg-slate-800:hover {
+  background-color: color-mix(in srgb, var(--slate-950) 80%, var(--accent) 20%) !important;
+}
+
+.settings-portal .shadow-sm {
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08) !important;
+}
+
+.settings-portal .shadow-xl {
+  box-shadow: var(--admin-shadow-strong) !important;
 }
 
 .placeholder\:text-gray-500::placeholder {

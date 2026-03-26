@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Wrench, Library, Loader2 } from 'lucide-react';
 import { fetchAgentConfig, saveAgentConfig } from '../../services/settingsApi';
-import ToolsTab from './ToolsTab';
+import ToolsTab, { type AgentConfig } from './ToolsTab';
 import SkillsRegistryTab from './SkillsRegistryTab';
 import { SettingsEmptyState, SettingsLoadingState, SettingsTabPanel, SettingsTabs } from './SettingsScaffold';
 import YAML from 'yaml';
@@ -9,7 +9,7 @@ import { getAuthUser } from '../../auth/authStore';
 
 const AgentSettingsTabs = () => {
     const [activeTab, setActiveTab] = useState<'tools' | 'skills'>('skills');
-    const [config, setConfig] = useState<any>(null);
+    const [config, setConfig] = useState<AgentConfig | null>(null);
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -40,7 +40,7 @@ const AgentSettingsTabs = () => {
         void loadConfig();
     }, [loadConfig]);
 
-    const handleSave = async (newConfig: any) => {
+    const handleSave = async (newConfig: AgentConfig) => {
         try {
             setSaving(true);
             const yamlString = YAML.stringify(newConfig);
@@ -80,7 +80,7 @@ const AgentSettingsTabs = () => {
                         <button
                             type="button"
                             onClick={loadConfig}
-                            className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800"
+                            className="settings-portal-button-secondary rounded-xl px-4 py-2 text-sm font-medium transition"
                         >
                             Retry
                         </button>
