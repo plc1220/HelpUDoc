@@ -37,3 +37,7 @@ backend/workspaces/
 agent/outputs/
 rag_storage/
 .local-run/
+
+# CodeGraphContext local setup
+.cgcignore
+mcp.json
