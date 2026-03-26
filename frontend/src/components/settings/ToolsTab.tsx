@@ -1,9 +1,39 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Plus, Trash2, Save, Loader2, Server, Hammer, X, ExternalLink } from 'lucide-react';
 
+interface ToolDefinition {
+    name: string;
+    kind?: string;
+    description?: string;
+}
+
+interface McpServerConfig {
+    name: string;
+    transport?: 'stdio' | 'http';
+    default_access?: 'allow' | 'deny';
+    defaultAccess?: 'allow' | 'deny';
+    delegated_auth_provider?: '' | 'google';
+    delegatedAuthProvider?: '' | 'google';
+    command?: string;
+    args?: string[];
+    env?: Record<string, string>;
+    envPassthrough?: string[];
+    cwd?: string;
+    url?: string;
+    bearerTokenEnvVar?: string;
+    headers?: Record<string, string>;
+    headersFromEnv?: Record<string, string>;
+}
+
+export interface AgentConfig {
+    tools?: ToolDefinition[];
+    mcp_servers?: McpServerConfig[];
+    [key: string]: unknown;
+}
+
 interface ToolsTabProps {
-    config: any;
-    onSave: (config: any) => Promise<void>;
+    config: AgentConfig | null;
+    onSave: (config: AgentConfig) => Promise<void>;
     isSaving: boolean;
 }
 
@@ -45,6 +75,11 @@ const EmptyMcpForm: McpServerFormState = {
     headersFromEnv: [],
 };
 
+const primaryButtonClass = 'settings-button-primary inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition disabled:opacity-60';
+const secondaryButtonClass = 'settings-portal-button-secondary inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-medium transition disabled:opacity-60';
+const controlClass = 'settings-control w-full rounded-lg px-3 py-2 text-sm outline-none transition-all';
+const segmentedButtonClass = (active: boolean) => `settings-portal-nav-item flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium transition-colors ${active ? 'settings-portal-nav-item-active' : ''}`;
+
 const ToolsTab: React.FC<ToolsTabProps> = ({ config, onSave, isSaving }) => {
     const [activeSection, setActiveSection] = useState<'builtin' | 'mcp'>('mcp');
 
@@ -58,8 +93,8 @@ const ToolsTab: React.FC<ToolsTabProps> = ({ config, onSave, isSaving }) => {
     const [editingMcpIndex, setEditingMcpIndex] = useState<number | null>(null);
     const [mcpForm, setMcpForm] = useState<McpServerFormState>(EmptyMcpForm);
 
-    const tools = config?.tools || [];
-    const mcpServers = config?.mcp_servers || [];
+    const tools = useMemo(() => config?.tools ?? [], [config]);
+    const mcpServers = useMemo(() => config?.mcp_servers ?? [], [config]);
 
     // Initialize form when editing
     useEffect(() => {
@@ -108,7 +143,7 @@ const ToolsTab: React.FC<ToolsTabProps> = ({ config, onSave, isSaving }) => {
     const handleSaveMcp = async () => {
         if (!mcpForm.name) return;
 
-        const newServerConfig: any = {
+        const newServerConfig: McpServerConfig = {
             name: mcpForm.name,
             transport: mcpForm.transport,
             default_access: mcpForm.defaultAccess,
@@ -143,7 +178,7 @@ const ToolsTab: React.FC<ToolsTabProps> = ({ config, onSave, isSaving }) => {
             }
         }
 
-        let updatedMcpServers = [...mcpServers];
+        const updatedMcpServers = [...mcpServers];
         if (editingMcpIndex !== null) {
             updatedMcpServers[editingMcpIndex] = newServerConfig;
         } else {
@@ -217,24 +252,18 @@ const ToolsTab: React.FC<ToolsTabProps> = ({ config, onSave, isSaving }) => {
     };
 
     return (
-        <div>
-            <div className="flex gap-4 mb-6 border-b border-slate-200 pb-4">
+        <div className="settings-tools space-y-6">
+            <div className="settings-portal-surface-muted inline-flex flex-wrap items-center gap-1 rounded-2xl border border-slate-200 p-1">
                 <button
                     onClick={() => setActiveSection('mcp')}
-                    className={`flex items-center gap-2 text-sm font-medium pb-1 -mb-5 border-b-2 transition-colors ${activeSection === 'mcp'
-                        ? 'border-slate-900 text-slate-900'
-                        : 'border-transparent text-slate-500 hover:text-slate-700'
-                        }`}
+                    className={segmentedButtonClass(activeSection === 'mcp')}
                 >
                     <Server size={16} />
                     MCP Servers
                 </button>
                 <button
                     onClick={() => setActiveSection('builtin')}
-                    className={`flex items-center gap-2 text-sm font-medium pb-1 -mb-5 border-b-2 transition-colors ${activeSection === 'builtin'
-                        ? 'border-slate-900 text-slate-900'
-                        : 'border-transparent text-slate-500 hover:text-slate-700'
-                        }`}
+                    className={segmentedButtonClass(activeSection === 'builtin')}
                 >
                     <Hammer size={16} />
                     Built-in Tools
@@ -247,7 +276,7 @@ const ToolsTab: React.FC<ToolsTabProps> = ({ config, onSave, isSaving }) => {
                         <h3 className="text-lg font-semibold text-slate-900">Built-in Tools</h3>
                         <button
                             onClick={() => setIsAddingTool(true)}
-                            className="flex items-center gap-2 px-4 py-2 bg-slate-900 text-white rounded-lg text-sm font-medium hover:bg-slate-800"
+                            className={primaryButtonClass}
                         >
                             <Plus size={16} />
                             Add Tool
@@ -255,22 +284,22 @@ const ToolsTab: React.FC<ToolsTabProps> = ({ config, onSave, isSaving }) => {
                     </div>
 
                     {isAddingTool && (
-                        <div className="mb-6 p-4 bg-slate-50 rounded-xl border border-slate-200 shadow-sm">
+                        <div className="settings-soft-panel mb-6 rounded-xl p-4">
                             <div className="grid grid-cols-2 gap-4 mb-4">
                                 <div>
                                     <label className="block text-xs font-medium text-slate-700 mb-1">Tool Name</label>
                                     <input type="text" value={newToolName} onChange={(e) => setNewToolName(e.target.value)} placeholder="e.g., google_search"
-                                        className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm focus:border-slate-500 focus:ring-1 focus:ring-slate-500 outline-none transition-all" />
+                                        className={controlClass} />
                                 </div>
                                 <div>
                                     <label className="block text-xs font-medium text-slate-700 mb-1">Description</label>
                                     <input type="text" value={newToolDesc} onChange={(e) => setNewToolDesc(e.target.value)} placeholder="Description"
-                                        className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm focus:border-slate-500 focus:ring-1 focus:ring-slate-500 outline-none transition-all" />
+                                        className={controlClass} />
                                 </div>
                             </div>
                             <div className="flex justify-end gap-2">
-                                <button onClick={() => setIsAddingTool(false)} className="px-3 py-1.5 text-slate-600 text-sm hover:bg-slate-200 rounded-lg">Cancel</button>
-                                <button onClick={handleSaveTool} disabled={isSaving} className="flex items-center gap-2 px-3 py-1.5 bg-slate-900 text-white text-sm rounded-lg hover:bg-slate-800">
+                                <button onClick={() => setIsAddingTool(false)} className={secondaryButtonClass}>Cancel</button>
+                                <button onClick={handleSaveTool} disabled={isSaving} className={primaryButtonClass}>
                                     {isSaving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
                                     Save
                                 </button>
@@ -279,8 +308,8 @@ const ToolsTab: React.FC<ToolsTabProps> = ({ config, onSave, isSaving }) => {
                     )}
 
                     <div className="grid gap-3">
-                        {tools.map((tool: any, idx: number) => (
-                            <div key={idx} className="p-4 rounded-xl border border-slate-200 bg-white flex justify-between items-center shadow-sm">
+                        {tools.map((tool, idx: number) => (
+                            <div key={idx} className="settings-selection-card flex justify-between items-center rounded-xl p-4">
                                 <div>
                                     <p className="font-semibold text-slate-900">{tool.name}</p>
                                     <p className="text-sm text-slate-500">{tool.description}</p>
@@ -308,7 +337,7 @@ const ToolsTab: React.FC<ToolsTabProps> = ({ config, onSave, isSaving }) => {
                                 </div>
                                 <button
                                     onClick={() => { setMcpForm(EmptyMcpForm); setEditingMcpIndex(null); setIsEditingMcp(true); }}
-                                    className="flex items-center gap-2 px-4 py-2 bg-slate-900 text-white rounded-lg text-sm font-medium hover:bg-slate-800 shadow-sm transition-all"
+                                    className={primaryButtonClass}
                                 >
                                     <Plus size={16} />
                                     Add Server
@@ -316,8 +345,8 @@ const ToolsTab: React.FC<ToolsTabProps> = ({ config, onSave, isSaving }) => {
                             </div>
 
                             <div className="grid gap-3">
-                                {mcpServers.map((server: any, idx: number) => (
-                                    <div key={idx} className="group p-4 rounded-xl border border-slate-200 bg-white hover:border-slate-300 transition-all shadow-sm">
+                                {mcpServers.map((server, idx: number) => (
+                                    <div key={idx} className="settings-selection-card group rounded-xl p-4 transition-all">
                                         <div className="flex justify-between items-start">
                                             <div onClick={() => { setMcpForm(EmptyMcpForm); setEditingMcpIndex(idx); setIsEditingMcp(true); /* Will trigger effect */ }} className="cursor-pointer flex-1">
                                                 <div className="flex items-center gap-2 mb-1">
@@ -329,10 +358,10 @@ const ToolsTab: React.FC<ToolsTabProps> = ({ config, onSave, isSaving }) => {
                                                 </p>
                                             </div>
                                             <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                <button onClick={() => { setMcpForm(EmptyMcpForm); setEditingMcpIndex(idx); setIsEditingMcp(true); }} className="p-2 text-slate-400 hover:text-slate-900 rounded-lg hover:bg-slate-50">
+                                                <button onClick={() => { setMcpForm(EmptyMcpForm); setEditingMcpIndex(idx); setIsEditingMcp(true); }} className="settings-portal-button-secondary rounded-lg p-2 transition">
                                                     <Hammer size={16} />
                                                 </button>
-                                                <button onClick={() => handleDeleteMcp(idx)} className="p-2 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50">
+                                                <button onClick={() => handleDeleteMcp(idx)} className="settings-button-danger rounded-lg p-2 transition">
                                                     <Trash2 size={16} />
                                                 </button>
                                             </div>
@@ -340,7 +369,7 @@ const ToolsTab: React.FC<ToolsTabProps> = ({ config, onSave, isSaving }) => {
                                     </div>
                                 ))}
                                 {mcpServers.length === 0 && (
-                                    <div className="text-center py-12 bg-slate-50 rounded-xl border border-dashed border-slate-200">
+                                    <div className="settings-soft-panel rounded-xl border border-dashed py-12 text-center">
                                         <Server className="mx-auto text-slate-300 mb-3" size={32} />
                                         <p className="text-slate-500 font-medium">No MCP servers connected</p>
                                         <p className="text-slate-400 text-sm mt-1">Add a server to extend capabilities</p>
@@ -349,7 +378,7 @@ const ToolsTab: React.FC<ToolsTabProps> = ({ config, onSave, isSaving }) => {
                             </div>
                         </>
                     ) : (
-                        <div className="bg-[#1C1C1E] text-slate-200 rounded-xl border border-[#2C2C2E] overflow-hidden shadow-2xl">
+                        <div className="settings-tools-panel rounded-xl overflow-hidden text-slate-200">
                             <div className="p-6">
                                 <div className="flex justify-between items-center mb-6">
                                     <div>
@@ -613,7 +642,7 @@ const ToolsTab: React.FC<ToolsTabProps> = ({ config, onSave, isSaving }) => {
                                     <button
                                         onClick={handleSaveMcp}
                                         disabled={isSaving}
-                                        className="px-6 py-2 bg-[#F2F2F7] text-black rounded-lg font-medium hover:bg-white transition-colors disabled:opacity-50"
+                                        className="settings-button-primary rounded-lg px-6 py-2 font-medium transition disabled:opacity-50"
                                     >
                                         {isSaving ? 'Saving...' : 'Save'}
                                     </button>

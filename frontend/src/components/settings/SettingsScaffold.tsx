@@ -11,7 +11,7 @@ type SurfaceProps = {
 export const SettingsSurface = ({ children, className }: SurfaceProps) => (
   <section
     className={cx(
-      'rounded-[28px] border border-slate-200/80 bg-white/95 p-6 shadow-[0_18px_45px_rgba(15,23,42,0.08)] backdrop-blur',
+      'settings-portal-surface rounded-[28px] p-6',
       className,
     )}
   >
@@ -32,7 +32,7 @@ export const SettingsSectionHeader = ({ title, description, eyebrow, actions }: 
       {eyebrow ? (
         <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-500">{eyebrow}</p>
       ) : null}
-      <h3 className="text-lg font-semibold text-slate-950">{title}</h3>
+      <h3 className="text-lg font-semibold tracking-tight text-slate-950">{title}</h3>
       {description ? <p className="max-w-2xl text-sm leading-6 text-slate-600">{description}</p> : null}
     </div>
     {actions ? <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div> : null}
@@ -46,13 +46,13 @@ type NoticeProps = {
 };
 
 const noticeStyles: Record<NonNullable<NoticeProps['variant']>, string> = {
-  info: 'border-slate-200 bg-slate-50 text-slate-700',
+  info: 'border-blue-200 bg-blue-50/80 text-slate-700',
   warning: 'border-amber-200 bg-amber-50 text-amber-800',
   error: 'border-rose-200 bg-rose-50 text-rose-700',
 };
 
 export const SettingsNotice = ({ children, variant = 'info', className }: NoticeProps) => (
-  <div className={cx('rounded-2xl border px-4 py-3 text-sm shadow-sm', noticeStyles[variant], className)}>{children}</div>
+  <div className={cx('settings-portal-surface-muted rounded-2xl border px-4 py-3 text-sm', noticeStyles[variant], className)}>{children}</div>
 );
 
 type EmptyStateProps = {
@@ -72,13 +72,13 @@ export const SettingsEmptyState = ({
 }: EmptyStateProps) => (
   <div
     className={cx(
-      'rounded-[24px] border border-dashed border-slate-200 bg-slate-50/90 p-8',
+      'settings-portal-surface-muted rounded-[24px] border border-dashed border-slate-200 p-8',
       align === 'center' ? 'text-center' : 'text-left',
     )}
   >
     <div className={cx('flex gap-4', align === 'center' ? 'flex-col items-center' : 'items-start')}>
       {Icon ? (
-        <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white text-slate-700 shadow-sm ring-1 ring-slate-200">
+        <span className="settings-portal-icon-muted flex h-12 w-12 items-center justify-center rounded-2xl ring-1 ring-slate-200">
           <Icon size={20} />
         </span>
       ) : null}
@@ -97,7 +97,7 @@ type LoadingStateProps = {
 };
 
 export const SettingsLoadingState = ({ label, className }: LoadingStateProps) => (
-  <div className={cx('flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600', className)}>
+  <div className={cx('settings-portal-surface-muted flex items-center gap-3 rounded-2xl border border-slate-200 p-4 text-sm text-slate-600', className)}>
     <Loader2 className="h-4 w-4 animate-spin" />
     {label}
   </div>
@@ -120,7 +120,7 @@ type MetricCardProps = {
 };
 
 export const SettingsMetricCard = ({ label, value, hint, icon: Icon }: MetricCardProps) => (
-  <div className="rounded-[24px] border border-slate-200/80 bg-gradient-to-br from-white via-slate-50 to-slate-100/80 p-5 shadow-[0_10px_30px_rgba(15,23,42,0.06)]">
+  <div className="settings-portal-card rounded-[24px] p-5">
     <div className="flex items-start justify-between gap-4">
       <div>
         <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">{label}</p>
@@ -128,7 +128,7 @@ export const SettingsMetricCard = ({ label, value, hint, icon: Icon }: MetricCar
         {hint ? <p className="mt-1 text-sm text-slate-500">{hint}</p> : null}
       </div>
       {Icon ? (
-        <span className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-900 text-white shadow-sm">
+        <span className="settings-portal-icon inline-flex h-11 w-11 items-center justify-center rounded-2xl">
           <Icon size={18} />
         </span>
       ) : null}
@@ -147,7 +147,7 @@ type TabsProps<T extends string> = {
 };
 
 export const SettingsTabs = <T extends string>({ tabs, value, onChange }: TabsProps<T>) => (
-  <div className="inline-flex flex-wrap items-center gap-1 rounded-2xl border border-slate-200 bg-slate-100/90 p-1 shadow-inner">
+  <div className="settings-portal-surface-muted inline-flex flex-wrap items-center gap-1 rounded-2xl border border-slate-200 p-1">
     {tabs.map(({ id, label, icon: Icon }) => {
       const isActive = id === value;
       return (
@@ -156,10 +156,10 @@ export const SettingsTabs = <T extends string>({ tabs, value, onChange }: TabsPr
           type="button"
           onClick={() => onChange(id)}
           className={cx(
-            'inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-medium transition',
+            'settings-portal-nav-item inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-medium transition',
             isActive
-              ? 'bg-white text-slate-950 shadow-sm ring-1 ring-slate-200'
-              : 'text-slate-600 hover:bg-white/80 hover:text-slate-900',
+              ? 'settings-portal-nav-item-active'
+              : '',
           )}
         >
           {Icon ? <Icon size={16} /> : null}
@@ -176,5 +176,5 @@ type TabPanelProps = {
 };
 
 export const SettingsTabPanel = ({ children, className }: TabPanelProps) => (
-  <SettingsSurface className={cx('min-h-[500px]', className)}>{children}</SettingsSurface>
+  <SettingsSurface className={cx('min-h-[520px]', className)}>{children}</SettingsSurface>
 );

@@ -61,6 +61,10 @@ const makeId = () =>
     ? crypto.randomUUID()
     : `id-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
+const primaryButtonClass = 'settings-button-primary inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition disabled:opacity-60';
+const secondaryButtonClass = 'settings-portal-button-secondary inline-flex items-center gap-2 rounded-lg px-2 py-1 text-xs transition disabled:opacity-60';
+const workbenchColumnClass = 'settings-workbench-column flex flex-col overflow-hidden rounded-xl';
+
 const SkillsRegistryTab: React.FC = () => {
   const [skills, setSkills] = useState<SkillDefinition[]>([]);
   const [loading, setLoading] = useState(true);
@@ -583,7 +587,7 @@ const SkillsRegistryTab: React.FC = () => {
         <p className="text-rose-600 mb-4">{error}</p>
         <button
           onClick={loadSkills}
-          className="px-4 py-2 bg-slate-900 text-white rounded-lg hover:bg-slate-800 transition-colors"
+          className="settings-button-primary rounded-lg px-4 py-2 transition-colors"
         >
           Retry
         </button>
@@ -592,8 +596,8 @@ const SkillsRegistryTab: React.FC = () => {
   }
 
   return (
-    <div style={{ height: 'calc(100vh - 260px)', minHeight: '620px' }} className="flex gap-4">
-      <div className={`${builderCollapsed ? 'w-12' : 'w-[390px]'} flex-shrink-0 border border-slate-200 rounded-xl bg-white flex flex-col overflow-hidden`}>
+    <div style={{ height: 'calc(100vh - 260px)', minHeight: '620px' }} className="settings-workbench flex gap-4">
+      <div className={`${builderCollapsed ? 'w-12' : 'w-[390px]'} ${workbenchColumnClass} flex-shrink-0`}>
         <div className="px-3 py-2 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
           {!builderCollapsed && (
             <div className="flex items-center gap-2 text-sm font-semibold text-slate-700">
@@ -620,7 +624,7 @@ const SkillsRegistryTab: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setGithubModalOpen(true)}
-                  className="inline-flex items-center gap-1 px-2 py-1 text-xs border border-slate-300 rounded hover:bg-slate-100"
+                  className={secondaryButtonClass}
                 >
                   <Github size={13} />
                   Import
@@ -628,7 +632,7 @@ const SkillsRegistryTab: React.FC = () => {
                 <button
                   type="button"
                   onClick={parseActionsFromMessages}
-                  className="inline-flex items-center gap-1 px-2 py-1 text-xs border border-slate-300 rounded hover:bg-slate-100"
+                  className={secondaryButtonClass}
                 >
                   <Wand2 size={13} />
                   Parse Actions
@@ -646,7 +650,7 @@ const SkillsRegistryTab: React.FC = () => {
                   type="button"
                   disabled={contextUploading}
                   onClick={() => attachmentInputRef.current?.click()}
-                  className="inline-flex items-center gap-1 px-2 py-1 text-xs bg-slate-900 text-white rounded hover:bg-slate-800 disabled:opacity-60"
+                  className={secondaryButtonClass}
                 >
                   {contextUploading ? <Loader2 size={12} className="animate-spin" /> : <Upload size={12} />}
                   Upload
@@ -712,14 +716,14 @@ const SkillsRegistryTab: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => void handleRunDecision('approve')}
-                    className="px-2 py-1 text-xs bg-emerald-600 text-white rounded hover:bg-emerald-700"
+                  className="rounded px-2 py-1 text-xs bg-emerald-600 text-white hover:bg-emerald-700"
                   >
                     Approve
                   </button>
                   <button
                     type="button"
                     onClick={() => void handleRunDecision('reject')}
-                    className="px-2 py-1 text-xs bg-rose-600 text-white rounded hover:bg-rose-700"
+                  className="rounded px-2 py-1 text-xs bg-rose-600 text-white hover:bg-rose-700"
                   >
                     Reject
                   </button>
@@ -744,7 +748,7 @@ const SkillsRegistryTab: React.FC = () => {
                   type="button"
                   disabled={!builderReady || builderRunning || !builderPrompt.trim()}
                   onClick={() => void handleSendPrompt()}
-                  className="inline-flex items-center gap-1 px-3 py-1.5 text-sm bg-slate-900 text-white rounded-lg hover:bg-slate-800 disabled:opacity-60"
+                  className={primaryButtonClass}
                 >
                   <Play size={14} />
                   Send
@@ -759,7 +763,7 @@ const SkillsRegistryTab: React.FC = () => {
                   type="button"
                   disabled={!proposedActions.length || applyingAll}
                   onClick={() => void applyAllActions()}
-                  className="inline-flex items-center gap-1 px-2 py-1 text-xs bg-emerald-600 text-white rounded hover:bg-emerald-700 disabled:opacity-60"
+                  className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-60"
                 >
                   {applyingAll ? <Loader2 size={12} className="animate-spin" /> : <CheckCircle2 size={12} />}
                   Apply All
@@ -793,7 +797,7 @@ const SkillsRegistryTab: React.FC = () => {
       </div>
 
       <div className="flex-1 min-w-0 flex gap-4">
-        <div className="w-72 flex-shrink-0 flex flex-col bg-white border border-slate-200 rounded-xl overflow-hidden">
+        <div className={`w-72 flex-shrink-0 ${workbenchColumnClass}`}>
           <div className="p-3 border-b border-slate-200 bg-slate-50">
             <div className="flex items-center justify-between mb-3">
               <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Skills</span>
@@ -823,7 +827,7 @@ const SkillsRegistryTab: React.FC = () => {
                 setNewName('');
                 setNewDesc('');
               }}
-              className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-slate-900 text-white rounded-lg text-sm font-medium hover:bg-slate-800 transition-colors"
+              className={primaryButtonClass}
             >
               <Plus size={16} />
               Add Skill
@@ -901,7 +905,7 @@ const SkillsRegistryTab: React.FC = () => {
           </div>
         </div>
 
-        <div className="flex-1 flex flex-col bg-white border border-slate-200 rounded-xl overflow-hidden">
+        <div className={`flex-1 ${workbenchColumnClass}`}>
           {selectedSkill ? (
             <>
               <div className="flex items-center justify-between px-4 py-2.5 border-b border-slate-200 bg-slate-50">
@@ -955,7 +959,7 @@ const SkillsRegistryTab: React.FC = () => {
                   )}
                 </div>
 
-                <div className="flex-1 relative bg-[#1e1e1e]">
+                <div className="settings-workbench-editor flex-1 relative">
                   {fileLoading ? (
                     <div className="absolute inset-0 flex items-center justify-center bg-[#1e1e1e]">
                       <Loader2 size={24} className="animate-spin text-slate-500" />
@@ -995,8 +999,8 @@ const SkillsRegistryTab: React.FC = () => {
       </div>
 
       {githubModalOpen && (
-        <div className="fixed inset-0 z-40 bg-black/40 flex items-center justify-center p-4">
-          <div className="w-full max-w-2xl bg-white rounded-xl border border-slate-200 shadow-xl">
+        <div className="settings-modal-overlay fixed inset-0 z-40 flex items-center justify-center p-4">
+          <div className="settings-modal-panel w-full max-w-2xl rounded-xl">
             <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
               <h3 className="text-sm font-semibold text-slate-800">Import Skill From GitHub</h3>
               <button onClick={() => setGithubModalOpen(false)} className="text-slate-400 hover:text-slate-600">
