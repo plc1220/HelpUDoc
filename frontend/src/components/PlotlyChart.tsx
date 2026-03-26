@@ -13,6 +13,14 @@ type PlotlyRuntime = {
   purge: (el: HTMLDivElement) => void;
 };
 
+const getPlotlyModuleUrl = () => {
+  const link = document.querySelector<HTMLLinkElement>('link[rel="modulepreload"][href*="plotly"]');
+  if (!link?.href) {
+    throw new Error('Plotly asset URL is unavailable.');
+  }
+  return link.href;
+};
+
 interface PlotlyChartProps {
   spec: PlotlySpec;
   className?: string;
@@ -41,7 +49,7 @@ const PlotlyChart = ({ spec, className, minHeight = 320 }: PlotlyChartProps) => 
   useEffect(() => {
     let cancelled = false;
 
-    void import('plotly.js-dist-min')
+    void import(/* @vite-ignore */ getPlotlyModuleUrl())
       .then((module) => {
         if (cancelled) return;
         plotlyRef.current = (module as unknown as { default?: PlotlyRuntime }).default ?? (module as unknown as PlotlyRuntime);
