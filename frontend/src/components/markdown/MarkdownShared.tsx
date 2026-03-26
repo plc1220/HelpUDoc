@@ -8,17 +8,9 @@ const PlotlyChart = lazy(() => import('../PlotlyChart'));
 
 let mermaidRuntimePromise: Promise<typeof import('mermaid')> | null = null;
 
-const getMermaidModuleUrl = () => {
-  const link = document.querySelector<HTMLLinkElement>('link[rel="modulepreload"][href*="mermaid"]');
-  if (!link?.href) {
-    throw new Error('Mermaid asset URL is unavailable.');
-  }
-  return link.href;
-};
-
 const loadMermaidRuntime = async () => {
   if (!mermaidRuntimePromise) {
-    mermaidRuntimePromise = import(/* @vite-ignore */ getMermaidModuleUrl());
+    mermaidRuntimePromise = import('mermaid');
   }
   return mermaidRuntimePromise;
 };
@@ -219,8 +211,16 @@ export const classifyCodeBlockLabel = (languageMatch: RegExpExecArray | null, co
 
 const isExternalSource = (src: string) => /^(https?:|data:|blob:)/i.test(src);
 
-const MermaidFallback = ({ chart }: { chart: string }) => (
-  <pre className="my-4 overflow-x-auto rounded-xl bg-red-50 p-4 text-sm text-red-700">
+const MermaidFallback = ({
+  chart,
+  colorMode,
+}: {
+  chart: string;
+  colorMode: MermaidColorMode;
+}) => (
+  <pre className={`my-4 overflow-x-auto rounded-2xl border p-4 text-sm ${colorMode === 'dark'
+    ? 'border-rose-500/20 bg-rose-950/20 text-slate-200'
+    : 'border-rose-200 bg-rose-50 text-rose-700'}`}>
     {chart}
   </pre>
 );
@@ -274,10 +274,10 @@ export const MermaidDiagram = ({
   if (errorMessage) {
     return (
       <div className={fallbackClassName}>
-        <p className="mb-2 text-sm font-medium text-red-600">
+        <p className={`mb-2 text-sm font-medium ${colorMode === 'dark' ? 'text-rose-300' : 'text-rose-600'}`}>
           Unable to render Mermaid diagram.
         </p>
-        <MermaidFallback chart={chart} />
+        <MermaidFallback chart={chart} colorMode={colorMode} />
       </div>
     );
   }

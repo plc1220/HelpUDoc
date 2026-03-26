@@ -133,8 +133,8 @@ export default function ChatMessageList({
       const dateLabel = formatDateLabel(message.updatedAt || message.createdAt);
       if (dateLabel && dateLabel !== previousDateLabel) {
         nodes.push(
-          <div key={`date-${message.id}-${dateLabel}`} className="sticky top-2 z-10 flex justify-center py-1 pointer-events-none">
-            <span className="rounded-full border border-slate-200/90 bg-white/85 px-3 py-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500 shadow-sm backdrop-blur">
+          <div key={`date-${message.id}-${dateLabel}`} className="pointer-events-none sticky top-2 z-10 flex justify-center py-1">
+            <span className="rounded-full border border-slate-700/70 bg-slate-900/85 px-3 py-1 text-[10px] font-semibold uppercase tracking-wide text-slate-300 shadow-sm backdrop-blur">
               {dateLabel}
             </span>
           </div>,
@@ -223,12 +223,12 @@ export default function ChatMessageList({
         <div className="mx-auto w-full max-w-5xl space-y-4">
           {messages.length === 0 ? (
             <div className="flex h-full min-h-[40vh] flex-col items-center justify-center text-center text-slate-400">
-              <div className="rounded-2xl border border-slate-200 bg-white/70 px-6 py-8 shadow-sm backdrop-blur-sm">
-                <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-slate-500">
+              <div className="rounded-3xl border border-slate-700/70 bg-slate-900/75 px-6 py-8 shadow-[0_20px_50px_-32px_rgba(15,23,42,0.95)] backdrop-blur-sm">
+                <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full border border-slate-700/70 bg-slate-950/90 text-slate-300">
                   <MessageSquareText size={18} />
                 </div>
-                <p className="text-sm font-semibold text-slate-600">No messages yet</p>
-                <p className="mt-1 text-xs text-slate-500">Ask the agent to inspect files, generate content, or run a task.</p>
+                <p className="text-sm font-semibold text-slate-100">No messages yet</p>
+                <p className="mt-1 text-xs text-slate-400">Ask the agent to inspect files, generate content, or run a task.</p>
               </div>
             </div>
           ) : (
@@ -240,7 +240,7 @@ export default function ChatMessageList({
         <button
           type="button"
           onClick={scrollToLatest}
-          className="absolute bottom-4 right-4 inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white/90 px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-lg backdrop-blur transition-all duration-200 hover:bg-white"
+          className="absolute bottom-4 right-4 inline-flex items-center gap-1 rounded-full border border-slate-700/70 bg-slate-900/95 px-3 py-1.5 text-xs font-semibold text-slate-200 shadow-lg backdrop-blur transition-all duration-200 hover:bg-slate-800"
           title="Jump to latest message"
         >
           <ArrowDown size={14} />

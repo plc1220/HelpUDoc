@@ -916,34 +916,44 @@ body {
   background: #dbeafe;
 }
 
-:root[data-theme='dark'] .helpudoc-markdown {
+:root[data-theme='dark'] .helpudoc-markdown,
+:root.dark .helpudoc-markdown {
   color: #e6edf3;
 }
 
 :root[data-theme='dark'] .helpudoc-markdown h1,
-:root[data-theme='dark'] .helpudoc-markdown h2 {
+:root[data-theme='dark'] .helpudoc-markdown h2,
+:root.dark .helpudoc-markdown h1,
+:root.dark .helpudoc-markdown h2 {
   color: #9bbcff;
 }
 
 :root[data-theme='dark'] .helpudoc-markdown h3,
 :root[data-theme='dark'] .helpudoc-markdown h4,
 :root[data-theme='dark'] .helpudoc-markdown h5,
-:root[data-theme='dark'] .helpudoc-markdown h6 {
+:root[data-theme='dark'] .helpudoc-markdown h6,
+:root.dark .helpudoc-markdown h3,
+:root.dark .helpudoc-markdown h4,
+:root.dark .helpudoc-markdown h5,
+:root.dark .helpudoc-markdown h6 {
   color: #bfd2ff;
 }
 
-:root[data-theme='dark'] .helpudoc-markdown code {
+:root[data-theme='dark'] .helpudoc-markdown code,
+:root.dark .helpudoc-markdown code {
   background: #2d333b;
   border-color: #3a4350;
   color: #e6edf3;
 }
 
-:root[data-theme='dark'] .helpudoc-markdown pre {
+:root[data-theme='dark'] .helpudoc-markdown pre,
+:root.dark .helpudoc-markdown pre {
   background: #0b1220;
   border-color: #1f2937;
 }
 
-:root[data-theme='dark'] .helpudoc-markdown blockquote {
+:root[data-theme='dark'] .helpudoc-markdown blockquote,
+:root.dark .helpudoc-markdown blockquote {
   border-left-color: #3a4350;
   color: #cbd5e1;
 }
@@ -951,18 +961,26 @@ body {
 :root[data-theme='dark'] .helpudoc-markdown hr,
 :root[data-theme='dark'] .helpudoc-markdown table,
 :root[data-theme='dark'] .helpudoc-markdown thead,
-:root[data-theme='dark'] .helpudoc-markdown tbody tr {
+:root[data-theme='dark'] .helpudoc-markdown tbody tr,
+:root.dark .helpudoc-markdown hr,
+:root.dark .helpudoc-markdown table,
+:root.dark .helpudoc-markdown thead,
+:root.dark .helpudoc-markdown tbody tr {
   border-color: #1f2937;
 }
 
 :root[data-theme='dark'] .helpudoc-mdxeditor-shell,
-:root[data-theme='dark'] .helpudoc-mdxeditor {
+:root[data-theme='dark'] .helpudoc-mdxeditor,
+:root.dark .helpudoc-mdxeditor-shell,
+:root.dark .helpudoc-mdxeditor {
   background: #0f172a;
   color: #e6edf3;
 }
 
 :root[data-theme='dark'] .helpudoc-mdxeditor .mdxeditor-toolbar,
-:root[data-theme='dark'] .helpudoc-mdxeditor [role='toolbar'] {
+:root[data-theme='dark'] .helpudoc-mdxeditor [role='toolbar'],
+:root.dark .helpudoc-mdxeditor .mdxeditor-toolbar,
+:root.dark .helpudoc-mdxeditor [role='toolbar'] {
   background: rgba(15, 23, 42, 0.92);
   border-bottom-color: #1f2937;
   backdrop-filter: blur(8px);
@@ -971,17 +989,25 @@ body {
 :root[data-theme='dark'] .helpudoc-mdxeditor .mdxeditor-toolbar button,
 :root[data-theme='dark'] .helpudoc-mdxeditor .mdxeditor-toolbar select,
 :root[data-theme='dark'] .helpudoc-mdxeditor [role='toolbar'] button,
-:root[data-theme='dark'] .helpudoc-mdxeditor [role='toolbar'] select {
+:root[data-theme='dark'] .helpudoc-mdxeditor [role='toolbar'] select,
+:root.dark .helpudoc-mdxeditor .mdxeditor-toolbar button,
+:root.dark .helpudoc-mdxeditor .mdxeditor-toolbar select,
+:root.dark .helpudoc-mdxeditor [role='toolbar'] button,
+:root.dark .helpudoc-mdxeditor [role='toolbar'] select {
   color: #e6edf3;
   border-color: #263245;
 }
 
 :root[data-theme='dark'] .helpudoc-mdxeditor .mdxeditor-toolbar button:hover,
-:root[data-theme='dark'] .helpudoc-mdxeditor [role='toolbar'] button:hover {
+:root[data-theme='dark'] .helpudoc-mdxeditor [role='toolbar'] button:hover,
+:root.dark .helpudoc-mdxeditor .mdxeditor-toolbar button:hover,
+:root.dark .helpudoc-mdxeditor [role='toolbar'] button:hover {
   background: #1f2937;
 }
 
 :root[data-theme='dark'] .helpudoc-mdxeditor .mdxeditor-toolbar button[aria-pressed='true'],
-:root[data-theme='dark'] .helpudoc-mdxeditor [role='toolbar'] button[aria-pressed='true'] {
+:root[data-theme='dark'] .helpudoc-mdxeditor [role='toolbar'] button[aria-pressed='true'],
+:root.dark .helpudoc-mdxeditor .mdxeditor-toolbar button[aria-pressed='true'],
+:root.dark .helpudoc-mdxeditor [role='toolbar'] button[aria-pressed='true'] {
   background: #26334a;
 }

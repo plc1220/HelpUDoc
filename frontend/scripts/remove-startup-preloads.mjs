@@ -235,12 +235,17 @@ const stripImports = (code) =>
       .replace(/import"\.\/monaco-[^"]+\.js";/g, ''),
   );
 
+const shouldStripStartupImports = (file) => (
+  file.startsWith('main-') ||
+  file.startsWith('ProtectedShell-')
+);
+
 const assetFiles = (await fs.readdir(distDir)).filter((file) => file.endsWith('.js'));
 
 for (const file of assetFiles) {
   const filePath = path.join(distDir, file);
   const code = await fs.readFile(filePath, 'utf8');
-  const nextCode = stripImports(code);
+  const nextCode = shouldStripStartupImports(file) ? stripImports(code) : stripMonacoHelperCalls(code);
   if (nextCode !== code) {
     await fs.writeFile(filePath, nextCode);
     console.log(`Stripped preload helpers from ${file}`);

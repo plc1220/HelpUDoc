@@ -76,19 +76,19 @@ export default function ChatInputArea({
   onSelectCommand: (command: CommandSuggestion) => void;
 }) {
   return (
-    <div className="sticky bottom-0 border-t border-slate-200/80 bg-white/80 p-4 backdrop-blur-md">
-      <div className="relative rounded-2xl border border-slate-200/90 bg-white/80 shadow-[0_16px_40px_-28px_rgba(15,23,42,0.9)] transition-all duration-200 focus-within:border-blue-400 focus-within:ring-2 focus-within:ring-blue-200">
+    <div className="sticky bottom-0 border-t border-slate-700/70 bg-slate-950/45 p-4 backdrop-blur-md">
+      <div className="relative rounded-2xl border border-slate-700/80 bg-slate-900/80 shadow-[0_24px_60px_-36px_rgba(15,23,42,0.98)] transition-all duration-200 focus-within:border-sky-400/70 focus-within:ring-2 focus-within:ring-sky-400/15">
         {chatAttachments.length > 0 && (
           <div className="flex flex-wrap gap-2 px-3 pt-3">
             {chatAttachments.map((file, index) => (
               <div
                 key={`${file.name}-${index}`}
-                className="group flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-xs font-medium text-slate-700 transition-all duration-200"
+                className="group flex items-center gap-2 rounded-lg border border-slate-700/70 bg-slate-950/70 px-2 py-1 text-xs font-medium text-slate-200 transition-all duration-200"
               >
                 <span className="max-w-[120px] truncate">{file.name}</span>
                 <button
                   type="button"
-                  className="text-slate-400 transition-all duration-200 hover:text-red-500"
+                  className="text-slate-500 transition-all duration-200 hover:text-rose-400"
                   onClick={() => onRemoveChatAttachment(index)}
                   aria-label={`Remove ${file.name}`}
                 >
@@ -103,12 +103,12 @@ export default function ChatInputArea({
             {commandTags.map((tag) => (
               <div
                 key={tag.id}
-                className="group flex items-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700"
+                className="group flex items-center gap-2 rounded-full border border-sky-400/25 bg-slate-950/75 px-2.5 py-1 text-xs font-medium text-sky-100"
               >
                 <span>{tag.label}</span>
                 <button
                   type="button"
-                  className="text-blue-400 transition-all duration-200 hover:text-red-500"
+                  className="text-sky-200/60 transition-all duration-200 hover:text-rose-300"
                   onClick={() => onRemoveCommandTag(tag.id)}
                   aria-label={`Remove ${tag.label}`}
                 >
@@ -126,7 +126,7 @@ export default function ChatInputArea({
           onKeyDown={onChatInputKeyDown}
           onKeyUp={onChatInputKeyUp}
           onSelect={onChatInputSelectionChange}
-          className="w-full max-h-60 resize-none bg-transparent px-4 py-3 text-sm leading-relaxed text-slate-900 placeholder:text-slate-400 focus:outline-none"
+          className="w-full max-h-60 resize-none bg-transparent px-4 py-3 text-sm leading-relaxed text-slate-100 placeholder:text-slate-500 focus:outline-none"
           rows={Math.min(5, Math.max(1, chatMessage.split('\n').length))}
           style={{ minHeight: '56px' }}
         />
@@ -135,7 +135,7 @@ export default function ChatInputArea({
             <button
               type="button"
               onClick={onChatAttachmentButtonClick}
-              className="rounded-lg p-2 text-slate-500 transition-all duration-200 hover:bg-slate-100 hover:text-slate-700"
+              className="rounded-lg p-2 text-slate-400 transition-all duration-200 hover:bg-slate-800 hover:text-slate-100"
               title="Attach files"
             >
               <Plus size={18} />
@@ -143,7 +143,7 @@ export default function ChatInputArea({
             <button
               type="button"
               onClick={onInsertSlashTrigger}
-              className="rounded-lg p-2 text-slate-500 transition-all duration-200 hover:bg-slate-100 hover:text-slate-700"
+              className="rounded-lg p-2 text-slate-400 transition-all duration-200 hover:bg-slate-800 hover:text-slate-100"
               title="Commands"
               aria-label="Insert command"
             >
@@ -151,14 +151,14 @@ export default function ChatInputArea({
             </button>
             {showPaper2SlidesControls && (
               <>
-                <div className="mx-1 h-4 w-px bg-slate-200" aria-hidden="true" />
+                <div className="mx-1 h-4 w-px bg-slate-700/80" aria-hidden="true" />
                 <button
                   type="button"
                   onClick={onOpenPresentationModal}
                   className={`rounded-lg p-2 transition-all duration-200 ${
                     presentationStatus === 'running'
-                      ? 'bg-blue-50 text-blue-600 ring-1 ring-blue-200'
-                      : 'text-slate-500 hover:bg-slate-100 hover:text-blue-600'
+                      ? 'bg-sky-400/12 text-sky-100 ring-1 ring-sky-400/25'
+                      : 'text-slate-400 hover:bg-slate-800 hover:text-sky-200'
                   }`}
                   title={`Configure Paper2Slides: ${presentationOptionSummary || 'Options'}`}
                   aria-label="Configure Paper2Slides"
@@ -169,7 +169,7 @@ export default function ChatInputArea({
             )}
           </div>
           <div className="flex items-center gap-2">
-            <span className="mr-2 hidden text-[10px] text-slate-400 sm:inline-block">
+            <span className="mr-2 hidden text-[10px] text-slate-500 sm:inline-block">
               {isStreaming ? 'Generating...' : 'Enter to send'}
             </span>
             <button
@@ -177,10 +177,10 @@ export default function ChatInputArea({
               disabled={!chatMessage.trim() && !chatAttachments.length && !isStreaming}
               className={`rounded-xl p-2 transition-all duration-200 ${
                 !chatMessage.trim() && !chatAttachments.length && !isStreaming
-                  ? 'cursor-not-allowed bg-slate-100 text-slate-400'
+                  ? 'cursor-not-allowed bg-slate-800 text-slate-600'
                   : isStreaming
-                    ? 'bg-red-50 text-red-600 hover:bg-red-100'
-                    : 'bg-blue-600 text-white shadow-sm hover:bg-blue-700'
+                    ? 'bg-rose-500/15 text-rose-300 hover:bg-rose-500/25'
+                    : 'bg-[linear-gradient(135deg,rgba(56,189,248,0.92),rgba(59,130,246,0.9))] text-white shadow-[0_12px_30px_-16px_rgba(56,189,248,0.85)] hover:bg-[linear-gradient(135deg,rgba(103,232,249,0.95),rgba(96,165,250,0.92))]'
               }`}
               title={isStreaming ? 'Stop current agent response' : 'Send message'}
             >
@@ -197,7 +197,7 @@ export default function ChatInputArea({
           onChange={onChatAttachmentChange}
         />
         {isMentionOpen && (
-          <div className="absolute bottom-full left-0 z-20 mb-2 max-h-48 w-64 overflow-y-auto rounded-lg border border-slate-200 bg-white/90 shadow-xl backdrop-blur-md">
+          <div className="absolute bottom-full left-0 z-20 mb-2 max-h-48 w-64 overflow-y-auto rounded-lg border border-slate-700/80 bg-slate-900/95 shadow-xl backdrop-blur-md">
             {mentionSuggestions.length ? (
               mentionSuggestions.map((file, index) => (
                 <button
@@ -209,8 +209,8 @@ export default function ChatInputArea({
                   }}
                   className={`flex w-full items-center px-3 py-2 text-left text-xs transition-all duration-200 ${
                     index === mentionSelectedIndex
-                      ? 'bg-blue-50 text-blue-700'
-                      : 'text-slate-700 hover:bg-slate-50'
+                      ? 'bg-sky-500/15 text-sky-200'
+                      : 'text-slate-200 hover:bg-slate-800'
                   }`}
                 >
                   <FileIcon size={16} className="mr-2 text-slate-500" />
@@ -218,12 +218,12 @@ export default function ChatInputArea({
                 </button>
               ))
             ) : (
-              <div className="px-3 py-2 text-xs text-slate-500">No matching files</div>
+              <div className="px-3 py-2 text-xs text-slate-400">No matching files</div>
             )}
           </div>
         )}
         {isCommandOpen && (
-          <div className="absolute bottom-full left-0 z-20 mb-2 max-h-48 w-72 overflow-y-auto rounded-lg border border-slate-200 bg-white/90 shadow-xl backdrop-blur-md">
+          <div className="absolute bottom-full left-0 z-20 mb-2 max-h-48 w-72 overflow-y-auto rounded-lg border border-slate-700/80 bg-slate-900/95 shadow-xl backdrop-blur-md">
             {commandSuggestions.length ? (
               commandSuggestions.map((command, index) => (
                 <button
@@ -235,18 +235,18 @@ export default function ChatInputArea({
                   }}
                   className={`w-full px-3 py-2 text-left text-xs transition-all duration-200 ${
                     index === commandSelectedIndex
-                      ? 'bg-blue-50 text-blue-700'
-                      : 'text-slate-700 hover:bg-slate-50'
+                      ? 'bg-sky-500/15 text-sky-200'
+                      : 'text-slate-200 hover:bg-slate-800'
                   }`}
                 >
                   <div className="flex flex-col">
                     <span className="font-semibold">{command.command}</span>
-                    <span className="text-[11px] text-slate-500">{command.description}</span>
+                    <span className="text-[11px] text-slate-400">{command.description}</span>
                   </div>
                 </button>
               ))
             ) : (
-              <div className="px-3 py-2 text-xs text-slate-500">No matching commands, skills, or MCP servers</div>
+              <div className="px-3 py-2 text-xs text-slate-400">No matching commands, skills, or MCP servers</div>
             )}
           </div>
         )}

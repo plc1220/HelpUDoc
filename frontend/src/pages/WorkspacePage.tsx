@@ -2123,8 +2123,9 @@ export default function WorkspacePage() {
       }
       try {
         const fileWithContent = await getFileContent(selectedWorkspace.id, selectedFile.id);
-        setSelectedFileDetails(fileWithContent);
-        const content = fileWithContent.content || '';
+        const hydratedFile = { ...selectedFile, ...fileWithContent };
+        setSelectedFileDetails(hydratedFile);
+        const content = hydratedFile.content || '';
         setFileContent(content);
         lastAutoSavedContentRef.current = content;
       } catch (error) {
