@@ -291,18 +291,23 @@ const FileEditor: React.FC<FileEditorProps> = ({
     const model = editorInstance.getModel();
     if (!model) return;
 
-    const { MonacoBinding } = await import('y-monaco');
-    if (collabSessionRef.current !== session || editorRef.current !== editorInstance) {
-      return;
-    }
+    try {
+      const { MonacoBinding } = await import('y-monaco');
+      if (collabSessionRef.current !== session || editorRef.current !== editorInstance) {
+        return;
+      }
 
-    monacoBindingRef.current?.destroy();
-    monacoBindingRef.current = new MonacoBinding(
-      session.yText,
-      model,
-      new Set([editorInstance]),
-      session.provider.awareness ?? undefined,
-    );
+      monacoBindingRef.current?.destroy();
+      monacoBindingRef.current = new MonacoBinding(
+        session.yText,
+        model,
+        new Set([editorInstance]),
+        session.provider.awareness ?? undefined,
+      );
+      setCollabReady(true);
+    } catch (error) {
+      console.error('Failed to initialize Monaco collaboration binding', error);
+    }
   }, [fileName]);
 
   useEffect(() => {
@@ -323,7 +328,7 @@ const FileEditor: React.FC<FileEditorProps> = ({
 
     const session = createCollabSession(workspaceId, fileId);
     collabSessionRef.current = session;
-    setCollabReady(true);
+    setCollabReady(false);
     setConnectionStatus('connecting');
     hasSeededRef.current = false;
 
@@ -559,7 +564,7 @@ const FileEditor: React.FC<FileEditorProps> = ({
           </div>
         ) : (
           <Suspense fallback={<EditorLoadingState />}>
-            <MonacoEditor
+          <MonacoEditor
               height="100%"
               language={getLanguage(file.name)}
               defaultValue={fileContent}
@@ -571,6 +576,7 @@ const FileEditor: React.FC<FileEditorProps> = ({
               }}
               theme={monacoTheme}
               options={{
+                readOnly: !collabReady,
                 wordWrap: 'on',
                 wrappingIndent: 'indent',
                 minimap: { enabled: false },
