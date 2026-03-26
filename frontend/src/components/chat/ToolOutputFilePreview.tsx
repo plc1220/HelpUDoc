@@ -1,11 +1,14 @@
-import { useEffect, useState } from 'react';
+import { Suspense, lazy, useEffect, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
+import type { Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
-import PlotlyChart, { type PlotlySpec } from '../PlotlyChart';
+import type { PlotlySpec } from '../PlotlyChart';
 import { getFiles, getFileContent, getWorkspaceFilePreview } from '../../services/fileApi';
 import type { File as WorkspaceFile, ToolOutputFile } from '../../types';
 import { inferPreviewEncoding } from '../../utils/files';
+
+const PlotlyChart = lazy(() => import('../PlotlyChart'));
 
 type FilePreviewPayload = {
   path: string;
@@ -29,7 +32,7 @@ export default function ToolOutputFilePreview({
 }: {
   workspaceId?: string;
   file: ToolOutputFile;
-  markdownComponents?: Record<string, any>;
+  markdownComponents?: Components;
 }) {
   const preBaseClass =
     'mt-2 w-full max-w-full min-w-0 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded p-3 text-xs';
@@ -160,7 +163,9 @@ export default function ToolOutputFilePreview({
       }
       return (
         <div className="mt-2 rounded border border-gray-200 bg-white p-2">
-          <PlotlyChart spec={spec} minHeight={280} />
+          <Suspense fallback={<div className="flex min-h-[280px] items-center justify-center text-sm text-slate-500">Loading chart…</div>}>
+            <PlotlyChart spec={spec} minHeight={280} />
+          </Suspense>
         </div>
       );
     } catch {

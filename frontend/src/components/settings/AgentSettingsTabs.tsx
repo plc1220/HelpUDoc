@@ -1,11 +1,12 @@
-import { useState, useEffect, useCallback } from 'react';
+import { Suspense, lazy, useState, useEffect, useCallback } from 'react';
 import { Wrench, Library, Loader2 } from 'lucide-react';
 import { fetchAgentConfig, saveAgentConfig } from '../../services/settingsApi';
 import ToolsTab, { type AgentConfig } from './ToolsTab';
-import SkillsRegistryTab from './SkillsRegistryTab';
 import { SettingsEmptyState, SettingsLoadingState, SettingsTabPanel, SettingsTabs } from './SettingsScaffold';
 import YAML from 'yaml';
 import { getAuthUser } from '../../auth/authStore';
+
+const SkillsRegistryTab = lazy(() => import('./SkillsRegistryTab'));
 
 const AgentSettingsTabs = () => {
     const [activeTab, setActiveTab] = useState<'tools' | 'skills'>('skills');
@@ -106,7 +107,9 @@ const AgentSettingsTabs = () => {
                     <ToolsTab config={config} onSave={handleSave} isSaving={saving} />
                 )}
                 {activeTab === 'skills' && (
-                    <SkillsRegistryTab />
+                    <Suspense fallback={<SettingsLoadingState label="Loading skill registry..." />}>
+                        <SkillsRegistryTab />
+                    </Suspense>
                 )}
             </SettingsTabPanel>
         </div>

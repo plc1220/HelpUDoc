@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Plus,
   RefreshCw,
@@ -19,7 +19,6 @@ import {
   Minimize2,
   Maximize2,
 } from 'lucide-react';
-import Editor from '@monaco-editor/react';
 import {
   applyGithubSkillImport,
   applySkillBuilderActions,
@@ -43,6 +42,9 @@ import {
   type SkillBuilderContextFile,
 } from '../../services/settingsApi';
 import type { SkillDefinition } from '../../types';
+import EditorLoadingState from '../EditorLoadingState';
+
+const MonacoEditor = lazy(() => import('@monaco-editor/react'));
 
 const BUILDER_COLLAPSED_KEY = 'settings.skillBuilder.collapsed';
 
@@ -965,22 +967,24 @@ const SkillsRegistryTab: React.FC = () => {
                       <Loader2 size={24} className="animate-spin text-slate-500" />
                     </div>
                   ) : selectedFile ? (
-                    <Editor
-                      height="100%"
-                      theme="vs-dark"
-                      language={getLanguage(selectedFile)}
-                      value={fileContent}
-                      onChange={(value) => setFileContent(value || '')}
-                      options={{
-                        minimap: { enabled: false },
-                        fontSize: 13,
-                        lineHeight: 20,
-                        wordWrap: 'on',
-                        scrollBeyondLastLine: false,
-                        automaticLayout: true,
-                        padding: { top: 12, bottom: 12 },
-                      }}
-                    />
+                    <Suspense fallback={<EditorLoadingState />}>
+                      <MonacoEditor
+                        height="100%"
+                        theme="vs-dark"
+                        language={getLanguage(selectedFile)}
+                        value={fileContent}
+                        onChange={(value) => setFileContent(value || '')}
+                        options={{
+                          minimap: { enabled: false },
+                          fontSize: 13,
+                          lineHeight: 20,
+                          wordWrap: 'on',
+                          scrollBeyondLastLine: false,
+                          automaticLayout: true,
+                          padding: { top: 12, bottom: 12 },
+                        }}
+                      />
+                    </Suspense>
                   ) : (
                     <div className="flex flex-col items-center justify-center h-full text-slate-500 bg-slate-100">
                       <p className="text-sm">Select a file to edit</p>

@@ -1,15 +1,16 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import mermaid from 'mermaid';
+import React, { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import Papa from 'papaparse';
-import PlotlyChart, { type PlotlySpec } from './PlotlyChart';
+import type { PlotlySpec } from './PlotlyChart';
 import type { File } from '../types';
 import {
   configureMermaid,
   createMarkdownComponents,
   useMermaidColorMode,
 } from './markdown/MarkdownShared';
+
+const PlotlyChart = lazy(() => import('./PlotlyChart'));
 
 interface FileRendererProps {
   file: File | null;
@@ -145,9 +146,9 @@ const FileRenderer: React.FC<FileRendererProps> = ({
         setMermaidError(null);
         try {
           mermaidRef.current.innerHTML = '';
-          configureMermaid(colorMode);
+          const mermaid = await configureMermaid(colorMode);
           // Validate syntax before rendering to avoid Mermaid's error SVG
-          mermaid.parse(fileContent);
+          await mermaid.parse(fileContent);
           const renderId = `${mermaidIdRef.current}-${Date.now()}`;
           const { svg } = await mermaid.render(renderId, fileContent);
           if (!cancelled && mermaidRef.current) {
@@ -333,7 +334,11 @@ const FileRenderer: React.FC<FileRendererProps> = ({
         if (!Array.isArray(spec.data)) {
           throw new Error('Plotly spec must include a top-level "data" array.');
         }
-        return <PlotlyChart spec={spec} />;
+        return (
+          <Suspense fallback={<div className="flex h-full items-center justify-center text-sm text-slate-500">Loading chart…</div>}>
+            <PlotlyChart spec={spec} />
+          </Suspense>
+        );
       } catch (error) {
         return (
           <div className="flex h-full items-center justify-center px-4 text-sm text-red-600">

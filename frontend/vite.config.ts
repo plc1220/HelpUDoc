@@ -7,4 +7,53 @@ export default defineConfig({
   css: {
     postcss: './postcss.config.js',
   },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes('node_modules')) {
+            return undefined
+          }
+
+          if (id.includes('monaco-editor') || id.includes('@monaco-editor')) {
+            return 'monaco'
+          }
+
+          if (id.includes('@mdxeditor')) {
+            return 'mdxeditor'
+          }
+
+          if (id.includes('@hocuspocus') || id.includes('y-monaco') || id.includes('/yjs/')) {
+            return 'collab'
+          }
+
+          if (id.includes('plotly.js') || id.includes('react-plotly.js')) {
+            return 'plotly'
+          }
+
+          if (id.includes('mermaid')) {
+            return 'mermaid'
+          }
+
+          if (id.includes('lucide-react')) {
+            return 'icons'
+          }
+
+          if (id.includes('react-markdown') || id.includes('remark-') || id.includes('rehype-')) {
+            return 'markdown'
+          }
+
+          if (id.includes('@mui') || id.includes('@emotion')) {
+            return 'mui'
+          }
+
+          if (id.includes('react') || id.includes('react-router')) {
+            return 'react-vendor'
+          }
+
+          return 'vendor'
+        },
+      },
+    },
+  },
 })
