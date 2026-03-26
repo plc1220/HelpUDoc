@@ -1,6 +1,5 @@
 /* eslint-disable react-refresh/only-export-components */
 import { Children, isValidElement, useEffect, useRef, useState, type ReactNode } from 'react';
-import mermaid from 'mermaid';
 import type { Components } from 'react-markdown';
 import { getWorkspaceFilePreview } from '../../services/fileApi';
 import PlotlyChart, { type PlotlySpec } from '../PlotlyChart';
@@ -28,6 +27,23 @@ type MarkdownComponentOptions = {
     className?: string;
     children: ReactNode;
   }) => ReactNode;
+};
+
+const getMermaidModuleUrl = () => {
+  const link = document.querySelector<HTMLLinkElement>('link[rel="modulepreload"][href*="mermaid"]');
+  if (!link?.href) {
+    throw new Error('Mermaid asset URL is unavailable.');
+  }
+  return link.href;
+};
+
+let mermaidRuntimePromise: Promise<typeof import('mermaid')> | null = null;
+
+const loadMermaidRuntime = async () => {
+  if (!mermaidRuntimePromise) {
+    mermaidRuntimePromise = import(/* @vite-ignore */ getMermaidModuleUrl());
+  }
+  return mermaidRuntimePromise;
 };
 
 const BLOCK_LEVEL_TAGS = ['div', 'pre', 'table', 'blockquote', 'ul', 'ol', 'hr'];
@@ -133,7 +149,8 @@ export const useMermaidColorMode = () => {
   return colorMode;
 };
 
-export const configureMermaid = (mode: MermaidColorMode) => {
+export const configureMermaid = async (mode: MermaidColorMode) => {
+  const mermaid = (await loadMermaidRuntime()).default;
   mermaid.initialize({
     startOnLoad: false,
     securityLevel: 'loose',
@@ -141,6 +158,7 @@ export const configureMermaid = (mode: MermaidColorMode) => {
     themeVariables: buildMermaidTheme(mode),
     fontFamily: 'Inter, "Segoe UI", Arial, sans-serif',
   });
+  return mermaid;
 };
 
 export const extractCodeText = (value: ReactNode): string => {
@@ -230,7 +248,7 @@ export const MermaidDiagram = ({
       try {
         setErrorMessage(null);
         diagramRef.current.innerHTML = '';
-        configureMermaid(colorMode);
+        const mermaid = await configureMermaid(colorMode);
         await mermaid.parse(chart);
         const renderId = `${idRef.current}-${Date.now()}`;
         const { svg } = await mermaid.render(renderId, chart);
