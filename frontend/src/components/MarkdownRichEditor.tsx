@@ -118,7 +118,7 @@ const MermaidCodeBlockEditor = ({
             className={`min-h-[240px] w-full resize-y rounded-2xl border p-4 font-mono text-sm leading-relaxed focus:outline-none ${
               isDarkMode
                 ? 'border-slate-800 bg-[#040816] text-slate-100 focus:border-sky-400'
-                : 'border-slate-200 bg-slate-950 text-slate-100 focus:border-blue-400'
+                : 'border-slate-200 bg-white text-slate-800 focus:border-blue-400'
             }`}
           />
         </label>
@@ -153,6 +153,7 @@ type MarkdownRichEditorProps = {
   onChange: (value: string) => void;
   onError: (error: string) => void;
   onImageUpload: (image: File) => Promise<string>;
+  colorMode: 'light' | 'dark';
 };
 
 const MarkdownRichEditor = forwardRef<MarkdownRichEditorHandle, MarkdownRichEditorProps>(({
@@ -160,6 +161,7 @@ const MarkdownRichEditor = forwardRef<MarkdownRichEditorHandle, MarkdownRichEdit
   onChange,
   onError,
   onImageUpload,
+  colorMode,
 }, ref) => {
   const editorRef = useRef<MDXEditorMethods | null>(null);
 
@@ -213,8 +215,10 @@ const MarkdownRichEditor = forwardRef<MarkdownRichEditorHandle, MarkdownRichEdit
     <MDXEditor
       ref={editorRef}
       markdown={markdown}
-      className="mdxeditor helpudoc-mdxeditor flex-1"
-      contentEditableClassName="prose prose-slate max-w-none helpudoc-markdown helpudoc-markdown-editor mdxeditor-root-contenteditable"
+      className={`mdxeditor helpudoc-mdxeditor flex-1 ${colorMode === 'dark' ? 'helpudoc-mdxeditor-dark' : 'helpudoc-mdxeditor-light'}`}
+      contentEditableClassName={`prose max-w-none helpudoc-markdown helpudoc-markdown-editor mdxeditor-root-contenteditable ${
+        colorMode === 'dark' ? 'prose-invert helpudoc-markdown-dark' : 'prose-slate helpudoc-markdown-light'
+      }`}
       onChange={onChange}
       onError={({ error }) => {
         console.error('MDXEditor markdown processing error:', error);

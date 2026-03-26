@@ -2,7 +2,7 @@
 import { Children, Suspense, isValidElement, lazy, useEffect, useRef, useState, type ReactNode } from 'react';
 import type { Components } from 'react-markdown';
 import { getWorkspaceFilePreview } from '../../services/fileApi';
-import type { PlotlySpec } from '../PlotlyChart';
+import { parsePlotlySpec } from '../../utils/plotlySpec';
 
 const PlotlyChart = lazy(() => import('../PlotlyChart'));
 
@@ -210,6 +210,8 @@ export const classifyCodeBlockLabel = (languageMatch: RegExpExecArray | null, co
 };
 
 const isExternalSource = (src: string) => /^(https?:|data:|blob:)/i.test(src);
+const isRootRelativeSource = (src: string) => src.startsWith('/');
+const isDirectRenderableSource = (src: string) => isExternalSource(src) || isRootRelativeSource(src);
 
 const MermaidFallback = ({
   chart,
@@ -295,20 +297,24 @@ export const WorkspaceMarkdownImage = ({
   alt,
   workspaceId,
   className,
+  colorMode,
 }: {
   src?: string;
   alt?: string;
   workspaceId?: string;
   className?: string;
+  colorMode: MermaidColorMode;
 }) => {
   const resolvedSrc = typeof src === 'string' ? src.trim() : '';
   const [preview, setPreview] = useState<WorkspaceImagePreview | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const statusTextClassName = colorMode === 'dark' ? 'text-slate-400' : 'text-slate-500';
+  const errorTextClassName = colorMode === 'dark' ? 'text-rose-300' : 'text-rose-600';
 
   useEffect(() => {
     let cancelled = false;
 
-    if (!resolvedSrc || isExternalSource(resolvedSrc) || !workspaceId) {
+    if (!resolvedSrc || isDirectRenderableSource(resolvedSrc) || !workspaceId) {
       setPreview(null);
       setLoadError(null);
       return undefined;
@@ -340,7 +346,7 @@ export const WorkspaceMarkdownImage = ({
     return null;
   }
 
-  if (isExternalSource(resolvedSrc)) {
+  if (isDirectRenderableSource(resolvedSrc)) {
     return (
       <img
         className={className || 'max-w-full h-auto rounded-lg shadow-md'}
@@ -353,7 +359,7 @@ export const WorkspaceMarkdownImage = ({
 
   if (!workspaceId) {
     return (
-      <span className="text-xs text-slate-500">
+      <span className={`text-xs ${statusTextClassName}`}>
         Image path: <code>{resolvedSrc}</code>
       </span>
     );
@@ -375,26 +381,39 @@ export const WorkspaceMarkdownImage = ({
 
   if (loadError) {
     return (
-      <span className="text-xs text-rose-600">
+      <span className={`text-xs ${errorTextClassName}`}>
         Unable to load image: <code>{loadError}</code>
       </span>
     );
   }
 
-  return <span className="text-xs text-slate-500">Loading image...</span>;
+  return <span className={`text-xs ${statusTextClassName}`}>Loading image...</span>;
 };
 
 export const createMarkdownComponents = ({
   workspaceId,
   colorMode,
-  codeBlockClassName = 'my-4 overflow-x-auto rounded-xl bg-gray-900 p-4 text-sm text-gray-100',
-  inlineCodeClassName = 'inline-code rounded-md px-1.5 py-0.5 font-mono text-xs',
-  imageClassName = 'max-w-full h-auto rounded-lg shadow-md',
-  paragraphClassName = 'mb-4 last:mb-0',
+  codeBlockClassName,
+  inlineCodeClassName,
+  imageClassName,
+  paragraphClassName,
   enablePlotly = true,
   codeBlockShell,
-}: MarkdownComponentOptions): Components => ({
-  p({ children }) {
+}: MarkdownComponentOptions): Components => {
+  const resolvedCodeBlockClassName = codeBlockClassName
+    || (colorMode === 'dark'
+      ? 'my-4 overflow-x-auto rounded-2xl border border-slate-700/70 bg-slate-950/90 p-4 text-sm text-slate-100 shadow-lg'
+      : 'my-4 overflow-x-auto rounded-2xl border border-slate-200 bg-white p-4 text-sm text-slate-900 shadow-sm');
+  const resolvedInlineCodeClassName = inlineCodeClassName
+    || (colorMode === 'dark'
+      ? 'inline-code rounded-md border border-slate-700/70 bg-slate-900/80 px-1.5 py-0.5 font-mono text-xs text-slate-100'
+      : 'inline-code rounded-md border border-slate-200 bg-slate-100 px-1.5 py-0.5 font-mono text-xs text-slate-800');
+  const resolvedImageClassName = imageClassName || 'max-w-full h-auto rounded-lg shadow-md';
+  const resolvedParagraphClassName = paragraphClassName
+    || `mb-4 last:mb-0 leading-relaxed ${colorMode === 'dark' ? 'text-slate-200' : 'text-slate-700'}`;
+
+  return {
+    p({ children }) {
     const childArray = Children.toArray(children);
     const containsBlockChild = childArray.some((child) => {
       if (!isValidElement(child)) {
@@ -426,26 +445,27 @@ export const createMarkdownComponents = ({
       return false;
     });
     const Element: 'p' | 'div' = containsBlockChild ? 'div' : 'p';
-    return <Element className={paragraphClassName}>{children}</Element>;
-  },
-  img({ src, alt }) {
+    return <Element className={resolvedParagraphClassName}>{children}</Element>;
+    },
+    img({ src, alt }) {
     return (
       <WorkspaceMarkdownImage
         src={src}
         alt={alt}
         workspaceId={workspaceId}
-        className={imageClassName}
+        className={resolvedImageClassName}
+        colorMode={colorMode}
       />
     );
-  },
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  code({ inline, className, children, node, ...props }: any) {
+    },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    code({ inline, className, children, node, ...props }: any) {
     const codeContent = extractCodeText(children).replace(/\n$/, '');
     const isInline = inferInlineCode(inline, className, codeContent, node);
 
     if (isInline) {
       return (
-        <code className={`${inlineCodeClassName} ${className || ''}`.trim()} {...props}>
+        <code className={`${resolvedInlineCodeClassName} ${className || ''}`.trim()} {...props}>
           {children}
         </code>
       );
@@ -466,20 +486,26 @@ export const createMarkdownComponents = ({
 
     if (enablePlotly && language === 'plotly') {
       try {
-        const spec = JSON.parse(codeContent) as PlotlySpec;
-        if (!spec || typeof spec !== 'object' || !Array.isArray(spec.data)) {
+        const spec = parsePlotlySpec(codeContent);
+        if (!spec || typeof spec !== 'object') {
           throw new Error('Plotly spec must include a top-level "data" array.');
         }
         return (
-          <div className="my-4 overflow-hidden rounded-xl border border-gray-200 bg-white p-2">
-            <Suspense fallback={<div className="flex min-h-[360px] items-center justify-center text-sm text-slate-500">Loading chart…</div>}>
+          <div className={`my-4 overflow-hidden rounded-xl border p-2 ${
+            colorMode === 'dark' ? 'border-slate-700/70 bg-slate-950/80' : 'border-gray-200 bg-white'
+          }`}>
+            <Suspense fallback={<div className={`flex min-h-[360px] items-center justify-center text-sm ${
+              colorMode === 'dark' ? 'text-slate-400' : 'text-slate-500'
+            }`}>Loading chart…</div>}>
               <PlotlyChart spec={spec} minHeight={360} />
             </Suspense>
           </div>
         );
       } catch (error) {
         return (
-          <pre className="my-4 overflow-x-auto rounded-xl bg-red-50 p-4 text-sm text-red-700">
+          <pre className={`my-4 overflow-x-auto rounded-xl p-4 text-sm ${
+            colorMode === 'dark' ? 'bg-rose-950/20 text-rose-200' : 'bg-red-50 text-red-700'
+          }`}>
             Invalid Plotly JSON: {error instanceof Error ? error.message : 'Unknown error'}
           </pre>
         );
@@ -500,11 +526,12 @@ export const createMarkdownComponents = ({
     }
 
     return (
-      <pre className={codeBlockClassName}>
+      <pre className={resolvedCodeBlockClassName}>
         <code className={`font-mono ${className || ''}`.trim()} {...props}>
           {children}
         </code>
       </pre>
     );
-  },
-});
+    },
+  };
+};

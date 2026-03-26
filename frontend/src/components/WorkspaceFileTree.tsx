@@ -22,6 +22,7 @@ import {
 
 interface WorkspaceFileTreeProps {
   files: WorkspaceFile[];
+  colorMode: 'light' | 'dark';
   selectedFileId: string | null;
   selectedFiles: Set<string>;
   ragStatuses: Record<string, { status?: string; updatedAt?: string; error?: string }>;
@@ -48,7 +49,7 @@ const getRagStatus = (
   return typeof file.name === 'string' ? ragStatuses[file.name] : undefined;
 };
 
-const SlidingFileName: React.FC<{ name: string }> = ({ name }) => {
+const SlidingFileName: React.FC<{ name: string; colorMode: 'light' | 'dark' }> = ({ name, colorMode }) => {
   const viewportRef = useRef<HTMLSpanElement | null>(null);
   const textRef = useRef<HTMLSpanElement | null>(null);
   const [overflowOffset, setOverflowOffset] = useState(0);
@@ -78,7 +79,9 @@ const SlidingFileName: React.FC<{ name: string }> = ({ name }) => {
     <span ref={viewportRef} className="block min-w-0 overflow-hidden whitespace-nowrap">
       <span
         ref={textRef}
-        className="block w-max max-w-full truncate text-sm leading-snug text-slate-800 transition-transform duration-500 ease-out group-hover:truncate-none group-focus-within:truncate-none"
+        className={`block w-max max-w-full truncate text-sm leading-snug transition-transform duration-500 ease-out group-hover:truncate-none group-focus-within:truncate-none ${
+          colorMode === 'dark' ? 'text-slate-200' : 'text-slate-800'
+        }`}
         style={overflowOffset > 0 ? { transform: `translateX(calc(${overflowOffset * -1}px * var(--file-name-slide, 0)))` } : undefined}
       >
         {name}
@@ -101,6 +104,7 @@ const TreeFileRow: React.FC<{
   draggedFileId: string | null;
   setDraggedFileId: (fileId: string | null) => void;
   setDropTargetPath: (path: string | null) => void;
+  colorMode: 'light' | 'dark';
 }> = ({
   node,
   selected,
@@ -115,6 +119,7 @@ const TreeFileRow: React.FC<{
   draggedFileId,
   setDraggedFileId,
   setDropTargetPath,
+  colorMode,
 }) => {
   const { file } = node;
   const isPendingJob = file.mimeType === 'application/vnd.helpudoc.paper2slides-job';
@@ -126,12 +131,26 @@ const TreeFileRow: React.FC<{
   const isDraft = isDraftWorkspaceFile(file);
   const isDraggable = !isPendingJob && !isDraft;
   const isBeingDragged = draggedFileId === file.id;
+  const isDarkMode = colorMode === 'dark';
+  const rowClassName = selected
+    ? isDarkMode
+      ? 'bg-sky-500/12 ring-1 ring-sky-400/20'
+      : 'bg-blue-50/80'
+    : isDarkMode
+      ? 'hover:bg-slate-800/80'
+      : 'hover:bg-slate-100/80';
+  const actionsClassName = isDarkMode
+    ? 'border-slate-700/80 bg-slate-950/96 shadow-[0_18px_50px_-34px_rgba(2,6,23,0.98)]'
+    : 'border-slate-200/80 bg-white/95 shadow-sm';
+  const actionButtonClassName = isDarkMode
+    ? 'pointer-events-auto rounded p-1.5 text-slate-400 hover:bg-slate-800 hover:text-slate-100'
+    : 'pointer-events-auto rounded p-1.5 text-slate-500 hover:bg-slate-200 hover:text-slate-700';
 
   return (
     <div
-      className={`group relative flex items-start gap-2 rounded-lg px-2 py-2 transition-colors ${
-        selected ? 'bg-blue-50/80' : 'hover:bg-slate-100/80'
-      } ${isBeingDragged ? 'opacity-40' : ''}`}
+      className={`group relative flex items-start gap-2 rounded-lg px-2 py-2 transition-colors ${rowClassName} ${
+        isBeingDragged ? 'opacity-40' : ''
+      }`}
       draggable={isDraggable}
       onDragStart={(event) => {
         if (!isDraggable) {
@@ -173,11 +192,11 @@ const TreeFileRow: React.FC<{
           <span className="shrink-0" aria-hidden="true">
             {fileIcon}
           </span>
-          <SlidingFileName name={displayName} />
+          <SlidingFileName name={displayName} colorMode={colorMode} />
         </div>
       </button>
       {!isPendingJob && (
-        <div className="pointer-events-none absolute right-2 top-1/2 z-10 flex -translate-y-1/2 items-center gap-1 rounded-lg border border-slate-200/80 bg-white/95 pl-2 shadow-sm opacity-0 backdrop-blur-sm transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+        <div className={`pointer-events-none absolute right-2 top-1/2 z-10 flex -translate-y-1/2 items-center gap-1 rounded-lg border pl-2 opacity-0 backdrop-blur-sm transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 ${actionsClassName}`}>
           {file.publicUrl && !isDraft && (
             <button
               type="button"
@@ -185,7 +204,7 @@ const TreeFileRow: React.FC<{
                 event.stopPropagation();
                 onCopyPublicUrl(file);
               }}
-              className="pointer-events-auto rounded p-1.5 text-slate-500 hover:bg-slate-200 hover:text-slate-700"
+              className={actionButtonClassName}
               title={file.publicUrl}
             >
               <LinkIcon size={14} />
@@ -198,7 +217,7 @@ const TreeFileRow: React.FC<{
                 event.stopPropagation();
                 onRenameFile(file);
               }}
-              className="pointer-events-auto rounded p-1.5 text-slate-500 hover:bg-slate-200 hover:text-slate-700"
+              className={actionButtonClassName}
               title="Rename"
             >
               <Edit size={14} />
@@ -210,7 +229,7 @@ const TreeFileRow: React.FC<{
               event.stopPropagation();
               onDeleteFile(file);
             }}
-            className="pointer-events-auto rounded p-1.5 text-slate-500 hover:bg-slate-200 hover:text-slate-700"
+            className={actionButtonClassName}
             title="Delete"
           >
             <Trash size={14} />
@@ -230,6 +249,7 @@ const TreeFolderRow: React.FC<{
   setDropTargetPath: (path: string | null) => void;
   dropTargetPath: string | null;
   children: React.ReactNode;
+  colorMode: 'light' | 'dark';
 }> = ({
   node,
   expanded,
@@ -239,16 +259,23 @@ const TreeFolderRow: React.FC<{
   setDropTargetPath,
   dropTargetPath,
   children,
+  colorMode,
 }) => {
   const isDropTarget = dropTargetPath === node.path;
   const canAcceptDrop = Boolean(draggedFileId);
+  const isDarkMode = colorMode === 'dark';
+  const containerClassName = isDropTarget
+    ? isDarkMode
+      ? 'bg-sky-500/10 ring-1 ring-sky-400/25'
+      : 'bg-blue-50 ring-1 ring-blue-100'
+    : isDarkMode
+      ? 'hover:bg-slate-800/80'
+      : 'hover:bg-slate-100/80';
 
   return (
     <div className="select-none">
       <div
-        className={`group flex items-center gap-2 rounded-lg px-2 py-2 transition-colors ${
-          isDropTarget ? 'bg-blue-50 ring-1 ring-blue-100' : 'hover:bg-slate-100/80'
-        }`}
+        className={`group flex items-center gap-2 rounded-lg px-2 py-2 transition-colors ${containerClassName}`}
         onDragOver={(event) => {
           if (!canAcceptDrop) {
             return;
@@ -279,7 +306,11 @@ const TreeFolderRow: React.FC<{
         <button
           type="button"
           onClick={() => onToggle(node.path)}
-          className="inline-flex h-7 w-7 items-center justify-center rounded-md text-slate-500 hover:bg-slate-200 hover:text-slate-800"
+          className={`inline-flex h-7 w-7 items-center justify-center rounded-md transition-colors ${
+            isDarkMode
+              ? 'text-slate-400 hover:bg-slate-700/70 hover:text-slate-100'
+              : 'text-slate-500 hover:bg-slate-200 hover:text-slate-800'
+          }`}
           aria-label={`${expanded ? 'Collapse' : 'Expand'} ${node.name}`}
         >
           {expanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
@@ -292,8 +323,10 @@ const TreeFolderRow: React.FC<{
           title={node.path || node.name}
         >
           <div className="flex items-center gap-2">
-            <span className="truncate text-sm font-medium text-slate-800">{getFolderLabel(node)}</span>
-            <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-600">
+            <span className={`truncate text-sm font-medium ${isDarkMode ? 'text-slate-200' : 'text-slate-800'}`}>{getFolderLabel(node)}</span>
+            <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+              isDarkMode ? 'bg-slate-800 text-slate-400' : 'bg-slate-200 text-slate-600'
+            }`}>
               {node.fileCount}
             </span>
           </div>
@@ -323,6 +356,7 @@ const renderTreeNodes = (
     setDraggedFileId: (fileId: string | null) => void;
     setDropTargetPath: (path: string | null) => void;
     dropTargetPath: string | null;
+    colorMode: 'light' | 'dark';
   },
 ): React.ReactNode => {
   return nodes.map((node) => {
@@ -338,6 +372,7 @@ const renderTreeNodes = (
           draggedFileId={options.draggedFileId}
           setDropTargetPath={options.setDropTargetPath}
           dropTargetPath={options.dropTargetPath}
+          colorMode={options.colorMode}
         >
           {renderTreeNodes(node.children, options)}
         </TreeFolderRow>
@@ -360,6 +395,7 @@ const renderTreeNodes = (
         draggedFileId={options.draggedFileId}
         setDraggedFileId={options.setDraggedFileId}
         setDropTargetPath={options.setDropTargetPath}
+        colorMode={options.colorMode}
       />
     );
   });
@@ -367,6 +403,7 @@ const renderTreeNodes = (
 
 export default function WorkspaceFileTree({
   files,
+  colorMode,
   selectedFileId,
   selectedFiles,
   ragStatuses,
@@ -378,6 +415,7 @@ export default function WorkspaceFileTree({
   onDeleteFile,
   onMoveFile,
 }: WorkspaceFileTreeProps) {
+  const isDarkMode = colorMode === 'dark';
   const tree = useMemo(() => buildWorkspaceFileTree(files), [files]);
   const folderPaths = useMemo(() => collectWorkspaceFolderPaths(tree), [tree]);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
@@ -452,7 +490,9 @@ export default function WorkspaceFileTree({
 
   return (
     <div
-      className={`flex h-full min-h-0 flex-col overflow-hidden ${draggedFileId ? 'bg-blue-50/30' : ''}`}
+      className={`flex h-full min-h-0 flex-col overflow-hidden ${
+        draggedFileId ? (isDarkMode ? 'bg-sky-500/5' : 'bg-blue-50/30') : ''
+      }`}
       onDragOver={(event) => {
         if (!draggedFileId) {
           return;
@@ -482,14 +522,17 @@ export default function WorkspaceFileTree({
               setDraggedFileId,
               setDropTargetPath,
               dropTargetPath,
+              colorMode,
             })}
           </div>
         ) : (
-          <div className="flex h-full items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-6 py-12 text-center">
+          <div className={`flex h-full items-center justify-center rounded-2xl border border-dashed px-6 py-12 text-center ${
+            isDarkMode ? 'border-slate-700/70 bg-slate-900/50' : 'border-slate-200 bg-slate-50'
+          }`}>
             <div>
-              <Folder className="mx-auto mb-3 text-slate-300" size={24} />
-              <p className="text-sm font-medium text-slate-700">No files yet</p>
-              <p className="mt-1 text-xs text-slate-500">Upload files to start building a workspace hierarchy.</p>
+              <Folder className={`mx-auto mb-3 ${isDarkMode ? 'text-slate-600' : 'text-slate-300'}`} size={24} />
+              <p className={`text-sm font-medium ${isDarkMode ? 'text-slate-200' : 'text-slate-700'}`}>No files yet</p>
+              <p className={`mt-1 text-xs ${isDarkMode ? 'text-slate-500' : 'text-slate-500'}`}>Upload files to start building a workspace hierarchy.</p>
             </div>
           </div>
         )}

@@ -550,7 +550,9 @@ const FileEditor: React.FC<FileEditorProps> = ({
             {isRawView ? (
               <textarea
                 className={`flex-1 w-full h-full p-4 font-mono text-sm border-none resize-none focus:outline-none focus:ring-0 ${
-                  isDarkMode ? 'bg-[#040816] text-slate-100 placeholder:text-slate-500' : 'bg-white'
+                  isDarkMode
+                    ? 'bg-[#040816] text-slate-100 placeholder:text-slate-500'
+                    : 'bg-white text-slate-800 placeholder:text-slate-400'
                 }`}
                 value={fileContent}
                 onChange={(event) => {
@@ -581,6 +583,7 @@ const FileEditor: React.FC<FileEditorProps> = ({
                     }}
                     onError={setMdxError}
                     onImageUpload={handleImageUpload}
+                    colorMode={colorMode}
                   />
                 </Suspense>
               </>
