@@ -6,6 +6,7 @@ import ChatMessageBubble from './ChatMessageBubble';
 import type { RenderableInterruptAction } from './interruptActions';
 
 export default function ChatMessageList({
+  colorMode,
   messages,
   isStreaming,
   personaDisplayName,
@@ -38,6 +39,7 @@ export default function ChatMessageList({
   enableTrustedPlanMode,
   workspaceId,
 }: {
+  colorMode: 'light' | 'dark';
   messages: ConversationMessage[];
   isStreaming: boolean;
   personaDisplayName: string;
@@ -87,6 +89,7 @@ export default function ChatMessageList({
   enableTrustedPlanMode: () => Promise<boolean> | boolean;
   workspaceId?: string;
 }) {
+  const isDarkMode = colorMode === 'dark';
   const listRef = useRef<HTMLDivElement | null>(null);
   const [shouldAutoScroll, setShouldAutoScroll] = useState(true);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
@@ -133,8 +136,12 @@ export default function ChatMessageList({
       const dateLabel = formatDateLabel(message.updatedAt || message.createdAt);
       if (dateLabel && dateLabel !== previousDateLabel) {
         nodes.push(
-          <div key={`date-${message.id}-${dateLabel}`} className="sticky top-2 z-10 flex justify-center py-1 pointer-events-none">
-            <span className="rounded-full border border-slate-200/90 bg-white/85 px-3 py-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500 shadow-sm backdrop-blur">
+          <div key={`date-${message.id}-${dateLabel}`} className="pointer-events-none sticky top-2 z-10 flex justify-center py-1">
+            <span className={`rounded-full border px-3 py-1 text-[10px] font-semibold uppercase tracking-wide shadow-sm backdrop-blur ${
+              isDarkMode
+                ? 'border-slate-700/70 bg-slate-900/85 text-slate-300'
+                : 'border-slate-200/80 bg-slate-900 text-slate-100'
+            }`}>
               {dateLabel}
             </span>
           </div>,
@@ -175,6 +182,7 @@ export default function ChatMessageList({
           enableTrustedPlanMode={enableTrustedPlanMode}
           isStreaming={isStreaming}
           workspaceId={workspaceId}
+          colorMode={colorMode}
         />,
       );
     });
@@ -211,6 +219,8 @@ export default function ChatMessageList({
     workspaceId,
     handlePrepareInterruptAction,
     enableTrustedPlanMode,
+    colorMode,
+    isDarkMode,
   ]);
 
   return (
@@ -222,13 +232,23 @@ export default function ChatMessageList({
       >
         <div className="mx-auto w-full max-w-5xl space-y-4">
           {messages.length === 0 ? (
-            <div className="flex h-full min-h-[40vh] flex-col items-center justify-center text-center text-slate-400">
-              <div className="rounded-2xl border border-slate-200 bg-white/70 px-6 py-8 shadow-sm backdrop-blur-sm">
-                <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-slate-500">
+            <div className={`flex h-full min-h-[40vh] flex-col items-center justify-center text-center ${
+              isDarkMode ? 'text-slate-400' : 'text-slate-500'
+            }`}>
+              <div className={`rounded-3xl border px-6 py-8 backdrop-blur-sm ${
+                isDarkMode
+                  ? 'border-slate-700/70 bg-slate-900/75 shadow-[0_20px_50px_-32px_rgba(15,23,42,0.95)]'
+                  : 'border-slate-200/80 bg-white/92 shadow-[0_24px_60px_-40px_rgba(15,23,42,0.16)]'
+              }`}>
+                <div className={`mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full border ${
+                  isDarkMode
+                    ? 'border-slate-700/70 bg-slate-950/90 text-slate-300'
+                    : 'border-slate-200 bg-slate-100 text-slate-600'
+                }`}>
                   <MessageSquareText size={18} />
                 </div>
-                <p className="text-sm font-semibold text-slate-600">No messages yet</p>
-                <p className="mt-1 text-xs text-slate-500">Ask the agent to inspect files, generate content, or run a task.</p>
+                <p className={`text-sm font-semibold ${isDarkMode ? 'text-slate-100' : 'text-slate-900'}`}>No messages yet</p>
+                <p className={`mt-1 text-xs ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Ask the agent to inspect files, generate content, or run a task.</p>
               </div>
             </div>
           ) : (
@@ -240,7 +260,11 @@ export default function ChatMessageList({
         <button
           type="button"
           onClick={scrollToLatest}
-          className="absolute bottom-4 right-4 inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white/90 px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-lg backdrop-blur transition-all duration-200 hover:bg-white"
+          className={`absolute bottom-4 right-4 inline-flex items-center gap-1 rounded-full border px-3 py-1.5 text-xs font-semibold shadow-lg backdrop-blur transition-all duration-200 ${
+            isDarkMode
+              ? 'border-slate-700/70 bg-slate-900/95 text-slate-200 hover:bg-slate-800'
+              : 'border-slate-200 bg-white/95 text-slate-700 hover:bg-slate-50'
+          }`}
           title="Jump to latest message"
         >
           <ArrowDown size={14} />

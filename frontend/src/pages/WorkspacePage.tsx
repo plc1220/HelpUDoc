@@ -808,18 +808,32 @@ export default function WorkspacePage() {
       ...createMarkdownComponents({
         workspaceId: selectedWorkspace?.id,
         colorMode: colorMode === 'dark' ? 'dark' : 'light',
-        paragraphClassName: 'mb-4 leading-relaxed text-slate-700',
-        inlineCodeClassName: 'rounded-md bg-slate-200 px-1.5 py-0.5 font-mono text-xs text-slate-800',
+        paragraphClassName: `mb-4 leading-relaxed ${colorMode === 'dark' ? 'text-slate-200' : 'text-slate-700'}`,
+        inlineCodeClassName: colorMode === 'dark'
+          ? 'rounded-md border border-slate-700/70 bg-slate-900/80 px-1.5 py-0.5 font-mono text-xs text-slate-100'
+          : 'rounded-md border border-slate-200 bg-slate-100 px-1.5 py-0.5 font-mono text-xs text-slate-800',
         codeBlockShell: ({ blockId, codeContent, languageLabel, className, children }) => {
           const copyLabel = copiedCodeBlockId === blockId ? 'Copied' : 'Copy';
           return (
-            <div className="mb-4 mt-2 overflow-hidden rounded-2xl border border-slate-200 bg-slate-950/90 text-slate-100 shadow-lg">
-              <div className="flex items-center justify-between border-b border-slate-800 bg-slate-900/60 px-4 py-2 text-[11px] font-semibold tracking-wide uppercase text-slate-300">
+            <div className={`mb-4 mt-2 overflow-hidden rounded-2xl border shadow-lg ${
+              colorMode === 'dark'
+                ? 'border-slate-700/70 bg-slate-950/90 text-slate-100'
+                : 'border-slate-200 bg-white text-slate-900 shadow-[0_24px_60px_-40px_rgba(15,23,42,0.16)]'
+            }`}>
+              <div className={`flex items-center justify-between border-b px-4 py-2 text-[11px] font-semibold tracking-wide uppercase ${
+                colorMode === 'dark'
+                  ? 'border-slate-800 bg-slate-900/60 text-slate-300'
+                  : 'border-slate-200 bg-slate-50 text-slate-500'
+              }`}>
                 <span>{languageLabel}</span>
                 <button
                   type="button"
                   onClick={() => handleCopyCodeBlock(blockId, codeContent)}
-                  className="flex items-center gap-1 rounded-full border border-slate-600 px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest text-slate-200 hover:border-slate-400"
+                  className={`flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest ${
+                    colorMode === 'dark'
+                      ? 'border-slate-600 text-slate-200 hover:border-slate-400'
+                      : 'border-slate-300 text-slate-700 hover:border-slate-400'
+                  }`}
                 >
                   {copyLabel}
                 </button>
@@ -928,6 +942,7 @@ export default function WorkspacePage() {
     transition: 'flex-basis 0.35s ease, flex-grow 0.35s ease, width 0.35s ease',
   };
   const messageBubbleMaxWidth = isAgentPaneFullScreen ? '100%' : '720px';
+  const isDarkMode = colorMode === 'dark';
 
   const activeFile = selectedFileDetails || selectedFile;
   const activeFileName = activeFile?.name ?? '';
@@ -2123,8 +2138,9 @@ export default function WorkspacePage() {
       }
       try {
         const fileWithContent = await getFileContent(selectedWorkspace.id, selectedFile.id);
-        setSelectedFileDetails(fileWithContent);
-        const content = fileWithContent.content || '';
+        const hydratedFile = { ...selectedFile, ...fileWithContent };
+        setSelectedFileDetails(hydratedFile);
+        const content = hydratedFile.content || '';
         setFileContent(content);
         lastAutoSavedContentRef.current = content;
       } catch (error) {
@@ -4977,16 +4993,22 @@ export default function WorkspacePage() {
           }}
         >
           <div
-            className="flex bg-gray-100 font-sans h-full min-h-0 overflow-hidden"
+            className={`flex font-sans h-full min-h-0 overflow-hidden ${
+              isDarkMode ? 'bg-[#020817]' : 'bg-gray-100'
+            }`}
             style={{ height: layoutHeight }}
           >
             {/* Middle Pane: Files & Editor */}
             <div
-              className="flex flex-col border-r border-gray-200 min-w-0 min-h-0 overflow-hidden"
+              className={`flex flex-col min-w-0 min-h-0 overflow-hidden ${
+                isDarkMode ? 'border-r border-slate-800' : 'border-r border-gray-200'
+              }`}
               style={workspacePaneStyles}
             >
               {/* Workspace Header */}
-              <div className="p-4 border-b border-gray-200 flex justify-between items-center">
+              <div className={`p-4 flex justify-between items-center ${
+                isDarkMode ? 'border-b border-slate-800 bg-[#08111f]' : 'border-b border-gray-200'
+              }`}>
                 {selectedWorkspace ? (
                   isWorkspaceRenameActive && selectedWorkspace.canEdit ? (
                     <input
@@ -5007,7 +5029,11 @@ export default function WorkspacePage() {
                       }}
                       disabled={workspaceRenameBusy}
                       aria-label="Workspace name"
-                      className="w-full max-w-[28rem] rounded-lg border border-blue-200 bg-white px-3 py-1.5 text-xl font-semibold text-gray-800 outline-none ring-2 ring-blue-100 disabled:cursor-wait"
+                      className={`w-full max-w-[28rem] rounded-lg px-3 py-1.5 text-xl font-semibold outline-none ring-2 disabled:cursor-wait ${
+                        isDarkMode
+                          ? 'border border-sky-500/40 bg-slate-900 text-slate-100 ring-sky-500/20'
+                          : 'border border-blue-200 bg-white text-gray-800 ring-blue-100'
+                      }`}
                     />
                   ) : (
                     <button
@@ -5018,40 +5044,51 @@ export default function WorkspacePage() {
                         setIsWorkspaceRenameActive(true);
                       }}
                       className={`flex items-center gap-2 text-left text-xl font-semibold ${
-                        selectedWorkspace.canEdit ? 'text-gray-800 hover:text-blue-700' : 'cursor-default text-gray-800'
+                        selectedWorkspace.canEdit
+                          ? isDarkMode ? 'text-slate-100 hover:text-sky-300' : 'text-gray-800 hover:text-blue-700'
+                          : isDarkMode ? 'cursor-default text-slate-100' : 'cursor-default text-gray-800'
                       }`}
                     >
                       <span>{selectedWorkspace.name}</span>
-                      {selectedWorkspace.canEdit ? <Edit size={16} className="text-gray-400" /> : null}
+                      {selectedWorkspace.canEdit ? <Edit size={16} className={isDarkMode ? 'text-slate-500' : 'text-gray-400'} /> : null}
                     </button>
                   )
                 ) : (
-                  <h2 className="text-xl font-semibold text-gray-800">No workspace selected</h2>
+                  <h2 className={`text-xl font-semibold ${isDarkMode ? 'text-slate-100' : 'text-gray-800'}`}>No workspace selected</h2>
                 )}
               </div>
               <div className="flex-1 flex min-h-0">
                 {/* File Explorer */}
                 <div
-                  className="bg-white border-r border-gray-200 flex flex-col overflow-hidden min-h-0"
+                  className={`flex flex-col overflow-hidden min-h-0 ${
+                    isDarkMode ? 'bg-[#08111f] border-r border-slate-800' : 'bg-white border-r border-gray-200'
+                  }`}
                   style={filePaneStyles}
                 >
                   <div
-                    className={`p-4 border-b border-gray-200 flex items-center ${isFilePaneVisible ? 'justify-between' : 'justify-center'
+                    className={`p-4 flex items-center ${isFilePaneVisible ? 'justify-between' : 'justify-center'
+                      } ${isDarkMode ? 'border-b border-slate-800' : 'border-b border-gray-200'
                       }`}
                   >
                     <div className={`flex items-center ${isFilePaneVisible ? 'gap-3' : ''}`}>
                       <button
                         onClick={() => setIsFilePaneVisible(!isFilePaneVisible)}
-                        className="p-1.5 border rounded-full hover:bg-gray-100"
+                        className={`p-1.5 border rounded-full ${
+                          isDarkMode
+                            ? 'border-slate-700 text-slate-300 hover:bg-slate-800'
+                            : 'border-gray-200 hover:bg-gray-100'
+                        }`}
                         title={isFilePaneVisible ? 'Collapse files' : 'Expand files'}
                       >
                         <ChevronLeft
                           size={16}
-                          className={`text-gray-600 transition-transform duration-300 ${isFilePaneVisible ? '' : 'rotate-180'
+                          className={`transition-transform duration-300 ${
+                            isDarkMode ? 'text-slate-300' : 'text-gray-600'
+                          } ${isFilePaneVisible ? '' : 'rotate-180'
                             }`}
                         />
                       </button>
-                      {isFilePaneVisible && <h3 className="text-lg font-semibold text-gray-800">Files</h3>}
+                      {isFilePaneVisible && <h3 className={`text-lg font-semibold ${isDarkMode ? 'text-slate-100' : 'text-gray-800'}`}>Files</h3>}
                     </div>
                     {isFilePaneVisible && (
                       <div className="flex items-center space-x-1.5">
@@ -5065,38 +5102,48 @@ export default function WorkspacePage() {
                         <button
                           onClick={() => document.getElementById('file-upload')?.click()}
                           disabled={!selectedWorkspace}
-                          className="p-2 rounded-lg hover:bg-gray-100 disabled:opacity-50"
+                          className={`p-2 rounded-lg disabled:opacity-50 ${
+                            isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-100'
+                          }`}
                         >
-                          <Plus size={18} className="text-gray-600" />
+                          <Plus size={18} className={isDarkMode ? 'text-slate-300' : 'text-gray-600'} />
                         </button>
                         <button
                           onClick={handleRefreshFiles}
                           disabled={!selectedWorkspace}
-                          className="p-2 rounded-lg hover:bg-gray-100 disabled:opacity-50"
+                          className={`p-2 rounded-lg disabled:opacity-50 ${
+                            isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-100'
+                          }`}
                           title="Refresh files"
                         >
-                          <RotateCcw size={18} className="text-gray-600" />
+                          <RotateCcw size={18} className={isDarkMode ? 'text-slate-300' : 'text-gray-600'} />
                         </button>
                         <button
                           onClick={handleSelectAllFiles}
                           disabled={visibleFiles.length === 0}
-                          className="p-2 rounded-lg hover:bg-gray-100 disabled:opacity-50"
+                          className={`p-2 rounded-lg disabled:opacity-50 ${
+                            isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-100'
+                          }`}
                           title={allFilesSelected ? 'Clear selection' : 'Select all files'}
                         >
-                          <CheckSquare size={18} className="text-gray-600" />
+                          <CheckSquare size={18} className={isDarkMode ? 'text-slate-300' : 'text-gray-600'} />
                         </button>
                         <button
                           onClick={handleBulkDelete}
                           disabled={selectedFiles.size === 0}
-                          className="p-2 rounded-lg hover:bg-gray-100 disabled:opacity-50"
+                          className={`p-2 rounded-lg disabled:opacity-50 ${
+                            isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-100'
+                          }`}
                         >
-                          <Trash size={18} className="text-gray-600" />
+                          <Trash size={18} className={isDarkMode ? 'text-slate-300' : 'text-gray-600'} />
                         </button>
                       </div>
                     )}
                   </div>
                   {isFilePaneVisible && hiddenFileCount > 0 && (
-                    <div className="px-4 pb-2 text-xs text-gray-500 flex items-center justify-between">
+                    <div className={`px-4 pb-2 text-xs flex items-center justify-between ${
+                      isDarkMode ? 'text-slate-500' : 'text-gray-500'
+                    }`}>
                       <span>
                         {showSystemFiles
                           ? `Showing ${files.length} files`
@@ -5104,7 +5151,7 @@ export default function WorkspacePage() {
                       </span>
                       <button
                         type="button"
-                        className="text-blue-600 hover:text-blue-700"
+                        className={isDarkMode ? 'text-sky-400 hover:text-sky-300' : 'text-blue-600 hover:text-blue-700'}
                         onClick={() => setShowSystemFiles((prev) => !prev)}
                       >
                         {showSystemFiles ? 'Hide system files' : `Show ${hiddenFileCount} hidden`}
@@ -5119,6 +5166,7 @@ export default function WorkspacePage() {
                     <div className="h-full min-h-0 px-4 py-3">
                       <WorkspaceFileTree
                         files={visibleFiles}
+                        colorMode={colorMode}
                         selectedFileId={selectedFile?.id || null}
                         selectedFiles={selectedFiles}
                         ragStatuses={ragStatuses}
@@ -5140,55 +5188,69 @@ export default function WorkspacePage() {
                 </div>
 
                 {/* Content Editor */}
-                <div className="flex-1 flex flex-col bg-gray-50 overflow-hidden min-w-0 min-h-0">
-                  <div className="px-4 pt-4 pb-6 border-b border-gray-200 flex justify-between items-center">
+                <div className={`flex-1 flex flex-col overflow-hidden min-w-0 min-h-0 ${
+                  isDarkMode ? 'bg-[#0b1323]' : 'bg-gray-50'
+                }`}>
+                  <div className={`px-4 pt-4 pb-6 flex justify-between items-center ${
+                    isDarkMode ? 'border-b border-slate-800' : 'border-b border-gray-200'
+                  }`}>
                     <div className="flex items-center gap-3">
-                      <h3 className="text-lg font-semibold text-gray-800">{canvasTitle}</h3>
+                      <h3 className={`text-lg font-semibold ${isDarkMode ? 'text-slate-100' : 'text-gray-800'}`}>{canvasTitle}</h3>
                     </div>
                     <div className="flex items-center space-x-2">
                       {canCopyImageUrl && (
                         <button
                           type="button"
-                          className="h-9 w-9 inline-flex items-center justify-center rounded-lg hover:bg-gray-200 disabled:opacity-50"
+                          className={`h-9 w-9 inline-flex items-center justify-center rounded-lg disabled:opacity-50 ${
+                            isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-200'
+                          }`}
                           onClick={handleCopyImageUrl}
                           title={copiedImageUrl ? 'Copied!' : 'Copy public URL'}
                         >
-                          <LinkIcon size={18} className="text-gray-600" />
+                          <LinkIcon size={18} className={isDarkMode ? 'text-slate-300' : 'text-gray-600'} />
                         </button>
                       )}
                       <button
                         type="button"
-                        className="h-9 w-9 inline-flex items-center justify-center rounded-lg hover:bg-gray-200 disabled:opacity-50"
+                        className={`h-9 w-9 inline-flex items-center justify-center rounded-lg disabled:opacity-50 ${
+                          isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-200'
+                        }`}
                         onClick={handleCopyWorkspaceContent}
                         disabled={!selectedFile}
                         title={copiedWorkspaceContent ? 'Copied!' : 'Copy file content'}
                       >
-                        <Copy size={18} className="text-gray-600" />
+                        <Copy size={18} className={isDarkMode ? 'text-slate-300' : 'text-gray-600'} />
                       </button>
                       {canPrintOrDownloadFile && (
                         <>
                           <button
                             type="button"
-                            className="h-9 w-9 inline-flex items-center justify-center rounded-lg hover:bg-gray-200 disabled:opacity-50"
+                            className={`h-9 w-9 inline-flex items-center justify-center rounded-lg disabled:opacity-50 ${
+                              isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-200'
+                            }`}
                             onClick={handlePrintActiveFile}
                             title="Print file"
                           >
-                            <Printer size={18} className="text-gray-600" />
+                            <Printer size={18} className={isDarkMode ? 'text-slate-300' : 'text-gray-600'} />
                           </button>
                           <button
                             type="button"
-                            className="h-9 w-9 inline-flex items-center justify-center rounded-lg hover:bg-gray-200 disabled:opacity-50"
+                            className={`h-9 w-9 inline-flex items-center justify-center rounded-lg disabled:opacity-50 ${
+                              isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-200'
+                            }`}
                             onClick={handleDownloadActiveFile}
                             title="Download file"
                           >
-                            <Download size={18} className="text-gray-600" />
+                            <Download size={18} className={isDarkMode ? 'text-slate-300' : 'text-gray-600'} />
                           </button>
                         </>
                       )}
                       {isPdfFile && (
                         <button
                           type="button"
-                          className="h-9 px-3 inline-flex items-center justify-center gap-2 rounded-lg text-sm font-medium text-slate-700 hover:bg-gray-200 disabled:opacity-50"
+                          className={`h-9 px-3 inline-flex items-center justify-center gap-2 rounded-lg text-sm font-medium disabled:opacity-50 ${
+                            isDarkMode ? 'text-slate-200 hover:bg-slate-800' : 'text-slate-700 hover:bg-gray-200'
+                          }`}
                           onClick={handleExportPptxFromPdf}
                           disabled={!activeFile || isPptxExporting}
                           title="Export PPTX from PDF"
@@ -5199,7 +5261,9 @@ export default function WorkspacePage() {
                       )}
                       {!shouldForceEditMode(selectedFile?.name || '') && (
                         <button
-                          className="h-9 w-9 inline-flex items-center justify-center rounded-lg hover:bg-gray-200 disabled:opacity-50"
+                          className={`h-9 w-9 inline-flex items-center justify-center rounded-lg disabled:opacity-50 ${
+                            isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-200'
+                          }`}
                           onClick={() => {
                             if (!isAgentPaneVisible) {
                               setIsAgentPaneVisible(true);
@@ -5208,11 +5272,13 @@ export default function WorkspacePage() {
                           }}
                           disabled={!selectedFile || !isFileEditable(selectedFile.name)}
                         >
-                          <Edit size={18} className="text-gray-600" />
+                          <Edit size={18} className={isDarkMode ? 'text-slate-300' : 'text-gray-600'} />
                         </button>
                       )}
                       <button
-                        className="h-9 px-3 inline-flex items-center justify-center rounded-lg text-sm font-medium text-slate-700 hover:bg-gray-200 disabled:opacity-50"
+                        className={`h-9 px-3 inline-flex items-center justify-center rounded-lg text-sm font-medium disabled:opacity-50 ${
+                          isDarkMode ? 'text-slate-200 hover:bg-slate-800' : 'text-slate-700 hover:bg-gray-200'
+                        }`}
                         onClick={() => selectedFile && handleUpdateFile(selectedFile, fileContent)}
                         disabled={!isEditMode}
                       >
@@ -5222,16 +5288,20 @@ export default function WorkspacePage() {
                         <>
                           <button
                             type="button"
-                            className="h-9 w-9 inline-flex items-center justify-center rounded-lg hover:bg-gray-200 disabled:opacity-50"
+                            className={`h-9 w-9 inline-flex items-center justify-center rounded-lg disabled:opacity-50 ${
+                              isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-200'
+                            }`}
                             onClick={handleCanvasZoomOut}
                             disabled={!canZoomOutCanvas}
                             title="Zoom out canvas"
                           >
-                            <Minus size={18} className="text-gray-600" />
+                            <Minus size={18} className={isDarkMode ? 'text-slate-300' : 'text-gray-600'} />
                           </button>
                           <button
                             type="button"
-                            className="h-9 px-2 inline-flex items-center justify-center rounded-lg text-xs font-semibold text-slate-700 hover:bg-gray-200"
+                            className={`h-9 px-2 inline-flex items-center justify-center rounded-lg text-xs font-semibold ${
+                              isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-700 hover:bg-gray-200'
+                            }`}
                             onClick={handleCanvasZoomReset}
                             title="Reset canvas zoom"
                           >
@@ -5239,12 +5309,14 @@ export default function WorkspacePage() {
                           </button>
                           <button
                             type="button"
-                            className="h-9 w-9 inline-flex items-center justify-center rounded-lg hover:bg-gray-200 disabled:opacity-50"
+                            className={`h-9 w-9 inline-flex items-center justify-center rounded-lg disabled:opacity-50 ${
+                              isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-200'
+                            }`}
                             onClick={handleCanvasZoomIn}
                             disabled={!canZoomInCanvas}
                             title="Zoom in canvas"
                           >
-                            <Plus size={18} className="text-gray-600" />
+                            <Plus size={18} className={isDarkMode ? 'text-slate-300' : 'text-gray-600'} />
                           </button>
                         </>
                       )}
@@ -5277,7 +5349,7 @@ export default function WorkspacePage() {
                               workspaceId={selectedWorkspace?.id}
                               className="h-full w-full"
                               emptyState={
-                                <div className="text-center text-gray-400">
+                                <div className={`text-center ${isDarkMode ? 'text-slate-500' : 'text-gray-400'}`}>
                                   <p>Select a file to view its content</p>
                                 </div>
                               }
@@ -5292,6 +5364,7 @@ export default function WorkspacePage() {
             </div>
 
             <AgentChatPane
+              colorMode={colorMode}
               agentPaneStyles={agentPaneStyles}
               isAgentPaneVisible={isAgentPaneVisible}
               isAgentPaneFullScreen={isAgentPaneFullScreen}

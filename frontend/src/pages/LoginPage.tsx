@@ -3,7 +3,7 @@ import type { PaletteMode } from '@mui/material';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Sun, Moon } from 'lucide-react';
 import { useAuth } from '../auth/AuthProvider';
-import { applyColorModeToDocument, resolveInitialColorMode } from '../theme';
+import { applyColorModeToDocument, resolveInitialColorMode } from '../colorMode';
 
 interface LocationState {
   from?: string;

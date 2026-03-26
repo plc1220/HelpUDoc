@@ -361,6 +361,7 @@ const upsertStructuredAnswer = (
 };
 
 export default function ChatMessageBubble({
+  colorMode,
   message,
   personaDisplayName,
   messageBubbleMaxWidth,
@@ -393,6 +394,7 @@ export default function ChatMessageBubble({
   isStreaming,
   workspaceId,
 }: {
+  colorMode: 'light' | 'dark';
   message: ConversationMessage;
   personaDisplayName: string;
   messageBubbleMaxWidth: string;
@@ -442,6 +444,7 @@ export default function ChatMessageBubble({
   isStreaming: boolean;
   workspaceId?: string;
 }) {
+  const isDarkMode = colorMode === 'dark';
   const isAgentMessage = message.sender === 'agent';
   const messageMetadata = (message.metadata as ConversationMessageMetadata | null | undefined) || undefined;
   const timestampLabel = formatMessageTimestamp(message.updatedAt || message.createdAt);
@@ -804,26 +807,77 @@ export default function ChatMessageBubble({
     await Promise.resolve(enableTrustedPlanMode());
   };
 
+  const agentContainerClassName = isDarkMode
+    ? 'w-full rounded-[1.8rem] border border-slate-700/70 bg-[linear-gradient(160deg,rgba(15,23,42,0.98),rgba(30,41,59,0.94))] px-4 py-4 text-slate-100 shadow-[0_26px_70px_-36px_rgba(2,6,23,0.95)] ring-1 ring-white/5'
+    : 'w-full rounded-[1.8rem] border border-slate-200/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(248,250,252,0.95))] px-4 py-4 text-slate-900 shadow-[0_26px_70px_-36px_rgba(15,23,42,0.16)]';
+  const agentMetaClassName = isDarkMode
+    ? 'flex flex-wrap items-center justify-between gap-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500'
+    : 'flex flex-wrap items-center justify-between gap-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400';
+  const agentPersonaClassName = isDarkMode ? 'text-slate-300' : 'text-slate-700';
+  const thinkingCardClassName = isDarkMode
+    ? 'mt-3 rounded-[1.5rem] border border-slate-700/70 bg-slate-950/45 px-3 py-3 text-[13px] text-slate-300 shadow-inner shadow-black/20 transition-all duration-200 ease-in-out'
+    : 'mt-3 rounded-[1.5rem] border border-slate-200/80 bg-slate-50/90 px-3 py-3 text-[13px] text-slate-700 shadow-inner shadow-slate-200/40 transition-all duration-200 ease-in-out';
+  const thinkingHeaderClassName = isDarkMode
+    ? 'flex items-center justify-between text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400'
+    : 'flex items-center justify-between text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500';
+  const thinkingToggleClassName = isDarkMode
+    ? 'rounded-full border border-slate-700/70 px-2.5 py-1 text-[10px] text-slate-300 transition-all duration-200 hover:border-slate-600 hover:bg-slate-800 hover:text-white'
+    : 'rounded-full border border-slate-200 px-2.5 py-1 text-[10px] text-slate-600 transition-all duration-200 hover:border-slate-300 hover:bg-white hover:text-slate-900';
+  const thinkingFadeClassName = isDarkMode
+    ? 'pointer-events-none absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-slate-950 via-slate-950/70 to-transparent'
+    : 'pointer-events-none absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-slate-50 via-slate-50/75 to-transparent';
+  const toolPanelClassName = isDarkMode
+    ? 'mt-3 rounded-[1.4rem] border border-slate-700/70 bg-slate-950/45 px-3 py-3'
+    : 'mt-3 rounded-[1.4rem] border border-slate-200/80 bg-white/90 px-3 py-3';
+  const toolButtonClassName = isDarkMode
+    ? 'text-xs font-semibold uppercase tracking-[0.18em] text-slate-400 transition-all duration-200 hover:text-slate-200'
+    : 'text-xs font-semibold uppercase tracking-[0.18em] text-slate-500 transition-all duration-200 hover:text-slate-700';
+  const toolExpandedClassName = isDarkMode
+    ? 'mt-3 rounded-2xl border border-slate-700/70 bg-slate-900/70 px-3 py-3 text-xs text-slate-300 shadow-inner shadow-black/15'
+    : 'mt-3 rounded-2xl border border-slate-200/80 bg-slate-50/90 px-3 py-3 text-xs text-slate-600 shadow-inner shadow-slate-200/40';
+  const userBubbleClassName = isDarkMode
+    ? 'rounded-[1.7rem] bg-[linear-gradient(135deg,rgba(56,189,248,0.94),rgba(59,130,246,0.92))] px-4 py-3 text-sm text-white shadow-[0_20px_48px_-28px_rgba(56,189,248,0.75)] [text-shadow:0_1px_1px_rgba(15,23,42,0.35)]'
+    : 'rounded-[1.7rem] bg-[linear-gradient(135deg,rgba(96,165,250,0.95),rgba(59,130,246,0.9))] px-4 py-3 text-sm text-white shadow-[0_20px_48px_-28px_rgba(59,130,246,0.35)] [text-shadow:0_1px_1px_rgba(15,23,42,0.2)]';
+  const copyButtonClassName = isDarkMode
+    ? `absolute -top-2 ${copyButtonPositionClass} rounded-full border border-slate-700/70 bg-slate-950/95 p-1.5 text-slate-300 shadow ring-1 ring-white/5 transition-all duration-200 opacity-0 hover:bg-slate-900 hover:text-white group-hover:opacity-100 focus-visible:opacity-100`
+    : `absolute -top-2 ${copyButtonPositionClass} rounded-full border border-slate-200 bg-white/95 p-1.5 text-slate-500 shadow transition-all duration-200 opacity-0 hover:bg-slate-50 hover:text-slate-800 group-hover:opacity-100 focus-visible:opacity-100`;
+  const rerunButtonClassName = isDarkMode
+    ? `absolute -right-2 -top-2 rounded-full bg-[linear-gradient(135deg,rgba(56,189,248,0.92),rgba(59,130,246,0.92))] p-1.5 text-white shadow-[0_16px_36px_-22px_rgba(56,189,248,0.85)] transition-all duration-200 opacity-0 ${
+      isStreaming
+        ? 'cursor-not-allowed group-hover:opacity-60 hover:opacity-60'
+        : 'group-hover:opacity-100 hover:opacity-100 focus-visible:opacity-100'
+    }`
+    : `absolute -right-2 -top-2 rounded-full bg-[linear-gradient(135deg,rgba(96,165,250,0.95),rgba(59,130,246,0.92))] p-1.5 text-white shadow-[0_16px_36px_-22px_rgba(59,130,246,0.45)] transition-all duration-200 opacity-0 ${
+      isStreaming
+        ? 'cursor-not-allowed group-hover:opacity-60 hover:opacity-60'
+        : 'group-hover:opacity-100 hover:opacity-100 focus-visible:opacity-100'
+    }`;
+
   return (
     <div className={`group flex items-start gap-3 motion-safe:animate-[chat-pane-message-in_220ms_ease-out] ${isAgentMessage ? '' : 'justify-end'}`}>
       <div style={{ width: '100%', maxWidth: messageBubbleMaxWidth }} className="relative flex-1 md:flex-initial">
         {isAgentMessage ? (
-          <div className="w-full rounded-2xl border border-slate-200 bg-gradient-to-br from-white via-slate-50 to-blue-50/40 px-4 py-4 text-slate-800 shadow-[0_22px_40px_-28px_rgba(15,23,42,0.8)] ring-1 ring-slate-100">
-            <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-              <span className="text-slate-600">{personaDisplayName}</span>
+          <div className={agentContainerClassName}>
+            <div className={agentMetaClassName}>
+              <span className={agentPersonaClassName}>{personaDisplayName}</span>
               {timestampLabel ? <span>{timestampLabel}</span> : null}
             </div>
             {displayThinkingText ? (
-              <div className="relative mt-3 pl-4 before:absolute before:bottom-2 before:left-1 before:top-2 before:w-px before:bg-sky-200">
-                <span className="absolute left-0 top-3 h-2.5 w-2.5 rounded-full border border-sky-300 bg-sky-100" />
-                <div className="rounded-2xl border border-sky-100 bg-sky-50/60 px-3 py-3 text-[13px] text-slate-600 shadow-inner transition-all duration-200 ease-in-out">
-                  <div className="flex items-center justify-between text-[11px] font-semibold uppercase tracking-wide text-sky-700">
-                    <span>Thinking</span>
+              <div className={thinkingCardClassName}>
+                  <div className={thinkingHeaderClassName}>
+                    <span className="inline-flex items-center gap-2">
+                      <span className={`h-2 w-2 rounded-full ${
+                        isDarkMode
+                          ? 'bg-sky-300 shadow-[0_0_14px_rgba(125,211,252,0.6)]'
+                          : 'bg-sky-500 shadow-[0_0_12px_rgba(14,165,233,0.28)]'
+                      }`} />
+                      Thinking
+                    </span>
                     {showThinkingToggle ? (
                       <button
                         type="button"
                         onClick={() => toggleThinkingVisibility(message.id)}
-                        className="text-sky-700 transition-all duration-200 hover:text-sky-600"
+                        className={thinkingToggleClassName}
                       >
                         {isThinkingExpanded ? 'Show less' : 'Expand'}
                       </button>
@@ -835,11 +889,10 @@ export default function ChatMessageBubble({
                   >
                     {displayThinkingText}
                     {isThinkingCollapsed ? (
-                      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-sky-50/95 to-transparent" />
+                      <div className={thinkingFadeClassName} />
                     ) : null}
                   </div>
                 </div>
-              </div>
             ) : null}
             {sanitizedAgentText ? (
               <div className="agent-markdown mt-3 text-sm">
@@ -848,7 +901,7 @@ export default function ChatMessageBubble({
                 </ReactMarkdown>
               </div>
             ) : shouldShowFallbackStatus ? (
-              <span className="mt-3 block text-sm text-slate-500">
+              <span className={`mt-3 block text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
                 {displayThinkingText ? 'Finalizing response...' : 'Thinking...'}
               </span>
             ) : null}
@@ -1178,33 +1231,40 @@ export default function ChatMessageBubble({
               </div>
             ) : null}
             {hasToolEvents ? (
-              <div className="relative mt-3 pl-4">
-                <span className="absolute left-0 top-2 h-2.5 w-2.5 rounded-full border border-slate-300 bg-slate-100" />
+              <div className={toolPanelClassName}>
                 <button
                   type="button"
                   onClick={() => toggleToolActivityVisibility(message.id)}
-                  className="text-xs font-semibold uppercase tracking-wide text-slate-500 transition-all duration-200 hover:text-slate-700"
+                  className={toolButtonClassName}
                 >
                   {isToolActivityExpanded ? 'Hide tool activity' : `Show tool activity (${toolEvents.length})`}
                 </button>
                 {isToolActivityExpanded ? (
-                  <div className="mt-2 rounded-2xl border border-slate-200 bg-white/80 px-3 py-3 text-xs text-slate-600 shadow-inner">
+                  <div className={toolExpandedClassName}>
                     {toolEvents.map((event, index) => {
                       const isLast = index === toolEvents.length - 1;
                       return (
                         <div key={event.id || `${event.name}-${index}`} className="flex min-w-0 gap-3 pb-3 last:pb-0">
                           <div className="flex flex-col items-center">
-                            <span className={`h-2.5 w-2.5 rounded-full ${event.status === 'completed' ? 'bg-emerald-500' : 'bg-amber-400'}`} />
-                            {!isLast ? <span className="h-full w-px flex-1 bg-slate-200" /> : null}
+                            <span className={`h-2.5 w-2.5 rounded-full ${event.status === 'completed' ? 'bg-emerald-400' : 'bg-amber-300'}`} />
+                            {!isLast ? <span className={`h-full w-px flex-1 ${isDarkMode ? 'bg-slate-700/80' : 'bg-slate-300'}`} /> : null}
                           </div>
                           <div className="min-w-0 flex-1">
-                            <p className={`break-words text-[11px] font-semibold uppercase tracking-wide ${event.status === 'error' ? 'text-red-500' : 'text-slate-500'}`}>
+                            <p className={`break-words text-[11px] font-semibold uppercase tracking-wide ${
+                              event.status === 'error'
+                                ? isDarkMode ? 'text-rose-300' : 'text-rose-600'
+                                : isDarkMode ? 'text-slate-400' : 'text-slate-500'
+                            }`}>
                               {event.name}
                             </p>
-                            <p className={`whitespace-pre-wrap break-words text-sm ${event.status === 'error' ? 'text-red-600' : 'text-slate-700'}`}>
+                            <p className={`whitespace-pre-wrap break-words text-sm ${
+                              event.status === 'error'
+                                ? isDarkMode ? 'text-rose-200' : 'text-rose-700'
+                                : isDarkMode ? 'text-slate-200' : 'text-slate-700'
+                            }`}>
                               {event.summary || (event.status === 'completed' ? 'Completed' : event.status === 'error' ? 'Failed' : 'In progress...')}
                             </p>
-                            <p className="mt-1 text-[11px] uppercase tracking-wide text-slate-400">
+                            <p className={`mt-1 text-[11px] uppercase tracking-wide ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>
                               {formatMessageTimestamp(event.startedAt)}
                               {event.finishedAt ? ` • ${formatMessageTimestamp(event.finishedAt)}` : ''}
                             </p>
@@ -1213,9 +1273,11 @@ export default function ChatMessageBubble({
                                 {event.outputFiles.map((file) => (
                                   <div
                                     key={`${event.id}-${file.path}`}
-                                    className="min-w-0 max-w-full overflow-hidden rounded-lg border border-slate-200 bg-white p-2"
+                                    className={`min-w-0 max-w-full overflow-hidden rounded-xl border p-2 ${
+                                      isDarkMode ? 'border-slate-700/70 bg-slate-950/80' : 'border-slate-200 bg-white'
+                                    }`}
                                   >
-                                    <p className="break-all text-xs font-semibold text-slate-700">{file.path}</p>
+                                    <p className={`break-all text-xs font-semibold ${isDarkMode ? 'text-slate-200' : 'text-slate-700'}`}>{file.path}</p>
                                     <ToolOutputFilePreview workspaceId={workspaceId} file={file} markdownComponents={markdownComponents} />
                                   </div>
                                 ))}
@@ -1231,7 +1293,7 @@ export default function ChatMessageBubble({
             ) : null}
           </div>
         ) : (
-          <div className="rounded-2xl bg-gradient-to-br from-blue-600 to-blue-500 px-4 py-3 text-sm text-white shadow-lg [text-shadow:0_1px_1px_rgba(15,23,42,0.35)]">
+          <div className={userBubbleClassName}>
             <p className="whitespace-pre-line leading-relaxed">{message.text}</p>
             {timestampLabel ? (
               <span className="mt-2 block text-[11px] uppercase tracking-wide text-white/70">{timestampLabel}</span>
@@ -1244,7 +1306,7 @@ export default function ChatMessageBubble({
             onClick={() => handleCopyMessageText(message)}
             title={copyTitle}
             aria-label="Copy message text"
-            className={`absolute -top-2 ${copyButtonPositionClass} rounded-full bg-white p-1.5 text-slate-600 shadow ring-1 ring-slate-200 transition-all duration-200 opacity-0 hover:bg-slate-50 group-hover:opacity-100 focus-visible:opacity-100`}
+            className={copyButtonClassName}
           >
             <Copy size={14} />
           </button>
@@ -1255,11 +1317,7 @@ export default function ChatMessageBubble({
             onClick={() => handleRerunMessage(message.id)}
             disabled={isStreaming}
             title="Rerun this message"
-            className={`absolute -right-2 -top-2 rounded-full bg-blue-500 p-1.5 text-white shadow transition-all duration-200 opacity-0 ${
-              isStreaming
-                ? 'cursor-not-allowed group-hover:opacity-60 hover:opacity-60'
-                : 'group-hover:opacity-100 hover:opacity-100 focus-visible:opacity-100'
-            }`}
+            className={rerunButtonClassName}
           >
             <RotateCcw size={14} />
           </button>

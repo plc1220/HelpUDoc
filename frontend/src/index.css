@@ -836,6 +836,15 @@ body {
   color: inherit;
 }
 
+.helpudoc-markdown strong,
+.helpudoc-markdown b,
+.helpudoc-markdown em,
+.helpudoc-markdown a,
+.helpudoc-markdown ul > li::marker,
+.helpudoc-markdown ol > li::marker {
+  color: inherit;
+}
+
 .helpudoc-markdown pre {
   background: #0f172a;
   border: 1px solid #1e293b;
@@ -891,6 +900,53 @@ body {
   color: #0f172a;
 }
 
+.helpudoc-mdxeditor-light.helpudoc-mdxeditor,
+.helpudoc-markdown-light.helpudoc-markdown {
+  color: #0f172a;
+}
+
+.helpudoc-markdown-light.helpudoc-markdown h1,
+.helpudoc-markdown-light.helpudoc-markdown h2 {
+  color: #1e3a8a;
+}
+
+.helpudoc-markdown-light.helpudoc-markdown h3,
+.helpudoc-markdown-light.helpudoc-markdown h4,
+.helpudoc-markdown-light.helpudoc-markdown h5,
+.helpudoc-markdown-light.helpudoc-markdown h6 {
+  color: #1f2937;
+}
+
+.helpudoc-markdown-light.helpudoc-markdown code {
+  background: #f1f5f9;
+  border-color: #e2e8f0;
+  color: #0f172a;
+}
+
+.helpudoc-markdown-light.helpudoc-markdown code.inline-code,
+.helpudoc-markdown-light.helpudoc-markdown .inline-code {
+  background: #f1f5f9;
+  border-color: #e2e8f0;
+  color: #0f172a;
+}
+
+.helpudoc-markdown-light.helpudoc-markdown pre {
+  background: #ffffff;
+  border-color: #e2e8f0;
+}
+
+.helpudoc-markdown-light.helpudoc-markdown blockquote {
+  border-left-color: #cbd5e1;
+  color: #475569;
+}
+
+.helpudoc-markdown-light.helpudoc-markdown hr,
+.helpudoc-markdown-light.helpudoc-markdown table,
+.helpudoc-markdown-light.helpudoc-markdown thead,
+.helpudoc-markdown-light.helpudoc-markdown tbody tr {
+  border-color: #e2e8f0;
+}
+
 .helpudoc-mdxeditor .mdxeditor-toolbar,
 .helpudoc-mdxeditor [role='toolbar'] {
   background: #f8fafc;
@@ -916,34 +972,100 @@ body {
   background: #dbeafe;
 }
 
-:root[data-theme='dark'] .helpudoc-markdown {
+.helpudoc-mdxeditor .mdxeditor-toolbar [role='separator'],
+.helpudoc-mdxeditor [role='toolbar'] [role='separator'] {
+  border-left-color: #dbe4f0;
+  border-right-color: #ffffff;
+}
+
+.helpudoc-mdxeditor .mdxeditor-toolbar svg,
+.helpudoc-mdxeditor [role='toolbar'] svg {
+  color: inherit;
+}
+
+.helpudoc-mdxeditor .mdxeditor-toolbar svg path,
+.helpudoc-mdxeditor .mdxeditor-toolbar svg circle,
+.helpudoc-mdxeditor .mdxeditor-toolbar svg rect,
+.helpudoc-mdxeditor [role='toolbar'] svg path,
+.helpudoc-mdxeditor [role='toolbar'] svg circle,
+.helpudoc-mdxeditor [role='toolbar'] svg rect {
+  fill: currentColor;
+  stroke: currentColor;
+}
+
+:root[data-theme='dark'] .helpudoc-markdown,
+:root.dark .helpudoc-markdown {
   color: #e6edf3;
 }
 
+:root[data-theme='dark'] .helpudoc-markdown p,
+:root[data-theme='dark'] .helpudoc-markdown li,
+:root[data-theme='dark'] .helpudoc-markdown td,
+:root[data-theme='dark'] .helpudoc-markdown th,
+:root[data-theme='dark'] .helpudoc-markdown strong,
+:root[data-theme='dark'] .helpudoc-markdown b,
+:root[data-theme='dark'] .helpudoc-markdown em,
+:root[data-theme='dark'] .helpudoc-markdown a,
+:root.dark .helpudoc-markdown p,
+:root.dark .helpudoc-markdown li,
+:root.dark .helpudoc-markdown td,
+:root.dark .helpudoc-markdown th,
+:root.dark .helpudoc-markdown strong,
+:root.dark .helpudoc-markdown b,
+:root.dark .helpudoc-markdown em,
+:root.dark .helpudoc-markdown a {
+  color: inherit;
+}
+
+:root[data-theme='dark'] .helpudoc-markdown ul > li::marker,
+:root[data-theme='dark'] .helpudoc-markdown ol > li::marker,
+:root.dark .helpudoc-markdown ul > li::marker,
+:root.dark .helpudoc-markdown ol > li::marker {
+  color: #7f8da3;
+}
+
 :root[data-theme='dark'] .helpudoc-markdown h1,
-:root[data-theme='dark'] .helpudoc-markdown h2 {
+:root[data-theme='dark'] .helpudoc-markdown h2,
+:root.dark .helpudoc-markdown h1,
+:root.dark .helpudoc-markdown h2 {
   color: #9bbcff;
 }
 
 :root[data-theme='dark'] .helpudoc-markdown h3,
 :root[data-theme='dark'] .helpudoc-markdown h4,
 :root[data-theme='dark'] .helpudoc-markdown h5,
-:root[data-theme='dark'] .helpudoc-markdown h6 {
+:root[data-theme='dark'] .helpudoc-markdown h6,
+:root.dark .helpudoc-markdown h3,
+:root.dark .helpudoc-markdown h4,
+:root.dark .helpudoc-markdown h5,
+:root.dark .helpudoc-markdown h6 {
   color: #bfd2ff;
 }
 
-:root[data-theme='dark'] .helpudoc-markdown code {
+:root[data-theme='dark'] .helpudoc-markdown code,
+:root.dark .helpudoc-markdown code {
   background: #2d333b;
   border-color: #3a4350;
   color: #e6edf3;
 }
 
-:root[data-theme='dark'] .helpudoc-markdown pre {
+:root[data-theme='dark'] .helpudoc-markdown code.inline-code,
+:root[data-theme='dark'] .helpudoc-markdown .inline-code,
+:root.dark .helpudoc-markdown code.inline-code,
+:root.dark .helpudoc-markdown .inline-code {
+  background: #1f2937;
+  border-color: #334155;
+  color: #f8fafc;
+}
+
+:root[data-theme='dark'] .helpudoc-markdown pre,
+:root.dark .helpudoc-markdown pre {
   background: #0b1220;
   border-color: #1f2937;
 }
 
-:root[data-theme='dark'] .helpudoc-markdown blockquote {
+:root[data-theme='dark'] .helpudoc-markdown blockquote,
+:root.dark .helpudoc-markdown blockquote {
   border-left-color: #3a4350;
   color: #cbd5e1;
 }
@@ -951,18 +1073,65 @@ body {
 :root[data-theme='dark'] .helpudoc-markdown hr,
 :root[data-theme='dark'] .helpudoc-markdown table,
 :root[data-theme='dark'] .helpudoc-markdown thead,
-:root[data-theme='dark'] .helpudoc-markdown tbody tr {
+:root[data-theme='dark'] .helpudoc-markdown tbody tr,
+:root.dark .helpudoc-markdown hr,
+:root.dark .helpudoc-markdown table,
+:root.dark .helpudoc-markdown thead,
+:root.dark .helpudoc-markdown tbody tr {
   border-color: #1f2937;
 }
 
 :root[data-theme='dark'] .helpudoc-mdxeditor-shell,
-:root[data-theme='dark'] .helpudoc-mdxeditor {
+:root[data-theme='dark'] .helpudoc-mdxeditor,
+:root.dark .helpudoc-mdxeditor-shell,
+:root.dark .helpudoc-mdxeditor {
   background: #0f172a;
   color: #e6edf3;
 }
 
+.helpudoc-mdxeditor-dark.helpudoc-mdxeditor,
+.helpudoc-markdown-dark.helpudoc-markdown {
+  color: #e6edf3;
+}
+
+.helpudoc-mdxeditor-light.helpudoc-mdxeditor {
+  --basePageBg: #ffffff;
+  --baseBase: #f8fafc;
+  --baseBgSubtle: #f8fafc;
+  --baseBg: #eff6ff;
+  --baseBgHover: #e2e8f0;
+  --baseBgActive: #dbeafe;
+  --baseBorder: #dbe4f0;
+  --baseBorderHover: #94a3b8;
+  --baseText: #475569;
+  --baseTextContrast: #334155;
+  --accentText: #2563eb;
+  --accentBg: #dbeafe;
+  --accentBgHover: #bfdbfe;
+  --accentBgActive: #93c5fd;
+}
+
+.helpudoc-mdxeditor-dark.helpudoc-mdxeditor {
+  --basePageBg: #0f172a;
+  --baseBase: #0b1220;
+  --baseBgSubtle: #111c31;
+  --baseBg: #16233a;
+  --baseBgHover: #1d2d48;
+  --baseBgActive: #223452;
+  --baseBorder: #334155;
+  --baseBorderHover: #94a3b8;
+  --baseText: #cbd5e1;
+  --baseTextContrast: #f8fafc;
+  --accentText: #93c5fd;
+  --accentBg: rgba(56, 189, 248, 0.16);
+  --accentBgHover: rgba(56, 189, 248, 0.22);
+  --accentBgActive: rgba(56, 189, 248, 0.28);
+}
+
 :root[data-theme='dark'] .helpudoc-mdxeditor .mdxeditor-toolbar,
-:root[data-theme='dark'] .helpudoc-mdxeditor [role='toolbar'] {
+:root[data-theme='dark'] .helpudoc-mdxeditor [role='toolbar'],
+:root.dark .helpudoc-mdxeditor .mdxeditor-toolbar,
+:root.dark .helpudoc-mdxeditor [role='toolbar'] {
   background: rgba(15, 23, 42, 0.92);
   border-bottom-color: #1f2937;
   backdrop-filter: blur(8px);
@@ -970,18 +1139,49 @@ body {
 
 :root[data-theme='dark'] .helpudoc-mdxeditor .mdxeditor-toolbar button,
 :root[data-theme='dark'] .helpudoc-mdxeditor .mdxeditor-toolbar select,
+:root[data-theme='dark'] .helpudoc-mdxeditor .mdxeditor-toolbar [role='combobox'],
 :root[data-theme='dark'] .helpudoc-mdxeditor [role='toolbar'] button,
-:root[data-theme='dark'] .helpudoc-mdxeditor [role='toolbar'] select {
+:root[data-theme='dark'] .helpudoc-mdxeditor [role='toolbar'] select,
+:root[data-theme='dark'] .helpudoc-mdxeditor [role='toolbar'] [role='combobox'],
+:root.dark .helpudoc-mdxeditor .mdxeditor-toolbar button,
+:root.dark .helpudoc-mdxeditor .mdxeditor-toolbar select,
+:root.dark .helpudoc-mdxeditor .mdxeditor-toolbar [role='combobox'],
+:root.dark .helpudoc-mdxeditor [role='toolbar'] button,
+:root.dark .helpudoc-mdxeditor [role='toolbar'] select,
+:root.dark .helpudoc-mdxeditor [role='toolbar'] [role='combobox'] {
   color: #e6edf3;
   border-color: #263245;
 }
 
+:root[data-theme='dark'] .helpudoc-mdxeditor .mdxeditor-toolbar [role='combobox'],
+:root[data-theme='dark'] .helpudoc-mdxeditor [role='toolbar'] [role='combobox'],
+:root.dark .helpudoc-mdxeditor .mdxeditor-toolbar [role='combobox'],
+:root.dark .helpudoc-mdxeditor [role='toolbar'] [role='combobox'] {
+  background: #16233a;
+}
+
 :root[data-theme='dark'] .helpudoc-mdxeditor .mdxeditor-toolbar button:hover,
-:root[data-theme='dark'] .helpudoc-mdxeditor [role='toolbar'] button:hover {
+:root[data-theme='dark'] .helpudoc-mdxeditor .mdxeditor-toolbar [role='combobox']:hover,
+:root[data-theme='dark'] .helpudoc-mdxeditor [role='toolbar'] button:hover,
+:root[data-theme='dark'] .helpudoc-mdxeditor [role='toolbar'] [role='combobox']:hover,
+:root.dark .helpudoc-mdxeditor .mdxeditor-toolbar button:hover,
+:root.dark .helpudoc-mdxeditor .mdxeditor-toolbar [role='combobox']:hover,
+:root.dark .helpudoc-mdxeditor [role='toolbar'] button:hover,
+:root.dark .helpudoc-mdxeditor [role='toolbar'] [role='combobox']:hover {
   background: #1f2937;
 }
 
 :root[data-theme='dark'] .helpudoc-mdxeditor .mdxeditor-toolbar button[aria-pressed='true'],
-:root[data-theme='dark'] .helpudoc-mdxeditor [role='toolbar'] button[aria-pressed='true'] {
+:root[data-theme='dark'] .helpudoc-mdxeditor [role='toolbar'] button[aria-pressed='true'],
+:root.dark .helpudoc-mdxeditor .mdxeditor-toolbar button[aria-pressed='true'],
+:root.dark .helpudoc-mdxeditor [role='toolbar'] button[aria-pressed='true'] {
   background: #26334a;
+}
+
+:root[data-theme='dark'] .helpudoc-mdxeditor .mdxeditor-toolbar [role='separator'],
+:root[data-theme='dark'] .helpudoc-mdxeditor [role='toolbar'] [role='separator'],
+:root.dark .helpudoc-mdxeditor .mdxeditor-toolbar [role='separator'],
+:root.dark .helpudoc-mdxeditor [role='toolbar'] [role='separator'] {
+  border-left-color: #334155;
+  border-right-color: #0f172a;
 }

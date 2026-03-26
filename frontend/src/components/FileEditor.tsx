@@ -291,23 +291,18 @@ const FileEditor: React.FC<FileEditorProps> = ({
     const model = editorInstance.getModel();
     if (!model) return;
 
-    try {
-      const { MonacoBinding } = await import('y-monaco');
-      if (collabSessionRef.current !== session || editorRef.current !== editorInstance) {
-        return;
-      }
-
-      monacoBindingRef.current?.destroy();
-      monacoBindingRef.current = new MonacoBinding(
-        session.yText,
-        model,
-        new Set([editorInstance]),
-        session.provider.awareness ?? undefined,
-      );
-      setCollabReady(true);
-    } catch (error) {
-      console.error('Failed to initialize Monaco collaboration binding', error);
+    const { MonacoBinding } = await import('y-monaco');
+    if (collabSessionRef.current !== session || editorRef.current !== editorInstance) {
+      return;
     }
+
+    monacoBindingRef.current?.destroy();
+    monacoBindingRef.current = new MonacoBinding(
+      session.yText,
+      model,
+      new Set([editorInstance]),
+      session.provider.awareness ?? undefined,
+    );
   }, [fileName]);
 
   useEffect(() => {
@@ -328,7 +323,7 @@ const FileEditor: React.FC<FileEditorProps> = ({
 
     const session = createCollabSession(workspaceId, fileId);
     collabSessionRef.current = session;
-    setCollabReady(false);
+    setCollabReady(true);
     setConnectionStatus('connecting');
     hasSeededRef.current = false;
 
@@ -428,7 +423,8 @@ const FileEditor: React.FC<FileEditorProps> = ({
     return null;
   }
 
-  const isMarkdown = getLanguage(file.name) === 'markdown';
+  const resolvedFileName = file.name ?? '';
+  const isMarkdown = getLanguage(resolvedFileName) === 'markdown';
   const statusLabel = connectionStatus === 'connected'
     ? 'Live'
     : connectionStatus === 'connecting'
@@ -444,8 +440,10 @@ const FileEditor: React.FC<FileEditorProps> = ({
 
   return (
     <div className="h-full flex flex-col">
-      <div className="bg-gray-100 px-2 py-1 border-b flex items-center justify-between text-xs">
-        <div className="flex items-center gap-2 text-gray-600">
+      <div className={`border-b px-3 py-2 flex items-center justify-between text-xs ${
+        isDarkMode ? 'border-slate-700/70 bg-slate-950/70' : 'bg-gray-100'
+      }`}>
+        <div className={`flex items-center gap-2 ${isDarkMode ? 'text-slate-300' : 'text-gray-600'}`}>
           <span className={`inline-block h-2 w-2 rounded-full ${statusColor}`} />
           <span>{statusLabel}</span>
         </div>
@@ -453,49 +451,65 @@ const FileEditor: React.FC<FileEditorProps> = ({
           {visibleUsers.map((user) => (
             <div
               key={user.clientId}
-              className="flex items-center gap-1 px-2 py-0.5 rounded-full border border-gray-200 bg-white text-gray-700"
+              className={`flex items-center gap-1 px-2 py-0.5 rounded-full border ${
+                isDarkMode
+                  ? 'border-slate-700/70 bg-slate-900/85 text-slate-200'
+                  : 'border-gray-200 bg-white text-gray-700'
+              }`}
             >
               <span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: user.color }} />
               <span className="max-w-[120px] truncate">{user.name}</span>
             </div>
           ))}
           {overflowCount > 0 && (
-            <span className="text-gray-500">+{overflowCount}</span>
+            <span className={isDarkMode ? 'text-slate-500' : 'text-gray-500'}>+{overflowCount}</span>
           )}
           {presenceUsers.length === 0 && (
-            <span className="text-gray-400">No collaborators</span>
+            <span className={isDarkMode ? 'text-slate-500' : 'text-gray-400'}>No collaborators</span>
           )}
         </div>
       </div>
       {!isMarkdown && (
-        <div className="bg-white/95 p-1 border-b border-slate-200 backdrop-blur">
+        <div className={`p-1 border-b backdrop-blur ${
+          isDarkMode ? 'border-slate-700/70 bg-slate-950/70' : 'border-slate-200 bg-white/95'
+        }`}>
           <button
             onClick={handleUndo}
-            className="px-2 py-1 mr-1 border border-slate-200 rounded text-slate-700 hover:bg-slate-100"
+            className={`px-2 py-1 mr-1 border rounded ${
+              isDarkMode ? 'border-slate-700 text-slate-200 hover:bg-slate-800' : 'border-slate-200 text-slate-700 hover:bg-slate-100'
+            }`}
           >
             Undo
           </button>
           <button
             onClick={handleRedo}
-            className="px-2 py-1 mr-1 border border-slate-200 rounded text-slate-700 hover:bg-slate-100"
+            className={`px-2 py-1 mr-1 border rounded ${
+              isDarkMode ? 'border-slate-700 text-slate-200 hover:bg-slate-800' : 'border-slate-200 text-slate-700 hover:bg-slate-100'
+            }`}
           >
             Redo
           </button>
           <button
             onClick={() => applyFormat('bold')}
-            className="px-2 py-1 mr-1 border border-slate-200 rounded text-slate-700 hover:bg-slate-100 font-bold"
+            className={`px-2 py-1 mr-1 border rounded font-bold ${
+              isDarkMode ? 'border-slate-700 text-slate-200 hover:bg-slate-800' : 'border-slate-200 text-slate-700 hover:bg-slate-100'
+            }`}
           >
             B
           </button>
           <button
             onClick={() => applyFormat('italic')}
-            className="px-2 py-1 mr-1 border border-slate-200 rounded text-slate-700 hover:bg-slate-100 italic"
+            className={`px-2 py-1 mr-1 border rounded italic ${
+              isDarkMode ? 'border-slate-700 text-slate-200 hover:bg-slate-800' : 'border-slate-200 text-slate-700 hover:bg-slate-100'
+            }`}
           >
             I
           </button>
           <button
             onClick={() => applyFormat('heading')}
-            className="px-2 py-1 mr-1 border border-slate-200 rounded text-slate-700 hover:bg-slate-100"
+            className={`px-2 py-1 mr-1 border rounded ${
+              isDarkMode ? 'border-slate-700 text-slate-200 hover:bg-slate-800' : 'border-slate-200 text-slate-700 hover:bg-slate-100'
+            }`}
           >
             H
           </button>
@@ -504,8 +518,10 @@ const FileEditor: React.FC<FileEditorProps> = ({
       <div className="flex-grow overflow-auto">
         {isMarkdown ? (
           <div className="helpudoc-mdxeditor-shell h-full overflow-y-auto flex flex-col" style={{ maxHeight: 'calc(100vh - 200px)' }}>
-            <div className="flex items-center justify-between px-3 py-2 border-b border-gray-200 bg-gray-50">
-              <span className="text-xs font-medium text-gray-500">
+            <div className={`flex items-center justify-between px-3 py-2 border-b ${
+              isDarkMode ? 'border-slate-700/70 bg-slate-950/45' : 'border-gray-200 bg-gray-50'
+            }`}>
+              <span className={`text-xs font-medium ${isDarkMode ? 'text-slate-400' : 'text-gray-500'}`}>
                 {isRawView ? 'Raw Markdown' : 'Rich Editor'}
               </span>
               <button
@@ -513,7 +529,9 @@ const FileEditor: React.FC<FileEditorProps> = ({
                 onClick={() => {
                   setIsRawView(!isRawView);
                 }}
-                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium text-gray-600 hover:bg-gray-200 transition-colors"
+                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                  isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-gray-600 hover:bg-gray-200'
+                }`}
                 title={isRawView ? 'Switch to Rich Editor' : 'View Raw Markdown'}
               >
                 {isRawView ? (
@@ -531,7 +549,11 @@ const FileEditor: React.FC<FileEditorProps> = ({
             </div>
             {isRawView ? (
               <textarea
-                className="flex-1 w-full h-full p-4 font-mono text-sm border-none resize-none focus:outline-none focus:ring-0 bg-white"
+                className={`flex-1 w-full h-full p-4 font-mono text-sm border-none resize-none focus:outline-none focus:ring-0 ${
+                  isDarkMode
+                    ? 'bg-[#040816] text-slate-100 placeholder:text-slate-500'
+                    : 'bg-white text-slate-800 placeholder:text-slate-400'
+                }`}
                 value={fileContent}
                 onChange={(event) => {
                   applyTextUpdate(event.target.value);
@@ -542,7 +564,11 @@ const FileEditor: React.FC<FileEditorProps> = ({
             ) : (
               <>
                 {mdxError && (
-                  <div className="border-b border-rose-200 bg-rose-50 px-4 py-2 text-sm text-rose-700">
+                  <div className={`border-b px-4 py-2 text-sm ${
+                    isDarkMode
+                      ? 'border-rose-500/20 bg-rose-950/25 text-rose-200'
+                      : 'border-rose-200 bg-rose-50 text-rose-700'
+                  }`}>
                     {mdxError}
                   </div>
                 )}
@@ -557,6 +583,7 @@ const FileEditor: React.FC<FileEditorProps> = ({
                     }}
                     onError={setMdxError}
                     onImageUpload={handleImageUpload}
+                    colorMode={colorMode}
                   />
                 </Suspense>
               </>
@@ -564,9 +591,9 @@ const FileEditor: React.FC<FileEditorProps> = ({
           </div>
         ) : (
           <Suspense fallback={<EditorLoadingState />}>
-          <MonacoEditor
+            <MonacoEditor
               height="100%"
-              language={getLanguage(file.name)}
+              language={getLanguage(resolvedFileName)}
               defaultValue={fileContent}
               value={collabReady ? undefined : fileContent}
               onMount={handleEditorDidMount}
@@ -576,7 +603,6 @@ const FileEditor: React.FC<FileEditorProps> = ({
               }}
               theme={monacoTheme}
               options={{
-                readOnly: !collabReady,
                 wordWrap: 'on',
                 wrappingIndent: 'indent',
                 minimap: { enabled: false },

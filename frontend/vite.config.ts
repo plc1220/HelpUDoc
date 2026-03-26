@@ -9,7 +9,11 @@ export default defineConfig({
   },
   build: {
     modulePreload: false,
+    manifest: true,
     rollupOptions: {
+      input: {
+        main: 'index.html',
+      },
       output: {
         manualChunks(id) {
           if (!id.includes('node_modules')) {
@@ -36,23 +40,10 @@ export default defineConfig({
             return 'mermaid'
           }
 
-          if (id.includes('lucide-react')) {
-            return 'icons'
-          }
-
-          if (id.includes('react-markdown') || id.includes('remark-') || id.includes('rehype-')) {
-            return 'markdown'
-          }
-
-          if (id.includes('@mui') || id.includes('@emotion')) {
-            return 'mui'
-          }
-
-          if (id.includes('react') || id.includes('react-router')) {
-            return 'react-vendor'
-          }
-
-          return 'vendor'
+          // Let Rollup keep the general React/app dependency graph together.
+          // Splitting react-vendor, mui, markdown, and generic vendor apart was
+          // creating runtime cycles in production bundles.
+          return undefined
         },
       },
     },

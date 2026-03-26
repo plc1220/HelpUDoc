@@ -35,6 +35,7 @@ type CommandTag = {
 type ConversationStreamingMap = Record<string, boolean>;
 
 export default function AgentChatPane({
+  colorMode,
   agentPaneStyles,
   isAgentPaneVisible,
   isAgentPaneFullScreen,
@@ -113,6 +114,7 @@ export default function AgentChatPane({
   onSelectMention,
   onSelectCommand,
 }: {
+  colorMode: 'light' | 'dark';
   agentPaneStyles: CSSProperties;
   isAgentPaneVisible: boolean;
   isAgentPaneFullScreen: boolean;
@@ -208,10 +210,17 @@ export default function AgentChatPane({
   onSelectMention: (file: WorkspaceFile) => void;
   onSelectCommand: (command: CommandSuggestion) => void;
 }) {
+  const isDarkMode = colorMode === 'dark';
   return (
-    <div className="flex min-h-0 flex-col overflow-hidden bg-gradient-to-b from-white to-slate-50" style={agentPaneStyles}>
+    <div
+      className={`flex min-h-0 flex-col overflow-hidden ${
+        isDarkMode ? 'bg-gradient-to-b from-slate-950 to-slate-900' : 'bg-gradient-to-b from-white to-slate-50'
+      }`}
+      style={agentPaneStyles}
+    >
       <style>{`@keyframes chat-pane-message-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }`}</style>
       <ChatHeader
+        colorMode={colorMode}
         isAgentPaneVisible={isAgentPaneVisible}
         isEditMode={isEditMode}
         isHistoryOpen={isHistoryOpen}
@@ -230,6 +239,7 @@ export default function AgentChatPane({
         }`}
       >
         <ChatHistoryPanel
+          colorMode={colorMode}
           isHistoryOpen={isHistoryOpen}
           conversationHistory={conversationHistory}
           activeConversationId={activeConversationId}
@@ -240,6 +250,7 @@ export default function AgentChatPane({
           onDeleteConversation={onDeleteConversation}
         />
         <ChatMessageList
+          colorMode={colorMode}
           messages={messages}
           isStreaming={isStreaming}
           personaDisplayName={personaDisplayName}
@@ -273,6 +284,7 @@ export default function AgentChatPane({
           workspaceId={workspaceId}
         />
         <ChatInputArea
+          colorMode={colorMode}
           chatMessage={chatMessage}
           chatAttachments={chatAttachments}
           chatInputRef={chatInputRef}

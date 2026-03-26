@@ -13,14 +13,6 @@ type PlotlyRuntime = {
   purge: (el: HTMLDivElement) => void;
 };
 
-const getPlotlyModuleUrl = () => {
-  const link = document.querySelector<HTMLLinkElement>('link[rel="modulepreload"][href*="plotly"]');
-  if (!link?.href) {
-    throw new Error('Plotly asset URL is unavailable.');
-  }
-  return link.href;
-};
-
 interface PlotlyChartProps {
   spec: PlotlySpec;
   className?: string;
@@ -31,6 +23,7 @@ const PlotlyChart = ({ spec, className, minHeight = 320 }: PlotlyChartProps) => 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const plotlyRef = useRef<PlotlyRuntime | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [isRuntimeReady, setIsRuntimeReady] = useState(false);
 
   const data = Array.isArray(spec?.data) ? spec.data : [];
   const layout = spec?.layout && typeof spec.layout === 'object' ? spec.layout : {};
@@ -49,21 +42,24 @@ const PlotlyChart = ({ spec, className, minHeight = 320 }: PlotlyChartProps) => 
   useEffect(() => {
     let cancelled = false;
 
-    void import(/* @vite-ignore */ getPlotlyModuleUrl())
+    void import('plotly.js-dist-min')
       .then((module) => {
         if (cancelled) return;
-        plotlyRef.current = (module as unknown as { default?: PlotlyRuntime }).default ?? (module as unknown as PlotlyRuntime);
+        plotlyRef.current = module.default as unknown as PlotlyRuntime;
         setLoadError(null);
+        setIsRuntimeReady(true);
       })
       .catch((error) => {
         console.error('Failed to load Plotly', error);
         if (!cancelled) {
           setLoadError(error instanceof Error ? error.message : 'Failed to load chart renderer.');
+          setIsRuntimeReady(false);
         }
       });
 
     return () => {
       cancelled = true;
+      setIsRuntimeReady(false);
       if (plotlyRef.current && containerRef.current) {
         try {
           plotlyRef.current.purge(containerRef.current);
@@ -77,7 +73,7 @@ const PlotlyChart = ({ spec, className, minHeight = 320 }: PlotlyChartProps) => 
   useEffect(() => {
     const Plotly = plotlyRef.current;
     const el = containerRef.current;
-    if (!Plotly || !el || loadError) {
+    if (!Plotly || !el || loadError || !isRuntimeReady) {
       return;
     }
 
@@ -92,7 +88,7 @@ const PlotlyChart = ({ spec, className, minHeight = 320 }: PlotlyChartProps) => 
     return () => {
       cancelled = true;
     };
-  }, [figure, loadError]);
+  }, [figure, isRuntimeReady, loadError]);
 
   return (
     <div className={className ?? 'h-full w-full'} style={{ minHeight }}>

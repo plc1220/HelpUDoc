@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
-    "build:docker": "vite build",
+    "build": "tsc -b && vite build && node scripts/remove-startup-preloads.mjs",
+    "build:docker": "vite build && node scripts/remove-startup-preloads.mjs",
     "lint": "eslint .",
     "preview": "vite preview",
     "e2e:install": "playwright install --with-deps chromium",

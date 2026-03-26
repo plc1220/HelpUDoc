@@ -72,16 +72,28 @@ const MermaidCodeBlockEditor = ({
     });
   }, [focusEmitter]);
 
+  const isDarkMode = mermaidColorMode === 'dark';
+
   return (
-    <div className="helpudoc-mermaid-editor not-prose my-4 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-      <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-4 py-2">
+    <div className={`helpudoc-mermaid-editor not-prose my-4 overflow-hidden rounded-[1.6rem] border shadow-sm ${
+      isDarkMode
+        ? 'border-slate-700/70 bg-slate-900/85 shadow-[0_26px_70px_-42px_rgba(2,6,23,0.95)]'
+        : 'border-slate-200 bg-white'
+    }`}>
+      <div className={`flex items-center justify-between border-b px-4 py-3 ${
+        isDarkMode ? 'border-slate-700/70 bg-slate-950/45' : 'border-slate-200 bg-slate-50'
+      }`}>
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Mermaid</p>
-          <p className="text-xs text-slate-500">Edit the diagram source and preview it live.</p>
+          <p className={`text-xs font-semibold uppercase tracking-[0.18em] ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Mermaid</p>
+          <p className={`text-xs ${isDarkMode ? 'text-slate-500' : 'text-slate-500'}`}>Edit the diagram source and preview it live.</p>
         </div>
         <button
           type="button"
-          className="rounded-full border border-slate-300 px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100"
+          className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+            isDarkMode
+              ? 'border-slate-600 bg-transparent text-slate-200 hover:bg-slate-800'
+              : 'border-slate-300 text-slate-600 hover:bg-slate-100'
+          }`}
           onClick={() => {
             parentEditor.update(() => {
               lexicalNode.remove();
@@ -93,7 +105,7 @@ const MermaidCodeBlockEditor = ({
       </div>
       <div className="grid gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
         <label className="flex min-h-[260px] flex-col gap-2">
-          <span className="text-xs font-medium text-slate-600">Source</span>
+          <span className={`text-xs font-medium ${isDarkMode ? 'text-slate-300' : 'text-slate-600'}`}>Source</span>
           <textarea
             ref={textareaRef}
             value={draft}
@@ -103,15 +115,21 @@ const MermaidCodeBlockEditor = ({
               setCode(nextValue);
             }}
             spellCheck={false}
-            className="min-h-[240px] w-full resize-y rounded-xl border border-slate-200 bg-slate-950 p-4 font-mono text-sm leading-relaxed text-slate-100 focus:border-blue-400 focus:outline-none"
+            className={`min-h-[240px] w-full resize-y rounded-2xl border p-4 font-mono text-sm leading-relaxed focus:outline-none ${
+              isDarkMode
+                ? 'border-slate-800 bg-[#040816] text-slate-100 focus:border-sky-400'
+                : 'border-slate-200 bg-white text-slate-800 focus:border-blue-400'
+            }`}
           />
         </label>
         <div className="flex min-h-[260px] flex-col gap-2">
-          <span className="text-xs font-medium text-slate-600">Preview</span>
+          <span className={`text-xs font-medium ${isDarkMode ? 'text-slate-300' : 'text-slate-600'}`}>Preview</span>
           <MermaidDiagram
             chart={draft}
             colorMode={mermaidColorMode}
-            className={`mermaid-container h-full min-h-[240px] overflow-auto rounded-xl border p-4 ${mermaidColorMode === 'dark' ? 'border-slate-700 bg-slate-950' : 'border-slate-200 bg-white'}`}
+            className={`mermaid-container h-full min-h-[240px] overflow-auto rounded-2xl border p-4 ${
+              isDarkMode ? 'border-slate-700/70 bg-slate-950/60' : 'border-slate-200 bg-white'
+            }`}
             fallbackClassName="h-full min-h-[240px]"
           />
         </div>
@@ -135,6 +153,7 @@ type MarkdownRichEditorProps = {
   onChange: (value: string) => void;
   onError: (error: string) => void;
   onImageUpload: (image: File) => Promise<string>;
+  colorMode: 'light' | 'dark';
 };
 
 const MarkdownRichEditor = forwardRef<MarkdownRichEditorHandle, MarkdownRichEditorProps>(({
@@ -142,6 +161,7 @@ const MarkdownRichEditor = forwardRef<MarkdownRichEditorHandle, MarkdownRichEdit
   onChange,
   onError,
   onImageUpload,
+  colorMode,
 }, ref) => {
   const editorRef = useRef<MDXEditorMethods | null>(null);
 
@@ -195,8 +215,10 @@ const MarkdownRichEditor = forwardRef<MarkdownRichEditorHandle, MarkdownRichEdit
     <MDXEditor
       ref={editorRef}
       markdown={markdown}
-      className="mdxeditor helpudoc-mdxeditor flex-1"
-      contentEditableClassName="prose prose-slate max-w-none helpudoc-markdown helpudoc-markdown-editor mdxeditor-root-contenteditable"
+      className={`mdxeditor helpudoc-mdxeditor flex-1 ${colorMode === 'dark' ? 'helpudoc-mdxeditor-dark' : 'helpudoc-mdxeditor-light'}`}
+      contentEditableClassName={`prose max-w-none helpudoc-markdown helpudoc-markdown-editor mdxeditor-root-contenteditable ${
+        colorMode === 'dark' ? 'prose-invert helpudoc-markdown-dark' : 'prose-slate helpudoc-markdown-light'
+      }`}
       onChange={onChange}
       onError={({ error }) => {
         console.error('MDXEditor markdown processing error:', error);

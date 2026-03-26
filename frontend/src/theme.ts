@@ -7,13 +7,9 @@ export const resolveInitialColorMode = (): PaletteMode => {
     return 'light';
   }
 
-  try {
-    const stored = window.localStorage.getItem(APP_COLOR_MODE_STORAGE_KEY);
-    if (stored === 'light' || stored === 'dark') {
-      return stored;
-    }
-  } catch (error) {
-    console.warn('Failed to read persisted color mode', error);
+  const stored = window.localStorage.getItem(APP_COLOR_MODE_STORAGE_KEY);
+  if (stored === 'light' || stored === 'dark') {
+    return stored;
   }
 
   return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
@@ -26,11 +22,7 @@ export const applyColorModeToDocument = (mode: PaletteMode) => {
   }
 
   if (typeof window !== 'undefined') {
-    try {
-      window.localStorage.setItem(APP_COLOR_MODE_STORAGE_KEY, mode);
-    } catch (error) {
-      console.warn('Failed to persist color mode', error);
-    }
+    window.localStorage.setItem(APP_COLOR_MODE_STORAGE_KEY, mode);
   }
 };
 

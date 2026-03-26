@@ -3,10 +3,10 @@ import ReactMarkdown from 'react-markdown';
 import type { Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
-import type { PlotlySpec } from '../PlotlyChart';
 import { getFiles, getFileContent, getWorkspaceFilePreview } from '../../services/fileApi';
 import type { File as WorkspaceFile, ToolOutputFile } from '../../types';
 import { inferPreviewEncoding } from '../../utils/files';
+import { normalizePlotlySpecSource, parsePlotlySpec } from '../../utils/plotlySpec';
 
 const PlotlyChart = lazy(() => import('../PlotlyChart'));
 
@@ -157,9 +157,13 @@ export default function ToolOutputFilePreview({
 
   if (isPlotlyJson) {
     try {
-      const spec = JSON.parse(content) as PlotlySpec;
-      if (!spec || typeof spec !== 'object' || !Array.isArray(spec.data)) {
-        throw new Error('Plotly spec must include a top-level data array.');
+      const spec = parsePlotlySpec(content);
+      if (!spec) {
+        return (
+          <div className="mt-2 rounded border border-gray-200 bg-white p-4 text-sm text-slate-500">
+            Loading chart...
+          </div>
+        );
       }
       return (
         <div className="mt-2 rounded border border-gray-200 bg-white p-2">
@@ -176,7 +180,8 @@ export default function ToolOutputFilePreview({
   if (normalizedMime.includes('json')) {
     let formatted = content;
     try {
-      formatted = JSON.stringify(JSON.parse(content), null, 2);
+      const normalizedPlotlyContent = normalizePlotlySpecSource(content);
+      formatted = JSON.stringify(JSON.parse(normalizedPlotlyContent || content), null, 2);
     } catch {
       // Keep original payload as-is.
     }

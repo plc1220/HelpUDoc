@@ -1,96 +1,75 @@
-import React, { Suspense, lazy } from 'react';
-import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
-import { useAuth } from './auth/AuthProvider';
+import { useEffect, useState, type ComponentType, type FC } from 'react';
+import { Route, Routes } from 'react-router-dom';
+import LoginPage from './pages/LoginPage';
 
-const WorkspacePage = lazy(() => import('./pages/WorkspacePage'));
-const AgentSettingsPage = lazy(() => import('./pages/AgentSettingsPage'));
-const DashboardPage = lazy(() => import('./pages/DashboardPage'));
-const KnowledgePage = lazy(() => import('./pages/KnowledgePage'));
-const UsersPage = lazy(() => import('./pages/UsersPage'));
-const BillingPage = lazy(() => import('./pages/BillingPage'));
-const LoginPage = lazy(() => import('./pages/LoginPage'));
+type ProtectedShellModule = {
+  default: ComponentType;
+};
 
-const RequireAuth: React.FC<{ children: React.ReactElement }> = ({ children }) => {
-  const { user, loading } = useAuth();
-  const location = useLocation();
+const protectedShellModules = import.meta.glob<ProtectedShellModule>('./ProtectedShell.tsx');
 
-  if (loading) {
+const loadProtectedShell = async (): Promise<ProtectedShellModule> => {
+  const loader = protectedShellModules['./ProtectedShell.tsx'];
+  if (!loader) {
+    throw new Error('Unable to resolve protected shell module.');
+  }
+
+  return loader();
+};
+
+const ProtectedShellView: FC = () => {
+  const [Shell, setShell] = useState<ComponentType | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    setShell(null);
+    setError(null);
+
+    void loadProtectedShell()
+      .then((mod) => {
+        if (!cancelled) {
+          setShell(() => mod.default);
+        }
+      })
+      .catch((loadError) => {
+        console.error('Failed to load protected shell', loadError);
+        if (!cancelled) {
+          setError(loadError instanceof Error ? loadError.message : 'Failed to load app shell.');
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (error) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[var(--app-bg)] text-slate-600">
-        Checking your session…
+      <div className="flex min-h-screen items-center justify-center bg-[var(--app-bg)] text-slate-500">
+        {error}
       </div>
     );
   }
 
-  if (!user) {
-    return <Navigate to="/login" replace state={{ from: location.pathname }} />;
+  if (!Shell) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[var(--app-bg)] text-slate-500">
+        Loading page…
+      </div>
+    );
   }
 
-  return children;
+  return <Shell />;
 };
 
-const App: React.FC = () => {
+const App: FC = () => {
   return (
-    <Suspense
-      fallback={(
-        <div className="flex min-h-screen items-center justify-center bg-[var(--app-bg)] text-slate-500">
-          Loading page…
-        </div>
-      )}
-    >
-      <Routes>
-        <Route path="/login" element={<LoginPage />} />
-        <Route
-          path="/"
-          element={
-            <RequireAuth>
-              <WorkspacePage />
-            </RequireAuth>
-          }
-        />
-        <Route
-          path="/settings"
-          element={
-            <RequireAuth>
-              <DashboardPage />
-            </RequireAuth>
-          }
-        />
-        <Route
-          path="/settings/agents"
-          element={
-            <RequireAuth>
-              <AgentSettingsPage />
-            </RequireAuth>
-          }
-        />
-        <Route
-          path="/settings/knowledge"
-          element={
-            <RequireAuth>
-              <KnowledgePage />
-            </RequireAuth>
-          }
-        />
-        <Route
-          path="/settings/users"
-          element={
-            <RequireAuth>
-              <UsersPage />
-            </RequireAuth>
-          }
-        />
-        <Route
-          path="/settings/billing"
-          element={
-            <RequireAuth>
-              <BillingPage />
-            </RequireAuth>
-          }
-        />
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
-    </Suspense>
+    <Routes>
+      <Route path="/login" element={<LoginPage />} />
+      <Route path="*" element={<ProtectedShellView />} />
+    </Routes>
   );
 };
 

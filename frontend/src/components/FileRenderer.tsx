@@ -2,8 +2,8 @@ import React, { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'rea
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import Papa from 'papaparse';
-import type { PlotlySpec } from './PlotlyChart';
 import type { File } from '../types';
+import { parsePlotlySpec } from '../utils/plotlySpec';
 import {
   configureMermaid,
   createMarkdownComponents,
@@ -313,7 +313,8 @@ const FileRenderer: React.FC<FileRendererProps> = ({
   const renderContent = () => {
     if (isMarkdownFile) {
       const markdownContainerClassName = [
-        'prose max-w-none break-words overflow-x-hidden p-4',
+        colorMode === 'dark' ? 'prose prose-invert' : 'prose prose-slate',
+        'max-w-none break-words overflow-x-hidden p-4',
         disableInternalScroll ? 'h-auto overflow-y-visible' : 'h-full overflow-y-auto',
       ].join(' ');
 
@@ -326,13 +327,18 @@ const FileRenderer: React.FC<FileRendererProps> = ({
       );
     }
     if (isPlotlyFile) {
+      const normalizedPlotlyContent = fileContent.trim();
+      if (!normalizedPlotlyContent) {
+        return (
+          <div className="flex h-full items-center justify-center px-4 text-sm text-slate-500">
+            Loading chart…
+          </div>
+        );
+      }
       try {
-        const spec = JSON.parse(fileContent) as PlotlySpec;
+        const spec = parsePlotlySpec(fileContent);
         if (!spec || typeof spec !== 'object') {
           throw new Error('Plotly spec must be a JSON object.');
-        }
-        if (!Array.isArray(spec.data)) {
-          throw new Error('Plotly spec must include a top-level "data" array.');
         }
         return (
           <Suspense fallback={<div className="flex h-full items-center justify-center text-sm text-slate-500">Loading chart…</div>}>
