@@ -1,37 +1,26 @@
 import { useEffect, useMemo, useState } from 'react';
+import type { PaletteMode } from '@mui/material';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Sun, Moon } from 'lucide-react';
 import { useAuth } from '../auth/AuthProvider';
+import { applyColorModeToDocument, resolveInitialColorMode } from '../colorMode';
 
 interface LocationState {
   from?: string;
 }
 
-type PaletteMode = 'light' | 'dark';
-
 const LoginPage = () => {
   const { user, googleReady, googleError, authMode, signInWithGoogle, signInWithHeaders } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-  const [colorMode, setColorMode] = useState<PaletteMode>(() => {
-    if (typeof window === 'undefined') return 'light';
-    const stored = window.localStorage.getItem('helpudoc-color-mode');
-    if (stored === 'light' || stored === 'dark') {
-      return stored;
-    }
-    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-  });
+  const [colorMode, setColorMode] = useState<PaletteMode>(resolveInitialColorMode);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [headerName, setHeaderName] = useState('');
   const [headerEmail, setHeaderEmail] = useState('');
 
   useEffect(() => {
-    document.documentElement.setAttribute('data-theme', colorMode);
-    document.documentElement.classList.toggle('dark', colorMode === 'dark');
-    if (typeof window !== 'undefined') {
-      window.localStorage.setItem('helpudoc-color-mode', colorMode);
-    }
+    applyColorModeToDocument(colorMode);
   }, [colorMode]);
 
   useEffect(() => {

@@ -338,7 +338,7 @@ const UsersPage = () => {
                 return (
                   <div
                     key={user.id}
-                    className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50/70 px-4 py-3"
+                    className="settings-selection-card flex items-center justify-between gap-3 rounded-2xl px-4 py-3"
                   >
                     <div className="min-w-0">
                       <p className="truncate text-sm font-medium text-slate-900">{user.displayName}</p>
@@ -396,12 +396,12 @@ const UsersPage = () => {
                   value={newGroupName}
                   onChange={(event) => setNewGroupName(event.target.value)}
                   placeholder="Create group (e.g. analysts)"
-                  className="flex-1 rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm shadow-sm outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-900/5"
+                  className="settings-control flex-1 rounded-2xl px-4 py-3 text-sm"
                 />
                 <button
                   type="button"
                   onClick={handleCreateGroup}
-                  className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
+                  className="settings-button-primary inline-flex items-center justify-center gap-2 rounded-2xl px-4 py-3 text-sm font-semibold transition"
                 >
                   <Plus size={14} />
                   Add group
@@ -421,10 +421,10 @@ const UsersPage = () => {
                     <div
                       key={group.id}
                       className={cx(
-                        'flex items-center justify-between rounded-2xl border px-4 py-3 transition',
+                        'flex items-center justify-between rounded-2xl px-4 py-3 transition',
                         group.id === selectedGroupId
-                          ? 'border-slate-900 bg-slate-100'
-                          : 'border-slate-200 bg-slate-50/70',
+                          ? 'settings-selection-card settings-selection-card-active'
+                          : 'settings-selection-card',
                       )}
                     >
                       <button
@@ -447,7 +447,7 @@ const UsersPage = () => {
               )}
 
               {selectedGroup ? (
-                <div className="space-y-5 rounded-[24px] border border-slate-200 bg-slate-50/80 p-5">
+                <div className="settings-soft-panel space-y-5 rounded-[24px] p-5">
                   {accessLoading ? <SettingsLoadingState label="Loading group details..." /> : null}
 
                   {!accessLoading ? (
@@ -465,7 +465,7 @@ const UsersPage = () => {
                       <div className="space-y-4">
                         <div className="flex flex-col gap-3 sm:flex-row">
                           <select
-                            className="flex-1 rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm shadow-sm outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-900/5"
+                            className="settings-control flex-1 rounded-2xl px-4 py-3 text-sm"
                             value={selectedUserId}
                             onChange={(event) => setSelectedUserId(event.target.value)}
                           >
@@ -477,7 +477,7 @@ const UsersPage = () => {
                           <button
                             type="button"
                             onClick={handleAddMember}
-                            className="rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
+                            className="settings-button-primary rounded-2xl px-4 py-3 text-sm font-semibold transition"
                           >
                             Add member
                           </button>
@@ -494,7 +494,7 @@ const UsersPage = () => {
                             groupMembers.map((member) => (
                               <div
                                 key={member.id}
-                                className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white px-4 py-3"
+                                className="settings-selection-card flex items-center justify-between rounded-2xl px-4 py-3"
                               >
                                 <span className="text-sm text-slate-800">{member.displayName}</span>
                                 <button
@@ -510,7 +510,7 @@ const UsersPage = () => {
                         </div>
                       </div>
 
-                      <div className="space-y-4 rounded-2xl border border-slate-200 bg-white p-4">
+                      <div className="settings-portal-card space-y-4 rounded-2xl p-4">
                         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                           <div>
                             <p className="text-sm font-semibold text-slate-900">Prompt access</p>
@@ -527,7 +527,7 @@ const UsersPage = () => {
                                 'rounded-xl px-3 py-2 text-xs font-semibold transition',
                                 !isAccessDirty || accessSaving
                                   ? 'cursor-not-allowed bg-slate-100 text-slate-400'
-                                  : 'bg-slate-100 text-slate-700 hover:bg-slate-200',
+                                  : 'settings-portal-button-secondary',
                               )}
                             >
                               Reset
@@ -540,7 +540,7 @@ const UsersPage = () => {
                                 'inline-flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold transition',
                                 !isAccessDirty || accessSaving
                                   ? 'cursor-not-allowed bg-slate-200 text-slate-500'
-                                  : 'bg-slate-900 text-white hover:bg-slate-800',
+                                  : 'settings-button-primary',
                               )}
                             >
                               {accessSaving ? <Loader2 size={14} className="animate-spin" /> : <KeyRound size={14} />}
@@ -558,10 +558,10 @@ const UsersPage = () => {
                                 value={skillSearch}
                                 onChange={(event) => setSkillSearch(event.target.value)}
                                 placeholder="Filter skills"
-                                className="w-full rounded-xl border border-slate-300 bg-white py-2 pl-9 pr-3 text-sm outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-900/5"
+                                className="settings-control w-full rounded-xl py-2 pl-9 pr-3 text-sm"
                               />
                             </div>
-                            <div className="max-h-80 space-y-2 overflow-y-auto rounded-2xl border border-slate-200 bg-slate-50 p-2">
+                            <div className="settings-soft-panel max-h-80 space-y-2 overflow-y-auto rounded-2xl p-2">
                               {catalogLoading ? <SettingsLoadingState label="Loading skills..." /> : null}
                               {!catalogLoading && filteredSkills.length === 0 ? (
                                 <SettingsEmptyState
@@ -580,12 +580,12 @@ const UsersPage = () => {
                                     className={cx(
                                       'w-full rounded-2xl border px-3 py-3 text-left transition',
                                       selected
-                                        ? 'border-slate-900 bg-slate-900 text-white'
-                                        : 'border-slate-200 bg-white text-slate-900 hover:border-slate-300',
+                                        ? 'settings-selection-card settings-selection-card-active text-slate-900'
+                                        : 'settings-selection-card text-slate-900',
                                     )}
                                   >
                                     <p className="text-sm font-semibold">{skill.name || skill.id}</p>
-                                    <p className={cx('mt-1 text-xs leading-5', selected ? 'text-slate-200' : 'text-slate-500')}>
+                                    <p className={cx('mt-1 text-xs leading-5', selected ? 'text-slate-600' : 'text-slate-500')}>
                                       {skill.description || skill.id}
                                     </p>
                                   </button>
@@ -602,10 +602,10 @@ const UsersPage = () => {
                                 value={mcpSearch}
                                 onChange={(event) => setMcpSearch(event.target.value)}
                                 placeholder="Filter MCP servers"
-                                className="w-full rounded-xl border border-slate-300 bg-white py-2 pl-9 pr-3 text-sm outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-900/5"
+                                className="settings-control w-full rounded-xl py-2 pl-9 pr-3 text-sm"
                               />
                             </div>
-                            <div className="max-h-80 space-y-2 overflow-y-auto rounded-2xl border border-slate-200 bg-slate-50 p-2">
+                            <div className="settings-soft-panel max-h-80 space-y-2 overflow-y-auto rounded-2xl p-2">
                               {catalogLoading ? <SettingsLoadingState label="Loading MCP servers..." /> : null}
                               {!catalogLoading && filteredMcpServers.length === 0 ? (
                                 <SettingsEmptyState
@@ -624,12 +624,12 @@ const UsersPage = () => {
                                     className={cx(
                                       'w-full rounded-2xl border px-3 py-3 text-left transition',
                                       selected
-                                        ? 'border-slate-900 bg-slate-900 text-white'
-                                        : 'border-slate-200 bg-white text-slate-900 hover:border-slate-300',
+                                        ? 'settings-selection-card settings-selection-card-active text-slate-900'
+                                        : 'settings-selection-card text-slate-900',
                                     )}
                                   >
                                     <p className="text-sm font-semibold">{server.name}</p>
-                                    <p className={cx('mt-1 text-xs leading-5', selected ? 'text-slate-200' : 'text-slate-500')}>
+                                    <p className={cx('mt-1 text-xs leading-5', selected ? 'text-slate-600' : 'text-slate-500')}>
                                       {server.description || 'Allow prompts in this group to target this MCP server.'}
                                     </p>
                                   </button>
@@ -649,8 +649,8 @@ const UsersPage = () => {
       </div>
 
       {pendingDeleteUser ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/35 px-4">
-          <div className="w-full max-w-2xl rounded-[28px] border border-slate-200 bg-white p-6 shadow-[0_24px_80px_rgba(15,23,42,0.2)]">
+        <div className="settings-modal-overlay fixed inset-0 z-50 flex items-center justify-center px-4">
+          <div className="settings-modal-panel w-full max-w-2xl rounded-[28px] p-6">
             <div className="flex items-start justify-between gap-4">
               <div>
                 <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-rose-500">Destructive action</p>
@@ -710,7 +710,7 @@ const UsersPage = () => {
                   setPendingDeleteUser(null);
                   setDeletionImpact(null);
                 }}
-                className="rounded-2xl border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                className="settings-portal-button-secondary rounded-2xl px-4 py-2.5 text-sm font-semibold transition"
               >
                 Cancel
               </button>
@@ -722,7 +722,7 @@ const UsersPage = () => {
                   'inline-flex items-center gap-2 rounded-2xl px-4 py-2.5 text-sm font-semibold text-white transition',
                   deletionImpactLoading || deletingUserId === pendingDeleteUser.id
                     ? 'cursor-not-allowed bg-rose-300'
-                    : 'bg-rose-600 hover:bg-rose-700',
+                    : 'settings-button-danger-solid',
                 )}
               >
                 {deletingUserId === pendingDeleteUser.id ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}

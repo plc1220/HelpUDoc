@@ -25,8 +25,8 @@ type KnowledgeSource = {
   content?: string | null;
   fileId?: number | null;
   sourceUrl?: string | null;
-  tags?: any;
-  metadata?: Record<string, any> | null;
+  tags?: unknown;
+  metadata?: Record<string, unknown> | null;
   createdAt: string;
   updatedAt: string;
   file?: {
@@ -292,7 +292,7 @@ const KnowledgePage = () => {
     <div className="flex flex-wrap items-center gap-3">
       <div className="relative">
         <select
-          className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+          className="settings-control rounded-xl px-3 py-2 text-sm"
           value={selectedWorkspaceId}
           onChange={(event) => setSelectedWorkspaceId(event.target.value)}
           disabled={loadingWorkspaces}
@@ -311,7 +311,7 @@ const KnowledgePage = () => {
         type="button"
         onClick={handleRefresh}
         disabled={!selectedWorkspaceId || loadingKnowledge || loadingStatuses}
-        className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:opacity-60"
+        className="settings-portal-button-secondary inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium transition disabled:opacity-60"
       >
         {loadingKnowledge || loadingStatuses ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw size={16} />}
         Refresh
@@ -382,7 +382,7 @@ const KnowledgePage = () => {
               description="Upload files and we’ll index supported documents automatically."
             />
 
-            <div className="mt-6 rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center">
+            <div className="settings-soft-panel mt-6 rounded-2xl border border-dashed p-6 text-center">
               <input
                 ref={uploadInputRef}
                 type="file"
@@ -394,7 +394,7 @@ const KnowledgePage = () => {
                 type="button"
                 onClick={handleUploadClick}
                 disabled={!selectedWorkspaceId || uploading}
-                className="inline-flex items-center gap-2 rounded-2xl bg-slate-900 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-slate-800 disabled:opacity-60"
+                className="settings-button-primary inline-flex items-center gap-2 rounded-2xl px-4 py-2.5 text-sm font-medium transition disabled:opacity-60"
               >
                 {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus size={16} />}
                 Upload files
@@ -407,7 +407,7 @@ const KnowledgePage = () => {
               ) : null}
             </div>
 
-            <div className="mt-6 rounded-[24px] border border-slate-100 bg-white/70 p-5">
+            <div className="settings-portal-card mt-6 rounded-[24px] p-5">
               <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Tips</p>
               <ul className="mt-2 space-y-2 text-sm text-slate-600">
                 <li>RAG indexing runs for PDF, DOC/DOCX, and Markdown files.</li>
@@ -445,10 +445,10 @@ const KnowledgePage = () => {
               {knowledgeSources.map((item) => (
                 <div
                   key={item.id}
-                  className="rounded-[24px] border border-slate-200 bg-slate-50/70 p-4 shadow-[0_10px_22px_rgba(15,23,42,0.06)]"
+                  className="settings-portal-card rounded-[24px] p-4"
                 >
                   <div className="flex items-start gap-4">
-                    <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-white text-slate-700 ring-1 ring-slate-200">
+                    <span className="settings-portal-icon-muted flex h-10 w-10 items-center justify-center rounded-2xl ring-1 ring-slate-200">
                       <FileIcon size={18} />
                     </span>
                     <div className="flex-1 space-y-2">
@@ -464,7 +464,7 @@ const KnowledgePage = () => {
                           {renderStatusBadge(item.file?.name)}
                           <button
                             type="button"
-                            className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-600 transition hover:bg-slate-50"
+                            className="settings-portal-button-secondary inline-flex items-center gap-1 rounded-xl px-2.5 py-1.5 text-xs transition"
                             onClick={() => handleDeleteKnowledge(item)}
                           >
                             <Trash size={12} />
@@ -489,7 +489,7 @@ const KnowledgePage = () => {
             actions={(
               <Link
                 to="/settings/agents"
-                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-900 px-3 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-slate-800"
+                className="settings-portal-button-secondary inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium transition"
               >
                 Configure skills
               </Link>
