@@ -836,6 +836,15 @@ body {
   color: inherit;
 }
 
+.helpudoc-markdown strong,
+.helpudoc-markdown b,
+.helpudoc-markdown em,
+.helpudoc-markdown a,
+.helpudoc-markdown ul > li::marker,
+.helpudoc-markdown ol > li::marker {
+  color: inherit;
+}
+
 .helpudoc-markdown pre {
   background: #0f172a;
   border: 1px solid #1e293b;
@@ -987,6 +996,32 @@ body {
 :root[data-theme='dark'] .helpudoc-markdown,
 :root.dark .helpudoc-markdown {
   color: #e6edf3;
+}
+
+:root[data-theme='dark'] .helpudoc-markdown p,
+:root[data-theme='dark'] .helpudoc-markdown li,
+:root[data-theme='dark'] .helpudoc-markdown td,
+:root[data-theme='dark'] .helpudoc-markdown th,
+:root[data-theme='dark'] .helpudoc-markdown strong,
+:root[data-theme='dark'] .helpudoc-markdown b,
+:root[data-theme='dark'] .helpudoc-markdown em,
+:root[data-theme='dark'] .helpudoc-markdown a,
+:root.dark .helpudoc-markdown p,
+:root.dark .helpudoc-markdown li,
+:root.dark .helpudoc-markdown td,
+:root.dark .helpudoc-markdown th,
+:root.dark .helpudoc-markdown strong,
+:root.dark .helpudoc-markdown b,
+:root.dark .helpudoc-markdown em,
+:root.dark .helpudoc-markdown a {
+  color: inherit;
+}
+
+:root[data-theme='dark'] .helpudoc-markdown ul > li::marker,
+:root[data-theme='dark'] .helpudoc-markdown ol > li::marker,
+:root.dark .helpudoc-markdown ul > li::marker,
+:root.dark .helpudoc-markdown ol > li::marker {
+  color: #7f8da3;
 }
 
 :root[data-theme='dark'] .helpudoc-markdown h1,

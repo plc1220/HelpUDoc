@@ -313,7 +313,8 @@ const FileRenderer: React.FC<FileRendererProps> = ({
   const renderContent = () => {
     if (isMarkdownFile) {
       const markdownContainerClassName = [
-        'prose max-w-none break-words overflow-x-hidden p-4',
+        colorMode === 'dark' ? 'prose prose-invert' : 'prose prose-slate',
+        'max-w-none break-words overflow-x-hidden p-4',
         disableInternalScroll ? 'h-auto overflow-y-visible' : 'h-full overflow-y-auto',
       ].join(' ');
 
