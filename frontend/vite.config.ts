@@ -8,6 +8,7 @@ export default defineConfig({
     postcss: './postcss.config.js',
   },
   build: {
+    modulePreload: false,
     rollupOptions: {
       output: {
         manualChunks(id) {
