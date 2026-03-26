@@ -6,15 +6,6 @@ import type { PlotlySpec } from '../PlotlyChart';
 
 const PlotlyChart = lazy(() => import('../PlotlyChart'));
 
-let mermaidRuntimePromise: Promise<typeof import('mermaid')> | null = null;
-
-const loadMermaidRuntime = async () => {
-  if (!mermaidRuntimePromise) {
-    mermaidRuntimePromise = import('mermaid');
-  }
-  return mermaidRuntimePromise;
-};
-
 export type MermaidColorMode = 'light' | 'dark';
 
 type WorkspaceImagePreview = {
@@ -38,6 +29,23 @@ type MarkdownComponentOptions = {
     className?: string;
     children: ReactNode;
   }) => ReactNode;
+};
+
+const getMermaidModuleUrl = () => {
+  const link = document.querySelector<HTMLLinkElement>('link[rel="modulepreload"][href*="mermaid"]');
+  if (!link?.href) {
+    throw new Error('Mermaid asset URL is unavailable.');
+  }
+  return link.href;
+};
+
+let mermaidRuntimePromise: Promise<typeof import('mermaid')> | null = null;
+
+const loadMermaidRuntime = async () => {
+  if (!mermaidRuntimePromise) {
+    mermaidRuntimePromise = import(/* @vite-ignore */ getMermaidModuleUrl());
+  }
+  return mermaidRuntimePromise;
 };
 
 const BLOCK_LEVEL_TAGS = ['div', 'pre', 'table', 'blockquote', 'ul', 'ol', 'hr'];
