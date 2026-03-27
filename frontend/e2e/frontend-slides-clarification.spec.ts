@@ -3,9 +3,9 @@ import { expect, test } from '@playwright/test';
 test.setTimeout(150_000);
 
 const E2E_USER = {
-  id: 'local-e2e',
-  name: 'E2E User',
-  email: 'e2e@example.com',
+  id: 'admin-local',
+  name: 'Admin',
+  email: 'admin@local.com',
   provider: 'local',
 };
 
@@ -47,11 +47,14 @@ test('frontend-slides pauses on clarification instead of approval', async ({ pag
 
   await page.goto(resolvedBaseUrl, { waitUntil: 'domcontentloaded' });
 
-  // Open the workspace drawer.
-  await page.getByRole('button').first().click();
+  // Open the workspace drawer if it is collapsed.
+  const filesPanel = page.getByText('Files', { exact: true });
+  if (!(await filesPanel.isVisible().catch(() => false))) {
+    await page.getByRole('button').first().click();
+  }
 
   // Create and auto-select a disposable workspace.
-  await page.getByRole('button', { name: /\+ Create/i }).click();
+  await page.getByRole('button', { name: /^Create$/i }).click();
   await page.getByRole('button').first().click();
 
   // Upload the source markdown through the workspace file input.
@@ -63,8 +66,9 @@ test('frontend-slides pauses on clarification instead of approval', async ({ pag
   await expect(page.getByText('operation-epic-fury-report.md', { exact: true })).toBeVisible();
 
   // Trigger the frontend-slides flow using a tagged workspace file.
-  const composer = page.getByPlaceholder('Interact with the agent... (Type / for commands)');
-  await composer.fill('use frontend-slide skill, build the presentation slide for @operation-epic-fury-report.md');
+  const composer = page.locator('textarea[placeholder*="Interact with the agent..."]');
+  await expect(composer).toBeVisible();
+  await composer.fill('/skill frontend-slides @operation-epic-fury-report.md');
   const startRunResponse = page.waitForResponse(
     (response) =>
       response.request().method() === 'POST' &&
@@ -72,7 +76,7 @@ test('frontend-slides pauses on clarification instead of approval', async ({ pag
     { timeout: 30_000 },
   );
   await page.getByRole('button', { name: 'Send message' }).click();
-  await expect(page.getByText('use frontend-slide skill, build the presentation slide for @operation-epic-fury-report.md')).toBeVisible();
+  await expect(page.getByText('/skill frontend-slides @operation-epic-fury-report.md')).toBeVisible();
   const runResponse = await startRunResponse;
   console.log(`[start-run-body] ${await runResponse.text()}`);
 
@@ -80,12 +84,13 @@ test('frontend-slides pauses on clarification instead of approval', async ({ pag
   await expect
     .poll(
       async () => {
-        const purposeQuestionCount = await page.getByText(/Purpose: What is this presentation for\?/i).count();
-        const discoveryTitleCount = await page.getByText(/Presentation Discovery|File Not Found/i).count();
-        const continueCount = await page.getByRole('button', { name: 'Continue' }).count();
+        const purposeQuestionCount = await page.getByText(/What is this presentation for\?/i).count();
+        const pitchDeckOptionCount = await page.getByRole('button', { name: /Pitch deck/i }).count();
+        const discoveryTitleCount = await page.getByText(/Presentation Discovery|Presentation Context|File Not Found/i).count();
+        const submitCount = await page.getByRole('button', { name: /Continue|Start Designing/i }).count();
         return (
-          (continueCount > 0 && discoveryTitleCount > 0) ||
-          (continueCount > 0 && purposeQuestionCount > 0)
+          (submitCount > 0 && discoveryTitleCount > 0 && pitchDeckOptionCount > 0) ||
+          (submitCount > 0 && purposeQuestionCount > 0 && pitchDeckOptionCount > 0)
         );
       },
       { timeout: 120_000, message: 'expected clarification UI to appear' },
@@ -94,7 +99,6 @@ test('frontend-slides pauses on clarification instead of approval', async ({ pag
 
   await expect(page.getByText(/Review Research Strategy/i)).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Approve' })).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Edit' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Reject' })).toHaveCount(0);
   await expect(page.getByText('Generating...')).toHaveCount(0, { timeout: 30_000 });
 });

@@ -315,11 +315,11 @@ Mentally verify the modified slide at these viewport sizes:
 
 ## Phase 1: Content Discovery (New Presentations)
 
-Before designing, understand the content. Ask via AskUserQuestion:
+Before designing, understand the content. Use `request_clarification` for every decision gate in this skill. Do not ask these questions in plain chat prose, and do not continue to later phases after a clarification tool call until the user has resumed the run.
 
 ### Step 1.1: Presentation Context + Images (Single Form)
 
-**IMPORTANT:** Ask ALL 4 questions in a single AskUserQuestion call so the user can fill everything out at once before submitting.
+**IMPORTANT:** Ask ALL 5 questions in a single `request_clarification` call so the user can fill everything out at once before submitting. Pass them via `questions_json`, not as a prose list in the chat response.
 
 **Question 1: Purpose**
 - Header: "Purpose"
@@ -396,7 +396,7 @@ After evaluation, the **usable** images become context for planning the slide st
 
 This means curated images are factored in **before** style selection (Phase 2) and **before** HTML generation (Phase 3). They are co-equal context in the design process.
 
-5. **Confirm outline via AskUserQuestion** — Do NOT break the flow by asking the user to type free text. Use AskUserQuestion to confirm:
+5. **Confirm outline via `request_clarification`** — Do NOT break the flow by asking the user to type free text. Use `request_clarification` to confirm:
 
 **Question: Outline Confirmation**
 - Header: "Outline"
@@ -406,7 +406,7 @@ This means curated images are factored in **before** style selection (Phase 2) a
   - "Adjust images" — I want to change which images go where
   - "Adjust outline" — I want to change the slide structure
 
-This keeps the entire flow in the AskUserQuestion format without dropping to free-text chat.
+After this tool call, stop and wait. Do not move into style selection or preview generation until the user responds.
 
 ---
 
@@ -449,7 +449,7 @@ Users can select a style in **two ways**:
 
 ### Step 2.0: Style Path Selection
 
-First, ask how the user wants to choose their style:
+First, ask how the user wants to choose their style using `request_clarification`:
 
 **Question: Style Selection Method**
 - Header: "Style"
@@ -460,7 +460,7 @@ First, ask how the user wants to choose their style:
 
 **If "Show me options"** → Continue to Step 2.1 (Mood Selection)
 
-**If "I know what I want"** → Show preset picker:
+**If "I know what I want"** → Show preset picker via a second `request_clarification` call:
 
 **Question: Pick a Preset**
 - Header: "Preset"
@@ -474,6 +474,8 @@ First, ask how the user wants to choose their style:
 (If user picks one, skip to Phase 3. If they want to see more options, show additional presets or proceed to guided discovery.)
 
 ### Step 2.1: Mood Selection (Guided Discovery)
+
+Use `request_clarification` for this step as well. This is a structured chooser, not a prose question.
 
 **Question 1: Feeling**
 - Header: "Vibe"
@@ -548,13 +550,10 @@ Open each file to see them in action:
 - .claude-design/slide-previews/style-b.html
 - .claude-design/slide-previews/style-c.html
 
-Take a look and tell me:
-1. Which style resonates most?
-2. What do you like about it?
-3. Anything you'd change?
+Take a look at the three files, then pause with `request_clarification` so the user can choose in the UI instead of replying in free text.
 ```
 
-Then use AskUserQuestion:
+Then use `request_clarification`:
 
 **Question: Pick Your Style**
 - Header: "Style"
@@ -566,6 +565,8 @@ Then use AskUserQuestion:
   - "Mix elements" — Combine aspects from different styles
 
 If "Mix elements", ask for specifics.
+
+After this tool call, stop and wait. Do not generate the final presentation until the user has answered the style-selection interrupt.
 
 ---
 
@@ -1411,7 +1412,7 @@ class TiltEffect {
 ## Example Session Flow
 
 1. User: "I want to create a pitch deck for my AI startup"
-2. Skill asks about purpose, length, content, and images (single form)
+2. Skill uses `request_clarification` to ask about purpose, length, content, images, and editing (single form)
 3. User shares bullet points, selects `./assets` folder
 4. **Evaluate:** Skill views each image (multimodal), builds slide outline with image assignments:
    - `logo.png` → USABLE → title/closing slide
@@ -1419,10 +1420,10 @@ class TiltEffect {
    - `dashboard.png` → USABLE → feature slide
    - `launch_card.png` → USABLE → feature slide
    - `blurry_team.jpg` → NOT USABLE (too low resolution)
-5. User confirms outline via AskUserQuestion
-6. Skill asks about desired feeling (Impressed + Excited)
+5. User confirms outline via `request_clarification`
+6. Skill asks about desired feeling via `request_clarification` (Impressed + Excited)
 7. Skill generates 3 style previews
-8. User picks Style B (Neon Cyber)
+8. User picks Style B (Neon Cyber) via `request_clarification`
 9. **Process + Generate:** Skill runs Pillow operations (circular crop, resize), generates full presentation with direct image paths
 10. Skill opens the presentation in browser
 11. User requests tweaks to specific slides
@@ -1435,7 +1436,7 @@ class TiltEffect {
 1. User: "Convert my slides.pptx to a web presentation"
 2. Skill extracts content and images from PPT
 3. Skill confirms extracted content with user
-4. Skill asks about desired feeling/style
+4. Skill asks about desired feeling/style via `request_clarification`
 5. Skill generates style previews
 6. User picks a style
 7. Skill generates HTML presentation with preserved assets

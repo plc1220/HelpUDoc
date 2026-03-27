@@ -23,6 +23,10 @@ from .graph import AgentRegistry
 from .state import AgentRuntimeState
 from .tools_and_schemas import ToolFactory, GeminiClientManager
 from .mcp_manager import describe_mcp_servers
+from .interrupt_payloads import (
+    extract_interrupt_payload_from_tool_call,
+    extract_interrupt_payload_from_tool_text,
+)
 from .utils import SourceTracker
 from langchain_core.callbacks.base import AsyncCallbackHandler
 from .rag_worker import RagIndexWorker
@@ -959,6 +963,8 @@ def create_app() -> FastAPI:
             self._to_text = text_fn
             self._has_events = False
             self._has_assistant_text = False
+            self._interrupt_emitted = False
+            self._cancel_run: Optional[Callable[[], None]] = None
 
         @property
         def has_events(self) -> bool:
@@ -967,6 +973,13 @@ def create_app() -> FastAPI:
         @property
         def has_assistant_text(self) -> bool:
             return self._has_assistant_text
+
+        @property
+        def interrupt_emitted(self) -> bool:
+            return self._interrupt_emitted
+
+        def attach_cancel(self, cancel_cb: Callable[[], None]) -> None:
+            self._cancel_run = cancel_cb
 
         async def _emit(self, payload: Dict[str, Any]) -> None:
             self._has_events = True
@@ -1040,6 +1053,14 @@ def create_app() -> FastAPI:
         ) -> None:
             name = (serialized or {}).get("name") or (metadata or {}).get("name") or "tool"
             self._tool_names[str(run_id)] = name
+            if name in _INTERRUPT_TOOL_NAMES:
+                interrupt_payload = extract_interrupt_payload_from_tool_call(name, input_str)
+                if interrupt_payload:
+                    self._interrupt_emitted = True
+                    await self._emit(interrupt_payload)
+                    if self._cancel_run:
+                        self._cancel_run()
+                    return
             preview = input_str.strip()
             await self._emit(
                 {
@@ -1053,9 +1074,12 @@ def create_app() -> FastAPI:
             run_key = str(run_id)
             name = self._tool_names.pop(run_key, "tool")
             text = self._to_text(output)
-            if name in _INTERRUPT_TOOL_NAMES and text.strip().startswith("Interrupt(value="):
-                self._tool_meta.pop(run_key, None)
-                return
+            if name in _INTERRUPT_TOOL_NAMES:
+                interrupt_payload = extract_interrupt_payload_from_tool_text(text)
+                if interrupt_payload:
+                    self._tool_meta.pop(run_key, None)
+                    await self._emit(interrupt_payload)
+                    return
             payload: Dict[str, Any] = {
                 "type": "tool_end",
                 "name": name,
@@ -1411,7 +1435,14 @@ def create_app() -> FastAPI:
                     stream_input = Command(resume={"decisions": resume_decisions})
                 elif resume_value is not None:
                     stream_input = Command(resume=resume_value)
-                final_result = await agent.ainvoke(stream_input, config=stream_config)
+                final_result = None
+                async for chunk in agent.astream(stream_input, config=stream_config, stream_mode="values"):
+                    final_result = chunk
+                    interrupt_payload = _extract_interrupt_payload(chunk)
+                    if interrupt_payload:
+                        saw_interrupt = True
+                        await handler._emit(interrupt_payload)
+                        return
 
                 emitted = False
                 interrupt_payload = _extract_interrupt_payload(final_result)
@@ -1453,6 +1484,11 @@ def create_app() -> FastAPI:
                     await handler._emit(interrupt_payload)
                     return
                 raise
+            except asyncio.CancelledError:
+                if handler.interrupt_emitted:
+                    saw_interrupt = True
+                    return
+                raise
             except Exception as exc:  # pragma: no cover - streaming guard
                 error_message = _format_exception(exc)
                 logger.exception("Agent stream error: %s", error_message)
@@ -1469,6 +1505,7 @@ def create_app() -> FastAPI:
                 await handler.queue.put(sentinel)
 
         task = asyncio.create_task(_agent_runner())
+        handler.attach_cancel(task.cancel)
         try:
             while True:
                 try:
