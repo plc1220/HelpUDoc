@@ -87,6 +87,21 @@ npm install
 npm run dev
 ```
 
+Local QA without Google login:
+
+```bash
+# Backend: force local header auth instead of OIDC
+cd backend
+AUTH_MODE=headers ENV_FILE=../env/local/dev.env npm run dev
+
+# Frontend: show the local app instead of the Google sign-in screen
+cd frontend
+VITE_AUTH_MODE=headers npm run dev
+```
+
+For browser automation, preload a local auth user in `localStorage` under
+`helpudoc-auth-user`. The Playwright clarification test already does this.
+
 Agent:
 
 ```bash

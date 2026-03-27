@@ -44,6 +44,26 @@ Notes:
 - The backend and agent read `ENV_FILE` if set; otherwise they fall back to a local `.env` in their folder.
 - Vite reads `VITE_*` values from the shell, so `VITE_GOOGLE_CLIENT_ID` in `env/local/dev.env` is enough.
 
+### Local QA without Google login
+
+If you want to test the workspace UI locally without going through Google OAuth,
+start the dev servers with header auth:
+
+```bash
+cd backend
+AUTH_MODE=headers ENV_FILE=../env/local/dev.env npm run dev
+```
+
+```bash
+cd frontend
+VITE_AUTH_MODE=headers npm run dev
+```
+
+This is useful for Playwright and manual browser QA. The frontend will use the
+local header-auth path instead of redirecting to the Google sign-in screen.
+For automated tests, preload a local user into `localStorage` with the key
+`helpudoc-auth-user`.
+
 ## Local development (Docker Compose full stack)
 
 ```bash
