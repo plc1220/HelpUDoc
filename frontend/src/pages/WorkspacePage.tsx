@@ -395,9 +395,20 @@ export default function WorkspacePage() {
       ),
     [messages],
   );
+  const hasPendingInterruptMessage = useMemo(
+    () =>
+      messages.some(
+        (message) =>
+          message.sender === 'agent' &&
+          (Boolean(message.metadata?.pendingInterrupt) || message.metadata?.status === 'awaiting_approval'),
+      ),
+    [messages],
+  );
   const isStreaming = useMemo(
-    () => (activeConversationId ? conversationStreaming[activeConversationId] || false : false) || hasRunningAgentMessage,
-    [activeConversationId, conversationStreaming, hasRunningAgentMessage],
+    () =>
+      !hasPendingInterruptMessage &&
+      ((activeConversationId ? conversationStreaming[activeConversationId] || false : false) || hasRunningAgentMessage),
+    [activeConversationId, conversationStreaming, hasPendingInterruptMessage, hasRunningAgentMessage],
   );
   const systemFiles = useMemo(() => files.filter(isSystemFile), [files]);
   const visibleFiles = useMemo(
