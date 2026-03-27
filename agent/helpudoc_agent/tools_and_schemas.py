@@ -38,6 +38,7 @@ from .skills_registry import (
 )
 from .rag_indexer import RagConfig, WorkspaceRagStore
 from .state import WorkspaceState
+from .tagged_file_policy import is_tagged_files_only, tagged_files_mode_guard
 from .utils import SourceTracker, extract_web_url
 
 logger = logging.getLogger(__name__)
@@ -325,8 +326,9 @@ class ToolFactory:
         @tool
         def list_skills() -> str:
             """List available skills and their descriptions."""
-            if workspace_state.context.get("tagged_files_only"):
-                return "Tool disabled: tagged files were provided, use rag_query only."
+            blocked = tagged_files_mode_guard(workspace_state.context, "list_skills")
+            if blocked:
+                return blocked
             if skills_root is None or not skills_root.exists():
                 return "No skills directory configured."
             skills = [skill for skill in load_skills(skills_root) if is_skill_allowed(skill, workspace_state.context)]
@@ -349,8 +351,9 @@ class ToolFactory:
         @tool
         def load_skill(skill_id: str) -> str:
             """Load the full content of a skill by id or name."""
-            if workspace_state.context.get("tagged_files_only"):
-                return "Tool disabled: tagged files were provided, use rag_query only."
+            blocked = tagged_files_mode_guard(workspace_state.context, "load_skill")
+            if blocked:
+                return blocked
             if skills_root is None or not skills_root.exists():
                 return "No skills directory configured."
             skills = [skill for skill in load_skills(skills_root) if is_skill_allowed(skill, workspace_state.context)]
@@ -393,9 +396,6 @@ class ToolFactory:
             edited_plan_content: str = "",
         ) -> str:
             """Request human approval/edit/rejection for a proposed execution plan."""
-            if workspace_state.context.get("tagged_files_only"):
-                return "Tool disabled: tagged files were provided, use rag_query only."
-
             title = (plan_title or "").strip()
             summary = (plan_summary or "").strip()
             summary_markdown = (plan_summary_markdown or "").strip()
@@ -486,9 +486,6 @@ class ToolFactory:
             context_json: str = "{}",
         ) -> str:
             """Ask the human for clarification with optional selectable choices and typed feedback."""
-            if workspace_state.context.get("tagged_files_only"):
-                return "Tool disabled: tagged files were provided, use rag_query only."
-
             prompt_title = (title or "").strip()
             prompt_description = (description or "").strip()
             if not prompt_title:
@@ -649,6 +646,7 @@ class ToolFactory:
         request_clarification.name = "request_clarification"
         request_clarification.description = (
             "Pause execution to ask the human a clarification question. "
+            "If a loaded skill says AskUserQuestion, AskUserChoice, or otherwise requires a structured user choice, use this tool instead of asking in chat prose. "
             "Use options_json for clickable suggestions and allow_freeform for typed input. "
             "For multi-question discovery forms, pass questions_json with objects like "
             '{"header":"Purpose","question":"What is this presentation for?","options":[{"label":"Pitch deck","value":"Pitch deck","description":"Selling an idea to investors"}]}. '
@@ -670,9 +668,6 @@ class ToolFactory:
             context_json: str = "{}",
         ) -> str:
             """Ask the human to choose an action, optionally with scoped text input."""
-            if workspace_state.context.get("tagged_files_only"):
-                return "Tool disabled: tagged files were provided, use rag_query only."
-
             prompt_title = (title or "").strip()
             prompt_description = (description or "").strip()
             interrupt_kind = (kind or "approval").strip().lower()
@@ -777,8 +772,9 @@ class ToolFactory:
         @tool
         def append_to_report(source_path: str, target_path: str = "/Final_Proposal.md") -> str:
             """Append content from source_path into target_path with a separator."""
-            if workspace_state.context.get("tagged_files_only"):
-                return "Tool disabled: tagged files were provided, use rag_query only."
+            blocked = tagged_files_mode_guard(workspace_state.context, "append_to_report")
+            if blocked:
+                return blocked
             try:
                 source = _resolve(source_path)
                 target = _resolve(target_path)
@@ -824,8 +820,9 @@ class ToolFactory:
             Returns:
                 The public URL of the image if found, or an error message if not found.
             """
-            if workspace_state.context.get("tagged_files_only"):
-                return "Tool disabled: tagged files were provided, use rag_query only."
+            blocked = tagged_files_mode_guard(workspace_state.context, "get_image_url")
+            if blocked:
+                return blocked
             try:
                 import json
                 import os
@@ -962,7 +959,7 @@ class ToolFactory:
             if normalized and mode != "hybrid":
                 mode = "hybrid"
             cached_context = workspace_state.context.get("tagged_rag_context")
-            if cached_context and workspace_state.context.get("tagged_files_only"):
+            if cached_context and is_tagged_files_only(workspace_state.context):
                 return str(cached_context)
             keywords: List[str] = [query.strip()]
             if normalized:
@@ -1089,8 +1086,9 @@ def _build_grounded_google_search_tool(
     @tool
     def grounded_search(query: str, max_results: int = 5) -> str:
         """Run a Gemini native Google search for the given query."""
-        if workspace_state.context.get("tagged_files_only"):
-            return "Tool disabled: tagged files were provided, use rag_query only."
+        blocked = tagged_files_mode_guard(workspace_state.context, tool_name)
+        if blocked:
+            return blocked
         policy = _get_active_skill_policy(workspace_state)
         if policy.requires_hitl_plan and not _is_plan_approved(workspace_state):
             limit = max(0, int(policy.pre_plan_search_limit or 0))
@@ -1283,8 +1281,9 @@ def build_gemini_image_tool(
         if not prompt.strip():
             return "Skipped gemini_image: prompt is required for image generation/editing."
 
-        if workspace_state.context.get("tagged_files_only"):
-            return "Tool disabled: tagged files were provided, use rag_query only."
+        blocked = tagged_files_mode_guard(workspace_state.context, "gemini_image")
+        if blocked:
+            return blocked
 
         if not _is_explicit_image_request(prompt):
             return "Skipped gemini_image: user did not explicitly request image generation/editing."

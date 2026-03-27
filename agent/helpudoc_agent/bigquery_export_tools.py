@@ -20,6 +20,7 @@ from langchain_core.tools import Tool, tool
 
 from .configuration import REPO_ROOT
 from .state import WorkspaceState
+from .tagged_file_policy import tagged_files_mode_guard
 
 logger = logging.getLogger(__name__)
 
@@ -356,8 +357,9 @@ def build_export_bigquery_query_tool(workspace_state: WorkspaceState) -> Tool:
         callbacks: Optional[CallbackManagerForToolRun] = None,
     ) -> str:
         """Execute a read-only BigQuery query and save the result into the workspace."""
-        if workspace_state.context.get("tagged_files_only"):
-            return "Tool disabled: tagged files were provided, use rag_query only."
+        blocked = tagged_files_mode_guard(workspace_state.context, "export_bigquery_query")
+        if blocked:
+            return blocked
 
         try:
             validate_read_only_sql(sql)

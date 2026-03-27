@@ -31,6 +31,7 @@ from .bigquery_export_tools import (
 )
 from .data_report_renderers import render_dashboard_html, render_summary_html
 from .state import WorkspaceState
+from .tagged_file_policy import tagged_files_mode_guard
 
 logger = logging.getLogger(__name__)
 
@@ -1216,8 +1217,9 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
         callbacks: Optional[CallbackManagerForToolRun] = None,
     ) -> str:
         """Materialize a read-only BigQuery query into cached and optionally stable workspace Parquet."""
-        if workspace_state.context.get("tagged_files_only"):
-            return "Tool disabled: tagged files were provided, use rag_query only."
+        blocked = tagged_files_mode_guard(workspace_state.context, "cache_bigquery_query")
+        if blocked:
+            return blocked
 
         normalized_sql = _coerce_text_arg(sql_query).strip().rstrip(";")
         if not normalized_sql:
