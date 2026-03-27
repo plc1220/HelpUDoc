@@ -367,6 +367,18 @@ async function runAgentRunWorker(runId: string, params: StartRunParams, resumePa
   let contractErrorMessage = '';
   let processingQueue: Promise<void> = Promise.resolve();
 
+  const stopAtInterrupt = async (parsed: Record<string, unknown>) => {
+    if (sawInterruptPayload) {
+      return;
+    }
+    sawInterruptPayload = parsed;
+    await markRunAwaitingApproval(runId, JSON.stringify(parsed));
+    buffer = '';
+    if (upstream && !upstream.destroyed) {
+      upstream.destroy();
+    }
+  };
+
   const processBuffer = async () => {
     try {
       let newlineIndex = buffer.indexOf('\n');
@@ -377,7 +389,8 @@ async function runAgentRunWorker(runId: string, params: StartRunParams, resumePa
           await appendStreamEvent(runId, line);
           const parsed = parseLine(line);
           if (parsed?.type === 'interrupt') {
-            sawInterruptPayload = parsed;
+            await stopAtInterrupt(parsed);
+            break;
           }
           if (parsed?.type === 'contract_error') {
             contractErrorMessage =
@@ -409,7 +422,8 @@ async function runAgentRunWorker(runId: string, params: StartRunParams, resumePa
       await appendStreamEvent(runId, line);
       const parsed = parseLine(line);
       if (parsed?.type === 'interrupt') {
-        sawInterruptPayload = parsed;
+        await stopAtInterrupt(parsed);
+        break;
       }
       if (parsed?.type === 'contract_error') {
         contractErrorMessage =
@@ -481,6 +495,11 @@ async function runAgentRunWorker(runId: string, params: StartRunParams, resumePa
       cleanupRun(runId, upstream || undefined);
     });
     upstream.on('error', async (error: Error) => {
+      if (sawInterruptPayload) {
+        await markRunAwaitingApproval(runId, JSON.stringify(sawInterruptPayload));
+        cleanupRun(runId, upstream || undefined);
+        return;
+      }
       const status: AgentRunStatus = controller.signal.aborted ? 'cancelled' : 'failed';
       if (!controller.signal.aborted) {
         const errorPayload = JSON.stringify({ type: 'error', message: error.message || 'Agent stream failed.' });

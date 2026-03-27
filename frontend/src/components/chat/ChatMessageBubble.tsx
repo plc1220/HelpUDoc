@@ -154,6 +154,19 @@ const FRONTEND_SLIDES_DISCOVERY_QUESTIONS: ClarificationQuestion[] = [
   },
 ];
 
+const isFrontendSlidesDiscoveryInterrupt = (
+  pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
+  activeSkill?: string,
+): boolean => {
+  const normalizedSkill = activeSkill?.trim().toLowerCase();
+  if (normalizedSkill === 'frontend-slides') {
+    return true;
+  }
+  const normalizedTitle = String(pendingInterrupt?.title || '').trim().toLowerCase();
+  return normalizedTitle === 'presentation context + images'
+    || normalizedTitle === 'presentation context and images';
+};
+
 const getThinkingPlaceholder = (
   metadata?: ConversationMessageMetadata,
   toolEvents: ConversationMessage['toolEvents'] = [],
@@ -307,13 +320,17 @@ const parseClarificationQuestions = (
     }
   }
 
-  const skill = activeSkill?.trim().toLowerCase();
   const responseChoices = Array.isArray(pendingInterrupt?.responseSpec?.choices) ? pendingInterrupt?.responseSpec?.choices : [];
   const normalizedChoiceLabels = responseChoices.map((choice) => choice.label.trim().toLowerCase());
   const looksLikeFrontendSlidesDiscovery =
-    skill === 'frontend-slides' &&
-    normalizedChoiceLabels.length === FRONTEND_SLIDES_DISCOVERY_HEADERS.length &&
-    normalizedChoiceLabels.every((label) => FRONTEND_SLIDES_DISCOVERY_HEADERS.includes(label as (typeof FRONTEND_SLIDES_DISCOVERY_HEADERS)[number]));
+    isFrontendSlidesDiscoveryInterrupt(pendingInterrupt, activeSkill)
+    && (
+      normalizedChoiceLabels.length === 0
+      || (
+        normalizedChoiceLabels.length === FRONTEND_SLIDES_DISCOVERY_HEADERS.length &&
+        normalizedChoiceLabels.every((label) => FRONTEND_SLIDES_DISCOVERY_HEADERS.includes(label as (typeof FRONTEND_SLIDES_DISCOVERY_HEADERS)[number]))
+      )
+    );
 
   return looksLikeFrontendSlidesDiscovery ? FRONTEND_SLIDES_DISCOVERY_QUESTIONS : [];
 };
