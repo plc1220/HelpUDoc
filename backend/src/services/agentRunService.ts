@@ -339,6 +339,30 @@ const parseLine = (line: string): Record<string, unknown> | null => {
   }
 };
 
+type InterruptStopState = {
+  sawInterruptPayload: Record<string, unknown> | null;
+  buffer: string;
+  upstream: { destroy(): void; destroyed: boolean } | null;
+};
+
+export async function persistInterruptAndStopRun(
+  runId: string,
+  parsed: Record<string, unknown>,
+  state: InterruptStopState,
+  persistInterrupt: (runId: string, interruptPayload: string) => Promise<void> = markRunAwaitingApproval,
+): Promise<boolean> {
+  if (state.sawInterruptPayload) {
+    return false;
+  }
+  state.sawInterruptPayload = parsed;
+  await persistInterrupt(runId, JSON.stringify(parsed));
+  state.buffer = '';
+  if (state.upstream && !state.upstream.destroyed) {
+    state.upstream.destroy();
+  }
+  return true;
+}
+
 async function runAgentRunWorker(runId: string, params: StartRunParams, resumePayload?: ResumePayload) {
   const controller = new AbortController();
   runAbortControllers.set(runId, controller);
@@ -367,6 +391,33 @@ async function runAgentRunWorker(runId: string, params: StartRunParams, resumePa
   let contractErrorMessage = '';
   let processingQueue: Promise<void> = Promise.resolve();
 
+  const stopAtInterrupt = async (parsed: Record<string, unknown>) => {
+    await persistInterruptAndStopRun(
+      runId,
+      parsed,
+      {
+        get sawInterruptPayload() {
+          return sawInterruptPayload;
+        },
+        set sawInterruptPayload(value: Record<string, unknown> | null) {
+          sawInterruptPayload = value;
+        },
+        get buffer() {
+          return buffer;
+        },
+        set buffer(value: string) {
+          buffer = value;
+        },
+        get upstream() {
+          return upstream;
+        },
+        set upstream(value: IncomingMessage | null) {
+          upstream = value;
+        },
+      },
+    );
+  };
+
   const processBuffer = async () => {
     try {
       let newlineIndex = buffer.indexOf('\n');
@@ -377,7 +428,8 @@ async function runAgentRunWorker(runId: string, params: StartRunParams, resumePa
           await appendStreamEvent(runId, line);
           const parsed = parseLine(line);
           if (parsed?.type === 'interrupt') {
-            sawInterruptPayload = parsed;
+            await stopAtInterrupt(parsed);
+            break;
           }
           if (parsed?.type === 'contract_error') {
             contractErrorMessage =
@@ -409,7 +461,8 @@ async function runAgentRunWorker(runId: string, params: StartRunParams, resumePa
       await appendStreamEvent(runId, line);
       const parsed = parseLine(line);
       if (parsed?.type === 'interrupt') {
-        sawInterruptPayload = parsed;
+        await stopAtInterrupt(parsed);
+        break;
       }
       if (parsed?.type === 'contract_error') {
         contractErrorMessage =
@@ -481,6 +534,11 @@ async function runAgentRunWorker(runId: string, params: StartRunParams, resumePa
       cleanupRun(runId, upstream || undefined);
     });
     upstream.on('error', async (error: Error) => {
+      if (sawInterruptPayload) {
+        await markRunAwaitingApproval(runId, JSON.stringify(sawInterruptPayload));
+        cleanupRun(runId, upstream || undefined);
+        return;
+      }
       const status: AgentRunStatus = controller.signal.aborted ? 'cancelled' : 'failed';
       if (!controller.signal.aborted) {
         const errorPayload = JSON.stringify({ type: 'error', message: error.message || 'Agent stream failed.' });

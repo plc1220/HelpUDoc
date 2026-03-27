@@ -154,6 +154,23 @@ const FRONTEND_SLIDES_DISCOVERY_QUESTIONS: ClarificationQuestion[] = [
   },
 ];
 
+const getInterruptSkill = (
+  pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
+  activeSkill?: string,
+): string | undefined => {
+  const normalizedActiveSkill = activeSkill?.trim().toLowerCase();
+  if (normalizedActiveSkill) {
+    return normalizedActiveSkill;
+  }
+  const payloadSkill = pendingInterrupt?.displayPayload?.skill;
+  return typeof payloadSkill === 'string' ? payloadSkill.trim().toLowerCase() : undefined;
+};
+
+const isFrontendSlidesDiscoveryInterrupt = (
+  pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
+  activeSkill?: string,
+): boolean => getInterruptSkill(pendingInterrupt, activeSkill) === 'frontend-slides';
+
 const getThinkingPlaceholder = (
   metadata?: ConversationMessageMetadata,
   toolEvents: ConversationMessage['toolEvents'] = [],
@@ -307,13 +324,17 @@ const parseClarificationQuestions = (
     }
   }
 
-  const skill = activeSkill?.trim().toLowerCase();
   const responseChoices = Array.isArray(pendingInterrupt?.responseSpec?.choices) ? pendingInterrupt?.responseSpec?.choices : [];
   const normalizedChoiceLabels = responseChoices.map((choice) => choice.label.trim().toLowerCase());
   const looksLikeFrontendSlidesDiscovery =
-    skill === 'frontend-slides' &&
-    normalizedChoiceLabels.length === FRONTEND_SLIDES_DISCOVERY_HEADERS.length &&
-    normalizedChoiceLabels.every((label) => FRONTEND_SLIDES_DISCOVERY_HEADERS.includes(label as (typeof FRONTEND_SLIDES_DISCOVERY_HEADERS)[number]));
+    isFrontendSlidesDiscoveryInterrupt(pendingInterrupt, activeSkill)
+    && (
+      normalizedChoiceLabels.length === 0
+      || (
+        normalizedChoiceLabels.length === FRONTEND_SLIDES_DISCOVERY_HEADERS.length &&
+        normalizedChoiceLabels.every((label) => FRONTEND_SLIDES_DISCOVERY_HEADERS.includes(label as (typeof FRONTEND_SLIDES_DISCOVERY_HEADERS)[number]))
+      )
+    );
 
   return looksLikeFrontendSlidesDiscovery ? FRONTEND_SLIDES_DISCOVERY_QUESTIONS : [];
 };

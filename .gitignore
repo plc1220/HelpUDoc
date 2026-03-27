@@ -41,3 +41,4 @@ rag_storage/
 # CodeGraphContext local setup
 .cgcignore
 mcp.json
+.gstack/

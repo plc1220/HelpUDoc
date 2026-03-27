@@ -196,16 +196,39 @@ def _expand_env_vars(data):
     return data
 
 
+def _resolve_env_override_path(value: str, *, base_dir: Path) -> str:
+    raw = (value or "").strip()
+    if not raw:
+        return raw
+    path = Path(raw)
+    if path.is_absolute():
+        return str(path)
+    return str((base_dir / path).resolve())
+
+
 def load_settings(config_path: Path | None = None) -> Settings:
     path = config_path or DEFAULT_CONFIG_PATH
     config_dict = _expand_env_vars(_load_yaml(path))
+    override_base_dir = AGENT_ROOT
 
     # Allow runtime override for shared workspace volume paths (e.g., Docker Compose).
     workspace_root_override = os.getenv("WORKSPACE_ROOT")
+    skills_root_override = os.getenv("SKILLS_ROOT")
     if workspace_root_override:
         backend_cfg = config_dict.get("backend") or {}
         if isinstance(backend_cfg, dict):
-            backend_cfg["workspace_root"] = workspace_root_override
+            backend_cfg["workspace_root"] = _resolve_env_override_path(
+                workspace_root_override,
+                base_dir=override_base_dir,
+            )
+            config_dict["backend"] = backend_cfg
+    if skills_root_override:
+        backend_cfg = config_dict.get("backend") or {}
+        if isinstance(backend_cfg, dict):
+            backend_cfg["skills_root"] = _resolve_env_override_path(
+                skills_root_override,
+                base_dir=override_base_dir,
+            )
             config_dict["backend"] = backend_cfg
 
     payload = {
