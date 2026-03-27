@@ -339,6 +339,30 @@ const parseLine = (line: string): Record<string, unknown> | null => {
   }
 };
 
+type InterruptStopState = {
+  sawInterruptPayload: Record<string, unknown> | null;
+  buffer: string;
+  upstream: { destroy(): void; destroyed: boolean } | null;
+};
+
+export async function persistInterruptAndStopRun(
+  runId: string,
+  parsed: Record<string, unknown>,
+  state: InterruptStopState,
+  persistInterrupt: (runId: string, interruptPayload: string) => Promise<void> = markRunAwaitingApproval,
+): Promise<boolean> {
+  if (state.sawInterruptPayload) {
+    return false;
+  }
+  state.sawInterruptPayload = parsed;
+  await persistInterrupt(runId, JSON.stringify(parsed));
+  state.buffer = '';
+  if (state.upstream && !state.upstream.destroyed) {
+    state.upstream.destroy();
+  }
+  return true;
+}
+
 async function runAgentRunWorker(runId: string, params: StartRunParams, resumePayload?: ResumePayload) {
   const controller = new AbortController();
   runAbortControllers.set(runId, controller);
@@ -368,15 +392,30 @@ async function runAgentRunWorker(runId: string, params: StartRunParams, resumePa
   let processingQueue: Promise<void> = Promise.resolve();
 
   const stopAtInterrupt = async (parsed: Record<string, unknown>) => {
-    if (sawInterruptPayload) {
-      return;
-    }
-    sawInterruptPayload = parsed;
-    await markRunAwaitingApproval(runId, JSON.stringify(parsed));
-    buffer = '';
-    if (upstream && !upstream.destroyed) {
-      upstream.destroy();
-    }
+    await persistInterruptAndStopRun(
+      runId,
+      parsed,
+      {
+        get sawInterruptPayload() {
+          return sawInterruptPayload;
+        },
+        set sawInterruptPayload(value: Record<string, unknown> | null) {
+          sawInterruptPayload = value;
+        },
+        get buffer() {
+          return buffer;
+        },
+        set buffer(value: string) {
+          buffer = value;
+        },
+        get upstream() {
+          return upstream;
+        },
+        set upstream(value: IncomingMessage | null) {
+          upstream = value;
+        },
+      },
+    );
   };
 
   const processBuffer = async () => {

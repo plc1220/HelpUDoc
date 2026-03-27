@@ -9,11 +9,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "agent"))
 from helpudoc_agent.configuration import load_settings  # noqa: E402
 
 
-def test_env_override_paths_resolve_from_current_working_directory(monkeypatch) -> None:
+def test_env_override_paths_resolve_from_agent_root(monkeypatch) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     agent_root = repo_root / "agent"
 
-    monkeypatch.chdir(agent_root)
+    monkeypatch.chdir(repo_root)
     monkeypatch.setenv("WORKSPACE_ROOT", "../backend/workspaces")
     monkeypatch.setenv("SKILLS_ROOT", "../skills")
 

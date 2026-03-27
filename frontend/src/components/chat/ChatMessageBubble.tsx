@@ -154,18 +154,22 @@ const FRONTEND_SLIDES_DISCOVERY_QUESTIONS: ClarificationQuestion[] = [
   },
 ];
 
+const getInterruptSkill = (
+  pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
+  activeSkill?: string,
+): string | undefined => {
+  const normalizedActiveSkill = activeSkill?.trim().toLowerCase();
+  if (normalizedActiveSkill) {
+    return normalizedActiveSkill;
+  }
+  const payloadSkill = pendingInterrupt?.displayPayload?.skill;
+  return typeof payloadSkill === 'string' ? payloadSkill.trim().toLowerCase() : undefined;
+};
+
 const isFrontendSlidesDiscoveryInterrupt = (
   pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
   activeSkill?: string,
-): boolean => {
-  const normalizedSkill = activeSkill?.trim().toLowerCase();
-  if (normalizedSkill === 'frontend-slides') {
-    return true;
-  }
-  const normalizedTitle = String(pendingInterrupt?.title || '').trim().toLowerCase();
-  return normalizedTitle === 'presentation context + images'
-    || normalizedTitle === 'presentation context and images';
-};
+): boolean => getInterruptSkill(pendingInterrupt, activeSkill) === 'frontend-slides';
 
 const getThinkingPlaceholder = (
   metadata?: ConversationMessageMetadata,
