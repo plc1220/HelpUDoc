@@ -94,6 +94,8 @@ const sanitizePresentationLabel = (value: string, fallback: string) => {
   return cleaned || fallback;
 };
 
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 const DEFAULT_PERSONA_NAME = 'fast';
 const DEFAULT_PERSONAS: AgentPersona[] = [
   {
@@ -317,7 +319,7 @@ export default function WorkspacePage() {
   const [activeConversationPersona, setActiveConversationPersona] = useState<string | null>(null);
   const [presentationOptions, setPresentationOptions] = useState<PresentationOptionsState>({
     output: 'slides',
-    content: 'paper',
+    content: 'general',
     stylePreset: 'academic',
     customStyle: '',
     length: 'medium',
@@ -1601,6 +1603,14 @@ export default function WorkspacePage() {
           return false;
         }
       }
+      const presentationDirectiveMatch = textBeforeCursor.match(/^\s*\/presentation(?:\s+([\s\S]*))?$/i);
+      if (presentationDirectiveMatch) {
+        const trailingPrompt = presentationDirectiveMatch[1] || '';
+        if (trailingPrompt.trim().length > 0 || /\s$/.test(textBeforeCursor)) {
+          closeCommand();
+          return false;
+        }
+      }
       const commandMatch = textBeforeCursor.match(/(^|[\s([{])\/([^\n/]*)$/);
       if (!commandMatch) {
         closeCommand();
@@ -1769,7 +1779,29 @@ export default function WorkspacePage() {
       if (!value) {
         return [];
       }
-      return visibleFiles.filter((file) => value.includes(`@${file.name}`));
+      const normalizedValue = normalizeFilePath(value);
+      return visibleFiles.filter((file) => {
+        const escapedName = escapeRegExp(normalizeFilePath(file.name));
+        const mentionPattern = new RegExp(`(^|[\\s([{])@${escapedName}(?=$|[\\s)\\]}])`, 'i');
+        return mentionPattern.test(normalizedValue);
+      });
+    },
+    [visibleFiles],
+  );
+
+  const stripMentionedFilesFromPrompt = useCallback(
+    (value: string): string => {
+      if (!value) {
+        return '';
+      }
+      let nextValue = normalizeFilePath(value);
+      const filesByLongestNameFirst = [...visibleFiles].sort((left, right) => right.name.length - left.name.length);
+      filesByLongestNameFirst.forEach((file) => {
+        const escapedName = escapeRegExp(normalizeFilePath(file.name));
+        const mentionPattern = new RegExp(`(^|[\\s([{])@${escapedName}(?=$|[\\s)\\]}])`, 'gi');
+        nextValue = nextValue.replace(mentionPattern, (_match, prefix: string) => prefix);
+      });
+      return nextValue.replace(/\s{2,}/g, ' ').trim();
     },
     [visibleFiles],
   );
@@ -4054,7 +4086,7 @@ export default function WorkspacePage() {
         ),
       )
       : [];
-    const presentationBrief = isPresentationCommand ? directive.prompt : '';
+    const presentationBrief = isPresentationCommand ? stripMentionedFilesFromPrompt(directive.prompt) : '';
     if (directive.kind === 'skill') {
       if (!directive.skillId || !directive.prompt) {
         addLocalSystemMessage('Use /skill <skill-id> <task>. Example: /skill sales prep me for tomorrow\'s call.');
@@ -4477,7 +4509,7 @@ export default function WorkspacePage() {
         ),
       )
       : [];
-    const presentationBrief = isPresentationCommand ? directive.prompt : '';
+    const presentationBrief = isPresentationCommand ? stripMentionedFilesFromPrompt(directive.prompt) : '';
 
     if (isPresentationCommand && hasAttachments) {
       addLocalSystemMessage('Attachments are not supported for /presentation. Please tag files using @filename instead.');

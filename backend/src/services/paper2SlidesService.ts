@@ -62,6 +62,68 @@ const formatAgentFailure = (error: any): string => {
   return `${base}${error.message ? `: ${error.message}` : ''}`.trim();
 };
 
+const TEXT_FILE_PATTERN = /\.(md|markdown|txt|html?)$/i;
+const ACADEMIC_MARKERS = [
+  /\babstract\b/i,
+  /\bintroduction\b/i,
+  /\bmethod(?:ology|s)?\b/i,
+  /\bresults?\b/i,
+  /\bconclusion\b/i,
+  /\breferences\b/i,
+  /\bdoi\b/i,
+  /\barxiv\b/i,
+  /\bet al\.\b/i,
+  /\bkeywords?\b/i,
+  /\bfigure\s+\d+\b/i,
+  /\btable\s+\d+\b/i,
+];
+const GENERAL_DOC_MARKERS = [
+  /\btl;dr\b/i,
+  /\bbrief(ing)?\b/i,
+  /\breport\b/i,
+  /\bscenario\b/i,
+  /\bbackground\b/i,
+  /\bimpact\b/i,
+  /\bsummary\b/i,
+  /\bsections?\b/i,
+];
+
+const looksLikeAcademicPaper = (files: InputFile[]): boolean => {
+  let academicScore = 0;
+  let generalScore = 0;
+
+  files.forEach((file) => {
+    if (!TEXT_FILE_PATTERN.test(file.name)) {
+      return;
+    }
+    const sample = file.buffer.toString('utf-8', 0, Math.min(file.buffer.length, 12_000));
+    academicScore += ACADEMIC_MARKERS.filter((pattern) => pattern.test(sample)).length;
+    generalScore += GENERAL_DOC_MARKERS.filter((pattern) => pattern.test(sample)).length;
+    if (/\bpaper\b/i.test(file.name) || /\bresearch\b/i.test(file.name)) {
+      academicScore += 1;
+    }
+    if (/\breport\b/i.test(file.name) || /\bnotes?\b/i.test(file.name) || /\bbrief\b/i.test(file.name)) {
+      generalScore += 1;
+    }
+  });
+
+  return academicScore > 0 && academicScore >= generalScore;
+};
+
+const resolveContentMode = (
+  files: InputFile[],
+  requestedContent?: Paper2SlidesOptions['content'],
+): NonNullable<Paper2SlidesOptions['content']> => {
+  const inferredContent = looksLikeAcademicPaper(files) ? 'paper' : 'general';
+  if (!requestedContent) {
+    return inferredContent;
+  }
+  if (requestedContent === 'paper' && inferredContent === 'general') {
+    return 'general';
+  }
+  return requestedContent;
+};
+
 export class Paper2SlidesService {
   private fileService: FileService;
 
@@ -107,6 +169,7 @@ export class Paper2SlidesService {
       throw new Error('No files provided for Paper2Slides');
     }
     try {
+      const resolvedContent = resolveContentMode(files, options.content);
       const payloadFiles = files.map((file, index) => ({
         name: sanitizeFileName(file.name, `input-${index}.bin`),
         contentB64: file.buffer.toString('base64'),
@@ -116,7 +179,7 @@ export class Paper2SlidesService {
         files: payloadFiles,
         options: {
           output: options.output,
-          content: options.content,
+          content: resolvedContent,
           style: options.style,
           length: options.length,
           mode: options.mode,
