@@ -423,6 +423,77 @@ export class FileService {
     }
   }
 
+  async deleteFolder(workspaceId: string, folderPath: string, userId: string) {
+    await this.workspaceService.ensureMembership(workspaceId, userId, { requireEdit: true });
+
+    const normalizedFolder = this.normalizeRelativeFolderPath(folderPath);
+    if (!normalizedFolder) {
+      throw new ConflictError('Folder path is required');
+    }
+
+    const workspaceRoot = path.resolve(WORKSPACE_DIR, workspaceId);
+    const absoluteFolderPath = path.resolve(workspaceRoot, normalizedFolder);
+    if (!absoluteFolderPath.startsWith(workspaceRoot)) {
+      throw new ConflictError('Invalid folder path');
+    }
+
+    const prefix = `${normalizedFolder}/`;
+    const filesInFolder = await this.db('files')
+      .where({ workspaceId })
+      .andWhere((query) => {
+        query.where('name', normalizedFolder).orWhere('name', 'like', `${prefix}%`);
+      });
+
+    for (const file of filesInFolder) {
+      const localPath = this.getLocalPath(workspaceId, file.name);
+      if (file.storageType === 'local') {
+        try {
+          await fs.unlink(file.path);
+        } catch (error: any) {
+          if (error?.code !== 'ENOENT') {
+            console.error(`Failed to delete file from filesystem: ${file.path}`, error);
+          }
+        }
+      } else {
+        try {
+          await this.s3Service.deleteFile(file.path);
+        } catch (error) {
+          console.error(`Failed to delete S3 file: ${file.path}`, error);
+        }
+        try {
+          await fs.unlink(localPath);
+        } catch (error: any) {
+          if (error?.code !== 'ENOENT') {
+            console.error(`Failed to delete local copy of S3 file: ${localPath}`, error);
+          }
+        }
+      }
+    }
+
+    if (filesInFolder.length) {
+      await this.db('files').whereIn('id', filesInFolder.map((file) => file.id)).del();
+    }
+
+    try {
+      await fs.rm(absoluteFolderPath, { recursive: true, force: true });
+    } catch (error) {
+      console.error(`Failed to delete folder from filesystem: ${absoluteFolderPath}`, error);
+    }
+
+    await this.workspaceService.touchWorkspace(workspaceId, userId);
+
+    for (const file of filesInFolder) {
+      try {
+        await this.ragQueueService?.enqueueFileDelete({
+          workspaceId,
+          relativePath: file.name,
+        });
+      } catch (error) {
+        console.error('Failed to enqueue RAG delete job for folder delete', error);
+      }
+    }
+  }
+
   async renameFile(
     fileId: number,
     target: { name?: string; path?: string },
@@ -545,8 +616,54 @@ export class FileService {
     }
 
     const existing = await this.db('files').where({ workspaceId });
-    const existingPaths = new Set<string>();
+    const diskFiles = await this.walkWorkspace(workspacePath);
+    const normalizedDiskFiles = new Set(diskFiles.map((filePath) => path.normalize(filePath)));
+    const staleLocalFileIds: number[] = [];
+    const localPathRepairs: Array<{ id: number; path: string }> = [];
+
     for (const file of existing) {
+      if (file.storageType !== 'local') {
+        continue;
+      }
+
+      let expectedLocalPath: string | null = null;
+      try {
+        expectedLocalPath = path.normalize(this.getLocalPath(workspaceId, file.name));
+      } catch (error) {
+        console.error('Failed to resolve expected local path during workspace sync:', error);
+      }
+
+      const currentPath = path.normalize(file.path);
+      const diskHasCurrentPath = normalizedDiskFiles.has(currentPath);
+      const diskHasExpectedPath = expectedLocalPath ? normalizedDiskFiles.has(expectedLocalPath) : false;
+
+      if (!diskHasCurrentPath && !diskHasExpectedPath) {
+        staleLocalFileIds.push(file.id);
+        continue;
+      }
+
+      if (expectedLocalPath && currentPath !== expectedLocalPath && diskHasExpectedPath) {
+        localPathRepairs.push({ id: file.id, path: expectedLocalPath });
+      }
+    }
+
+    if (staleLocalFileIds.length) {
+      await this.db('files').whereIn('id', staleLocalFileIds).del();
+    }
+
+    if (localPathRepairs.length) {
+      await Promise.all(
+        localPathRepairs.map(({ id, path: nextPath }) =>
+          this.db('files').where({ id }).update({ path: nextPath }),
+        ),
+      );
+    }
+
+    const remainingExisting = staleLocalFileIds.length
+      ? existing.filter((file) => !staleLocalFileIds.includes(file.id))
+      : existing;
+    const existingPaths = new Set<string>();
+    for (const file of remainingExisting) {
       existingPaths.add(path.normalize(file.path));
       if (file.storageType === 's3') {
         try {
@@ -557,7 +674,6 @@ export class FileService {
       }
     }
 
-    const diskFiles = await this.walkWorkspace(workspacePath);
     const missingFiles = diskFiles.filter(
       (filePath) => !existingPaths.has(path.normalize(filePath))
     );

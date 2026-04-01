@@ -32,6 +32,10 @@ export default function(fileService: FileService) {
     files: z.array(z.string().min(1)),
   });
 
+  const deleteFolderSchema = z.object({
+    path: z.string().min(1),
+  });
+
   const requireUserContext = (req: Request) => {
     if (!req.userContext) {
       throw new HttpError(401, 'Missing user context');
@@ -154,6 +158,21 @@ export default function(fileService: FileService) {
       res.json(updatedFile);
     } catch (error) {
       handleError(res, error, 'Failed to update file content');
+    }
+  });
+
+  router.delete('/folders', async (req: Request<{ workspaceId: string }>, res: Response) => {
+    try {
+      const { workspaceId } = req.params;
+      const user = requireUserContext(req);
+      const { path } = deleteFolderSchema.parse(req.query);
+      await fileService.deleteFolder(workspaceId, path, user.userId);
+      res.status(204).send();
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: 'Invalid folder delete payload' });
+      }
+      handleError(res, error, 'Failed to delete folder');
     }
   });
 

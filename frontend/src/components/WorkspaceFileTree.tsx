@@ -32,6 +32,7 @@ interface WorkspaceFileTreeProps {
   onCopyPublicUrl: (file: WorkspaceFile) => void;
   onRenameFile: (file: WorkspaceFile) => void;
   onDeleteFile: (file: WorkspaceFile) => void;
+  onDeleteFolder: (folder: WorkspaceFileTreeFolderNode) => void;
   onMoveFile: (file: WorkspaceFile, destinationFolderPath?: string) => void;
 }
 
@@ -244,6 +245,7 @@ const TreeFolderRow: React.FC<{
   node: WorkspaceFileTreeFolderNode;
   expanded: boolean;
   onToggle: (folderPath: string) => void;
+  onDeleteFolder: (folder: WorkspaceFileTreeFolderNode) => void;
   onDropFileToFolder: (fileId: string, folderPath: string) => void;
   draggedFileId: string | null;
   setDropTargetPath: (path: string | null) => void;
@@ -254,6 +256,7 @@ const TreeFolderRow: React.FC<{
   node,
   expanded,
   onToggle,
+  onDeleteFolder,
   onDropFileToFolder,
   draggedFileId,
   setDropTargetPath,
@@ -331,6 +334,22 @@ const TreeFolderRow: React.FC<{
             </span>
           </div>
         </button>
+        <button
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation();
+            onDeleteFolder(node);
+          }}
+          className={`rounded p-1.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 ${
+            isDarkMode
+              ? 'text-slate-400 hover:bg-slate-700/70 hover:text-slate-100'
+              : 'text-slate-500 hover:bg-slate-200 hover:text-slate-700'
+          }`}
+          title={`Delete folder ${node.path}`}
+          aria-label={`Delete folder ${node.path}`}
+        >
+          <Trash size={14} />
+        </button>
       </div>
       {expanded && <div className="mt-1 space-y-1 pl-5">{children}</div>}
     </div>
@@ -350,6 +369,7 @@ const renderTreeNodes = (
     onCopyPublicUrl: (file: WorkspaceFile) => void;
     onRenameFile: (file: WorkspaceFile) => void;
     onDeleteFile: (file: WorkspaceFile) => void;
+    onDeleteFolder: (folder: WorkspaceFileTreeFolderNode) => void;
     onToggleFolder: (folderPath: string) => void;
     onDropFileToFolder: (fileId: string, folderPath: string) => void;
     draggedFileId: string | null;
@@ -368,6 +388,7 @@ const renderTreeNodes = (
           node={node}
           expanded={expanded}
           onToggle={options.onToggleFolder}
+          onDeleteFolder={options.onDeleteFolder}
           onDropFileToFolder={options.onDropFileToFolder}
           draggedFileId={options.draggedFileId}
           setDropTargetPath={options.setDropTargetPath}
@@ -413,6 +434,7 @@ export default function WorkspaceFileTree({
   onCopyPublicUrl,
   onRenameFile,
   onDeleteFile,
+  onDeleteFolder,
   onMoveFile,
 }: WorkspaceFileTreeProps) {
   const isDarkMode = colorMode === 'dark';
@@ -516,6 +538,7 @@ export default function WorkspaceFileTree({
               onCopyPublicUrl,
               onRenameFile,
               onDeleteFile,
+              onDeleteFolder,
               onToggleFolder: handleToggleFolder,
               onDropFileToFolder: handleDropFileToFolder,
               draggedFileId,

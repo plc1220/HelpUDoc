@@ -20,9 +20,16 @@ Use this skill for general requests and as a router to other skills when special
    - Scan `/skills` and select the most relevant skill(s).
    - Read only the chosen `SKILL.md` files (progressive disclosure).
    - When executing a skill, use only the tools listed in its frontmatter.
+   - Route common document formats to the dedicated format skill before attempting file reads:
+     - `.pdf` -> `pdf`
+     - `.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`, `.webp`, `.svg` -> `image`
+     - `.csv`, `.tsv`, `.xlsx`, `.xls`, `.ods`, `.parquet` -> `sheets`
+     - `.pptx`, `.ppt`, `.key` -> `pptx`
 2. **Workspace files**
 
-   - Use `read_file` before editing.
+   - Use `read_file` before editing text files.
+   - Do not use `read_file` on common binary document formats such as images, PDFs, PowerPoint files, Excel files, or Parquet files.
+   - If a file is binary, load the matching format skill first and follow that workflow instead of attempting UTF-8 text decoding.
    - Use `write_file` for new files and `edit_file` for modifications.
 3. **Web research**
 

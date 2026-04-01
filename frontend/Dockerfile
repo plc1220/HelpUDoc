@@ -23,6 +23,7 @@ COPY frontend/vite.config.ts ./frontend/
 COPY frontend/index.html ./frontend/
 COPY --from=deps /app/frontend/node_modules ./frontend/node_modules
 COPY frontend/public ./frontend/public
+COPY frontend/scripts ./frontend/scripts
 COPY frontend/src ./frontend/src
 COPY packages/shared ./packages/shared
 

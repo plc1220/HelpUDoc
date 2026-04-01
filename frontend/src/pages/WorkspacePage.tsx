@@ -17,6 +17,7 @@ import {
   createFile,
   createTextFile,
   updateFileContent,
+  deleteFolder,
   deleteFile,
   getFileContent,
   renameFile,
@@ -1222,6 +1223,62 @@ export default function WorkspacePage() {
       removeFromState();
     } catch (error) {
       console.error('Failed to delete file:', error);
+    }
+  };
+
+  const handleDeleteFolder = async (folder: { path: string; fileCount: number }) => {
+    if (!selectedWorkspace || !folder.path) return;
+
+    const prefix = `${folder.path}/`;
+    const filesInFolder = files.filter((file) => {
+      const name = file.name || '';
+      return name === folder.path || name.startsWith(prefix);
+    });
+    const persistedFiles = filesInFolder.filter((file) => !isDraftWorkspaceFile(file));
+
+    const confirmed = window.confirm(
+      `Delete folder ${folder.path} and ${folder.fileCount} file${folder.fileCount === 1 ? '' : 's'} inside it?`,
+    );
+    if (!confirmed) return;
+
+    try {
+      if (persistedFiles.length > 0) {
+        await deleteFolder(selectedWorkspace.id, folder.path);
+      }
+
+      const deletedIds = new Set(filesInFolder.map((file) => file.id));
+      const deletedNames = new Set(filesInFolder.map((file) => file.name));
+
+      setFiles((prev) =>
+        prev.filter((file) => {
+          const name = file.name || '';
+          return name !== folder.path && !name.startsWith(prefix);
+        }),
+      );
+      setSelectedFiles((prev) => {
+        const next = new Set(prev);
+        for (const fileId of deletedIds) {
+          next.delete(fileId);
+        }
+        return next;
+      });
+      setRagStatuses((prev) => {
+        const next = { ...prev };
+        for (const fileName of deletedNames) {
+          delete next[fileName];
+        }
+        return next;
+      });
+      if (selectedFile) {
+        const selectedName = selectedFile.name || '';
+        if (selectedName === folder.path || selectedName.startsWith(prefix)) {
+          setSelectedFile(null);
+          setSelectedFileDetails(null);
+          setFileContent('');
+        }
+      }
+    } catch (error) {
+      console.error('Failed to delete folder:', error);
     }
   };
 
@@ -5245,6 +5302,7 @@ export default function WorkspacePage() {
                         onCopyPublicUrl={handleCopyFilePublicUrl}
                         onRenameFile={handleRenameFile}
                         onDeleteFile={handleDeleteSingleFile}
+                        onDeleteFolder={handleDeleteFolder}
                         onMoveFile={handleMoveFile}
                       />
                     </div>

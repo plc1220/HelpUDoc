@@ -90,6 +90,17 @@ export const deleteFile = async (workspaceId: string, fileId: string) => {
   }
 };
 
+export const deleteFolder = async (workspaceId: string, folderPath: string) => {
+  const url = new URL(`${API_URL}/workspaces/${workspaceId}/files/folders`);
+  url.searchParams.set('path', folderPath);
+  const response = await apiFetch(url.toString(), {
+    method: 'DELETE',
+  });
+  if (!response.ok) {
+    throw new Error('Failed to delete folder');
+  }
+};
+
 export const renameFile = async (
   workspaceId: string,
   fileId: string,
