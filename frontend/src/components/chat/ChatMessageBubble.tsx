@@ -4,13 +4,17 @@ import remarkGfm from 'remark-gfm';
 import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from 'react';
 
 import type { ConversationMessage, ConversationMessageMetadata } from '../../types';
-import ToolOutputFilePreview from './ToolOutputFilePreview';
 import type { RenderableInterruptAction } from './interruptActions';
 import { buildApprovalReview } from './approvalReview';
 
 const THOUGHT_PREVIEW_LIMIT = 320;
 const DEFAULT_THINKING_PLACEHOLDER = 'Working through your request based on the current workspace context.';
 const FRONTEND_SLIDES_DISCOVERY_HEADERS = ['purpose', 'length', 'content', 'images', 'editing'] as const;
+
+const isSkippedToolEvent = (event: NonNullable<ConversationMessage['toolEvents']>[number]): boolean => {
+  const summary = typeof event.summary === 'string' ? event.summary.trim() : '';
+  return /^Skipped\b/i.test(summary);
+};
 
 type ClarificationQuestionOption = {
   id: string;
@@ -413,7 +417,7 @@ export default function ChatMessageBubble({
   handleInterruptAction,
   enableTrustedPlanMode,
   isStreaming,
-  workspaceId,
+  workspaceId: _workspaceId,
 }: {
   colorMode: 'light' | 'dark';
   message: ConversationMessage;
@@ -469,7 +473,10 @@ export default function ChatMessageBubble({
   const isAgentMessage = message.sender === 'agent';
   const messageMetadata = (message.metadata as ConversationMessageMetadata | null | undefined) || undefined;
   const timestampLabel = formatMessageTimestamp(message.updatedAt || message.createdAt);
-  const toolEvents = message.toolEvents || [];
+  const toolEvents = useMemo(
+    () => (message.toolEvents || []).filter((event) => !isSkippedToolEvent(event)),
+    [message.toolEvents],
+  );
   const hasToolEvents = toolEvents.length > 0;
   const pendingInterrupt = messageMetadata?.pendingInterrupt;
   const interruptKind = getInterruptKind(pendingInterrupt);
@@ -934,7 +941,7 @@ export default function ChatMessageBubble({
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
                         <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-500">
-                          {approvalReview?.cardTitle || pendingInterrupt.title || 'Review Research Strategy'}
+                          {approvalReview?.cardTitle || pendingInterrupt.title || 'Review Proposed Action'}
                         </p>
                         <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-amber-700">
                           <CheckCircle2 size={12} />
@@ -945,7 +952,7 @@ export default function ChatMessageBubble({
                         {approvalReview?.planTitle || 'Proposed plan'}
                       </p>
                       <p className="mt-1 text-sm leading-relaxed text-slate-600">
-                        {approvalReview?.description || pendingInterrupt.description || 'Review the proposed research strategy before execution continues.'}
+                        {approvalReview?.description || pendingInterrupt.description || 'Review the proposed action before execution continues.'}
                       </p>
                     </div>
                     {approvalReview?.stepCount && approvalReview.stepCount > 1 ? (
@@ -1298,8 +1305,16 @@ export default function ChatMessageBubble({
                                       isDarkMode ? 'border-slate-700/70 bg-slate-950/80' : 'border-slate-200 bg-white'
                                     }`}
                                   >
-                                    <p className={`break-all text-xs font-semibold ${isDarkMode ? 'text-slate-200' : 'text-slate-700'}`}>{file.path}</p>
-                                    <ToolOutputFilePreview workspaceId={workspaceId} file={file} markdownComponents={markdownComponents} />
+                                    <div className="flex items-center justify-between gap-3">
+                                      <p className={`break-all text-xs font-semibold ${isDarkMode ? 'text-slate-200' : 'text-slate-700'}`}>{file.path}</p>
+                                      {file.mimeType ? (
+                                        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                                          isDarkMode ? 'bg-slate-800 text-slate-300' : 'bg-slate-100 text-slate-600'
+                                        }`}>
+                                          {file.mimeType}
+                                        </span>
+                                      ) : null}
+                                    </div>
                                   </div>
                                 ))}
                               </div>

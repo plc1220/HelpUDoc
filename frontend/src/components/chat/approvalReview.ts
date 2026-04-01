@@ -29,9 +29,9 @@ export type ApprovalReviewModel = {
 
 type PrimaryInterruptAction = { name?: string; args?: Record<string, unknown> } | undefined;
 
-const DEFAULT_CARD_TITLE = 'Review Research Strategy';
+const DEFAULT_CARD_TITLE = 'Review Proposed Action';
 const DEFAULT_BADGE_LABEL = 'Pending Approval';
-const DEFAULT_PLAN_PATH = 'research_plan.md';
+const DEFAULT_PLAN_PATH = 'draft.md';
 
 const coerceString = (value: unknown): string => (typeof value === 'string' ? value.trim() : '');
 

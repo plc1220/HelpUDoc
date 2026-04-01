@@ -2850,6 +2850,18 @@ export default function WorkspacePage() {
     const actions = Array.isArray(pendingInterrupt?.actions) ? pendingInterrupt.actions : [];
     const actionRequests = Array.isArray(pendingInterrupt?.actionRequests) ? pendingInterrupt.actionRequests : [];
     const reviewConfigs = Array.isArray(pendingInterrupt?.reviewConfigs) ? pendingInterrupt.reviewConfigs : [];
+    const interruptTitle = typeof pendingInterrupt?.title === 'string' ? pendingInterrupt.title.trim().toLowerCase() : '';
+    const interruptDescription = typeof pendingInterrupt?.description === 'string'
+      ? pendingInterrupt.description.trim().toLowerCase()
+      : '';
+    const hasClarificationRequest = actionRequests.some((request) => {
+      const name = typeof request?.name === 'string' ? request.name.trim().toLowerCase() : '';
+      return name.includes('clarification');
+    });
+    const hasClarificationReviewConfig = reviewConfigs.some((config) => {
+      const name = typeof config?.action_name === 'string' ? config.action_name.trim().toLowerCase() : '';
+      return name.includes('clarification');
+    });
     const hasApprovalConfig = actionRequests.length > 0 || reviewConfigs.length > 0;
     const hasClarificationAction = actions.some((action) => {
       if (!action || typeof action !== 'object') {
@@ -2863,6 +2875,15 @@ export default function WorkspacePage() {
       }
       return false;
     });
+
+    if (
+      hasClarificationRequest ||
+      hasClarificationReviewConfig ||
+      /clarification|need(s)? more detail|question/i.test(interruptTitle) ||
+      /clarification|need(s)? more detail|question/i.test(interruptDescription)
+    ) {
+      return 'clarification';
+    }
 
     if (hasClarificationAction && !hasApprovalConfig) {
       return 'clarification';
