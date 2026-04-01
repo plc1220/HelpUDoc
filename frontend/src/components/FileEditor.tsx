@@ -310,6 +310,21 @@ const FileEditor: React.FC<FileEditorProps> = ({
   }, [fileContent]);
 
   useEffect(() => {
+    if (!fileName || getLanguage(fileName) !== 'markdown' || isRawView) {
+      return;
+    }
+
+    const editorInstance = mdxEditorRef.current;
+    if (!editorInstance) {
+      return;
+    }
+
+    isApplyingRemoteRef.current = true;
+    editorInstance.setMarkdown(fileContent || '');
+    isApplyingRemoteRef.current = false;
+  }, [fileContent, fileName, isRawView]);
+
+  useEffect(() => {
     setMdxError(null);
   }, [fileId, isRawView]);
 
@@ -574,6 +589,7 @@ const FileEditor: React.FC<FileEditorProps> = ({
                 )}
                 <Suspense fallback={<EditorLoadingState className="min-h-[320px] flex-1" label="Loading rich editor..." />}>
                   <MarkdownRichEditor
+                    key={fileId ?? resolvedFileName}
                     ref={mdxEditorRef}
                     markdown={fileContent}
                     onChange={(value) => {

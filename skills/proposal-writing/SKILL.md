@@ -10,6 +10,10 @@ description: Create a multi-section Statement of Work (SOW) proposal for data/an
 - Use write_file for every new file and append_to_report to stitch sections into /Final_Proposal.md.
 - If append_to_report is unavailable, read the section file and append it by rewriting /Final_Proposal.md with write_file.
 - Reply in chat only with short progress updates and final confirmation.
+- Default proposal visuals to Mermaid inside markdown. Do not switch to image generation unless the user explicitly asks for a static visual artifact such as PNG/JPG/diagram image.
+- If the user explicitly asks for a static image export from proposal content or names `gemini_image`, treat that as authorization to call `gemini_image` after reading the relevant section file and extracting the specific table/diagram to visualize.
+- For those explicit image-export requests, do not hand off to unrelated sales asset workflows unless the user asks for a broader customer-facing asset.
+- `Final_Proposal.md` must preserve the wording of each section file. Stitch from the section files exactly; do not paraphrase, compress, or rewrite section prose while assembling the final document.
 
 ## Workflow
 ### Phase 1 - Research
@@ -42,7 +46,7 @@ description: Create a multi-section Statement of Work (SOW) proposal for data/an
 ### Phase 3 - Write & Stitch (one section at a time)
 For each section in order:
 1. Read /proposal_config.json and focus on a single section.
-2. Resume logic: If the section file already exists or its content is already in /Final_Proposal.md, mark it complete and continue.
+2. Resume logic: If the section file already exists, prefer it as the source of truth. Do not trust /Final_Proposal.md as proof that the section is correct unless the wording materially matches the section file.
 3. Write the section file (400-800 words) using write_file:
    - /01_executive_summary.md
    - /02_business_requirements.md
@@ -52,11 +56,34 @@ For each section in order:
    - /06_success_criteria.md
    - /07_commercials.md
 4. Append the section into /Final_Proposal.md using append_to_report.
-5. Update todos after each section (mark in-progress then complete). If using /todos.md, rewrite it with write_file.
+5. After appending, verify the stitched content still matches the section file. If the wording was compressed, altered, or partially omitted, repair /Final_Proposal.md from the section file content before moving on.
+6. Update todos after each section (mark in-progress then complete). If using /todos.md, rewrite it with write_file.
+
+### Phase 3.5 - Optional Static Visual Exports
+Only run this phase if the user asked for static image outputs.
+1. Finish the markdown section files first, including Mermaid diagrams in /03_architecture.md and /04_scope_of_work.md.
+2. Then generate any requested static visuals from the completed markdown artifacts:
+   - architecture diagram image from /03_architecture.md
+   - Gantt chart image from /04_scope_of_work.md
+   - RACI matrix image from /04_scope_of_work.md
+3. Save these as separate workspace artifacts, for example:
+   - /architecture-diagram.png
+   - /gantt-chart.png
+   - /raci-matrix.png
+4. Treat the completed markdown files as the canonical source. The images are derivative exports, not replacements for the markdown artifacts.
 
 ### Phase 4 - Complete
 1. Verify /Final_Proposal.md exists.
-2. Respond with: Proposal complete. Check /Final_Proposal.md (includes Mermaid diagrams)
+2. Re-read every section file and rebuild /Final_Proposal.md from those exact contents in order if there is any mismatch, compression, paraphrase, or missing block.
+3. Confirm that the final file contains the same section wording as:
+   - /01_executive_summary.md
+   - /02_business_requirements.md
+   - /03_architecture.md
+   - /04_scope_of_work.md
+   - /05_assumptions_out_of_scope.md
+   - /06_success_criteria.md
+   - /07_commercials.md
+4. Respond with: Proposal complete. Check /Final_Proposal.md (includes Mermaid diagrams)
 
 ## Section requirements (exhaustive)
 ### 1) Executive Summary
@@ -99,5 +126,7 @@ For each section in order:
 - Do not write all sections at once.
 - Write and stitch exactly one section at a time.
 - Sections 3 and 4 must include Mermaid diagrams.
+- If the user asks for static chart or diagram images, generate them only after the markdown sections are complete.
 - Keep /proposal_config.json as the single source of truth.
 - If you resume mid-run, reuse existing files and skip completed sections.
+- Never let /Final_Proposal.md become a summarized version of the section files. The section files are canonical; the final proposal is a stitched copy of them.

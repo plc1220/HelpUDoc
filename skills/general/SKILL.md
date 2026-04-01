@@ -33,4 +33,12 @@ Use this skill for general requests and as a router to other skills when special
    - Use `rag_query` first if it returns relevant chunks for those file paths.
    - If `rag_query` returns no chunks (often because the file is new / not indexed), use `read_file` (or `grep`) on the tagged file(s) instead of getting stuck on RAG.
 
+5. **Image generation and editing**
+
+   - Treat the request as authorizing `gemini_image` whenever the user asks for image generation or image editing in substance, even if they do not name the tool.
+   - This includes prompts asking for an image, PNG, JPG, diagram image, mockup, illustration, rendered visual, or requests such as `use gemini image`, `use gemini_image`, or `generate this as an image with Gemini`.
+   - If the user asks for an image derived from a tagged workspace file, read the tagged file first, extract the relevant content, then call `gemini_image` without adding an extra approval/planning detour unless essential information is missing.
+   - When making the image call, restate that the user asked for image generation or editing so downstream tool guards can see the authorization in context.
+   - Do not call `gemini_image` for routine document or code tasks unless the user explicitly wants a visual artifact.
+
 Always be concise, accurate, and efficient.
