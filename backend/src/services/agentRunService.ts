@@ -1,4 +1,4 @@
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import type { IncomingMessage } from 'http';
 import { redisClient } from './redisService';
 import {
@@ -113,6 +113,103 @@ const runContexts = new Map<string, RunContext>();
 const buildStreamKey = (runId: string) => `agent:run:${runId}`;
 const buildMetaKey = (runId: string) => `agent:run:${runId}:meta`;
 
+const stableNormalize = (value: unknown): unknown => {
+  if (Array.isArray(value)) {
+    return value.map(stableNormalize);
+  }
+  if (value && typeof value === 'object') {
+    return Object.keys(value as Record<string, unknown>)
+      .sort()
+      .reduce<Record<string, unknown>>((acc, key) => {
+        acc[key] = stableNormalize((value as Record<string, unknown>)[key]);
+        return acc;
+      }, {});
+  }
+  return value;
+};
+
+const buildInterruptId = (payload: Record<string, unknown>): string => {
+  const canonical = stableNormalize(
+    Object.entries(payload).reduce<Record<string, unknown>>((acc, [key, value]) => {
+      if (key !== 'interruptId' && key !== 'id') {
+        acc[key] = value;
+      }
+      return acc;
+    }, {}),
+  );
+  return `interrupt-${createHash('sha256').update(JSON.stringify(canonical)).digest('hex').slice(0, 20)}`;
+};
+
+const normalizeInterruptPayloadRecord = (payload: Record<string, unknown>): Record<string, unknown> => {
+  if (payload.type !== 'interrupt') {
+    return payload;
+  }
+  const interruptId =
+    typeof payload.interruptId === 'string' && payload.interruptId.trim()
+      ? payload.interruptId.trim()
+      : buildInterruptId(payload);
+  if (payload.interruptId === interruptId) {
+    return payload;
+  }
+  return {
+    ...payload,
+    interruptId,
+  };
+};
+
+const hasStructuredAnswers = (value: unknown): value is Record<string, string | string[]> =>
+  Boolean(
+    value &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    Object.keys(value as Record<string, unknown>).length,
+  );
+
+const hasClarificationResumeInput = (payload?: AgentInterruptResponse): boolean =>
+  Boolean(
+    payload?.message?.trim() ||
+    payload?.selectedChoiceIds?.length ||
+    payload?.selectedValues?.length ||
+    hasStructuredAnswers(payload?.answersByQuestionId),
+  );
+
+const clarificationSignature = (value: Record<string, unknown> | RunPendingInterrupt | undefined): string => {
+  if (!value) {
+    return '';
+  }
+  const source = value as Record<string, unknown>;
+  return JSON.stringify(
+    stableNormalize({
+      kind: source.kind,
+      title: source.title,
+      description: source.description,
+      responseSpec: source.responseSpec,
+      displayPayload: source.displayPayload,
+      actions: source.actions,
+      actionRequests: source.actionRequests,
+      reviewConfigs: source.reviewConfigs,
+    }),
+  );
+};
+
+const isRepeatedClarificationInterrupt = (
+  payload: Record<string, unknown>,
+  previousInterrupt?: RunPendingInterrupt,
+  resumePayload?: ResumePayload,
+): boolean => {
+  if (!('response' in (resumePayload || {})) || !hasClarificationResumeInput(resumePayload?.response)) {
+    return false;
+  }
+  if (previousInterrupt?.kind !== 'clarification' || payload.kind !== 'clarification') {
+    return false;
+  }
+  const normalized = normalizeInterruptPayloadRecord(payload);
+  if (previousInterrupt.interruptId && normalized.interruptId === previousInterrupt.interruptId) {
+    return true;
+  }
+  return clarificationSignature(normalized) === clarificationSignature(previousInterrupt);
+};
+
 const persistMeta = async (runId: string, meta: Partial<PersistedRunMeta>) => {
   const metaKey = buildMetaKey(runId);
   const stringified: Record<string, string> = {};
@@ -166,7 +263,7 @@ const parsePendingInterrupt = (raw: string | undefined): RunPendingInterrupt | u
     return undefined;
   }
   try {
-    const parsed = JSON.parse(raw);
+    const parsed = normalizeInterruptPayloadRecord(JSON.parse(raw));
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
       return undefined;
     }
@@ -354,8 +451,9 @@ export async function persistInterruptAndStopRun(
   if (state.sawInterruptPayload) {
     return false;
   }
-  state.sawInterruptPayload = parsed;
-  await persistInterrupt(runId, JSON.stringify(parsed));
+  const normalized = normalizeInterruptPayloadRecord(parsed);
+  state.sawInterruptPayload = normalized;
+  await persistInterrupt(runId, JSON.stringify(normalized));
   state.buffer = '';
   if (state.upstream && !state.upstream.destroyed) {
     state.upstream.destroy();
@@ -363,7 +461,12 @@ export async function persistInterruptAndStopRun(
   return true;
 }
 
-async function runAgentRunWorker(runId: string, params: StartRunParams, resumePayload?: ResumePayload) {
+async function runAgentRunWorker(
+  runId: string,
+  params: StartRunParams,
+  resumePayload?: ResumePayload,
+  previousInterrupt?: RunPendingInterrupt,
+) {
   const controller = new AbortController();
   runAbortControllers.set(runId, controller);
 
@@ -389,7 +492,18 @@ async function runAgentRunWorker(runId: string, params: StartRunParams, resumePa
   let buffer = '';
   let sawInterruptPayload: Record<string, unknown> | null = null;
   let contractErrorMessage = '';
+  let loopErrorMessage = '';
+  let settled = false;
   let processingQueue: Promise<void> = Promise.resolve();
+
+  const finalizeRun = async (status: AgentRunStatus, error?: string) => {
+    if (settled) {
+      return;
+    }
+    settled = true;
+    await markRunFinished(runId, status, error);
+    cleanupRun(runId, upstream || undefined);
+  };
 
   const stopAtInterrupt = async (parsed: Record<string, unknown>) => {
     await persistInterruptAndStopRun(
@@ -425,8 +539,20 @@ async function runAgentRunWorker(runId: string, params: StartRunParams, resumePa
         const line = buffer.slice(0, newlineIndex).trim();
         buffer = buffer.slice(newlineIndex + 1);
         if (line) {
-          await appendStreamEvent(runId, line);
           const parsed = parseLine(line);
+          if (
+            parsed?.type === 'interrupt' &&
+            isRepeatedClarificationInterrupt(parsed, previousInterrupt, resumePayload)
+          ) {
+            loopErrorMessage = 'Clarification response was not consumed. The same clarification was emitted again.';
+            const errorPayload = JSON.stringify({ type: 'error', message: loopErrorMessage });
+            await appendStreamEvent(runId, errorPayload);
+            if (upstream && !upstream.destroyed) {
+              upstream.destroy();
+            }
+            break;
+          }
+          await appendStreamEvent(runId, parsed ? JSON.stringify(normalizeInterruptPayloadRecord(parsed)) : line);
           if (parsed?.type === 'interrupt') {
             await stopAtInterrupt(parsed);
             break;
@@ -458,8 +584,20 @@ async function runAgentRunWorker(runId: string, params: StartRunParams, resumePa
       .map((line) => line.trim())
       .filter((line) => line.length > 0);
     for (const line of lines) {
-      await appendStreamEvent(runId, line);
       const parsed = parseLine(line);
+      if (
+        parsed?.type === 'interrupt' &&
+        isRepeatedClarificationInterrupt(parsed, previousInterrupt, resumePayload)
+      ) {
+        loopErrorMessage = 'Clarification response was not consumed. The same clarification was emitted again.';
+        const errorPayload = JSON.stringify({ type: 'error', message: loopErrorMessage });
+        await appendStreamEvent(runId, errorPayload);
+        if (upstream && !upstream.destroyed) {
+          upstream.destroy();
+        }
+        break;
+      }
+      await appendStreamEvent(runId, parsed ? JSON.stringify(normalizeInterruptPayloadRecord(parsed)) : line);
       if (parsed?.type === 'interrupt') {
         await stopAtInterrupt(parsed);
         break;
@@ -512,15 +650,18 @@ async function runAgentRunWorker(runId: string, params: StartRunParams, resumePa
         await processTailBuffer();
       }
 
+      if (loopErrorMessage) {
+        await finalizeRun('failed', loopErrorMessage);
+        return;
+      }
+
       if (controller.signal.aborted) {
-        await markRunFinished(runId, 'cancelled');
-        cleanupRun(runId, upstream || undefined);
+        await finalizeRun('cancelled');
         return;
       }
 
       if (contractErrorMessage) {
-        await markRunFinished(runId, 'failed', contractErrorMessage);
-        cleanupRun(runId, upstream || undefined);
+        await finalizeRun('failed', contractErrorMessage);
         return;
       }
 
@@ -530,10 +671,13 @@ async function runAgentRunWorker(runId: string, params: StartRunParams, resumePa
         return;
       }
 
-      await markRunFinished(runId, 'completed');
-      cleanupRun(runId, upstream || undefined);
+      await finalizeRun('completed');
     });
     upstream.on('error', async (error: Error) => {
+      if (loopErrorMessage) {
+        await finalizeRun('failed', loopErrorMessage);
+        return;
+      }
       if (sawInterruptPayload) {
         await markRunAwaitingApproval(runId, JSON.stringify(sawInterruptPayload));
         cleanupRun(runId, upstream || undefined);
@@ -544,8 +688,7 @@ async function runAgentRunWorker(runId: string, params: StartRunParams, resumePa
         const errorPayload = JSON.stringify({ type: 'error', message: error.message || 'Agent stream failed.' });
         await appendStreamEvent(runId, errorPayload);
       }
-      await markRunFinished(runId, status, error.message);
-      cleanupRun(runId, upstream || undefined);
+      await finalizeRun(status, error.message);
     });
   } catch (error: any) {
     const status: AgentRunStatus = controller.signal.aborted ? 'cancelled' : 'failed';
@@ -554,8 +697,7 @@ async function runAgentRunWorker(runId: string, params: StartRunParams, resumePa
       const errorPayload = JSON.stringify({ type: 'error', message });
       await appendStreamEvent(runId, errorPayload);
     }
-    await markRunFinished(runId, status, error?.message || 'Agent run failed');
-    cleanupRun(runId, upstream || undefined);
+    await finalizeRun(status, error?.message || 'Agent run failed');
   }
 }
 
@@ -583,7 +725,7 @@ export async function resumeAgentRun(
 export async function resumeAgentRunWithResponse(
   runId: string,
   response: AgentInterruptResponse,
-  options?: { authToken?: string },
+  options?: { authToken?: string; previousInterrupt?: RunPendingInterrupt },
 ): Promise<{ runId: string; status: AgentRunStatus }> {
   const context = await loadRunContext(runId);
   if (!context) {
@@ -597,7 +739,7 @@ export async function resumeAgentRunWithResponse(
     error: '',
     pendingInterrupt: '',
   });
-  void runAgentRunWorker(runId, nextParams, { response });
+  void runAgentRunWorker(runId, nextParams, { response }, options?.previousInterrupt);
   return { runId, status: 'queued' };
 }
 

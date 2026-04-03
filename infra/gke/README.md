@@ -13,6 +13,7 @@ The GKE setup covers the same services as local Compose:
 
 - backend API
 - agent service
+- AWS Pricing MCP proxy
 - frontend
 - PostgreSQL
 - Redis
@@ -31,6 +32,7 @@ The backend and agent are intentionally co-located around shared workspace/confi
 | `k8s/41-redis.yaml` | Redis workload |
 | `k8s/42-minio.yaml` | MinIO workload |
 | `k8s/43-minio-setup.yaml` | Bucket/bootstrap job |
+| `k8s/51-aws-pricing-mcp.yaml` | AWS Pricing MCP deployment/service |
 | `k8s/50-app.yaml` | Combined backend + agent application deployment |
 | `k8s/60-frontend.yaml` | Frontend deployment/service |
 | `k8s/70-caddy.yaml` | Caddy proxy deployment/service |
@@ -66,6 +68,8 @@ From the repo root, the most reliable path is:
    kubectl -n helpudoc create secret generic helpudoc-secrets --from-env-file=env/prod/secrets.env
    kubectl -n helpudoc create configmap helpudoc-config --from-env-file=env/prod/config.env
    ```
+   The AWS Pricing MCP deployment reads `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`,
+   optional `AWS_SESSION_TOKEN`, and `AWS_REGION` from those same resources.
 5. Submit the build and deploy pipeline:
    ```bash
    gcloud builds submit . \
@@ -86,6 +90,7 @@ kubectl apply -f infra/gke/k8s/40-postgres.yaml
 kubectl apply -f infra/gke/k8s/41-redis.yaml
 kubectl apply -f infra/gke/k8s/42-minio.yaml
 kubectl apply -f infra/gke/k8s/43-minio-setup.yaml
+kubectl apply -f infra/gke/k8s/51-aws-pricing-mcp.yaml
 kubectl apply -f infra/gke/k8s/50-app.yaml
 kubectl apply -f infra/gke/k8s/60-frontend.yaml
 kubectl apply -f infra/gke/k8s/70-caddy.yaml
@@ -100,6 +105,9 @@ If you are not using Cloud Build's image-tag rewriting, update the deployment im
 - `30-storage.yaml` provisions PVCs used by workspaces, agent config, and shared skills.
 - The backend settings UI expects a writable skills mount and a writable `runtime.yaml` mount.
 - `templates/` files are examples only; the live cluster normally gets `helpudoc-secrets` and `helpudoc-config` from `kubectl create ... --from-env-file`.
+- The default runtime config now points `aws-pricing` at the in-cluster service
+  `http://helpudoc-aws-pricing-mcp:8000/mcp` and `aws-knowledge` directly at
+  `https://knowledge-mcp.global.api.aws`.
 
 ## Verification
 

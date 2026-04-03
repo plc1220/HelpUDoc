@@ -3,17 +3,68 @@ import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from 'react';
 
-import type { ConversationMessage, ConversationMessageMetadata } from '../../types';
+import type {
+  ConversationMessage,
+  ConversationMessageMetadata,
+  InterruptAnswersByQuestionId,
+} from '../../types';
 import type { RenderableInterruptAction } from './interruptActions';
 import { buildApprovalReview } from './approvalReview';
+import {
+  areStructuredClarificationQuestionsComplete,
+  buildClarificationDraftStorageKey,
+  extractStructuredAnswersFromMessage,
+  readInterruptAnswerText,
+} from '../../utils/clarifications';
 
 const THOUGHT_PREVIEW_LIMIT = 320;
 const DEFAULT_THINKING_PLACEHOLDER = 'Working through your request based on the current workspace context.';
 const FRONTEND_SLIDES_DISCOVERY_HEADERS = ['purpose', 'length', 'content', 'images', 'editing'] as const;
 
+const formatElapsedTime = (
+  startedAt?: string,
+  now = Date.now(),
+  endedAt?: string,
+): string => {
+  if (!startedAt) {
+    return '';
+  }
+  const started = new Date(startedAt).getTime();
+  if (Number.isNaN(started)) {
+    return '';
+  }
+  const ended = endedAt ? new Date(endedAt).getTime() : Number.NaN;
+  const effectiveNow = Number.isNaN(ended) ? now : ended;
+  const elapsedSeconds = Math.max(0, Math.floor((effectiveNow - started) / 1000));
+  const minutes = Math.floor(elapsedSeconds / 60);
+  const seconds = elapsedSeconds % 60;
+  if (minutes >= 60) {
+    const hours = Math.floor(minutes / 60);
+    const remainingMinutes = minutes % 60;
+    return `${hours}h ${remainingMinutes}m`;
+  }
+  return `${minutes}m ${String(seconds).padStart(2, '0')}s`;
+};
+
 const isSkippedToolEvent = (event: NonNullable<ConversationMessage['toolEvents']>[number]): boolean => {
   const summary = typeof event.summary === 'string' ? event.summary.trim() : '';
   return /^Skipped\b/i.test(summary);
+};
+
+const isSummaryLikeAgentText = (value?: string): boolean => {
+  const text = String(value || '').trim();
+  if (!text) {
+    return false;
+  }
+  return (
+    /^Updated file\s+\//i.test(text) ||
+    /^Completed successfully\.?$/i.test(text) ||
+    /^The run (failed|was stopped)/i.test(text) ||
+    /^Artifact contract failed\.?$/i.test(text) ||
+    /^Missing:/i.test(text) ||
+    /^PLAN_(APPROVAL|EDIT|REJECTION|REJECT|CLARIFICATION|ACTION)_[A-Z_]+/i.test(text) ||
+    /^Command\s*\(/i.test(text)
+  );
 };
 
 type ClarificationQuestionOption = {
@@ -343,51 +394,10 @@ const parseClarificationQuestions = (
   return looksLikeFrontendSlidesDiscovery ? FRONTEND_SLIDES_DISCOVERY_QUESTIONS : [];
 };
 
-const buildClarificationTemplate = (questions: ClarificationQuestion[]): string =>
-  questions
-    .map((question) => `${question.header}:`)
-    .join('\n');
-
-const readStructuredAnswerMap = (
-  value: string,
-  questions: ClarificationQuestion[],
-): Record<string, string> => {
-  const answers: Record<string, string> = {};
-  const lines = value.split('\n');
-  questions.forEach((question) => {
-    const prefix = `${question.header.toLowerCase()}:`;
-    const matchingLine = lines.find((line) => line.trim().toLowerCase().startsWith(prefix));
-    if (matchingLine) {
-      answers[question.id] = matchingLine.slice(matchingLine.indexOf(':') + 1).trim();
-    }
-  });
-  return answers;
-};
-
-const upsertStructuredAnswer = (
-  value: string,
-  question: ClarificationQuestion,
-  answer: string,
-  questions: ClarificationQuestion[],
-): string => {
-  const existingLines = value
-    ? value.split('\n')
-    : buildClarificationTemplate(questions).split('\n');
-  const prefix = `${question.header}:`;
-  const nextLines = [...existingLines];
-  const lineIndex = nextLines.findIndex((line) => line.trim().toLowerCase().startsWith(prefix.toLowerCase()));
-  const nextLine = `${prefix} ${answer}`.trimEnd();
-  if (lineIndex >= 0) {
-    nextLines[lineIndex] = nextLine;
-  } else {
-    nextLines.push(nextLine);
-  }
-  return nextLines.join('\n').trim();
-};
-
 export default function ChatMessageBubble({
   colorMode,
   message,
+  isLatestAgentMessage,
   personaDisplayName,
   messageBubbleMaxWidth,
   markdownComponents,
@@ -395,6 +405,7 @@ export default function ChatMessageBubble({
   expandedThinkingMessages,
   copiedMessageId,
   interruptInputByMessageId,
+  interruptStructuredAnswersByMessageId,
   interruptSelectedChoicesByMessageId,
   interruptSubmittingByMessageId,
   interruptErrorByMessageId,
@@ -406,6 +417,7 @@ export default function ChatMessageBubble({
   getPrimaryInterruptAction,
   isPlanApprovalInterrupt,
   setInterruptInputByMessageId,
+  setInterruptStructuredAnswersByMessageId,
   toggleInterruptSelectedChoice,
   workspaceSkipPlanApprovals,
   workspaceSettingsBusy,
@@ -421,6 +433,7 @@ export default function ChatMessageBubble({
 }: {
   colorMode: 'light' | 'dark';
   message: ConversationMessage;
+  isLatestAgentMessage?: boolean;
   personaDisplayName: string;
   messageBubbleMaxWidth: string;
   markdownComponents: Components;
@@ -428,6 +441,7 @@ export default function ChatMessageBubble({
   expandedThinkingMessages: Set<ConversationMessage['id']>;
   copiedMessageId: ConversationMessage['id'] | null;
   interruptInputByMessageId: Record<string, string>;
+  interruptStructuredAnswersByMessageId: Record<string, InterruptAnswersByQuestionId>;
   interruptSelectedChoicesByMessageId: Record<string, string[]>;
   interruptSubmittingByMessageId: Record<string, boolean>;
   interruptErrorByMessageId: Record<string, string>;
@@ -448,6 +462,7 @@ export default function ChatMessageBubble({
   ) => { name?: string; args?: Record<string, unknown> } | undefined;
   isPlanApprovalInterrupt: (pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt']) => boolean;
   setInterruptInputByMessageId: Dispatch<SetStateAction<Record<string, string>>>;
+  setInterruptStructuredAnswersByMessageId: Dispatch<SetStateAction<Record<string, InterruptAnswersByQuestionId>>>;
   toggleInterruptSelectedChoice: (messageKey: string, choiceId: string, multiple: boolean) => void;
   workspaceSkipPlanApprovals: boolean;
   workspaceSettingsBusy: boolean;
@@ -471,6 +486,7 @@ export default function ChatMessageBubble({
 }) {
   const isDarkMode = colorMode === 'dark';
   const isAgentMessage = message.sender === 'agent';
+  const [now, setNow] = useState(() => Date.now());
   const messageMetadata = (message.metadata as ConversationMessageMetadata | null | undefined) || undefined;
   const timestampLabel = formatMessageTimestamp(message.updatedAt || message.createdAt);
   const toolEvents = useMemo(
@@ -502,7 +518,13 @@ export default function ChatMessageBubble({
   const isThinkingCollapsed = showThinkingToggle && !isThinkingExpanded;
   const sanitizedAgentText = (() => {
     const raw = message.text || '';
-    if (!pendingInterrupt || !raw || interruptKind !== 'approval') {
+    if (!raw) {
+      return raw;
+    }
+    const shouldStripApprovalBoilerplate = Boolean(pendingInterrupt) && interruptKind === 'approval';
+    const shouldStripTransientErrorLine = Boolean(pendingInterrupt)
+      || messageMetadata?.status === 'awaiting_approval';
+    if (!shouldStripApprovalBoilerplate && !shouldStripTransientErrorLine) {
       return raw;
     }
     return raw
@@ -510,18 +532,24 @@ export default function ChatMessageBubble({
       .filter((line) => {
         const value = line.trim();
         if (!value) return false;
-        if (/^\[human approval required\]$/i.test(value)) return false;
-        if (/request_plan_approval\s*\(allowed:/i.test(value)) return false;
-        if (/\(allowed:\s*approve,\s*edit,\s*reject\)/i.test(value)) return false;
-        if (/use the approval controls to approve, edit, or reject before execution continues\.?/i.test(value)) return false;
+        if (shouldStripApprovalBoilerplate) {
+          if (/^\[human approval required\]$/i.test(value)) return false;
+          if (/request_plan_approval\s*\(allowed:/i.test(value)) return false;
+          if (/\(allowed:\s*approve,\s*edit,\s*reject\)/i.test(value)) return false;
+          if (/use the approval controls to approve, edit, or reject before execution continues\.?/i.test(value)) return false;
+        }
+        if (shouldStripTransientErrorLine && /^Sorry,\s*something went wrong\.?$/i.test(value)) return false;
+        if (/^PLAN_(APPROVAL|EDIT|REJECTION|REJECT|CLARIFICATION|ACTION)_[A-Z_]+/i.test(value)) return false;
+        if (/^Command\s*\(/i.test(value)) return false;
         return true;
       })
       .join('\n')
       .trim();
   })();
-  const canCopyMessage =
-    Boolean((message.text && message.text.trim()) || (message.thinkingText && message.thinkingText.trim()));
-  const shouldShowFallbackStatus = !sanitizedAgentText && !displayThinkingText && !hasToolEvents;
+  const effectiveStatus = pendingInterrupt ? 'awaiting_approval' : messageMetadata?.status;
+  const isLiveAgentStatus = effectiveStatus === 'running' || effectiveStatus === 'awaiting_approval';
+  const bodySource = messageMetadata?.bodySource
+    || (sanitizedAgentText ? (isSummaryLikeAgentText(sanitizedAgentText) ? 'summary' : 'assistant') : undefined);
   const copyTitle = copiedMessageId === message.id ? 'Copied!' : 'Copy message';
   const copyButtonPositionClass = message.sender === 'user' ? 'right-10' : 'right-2';
   const planFeedbackKey = interruptFieldKey(messageKey, 'feedback');
@@ -539,10 +567,20 @@ export default function ChatMessageBubble({
   const hasStructuredClarificationForm = isClarificationInterrupt && structuredClarificationQuestions.length > 0;
   const clarificationDraftValue = interruptInputByMessageId[clarificationTextKey] || '';
   const structuredClarificationSubmitActions = interruptActions.filter((action) => action.inputMode === 'text');
-  const structuredAnswerMap = useMemo(
-    () => readStructuredAnswerMap(clarificationDraftValue, structuredClarificationQuestions),
-    [clarificationDraftValue, structuredClarificationQuestions],
-  );
+  const structuredAnswerMap = interruptStructuredAnswersByMessageId[messageKey] || {};
+  const hasMultiQuestionClarificationWizard = hasStructuredClarificationForm && structuredClarificationQuestions.length > 1;
+  const [wizardStepIndex, setWizardStepIndex] = useState(0);
+  const wizardStorageKey = pendingInterrupt?.interruptId
+    ? buildClarificationDraftStorageKey(message.conversationId, message.id, pendingInterrupt.interruptId)
+    : '';
+  const currentWizardQuestion = hasMultiQuestionClarificationWizard
+    && wizardStepIndex < structuredClarificationQuestions.length
+    ? structuredClarificationQuestions[wizardStepIndex]
+    : null;
+  const isWizardReviewStep = hasMultiQuestionClarificationWizard && wizardStepIndex >= structuredClarificationQuestions.length;
+  const structuredAnswersComplete = hasStructuredClarificationForm
+    ? areStructuredClarificationQuestionsComplete(structuredClarificationQuestions, structuredAnswerMap)
+    : false;
 
   const planText = useMemo(() => {
     const args = primaryInterruptAction?.args;
@@ -567,24 +605,175 @@ export default function ChatMessageBubble({
     () => buildApprovalReview(pendingInterrupt, primaryInterruptAction),
     [pendingInterrupt, primaryInterruptAction],
   );
-
+  const shouldHideAgentBodyForApproval = Boolean(
+    pendingInterrupt
+    && !isClarificationInterrupt
+    && (approvalReview || interruptKind === 'approval'),
+  );
+  const visibleAgentText = shouldHideAgentBodyForApproval
+    ? ''
+    : bodySource === 'summary' && isLiveAgentStatus
+      ? ''
+      : sanitizedAgentText;
+  const inlineStatus = (() => {
+    if (!isAgentMessage || !isLatestAgentMessage) {
+      return null;
+    }
+    const rawStatus = effectiveStatus;
+    if (rawStatus !== 'running' && rawStatus !== 'awaiting_approval') {
+      return null;
+    }
+    const latestToolEvent = [...toolEvents].reverse().find(Boolean);
+    const detail = rawStatus === 'awaiting_approval'
+      ? pendingInterrupt?.title || pendingInterrupt?.description || 'The agent needs your input to continue.'
+      : latestToolEvent?.status === 'running'
+        ? `Running ${latestToolEvent.name || 'tool'}...`
+        : latestToolEvent?.summary
+          ? latestToolEvent.summary
+          : visibleAgentText || displayThinkingText || 'Working through the current request.';
+    return {
+      status: rawStatus,
+      title: rawStatus === 'awaiting_approval' ? 'Waiting for you' : 'Running',
+      detail,
+      elapsed: formatElapsedTime(message.createdAt, now),
+    };
+  })();
+  const canCopyMessage =
+    Boolean((visibleAgentText && visibleAgentText.trim()) || (message.thinkingText && message.thinkingText.trim()));
+  const shouldShowFallbackStatus = !visibleAgentText && !displayThinkingText && !hasToolEvents;
   useEffect(() => {
     if (!pendingInterrupt) {
       setActiveTextActionId(null);
       setConfirmActionId(null);
       setClarificationDismissed(false);
+      setWizardStepIndex(0);
       return;
     }
     setActiveTextActionId(null);
     setConfirmActionId(null);
     setClarificationDismissed(false);
+    setWizardStepIndex(0);
   }, [pendingInterrupt, messageKey]);
+
+  useEffect(() => {
+    if (!hasStructuredClarificationForm) {
+      return;
+    }
+    const legacyAnswers = extractStructuredAnswersFromMessage(clarificationDraftValue, structuredClarificationQuestions);
+    if (Object.keys(legacyAnswers).length === 0 || Object.keys(structuredAnswerMap).length > 0) {
+      return;
+    }
+    setInterruptStructuredAnswersByMessageId((prev) => ({
+      ...prev,
+      [messageKey]: {
+        ...(prev[messageKey] || {}),
+        ...legacyAnswers,
+      },
+    }));
+  }, [
+    clarificationDraftValue,
+    hasStructuredClarificationForm,
+    messageKey,
+    setInterruptStructuredAnswersByMessageId,
+    structuredAnswerMap,
+    structuredClarificationQuestions,
+  ]);
+
+  useEffect(() => {
+    if (!hasStructuredClarificationForm || !wizardStorageKey || typeof window === 'undefined') {
+      return;
+    }
+    try {
+      const raw = window.localStorage.getItem(wizardStorageKey);
+      if (!raw) {
+        return;
+      }
+      const parsed = JSON.parse(raw) as {
+        answersByQuestionId?: InterruptAnswersByQuestionId;
+        notes?: string;
+        stepIndex?: number;
+      };
+      if (parsed.answersByQuestionId && Object.keys(structuredAnswerMap).length === 0) {
+        setInterruptStructuredAnswersByMessageId((prev) => {
+          if (prev[messageKey] && Object.keys(prev[messageKey]).length > 0) {
+            return prev;
+          }
+          return {
+            ...prev,
+            [messageKey]: parsed.answersByQuestionId || {},
+          };
+        });
+      }
+      if (parsed.notes && !clarificationDraftValue.trim()) {
+        setInterruptValue(clarificationTextKey, parsed.notes);
+      }
+      if (typeof parsed.stepIndex === 'number' && Number.isFinite(parsed.stepIndex)) {
+        const maxStep = hasMultiQuestionClarificationWizard ? structuredClarificationQuestions.length : 0;
+        setWizardStepIndex(Math.max(0, Math.min(parsed.stepIndex, maxStep)));
+      }
+    } catch (error) {
+      console.error('Failed to restore clarification draft', error);
+    }
+  }, [
+    clarificationDraftValue,
+    clarificationTextKey,
+    hasMultiQuestionClarificationWizard,
+    hasStructuredClarificationForm,
+    messageKey,
+    setInterruptStructuredAnswersByMessageId,
+    structuredAnswerMap,
+    structuredClarificationQuestions.length,
+    wizardStorageKey,
+  ]);
+
+  useEffect(() => {
+    if (!hasStructuredClarificationForm || !wizardStorageKey || typeof window === 'undefined') {
+      return;
+    }
+    try {
+      window.localStorage.setItem(
+        wizardStorageKey,
+        JSON.stringify({
+          answersByQuestionId: structuredAnswerMap,
+          notes: clarificationDraftValue,
+          stepIndex: wizardStepIndex,
+        }),
+      );
+    } catch (error) {
+      console.error('Failed to persist clarification draft', error);
+    }
+  }, [
+    clarificationDraftValue,
+    hasStructuredClarificationForm,
+    structuredAnswerMap,
+    wizardStepIndex,
+    wizardStorageKey,
+  ]);
 
   const setInterruptValue = (fieldKey: string, value: string) => {
     setInterruptInputByMessageId((prev) => ({
       ...prev,
       [fieldKey]: value,
     }));
+  };
+
+  const setStructuredAnswer = (questionId: string, value: string) => {
+    setInterruptStructuredAnswersByMessageId((prev) => {
+      const next = { ...prev };
+      const current = { ...(next[messageKey] || {}) };
+      const normalizedValue = value.trim();
+      if (normalizedValue) {
+        current[questionId] = normalizedValue;
+      } else {
+        delete current[questionId];
+      }
+      if (Object.keys(current).length === 0) {
+        delete next[messageKey];
+      } else {
+        next[messageKey] = current;
+      }
+      return next;
+    });
   };
 
   const getActionInputKey = (action: RenderableInterruptAction): string => {
@@ -649,20 +838,244 @@ export default function ChatMessageBubble({
     const isDanger = action.style === 'danger';
     if (tone === 'dark') {
       if (isPrimary) {
-        return 'rounded-[1.2rem] border border-[#94c5f8]/70 bg-[#94c5f8] px-4 py-3 text-sm font-semibold text-slate-900 transition-all duration-200 hover:bg-[#a8d2fb] disabled:cursor-not-allowed disabled:opacity-40';
+        return 'rounded-[1.2rem] border border-white/15 bg-white px-4 py-3 text-sm font-semibold text-slate-900 transition-all duration-200 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40';
       }
       if (isDanger) {
-        return 'rounded-[1.2rem] border border-rose-400/35 bg-rose-500/10 px-4 py-3 text-sm font-semibold text-rose-100 transition-all duration-200 hover:bg-rose-500/15 disabled:cursor-not-allowed disabled:opacity-40';
+        return 'rounded-[1.2rem] border border-white/14 bg-white/[0.04] px-4 py-3 text-sm font-semibold text-white/88 transition-all duration-200 hover:border-white/24 hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-40';
       }
       return 'rounded-[1.2rem] border border-white/10 bg-white/[0.03] px-4 py-3 text-sm font-semibold text-white/92 transition-all duration-200 hover:border-white/25 hover:bg-white/[0.07] disabled:cursor-not-allowed disabled:opacity-40';
     }
     if (isPrimary) {
-      return 'rounded-xl border border-emerald-300/80 bg-emerald-500/90 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition-all duration-200 hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-60';
+      return 'rounded-xl border border-slate-900/90 bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition-all duration-200 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60';
     }
     if (isDanger) {
-      return 'rounded-xl border border-rose-200/90 bg-white px-3 py-1.5 text-xs font-semibold text-rose-700 transition-all duration-200 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60';
+      return 'rounded-xl border border-slate-300/90 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition-all duration-200 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60';
     }
-    return 'rounded-xl border border-blue-200/90 bg-white px-3 py-1.5 text-xs font-semibold text-blue-700 transition-all duration-200 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-60';
+    return 'rounded-xl border border-slate-300/90 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition-all duration-200 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60';
+  };
+
+  const renderStructuredSubmitButtons = (alignment: 'between' | 'end' = 'between') => (
+    <div className={`flex flex-wrap gap-2 ${alignment === 'end' ? 'justify-end' : 'justify-between'}`}>
+      {alignment === 'between' ? <div /> : null}
+      <div className="flex flex-wrap gap-2">
+        {structuredClarificationSubmitActions.map((action) => (
+          <button
+            key={action.id}
+            type="button"
+            disabled={interruptControlsDisabled || !structuredAnswersComplete}
+            onClick={() => void handleInterruptAction(message, action, pendingInterrupt)}
+            className={getActionButtonClass(
+              {
+                ...action,
+                label: action.submitLabel || action.label,
+                style: 'primary',
+              },
+              'light',
+            )}
+          >
+            {interruptBusy ? (
+              <span className="inline-flex items-center gap-2">
+                <Loader2 size={16} className="animate-spin" />
+                {action.submitLabel || action.label}
+              </span>
+            ) : (
+              action.submitLabel || action.label
+            )}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+
+  const renderStructuredQuestionEditor = (question: ClarificationQuestion) => {
+    const currentAnswer = readInterruptAnswerText(structuredAnswerMap[question.id]);
+    return (
+      <div className="space-y-4">
+        <div className="rounded-[1.5rem] border border-slate-200/80 bg-white/90 p-4 shadow-sm">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-400">
+            {question.header}
+          </p>
+          <p className="mt-2 text-base font-semibold leading-relaxed text-slate-900">
+            {question.question}
+          </p>
+          {question.options.length ? (
+            <div className="mt-4 grid gap-3">
+              {question.options.map((option) => {
+                const isSelected = currentAnswer.trim().toLowerCase() === option.value.trim().toLowerCase();
+                return (
+                  <button
+                    key={option.id}
+                    type="button"
+                    disabled={interruptControlsDisabled}
+                    onClick={() => setStructuredAnswer(question.id, option.value)}
+                    className={`w-full rounded-[1.2rem] border px-4 py-3 text-left transition-all duration-200 ${
+                      isSelected
+                        ? 'border-sky-300 bg-sky-50 text-sky-900 shadow-[0_0_0_1px_rgba(14,165,233,0.14)]'
+                        : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50'
+                    } ${interruptControlsDisabled ? 'cursor-not-allowed opacity-60' : ''}`}
+                  >
+                    <span className="block text-sm font-semibold">{option.label}</span>
+                    {option.description ? (
+                      <span className="mt-1 block text-xs leading-relaxed text-slate-500">
+                        {option.description}
+                      </span>
+                    ) : null}
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
+          <div className="mt-4">
+            <label className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
+              Your answer
+            </label>
+            <textarea
+              value={currentAnswer}
+              onChange={(event) => setStructuredAnswer(question.id, event.target.value)}
+              rows={question.options.length ? 3 : 5}
+              disabled={interruptControlsDisabled}
+              placeholder="Add the exact answer you want the agent to use."
+              className="mt-2 w-full rounded-[1.2rem] border border-slate-200 bg-white px-4 py-3 text-sm leading-relaxed text-slate-700 placeholder:text-slate-400 focus:border-sky-400 focus:outline-none disabled:cursor-not-allowed disabled:opacity-70"
+            />
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderStructuredClarificationForm = () => {
+    if (!hasStructuredClarificationForm) {
+      return null;
+    }
+
+    if (hasMultiQuestionClarificationWizard) {
+      const answeredCount = structuredClarificationQuestions.filter(
+        (question) => readInterruptAnswerText(structuredAnswerMap[question.id]).trim().length > 0,
+      ).length;
+      const progress = ((Math.min(wizardStepIndex, structuredClarificationQuestions.length) + 1)
+        / (structuredClarificationQuestions.length + 1)) * 100;
+
+      if (isWizardReviewStep) {
+        return (
+          <div className="mt-5 space-y-4">
+            <div className="rounded-[1.5rem] border border-slate-200/80 bg-white/90 p-4 shadow-sm">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-400">Review</p>
+                  <p className="mt-1 text-sm text-slate-600">Check the answers below before continuing.</p>
+                </div>
+                <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600">
+                  {answeredCount}/{structuredClarificationQuestions.length} answered
+                </span>
+              </div>
+              <div className="mt-4 h-2 overflow-hidden rounded-full bg-slate-100">
+                <div className="h-full rounded-full bg-sky-400 transition-all duration-300" style={{ width: `${progress}%` }} />
+              </div>
+              <div className="mt-4 space-y-3">
+                {structuredClarificationQuestions.map((question) => (
+                  <div key={question.id} className="rounded-[1.2rem] border border-slate-200/80 bg-slate-50/80 px-4 py-3">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+                      {question.header}
+                    </p>
+                    <p className="mt-1 text-sm text-slate-700">
+                      {readInterruptAnswerText(structuredAnswerMap[question.id]) || 'Not answered'}
+                    </p>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-4">
+                <label className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
+                  Notes for the agent
+                </label>
+                <textarea
+                  value={clarificationDraftValue}
+                  onChange={(event) => setInterruptValue(clarificationTextKey, event.target.value)}
+                  rows={4}
+                  disabled={interruptControlsDisabled}
+                  placeholder="Add any extra constraints, preferences, or context."
+                  className="mt-2 w-full rounded-[1.2rem] border border-slate-200 bg-white px-4 py-3 text-sm leading-relaxed text-slate-700 placeholder:text-slate-400 focus:border-sky-400 focus:outline-none disabled:cursor-not-allowed disabled:opacity-70"
+                />
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <button
+                type="button"
+                disabled={interruptControlsDisabled}
+                onClick={() => setWizardStepIndex(Math.max(0, structuredClarificationQuestions.length - 1))}
+                className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition-all duration-200 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Back
+              </button>
+              {renderStructuredSubmitButtons('end')}
+            </div>
+          </div>
+        );
+      }
+
+      const currentAnswer = currentWizardQuestion
+        ? readInterruptAnswerText(structuredAnswerMap[currentWizardQuestion.id])
+        : '';
+      return (
+        <div className="mt-5 space-y-4">
+          <div className="rounded-[1.5rem] border border-slate-200/80 bg-white/90 p-4 shadow-sm">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-400">
+                  Question {Math.min(wizardStepIndex + 1, structuredClarificationQuestions.length)} of {structuredClarificationQuestions.length}
+                </p>
+                <p className="mt-1 text-sm text-slate-600">Answer one thing at a time, then review everything before submit.</p>
+              </div>
+              <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600">
+                {answeredCount}/{structuredClarificationQuestions.length} answered
+              </span>
+            </div>
+            <div className="mt-4 h-2 overflow-hidden rounded-full bg-slate-100">
+              <div className="h-full rounded-full bg-sky-400 transition-all duration-300" style={{ width: `${progress}%` }} />
+            </div>
+          </div>
+          {currentWizardQuestion ? renderStructuredQuestionEditor(currentWizardQuestion) : null}
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <button
+              type="button"
+              disabled={interruptControlsDisabled || wizardStepIndex === 0}
+              onClick={() => setWizardStepIndex((current) => Math.max(0, current - 1))}
+              className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition-all duration-200 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              Back
+            </button>
+            <button
+              type="button"
+              disabled={interruptControlsDisabled || !currentAnswer.trim()}
+              onClick={() => setWizardStepIndex((current) => Math.min(structuredClarificationQuestions.length, current + 1))}
+              className="rounded-xl border border-sky-200 bg-sky-500 px-3 py-1.5 text-xs font-semibold text-white transition-all duration-200 hover:bg-sky-500/90 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {wizardStepIndex === structuredClarificationQuestions.length - 1 ? 'Review answers' : 'Next'}
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    const singleQuestion = structuredClarificationQuestions[0];
+    return (
+      <div className="mt-5 space-y-4">
+        {singleQuestion ? renderStructuredQuestionEditor(singleQuestion) : null}
+        <div className="rounded-[1.5rem] border border-slate-200/80 bg-white/90 p-4 shadow-sm">
+          <label className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
+            Notes for the agent
+          </label>
+          <textarea
+            value={clarificationDraftValue}
+            onChange={(event) => setInterruptValue(clarificationTextKey, event.target.value)}
+            rows={4}
+            disabled={interruptControlsDisabled}
+            placeholder="Add any extra context that should travel with your answer."
+            className="mt-2 w-full rounded-[1.2rem] border border-slate-200 bg-white px-4 py-3 text-sm leading-relaxed text-slate-700 placeholder:text-slate-400 focus:border-sky-400 focus:outline-none disabled:cursor-not-allowed disabled:opacity-70"
+          />
+        </div>
+        {renderStructuredSubmitButtons('end')}
+      </div>
+    );
   };
 
   const renderInterruptActions = (tone: 'light' | 'dark') => {
@@ -881,15 +1294,60 @@ export default function ChatMessageBubble({
         : 'group-hover:opacity-100 hover:opacity-100 focus-visible:opacity-100'
     }`;
 
+  useEffect(() => {
+    if (!inlineStatus) {
+      return;
+    }
+    const interval = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(interval);
+  }, [inlineStatus]);
+
   return (
     <div className={`group flex items-start gap-3 motion-safe:animate-[chat-pane-message-in_220ms_ease-out] ${isAgentMessage ? '' : 'justify-end'}`}>
       <div style={{ width: '100%', maxWidth: messageBubbleMaxWidth }} className="relative flex-1 md:flex-initial">
         {isAgentMessage ? (
           <div className={agentContainerClassName}>
             <div className={agentMetaClassName}>
-              <span className={agentPersonaClassName}>{personaDisplayName}</span>
-              {timestampLabel ? <span>{timestampLabel}</span> : null}
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <span className={agentPersonaClassName}>{personaDisplayName}</span>
+                {inlineStatus ? (
+                  <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] ${
+                    inlineStatus.status === 'awaiting_approval'
+                      ? isDarkMode
+                        ? 'border-amber-400/30 bg-amber-500/10 text-amber-200'
+                        : 'border-amber-200 bg-amber-50 text-amber-700'
+                      : isDarkMode
+                        ? 'border-sky-400/30 bg-sky-500/10 text-sky-200'
+                        : 'border-sky-200 bg-sky-50 text-sky-700'
+                  }`}>
+                    {inlineStatus.title}
+                  </span>
+                ) : null}
+              </div>
+              <div className="flex items-center gap-2">
+                {inlineStatus?.elapsed ? (
+                  <span className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold ${
+                    isDarkMode ? 'border-white/10 text-slate-300' : 'border-slate-200 text-slate-600'
+                  }`}>
+                    {inlineStatus.elapsed}
+                  </span>
+                ) : null}
+                {timestampLabel ? <span>{timestampLabel}</span> : null}
+              </div>
             </div>
+            {inlineStatus ? (
+              <div className={`mt-3 rounded-[1.25rem] border px-3 py-2 text-sm ${
+                inlineStatus.status === 'awaiting_approval'
+                  ? isDarkMode
+                    ? 'border-amber-400/20 bg-amber-500/10 text-amber-100'
+                    : 'border-amber-200 bg-amber-50/80 text-amber-900'
+                  : isDarkMode
+                    ? 'border-sky-400/20 bg-sky-500/10 text-sky-100'
+                    : 'border-sky-200 bg-sky-50/80 text-sky-900'
+              }`}>
+                {inlineStatus.detail}
+              </div>
+            ) : null}
             {displayThinkingText ? (
               <div className={thinkingCardClassName}>
                   <div className={thinkingHeaderClassName}>
@@ -922,10 +1380,10 @@ export default function ChatMessageBubble({
                   </div>
                 </div>
             ) : null}
-            {sanitizedAgentText ? (
+            {visibleAgentText ? (
               <div className="agent-markdown mt-3 text-sm">
                 <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-                  {sanitizedAgentText}
+                  {visibleAgentText}
                 </ReactMarkdown>
               </div>
             ) : shouldShowFallbackStatus ? (
@@ -1146,99 +1604,7 @@ export default function ChatMessageBubble({
                   </div>
                 ) : null}
                 {hasStructuredClarificationForm ? (
-                  <div className="mt-5 space-y-5">
-                    <div className="grid gap-4 md:grid-cols-2">
-                      {structuredClarificationQuestions.map((question) => (
-                        <div key={question.id} className="rounded-[1.5rem] border border-slate-200/80 bg-white/85 p-4 shadow-sm">
-                          <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-400">
-                            {question.header}
-                          </p>
-                          <p className="mt-2 text-sm font-medium leading-relaxed text-slate-700">
-                            {question.question}
-                          </p>
-                          {question.options.length ? (
-                            <div className="mt-3 space-y-2">
-                              {question.options.map((option) => {
-                                const currentAnswer = (structuredAnswerMap[question.id] || '').trim().toLowerCase();
-                                const isSelected = currentAnswer === option.value.trim().toLowerCase();
-                                return (
-                                  <button
-                                    key={option.id}
-                                    type="button"
-                                    disabled={interruptControlsDisabled}
-                                    onClick={() => {
-                                      const nextValue = upsertStructuredAnswer(
-                                        clarificationDraftValue,
-                                        question,
-                                        option.value,
-                                        structuredClarificationQuestions,
-                                      );
-                                      setInterruptValue(clarificationTextKey, nextValue);
-                                    }}
-                                    className={`w-full rounded-[1.15rem] border px-3 py-3 text-left transition-all duration-200 ${
-                                      isSelected
-                                        ? 'border-sky-300 bg-sky-50 text-sky-900 shadow-[0_0_0_1px_rgba(14,165,233,0.12)]'
-                                        : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50'
-                                    } ${interruptControlsDisabled ? 'cursor-not-allowed opacity-60' : ''}`}
-                                  >
-                                    <span className="block text-sm font-semibold">{option.label}</span>
-                                    {option.description ? (
-                                      <span className="mt-1 block text-xs leading-relaxed text-slate-500">
-                                        {option.description}
-                                      </span>
-                                    ) : null}
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          ) : null}
-                        </div>
-                      ))}
-                    </div>
-                    <div className="rounded-[1.5rem] border border-slate-200/80 bg-white/90 p-4 shadow-sm">
-                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                        <div>
-                          <p className="text-sm font-semibold text-slate-800">Notes for the agent</p>
-                          <p className="mt-1 text-xs text-slate-500">Adjust any suggestion or add your own details, then continue.</p>
-                        </div>
-                        <div className="flex flex-wrap gap-2">
-                          {structuredClarificationSubmitActions.map((action) => (
-                            <button
-                              key={action.id}
-                              type="button"
-                              disabled={interruptControlsDisabled || !clarificationDraftValue.trim()}
-                              onClick={() => void handleInterruptAction(message, action, pendingInterrupt)}
-                              className={getActionButtonClass(
-                                {
-                                  ...action,
-                                  label: action.submitLabel || action.label,
-                                  style: 'primary',
-                                },
-                                'light',
-                              )}
-                            >
-                              {interruptBusy ? (
-                                <span className="inline-flex items-center gap-2">
-                                  <Loader2 size={16} className="animate-spin" />
-                                  {action.submitLabel || action.label}
-                                </span>
-                              ) : (
-                                action.submitLabel || action.label
-                              )}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                      <textarea
-                        value={clarificationDraftValue}
-                        onChange={(event) => setInterruptValue(clarificationTextKey, event.target.value)}
-                        rows={Math.max(6, structuredClarificationQuestions.length + 1)}
-                        disabled={interruptControlsDisabled}
-                        placeholder={buildClarificationTemplate(structuredClarificationQuestions)}
-                        className="mt-3 w-full rounded-[1.35rem] border border-slate-200 bg-white px-4 py-3 text-sm leading-relaxed text-slate-700 placeholder:text-slate-400 focus:border-sky-400 focus:outline-none disabled:cursor-not-allowed disabled:opacity-70"
-                      />
-                    </div>
-                  </div>
+                  renderStructuredClarificationForm()
                 ) : (
                   renderInterruptActions('light')
                 )}

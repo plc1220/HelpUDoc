@@ -4,6 +4,12 @@ import type { AgentPersona, ConversationSummary } from '../../types';
 
 type ConversationStreamingMap = Record<string, boolean>;
 
+type ConversationAttentionState = {
+  status: 'running' | 'awaiting_approval' | 'completed' | 'failed' | 'cancelled';
+  label?: string;
+  updatedAt: string;
+};
+
 const normalizePersonaName = (name: string): string => {
   const normalized = String(name || '').trim().toLowerCase();
   if (!normalized || normalized === 'general-assistant') {
@@ -18,6 +24,7 @@ export default function ChatHistoryPanel({
   conversationHistory,
   activeConversationId,
   conversationStreaming,
+  conversationAttentionById,
   personas,
   onClose,
   onSelectConversation,
@@ -28,6 +35,7 @@ export default function ChatHistoryPanel({
   conversationHistory: ConversationSummary[];
   activeConversationId: string | null;
   conversationStreaming: ConversationStreamingMap;
+  conversationAttentionById: Record<string, ConversationAttentionState>;
   personas: AgentPersona[];
   onClose: () => void;
   onSelectConversation: (conversationId: string) => void;
@@ -94,9 +102,21 @@ export default function ChatHistoryPanel({
             conversationHistory.map((conversation) => {
               const isActive = conversation.id === activeConversationId;
               const isConversationStreaming = conversationStreaming[conversation.id];
+              const attention = conversationAttentionById[conversation.id];
               const normalizedPersona = normalizePersonaName(conversation.persona);
               const personaLabel =
                 personas.find((persona) => persona.name === normalizedPersona)?.displayName || normalizedPersona;
+              const attentionLabel = isConversationStreaming
+                ? 'Running'
+                : attention?.status === 'awaiting_approval'
+                  ? 'Waiting'
+                  : attention?.status === 'completed'
+                    ? 'Done'
+                    : attention?.status === 'failed'
+                      ? 'Failed'
+                      : attention?.status === 'cancelled'
+                        ? 'Stopped'
+                        : '';
               return (
                 <div key={conversation.id} className="group relative">
                   <button
@@ -120,16 +140,50 @@ export default function ChatHistoryPanel({
                         ? isDarkMode ? 'text-slate-50' : 'text-sky-900'
                         : isDarkMode ? 'text-slate-200' : 'text-slate-800'
                     }`}>{conversation.title}</p>
-                    <p className={`mt-1 flex items-center gap-1 text-xs ${
+                    <div className={`mt-1 flex items-center gap-2 text-xs ${
                       isActive
                         ? isDarkMode ? 'text-sky-100/80' : 'text-sky-700'
                         : isDarkMode ? 'text-slate-500' : 'text-slate-500'
                     }`}>
                       {isConversationStreaming ? <Loader2 size={12} className={`animate-spin ${isDarkMode ? 'text-sky-300' : 'text-sky-500'}`} /> : null}
-                      <span>
+                      <span className="truncate">
                         Mode: {personaLabel} · {new Date(conversation.updatedAt).toLocaleString()}
                       </span>
-                    </p>
+                    </div>
+                    {attentionLabel ? (
+                      <div className="mt-2 flex items-center gap-2">
+                        <span className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] ${
+                          attention?.status === 'awaiting_approval'
+                            ? isDarkMode
+                              ? 'border-amber-400/30 bg-amber-500/10 text-amber-200'
+                              : 'border-amber-200 bg-amber-50 text-amber-700'
+                            : attention?.status === 'completed'
+                              ? isDarkMode
+                                ? 'border-emerald-400/30 bg-emerald-500/10 text-emerald-200'
+                                : 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                              : attention?.status === 'failed'
+                                ? isDarkMode
+                                  ? 'border-rose-400/30 bg-rose-500/10 text-rose-200'
+                                  : 'border-rose-200 bg-rose-50 text-rose-700'
+                                : attention?.status === 'cancelled'
+                                  ? isDarkMode
+                                    ? 'border-slate-600 bg-slate-900 text-slate-300'
+                                    : 'border-slate-200 bg-slate-100 text-slate-600'
+                                  : isDarkMode
+                                    ? 'border-sky-400/30 bg-sky-500/10 text-sky-200'
+                                    : 'border-sky-200 bg-sky-50 text-sky-700'
+                        }`}>
+                          {attentionLabel}
+                        </span>
+                        {attention?.label ? (
+                          <span className={`truncate text-[11px] ${
+                            isDarkMode ? 'text-slate-400' : 'text-slate-500'
+                          }`}>
+                            {attention.label}
+                          </span>
+                        ) : null}
+                      </div>
+                    ) : null}
                   </button>
                   <button
                     type="button"

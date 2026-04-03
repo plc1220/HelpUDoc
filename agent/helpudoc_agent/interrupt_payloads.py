@@ -2,12 +2,25 @@
 from __future__ import annotations
 
 import ast
+import hashlib
 import json
 import logging
 from typing import Any, Dict, List
 
 
 logger = logging.getLogger(__name__)
+
+
+def _build_interrupt_id(interrupt_value: Dict[str, Any]) -> str:
+    canonical = {
+        key: value
+        for key, value in interrupt_value.items()
+        if key not in {"interrupt_id", "interruptId", "id"}
+    }
+    digest = hashlib.sha256(
+        json.dumps(canonical, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    ).hexdigest()
+    return f"interrupt-{digest[:20]}"
 
 
 def _normalize_interrupt_payload(interrupt_value: Dict[str, Any], interrupt_id: str | None = None) -> Dict[str, Any]:
@@ -31,9 +44,17 @@ def _normalize_interrupt_payload(interrupt_value: Dict[str, Any], interrupt_id: 
     display_payload = interrupt_value.get("display_payload")
     if isinstance(display_payload, dict):
         payload["displayPayload"] = display_payload
-    if isinstance(interrupt_id, str) and interrupt_id:
-        payload["interruptId"] = interrupt_id
+    normalized_interrupt_id = (
+        interrupt_id.strip()
+        if isinstance(interrupt_id, str) and interrupt_id.strip()
+        else _build_interrupt_id(interrupt_value)
+    )
+    payload["interruptId"] = normalized_interrupt_id
     return payload
+
+
+def normalize_interrupt_payload_value(interrupt_value: Dict[str, Any], interrupt_id: str | None = None) -> Dict[str, Any]:
+    return _normalize_interrupt_payload(interrupt_value, interrupt_id)
 
 
 def _parse_json_list(raw: Any) -> List[Any]:

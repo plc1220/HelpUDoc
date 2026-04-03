@@ -26,6 +26,7 @@ from .mcp_manager import describe_mcp_servers
 from .interrupt_payloads import (
     extract_interrupt_payload_from_tool_call,
     extract_interrupt_payload_from_tool_text,
+    normalize_interrupt_payload_value,
 )
 from .utils import SourceTracker
 from langchain_core.callbacks.base import AsyncCallbackHandler
@@ -250,6 +251,7 @@ class InterruptResponseRequest(BaseModel):
     message: Optional[str] = None
     selectedChoiceIds: List[str] = Field(default_factory=list)
     selectedValues: List[str] = Field(default_factory=list)
+    answersByQuestionId: Dict[str, str | List[str]] = Field(default_factory=dict)
 
 
 class InterruptAction(BaseModel):
@@ -1158,6 +1160,17 @@ def create_app() -> FastAPI:
             start = max(end, start + 1)
         return chunks
 
+    _INTERNAL_STREAM_TEXT_PATTERNS = (
+        re.compile(r"^PLAN_(APPROVAL|EDIT|REJECTION|REJECT|CLARIFICATION|ACTION)_[A-Z_]+", re.IGNORECASE),
+        re.compile(r"^Command\s*\(", re.IGNORECASE),
+    )
+
+    def _is_internal_stream_text(text: str) -> bool:
+        normalized = (text or "").strip()
+        if not normalized:
+            return False
+        return any(pattern.match(normalized) for pattern in _INTERNAL_STREAM_TEXT_PATTERNS)
+
     def _message_role(message: Any) -> str:
         for attr in ("type", "role"):
             value = getattr(message, attr, None)
@@ -1219,29 +1232,7 @@ def create_app() -> FastAPI:
         if not isinstance(interrupt_value, dict):
             return None
 
-        action_requests = interrupt_value.get("action_requests")
-        review_configs = interrupt_value.get("review_configs")
-        actions = interrupt_value.get("actions")
-        payload = {
-            "type": "interrupt",
-            "kind": interrupt_value.get("kind"),
-            "title": interrupt_value.get("title"),
-            "description": interrupt_value.get("description"),
-            "stepIndex": interrupt_value.get("step_index"),
-            "stepCount": interrupt_value.get("step_count"),
-            "actions": actions if isinstance(actions, list) else [],
-            "actionRequests": action_requests if isinstance(action_requests, list) else [],
-            "reviewConfigs": review_configs if isinstance(review_configs, list) else [],
-        }
-        response_spec = interrupt_value.get("response_spec")
-        if isinstance(response_spec, dict):
-            payload["responseSpec"] = response_spec
-        display_payload = interrupt_value.get("display_payload")
-        if isinstance(display_payload, dict):
-            payload["displayPayload"] = display_payload
-        if isinstance(interrupt_id, str) and interrupt_id:
-            payload["interruptId"] = interrupt_id
-        return payload
+        return normalize_interrupt_payload_value(interrupt_value, interrupt_id if isinstance(interrupt_id, str) else None)
 
     def _extract_interrupt_payload(chunk: Any) -> Dict[str, Any] | None:
         if not isinstance(chunk, dict):
@@ -1290,13 +1281,11 @@ def create_app() -> FastAPI:
             return []
         if not bool(policy.get("requires_workspace_artifacts", False)):
             return []
-        mode = str(policy.get("required_artifacts_mode") or "").strip().lower()
-        if mode != "full_pack":
-            return []
-
         root = runtime.workspace_state.root_path
         required = policy.get("required_artifacts") or []
         required_items = [str(item).strip() for item in required if str(item).strip()]
+        if not required_items:
+            return []
         missing: List[str] = []
         for item in required_items:
             if item.startswith("pattern:"):
@@ -1385,6 +1374,8 @@ def create_app() -> FastAPI:
         if not text:
             return []
         if role in _ASSISTANT_ROLES:
+            if _is_internal_stream_text(text):
+                return []
             return [
                 {"type": "token", "content": piece, "role": "assistant"}
                 for piece in _chunk_text(text)
@@ -1464,7 +1455,7 @@ def create_app() -> FastAPI:
                                 await handler._emit(event_payload)
                 elif not handler.has_assistant_text:
                     text = _message_to_text(final_result)
-                    if text:
+                    if text and not _is_internal_stream_text(text):
                         emitted = True
                         for event_payload in _emit_text("assistant", text):
                             await handler._emit(event_payload)

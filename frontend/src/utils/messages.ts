@@ -32,7 +32,13 @@ const sanitizeRunPolicy = (
 
 export const mapMessagesToAgentHistory = (messages: ConversationMessage[]) => {
   return messages
-    .filter((message) => typeof message.text === 'string' && message.text.trim().length > 0)
+    .filter((message) => {
+      if (typeof message.text !== 'string' || message.text.trim().length === 0) {
+        return false;
+      }
+      const metadata = (message.metadata as ConversationMessageMetadata | null | undefined) || undefined;
+      return !(message.sender === 'agent' && metadata?.bodySource === 'summary');
+    })
     .map((message) => ({
       role: message.sender === 'agent' ? 'assistant' : 'user',
       content: message.text.trim(),
@@ -69,6 +75,9 @@ export const buildMessageMetadata = (
   }
   if (message.toolEvents?.length) {
     metadata.toolEvents = message.toolEvents;
+  }
+  if (existingMetadata?.bodySource) {
+    metadata.bodySource = existingMetadata.bodySource;
   }
   if (existingMetadata?.runPolicy) {
     const sanitizedRunPolicy = sanitizeRunPolicy(existingMetadata.runPolicy);

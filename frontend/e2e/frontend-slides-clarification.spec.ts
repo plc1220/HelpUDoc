@@ -22,7 +22,7 @@ const REPORT_CONTENT = `# Operation Epic Fury
 4. Regional shifts
 `;
 
-test('frontend-slides pauses on clarification instead of approval', async ({ page, baseURL }) => {
+test('frontend-slides uses a paginated clarification wizard and submits structured answers', async ({ page, baseURL }) => {
   const resolvedBaseUrl = baseURL || 'https://lc-demo.com';
   page.on('console', (message) => {
     console.log(`[browser:${message.type()}] ${message.text()}`);
@@ -87,10 +87,10 @@ test('frontend-slides pauses on clarification instead of approval', async ({ pag
         const purposeQuestionCount = await page.getByText(/What is this presentation for\?/i).count();
         const pitchDeckOptionCount = await page.getByRole('button', { name: /Pitch deck/i }).count();
         const discoveryTitleCount = await page.getByText(/Presentation Discovery|Presentation Context|File Not Found/i).count();
-        const submitCount = await page.getByRole('button', { name: /Continue|Start Designing/i }).count();
+        const questionStepCount = await page.getByText(/Question 1 of 5/i).count();
         return (
-          (submitCount > 0 && discoveryTitleCount > 0 && pitchDeckOptionCount > 0) ||
-          (submitCount > 0 && purposeQuestionCount > 0 && pitchDeckOptionCount > 0)
+          (questionStepCount > 0 && discoveryTitleCount > 0 && pitchDeckOptionCount > 0) ||
+          (questionStepCount > 0 && purposeQuestionCount > 0 && pitchDeckOptionCount > 0)
         );
       },
       { timeout: 120_000, message: 'expected clarification UI to appear' },
@@ -101,4 +101,50 @@ test('frontend-slides pauses on clarification instead of approval', async ({ pag
   await expect(page.getByRole('button', { name: 'Approve' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Reject' })).toHaveCount(0);
   await expect(page.getByText('Generating...')).toHaveCount(0, { timeout: 30_000 });
+
+  await page.getByRole('button', { name: /Pitch deck/i }).click();
+  await page.getByRole('button', { name: /Next/i }).click();
+  await expect(page.getByText(/Question 2 of 5/i)).toBeVisible();
+
+  await page.getByRole('button', { name: /Medium \(10-20\)/i }).click();
+  await page.getByRole('button', { name: /Next/i }).click();
+  await expect(page.getByText(/Question 3 of 5/i)).toBeVisible();
+
+  await page.getByRole('button', { name: /Rough notes/i }).click();
+  await page.getByRole('button', { name: /Next/i }).click();
+  await expect(page.getByText(/Question 4 of 5/i)).toBeVisible();
+
+  await page.getByRole('button', { name: /Use \.\/assets/i }).click();
+  await page.getByRole('button', { name: /Next/i }).click();
+  await expect(page.getByText(/Question 5 of 5/i)).toBeVisible();
+
+  await page.getByRole('button', { name: /^Yes \(Recommended\)$/i }).click();
+
+  const respondRequestPromise = page.waitForRequest(
+    (request) =>
+      request.method() === 'POST' &&
+      /\/api\/agent\/runs\/[^/]+\/respond(?:\?|$)/.test(request.url()),
+    { timeout: 30_000 },
+  );
+  await page.getByRole('button', { name: /Review answers/i }).click();
+  await expect(page.getByText(/Review/i)).toBeVisible();
+  await page.locator('textarea').last().fill('Keep it bold, fast-paced, and visually modern.');
+  await page.getByRole('button', { name: /Continue|Start Designing/i }).click();
+
+  const respondRequest = await respondRequestPromise;
+  const respondPayload = respondRequest.postDataJSON() as {
+    message?: string;
+    answersByQuestionId?: Record<string, string>;
+  };
+
+  expect(respondPayload.answersByQuestionId).toMatchObject({
+    purpose: 'Pitch deck',
+    length: 'Medium (10-20)',
+    content: 'I have rough notes',
+    images: './assets',
+    editing: 'Yes',
+  });
+  expect(respondPayload.message || '').toContain('Purpose: Pitch deck');
+  expect(respondPayload.message || '').toContain('Notes: Keep it bold, fast-paced, and visually modern.');
+  await expect(page.getByText(/What is this presentation for\?/i)).toHaveCount(0, { timeout: 15_000 });
 });

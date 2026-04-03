@@ -26,6 +26,7 @@ except ImportError as exc:  # pragma: no cover
     raise RuntimeError("Gemini dependencies are required") from exc
 
 from .bigquery_export_tools import build_export_bigquery_query_tool
+from .clarification_responses import normalize_clarification_resume_payload
 from .configuration import Settings, ToolConfig
 from .skills_registry import (
     SkillPolicy,
@@ -635,12 +636,16 @@ class ToolFactory:
 
             response = _interrupt_with_retry(
                 interrupt_payload,
-                valid_keys={"message", "selectedChoiceIds", "selectedValues"},
+                valid_keys={"message", "selectedChoiceIds", "selectedValues", "answersByQuestionId"},
                 stale_keys={"decisions", "action"},
                 label="request_clarification",
             )
             if isinstance(response, dict):
-                return json.dumps(response, ensure_ascii=False)
+                return normalize_clarification_resume_payload(
+                    response,
+                    questions=parsed_questions,
+                    choices=parsed_choices,
+                )
             return str(response)
 
         request_clarification.name = "request_clarification"

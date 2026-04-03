@@ -54,6 +54,8 @@ import type {
   ToolOutputFile,
   ConversationMessageMetadata,
   InterruptAction,
+  InterruptAnswersByQuestionId,
+  InterruptQuestion,
   SkillDefinition,
 } from '../types';
 import CollapsibleDrawer from '../components/CollapsibleDrawer';
@@ -73,6 +75,12 @@ import {
   SLASH_COMMANDS,
 } from '../constants/workspace';
 import { isSystemFile, normalizeFilePath } from '../utils/files';
+import {
+  areStructuredClarificationQuestionsComplete,
+  buildClarificationDraftStorageKey,
+  buildStructuredClarificationMessage,
+  hasStructuredClarificationAnswers,
+} from '../utils/clarifications';
 import {
   buildWorkspaceDestinationPath,
   getWorkspaceParentFolderPath,
@@ -105,6 +113,11 @@ const DEFAULT_PERSONAS: AgentPersona[] = [
     description: 'Gemini 3 Flash (Preview)',
   },
   {
+    name: 'lite',
+    displayName: 'Lite',
+    description: 'Gemini 3.1 Flash Lite (Preview)',
+  },
+  {
     name: 'pro',
     displayName: 'Pro',
     description: 'Gemini 3 Pro (Preview)',
@@ -115,7 +128,13 @@ const normalizePersonaName = (name: string): string => {
   if (!normalized || normalized === 'general-assistant') {
     return DEFAULT_PERSONA_NAME;
   }
-  return normalized === 'pro' ? 'pro' : 'fast';
+  if (normalized === 'pro') {
+    return 'pro';
+  }
+  if (normalized === 'lite') {
+    return 'lite';
+  }
+  return 'fast';
 };
 const STREAM_DEBUG_ENABLED =
   typeof import.meta !== 'undefined' &&
@@ -171,6 +190,12 @@ type ActiveRunInfo = {
   status: AgentRunStatus;
 };
 
+type ConversationAttentionState = {
+  status: Exclude<AgentRunStatus, 'queued'>;
+  label?: string;
+  updatedAt: string;
+};
+
 const ACTIVE_RUNS_STORAGE_KEY = 'helpudoc-active-runs';
 const MARKDOWN_FILE_EXTENSIONS = ['.md'];
 const HTML_FILE_EXTENSIONS = ['.html', '.htm'];
@@ -184,6 +209,83 @@ const generateTurnId = () => {
 };
 
 const DEFAULT_PLAN_FILE_PATH = 'research_plan.md';
+
+const normalizeRunStatus = (
+  status?: ConversationMessageMetadata['status'] | AgentRunStatus,
+): Exclude<AgentRunStatus, 'queued'> => {
+  if (!status || status === 'queued') {
+    return 'running';
+  }
+  return status;
+};
+
+const isTerminalRunStatus = (
+  status?: ConversationMessageMetadata['status'] | AgentRunStatus,
+): status is 'completed' | 'failed' | 'cancelled' => (
+  status === 'completed' || status === 'failed' || status === 'cancelled'
+);
+
+const titleCaseToolName = (value?: string): string =>
+  String(value || '')
+    .trim()
+    .split(/[_\s-]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+
+const trimMilestone = (value?: string): string => {
+  const normalized = String(value || '').replace(/\s+/g, ' ').trim();
+  if (!normalized) {
+    return '';
+  }
+  return normalized.length > 120 ? `${normalized.slice(0, 117)}...` : normalized;
+};
+
+const isSummaryLikeAgentText = (value?: string): boolean => {
+  const text = String(value || '').trim();
+  if (!text) {
+    return false;
+  }
+  return (
+    /^Updated file\s+\//i.test(text) ||
+    /^Completed successfully\.?$/i.test(text) ||
+    /^The run (failed|was stopped)/i.test(text) ||
+    /^Artifact contract failed\.?$/i.test(text) ||
+    /^Missing:/i.test(text) ||
+    /^PLAN_(APPROVAL|EDIT|REJECTION|REJECT|CLARIFICATION|ACTION)_[A-Z_]+/i.test(text) ||
+    /^Command\s*\(/i.test(text)
+  );
+};
+
+const summarizeMessageFromToolEvents = (
+  message?: ConversationMessage | null,
+  status?: AgentRunStatus,
+): string => {
+  const toolEvents = message?.toolEvents || [];
+  const latestFinishedEvent = [...toolEvents]
+    .reverse()
+    .find((event) => event.status === 'completed' || event.status === 'error');
+  if (latestFinishedEvent?.summary?.trim()) {
+    return latestFinishedEvent.summary.trim();
+  }
+  const latestOutputFile = [...toolEvents]
+    .reverse()
+    .flatMap((event) => event.outputFiles || [])
+    .find((file) => typeof file.path === 'string' && file.path.trim());
+  if (latestOutputFile?.path) {
+    return `Updated file ${latestOutputFile.path}`;
+  }
+  if (status === 'completed') {
+    return 'Completed successfully.';
+  }
+  if (status === 'failed') {
+    return 'The run failed before it could finish.';
+  }
+  if (status === 'cancelled') {
+    return 'The run was stopped before completion.';
+  }
+  return '';
+};
 
 const formatWorkspaceLastUsed = (updatedAt?: string) => {
   if (!updatedAt) {
@@ -246,10 +348,28 @@ const mergePersistedAgentMessage = (
 
   const persistedText = typeof hydrated.text === 'string' ? hydrated.text : '';
   const existingText = typeof existing?.text === 'string' ? existing.text : '';
-  const mergedText =
-    persistedText.trim().length > 0 || !existingText.trim().length
-      ? persistedText
-      : existingText;
+  const persistedBodySource =
+    persistedMetadata.bodySource
+    || (persistedText.trim().length ? (isSummaryLikeAgentText(persistedText) ? 'summary' : 'assistant') : undefined);
+  const existingBodySource =
+    existingMetadata.bodySource
+    || (existingText.trim().length ? (isSummaryLikeAgentText(existingText) ? 'summary' : 'assistant') : undefined);
+
+  let mergedText = persistedText;
+  let mergedBodySource = persistedBodySource;
+  if (!persistedText.trim().length && existingText.trim().length) {
+    mergedText = existingText;
+    mergedBodySource = existingBodySource;
+  } else if (persistedBodySource !== 'assistant' && existingBodySource === 'assistant' && existingText.trim().length) {
+    mergedText = existingText;
+    mergedBodySource = existingBodySource;
+  }
+
+  if (mergedBodySource) {
+    mergedMetadata.bodySource = mergedBodySource;
+  } else {
+    delete mergedMetadata.bodySource;
+  }
 
   return {
     ...hydrated,
@@ -380,9 +500,13 @@ export default function WorkspacePage() {
   const [availableSkills, setAvailableSkills] = useState<SkillDefinition[]>([]);
   const [availableMcpServers, setAvailableMcpServers] = useState<Array<{ name: string; description?: string }>>([]);
   const [interruptInputByMessageId, setInterruptInputByMessageId] = useState<Record<string, string>>({});
+  const [interruptStructuredAnswersByMessageId, setInterruptStructuredAnswersByMessageId] = useState<
+    Record<string, InterruptAnswersByQuestionId>
+  >({});
   const [interruptSelectedChoicesByMessageId, setInterruptSelectedChoicesByMessageId] = useState<Record<string, string[]>>({});
   const [interruptSubmittingByMessageId, setInterruptSubmittingByMessageId] = useState<Record<string, boolean>>({});
   const [interruptErrorByMessageId, setInterruptErrorByMessageId] = useState<Record<string, string>>({});
+  const [conversationAttentionById, setConversationAttentionById] = useState<Record<string, ConversationAttentionState>>({});
   const ragStatusFetchedRef = useRef<Record<string, boolean>>({});
   const resumeInFlightRef = useRef<Set<string>>(new Set());
   const resumeAttemptedRef = useRef<Set<string>>(new Set());
@@ -439,6 +563,24 @@ export default function WorkspacePage() {
         console.error('Failed to persist active runs', error);
       }
     }
+  }, []);
+
+  const setConversationAttention = useCallback((
+    conversationId: string,
+    status: Exclude<AgentRunStatus, 'queued'>,
+    label?: string,
+  ) => {
+    if (!conversationId) {
+      return;
+    }
+    setConversationAttentionById((prev) => ({
+      ...prev,
+      [conversationId]: {
+        status,
+        label: trimMilestone(label),
+        updatedAt: new Date().toISOString(),
+      },
+    }));
   }, []);
 
   const removeConflictingRuns = useCallback((runs: Record<string, ActiveRunInfo>, runInfo: ActiveRunInfo) => {
@@ -1886,7 +2028,18 @@ export default function WorkspacePage() {
   const loadConversationMessages = useCallback(async (conversationId: string) => {
     try {
       const detail = await fetchConversationDetail(conversationId);
-      const hydratedMessages = detail.messages.map(mergeMessageMetadata);
+      const hydratedMessages = detail.messages
+        .map(mergeMessageMetadata)
+        .map((message) => {
+          if (message.sender !== 'agent' || message.text?.trim()) {
+            return message;
+          }
+          const synthesizedText = summarizeMessageFromToolEvents(
+            message,
+            (message.metadata as ConversationMessageMetadata | undefined)?.status,
+          );
+          return synthesizedText ? { ...message, text: synthesizedText } : message;
+        });
       const filteredMessages = hydratedMessages.filter((message) => {
         if (message.sender !== 'agent') {
           return true;
@@ -2781,16 +2934,30 @@ export default function WorkspacePage() {
       }
       const message = findAgentMessageForRun(conversationId, placeholderId, turnId);
       const bufferedState = getBufferedAgentState(runInfo);
-      const text = bufferedState.text;
-      const lastText = lastPersistedAgentTextRef.current[runId];
       const nextStatus = statusOverride || message?.metadata?.status || runInfo.status || 'running';
+      const assistantText = bufferedState.text;
+      const summaryText =
+        !assistantText.trim() && isTerminalRunStatus(nextStatus)
+          ? summarizeMessageFromToolEvents(message, nextStatus)
+          : '';
+      const text = assistantText || summaryText;
+      const bodySource = assistantText.trim()
+        ? 'assistant'
+        : summaryText.trim()
+          ? 'summary'
+          : undefined;
+      const lastText = lastPersistedAgentTextRef.current[runId];
       const lastStatus = lastPersistedStatusRef.current[runId];
       const metadata = {
         ...(buildMessageMetadata(message) || {}),
         ...(options?.metadataOverride || {}),
         runId,
         status: nextStatus,
+        bodySource,
       } satisfies ConversationMessageMetadata;
+      if (!bodySource) {
+        delete metadata.bodySource;
+      }
       const metadataSignature = JSON.stringify(metadata);
       const lastMetadataSignature = lastPersistedMetadataRef.current[runId];
       if (text === lastText && nextStatus === lastStatus && metadataSignature === lastMetadataSignature) {
@@ -2846,6 +3013,45 @@ export default function WorkspacePage() {
       }
     },
     [findAgentMessageForRun, getBufferedAgentState, upsertPersistedAgentMessage],
+  );
+
+  const syncRunStateToConversation = useCallback(
+    async (
+      runInfo: ActiveRunInfo,
+      status: Exclude<AgentRunStatus, 'queued'>,
+      pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
+    ) => {
+      const agentMessageIndex = findAgentMessageIndexForRun(
+        runInfo.conversationId,
+        runInfo.placeholderId,
+        runInfo.turnId,
+        runInfo.runId,
+      );
+      if (agentMessageIndex >= 0) {
+        updateMessageMetadataAtIndex(runInfo.conversationId, agentMessageIndex, (metadata) => ({
+          ...metadata,
+          runId: runInfo.runId,
+          status,
+          pendingInterrupt: status === 'awaiting_approval' ? pendingInterrupt : undefined,
+        }));
+      }
+      await persistAgentProgress(
+        { ...runInfo, status },
+        status,
+        pendingInterrupt
+          ? {
+              metadataOverride: {
+                pendingInterrupt,
+              },
+            }
+          : {
+              metadataOverride: {
+                pendingInterrupt: undefined,
+              },
+            },
+      );
+    },
+    [findAgentMessageIndexForRun, persistAgentProgress, updateMessageMetadataAtIndex],
   );
 
   const bufferAgentChunk = (conversationId: string, index: number, chunk: string) => {
@@ -3178,21 +3384,23 @@ export default function WorkspacePage() {
     chunk: AgentStreamChunk,
     runId?: string,
   ) => {
-    const preserveInterruptState = (
+    const markStreamingState = (
       metadata: ConversationMessageMetadata | undefined,
     ): ConversationMessageMetadata => {
       const nextMetadata = { ...(metadata || {}) };
-      const hasPendingInterrupt = Boolean(nextMetadata.pendingInterrupt);
       if (runId) {
         nextMetadata.runId = runId;
       }
-      nextMetadata.status = hasPendingInterrupt ? 'awaiting_approval' : 'running';
-      nextMetadata.pendingInterrupt = hasPendingInterrupt ? nextMetadata.pendingInterrupt : undefined;
+      // Any real stream activity after resume means the prior interrupt has been
+      // consumed; keeping it here causes stale approval/clarification cards to linger.
+      nextMetadata.status = 'running';
+      nextMetadata.pendingInterrupt = undefined;
       return nextMetadata;
     };
 
     if (chunk.type === 'keepalive') {
       setStreamingForConversation(conversationId, true);
+      setConversationAttention(conversationId, 'running', 'Working through the current request.');
       return;
     }
 
@@ -3206,34 +3414,51 @@ export default function WorkspacePage() {
         prePlanSearchUsed: chunk.prePlanSearchUsed,
       });
       updateMessageMetadataAtIndex(conversationId, agentMessageIndex, (metadata) => ({
-        ...metadata,
-        ...(runId ? { runId } : {}),
+        ...markStreamingState(metadata),
         runPolicy: nextRunPolicy,
       }));
       return;
     }
 
     if (chunk.type === 'thought') {
-      updateMessageMetadataAtIndex(conversationId, agentMessageIndex, preserveInterruptState);
+      updateMessageMetadataAtIndex(conversationId, agentMessageIndex, markStreamingState);
       appendAgentThought(conversationId, agentMessageIndex, chunk.content || '');
+      if (chunk.content?.trim()) {
+        setConversationAttention(conversationId, 'running', chunk.content);
+      }
       return;
     }
 
     if (chunk.type === 'tool_start') {
-      updateMessageMetadataAtIndex(conversationId, agentMessageIndex, preserveInterruptState);
+      updateMessageMetadataAtIndex(conversationId, agentMessageIndex, markStreamingState);
       appendToolStart(conversationId, agentMessageIndex, chunk);
+      setConversationAttention(
+        conversationId,
+        'running',
+        `Running ${titleCaseToolName(chunk.name || chunk.content || 'tool') || 'a tool'}...`,
+      );
       return;
     }
 
     if (chunk.type === 'tool_end') {
-      updateMessageMetadataAtIndex(conversationId, agentMessageIndex, preserveInterruptState);
+      updateMessageMetadataAtIndex(conversationId, agentMessageIndex, markStreamingState);
       appendToolEnd(conversationId, agentMessageIndex, chunk);
+      setConversationAttention(
+        conversationId,
+        'running',
+        chunk.content || `${titleCaseToolName(chunk.name) || 'Tool'} completed.`,
+      );
       return;
     }
 
     if (chunk.type === 'tool_error') {
-      updateMessageMetadataAtIndex(conversationId, agentMessageIndex, preserveInterruptState);
+      updateMessageMetadataAtIndex(conversationId, agentMessageIndex, markStreamingState);
       appendToolEnd(conversationId, agentMessageIndex, chunk, 'error');
+      setConversationAttention(
+        conversationId,
+        'running',
+        chunk.content || `${titleCaseToolName(chunk.name) || 'Tool'} reported an error.`,
+      );
       return;
     }
 
@@ -3256,11 +3481,19 @@ export default function WorkspacePage() {
           displayPayload: chunk.displayPayload,
         },
       }));
+      setConversationAttention(
+        conversationId,
+        'awaiting_approval',
+        chunk.title || chunk.description || 'Waiting for your input.',
+      );
       return;
     }
 
     if (chunk.type === 'token' || chunk.type === 'chunk') {
-      updateMessageMetadataAtIndex(conversationId, agentMessageIndex, preserveInterruptState);
+      updateMessageMetadataAtIndex(conversationId, agentMessageIndex, (metadata) => ({
+        ...markStreamingState(metadata),
+        bodySource: 'assistant',
+      }));
       if (chunk.role && chunk.role !== 'assistant') {
         return;
       }
@@ -3269,15 +3502,12 @@ export default function WorkspacePage() {
     }
 
     if (chunk.type === 'contract_error') {
-      appendAgentChunk(conversationId, agentMessageIndex, `\\n${chunk.message || 'Artifact contract failed.'}`);
-      if (Array.isArray(chunk.missing) && chunk.missing.length) {
-        appendAgentChunk(conversationId, agentMessageIndex, `\\nMissing: ${chunk.missing.join(', ')}`);
-      }
+      setConversationAttention(conversationId, 'failed', chunk.message || 'Artifact contract failed.');
       return;
     }
 
     if (chunk.type === 'error') {
-      appendAgentChunk(conversationId, agentMessageIndex, `\n${chunk.message || 'Agent stream failed.'}`);
+      setConversationAttention(conversationId, 'failed', chunk.message || 'Agent stream failed.');
     }
   };
 
@@ -3306,8 +3536,12 @@ export default function WorkspacePage() {
       const controller = new AbortController();
       streamAbortMapRef.current.set(conversationId, controller);
       setStreamingForConversation(conversationId, true);
+      setConversationAttention(conversationId, 'running', 'Streaming the latest agent updates...');
       let finalStatus: AgentRunStatus = 'completed';
       let lastStreamId = resumeAfterId || runInfo.lastStreamId;
+      let latestStatusSnapshot:
+        | Awaited<ReturnType<typeof getRunStatus>>
+        | null = null;
       let latestInterrupt:
         | ConversationMessageMetadata['pendingInterrupt']
         | undefined;
@@ -3355,22 +3589,44 @@ export default function WorkspacePage() {
         })();
         if ((error as DOMException)?.name === 'AbortError') {
           if (stopRequestedRef.current) {
-            appendAgentChunk(conversationId, agentMessageIndex, '\n[Stopped by user]');
             finalStatus = 'cancelled';
+            setConversationAttention(conversationId, 'cancelled', 'The latest run was stopped.');
           } else if (!supersededByNewerStream) {
-            appendAgentChunk(conversationId, agentMessageIndex, '\n[Stream cancelled]');
             finalStatus = 'cancelled';
+            setConversationAttention(conversationId, 'cancelled', 'The latest run was cancelled.');
           }
         } else {
           console.error('Failed to stream agent run', error);
-          appendAgentChunk(conversationId, agentMessageIndex, '\nSorry, something went wrong.');
-          finalStatus = 'failed';
+          try {
+            latestStatusSnapshot = await getRunStatus(runId);
+            finalStatus = latestStatusSnapshot.status;
+            latestInterrupt = latestStatusSnapshot.pendingInterrupt ?? latestInterrupt;
+          } catch (statusError) {
+            console.error('Failed to fetch run status after stream error', statusError);
+          }
+          if (
+            finalStatus === 'awaiting_approval'
+            || finalStatus === 'completed'
+            || finalStatus === 'cancelled'
+          ) {
+            if (finalStatus === 'awaiting_approval' && latestInterrupt) {
+              updateMessageMetadataAtIndex(conversationId, agentMessageIndex, (metadata) => ({
+                ...metadata,
+                ...(runId ? { runId } : {}),
+                status: 'awaiting_approval',
+                pendingInterrupt: latestInterrupt,
+              }));
+            }
+          } else {
+            finalStatus = 'failed';
+            setConversationAttention(conversationId, 'failed', 'Sorry, something went wrong.');
+          }
         }
       } finally {
         const supersededByNewerStream = streamAbortMapRef.current.get(conversationId) !== controller;
         let latestRunMeta:
           | Awaited<ReturnType<typeof getRunStatus>>
-          | null = null;
+          | null = latestStatusSnapshot;
         try {
           latestRunMeta = await getRunStatus(runId);
           finalStatus = latestRunMeta.status;
@@ -3428,6 +3684,7 @@ export default function WorkspacePage() {
             lastStreamId,
           };
           registerActiveRun(resumedRunInfo);
+          setConversationAttention(conversationId, 'running', 'Streaming the latest agent updates...');
           if (streamAbortMapRef.current.get(conversationId) === controller) {
             streamAbortMapRef.current.delete(conversationId);
           }
@@ -3440,28 +3697,26 @@ export default function WorkspacePage() {
           }, 300);
           return;
         }
-        {
-          const agentMessageIndex = (() => {
-            const resolved = findAgentMessageIndexForRun(conversationId, placeholderId, turnId, runId);
-            return resolved >= 0 ? resolved : initialAgentMessageIndex;
-          })();
-          updateMessageMetadataAtIndex(conversationId, agentMessageIndex, (metadata) => ({
-            ...metadata,
-            ...(runId ? { runId } : {}),
-            status: finalStatus,
-            pendingInterrupt: finalStatus === 'awaiting_approval' ? effectivePendingInterrupt : undefined,
-          }));
-        }
-        await persistAgentProgress(
-          { ...runInfo, status: finalStatus },
-          finalStatus,
-          effectivePendingInterrupt
-            ? {
-                metadataOverride: {
-                  pendingInterrupt: effectivePendingInterrupt,
-                },
-              }
-            : undefined,
+        const normalizedFinalStatus = normalizeRunStatus(finalStatus);
+        await syncRunStateToConversation(
+          {
+            ...runInfo,
+            status: normalizedFinalStatus,
+            lastStreamId,
+          },
+          normalizedFinalStatus,
+          normalizedFinalStatus === 'awaiting_approval' ? effectivePendingInterrupt : undefined,
+        );
+        setConversationAttention(
+          conversationId,
+          normalizedFinalStatus,
+          normalizedFinalStatus === 'awaiting_approval'
+            ? effectivePendingInterrupt?.title || effectivePendingInterrupt?.description || 'Waiting for your input.'
+            : normalizedFinalStatus === 'completed'
+              ? 'The latest run completed.'
+              : normalizedFinalStatus === 'cancelled'
+                ? 'The latest run was stopped.'
+                : latestRunMeta?.error || 'The latest run failed.',
         );
         setStreamingForConversation(conversationId, false);
         if (streamAbortMapRef.current.get(conversationId) === controller) {
@@ -3470,7 +3725,7 @@ export default function WorkspacePage() {
         stopRequestedRef.current = false;
         resumeInFlightRef.current.delete(runId);
         if (finalStatus === 'awaiting_approval') {
-          registerActiveRun({ ...runInfo, status: finalStatus });
+          registerActiveRun({ ...runInfo, status: finalStatus, lastStreamId });
         } else {
           removeActiveRun(runId);
           removeActiveRunsForTurn(conversationId, turnId);
@@ -3626,6 +3881,7 @@ export default function WorkspacePage() {
         };
         markRunStreamLaunching(runId);
         registerActiveRun(runInfo);
+        setConversationAttention(message.conversationId, 'running', 'Resuming the run...');
         if (runInfo) {
           await streamRunForConversation(runInfo, false);
         } else {
@@ -3655,6 +3911,7 @@ export default function WorkspacePage() {
       clearPendingInterruptForRun,
       markRunStreamLaunching,
       registerActiveRun,
+      setConversationAttention,
       submitInterruptWithRetry,
       streamRunForConversation,
     ],
@@ -3677,13 +3934,35 @@ export default function WorkspacePage() {
       const messageKey = String(message.id);
       const textKey = interruptFieldKey(messageKey, 'clarification-text');
       const rawMessage = (interruptInputByMessageId[textKey] || '').trim();
+      const structuredQuestions = Array.isArray(pendingInterrupt?.responseSpec?.questions)
+        ? pendingInterrupt.responseSpec.questions as InterruptQuestion[]
+        : [];
+      const structuredAnswers = interruptStructuredAnswersByMessageId[messageKey];
+      const hasStructuredQuestionnaire = structuredQuestions.length > 0;
+      const hasCompleteStructuredAnswers = hasStructuredQuestionnaire
+        ? areStructuredClarificationQuestionsComplete(structuredQuestions, structuredAnswers)
+        : false;
       const selectedChoiceIds = interruptSelectedChoicesByMessageId[messageKey] || [];
       const choices = pendingInterrupt?.responseSpec?.choices || [];
       const selectedValues = selectedChoiceIds
         .map((choiceId) => choices.find((choice) => choice.id === choiceId)?.value)
         .filter((value): value is string => typeof value === 'string');
+      const structuredSummary = hasStructuredQuestionnaire && structuredAnswers
+        ? buildStructuredClarificationMessage(structuredQuestions, structuredAnswers, rawMessage)
+        : rawMessage;
+      const answersByQuestionId = hasStructuredClarificationAnswers(structuredAnswers)
+        ? structuredAnswers
+        : undefined;
 
-      if (!rawMessage && !selectedChoiceIds.length && !selectedValues.length) {
+      if (hasStructuredQuestionnaire && !hasCompleteStructuredAnswers) {
+        setInterruptErrorByMessageId((prev) => ({
+          ...prev,
+          [messageKey]: 'Answer each clarification step before continuing.',
+        }));
+        return;
+      }
+
+      if (!structuredSummary && !selectedChoiceIds.length && !selectedValues.length && !answersByQuestionId) {
         addLocalSystemMessage('Choose an option or enter a clarification response before continuing.');
         return;
       }
@@ -3698,9 +3977,10 @@ export default function WorkspacePage() {
       try {
         await submitInterruptWithRetry(runId, 'clarification', () =>
           submitRunResponse(runId, {
-            message: rawMessage || undefined,
+            message: structuredSummary || undefined,
             selectedChoiceIds: selectedChoiceIds.length ? selectedChoiceIds : undefined,
             selectedValues: selectedValues.length ? selectedValues : undefined,
+            answersByQuestionId,
           })
         );
         clearPendingInterruptForRun(message.conversationId, runId, message.turnId);
@@ -3709,11 +3989,24 @@ export default function WorkspacePage() {
           delete next[textKey];
           return next;
         });
+        setInterruptStructuredAnswersByMessageId((prev) => {
+          if (!prev[messageKey]) {
+            return prev;
+          }
+          const next = { ...prev };
+          delete next[messageKey];
+          return next;
+        });
         setInterruptSelectedChoicesByMessageId((prev) => {
           const next = { ...prev };
           delete next[messageKey];
           return next;
         });
+        if (typeof window !== 'undefined' && pendingInterrupt?.interruptId) {
+          window.localStorage.removeItem(
+            buildClarificationDraftStorageKey(message.conversationId, message.id, pendingInterrupt.interruptId),
+          );
+        }
         setInterruptErrorByMessageId((prev) => {
           if (!prev[messageKey]) return prev;
           const next = { ...prev };
@@ -3736,6 +4029,7 @@ export default function WorkspacePage() {
         };
         markRunStreamLaunching(runId);
         registerActiveRun(runInfo);
+        setConversationAttention(message.conversationId, 'running', 'Resuming the run...');
         if (runInfo) {
           await streamRunForConversation(runInfo, false);
         } else {
@@ -3757,11 +4051,14 @@ export default function WorkspacePage() {
       getInterruptKind,
       interruptFieldKey,
       interruptInputByMessageId,
+      interruptStructuredAnswersByMessageId,
       interruptSelectedChoicesByMessageId,
       rebuildRunInfoForMessage,
+      setConversationAttention,
       clearPendingInterruptForRun,
       markRunStreamLaunching,
       registerActiveRun,
+      setInterruptStructuredAnswersByMessageId,
       submitInterruptWithRetry,
       streamRunForConversation,
     ],
@@ -3864,6 +4161,7 @@ export default function WorkspacePage() {
           };
           markRunStreamLaunching(runId);
           registerActiveRun(runInfo);
+          setConversationAttention(message.conversationId, 'running', 'Resuming the run...');
           if (runInfo) {
             await streamRunForConversation(runInfo, false);
           } else {
@@ -3935,6 +4233,7 @@ export default function WorkspacePage() {
         };
         markRunStreamLaunching(runId);
         registerActiveRun(runInfo);
+        setConversationAttention(message.conversationId, 'running', 'Resuming the run...');
         if (runInfo) {
           await streamRunForConversation(runInfo, false);
         } else {
@@ -3961,6 +4260,7 @@ export default function WorkspacePage() {
       clearPendingInterruptForRun,
       markRunStreamLaunching,
       registerActiveRun,
+      setConversationAttention,
       submitInterruptWithRetry,
       streamRunForConversation,
       toggleInterruptSelectedChoice,
@@ -4009,10 +4309,20 @@ export default function WorkspacePage() {
           );
           const needsRecovery = isAgentMessageEmpty(persistedMessage);
           if (status.status === 'running' || status.status === 'queued') {
+            const shouldReplayFromStart = needsRecovery || !activeRun.lastStreamId;
             if (STREAM_DEBUG_ENABLED) {
-              console.debug('[WorkspacePage] resume stream', { runId: activeRun.runId });
+              console.debug('[WorkspacePage] resume stream', {
+                runId: activeRun.runId,
+                replayFromStart: shouldReplayFromStart,
+                lastStreamId: activeRun.lastStreamId,
+              });
             }
-            streamRunForConversation(activeRun, true)
+            setConversationAttention(activeRun.conversationId, 'running', 'Resuming the latest run...');
+            streamRunForConversation(
+              activeRun,
+              shouldReplayFromStart,
+              shouldReplayFromStart ? undefined : activeRun.lastStreamId,
+            )
               .catch((error) => {
                 console.error('Failed to resume agent stream', error);
                 removeActiveRun(activeRun.runId);
@@ -4057,6 +4367,16 @@ export default function WorkspacePage() {
                 return updated;
               });
             }
+            void syncRunStateToConversation(
+              { ...activeRun, status: 'awaiting_approval' },
+              'awaiting_approval',
+              status.pendingInterrupt,
+            );
+            setConversationAttention(
+              activeRun.conversationId,
+              'awaiting_approval',
+              status.pendingInterrupt?.title || status.pendingInterrupt?.description || 'Waiting for your input.',
+            );
             resumeInFlightRef.current.delete(activeRun.runId);
           } else if (needsRecovery) {
             streamRunForConversation({ ...activeRun, status: status.status }, true)
@@ -4085,7 +4405,22 @@ export default function WorkspacePage() {
                 prev.filter((message) => message.id !== staleMessage.id)
               );
               agentMessageBufferRef.current.delete(staleMessage.id);
+            } else {
+              const normalizedSettledStatus = normalizeRunStatus(status.status);
+              void syncRunStateToConversation(
+                { ...activeRun, status: normalizedSettledStatus },
+                normalizedSettledStatus,
+              );
             }
+            setConversationAttention(
+              activeRun.conversationId,
+              normalizeRunStatus(status.status),
+              status.status === 'completed'
+                ? 'The latest run completed.'
+                : status.status === 'cancelled'
+                  ? 'The latest run was stopped.'
+                  : 'The latest run failed.',
+            );
             removeActiveRun(activeRun.runId);
           }
         })
@@ -4119,6 +4454,8 @@ export default function WorkspacePage() {
     getActiveRunForConversation,
     isAgentMessageEmpty,
     removeActiveRun,
+    setConversationAttention,
+    syncRunStateToConversation,
     streamRunForConversation,
     updateMessagesForConversation,
   ]);
@@ -4280,6 +4617,7 @@ export default function WorkspacePage() {
       };
       markRunStreamLaunching(runId);
       registerActiveRun(runInfo);
+      setConversationAttention(conversationId, 'running', 'Queued the latest run...');
       await streamRunForConversation(runInfo, true);
 
       const messagesSnapshot = getConversationMessagesSnapshot(conversationId);
@@ -4719,6 +5057,7 @@ export default function WorkspacePage() {
       };
       markRunStreamLaunching(runId);
       registerActiveRun(runInfo);
+      setConversationAttention(conversationId, 'running', 'Queued the latest run...');
       await streamRunForConversation(runInfo, true);
 
       const messagesSnapshot = getConversationMessagesSnapshot(conversationId);
@@ -5506,6 +5845,7 @@ export default function WorkspacePage() {
               expandedThinkingMessages={expandedThinkingMessages}
               copiedMessageId={copiedMessageId}
               interruptInputByMessageId={interruptInputByMessageId}
+              interruptStructuredAnswersByMessageId={interruptStructuredAnswersByMessageId}
               interruptSelectedChoicesByMessageId={interruptSelectedChoicesByMessageId}
               interruptSubmittingByMessageId={interruptSubmittingByMessageId}
               interruptErrorByMessageId={interruptErrorByMessageId}
@@ -5532,7 +5872,9 @@ export default function WorkspacePage() {
               getPrimaryInterruptAction={getPrimaryInterruptAction}
               isPlanApprovalInterrupt={isPlanApprovalInterrupt}
               setInterruptInputByMessageId={setInterruptInputByMessageId}
+              setInterruptStructuredAnswersByMessageId={setInterruptStructuredAnswersByMessageId}
               toggleInterruptSelectedChoice={toggleInterruptSelectedChoice}
+              conversationAttentionById={conversationAttentionById}
               workspaceSkipPlanApprovals={Boolean(selectedWorkspace?.skipPlanApprovals)}
               workspaceSettingsBusy={workspaceSettingsBusy}
               onToggleAgentPaneVisibility={() => setIsAgentPaneVisible((prev) => !prev)}

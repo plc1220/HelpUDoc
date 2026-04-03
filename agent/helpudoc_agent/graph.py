@@ -62,10 +62,14 @@ class AgentRegistry:
         name = (agent_name or "").strip().lower()
         if name.endswith(":pro") or name.endswith("-pro"):
             return "pro"
+        if name.endswith(":lite") or name.endswith("-lite"):
+            return "lite"
         if name.endswith(":fast") or name.endswith("-fast"):
             return "fast"
         if name in {"pro", "gemini-pro", "general-assistant-pro"}:
             return "pro"
+        if name in {"lite", "gemini-lite", "general-assistant-lite", "flash-lite"}:
+            return "lite"
         if name in {"fast", "flash", "general-assistant"}:
             return "fast"
         return "fast"
