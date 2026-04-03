@@ -103,6 +103,9 @@ gcloud builds submit . --config=infra/cloudbuild.yaml --project=<PROJECT_ID> --s
 Notes:
 - Templates for reference live in `infra/gke/templates/`.
 - For production, store secret values in Google Secret Manager and generate `env/prod/secrets.env` from there instead of committing them.
+- If you enable the AWS Pricing MCP deployment, populate `AWS_ACCESS_KEY_ID`,
+  `AWS_SECRET_ACCESS_KEY`, optional `AWS_SESSION_TOKEN`, and `AWS_REGION` in the
+  same Secret/ConfigMap set used by the rest of the cluster.
 
 ## Google OAuth + Google-Delegated MCP
 

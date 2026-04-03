@@ -33,6 +33,7 @@ export type AgentInterruptResponse = {
   message?: string;
   selectedChoiceIds?: string[];
   selectedValues?: string[];
+  answersByQuestionId?: Record<string, string | string[]>;
 };
 
 export type AgentInterruptAction = {

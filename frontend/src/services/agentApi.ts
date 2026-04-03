@@ -1,7 +1,7 @@
 import { streamAgentRunWithReconnect, type AgentStreamChunk } from '../../../packages/shared/src/services/agentStream';
 export type { AgentStreamChunk };
 import { API_URL, apiFetch } from './apiClient';
-import type { ConversationMessageMetadata } from '../types';
+import type { ConversationMessageMetadata, InterruptAnswersByQuestionId } from '../types';
 import type { SkillDefinition } from '../types';
 
 const STREAM_DEBUG_ENABLED =
@@ -97,6 +97,7 @@ export const getRunStatus = async (
   workspaceId: string;
   persona: string;
   turnId?: string;
+  error?: string;
   pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'];
 }> => {
   const response = await apiFetch(`${API_URL}/agent/runs/${runId}`);
@@ -147,6 +148,7 @@ export const submitRunResponse = async (
     message?: string;
     selectedChoiceIds?: string[];
     selectedValues?: string[];
+    answersByQuestionId?: InterruptAnswersByQuestionId;
   },
 ) => {
   const response = await apiFetch(`${API_URL}/agent/runs/${runId}/respond`, {

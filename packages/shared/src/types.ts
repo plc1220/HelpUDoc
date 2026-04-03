@@ -73,6 +73,9 @@ export interface InterruptQuestion {
   options?: InterruptQuestionOption[];
 }
 
+export type InterruptAnswerValue = string | string[];
+export type InterruptAnswersByQuestionId = Record<string, InterruptAnswerValue>;
+
 export interface InterruptAction {
   id: string;
   label: string;
@@ -113,6 +116,7 @@ export interface PendingInterrupt {
 export interface ConversationMessageMetadata {
   thinkingText?: string;
   toolEvents?: ToolEvent[];
+  bodySource?: 'assistant' | 'summary';
   runId?: string;
   status?: 'queued' | 'running' | 'awaiting_approval' | 'completed' | 'failed' | 'cancelled';
   pendingInterrupt?: PendingInterrupt;

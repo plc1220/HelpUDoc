@@ -7,13 +7,13 @@ import type {
   SetStateAction,
   SyntheticEvent,
 } from 'react';
-
 import type {
   AgentPersona,
   ConversationMessage,
   ConversationMessageMetadata,
   ConversationSummary,
   File as WorkspaceFile,
+  InterruptAnswersByQuestionId,
 } from '../../types';
 import ChatHeader from './ChatHeader';
 import ChatHistoryPanel from './ChatHistoryPanel';
@@ -33,6 +33,12 @@ type CommandTag = {
 };
 
 type ConversationStreamingMap = Record<string, boolean>;
+
+type ConversationAttentionState = {
+  status: 'running' | 'awaiting_approval' | 'completed' | 'failed' | 'cancelled';
+  label?: string;
+  updatedAt: string;
+};
 
 export default function AgentChatPane({
   colorMode,
@@ -55,6 +61,7 @@ export default function AgentChatPane({
   expandedThinkingMessages,
   copiedMessageId,
   interruptInputByMessageId,
+  interruptStructuredAnswersByMessageId,
   interruptSelectedChoicesByMessageId,
   interruptSubmittingByMessageId,
   interruptErrorByMessageId,
@@ -81,7 +88,9 @@ export default function AgentChatPane({
   getPrimaryInterruptAction,
   isPlanApprovalInterrupt,
   setInterruptInputByMessageId,
+  setInterruptStructuredAnswersByMessageId,
   toggleInterruptSelectedChoice,
+  conversationAttentionById,
   workspaceSkipPlanApprovals,
   workspaceSettingsBusy,
   onToggleAgentPaneVisibility,
@@ -134,6 +143,7 @@ export default function AgentChatPane({
   expandedThinkingMessages: Set<ConversationMessage['id']>;
   copiedMessageId: ConversationMessage['id'] | null;
   interruptInputByMessageId: Record<string, string>;
+  interruptStructuredAnswersByMessageId: Record<string, InterruptAnswersByQuestionId>;
   interruptSelectedChoicesByMessageId: Record<string, string[]>;
   interruptSubmittingByMessageId: Record<string, boolean>;
   interruptErrorByMessageId: Record<string, string>;
@@ -169,7 +179,9 @@ export default function AgentChatPane({
   ) => { name?: string; args?: Record<string, unknown> } | undefined;
   isPlanApprovalInterrupt: (pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt']) => boolean;
   setInterruptInputByMessageId: Dispatch<SetStateAction<Record<string, string>>>;
+  setInterruptStructuredAnswersByMessageId: Dispatch<SetStateAction<Record<string, InterruptAnswersByQuestionId>>>;
   toggleInterruptSelectedChoice: (messageKey: string, choiceId: string, multiple: boolean) => void;
+  conversationAttentionById: Record<string, ConversationAttentionState>;
   workspaceSkipPlanApprovals: boolean;
   workspaceSettingsBusy: boolean;
   onToggleAgentPaneVisibility: () => void;
@@ -211,6 +223,7 @@ export default function AgentChatPane({
   onSelectCommand: (command: CommandSuggestion) => void;
 }) {
   const isDarkMode = colorMode === 'dark';
+
   return (
     <div
       className={`flex min-h-0 flex-col overflow-hidden ${
@@ -244,6 +257,7 @@ export default function AgentChatPane({
           conversationHistory={conversationHistory}
           activeConversationId={activeConversationId}
           conversationStreaming={conversationStreaming}
+          conversationAttentionById={conversationAttentionById}
           personas={personas}
           onClose={onCloseHistory}
           onSelectConversation={onSelectConversation}
@@ -260,6 +274,7 @@ export default function AgentChatPane({
           expandedThinkingMessages={expandedThinkingMessages}
           copiedMessageId={copiedMessageId}
           interruptInputByMessageId={interruptInputByMessageId}
+          interruptStructuredAnswersByMessageId={interruptStructuredAnswersByMessageId}
           interruptSelectedChoicesByMessageId={interruptSelectedChoicesByMessageId}
           interruptSubmittingByMessageId={interruptSubmittingByMessageId}
           interruptErrorByMessageId={interruptErrorByMessageId}
@@ -271,6 +286,7 @@ export default function AgentChatPane({
           getPrimaryInterruptAction={getPrimaryInterruptAction}
           isPlanApprovalInterrupt={isPlanApprovalInterrupt}
           setInterruptInputByMessageId={setInterruptInputByMessageId}
+          setInterruptStructuredAnswersByMessageId={setInterruptStructuredAnswersByMessageId}
           toggleInterruptSelectedChoice={toggleInterruptSelectedChoice}
           workspaceSkipPlanApprovals={workspaceSkipPlanApprovals}
           workspaceSettingsBusy={workspaceSettingsBusy}

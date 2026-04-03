@@ -29,3 +29,23 @@ def test_collect_tool_names_adds_request_plan_approval_for_hitl_skills() -> None
 
     tool_names = collect_tool_names(skills)
     assert "request_plan_approval" in tool_names
+
+
+def test_research_skill_declares_its_own_artifact_contract() -> None:
+    skills = {skill.skill_id: skill for skill in load_skills(Path("skills"))}
+    research = skills["research"]
+
+    assert research.policy.requires_hitl_plan is True
+    assert research.policy.requires_workspace_artifacts is True
+    assert research.policy.required_artifacts_mode == "full_pack"
+    assert research.policy.pre_plan_search_limit == 3
+    assert research.policy.required_artifacts == [
+        "/question.txt",
+        "/preliminary_search_notes.md",
+        "/research_plan.md",
+        "/research_notes.md",
+        "/knowledge_graph.md",
+        "/synthesis.md",
+        "/final-research-report.md",
+        "pattern:/0[1-9]_*.md",
+    ]

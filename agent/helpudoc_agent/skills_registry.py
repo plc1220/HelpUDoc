@@ -75,11 +75,25 @@ def _normalize_optional_bool(value: object) -> bool | None:
     return None
 
 
+def _normalize_optional_string(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _normalize_string_list(value: object) -> List[str] | None:
+    normalized = _normalize_tools(value)
+    return normalized or None
+
+
 def _infer_skill_policy(skill_id: str, content: str, meta: dict) -> SkillPolicy:
     tools = _normalize_tools(meta.get("tools"))
     lower = content.lower()
     explicit_requires_hitl_plan = _normalize_optional_bool(meta.get("requires_hitl_plan"))
     explicit_requires_workspace_artifacts = _normalize_optional_bool(meta.get("requires_workspace_artifacts"))
+    explicit_required_artifacts_mode = _normalize_optional_string(meta.get("required_artifacts_mode"))
+    explicit_required_artifacts = _normalize_string_list(meta.get("required_artifacts"))
     has_hitl_keyword = any(
         keyword in lower
         for keyword in (
@@ -109,7 +123,7 @@ def _infer_skill_policy(skill_id: str, content: str, meta: dict) -> SkillPolicy:
     requires_workspace_artifacts = (
         explicit_requires_workspace_artifacts
         if explicit_requires_workspace_artifacts is not None
-        else has_file_keyword or ("write_file" in lower)
+        else bool(explicit_required_artifacts) or has_file_keyword or ("write_file" in lower)
     )
     raw_pre_plan_limit = meta.get("pre_plan_search_limit")
     pre_plan_search_limit = 0
@@ -121,27 +135,10 @@ def _infer_skill_policy(skill_id: str, content: str, meta: dict) -> SkillPolicy:
         except ValueError:
             pre_plan_search_limit = 0
 
-    required_artifacts_mode: str | None = None
-    required_artifacts: List[str] | None = None
-    # Canonical skill id for policy matching (strip leading "data/" etc.)
-    base_id = skill_id.split("/")[-1] if "/" in skill_id else skill_id
-    if base_id == "research" or skill_id == "research":
-        required_artifacts_mode = "full_pack"
-        required_artifacts = [
-            "/question.txt",
-            "/preliminary_search_notes.md",
-            "/research_plan.md",
-            "/research_notes.md",
-            "/knowledge_graph.md",
-            "/synthesis.md",
-            "/final-research-report.md",
-            "pattern:/0[1-9]_*.md",
-        ]
-        requires_hitl_plan = True
-        requires_workspace_artifacts = True
-        pre_plan_search_limit = pre_plan_search_limit or 3
-    elif requires_workspace_artifacts:
-        required_artifacts_mode = "minimal"
+    required_artifacts_mode = explicit_required_artifacts_mode
+    required_artifacts = explicit_required_artifacts
+    if requires_workspace_artifacts and not required_artifacts_mode:
+        required_artifacts_mode = "strict" if required_artifacts else "minimal"
 
     return SkillPolicy(
         requires_hitl_plan=requires_hitl_plan,

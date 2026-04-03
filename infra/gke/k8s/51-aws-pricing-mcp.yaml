@@ -1,0 +1,140 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aws-pricing-mcp-config
+  namespace: helpudoc
+data:
+  aws-pricing.mcp.json.tmpl: |
+    {
+      "mcpServers": {
+        "awslabs.aws-pricing-mcp-server": {
+          "command": "uvx",
+          "args": [
+            "awslabs.aws-pricing-mcp-server@latest"
+          ],
+          "env": {
+            "FASTMCP_LOG_LEVEL": "${FASTMCP_LOG_LEVEL}",
+            "AWS_REGION": "${AWS_REGION}",
+            "AWS_ACCESS_KEY_ID": "${AWS_ACCESS_KEY_ID}",
+            "AWS_SECRET_ACCESS_KEY": "${AWS_SECRET_ACCESS_KEY}",
+            "AWS_SESSION_TOKEN": "${AWS_SESSION_TOKEN}"
+          },
+          "disabled": false,
+          "autoApprove": []
+        }
+      }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: helpudoc-aws-pricing-mcp
+  namespace: helpudoc
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: helpudoc-aws-pricing-mcp
+  template:
+    metadata:
+      labels:
+        app: helpudoc-aws-pricing-mcp
+    spec:
+      containers:
+        - name: aws-pricing-mcp
+          image: python:3.12-slim
+          ports:
+            - containerPort: 8000
+          env:
+            - name: AWS_REGION
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: AWS_REGION
+                  optional: true
+            - name: FASTMCP_LOG_LEVEL
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: AWS_PRICING_MCP_LOG_LEVEL
+                  optional: true
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: AWS_ACCESS_KEY_ID
+                  optional: true
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: AWS_SECRET_ACCESS_KEY
+                  optional: true
+            - name: AWS_SESSION_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: AWS_SESSION_TOKEN
+                  optional: true
+          command:
+            - /bin/sh
+            - -lc
+          args:
+            - |
+              set -eu
+              python -m pip install --no-cache-dir uv
+              python - <<'PY'
+              import os
+              from pathlib import Path
+
+              template = Path("/config/aws-pricing.mcp.json.tmpl").read_text()
+              rendered = template
+              for key in [
+                  "FASTMCP_LOG_LEVEL",
+                  "AWS_REGION",
+                  "AWS_ACCESS_KEY_ID",
+                  "AWS_SECRET_ACCESS_KEY",
+                  "AWS_SESSION_TOKEN",
+              ]:
+                  rendered = rendered.replace("${" + key + "}", os.environ.get(key, ""))
+              Path("/tmp/aws-pricing.mcp.json").write_text(rendered)
+              PY
+              uvx fastmcp run /tmp/aws-pricing.mcp.json --transport http --host 0.0.0.0 --port 8000 --path /mcp
+          readinessProbe:
+            tcpSocket:
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          volumeMounts:
+            - name: config
+              mountPath: /config
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: aws-pricing-mcp-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: helpudoc-aws-pricing-mcp
+  namespace: helpudoc
+spec:
+  selector:
+    app: helpudoc-aws-pricing-mcp
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000

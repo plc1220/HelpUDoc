@@ -19,6 +19,7 @@ class ModelConfig(BaseModel):
     provider: str = Field(default="gemini")
     name: str = Field(default="gemini-3-flash-preview")
     fast_name: Optional[str] = None
+    lite_name: Optional[str] = None
     pro_name: Optional[str] = None
     image_name: Optional[str] = None
     project: Optional[str] = None
@@ -36,6 +37,8 @@ class ModelConfig(BaseModel):
         if not mode:
             return self.name
         normalized = mode.strip().lower()
+        if normalized == "lite":
+            return self.lite_name or self.fast_name or self.name
         if normalized == "pro":
             return self.pro_name or self.name
         if normalized == "fast":
@@ -183,7 +186,35 @@ class Settings(BaseModel):
 
 def _load_yaml(path: Path) -> dict:
     with path.open("r", encoding="utf-8") as handle:
-        return yaml.safe_load(handle)
+        loaded = yaml.safe_load(handle)
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def _merge_named_entries(base_entries: Any, override_entries: Any) -> List[dict]:
+    merged: Dict[str, dict] = {}
+    for source in (base_entries, override_entries):
+        if not isinstance(source, list):
+            continue
+        for entry in source:
+            if not isinstance(entry, dict):
+                continue
+            name = entry.get("name")
+            if not isinstance(name, str) or not name.strip():
+                continue
+            prior = merged.get(name, {})
+            merged[name] = {**prior, **entry}
+    return list(merged.values())
+
+
+def _merge_runtime_config(base_config: dict, override_config: dict) -> dict:
+    merged = {**base_config, **override_config}
+    merged_tools = _merge_named_entries(base_config.get("tools"), override_config.get("tools"))
+    merged_mcp_servers = _merge_named_entries(base_config.get("mcp_servers"), override_config.get("mcp_servers"))
+    if merged_tools:
+        merged["tools"] = merged_tools
+    if merged_mcp_servers:
+        merged["mcp_servers"] = merged_mcp_servers
+    return merged
 
 
 def _expand_env_vars(data):
@@ -208,7 +239,11 @@ def _resolve_env_override_path(value: str, *, base_dir: Path) -> str:
 
 def load_settings(config_path: Path | None = None) -> Settings:
     path = config_path or DEFAULT_CONFIG_PATH
-    config_dict = _expand_env_vars(_load_yaml(path))
+    base_config = _load_yaml(DEFAULT_CONFIG_PATH) if path != DEFAULT_CONFIG_PATH else {}
+    config_dict = _load_yaml(path)
+    if base_config:
+        config_dict = _merge_runtime_config(base_config, config_dict)
+    config_dict = _expand_env_vars(config_dict)
     override_base_dir = AGENT_ROOT
 
     # Allow runtime override for shared workspace volume paths (e.g., Docker Compose).

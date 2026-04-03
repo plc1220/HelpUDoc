@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "agent"))
 from helpudoc_agent.interrupt_payloads import (  # noqa: E402
     extract_interrupt_payload_from_tool_call,
     extract_interrupt_payload_from_tool_text,
+    normalize_interrupt_payload_value,
 )
 
 
@@ -76,3 +77,31 @@ def test_extract_interrupt_payload_from_human_action_tool_call() -> None:
     assert parsed["type"] == "interrupt"
     assert parsed["kind"] == "clarification"
     assert parsed["actions"][0]["id"] == "style-a"
+
+
+def test_normalize_interrupt_payload_value_synthesizes_stable_interrupt_id() -> None:
+    payload = {
+        "kind": "clarification",
+        "title": "Presentation Discovery",
+        "description": "Confirm the setup.",
+        "step_index": 0,
+        "step_count": 1,
+        "actions": [],
+        "response_spec": {
+            "inputMode": "choice",
+            "questions": [
+                {
+                    "id": "purpose",
+                    "header": "Purpose",
+                    "question": "What is this presentation for?",
+                }
+            ],
+        },
+        "display_payload": {"skill": "frontend-slides"},
+    }
+
+    normalized_first = normalize_interrupt_payload_value(payload)
+    normalized_second = normalize_interrupt_payload_value(dict(reversed(list(payload.items()))))
+
+    assert normalized_first["interruptId"].startswith("interrupt-")
+    assert normalized_first["interruptId"] == normalized_second["interruptId"]
