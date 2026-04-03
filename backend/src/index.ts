@@ -16,6 +16,9 @@ import apiRoutes from './api/routes';
 import { loggingMiddleware } from './api/logging';
 import { DatabaseService } from './services/databaseService';
 import { UserService } from './services/userService';
+import { RunTelemetryService } from './services/runTelemetryService';
+import { UserMemoryService } from './services/userMemoryService';
+import { configureAgentRunServices } from './services/agentRunService';
 import { userContextMiddleware } from './middleware/userContext';
 import { blockingRedisClient, redisClient } from './services/redisService';
 import { startCollabServer } from './collab/collabServer';
@@ -49,6 +52,10 @@ async function startServer() {
   const databaseService = new DatabaseService();
   await databaseService.initialize();
   const userService = new UserService(databaseService);
+  configureAgentRunServices({
+    telemetryService: new RunTelemetryService(databaseService),
+    userMemoryService: new UserMemoryService(databaseService),
+  });
   await Promise.all([redisClient.connect(), blockingRedisClient.connect()]);
 
   const sessionTtlSeconds = Number(process.env.SESSION_TTL_SECONDS);

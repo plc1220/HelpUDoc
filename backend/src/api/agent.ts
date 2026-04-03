@@ -230,6 +230,7 @@ export default function(
     persona: z.string().min(1),
     prompt: z.string().min(1),
     workspaceId: z.string().min(1),
+    conversationId: z.string().optional(),
     history: z.array(z.object({
       role: z.string().min(1),
       content: z.string().min(1),
@@ -735,7 +736,7 @@ export default function(
   router.post('/runs', async (req, res) => {
     try {
       const user = requireUserContext(req);
-      const { persona, prompt, workspaceId, history, forceReset, turnId } = runAgentSchema.parse(req.body);
+      const { persona, prompt, workspaceId, conversationId, history, forceReset, turnId } = runAgentSchema.parse(req.body);
       await workspaceService.ensureMembership(workspaceId, user.userId, { requireEdit: true });
       const workspacePolicy = await workspaceService.getMcpServerPolicy(workspaceId, user.userId, { requireEdit: true });
       const policy = await resolveEffectiveAgentPolicy(user.userId, workspacePolicy);
@@ -750,6 +751,8 @@ export default function(
       const { runId, status } = await startAgentRun({
         persona,
         workspaceId,
+        userId: user.userId,
+        conversationId,
         prompt: enrichedPrompt,
         history,
         forceReset,

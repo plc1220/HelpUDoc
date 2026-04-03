@@ -39,6 +39,7 @@ const readErrorMessage = async (response: Response, fallback: string): Promise<s
 
 export const startAgentRun = async (
   workspaceId: string,
+  conversationId: string,
   persona: string,
   prompt: string,
   history: Array<{ role: string; content: string }> | undefined,
@@ -52,6 +53,7 @@ export const startAgentRun = async (
     },
     body: JSON.stringify({
       workspaceId,
+      conversationId,
       persona,
       prompt,
       history,

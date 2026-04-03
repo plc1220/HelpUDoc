@@ -53,6 +53,10 @@ type RunAgentOptions = {
   authToken?: string;
 };
 
+type InternalAgentOptions = {
+  authToken?: string;
+};
+
 export async function runAgent(
   persona: string,
   workspaceId: string,
@@ -224,6 +228,76 @@ export async function exportPaper2SlidesPptx(payload: {
     maxContentLength: Infinity,
     maxBodyLength: Infinity,
     timeout: PAPER2SLIDES_TIMEOUT_MS,
+  });
+  return res.data;
+}
+
+export type InternalAnalyzeResponse = {
+  text: string;
+};
+
+export async function runInternalAnalysis(
+  payload: {
+    systemPrompt: string;
+    userPrompt: string;
+  },
+  options?: InternalAgentOptions,
+): Promise<InternalAnalyzeResponse> {
+  const headers: Record<string, string> = {};
+  if (options?.authToken) {
+    headers.Authorization = `Bearer ${options.authToken}`;
+  }
+  const res = await client.post('/internal/analyze', payload, { headers });
+  return res.data;
+}
+
+export type InternalMemoryFileResponse = {
+  path: string;
+  exists: boolean;
+  content: string;
+  modifiedAt?: string | null;
+};
+
+export async function getInternalMemoryFile(
+  path: string,
+  options?: InternalAgentOptions,
+): Promise<InternalMemoryFileResponse> {
+  const headers: Record<string, string> = {};
+  if (options?.authToken) {
+    headers.Authorization = `Bearer ${options.authToken}`;
+  }
+  const res = await client.get('/internal/memories', {
+    headers,
+    params: { path },
+  });
+  return res.data;
+}
+
+export async function putInternalMemoryFile(
+  payload: { path: string; content: string },
+  options?: InternalAgentOptions,
+): Promise<InternalMemoryFileResponse> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+  if (options?.authToken) {
+    headers.Authorization = `Bearer ${options.authToken}`;
+  }
+  const res = await client.put('/internal/memories', payload, { headers });
+  return res.data;
+}
+
+export async function deleteInternalMemoryFile(
+  path: string,
+  options?: InternalAgentOptions,
+): Promise<{ ok: true; path: string }> {
+  const headers: Record<string, string> = {};
+  if (options?.authToken) {
+    headers.Authorization = `Bearer ${options.authToken}`;
+  }
+  const res = await client.delete('/internal/memories', {
+    headers,
+    data: { path },
   });
   return res.data;
 }

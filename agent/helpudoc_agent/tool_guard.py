@@ -12,6 +12,41 @@ from .skills_registry import is_tool_allowed
 from .state import WorkspaceState
 
 
+def _normalize_candidate_path(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip().replace("\\", "/")
+    if not normalized:
+        return None
+    if not normalized.startswith("/"):
+        normalized = f"/{normalized.lstrip('/')}"
+    return normalized
+
+
+def _extract_mutation_paths(tool_name: str, payload: Any) -> list[str]:
+    if not isinstance(payload, dict):
+        return []
+    candidates: list[str] = []
+    if tool_name in {"write_file", "edit_file"}:
+        for key in ("file_path", "path"):
+            normalized = _normalize_candidate_path(payload.get(key))
+            if normalized:
+                candidates.append(normalized)
+    if tool_name == "upload_files":
+        files = payload.get("files")
+        if isinstance(files, list):
+            for item in files:
+                if isinstance(item, (list, tuple)) and item:
+                    normalized = _normalize_candidate_path(item[0])
+                    if normalized:
+                        candidates.append(normalized)
+                elif isinstance(item, dict):
+                    normalized = _normalize_candidate_path(item.get("path"))
+                    if normalized:
+                        candidates.append(normalized)
+    return candidates
+
+
 def _tool_scope_error(tool_name: str, skill_id: Optional[str], tool_mcp_server: Optional[str]) -> str:
     if skill_id:
         if tool_mcp_server:
@@ -68,6 +103,18 @@ class GuardedTool(BaseTool):
             if isinstance(raw_skill_id, str) and raw_skill_id.strip():
                 skill_id = raw_skill_id.strip()
         return _tool_scope_error(self.name, skill_id, self.tool_mcp_server)
+
+    def _memory_guard(self, input: Any) -> Optional[str]:
+        context = self.workspace_state.context if isinstance(self.workspace_state.context, dict) else {}
+        if bool(context.get("allow_memory_write")):
+            return None
+        for candidate in _extract_mutation_paths(self.name, self._unwrap_runtime_input(input)):
+            if candidate.startswith("/memories/"):
+                return (
+                    f"Tool '{self.name}' cannot modify '{candidate}' during a normal chat run. "
+                    "Persistent /memories/* files are read-only unless the request is a private backend-managed memory update."
+                )
+        return None
 
     def _blocked_result(self, input: Any, error: str) -> Any:
         """Return an agent-runtime-safe blocked result.
@@ -168,6 +215,9 @@ class GuardedTool(BaseTool):
         error = self._guard()
         if error:
             return self._blocked_result(input, error)
+        memory_error = self._memory_guard(input)
+        if memory_error:
+            return self._blocked_result(input, memory_error)
         try:
             result = self.wrapped_tool.invoke(self._unwrap_runtime_input(input), config=config, **kwargs)
             return self._success_result(input, result)
@@ -178,6 +228,9 @@ class GuardedTool(BaseTool):
         error = self._guard()
         if error:
             return self._blocked_result(input, error)
+        memory_error = self._memory_guard(input)
+        if memory_error:
+            return self._blocked_result(input, memory_error)
         try:
             wrapped_input = self._unwrap_runtime_input(input)
             if hasattr(self.wrapped_tool, "ainvoke"):
@@ -201,6 +254,9 @@ class GuardedTool(BaseTool):
             payload = list(args)
         else:
             payload = {}
+        memory_error = self._memory_guard(payload)
+        if memory_error:
+            return self._blocked_result(payload, memory_error)
         try:
             return self.wrapped_tool.invoke(payload)
         except Exception as exc:
@@ -219,6 +275,9 @@ class GuardedTool(BaseTool):
             payload = list(args)
         else:
             payload = {}
+        memory_error = self._memory_guard(payload)
+        if memory_error:
+            return self._blocked_result(payload, memory_error)
         try:
             if hasattr(self.wrapped_tool, "ainvoke"):
                 return await self.wrapped_tool.ainvoke(payload)

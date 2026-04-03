@@ -44,6 +44,12 @@ import {
   deleteConversation as deleteConversationApi,
   truncateConversationMessages,
 } from '../services/conversationApi';
+import {
+  decideUserMemorySuggestion,
+  getUserMemory,
+  getUserMemorySuggestions,
+  updateUserMemory,
+} from '../services/memoryApi';
 import type {
   Workspace,
   File as WorkspaceFile,
@@ -57,6 +63,8 @@ import type {
   InterruptAnswersByQuestionId,
   InterruptQuestion,
   SkillDefinition,
+  UserMemorySuggestion,
+  UserMemoryView,
 } from '../types';
 import CollapsibleDrawer from '../components/CollapsibleDrawer';
 import type { UIBlock } from '../components/UIBlockRenderer';
@@ -94,6 +102,12 @@ const FileEditor = lazy(() => import('../components/FileEditor'));
 const UIBlockRenderer = lazy(() => import('../components/UIBlockRenderer'));
 
 const drawerWidth = 280;
+const EMPTY_MEMORY_VIEW: UserMemoryView = {
+  globalPreferences: '',
+  globalContext: '',
+  workspacePreferences: '',
+  workspaceContext: '',
+};
 
 const sanitizePresentationLabel = (value: string, fallback: string) => {
   const normalized = normalizeFilePath(value);
@@ -507,6 +521,12 @@ export default function WorkspacePage() {
   const [interruptSubmittingByMessageId, setInterruptSubmittingByMessageId] = useState<Record<string, boolean>>({});
   const [interruptErrorByMessageId, setInterruptErrorByMessageId] = useState<Record<string, string>>({});
   const [conversationAttentionById, setConversationAttentionById] = useState<Record<string, ConversationAttentionState>>({});
+  const [isMemorySheetOpen, setIsMemorySheetOpen] = useState(false);
+  const [memoryView, setMemoryView] = useState<UserMemoryView>(EMPTY_MEMORY_VIEW);
+  const [memorySuggestions, setMemorySuggestions] = useState<UserMemorySuggestion[]>([]);
+  const [memoryLoading, setMemoryLoading] = useState(false);
+  const [memorySaving, setMemorySaving] = useState(false);
+  const [memoryError, setMemoryError] = useState<string | null>(null);
   const ragStatusFetchedRef = useRef<Record<string, boolean>>({});
   const resumeInFlightRef = useRef<Set<string>>(new Set());
   const resumeAttemptedRef = useRef<Set<string>>(new Set());
@@ -553,6 +573,71 @@ export default function WorkspacePage() {
   const showPaper2SlidesControls = Boolean(
     selectedFile || chatAttachments.length || chatMessage.trim().length || presentationStatus !== 'idle',
   );
+
+  const loadMemoryState = useCallback(async (workspaceId?: string) => {
+    setMemoryLoading(true);
+    setMemoryError(null);
+    try {
+      const [nextMemory, nextSuggestions] = await Promise.all([
+        getUserMemory(workspaceId),
+        getUserMemorySuggestions(workspaceId),
+      ]);
+      setMemoryView(nextMemory);
+      setMemorySuggestions(nextSuggestions);
+    } catch (error) {
+      console.error('Failed to load memory state', error);
+      setMemoryError('Failed to load memory. Please try again.');
+    } finally {
+      setMemoryLoading(false);
+    }
+  }, []);
+
+  const handleOpenMemorySheet = useCallback(() => {
+    setIsMemorySheetOpen(true);
+    void loadMemoryState(selectedWorkspace?.id);
+  }, [loadMemoryState, selectedWorkspace?.id]);
+
+  const handleRefreshMemory = useCallback(() => {
+    void loadMemoryState(selectedWorkspace?.id);
+  }, [loadMemoryState, selectedWorkspace?.id]);
+
+  const handleSaveMemorySection = useCallback(async (input: {
+    scope: 'global' | 'workspace';
+    section: 'preferences' | 'context';
+    content: string;
+    workspaceId?: string;
+  }) => {
+    setMemorySaving(true);
+    setMemoryError(null);
+    try {
+      const nextMemory = await updateUserMemory(input);
+      setMemoryView(nextMemory);
+      const nextSuggestions = await getUserMemorySuggestions(input.workspaceId || selectedWorkspace?.id);
+      setMemorySuggestions(nextSuggestions);
+    } catch (error) {
+      console.error('Failed to save memory section', error);
+      setMemoryError('Failed to save memory. Please try again.');
+    } finally {
+      setMemorySaving(false);
+    }
+  }, [selectedWorkspace?.id]);
+
+  const handleDecideMemorySuggestion = useCallback(async (
+    suggestionId: string,
+    payload: { decision: 'accept' | 'reject'; editedContent?: string },
+  ) => {
+    setMemorySaving(true);
+    setMemoryError(null);
+    try {
+      await decideUserMemorySuggestion(suggestionId, payload);
+      await loadMemoryState(selectedWorkspace?.id);
+    } catch (error) {
+      console.error('Failed to apply memory suggestion decision', error);
+      setMemoryError('Failed to apply memory suggestion. Refresh and try again.');
+    } finally {
+      setMemorySaving(false);
+    }
+  }, [loadMemoryState, selectedWorkspace?.id]);
 
   const persistActiveRuns = useCallback((runs: Record<string, ActiveRunInfo>) => {
     activeRunsRef.current = runs;
@@ -711,6 +796,12 @@ export default function WorkspacePage() {
   useEffect(() => {
     applyColorModeToDocument(colorMode);
   }, [colorMode]);
+
+  useEffect(() => {
+    if (isMemorySheetOpen) {
+      void loadMemoryState(selectedWorkspace?.id);
+    }
+  }, [isMemorySheetOpen, loadMemoryState, selectedWorkspace?.id]);
 
   useEffect(() => {
     const storedRuns = loadActiveRunsFromStorage();
@@ -4597,6 +4688,7 @@ export default function WorkspacePage() {
       const agentPrompt = buildAgentPromptFromDirective(directive);
       const { runId } = await startAgentRun(
         selectedWorkspace.id,
+        conversationId,
         persona,
         agentPrompt,
         historyPayload.length ? historyPayload : undefined,
@@ -5034,6 +5126,7 @@ export default function WorkspacePage() {
     try {
       const { runId } = await startAgentRun(
         workspaceId,
+        conversationId,
         persona,
         agentPrompt,
         historyPayload.length ? historyPayload : undefined,
@@ -5864,6 +5957,7 @@ export default function WorkspacePage() {
               chatInputRef={chatInputRef}
               attachmentInputRef={attachmentInputRef}
               workspaceId={selectedWorkspace?.id}
+              workspaceName={selectedWorkspace?.name}
               formatMessageTimestamp={formatMessageTimestamp}
               interruptFieldKey={interruptFieldKey}
               interruptActionFieldKey={interruptActionFieldKey}
@@ -5877,9 +5971,20 @@ export default function WorkspacePage() {
               conversationAttentionById={conversationAttentionById}
               workspaceSkipPlanApprovals={Boolean(selectedWorkspace?.skipPlanApprovals)}
               workspaceSettingsBusy={workspaceSettingsBusy}
+              isMemorySheetOpen={isMemorySheetOpen}
+              memoryView={memoryView}
+              memorySuggestions={memorySuggestions}
+              memoryLoading={memoryLoading}
+              memorySaving={memorySaving}
+              memoryError={memoryError}
               onToggleAgentPaneVisibility={() => setIsAgentPaneVisible((prev) => !prev)}
               onModeChange={handleModeChange}
               onToggleHistory={() => setIsHistoryOpen((prev) => !prev)}
+              onOpenMemorySheet={handleOpenMemorySheet}
+              onCloseMemorySheet={() => setIsMemorySheetOpen(false)}
+              onRefreshMemory={handleRefreshMemory}
+              onSaveMemorySection={handleSaveMemorySection}
+              onDecideMemorySuggestion={handleDecideMemorySuggestion}
               onNewChat={handleNewChat}
               onToggleFullScreen={toggleAgentPaneFullScreen}
               onCloseHistory={() => setIsHistoryOpen(false)}

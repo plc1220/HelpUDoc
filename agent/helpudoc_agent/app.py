@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Dict, List, AsyncGenerator, Iterable, Sequence, Set, Optional, Tuple
+from typing import Any, Dict, List, AsyncGenerator, Iterable, Sequence, Set, Optional, Tuple, Callable
 import html as html_lib
 import json
 import logging
@@ -17,6 +17,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Body, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+from langchain_core.messages import HumanMessage, SystemMessage
 
 from .configuration import load_settings
 from .graph import AgentRegistry
@@ -44,6 +45,7 @@ from .paper2slides_runner import run_paper2slides, export_pptx_from_pdf
 from .jwt_utils import decode_and_verify_hs256_jwt
 from langgraph.errors import GraphInterrupt
 from langgraph.types import Command
+from .memory_store import MemoryStoreManager
 
 
 logger = logging.getLogger(__name__)
@@ -230,6 +232,19 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     reply: Any
+
+
+class InternalAnalyzeRequest(BaseModel):
+    systemPrompt: str
+    userPrompt: str
+
+
+class InternalMemoryRequest(BaseModel):
+    path: str
+
+
+class InternalMemoryWriteRequest(InternalMemoryRequest):
+    content: str
 
 
 class Action(BaseModel):
@@ -419,10 +434,11 @@ def create_app() -> FastAPI:
             logger.warning("AGENT_CONFIG_PATH is set but file does not exist; falling back to built-in config", extra={"path": env_config_path})
 
     settings = load_settings(config_path)
+    memory_store_manager = MemoryStoreManager()
     source_tracker = SourceTracker()
     gemini_manager = GeminiClientManager(settings)
     tool_factory = ToolFactory(settings, source_tracker, gemini_manager)
-    registry = AgentRegistry(settings, tool_factory)
+    registry = AgentRegistry(settings, tool_factory, memory_store=memory_store_manager)
     agent_jwt_secret = _get_agent_jwt_secret()
 
     app = FastAPI(title="DeepAgents Service", version="0.2.0")
@@ -430,6 +446,11 @@ def create_app() -> FastAPI:
 
     @app.on_event("startup")
     async def _startup() -> None:
+        try:
+            memory_store_manager.start()
+        except Exception:
+            logger.exception("Failed to start persistent memory store")
+            raise
         try:
             await rag_worker.start()
         except Exception:
@@ -441,6 +462,70 @@ def create_app() -> FastAPI:
             await rag_worker.stop()
         except Exception:
             logger.exception("Failed to stop RAG index worker cleanly")
+        try:
+            memory_store_manager.stop()
+        except Exception:
+            logger.exception("Failed to stop persistent memory store cleanly")
+
+    async def _run_internal_analysis(system_prompt: str, user_prompt: str) -> str:
+        model = registry._get_model(settings.model.resolve_chat_model_name("fast"))
+        messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=user_prompt),
+        ]
+        if hasattr(model, "ainvoke"):
+            result = await model.ainvoke(messages)
+        else:
+            result = model.invoke(messages)
+        return _message_to_text(result)
+
+    @app.post("/internal/analyze")
+    async def internal_analyze(req: InternalAnalyzeRequest, request: Request):
+        _require_internal_user_context(request)
+        if not req.systemPrompt.strip() or not req.userPrompt.strip():
+            raise HTTPException(status_code=400, detail="systemPrompt and userPrompt are required")
+        text = await _run_internal_analysis(req.systemPrompt, req.userPrompt)
+        return {"text": text}
+
+    @app.get("/internal/memories")
+    async def get_internal_memory(path: str, request: Request):
+        context = _require_internal_user_context(request)
+        user_id = str(context["user_id"]).strip()
+        try:
+            file = memory_store_manager.read_file(user_id, path)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {
+            "path": file.path,
+            "exists": file.exists,
+            "content": file.content,
+            "modifiedAt": file.modified_at,
+        }
+
+    @app.put("/internal/memories")
+    async def put_internal_memory(req: InternalMemoryWriteRequest, request: Request):
+        context = _require_internal_user_context(request)
+        user_id = str(context["user_id"]).strip()
+        try:
+            file = memory_store_manager.write_file(user_id, req.path, req.content)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {
+            "path": file.path,
+            "exists": file.exists,
+            "content": file.content,
+            "modifiedAt": file.modified_at,
+        }
+
+    @app.delete("/internal/memories")
+    async def delete_internal_memory(req: InternalMemoryRequest, request: Request):
+        context = _require_internal_user_context(request)
+        user_id = str(context["user_id"]).strip()
+        try:
+            memory_store_manager.delete_file(user_id, req.path)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"ok": True, "path": req.path}
 
     @app.post("/rag/workspaces/{workspace_id}/query", response_model=RagQueryResponse)
     async def rag_query(workspace_id: str, req: RagQueryRequest = Body(...)):
@@ -691,6 +776,9 @@ def create_app() -> FastAPI:
         user_id = payload.get("userId") or payload.get("sub")
         if isinstance(user_id, str) and user_id.strip():
             context["user_id"] = user_id.strip()
+        workspace_id = payload.get("workspaceId")
+        if isinstance(workspace_id, str) and workspace_id.strip():
+            context["workspace_id"] = workspace_id.strip()
         skill_allow_ids = payload.get("skillAllowIds") or []
         if isinstance(skill_allow_ids, list):
             context["skill_allow_ids"] = [str(x).strip() for x in skill_allow_ids if str(x).strip()]
@@ -730,6 +818,67 @@ def create_app() -> FastAPI:
         if isinstance(payload.get("skipPlanApprovals"), bool):
             context["skip_plan_approvals"] = payload["skipPlanApprovals"]
         return context
+
+    def _require_internal_user_context(request: Request) -> Dict[str, Any]:
+        context = _extract_request_context(request)
+        user_id = context.get("user_id")
+        if not isinstance(user_id, str) or not user_id.strip():
+            raise HTTPException(status_code=401, detail="Missing or invalid agent context token")
+        return context
+
+    def _memory_paths_for_turn(runtime: AgentRuntimeState) -> List[str]:
+        context = runtime.workspace_state.context or {}
+        user_id = context.get("user_id")
+        if not isinstance(user_id, str) or not user_id.strip():
+            return []
+        workspace_id = runtime.workspace_state.workspace_id
+        return [
+            "/memories/global/preferences.md",
+            "/memories/global/context.md",
+            f"/memories/workspaces/{workspace_id}/preferences.md",
+            f"/memories/workspaces/{workspace_id}/context.md",
+        ]
+
+    def _build_memory_system_message(runtime: AgentRuntimeState) -> str | None:
+        context = runtime.workspace_state.context or {}
+        user_id = context.get("user_id")
+        if not isinstance(user_id, str) or not user_id.strip():
+            return None
+        paths = _memory_paths_for_turn(runtime)
+        files = memory_store_manager.read_many(user_id.strip(), paths)
+        existing_lines: List[str] = []
+        digest_lines: List[str] = []
+        char_budget = 3200
+        used = 0
+        for path in paths:
+            file = files.get(path)
+            if not file or not file.exists or not file.content.strip():
+                continue
+            existing_lines.append(f"- {path}")
+            excerpt = file.content.strip()
+            remaining = max(0, char_budget - used)
+            if remaining <= 0:
+                continue
+            clipped = excerpt[:remaining]
+            used += len(clipped)
+            digest_lines.append(f"{path}:\n{clipped}")
+        if not existing_lines:
+            return None
+        sections = [
+            "Persistent memory is available for this user.",
+            "Relevant memory files:",
+            "\n".join(existing_lines),
+            "Consult these files when they are relevant to the request. Treat them as approved long-term user memory.",
+            "Do not modify any /memories/* file during normal chat runs.",
+        ]
+        if digest_lines:
+            sections.extend(
+                [
+                    "Memory digest:",
+                    "\n\n".join(digest_lines),
+                ]
+            )
+        return "\n\n".join(section for section in sections if section)
 
 
     def _extract_tagged_files(content: str) -> List[str]:
@@ -904,7 +1053,15 @@ def create_app() -> FastAPI:
 
     def _build_agent_config(runtime: AgentRuntimeState, message: ChatRequest, callbacks=None) -> Dict[str, Any]:
         thread_id = _get_thread_id(runtime, message.forceReset)
-        config: Dict[str, Any] = {"configurable": {"thread_id": thread_id}}
+        runtime_context = runtime.workspace_state.context or {}
+        configurable: Dict[str, Any] = {"thread_id": thread_id}
+        user_id = runtime_context.get("user_id")
+        if isinstance(user_id, str) and user_id.strip():
+            configurable["user_id"] = user_id.strip()
+        workspace_id = runtime_context.get("workspace_id") or runtime.workspace_state.workspace_id
+        if isinstance(workspace_id, str) and workspace_id.strip():
+            configurable["workspace_id"] = workspace_id.strip()
+        config: Dict[str, Any] = {"configurable": configurable}
         if callbacks:
             config["callbacks"] = callbacks
         return config
@@ -920,8 +1077,8 @@ def create_app() -> FastAPI:
         payload = await _prepare_turn_payload(runtime, message, fresh_turn=True)
         config = _build_agent_config(runtime, message)
         if hasattr(agent, "ainvoke"):
-            return await agent.ainvoke({"messages": payload}, config=config)
-        return agent.invoke({"messages": payload}, config=config)
+            return await agent.ainvoke({"messages": payload}, config=config, context=runtime.workspace_state.context)
+        return agent.invoke({"messages": payload}, config=config, context=runtime.workspace_state.context)
 
     def _json_line(payload: Dict[str, Any]) -> bytes:
         return (json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8")
@@ -1333,6 +1490,10 @@ def create_app() -> FastAPI:
         if fresh_turn:
             _reset_turn_context(runtime)
         payload, latest_user_text = _apply_embedded_directives(runtime, payload)
+        if fresh_turn:
+            memory_guidance = _build_memory_system_message(runtime)
+            if memory_guidance:
+                payload.insert(0, {"role": "system", "content": memory_guidance})
 
         prompt_for_tagged_files = latest_user_text or message.message or ""
         tagged_files = _extract_tagged_files(prompt_for_tagged_files)
@@ -1427,7 +1588,12 @@ def create_app() -> FastAPI:
                 elif resume_value is not None:
                     stream_input = Command(resume=resume_value)
                 final_result = None
-                async for chunk in agent.astream(stream_input, config=stream_config, stream_mode="values"):
+                async for chunk in agent.astream(
+                    stream_input,
+                    config=stream_config,
+                    context=runtime.workspace_state.context,
+                    stream_mode="values",
+                ):
                     final_result = chunk
                     interrupt_payload = _extract_interrupt_payload(chunk)
                     if interrupt_payload:

@@ -151,3 +151,90 @@ export interface SkillDefinition {
   error?: string;
   warning?: string;
 }
+
+export interface ReflectionScorecard {
+  outcome: number;
+  reliability: number;
+  friction: number;
+}
+
+export interface ReflectionRecommendation {
+  id: string;
+  title: string;
+  detail: string;
+  priority: 'high' | 'medium' | 'low';
+}
+
+export interface ReflectionConversationSample {
+  conversationId: string;
+  workspaceId?: string | null;
+  workspaceName?: string | null;
+  userId?: string | null;
+  userDisplayName?: string | null;
+  title?: string | null;
+  status: 'completed' | 'failed' | 'cancelled' | 'awaiting_approval' | 'running' | 'queued';
+  excerpt?: string | null;
+}
+
+export interface ReflectionBreakdown {
+  id: number;
+  reflectionId: number;
+  dimension: 'skill' | 'tool' | 'user' | 'workspace';
+  entityKey: string;
+  label: string;
+  rank: number;
+  metrics: Record<string, unknown>;
+  summary?: string | null;
+}
+
+export interface DailyReflection {
+  id: number;
+  reflectionDate: string;
+  timezone: string;
+  status: 'ready' | 'running' | 'failed';
+  scorecard: ReflectionScorecard;
+  summaryMarkdown: string;
+  metrics: Record<string, unknown>;
+  recommendations: ReflectionRecommendation[];
+  sampledConversations: ReflectionConversationSample[];
+  breakdowns: ReflectionBreakdown[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ReflectionTrendPoint {
+  reflectionDate: string;
+  timezone: string;
+  scorecard: ReflectionScorecard;
+  metrics: Record<string, unknown>;
+}
+
+export type UserMemoryScope = 'global' | 'workspace';
+export type UserMemorySection = 'preferences' | 'context';
+export type UserMemorySuggestionStatus = 'pending' | 'accepted' | 'rejected' | 'stale';
+
+export interface UserMemoryView {
+  globalPreferences: string;
+  globalContext: string;
+  workspacePreferences: string;
+  workspaceContext: string;
+}
+
+export interface UserMemorySuggestion {
+  id: string;
+  userId: string;
+  workspaceId?: string | null;
+  sourceConversationId?: string | null;
+  sourceRunId?: string | null;
+  targetPath: string;
+  targetScope: UserMemoryScope;
+  targetSection: UserMemorySection;
+  baseContentHash: string;
+  proposedContent: string;
+  rationale: string;
+  status: UserMemorySuggestionStatus;
+  reviewedContent?: string | null;
+  reviewedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
