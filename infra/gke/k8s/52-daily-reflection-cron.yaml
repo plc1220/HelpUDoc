@@ -1,0 +1,52 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: helpudoc-daily-reflection
+  namespace: helpudoc
+spec:
+  schedule: "15 0 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: reflection-job
+              image: gcr.io/my-rd-coe-demo-gen-ai/helpudoc-backend:latest
+              command:
+                - /bin/sh
+                - -lc
+                - cd /app && npx ts-node --transpile-only src/jobs/generateDailyReflection.ts
+              env:
+                - name: NODE_ENV
+                  value: production
+                - name: POSTGRES_HOST
+                  value: postgres
+                - name: POSTGRES_PORT
+                  value: "5432"
+                - name: POSTGRES_DB
+                  valueFrom:
+                    configMapKeyRef:
+                      name: helpudoc-config
+                      key: POSTGRES_DB
+                - name: POSTGRES_USER
+                  valueFrom:
+                    configMapKeyRef:
+                      name: helpudoc-config
+                      key: POSTGRES_USER
+                - name: POSTGRES_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: helpudoc-secrets
+                      key: POSTGRES_PASSWORD
+                - name: DATABASE_URL
+                  value: "postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@postgres:5432/$(POSTGRES_DB)"
+                - name: ANALYTICS_TIMEZONE
+                  valueFrom:
+                    configMapKeyRef:
+                      name: helpudoc-config
+                      key: ANALYTICS_TIMEZONE
+                      optional: true

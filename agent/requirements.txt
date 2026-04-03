@@ -15,6 +15,8 @@ google-genai==1.52.0
 langchain-google-vertexai
 deepagents
 langchain-mcp-adapters>=0.1.0
+langgraph-checkpoint-postgres>=3.0.5
+psycopg[binary]>=3.3.0
 python-dotenv
 pydantic
 pyyaml

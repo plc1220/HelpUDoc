@@ -37,6 +37,11 @@ export class DatabaseService {
     await this.createKnowledgeSourcesTable();
     await this.createConversationsTable();
     await this.createConversationMessagesTable();
+    await this.createAgentRunSummariesTable();
+    await this.createAgentRunToolEventsTable();
+    await this.createAgentDailyReflectionsTable();
+    await this.createAgentDailyReflectionBreakdownsTable();
+    await this.createUserMemorySuggestionsTable();
   }
 
   private buildConnectionConfig(): PgConnection {
@@ -435,6 +440,264 @@ export class DatabaseService {
     await this.db.raw(
       'CREATE INDEX IF NOT EXISTS conversation_messages_turn_idx ON conversation_messages ("conversationId", "turnId")'
     );
+  }
+
+  private async createAgentRunSummariesTable(): Promise<void> {
+    const exists = await this.db.schema.hasTable('agent_run_summaries');
+    if (!exists) {
+      await this.db.schema.createTable('agent_run_summaries', (table) => {
+        table.string('runId').primary();
+        table.uuid('workspaceId').notNullable().references('id').inTable('workspaces').onDelete('CASCADE');
+        table.uuid('userId').references('id').inTable('users').onDelete('SET NULL');
+        table.uuid('conversationId').references('id').inTable('conversations').onDelete('SET NULL');
+        table.string('turnId');
+        table.string('persona').notNullable();
+        table.string('status').notNullable();
+        table.string('skillId');
+        table.boolean('hadInterrupt').notNullable().defaultTo(false);
+        table.integer('approvalInterruptCount').notNullable().defaultTo(0);
+        table.integer('clarificationInterruptCount').notNullable().defaultTo(0);
+        table.integer('toolCallCount').notNullable().defaultTo(0);
+        table.integer('toolErrorCount').notNullable().defaultTo(0);
+        table.text('error');
+        table.jsonb('metadata');
+        table.timestamp('queuedAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.timestamp('startedAt', { useTz: true });
+        table.timestamp('completedAt', { useTz: true });
+        table.timestamp('createdAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.timestamp('updatedAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.index(['workspaceId', 'queuedAt'], 'agent_run_summaries_workspace_queued_idx');
+        table.index(['userId', 'queuedAt'], 'agent_run_summaries_user_queued_idx');
+        table.index(['conversationId', 'queuedAt'], 'agent_run_summaries_conversation_queued_idx');
+        table.index(['status', 'completedAt'], 'agent_run_summaries_status_completed_idx');
+      });
+      console.log('Created "agent_run_summaries" table.');
+    } else {
+      await this.ensureColumn('agent_run_summaries', 'userId', (table) =>
+        table.uuid('userId').references('id').inTable('users').onDelete('SET NULL'));
+      await this.ensureColumn('agent_run_summaries', 'conversationId', (table) =>
+        table.uuid('conversationId').references('id').inTable('conversations').onDelete('SET NULL'));
+      await this.ensureColumn('agent_run_summaries', 'turnId', (table) => table.string('turnId'));
+      await this.ensureColumn('agent_run_summaries', 'skillId', (table) => table.string('skillId'));
+      await this.ensureColumn('agent_run_summaries', 'hadInterrupt', (table) =>
+        table.boolean('hadInterrupt').notNullable().defaultTo(false));
+      await this.ensureColumn('agent_run_summaries', 'approvalInterruptCount', (table) =>
+        table.integer('approvalInterruptCount').notNullable().defaultTo(0));
+      await this.ensureColumn('agent_run_summaries', 'clarificationInterruptCount', (table) =>
+        table.integer('clarificationInterruptCount').notNullable().defaultTo(0));
+      await this.ensureColumn('agent_run_summaries', 'toolCallCount', (table) =>
+        table.integer('toolCallCount').notNullable().defaultTo(0));
+      await this.ensureColumn('agent_run_summaries', 'toolErrorCount', (table) =>
+        table.integer('toolErrorCount').notNullable().defaultTo(0));
+      await this.ensureColumn('agent_run_summaries', 'error', (table) => table.text('error'));
+      await this.ensureColumn('agent_run_summaries', 'metadata', (table) => table.jsonb('metadata'));
+      await this.ensureColumn('agent_run_summaries', 'queuedAt', (table) =>
+        table.timestamp('queuedAt', { useTz: true }).defaultTo(this.db.fn.now()));
+      await this.ensureColumn('agent_run_summaries', 'startedAt', (table) =>
+        table.timestamp('startedAt', { useTz: true }));
+      await this.ensureColumn('agent_run_summaries', 'completedAt', (table) =>
+        table.timestamp('completedAt', { useTz: true }));
+      await this.ensureColumn('agent_run_summaries', 'createdAt', (table) =>
+        table.timestamp('createdAt', { useTz: true }).defaultTo(this.db.fn.now()));
+      await this.ensureColumn('agent_run_summaries', 'updatedAt', (table) =>
+        table.timestamp('updatedAt', { useTz: true }).defaultTo(this.db.fn.now()));
+      await this.db.raw(
+        'CREATE INDEX IF NOT EXISTS agent_run_summaries_workspace_queued_idx ON agent_run_summaries ("workspaceId", "queuedAt")',
+      );
+      await this.db.raw(
+        'CREATE INDEX IF NOT EXISTS agent_run_summaries_user_queued_idx ON agent_run_summaries ("userId", "queuedAt")',
+      );
+      await this.db.raw(
+        'CREATE INDEX IF NOT EXISTS agent_run_summaries_conversation_queued_idx ON agent_run_summaries ("conversationId", "queuedAt")',
+      );
+      await this.db.raw(
+        'CREATE INDEX IF NOT EXISTS agent_run_summaries_status_completed_idx ON agent_run_summaries ("status", "completedAt")',
+      );
+    }
+  }
+
+  private async createAgentRunToolEventsTable(): Promise<void> {
+    const exists = await this.db.schema.hasTable('agent_run_tool_events');
+    if (!exists) {
+      await this.db.schema.createTable('agent_run_tool_events', (table) => {
+        table.bigIncrements('id').primary();
+        table.string('runId').notNullable().references('runId').inTable('agent_run_summaries').onDelete('CASCADE');
+        table.uuid('workspaceId').notNullable().references('id').inTable('workspaces').onDelete('CASCADE');
+        table.uuid('userId').references('id').inTable('users').onDelete('SET NULL');
+        table.uuid('conversationId').references('id').inTable('conversations').onDelete('SET NULL');
+        table.string('turnId');
+        table.integer('eventIndex').notNullable();
+        table.string('toolName').notNullable();
+        table.string('eventType').notNullable();
+        table.text('summary');
+        table.jsonb('outputFiles');
+        table.jsonb('payload');
+        table.timestamp('eventAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.timestamp('createdAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.unique(['runId', 'eventIndex']);
+        table.index(['workspaceId', 'eventAt'], 'agent_run_tool_events_workspace_event_idx');
+        table.index(['toolName', 'eventAt'], 'agent_run_tool_events_tool_event_idx');
+      });
+      console.log('Created "agent_run_tool_events" table.');
+    } else {
+      await this.ensureColumn('agent_run_tool_events', 'userId', (table) =>
+        table.uuid('userId').references('id').inTable('users').onDelete('SET NULL'));
+      await this.ensureColumn('agent_run_tool_events', 'conversationId', (table) =>
+        table.uuid('conversationId').references('id').inTable('conversations').onDelete('SET NULL'));
+      await this.ensureColumn('agent_run_tool_events', 'turnId', (table) => table.string('turnId'));
+      await this.ensureColumn('agent_run_tool_events', 'summary', (table) => table.text('summary'));
+      await this.ensureColumn('agent_run_tool_events', 'outputFiles', (table) => table.jsonb('outputFiles'));
+      await this.ensureColumn('agent_run_tool_events', 'payload', (table) => table.jsonb('payload'));
+      await this.ensureColumn('agent_run_tool_events', 'eventAt', (table) =>
+        table.timestamp('eventAt', { useTz: true }).defaultTo(this.db.fn.now()));
+      await this.ensureColumn('agent_run_tool_events', 'createdAt', (table) =>
+        table.timestamp('createdAt', { useTz: true }).defaultTo(this.db.fn.now()));
+      await this.db.raw(
+        'CREATE UNIQUE INDEX IF NOT EXISTS agent_run_tool_events_run_event_uidx ON agent_run_tool_events ("runId", "eventIndex")',
+      );
+      await this.db.raw(
+        'CREATE INDEX IF NOT EXISTS agent_run_tool_events_workspace_event_idx ON agent_run_tool_events ("workspaceId", "eventAt")',
+      );
+      await this.db.raw(
+        'CREATE INDEX IF NOT EXISTS agent_run_tool_events_tool_event_idx ON agent_run_tool_events ("toolName", "eventAt")',
+      );
+    }
+  }
+
+  private async createAgentDailyReflectionsTable(): Promise<void> {
+    const exists = await this.db.schema.hasTable('agent_daily_reflections');
+    if (!exists) {
+      await this.db.schema.createTable('agent_daily_reflections', (table) => {
+        table.bigIncrements('id').primary();
+        table.date('reflectionDate').notNullable();
+        table.string('timezone').notNullable();
+        table.string('status').notNullable().defaultTo('ready');
+        table.integer('outcomeScore').notNullable().defaultTo(0);
+        table.integer('reliabilityScore').notNullable().defaultTo(0);
+        table.integer('frictionScore').notNullable().defaultTo(0);
+        table.text('summaryMarkdown').notNullable().defaultTo('');
+        table.jsonb('metrics').notNullable().defaultTo(this.db.raw(`'{}'::jsonb`));
+        table.jsonb('recommendations').notNullable().defaultTo(this.db.raw(`'[]'::jsonb`));
+        table.jsonb('sampledConversations').notNullable().defaultTo(this.db.raw(`'[]'::jsonb`));
+        table.timestamp('createdAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.timestamp('updatedAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.unique(['reflectionDate', 'timezone']);
+        table.index(['reflectionDate', 'timezone'], 'agent_daily_reflections_date_timezone_idx');
+      });
+      console.log('Created "agent_daily_reflections" table.');
+    } else {
+      await this.ensureColumn('agent_daily_reflections', 'status', (table) =>
+        table.string('status').notNullable().defaultTo('ready'));
+      await this.ensureColumn('agent_daily_reflections', 'outcomeScore', (table) =>
+        table.integer('outcomeScore').notNullable().defaultTo(0));
+      await this.ensureColumn('agent_daily_reflections', 'reliabilityScore', (table) =>
+        table.integer('reliabilityScore').notNullable().defaultTo(0));
+      await this.ensureColumn('agent_daily_reflections', 'frictionScore', (table) =>
+        table.integer('frictionScore').notNullable().defaultTo(0));
+      await this.ensureColumn('agent_daily_reflections', 'summaryMarkdown', (table) =>
+        table.text('summaryMarkdown').notNullable().defaultTo(''));
+      await this.ensureColumn('agent_daily_reflections', 'metrics', (table) =>
+        table.jsonb('metrics').notNullable().defaultTo(this.db.raw(`'{}'::jsonb`)));
+      await this.ensureColumn('agent_daily_reflections', 'recommendations', (table) =>
+        table.jsonb('recommendations').notNullable().defaultTo(this.db.raw(`'[]'::jsonb`)));
+      await this.ensureColumn('agent_daily_reflections', 'sampledConversations', (table) =>
+        table.jsonb('sampledConversations').notNullable().defaultTo(this.db.raw(`'[]'::jsonb`)));
+      await this.ensureColumn('agent_daily_reflections', 'createdAt', (table) =>
+        table.timestamp('createdAt', { useTz: true }).defaultTo(this.db.fn.now()));
+      await this.ensureColumn('agent_daily_reflections', 'updatedAt', (table) =>
+        table.timestamp('updatedAt', { useTz: true }).defaultTo(this.db.fn.now()));
+      await this.db.raw(
+        'CREATE UNIQUE INDEX IF NOT EXISTS agent_daily_reflections_date_timezone_uidx ON agent_daily_reflections ("reflectionDate", "timezone")',
+      );
+      await this.db.raw(
+        'CREATE INDEX IF NOT EXISTS agent_daily_reflections_date_timezone_idx ON agent_daily_reflections ("reflectionDate", "timezone")',
+      );
+    }
+  }
+
+  private async createAgentDailyReflectionBreakdownsTable(): Promise<void> {
+    const exists = await this.db.schema.hasTable('agent_daily_reflection_breakdowns');
+    if (!exists) {
+      await this.db.schema.createTable('agent_daily_reflection_breakdowns', (table) => {
+        table.bigIncrements('id').primary();
+        table.bigInteger('reflectionId').notNullable().references('id').inTable('agent_daily_reflections').onDelete('CASCADE');
+        table.string('dimension').notNullable();
+        table.string('entityKey').notNullable();
+        table.string('label').notNullable();
+        table.integer('rank').notNullable().defaultTo(0);
+        table.jsonb('metrics').notNullable().defaultTo(this.db.raw(`'{}'::jsonb`));
+        table.text('summary');
+        table.timestamp('createdAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.unique(['reflectionId', 'dimension', 'entityKey']);
+        table.index(['reflectionId', 'dimension', 'rank'], 'agent_daily_reflection_breakdowns_reflection_dimension_rank_idx');
+      });
+      console.log('Created "agent_daily_reflection_breakdowns" table.');
+    } else {
+      await this.ensureColumn('agent_daily_reflection_breakdowns', 'rank', (table) =>
+        table.integer('rank').notNullable().defaultTo(0));
+      await this.ensureColumn('agent_daily_reflection_breakdowns', 'metrics', (table) =>
+        table.jsonb('metrics').notNullable().defaultTo(this.db.raw(`'{}'::jsonb`)));
+      await this.ensureColumn('agent_daily_reflection_breakdowns', 'summary', (table) => table.text('summary'));
+      await this.ensureColumn('agent_daily_reflection_breakdowns', 'createdAt', (table) =>
+        table.timestamp('createdAt', { useTz: true }).defaultTo(this.db.fn.now()));
+      await this.db.raw(
+        'CREATE UNIQUE INDEX IF NOT EXISTS agent_daily_reflection_breakdowns_reflection_dimension_entity_uidx ON agent_daily_reflection_breakdowns ("reflectionId", "dimension", "entityKey")',
+      );
+      await this.db.raw(
+        'CREATE INDEX IF NOT EXISTS agent_daily_reflection_breakdowns_reflection_dimension_rank_idx ON agent_daily_reflection_breakdowns ("reflectionId", "dimension", "rank")',
+      );
+    }
+  }
+
+  private async createUserMemorySuggestionsTable(): Promise<void> {
+    const exists = await this.db.schema.hasTable('user_memory_suggestions');
+    if (!exists) {
+      await this.db.schema.createTable('user_memory_suggestions', (table) => {
+        table.uuid('id').primary();
+        table.uuid('userId').notNullable().references('id').inTable('users').onDelete('CASCADE');
+        table.uuid('workspaceId').references('id').inTable('workspaces').onDelete('CASCADE');
+        table.uuid('sourceConversationId').references('id').inTable('conversations').onDelete('SET NULL');
+        table.string('sourceRunId').references('runId').inTable('agent_run_summaries').onDelete('SET NULL');
+        table.string('targetPath').notNullable();
+        table.string('targetScope').notNullable();
+        table.string('targetSection').notNullable();
+        table.string('baseContentHash').notNullable();
+        table.text('proposedContent').notNullable();
+        table.text('rationale').notNullable();
+        table.string('status').notNullable().defaultTo('pending');
+        table.text('reviewedContent');
+        table.timestamp('reviewedAt', { useTz: true });
+        table.timestamp('createdAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.timestamp('updatedAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.index(['userId', 'status', 'createdAt'], 'user_memory_suggestions_user_status_created_idx');
+        table.index(['workspaceId', 'status', 'createdAt'], 'user_memory_suggestions_workspace_status_created_idx');
+      });
+      console.log('Created "user_memory_suggestions" table.');
+    } else {
+      await this.ensureColumn('user_memory_suggestions', 'sourceRunId', (table) =>
+        table.string('sourceRunId').references('runId').inTable('agent_run_summaries').onDelete('SET NULL'));
+      await this.ensureColumn('user_memory_suggestions', 'targetPath', (table) => table.string('targetPath').notNullable());
+      await this.ensureColumn('user_memory_suggestions', 'targetScope', (table) => table.string('targetScope').notNullable());
+      await this.ensureColumn('user_memory_suggestions', 'targetSection', (table) => table.string('targetSection').notNullable());
+      await this.ensureColumn('user_memory_suggestions', 'baseContentHash', (table) => table.string('baseContentHash').notNullable());
+      await this.ensureColumn('user_memory_suggestions', 'proposedContent', (table) => table.text('proposedContent').notNullable());
+      await this.ensureColumn('user_memory_suggestions', 'rationale', (table) => table.text('rationale').notNullable());
+      await this.ensureColumn('user_memory_suggestions', 'status', (table) =>
+        table.string('status').notNullable().defaultTo('pending'));
+      await this.ensureColumn('user_memory_suggestions', 'reviewedContent', (table) => table.text('reviewedContent'));
+      await this.ensureColumn('user_memory_suggestions', 'reviewedAt', (table) =>
+        table.timestamp('reviewedAt', { useTz: true }));
+      await this.ensureColumn('user_memory_suggestions', 'createdAt', (table) =>
+        table.timestamp('createdAt', { useTz: true }).defaultTo(this.db.fn.now()));
+      await this.ensureColumn('user_memory_suggestions', 'updatedAt', (table) =>
+        table.timestamp('updatedAt', { useTz: true }).defaultTo(this.db.fn.now()));
+      await this.db.raw(
+        'CREATE INDEX IF NOT EXISTS user_memory_suggestions_user_status_created_idx ON user_memory_suggestions ("userId", "status", "createdAt")',
+      );
+      await this.db.raw(
+        'CREATE INDEX IF NOT EXISTS user_memory_suggestions_workspace_status_created_idx ON user_memory_suggestions ("workspaceId", "status", "createdAt")',
+      );
+    }
   }
 
   private async ensureColumn(
