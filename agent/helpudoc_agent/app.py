@@ -980,7 +980,7 @@ def create_app() -> FastAPI:
     class _CallbackStreamingHandler(AsyncCallbackHandler):
         """Streams LangChain callback events into JSON payloads for the UI."""
 
-        def __init__(self, text_fn):
+        def __init__(self, text_fn, *, suppress_interrupt_tool_start: bool = False):
             super().__init__()
             self.queue: asyncio.Queue[Any] = asyncio.Queue()
             self._tool_names: Dict[str, str] = {}
@@ -991,6 +991,7 @@ def create_app() -> FastAPI:
             self._has_assistant_text = False
             self._interrupt_emitted = False
             self._cancel_run: Optional[Callable[[], None]] = None
+            self._suppress_interrupt_tool_start = suppress_interrupt_tool_start
 
         @property
         def has_events(self) -> bool:
@@ -1080,6 +1081,11 @@ def create_app() -> FastAPI:
             name = (serialized or {}).get("name") or (metadata or {}).get("name") or "tool"
             self._tool_names[str(run_id)] = name
             if name in _INTERRUPT_TOOL_NAMES:
+                # On resumed clarification/action flows, let the tool consume the
+                # resume payload first. Eagerly re-emitting the interrupt here can
+                # cancel the resumed run before the answer is applied.
+                if self._suppress_interrupt_tool_start:
+                    return
                 interrupt_payload = extract_interrupt_payload_from_tool_call(name, input_str)
                 if interrupt_payload:
                     self._interrupt_emitted = True
@@ -1430,7 +1436,10 @@ def create_app() -> FastAPI:
             payload = await _prepare_turn_payload(runtime, message, fresh_turn=True)
         else:
             payload = _prepare_payload(message)
-        handler = _CallbackStreamingHandler(_message_to_text)
+        handler = _CallbackStreamingHandler(
+            _message_to_text,
+            suppress_interrupt_tool_start=resume_decisions is not None or resume_value is not None,
+        )
         sentinel = object()
         stream_started = asyncio.get_running_loop().time()
         saw_interrupt = False
