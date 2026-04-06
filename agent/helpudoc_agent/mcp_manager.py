@@ -170,7 +170,15 @@ def _preflight_gemini_tools(tools: List[Tool]) -> None:
         raise RuntimeError(f"Gemini conversion helpers unavailable: {exc}") from exc
 
     declarations = convert_to_genai_function_declarations(tools)
-    payload = tool_to_dict(declarations)
+    declaration_items = declarations if isinstance(declarations, list) else [declarations]
+    payload_items = []
+    for declaration in declaration_items:
+        payload_items.append(tool_to_dict(declaration))
+    payload = {"function_declarations": []}
+    for item in payload_items:
+        function_declarations = item.get("function_declarations", [])
+        if isinstance(function_declarations, list):
+            payload["function_declarations"].extend(function_declarations)
     declaration_map = {
         str(item.get("name") or ""): item
         for item in payload.get("function_declarations", [])

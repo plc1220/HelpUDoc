@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import yaml
-from pydantic import BaseModel, Field, validator, root_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 PACKAGE_ROOT = Path(__file__).resolve().parent
@@ -67,7 +67,8 @@ class BackendConfig(BaseModel):
         }
     )
 
-    @validator("workspace_root", pre=True)
+    @field_validator("workspace_root", mode="before")
+    @classmethod
     def _resolve_workspace(cls, value: str | Path) -> Path:
         if isinstance(value, Path):
             return value.resolve()
@@ -76,7 +77,8 @@ class BackendConfig(BaseModel):
             path = REPO_ROOT / value
         return path.resolve()
 
-    @validator("skills_root", pre=True)
+    @field_validator("skills_root", mode="before")
+    @classmethod
     def _resolve_skills_root(cls, value: str | Path | None) -> Optional[Path]:
         if value is None:
             return (REPO_ROOT / "skills").resolve()
@@ -113,8 +115,9 @@ class MCPServerConfig(BaseModel):
     # RBAC metadata
     default_access: str = Field(default="allow")  # "allow" | "deny"
 
-    @root_validator(pre=True)
-    def _normalize_legacy_and_camelcase_keys(cls, values: dict) -> dict:
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_legacy_and_camelcase_keys(cls, values: Any) -> Any:
         """Accept both YAML styles (snake_case and camelCase) from the admin UI."""
         if not isinstance(values, dict):
             return values
@@ -137,21 +140,24 @@ class MCPServerConfig(BaseModel):
 
         return values
 
-    @validator("default_access")
+    @field_validator("default_access")
+    @classmethod
     def _validate_default_access(cls, value: str) -> str:
         normalized = (value or "").strip().lower()
         if normalized not in {"allow", "deny"}:
             raise ValueError("default_access must be 'allow' or 'deny'")
         return normalized
 
-    @validator("transport")
+    @field_validator("transport")
+    @classmethod
     def _validate_transport(cls, value: str) -> str:
         normalized = (value or "").strip().lower()
         if normalized not in {"stdio", "http", "sse"}:
             raise ValueError("transport must be 'stdio', 'http', or 'sse'")
         return normalized
 
-    @validator("delegated_auth_provider")
+    @field_validator("delegated_auth_provider")
+    @classmethod
     def _validate_delegated_auth_provider(cls, value: Optional[str]) -> Optional[str]:
         if value is None:
             return None

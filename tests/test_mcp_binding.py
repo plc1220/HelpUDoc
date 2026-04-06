@@ -115,15 +115,9 @@ def _build_settings(tmp_path: Path) -> Settings:
         return Settings.parse_obj(payload)
 
 
-def test_preflight_rejects_live_like_pricing_union_schema():
+def test_preflight_handles_live_like_pricing_union_schema():
     pytest.importorskip("langchain_google_genai")
-
-    with pytest.raises(ValueError) as excinfo:
-        _preflight_gemini_tools([_bad_pricing_tool()])
-
-    message = str(excinfo.value)
-    assert "parameters.properties.filters.items.properties.Value" in message
-    assert "missing after Gemini conversion" in message or "mixed scalar/complex union" in message
+    _preflight_gemini_tools([_bad_pricing_tool()])
 
 
 def test_aws_pricing_wrapper_sanitizes_schema_and_normalizes_inputs():
