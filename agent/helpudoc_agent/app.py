@@ -731,6 +731,30 @@ def create_app() -> FastAPI:
             context["skip_plan_approvals"] = payload["skipPlanApprovals"]
         return context
 
+    def _seed_initial_skill_context(initial_context: Dict[str, Any], message: ChatRequest) -> Dict[str, Any]:
+        seeded = dict(initial_context or {})
+        payload = _prepare_payload(message)
+        for index in range(len(payload) - 1, -1, -1):
+            item = payload[index]
+            role = str(item.get("role") or "").strip().lower()
+            if role not in {"user", "human"}:
+                continue
+            content = item.get("content")
+            if not isinstance(content, str):
+                break
+            directive, _ = _extract_directive_from_text(content)
+            if directive is None:
+                break
+            if directive.kind == "skill" and directive.skillId:
+                skill = find_skill(settings.backend.skills_root, directive.skillId)
+                if skill is not None and is_skill_allowed(skill, seeded):
+                    seeded.pop("preferred_mcp_server", None)
+                    activate_skill_context(seeded, skill)
+            elif directive.kind == "mcp" and directive.serverId:
+                seeded["preferred_mcp_server"] = directive.serverId
+            break
+        return seeded
+
 
     def _extract_tagged_files(content: str) -> List[str]:
         if not content:
@@ -1526,7 +1550,7 @@ def create_app() -> FastAPI:
     @app.post("/agents/{agent_name}/workspace/{workspace_id}/chat", response_model=ChatResponse)
     async def chat(agent_name: str, workspace_id: str, chat_request: ChatRequest, request: Request):
         try:
-            initial_context = _extract_request_context(request)
+            initial_context = _seed_initial_skill_context(_extract_request_context(request), chat_request)
             runtime = await registry.get_or_create(agent_name, workspace_id, initial_context=initial_context)
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -1538,7 +1562,7 @@ def create_app() -> FastAPI:
     @app.post("/agents/{agent_name}/workspace/{workspace_id}/chat/stream")
     async def chat_stream(agent_name: str, workspace_id: str, chat_request: ChatRequest, request: Request):
         try:
-            initial_context = _extract_request_context(request)
+            initial_context = _seed_initial_skill_context(_extract_request_context(request), chat_request)
             runtime = await registry.get_or_create(agent_name, workspace_id, initial_context=initial_context)
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc

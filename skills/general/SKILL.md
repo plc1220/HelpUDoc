@@ -6,6 +6,9 @@ tools:
   - gemini_image
   - get_image_url
   - rag_query
+mcp_servers:
+  - aws-pricing
+  - aws-knowledge
 ---
 # general
 
@@ -34,6 +37,9 @@ Use this skill for general requests and as a router to other skills when special
 3. **Web research**
 
    - Use `google_search` when internet information is required.
+   - When the request is specifically about AWS service capabilities, AWS implementation guidance, or AWS pricing and the server tools are available, prefer the AWS MCP tools before general web search.
+   - Use `aws-knowledge` for AWS documentation and feature questions.
+   - Use `aws-pricing` for AWS cost, SKU, or price discovery questions.
 4. **Tagged files**
 
    - If the user provided tagged files, prefer using only those files.

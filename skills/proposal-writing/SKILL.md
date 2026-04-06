@@ -1,6 +1,9 @@
 ---
 name: proposal-writing
 description: Create a multi-section Statement of Work (SOW) proposal for data/analytics or cloud modernization. Use when asked to research, plan, and draft a resumable proposal with Mermaid diagrams and to save all output as markdown files in the workspace, including a stitched /Final_Proposal.md.
+mcp_servers:
+  - aws-pricing
+  - aws-knowledge
 ---
 
 # proposal-writing
@@ -21,9 +24,12 @@ description: Create a multi-section Statement of Work (SOW) proposal for data/an
    - Client strategic goals and transformation initiatives.
    - Current stack constraints / technical debt.
    - Relevant reference architecture for the use case (cloud-agnostic unless the user specifies a provider).
-2. If search fails or times out, proceed with reasonable assumptions and label them as assumptions.
-3. Write findings to /research_context.md with write_file. Highlight specific business pains the solution addresses.
-4. Respond: Research complete. Saved to /research_context.md.
+2. If the user explicitly wants an AWS proposal, AWS service guidance, or AWS cost detail:
+   - prefer `aws-knowledge` for AWS service capabilities, implementation references, and feature availability
+   - prefer `aws-pricing` for cost and SKU lookups before falling back to assumptions
+3. If search fails or times out, proceed with reasonable assumptions and label them as assumptions.
+4. Write findings to /research_context.md with write_file. Highlight specific business pains the solution addresses.
+5. Respond: Research complete. Saved to /research_context.md.
 
 ### Phase 2 - Plan
 1. Read /research_context.md.

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any, Dict, Tuple
 
 from deepagents.backends import FilesystemBackend
@@ -16,9 +17,16 @@ from langchain.chat_models import init_chat_model
 from .configuration import Settings
 from .state import WorkspaceState, AgentRuntimeState
 from .tools_and_schemas import ToolFactory
-from .skills_registry import collect_tool_names, load_skills, sync_skills_to_workspace
+from .skills_registry import (
+    collect_tool_names,
+    get_candidate_mcp_servers,
+    load_skills,
+    sync_skills_to_workspace,
+)
 from .mcp_manager import MCPServerManager
 from .tool_guard import GuardedTool
+
+logger = logging.getLogger(__name__)
 
 GENERAL_SYSTEM_PROMPT = (
     "You are a general assistant. Use skills for specialized tasks. "
@@ -161,8 +169,18 @@ class AgentRegistry:
             for tool in self.tool_factory.build_tools(tool_names, workspace_state)
         ]
 
+        active_skill = workspace_state.context.get("active_skill_scope")
+        candidate_mcp_servers = get_candidate_mcp_servers(active_skill)
         mcp_manager = MCPServerManager(self.settings, workspace_state)
-        await mcp_manager.initialize()
+        logger.info(
+            "MCP bind candidates resolved (workspace=%s allowed_by_skill=%s)",
+            workspace_id,
+            candidate_mcp_servers,
+        )
+        await mcp_manager.initialize(
+            candidate_server_names=candidate_mcp_servers,
+            preflight_gemini=self.settings.model.provider == "gemini",
+        )
         mcp_tools = []
         for server_name, server_tools in mcp_manager.get_tools_by_server().items():
             for tool in server_tools:
@@ -174,6 +192,13 @@ class AgentRegistry:
                     )
                 )
 
+        logger.info(
+            "MCP bind results (workspace=%s allowed_by_rbac=%s accepted=%s rejected=%s)",
+            workspace_id,
+            mcp_manager.get_allowed_server_names(),
+            list(mcp_manager.get_tools_by_server().keys()),
+            mcp_manager.get_rejected_servers(),
+        )
         tools = builtin_tools + mcp_tools
         backend = FilesystemBackend(
             root_dir=str(workspace_state.root_path),

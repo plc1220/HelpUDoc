@@ -40,6 +40,12 @@ TOOL_FACTORY_EXPANSIONS: dict[str, tuple[str, ...]] = {
 }
 
 
+SKILL_MCP_SERVER_ELIGIBILITY: dict[str, tuple[str, ...]] = {
+    "proposal-writing": ("aws-pricing", "aws-knowledge"),
+    "general": ("aws-pricing", "aws-knowledge"),
+}
+
+
 def _parse_frontmatter(text: str) -> dict:
     if not text.startswith("---"):
         return {}
@@ -399,6 +405,21 @@ def is_tool_allowed(
     if not active_skill.mcp_servers:
         return True
     return tool_mcp_server in active_skill.mcp_servers
+
+
+def get_candidate_mcp_servers(
+    active_skill: SkillMetadata | dict[str, Any] | None,
+) -> List[str]:
+    """Return MCP servers eligible for binding for the active skill.
+
+    This is intentionally narrower than runtime tool allowlisting. We only bind
+    MCP servers for explicitly approved skills to keep Gemini-facing schemas
+    small and reduce whole-run failures from incompatible MCP tool definitions.
+    """
+    resolved_skill = _coerce_active_skill_scope(active_skill)
+    if resolved_skill is None:
+        return []
+    return list(SKILL_MCP_SERVER_ELIGIBILITY.get(resolved_skill.skill_id, ()))
 
 
 def sync_skills_to_workspace(skills_root: Path, workspace_root: Path) -> None:
