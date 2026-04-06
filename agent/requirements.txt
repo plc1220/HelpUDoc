@@ -10,10 +10,11 @@ torchvision==0.20.1
 # LangChain + Gemini stack aligned with pydantic v2
 langchain==1.0.8
 langchain-core==1.1.0
+langgraph==1.0.10
 langchain-google-genai==3.1.0
 google-genai==1.52.0
 langchain-google-vertexai
-deepagents
+deepagents==0.2.8
 langchain-mcp-adapters>=0.1.0
 python-dotenv
 pydantic
