@@ -1,6 +1,7 @@
 """Agent graph construction utilities."""
 from __future__ import annotations
 
+from copy import deepcopy
 import json
 import logging
 from typing import Any, Dict, Tuple
@@ -124,6 +125,7 @@ class AgentRegistry:
             if context_payload:
                 runtime.workspace_state.context.update(context_payload)
             return runtime
+        preserved_context: Dict[str, Any] = {}
         # Prevent unbounded growth when delegated auth fingerprints rotate over time.
         stale_keys = [
             cache_key
@@ -134,13 +136,18 @@ class AgentRegistry:
             and cache_key != key
         ]
         for stale_key in stale_keys:
-            self._cache.pop(stale_key, None)
+            stale_runtime = self._cache.pop(stale_key, None)
+            if stale_runtime is not None:
+                # Preserve in-flight thread/skill state when delegated auth refreshes.
+                preserved_context = deepcopy(stale_runtime.workspace_state.context)
 
         workspace_base = self.settings.backend.workspace_root
         workspace_base.mkdir(parents=True, exist_ok=True)
         workspace_root = workspace_base / workspace_id
         workspace_root.mkdir(parents=True, exist_ok=True)
         workspace_state = WorkspaceState(workspace_id=workspace_id, root_path=workspace_root)
+        if preserved_context:
+            workspace_state.context.update(preserved_context)
         if context_payload:
             workspace_state.context.update(context_payload)
         system_prompt = GENERAL_SYSTEM_PROMPT

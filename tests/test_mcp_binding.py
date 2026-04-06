@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import sys
 from pathlib import Path
@@ -115,9 +116,87 @@ def _build_settings(tmp_path: Path) -> Settings:
         return Settings.parse_obj(payload)
 
 
+class ToolFactoryStub:
+    def build_tools(self, _tool_names, _workspace_state):
+        return []
+
+
 def test_preflight_handles_live_like_pricing_union_schema():
     pytest.importorskip("langchain_google_genai")
     _preflight_gemini_tools([_bad_pricing_tool()])
+
+
+def test_registry_preserves_runtime_context_when_auth_fingerprint_rotates(tmp_path, monkeypatch):
+    settings = _build_settings(tmp_path)
+    created_tools: list[list[str]] = []
+
+    class DummyAgent:
+        def __init__(self, tools):
+            self.tools = tools
+
+        def with_config(self, _config):
+            return self
+
+    def fake_create_agent(*, model, tools, system_prompt, middleware, checkpointer):
+        created_tools.append([getattr(tool, "name", None) for tool in tools])
+        return DummyAgent(tools)
+
+    async def fake_initialize(self, *, candidate_server_names=None, preflight_gemini=False):
+        self._allowed_servers = {}
+        self._tools_by_server = {}
+        self._clients_by_server = {}
+        self._rejected_servers = {}
+
+    monkeypatch.setattr("helpudoc_agent.graph.create_agent", fake_create_agent)
+    monkeypatch.setattr("helpudoc_agent.graph.init_chat_model", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.graph.FilesystemBackend", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.graph.TodoListMiddleware", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.graph.FilesystemMiddleware", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.graph.SummarizationMiddleware", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.graph.PatchToolCallsMiddleware", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.graph.HumanInTheLoopMiddleware", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.mcp_manager.MCPServerManager.initialize", fake_initialize)
+
+    registry = AgentRegistry(settings, ToolFactoryStub())
+
+    runtime = asyncio.run(
+        registry.get_or_create(
+            "fast",
+            "workspace-rotate",
+            initial_context={
+                "user_id": "user-1",
+                "mcp_policy": {"allowIds": [], "denyIds": [], "isAdmin": False},
+                "mcp_auth_fingerprint": "fingerprint-a",
+                "active_skill": "frontend-slides",
+                "active_skill_scope": {"skill_id": "frontend-slides", "tools": []},
+            },
+        )
+    )
+    runtime.workspace_state.context["thread_id"] = "general-assistant:fast:workspace-rotate:user-1:thread"
+    runtime.workspace_state.context["custom_resume_marker"] = "keep-me"
+
+    rotated_runtime = asyncio.run(
+        registry.get_or_create(
+            "fast",
+            "workspace-rotate",
+            initial_context={
+                "user_id": "user-1",
+                "mcp_policy": {"allowIds": [], "denyIds": [], "isAdmin": False},
+                "mcp_auth_fingerprint": "fingerprint-b",
+                "mcp_auth": {"google-workspace": {"Authorization": "Bearer refreshed-token"}},
+            },
+        )
+    )
+
+    assert rotated_runtime is not runtime
+    assert rotated_runtime.workspace_state.context["thread_id"] == "general-assistant:fast:workspace-rotate:user-1:thread"
+    assert rotated_runtime.workspace_state.context["active_skill"] == "frontend-slides"
+    assert rotated_runtime.workspace_state.context["custom_resume_marker"] == "keep-me"
+    assert rotated_runtime.workspace_state.context["mcp_auth_fingerprint"] == "fingerprint-b"
+    assert rotated_runtime.workspace_state.context["mcp_auth"] == {
+        "google-workspace": {"Authorization": "Bearer refreshed-token"}
+    }
+    assert len(created_tools) == 2
 
 
 def test_aws_pricing_wrapper_sanitizes_schema_and_normalizes_inputs():
@@ -282,10 +361,6 @@ def test_agent_registry_builds_runtime_with_wrapped_aws_pricing_candidate(
 ):
     pytest.importorskip("langchain_google_genai")
     settings = _build_settings(tmp_path)
-
-    class ToolFactoryStub:
-        def build_tools(self, _tool_names, _workspace_state):
-            return []
 
     captured = {}
 
