@@ -34,3 +34,4 @@ lightrag-hku[api]
 raganything
 pypdf
 redis
+langfuse>=4.0,<5

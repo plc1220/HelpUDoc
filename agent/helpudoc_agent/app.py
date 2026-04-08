@@ -41,6 +41,7 @@ from .skills_registry import (
 )
 from .paper2slides_runner import run_paper2slides, export_pptx_from_pdf
 from .jwt_utils import decode_and_verify_hs256_jwt
+from .langfuse_callbacks import langfuse_langchain_callbacks
 from langgraph.errors import GraphInterrupt
 from langgraph.types import Command
 
@@ -916,7 +917,8 @@ def create_app() -> FastAPI:
         if manager and hasattr(manager, "reset_session"):
             manager.reset_session()
         payload = await _prepare_turn_payload(runtime, message, fresh_turn=True)
-        config = _build_agent_config(runtime, message)
+        lf = langfuse_langchain_callbacks()
+        config = _build_agent_config(runtime, message, callbacks=lf or None)
         if hasattr(agent, "ainvoke"):
             return await agent.ainvoke({"messages": payload}, config=config)
         return agent.invoke({"messages": payload}, config=config)
@@ -1429,7 +1431,11 @@ def create_app() -> FastAPI:
         async def _agent_runner():
             try:
                 nonlocal saw_interrupt
-                stream_config = _build_agent_config(runtime, message, callbacks=[handler])
+                stream_config = _build_agent_config(
+                    runtime,
+                    message,
+                    callbacks=[handler, *langfuse_langchain_callbacks()],
+                )
                 stream_input: Any = {"messages": payload}
                 if resume_decisions is not None:
                     stream_input = Command(resume={"decisions": resume_decisions})
