@@ -80,7 +80,7 @@ const SlidingFileName: React.FC<{ name: string; colorMode: 'light' | 'dark' }> =
     <span ref={viewportRef} className="block min-w-0 overflow-hidden whitespace-nowrap">
       <span
         ref={textRef}
-        className={`block w-max max-w-full truncate text-sm leading-snug transition-transform duration-500 ease-out group-hover:truncate-none group-focus-within:truncate-none ${
+        className={`block w-max max-w-full truncate text-[13px] leading-snug transition-transform duration-500 ease-out group-hover:truncate-none group-focus-within:truncate-none ${
           colorMode === 'dark' ? 'text-slate-200' : 'text-slate-800'
         }`}
         style={overflowOffset > 0 ? { transform: `translateX(calc(${overflowOffset * -1}px * var(--file-name-slide, 0)))` } : undefined}
@@ -149,7 +149,7 @@ const TreeFileRow: React.FC<{
 
   return (
     <div
-      className={`group relative flex items-start gap-2 rounded-lg px-2 py-2 transition-colors ${rowClassName} ${
+      className={`group relative flex items-start gap-2 rounded-lg px-2 py-1.5 transition-colors ${rowClassName} ${
         isBeingDragged ? 'opacity-40' : ''
       }`}
       draggable={isDraggable}
@@ -278,7 +278,7 @@ const TreeFolderRow: React.FC<{
   return (
     <div className="select-none">
       <div
-        className={`group flex items-center gap-2 rounded-lg px-2 py-2 transition-colors ${containerClassName}`}
+        className={`group flex items-center gap-2 rounded-lg px-2 py-1.5 transition-colors ${containerClassName}`}
         onDragOver={(event) => {
           if (!canAcceptDrop) {
             return;
@@ -309,7 +309,7 @@ const TreeFolderRow: React.FC<{
         <button
           type="button"
           onClick={() => onToggle(node.path)}
-          className={`inline-flex h-7 w-7 items-center justify-center rounded-md transition-colors ${
+          className={`inline-flex h-6 w-6 items-center justify-center rounded-md transition-colors ${
             isDarkMode
               ? 'text-slate-400 hover:bg-slate-700/70 hover:text-slate-100'
               : 'text-slate-500 hover:bg-slate-200 hover:text-slate-800'
@@ -326,7 +326,7 @@ const TreeFolderRow: React.FC<{
           title={node.path || node.name}
         >
           <div className="flex items-center gap-2">
-            <span className={`truncate text-sm font-medium ${isDarkMode ? 'text-slate-200' : 'text-slate-800'}`}>{getFolderLabel(node)}</span>
+            <span className={`truncate text-[13px] font-medium ${isDarkMode ? 'text-slate-200' : 'text-slate-800'}`}>{getFolderLabel(node)}</span>
             <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
               isDarkMode ? 'bg-slate-800 text-slate-400' : 'bg-slate-200 text-slate-600'
             }`}>
