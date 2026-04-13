@@ -247,14 +247,14 @@ export default function ChatMessageList({
       <div
         ref={listRef}
         onScroll={handleScroll}
-        className="h-full overflow-y-auto px-4 py-4 min-h-0"
+        className="h-full overflow-y-auto px-3 py-3 min-h-0"
       >
-        <div className="mx-auto w-full max-w-5xl space-y-4">
+        <div className="mx-auto w-full max-w-[72rem] space-y-3">
           {messages.length === 0 ? (
             <div className={`flex h-full min-h-[40vh] flex-col items-center justify-center text-center ${
               isDarkMode ? 'text-slate-400' : 'text-slate-500'
             }`}>
-              <div className={`rounded-3xl border px-6 py-8 backdrop-blur-sm ${
+              <div className={`rounded-3xl border px-5 py-7 backdrop-blur-sm ${
                 isDarkMode
                   ? 'border-slate-700/70 bg-slate-900/75 shadow-[0_20px_50px_-32px_rgba(15,23,42,0.95)]'
                   : 'border-slate-200/80 bg-white/92 shadow-[0_24px_60px_-40px_rgba(15,23,42,0.16)]'

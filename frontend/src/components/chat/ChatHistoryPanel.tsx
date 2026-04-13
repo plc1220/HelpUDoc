@@ -55,7 +55,7 @@ export default function ChatHistoryPanel({
         />
       )}
       <div
-        className={`absolute inset-y-0 right-0 z-20 flex w-80 max-w-[90%] flex-col border-l shadow-2xl backdrop-blur-md transition-transform duration-200 ${
+        className={`absolute inset-y-0 right-0 z-20 flex w-72 max-w-[90%] flex-col border-l shadow-2xl backdrop-blur-md transition-transform duration-200 ${
           isDarkMode
             ? 'border-slate-700/70 bg-slate-950/92 ring-1 ring-white/5'
             : 'border-slate-200/80 bg-white/92 ring-1 ring-slate-200/60'
@@ -64,7 +64,7 @@ export default function ChatHistoryPanel({
         }`}
         aria-hidden={!isHistoryOpen}
       >
-        <div className={`flex items-center justify-between border-b px-4 py-3 ${
+        <div className={`flex items-center justify-between border-b px-3 py-2.5 ${
           isDarkMode ? 'border-slate-700/70' : 'border-slate-200/80'
         }`}>
           <div>
@@ -86,7 +86,7 @@ export default function ChatHistoryPanel({
             <X size={16} />
           </button>
         </div>
-        <div className="flex-1 space-y-2 overflow-y-auto p-4">
+        <div className="flex-1 space-y-2 overflow-y-auto p-3">
           {conversationHistory.length === 0 ? (
             <div className="flex h-full flex-col items-center justify-center text-center">
               <div className={`rounded-3xl border px-5 py-5 ${
@@ -125,7 +125,7 @@ export default function ChatHistoryPanel({
                       onSelectConversation(conversation.id);
                       onClose();
                     }}
-                    className={`w-full rounded-2xl border p-3 pr-9 text-left transition-all duration-200 ${
+                    className={`w-full rounded-2xl border p-2.5 pr-9 text-left transition-all duration-200 ${
                       isActive
                         ? isDarkMode
                           ? 'border-sky-500/45 bg-sky-500/10 shadow-[0_16px_40px_-28px_rgba(14,165,233,0.55)]'

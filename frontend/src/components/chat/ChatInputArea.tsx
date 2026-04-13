@@ -80,7 +80,7 @@ export default function ChatInputArea({
   const isDarkMode = colorMode === 'dark';
 
   return (
-    <div className={`sticky bottom-0 border-t p-4 backdrop-blur-md ${
+    <div className={`sticky bottom-0 border-t p-3 backdrop-blur-md ${
       isDarkMode ? 'border-slate-700/70 bg-slate-950/45' : 'border-slate-200/80 bg-white/80'
     }`}>
       <div className={`relative rounded-2xl border transition-all duration-200 ${
@@ -89,11 +89,11 @@ export default function ChatInputArea({
           : 'border-slate-200/90 bg-white shadow-[0_24px_60px_-36px_rgba(15,23,42,0.15)] focus-within:border-sky-400/70 focus-within:ring-2 focus-within:ring-sky-200/50'
       }`}>
         {chatAttachments.length > 0 && (
-          <div className="flex flex-wrap gap-2 px-3 pt-3">
+          <div className="flex flex-wrap gap-2 px-3 pt-2.5">
             {chatAttachments.map((file, index) => (
               <div
                 key={`${file.name}-${index}`}
-                className={`group flex items-center gap-2 rounded-lg border px-2 py-1 text-xs font-medium transition-all duration-200 ${
+                className={`group flex items-center gap-2 rounded-lg border px-2 py-1 text-[11px] font-medium transition-all duration-200 ${
                   isDarkMode ? 'border-slate-700/70 bg-slate-950/70 text-slate-200' : 'border-slate-200 bg-slate-50 text-slate-700'
                 }`}
               >
@@ -113,11 +113,11 @@ export default function ChatInputArea({
           </div>
         )}
         {commandTags.length > 0 && (
-          <div className="flex flex-wrap gap-2 px-3 pt-3">
+          <div className="flex flex-wrap gap-2 px-3 pt-2.5">
             {commandTags.map((tag) => (
               <div
                 key={tag.id}
-                className={`group flex items-center gap-2 rounded-full border px-2.5 py-1 text-xs font-medium ${
+                className={`group flex items-center gap-2 rounded-full border px-2.5 py-1 text-[11px] font-medium ${
                   isDarkMode
                     ? 'border-sky-400/25 bg-slate-950/75 text-sky-100'
                     : 'border-sky-200 bg-sky-50 text-sky-700'
@@ -146,28 +146,28 @@ export default function ChatInputArea({
           onKeyDown={onChatInputKeyDown}
           onKeyUp={onChatInputKeyUp}
           onSelect={onChatInputSelectionChange}
-          className={`w-full max-h-60 resize-none bg-transparent px-4 py-3 text-sm leading-relaxed focus:outline-none ${
+          className={`w-full max-h-52 resize-none bg-transparent px-3.5 py-2.5 text-sm leading-relaxed focus:outline-none ${
             isDarkMode ? 'text-slate-100 placeholder:text-slate-500' : 'text-slate-800 placeholder:text-slate-400'
           }`}
           rows={Math.min(5, Math.max(1, chatMessage.split('\n').length))}
-          style={{ minHeight: '56px' }}
+          style={{ minHeight: '50px' }}
         />
-        <div className="flex items-center justify-between px-2 pb-2">
+        <div className="flex items-center justify-between px-2 pb-1.5">
           <div className="flex items-center gap-1">
             <button
               type="button"
               onClick={onChatAttachmentButtonClick}
-              className={`rounded-lg p-2 transition-all duration-200 ${
+              className={`rounded-lg p-1.5 transition-all duration-200 ${
                 isDarkMode ? 'text-slate-400 hover:bg-slate-800 hover:text-slate-100' : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'
               }`}
               title="Attach files"
             >
-              <Plus size={18} />
+              <Plus size={16} />
             </button>
             <button
               type="button"
               onClick={onInsertSlashTrigger}
-              className={`rounded-lg p-2 transition-all duration-200 ${
+              className={`rounded-lg p-1.5 transition-all duration-200 ${
                 isDarkMode ? 'text-slate-400 hover:bg-slate-800 hover:text-slate-100' : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'
               }`}
               title="Commands"
@@ -181,7 +181,7 @@ export default function ChatInputArea({
                 <button
                   type="button"
                   onClick={onOpenPresentationModal}
-                  className={`rounded-lg p-2 transition-all duration-200 ${
+                  className={`rounded-lg p-1.5 transition-all duration-200 ${
                     presentationStatus === 'running'
                       ? isDarkMode
                         ? 'bg-sky-400/12 text-sky-100 ring-1 ring-sky-400/25'
@@ -193,7 +193,7 @@ export default function ChatInputArea({
                   title={`Configure Paper2Slides: ${presentationOptionSummary || 'Options'}`}
                   aria-label="Configure Paper2Slides"
                 >
-                  <MonitorPlay size={18} />
+                  <MonitorPlay size={16} />
                 </button>
               </>
             )}
@@ -205,7 +205,7 @@ export default function ChatInputArea({
             <button
               onClick={isStreaming ? onStopStreaming : onSendMessage}
               disabled={!chatMessage.trim() && !chatAttachments.length && !isStreaming}
-              className={`rounded-xl p-2 transition-all duration-200 ${
+              className={`rounded-xl p-1.5 transition-all duration-200 ${
                 !chatMessage.trim() && !chatAttachments.length && !isStreaming
                   ? isDarkMode
                     ? 'cursor-not-allowed bg-slate-800 text-slate-600'
@@ -218,7 +218,7 @@ export default function ChatInputArea({
               }`}
               title={isStreaming ? 'Stop current agent response' : 'Send message'}
             >
-              {isStreaming ? <StopCircle size={18} /> : <Send size={18} />}
+              {isStreaming ? <StopCircle size={16} /> : <Send size={16} />}
             </button>
           </div>
         </div>
