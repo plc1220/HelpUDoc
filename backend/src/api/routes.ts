@@ -3,6 +3,7 @@ import agentRoutes from './agent';
 import authRoutes from './auth';
 import workspaceRoutes from './workspaces';
 import fileRoutes from './files';
+import attachmentRoutes from './attachments';
 import conversationRoutes from './conversations';
 import settingsRoutes from './settings';
 import knowledgeRoutes from './knowledge';
@@ -18,23 +19,37 @@ import { redisClient } from '../services/redisService';
 import { RagQueueService } from '../services/ragQueueService';
 import { UserOAuthTokenService } from '../services/userOAuthTokenService';
 import { GoogleOAuthService } from '../services/googleOAuthService';
+import { DerivedArtifactService } from '../services/derivedArtifactService';
+import { GoogleDriveService } from '../services/googleDriveService';
+import { AttachmentPrepJobService } from '../services/attachmentPrepJobService';
 
 export default function(dbService: DatabaseService, userService: UserService) {
   const router = Router();
   const ragQueueService = new RagQueueService(redisClient);
   const workspaceService = new WorkspaceService(dbService, ragQueueService);
   const fileService = new FileService(dbService, workspaceService, ragQueueService);
+  const derivedArtifactService = new DerivedArtifactService(dbService, fileService, workspaceService);
+  derivedArtifactService.logDiagnostics();
+  fileService.setDerivedArtifactCleanup(derivedArtifactService);
   const conversationService = new ConversationService(dbService, workspaceService);
   const knowledgeService = new KnowledgeService(dbService, workspaceService);
   const userOAuthTokenService = new UserOAuthTokenService(dbService);
   const googleOAuthService = new GoogleOAuthService(userOAuthTokenService);
+  const googleDriveService = new GoogleDriveService(googleOAuthService, fileService);
+  const attachmentPrepJobService = new AttachmentPrepJobService(
+    workspaceService,
+    googleDriveService,
+    fileService,
+    derivedArtifactService,
+  );
 
   router.use('/auth', authRoutes(userService, googleOAuthService));
   router.use('/agent', agentRoutes(workspaceService, fileService, googleOAuthService, userService));
   router.use('/settings', requireSystemAdmin(userService), settingsRoutes(workspaceService));
   router.use('/users', requireSystemAdmin(userService), usersRoutes(userService, workspaceService));
   router.use('/workspaces', workspaceRoutes(workspaceService, userService));
-  router.use('/workspaces/:workspaceId/files', fileRoutes(fileService));
+  router.use('/workspaces/:workspaceId/attachments', attachmentRoutes(workspaceService, attachmentPrepJobService));
+  router.use('/workspaces/:workspaceId/files', fileRoutes(fileService, workspaceService, googleOAuthService, derivedArtifactService));
   router.use('/workspaces/:workspaceId/knowledge', knowledgeRoutes(knowledgeService));
   router.use('/', conversationRoutes(conversationService));
 

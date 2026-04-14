@@ -88,6 +88,18 @@ export const buildMessageMetadata = (
   if (existingMetadata?.pendingInterrupt) {
     metadata.pendingInterrupt = existingMetadata.pendingInterrupt;
   }
+  if (existingMetadata?.attachmentJobId) {
+    metadata.attachmentJobId = existingMetadata.attachmentJobId;
+  }
+  if (existingMetadata?.attachmentPrepStatus) {
+    metadata.attachmentPrepStatus = existingMetadata.attachmentPrepStatus;
+  }
+  if (existingMetadata?.attachmentPrepError) {
+    metadata.attachmentPrepError = existingMetadata.attachmentPrepError;
+  }
+  if (existingMetadata?.fileContextRefs?.length) {
+    metadata.fileContextRefs = existingMetadata.fileContextRefs;
+  }
   return Object.keys(metadata).length ? metadata : undefined;
 };
 

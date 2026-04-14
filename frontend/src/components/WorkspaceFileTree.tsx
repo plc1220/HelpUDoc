@@ -40,6 +40,15 @@ const getFolderLabel = (node: WorkspaceFileTreeFolderNode) => {
   if (!node.path) {
     return node.name;
   }
+  if (node.path === '.system') {
+    return 'System';
+  }
+  if (node.path === '.system/extracted-assets') {
+    return 'Extracted assets';
+  }
+  if (node.path === '.system/derived-artifacts') {
+    return 'Derived artifacts';
+  }
   return node.name;
 };
 
@@ -126,7 +135,11 @@ const TreeFileRow: React.FC<{
   const isPendingJob = file.mimeType === 'application/vnd.helpudoc.paper2slides-job';
   const ragStatus = getRagStatus(ragStatuses, file);
   const ragState = ragStatus?.status ? String(ragStatus.status).toLowerCase() : '';
+  const understandingState = file.understandingStatus ? String(file.understandingStatus).toLowerCase() : '';
   const isIndexing = !isPendingJob && ['pending', 'processing', 'preprocessed'].includes(ragState);
+  const isUnderstandingPending = !isPendingJob && understandingState === 'pending';
+  const understandingFailed = !isPendingJob && understandingState === 'failed';
+  const understandingPartial = !isPendingJob && understandingState === 'partial';
   const displayName = getFileDisplayName(file.name || '');
   const fileIcon = getFileTypeIcon(file.name || '');
   const isDraft = isDraftWorkspaceFile(file);
@@ -184,16 +197,43 @@ const TreeFileRow: React.FC<{
         }}
         className="flex min-w-0 flex-1 items-start gap-2 text-left"
       >
-        <div className="flex min-w-0 items-center gap-2">
-          {(isPendingJob || isIndexing) && (
-            <span className="inline-flex h-4 w-4 items-center justify-center text-blue-500">
-              <span className="h-2 w-2 animate-pulse rounded-full bg-current" />
+        <div className="flex min-w-0 flex-col gap-1">
+          <div className="flex min-w-0 items-center gap-2">
+            {(isPendingJob || isIndexing || isUnderstandingPending) && (
+              <span className="inline-flex h-4 w-4 items-center justify-center text-blue-500">
+                <span className="h-2 w-2 animate-pulse rounded-full bg-current" />
+              </span>
+            )}
+            {understandingFailed && (
+              <span className="inline-flex h-4 w-4 items-center justify-center text-rose-500">
+                <span className="h-2 w-2 rounded-full bg-current" />
+              </span>
+            )}
+            {understandingPartial && (
+              <span className="inline-flex h-4 w-4 items-center justify-center text-amber-500">
+                <span className="h-2 w-2 rounded-full bg-current" />
+              </span>
+            )}
+            <span className="shrink-0" aria-hidden="true">
+              {fileIcon}
+            </span>
+            <SlidingFileName name={displayName} colorMode={colorMode} />
+          </div>
+          {(isUnderstandingPending || understandingFailed || understandingPartial) && (
+            <span className={`pl-6 text-[11px] leading-none ${
+              understandingFailed
+                ? isDarkMode ? 'text-rose-400' : 'text-rose-600'
+                : understandingPartial
+                  ? isDarkMode ? 'text-amber-400' : 'text-amber-600'
+                  : isDarkMode ? 'text-sky-400' : 'text-sky-600'
+            }`}>
+              {understandingFailed
+                ? (file.understandingError?.trim() || 'Artifact processing failed')
+                : understandingPartial
+                  ? 'Artifact ready with partial extraction'
+                  : 'Processing document artifacts...'}
             </span>
           )}
-          <span className="shrink-0" aria-hidden="true">
-            {fileIcon}
-          </span>
-          <SlidingFileName name={displayName} colorMode={colorMode} />
         </div>
       </button>
       {!isPendingJob && (

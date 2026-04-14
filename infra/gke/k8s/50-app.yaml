@@ -190,8 +190,10 @@ spec:
             - name: AGENT_CONFIG_PATH
               value: /agent/config/runtime.yaml
             - name: RAG_PARSER_PIPELINE
-              value: basic
-            - name: PARSER
+              value: raganything
+            - name: RAGANYTHING_PARSER
+              value: docling
+            - name: PARSER_ENRICHMENT_MODE
               value: docling
             - name: POSTGRES_HOST
               value: postgres

@@ -1,7 +1,7 @@
 import { streamAgentRunWithReconnect, type AgentStreamChunk } from '../../../packages/shared/src/services/agentStream';
 export type { AgentStreamChunk };
 import { API_URL, apiFetch } from './apiClient';
-import type { ConversationMessageMetadata, InterruptAnswersByQuestionId } from '../types';
+import type { ConversationMessageMetadata, FileContextRef, InterruptAnswersByQuestionId } from '../types';
 import type { SkillDefinition } from '../types';
 
 const STREAM_DEBUG_ENABLED =
@@ -43,7 +43,11 @@ export const startAgentRun = async (
   prompt: string,
   history: Array<{ role: string; content: string }> | undefined,
   turnId?: string,
-  options?: AgentStreamOptions,
+  options?: AgentStreamOptions & {
+    taggedFiles?: string[];
+    fileContextRefs?: FileContextRef[];
+    currentTurnFileIds?: number[];
+  },
 ): Promise<AgentRunStartResponse> => {
   const response = await apiFetch(`${API_URL}/agent/runs`, {
     method: 'POST',
@@ -57,6 +61,9 @@ export const startAgentRun = async (
       history,
       forceReset: options?.forceReset,
       turnId,
+      taggedFiles: options?.taggedFiles,
+      fileContextRefs: options?.fileContextRefs,
+      currentTurnFileIds: options?.currentTurnFileIds,
     }),
   });
   if (!response.ok) {
