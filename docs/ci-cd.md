@@ -18,6 +18,8 @@ Each workflow:
 3. Gets cluster credentials and deploys via `kubectl`.
 4. Waits for rollout status.
 
+**Langfuse (ClickHouse + Langfuse):** `deploy-gke.yml` applies all of `infra/gke/k8s/`. The **backend** and **agent** workflows also `kubectl apply` `30-storage.yaml`, `44-clickhouse.yaml`, and `45-langfuse.yaml` before `50-app.yaml` so partial rollouts stay in sync. Ensure `helpudoc-secrets` and `helpudoc-config` include the Langfuse-related keys from `env/prod/*.example` (see [`LANGFUSE_TASKS.md`](../LANGFUSE_TASKS.md)).
+
 ## One Command Deploy (Manual)
 
 Prereqs:
@@ -74,7 +76,7 @@ Run one of these in GitHub Actions:
 
 ## What Gets Persisted (PVCs)
 
-GKE storage is defined in `infra/gke/k8s/30-storage.yaml`.
+GKE storage is defined in `infra/gke/k8s/30-storage.yaml` (includes `clickhouse-pvc` for Langfuse).
 
 Key mounts used by the app:
 - `skills-pvc` mounted at `/app/skills` (backend reads this via `SKILLS_ROOT`).

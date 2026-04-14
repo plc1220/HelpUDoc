@@ -97,7 +97,10 @@ jobs:
           test -n "${GOOGLE_OAUTH_POST_LOGIN_REDIRECT}"
           test -n "${OAUTH_TOKEN_ENCRYPTION_KEY}"
 
+          kubectl -n helpudoc apply -f infra/gke/k8s/30-storage.yaml
           kubectl -n helpudoc apply -f infra/gke/k8s/20-configmap.yaml
+          kubectl -n helpudoc apply -f infra/gke/k8s/44-clickhouse.yaml
+          kubectl -n helpudoc apply -f infra/gke/k8s/45-langfuse.yaml
           kubectl -n helpudoc patch configmap helpudoc-config --type merge -p "$(jq -n \
             --arg auth_mode "hybrid" \
             --arg cid "${GOOGLE_OAUTH_CLIENT_ID}" \

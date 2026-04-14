@@ -156,6 +156,45 @@ steps:
       # Pulling the agent image can exceed the default 5m readiness wait (5GB+ image).
       - '--timeout=15m'
 
+  # 5b. Ensure Postgres database for Langfuse exists, then restart Langfuse so migrations can run.
+  - id: bootstrap-langfuse-db
+    name: 'gcr.io/cloud-builders/kubectl'
+    waitFor: ['deploy']
+    env:
+      - 'CLOUDSDK_COMPUTE_ZONE=$_GKE_LOCATION'
+      - 'CLOUDSDK_CONTAINER_CLUSTER=$_GKE_CLUSTER'
+    entrypoint: 'sh'
+    args:
+      - '-c'
+      - |
+        set -eu
+        PG_POD="$$(kubectl -n helpudoc get pods -l app=helpudoc-postgres -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+        if [ -z "$${PG_POD}" ]; then
+          echo "Postgres pod not found; skipping Langfuse DB bootstrap."
+          exit 0
+        fi
+        POSTGRES_DB="$$(kubectl -n helpudoc get configmap helpudoc-config -o jsonpath='{.data.POSTGRES_DB}')"
+        POSTGRES_USER="$$(kubectl -n helpudoc get configmap helpudoc-config -o jsonpath='{.data.POSTGRES_USER}')"
+        POSTGRES_PASSWORD="$$(kubectl -n helpudoc get secret helpudoc-secrets -o jsonpath='{.data.POSTGRES_PASSWORD}' | base64 --decode)"
+        HAS_LANGFUSE="$$(kubectl -n helpudoc exec -i "$${PG_POD}" -- \
+          env PGPASSWORD="$${POSTGRES_PASSWORD}" psql -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}" \
+          -tAc "SELECT 1 FROM pg_database WHERE datname = 'langfuse'")"
+        HAS_LANGFUSE="$$(echo "$${HAS_LANGFUSE}" | tr -d '[:space:]')"
+        CREATED_LANGFUSE_DB=false
+        if [ "$${HAS_LANGFUSE}" != "1" ]; then
+          kubectl -n helpudoc exec -i "$${PG_POD}" -- \
+            env PGPASSWORD="$${POSTGRES_PASSWORD}" psql -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}" \
+            -v ON_ERROR_STOP=1 -c "CREATE DATABASE langfuse;"
+          CREATED_LANGFUSE_DB=true
+        fi
+        if kubectl -n helpudoc get deploy helpudoc-langfuse-web >/dev/null 2>&1; then
+          if [ "$${CREATED_LANGFUSE_DB}" = "true" ]; then
+            kubectl -n helpudoc rollout restart deployment/helpudoc-langfuse-web deployment/helpudoc-langfuse-worker
+          fi
+          kubectl -n helpudoc rollout status deployment/helpudoc-langfuse-web --timeout=600s
+          kubectl -n helpudoc rollout status deployment/helpudoc-langfuse-worker --timeout=600s
+        fi
+
   # 6. Sync repo skills/ into skills PVC (workspace PVC is intentionally untouched).
   - id: sync-skills-pvc
     name: 'gcr.io/cloud-builders/kubectl'
@@ -229,7 +268,7 @@ steps:
   # 8. Post-deploy drift guard (fails if PVC-backed runtime/skills are stale)
   - id: post-deploy-drift-guard
     name: 'gcr.io/cloud-builders/kubectl'
-    waitFor: ['sync-skills-pvc', 'bootstrap-admin']
+    waitFor: ['sync-skills-pvc', 'bootstrap-admin', 'bootstrap-langfuse-db']
     env:
       - 'CLOUDSDK_COMPUTE_ZONE=$_GKE_LOCATION'
       - 'CLOUDSDK_CONTAINER_CLUSTER=$_GKE_CLUSTER'

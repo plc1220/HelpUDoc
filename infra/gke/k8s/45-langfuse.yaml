@@ -1,0 +1,363 @@
+# Langfuse v3 (web + worker). Requires helpudoc-secrets keys documented in env/prod/secrets.env.example
+# and helpudoc-config LANGFUSE_NEXTAUTH_URL (public URL, e.g. https://langfuse.example.com).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: helpudoc-langfuse-web
+  namespace: helpudoc
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: helpudoc-langfuse-web
+  template:
+    metadata:
+      labels:
+        app: helpudoc-langfuse-web
+    spec:
+      initContainers:
+        - name: wait-deps
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              for i in $(seq 1 90); do
+                if wget -qO- http://clickhouse:8123/ping >/dev/null 2>&1 \
+                  && wget -qO- http://minio:9000/minio/health/live >/dev/null 2>&1; then
+                  exit 0
+                fi
+                sleep 3
+              done
+              exit 1
+      containers:
+        - name: langfuse-web
+          image: langfuse/langfuse:3
+          ports:
+            - containerPort: 3000
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1536Mi"
+          env:
+            - name: HOSTNAME
+              value: "0.0.0.0"
+            - name: PORT
+              value: "3000"
+            - name: NEXTAUTH_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: LANGFUSE_NEXTAUTH_URL
+            - name: NEXTAUTH_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: LANGFUSE_NEXTAUTH_SECRET
+            - name: SALT
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: LANGFUSE_SALT
+            - name: ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: LANGFUSE_ENCRYPTION_KEY
+            - name: TELEMETRY_ENABLED
+              value: "false"
+            - name: POSTGRES_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: POSTGRES_PASSWORD
+            - name: DATABASE_URL
+              value: "postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@postgres:5432/langfuse"
+            - name: CLICKHOUSE_MIGRATION_URL
+              value: clickhouse://clickhouse:9000
+            - name: CLICKHOUSE_URL
+              value: http://clickhouse:8123
+            - name: CLICKHOUSE_USER
+              value: clickhouse
+            - name: CLICKHOUSE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: CLICKHOUSE_PASSWORD
+            - name: CLICKHOUSE_CLUSTER_ENABLED
+              value: "false"
+            - name: REDIS_CONNECTION_STRING
+              value: redis://redis:6379/1
+            - name: LANGFUSE_S3_EVENT_UPLOAD_BUCKET
+              value: langfuse
+            - name: LANGFUSE_S3_EVENT_UPLOAD_REGION
+              value: auto
+            - name: LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: MINIO_ROOT_USER
+            - name: LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: MINIO_ROOT_PASSWORD
+            - name: LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT
+              value: http://minio:9000
+            - name: LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE
+              value: "true"
+            - name: LANGFUSE_S3_EVENT_UPLOAD_PREFIX
+              value: events/
+            - name: LANGFUSE_S3_MEDIA_UPLOAD_BUCKET
+              value: langfuse
+            - name: LANGFUSE_S3_MEDIA_UPLOAD_REGION
+              value: auto
+            - name: LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: MINIO_ROOT_USER
+            - name: LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: MINIO_ROOT_PASSWORD
+            - name: LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT
+              value: http://minio:9000
+            - name: LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE
+              value: "true"
+            - name: LANGFUSE_S3_MEDIA_UPLOAD_PREFIX
+              value: media/
+            - name: LANGFUSE_INIT_ORG_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: LANGFUSE_INIT_ORG_ID
+            - name: LANGFUSE_INIT_ORG_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: LANGFUSE_INIT_ORG_NAME
+            - name: LANGFUSE_INIT_PROJECT_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: LANGFUSE_INIT_PROJECT_ID
+            - name: LANGFUSE_INIT_PROJECT_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: LANGFUSE_INIT_PROJECT_NAME
+            - name: LANGFUSE_INIT_PROJECT_PUBLIC_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: LANGFUSE_PUBLIC_KEY
+            - name: LANGFUSE_INIT_PROJECT_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: LANGFUSE_SECRET_KEY
+            - name: LANGFUSE_INIT_USER_EMAIL
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: LANGFUSE_INIT_USER_EMAIL
+            - name: LANGFUSE_INIT_USER_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: LANGFUSE_INIT_USER_NAME
+            - name: LANGFUSE_INIT_USER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: LANGFUSE_INIT_USER_PASSWORD
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 3000
+            initialDelaySeconds: 45
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 3000
+            initialDelaySeconds: 90
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: helpudoc-langfuse-worker
+  namespace: helpudoc
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: helpudoc-langfuse-worker
+  template:
+    metadata:
+      labels:
+        app: helpudoc-langfuse-worker
+    spec:
+      initContainers:
+        - name: wait-deps
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              for i in $(seq 1 90); do
+                if wget -qO- http://clickhouse:8123/ping >/dev/null 2>&1 \
+                  && wget -qO- http://minio:9000/minio/health/live >/dev/null 2>&1; then
+                  exit 0
+                fi
+                sleep 3
+              done
+              exit 1
+      containers:
+        - name: langfuse-worker
+          image: langfuse/langfuse-worker:3
+          ports:
+            - containerPort: 3030
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1536Mi"
+          env:
+            - name: HOSTNAME
+              value: "0.0.0.0"
+            - name: PORT
+              value: "3030"
+            - name: NEXTAUTH_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: LANGFUSE_NEXTAUTH_URL
+            - name: NEXTAUTH_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: LANGFUSE_NEXTAUTH_SECRET
+            - name: SALT
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: LANGFUSE_SALT
+            - name: ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: LANGFUSE_ENCRYPTION_KEY
+            - name: TELEMETRY_ENABLED
+              value: "false"
+            - name: POSTGRES_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: POSTGRES_PASSWORD
+            - name: DATABASE_URL
+              value: "postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@postgres:5432/langfuse"
+            - name: CLICKHOUSE_MIGRATION_URL
+              value: clickhouse://clickhouse:9000
+            - name: CLICKHOUSE_URL
+              value: http://clickhouse:8123
+            - name: CLICKHOUSE_USER
+              value: clickhouse
+            - name: CLICKHOUSE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: CLICKHOUSE_PASSWORD
+            - name: CLICKHOUSE_CLUSTER_ENABLED
+              value: "false"
+            - name: REDIS_CONNECTION_STRING
+              value: redis://redis:6379/1
+            - name: LANGFUSE_S3_EVENT_UPLOAD_BUCKET
+              value: langfuse
+            - name: LANGFUSE_S3_EVENT_UPLOAD_REGION
+              value: auto
+            - name: LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: MINIO_ROOT_USER
+            - name: LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: MINIO_ROOT_PASSWORD
+            - name: LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT
+              value: http://minio:9000
+            - name: LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE
+              value: "true"
+            - name: LANGFUSE_S3_EVENT_UPLOAD_PREFIX
+              value: events/
+            - name: LANGFUSE_S3_MEDIA_UPLOAD_BUCKET
+              value: langfuse
+            - name: LANGFUSE_S3_MEDIA_UPLOAD_REGION
+              value: auto
+            - name: LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: MINIO_ROOT_USER
+            - name: LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: MINIO_ROOT_PASSWORD
+            - name: LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT
+              value: http://minio:9000
+            - name: LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE
+              value: "true"
+            - name: LANGFUSE_S3_MEDIA_UPLOAD_PREFIX
+              value: media/
+          readinessProbe:
+            tcpSocket:
+              port: 3030
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 3030
+            initialDelaySeconds: 60
+            periodSeconds: 30
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: langfuse-web
+  namespace: helpudoc
+spec:
+  selector:
+    app: helpudoc-langfuse-web
+  ports:
+    - name: http
+      port: 80
+      targetPort: 3000

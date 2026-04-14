@@ -22,3 +22,14 @@ data:
   GOOGLE_OAUTH_POST_LOGIN_REDIRECT: https://lc-demo.com/login
   GOOGLE_OAUTH_SCOPES: openid email profile https://www.googleapis.com/auth/bigquery https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/spreadsheets.readonly
   GOOGLE_WORKSPACE_MCP_URL: ""
+  # In-cluster Langfuse API (agent SDK); Langfuse web listens on Service langfuse-web:80 -> pod 3000.
+  LANGFUSE_BASE_URL: http://langfuse-web
+  LANGFUSE_TRACING_ENABLED: "true"
+  # Public URL browsers use for Langfuse UI (must match Ingress host + TLS). Override per environment.
+  LANGFUSE_NEXTAUTH_URL: https://langfuse.lc-demo.com
+  LANGFUSE_INIT_ORG_ID: helpudoc
+  LANGFUSE_INIT_ORG_NAME: HelpUDoc
+  LANGFUSE_INIT_PROJECT_ID: helpudoc-gke
+  LANGFUSE_INIT_PROJECT_NAME: gke
+  LANGFUSE_INIT_USER_EMAIL: admin@local.com
+  LANGFUSE_INIT_USER_NAME: admin

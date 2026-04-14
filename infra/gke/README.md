@@ -17,6 +17,8 @@ The GKE setup covers the same services as local Compose:
 - PostgreSQL
 - Redis
 - MinIO
+- ClickHouse (for Langfuse v3)
+- Langfuse web + worker (LLM observability)
 - Caddy ingress/proxy components
 
 The backend and agent are intentionally co-located around shared workspace/config volumes to match the current application architecture.
@@ -30,7 +32,9 @@ The backend and agent are intentionally co-located around shared workspace/confi
 | `k8s/40-postgres.yaml` | PostgreSQL workload |
 | `k8s/41-redis.yaml` | Redis workload |
 | `k8s/42-minio.yaml` | MinIO workload |
-| `k8s/43-minio-setup.yaml` | Bucket/bootstrap job |
+| `k8s/43-minio-setup.yaml` | Bucket/bootstrap job (includes `langfuse` bucket) |
+| `k8s/44-clickhouse.yaml` | ClickHouse for Langfuse |
+| `k8s/45-langfuse.yaml` | Langfuse web + worker + `langfuse-web` Service |
 | `k8s/50-app.yaml` | Combined backend + agent application deployment |
 | `k8s/60-frontend.yaml` | Frontend deployment/service |
 | `k8s/70-caddy.yaml` | Caddy proxy deployment/service |
@@ -55,18 +59,19 @@ From the repo root, the most reliable path is:
    cp env/prod/secrets.env.example env/prod/secrets.env
    cp env/prod/config.env.example env/prod/config.env
    ```
-2. Fill in the real values for database passwords, session secrets, OAuth settings, Gemini keys, and storage URLs.
-3. Authenticate to the cluster:
+2. Fill in the real values for database passwords, session secrets, OAuth settings, Gemini keys, storage URLs, and **Langfuse** keys (`CLICKHOUSE_PASSWORD`, `LANGFUSE_*` — see `env/prod/secrets.env.example` and `env/prod/config.env.example`).
+3. Point **`LANGFUSE_NEXTAUTH_URL`** at the public Langfuse origin (must match the Ingress host). The sample Ingress uses `langfuse.lc-demo.com`; add a DNS **A** record for that host to the same load balancer IP as the main app, and include the domain in `ManagedCertificate` (already listed in `k8s/71-ingress.yaml` for the demo hostname).
+4. Authenticate to the cluster:
    ```bash
    gcloud container clusters get-credentials <CLUSTER> --region <REGION> --project <PROJECT_ID>
    ```
-4. Create namespace and config objects:
+5. Create namespace and config objects:
    ```bash
    kubectl apply -f infra/gke/k8s/00-namespace.yaml
    kubectl -n helpudoc create secret generic helpudoc-secrets --from-env-file=env/prod/secrets.env
    kubectl -n helpudoc create configmap helpudoc-config --from-env-file=env/prod/config.env
    ```
-5. Submit the build and deploy pipeline:
+6. Submit the build and deploy pipeline:
    ```bash
    gcloud builds submit . \
      --config=infra/cloudbuild.yaml \
@@ -86,6 +91,8 @@ kubectl apply -f infra/gke/k8s/40-postgres.yaml
 kubectl apply -f infra/gke/k8s/41-redis.yaml
 kubectl apply -f infra/gke/k8s/42-minio.yaml
 kubectl apply -f infra/gke/k8s/43-minio-setup.yaml
+kubectl apply -f infra/gke/k8s/44-clickhouse.yaml
+kubectl apply -f infra/gke/k8s/45-langfuse.yaml
 kubectl apply -f infra/gke/k8s/50-app.yaml
 kubectl apply -f infra/gke/k8s/60-frontend.yaml
 kubectl apply -f infra/gke/k8s/70-caddy.yaml

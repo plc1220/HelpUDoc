@@ -15,7 +15,7 @@ env:
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest
+  runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write
@@ -86,6 +86,9 @@ jobs:
           IMAGE_TAG: ${{ github.sha }}
         run: |
           set -euo pipefail
+          kubectl -n helpudoc apply -f infra/gke/k8s/30-storage.yaml
+          kubectl -n helpudoc apply -f infra/gke/k8s/44-clickhouse.yaml
+          kubectl -n helpudoc apply -f infra/gke/k8s/45-langfuse.yaml
           kubectl -n helpudoc apply -f infra/gke/k8s/50-app.yaml
           kubectl -n helpudoc set image deployment/helpudoc-app agent="gcr.io/${PROJECT_ID}/helpudoc-agent:${IMAGE_TAG}"
           kubectl -n helpudoc rollout status deployment/helpudoc-app --timeout=20m
