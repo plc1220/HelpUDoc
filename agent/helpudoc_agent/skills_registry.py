@@ -260,13 +260,17 @@ def expand_runtime_tool_names(tool_names: Iterable[str]) -> List[str]:
 
 def activate_skill_context(context: dict[str, Any], skill: SkillMetadata) -> None:
     runtime_tools = expand_runtime_tool_names(skill.tools)
+    allowed_mcp_servers = list(skill.mcp_servers)
+    preferred_mcp_server = str(context.get("preferred_mcp_server") or "").strip()
+    if preferred_mcp_server and preferred_mcp_server not in allowed_mcp_servers:
+        allowed_mcp_servers.append(preferred_mcp_server)
     context["active_skill"] = skill.skill_id
     context["active_skill_scope"] = {
         "skill_id": skill.skill_id,
         "name": skill.name,
         "tools": runtime_tools,
         "declared_tools": list(skill.tools),
-        "mcp_servers": list(skill.mcp_servers),
+        "mcp_servers": allowed_mcp_servers,
     }
     context["active_skill_policy"] = {
         "requires_hitl_plan": skill.policy.requires_hitl_plan,
@@ -409,6 +413,7 @@ def is_tool_allowed(
 
 def get_candidate_mcp_servers(
     active_skill: SkillMetadata | dict[str, Any] | None,
+    preferred_server: str | None = None,
 ) -> List[str]:
     """Return MCP servers eligible for binding for the active skill.
 
@@ -416,10 +421,14 @@ def get_candidate_mcp_servers(
     MCP servers for explicitly approved skills to keep Gemini-facing schemas
     small and reduce whole-run failures from incompatible MCP tool definitions.
     """
+    candidates: List[str] = []
     resolved_skill = _coerce_active_skill_scope(active_skill)
-    if resolved_skill is None:
-        return []
-    return list(SKILL_MCP_SERVER_ELIGIBILITY.get(resolved_skill.skill_id, ()))
+    if resolved_skill is not None:
+        candidates.extend(SKILL_MCP_SERVER_ELIGIBILITY.get(resolved_skill.skill_id, ()))
+    normalized_preferred = str(preferred_server or "").strip()
+    if normalized_preferred and normalized_preferred not in candidates:
+        candidates.append(normalized_preferred)
+    return candidates
 
 
 def sync_skills_to_workspace(skills_root: Path, workspace_root: Path) -> None:
