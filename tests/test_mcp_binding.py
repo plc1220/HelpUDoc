@@ -21,13 +21,18 @@ if str(AGENT_DIR) not in sys.path:
 from langchain_core.tools import StructuredTool, tool  # noqa: E402
 
 from helpudoc_agent.configuration import Settings  # noqa: E402
-from helpudoc_agent.graph import AgentRegistry  # noqa: E402
+from helpudoc_agent.graph import AgentRegistry, _clone_preservable_context  # noqa: E402
 from helpudoc_agent.mcp_manager import (  # noqa: E402
     MCPServerManager,
     _preflight_gemini_tools,
     _wrap_tool_for_gemini,
 )
-from helpudoc_agent.skills_registry import get_candidate_mcp_servers  # noqa: E402
+from helpudoc_agent.skills_registry import (  # noqa: E402
+    SkillMetadata,
+    SkillPolicy,
+    activate_skill_context,
+    get_candidate_mcp_servers,
+)
 from helpudoc_agent.state import WorkspaceState  # noqa: E402
 
 
@@ -108,6 +113,11 @@ def _build_settings(tmp_path: Path) -> Settings:
                 "transport": "http",
                 "url": "https://knowledge.example.com/mcp",
             },
+            "google-workspace": {
+                "name": "google-workspace",
+                "transport": "http",
+                "url": "https://workspace.example.com/mcp",
+            },
         },
     }
     try:
@@ -119,6 +129,11 @@ def _build_settings(tmp_path: Path) -> Settings:
 class ToolFactoryStub:
     def build_tools(self, _tool_names, _workspace_state):
         return []
+
+
+class UncopyableHandle:
+    def __deepcopy__(self, memo):
+        raise TypeError("cannot pickle '_duckdb.DuckDBPyConnection' object")
 
 
 def test_preflight_handles_live_like_pricing_union_schema():
@@ -174,6 +189,7 @@ def test_registry_preserves_runtime_context_when_auth_fingerprint_rotates(tmp_pa
     )
     runtime.workspace_state.context["thread_id"] = "general-assistant:fast:workspace-rotate:user-1:thread"
     runtime.workspace_state.context["custom_resume_marker"] = "keep-me"
+    runtime.workspace_state.context["data_agent_manager"] = UncopyableHandle()
 
     rotated_runtime = asyncio.run(
         registry.get_or_create(
@@ -192,11 +208,26 @@ def test_registry_preserves_runtime_context_when_auth_fingerprint_rotates(tmp_pa
     assert rotated_runtime.workspace_state.context["thread_id"] == "general-assistant:fast:workspace-rotate:user-1:thread"
     assert rotated_runtime.workspace_state.context["active_skill"] == "frontend-slides"
     assert rotated_runtime.workspace_state.context["custom_resume_marker"] == "keep-me"
+    assert "data_agent_manager" not in rotated_runtime.workspace_state.context
     assert rotated_runtime.workspace_state.context["mcp_auth_fingerprint"] == "fingerprint-b"
     assert rotated_runtime.workspace_state.context["mcp_auth"] == {
         "google-workspace": {"Authorization": "Bearer refreshed-token"}
     }
     assert len(created_tools) == 2
+
+
+def test_clone_preservable_context_skips_uncopyable_handles():
+    cloned = _clone_preservable_context(
+        {
+            "thread_id": "thread-123",
+            "tagged_files": ["spec.docx"],
+            "data_agent_manager": UncopyableHandle(),
+        }
+    )
+
+    assert cloned["thread_id"] == "thread-123"
+    assert cloned["tagged_files"] == ["spec.docx"]
+    assert "data_agent_manager" not in cloned
 
 
 def test_aws_pricing_wrapper_sanitizes_schema_and_normalizes_inputs():
@@ -301,15 +332,41 @@ def test_preflight_accepts_simple_gemini_safe_tool():
 
 def test_candidate_servers_only_for_general_and_proposal_skills():
     assert get_candidate_mcp_servers(None) == []
+    assert get_candidate_mcp_servers(None, preferred_server="google-workspace") == ["google-workspace"]
     assert get_candidate_mcp_servers({"skill_id": "research", "tools": [], "mcp_servers": []}) == []
     assert get_candidate_mcp_servers({"skill_id": "general", "tools": [], "mcp_servers": []}) == [
         "aws-pricing",
         "aws-knowledge",
     ]
+    assert get_candidate_mcp_servers(
+        {"skill_id": "general", "tools": [], "mcp_servers": []},
+        preferred_server="google-workspace",
+    ) == [
+        "aws-pricing",
+        "aws-knowledge",
+        "google-workspace",
+    ]
     assert get_candidate_mcp_servers({"skill_id": "proposal-writing", "tools": [], "mcp_servers": []}) == [
         "aws-pricing",
         "aws-knowledge",
     ]
+
+
+def test_activate_skill_context_inherits_preferred_mcp_server():
+    context = {"preferred_mcp_server": "google-workspace"}
+    skill = SkillMetadata(
+        skill_id="research",
+        name="research",
+        description=None,
+        tools=[],
+        mcp_servers=[],
+        policy=SkillPolicy(),
+        path=Path("/tmp/research/SKILL.md"),
+    )
+
+    activate_skill_context(context, skill)
+
+    assert context["active_skill_scope"]["mcp_servers"] == ["google-workspace"]
 
 
 def test_manager_accepts_wrapped_aws_pricing_and_compatible_server(
@@ -423,3 +480,60 @@ def test_agent_registry_builds_runtime_with_wrapped_aws_pricing_candidate(
 
     assert runtime is not None
     assert captured["tool_names"] == ["get_pricing", "aws___search_documentation"]
+
+
+def test_agent_registry_rebuilds_runtime_when_preferred_mcp_server_changes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    settings = _build_settings(tmp_path)
+    initialize_calls: list[list[str]] = []
+
+    class DummyAgent:
+        def __init__(self, tools):
+            self.tools = tools
+
+        def with_config(self, _config):
+            return self
+
+    def fake_create_agent(*, model, tools, system_prompt, middleware, checkpointer):
+        return DummyAgent(tools)
+
+    async def fake_initialize(self, *, candidate_server_names=None, preflight_gemini=False):
+        initialize_calls.append(list(candidate_server_names or []))
+        self._allowed_servers = {}
+        self._tools_by_server = {}
+        self._clients_by_server = {}
+        self._rejected_servers = {}
+
+    monkeypatch.setattr("helpudoc_agent.graph.create_agent", fake_create_agent)
+    monkeypatch.setattr("helpudoc_agent.graph.init_chat_model", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.graph.FilesystemBackend", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.graph.TodoListMiddleware", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.graph.FilesystemMiddleware", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.graph.SummarizationMiddleware", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.graph.PatchToolCallsMiddleware", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.graph.HumanInTheLoopMiddleware", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.mcp_manager.MCPServerManager.initialize", fake_initialize)
+
+    registry = AgentRegistry(settings, ToolFactoryStub())
+
+    runtime = asyncio.run(
+        registry.get_or_create(
+            "fast",
+            "workspace-pref",
+            initial_context={},
+        )
+    )
+    rebound_runtime = asyncio.run(
+        registry.get_or_create(
+            "fast",
+            "workspace-pref",
+            initial_context={"preferred_mcp_server": "google-workspace"},
+        )
+    )
+
+    assert runtime is not rebound_runtime
+    assert initialize_calls == [[], ["google-workspace"]]
+    assert rebound_runtime.workspace_state.context["preferred_mcp_server"] == "google-workspace"
+    assert rebound_runtime.workspace_state.context["_bound_mcp_candidates"] == ["google-workspace"]

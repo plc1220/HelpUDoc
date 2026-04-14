@@ -56,6 +56,32 @@ GENERAL_SYSTEM_PROMPT = (
 BASE_AGENT_PROMPT = "In order to complete the objective that the user asks of you, you have access to a number of standard tools."
 
 
+def _normalize_mcp_candidate_servers(server_names: Any) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw_name in server_names or []:
+        name = str(raw_name or "").strip()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        normalized.append(name)
+    return normalized
+
+
+def _clone_preservable_context(context: Dict[str, Any] | None) -> Dict[str, Any]:
+    cloned: Dict[str, Any] = {}
+    for key, value in (context or {}).items():
+        try:
+            cloned[key] = deepcopy(value)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.info(
+                "Skipping non-copyable workspace context key during runtime reuse: %s (%s)",
+                key,
+                exc,
+            )
+    return cloned
+
+
 class AgentRegistry:
     """Caches DeepAgents keyed by (agent_name, workspace_id)."""
 
@@ -120,12 +146,28 @@ class AgentRegistry:
         user_key = str(context_payload.get("user_id") or "")
         cache_scope_prefix = f"{user_key}:{policy_key}:"
         key = (resolved_name, workspace_id, f"{user_key}:{policy_key}:{mcp_auth_fingerprint}")
+        preserved_context: Dict[str, Any] = {}
         if key in self._cache:
             runtime = self._cache[key]
+            prospective_context = _clone_preservable_context(runtime.workspace_state.context)
             if context_payload:
-                runtime.workspace_state.context.update(context_payload)
-            return runtime
-        preserved_context: Dict[str, Any] = {}
+                prospective_context.update(context_payload)
+            desired_candidates = _normalize_mcp_candidate_servers(
+                get_candidate_mcp_servers(
+                    prospective_context.get("active_skill_scope"),
+                    preferred_server=prospective_context.get("preferred_mcp_server"),
+                )
+            )
+            bound_candidates = _normalize_mcp_candidate_servers(
+                runtime.workspace_state.context.get("_bound_mcp_candidates") or []
+            )
+            if desired_candidates == bound_candidates:
+                if context_payload:
+                    runtime.workspace_state.context.update(context_payload)
+                return runtime
+            preserved_context = prospective_context
+            self._cache.pop(key, None)
+
         # Prevent unbounded growth when delegated auth fingerprints rotate over time.
         stale_keys = [
             cache_key
@@ -137,9 +179,9 @@ class AgentRegistry:
         ]
         for stale_key in stale_keys:
             stale_runtime = self._cache.pop(stale_key, None)
-            if stale_runtime is not None:
+            if stale_runtime is not None and not preserved_context:
                 # Preserve in-flight thread/skill state when delegated auth refreshes.
-                preserved_context = deepcopy(stale_runtime.workspace_state.context)
+                preserved_context = _clone_preservable_context(stale_runtime.workspace_state.context)
 
         workspace_base = self.settings.backend.workspace_root
         workspace_base.mkdir(parents=True, exist_ok=True)
@@ -177,17 +219,23 @@ class AgentRegistry:
         ]
 
         active_skill = workspace_state.context.get("active_skill_scope")
-        candidate_mcp_servers = get_candidate_mcp_servers(active_skill)
+        preferred_mcp_server = workspace_state.context.get("preferred_mcp_server")
+        candidate_mcp_servers = get_candidate_mcp_servers(
+            active_skill,
+            preferred_server=str(preferred_mcp_server or "").strip() or None,
+        )
         mcp_manager = MCPServerManager(self.settings, workspace_state)
         logger.info(
-            "MCP bind candidates resolved (workspace=%s allowed_by_skill=%s)",
+            "MCP bind candidates resolved (workspace=%s allowed_by_skill=%s preferred=%s)",
             workspace_id,
             candidate_mcp_servers,
+            preferred_mcp_server,
         )
         await mcp_manager.initialize(
             candidate_server_names=candidate_mcp_servers,
             preflight_gemini=self.settings.model.provider == "gemini",
         )
+        workspace_state.context["_bound_mcp_candidates"] = list(candidate_mcp_servers)
         mcp_tools = []
         for server_name, server_tools in mcp_manager.get_tools_by_server().items():
             for tool in server_tools:

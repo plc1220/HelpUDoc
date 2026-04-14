@@ -11,7 +11,6 @@ import logging
 import os
 import re
 import hashlib
-import sys
 from datetime import datetime, timezone
 from dataclasses import dataclass
 from pathlib import Path
@@ -42,7 +41,7 @@ except Exception:  # pragma: no cover - optional dependency for some test enviro
 
 logger = logging.getLogger(__name__)
 
-RAG_INDEXABLE_SUFFIXES = {".pdf", ".doc", ".docx", ".md"}
+RAG_INDEXABLE_SUFFIXES = {".pdf", ".doc", ".docx", ".ppt", ".pptx", ".md", ".html", ".htm"}
 
 
 def _env(name: str, default: str | None = None) -> str | None:
@@ -103,7 +102,7 @@ class RagConfig:
         offline = offline_env in {"1", "true", "yes", "y", "on"} or not api_key
         pipeline = (_env("RAG_PARSER_PIPELINE", "raganything") or "raganything").strip().lower()
         use_raganything = pipeline in {"raganything", "rag_anything", "rag-everything", "rageverything"}
-        raganything_parser = (_env("RAGANYTHING_PARSER", "mineru") or "mineru").strip().lower()
+        raganything_parser = (_env("RAGANYTHING_PARSER", "docling") or "docling").strip().lower()
         raganything_parse_method = (_env("RAGANYTHING_PARSE_METHOD", "auto") or "auto").strip().lower()
         raganything_output_dir = Path(
             _env("RAGANYTHING_OUTPUT_DIR", str(workspace_root / ".raganything_output")) or str(workspace_root / ".raganything_output")
@@ -248,6 +247,57 @@ def _read_text(path: Path, max_chars: int) -> str:
     return text
 
 
+def _read_docling_markdown(output_dir: Path, stem: str) -> str:
+    markdown_path = output_dir / stem / "docling" / f"{stem}.md"
+    if not markdown_path.exists():
+        return ""
+    return markdown_path.read_text(encoding="utf-8", errors="replace").strip()
+
+
+def _multimodal_items_to_text(multimodal_items: list[dict[str, Any]]) -> str:
+    lines: list[str] = []
+    for item in multimodal_items:
+        item_type = str(item.get("type") or "").strip().lower()
+        if item_type == "image":
+            caption = str(item.get("image_caption") or "").strip()
+            footnote = str(item.get("image_footnote") or "").strip()
+            parts = [part for part in [caption, footnote] if part]
+            if parts:
+                lines.append(f"[Image] {' | '.join(parts)}")
+        elif item_type == "table":
+            caption = str(item.get("table_caption") or "").strip()
+            footnote = str(item.get("table_footnote") or "").strip()
+            body = item.get("table_body")
+            parts = [part for part in [caption, footnote] if part]
+            if parts:
+                lines.append(f"[Table] {' | '.join(parts)}")
+            if isinstance(body, list) and body:
+                preview_rows: list[str] = []
+                for row in body[:3]:
+                    if isinstance(row, dict):
+                        values = [
+                            str(value).strip()
+                            for value in row.values()
+                            if str(value).strip()
+                        ]
+                        if values:
+                            preview_rows.append(" | ".join(values))
+                    elif isinstance(row, list):
+                        values = [str(value).strip() for value in row if str(value).strip()]
+                        if values:
+                            preview_rows.append(" | ".join(values))
+                    else:
+                        row_text = str(row).strip()
+                        if row_text:
+                            preview_rows.append(row_text)
+                lines.extend(preview_rows)
+        elif item_type == "equation":
+            equation_text = str(item.get("text") or "").strip()
+            if equation_text:
+                lines.append(f"[Equation] {equation_text}")
+    return "\n".join(lines).strip()
+
+
 class WorkspaceRagStore:
     """Caches a LightRAG instance per workspace id."""
 
@@ -362,41 +412,21 @@ class WorkspaceRagStore:
         file_path: Path,
     ) -> str:
         try:
-            from raganything import RAGAnything, RAGAnythingConfig  # type: ignore
-            from raganything.utils import separate_content  # type: ignore
+            from paper2slides.raganything.parser import DoclingParser  # type: ignore
+            from paper2slides.raganything.utils import separate_content  # type: ignore
         except Exception as exc:  # pragma: no cover
-            raise RuntimeError("RAGAnything is not installed") from exc
+            raise RuntimeError("Vendored docling parser is not available") from exc
+
+        if self.config.raganything_parser != "docling":
+            raise RuntimeError(
+                f"Unsupported global parser '{self.config.raganything_parser}'. Only 'docling' is supported."
+            )
 
         doc_id = compute_mdhash_id(f"{workspace_id}:{relative_path}", prefix="doc-")
         rag = await self._get_rag(workspace_id)
 
         output_dir = self.config.raganything_output_dir / workspace_id
         output_dir.mkdir(parents=True, exist_ok=True)
-
-        config = RAGAnythingConfig(
-            working_dir=str(self.config.working_dir),
-            parser=self.config.raganything_parser,
-            parse_method=self.config.raganything_parse_method,
-            parser_output_dir=str(output_dir),
-            enable_image_processing=self.config.raganything_enable_image_processing,
-            enable_table_processing=self.config.raganything_enable_table_processing,
-            enable_equation_processing=self.config.raganything_enable_equation_processing,
-        )
-
-        rag_any = RAGAnything(
-            config=config,
-            lightrag=rag,
-            llm_model_func=_build_llm_func(self.config),
-        )
-
-        venv_bin = Path(sys.executable).parent
-        current_path = os.environ.get("PATH", "")
-        if str(venv_bin) not in current_path.split(os.pathsep):
-            os.environ["PATH"] = f"{venv_bin}{os.pathsep}{current_path}"
-
-        init_result = await rag_any._ensure_lightrag_initialized()
-        if isinstance(init_result, dict) and not init_result.get("success", True):
-            raise RuntimeError(init_result.get("error") or "RAGAnything initialization failed")
 
         def _build_status_payload(existing: Dict[str, Any] | None, status: DocStatus) -> Dict[str, Any]:
             now_iso = datetime.now(timezone.utc).isoformat()
@@ -424,47 +454,55 @@ class WorkspaceRagStore:
                 }
             }
         )
+        try:
+            parser = DoclingParser()
 
-        await rag_any.process_document_complete(
-            file_path=str(file_path),
-            output_dir=str(output_dir),
-            parse_method=self.config.raganything_parse_method,
-            doc_id=doc_id,
-        )
+            def _parse_document() -> tuple[list[dict[str, Any]], str]:
+                content_list = parser.parse_document(
+                    file_path,
+                    method=self.config.raganything_parse_method,
+                    output_dir=str(output_dir),
+                )
+                markdown = _read_docling_markdown(output_dir, file_path.stem)
+                return content_list, markdown
 
-        status = await rag.doc_status.get_by_id(doc_id)
-        chunks = status.get("chunks_list") if isinstance(status, dict) else None
-        if not chunks:
-            content_list, _content_doc_id = await rag_any.parse_document(
-                str(file_path),
-                str(output_dir),
-                self.config.raganything_parse_method,
-                config.display_content_stats,
-            )
-            text_content, _multimodal_items = separate_content(content_list)
-            text_content = text_content.strip()
-            if text_content:
-                text_content = f"SOURCE: /{relative_path.lstrip('/')}\n\n{text_content}"
-            else:
-                text_content = f"SOURCE: /{relative_path.lstrip('/')}\n\n[No extractable text found.]"
-            logger.info("LightRAG did not persist chunks; inserting text-only content.")
+            content_list, markdown = await asyncio.to_thread(_parse_document)
+            text_content, multimodal_items = separate_content(content_list)
+            combined_text = markdown.strip() or text_content.strip()
+            if not combined_text:
+                combined_text = _multimodal_items_to_text(multimodal_items)
+            if not combined_text:
+                combined_text = "[No extractable text found.]"
+
+            payload = f"SOURCE: /{relative_path.lstrip('/')}\n\n{combined_text}"
             await rag.ainsert(
-                input=text_content,
+                input=payload,
                 ids=doc_id,
                 file_paths="/" + relative_path.lstrip("/"),
             )
 
-        refreshed_status = await rag.doc_status.get_by_id(doc_id)
-        await rag.doc_status.upsert(
-            {
-                doc_id: {
-                    **_build_status_payload(refreshed_status, DocStatus.PROCESSED),
-                    "file_path": "/" + relative_path.lstrip("/"),
+            refreshed_status = await rag.doc_status.get_by_id(doc_id)
+            await rag.doc_status.upsert(
+                {
+                    doc_id: {
+                        **_build_status_payload(refreshed_status, DocStatus.PROCESSED),
+                        "file_path": "/" + relative_path.lstrip("/"),
+                    }
                 }
-            }
-        )
-
-        return doc_id
+            )
+            return doc_id
+        except Exception as exc:
+            refreshed_status = await rag.doc_status.get_by_id(doc_id)
+            await rag.doc_status.upsert(
+                {
+                    doc_id: {
+                        **_build_status_payload(refreshed_status, DocStatus.FAILED),
+                        "file_path": "/" + relative_path.lstrip("/"),
+                        "error_msg": str(exc),
+                    }
+                }
+            )
+            raise
 
     async def query(
         self,
