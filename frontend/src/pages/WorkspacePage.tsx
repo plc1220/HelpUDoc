@@ -67,6 +67,7 @@ import type {
   SkillDefinition,
 } from '../types';
 import CollapsibleDrawer from '../components/CollapsibleDrawer';
+import WorkspaceShareDialog from '../components/WorkspaceShareDialog';
 import type { UIBlock } from '../components/UIBlockRenderer';
 import ExpandableSidebar from '../components/ExpandableSidebar';
 import WorkspaceFileTree from '../components/WorkspaceFileTree';
@@ -490,6 +491,7 @@ export default function WorkspacePage() {
   const [chatMessage, setChatMessage] = useState('');
   const [chatAttachments, setChatAttachments] = useState<ChatComposerAttachment[]>([]);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [shareWorkspace, setShareWorkspace] = useState<Workspace | null>(null);
   const personas = DEFAULT_PERSONAS;
   const [selectedPersona, setSelectedPersona] = useState(DEFAULT_PERSONA_NAME);
   const [isEditMode, setIsEditMode] = useState(false);
@@ -5670,6 +5672,10 @@ export default function WorkspacePage() {
     }
   };
 
+  const handleShareWorkspace = useCallback((ws: Workspace) => {
+    setShareWorkspace(ws);
+  }, []);
+
   const handleUpdateFile = useCallback(async (targetFile: WorkspaceFile | null, content: string) => {
     if (!selectedWorkspace || !targetFile) return;
 
@@ -5905,6 +5911,7 @@ export default function WorkspacePage() {
           setWorkspaceSearchQuery={setWorkspaceSearchQuery}
           handleCreateWorkspace={handleCreateWorkspace}
           handleDeleteWorkspace={handleDeleteWorkspace}
+          onShareWorkspace={handleShareWorkspace}
           onSelectWorkspace={handleSelectWorkspace}
           onOpenSettings={handleOpenAgentSettings}
           colorMode={colorMode}
@@ -6415,6 +6422,11 @@ export default function WorkspacePage() {
         colorMode={colorMode}
         onClose={() => setIsDrivePickerOpen(false)}
         onConfirm={handleDrivePickerConfirm}
+      />
+      <WorkspaceShareDialog
+        open={shareWorkspace !== null}
+        workspace={shareWorkspace}
+        onClose={() => setShareWorkspace(null)}
       />
     </ThemeProvider>
   );

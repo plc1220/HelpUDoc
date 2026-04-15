@@ -28,6 +28,12 @@ export interface EffectivePromptAccess extends GroupPromptAccess {
   isAdmin: boolean;
 }
 
+export interface DirectoryUser {
+  id: string;
+  displayName: string;
+  email: string | null;
+}
+
 export interface UserDeletionImpact {
   user: Pick<UserRecord, 'id' | 'displayName' | 'email' | 'externalId' | 'isAdmin'>;
   ownedWorkspaces: Array<{ id: string; name: string }>;
@@ -119,6 +125,40 @@ export class UserService {
   async getUserById(userId: string): Promise<UserRecord | null> {
     const user = await this.db<UserRecord>('users').where({ id: userId }).first();
     return user || null;
+  }
+
+  /**
+   * Prefix search for workspace sharing picker. Requires at least two non-space characters.
+   */
+  async searchUsersForDirectory(
+    query: string,
+    options: { limit: number; excludeUserId?: string },
+  ): Promise<DirectoryUser[]> {
+    const trimmed = query.trim();
+    if (trimmed.length < 2) {
+      return [];
+    }
+    const limit = Math.min(Math.max(options.limit, 1), 50);
+    const pattern = `%${trimmed.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_')}%`;
+
+    let builder = this.db<UserRecord>('users')
+      .select('id', 'displayName', 'email')
+      .where((qb) => {
+        qb.where('displayName', 'ilike', pattern).orWhere('email', 'ilike', pattern);
+      })
+      .orderBy('displayName', 'asc')
+      .limit(limit);
+
+    if (options.excludeUserId) {
+      builder = builder.andWhere('id', '!=', options.excludeUserId);
+    }
+
+    const rows = await builder;
+    return (rows as UserRecord[]).map((row) => ({
+      id: row.id,
+      displayName: row.displayName,
+      email: row.email ?? null,
+    }));
   }
 
   async setUserAdmin(userId: string, isAdmin: boolean): Promise<UserRecord | null> {

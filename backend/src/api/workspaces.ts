@@ -12,11 +12,21 @@ const renameWorkspaceSchema = z.object({
   name: z.string().trim().min(1).max(255),
 });
 
-const collaboratorSchema = z.object({
-  externalUserId: z.string().min(1),
-  displayName: z.string().min(1).optional(),
-  role: z.enum(['editor', 'viewer']),
-});
+const collaboratorSchema = z
+  .object({
+    userId: z.string().uuid().optional(),
+    externalUserId: z.string().min(1).optional(),
+    displayName: z.string().min(1).optional(),
+    role: z.enum(['editor', 'viewer']),
+  })
+  .superRefine((data, ctx) => {
+    if (data.userId && data.externalUserId) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Provide either userId or externalUserId, not both' });
+    }
+    if (!data.userId && !data.externalUserId) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Provide userId or externalUserId' });
+    }
+  });
 
 const workspaceSettingsSchema = z.object({
   skipPlanApprovals: z.boolean(),
@@ -61,6 +71,24 @@ export default function workspaceRoutes(workspaceService: WorkspaceService, user
         return res.status(400).json({ error: 'Invalid input' });
       }
       handleError(res, error, 'Failed to create workspace');
+    }
+  });
+
+  router.get('/user-directory', async (req, res) => {
+    try {
+      const user = requireUserContext(req);
+      const q = typeof req.query.q === 'string' ? req.query.q : '';
+      const limitRaw = typeof req.query.limit === 'string' ? Number.parseInt(req.query.limit, 10) : 20;
+      const limit = Number.isFinite(limitRaw) ? limitRaw : 20;
+      const excludeSelf =
+        req.query.excludeSelf === '1' || req.query.excludeSelf === 'true' || req.query.excludeSelf === 'yes';
+      const users = await userService.searchUsersForDirectory(q, {
+        limit,
+        excludeUserId: excludeSelf ? user.userId : undefined,
+      });
+      res.json({ users });
+    } catch (error) {
+      handleError(res, error, 'Failed to search users');
     }
   });
 
@@ -136,17 +164,45 @@ export default function workspaceRoutes(workspaceService: WorkspaceService, user
     try {
       const user = requireUserContext(req);
       const payload = collaboratorSchema.parse(req.body);
-      const collaborator = await userService.ensureUser({
-        externalId: payload.externalUserId,
-        displayName: payload.displayName || payload.externalUserId,
-      });
-      await workspaceService.addCollaborator(req.params.workspaceId, user.userId, collaborator.id, payload.role);
+      if (payload.userId) {
+        if (payload.userId === user.userId) {
+          throw new HttpError(400, 'Cannot invite yourself');
+        }
+        const target = await userService.getUserById(payload.userId);
+        if (!target) {
+          throw new HttpError(404, 'User not found');
+        }
+        await workspaceService.addCollaborator(req.params.workspaceId, user.userId, target.id, payload.role);
+      } else if (payload.externalUserId) {
+        const collaborator = await userService.ensureUser({
+          externalId: payload.externalUserId,
+          displayName: payload.displayName || payload.externalUserId,
+        });
+        if (collaborator.id === user.userId) {
+          throw new HttpError(400, 'Cannot invite yourself');
+        }
+        await workspaceService.addCollaborator(req.params.workspaceId, user.userId, collaborator.id, payload.role);
+      }
       res.status(204).send();
     } catch (error) {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ error: 'Invalid collaborator payload' });
       }
       handleError(res, error, 'Failed to add collaborator');
+    }
+  });
+
+  router.delete('/:workspaceId/collaborators/:targetUserId', async (req, res) => {
+    try {
+      const user = requireUserContext(req);
+      await workspaceService.removeCollaborator(
+        req.params.workspaceId,
+        user.userId,
+        req.params.targetUserId,
+      );
+      res.status(204).send();
+    } catch (error) {
+      handleError(res, error, 'Failed to remove collaborator');
     }
   });
 
