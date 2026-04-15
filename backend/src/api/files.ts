@@ -4,10 +4,20 @@ import multer from 'multer';
 import { FileService } from '../services/fileService';
 import { fetchRagStatuses } from '../services/agentService';
 import { HttpError } from '../errors';
+import { WorkspaceService } from '../services/workspaceService';
+import { GoogleOAuthService, GoogleOAuthTokenMissingError } from '../services/googleOAuthService';
+import { GoogleDriveService } from '../services/googleDriveService';
+import { DerivedArtifactService } from '../services/derivedArtifactService';
 
-export default function(fileService: FileService) {
+export default function(
+  fileService: FileService,
+  workspaceService: WorkspaceService,
+  googleOAuthService: GoogleOAuthService,
+  derivedArtifactService: DerivedArtifactService,
+) {
   const router = Router({ mergeParams: true });
   const upload = multer({ storage: multer.memoryStorage() });
+  const googleDriveService = new GoogleDriveService(googleOAuthService, fileService);
 
   const updateFileSchema = z.object({
     content: z.string(),
@@ -36,6 +46,20 @@ export default function(fileService: FileService) {
     path: z.string().min(1),
   });
 
+  const googleDriveSearchSchema = z.object({
+    query: z.string().optional(),
+    scope: z.enum(['recent', 'my-drive', 'shared']).optional(),
+    pageToken: z.string().optional(),
+  });
+
+  const googleDriveImportSchema = z.object({
+    fileIds: z.array(z.string().min(1)).min(1).max(20),
+  });
+
+  const fileContextSchema = z.object({
+    fileIds: z.array(z.number().int().positive()).min(1).max(20),
+  });
+
   const requireUserContext = (req: Request) => {
     if (!req.userContext) {
       throw new HttpError(401, 'Missing user context');
@@ -44,6 +68,9 @@ export default function(fileService: FileService) {
   };
 
   const handleError = (res: Response, error: unknown, fallbackMessage: string) => {
+    if (error instanceof GoogleOAuthTokenMissingError) {
+      return res.status(400).json({ error: error.message });
+    }
     if (error instanceof HttpError) {
       return res.status(error.statusCode).json({ error: error.message, details: error.details });
     }
@@ -51,12 +78,72 @@ export default function(fileService: FileService) {
     return res.status(500).json({ error: fallbackMessage });
   };
 
+  const decorateFilesWithUnderstanding = async (
+    workspaceId: string,
+    userId: string,
+    files: Array<Record<string, any>>,
+  ) => {
+    const fileIds = files
+      .map((file) => Number(file.id))
+      .filter((value) => Number.isFinite(value) && value > 0);
+    const states = await derivedArtifactService.listFileUnderstandingStates(workspaceId, userId, fileIds);
+    return files.map((file) => {
+      const state = states.get(Number(file.id));
+      if (!state) {
+        return file;
+      }
+      return {
+        ...file,
+        understandingStatus: state.status,
+        understandingMode: state.mode,
+        understandingError: state.error,
+        derivedArtifactFileId: state.derivedArtifactFileId,
+      };
+    });
+  };
+
+  router.get('/drive/search', async (req: Request<{ workspaceId: string }>, res: Response) => {
+    try {
+      const { workspaceId } = req.params;
+      const user = requireUserContext(req);
+      const payload = googleDriveSearchSchema.parse(req.query);
+      await workspaceService.ensureMembership(workspaceId, user.userId);
+      const result = await googleDriveService.searchFiles(user.userId, {
+        query: payload.query,
+        scope: payload.scope,
+        pageToken: payload.pageToken,
+      });
+      res.json(result);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: 'Invalid Google Drive search payload' });
+      }
+      handleError(res, error, 'Failed to search Google Drive');
+    }
+  });
+
+  router.post('/drive/import', async (req: Request<{ workspaceId: string }>, res: Response) => {
+    try {
+      const { workspaceId } = req.params;
+      const user = requireUserContext(req);
+      const payload = googleDriveImportSchema.parse(req.body);
+      await workspaceService.ensureMembership(workspaceId, user.userId, { requireEdit: true });
+      const files = await googleDriveService.importFiles(workspaceId, user.userId, payload.fileIds);
+      res.status(201).json({ files });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: 'Invalid Google Drive import payload' });
+      }
+      handleError(res, error, 'Failed to import Google Drive files');
+    }
+  });
+
   router.get('/', async (req: Request<{ workspaceId: string }>, res: Response) => {
     try {
       const { workspaceId } = req.params;
       const user = requireUserContext(req);
       const files = await fileService.getFiles(workspaceId, user.userId);
-      res.json(files);
+      res.json(await decorateFilesWithUnderstanding(workspaceId, user.userId, files));
     } catch (error) {
       handleError(res, error, 'Failed to list files');
     }
@@ -85,6 +172,25 @@ export default function(fileService: FileService) {
       res.json(file);
     } catch (error) {
       handleError(res, error, 'Failed to retrieve file content');
+    }
+  });
+
+  router.post('/context', async (req: Request<{ workspaceId: string }>, res: Response) => {
+    try {
+      const { workspaceId } = req.params;
+      const user = requireUserContext(req);
+      const payload = fileContextSchema.parse(req.body);
+      const fileContextRefs = await derivedArtifactService.ensureFileContextRefs(
+        workspaceId,
+        user.userId,
+        payload.fileIds,
+      );
+      res.status(201).json({ fileContextRefs });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: 'Invalid file context payload' });
+      }
+      handleError(res, error, 'Failed to build file context');
     }
   });
 
@@ -121,7 +227,27 @@ export default function(fileService: FileService) {
           req.file.mimetype,
           user.userId,
         );
-        res.status(201).json(newFile);
+        let understandingState = null;
+        if (derivedArtifactService.isAutoProcessEligibleFile(newFile.name, newFile.mimeType)) {
+          const refs = await derivedArtifactService.enqueueFileUnderstanding(
+            workspaceId,
+            user.userId,
+            [Number(newFile.id)],
+          );
+          const ref = refs[0];
+          if (ref) {
+            understandingState = {
+              understandingStatus: ref.status,
+              understandingMode: ref.effectiveMode,
+              understandingError: ref.lastError ?? null,
+              derivedArtifactFileId: ref.derivedArtifactFileId ?? null,
+            };
+          }
+        }
+        res.status(201).json({
+          ...newFile,
+          ...(understandingState || {}),
+        });
       } catch (error) {
         handleError(res, error, 'Failed to create file');
       }

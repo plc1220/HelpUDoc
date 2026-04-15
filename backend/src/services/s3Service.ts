@@ -1,7 +1,9 @@
 import {
+  CreateBucketCommand,
   DeleteObjectCommand,
   DeleteObjectsCommand,
   GetObjectCommand,
+  HeadBucketCommand,
   ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
@@ -30,6 +32,30 @@ const s3 = new S3Client({
 });
 
 export class S3Service {
+  private bucketReadyPromise: Promise<void> | null = null;
+
+  private async ensureBucketExists(): Promise<void> {
+    if (!this.bucketReadyPromise) {
+      this.bucketReadyPromise = (async () => {
+        try {
+          await s3.send(new HeadBucketCommand({ Bucket: S3_BUCKET_NAME }));
+        } catch (error: any) {
+          const code = String(error?.Code || error?.name || '');
+          const status = Number(error?.$metadata?.httpStatusCode || 0);
+          const shouldCreate = code === 'NotFound' || code === 'NoSuchBucket' || status === 404;
+          if (!shouldCreate) {
+            throw error;
+          }
+          await s3.send(new CreateBucketCommand({ Bucket: S3_BUCKET_NAME }));
+        }
+      })().catch((error) => {
+        this.bucketReadyPromise = null;
+        throw error;
+      });
+    }
+    await this.bucketReadyPromise;
+  }
+
   async uploadFile(
     workspaceName: string,
     fileName: string,
@@ -37,6 +63,7 @@ export class S3Service {
     mimeType?: string,
     keyOverride?: string,
   ) {
+    await this.ensureBucketExists();
     const key = keyOverride || `${workspaceName}/${fileName.replace(/\\/g, '/')}`;
     const params = {
       Bucket: S3_BUCKET_NAME,
@@ -84,6 +111,7 @@ export class S3Service {
   }
 
   async copyFile(oldKey: string, newKey: string): Promise<void> {
+    await this.ensureBucketExists();
     const encodedSource = encodeURIComponent(oldKey).replace(/%2F/g, '/');
     const command = new CopyObjectCommand({
       Bucket: S3_BUCKET_NAME,

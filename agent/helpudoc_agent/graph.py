@@ -56,63 +56,29 @@ GENERAL_SYSTEM_PROMPT = (
 BASE_AGENT_PROMPT = "In order to complete the objective that the user asks of you, you have access to a number of standard tools."
 
 
-_SKIP_CONTEXT_VALUE = object()
-
-
-def _safe_clone_context_value(value: Any) -> Any:
-    """Best-effort deepcopy that skips non-copyable runtime handles."""
-    try:
-        return deepcopy(value)
-    except Exception:
-        pass
-
-    if isinstance(value, dict):
-        cloned: Dict[Any, Any] = {}
-        for key, child in value.items():
-            cloned_child = _safe_clone_context_value(child)
-            if cloned_child is _SKIP_CONTEXT_VALUE:
-                continue
-            cloned[key] = cloned_child
-        return cloned
-    if isinstance(value, list):
-        cloned_list = []
-        for child in value:
-            cloned_child = _safe_clone_context_value(child)
-            if cloned_child is _SKIP_CONTEXT_VALUE:
-                continue
-            cloned_list.append(cloned_child)
-        return cloned_list
-    if isinstance(value, tuple):
-        cloned_tuple = []
-        for child in value:
-            cloned_child = _safe_clone_context_value(child)
-            if cloned_child is _SKIP_CONTEXT_VALUE:
-                continue
-            cloned_tuple.append(cloned_child)
-        return tuple(cloned_tuple)
-    if isinstance(value, set):
-        cloned_set = set()
-        for child in value:
-            cloned_child = _safe_clone_context_value(child)
-            if cloned_child is _SKIP_CONTEXT_VALUE:
-                continue
-            cloned_set.add(cloned_child)
-        return cloned_set
-
-    return _SKIP_CONTEXT_VALUE
-
-
-def _safe_clone_workspace_context(context: Dict[str, Any]) -> Dict[str, Any]:
-    cloned: Dict[str, Any] = {}
-    dropped_keys: list[str] = []
-    for key, value in context.items():
-        cloned_value = _safe_clone_context_value(value)
-        if cloned_value is _SKIP_CONTEXT_VALUE:
-            dropped_keys.append(str(key))
+def _normalize_mcp_candidate_servers(server_names: Any) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw_name in server_names or []:
+        name = str(raw_name or "").strip()
+        if not name or name in seen:
             continue
-        cloned[key] = cloned_value
-    if dropped_keys:
-        logger.warning("Skipping non-copyable workspace context keys during runtime rebuild: %s", dropped_keys)
+        seen.add(name)
+        normalized.append(name)
+    return normalized
+
+
+def _clone_preservable_context(context: Dict[str, Any] | None) -> Dict[str, Any]:
+    cloned: Dict[str, Any] = {}
+    for key, value in (context or {}).items():
+        try:
+            cloned[key] = deepcopy(value)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.info(
+                "Skipping non-copyable workspace context key during runtime reuse: %s (%s)",
+                key,
+                exc,
+            )
     return cloned
 
 
@@ -165,47 +131,6 @@ class AgentRegistry:
         self._models[model_name] = model
         return model
 
-    def _resolve_candidate_mcp_servers(self, workspace_state: WorkspaceState) -> list[str]:
-        """Resolve MCP bind candidates from active skill scope and /mcp preference.
-
-        Order is deterministic:
-        1) skill-derived candidates
-        2) explicit preferred MCP server (if configured and not already present)
-        """
-        active_skill = workspace_state.context.get("active_skill_scope")
-        skill_candidates = list(get_candidate_mcp_servers(active_skill))
-
-        preferred = workspace_state.context.get("preferred_mcp_server")
-        preferred_server = str(preferred).strip() if isinstance(preferred, str) else ""
-        candidates: list[str] = []
-        seen: set[str] = set()
-        for server_name in skill_candidates:
-            normalized = str(server_name).strip()
-            if not normalized or normalized in seen:
-                continue
-            seen.add(normalized)
-            candidates.append(normalized)
-
-        if preferred_server:
-            if preferred_server in self.settings.mcp_servers:
-                if preferred_server not in seen:
-                    candidates.append(preferred_server)
-            else:
-                logger.warning(
-                    "Ignoring preferred MCP server not present in runtime config (workspace=%s preferred=%s)",
-                    workspace_state.workspace_id,
-                    preferred_server,
-                )
-
-        logger.info(
-            "MCP bind candidates resolved (workspace=%s preferred=%s allowed_by_skill=%s final_candidates=%s)",
-            workspace_state.workspace_id,
-            preferred_server or None,
-            skill_candidates,
-            candidates,
-        )
-        return candidates
-
     async def get_or_create(
         self,
         agent_name: str,
@@ -218,20 +143,31 @@ class AgentRegistry:
         context_payload = initial_context or {}
         policy_key = json.dumps(context_payload.get("mcp_policy", {}) or {}, sort_keys=True, default=str)
         mcp_auth_fingerprint = str(context_payload.get("mcp_auth_fingerprint") or "")
-        preferred_mcp_server = str(context_payload.get("preferred_mcp_server") or "").strip()
         user_key = str(context_payload.get("user_id") or "")
         cache_scope_prefix = f"{user_key}:{policy_key}:"
-        key = (
-            resolved_name,
-            workspace_id,
-            f"{user_key}:{policy_key}:{mcp_auth_fingerprint}:{preferred_mcp_server}",
-        )
+        key = (resolved_name, workspace_id, f"{user_key}:{policy_key}:{mcp_auth_fingerprint}")
+        preserved_context: Dict[str, Any] = {}
         if key in self._cache:
             runtime = self._cache[key]
+            prospective_context = _clone_preservable_context(runtime.workspace_state.context)
             if context_payload:
-                runtime.workspace_state.context.update(context_payload)
-            return runtime
-        preserved_context: Dict[str, Any] = {}
+                prospective_context.update(context_payload)
+            desired_candidates = _normalize_mcp_candidate_servers(
+                get_candidate_mcp_servers(
+                    prospective_context.get("active_skill_scope"),
+                    preferred_server=prospective_context.get("preferred_mcp_server"),
+                )
+            )
+            bound_candidates = _normalize_mcp_candidate_servers(
+                runtime.workspace_state.context.get("_bound_mcp_candidates") or []
+            )
+            if desired_candidates == bound_candidates:
+                if context_payload:
+                    runtime.workspace_state.context.update(context_payload)
+                return runtime
+            preserved_context = prospective_context
+            self._cache.pop(key, None)
+
         # Prevent unbounded growth when delegated auth fingerprints rotate over time.
         stale_keys = [
             cache_key
@@ -243,9 +179,9 @@ class AgentRegistry:
         ]
         for stale_key in stale_keys:
             stale_runtime = self._cache.pop(stale_key, None)
-            if stale_runtime is not None:
+            if stale_runtime is not None and not preserved_context:
                 # Preserve in-flight thread/skill state when delegated auth refreshes.
-                preserved_context = _safe_clone_workspace_context(stale_runtime.workspace_state.context)
+                preserved_context = _clone_preservable_context(stale_runtime.workspace_state.context)
 
         workspace_base = self.settings.backend.workspace_root
         workspace_base.mkdir(parents=True, exist_ok=True)
@@ -282,8 +218,19 @@ class AgentRegistry:
             for tool in self.tool_factory.build_tools(tool_names, workspace_state)
         ]
 
-        candidate_mcp_servers = self._resolve_candidate_mcp_servers(workspace_state)
+        active_skill = workspace_state.context.get("active_skill_scope")
+        preferred_mcp_server = workspace_state.context.get("preferred_mcp_server")
+        candidate_mcp_servers = get_candidate_mcp_servers(
+            active_skill,
+            preferred_server=str(preferred_mcp_server or "").strip() or None,
+        )
         mcp_manager = MCPServerManager(self.settings, workspace_state)
+        logger.info(
+            "MCP bind candidates resolved (workspace=%s allowed_by_skill=%s preferred=%s)",
+            workspace_id,
+            candidate_mcp_servers,
+            preferred_mcp_server,
+        )
         await mcp_manager.initialize(
             candidate_server_names=candidate_mcp_servers,
             preflight_gemini=self.settings.model.provider == "gemini",
@@ -294,6 +241,7 @@ class AgentRegistry:
         workspace_state.context["preferred_mcp_server_bound"] = bool(
             normalized_preferred and normalized_preferred in bound_servers
         )
+        workspace_state.context["_bound_mcp_candidates"] = list(candidate_mcp_servers)
         mcp_tools = []
         for server_name, server_tools in mcp_manager.get_tools_by_server().items():
             for tool in server_tools:

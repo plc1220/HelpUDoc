@@ -7,10 +7,9 @@ import { RagQueueService } from './ragQueueService';
 import { S3Service } from './s3Service';
 import { UserContext } from '../types/user';
 import { AccessDeniedError, NotFoundError } from '../errors';
+import { resolveWorkspaceRoot } from '../config/workspaceRoot';
 
-const WORKSPACE_DIR = process.env.WORKSPACE_ROOT
-  ? path.resolve(process.env.WORKSPACE_ROOT)
-  : path.join(process.cwd(), 'workspaces');
+const WORKSPACE_DIR = resolveWorkspaceRoot();
 
 export type WorkspaceRole = 'owner' | 'editor' | 'viewer';
 

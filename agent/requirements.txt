@@ -33,5 +33,6 @@ plotly
 kaleido
 lightrag-hku[api]
 raganything
+docling
 pypdf
 redis

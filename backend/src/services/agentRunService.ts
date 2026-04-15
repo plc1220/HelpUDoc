@@ -7,10 +7,12 @@ import {
   resumeAgentActionStream,
   resumeAgentResponseStream,
   type AgentDecision,
+  type AgentMessageContentBlock,
   type AgentInterruptActionResponse,
   type AgentInterruptResponse,
   type AgentHistoryEntry,
 } from './agentService';
+import type { FileContextRef } from '../../../packages/shared/src/types';
 
 export type AgentRunStatus =
   | 'queued'
@@ -28,6 +30,8 @@ type StartRunParams = {
   forceReset?: boolean;
   turnId?: string;
   authToken?: string;
+  fileContextRefs?: FileContextRef[];
+  messageContent?: AgentMessageContentBlock[];
 };
 
 type RunPendingInterrupt = {
@@ -91,6 +95,8 @@ type PersistedRunContext = {
   history?: AgentHistoryEntry[];
   forceReset?: boolean;
   turnId?: string;
+  fileContextRefs?: FileContextRef[];
+  messageContent?: AgentMessageContentBlock[];
 };
 
 type ResumePayload =
@@ -112,6 +118,8 @@ const runContexts = new Map<string, RunContext>();
 
 const buildStreamKey = (runId: string) => `agent:run:${runId}`;
 const buildMetaKey = (runId: string) => `agent:run:${runId}:meta`;
+const buildRunDedupeKey = (workspaceId: string, persona: string, turnId: string) =>
+  `agent:run:key:${workspaceId}:${persona}:${turnId}`;
 
 const stableNormalize = (value: unknown): unknown => {
   if (Array.isArray(value)) {
@@ -324,6 +332,8 @@ const serializeRunContext = (params: StartRunParams): string =>
     history: params.history,
     forceReset: params.forceReset,
     turnId: params.turnId,
+    fileContextRefs: params.fileContextRefs,
+    messageContent: params.messageContent,
   } satisfies PersistedRunContext);
 
 const parseRunContext = (raw: string | undefined): RunContext | undefined => {
@@ -350,6 +360,8 @@ const parseRunContext = (raw: string | undefined): RunContext | undefined => {
         history: Array.isArray(parsed.history) ? parsed.history : undefined,
         forceReset: typeof parsed.forceReset === 'boolean' ? parsed.forceReset : undefined,
         turnId: typeof parsed.turnId === 'string' ? parsed.turnId : undefined,
+        fileContextRefs: Array.isArray(parsed.fileContextRefs) ? parsed.fileContextRefs as FileContextRef[] : undefined,
+        messageContent: Array.isArray(parsed.messageContent) ? parsed.messageContent as AgentMessageContentBlock[] : undefined,
       },
     };
   } catch {
@@ -404,6 +416,15 @@ const markRunAwaitingApproval = async (runId: string, interruptPayload: string) 
 };
 
 export async function startAgentRun(params: StartRunParams): Promise<{ runId: string; status: AgentRunStatus }> {
+  if (params.turnId?.trim()) {
+    const existingRunId = await redisClient.get(buildRunDedupeKey(params.workspaceId, params.persona, params.turnId.trim()));
+    if (existingRunId) {
+      const existingMeta = await getRunMeta(existingRunId);
+      if (existingMeta && !['completed', 'failed', 'cancelled'].includes(existingMeta.status)) {
+        return { runId: existingRunId, status: existingMeta.status };
+      }
+    }
+  }
   const runId = randomUUID();
   const streamKey = buildStreamKey(runId);
   const metaKey = buildMetaKey(runId);
@@ -419,6 +440,13 @@ export async function startAgentRun(params: StartRunParams): Promise<{ runId: st
     pendingInterrupt: '',
     runContext: serializeRunContext(params),
   });
+  if (params.turnId?.trim()) {
+    await redisClient.set(
+      buildRunDedupeKey(params.workspaceId, params.persona, params.turnId.trim()),
+      runId,
+      { EX: STREAM_TTL_SECONDS },
+    );
+  }
   runContexts.set(runId, { params });
 
   // Fire and forget worker
@@ -632,6 +660,8 @@ async function runAgentRunWorker(
           forceReset: params.forceReset,
           signal: controller.signal,
           authToken: params.authToken,
+          fileContextRefs: params.fileContextRefs,
+          messageContent: params.messageContent,
         });
     upstream = response.data;
     upstream.on('data', (chunk: Buffer) => {

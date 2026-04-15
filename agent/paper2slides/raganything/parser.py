@@ -15,7 +15,9 @@ from __future__ import annotations
 import json
 import argparse
 import base64
+import os
 import subprocess
+import sys
 import tempfile
 import logging
 from pathlib import Path
@@ -30,6 +32,20 @@ from typing import (
 )
 
 T = TypeVar("T")
+
+
+def _docling_env() -> dict[str, str]:
+    env = dict(os.environ)
+    path_entries = env.get("PATH", "").split(os.pathsep) if env.get("PATH") else []
+    candidate_dirs = [
+        str(Path(sys.executable).parent),
+        str(Path(sys.prefix) / "bin"),
+    ]
+    for candidate in reversed(candidate_dirs):
+        if candidate and candidate not in path_entries and Path(candidate, "docling").exists():
+            path_entries.insert(0, candidate)
+    env["PATH"] = os.pathsep.join(path_entries)
+    return env
 
 
 class MineruExecutionError(Exception):
@@ -1380,6 +1396,7 @@ class DoclingParser(Parser):
                 "check": True,
                 "encoding": "utf-8",
                 "errors": "ignore",
+                "env": _docling_env(),
             }
 
             # Hide console window on Windows

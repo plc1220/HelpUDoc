@@ -8,6 +8,7 @@ import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import { existsSync } from 'fs';
 import type { WorkspaceService } from '../services/workspaceService';
 import { HttpError } from '../errors';
+import { resolveWorkspaceRoot } from '../config/workspaceRoot';
 import {
   cancelAgentRun,
   getRunMeta,
@@ -19,9 +20,14 @@ import { blockingRedisClient } from '../services/redisService';
 import { signAgentContextToken } from '../services/agentToken';
 
 const repoRoot = path.resolve(__dirname, '../../..');
-const workspaceRoot = process.env.WORKSPACE_ROOT
-  ? path.resolve(process.env.WORKSPACE_ROOT)
-  : path.join(repoRoot, 'workspaces');
+const workspaceRoot = resolveWorkspaceRoot();
+const resolveRepoRelativePath = (value?: string | null): string | undefined => {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  return path.isAbsolute(trimmed) ? trimmed : path.resolve(repoRoot, trimmed);
+};
 
 // In production containers, the repo layout does not exist. Use explicit env vars.
 // In local dev, fall back to the checked-in agent config so the Settings UI reflects
@@ -29,8 +35,8 @@ const workspaceRoot = process.env.WORKSPACE_ROOT
 const defaultAgentConfigDir = existsSync('/agent/config')
   ? '/agent/config'
   : path.join(repoRoot, 'agent', 'config');
-const agentConfigPath = process.env.AGENT_CONFIG_PATH
-  || path.join(process.env.AGENT_CONFIG_DIR || defaultAgentConfigDir, 'runtime.yaml');
+const agentConfigPath = resolveRepoRelativePath(process.env.AGENT_CONFIG_PATH)
+  || path.join(resolveRepoRelativePath(process.env.AGENT_CONFIG_DIR) || defaultAgentConfigDir, 'runtime.yaml');
 const repoAgentConfigPath = path.join(repoRoot, 'agent', 'config', 'runtime.yaml');
 const skillsRoot = process.env.SKILLS_ROOT || path.join(repoRoot, 'skills');
 

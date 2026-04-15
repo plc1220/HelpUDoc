@@ -33,6 +33,7 @@ export class DatabaseService {
     await this.createMcpConnectionsTable();
     await this.createMcpConnectionGrantsTable();
     await this.createFilesTable();
+    await this.createDerivedArtifactsTable();
     await this.createCollabDocumentsTable();
     await this.createKnowledgeSourcesTable();
     await this.createConversationsTable();
@@ -300,6 +301,10 @@ export class DatabaseService {
         table.string('path').notNullable();
         table.string('mimeType');
         table.string('publicUrl');
+        table.string('sourceProvider', 64);
+        table.string('sourceExternalId');
+        table.string('sourceVersionFingerprint');
+        table.string('sourceUrl');
         table.uuid('createdBy').references('id').inTable('users');
         table.uuid('updatedBy').references('id').inTable('users');
         table.integer('version').notNullable().defaultTo(1);
@@ -307,10 +312,46 @@ export class DatabaseService {
         table.timestamp('updatedAt').notNullable().defaultTo(this.db.fn.now());
         table.unique(['workspaceId', 'name']);
         table.index(['workspaceId', 'updatedAt'], 'files_workspace_updated_idx');
+        table.index(
+          ['workspaceId', 'sourceProvider', 'sourceExternalId', 'sourceVersionFingerprint'],
+          'files_workspace_source_version_idx',
+        );
       });
       console.log('Created "files" table.');
     } else {
       await this.ensureFilesTableColumns();
+    }
+  }
+
+  private async createDerivedArtifactsTable(): Promise<void> {
+    const exists = await this.db.schema.hasTable('derived_artifacts');
+    if (!exists) {
+      await this.db.schema.createTable('derived_artifacts', (table) => {
+        table.uuid('id').primary();
+        table.uuid('workspaceId').notNullable().references('id').inTable('workspaces').onDelete('CASCADE');
+        table.integer('sourceFileId').notNullable().references('id').inTable('files').onDelete('CASCADE');
+        table.string('sourceVersionFingerprint').notNullable();
+        table.string('pipelineStage', 32).notNullable();
+        table.integer('artifactVersion').notNullable().defaultTo(1);
+        table.string('understandingMode', 16).notNullable();
+        table.string('status', 16).notNullable();
+        table.integer('derivedArtifactFileId').references('id').inTable('files').onDelete('SET NULL');
+        table.jsonb('summaryMetadataJson');
+        table.text('lastError');
+        table.uuid('createdBy').references('id').inTable('users');
+        table.uuid('updatedBy').references('id').inTable('users');
+        table.timestamp('createdAt').notNullable().defaultTo(this.db.fn.now());
+        table.timestamp('updatedAt').notNullable().defaultTo(this.db.fn.now());
+        table.unique(
+          ['workspaceId', 'sourceFileId', 'sourceVersionFingerprint', 'pipelineStage'],
+          { indexName: 'derived_artifacts_source_stage_uidx' },
+        );
+        table.index(['workspaceId', 'sourceFileId'], 'derived_artifacts_workspace_source_idx');
+        table.index(['workspaceId', 'status'], 'derived_artifacts_workspace_status_idx');
+      });
+      console.log('Created "derived_artifacts" table.');
+    } else {
+      await this.ensureDerivedArtifactsColumns();
     }
   }
 
@@ -422,9 +463,38 @@ export class DatabaseService {
   private async ensureFilesTableColumns(): Promise<void> {
     await this.ensureColumn('files', 'mimeType', (table) => table.string('mimeType'));
     await this.ensureColumn('files', 'publicUrl', (table) => table.string('publicUrl'));
+    await this.ensureColumn('files', 'sourceProvider', (table) => table.string('sourceProvider', 64));
+    await this.ensureColumn('files', 'sourceExternalId', (table) => table.string('sourceExternalId'));
+    await this.ensureColumn('files', 'sourceVersionFingerprint', (table) => table.string('sourceVersionFingerprint'));
+    await this.ensureColumn('files', 'sourceUrl', (table) => table.string('sourceUrl'));
     await this.ensureColumn('files', 'createdBy', (table) => table.uuid('createdBy'));
     await this.ensureColumn('files', 'updatedBy', (table) => table.uuid('updatedBy'));
     await this.ensureColumn('files', 'version', (table) => table.integer('version').notNullable().defaultTo(1));
+    await this.db.raw(
+      'CREATE INDEX IF NOT EXISTS files_workspace_source_version_idx ON files ("workspaceId", "sourceProvider", "sourceExternalId", "sourceVersionFingerprint")',
+    );
+  }
+
+  private async ensureDerivedArtifactsColumns(): Promise<void> {
+    await this.ensureColumn('derived_artifacts', 'artifactVersion', (table) => table.integer('artifactVersion').notNullable().defaultTo(1));
+    await this.ensureColumn('derived_artifacts', 'understandingMode', (table) => table.string('understandingMode', 16).notNullable().defaultTo('part'));
+    await this.ensureColumn('derived_artifacts', 'status', (table) => table.string('status', 16).notNullable().defaultTo('pending'));
+    await this.ensureColumn('derived_artifacts', 'derivedArtifactFileId', (table) => table.integer('derivedArtifactFileId').references('id').inTable('files').onDelete('SET NULL'));
+    await this.ensureColumn('derived_artifacts', 'summaryMetadataJson', (table) => table.jsonb('summaryMetadataJson'));
+    await this.ensureColumn('derived_artifacts', 'lastError', (table) => table.text('lastError'));
+    await this.ensureColumn('derived_artifacts', 'createdBy', (table) => table.uuid('createdBy'));
+    await this.ensureColumn('derived_artifacts', 'updatedBy', (table) => table.uuid('updatedBy'));
+    await this.ensureColumn('derived_artifacts', 'createdAt', (table) => table.timestamp('createdAt').defaultTo(this.db.fn.now()));
+    await this.ensureColumn('derived_artifacts', 'updatedAt', (table) => table.timestamp('updatedAt').defaultTo(this.db.fn.now()));
+    await this.db.raw(
+      'CREATE UNIQUE INDEX IF NOT EXISTS derived_artifacts_source_stage_uidx ON derived_artifacts ("workspaceId", "sourceFileId", "sourceVersionFingerprint", "pipelineStage")',
+    );
+    await this.db.raw(
+      'CREATE INDEX IF NOT EXISTS derived_artifacts_workspace_source_idx ON derived_artifacts ("workspaceId", "sourceFileId")',
+    );
+    await this.db.raw(
+      'CREATE INDEX IF NOT EXISTS derived_artifacts_workspace_status_idx ON derived_artifacts ("workspaceId", "status")',
+    );
   }
 
   private async ensureConversationMessagesColumns(): Promise<void> {

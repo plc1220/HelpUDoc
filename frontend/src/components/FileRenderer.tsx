@@ -397,7 +397,7 @@ const FileRenderer: React.FC<FileRendererProps> = ({
     }
     if (isImageFile) {
       const dataSrc = fileContent ? `data:${file.mimeType || 'image/*'};base64,${fileContent}` : undefined;
-      const imageSrc = file.publicUrl || dataSrc;
+      const imageSrc = dataSrc || file.publicUrl;
       if (!imageSrc) {
         return (
           <div className="flex h-full items-center justify-center text-sm text-gray-500">
@@ -435,7 +435,7 @@ const FileRenderer: React.FC<FileRendererProps> = ({
       );
     }
     if (isPdfFile) {
-      const pdfSrc = file.publicUrl || (fileContent ? `data:application/pdf;base64,${fileContent}` : undefined);
+      const pdfSrc = fileContent ? `data:application/pdf;base64,${fileContent}` : file.publicUrl || undefined;
       if (!pdfSrc) {
         return (
           <div className="flex h-full items-center justify-center text-sm text-gray-500">
