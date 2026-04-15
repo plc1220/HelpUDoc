@@ -56,6 +56,66 @@ GENERAL_SYSTEM_PROMPT = (
 BASE_AGENT_PROMPT = "In order to complete the objective that the user asks of you, you have access to a number of standard tools."
 
 
+_SKIP_CONTEXT_VALUE = object()
+
+
+def _safe_clone_context_value(value: Any) -> Any:
+    """Best-effort deepcopy that skips non-copyable runtime handles."""
+    try:
+        return deepcopy(value)
+    except Exception:
+        pass
+
+    if isinstance(value, dict):
+        cloned: Dict[Any, Any] = {}
+        for key, child in value.items():
+            cloned_child = _safe_clone_context_value(child)
+            if cloned_child is _SKIP_CONTEXT_VALUE:
+                continue
+            cloned[key] = cloned_child
+        return cloned
+    if isinstance(value, list):
+        cloned_list = []
+        for child in value:
+            cloned_child = _safe_clone_context_value(child)
+            if cloned_child is _SKIP_CONTEXT_VALUE:
+                continue
+            cloned_list.append(cloned_child)
+        return cloned_list
+    if isinstance(value, tuple):
+        cloned_tuple = []
+        for child in value:
+            cloned_child = _safe_clone_context_value(child)
+            if cloned_child is _SKIP_CONTEXT_VALUE:
+                continue
+            cloned_tuple.append(cloned_child)
+        return tuple(cloned_tuple)
+    if isinstance(value, set):
+        cloned_set = set()
+        for child in value:
+            cloned_child = _safe_clone_context_value(child)
+            if cloned_child is _SKIP_CONTEXT_VALUE:
+                continue
+            cloned_set.add(cloned_child)
+        return cloned_set
+
+    return _SKIP_CONTEXT_VALUE
+
+
+def _safe_clone_workspace_context(context: Dict[str, Any]) -> Dict[str, Any]:
+    cloned: Dict[str, Any] = {}
+    dropped_keys: list[str] = []
+    for key, value in context.items():
+        cloned_value = _safe_clone_context_value(value)
+        if cloned_value is _SKIP_CONTEXT_VALUE:
+            dropped_keys.append(str(key))
+            continue
+        cloned[key] = cloned_value
+    if dropped_keys:
+        logger.warning("Skipping non-copyable workspace context keys during runtime rebuild: %s", dropped_keys)
+    return cloned
+
+
 class AgentRegistry:
     """Caches DeepAgents keyed by (agent_name, workspace_id)."""
 
@@ -185,7 +245,7 @@ class AgentRegistry:
             stale_runtime = self._cache.pop(stale_key, None)
             if stale_runtime is not None:
                 # Preserve in-flight thread/skill state when delegated auth refreshes.
-                preserved_context = deepcopy(stale_runtime.workspace_state.context)
+                preserved_context = _safe_clone_workspace_context(stale_runtime.workspace_state.context)
 
         workspace_base = self.settings.backend.workspace_root
         workspace_base.mkdir(parents=True, exist_ok=True)

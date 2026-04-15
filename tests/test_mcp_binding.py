@@ -199,6 +199,69 @@ def test_registry_preserves_runtime_context_when_auth_fingerprint_rotates(tmp_pa
     assert len(created_tools) == 2
 
 
+def test_registry_rotation_skips_non_copyable_context_values(tmp_path, monkeypatch):
+    settings = _build_settings(tmp_path)
+
+    class DummyAgent:
+        def with_config(self, _config):
+            return self
+
+    class NonCopyable:
+        def __deepcopy__(self, _memo):
+            raise TypeError("cannot pickle '_duckdb.DuckDBPyConnection' object")
+
+    def fake_create_agent(*, model, tools, system_prompt, middleware, checkpointer):
+        return DummyAgent()
+
+    async def fake_initialize(self, *, candidate_server_names=None, preflight_gemini=False):
+        self._allowed_servers = {}
+        self._tools_by_server = {}
+        self._clients_by_server = {}
+        self._rejected_servers = {}
+
+    monkeypatch.setattr("helpudoc_agent.graph.create_agent", fake_create_agent)
+    monkeypatch.setattr("helpudoc_agent.graph.init_chat_model", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.graph.FilesystemBackend", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.graph.TodoListMiddleware", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.graph.FilesystemMiddleware", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.graph.SummarizationMiddleware", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.graph.PatchToolCallsMiddleware", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.graph.HumanInTheLoopMiddleware", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.mcp_manager.MCPServerManager.initialize", fake_initialize)
+
+    registry = AgentRegistry(settings, ToolFactoryStub())
+    runtime = asyncio.run(
+        registry.get_or_create(
+            "fast",
+            "workspace-rotate-noncopyable",
+            initial_context={
+                "user_id": "user-1",
+                "mcp_policy": {"allowIds": [], "denyIds": [], "isAdmin": False},
+                "mcp_auth_fingerprint": "fingerprint-a",
+            },
+        )
+    )
+    runtime.workspace_state.context["thread_id"] = "general-assistant:fast:workspace-rotate-noncopyable:user-1:thread"
+    runtime.workspace_state.context["data_agent_manager"] = NonCopyable()
+
+    rotated_runtime = asyncio.run(
+        registry.get_or_create(
+            "fast",
+            "workspace-rotate-noncopyable",
+            initial_context={
+                "user_id": "user-1",
+                "mcp_policy": {"allowIds": [], "denyIds": [], "isAdmin": False},
+                "mcp_auth_fingerprint": "fingerprint-b",
+            },
+        )
+    )
+
+    assert rotated_runtime.workspace_state.context["thread_id"] == (
+        "general-assistant:fast:workspace-rotate-noncopyable:user-1:thread"
+    )
+    assert "data_agent_manager" not in rotated_runtime.workspace_state.context
+
+
 def test_registry_rebuilds_runtime_when_preferred_mcp_server_changes(tmp_path, monkeypatch):
     settings = _build_settings(tmp_path)
     created_tools: list[list[str]] = []
