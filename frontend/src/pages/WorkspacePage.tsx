@@ -318,7 +318,16 @@ const summarizeMessageFromToolEvents = (
   const toolEvents = message?.toolEvents || [];
   const latestFinishedEvent = [...toolEvents]
     .reverse()
-    .find((event) => event.status === 'completed' || event.status === 'error');
+    .find((event) => {
+      if (!(event.status === 'completed' || event.status === 'error')) {
+        return false;
+      }
+      const summary = String(event.summary || '').trim();
+      if (!summary || isSummaryLikeAgentText(summary)) {
+        return false;
+      }
+      return true;
+    });
   if (latestFinishedEvent?.summary?.trim()) {
     return latestFinishedEvent.summary.trim();
   }

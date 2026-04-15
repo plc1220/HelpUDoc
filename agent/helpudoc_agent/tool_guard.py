@@ -11,6 +11,12 @@ from pydantic import ConfigDict, Field
 from .skills_registry import is_tool_allowed
 from .state import WorkspaceState
 
+_PREFERRED_MCP_ONLY_BUILTINS = {
+    "google_search",
+    "google_grounded_search",
+    "rag_query",
+}
+
 
 def _tool_scope_error(tool_name: str, skill_id: Optional[str], tool_mcp_server: Optional[str]) -> str:
     if skill_id:
@@ -59,6 +65,19 @@ class GuardedTool(BaseTool):
 
     def _guard(self) -> Optional[str]:
         context = self.workspace_state.context if isinstance(self.workspace_state.context, dict) else {}
+        preferred_server = context.get("preferred_mcp_server")
+        preferred_bound = bool(context.get("preferred_mcp_server_bound"))
+        if (
+            isinstance(preferred_server, str)
+            and preferred_server.strip()
+            and preferred_bound
+            and self.tool_mcp_server is None
+            and self.name in _PREFERRED_MCP_ONLY_BUILTINS
+        ):
+            return (
+                f"Tool '{self.name}' is blocked for this turn because '/mcp {preferred_server.strip()}' "
+                "is active and bound. Use tools from the preferred MCP server first."
+            )
         active_scope = context.get("active_skill_scope")
         if is_tool_allowed(self.name, active_scope, tool_mcp_server=self.tool_mcp_server):
             return None
