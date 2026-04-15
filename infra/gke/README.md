@@ -42,6 +42,7 @@ The backend and agent are intentionally co-located around shared workspace/confi
 | `k8s/72-backendconfig.yaml` | GKE BackendConfig |
 | `templates/10-secrets.yaml` | Example secret template |
 | `templates/20-configmap.yaml` | Example config template |
+| `scripts/bootstrap-langfuse-db.sh` | Idempotent `CREATE DATABASE langfuse` + optional Langfuse rollout wait (used by Cloud Build and GitHub Actions) |
 
 ## Prerequisites
 
@@ -79,7 +80,11 @@ From the repo root, the most reliable path is:
      --substitutions=_GKE_LOCATION=<REGION_OR_ZONE>,_GKE_CLUSTER=<CLUSTER>,_RUN_E2E=false
    ```
 
-Cloud Build handles image builds and applies the manifests in `infra/gke/k8s/`.
+Cloud Build handles image builds and applies the manifests in `infra/gke/k8s/`, then runs `infra/gke/scripts/bootstrap-langfuse-db.sh --wait-rollout` so the Langfuse Postgres database exists before rollouts are considered successful.
+
+### GitHub Actions: Langfuse-only
+
+For clusters where app images are already deployed but Langfuse (ClickHouse + Langfuse + DB bootstrap) must be installed or updated without a full stack build, use the **`Deploy Langfuse to GKE`** workflow (`.github/workflows/deploy-langfuse-gke.yml`). It validates required ConfigMap/Secret keys, applies `30-storage.yaml`, `44-clickhouse.yaml`, and `45-langfuse.yaml`, then runs the same bootstrap script with rollout waits. Backend and agent workflows intentionally do not apply these manifests so they cannot roll out Langfuse without its prerequisites.
 
 ## Manual manifest apply
 
@@ -98,6 +103,12 @@ kubectl apply -f infra/gke/k8s/60-frontend.yaml
 kubectl apply -f infra/gke/k8s/70-caddy.yaml
 kubectl apply -f infra/gke/k8s/71-ingress.yaml
 kubectl apply -f infra/gke/k8s/72-backendconfig.yaml
+```
+
+After `45-langfuse.yaml` (with Postgres running), create the `langfuse` database and wait for Langfuse to become ready:
+
+```bash
+infra/gke/scripts/bootstrap-langfuse-db.sh --wait-rollout
 ```
 
 If you are not using Cloud Build's image-tag rewriting, update the deployment image references yourself with `kubectl set image` or by editing the manifests before apply.

@@ -120,10 +120,19 @@ jobs:
           docker push "gcr.io/${PROJECT_ID}/helpudoc-frontend:${IMAGE_TAG}"
           docker push "gcr.io/${PROJECT_ID}/helpudoc-agent:${IMAGE_TAG}"
 
+      # Applies all of infra/gke/k8s/ including demo-oriented keys in 20-configmap.yaml.
+      # Production clusters should keep Langfuse and other non-OAuth keys in helpudoc-config
+      # via env files or follow-up patches; the next step only merges OAuth-related keys.
       - name: Apply Base Manifests
         run: |
           set -euo pipefail
           kubectl apply -f infra/gke/k8s/
+
+      - name: Bootstrap Langfuse database and wait for Langfuse
+        run: |
+          set -euo pipefail
+          chmod +x infra/gke/scripts/bootstrap-langfuse-db.sh
+          infra/gke/scripts/bootstrap-langfuse-db.sh --wait-rollout
 
       - name: Sync OAuth Config and Secrets
         run: |

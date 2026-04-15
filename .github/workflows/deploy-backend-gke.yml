@@ -97,10 +97,10 @@ jobs:
           test -n "${GOOGLE_OAUTH_POST_LOGIN_REDIRECT}"
           test -n "${OAUTH_TOKEN_ENCRYPTION_KEY}"
 
-          kubectl -n helpudoc apply -f infra/gke/k8s/30-storage.yaml
-          kubectl -n helpudoc apply -f infra/gke/k8s/20-configmap.yaml
-          kubectl -n helpudoc apply -f infra/gke/k8s/44-clickhouse.yaml
-          kubectl -n helpudoc apply -f infra/gke/k8s/45-langfuse.yaml
+          # Do not kubectl apply infra/gke/k8s/20-configmap.yaml here: it would reset
+          # LANGFUSE_* and other cluster-specific keys to repo demo defaults. Operators
+          # should create/patch helpudoc-config from env/prod/config.env (see infra/gke/README.md).
+          # Langfuse manifests + DB bootstrap live in workflow "Deploy Langfuse to GKE".
           kubectl -n helpudoc patch configmap helpudoc-config --type merge -p "$(jq -n \
             --arg auth_mode "hybrid" \
             --arg cid "${GOOGLE_OAUTH_CLIENT_ID}" \

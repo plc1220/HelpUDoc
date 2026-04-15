@@ -1,7 +1,7 @@
-name: Deploy Agent to GKE
+name: Deploy Langfuse to GKE
 
 concurrency:
-  group: deploy-gke-agent-${{ github.ref }}
+  group: deploy-gke-langfuse-${{ github.ref }}
   cancel-in-progress: true
 
 on:
@@ -63,38 +63,63 @@ jobs:
         with:
           install_components: gke-gcloud-auth-plugin
 
-      - name: Configure Docker Auth
-        run: |
-          set -euo pipefail
-          gcloud auth configure-docker gcr.io --quiet
-
       - name: Get GKE Credentials
         run: |
           set -euo pipefail
           gcloud container clusters get-credentials "${GKE_CLUSTER}" --location "${GKE_LOCATION}" --project "${PROJECT_ID}"
 
-      - name: Build and Push Agent Image
-        env:
-          IMAGE_TAG: ${{ github.sha }}
+      - name: Validate Langfuse config and secrets
         run: |
           set -euo pipefail
-          docker build -f agent/Dockerfile.gke -t "gcr.io/${PROJECT_ID}/helpudoc-agent:${IMAGE_TAG}" .
-          docker push "gcr.io/${PROJECT_ID}/helpudoc-agent:${IMAGE_TAG}"
+          ns=helpudoc
+          need_cm_key() {
+            local k="$1"
+            local v
+            v="$(kubectl -n "${ns}" get configmap helpudoc-config -o "jsonpath={.data.${k}}" 2>/dev/null || true)"
+            if [[ -z "${v}" ]]; then
+              echo "helpudoc-config missing or empty data key: ${k}" >&2
+              exit 1
+            fi
+          }
+          need_secret_key() {
+            local k="$1"
+            local v
+            v="$(kubectl -n "${ns}" get secret helpudoc-secrets -o "jsonpath={.data.${k}}" 2>/dev/null || true)"
+            if [[ -z "${v}" ]]; then
+              echo "helpudoc-secrets missing or empty data key: ${k}" >&2
+              exit 1
+            fi
+          }
+          kubectl -n "${ns}" get configmap helpudoc-config >/dev/null
+          kubectl -n "${ns}" get secret helpudoc-secrets >/dev/null
+          need_cm_key LANGFUSE_NEXTAUTH_URL
+          need_cm_key POSTGRES_USER
+          need_cm_key LANGFUSE_INIT_ORG_ID
+          need_cm_key LANGFUSE_INIT_ORG_NAME
+          need_cm_key LANGFUSE_INIT_PROJECT_ID
+          need_cm_key LANGFUSE_INIT_PROJECT_NAME
+          need_cm_key LANGFUSE_INIT_USER_EMAIL
+          need_cm_key LANGFUSE_INIT_USER_NAME
+          need_secret_key POSTGRES_PASSWORD
+          need_secret_key CLICKHOUSE_PASSWORD
+          need_secret_key LANGFUSE_NEXTAUTH_SECRET
+          need_secret_key LANGFUSE_SALT
+          need_secret_key LANGFUSE_ENCRYPTION_KEY
+          need_secret_key LANGFUSE_PUBLIC_KEY
+          need_secret_key LANGFUSE_SECRET_KEY
+          need_secret_key LANGFUSE_INIT_USER_PASSWORD
+          need_secret_key MINIO_ROOT_USER
+          need_secret_key MINIO_ROOT_PASSWORD
 
-      - name: Deploy Agent
-        env:
-          IMAGE_TAG: ${{ github.sha }}
+      - name: Apply Langfuse infrastructure manifests
         run: |
           set -euo pipefail
-          kubectl -n helpudoc apply -f infra/gke/k8s/50-app.yaml
-          kubectl -n helpudoc set image deployment/helpudoc-app agent="gcr.io/${PROJECT_ID}/helpudoc-agent:${IMAGE_TAG}"
-          kubectl -n helpudoc rollout status deployment/helpudoc-app --timeout=20m
+          kubectl -n helpudoc apply -f infra/gke/k8s/30-storage.yaml
+          kubectl -n helpudoc apply -f infra/gke/k8s/44-clickhouse.yaml
+          kubectl -n helpudoc apply -f infra/gke/k8s/45-langfuse.yaml
 
-      - name: Sync Skills PVC
+      - name: Bootstrap Langfuse database and wait for rollouts
         run: |
           set -euo pipefail
-          APP_POD="$(kubectl -n helpudoc get pods -l app=helpudoc-app -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.phase}{"\n"}{end}' | awk '$2 == "Running" {print $1; exit}')"
-          test -n "${APP_POD}"
-          kubectl -n helpudoc exec "${APP_POD}" -c backend -- sh -lc "set -eu; mkdir -p /app/skills; find /app/skills -mindepth 1 -maxdepth 1 -exec rm -rf {} +"
-          tar -C skills -cf - . | kubectl -n helpudoc exec -i "${APP_POD}" -c backend -- sh -lc "tar -xf - -C /app/skills"
-          kubectl -n helpudoc exec "${APP_POD}" -c backend -- sh -lc "test -f /app/skills/research/SKILL.md"
+          chmod +x infra/gke/scripts/bootstrap-langfuse-db.sh
+          infra/gke/scripts/bootstrap-langfuse-db.sh --wait-rollout

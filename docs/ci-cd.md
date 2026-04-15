@@ -11,6 +11,7 @@ The primary deploy pipelines are GitHub workflows:
 - `.github/workflows/deploy-frontend-gke.yml` (frontend only)
 - `.github/workflows/deploy-backend-gke.yml` (backend only)
 - `.github/workflows/deploy-agent-gke.yml` (agent only)
+- `.github/workflows/deploy-langfuse-gke.yml` (ClickHouse + Langfuse only: storage, manifests, Postgres `langfuse` DB bootstrap, rollout health)
 
 Each workflow:
 1. Authenticates to GCP (WIF or JSON key).
@@ -18,7 +19,7 @@ Each workflow:
 3. Gets cluster credentials and deploys via `kubectl`.
 4. Waits for rollout status.
 
-**Langfuse (ClickHouse + Langfuse):** `deploy-gke.yml` applies all of `infra/gke/k8s/`. The **backend** and **agent** workflows also `kubectl apply` `30-storage.yaml`, `44-clickhouse.yaml`, and `45-langfuse.yaml` before `50-app.yaml` so partial rollouts stay in sync. Ensure `helpudoc-secrets` and `helpudoc-config` include the Langfuse-related keys from `env/prod/config.env.example` and `env/prod/secrets.env.example`, and follow `infra/gke/README.md` for DNS and ingress.
+**Langfuse (ClickHouse + Langfuse):** Use **`Deploy Langfuse to GKE`** when you need observability infra without rebuilding app images. It applies `30-storage.yaml`, `44-clickhouse.yaml`, and `45-langfuse.yaml`, validates required `helpudoc-config` / `helpudoc-secrets` keys, runs `infra/gke/scripts/bootstrap-langfuse-db.sh --wait-rollout`, and waits for Langfuse web/worker rollouts. **`deploy-gke.yml`** still applies the full `infra/gke/k8s/` tree and runs the same bootstrap script after the apply. **Backend** and **agent** workflows only touch `50-app.yaml` and OAuth patches (backend); they do not apply Langfuse manifests or `20-configmap.yaml`, so they will not reset `LANGFUSE_*` to demo defaults or roll out Langfuse without its prerequisites. Populate Langfuse keys from `env/prod/config.env.example` and `env/prod/secrets.env.example` before running the Langfuse workflow (`infra/gke/README.md` for DNS and ingress).
 
 ## One Command Deploy (Manual)
 
@@ -73,6 +74,7 @@ Run one of these in GitHub Actions:
 - `Deploy Frontend to GKE`
 - `Deploy Backend to GKE`
 - `Deploy Agent to GKE`
+- `Deploy Langfuse to GKE`
 
 ## What Gets Persisted (PVCs)
 
