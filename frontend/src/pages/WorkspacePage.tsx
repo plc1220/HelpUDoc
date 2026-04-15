@@ -85,6 +85,7 @@ import {
   SLASH_COMMANDS,
 } from '../constants/workspace';
 import { isSystemFile, normalizeFilePath } from '../utils/files';
+import { isBinaryOfficeDocument } from '../utils/officeFiles';
 import {
   areStructuredClarificationQuestionsComplete,
   buildClarificationDraftStorageKey,
@@ -2747,6 +2748,13 @@ export default function WorkspacePage() {
   useEffect(() => {
     fetchFileContent();
   }, [selectedFile, selectedWorkspace]);
+
+  useEffect(() => {
+    const name = selectedFile?.name ?? '';
+    if (isBinaryOfficeDocument(name)) {
+      setIsEditMode(false);
+    }
+  }, [selectedFile?.id, selectedFile?.name]);
 
   const handleCreateWorkspace = async () => {
     try {

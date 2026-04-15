@@ -31,6 +31,8 @@ const BINARY_MIME_TYPES_BY_EXTENSION: Record<string, string> = {
   '.svg': 'image/svg+xml',
   '.pdf': 'application/pdf',
   '.parquet': 'application/octet-stream',
+  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
 };
 
 const normalizeS3Key = (workspaceId: string, fileName: string) => {
@@ -384,7 +386,11 @@ export class FileService {
     const nextVersion = currentVersion + 1;
 
     if (file.storageType === 'local') {
-      await fs.writeFile(file.path, content);
+      const mimeType = this.resolveMimeType(file.name, file.mimeType) || 'application/octet-stream';
+      const payload = this.isTextFile(file.name, mimeType)
+        ? Buffer.from(content, 'utf-8')
+        : Buffer.from(content, 'base64');
+      await fs.writeFile(file.path, payload);
     } else {
       throw new ConflictError('Updating S3 files is not supported.');
     }

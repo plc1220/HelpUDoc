@@ -29,6 +29,7 @@
     "hyparquet": "^1.25.1",
     "hyparquet-compressors": "^1.1.1",
     "lucide-react": "^0.546.0",
+    "mammoth": "^1.12.0",
     "mermaid": "^11.12.0",
     "papaparse": "^5.5.3",
     "plotly.js-dist-min": "^3.3.0",
