@@ -9,6 +9,11 @@ import {
   createMarkdownComponents,
   useMermaidColorMode,
 } from './markdown/MarkdownShared';
+import {
+  isPowerPointDocument,
+  isWordDocument,
+  officeOnlineEmbedUrl,
+} from '../utils/officeFiles';
 
 const PlotlyChart = lazy(() => import('./PlotlyChart'));
 
@@ -123,9 +128,20 @@ const FileRenderer: React.FC<FileRendererProps> = ({
     lowerName.endsWith('.plot.json') ||
     lowerName.endsWith('.chart.json') ||
     lowerName.endsWith('.plotly');
+  const isDocxFile =
+    isWordDocument(lowerName) ||
+    (file?.mimeType || '').toLowerCase().includes(
+      'wordprocessingml',
+    );
+  const isPptxFile =
+    isPowerPointDocument(lowerName) ||
+    (file?.mimeType || '').toLowerCase().includes('presentationml');
   const [parquetPreview, setParquetPreview] = useState<TabularPreview | null>(null);
   const [parquetError, setParquetError] = useState<string | null>(null);
   const [isParquetLoading, setIsParquetLoading] = useState(false);
+  const [docxHtml, setDocxHtml] = useState<string | null>(null);
+  const [docxError, setDocxError] = useState<string | null>(null);
+  const [isDocxLoading, setIsDocxLoading] = useState(false);
 
   const parsedCsv = useMemo(() => {
     if (!isCsvFile || !fileContent.trim()) return null;
@@ -243,6 +259,54 @@ const FileRenderer: React.FC<FileRendererProps> = ({
       cancelled = true;
     };
   }, [fileContent, isParquetFile]);
+
+  useEffect(() => {
+    if (!isDocxFile) {
+      setDocxHtml(null);
+      setDocxError(null);
+      setIsDocxLoading(false);
+      return;
+    }
+
+    if (!fileContent.trim()) {
+      setDocxHtml(null);
+      setDocxError(null);
+      setIsDocxLoading(true);
+      return;
+    }
+
+    let cancelled = false;
+
+    const run = async () => {
+      setIsDocxLoading(true);
+      setDocxError(null);
+      try {
+        const mammoth = await import('mammoth');
+        const arrayBuffer = decodeBase64ToArrayBuffer(fileContent);
+        const { value } = await mammoth.convertToHtml({ arrayBuffer });
+        if (!cancelled) {
+          setDocxHtml(value);
+        }
+      } catch (error) {
+        console.error('DOCX preview error', error);
+        if (!cancelled) {
+          setDocxHtml(null);
+          setDocxError(
+            error instanceof Error ? error.message : 'Failed to render Word document.',
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setIsDocxLoading(false);
+        }
+      }
+    };
+
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [fileContent, isDocxFile]);
 
   const markdownComponents = useMemo(
     () => createMarkdownComponents({
@@ -525,6 +589,128 @@ const FileRenderer: React.FC<FileRendererProps> = ({
               ))}
             </tbody>
           </table>
+        </div>
+      );
+    }
+    if (isDocxFile) {
+      if (isDocxLoading) {
+        return (
+          <div className="flex h-full items-center justify-center text-sm text-gray-500">
+            Loading Word preview…
+          </div>
+        );
+      }
+      if (docxError) {
+        return (
+          <div className="flex h-full items-center justify-center px-4 text-sm text-red-600">
+            {docxError}
+          </div>
+        );
+      }
+      if (!docxHtml) {
+        return (
+          <div className="flex h-full items-center justify-center text-sm text-gray-500">
+            Unable to preview this document.
+          </div>
+        );
+      }
+      const docxProse = [
+        colorMode === 'dark' ? 'prose prose-invert' : 'prose prose-slate',
+        'max-w-none break-words p-4 text-sm',
+        disableInternalScroll ? 'h-auto overflow-y-visible' : 'h-full overflow-y-auto',
+      ].join(' ');
+      return (
+        <div className="flex h-full min-h-0 flex-col">
+          <div
+            className={`border-b px-4 py-2 text-xs ${
+              colorMode === 'dark'
+                ? 'border-slate-700 text-slate-400'
+                : 'border-gray-200 text-gray-500'
+            }`}
+          >
+            <span className={`font-medium ${colorMode === 'dark' ? 'text-slate-200' : 'text-gray-700'}`}>
+              Word preview
+            </span>
+            {' · '}
+            Approximate layout (not identical to Microsoft Word).
+          </div>
+          <div
+            className={`helpudoc-docx-preview min-h-0 flex-1 ${docxProse}`}
+            // mammoth emits semantic HTML only; images use data URLs from the file
+            dangerouslySetInnerHTML={{ __html: docxHtml }}
+          />
+        </div>
+      );
+    }
+    if (isPptxFile) {
+      const embedSrc = officeOnlineEmbedUrl(file?.publicUrl ?? null);
+      if (embedSrc) {
+        return (
+          <div className="relative flex h-full min-h-0 flex-col">
+            <div
+              className={`border-b px-4 py-2 text-xs ${
+                colorMode === 'dark'
+                  ? 'border-slate-700 text-slate-400'
+                  : 'border-gray-200 text-gray-500'
+              }`}
+            >
+              <span className={`font-medium ${colorMode === 'dark' ? 'text-slate-200' : 'text-gray-700'}`}>
+                PowerPoint preview
+              </span>
+              {' · '}
+              Via Microsoft Office Online (requires a public HTTPS file URL).
+            </div>
+            <iframe
+              title={file.name}
+              src={embedSrc}
+              className="min-h-0 w-full flex-1 border-none"
+              referrerPolicy="no-referrer"
+              loading="lazy"
+            />
+          </div>
+        );
+      }
+      const downloadBlob = () => {
+        try {
+          const buffer = decodeBase64ToArrayBuffer(fileContent);
+          const blob = new Blob([buffer], {
+            type:
+              file?.mimeType
+              || 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+          });
+          const url = URL.createObjectURL(blob);
+          const anchor = document.createElement('a');
+          anchor.href = url;
+          anchor.download = file.name || 'presentation.pptx';
+          anchor.click();
+          URL.revokeObjectURL(url);
+        } catch (e) {
+          console.error('PPTX download failed', e);
+        }
+      };
+      return (
+        <div
+          className={`flex h-full flex-col items-center justify-center gap-4 px-6 text-center text-sm ${
+            colorMode === 'dark' ? 'text-slate-300' : 'text-gray-600'
+          }`}
+        >
+          <p>
+            Inline PowerPoint preview needs a public <strong className="font-semibold">https</strong> URL to
+            your file. Download the deck and open it locally, or use a workspace with public file URLs.
+          </p>
+          {fileContent.trim() ? (
+            <button
+              type="button"
+              onClick={downloadBlob}
+              className={`rounded-lg px-4 py-2 text-sm font-medium text-white ${
+                colorMode === 'dark'
+                  ? 'bg-slate-600 hover:bg-slate-500'
+                  : 'bg-slate-800 hover:bg-slate-700'
+              }`}
+            >
+              Download .pptx
+            </button>
+          ) : null}
         </div>
       );
     }
