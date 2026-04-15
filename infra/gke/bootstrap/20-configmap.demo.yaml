@@ -1,3 +1,7 @@
+# Demo / first-install ConfigMap only. Not applied by `kubectl apply -f infra/gke/k8s/`
+# or Cloud Build gke-deploy, so production values from `kubectl create configmap
+# ... --from-env-file=env/prod/config.env` are never overwritten on routine deploys.
+# GitHub full-stack deploy applies this file only when helpudoc-config is missing.
 apiVersion: v1
 kind: ConfigMap
 metadata:

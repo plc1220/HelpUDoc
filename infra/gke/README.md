@@ -28,6 +28,7 @@ The backend and agent are intentionally co-located around shared workspace/confi
 | Path | Purpose |
 | ---- | ------- |
 | `k8s/00-namespace.yaml` | Namespace creation |
+| `bootstrap/20-configmap.demo.yaml` | Optional demo `helpudoc-config` (first install only; not applied by `kubectl apply -f k8s/` or Cloud Build) |
 | `k8s/30-storage.yaml` | PVCs for workspaces, agent config, and skills |
 | `k8s/40-postgres.yaml` | PostgreSQL workload |
 | `k8s/41-redis.yaml` | Redis workload |
@@ -80,7 +81,7 @@ From the repo root, the most reliable path is:
      --substitutions=_GKE_LOCATION=<REGION_OR_ZONE>,_GKE_CLUSTER=<CLUSTER>,_RUN_E2E=false
    ```
 
-Cloud Build handles image builds and applies the manifests in `infra/gke/k8s/`, then runs `infra/gke/scripts/bootstrap-langfuse-db.sh --wait-rollout` so the Langfuse Postgres database exists before rollouts are considered successful.
+Cloud Build handles image builds and applies the manifests in `infra/gke/k8s/` (the checked-in **demo** `helpudoc-config` is under `bootstrap/20-configmap.demo.yaml`, not in `k8s/`, so each deploy does not reset an existing production ConfigMap), then runs `infra/gke/scripts/bootstrap-langfuse-db.sh --wait-rollout` so the Langfuse Postgres database exists before rollouts are considered successful.
 
 ### GitHub Actions: Langfuse-only
 
