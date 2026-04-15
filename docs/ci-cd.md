@@ -18,7 +18,7 @@ Each workflow:
 3. Gets cluster credentials and deploys via `kubectl`.
 4. Waits for rollout status.
 
-**Langfuse (ClickHouse + Langfuse):** `deploy-gke.yml` applies all of `infra/gke/k8s/`. The **backend** and **agent** workflows also `kubectl apply` `30-storage.yaml`, `44-clickhouse.yaml`, and `45-langfuse.yaml` before `50-app.yaml` so partial rollouts stay in sync. Ensure `helpudoc-secrets` and `helpudoc-config` include the Langfuse-related keys from `env/prod/*.example` (see [`LANGFUSE_TASKS.md`](../LANGFUSE_TASKS.md)).
+**Langfuse (ClickHouse + Langfuse):** `deploy-gke.yml` applies all of `infra/gke/k8s/`. The **backend** and **agent** workflows also `kubectl apply` `30-storage.yaml`, `44-clickhouse.yaml`, and `45-langfuse.yaml` before `50-app.yaml` so partial rollouts stay in sync. Ensure `helpudoc-secrets` and `helpudoc-config` include the Langfuse-related keys from `env/prod/config.env.example` and `env/prod/secrets.env.example`, and follow `infra/gke/README.md` for DNS and ingress.
 
 ## One Command Deploy (Manual)
 
