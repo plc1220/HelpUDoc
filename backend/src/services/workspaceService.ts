@@ -288,6 +288,25 @@ export class WorkspaceService {
     });
   }
 
+  async removeCollaborator(workspaceId: string, actingUserId: string, targetUserId: string): Promise<void> {
+    const { membership } = await this.ensureMembership(workspaceId, actingUserId);
+    if (membership.role !== 'owner') {
+      throw new AccessDeniedError('Only workspace owners can remove collaborators');
+    }
+
+    const target = await this.db<WorkspaceMembershipRecord>('workspace_members')
+      .where({ workspaceId, userId: targetUserId })
+      .first();
+    if (!target) {
+      throw new NotFoundError('Collaborator not found');
+    }
+    if (target.role === 'owner') {
+      throw new AccessDeniedError('Cannot remove workspace owner');
+    }
+
+    await this.db('workspace_members').where({ workspaceId, userId: targetUserId }).del();
+  }
+
   async listCollaborators(
     workspaceId: string,
     userId: string,
