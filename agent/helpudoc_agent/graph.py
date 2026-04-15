@@ -158,9 +158,14 @@ class AgentRegistry:
         context_payload = initial_context or {}
         policy_key = json.dumps(context_payload.get("mcp_policy", {}) or {}, sort_keys=True, default=str)
         mcp_auth_fingerprint = str(context_payload.get("mcp_auth_fingerprint") or "")
+        preferred_mcp_server = str(context_payload.get("preferred_mcp_server") or "").strip()
         user_key = str(context_payload.get("user_id") or "")
         cache_scope_prefix = f"{user_key}:{policy_key}:"
-        key = (resolved_name, workspace_id, f"{user_key}:{policy_key}:{mcp_auth_fingerprint}")
+        key = (
+            resolved_name,
+            workspace_id,
+            f"{user_key}:{policy_key}:{mcp_auth_fingerprint}:{preferred_mcp_server}",
+        )
         if key in self._cache:
             runtime = self._cache[key]
             if context_payload:

@@ -199,6 +199,67 @@ def test_registry_preserves_runtime_context_when_auth_fingerprint_rotates(tmp_pa
     assert len(created_tools) == 2
 
 
+def test_registry_rebuilds_runtime_when_preferred_mcp_server_changes(tmp_path, monkeypatch):
+    settings = _build_settings(tmp_path)
+    created_tools: list[list[str]] = []
+
+    class DummyAgent:
+        def __init__(self, tools):
+            self.tools = tools
+
+        def with_config(self, _config):
+            return self
+
+    def fake_create_agent(*, model, tools, system_prompt, middleware, checkpointer):
+        created_tools.append([getattr(tool, "name", None) for tool in tools])
+        return DummyAgent(tools)
+
+    async def fake_initialize(self, *, candidate_server_names=None, preflight_gemini=False):
+        self._allowed_servers = {}
+        self._tools_by_server = {}
+        self._clients_by_server = {}
+        self._rejected_servers = {}
+
+    monkeypatch.setattr("helpudoc_agent.graph.create_agent", fake_create_agent)
+    monkeypatch.setattr("helpudoc_agent.graph.init_chat_model", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.graph.FilesystemBackend", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.graph.TodoListMiddleware", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.graph.FilesystemMiddleware", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.graph.SummarizationMiddleware", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.graph.PatchToolCallsMiddleware", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.graph.HumanInTheLoopMiddleware", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.mcp_manager.MCPServerManager.initialize", fake_initialize)
+
+    registry = AgentRegistry(settings, ToolFactoryStub())
+
+    runtime_without_mcp = asyncio.run(
+        registry.get_or_create(
+            "lite",
+            "workspace-pref-switch",
+            initial_context={
+                "user_id": "user-1",
+                "mcp_policy": {"allowIds": [], "denyIds": [], "isAdmin": False},
+                "mcp_auth_fingerprint": "fingerprint-a",
+            },
+        )
+    )
+    runtime_with_mcp = asyncio.run(
+        registry.get_or_create(
+            "lite",
+            "workspace-pref-switch",
+            initial_context={
+                "user_id": "user-1",
+                "mcp_policy": {"allowIds": [], "denyIds": [], "isAdmin": False},
+                "mcp_auth_fingerprint": "fingerprint-a",
+                "preferred_mcp_server": "aws-knowledge",
+            },
+        )
+    )
+
+    assert runtime_with_mcp is not runtime_without_mcp
+    assert len(created_tools) == 2
+
+
 def test_aws_pricing_wrapper_sanitizes_schema_and_normalizes_inputs():
     pytest.importorskip("langchain_google_genai")
     captured = {}
