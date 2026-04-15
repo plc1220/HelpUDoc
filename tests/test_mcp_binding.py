@@ -423,3 +423,144 @@ def test_agent_registry_builds_runtime_with_wrapped_aws_pricing_candidate(
 
     assert runtime is not None
     assert captured["tool_names"] == ["get_pricing", "aws___search_documentation"]
+
+
+def test_registry_includes_preferred_mcp_server_without_active_skill(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    settings = _build_settings(tmp_path)
+    captured: dict[str, object] = {}
+
+    class DummyAgent:
+        def with_config(self, _config):
+            return self
+
+    def fake_create_agent(*, model, tools, system_prompt, middleware, checkpointer):
+        return DummyAgent()
+
+    async def fake_initialize(self, *, candidate_server_names=None, preflight_gemini=False):
+        captured["candidates"] = list(candidate_server_names or [])
+        self._allowed_servers = {}
+        self._tools_by_server = {}
+        self._clients_by_server = {}
+        self._rejected_servers = {}
+
+    monkeypatch.setattr("helpudoc_agent.graph.create_agent", fake_create_agent)
+    monkeypatch.setattr("helpudoc_agent.graph.init_chat_model", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.graph.FilesystemBackend", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.graph.TodoListMiddleware", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.graph.FilesystemMiddleware", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.graph.SummarizationMiddleware", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.graph.PatchToolCallsMiddleware", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.graph.HumanInTheLoopMiddleware", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.mcp_manager.MCPServerManager.initialize", fake_initialize)
+
+    registry = AgentRegistry(settings, ToolFactoryStub())
+    asyncio.run(
+        registry.get_or_create(
+            "fast",
+            "workspace-pref",
+            initial_context={
+                "preferred_mcp_server": "aws-knowledge",
+            },
+        )
+    )
+
+    assert captured["candidates"] == ["aws-knowledge"]
+
+
+def test_registry_keeps_skill_candidates_and_appends_preferred_for_lite_persona(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    settings = _build_settings(tmp_path)
+    captured: dict[str, object] = {}
+
+    class DummyAgent:
+        def with_config(self, _config):
+            return self
+
+    def fake_create_agent(*, model, tools, system_prompt, middleware, checkpointer):
+        return DummyAgent()
+
+    async def fake_initialize(self, *, candidate_server_names=None, preflight_gemini=False):
+        captured["candidates"] = list(candidate_server_names or [])
+        self._allowed_servers = {}
+        self._tools_by_server = {}
+        self._clients_by_server = {}
+        self._rejected_servers = {}
+
+    monkeypatch.setattr("helpudoc_agent.graph.create_agent", fake_create_agent)
+    monkeypatch.setattr("helpudoc_agent.graph.init_chat_model", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.graph.FilesystemBackend", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.graph.TodoListMiddleware", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.graph.FilesystemMiddleware", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.graph.SummarizationMiddleware", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.graph.PatchToolCallsMiddleware", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.graph.HumanInTheLoopMiddleware", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.mcp_manager.MCPServerManager.initialize", fake_initialize)
+
+    registry = AgentRegistry(settings, ToolFactoryStub())
+    asyncio.run(
+        registry.get_or_create(
+            "lite",
+            "workspace-lite-pref",
+            initial_context={
+                "active_skill_scope": {
+                    "skill_id": "general",
+                    "tools": [],
+                    "mcp_servers": [],
+                },
+                "preferred_mcp_server": "aws-pricing",
+            },
+        )
+    )
+
+    # "general" skill contributes both AWS servers; preferred is deduped.
+    assert captured["candidates"] == ["aws-pricing", "aws-knowledge"]
+
+
+def test_registry_ignores_unknown_preferred_mcp_server(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    settings = _build_settings(tmp_path)
+    captured: dict[str, object] = {}
+
+    class DummyAgent:
+        def with_config(self, _config):
+            return self
+
+    def fake_create_agent(*, model, tools, system_prompt, middleware, checkpointer):
+        return DummyAgent()
+
+    async def fake_initialize(self, *, candidate_server_names=None, preflight_gemini=False):
+        captured["candidates"] = list(candidate_server_names or [])
+        self._allowed_servers = {}
+        self._tools_by_server = {}
+        self._clients_by_server = {}
+        self._rejected_servers = {}
+
+    monkeypatch.setattr("helpudoc_agent.graph.create_agent", fake_create_agent)
+    monkeypatch.setattr("helpudoc_agent.graph.init_chat_model", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.graph.FilesystemBackend", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.graph.TodoListMiddleware", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.graph.FilesystemMiddleware", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.graph.SummarizationMiddleware", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.graph.PatchToolCallsMiddleware", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.graph.HumanInTheLoopMiddleware", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.mcp_manager.MCPServerManager.initialize", fake_initialize)
+
+    registry = AgentRegistry(settings, ToolFactoryStub())
+    asyncio.run(
+        registry.get_or_create(
+            "fast",
+            "workspace-unknown-pref",
+            initial_context={
+                "preferred_mcp_server": "not-configured",
+            },
+        )
+    )
+
+    assert captured["candidates"] == []

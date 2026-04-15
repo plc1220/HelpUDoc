@@ -105,6 +105,47 @@ class AgentRegistry:
         self._models[model_name] = model
         return model
 
+    def _resolve_candidate_mcp_servers(self, workspace_state: WorkspaceState) -> list[str]:
+        """Resolve MCP bind candidates from active skill scope and /mcp preference.
+
+        Order is deterministic:
+        1) skill-derived candidates
+        2) explicit preferred MCP server (if configured and not already present)
+        """
+        active_skill = workspace_state.context.get("active_skill_scope")
+        skill_candidates = list(get_candidate_mcp_servers(active_skill))
+
+        preferred = workspace_state.context.get("preferred_mcp_server")
+        preferred_server = str(preferred).strip() if isinstance(preferred, str) else ""
+        candidates: list[str] = []
+        seen: set[str] = set()
+        for server_name in skill_candidates:
+            normalized = str(server_name).strip()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            candidates.append(normalized)
+
+        if preferred_server:
+            if preferred_server in self.settings.mcp_servers:
+                if preferred_server not in seen:
+                    candidates.append(preferred_server)
+            else:
+                logger.warning(
+                    "Ignoring preferred MCP server not present in runtime config (workspace=%s preferred=%s)",
+                    workspace_state.workspace_id,
+                    preferred_server,
+                )
+
+        logger.info(
+            "MCP bind candidates resolved (workspace=%s preferred=%s allowed_by_skill=%s final_candidates=%s)",
+            workspace_state.workspace_id,
+            preferred_server or None,
+            skill_candidates,
+            candidates,
+        )
+        return candidates
+
     async def get_or_create(
         self,
         agent_name: str,
@@ -176,14 +217,8 @@ class AgentRegistry:
             for tool in self.tool_factory.build_tools(tool_names, workspace_state)
         ]
 
-        active_skill = workspace_state.context.get("active_skill_scope")
-        candidate_mcp_servers = get_candidate_mcp_servers(active_skill)
+        candidate_mcp_servers = self._resolve_candidate_mcp_servers(workspace_state)
         mcp_manager = MCPServerManager(self.settings, workspace_state)
-        logger.info(
-            "MCP bind candidates resolved (workspace=%s allowed_by_skill=%s)",
-            workspace_id,
-            candidate_mcp_servers,
-        )
         await mcp_manager.initialize(
             candidate_server_names=candidate_mcp_servers,
             preflight_gemini=self.settings.model.provider == "gemini",
