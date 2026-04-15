@@ -202,6 +202,20 @@ steps:
         tar -C agent/config -cf - runtime.yaml | kubectl -n helpudoc exec -i "$${APP_POD}" -c backend -- sh -lc "tar -xf - -C /agent/config"
         kubectl -n helpudoc exec "$${APP_POD}" -c backend -- sh -lc "test -f /agent/config/runtime.yaml"
 
+  - id: restart-app-after-runtime-sync
+    name: 'gcr.io/cloud-builders/kubectl'
+    waitFor: ['sync-agent-config-pvc']
+    env:
+      - 'CLOUDSDK_COMPUTE_ZONE=$_GKE_LOCATION'
+      - 'CLOUDSDK_CONTAINER_CLUSTER=$_GKE_CLUSTER'
+    entrypoint: 'sh'
+    args:
+      - '-c'
+      - |
+        set -eu
+        kubectl -n helpudoc rollout restart deployment/helpudoc-app
+        kubectl -n helpudoc rollout status deployment/helpudoc-app --timeout=180s
+
   # 7. Bootstrap default admin (optional, idempotent).
   - id: bootstrap-admin
     name: 'gcr.io/cloud-builders/kubectl'
@@ -255,7 +269,7 @@ steps:
   # 8. Post-deploy drift guard (fails if PVC-backed runtime/skills are stale)
   - id: post-deploy-drift-guard
     name: 'gcr.io/cloud-builders/kubectl'
-    waitFor: ['sync-skills-pvc', 'sync-agent-config-pvc', 'bootstrap-admin']
+    waitFor: ['sync-skills-pvc', 'restart-app-after-runtime-sync', 'bootstrap-admin']
     env:
       - 'CLOUDSDK_COMPUTE_ZONE=$_GKE_LOCATION'
       - 'CLOUDSDK_CONTAINER_CLUSTER=$_GKE_CLUSTER'
