@@ -34,4 +34,5 @@ lightrag-hku[api]
 raganything
 pypdf
 redis
-langfuse>=4.0,<5
+# Keep major aligned with self-hosted Langfuse images (langfuse/langfuse:3 in infra).
+langfuse>=3.14.6,<4
