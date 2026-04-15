@@ -223,6 +223,12 @@ class AgentRegistry:
             candidate_server_names=candidate_mcp_servers,
             preflight_gemini=self.settings.model.provider == "gemini",
         )
+        preferred_server = workspace_state.context.get("preferred_mcp_server")
+        normalized_preferred = str(preferred_server).strip() if isinstance(preferred_server, str) else ""
+        bound_servers = list(mcp_manager.get_tools_by_server().keys())
+        workspace_state.context["preferred_mcp_server_bound"] = bool(
+            normalized_preferred and normalized_preferred in bound_servers
+        )
         mcp_tools = []
         for server_name, server_tools in mcp_manager.get_tools_by_server().items():
             for tool in server_tools:
