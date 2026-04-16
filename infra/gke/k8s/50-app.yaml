@@ -166,6 +166,8 @@ spec:
                   name: helpudoc-secrets
                   key: OAUTH_TOKEN_ENCRYPTION_KEY
                   optional: true
+            - name: FILE_UNDERSTANDING_AGENT_READS_WORKSPACE
+              value: "true"
           volumeMounts:
             - name: workspace-data
               mountPath: /app/workspaces
@@ -180,10 +182,10 @@ spec:
           resources:
             requests:
               cpu: "750m"
-              memory: "3Gi"
+              memory: "4Gi"
             limits:
               cpu: "1500m"
-              memory: "4Gi"
+              memory: "8Gi"
           env:
             - name: REDIS_URL
               value: redis://redis:6379

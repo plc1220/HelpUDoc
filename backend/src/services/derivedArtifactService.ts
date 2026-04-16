@@ -85,6 +85,11 @@ const resolveSyncMaxBytes = (): number => {
   return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : DEFAULT_SYNC_MAX_BYTES;
 };
 
+const agentReadsWorkspaceFiles = (): boolean => {
+  const raw = String(process.env.FILE_UNDERSTANDING_AGENT_READS_WORKSPACE || '').trim().toLowerCase();
+  return raw === 'true' || raw === '1' || raw === 'yes';
+};
+
 const isMarkdownLike = (fileName: string, mimeType?: string | null): boolean => {
   const ext = path.extname(fileName).toLowerCase();
   if (['.md', '.txt', '.csv', '.json', '.html', '.htm'].includes(ext)) {
@@ -678,11 +683,22 @@ export class DerivedArtifactService {
       };
     }
 
-    const response = await understandAttachment({
-      fileName: sourceFile.name,
-      mimeType: sourceFile.mimeType || 'application/octet-stream',
-      contentB64: buffer.toString('base64'),
-    });
+    const mimeType = sourceFile.mimeType || 'application/octet-stream';
+    const useWorkspaceRef = agentReadsWorkspaceFiles() && Boolean(sourceFile.workspaceId?.trim());
+    const response = await understandAttachment(
+      useWorkspaceRef
+        ? {
+            fileName: sourceFile.name,
+            mimeType,
+            workspaceId: sourceFile.workspaceId,
+            relativePath: sourceFile.name,
+          }
+        : {
+            fileName: sourceFile.name,
+            mimeType,
+            contentB64: buffer.toString('base64'),
+          },
+    );
     const title = response.title || path.basename(sourceFile.name);
     const sections = Array.isArray(response.sections) && response.sections.length
       ? response.sections

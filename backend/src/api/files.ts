@@ -1,3 +1,7 @@
+import * as fs from 'fs/promises';
+import { randomUUID } from 'crypto';
+import * as os from 'os';
+import * as path from 'path';
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import multer from 'multer';
@@ -16,7 +20,17 @@ export default function(
   derivedArtifactService: DerivedArtifactService,
 ) {
   const router = Router({ mergeParams: true });
-  const upload = multer({ storage: multer.memoryStorage() });
+  const upload = multer({
+    storage: multer.diskStorage({
+      destination: (_req, _file, cb) => {
+        cb(null, os.tmpdir());
+      },
+      filename: (_req, file, cb) => {
+        const ext = path.extname(file.originalname || '') || '';
+        cb(null, `helpudoc-upload-${randomUUID()}${ext}`);
+      },
+    }),
+  });
   const googleDriveService = new GoogleDriveService(googleOAuthService, fileService);
 
   const updateFileSchema = z.object({
@@ -220,10 +234,17 @@ export default function(
         if (!req.file) {
           return res.status(400).json({ error: 'No file uploaded' });
         }
+        const diskPath = req.file.path;
+        let fileBuffer: Buffer;
+        try {
+          fileBuffer = await fs.readFile(diskPath);
+        } finally {
+          await fs.unlink(diskPath).catch(() => undefined);
+        }
         const newFile = await fileService.createFile(
           workspaceId,
           req.file.originalname,
-          req.file.buffer,
+          fileBuffer,
           req.file.mimetype,
           user.userId,
         );

@@ -223,6 +223,7 @@ services:
       S3_PUBLIC_BASE_URL: ${S3_PUBLIC_BASE_URL:-http://localhost:9000/helpudoc}
       S3_FORCE_PATH_STYLE: "true"
       WORKSPACE_ROOT: /app/workspaces
+      FILE_UNDERSTANDING_AGENT_READS_WORKSPACE: "true"
       SKILLS_ROOT: /app/skills
       AGENT_CONFIG_PATH: /agent/config/runtime.yaml
       ADMIN_EMAILS: ${ADMIN_EMAILS:-admin@local.com}

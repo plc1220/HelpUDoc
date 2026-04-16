@@ -231,10 +231,14 @@ def _install_dependency_stubs():
         class _Tool:
             pass
 
+        class _StructuredTool(_Tool):
+            pass
+
         def _tool(fn):
             return fn
 
         tools_module.Tool = _Tool
+        tools_module.StructuredTool = _StructuredTool
         tools_module.tool = _tool
         sys.modules["langchain_core.tools"] = tools_module
         langchain_core.tools = tools_module
@@ -281,13 +285,27 @@ def _install_dependency_stubs():
 
     if "google.genai" not in sys.modules:
         genai = ModuleType("google.genai")
+        genai_types = ModuleType("google.genai.types")
 
         class _Client:
             def __init__(self, *_, **__):
                 pass
 
+        class _Part:
+            @staticmethod
+            def from_bytes(*_args, **_kwargs):
+                return {"kind": "bytes"}
+
+        class _GenerateContentConfig:
+            def __init__(self, *_, **__):
+                pass
+
         genai.Client = _Client
+        genai.types = genai_types
+        genai_types.Part = _Part
+        genai_types.GenerateContentConfig = _GenerateContentConfig
         sys.modules["google.genai"] = genai
+        sys.modules["google.genai.types"] = genai_types
         google_pkg.genai = genai
 
     if "redis" not in sys.modules:
@@ -420,6 +438,51 @@ def test_format_exception_flattens_exception_groups(client_with_stubs):
     error = ExceptionGroup("unhandled errors in a TaskGroup", [RuntimeError("401 Unauthorized"), ValueError("bad args")])
 
     assert app_module._format_exception(error) == "401 Unauthorized; bad args"
+
+
+def test_extract_directive_from_text_supports_use_skill_prefix(client_with_stubs):
+    client_with_stubs
+
+    import helpudoc_agent.app as app_module
+
+    directive, prompt = app_module._extract_directive_from_text(
+        "Use /skill proposal-writing draft a short proposal for Acme"
+    )
+
+    assert directive is not None
+    assert directive.kind == "skill"
+    assert directive.skillId == "proposal-writing"
+    assert prompt == "draft a short proposal for Acme"
+
+
+def test_extract_directive_from_text_supports_first_line_skill_command(client_with_stubs):
+    client_with_stubs
+
+    import helpudoc_agent.app as app_module
+
+    directive, prompt = app_module._extract_directive_from_text(
+        "/skill proposal-writing\nDraft a short proposal for Acme.\nFocus on timeline and budget."
+    )
+
+    assert directive is not None
+    assert directive.kind == "skill"
+    assert directive.skillId == "proposal-writing"
+    assert prompt == "Draft a short proposal for Acme.\nFocus on timeline and budget."
+
+
+def test_extract_directive_from_text_supports_use_mcp_prefix(client_with_stubs):
+    client_with_stubs
+
+    import helpudoc_agent.app as app_module
+
+    directive, prompt = app_module._extract_directive_from_text(
+        "Please use /mcp aws-knowledge find the latest AWS Bedrock guidance"
+    )
+
+    assert directive is not None
+    assert directive.kind == "mcp"
+    assert directive.serverId == "aws-knowledge"
+    assert prompt == "find the latest AWS Bedrock guidance"
 
 
 def test_append_tagged_file_guidance_warns_for_html(client_with_stubs):

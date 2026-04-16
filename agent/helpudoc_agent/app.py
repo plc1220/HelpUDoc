@@ -22,7 +22,7 @@ from dotenv import load_dotenv
 
 from fastapi import FastAPI, HTTPException, Body, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from google.genai import types as genai_types
 
 from .configuration import describe_workspace_root, load_settings
@@ -38,6 +38,7 @@ from .interrupt_payloads import (
 from .utils import SourceTracker
 from langchain_core.callbacks.base import AsyncCallbackHandler
 from .rag_worker import RagIndexWorker
+from .rag_indexer import _safe_join_workspace
 from .skills_registry import (
     activate_skill_context,
     build_loaded_skill_text,
@@ -331,7 +332,17 @@ class InterruptActionRequest(BaseModel):
 class AttachmentUnderstandingRequest(BaseModel):
     fileName: str
     mimeType: str
-    contentB64: str
+    contentB64: str = ""
+    workspaceId: Optional[str] = None
+    relativePath: Optional[str] = None
+
+    @model_validator(mode="after")
+    def validate_attachment_source(self) -> "AttachmentUnderstandingRequest":
+        has_b64 = bool((self.contentB64 or "").strip())
+        has_path = bool((self.workspaceId or "").strip() and (self.relativePath or "").strip())
+        if not has_b64 and not has_path:
+            raise ValueError("Either contentB64 or workspaceId+relativePath is required")
+        return self
 
 
 class AttachmentUnderstandingSection(BaseModel):
@@ -809,6 +820,14 @@ _LEGACY_MCP_PROMPT_RE = re.compile(
     r'[\s\S]*?(?:User request:\s*(?P<prompt>[\s\S]*))?$',
     re.IGNORECASE,
 )
+_LINE_SKILL_DIRECTIVE_RE = re.compile(
+    r"^\s*(?:(?:please\s+)?use\s+)?/skill\s+(?P<skill_id>[^\s]+)(?:\s+(?P<prompt>[\s\S]*))?$",
+    re.IGNORECASE,
+)
+_LINE_MCP_DIRECTIVE_RE = re.compile(
+    r"^\s*(?:(?:please\s+)?use\s+)?/mcp\s+(?P<server_id>[^\s]+)(?:\s+(?P<prompt>[\s\S]*))?$",
+    re.IGNORECASE,
+)
 
 
 def _infer_mime_type(file_path: str) -> str:
@@ -1005,12 +1024,31 @@ def create_app() -> FastAPI:
     async def understand_attachment(req: AttachmentUnderstandingRequest = Body(...)):
         if not req.fileName.strip():
             raise HTTPException(status_code=400, detail="fileName is required")
-        if not req.contentB64.strip():
-            raise HTTPException(status_code=400, detail="contentB64 is required")
-        try:
-            buffer = base64.b64decode(req.contentB64)
-        except Exception as exc:
-            raise HTTPException(status_code=400, detail="contentB64 must be valid base64") from exc
+        buffer: bytes
+        ws_id = (req.workspaceId or "").strip()
+        rel = (req.relativePath or "").strip()
+        if ws_id and rel:
+            try:
+                abs_path = _safe_join_workspace(
+                    Path(settings.backend.workspace_root),
+                    ws_id,
+                    rel,
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            if not abs_path.is_file():
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Workspace file not found for workspaceId={ws_id!r} relativePath={rel!r}",
+                )
+            buffer = await asyncio.to_thread(abs_path.read_bytes)
+        else:
+            if not req.contentB64.strip():
+                raise HTTPException(status_code=400, detail="contentB64 is required")
+            try:
+                buffer = base64.b64decode(req.contentB64)
+            except Exception as exc:
+                raise HTTPException(status_code=400, detail="contentB64 must be valid base64") from exc
 
         kind, fallback_mode = _guess_attachment_strategy(req.fileName, req.mimeType)
         extracted_text: str | None = None
@@ -1239,6 +1277,37 @@ def create_app() -> FastAPI:
                 EmbeddedDirective(kind="mcp", serverId=(legacy_mcp_match.group("server_id") or "").strip()),
                 (legacy_mcp_match.group("prompt") or "").strip(),
             )
+
+        lines = text.splitlines()
+        for index, raw_line in enumerate(lines):
+            if not raw_line.strip():
+                continue
+            skill_line_match = _LINE_SKILL_DIRECTIVE_RE.match(raw_line)
+            if skill_line_match:
+                remainder = "\n".join(lines[index + 1 :]).strip()
+                prompt_parts = [
+                    (skill_line_match.group("prompt") or "").strip(),
+                    remainder,
+                ]
+                prompt = "\n\n".join(part for part in prompt_parts if part)
+                return (
+                    EmbeddedDirective(kind="skill", skillId=(skill_line_match.group("skill_id") or "").strip()),
+                    prompt,
+                )
+
+            mcp_line_match = _LINE_MCP_DIRECTIVE_RE.match(raw_line)
+            if mcp_line_match:
+                remainder = "\n".join(lines[index + 1 :]).strip()
+                prompt_parts = [
+                    (mcp_line_match.group("prompt") or "").strip(),
+                    remainder,
+                ]
+                prompt = "\n\n".join(part for part in prompt_parts if part)
+                return (
+                    EmbeddedDirective(kind="mcp", serverId=(mcp_line_match.group("server_id") or "").strip()),
+                    prompt,
+                )
+            break
 
         return None, text
 
