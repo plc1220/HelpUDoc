@@ -39,7 +39,7 @@ spec:
             - containerPort: 3000
           resources:
             requests:
-              cpu: "250m"
+              cpu: "50m"
               memory: "512Mi"
             limits:
               cpu: "1000m"
@@ -98,6 +98,10 @@ spec:
               value: "false"
             - name: REDIS_CONNECTION_STRING
               value: redis://redis:6379/1
+            - name: REDIS_HOST
+              value: redis
+            - name: REDIS_PORT
+              value: "6379"
             - name: LANGFUSE_S3_EVENT_UPLOAD_BUCKET
               value: langfuse
             - name: LANGFUSE_S3_EVENT_UPLOAD_REGION
@@ -185,7 +189,7 @@ spec:
                   key: LANGFUSE_INIT_USER_PASSWORD
           readinessProbe:
             httpGet:
-              path: /
+              path: /api/public/ready
               port: 3000
             initialDelaySeconds: 45
             periodSeconds: 10
@@ -193,7 +197,7 @@ spec:
             failureThreshold: 6
           livenessProbe:
             httpGet:
-              path: /
+              path: /api/public/health
               port: 3000
             initialDelaySeconds: 90
             periodSeconds: 30
@@ -239,7 +243,7 @@ spec:
             - containerPort: 3030
           resources:
             requests:
-              cpu: "250m"
+              cpu: "50m"
               memory: "512Mi"
             limits:
               cpu: "1000m"
@@ -298,6 +302,10 @@ spec:
               value: "false"
             - name: REDIS_CONNECTION_STRING
               value: redis://redis:6379/1
+            - name: REDIS_HOST
+              value: redis
+            - name: REDIS_PORT
+              value: "6379"
             - name: LANGFUSE_S3_EVENT_UPLOAD_BUCKET
               value: langfuse
             - name: LANGFUSE_S3_EVENT_UPLOAD_REGION
@@ -339,15 +347,21 @@ spec:
             - name: LANGFUSE_S3_MEDIA_UPLOAD_PREFIX
               value: media/
           readinessProbe:
-            tcpSocket:
+            httpGet:
+              path: /api/health
               port: 3030
             initialDelaySeconds: 30
             periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
           livenessProbe:
-            tcpSocket:
+            httpGet:
+              path: /api/health
               port: 3030
             initialDelaySeconds: 60
             periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
 ---
 apiVersion: v1
 kind: Service

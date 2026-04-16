@@ -137,6 +137,59 @@ jobs:
           echo "For production, create the ConfigMap from env/prod/config.env instead (see infra/gke/README.md)."
           kubectl apply -f infra/gke/bootstrap/20-configmap.demo.yaml
 
+      - name: Ensure Langfuse bootstrap config and secrets
+        env:
+          CLICKHOUSE_PASSWORD_INPUT: ${{ secrets.CLICKHOUSE_PASSWORD }}
+          LANGFUSE_NEXTAUTH_SECRET_INPUT: ${{ secrets.LANGFUSE_NEXTAUTH_SECRET }}
+          LANGFUSE_SALT_INPUT: ${{ secrets.LANGFUSE_SALT }}
+          LANGFUSE_ENCRYPTION_KEY_INPUT: ${{ secrets.LANGFUSE_ENCRYPTION_KEY }}
+          LANGFUSE_PUBLIC_KEY_INPUT: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
+          LANGFUSE_SECRET_KEY_INPUT: ${{ secrets.LANGFUSE_SECRET_KEY }}
+          LANGFUSE_INIT_USER_PASSWORD_INPUT: ${{ secrets.LANGFUSE_INIT_USER_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          kubectl -n helpudoc get configmap helpudoc-config >/dev/null
+          kubectl -n helpudoc get secret helpudoc-secrets >/dev/null
+
+          ensure_cm_key() {
+            local key="$1"
+            local value="$2"
+            if [[ -n "$(kubectl -n helpudoc get configmap helpudoc-config -o "jsonpath={.data.${key}}" 2>/dev/null || true)" ]]; then
+              return
+            fi
+            kubectl -n helpudoc patch configmap helpudoc-config --type merge -p \
+              "$(jq -n --arg key "${key}" --arg value "${value}" '{data:{($key):$value}}')"
+          }
+
+          ensure_secret_key() {
+            local key="$1"
+            local value="$2"
+            if [[ -n "$(kubectl -n helpudoc get secret helpudoc-secrets -o "jsonpath={.data.${key}}" 2>/dev/null || true)" ]]; then
+              return
+            fi
+            kubectl -n helpudoc patch secret helpudoc-secrets --type merge -p \
+              "$(jq -n --arg key "${key}" --arg value "${value}" '{stringData:{($key):$value}}')"
+          }
+
+          ensure_cm_key LANGFUSE_NEXTAUTH_URL "https://langfuse.lc-demo.com"
+          ensure_cm_key LANGFUSE_BASE_URL "http://langfuse-web"
+          ensure_cm_key LANGFUSE_TRACING_ENABLED "true"
+          ensure_cm_key LANGFUSE_INIT_ORG_ID "helpudoc"
+          ensure_cm_key LANGFUSE_INIT_ORG_NAME "HelpUDoc"
+          ensure_cm_key LANGFUSE_INIT_PROJECT_ID "helpudoc-gke"
+          ensure_cm_key LANGFUSE_INIT_PROJECT_NAME "gke"
+          ensure_cm_key LANGFUSE_INIT_USER_EMAIL "admin@local.com"
+          ensure_cm_key LANGFUSE_INIT_USER_NAME "admin"
+
+          ensure_secret_key CLICKHOUSE_PASSWORD "${CLICKHOUSE_PASSWORD_INPUT:-$(openssl rand -hex 24)}"
+          ensure_secret_key LANGFUSE_NEXTAUTH_SECRET "${LANGFUSE_NEXTAUTH_SECRET_INPUT:-$(openssl rand -base64 32)}"
+          ensure_secret_key LANGFUSE_SALT "${LANGFUSE_SALT_INPUT:-$(openssl rand -base64 32)}"
+          ensure_secret_key LANGFUSE_ENCRYPTION_KEY "${LANGFUSE_ENCRYPTION_KEY_INPUT:-$(openssl rand -hex 32)}"
+          ensure_secret_key LANGFUSE_PUBLIC_KEY "${LANGFUSE_PUBLIC_KEY_INPUT:-pk-lf-$(openssl rand -hex 16)}"
+          ensure_secret_key LANGFUSE_SECRET_KEY "${LANGFUSE_SECRET_KEY_INPUT:-sk-lf-$(openssl rand -hex 32)}"
+          ensure_secret_key LANGFUSE_INIT_USER_PASSWORD "${LANGFUSE_INIT_USER_PASSWORD_INPUT:-$(openssl rand -base64 24)}"
+
       - name: Bootstrap Langfuse database and wait for Langfuse
         run: |
           set -euo pipefail
