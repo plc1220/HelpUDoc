@@ -123,6 +123,7 @@ jobs:
       - name: Apply Kubernetes manifests (ConfigMap is bootstrap-only; see next step)
         run: |
           set -euo pipefail
+          kubectl -n helpudoc delete job helpudoc-minio-setup --ignore-not-found
           kubectl apply -f infra/gke/k8s/
 
       - name: Ensure helpudoc-config exists (first install only)
