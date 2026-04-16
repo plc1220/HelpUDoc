@@ -1,7 +1,11 @@
 import { ArrowDown, MessageSquareText } from 'lucide-react';
 import { type Dispatch, type ReactNode, type SetStateAction, useEffect, useMemo, useRef, useState } from 'react';
 
-import type { ConversationMessage, ConversationMessageMetadata } from '../../types';
+import type {
+  ConversationMessage,
+  ConversationMessageMetadata,
+  InterruptAnswersByQuestionId,
+} from '../../types';
 import ChatMessageBubble from './ChatMessageBubble';
 import type { RenderableInterruptAction } from './interruptActions';
 
@@ -16,6 +20,7 @@ export default function ChatMessageList({
   expandedThinkingMessages,
   copiedMessageId,
   interruptInputByMessageId,
+  interruptStructuredAnswersByMessageId,
   interruptSelectedChoicesByMessageId,
   interruptSubmittingByMessageId,
   interruptErrorByMessageId,
@@ -27,6 +32,7 @@ export default function ChatMessageList({
   getPrimaryInterruptAction,
   isPlanApprovalInterrupt,
   setInterruptInputByMessageId,
+  setInterruptStructuredAnswersByMessageId,
   toggleInterruptSelectedChoice,
   workspaceSkipPlanApprovals,
   workspaceSettingsBusy,
@@ -49,6 +55,7 @@ export default function ChatMessageList({
   expandedThinkingMessages: Set<ConversationMessage['id']>;
   copiedMessageId: ConversationMessage['id'] | null;
   interruptInputByMessageId: Record<string, string>;
+  interruptStructuredAnswersByMessageId: Record<string, InterruptAnswersByQuestionId>;
   interruptSelectedChoicesByMessageId: Record<string, string[]>;
   interruptSubmittingByMessageId: Record<string, boolean>;
   interruptErrorByMessageId: Record<string, string>;
@@ -69,6 +76,7 @@ export default function ChatMessageList({
   ) => { name?: string; args?: Record<string, unknown> } | undefined;
   isPlanApprovalInterrupt: (pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt']) => boolean;
   setInterruptInputByMessageId: Dispatch<SetStateAction<Record<string, string>>>;
+  setInterruptStructuredAnswersByMessageId: Dispatch<SetStateAction<Record<string, InterruptAnswersByQuestionId>>>;
   toggleInterruptSelectedChoice: (messageKey: string, choiceId: string, multiple: boolean) => void;
   workspaceSkipPlanApprovals: boolean;
   workspaceSettingsBusy: boolean;
@@ -129,6 +137,11 @@ export default function ChatMessageList({
     setShowJumpToLatest(false);
   };
 
+  const latestAgentMessageId = useMemo(() => {
+    const latestAgentMessage = [...messages].reverse().find((message) => message.sender === 'agent');
+    return latestAgentMessage?.id ?? null;
+  }, [messages]);
+
   const messageItems = useMemo(() => {
     const nodes: ReactNode[] = [];
     let previousDateLabel = '';
@@ -152,6 +165,7 @@ export default function ChatMessageList({
         <ChatMessageBubble
           key={message.id}
           message={message}
+          isLatestAgentMessage={message.sender === 'agent' && message.id === latestAgentMessageId}
           personaDisplayName={personaDisplayName}
           messageBubbleMaxWidth={messageBubbleMaxWidth}
           markdownComponents={markdownComponents}
@@ -159,6 +173,7 @@ export default function ChatMessageList({
           expandedThinkingMessages={expandedThinkingMessages}
           copiedMessageId={copiedMessageId}
           interruptInputByMessageId={interruptInputByMessageId}
+          interruptStructuredAnswersByMessageId={interruptStructuredAnswersByMessageId}
           interruptSelectedChoicesByMessageId={interruptSelectedChoicesByMessageId}
           interruptSubmittingByMessageId={interruptSubmittingByMessageId}
           interruptErrorByMessageId={interruptErrorByMessageId}
@@ -170,6 +185,7 @@ export default function ChatMessageList({
           getPrimaryInterruptAction={getPrimaryInterruptAction}
           isPlanApprovalInterrupt={isPlanApprovalInterrupt}
           setInterruptInputByMessageId={setInterruptInputByMessageId}
+          setInterruptStructuredAnswersByMessageId={setInterruptStructuredAnswersByMessageId}
           toggleInterruptSelectedChoice={toggleInterruptSelectedChoice}
           workspaceSkipPlanApprovals={workspaceSkipPlanApprovals}
           workspaceSettingsBusy={workspaceSettingsBusy}
@@ -191,6 +207,7 @@ export default function ChatMessageList({
     interruptFieldKey,
     interruptActionFieldKey,
     interruptInputByMessageId,
+    interruptStructuredAnswersByMessageId,
     interruptSelectedChoicesByMessageId,
     interruptSubmittingByMessageId,
     interruptErrorByMessageId,
@@ -212,7 +229,9 @@ export default function ChatMessageList({
     messageBubbleMaxWidth,
     messages,
     personaDisplayName,
+    latestAgentMessageId,
     setInterruptInputByMessageId,
+    setInterruptStructuredAnswersByMessageId,
     toggleInterruptSelectedChoice,
     toggleThinkingVisibility,
     toggleToolActivityVisibility,
@@ -228,14 +247,14 @@ export default function ChatMessageList({
       <div
         ref={listRef}
         onScroll={handleScroll}
-        className="h-full overflow-y-auto px-4 py-4 min-h-0"
+        className="h-full overflow-y-auto px-3 py-3 min-h-0"
       >
-        <div className="mx-auto w-full max-w-5xl space-y-4">
+        <div className="mx-auto w-full max-w-[72rem] space-y-3">
           {messages.length === 0 ? (
             <div className={`flex h-full min-h-[40vh] flex-col items-center justify-center text-center ${
               isDarkMode ? 'text-slate-400' : 'text-slate-500'
             }`}>
-              <div className={`rounded-3xl border px-6 py-8 backdrop-blur-sm ${
+              <div className={`rounded-3xl border px-5 py-7 backdrop-blur-sm ${
                 isDarkMode
                   ? 'border-slate-700/70 bg-slate-900/75 shadow-[0_20px_50px_-32px_rgba(15,23,42,0.95)]'
                   : 'border-slate-200/80 bg-white/92 shadow-[0_24px_60px_-40px_rgba(15,23,42,0.16)]'

@@ -29,3 +29,10 @@ def test_general_skill_routes_binary_documents_to_format_skills() -> None:
     assert "-> `sheets`" in content
     assert "-> `pptx`" in content
     assert "Do not use `read_file` on common binary document formats" in content
+
+
+def test_general_and_proposal_skills_declare_aws_mcp_servers() -> None:
+    skills = {skill.skill_id: skill for skill in load_skills(REPO_ROOT / "skills")}
+
+    assert skills["general"].mcp_servers == ["aws-pricing", "aws-knowledge"]
+    assert skills["proposal-writing"].mcp_servers == ["aws-pricing", "aws-knowledge"]

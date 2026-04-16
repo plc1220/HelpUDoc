@@ -22,7 +22,13 @@ import {
   getFileContent,
   renameFile,
   getRagStatuses,
+  resolveFileContextRefs,
 } from '../services/fileApi';
+import {
+  createAttachmentPrepJob,
+  getAttachmentPrepJob,
+  type AttachmentPrepJob,
+} from '../services/attachmentPrepApi';
 import { startPaper2SlidesJob, getPaper2SlidesJob, exportPaper2SlidesPptx } from '../services/paper2SlidesJobApi';
 import {
   cancelRun,
@@ -54,15 +60,22 @@ import type {
   ToolOutputFile,
   ConversationMessageMetadata,
   InterruptAction,
+  InterruptAnswersByQuestionId,
+  InterruptQuestion,
+  GoogleDrivePickerItem,
+  FileContextRef,
   SkillDefinition,
 } from '../types';
 import CollapsibleDrawer from '../components/CollapsibleDrawer';
+import WorkspaceShareDialog from '../components/WorkspaceShareDialog';
 import type { UIBlock } from '../components/UIBlockRenderer';
 import ExpandableSidebar from '../components/ExpandableSidebar';
 import WorkspaceFileTree from '../components/WorkspaceFileTree';
 import AgentChatPane from '../components/chat/AgentChatPane';
 import { buildApprovalDraftContent, buildApprovalReview } from '../components/chat/approvalReview';
 import type { RenderableInterruptAction } from '../components/chat/interruptActions';
+import DrivePickerModal from '../components/chat/DrivePickerModal';
+import type { ChatComposerAttachment } from '../components/chat/chatTypes';
 import { useAuth } from '../auth/AuthProvider';
 import {
   CANVAS_ZOOM_STEP,
@@ -73,6 +86,13 @@ import {
   SLASH_COMMANDS,
 } from '../constants/workspace';
 import { isSystemFile, normalizeFilePath } from '../utils/files';
+import { isBinaryOfficeDocument } from '../utils/officeFiles';
+import {
+  areStructuredClarificationQuestionsComplete,
+  buildClarificationDraftStorageKey,
+  buildStructuredClarificationMessage,
+  hasStructuredClarificationAnswers,
+} from '../utils/clarifications';
 import {
   buildWorkspaceDestinationPath,
   getWorkspaceParentFolderPath,
@@ -97,12 +117,61 @@ const sanitizePresentationLabel = (value: string, fallback: string) => {
 
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+const summarizeComposerAttachments = (attachments: ChatComposerAttachment[]): string => {
+  if (!attachments.length) {
+    return '';
+  }
+  return attachments
+    .map((attachment) => (attachment.source === 'drive' ? `${attachment.name} (Drive)` : attachment.name))
+    .join(', ');
+};
+
+const findLatestFileContextRefs = (messages: ConversationMessage[]): FileContextRef[] | undefined => {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const metadata = messages[index]?.metadata as ConversationMessageMetadata | undefined;
+    if (metadata?.fileContextRefs?.length) {
+      return metadata.fileContextRefs;
+    }
+  }
+  return undefined;
+};
+
+const mergeFileContextRefs = (
+  ...groups: Array<FileContextRef[] | undefined>
+): FileContextRef[] | undefined => {
+  const merged: FileContextRef[] = [];
+  const seen = new Set<string>();
+
+  groups.forEach((group) => {
+    group?.forEach((ref) => {
+      const sourceFileId = String(ref.sourceFileId || '').trim();
+      const artifactId = typeof ref.artifactId === 'string' ? ref.artifactId.trim() : '';
+      const derivedArtifactFileId = String(ref.derivedArtifactFileId || '').trim();
+      const dedupeKey = sourceFileId || artifactId || derivedArtifactFileId;
+      if (!dedupeKey || seen.has(dedupeKey)) {
+        return;
+      }
+      seen.add(dedupeKey);
+      merged.push(ref);
+    });
+  });
+
+  return merged.length ? merged : undefined;
+};
+
+const delay = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
+
 const DEFAULT_PERSONA_NAME = 'fast';
 const DEFAULT_PERSONAS: AgentPersona[] = [
   {
     name: 'fast',
     displayName: 'Fast',
     description: 'Gemini 3 Flash (Preview)',
+  },
+  {
+    name: 'lite',
+    displayName: 'Lite',
+    description: 'Gemini 3.1 Flash Lite (Preview)',
   },
   {
     name: 'pro',
@@ -115,7 +184,13 @@ const normalizePersonaName = (name: string): string => {
   if (!normalized || normalized === 'general-assistant') {
     return DEFAULT_PERSONA_NAME;
   }
-  return normalized === 'pro' ? 'pro' : 'fast';
+  if (normalized === 'pro') {
+    return 'pro';
+  }
+  if (normalized === 'lite') {
+    return 'lite';
+  }
+  return 'fast';
 };
 const STREAM_DEBUG_ENABLED =
   typeof import.meta !== 'undefined' &&
@@ -171,6 +246,12 @@ type ActiveRunInfo = {
   status: AgentRunStatus;
 };
 
+type ConversationAttentionState = {
+  status: Exclude<AgentRunStatus, 'queued'>;
+  label?: string;
+  updatedAt: string;
+};
+
 const ACTIVE_RUNS_STORAGE_KEY = 'helpudoc-active-runs';
 const MARKDOWN_FILE_EXTENSIONS = ['.md'];
 const HTML_FILE_EXTENSIONS = ['.html', '.htm'];
@@ -184,6 +265,92 @@ const generateTurnId = () => {
 };
 
 const DEFAULT_PLAN_FILE_PATH = 'research_plan.md';
+
+const normalizeRunStatus = (
+  status?: ConversationMessageMetadata['status'] | AgentRunStatus,
+): Exclude<AgentRunStatus, 'queued'> => {
+  if (!status || status === 'queued') {
+    return 'running';
+  }
+  return status;
+};
+
+const isTerminalRunStatus = (
+  status?: ConversationMessageMetadata['status'] | AgentRunStatus,
+): status is 'completed' | 'failed' | 'cancelled' => (
+  status === 'completed' || status === 'failed' || status === 'cancelled'
+);
+
+const titleCaseToolName = (value?: string): string =>
+  String(value || '')
+    .trim()
+    .split(/[_\s-]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+
+const trimMilestone = (value?: string): string => {
+  const normalized = String(value || '').replace(/\s+/g, ' ').trim();
+  if (!normalized) {
+    return '';
+  }
+  return normalized.length > 120 ? `${normalized.slice(0, 117)}...` : normalized;
+};
+
+const isSummaryLikeAgentText = (value?: string): boolean => {
+  const text = String(value || '').trim();
+  if (!text) {
+    return false;
+  }
+  return (
+    /^Updated file\s+\//i.test(text) ||
+    /^Completed successfully\.?$/i.test(text) ||
+    /^The run (failed|was stopped)/i.test(text) ||
+    /^Artifact contract failed\.?$/i.test(text) ||
+    /^Missing:/i.test(text) ||
+    /^PLAN_(APPROVAL|EDIT|REJECTION|REJECT|CLARIFICATION|ACTION)_[A-Z_]+/i.test(text) ||
+    /^Command\s*\(/i.test(text)
+  );
+};
+
+const summarizeMessageFromToolEvents = (
+  message?: ConversationMessage | null,
+  status?: AgentRunStatus,
+): string => {
+  const toolEvents = message?.toolEvents || [];
+  const latestFinishedEvent = [...toolEvents]
+    .reverse()
+    .find((event) => {
+      if (!(event.status === 'completed' || event.status === 'error')) {
+        return false;
+      }
+      const summary = String(event.summary || '').trim();
+      if (!summary || isSummaryLikeAgentText(summary)) {
+        return false;
+      }
+      return true;
+    });
+  if (latestFinishedEvent?.summary?.trim()) {
+    return latestFinishedEvent.summary.trim();
+  }
+  const latestOutputFile = [...toolEvents]
+    .reverse()
+    .flatMap((event) => event.outputFiles || [])
+    .find((file) => typeof file.path === 'string' && file.path.trim());
+  if (latestOutputFile?.path) {
+    return `Updated file ${latestOutputFile.path}`;
+  }
+  if (status === 'completed') {
+    return 'Completed successfully.';
+  }
+  if (status === 'failed') {
+    return 'The run failed before it could finish.';
+  }
+  if (status === 'cancelled') {
+    return 'The run was stopped before completion.';
+  }
+  return '';
+};
 
 const formatWorkspaceLastUsed = (updatedAt?: string) => {
   if (!updatedAt) {
@@ -246,10 +413,28 @@ const mergePersistedAgentMessage = (
 
   const persistedText = typeof hydrated.text === 'string' ? hydrated.text : '';
   const existingText = typeof existing?.text === 'string' ? existing.text : '';
-  const mergedText =
-    persistedText.trim().length > 0 || !existingText.trim().length
-      ? persistedText
-      : existingText;
+  const persistedBodySource =
+    persistedMetadata.bodySource
+    || (persistedText.trim().length ? (isSummaryLikeAgentText(persistedText) ? 'summary' : 'assistant') : undefined);
+  const existingBodySource =
+    existingMetadata.bodySource
+    || (existingText.trim().length ? (isSummaryLikeAgentText(existingText) ? 'summary' : 'assistant') : undefined);
+
+  let mergedText = persistedText;
+  let mergedBodySource = persistedBodySource;
+  if (!persistedText.trim().length && existingText.trim().length) {
+    mergedText = existingText;
+    mergedBodySource = existingBodySource;
+  } else if (persistedBodySource !== 'assistant' && existingBodySource === 'assistant' && existingText.trim().length) {
+    mergedText = existingText;
+    mergedBodySource = existingBodySource;
+  }
+
+  if (mergedBodySource) {
+    mergedMetadata.bodySource = mergedBodySource;
+  } else {
+    delete mergedMetadata.bodySource;
+  }
 
   return {
     ...hydrated,
@@ -291,6 +476,7 @@ export default function WorkspacePage() {
   const [colorMode, setColorMode] = useState<PaletteMode>(resolveInitialColorMode);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [selectedWorkspace, setSelectedWorkspace] = useState<Workspace | null>(null);
+  const selectedWorkspaceIdRef = useRef<string | null>(null);
   const [workspaceSettingsBusy, setWorkspaceSettingsBusy] = useState(false);
   const [workspaceSearchQuery, setWorkspaceSearchQuery] = useState('');
   const [isWorkspaceRenameActive, setIsWorkspaceRenameActive] = useState(false);
@@ -303,8 +489,9 @@ export default function WorkspacePage() {
   const [fileContent, setFileContent] = useState('');
   const [conversationMessages, setConversationMessages] = useState<Record<string, ConversationMessage[]>>({});
   const [chatMessage, setChatMessage] = useState('');
-  const [chatAttachments, setChatAttachments] = useState<File[]>([]);
+  const [chatAttachments, setChatAttachments] = useState<ChatComposerAttachment[]>([]);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [shareWorkspace, setShareWorkspace] = useState<Workspace | null>(null);
   const personas = DEFAULT_PERSONAS;
   const [selectedPersona, setSelectedPersona] = useState(DEFAULT_PERSONA_NAME);
   const [isEditMode, setIsEditMode] = useState(false);
@@ -330,6 +517,8 @@ export default function WorkspacePage() {
   });
   const [presentationStatus, setPresentationStatus] = useState<'idle' | 'running' | 'success' | 'error'>('idle');
   const [isPresentationModalOpen, setIsPresentationModalOpen] = useState(false);
+  const [isDrivePickerOpen, setIsDrivePickerOpen] = useState(false);
+  const [isDriveImporting, setIsDriveImporting] = useState(false);
   const [draftPresentationOptions, setDraftPresentationOptions] = useState<PresentationOptionsState | null>(null);
   const [isPptxExporting, setIsPptxExporting] = useState(false);
   const streamAbortMapRef = useRef<Map<string, AbortController>>(new Map());
@@ -347,6 +536,9 @@ export default function WorkspacePage() {
   const persistInFlightRef = useRef<Set<string>>(new Set());
   const pendingPersistRef = useRef<Record<string, PersistProgressRequest>>({});
   const stopRequestedRef = useRef(false);
+  const sendLockRef = useRef(false);
+  const attachmentPrepPromiseRef = useRef<Map<string, Promise<AttachmentPrepJob>>>(new Map());
+  const attachmentPrepResumeRef = useRef<Set<string>>(new Set());
   const chatInputRef = useRef<HTMLTextAreaElement | null>(null);
   const attachmentInputRef = useRef<HTMLInputElement | null>(null);
   const workspaceNameInputRef = useRef<HTMLInputElement | null>(null);
@@ -380,13 +572,22 @@ export default function WorkspacePage() {
   const [availableSkills, setAvailableSkills] = useState<SkillDefinition[]>([]);
   const [availableMcpServers, setAvailableMcpServers] = useState<Array<{ name: string; description?: string }>>([]);
   const [interruptInputByMessageId, setInterruptInputByMessageId] = useState<Record<string, string>>({});
+  const [interruptStructuredAnswersByMessageId, setInterruptStructuredAnswersByMessageId] = useState<
+    Record<string, InterruptAnswersByQuestionId>
+  >({});
   const [interruptSelectedChoicesByMessageId, setInterruptSelectedChoicesByMessageId] = useState<Record<string, string[]>>({});
   const [interruptSubmittingByMessageId, setInterruptSubmittingByMessageId] = useState<Record<string, boolean>>({});
   const [interruptErrorByMessageId, setInterruptErrorByMessageId] = useState<Record<string, string>>({});
+  const [conversationAttentionById, setConversationAttentionById] = useState<Record<string, ConversationAttentionState>>({});
   const ragStatusFetchedRef = useRef<Record<string, boolean>>({});
   const resumeInFlightRef = useRef<Set<string>>(new Set());
   const resumeAttemptedRef = useRef<Set<string>>(new Set());
   const theme = useMemo(() => buildAppTheme(colorMode), [colorMode]);
+
+  useEffect(() => {
+    selectedWorkspaceIdRef.current = selectedWorkspace?.id ?? null;
+  }, [selectedWorkspace]);
+
   const messages = useMemo(
     () => (activeConversationId ? conversationMessages[activeConversationId] || [] : []),
     [activeConversationId, conversationMessages],
@@ -439,6 +640,24 @@ export default function WorkspacePage() {
         console.error('Failed to persist active runs', error);
       }
     }
+  }, []);
+
+  const setConversationAttention = useCallback((
+    conversationId: string,
+    status: Exclude<AgentRunStatus, 'queued'>,
+    label?: string,
+  ) => {
+    if (!conversationId) {
+      return;
+    }
+    setConversationAttentionById((prev) => ({
+      ...prev,
+      [conversationId]: {
+        status,
+        label: trimMilestone(label),
+        updatedAt: new Date().toISOString(),
+      },
+    }));
   }, []);
 
   const removeConflictingRuns = useCallback((runs: Record<string, ActiveRunInfo>, runInfo: ActiveRunInfo) => {
@@ -922,10 +1141,10 @@ export default function WorkspacePage() {
   const agentPaneWidth = isAgentPaneFullScreen
     ? '100%'
     : isAgentPaneVisible
-      ? '24rem'
+      ? '22rem'
       : '3rem';
 
-  const filePaneWidth = isFilePaneVisible ? 360 : 56;
+  const filePaneWidth = isFilePaneVisible ? 320 : 52;
 
   const layoutHeight = '100%';
 
@@ -1468,6 +1687,22 @@ export default function WorkspacePage() {
     if (!selectedWorkspace) {
       return;
     }
+    const hasPendingUnderstanding = files.some((file) =>
+      String(file.understandingStatus || '').toLowerCase() === 'pending',
+    );
+    if (!hasPendingUnderstanding) {
+      return;
+    }
+    const interval = window.setInterval(() => {
+      void loadFilesForWorkspace(selectedWorkspace.id);
+    }, 5000);
+    return () => window.clearInterval(interval);
+  }, [files, loadFilesForWorkspace, selectedWorkspace]);
+
+  useEffect(() => {
+    if (!selectedWorkspace) {
+      return;
+    }
     const workspaceId = selectedWorkspace.id;
     const hasPendingStatus = Object.values(ragStatuses).some((status) => {
       const normalized = String(status?.status || '').toLowerCase();
@@ -1886,7 +2121,18 @@ export default function WorkspacePage() {
   const loadConversationMessages = useCallback(async (conversationId: string) => {
     try {
       const detail = await fetchConversationDetail(conversationId);
-      const hydratedMessages = detail.messages.map(mergeMessageMetadata);
+      const hydratedMessages = detail.messages
+        .map(mergeMessageMetadata)
+        .map((message) => {
+          if (message.sender !== 'agent' || message.text?.trim()) {
+            return message;
+          }
+          const synthesizedText = summarizeMessageFromToolEvents(
+            message,
+            (message.metadata as ConversationMessageMetadata | undefined)?.status,
+          );
+          return synthesizedText ? { ...message, text: synthesizedText } : message;
+        });
       const filteredMessages = hydratedMessages.filter((message) => {
         if (message.sender !== 'agent') {
           return true;
@@ -2041,6 +2287,155 @@ export default function WorkspacePage() {
     }
   }, [activeConversationId, selectedWorkspace, selectedPersona, refreshConversationHistory, setStreamingForConversation]);
 
+  const upsertConversationMessage = useCallback(
+    (conversationId: string, nextMessage: ConversationMessage) => {
+      updateMessagesForConversation(conversationId, (prev) => {
+        const next = [...prev];
+        const existingIndex = next.findIndex((message) => {
+          if (nextMessage.id !== undefined && message.id === nextMessage.id) {
+            return true;
+          }
+          return Boolean(nextMessage.turnId) && message.sender === nextMessage.sender && message.turnId === nextMessage.turnId;
+        });
+        if (existingIndex >= 0) {
+          next[existingIndex] = nextMessage;
+          return next;
+        }
+        return [...next, nextMessage];
+      });
+    },
+    [updateMessagesForConversation],
+  );
+
+  const persistUserMessageMetadata = useCallback(
+    async (
+      conversationId: string,
+      message: ConversationMessage,
+      metadata: ConversationMessageMetadata,
+    ): Promise<ConversationMessage> => {
+      const persisted = await appendConversationMessage(conversationId, 'user', message.text, {
+        turnId: message.turnId,
+        replaceExisting: true,
+        metadata,
+      });
+      const normalized = mergeMessageMetadata(persisted);
+      upsertConversationMessage(conversationId, normalized);
+      return normalized;
+    },
+    [upsertConversationMessage],
+  );
+
+  const waitForAttachmentPrepJob = useCallback(
+    (workspaceId: string, jobId: string): Promise<AttachmentPrepJob> => {
+      const existing = attachmentPrepPromiseRef.current.get(jobId);
+      if (existing) {
+        return existing;
+      }
+      const promise = (async () => {
+        while (true) {
+          const job = await getAttachmentPrepJob(workspaceId, jobId);
+          if (job.status === 'ready' || job.status === 'failed') {
+            return job;
+          }
+          await delay(1500);
+        }
+      })().finally(() => {
+        attachmentPrepPromiseRef.current.delete(jobId);
+      });
+      attachmentPrepPromiseRef.current.set(jobId, promise);
+      return promise;
+    },
+    [],
+  );
+
+  async function launchPreparedAgentRun(params: {
+    workspaceId: string;
+    persona: string;
+    conversationId: string;
+    turnId: string;
+    prompt: string;
+    historyPayload: Array<{ role: string; content: string }>;
+    fileContextRefs?: FileContextRef[];
+    currentTurnFileIds?: number[];
+    taggedFiles?: string[];
+  }) {
+    const {
+      workspaceId,
+      persona,
+      conversationId,
+      turnId,
+      prompt,
+      historyPayload,
+      fileContextRefs,
+      currentTurnFileIds,
+      taggedFiles,
+    } = params;
+    const { runId } = await startAgentRun(
+      workspaceId,
+      persona,
+      prompt,
+      historyPayload.length ? historyPayload : undefined,
+      turnId,
+      {
+        forceReset: true,
+        taggedFiles,
+        fileContextRefs,
+        currentTurnFileIds,
+      },
+    );
+    if (STREAM_DEBUG_ENABLED) {
+      console.debug('[WorkspacePage] run started', { runId, conversationId });
+    }
+    const placeholderId = `agent-${runId}`;
+    ensureAgentPlaceholder(conversationId, placeholderId, turnId, true);
+    agentMessageBufferRef.current.set(placeholderId, '');
+    const runInfo: ActiveRunInfo = {
+      runId,
+      conversationId,
+      workspaceId,
+      persona,
+      turnId,
+      placeholderId,
+      status: 'running',
+    };
+    markRunStreamLaunching(runId);
+    registerActiveRun(runInfo);
+    setConversationAttention(conversationId, 'running', 'Queued the latest run...');
+    await streamRunForConversation(runInfo, true);
+
+    const messagesSnapshot = getConversationMessagesSnapshot(conversationId);
+    const targetIndex = messagesSnapshot.findIndex((message) => message.id === placeholderId);
+    const agentMessage = targetIndex >= 0 ? messagesSnapshot[targetIndex] : null;
+    const metadata = buildMessageMetadata(agentMessage) || {};
+    const bufferedText =
+      placeholderId !== null && placeholderId !== undefined
+        ? agentMessageBufferRef.current.get(placeholderId) ?? agentMessage?.text
+        : agentMessage?.text;
+    const placeholderTurnId = agentMessage?.turnId || turnId;
+    if (bufferedText) {
+      try {
+        const persisted = await appendConversationMessage(conversationId, 'agent', bufferedText, {
+          turnId: placeholderTurnId,
+          metadata: { ...metadata, runId },
+          replaceExisting: true,
+        });
+        upsertPersistedAgentMessage(conversationId, persisted, {
+          placeholderId,
+          existing: agentMessage,
+        });
+        if (placeholderId !== null && placeholderId !== undefined) {
+          agentMessageBufferRef.current.delete(placeholderId);
+        }
+        agentMessageBufferRef.current.set(persisted.id, persisted.text || '');
+        await refreshConversationHistory(workspaceId);
+      } catch (error) {
+        console.error('Failed to store agent message', error);
+      }
+    } else if (placeholderId !== null && placeholderId !== undefined) {
+      agentMessageBufferRef.current.delete(placeholderId);
+    }
+  }
+
   useEffect(() => {
     const loadConversations = async () => {
       if (!selectedWorkspace) {
@@ -2074,6 +2469,103 @@ export default function WorkspacePage() {
     };
     fetchWorkspaces();
   }, []);
+
+  useEffect(() => {
+    if (!selectedWorkspace?.id || !activeConversationId) {
+      return;
+    }
+    const workspaceId = selectedWorkspace.id;
+    const conversationId = activeConversationId;
+    const messagesForConversation = conversationMessages[conversationId] || [];
+    const pendingMessages = messagesForConversation.filter((message) => {
+      if (message.sender !== 'user' || !message.turnId) {
+        return false;
+      }
+      const metadata = message.metadata as ConversationMessageMetadata | undefined;
+      return Boolean(
+        metadata?.attachmentJobId
+        && (metadata.attachmentPrepStatus === 'pending' || metadata.attachmentPrepStatus === 'running'),
+      );
+    });
+    pendingMessages.forEach((message) => {
+      const metadata = message.metadata as ConversationMessageMetadata | undefined;
+      const jobId = metadata?.attachmentJobId;
+      if (!jobId || attachmentPrepResumeRef.current.has(jobId)) {
+        return;
+      }
+      attachmentPrepResumeRef.current.add(jobId);
+      void (async () => {
+        try {
+          const turnId = message.turnId;
+          if (!turnId) {
+            return;
+          }
+          setIsDriveImporting(true);
+          const settledJob = await waitForAttachmentPrepJob(workspaceId, jobId);
+          if (settledJob.status === 'failed') {
+            await persistUserMessageMetadata(conversationId, message, {
+              ...(metadata || {}),
+              attachmentJobId: jobId,
+              attachmentPrepStatus: 'failed',
+              attachmentPrepError: settledJob.error || 'Failed to prepare attachments.',
+            });
+            return;
+          }
+          const readyRefs = settledJob.result?.fileContextRefs?.length
+            ? settledJob.result.fileContextRefs
+            : undefined;
+          await persistUserMessageMetadata(conversationId, message, {
+            ...(metadata || {}),
+            attachmentJobId: jobId,
+            attachmentPrepStatus: 'ready',
+            attachmentPrepError: undefined,
+            fileContextRefs: readyRefs,
+          });
+          const agentExistsForTurn = getConversationMessagesSnapshot(conversationId).some(
+            (candidate) => candidate.sender === 'agent' && candidate.turnId === message.turnId,
+          );
+          if (agentExistsForTurn) {
+            return;
+          }
+          const updatedMessages = getConversationMessagesSnapshot(conversationId);
+          const historyPayload = mapMessagesToAgentHistory(updatedMessages);
+          const directive = parseSlashDirective(message.text.trim());
+          const agentPromptBase = buildAgentPromptFromDirective(directive) || message.text;
+          const attachmentPrompt = readyRefs?.length
+            ? `Use these attached files as primary context: ${readyRefs.map((ref) => ref.sourceName).join(', ')}`
+            : '';
+          await launchPreparedAgentRun({
+            workspaceId,
+            persona: normalizePersonaName(activeConversationPersona || selectedPersona || DEFAULT_PERSONA_NAME),
+            conversationId,
+            turnId,
+            prompt: attachmentPrompt
+              ? `${agentPromptBase}${agentPromptBase ? '\n\n' : ''}${attachmentPrompt}`
+              : agentPromptBase,
+            historyPayload,
+            fileContextRefs: readyRefs,
+            currentTurnFileIds: settledJob.result?.multimodalFileIds,
+            taggedFiles: readyRefs?.map((ref) => ref.sourceName).filter(Boolean),
+          });
+        } catch (error) {
+          console.error('Failed to resume attachment prep job', error);
+        } finally {
+          attachmentPrepResumeRef.current.delete(jobId);
+          setIsDriveImporting(false);
+        }
+      })();
+    });
+  }, [
+    activeConversationId,
+    activeConversationPersona,
+    conversationMessages,
+    getConversationMessagesSnapshot,
+    launchPreparedAgentRun,
+    persistUserMessageMetadata,
+    selectedPersona,
+    selectedWorkspace?.id,
+    waitForAttachmentPrepJob,
+  ]);
 
   useEffect(() => {
     if (!selectedWorkspace) {
@@ -2258,6 +2750,13 @@ export default function WorkspacePage() {
   useEffect(() => {
     fetchFileContent();
   }, [selectedFile, selectedWorkspace]);
+
+  useEffect(() => {
+    const name = selectedFile?.name ?? '';
+    if (isBinaryOfficeDocument(name)) {
+      setIsEditMode(false);
+    }
+  }, [selectedFile?.id, selectedFile?.name]);
 
   const handleCreateWorkspace = async () => {
     try {
@@ -2781,16 +3280,30 @@ export default function WorkspacePage() {
       }
       const message = findAgentMessageForRun(conversationId, placeholderId, turnId);
       const bufferedState = getBufferedAgentState(runInfo);
-      const text = bufferedState.text;
-      const lastText = lastPersistedAgentTextRef.current[runId];
       const nextStatus = statusOverride || message?.metadata?.status || runInfo.status || 'running';
+      const assistantText = bufferedState.text;
+      const summaryText =
+        !assistantText.trim() && isTerminalRunStatus(nextStatus)
+          ? summarizeMessageFromToolEvents(message, nextStatus)
+          : '';
+      const text = assistantText || summaryText;
+      const bodySource = assistantText.trim()
+        ? 'assistant'
+        : summaryText.trim()
+          ? 'summary'
+          : undefined;
+      const lastText = lastPersistedAgentTextRef.current[runId];
       const lastStatus = lastPersistedStatusRef.current[runId];
       const metadata = {
         ...(buildMessageMetadata(message) || {}),
         ...(options?.metadataOverride || {}),
         runId,
         status: nextStatus,
+        bodySource,
       } satisfies ConversationMessageMetadata;
+      if (!bodySource) {
+        delete metadata.bodySource;
+      }
       const metadataSignature = JSON.stringify(metadata);
       const lastMetadataSignature = lastPersistedMetadataRef.current[runId];
       if (text === lastText && nextStatus === lastStatus && metadataSignature === lastMetadataSignature) {
@@ -2846,6 +3359,45 @@ export default function WorkspacePage() {
       }
     },
     [findAgentMessageForRun, getBufferedAgentState, upsertPersistedAgentMessage],
+  );
+
+  const syncRunStateToConversation = useCallback(
+    async (
+      runInfo: ActiveRunInfo,
+      status: Exclude<AgentRunStatus, 'queued'>,
+      pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
+    ) => {
+      const agentMessageIndex = findAgentMessageIndexForRun(
+        runInfo.conversationId,
+        runInfo.placeholderId,
+        runInfo.turnId,
+        runInfo.runId,
+      );
+      if (agentMessageIndex >= 0) {
+        updateMessageMetadataAtIndex(runInfo.conversationId, agentMessageIndex, (metadata) => ({
+          ...metadata,
+          runId: runInfo.runId,
+          status,
+          pendingInterrupt: status === 'awaiting_approval' ? pendingInterrupt : undefined,
+        }));
+      }
+      await persistAgentProgress(
+        { ...runInfo, status },
+        status,
+        pendingInterrupt
+          ? {
+              metadataOverride: {
+                pendingInterrupt,
+              },
+            }
+          : {
+              metadataOverride: {
+                pendingInterrupt: undefined,
+              },
+            },
+      );
+    },
+    [findAgentMessageIndexForRun, persistAgentProgress, updateMessageMetadataAtIndex],
   );
 
   const bufferAgentChunk = (conversationId: string, index: number, chunk: string) => {
@@ -3178,21 +3730,23 @@ export default function WorkspacePage() {
     chunk: AgentStreamChunk,
     runId?: string,
   ) => {
-    const preserveInterruptState = (
+    const markStreamingState = (
       metadata: ConversationMessageMetadata | undefined,
     ): ConversationMessageMetadata => {
       const nextMetadata = { ...(metadata || {}) };
-      const hasPendingInterrupt = Boolean(nextMetadata.pendingInterrupt);
       if (runId) {
         nextMetadata.runId = runId;
       }
-      nextMetadata.status = hasPendingInterrupt ? 'awaiting_approval' : 'running';
-      nextMetadata.pendingInterrupt = hasPendingInterrupt ? nextMetadata.pendingInterrupt : undefined;
+      // Any real stream activity after resume means the prior interrupt has been
+      // consumed; keeping it here causes stale approval/clarification cards to linger.
+      nextMetadata.status = 'running';
+      nextMetadata.pendingInterrupt = undefined;
       return nextMetadata;
     };
 
     if (chunk.type === 'keepalive') {
       setStreamingForConversation(conversationId, true);
+      setConversationAttention(conversationId, 'running', 'Working through the current request.');
       return;
     }
 
@@ -3206,34 +3760,51 @@ export default function WorkspacePage() {
         prePlanSearchUsed: chunk.prePlanSearchUsed,
       });
       updateMessageMetadataAtIndex(conversationId, agentMessageIndex, (metadata) => ({
-        ...metadata,
-        ...(runId ? { runId } : {}),
+        ...markStreamingState(metadata),
         runPolicy: nextRunPolicy,
       }));
       return;
     }
 
     if (chunk.type === 'thought') {
-      updateMessageMetadataAtIndex(conversationId, agentMessageIndex, preserveInterruptState);
+      updateMessageMetadataAtIndex(conversationId, agentMessageIndex, markStreamingState);
       appendAgentThought(conversationId, agentMessageIndex, chunk.content || '');
+      if (chunk.content?.trim()) {
+        setConversationAttention(conversationId, 'running', chunk.content);
+      }
       return;
     }
 
     if (chunk.type === 'tool_start') {
-      updateMessageMetadataAtIndex(conversationId, agentMessageIndex, preserveInterruptState);
+      updateMessageMetadataAtIndex(conversationId, agentMessageIndex, markStreamingState);
       appendToolStart(conversationId, agentMessageIndex, chunk);
+      setConversationAttention(
+        conversationId,
+        'running',
+        `Running ${titleCaseToolName(chunk.name || chunk.content || 'tool') || 'a tool'}...`,
+      );
       return;
     }
 
     if (chunk.type === 'tool_end') {
-      updateMessageMetadataAtIndex(conversationId, agentMessageIndex, preserveInterruptState);
+      updateMessageMetadataAtIndex(conversationId, agentMessageIndex, markStreamingState);
       appendToolEnd(conversationId, agentMessageIndex, chunk);
+      setConversationAttention(
+        conversationId,
+        'running',
+        chunk.content || `${titleCaseToolName(chunk.name) || 'Tool'} completed.`,
+      );
       return;
     }
 
     if (chunk.type === 'tool_error') {
-      updateMessageMetadataAtIndex(conversationId, agentMessageIndex, preserveInterruptState);
+      updateMessageMetadataAtIndex(conversationId, agentMessageIndex, markStreamingState);
       appendToolEnd(conversationId, agentMessageIndex, chunk, 'error');
+      setConversationAttention(
+        conversationId,
+        'running',
+        chunk.content || `${titleCaseToolName(chunk.name) || 'Tool'} reported an error.`,
+      );
       return;
     }
 
@@ -3256,11 +3827,19 @@ export default function WorkspacePage() {
           displayPayload: chunk.displayPayload,
         },
       }));
+      setConversationAttention(
+        conversationId,
+        'awaiting_approval',
+        chunk.title || chunk.description || 'Waiting for your input.',
+      );
       return;
     }
 
     if (chunk.type === 'token' || chunk.type === 'chunk') {
-      updateMessageMetadataAtIndex(conversationId, agentMessageIndex, preserveInterruptState);
+      updateMessageMetadataAtIndex(conversationId, agentMessageIndex, (metadata) => ({
+        ...markStreamingState(metadata),
+        bodySource: 'assistant',
+      }));
       if (chunk.role && chunk.role !== 'assistant') {
         return;
       }
@@ -3269,15 +3848,12 @@ export default function WorkspacePage() {
     }
 
     if (chunk.type === 'contract_error') {
-      appendAgentChunk(conversationId, agentMessageIndex, `\\n${chunk.message || 'Artifact contract failed.'}`);
-      if (Array.isArray(chunk.missing) && chunk.missing.length) {
-        appendAgentChunk(conversationId, agentMessageIndex, `\\nMissing: ${chunk.missing.join(', ')}`);
-      }
+      setConversationAttention(conversationId, 'failed', chunk.message || 'Artifact contract failed.');
       return;
     }
 
     if (chunk.type === 'error') {
-      appendAgentChunk(conversationId, agentMessageIndex, `\n${chunk.message || 'Agent stream failed.'}`);
+      setConversationAttention(conversationId, 'failed', chunk.message || 'Agent stream failed.');
     }
   };
 
@@ -3306,8 +3882,12 @@ export default function WorkspacePage() {
       const controller = new AbortController();
       streamAbortMapRef.current.set(conversationId, controller);
       setStreamingForConversation(conversationId, true);
+      setConversationAttention(conversationId, 'running', 'Streaming the latest agent updates...');
       let finalStatus: AgentRunStatus = 'completed';
       let lastStreamId = resumeAfterId || runInfo.lastStreamId;
+      let latestStatusSnapshot:
+        | Awaited<ReturnType<typeof getRunStatus>>
+        | null = null;
       let latestInterrupt:
         | ConversationMessageMetadata['pendingInterrupt']
         | undefined;
@@ -3355,22 +3935,44 @@ export default function WorkspacePage() {
         })();
         if ((error as DOMException)?.name === 'AbortError') {
           if (stopRequestedRef.current) {
-            appendAgentChunk(conversationId, agentMessageIndex, '\n[Stopped by user]');
             finalStatus = 'cancelled';
+            setConversationAttention(conversationId, 'cancelled', 'The latest run was stopped.');
           } else if (!supersededByNewerStream) {
-            appendAgentChunk(conversationId, agentMessageIndex, '\n[Stream cancelled]');
             finalStatus = 'cancelled';
+            setConversationAttention(conversationId, 'cancelled', 'The latest run was cancelled.');
           }
         } else {
           console.error('Failed to stream agent run', error);
-          appendAgentChunk(conversationId, agentMessageIndex, '\nSorry, something went wrong.');
-          finalStatus = 'failed';
+          try {
+            latestStatusSnapshot = await getRunStatus(runId);
+            finalStatus = latestStatusSnapshot.status;
+            latestInterrupt = latestStatusSnapshot.pendingInterrupt ?? latestInterrupt;
+          } catch (statusError) {
+            console.error('Failed to fetch run status after stream error', statusError);
+          }
+          if (
+            finalStatus === 'awaiting_approval'
+            || finalStatus === 'completed'
+            || finalStatus === 'cancelled'
+          ) {
+            if (finalStatus === 'awaiting_approval' && latestInterrupt) {
+              updateMessageMetadataAtIndex(conversationId, agentMessageIndex, (metadata) => ({
+                ...metadata,
+                ...(runId ? { runId } : {}),
+                status: 'awaiting_approval',
+                pendingInterrupt: latestInterrupt,
+              }));
+            }
+          } else {
+            finalStatus = 'failed';
+            setConversationAttention(conversationId, 'failed', 'Sorry, something went wrong.');
+          }
         }
       } finally {
         const supersededByNewerStream = streamAbortMapRef.current.get(conversationId) !== controller;
         let latestRunMeta:
           | Awaited<ReturnType<typeof getRunStatus>>
-          | null = null;
+          | null = latestStatusSnapshot;
         try {
           latestRunMeta = await getRunStatus(runId);
           finalStatus = latestRunMeta.status;
@@ -3428,6 +4030,7 @@ export default function WorkspacePage() {
             lastStreamId,
           };
           registerActiveRun(resumedRunInfo);
+          setConversationAttention(conversationId, 'running', 'Streaming the latest agent updates...');
           if (streamAbortMapRef.current.get(conversationId) === controller) {
             streamAbortMapRef.current.delete(conversationId);
           }
@@ -3440,28 +4043,26 @@ export default function WorkspacePage() {
           }, 300);
           return;
         }
-        {
-          const agentMessageIndex = (() => {
-            const resolved = findAgentMessageIndexForRun(conversationId, placeholderId, turnId, runId);
-            return resolved >= 0 ? resolved : initialAgentMessageIndex;
-          })();
-          updateMessageMetadataAtIndex(conversationId, agentMessageIndex, (metadata) => ({
-            ...metadata,
-            ...(runId ? { runId } : {}),
-            status: finalStatus,
-            pendingInterrupt: finalStatus === 'awaiting_approval' ? effectivePendingInterrupt : undefined,
-          }));
-        }
-        await persistAgentProgress(
-          { ...runInfo, status: finalStatus },
-          finalStatus,
-          effectivePendingInterrupt
-            ? {
-                metadataOverride: {
-                  pendingInterrupt: effectivePendingInterrupt,
-                },
-              }
-            : undefined,
+        const normalizedFinalStatus = normalizeRunStatus(finalStatus);
+        await syncRunStateToConversation(
+          {
+            ...runInfo,
+            status: normalizedFinalStatus,
+            lastStreamId,
+          },
+          normalizedFinalStatus,
+          normalizedFinalStatus === 'awaiting_approval' ? effectivePendingInterrupt : undefined,
+        );
+        setConversationAttention(
+          conversationId,
+          normalizedFinalStatus,
+          normalizedFinalStatus === 'awaiting_approval'
+            ? effectivePendingInterrupt?.title || effectivePendingInterrupt?.description || 'Waiting for your input.'
+            : normalizedFinalStatus === 'completed'
+              ? 'The latest run completed.'
+              : normalizedFinalStatus === 'cancelled'
+                ? 'The latest run was stopped.'
+                : latestRunMeta?.error || 'The latest run failed.',
         );
         setStreamingForConversation(conversationId, false);
         if (streamAbortMapRef.current.get(conversationId) === controller) {
@@ -3470,7 +4071,7 @@ export default function WorkspacePage() {
         stopRequestedRef.current = false;
         resumeInFlightRef.current.delete(runId);
         if (finalStatus === 'awaiting_approval') {
-          registerActiveRun({ ...runInfo, status: finalStatus });
+          registerActiveRun({ ...runInfo, status: finalStatus, lastStreamId });
         } else {
           removeActiveRun(runId);
           removeActiveRunsForTurn(conversationId, turnId);
@@ -3626,6 +4227,7 @@ export default function WorkspacePage() {
         };
         markRunStreamLaunching(runId);
         registerActiveRun(runInfo);
+        setConversationAttention(message.conversationId, 'running', 'Resuming the run...');
         if (runInfo) {
           await streamRunForConversation(runInfo, false);
         } else {
@@ -3655,6 +4257,7 @@ export default function WorkspacePage() {
       clearPendingInterruptForRun,
       markRunStreamLaunching,
       registerActiveRun,
+      setConversationAttention,
       submitInterruptWithRetry,
       streamRunForConversation,
     ],
@@ -3677,13 +4280,35 @@ export default function WorkspacePage() {
       const messageKey = String(message.id);
       const textKey = interruptFieldKey(messageKey, 'clarification-text');
       const rawMessage = (interruptInputByMessageId[textKey] || '').trim();
+      const structuredQuestions = Array.isArray(pendingInterrupt?.responseSpec?.questions)
+        ? pendingInterrupt.responseSpec.questions as InterruptQuestion[]
+        : [];
+      const structuredAnswers = interruptStructuredAnswersByMessageId[messageKey];
+      const hasStructuredQuestionnaire = structuredQuestions.length > 0;
+      const hasCompleteStructuredAnswers = hasStructuredQuestionnaire
+        ? areStructuredClarificationQuestionsComplete(structuredQuestions, structuredAnswers)
+        : false;
       const selectedChoiceIds = interruptSelectedChoicesByMessageId[messageKey] || [];
       const choices = pendingInterrupt?.responseSpec?.choices || [];
       const selectedValues = selectedChoiceIds
         .map((choiceId) => choices.find((choice) => choice.id === choiceId)?.value)
         .filter((value): value is string => typeof value === 'string');
+      const structuredSummary = hasStructuredQuestionnaire && structuredAnswers
+        ? buildStructuredClarificationMessage(structuredQuestions, structuredAnswers, rawMessage)
+        : rawMessage;
+      const answersByQuestionId = hasStructuredClarificationAnswers(structuredAnswers)
+        ? structuredAnswers
+        : undefined;
 
-      if (!rawMessage && !selectedChoiceIds.length && !selectedValues.length) {
+      if (hasStructuredQuestionnaire && !hasCompleteStructuredAnswers) {
+        setInterruptErrorByMessageId((prev) => ({
+          ...prev,
+          [messageKey]: 'Answer each clarification step before continuing.',
+        }));
+        return;
+      }
+
+      if (!structuredSummary && !selectedChoiceIds.length && !selectedValues.length && !answersByQuestionId) {
         addLocalSystemMessage('Choose an option or enter a clarification response before continuing.');
         return;
       }
@@ -3698,9 +4323,10 @@ export default function WorkspacePage() {
       try {
         await submitInterruptWithRetry(runId, 'clarification', () =>
           submitRunResponse(runId, {
-            message: rawMessage || undefined,
+            message: structuredSummary || undefined,
             selectedChoiceIds: selectedChoiceIds.length ? selectedChoiceIds : undefined,
             selectedValues: selectedValues.length ? selectedValues : undefined,
+            answersByQuestionId,
           })
         );
         clearPendingInterruptForRun(message.conversationId, runId, message.turnId);
@@ -3709,11 +4335,24 @@ export default function WorkspacePage() {
           delete next[textKey];
           return next;
         });
+        setInterruptStructuredAnswersByMessageId((prev) => {
+          if (!prev[messageKey]) {
+            return prev;
+          }
+          const next = { ...prev };
+          delete next[messageKey];
+          return next;
+        });
         setInterruptSelectedChoicesByMessageId((prev) => {
           const next = { ...prev };
           delete next[messageKey];
           return next;
         });
+        if (typeof window !== 'undefined' && pendingInterrupt?.interruptId) {
+          window.localStorage.removeItem(
+            buildClarificationDraftStorageKey(message.conversationId, message.id, pendingInterrupt.interruptId),
+          );
+        }
         setInterruptErrorByMessageId((prev) => {
           if (!prev[messageKey]) return prev;
           const next = { ...prev };
@@ -3736,6 +4375,7 @@ export default function WorkspacePage() {
         };
         markRunStreamLaunching(runId);
         registerActiveRun(runInfo);
+        setConversationAttention(message.conversationId, 'running', 'Resuming the run...');
         if (runInfo) {
           await streamRunForConversation(runInfo, false);
         } else {
@@ -3757,11 +4397,14 @@ export default function WorkspacePage() {
       getInterruptKind,
       interruptFieldKey,
       interruptInputByMessageId,
+      interruptStructuredAnswersByMessageId,
       interruptSelectedChoicesByMessageId,
       rebuildRunInfoForMessage,
+      setConversationAttention,
       clearPendingInterruptForRun,
       markRunStreamLaunching,
       registerActiveRun,
+      setInterruptStructuredAnswersByMessageId,
       submitInterruptWithRetry,
       streamRunForConversation,
     ],
@@ -3864,6 +4507,7 @@ export default function WorkspacePage() {
           };
           markRunStreamLaunching(runId);
           registerActiveRun(runInfo);
+          setConversationAttention(message.conversationId, 'running', 'Resuming the run...');
           if (runInfo) {
             await streamRunForConversation(runInfo, false);
           } else {
@@ -3935,6 +4579,7 @@ export default function WorkspacePage() {
         };
         markRunStreamLaunching(runId);
         registerActiveRun(runInfo);
+        setConversationAttention(message.conversationId, 'running', 'Resuming the run...');
         if (runInfo) {
           await streamRunForConversation(runInfo, false);
         } else {
@@ -3961,6 +4606,7 @@ export default function WorkspacePage() {
       clearPendingInterruptForRun,
       markRunStreamLaunching,
       registerActiveRun,
+      setConversationAttention,
       submitInterruptWithRetry,
       streamRunForConversation,
       toggleInterruptSelectedChoice,
@@ -4009,10 +4655,20 @@ export default function WorkspacePage() {
           );
           const needsRecovery = isAgentMessageEmpty(persistedMessage);
           if (status.status === 'running' || status.status === 'queued') {
+            const shouldReplayFromStart = needsRecovery || !activeRun.lastStreamId;
             if (STREAM_DEBUG_ENABLED) {
-              console.debug('[WorkspacePage] resume stream', { runId: activeRun.runId });
+              console.debug('[WorkspacePage] resume stream', {
+                runId: activeRun.runId,
+                replayFromStart: shouldReplayFromStart,
+                lastStreamId: activeRun.lastStreamId,
+              });
             }
-            streamRunForConversation(activeRun, true)
+            setConversationAttention(activeRun.conversationId, 'running', 'Resuming the latest run...');
+            streamRunForConversation(
+              activeRun,
+              shouldReplayFromStart,
+              shouldReplayFromStart ? undefined : activeRun.lastStreamId,
+            )
               .catch((error) => {
                 console.error('Failed to resume agent stream', error);
                 removeActiveRun(activeRun.runId);
@@ -4057,6 +4713,16 @@ export default function WorkspacePage() {
                 return updated;
               });
             }
+            void syncRunStateToConversation(
+              { ...activeRun, status: 'awaiting_approval' },
+              'awaiting_approval',
+              status.pendingInterrupt,
+            );
+            setConversationAttention(
+              activeRun.conversationId,
+              'awaiting_approval',
+              status.pendingInterrupt?.title || status.pendingInterrupt?.description || 'Waiting for your input.',
+            );
             resumeInFlightRef.current.delete(activeRun.runId);
           } else if (needsRecovery) {
             streamRunForConversation({ ...activeRun, status: status.status }, true)
@@ -4085,7 +4751,22 @@ export default function WorkspacePage() {
                 prev.filter((message) => message.id !== staleMessage.id)
               );
               agentMessageBufferRef.current.delete(staleMessage.id);
+            } else {
+              const normalizedSettledStatus = normalizeRunStatus(status.status);
+              void syncRunStateToConversation(
+                { ...activeRun, status: normalizedSettledStatus },
+                normalizedSettledStatus,
+              );
             }
+            setConversationAttention(
+              activeRun.conversationId,
+              normalizeRunStatus(status.status),
+              status.status === 'completed'
+                ? 'The latest run completed.'
+                : status.status === 'cancelled'
+                  ? 'The latest run was stopped.'
+                  : 'The latest run failed.',
+            );
             removeActiveRun(activeRun.runId);
           }
         })
@@ -4119,6 +4800,8 @@ export default function WorkspacePage() {
     getActiveRunForConversation,
     isAgentMessageEmpty,
     removeActiveRun,
+    setConversationAttention,
+    syncRunStateToConversation,
     streamRunForConversation,
     updateMessagesForConversation,
   ]);
@@ -4280,6 +4963,7 @@ export default function WorkspacePage() {
       };
       markRunStreamLaunching(runId);
       registerActiveRun(runInfo);
+      setConversationAttention(conversationId, 'running', 'Queued the latest run...');
       await streamRunForConversation(runInfo, true);
 
       const messagesSnapshot = getConversationMessagesSnapshot(conversationId);
@@ -4488,7 +5172,7 @@ export default function WorkspacePage() {
               await finalizeMessage('completed', status.result, status.updatedAt);
               stopPresentationProgress('success');
               removePendingPresentationPlaceholder(startResponse.jobId);
-              if (selectedWorkspace?.id === workspaceId) {
+              if (selectedWorkspaceIdRef.current === workspaceId) {
                 await loadFilesForWorkspace(workspaceId);
                 await refreshConversationHistory(workspaceId);
               }
@@ -4570,191 +5254,299 @@ export default function WorkspacePage() {
   );
 
   const handleSendMessage = async () => {
+    if (sendLockRef.current || isDriveImporting) {
+      return;
+    }
     const trimmed = chatMessage.trim();
+    const localAttachments = chatAttachments.filter(
+      (attachment): attachment is Extract<ChatComposerAttachment, { source: 'local' }> => attachment.source === 'local',
+    );
+    const driveAttachments = chatAttachments.filter(
+      (attachment): attachment is Extract<ChatComposerAttachment, { source: 'drive' }> => attachment.source === 'drive',
+    );
     const hasAttachments = chatAttachments.length > 0;
+    const hasLocalAttachments = localAttachments.length > 0;
     if (!trimmed && !hasAttachments) return;
+    sendLockRef.current = true;
 
-    stopRequestedRef.current = false;
-    const directive = parseSlashDirective(trimmed);
-    const isPresentationCommand = directive.kind === 'presentation';
-    const mentionedFiles = isPresentationCommand ? findMentionedFiles(trimmed) : [];
-    const presentationFileIds = isPresentationCommand
-      ? Array.from(
+    try {
+      stopRequestedRef.current = false;
+      const directive = parseSlashDirective(trimmed);
+      const isPresentationCommand = directive.kind === 'presentation';
+      const mentionedFiles = findMentionedFiles(trimmed);
+      const mentionedFileIds = Array.from(
         new Set(
           mentionedFiles
             .map((file) => toNumericFileId(file.id))
             .filter((id): id is number => typeof id === 'number' && Number.isFinite(id)),
         ),
-      )
-      : [];
-    const presentationBrief = isPresentationCommand ? stripMentionedFilesFromPrompt(directive.prompt) : '';
-
-    if (isPresentationCommand && hasAttachments) {
-      addLocalSystemMessage('Attachments are not supported for /presentation. Please tag files using @filename instead.');
-      return;
-    }
-    if (directive.kind === 'skill') {
-      if (hasAttachments) {
-        addLocalSystemMessage('Attachments are not supported with /skill yet. Please upload files to the workspace first and reference them in your request.');
-        return;
-      }
-      if (!directive.skillId || !directive.prompt) {
-        addLocalSystemMessage('Use /skill <skill-id> <task>. Example: /skill sales draft follow-up from today\'s call.');
-        return;
-      }
-      if (!availableSkillMap.has(directive.skillId.toLowerCase())) {
-        addLocalSystemMessage(`Skill "${directive.skillId}" is not available.`);
-        return;
-      }
-    }
-    if (directive.kind === 'mcp') {
-      if (hasAttachments) {
-        addLocalSystemMessage('Attachments are not supported with /mcp yet. Please upload files to the workspace first if needed.');
-        return;
-      }
-      if (!directive.serverId || !directive.prompt) {
-        addLocalSystemMessage('Use /mcp <server-id> <task>. Example: /mcp google-workspace search my inbox for BMMB.');
-        return;
-      }
-      if (!availableMcpServerMap.has(directive.serverId.toLowerCase())) {
-        addLocalSystemMessage(`MCP server "${directive.serverId}" is not configured.`);
-        return;
-      }
-    }
-    if (isPresentationCommand && !presentationFileIds.length) {
-      addLocalSystemMessage('Tag at least one file using @filename before requesting a presentation.');
-      return;
-    }
-    const attachmentSummary = hasAttachments
-      ? `Attachments: ${chatAttachments.map((file) => file.name).join(', ')}`
-      : '';
-    const messageContent = hasAttachments
-      ? `${trimmed}${trimmed ? '\n\n' : ''}[${attachmentSummary}]`
-      : trimmed;
-    const agentPrompt = buildAgentPromptFromDirective(directive);
-
-    if (!selectedWorkspace) {
-      addLocalSystemMessage('Please select a workspace before chatting with an agent.');
-      return;
-    }
-
-    const workspaceId = selectedWorkspace.id;
-    const persona = normalizePersonaName(activeConversationPersona || selectedPersona || DEFAULT_PERSONA_NAME);
-
-    const conversationId = await ensureConversation();
-    if (!conversationId) {
-      addLocalSystemMessage('Unable to start a conversation right now.');
-      return;
-    }
-
-    cancelStreamForConversation(conversationId);
-    lastUserMessageMapRef.current[conversationId] = messageContent;
-    setChatMessage('');
-    setChatAttachments([]);
-    closeMention();
-    closeCommand();
-
-    const pendingTurnId = generateTurnId();
-    let resolvedTurnId = pendingTurnId;
-    let userMessageRecord: ConversationMessage | null = null;
-    let historyPayload: Array<{ role: string; content: string }> = [];
-    const existingMessages = getConversationMessagesSnapshot(conversationId);
-    try {
-      const createdMessage = await appendConversationMessage(conversationId, 'user', messageContent, {
-        turnId: pendingTurnId,
-      });
-      const normalizedMessage = mergeMessageMetadata(createdMessage);
-      userMessageRecord = normalizedMessage;
-      resolvedTurnId = normalizedMessage.turnId || pendingTurnId;
-      updateMessagesForConversation(conversationId, (prev) => [...prev, normalizedMessage]);
-      await refreshConversationHistory(workspaceId);
-      const pendingMessages = [...existingMessages, normalizedMessage];
-      historyPayload = mapMessagesToAgentHistory(pendingMessages);
-    } catch (error) {
-      console.error('Failed to send user message', error);
-      addLocalSystemMessage('Failed to send your message. Please try again.');
-      return;
-    }
-    if (!userMessageRecord) {
-      addLocalSystemMessage('Failed to record your message. Please try again.');
-      return;
-    }
-
-    if (isPresentationCommand) {
-      await runPresentationCommand({
-        workspaceId,
-        conversationId,
-        turnId: resolvedTurnId,
-        brief: presentationBrief,
-        fileIds: presentationFileIds,
-        fileNames: mentionedFiles.map((file) => file.name),
-        persona,
-      });
-      return;
-    }
-
-    try {
-      const { runId } = await startAgentRun(
-        workspaceId,
-        persona,
-        agentPrompt,
-        historyPayload.length ? historyPayload : undefined,
-        resolvedTurnId,
-        { forceReset: true }
       );
-      if (STREAM_DEBUG_ENABLED) {
-        console.debug('[WorkspacePage] run started', { runId, conversationId });
-      }
-      const placeholderId = `agent-${runId}`;
-      ensureAgentPlaceholder(conversationId, placeholderId, resolvedTurnId, true);
-      agentMessageBufferRef.current.set(placeholderId, '');
-      const runInfo: ActiveRunInfo = {
-        runId,
-        conversationId,
-        workspaceId,
-        persona,
-        turnId: resolvedTurnId,
-        placeholderId,
-        status: 'running',
-      };
-      markRunStreamLaunching(runId);
-      registerActiveRun(runInfo);
-      await streamRunForConversation(runInfo, true);
+      const presentationFileIds = isPresentationCommand
+        ? Array.from(
+          new Set(mentionedFileIds),
+        )
+        : [];
+      const presentationBrief = isPresentationCommand ? stripMentionedFilesFromPrompt(directive.prompt) : '';
 
-      const messagesSnapshot = getConversationMessagesSnapshot(conversationId);
-      const targetIndex = messagesSnapshot.findIndex((message) => message.id === placeholderId);
-      const agentMessage = targetIndex >= 0 ? messagesSnapshot[targetIndex] : null;
-      const metadata = buildMessageMetadata(agentMessage) || {};
-      const bufferedText =
-        placeholderId !== null && placeholderId !== undefined
-          ? agentMessageBufferRef.current.get(placeholderId) ?? agentMessage?.text
-          : agentMessage?.text;
-      const placeholderTurnId = agentMessage?.turnId || resolvedTurnId;
-      if (bufferedText) {
-        try {
-          const persisted = await appendConversationMessage(conversationId, 'agent', bufferedText, {
-            turnId: placeholderTurnId,
-            metadata: { ...metadata, runId },
-            replaceExisting: true,
-          });
-          upsertPersistedAgentMessage(conversationId, persisted, {
-            placeholderId,
-            existing: agentMessage,
-          });
-          if (placeholderId !== null && placeholderId !== undefined) {
-            agentMessageBufferRef.current.delete(placeholderId);
-          }
-          agentMessageBufferRef.current.set(persisted.id, persisted.text || '');
-          await refreshConversationHistory(workspaceId);
-        } catch (error) {
-          console.error('Failed to store agent message', error);
-        }
-      } else if (placeholderId !== null && placeholderId !== undefined) {
-        agentMessageBufferRef.current.delete(placeholderId);
+      if (isPresentationCommand && hasAttachments) {
+        addLocalSystemMessage('Attachments are not supported for /presentation. Please tag files using @filename instead.');
+        return;
       }
-    } catch (error) {
-      console.error('Failed to start agent run', error);
-      addLocalSystemMessage('Failed to start agent run. Please try again.');
+      if (directive.kind === 'skill') {
+        if (hasLocalAttachments) {
+          addLocalSystemMessage('Attachments are not supported with /skill yet. Please upload files to the workspace first and reference them in your request.');
+          return;
+        }
+        if (!directive.skillId || !directive.prompt) {
+          addLocalSystemMessage('Use /skill <skill-id> <task>. Example: /skill sales draft follow-up from today\'s call.');
+          return;
+        }
+        if (!availableSkillMap.has(directive.skillId.toLowerCase())) {
+          addLocalSystemMessage(`Skill "${directive.skillId}" is not available.`);
+          return;
+        }
+      }
+      if (directive.kind === 'mcp') {
+        if (hasLocalAttachments) {
+          addLocalSystemMessage('Attachments are not supported with /mcp yet. Please upload files to the workspace first if needed.');
+          return;
+        }
+        if (!directive.serverId || !directive.prompt) {
+          addLocalSystemMessage('Use /mcp <server-id> <task>. Example: /mcp google-workspace search my inbox for BMMB.');
+          return;
+        }
+        if (!availableMcpServerMap.has(directive.serverId.toLowerCase())) {
+          addLocalSystemMessage(`MCP server "${directive.serverId}" is not configured.`);
+          return;
+        }
+      }
+      if (isPresentationCommand && !presentationFileIds.length) {
+        addLocalSystemMessage('Tag at least one file using @filename before requesting a presentation.');
+        return;
+      }
+
+      if (!selectedWorkspace) {
+        addLocalSystemMessage('Please select a workspace before chatting with an agent.');
+        return;
+      }
+
+      const workspaceId = selectedWorkspace.id;
+      const persona = normalizePersonaName(activeConversationPersona || selectedPersona || DEFAULT_PERSONA_NAME);
+      const attachmentSummary = hasAttachments ? `Attachments: ${summarizeComposerAttachments(chatAttachments)}` : '';
+      const messageContent = hasAttachments
+        ? `${trimmed}${trimmed ? '\n\n' : ''}[${attachmentSummary}]`
+        : trimmed;
+      const agentPromptBase = buildAgentPromptFromDirective(directive) || messageContent;
+      const conversationId = await ensureConversation();
+      if (!conversationId) {
+        addLocalSystemMessage('Unable to start a conversation right now.');
+        return;
+      }
+
+      cancelStreamForConversation(conversationId);
+      lastUserMessageMapRef.current[conversationId] = messageContent;
+      setChatMessage('');
+      setChatAttachments([]);
+      setIsDrivePickerOpen(false);
+      closeMention();
+      closeCommand();
+
+      const pendingTurnId = generateTurnId();
+      let resolvedTurnId = pendingTurnId;
+      let userMessageRecord: ConversationMessage | null = null;
+      const existingMessages = getConversationMessagesSnapshot(conversationId);
+
+      try {
+        const createdMessage = await appendConversationMessage(conversationId, 'user', messageContent, {
+          turnId: pendingTurnId,
+          metadata: hasAttachments ? { attachmentPrepStatus: 'pending' } : undefined,
+        });
+        const normalizedMessage = mergeMessageMetadata(createdMessage);
+        userMessageRecord = normalizedMessage;
+        resolvedTurnId = normalizedMessage.turnId || pendingTurnId;
+        upsertConversationMessage(conversationId, normalizedMessage);
+        await refreshConversationHistory(workspaceId);
+      } catch (error) {
+        console.error('Failed to send user message', error);
+        addLocalSystemMessage('Failed to send your message. Please try again.');
+        return;
+      }
+      if (!userMessageRecord) {
+        addLocalSystemMessage('Failed to record your message. Please try again.');
+        return;
+      }
+
+      if (isPresentationCommand) {
+        await runPresentationCommand({
+          workspaceId,
+          conversationId,
+          turnId: resolvedTurnId,
+          brief: presentationBrief,
+          fileIds: presentationFileIds,
+          fileNames: mentionedFiles.map((file) => file.name),
+          persona,
+        });
+        return;
+      }
+
+      let resolvedFileContextRefs: FileContextRef[] | undefined;
+      let currentTurnFileIds: number[] | undefined;
+      let taggedFiles: string[] | undefined;
+
+      if (hasAttachments) {
+        setIsDriveImporting(true);
+        try {
+          const sourceFileIds: number[] = [];
+          for (const attachment of localAttachments) {
+            const uploaded = await createFile(workspaceId, attachment.file);
+            const uploadedId = toNumericFileId(uploaded.id);
+            if (uploadedId) {
+              sourceFileIds.push(uploadedId);
+            }
+          }
+          if (sourceFileIds.length && selectedWorkspaceIdRef.current === workspaceId) {
+            await loadFilesForWorkspace(workspaceId);
+          }
+          const prepJob = await createAttachmentPrepJob(workspaceId, {
+            conversationId,
+            turnId: resolvedTurnId,
+            driveFileIds: driveAttachments.map((attachment) => attachment.driveItem.id),
+            sourceFileIds,
+          });
+          attachmentPrepResumeRef.current.add(prepJob.id);
+          userMessageRecord = await persistUserMessageMetadata(conversationId, userMessageRecord, {
+            ...((userMessageRecord.metadata as ConversationMessageMetadata | undefined) || {}),
+            attachmentJobId: prepJob.id,
+            attachmentPrepStatus: prepJob.status,
+            attachmentPrepError: undefined,
+          });
+          const settledJob = prepJob.status === 'ready' || prepJob.status === 'failed'
+            ? prepJob
+            : await waitForAttachmentPrepJob(workspaceId, prepJob.id);
+          if (settledJob.status === 'failed') {
+            await persistUserMessageMetadata(conversationId, userMessageRecord, {
+              ...((userMessageRecord.metadata as ConversationMessageMetadata | undefined) || {}),
+              attachmentJobId: settledJob.id,
+              attachmentPrepStatus: 'failed',
+              attachmentPrepError: settledJob.error || 'Failed to prepare attachments.',
+            });
+            addLocalSystemMessage(settledJob.error || 'Failed to prepare attachments.');
+            return;
+          }
+          const preparedFiles = Array.isArray(settledJob.result?.files) ? settledJob.result?.files : [];
+          if (preparedFiles?.length && selectedWorkspaceIdRef.current === workspaceId) {
+            await loadFilesForWorkspace(workspaceId);
+          }
+          resolvedFileContextRefs = settledJob.result?.fileContextRefs?.length
+            ? settledJob.result.fileContextRefs
+            : undefined;
+          currentTurnFileIds = settledJob.result?.multimodalFileIds?.length
+            ? settledJob.result.multimodalFileIds
+            : undefined;
+          taggedFiles = resolvedFileContextRefs?.map((ref) => ref.sourceName).filter(Boolean);
+          userMessageRecord = await persistUserMessageMetadata(conversationId, userMessageRecord, {
+            ...((userMessageRecord.metadata as ConversationMessageMetadata | undefined) || {}),
+            attachmentJobId: settledJob.id,
+            attachmentPrepStatus: 'ready',
+            attachmentPrepError: undefined,
+            fileContextRefs: resolvedFileContextRefs,
+          });
+        } catch (error) {
+          console.error('Failed to prepare attachments', error);
+          const message = error instanceof Error ? error.message : 'Failed to prepare attachments.';
+          await persistUserMessageMetadata(conversationId, userMessageRecord, {
+            ...((userMessageRecord.metadata as ConversationMessageMetadata | undefined) || {}),
+            attachmentPrepStatus: 'failed',
+            attachmentPrepError: message,
+          }).catch((persistError) => {
+            console.error('Failed to persist attachment prep failure', persistError);
+          });
+          addLocalSystemMessage(message);
+          return;
+        } finally {
+          const jobId = (userMessageRecord?.metadata as ConversationMessageMetadata | undefined)?.attachmentJobId;
+          if (jobId) {
+            attachmentPrepResumeRef.current.delete(jobId);
+          }
+          setIsDriveImporting(false);
+        }
+      } else {
+        const previousFileContextRefs = findLatestFileContextRefs(existingMessages);
+        if (previousFileContextRefs?.length) {
+          try {
+            const refreshed = await resolveFileContextRefs(
+              workspaceId,
+              previousFileContextRefs
+                .map((ref) => Number(ref.sourceFileId))
+                .filter((value) => Number.isFinite(value) && value > 0),
+            );
+            resolvedFileContextRefs = Array.isArray(refreshed.fileContextRefs) && refreshed.fileContextRefs.length
+              ? refreshed.fileContextRefs
+              : previousFileContextRefs;
+          } catch (error) {
+            console.error('Failed to refresh file context refs', error);
+            resolvedFileContextRefs = previousFileContextRefs;
+          }
+        }
+      }
+
+      if (mentionedFileIds.length) {
+        try {
+          const resolvedMentions = await resolveFileContextRefs(workspaceId, mentionedFileIds);
+          resolvedFileContextRefs = hasAttachments
+            ? mergeFileContextRefs(resolvedFileContextRefs, resolvedMentions.fileContextRefs)
+            : mergeFileContextRefs(resolvedMentions.fileContextRefs, resolvedFileContextRefs);
+        } catch (error) {
+          console.error('Failed to resolve mentioned file context refs', error);
+          resolvedFileContextRefs = mergeFileContextRefs(resolvedFileContextRefs);
+        }
+      }
+
+      if (resolvedFileContextRefs?.length) {
+        taggedFiles = resolvedFileContextRefs.map((ref) => ref.sourceName).filter(Boolean);
+      } else if (mentionedFiles.length) {
+        taggedFiles = mentionedFiles.map((file) => file.name).filter(Boolean);
+      }
+
+      if (mentionedFileIds.length && resolvedFileContextRefs?.length) {
+        try {
+          userMessageRecord = await persistUserMessageMetadata(conversationId, userMessageRecord, {
+            ...((userMessageRecord.metadata as ConversationMessageMetadata | undefined) || {}),
+            fileContextRefs: resolvedFileContextRefs,
+          });
+        } catch (error) {
+          console.error('Failed to persist mentioned file context refs', error);
+        }
+      }
+
+      const preparedMessages = getConversationMessagesSnapshot(conversationId);
+      const historyPayload = mapMessagesToAgentHistory(preparedMessages);
+      const attachmentPrompt = resolvedFileContextRefs?.length
+        ? `Use these attached files as primary context: ${resolvedFileContextRefs.map((ref) => ref.sourceName).join(', ')}`
+        : '';
+      const agentPrompt = attachmentPrompt
+        ? `${agentPromptBase}${agentPromptBase ? '\n\n' : ''}${attachmentPrompt}`
+        : agentPromptBase;
+
+      try {
+        await launchPreparedAgentRun({
+          workspaceId,
+          persona,
+          conversationId,
+          turnId: resolvedTurnId,
+          prompt: agentPrompt,
+          historyPayload,
+          fileContextRefs: resolvedFileContextRefs,
+          currentTurnFileIds,
+          taggedFiles,
+        });
+      } catch (error) {
+        console.error('Failed to start agent run', error);
+        addLocalSystemMessage('Failed to start agent run. Please try again.');
+      }
+    } finally {
+      setIsDriveImporting(false);
+      sendLockRef.current = false;
     }
   };
 
@@ -4880,6 +5672,10 @@ export default function WorkspacePage() {
     }
   };
 
+  const handleShareWorkspace = useCallback((ws: Workspace) => {
+    setShareWorkspace(ws);
+  }, []);
+
   const handleUpdateFile = useCallback(async (targetFile: WorkspaceFile | null, content: string) => {
     if (!selectedWorkspace || !targetFile) return;
 
@@ -5003,27 +5799,66 @@ export default function WorkspacePage() {
       for (const file of filesToUpload) {
         const newFileData = (await createFile(selectedWorkspace.id, file)) as WorkspaceFile;
         setFiles((prevFiles) => [...prevFiles, newFileData]);
-        if (newFileData?.name) {
-          setRagStatuses((prev) => ({
-            ...prev,
-            [newFileData.name]: { status: 'pending' },
-          }));
-        }
       }
     } catch (error) {
       console.error('Failed to upload file:', error);
     }
   };
 
-  const handleChatAttachmentButtonClick = () => {
+  const handleOpenLocalAttachmentPicker = () => {
     attachmentInputRef.current?.click();
   };
 
   const handleChatAttachmentChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     if (!event.target.files) return;
     const selected = Array.from(event.target.files);
-    setChatAttachments((prev) => [...prev, ...selected]);
+    setChatAttachments((prev) => [
+      ...prev,
+      ...selected.map((file) => ({
+        id: `local:${file.name}:${file.size}:${file.lastModified}:${Math.random().toString(16).slice(2)}`,
+        name: file.name,
+        source: 'local' as const,
+        file,
+      })),
+    ]);
     event.target.value = '';
+  };
+
+  const handleOpenDrivePicker = () => {
+    if (!selectedWorkspace) {
+      addLocalSystemMessage('Please select a workspace before attaching Google Drive files.');
+      return;
+    }
+    setIsDrivePickerOpen(true);
+  };
+
+  const handleDrivePickerConfirm = (items: GoogleDrivePickerItem[]) => {
+    if (!items.length) {
+      setIsDrivePickerOpen(false);
+      return;
+    }
+    setChatAttachments((prev) => {
+      const existingDriveIds = new Set(
+        prev
+          .filter((attachment): attachment is Extract<ChatComposerAttachment, { source: 'drive' }> => attachment.source === 'drive')
+          .map((attachment) => attachment.driveItem.id),
+      );
+      const next = [...prev];
+      items.forEach((item) => {
+        if (existingDriveIds.has(item.id)) {
+          return;
+        }
+        existingDriveIds.add(item.id);
+        next.push({
+          id: `drive:${item.id}`,
+          name: item.name,
+          source: 'drive',
+          driveItem: item,
+        });
+      });
+      return next;
+    });
+    setIsDrivePickerOpen(false);
   };
 
   const handleRemoveChatAttachment = (index: number) => {
@@ -5076,6 +5911,7 @@ export default function WorkspacePage() {
           setWorkspaceSearchQuery={setWorkspaceSearchQuery}
           handleCreateWorkspace={handleCreateWorkspace}
           handleDeleteWorkspace={handleDeleteWorkspace}
+          onShareWorkspace={handleShareWorkspace}
           onSelectWorkspace={handleSelectWorkspace}
           onOpenSettings={handleOpenAgentSettings}
           colorMode={colorMode}
@@ -5090,7 +5926,7 @@ export default function WorkspacePage() {
           component="main"
           sx={{
             flexGrow: 1,
-            p: 3,
+            p: 2,
             height: '100%',
             maxHeight: '100%',
             minHeight: 0,
@@ -5127,7 +5963,7 @@ export default function WorkspacePage() {
               style={workspacePaneStyles}
             >
               {/* Workspace Header */}
-              <div className={`p-4 flex justify-between items-center ${
+              <div className={`px-4 py-3 flex justify-between items-center ${
                 isDarkMode ? 'border-b border-slate-800 bg-[#08111f]' : 'border-b border-gray-200'
               }`}>
                 {selectedWorkspace ? (
@@ -5150,7 +5986,7 @@ export default function WorkspacePage() {
                       }}
                       disabled={workspaceRenameBusy}
                       aria-label="Workspace name"
-                      className={`w-full max-w-[28rem] rounded-lg px-3 py-1.5 text-xl font-semibold outline-none ring-2 disabled:cursor-wait ${
+                      className={`w-full max-w-[24rem] rounded-lg px-3 py-1.5 text-lg font-semibold outline-none ring-2 disabled:cursor-wait ${
                         isDarkMode
                           ? 'border border-sky-500/40 bg-slate-900 text-slate-100 ring-sky-500/20'
                           : 'border border-blue-200 bg-white text-gray-800 ring-blue-100'
@@ -5164,7 +6000,7 @@ export default function WorkspacePage() {
                         setWorkspaceNameDraft(selectedWorkspace.name);
                         setIsWorkspaceRenameActive(true);
                       }}
-                      className={`flex items-center gap-2 text-left text-xl font-semibold ${
+                      className={`flex items-center gap-2 text-left text-lg font-semibold ${
                         selectedWorkspace.canEdit
                           ? isDarkMode ? 'text-slate-100 hover:text-sky-300' : 'text-gray-800 hover:text-blue-700'
                           : isDarkMode ? 'cursor-default text-slate-100' : 'cursor-default text-gray-800'
@@ -5175,7 +6011,7 @@ export default function WorkspacePage() {
                     </button>
                   )
                 ) : (
-                  <h2 className={`text-xl font-semibold ${isDarkMode ? 'text-slate-100' : 'text-gray-800'}`}>No workspace selected</h2>
+                  <h2 className={`text-lg font-semibold ${isDarkMode ? 'text-slate-100' : 'text-gray-800'}`}>No workspace selected</h2>
                 )}
               </div>
               <div className="flex-1 flex min-h-0">
@@ -5187,14 +6023,14 @@ export default function WorkspacePage() {
                   style={filePaneStyles}
                 >
                   <div
-                    className={`p-4 flex items-center ${isFilePaneVisible ? 'justify-between' : 'justify-center'
+                    className={`px-3 py-3 flex items-center ${isFilePaneVisible ? 'justify-between' : 'justify-center'
                       } ${isDarkMode ? 'border-b border-slate-800' : 'border-b border-gray-200'
                       }`}
                   >
                     <div className={`flex items-center ${isFilePaneVisible ? 'gap-3' : ''}`}>
                       <button
                         onClick={() => setIsFilePaneVisible(!isFilePaneVisible)}
-                        className={`p-1.5 border rounded-full ${
+                        className={`p-1 border rounded-full ${
                           isDarkMode
                             ? 'border-slate-700 text-slate-300 hover:bg-slate-800'
                             : 'border-gray-200 hover:bg-gray-100'
@@ -5209,7 +6045,7 @@ export default function WorkspacePage() {
                             }`}
                         />
                       </button>
-                      {isFilePaneVisible && <h3 className={`text-lg font-semibold ${isDarkMode ? 'text-slate-100' : 'text-gray-800'}`}>Files</h3>}
+                      {isFilePaneVisible && <h3 className={`text-base font-semibold ${isDarkMode ? 'text-slate-100' : 'text-gray-800'}`}>Files</h3>}
                     </div>
                     {isFilePaneVisible && (
                       <div className="flex items-center space-x-1.5">
@@ -5223,40 +6059,40 @@ export default function WorkspacePage() {
                         <button
                           onClick={() => document.getElementById('file-upload')?.click()}
                           disabled={!selectedWorkspace}
-                          className={`p-2 rounded-lg disabled:opacity-50 ${
+                          className={`p-1.5 rounded-lg disabled:opacity-50 ${
                             isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-100'
                           }`}
                         >
-                          <Plus size={18} className={isDarkMode ? 'text-slate-300' : 'text-gray-600'} />
+                          <Plus size={16} className={isDarkMode ? 'text-slate-300' : 'text-gray-600'} />
                         </button>
                         <button
                           onClick={handleRefreshFiles}
                           disabled={!selectedWorkspace}
-                          className={`p-2 rounded-lg disabled:opacity-50 ${
+                          className={`p-1.5 rounded-lg disabled:opacity-50 ${
                             isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-100'
                           }`}
                           title="Refresh files"
                         >
-                          <RotateCcw size={18} className={isDarkMode ? 'text-slate-300' : 'text-gray-600'} />
+                          <RotateCcw size={16} className={isDarkMode ? 'text-slate-300' : 'text-gray-600'} />
                         </button>
                         <button
                           onClick={handleSelectAllFiles}
                           disabled={visibleFiles.length === 0}
-                          className={`p-2 rounded-lg disabled:opacity-50 ${
+                          className={`p-1.5 rounded-lg disabled:opacity-50 ${
                             isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-100'
                           }`}
                           title={allFilesSelected ? 'Clear selection' : 'Select all files'}
                         >
-                          <CheckSquare size={18} className={isDarkMode ? 'text-slate-300' : 'text-gray-600'} />
+                          <CheckSquare size={16} className={isDarkMode ? 'text-slate-300' : 'text-gray-600'} />
                         </button>
                         <button
                           onClick={handleBulkDelete}
                           disabled={selectedFiles.size === 0}
-                          className={`p-2 rounded-lg disabled:opacity-50 ${
+                          className={`p-1.5 rounded-lg disabled:opacity-50 ${
                             isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-100'
                           }`}
                         >
-                          <Trash size={18} className={isDarkMode ? 'text-slate-300' : 'text-gray-600'} />
+                          <Trash size={16} className={isDarkMode ? 'text-slate-300' : 'text-gray-600'} />
                         </button>
                       </div>
                     )}
@@ -5284,7 +6120,7 @@ export default function WorkspacePage() {
                       }`}
                     aria-hidden={!isFilePaneVisible}
                   >
-                    <div className="h-full min-h-0 px-4 py-3">
+                    <div className="h-full min-h-0 px-3 py-2">
                       <WorkspaceFileTree
                         files={visibleFiles}
                         colorMode={colorMode}
@@ -5313,77 +6149,77 @@ export default function WorkspacePage() {
                 <div className={`flex-1 flex flex-col overflow-hidden min-w-0 min-h-0 ${
                   isDarkMode ? 'bg-[#0b1323]' : 'bg-gray-50'
                 }`}>
-                  <div className={`px-4 pt-4 pb-6 flex justify-between items-center ${
+                  <div className={`px-4 py-3 flex justify-between items-center ${
                     isDarkMode ? 'border-b border-slate-800' : 'border-b border-gray-200'
                   }`}>
                     <div className="flex items-center gap-3">
-                      <h3 className={`text-lg font-semibold ${isDarkMode ? 'text-slate-100' : 'text-gray-800'}`}>{canvasTitle}</h3>
+                      <h3 className={`text-base font-semibold ${isDarkMode ? 'text-slate-100' : 'text-gray-800'}`}>{canvasTitle}</h3>
                     </div>
                     <div className="flex items-center space-x-2">
                       {canCopyImageUrl && (
                         <button
                           type="button"
-                          className={`h-9 w-9 inline-flex items-center justify-center rounded-lg disabled:opacity-50 ${
+                          className={`h-8 w-8 inline-flex items-center justify-center rounded-lg disabled:opacity-50 ${
                             isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-200'
                           }`}
                           onClick={handleCopyImageUrl}
                           title={copiedImageUrl ? 'Copied!' : 'Copy public URL'}
                         >
-                          <LinkIcon size={18} className={isDarkMode ? 'text-slate-300' : 'text-gray-600'} />
+                          <LinkIcon size={16} className={isDarkMode ? 'text-slate-300' : 'text-gray-600'} />
                         </button>
                       )}
                       <button
                         type="button"
-                        className={`h-9 w-9 inline-flex items-center justify-center rounded-lg disabled:opacity-50 ${
+                        className={`h-8 w-8 inline-flex items-center justify-center rounded-lg disabled:opacity-50 ${
                           isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-200'
                         }`}
                         onClick={handleCopyWorkspaceContent}
                         disabled={!selectedFile}
                         title={copiedWorkspaceContent ? 'Copied!' : 'Copy file content'}
                       >
-                        <Copy size={18} className={isDarkMode ? 'text-slate-300' : 'text-gray-600'} />
+                        <Copy size={16} className={isDarkMode ? 'text-slate-300' : 'text-gray-600'} />
                       </button>
                       {canPrintOrDownloadFile && (
                         <>
                           <button
                             type="button"
-                            className={`h-9 w-9 inline-flex items-center justify-center rounded-lg disabled:opacity-50 ${
+                            className={`h-8 w-8 inline-flex items-center justify-center rounded-lg disabled:opacity-50 ${
                               isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-200'
                             }`}
                             onClick={handlePrintActiveFile}
                             title="Print file"
                           >
-                            <Printer size={18} className={isDarkMode ? 'text-slate-300' : 'text-gray-600'} />
+                            <Printer size={16} className={isDarkMode ? 'text-slate-300' : 'text-gray-600'} />
                           </button>
                           <button
                             type="button"
-                            className={`h-9 w-9 inline-flex items-center justify-center rounded-lg disabled:opacity-50 ${
+                            className={`h-8 w-8 inline-flex items-center justify-center rounded-lg disabled:opacity-50 ${
                               isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-200'
                             }`}
                             onClick={handleDownloadActiveFile}
                             title="Download file"
                           >
-                            <Download size={18} className={isDarkMode ? 'text-slate-300' : 'text-gray-600'} />
+                            <Download size={16} className={isDarkMode ? 'text-slate-300' : 'text-gray-600'} />
                           </button>
                         </>
                       )}
                       {isPdfFile && (
                         <button
                           type="button"
-                          className={`h-9 px-3 inline-flex items-center justify-center gap-2 rounded-lg text-sm font-medium disabled:opacity-50 ${
+                          className={`h-8 px-3 inline-flex items-center justify-center gap-2 rounded-lg text-xs font-medium disabled:opacity-50 ${
                             isDarkMode ? 'text-slate-200 hover:bg-slate-800' : 'text-slate-700 hover:bg-gray-200'
                           }`}
                           onClick={handleExportPptxFromPdf}
                           disabled={!activeFile || isPptxExporting}
                           title="Export PPTX from PDF"
                         >
-                          {isPptxExporting ? <Loader2 size={14} className="animate-spin" /> : null}
+                          {isPptxExporting ? <Loader2 size={13} className="animate-spin" /> : null}
                           {isPptxExporting ? 'Exporting PPTX' : 'Export PPTX'}
                         </button>
                       )}
                       {!shouldForceEditMode(selectedFile?.name || '') && (
                         <button
-                          className={`h-9 w-9 inline-flex items-center justify-center rounded-lg disabled:opacity-50 ${
+                          className={`h-8 w-8 inline-flex items-center justify-center rounded-lg disabled:opacity-50 ${
                             isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-200'
                           }`}
                           onClick={() => {
@@ -5394,11 +6230,11 @@ export default function WorkspacePage() {
                           }}
                           disabled={!selectedFile || !isFileEditable(selectedFile.name)}
                         >
-                          <Edit size={18} className={isDarkMode ? 'text-slate-300' : 'text-gray-600'} />
+                          <Edit size={16} className={isDarkMode ? 'text-slate-300' : 'text-gray-600'} />
                         </button>
                       )}
                       <button
-                        className={`h-9 px-3 inline-flex items-center justify-center rounded-lg text-sm font-medium disabled:opacity-50 ${
+                        className={`h-8 px-3 inline-flex items-center justify-center rounded-lg text-xs font-medium disabled:opacity-50 ${
                           isDarkMode ? 'text-slate-200 hover:bg-slate-800' : 'text-slate-700 hover:bg-gray-200'
                         }`}
                         onClick={() => selectedFile && handleUpdateFile(selectedFile, fileContent)}
@@ -5410,18 +6246,18 @@ export default function WorkspacePage() {
                         <>
                           <button
                             type="button"
-                            className={`h-9 w-9 inline-flex items-center justify-center rounded-lg disabled:opacity-50 ${
+                            className={`h-8 w-8 inline-flex items-center justify-center rounded-lg disabled:opacity-50 ${
                               isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-200'
                             }`}
                             onClick={handleCanvasZoomOut}
                             disabled={!canZoomOutCanvas}
                             title="Zoom out canvas"
                           >
-                            <Minus size={18} className={isDarkMode ? 'text-slate-300' : 'text-gray-600'} />
+                            <Minus size={16} className={isDarkMode ? 'text-slate-300' : 'text-gray-600'} />
                           </button>
                           <button
                             type="button"
-                            className={`h-9 px-2 inline-flex items-center justify-center rounded-lg text-xs font-semibold ${
+                            className={`h-8 px-2 inline-flex items-center justify-center rounded-lg text-[11px] font-semibold ${
                               isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-700 hover:bg-gray-200'
                             }`}
                             onClick={handleCanvasZoomReset}
@@ -5431,14 +6267,14 @@ export default function WorkspacePage() {
                           </button>
                           <button
                             type="button"
-                            className={`h-9 w-9 inline-flex items-center justify-center rounded-lg disabled:opacity-50 ${
+                            className={`h-8 w-8 inline-flex items-center justify-center rounded-lg disabled:opacity-50 ${
                               isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-200'
                             }`}
                             onClick={handleCanvasZoomIn}
                             disabled={!canZoomInCanvas}
                             title="Zoom in canvas"
                           >
-                            <Plus size={18} className={isDarkMode ? 'text-slate-300' : 'text-gray-600'} />
+                            <Plus size={16} className={isDarkMode ? 'text-slate-300' : 'text-gray-600'} />
                           </button>
                         </>
                       )}
@@ -5499,6 +6335,7 @@ export default function WorkspacePage() {
               conversationStreaming={conversationStreaming}
               messages={messages}
               isStreaming={isStreaming}
+              isPreparingAttachments={isDriveImporting}
               personaDisplayName={personaDisplayName}
               messageBubbleMaxWidth={messageBubbleMaxWidth}
               markdownComponents={markdownComponents}
@@ -5506,6 +6343,7 @@ export default function WorkspacePage() {
               expandedThinkingMessages={expandedThinkingMessages}
               copiedMessageId={copiedMessageId}
               interruptInputByMessageId={interruptInputByMessageId}
+              interruptStructuredAnswersByMessageId={interruptStructuredAnswersByMessageId}
               interruptSelectedChoicesByMessageId={interruptSelectedChoicesByMessageId}
               interruptSubmittingByMessageId={interruptSubmittingByMessageId}
               interruptErrorByMessageId={interruptErrorByMessageId}
@@ -5532,7 +6370,9 @@ export default function WorkspacePage() {
               getPrimaryInterruptAction={getPrimaryInterruptAction}
               isPlanApprovalInterrupt={isPlanApprovalInterrupt}
               setInterruptInputByMessageId={setInterruptInputByMessageId}
+              setInterruptStructuredAnswersByMessageId={setInterruptStructuredAnswersByMessageId}
               toggleInterruptSelectedChoice={toggleInterruptSelectedChoice}
+              conversationAttentionById={conversationAttentionById}
               workspaceSkipPlanApprovals={Boolean(selectedWorkspace?.skipPlanApprovals)}
               workspaceSettingsBusy={workspaceSettingsBusy}
               onToggleAgentPaneVisibility={() => setIsAgentPaneVisible((prev) => !prev)}
@@ -5554,7 +6394,8 @@ export default function WorkspacePage() {
               onChatInputKeyDown={handleChatInputKeyDown}
               onChatInputKeyUp={handleChatInputKeyUp}
               onChatInputSelectionChange={handleChatInputSelectionChange}
-              onChatAttachmentButtonClick={handleChatAttachmentButtonClick}
+              onOpenLocalAttachmentPicker={handleOpenLocalAttachmentPicker}
+              onOpenDrivePicker={handleOpenDrivePicker}
               onInsertSlashTrigger={handleInsertSlashTrigger}
               onOpenPresentationModal={handleOpenPresentationModal}
               onStopStreaming={handleStopStreaming}
@@ -5574,6 +6415,18 @@ export default function WorkspacePage() {
         onChange={handleDraftPresentationOptionChange}
         onClose={handleClosePresentationModal}
         onSave={handleSavePresentationOptions}
+      />
+      <DrivePickerModal
+        isOpen={isDrivePickerOpen}
+        workspaceId={selectedWorkspace?.id}
+        colorMode={colorMode}
+        onClose={() => setIsDrivePickerOpen(false)}
+        onConfirm={handleDrivePickerConfirm}
+      />
+      <WorkspaceShareDialog
+        open={shareWorkspace !== null}
+        workspace={shareWorkspace}
+        onClose={() => setShareWorkspace(null)}
       />
     </ThemeProvider>
   );

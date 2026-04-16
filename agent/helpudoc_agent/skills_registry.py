@@ -40,6 +40,12 @@ TOOL_FACTORY_EXPANSIONS: dict[str, tuple[str, ...]] = {
 }
 
 
+SKILL_MCP_SERVER_ELIGIBILITY: dict[str, tuple[str, ...]] = {
+    "proposal-writing": ("aws-pricing", "aws-knowledge"),
+    "general": ("aws-pricing", "aws-knowledge"),
+}
+
+
 def _parse_frontmatter(text: str) -> dict:
     if not text.startswith("---"):
         return {}
@@ -75,11 +81,25 @@ def _normalize_optional_bool(value: object) -> bool | None:
     return None
 
 
+def _normalize_optional_string(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _normalize_string_list(value: object) -> List[str] | None:
+    normalized = _normalize_tools(value)
+    return normalized or None
+
+
 def _infer_skill_policy(skill_id: str, content: str, meta: dict) -> SkillPolicy:
     tools = _normalize_tools(meta.get("tools"))
     lower = content.lower()
     explicit_requires_hitl_plan = _normalize_optional_bool(meta.get("requires_hitl_plan"))
     explicit_requires_workspace_artifacts = _normalize_optional_bool(meta.get("requires_workspace_artifacts"))
+    explicit_required_artifacts_mode = _normalize_optional_string(meta.get("required_artifacts_mode"))
+    explicit_required_artifacts = _normalize_string_list(meta.get("required_artifacts"))
     has_hitl_keyword = any(
         keyword in lower
         for keyword in (
@@ -109,7 +129,7 @@ def _infer_skill_policy(skill_id: str, content: str, meta: dict) -> SkillPolicy:
     requires_workspace_artifacts = (
         explicit_requires_workspace_artifacts
         if explicit_requires_workspace_artifacts is not None
-        else has_file_keyword or ("write_file" in lower)
+        else bool(explicit_required_artifacts) or has_file_keyword or ("write_file" in lower)
     )
     raw_pre_plan_limit = meta.get("pre_plan_search_limit")
     pre_plan_search_limit = 0
@@ -121,27 +141,10 @@ def _infer_skill_policy(skill_id: str, content: str, meta: dict) -> SkillPolicy:
         except ValueError:
             pre_plan_search_limit = 0
 
-    required_artifacts_mode: str | None = None
-    required_artifacts: List[str] | None = None
-    # Canonical skill id for policy matching (strip leading "data/" etc.)
-    base_id = skill_id.split("/")[-1] if "/" in skill_id else skill_id
-    if base_id == "research" or skill_id == "research":
-        required_artifacts_mode = "full_pack"
-        required_artifacts = [
-            "/question.txt",
-            "/preliminary_search_notes.md",
-            "/research_plan.md",
-            "/research_notes.md",
-            "/knowledge_graph.md",
-            "/synthesis.md",
-            "/final-research-report.md",
-            "pattern:/0[1-9]_*.md",
-        ]
-        requires_hitl_plan = True
-        requires_workspace_artifacts = True
-        pre_plan_search_limit = pre_plan_search_limit or 3
-    elif requires_workspace_artifacts:
-        required_artifacts_mode = "minimal"
+    required_artifacts_mode = explicit_required_artifacts_mode
+    required_artifacts = explicit_required_artifacts
+    if requires_workspace_artifacts and not required_artifacts_mode:
+        required_artifacts_mode = "strict" if required_artifacts else "minimal"
 
     return SkillPolicy(
         requires_hitl_plan=requires_hitl_plan,
@@ -257,13 +260,17 @@ def expand_runtime_tool_names(tool_names: Iterable[str]) -> List[str]:
 
 def activate_skill_context(context: dict[str, Any], skill: SkillMetadata) -> None:
     runtime_tools = expand_runtime_tool_names(skill.tools)
+    allowed_mcp_servers = list(skill.mcp_servers)
+    preferred_mcp_server = str(context.get("preferred_mcp_server") or "").strip()
+    if preferred_mcp_server and preferred_mcp_server not in allowed_mcp_servers:
+        allowed_mcp_servers.append(preferred_mcp_server)
     context["active_skill"] = skill.skill_id
     context["active_skill_scope"] = {
         "skill_id": skill.skill_id,
         "name": skill.name,
         "tools": runtime_tools,
         "declared_tools": list(skill.tools),
-        "mcp_servers": list(skill.mcp_servers),
+        "mcp_servers": allowed_mcp_servers,
     }
     context["active_skill_policy"] = {
         "requires_hitl_plan": skill.policy.requires_hitl_plan,
@@ -402,6 +409,26 @@ def is_tool_allowed(
     if not active_skill.mcp_servers:
         return True
     return tool_mcp_server in active_skill.mcp_servers
+
+
+def get_candidate_mcp_servers(
+    active_skill: SkillMetadata | dict[str, Any] | None,
+    preferred_server: str | None = None,
+) -> List[str]:
+    """Return MCP servers eligible for binding for the active skill.
+
+    This is intentionally narrower than runtime tool allowlisting. We only bind
+    MCP servers for explicitly approved skills to keep Gemini-facing schemas
+    small and reduce whole-run failures from incompatible MCP tool definitions.
+    """
+    candidates: List[str] = []
+    resolved_skill = _coerce_active_skill_scope(active_skill)
+    if resolved_skill is not None:
+        candidates.extend(SKILL_MCP_SERVER_ELIGIBILITY.get(resolved_skill.skill_id, ()))
+    normalized_preferred = str(preferred_server or "").strip()
+    if normalized_preferred and normalized_preferred not in candidates:
+        candidates.append(normalized_preferred)
+    return candidates
 
 
 def sync_skills_to_workspace(skills_root: Path, workspace_root: Path) -> None:

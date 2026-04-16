@@ -19,6 +19,7 @@ import { UserService } from './services/userService';
 import { userContextMiddleware } from './middleware/userContext';
 import { blockingRedisClient, redisClient } from './services/redisService';
 import { startCollabServer } from './collab/collabServer';
+import { logWorkspaceRootDiagnostic } from './config/workspaceRoot';
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -46,6 +47,7 @@ function resolveSaveUninitialized(): boolean {
 }
 
 async function startServer() {
+  logWorkspaceRootDiagnostic('backend');
   const databaseService = new DatabaseService();
   await databaseService.initialize();
   const userService = new UserService(databaseService);

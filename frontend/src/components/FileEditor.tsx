@@ -6,7 +6,9 @@ import { getAuthUser } from '../auth/authStore';
 import { createFile } from '../services/fileApi';
 import { createCollabSession } from '../services/collabClient';
 import EditorLoadingState from './EditorLoadingState';
+import FileRenderer from './FileRenderer';
 import type { MarkdownRichEditorHandle } from './MarkdownRichEditor';
+import { isBinaryOfficeDocument } from '../utils/officeFiles';
 
 const MonacoEditor = lazy(() => import('@monaco-editor/react'));
 const MarkdownRichEditor = lazy(() => import('./MarkdownRichEditor'));
@@ -93,7 +95,32 @@ interface FileEditorProps {
   colorMode: 'light' | 'dark';
 }
 
-const FileEditor: React.FC<FileEditorProps> = ({
+const OfficeDocumentReadOnlyPane: React.FC<{
+  file: WorkspaceFile;
+  fileContent: string;
+  workspaceId: string;
+  colorMode: 'light' | 'dark';
+}> = ({ file, fileContent, workspaceId, colorMode }) => {
+  const isDarkMode = colorMode === 'dark';
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <div
+        className={`border-b px-3 py-2 text-xs ${
+          isDarkMode
+            ? 'border-slate-700/70 bg-slate-950/70 text-slate-300'
+            : 'border-amber-100 bg-amber-50 text-amber-950'
+        }`}
+      >
+        Read-only preview. Word and PowerPoint files are not editable in the workspace editor.
+      </div>
+      <div className="min-h-0 flex-1">
+        <FileRenderer file={file} fileContent={fileContent} workspaceId={workspaceId} />
+      </div>
+    </div>
+  );
+};
+
+const CollabWorkspaceFileEditor: React.FC<FileEditorProps> = ({
   file,
   fileContent,
   onContentChange,
@@ -631,6 +658,23 @@ const FileEditor: React.FC<FileEditorProps> = ({
       </div>
     </div>
   );
+};
+
+const FileEditor: React.FC<FileEditorProps> = (props) => {
+  if (!props.file) {
+    return null;
+  }
+  if (isBinaryOfficeDocument(props.file.name ?? '')) {
+    return (
+      <OfficeDocumentReadOnlyPane
+        file={props.file}
+        fileContent={props.fileContent}
+        workspaceId={props.workspaceId}
+        colorMode={props.colorMode}
+      />
+    );
+  }
+  return <CollabWorkspaceFileEditor {...props} />;
 };
 
 export default FileEditor;

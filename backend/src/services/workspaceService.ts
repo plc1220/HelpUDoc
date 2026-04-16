@@ -7,10 +7,9 @@ import { RagQueueService } from './ragQueueService';
 import { S3Service } from './s3Service';
 import { UserContext } from '../types/user';
 import { AccessDeniedError, NotFoundError } from '../errors';
+import { resolveWorkspaceRoot } from '../config/workspaceRoot';
 
-const WORKSPACE_DIR = process.env.WORKSPACE_ROOT
-  ? path.resolve(process.env.WORKSPACE_ROOT)
-  : path.join(process.cwd(), 'workspaces');
+const WORKSPACE_DIR = resolveWorkspaceRoot();
 
 export type WorkspaceRole = 'owner' | 'editor' | 'viewer';
 
@@ -287,6 +286,25 @@ export class WorkspaceService {
       role,
       canEdit,
     });
+  }
+
+  async removeCollaborator(workspaceId: string, actingUserId: string, targetUserId: string): Promise<void> {
+    const { membership } = await this.ensureMembership(workspaceId, actingUserId);
+    if (membership.role !== 'owner') {
+      throw new AccessDeniedError('Only workspace owners can remove collaborators');
+    }
+
+    const target = await this.db<WorkspaceMembershipRecord>('workspace_members')
+      .where({ workspaceId, userId: targetUserId })
+      .first();
+    if (!target) {
+      throw new NotFoundError('Collaborator not found');
+    }
+    if (target.role === 'owner') {
+      throw new AccessDeniedError('Cannot remove workspace owner');
+    }
+
+    await this.db('workspace_members').where({ workspaceId, userId: targetUserId }).del();
   }
 
   async listCollaborators(

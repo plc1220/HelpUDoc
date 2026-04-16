@@ -1,6 +1,7 @@
 import axios from "axios";
 import type { AxiosResponse } from "axios";
 import type { IncomingMessage } from "http";
+import type { FileContextRef } from '../../../packages/shared/src/types';
 
 const AGENT_URL = process.env.AGENT_URL || "http://localhost:8001";
 
@@ -23,6 +24,11 @@ export type AgentHistoryEntry = {
   content: string;
 };
 
+export type AgentMessageContentBlock = {
+  type: string;
+  [key: string]: unknown;
+};
+
 export type AgentDecision = {
   type: 'approve' | 'edit' | 'reject';
   edited_action?: { name: string; args: Record<string, unknown> };
@@ -33,6 +39,7 @@ export type AgentInterruptResponse = {
   message?: string;
   selectedChoiceIds?: string[];
   selectedValues?: string[];
+  answersByQuestionId?: Record<string, string | string[]>;
 };
 
 export type AgentInterruptAction = {
@@ -50,6 +57,32 @@ type RunAgentOptions = {
   forceReset?: boolean;
   signal?: AbortSignal;
   authToken?: string;
+  fileContextRefs?: FileContextRef[];
+  messageContent?: AgentMessageContentBlock[];
+};
+
+export type AttachmentUnderstandingPayload = {
+  fileName: string;
+  mimeType: string;
+  contentB64: string;
+};
+
+export type AttachmentUnderstandingResponse = {
+  title?: string;
+  summary?: string;
+  outline?: string[];
+  markdown: string;
+  sections?: Array<{ heading: string; body: string }>;
+  extractedAssets?: Array<{
+    name: string;
+    mimeType: string;
+    contentB64: string;
+    sourcePath?: string | null;
+    caption?: string | null;
+    footnote?: string | null;
+  }>;
+  effectiveMode?: 'part' | 'parser' | 'hybrid';
+  status?: 'ready' | 'partial';
 };
 
 export async function runAgent(
@@ -66,6 +99,12 @@ export async function runAgent(
 
   if (options?.forceReset) {
     payload.forceReset = true;
+  }
+  if (options?.fileContextRefs?.length) {
+    payload.fileContextRefs = options.fileContextRefs;
+  }
+  if (options?.messageContent?.length) {
+    payload.messageContent = options.messageContent;
   }
 
   const headers: Record<string, string> = {};
@@ -92,6 +131,12 @@ export async function runAgentStream(
 
   if (options?.forceReset) {
     payload.forceReset = true;
+  }
+  if (options?.fileContextRefs?.length) {
+    payload.fileContextRefs = options.fileContextRefs;
+  }
+  if (options?.messageContent?.length) {
+    payload.messageContent = options.messageContent;
   }
 
   const headers: Record<string, string> = {};
@@ -220,6 +265,17 @@ export async function exportPaper2SlidesPptx(payload: {
   contentB64: string;
 }): Promise<{ pptxB64: string }> {
   const res = await client.post(`/paper2slides/export-pptx`, payload, {
+    maxContentLength: Infinity,
+    maxBodyLength: Infinity,
+    timeout: PAPER2SLIDES_TIMEOUT_MS,
+  });
+  return res.data;
+}
+
+export async function understandAttachment(
+  payload: AttachmentUnderstandingPayload,
+): Promise<AttachmentUnderstandingResponse> {
+  const res = await client.post('/attachments/understand', payload, {
     maxContentLength: Infinity,
     maxBodyLength: Infinity,
     timeout: PAPER2SLIDES_TIMEOUT_MS,

@@ -2,6 +2,7 @@ model:
   provider: gemini
   name: gemini-3-flash-preview
   fast_name: gemini-3-flash-preview
+  lite_name: gemini-3.1-flash-lite-preview
   pro_name: gemini-3-pro-preview
   image_name: gemini-3-pro-image-preview
   project: my-rd-coe-demo-gen-ai
@@ -80,3 +81,13 @@ mcp_servers:
     default_access: allow
     url: ${GOOGLE_WORKSPACE_MCP_URL}
     delegatedAuthProvider: google
+  - name: aws-pricing
+    transport: http
+    default_access: allow
+    url: http://helpudoc-aws-pricing-mcp:8000/mcp
+    description: AWS Pricing MCP served through an in-cluster FastMCP HTTP proxy
+  - name: aws-knowledge
+    transport: http
+    default_access: allow
+    url: https://knowledge-mcp.global.api.aws
+    description: Hosted AWS Knowledge MCP endpoint

@@ -7,19 +7,20 @@ import type {
   SetStateAction,
   SyntheticEvent,
 } from 'react';
-
 import type {
   AgentPersona,
   ConversationMessage,
   ConversationMessageMetadata,
   ConversationSummary,
   File as WorkspaceFile,
+  InterruptAnswersByQuestionId,
 } from '../../types';
 import ChatHeader from './ChatHeader';
 import ChatHistoryPanel from './ChatHistoryPanel';
 import ChatInputArea from './ChatInputArea';
 import ChatMessageList from './ChatMessageList';
 import type { RenderableInterruptAction } from './interruptActions';
+import type { ChatComposerAttachment } from './chatTypes';
 
 type CommandSuggestion = {
   id: string;
@@ -33,6 +34,12 @@ type CommandTag = {
 };
 
 type ConversationStreamingMap = Record<string, boolean>;
+
+type ConversationAttentionState = {
+  status: 'running' | 'awaiting_approval' | 'completed' | 'failed' | 'cancelled';
+  label?: string;
+  updatedAt: string;
+};
 
 export default function AgentChatPane({
   colorMode,
@@ -48,6 +55,7 @@ export default function AgentChatPane({
   conversationStreaming,
   messages,
   isStreaming,
+  isPreparingAttachments,
   personaDisplayName,
   messageBubbleMaxWidth,
   markdownComponents,
@@ -55,6 +63,7 @@ export default function AgentChatPane({
   expandedThinkingMessages,
   copiedMessageId,
   interruptInputByMessageId,
+  interruptStructuredAnswersByMessageId,
   interruptSelectedChoicesByMessageId,
   interruptSubmittingByMessageId,
   interruptErrorByMessageId,
@@ -81,7 +90,9 @@ export default function AgentChatPane({
   getPrimaryInterruptAction,
   isPlanApprovalInterrupt,
   setInterruptInputByMessageId,
+  setInterruptStructuredAnswersByMessageId,
   toggleInterruptSelectedChoice,
+  conversationAttentionById,
   workspaceSkipPlanApprovals,
   workspaceSettingsBusy,
   onToggleAgentPaneVisibility,
@@ -103,7 +114,8 @@ export default function AgentChatPane({
   onChatInputKeyDown,
   onChatInputKeyUp,
   onChatInputSelectionChange,
-  onChatAttachmentButtonClick,
+  onOpenLocalAttachmentPicker,
+  onOpenDrivePicker,
   onInsertSlashTrigger,
   onOpenPresentationModal,
   onStopStreaming,
@@ -127,6 +139,7 @@ export default function AgentChatPane({
   conversationStreaming: ConversationStreamingMap;
   messages: ConversationMessage[];
   isStreaming: boolean;
+  isPreparingAttachments: boolean;
   personaDisplayName: string;
   messageBubbleMaxWidth: string;
   markdownComponents: Record<string, any>;
@@ -134,11 +147,12 @@ export default function AgentChatPane({
   expandedThinkingMessages: Set<ConversationMessage['id']>;
   copiedMessageId: ConversationMessage['id'] | null;
   interruptInputByMessageId: Record<string, string>;
+  interruptStructuredAnswersByMessageId: Record<string, InterruptAnswersByQuestionId>;
   interruptSelectedChoicesByMessageId: Record<string, string[]>;
   interruptSubmittingByMessageId: Record<string, boolean>;
   interruptErrorByMessageId: Record<string, string>;
   chatMessage: string;
-  chatAttachments: File[];
+  chatAttachments: ChatComposerAttachment[];
   showPaper2SlidesControls: boolean;
   presentationStatus: 'idle' | 'running' | 'success' | 'error';
   presentationOptionSummary: string;
@@ -169,7 +183,9 @@ export default function AgentChatPane({
   ) => { name?: string; args?: Record<string, unknown> } | undefined;
   isPlanApprovalInterrupt: (pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt']) => boolean;
   setInterruptInputByMessageId: Dispatch<SetStateAction<Record<string, string>>>;
+  setInterruptStructuredAnswersByMessageId: Dispatch<SetStateAction<Record<string, InterruptAnswersByQuestionId>>>;
   toggleInterruptSelectedChoice: (messageKey: string, choiceId: string, multiple: boolean) => void;
+  conversationAttentionById: Record<string, ConversationAttentionState>;
   workspaceSkipPlanApprovals: boolean;
   workspaceSettingsBusy: boolean;
   onToggleAgentPaneVisibility: () => void;
@@ -199,7 +215,8 @@ export default function AgentChatPane({
   onChatInputKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
   onChatInputKeyUp: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
   onChatInputSelectionChange: (event: SyntheticEvent<HTMLTextAreaElement>) => void;
-  onChatAttachmentButtonClick: () => void;
+  onOpenLocalAttachmentPicker: () => void;
+  onOpenDrivePicker: () => void;
   onInsertSlashTrigger: () => void;
   onOpenPresentationModal: () => void;
   onStopStreaming: () => void;
@@ -211,6 +228,7 @@ export default function AgentChatPane({
   onSelectCommand: (command: CommandSuggestion) => void;
 }) {
   const isDarkMode = colorMode === 'dark';
+
   return (
     <div
       className={`flex min-h-0 flex-col overflow-hidden ${
@@ -244,6 +262,7 @@ export default function AgentChatPane({
           conversationHistory={conversationHistory}
           activeConversationId={activeConversationId}
           conversationStreaming={conversationStreaming}
+          conversationAttentionById={conversationAttentionById}
           personas={personas}
           onClose={onCloseHistory}
           onSelectConversation={onSelectConversation}
@@ -260,6 +279,7 @@ export default function AgentChatPane({
           expandedThinkingMessages={expandedThinkingMessages}
           copiedMessageId={copiedMessageId}
           interruptInputByMessageId={interruptInputByMessageId}
+          interruptStructuredAnswersByMessageId={interruptStructuredAnswersByMessageId}
           interruptSelectedChoicesByMessageId={interruptSelectedChoicesByMessageId}
           interruptSubmittingByMessageId={interruptSubmittingByMessageId}
           interruptErrorByMessageId={interruptErrorByMessageId}
@@ -271,6 +291,7 @@ export default function AgentChatPane({
           getPrimaryInterruptAction={getPrimaryInterruptAction}
           isPlanApprovalInterrupt={isPlanApprovalInterrupt}
           setInterruptInputByMessageId={setInterruptInputByMessageId}
+          setInterruptStructuredAnswersByMessageId={setInterruptStructuredAnswersByMessageId}
           toggleInterruptSelectedChoice={toggleInterruptSelectedChoice}
           workspaceSkipPlanApprovals={workspaceSkipPlanApprovals}
           workspaceSettingsBusy={workspaceSettingsBusy}
@@ -290,6 +311,7 @@ export default function AgentChatPane({
           chatInputRef={chatInputRef}
           attachmentInputRef={attachmentInputRef}
           isStreaming={isStreaming}
+          isPreparingAttachments={isPreparingAttachments}
           showPaper2SlidesControls={showPaper2SlidesControls}
           presentationStatus={presentationStatus}
           presentationOptionSummary={presentationOptionSummary}
@@ -304,7 +326,8 @@ export default function AgentChatPane({
           onChatInputKeyDown={onChatInputKeyDown}
           onChatInputKeyUp={onChatInputKeyUp}
           onChatInputSelectionChange={onChatInputSelectionChange}
-          onChatAttachmentButtonClick={onChatAttachmentButtonClick}
+          onOpenLocalAttachmentPicker={onOpenLocalAttachmentPicker}
+          onOpenDrivePicker={onOpenDrivePicker}
           onInsertSlashTrigger={onInsertSlashTrigger}
           onOpenPresentationModal={onOpenPresentationModal}
           onStopStreaming={onStopStreaming}

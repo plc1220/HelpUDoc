@@ -26,6 +26,7 @@ except ImportError as exc:  # pragma: no cover
     raise RuntimeError("Gemini dependencies are required") from exc
 
 from .bigquery_export_tools import build_export_bigquery_query_tool
+from .clarification_responses import normalize_clarification_resume_payload
 from .configuration import Settings, ToolConfig
 from .skills_registry import (
     SkillPolicy,
@@ -42,6 +43,10 @@ from .tagged_file_policy import is_tagged_files_only, tagged_files_mode_guard
 from .utils import SourceTracker, extract_web_url
 
 logger = logging.getLogger(__name__)
+
+
+class MissingToolBuilderError(RuntimeError):
+    """Raised when a configured tool builder cannot be loaded."""
 
 
 def _dict_has_keys(value: Any, keys: set[str]) -> bool:
@@ -263,7 +268,11 @@ class ToolFactory:
         tools: List[Tool] = []
         for name in tool_names:
             config = self.settings.get_tool(name)
-            built = self._build_tool(config, workspace_state)
+            try:
+                built = self._build_tool(config, workspace_state)
+            except MissingToolBuilderError as exc:
+                logger.warning("Skipping unavailable tool '%s': %s", name, exc)
+                continue
             if isinstance(built, list):
                 tools.extend(built)
             else:
@@ -279,8 +288,20 @@ class ToolFactory:
 
     def _load_entrypoint(self, entrypoint: str, workspace_state: WorkspaceState) -> Tool | List[Tool]:
         module_path, attr = entrypoint.split(":")
-        module = import_module(module_path)
-        factory = getattr(module, attr)
+        try:
+            module = import_module(module_path)
+        except ModuleNotFoundError as exc:
+            if exc.name == module_path or module_path.startswith(f"{exc.name}."):
+                raise MissingToolBuilderError(
+                    f"module '{module_path}' could not be imported"
+                ) from exc
+            raise
+        try:
+            factory = getattr(module, attr)
+        except AttributeError as exc:
+            raise MissingToolBuilderError(
+                f"entrypoint '{entrypoint}' is missing attribute '{attr}'"
+            ) from exc
         try:
             return factory(workspace_state=workspace_state, source_tracker=self.source_tracker)
         except TypeError:
@@ -635,12 +656,16 @@ class ToolFactory:
 
             response = _interrupt_with_retry(
                 interrupt_payload,
-                valid_keys={"message", "selectedChoiceIds", "selectedValues"},
+                valid_keys={"message", "selectedChoiceIds", "selectedValues", "answersByQuestionId"},
                 stale_keys={"decisions", "action"},
                 label="request_clarification",
             )
             if isinstance(response, dict):
-                return json.dumps(response, ensure_ascii=False)
+                return normalize_clarification_resume_payload(
+                    response,
+                    questions=parsed_questions,
+                    choices=parsed_choices,
+                )
             return str(response)
 
         request_clarification.name = "request_clarification"
@@ -944,6 +969,14 @@ class ToolFactory:
                 normalized.append(cleaned)
             return sorted(set(normalized))
 
+        def _allow_basename_match(path_value: str) -> bool:
+            normalized = str(path_value or "").strip().replace("\\", "/").lstrip("/")
+            if not normalized:
+                return False
+            if normalized.startswith(".system/"):
+                return False
+            return "/" not in normalized
+
         @tool
         async def rag_query(
             query: str,
@@ -998,7 +1031,7 @@ class ToolFactory:
                 data = response.get("data") if isinstance(response, dict) else None
                 chunks = data.get("chunks", []) if isinstance(data, dict) else []
             if normalized:
-                normalized_basenames = {Path(item).name for item in normalized if item}
+                normalized_basenames = {Path(item).name for item in normalized if _allow_basename_match(item)}
                 filtered = []
                 for chunk in chunks:
                     file_path = chunk.get("file_path") or ""

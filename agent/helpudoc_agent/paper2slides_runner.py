@@ -13,6 +13,8 @@ import tempfile
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+from .configuration import REPO_ROOT
+
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"}
 _RUN_DIR_PATTERN = re.compile(r"^\d{8}_\d{6}$")
 
@@ -170,7 +172,10 @@ def _resolve_cache_root() -> Optional[Path]:
 
     workspace_root = os.getenv("WORKSPACE_ROOT")
     if workspace_root:
-        return (Path(workspace_root).expanduser().resolve() / ".paper2slides_cache")
+        root = Path(workspace_root).expanduser()
+        if not root.is_absolute():
+            root = REPO_ROOT / root
+        return root.resolve() / ".paper2slides_cache"
 
     return None
 

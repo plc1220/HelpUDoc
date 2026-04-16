@@ -79,6 +79,7 @@ jobs:
         run: |
           set -euo pipefail
           docker build -f agent/Dockerfile.gke -t "gcr.io/${PROJECT_ID}/helpudoc-agent:${IMAGE_TAG}" .
+          docker run --rm "gcr.io/${PROJECT_ID}/helpudoc-agent:${IMAGE_TAG}" python /app/agent/scripts/smoke_import.py
           docker push "gcr.io/${PROJECT_ID}/helpudoc-agent:${IMAGE_TAG}"
 
       - name: Deploy Agent
@@ -89,11 +90,26 @@ jobs:
           kubectl -n helpudoc apply -f infra/gke/k8s/50-app.yaml
           kubectl -n helpudoc set image deployment/helpudoc-app agent="gcr.io/${PROJECT_ID}/helpudoc-agent:${IMAGE_TAG}"
           kubectl -n helpudoc rollout status deployment/helpudoc-app --timeout=20m
+          APP_POD="$(kubectl -n helpudoc get pods -l app=helpudoc-app -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' | head -n1)"
+          test -n "${APP_POD}"
+          if ! kubectl -n helpudoc wait --for=condition=Ready "pod/${APP_POD}" --timeout=5m; then
+            kubectl -n helpudoc describe "pod/${APP_POD}" || true
+            kubectl -n helpudoc logs "pod/${APP_POD}" -c agent --tail=200 || true
+            kubectl -n helpudoc logs "pod/${APP_POD}" -c agent --previous --tail=200 || true
+            exit 1
+          fi
+          AGENT_READY="$(kubectl -n helpudoc get "pod/${APP_POD}" -o jsonpath='{.status.containerStatuses[?(@.name=="agent")].ready}')"
+          if [[ "${AGENT_READY}" != "true" ]]; then
+            kubectl -n helpudoc describe "pod/${APP_POD}" || true
+            kubectl -n helpudoc logs "pod/${APP_POD}" -c agent --tail=200 || true
+            kubectl -n helpudoc logs "pod/${APP_POD}" -c agent --previous --tail=200 || true
+            exit 1
+          fi
 
       - name: Sync Skills PVC
         run: |
           set -euo pipefail
-          APP_POD="$(kubectl -n helpudoc get pods -l app=helpudoc-app -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.phase}{"\n"}{end}' | awk '$2 == "Running" {print $1; exit}')"
+          APP_POD="$(kubectl -n helpudoc get pods -l app=helpudoc-app -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.phase}{" "}{.status.containerStatuses[?(@.name=="agent")].ready}{"\n"}{end}' | awk '$2 == "Running" && $3 == "true" {print $1; exit}')"
           test -n "${APP_POD}"
           kubectl -n helpudoc exec "${APP_POD}" -c backend -- sh -lc "set -eu; mkdir -p /app/skills; find /app/skills -mindepth 1 -maxdepth 1 -exec rm -rf {} +"
           tar -C skills -cf - . | kubectl -n helpudoc exec -i "${APP_POD}" -c backend -- sh -lc "tar -xf - -C /app/skills"

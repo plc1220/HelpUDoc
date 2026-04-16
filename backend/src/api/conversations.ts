@@ -87,6 +87,7 @@ export default function conversationRoutes(conversationService: ConversationServ
           size: z.number().int().nonnegative().optional(),
         }).strict()).optional(),
       }).strict()).optional(),
+      bodySource: z.enum(['assistant', 'summary']).optional(),
       runId: z.string().optional(),
       status: z.enum(['queued', 'running', 'awaiting_approval', 'completed', 'failed', 'cancelled']).optional(),
       pendingInterrupt: z.object({

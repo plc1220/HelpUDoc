@@ -5,7 +5,7 @@ import { promises as fs } from 'fs';
 import { existsSync } from 'fs';
 import { z } from 'zod';
 import { parse as parseYaml } from 'yaml';
-import { runAgent, runAgentStream } from '../services/agentService';
+import { runAgent, runAgentStream, type AgentMessageContentBlock } from '../services/agentService';
 import { WorkspaceService } from '../services/workspaceService';
 import { FileService } from '../services/fileService';
 import { HttpError } from '../errors';
@@ -37,13 +37,27 @@ const DEBUG_AGENT_RUN_STREAM =
   process.env.DEBUG_AGENT_RUN_STREAM === '1' || process.env.DEBUG_AGENT_RUN_STREAM === 'true';
 const AUTH_MODE = (process.env.AUTH_MODE || 'headers').trim().toLowerCase();
 const BQ_DELEGATED_MCP_SERVER_ID = 'toolbox-bq-demo';
+const DEFAULT_CURRENT_TURN_MULTIMODAL_MAX_BYTES = 8 * 1024 * 1024;
 const repoRoot = path.resolve(__dirname, '../../..');
 const skillsRoot = process.env.SKILLS_ROOT || path.join(repoRoot, 'skills');
+const resolveRepoRelativePath = (value?: string | null): string | undefined => {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  return path.isAbsolute(trimmed) ? trimmed : path.resolve(repoRoot, trimmed);
+};
 const defaultAgentConfigDir = existsSync('/agent/config')
   ? '/agent/config'
   : path.join(repoRoot, 'agent', 'config');
-const agentConfigPath = process.env.AGENT_CONFIG_PATH
-  || path.join(process.env.AGENT_CONFIG_DIR || defaultAgentConfigDir, 'runtime.yaml');
+const agentConfigPath = resolveRepoRelativePath(process.env.AGENT_CONFIG_PATH)
+  || path.join(resolveRepoRelativePath(process.env.AGENT_CONFIG_DIR) || defaultAgentConfigDir, 'runtime.yaml');
+const repoAgentConfigPath = path.join(repoRoot, 'agent', 'config', 'runtime.yaml');
+
+type RuntimeConfigShape = {
+  mcp_servers?: RuntimeMcpServerConfig[];
+  [key: string]: unknown;
+};
 
 type RuntimeMcpServerConfig = {
   name: string;
@@ -71,6 +85,13 @@ type EffectiveAgentPolicy = {
 };
 
 const normalizeUniqueIds = (values: string[]) => Array.from(new Set(values.map((value) => value.trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+
+const resolveCurrentTurnMultimodalMaxBytes = (): number => {
+  const raw = Number(process.env.CURRENT_TURN_MULTIMODAL_MAX_BYTES || DEFAULT_CURRENT_TURN_MULTIMODAL_MAX_BYTES);
+  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : DEFAULT_CURRENT_TURN_MULTIMODAL_MAX_BYTES;
+};
+
+const CURRENT_TURN_MULTIMODAL_MAX_BYTES = resolveCurrentTurnMultimodalMaxBytes();
 
 const extractFrontmatterString = (frontmatter: Record<string, unknown>, key: string): string | undefined => {
   const value = frontmatter[key];
@@ -169,15 +190,31 @@ const normalizeDefaultAccess = (value: unknown): 'allow' | 'deny' => {
   return normalized === 'deny' ? 'deny' : 'allow';
 };
 
+const mergeRuntimeMcpServers = (
+  baseEntries: unknown,
+  overrideEntries: unknown,
+): RuntimeMcpServerConfig[] => {
+  const merged = new Map<string, RuntimeMcpServerConfig>();
+  for (const source of [baseEntries, overrideEntries]) {
+    if (!Array.isArray(source)) continue;
+    for (const entry of source) {
+      if (!entry || typeof entry !== 'object' || typeof (entry as any).name !== 'string') continue;
+      const name = (entry as any).name;
+      merged.set(name, { ...(merged.get(name) || {}), ...(entry as RuntimeMcpServerConfig) });
+    }
+  }
+  return Array.from(merged.values());
+};
+
 const loadRuntimeMcpServers = async (): Promise<RuntimeMcpServerConfig[]> => {
   try {
-    const content = await fs.readFile(agentConfigPath, 'utf-8');
-    const parsed = parseYaml(content) as { mcp_servers?: unknown } | null;
-    const rawServers = parsed?.mcp_servers;
-    if (!Array.isArray(rawServers)) {
-      return [];
-    }
-    return rawServers
+    const [baseContent, liveContent] = await Promise.all([
+      fs.readFile(repoAgentConfigPath, 'utf-8').catch(() => ''),
+      fs.readFile(agentConfigPath, 'utf-8'),
+    ]);
+    const baseParsed = (parseYaml(baseContent) as RuntimeConfigShape | null) || {};
+    const liveParsed = (parseYaml(liveContent) as RuntimeConfigShape | null) || {};
+    return mergeRuntimeMcpServers(baseParsed.mcp_servers, liveParsed.mcp_servers)
       .filter((entry): entry is RuntimeMcpServerConfig => Boolean(entry && typeof entry === 'object' && (entry as any).name));
   } catch (error: any) {
     if (error?.code !== 'ENOENT') {
@@ -214,6 +251,22 @@ export default function(
     })).optional(),
     forceReset: z.boolean().optional(),
     turnId: z.string().optional(),
+    taggedFiles: z.array(z.string().min(1)).optional(),
+    currentTurnFileIds: z.array(z.number().int().positive()).optional(),
+    fileContextRefs: z.array(z.object({
+      sourceFileId: z.number().int().positive(),
+      sourceName: z.string().min(1),
+      sourceMimeType: z.string().nullable().optional(),
+      sourceVersionFingerprint: z.string().min(1),
+      artifactId: z.string().min(1),
+      artifactVersion: z.number().int().positive(),
+      derivedArtifactFileId: z.number().int().positive().nullable().optional(),
+      derivedArtifactPath: z.string().nullable().optional(),
+      effectiveMode: z.enum(['part', 'parser', 'hybrid']),
+      status: z.enum(['pending', 'partial', 'ready', 'failed', 'superseded']),
+      summary: z.string().nullable().optional(),
+      lastError: z.string().nullable().optional(),
+    }).strict()).optional(),
   });
 
   const presentationSchema = z.object({
@@ -249,6 +302,7 @@ export default function(
     message: z.string().optional(),
     selectedChoiceIds: z.array(z.string().min(1)).optional(),
     selectedValues: z.array(z.string()).optional(),
+    answersByQuestionId: z.record(z.string(), z.union([z.string(), z.array(z.string())])).optional(),
   });
   const runActionSchema = z.object({
     actionId: z.string().min(1),
@@ -576,12 +630,32 @@ export default function(
     return IMAGE_NAME_PATTERN.test(String(file.name || ''));
   };
 
-  const injectTaggedFileUrls = async (prompt: string, workspaceId: string, userId: string) => {
-    if (!prompt || !prompt.includes('@')) {
+  const normalizeTaggedValue = (value: string): string => value.trim().replace(/\\/g, '/').replace(/^\/+/, '');
+
+  const injectTaggedFileUrls = async (
+    prompt: string,
+    workspaceId: string,
+    userId: string,
+    explicitTaggedFiles?: string[],
+  ) => {
+    const normalizedExplicit = Array.from(
+      new Set((explicitTaggedFiles || []).map((value) => normalizeTaggedValue(String(value || ''))).filter(Boolean)),
+    );
+    if ((!prompt || !prompt.includes('@')) && !normalizedExplicit.length) {
       return prompt;
     }
     const files = await fileService.getFiles(workspaceId, userId);
-    const tagged = files.filter((file) => prompt.includes(`@${file.name}`));
+    const explicitBasenames = new Set(normalizedExplicit.map((value) => path.posix.basename(value)));
+    const tagged = files.filter((file) => {
+      const fileName = typeof file.name === 'string' ? normalizeTaggedValue(file.name) : '';
+      if (!fileName) {
+        return false;
+      }
+      if (normalizedExplicit.length) {
+        return normalizedExplicit.includes(fileName) || explicitBasenames.has(path.posix.basename(fileName));
+      }
+      return prompt.includes(`@${file.name}`);
+    });
     const withUrls = tagged.filter((file) => file.publicUrl && isImageFile(file));
     const taggedPaths = Array.from(
       new Set(
@@ -606,21 +680,99 @@ export default function(
     return `${prompt}${fileHint}${urlHint}`;
   };
 
+  const buildCurrentTurnMessageContent = async (
+    workspaceId: string,
+    userId: string,
+    prompt: string,
+    currentTurnFileIds?: number[],
+  ): Promise<AgentMessageContentBlock[] | undefined> => {
+    const normalizedIds = Array.from(
+      new Set(
+        (currentTurnFileIds || [])
+          .map((value) => Number(value))
+          .filter((value) => Number.isFinite(value) && value > 0),
+      ),
+    );
+    if (!normalizedIds.length) {
+      return undefined;
+    }
+
+    const fileBlocks: AgentMessageContentBlock[] = [];
+
+    for (const fileId of normalizedIds) {
+      const file = await fileService.getFileContent(fileId, userId);
+      const mimeType = typeof file.mimeType === 'string' && file.mimeType.trim()
+        ? file.mimeType.trim()
+        : 'application/octet-stream';
+      const encoded = typeof file.content === 'string' ? file.content : '';
+      if (!encoded) {
+        continue;
+      }
+      const byteLength = Buffer.byteLength(encoded, 'base64');
+      if (byteLength > CURRENT_TURN_MULTIMODAL_MAX_BYTES) {
+        console.info('Skipping oversized current-turn multimodal attachment', {
+          workspaceId,
+          fileId,
+          fileName: file.name,
+          mimeType,
+          byteLength,
+          maxBytes: CURRENT_TURN_MULTIMODAL_MAX_BYTES,
+        });
+        continue;
+      }
+      if (mimeType === 'application/pdf') {
+        fileBlocks.push({
+          type: 'file',
+          base64: encoded,
+          mime_type: mimeType,
+          filename: String(file.name || `attachment-${fileId}.pdf`),
+        });
+      } else if (mimeType.startsWith('image/')) {
+        fileBlocks.push({
+          type: 'image',
+          base64: encoded,
+          mime_type: mimeType,
+        });
+      }
+    }
+
+    if (!fileBlocks.length) {
+      return undefined;
+    }
+
+    const promptText = [
+      prompt.trim(),
+      'Use the attached file content as primary context for this turn before falling back to workspace search or web search.',
+    ]
+      .filter(Boolean)
+      .join('\n\n');
+
+    return promptText
+      ? [{ type: 'text', text: promptText }, ...fileBlocks]
+      : fileBlocks;
+  };
+
   router.post('/run', async (req, res) => {
     try {
       const user = requireUserContext(req);
-      const { persona, prompt, workspaceId, history, forceReset } = runAgentSchema.parse(req.body);
+      const { persona, prompt, workspaceId, history, forceReset, taggedFiles, currentTurnFileIds, fileContextRefs } = runAgentSchema.parse(req.body);
       const workspacePolicy = await workspaceService.getMcpServerPolicy(workspaceId, user.userId, { requireEdit: true });
       const policy = await resolveEffectiveAgentPolicy(user.userId, workspacePolicy);
       const settings = await workspaceService.getWorkspaceSettings(workspaceId, user.userId, { requireEdit: true });
-      const enrichedPrompt = await injectTaggedFileUrls(prompt, workspaceId, user.userId);
+      const enrichedPrompt = await injectTaggedFileUrls(prompt, workspaceId, user.userId, taggedFiles);
       const authToken = await buildAgentAuthToken({
         userId: user.userId,
         workspaceId,
         policy,
         skipPlanApprovals: settings.skipPlanApprovals,
       });
-      const response = await runAgent(persona, workspaceId, enrichedPrompt, history, { forceReset, authToken: authToken || undefined });
+      const messageContent = await buildCurrentTurnMessageContent(workspaceId, user.userId, enrichedPrompt, currentTurnFileIds);
+      const response = await runAgent(persona, workspaceId, enrichedPrompt, history, {
+        forceReset,
+        authToken: authToken || undefined,
+        fileContextRefs,
+        messageContent,
+      });
       res.json(response);
     } catch (error: any) {
       if (error instanceof z.ZodError) {
@@ -655,21 +807,24 @@ export default function(
 
     try {
       const user = requireUserContext(req);
-      const { persona, prompt, workspaceId, history, forceReset } = runAgentSchema.parse(req.body);
+      const { persona, prompt, workspaceId, history, forceReset, taggedFiles, currentTurnFileIds, fileContextRefs } = runAgentSchema.parse(req.body);
       const workspacePolicy = await workspaceService.getMcpServerPolicy(workspaceId, user.userId, { requireEdit: true });
       const policy = await resolveEffectiveAgentPolicy(user.userId, workspacePolicy);
       const settings = await workspaceService.getWorkspaceSettings(workspaceId, user.userId, { requireEdit: true });
-      const enrichedPrompt = await injectTaggedFileUrls(prompt, workspaceId, user.userId);
+      const enrichedPrompt = await injectTaggedFileUrls(prompt, workspaceId, user.userId, taggedFiles);
       const authToken = await buildAgentAuthToken({
         userId: user.userId,
         workspaceId,
         policy,
         skipPlanApprovals: settings.skipPlanApprovals,
       });
+      const messageContent = await buildCurrentTurnMessageContent(workspaceId, user.userId, enrichedPrompt, currentTurnFileIds);
       streamResponse = await runAgentStream(persona, workspaceId, enrichedPrompt, history, {
         forceReset,
         signal: upstreamAbort.signal,
         authToken: authToken || undefined,
+        fileContextRefs,
+        messageContent,
       });
       res.setHeader('Content-Type', 'application/jsonl');
       streamResponse.data.on('data', (chunk: Buffer) => {
@@ -712,18 +867,19 @@ export default function(
   router.post('/runs', async (req, res) => {
     try {
       const user = requireUserContext(req);
-      const { persona, prompt, workspaceId, history, forceReset, turnId } = runAgentSchema.parse(req.body);
+      const { persona, prompt, workspaceId, history, forceReset, turnId, taggedFiles, currentTurnFileIds, fileContextRefs } = runAgentSchema.parse(req.body);
       await workspaceService.ensureMembership(workspaceId, user.userId, { requireEdit: true });
       const workspacePolicy = await workspaceService.getMcpServerPolicy(workspaceId, user.userId, { requireEdit: true });
       const policy = await resolveEffectiveAgentPolicy(user.userId, workspacePolicy);
       const settings = await workspaceService.getWorkspaceSettings(workspaceId, user.userId, { requireEdit: true });
-      const enrichedPrompt = await injectTaggedFileUrls(prompt, workspaceId, user.userId);
+      const enrichedPrompt = await injectTaggedFileUrls(prompt, workspaceId, user.userId, taggedFiles);
       const authToken = await buildAgentAuthToken({
         userId: user.userId,
         workspaceId,
         policy,
         skipPlanApprovals: settings.skipPlanApprovals,
       });
+      const messageContent = await buildCurrentTurnMessageContent(workspaceId, user.userId, enrichedPrompt, currentTurnFileIds);
       const { runId, status } = await startAgentRun({
         persona,
         workspaceId,
@@ -732,6 +888,8 @@ export default function(
         forceReset,
         turnId,
         authToken: authToken || undefined,
+        fileContextRefs,
+        messageContent,
       });
       res.json({ runId, status });
     } catch (error: any) {
@@ -855,14 +1013,21 @@ export default function(
       }
       const payload = runResponseSchema.parse(req.body);
       if (!payload.message && !payload.selectedChoiceIds?.length && !payload.selectedValues?.length) {
-        return res.status(400).json({ error: 'Clarification response requires a message or a selected choice' });
+        const hasStructuredAnswers = Boolean(
+          payload.answersByQuestionId && Object.keys(payload.answersByQuestionId).length,
+        );
+        if (!hasStructuredAnswers) {
+          return res.status(400).json({ error: 'Clarification response requires a message or a selected choice' });
+        }
       }
       const result = await resumeAgentRunWithResponse(runId, {
         message: payload.message,
         selectedChoiceIds: payload.selectedChoiceIds,
         selectedValues: payload.selectedValues,
+        answersByQuestionId: payload.answersByQuestionId,
       }, {
         authToken: authToken || undefined,
+        previousInterrupt: meta.pendingInterrupt,
       });
       res.json(result);
     } catch (error: any) {

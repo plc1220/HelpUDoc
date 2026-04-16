@@ -32,14 +32,14 @@ export default function ChatHeader({
 }) {
   const isDarkMode = colorMode === 'dark';
   return (
-    <div className={`sticky top-0 z-30 border-b px-4 py-3 backdrop-blur-md ${
+    <div className={`sticky top-0 z-30 border-b px-3 py-2.5 backdrop-blur-md ${
       isDarkMode ? 'border-slate-700/70 bg-slate-950/60' : 'border-slate-200/70 bg-white/80'
     }`}>
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <button
             onClick={onToggleVisibility}
-            className={`rounded-xl p-2 transition-all duration-200 ${
+            className={`rounded-xl p-1.5 transition-all duration-200 ${
               isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-600 hover:bg-slate-100'
             }`}
             disabled={isEditMode}
@@ -52,13 +52,13 @@ export default function ChatHeader({
           </button>
           {isAgentPaneVisible && (
             <div className="flex items-center gap-2">
-              <span className={`text-[11px] font-semibold uppercase tracking-wide ${
+              <span className={`text-[10px] font-semibold uppercase tracking-wide ${
                 isDarkMode ? 'text-slate-400' : 'text-slate-500'
               }`}>Mode</span>
               <select
                 value={selectedPersona}
                 onChange={onModeChange}
-                className={`rounded-xl border px-2.5 py-1 text-sm font-semibold shadow-sm transition-all duration-200 focus:outline-none ${
+                className={`rounded-xl border px-2.5 py-1 text-xs font-semibold shadow-sm transition-all duration-200 focus:outline-none ${
                   isDarkMode
                     ? 'border-slate-700/80 bg-slate-800/90 text-slate-100 focus:border-sky-400 focus:ring-2 focus:ring-sky-400/20'
                     : 'border-slate-200/80 bg-slate-100/90 text-slate-700 focus:border-blue-400 focus:ring-2 focus:ring-blue-200'
@@ -80,7 +80,7 @@ export default function ChatHeader({
             <button
               type="button"
               onClick={onToggleHistory}
-              className={`rounded-xl p-2 transition-all duration-200 ${
+              className={`rounded-xl p-1.5 transition-all duration-200 ${
                 isHistoryOpen
                   ? isDarkMode
                     ? 'bg-sky-500/14 text-sky-200 ring-1 ring-sky-400/35'
@@ -98,7 +98,7 @@ export default function ChatHeader({
             <span className={`h-5 w-px ${isDarkMode ? 'bg-slate-700' : 'bg-slate-200'}`} aria-hidden="true" />
             <button
               onClick={onNewChat}
-              className={`rounded-xl p-2 transition-all duration-200 ${
+              className={`rounded-xl p-1.5 transition-all duration-200 ${
                 isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-600 hover:bg-slate-100'
               }`}
               title="Start new chat"
@@ -108,7 +108,7 @@ export default function ChatHeader({
             </button>
             <button
               onClick={onToggleFullScreen}
-              className={`rounded-xl p-2 transition-all duration-200 ${
+              className={`rounded-xl p-1.5 transition-all duration-200 ${
                 isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-600 hover:bg-slate-100'
               }`}
               title={isAgentPaneFullScreen ? 'Exit full screen chat' : 'Enter full screen chat'}

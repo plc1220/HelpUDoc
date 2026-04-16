@@ -1,7 +1,9 @@
-import { FileIcon, MonitorPlay, Plus, Send, StopCircle, X } from 'lucide-react';
-import { type ChangeEvent, type KeyboardEvent, type RefObject, type SyntheticEvent } from 'react';
+import { FileIcon, MonitorPlay, Paperclip, Plus, Send, StopCircle, X } from 'lucide-react';
+import { type ChangeEvent, type KeyboardEvent, type RefObject, type SyntheticEvent, useEffect, useRef, useState } from 'react';
 
 import type { File as WorkspaceFile } from '../../types';
+import type { ChatComposerAttachment } from './chatTypes';
+import GoogleDriveIcon from './GoogleDriveIcon';
 
 type CommandSuggestion = {
   id: string;
@@ -21,6 +23,7 @@ export default function ChatInputArea({
   chatInputRef,
   attachmentInputRef,
   isStreaming,
+  isPreparingAttachments,
   showPaper2SlidesControls,
   presentationStatus,
   presentationOptionSummary,
@@ -35,7 +38,8 @@ export default function ChatInputArea({
   onChatInputKeyDown,
   onChatInputKeyUp,
   onChatInputSelectionChange,
-  onChatAttachmentButtonClick,
+  onOpenLocalAttachmentPicker,
+  onOpenDrivePicker,
   onInsertSlashTrigger,
   onOpenPresentationModal,
   onStopStreaming,
@@ -48,10 +52,11 @@ export default function ChatInputArea({
 }: {
   colorMode: 'light' | 'dark';
   chatMessage: string;
-  chatAttachments: File[];
+  chatAttachments: ChatComposerAttachment[];
   chatInputRef: RefObject<HTMLTextAreaElement | null>;
   attachmentInputRef: RefObject<HTMLInputElement | null>;
   isStreaming: boolean;
+  isPreparingAttachments: boolean;
   showPaper2SlidesControls: boolean;
   presentationStatus: 'idle' | 'running' | 'success' | 'error';
   presentationOptionSummary: string;
@@ -66,7 +71,8 @@ export default function ChatInputArea({
   onChatInputKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
   onChatInputKeyUp: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
   onChatInputSelectionChange: (event: SyntheticEvent<HTMLTextAreaElement>) => void;
-  onChatAttachmentButtonClick: () => void;
+  onOpenLocalAttachmentPicker: () => void;
+  onOpenDrivePicker: () => void;
   onInsertSlashTrigger: () => void;
   onOpenPresentationModal: () => void;
   onStopStreaming: () => void;
@@ -78,9 +84,27 @@ export default function ChatInputArea({
   onSelectCommand: (command: CommandSuggestion) => void;
 }) {
   const isDarkMode = colorMode === 'dark';
+  const [isAttachmentMenuOpen, setIsAttachmentMenuOpen] = useState(false);
+  const attachmentMenuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!isAttachmentMenuOpen) {
+      return undefined;
+    }
+
+    const handlePointerDown = (event: MouseEvent) => {
+      if (attachmentMenuRef.current?.contains(event.target as Node)) {
+        return;
+      }
+      setIsAttachmentMenuOpen(false);
+    };
+
+    document.addEventListener('mousedown', handlePointerDown);
+    return () => document.removeEventListener('mousedown', handlePointerDown);
+  }, [isAttachmentMenuOpen]);
 
   return (
-    <div className={`sticky bottom-0 border-t p-4 backdrop-blur-md ${
+    <div className={`sticky bottom-0 border-t p-3 backdrop-blur-md ${
       isDarkMode ? 'border-slate-700/70 bg-slate-950/45' : 'border-slate-200/80 bg-white/80'
     }`}>
       <div className={`relative rounded-2xl border transition-all duration-200 ${
@@ -89,14 +113,19 @@ export default function ChatInputArea({
           : 'border-slate-200/90 bg-white shadow-[0_24px_60px_-36px_rgba(15,23,42,0.15)] focus-within:border-sky-400/70 focus-within:ring-2 focus-within:ring-sky-200/50'
       }`}>
         {chatAttachments.length > 0 && (
-          <div className="flex flex-wrap gap-2 px-3 pt-3">
+          <div className="flex flex-wrap gap-2 px-3 pt-2.5">
             {chatAttachments.map((file, index) => (
               <div
-                key={`${file.name}-${index}`}
+                key={file.id}
                 className={`group flex items-center gap-2 rounded-lg border px-2 py-1 text-xs font-medium transition-all duration-200 ${
                   isDarkMode ? 'border-slate-700/70 bg-slate-950/70 text-slate-200' : 'border-slate-200 bg-slate-50 text-slate-700'
                 }`}
               >
+                {file.source === 'drive' ? (
+                  <GoogleDriveIcon className="h-3.5 w-3.5 shrink-0" />
+                ) : (
+                  <Paperclip size={12} className={isDarkMode ? 'text-slate-400' : 'text-slate-500'} />
+                )}
                 <span className="max-w-[120px] truncate">{file.name}</span>
                 <button
                   type="button"
@@ -113,11 +142,11 @@ export default function ChatInputArea({
           </div>
         )}
         {commandTags.length > 0 && (
-          <div className="flex flex-wrap gap-2 px-3 pt-3">
+          <div className="flex flex-wrap gap-2 px-3 pt-2.5">
             {commandTags.map((tag) => (
               <div
                 key={tag.id}
-                className={`group flex items-center gap-2 rounded-full border px-2.5 py-1 text-xs font-medium ${
+                className={`group flex items-center gap-2 rounded-full border px-2.5 py-1 text-[11px] font-medium ${
                   isDarkMode
                     ? 'border-sky-400/25 bg-slate-950/75 text-sky-100'
                     : 'border-sky-200 bg-sky-50 text-sky-700'
@@ -146,29 +175,83 @@ export default function ChatInputArea({
           onKeyDown={onChatInputKeyDown}
           onKeyUp={onChatInputKeyUp}
           onSelect={onChatInputSelectionChange}
-          className={`w-full max-h-60 resize-none bg-transparent px-4 py-3 text-sm leading-relaxed focus:outline-none ${
+          className={`w-full max-h-52 resize-none bg-transparent px-3.5 py-2.5 text-sm leading-relaxed focus:outline-none ${
             isDarkMode ? 'text-slate-100 placeholder:text-slate-500' : 'text-slate-800 placeholder:text-slate-400'
           }`}
           rows={Math.min(5, Math.max(1, chatMessage.split('\n').length))}
-          style={{ minHeight: '56px' }}
+          style={{ minHeight: '50px' }}
         />
-        <div className="flex items-center justify-between px-2 pb-2">
+        <div className="flex items-center justify-between px-2 pb-1.5">
           <div className="flex items-center gap-1">
-            <button
-              type="button"
-              onClick={onChatAttachmentButtonClick}
-              className={`rounded-lg p-2 transition-all duration-200 ${
-                isDarkMode ? 'text-slate-400 hover:bg-slate-800 hover:text-slate-100' : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'
-              }`}
-              title="Attach files"
-            >
-              <Plus size={18} />
-            </button>
+            <div className="relative" ref={attachmentMenuRef}>
+              <button
+                type="button"
+                disabled={isPreparingAttachments}
+                onClick={() => setIsAttachmentMenuOpen((prev) => !prev)}
+                className={`rounded-lg p-2 transition-all duration-200 ${
+                  isPreparingAttachments
+                    ? isDarkMode
+                      ? 'cursor-not-allowed text-slate-600'
+                      : 'cursor-not-allowed text-slate-300'
+                    : isDarkMode ? 'text-slate-400 hover:bg-slate-800 hover:text-slate-100' : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'
+                }`}
+                title="Attach files"
+              >
+                <Plus size={18} />
+              </button>
+              {isAttachmentMenuOpen && (
+                <div className={`absolute bottom-full left-0 z-30 mb-2 w-64 rounded-2xl border p-2 shadow-2xl backdrop-blur-md ${
+                  isDarkMode ? 'border-slate-700/80 bg-slate-900/95' : 'border-slate-200 bg-white/95'
+                }`}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsAttachmentMenuOpen(false);
+                      onOpenLocalAttachmentPicker();
+                    }}
+                    className={`flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm font-medium transition ${
+                      isDarkMode ? 'text-slate-100 hover:bg-slate-800' : 'text-slate-800 hover:bg-slate-50'
+                    }`}
+                  >
+                    <Paperclip size={18} />
+                    <div className="flex flex-col">
+                      <span>Upload files</span>
+                      <span className={`text-[11px] font-normal ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                        Add files from this device
+                      </span>
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsAttachmentMenuOpen(false);
+                      onOpenDrivePicker();
+                    }}
+                    className={`mt-1 flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm font-medium transition ${
+                      isDarkMode ? 'text-slate-100 hover:bg-slate-800' : 'text-slate-800 hover:bg-slate-50'
+                    }`}
+                  >
+                    <GoogleDriveIcon className="h-[18px] w-[18px]" />
+                    <div className="flex flex-col">
+                      <span>Add from Google Drive</span>
+                      <span className={`text-[11px] font-normal ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                        Search Drive or paste a file URL
+                      </span>
+                    </div>
+                  </button>
+                </div>
+              )}
+            </div>
             <button
               type="button"
               onClick={onInsertSlashTrigger}
+              disabled={isPreparingAttachments}
               className={`rounded-lg p-2 transition-all duration-200 ${
-                isDarkMode ? 'text-slate-400 hover:bg-slate-800 hover:text-slate-100' : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'
+                isPreparingAttachments
+                  ? isDarkMode
+                    ? 'cursor-not-allowed text-slate-600'
+                    : 'cursor-not-allowed text-slate-300'
+                  : isDarkMode ? 'text-slate-400 hover:bg-slate-800 hover:text-slate-100' : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'
               }`}
               title="Commands"
               aria-label="Insert command"
@@ -181,7 +264,7 @@ export default function ChatInputArea({
                 <button
                   type="button"
                   onClick={onOpenPresentationModal}
-                  className={`rounded-lg p-2 transition-all duration-200 ${
+                  className={`rounded-lg p-1.5 transition-all duration-200 ${
                     presentationStatus === 'running'
                       ? isDarkMode
                         ? 'bg-sky-400/12 text-sky-100 ring-1 ring-sky-400/25'
@@ -193,20 +276,20 @@ export default function ChatInputArea({
                   title={`Configure Paper2Slides: ${presentationOptionSummary || 'Options'}`}
                   aria-label="Configure Paper2Slides"
                 >
-                  <MonitorPlay size={18} />
+                  <MonitorPlay size={16} />
                 </button>
               </>
             )}
           </div>
           <div className="flex items-center gap-2">
             <span className={`mr-2 hidden text-[10px] sm:inline-block ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>
-              {isStreaming ? 'Generating...' : 'Enter to send'}
+              {isStreaming ? 'Generating...' : isPreparingAttachments ? 'Preparing attachments...' : 'Enter to send'}
             </span>
             <button
               onClick={isStreaming ? onStopStreaming : onSendMessage}
-              disabled={!chatMessage.trim() && !chatAttachments.length && !isStreaming}
+              disabled={isPreparingAttachments || (!chatMessage.trim() && !chatAttachments.length && !isStreaming)}
               className={`rounded-xl p-2 transition-all duration-200 ${
-                !chatMessage.trim() && !chatAttachments.length && !isStreaming
+                isPreparingAttachments || (!chatMessage.trim() && !chatAttachments.length && !isStreaming)
                   ? isDarkMode
                     ? 'cursor-not-allowed bg-slate-800 text-slate-600'
                     : 'cursor-not-allowed bg-slate-100 text-slate-300'
@@ -218,7 +301,7 @@ export default function ChatInputArea({
               }`}
               title={isStreaming ? 'Stop current agent response' : 'Send message'}
             >
-              {isStreaming ? <StopCircle size={18} /> : <Send size={18} />}
+              {isStreaming ? <StopCircle size={16} /> : <Send size={16} />}
             </button>
           </div>
         </div>

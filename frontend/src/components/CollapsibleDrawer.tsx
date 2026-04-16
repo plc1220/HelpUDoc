@@ -14,6 +14,7 @@ interface CollapsibleDrawerProps {
   setWorkspaceSearchQuery: (name: string) => void;
   handleCreateWorkspace: () => void;
   handleDeleteWorkspace: (id: string) => void;
+  onShareWorkspace?: (workspace: Workspace) => void;
   onSelectWorkspace: (workspace: Workspace) => void;
   onOpenSettings: () => void;
   colorMode: PaletteMode;
@@ -34,6 +35,7 @@ const CollapsibleDrawer: React.FC<CollapsibleDrawerProps> = ({
   setWorkspaceSearchQuery,
   handleCreateWorkspace,
   handleDeleteWorkspace,
+  onShareWorkspace,
   onSelectWorkspace,
   onOpenSettings,
   colorMode,
@@ -138,6 +140,7 @@ const CollapsibleDrawer: React.FC<CollapsibleDrawerProps> = ({
               selectedWorkspace={selectedWorkspace}
               onSelectWorkspace={onSelectWorkspace}
               onDeleteWorkspace={handleDeleteWorkspace}
+              onShareWorkspace={onShareWorkspace}
             />
           </Box>
           <Box

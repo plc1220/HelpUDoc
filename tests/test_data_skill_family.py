@@ -401,6 +401,59 @@ class TestGuardedTool:
         assert runtime_result.status == "success"
         assert "orders in thelook_ecommerce" in str(runtime_result.content)
 
+    def test_guarded_tool_blocks_google_search_when_preferred_mcp_is_bound(self, tmp_path: Path) -> None:
+        from langchain_core.messages import ToolMessage
+        from langchain_core.tools import tool
+
+        from agent.helpudoc_agent.state import WorkspaceState
+        from agent.helpudoc_agent.tool_guard import GuardedTool
+
+        @tool
+        def google_search(query: str) -> str:
+            """Search the web."""
+            return f"results for {query}"
+
+        workspace_state = WorkspaceState(workspace_id="w", root_path=tmp_path)
+        workspace_state.context["preferred_mcp_server"] = "aws-knowledge"
+        workspace_state.context["preferred_mcp_server_bound"] = True
+
+        guarded = GuardedTool.from_tool(google_search, workspace_state=workspace_state)
+        result = guarded.invoke({"query": "latest bedrock models"})
+        assert isinstance(result, str)
+        assert "blocked for this turn" in result.lower()
+
+        runtime_result = guarded.invoke(
+            {
+                "id": "tool-call-4",
+                "name": "google_search",
+                "type": "tool_call",
+                "query": "latest bedrock models",
+            }
+        )
+        assert isinstance(runtime_result, ToolMessage)
+        assert runtime_result.status == "error"
+        assert "preferred mcp server" in str(runtime_result.content).lower()
+
+    def test_guarded_tool_allows_google_search_when_preferred_mcp_is_not_bound(self, tmp_path: Path) -> None:
+        from langchain_core.tools import tool
+
+        from agent.helpudoc_agent.state import WorkspaceState
+        from agent.helpudoc_agent.tool_guard import GuardedTool
+
+        @tool
+        def google_search(query: str) -> str:
+            """Search the web."""
+            return f"results for {query}"
+
+        workspace_state = WorkspaceState(workspace_id="w", root_path=tmp_path)
+        workspace_state.context["preferred_mcp_server"] = "aws-knowledge"
+        workspace_state.context["preferred_mcp_server_bound"] = False
+
+        guarded = GuardedTool.from_tool(google_search, workspace_state=workspace_state)
+        result = guarded.invoke({"query": "latest bedrock models"})
+        assert isinstance(result, str)
+        assert "results for latest bedrock models" == result
+
 
 # ---------------------------------------------------------------------------
 # data_agent_tools tests

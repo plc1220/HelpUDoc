@@ -40,6 +40,15 @@ const getFolderLabel = (node: WorkspaceFileTreeFolderNode) => {
   if (!node.path) {
     return node.name;
   }
+  if (node.path === '.system') {
+    return 'System';
+  }
+  if (node.path === '.system/extracted-assets') {
+    return 'Extracted assets';
+  }
+  if (node.path === '.system/derived-artifacts') {
+    return 'Derived artifacts';
+  }
   return node.name;
 };
 
@@ -80,7 +89,7 @@ const SlidingFileName: React.FC<{ name: string; colorMode: 'light' | 'dark' }> =
     <span ref={viewportRef} className="block min-w-0 overflow-hidden whitespace-nowrap">
       <span
         ref={textRef}
-        className={`block w-max max-w-full truncate text-sm leading-snug transition-transform duration-500 ease-out group-hover:truncate-none group-focus-within:truncate-none ${
+        className={`block w-max max-w-full truncate text-[13px] leading-snug transition-transform duration-500 ease-out group-hover:truncate-none group-focus-within:truncate-none ${
           colorMode === 'dark' ? 'text-slate-200' : 'text-slate-800'
         }`}
         style={overflowOffset > 0 ? { transform: `translateX(calc(${overflowOffset * -1}px * var(--file-name-slide, 0)))` } : undefined}
@@ -126,7 +135,11 @@ const TreeFileRow: React.FC<{
   const isPendingJob = file.mimeType === 'application/vnd.helpudoc.paper2slides-job';
   const ragStatus = getRagStatus(ragStatuses, file);
   const ragState = ragStatus?.status ? String(ragStatus.status).toLowerCase() : '';
+  const understandingState = file.understandingStatus ? String(file.understandingStatus).toLowerCase() : '';
   const isIndexing = !isPendingJob && ['pending', 'processing', 'preprocessed'].includes(ragState);
+  const isUnderstandingPending = !isPendingJob && understandingState === 'pending';
+  const understandingFailed = !isPendingJob && understandingState === 'failed';
+  const understandingPartial = !isPendingJob && understandingState === 'partial';
   const displayName = getFileDisplayName(file.name || '');
   const fileIcon = getFileTypeIcon(file.name || '');
   const isDraft = isDraftWorkspaceFile(file);
@@ -149,7 +162,7 @@ const TreeFileRow: React.FC<{
 
   return (
     <div
-      className={`group relative flex items-start gap-2 rounded-lg px-2 py-2 transition-colors ${rowClassName} ${
+      className={`group relative flex items-start gap-2 rounded-lg px-2 py-1.5 transition-colors ${rowClassName} ${
         isBeingDragged ? 'opacity-40' : ''
       }`}
       draggable={isDraggable}
@@ -184,16 +197,43 @@ const TreeFileRow: React.FC<{
         }}
         className="flex min-w-0 flex-1 items-start gap-2 text-left"
       >
-        <div className="flex min-w-0 items-center gap-2">
-          {(isPendingJob || isIndexing) && (
-            <span className="inline-flex h-4 w-4 items-center justify-center text-blue-500">
-              <span className="h-2 w-2 animate-pulse rounded-full bg-current" />
+        <div className="flex min-w-0 flex-col gap-1">
+          <div className="flex min-w-0 items-center gap-2">
+            {(isPendingJob || isIndexing || isUnderstandingPending) && (
+              <span className="inline-flex h-4 w-4 items-center justify-center text-blue-500">
+                <span className="h-2 w-2 animate-pulse rounded-full bg-current" />
+              </span>
+            )}
+            {understandingFailed && (
+              <span className="inline-flex h-4 w-4 items-center justify-center text-rose-500">
+                <span className="h-2 w-2 rounded-full bg-current" />
+              </span>
+            )}
+            {understandingPartial && (
+              <span className="inline-flex h-4 w-4 items-center justify-center text-amber-500">
+                <span className="h-2 w-2 rounded-full bg-current" />
+              </span>
+            )}
+            <span className="shrink-0" aria-hidden="true">
+              {fileIcon}
+            </span>
+            <SlidingFileName name={displayName} colorMode={colorMode} />
+          </div>
+          {(isUnderstandingPending || understandingFailed || understandingPartial) && (
+            <span className={`pl-6 text-[11px] leading-none ${
+              understandingFailed
+                ? isDarkMode ? 'text-rose-400' : 'text-rose-600'
+                : understandingPartial
+                  ? isDarkMode ? 'text-amber-400' : 'text-amber-600'
+                  : isDarkMode ? 'text-sky-400' : 'text-sky-600'
+            }`}>
+              {understandingFailed
+                ? (file.understandingError?.trim() || 'Artifact processing failed')
+                : understandingPartial
+                  ? 'Artifact ready with partial extraction'
+                  : 'Processing document artifacts...'}
             </span>
           )}
-          <span className="shrink-0" aria-hidden="true">
-            {fileIcon}
-          </span>
-          <SlidingFileName name={displayName} colorMode={colorMode} />
         </div>
       </button>
       {!isPendingJob && (
@@ -278,7 +318,7 @@ const TreeFolderRow: React.FC<{
   return (
     <div className="select-none">
       <div
-        className={`group flex items-center gap-2 rounded-lg px-2 py-2 transition-colors ${containerClassName}`}
+        className={`group flex items-center gap-2 rounded-lg px-2 py-1.5 transition-colors ${containerClassName}`}
         onDragOver={(event) => {
           if (!canAcceptDrop) {
             return;
@@ -309,7 +349,7 @@ const TreeFolderRow: React.FC<{
         <button
           type="button"
           onClick={() => onToggle(node.path)}
-          className={`inline-flex h-7 w-7 items-center justify-center rounded-md transition-colors ${
+          className={`inline-flex h-6 w-6 items-center justify-center rounded-md transition-colors ${
             isDarkMode
               ? 'text-slate-400 hover:bg-slate-700/70 hover:text-slate-100'
               : 'text-slate-500 hover:bg-slate-200 hover:text-slate-800'
@@ -326,7 +366,7 @@ const TreeFolderRow: React.FC<{
           title={node.path || node.name}
         >
           <div className="flex items-center gap-2">
-            <span className={`truncate text-sm font-medium ${isDarkMode ? 'text-slate-200' : 'text-slate-800'}`}>{getFolderLabel(node)}</span>
+            <span className={`truncate text-[13px] font-medium ${isDarkMode ? 'text-slate-200' : 'text-slate-800'}`}>{getFolderLabel(node)}</span>
             <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
               isDarkMode ? 'bg-slate-800 text-slate-400' : 'bg-slate-200 text-slate-600'
             }`}>

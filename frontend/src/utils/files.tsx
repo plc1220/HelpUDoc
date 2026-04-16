@@ -27,6 +27,11 @@ const TEXT_PREVIEW_EXTENSIONS = new Set([
 
 export const normalizeFilePath = (value: string) => value.replace(/\\/g, '/');
 
+export const isExtractedAssetFilePath = (value: string): boolean => {
+  const normalized = normalizeFilePath(value || '').replace(/^\/+/, '').toLowerCase();
+  return normalized.startsWith('.system/extracted-assets/');
+};
+
 export const getFileDisplayName = (value: string) => {
   if (!value) {
     return '';
@@ -60,6 +65,9 @@ export const getFileTypeIcon = (value: string) => {
 export const isSystemFile = (file: WorkspaceFile): boolean => {
   const name = normalizeFilePath(file.name || '');
   if (!name) {
+    return false;
+  }
+  if (isExtractedAssetFilePath(name)) {
     return false;
   }
   const lowerName = name.toLowerCase();

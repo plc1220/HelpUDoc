@@ -19,6 +19,50 @@ export interface File {
   mimeType?: string | null;
   publicUrl?: string | null;
   content?: string;
+  understandingStatus?: DerivedArtifactStatus | null;
+  understandingMode?: DerivedArtifactMode | null;
+  understandingError?: string | null;
+  derivedArtifactFileId?: number | null;
+}
+
+export type GoogleDrivePickerScope = 'recent' | 'my-drive' | 'shared';
+
+export type GoogleDriveIconHint = 'docs' | 'sheets' | 'slides' | 'pdf' | 'image' | 'file';
+
+export interface GoogleDrivePickerItem {
+  id: string;
+  name: string;
+  mimeType: string;
+  webViewUrl?: string | null;
+  modifiedTime?: string | null;
+  ownerNames?: string[];
+  size?: string | null;
+  iconHint: GoogleDriveIconHint;
+  scope?: GoogleDrivePickerScope;
+}
+
+export interface GoogleDriveSearchResult {
+  files: GoogleDrivePickerItem[];
+  nextPageToken?: string | null;
+}
+
+export type DerivedArtifactStatus = 'pending' | 'partial' | 'ready' | 'failed' | 'superseded';
+export type DerivedArtifactMode = 'part' | 'parser' | 'hybrid';
+export type AttachmentPrepStatus = 'pending' | 'running' | 'ready' | 'failed';
+
+export interface FileContextRef {
+  sourceFileId: number;
+  sourceName: string;
+  sourceMimeType?: string | null;
+  sourceVersionFingerprint: string;
+  artifactId: string;
+  artifactVersion: number;
+  derivedArtifactFileId?: number | null;
+  derivedArtifactPath?: string | null;
+  effectiveMode: DerivedArtifactMode;
+  status: DerivedArtifactStatus;
+  summary?: string | null;
+  lastError?: string | null;
 }
 
 export interface AgentPersona {
@@ -73,6 +117,9 @@ export interface InterruptQuestion {
   options?: InterruptQuestionOption[];
 }
 
+export type InterruptAnswerValue = string | string[];
+export type InterruptAnswersByQuestionId = Record<string, InterruptAnswerValue>;
+
 export interface InterruptAction {
   id: string;
   label: string;
@@ -113,8 +160,12 @@ export interface PendingInterrupt {
 export interface ConversationMessageMetadata {
   thinkingText?: string;
   toolEvents?: ToolEvent[];
+  bodySource?: 'assistant' | 'summary';
   runId?: string;
   status?: 'queued' | 'running' | 'awaiting_approval' | 'completed' | 'failed' | 'cancelled';
+  attachmentJobId?: string;
+  attachmentPrepStatus?: AttachmentPrepStatus;
+  attachmentPrepError?: string;
   pendingInterrupt?: PendingInterrupt;
   runPolicy?: {
     skill?: string;
@@ -124,6 +175,7 @@ export interface ConversationMessageMetadata {
     prePlanSearchLimit?: number;
     prePlanSearchUsed?: number;
   };
+  fileContextRefs?: FileContextRef[];
 }
 
 export interface ConversationMessage {

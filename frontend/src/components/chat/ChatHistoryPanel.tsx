@@ -4,6 +4,12 @@ import type { AgentPersona, ConversationSummary } from '../../types';
 
 type ConversationStreamingMap = Record<string, boolean>;
 
+type ConversationAttentionState = {
+  status: 'running' | 'awaiting_approval' | 'completed' | 'failed' | 'cancelled';
+  label?: string;
+  updatedAt: string;
+};
+
 const normalizePersonaName = (name: string): string => {
   const normalized = String(name || '').trim().toLowerCase();
   if (!normalized || normalized === 'general-assistant') {
@@ -18,6 +24,7 @@ export default function ChatHistoryPanel({
   conversationHistory,
   activeConversationId,
   conversationStreaming,
+  conversationAttentionById,
   personas,
   onClose,
   onSelectConversation,
@@ -28,6 +35,7 @@ export default function ChatHistoryPanel({
   conversationHistory: ConversationSummary[];
   activeConversationId: string | null;
   conversationStreaming: ConversationStreamingMap;
+  conversationAttentionById: Record<string, ConversationAttentionState>;
   personas: AgentPersona[];
   onClose: () => void;
   onSelectConversation: (conversationId: string) => void;
@@ -47,7 +55,7 @@ export default function ChatHistoryPanel({
         />
       )}
       <div
-        className={`absolute inset-y-0 right-0 z-20 flex w-80 max-w-[90%] flex-col border-l shadow-2xl backdrop-blur-md transition-transform duration-200 ${
+        className={`absolute inset-y-0 right-0 z-20 flex w-72 max-w-[90%] flex-col border-l shadow-2xl backdrop-blur-md transition-transform duration-200 ${
           isDarkMode
             ? 'border-slate-700/70 bg-slate-950/92 ring-1 ring-white/5'
             : 'border-slate-200/80 bg-white/92 ring-1 ring-slate-200/60'
@@ -56,7 +64,7 @@ export default function ChatHistoryPanel({
         }`}
         aria-hidden={!isHistoryOpen}
       >
-        <div className={`flex items-center justify-between border-b px-4 py-3 ${
+        <div className={`flex items-center justify-between border-b px-3 py-2.5 ${
           isDarkMode ? 'border-slate-700/70' : 'border-slate-200/80'
         }`}>
           <div>
@@ -78,7 +86,7 @@ export default function ChatHistoryPanel({
             <X size={16} />
           </button>
         </div>
-        <div className="flex-1 space-y-2 overflow-y-auto p-4">
+        <div className="flex-1 space-y-2 overflow-y-auto p-3">
           {conversationHistory.length === 0 ? (
             <div className="flex h-full flex-col items-center justify-center text-center">
               <div className={`rounded-3xl border px-5 py-5 ${
@@ -94,9 +102,21 @@ export default function ChatHistoryPanel({
             conversationHistory.map((conversation) => {
               const isActive = conversation.id === activeConversationId;
               const isConversationStreaming = conversationStreaming[conversation.id];
+              const attention = conversationAttentionById[conversation.id];
               const normalizedPersona = normalizePersonaName(conversation.persona);
               const personaLabel =
                 personas.find((persona) => persona.name === normalizedPersona)?.displayName || normalizedPersona;
+              const attentionLabel = isConversationStreaming
+                ? 'Running'
+                : attention?.status === 'awaiting_approval'
+                  ? 'Waiting'
+                  : attention?.status === 'completed'
+                    ? 'Done'
+                    : attention?.status === 'failed'
+                      ? 'Failed'
+                      : attention?.status === 'cancelled'
+                        ? 'Stopped'
+                        : '';
               return (
                 <div key={conversation.id} className="group relative">
                   <button
@@ -105,7 +125,7 @@ export default function ChatHistoryPanel({
                       onSelectConversation(conversation.id);
                       onClose();
                     }}
-                    className={`w-full rounded-2xl border p-3 pr-9 text-left transition-all duration-200 ${
+                    className={`w-full rounded-2xl border p-2.5 pr-9 text-left transition-all duration-200 ${
                       isActive
                         ? isDarkMode
                           ? 'border-sky-500/45 bg-sky-500/10 shadow-[0_16px_40px_-28px_rgba(14,165,233,0.55)]'
@@ -120,16 +140,50 @@ export default function ChatHistoryPanel({
                         ? isDarkMode ? 'text-slate-50' : 'text-sky-900'
                         : isDarkMode ? 'text-slate-200' : 'text-slate-800'
                     }`}>{conversation.title}</p>
-                    <p className={`mt-1 flex items-center gap-1 text-xs ${
+                    <div className={`mt-1 flex items-center gap-2 text-xs ${
                       isActive
                         ? isDarkMode ? 'text-sky-100/80' : 'text-sky-700'
                         : isDarkMode ? 'text-slate-500' : 'text-slate-500'
                     }`}>
                       {isConversationStreaming ? <Loader2 size={12} className={`animate-spin ${isDarkMode ? 'text-sky-300' : 'text-sky-500'}`} /> : null}
-                      <span>
+                      <span className="truncate">
                         Mode: {personaLabel} · {new Date(conversation.updatedAt).toLocaleString()}
                       </span>
-                    </p>
+                    </div>
+                    {attentionLabel ? (
+                      <div className="mt-2 flex items-center gap-2">
+                        <span className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] ${
+                          attention?.status === 'awaiting_approval'
+                            ? isDarkMode
+                              ? 'border-amber-400/30 bg-amber-500/10 text-amber-200'
+                              : 'border-amber-200 bg-amber-50 text-amber-700'
+                            : attention?.status === 'completed'
+                              ? isDarkMode
+                                ? 'border-emerald-400/30 bg-emerald-500/10 text-emerald-200'
+                                : 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                              : attention?.status === 'failed'
+                                ? isDarkMode
+                                  ? 'border-rose-400/30 bg-rose-500/10 text-rose-200'
+                                  : 'border-rose-200 bg-rose-50 text-rose-700'
+                                : attention?.status === 'cancelled'
+                                  ? isDarkMode
+                                    ? 'border-slate-600 bg-slate-900 text-slate-300'
+                                    : 'border-slate-200 bg-slate-100 text-slate-600'
+                                  : isDarkMode
+                                    ? 'border-sky-400/30 bg-sky-500/10 text-sky-200'
+                                    : 'border-sky-200 bg-sky-50 text-sky-700'
+                        }`}>
+                          {attentionLabel}
+                        </span>
+                        {attention?.label ? (
+                          <span className={`truncate text-[11px] ${
+                            isDarkMode ? 'text-slate-400' : 'text-slate-500'
+                          }`}>
+                            {attention.label}
+                          </span>
+                        ) : null}
+                      </div>
+                    ) : null}
                   </button>
                   <button
                     type="button"

@@ -6,6 +6,19 @@ tools:
   - request_plan_approval
   - request_clarification
   - request_human_action
+requires_hitl_plan: true
+requires_workspace_artifacts: true
+required_artifacts_mode: full_pack
+required_artifacts:
+  - /question.txt
+  - /preliminary_search_notes.md
+  - /research_plan.md
+  - /research_notes.md
+  - /knowledge_graph.md
+  - /synthesis.md
+  - /final-research-report.md
+  - pattern:/0[1-9]_*.md
+pre_plan_search_limit: 3
 source_skills:
   - research-core
   - research-sub_researcher

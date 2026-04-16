@@ -3,13 +3,19 @@ from __future__ import annotations
 
 import asyncio
 from typing import Any, Dict, List, AsyncGenerator, Iterable, Sequence, Set, Optional, Tuple
+import base64
 import html as html_lib
+import importlib
 import json
 import logging
 import os
 import fnmatch
 import mimetypes
 import re
+import shutil
+import sys
+import tempfile
+from io import BytesIO
 from pathlib import Path
 from uuid import uuid4
 from dotenv import load_dotenv
@@ -17,8 +23,9 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Body, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+from google.genai import types as genai_types
 
-from .configuration import load_settings
+from .configuration import describe_workspace_root, load_settings
 from .graph import AgentRegistry
 from .state import AgentRuntimeState
 from .tools_and_schemas import ToolFactory, GeminiClientManager
@@ -26,6 +33,7 @@ from .mcp_manager import describe_mcp_servers
 from .interrupt_payloads import (
     extract_interrupt_payload_from_tool_call,
     extract_interrupt_payload_from_tool_text,
+    normalize_interrupt_payload_value,
 )
 from .utils import SourceTracker
 from langchain_core.callbacks.base import AsyncCallbackHandler
@@ -44,6 +52,7 @@ from .jwt_utils import decode_and_verify_hs256_jwt
 from .langfuse_callbacks import langfuse_langchain_callbacks
 from langgraph.errors import GraphInterrupt
 from langgraph.types import Command
+from paper2slides.raganything.parser import DoclingParser
 
 
 logger = logging.getLogger(__name__)
@@ -100,6 +109,15 @@ def _normalize_tagged_file_paths(tagged_paths: Sequence[str]) -> List[str]:
     return sorted(set(normalized))
 
 
+def _allow_basename_match_for_path(path_value: str) -> bool:
+    normalized = str(path_value or "").strip().replace("\\", "/").lstrip("/")
+    if not normalized:
+        return False
+    if normalized.startswith(".system/"):
+        return False
+    return "/" not in normalized
+
+
 def _build_tagged_rag_keywords(prompt: str, tagged_paths: Sequence[str]) -> List[str]:
     keywords: List[str] = []
     if isinstance(prompt, str) and prompt.strip():
@@ -122,7 +140,7 @@ def _filter_rag_chunks_to_tagged_paths(chunks: Sequence[Dict[str, Any]], tagged_
     normalized = _normalize_tagged_file_paths(tagged_paths)
     if not normalized:
         return list(chunks)
-    basenames = {Path(item).name for item in normalized}
+    basenames = {Path(item).name for item in normalized if _allow_basename_match_for_path(item)}
     filtered: List[Dict[str, Any]] = []
     for chunk in chunks:
         file_path = str(chunk.get("file_path") or "").strip().replace("\\", "/")
@@ -222,10 +240,55 @@ def _append_tagged_file_guidance(prompt: str, tagged_paths: Sequence[str]) -> st
     return f"{prompt.rstrip()}\n\n{guidance}"
 
 
+def _append_artifact_first_guidance(
+    prompt: str,
+    file_context_refs: Sequence[Dict[str, Any]],
+    tagged_paths: Sequence[str],
+    *,
+    multimodal_active: bool,
+) -> str:
+    if not prompt:
+        return prompt
+    if "Artifact-first guidance:" in prompt:
+        return prompt
+    if not file_context_refs:
+        return prompt
+    ready_refs = [
+        item
+        for item in file_context_refs
+        if str(item.get("status") or "").strip().lower() in {"ready", "partial"}
+    ]
+    if not ready_refs:
+        return prompt
+    binary_ready = [
+        item
+        for item in ready_refs
+        if not str(item.get("sourceMimeType") or "").strip().lower().startswith("text/")
+    ]
+    if not binary_ready:
+        return prompt
+    guidance_lines = [
+        "Artifact-first guidance:",
+        "- Ready derived artifacts are available for the attached files and are the primary source of truth for this turn.",
+        "- Prefer the tagged derived artifact paths over the original source file when answering.",
+        "- Do not call read_file on the original binary source (.docx, .pptx, .pdf, etc.) if a ready derived artifact is already available.",
+    ]
+    if multimodal_active:
+        guidance_lines.append("- Use the current-turn multimodal attachment only for additional grounding; keep follow-up reasoning anchored to the derived artifact.")
+    else:
+        guidance_lines.append("- If you need to inspect content, read the derived artifact markdown first rather than the original binary file.")
+    if tagged_paths:
+        guidance_lines.append("- Tagged derived artifacts:")
+        guidance_lines.extend(f"  - {path}" for path in tagged_paths)
+    return f"{prompt.rstrip()}\n\n" + "\n".join(guidance_lines)
+
+
 class ChatRequest(BaseModel):
     message: str
     history: List[Dict[str, Any]] | None = None
     forceReset: bool = False
+    fileContextRefs: List[Dict[str, Any]] | None = None
+    messageContent: List[Dict[str, Any]] | None = None
 
 
 class ChatResponse(BaseModel):
@@ -251,6 +314,7 @@ class InterruptResponseRequest(BaseModel):
     message: Optional[str] = None
     selectedChoiceIds: List[str] = Field(default_factory=list)
     selectedValues: List[str] = Field(default_factory=list)
+    answersByQuestionId: Dict[str, str | List[str]] = Field(default_factory=dict)
 
 
 class InterruptAction(BaseModel):
@@ -262,6 +326,37 @@ class InterruptAction(BaseModel):
 
 class InterruptActionRequest(BaseModel):
     action: InterruptAction
+
+
+class AttachmentUnderstandingRequest(BaseModel):
+    fileName: str
+    mimeType: str
+    contentB64: str
+
+
+class AttachmentUnderstandingSection(BaseModel):
+    heading: str
+    body: str
+
+
+class AttachmentUnderstandingAsset(BaseModel):
+    name: str
+    mimeType: str
+    contentB64: str
+    sourcePath: Optional[str] = None
+    caption: Optional[str] = None
+    footnote: Optional[str] = None
+
+
+class AttachmentUnderstandingResponse(BaseModel):
+    title: str
+    summary: str
+    outline: List[str] = Field(default_factory=list)
+    markdown: str
+    sections: List[AttachmentUnderstandingSection] = Field(default_factory=list)
+    extractedAssets: List[AttachmentUnderstandingAsset] = Field(default_factory=list)
+    effectiveMode: str = "part"
+    status: str = "ready"
 
 
 class RagQueryRequest(BaseModel):
@@ -322,6 +417,359 @@ class Paper2SlidesExportRequest(BaseModel):
 
 class Paper2SlidesExportResponse(BaseModel):
     pptxB64: str
+
+
+def _extract_json_block(text: str) -> str:
+    fenced = re.search(r"```json\s*(.*?)```", text or "", flags=re.IGNORECASE | re.DOTALL)
+    if fenced:
+        return fenced.group(1).strip()
+    return (text or "").strip()
+
+
+def _response_text(response: Any) -> str:
+    text = getattr(response, "text", None)
+    if isinstance(text, str) and text.strip():
+        return text.strip()
+    parts: List[str] = []
+    for candidate in getattr(response, "candidates", []) or []:
+        content = getattr(candidate, "content", None)
+        if not content:
+            continue
+        for part in getattr(content, "parts", []) or []:
+            value = getattr(part, "text", None)
+            if isinstance(value, str) and value.strip():
+                parts.append(value.strip())
+    return "\n".join(parts).strip()
+
+
+def _split_sections_from_markdown(markdown: str) -> List[Dict[str, str]]:
+    sections: List[Dict[str, str]] = []
+    heading = "Overview"
+    body_lines: List[str] = []
+    for line in (markdown or "").splitlines():
+        match = re.match(r"^#{1,6}\s+(.*)$", line.strip())
+        if match:
+            if body_lines:
+                sections.append({"heading": heading, "body": "\n".join(body_lines).strip()})
+            heading = match.group(1).strip() or "Section"
+            body_lines = []
+            continue
+        body_lines.append(line)
+    if body_lines:
+        sections.append({"heading": heading, "body": "\n".join(body_lines).strip()})
+    return [section for section in sections if section.get("body")]
+
+
+def _markdown_from_attachment_payload(payload: Dict[str, Any]) -> str:
+    title = str(payload.get("title") or "Attachment").strip() or "Attachment"
+    summary = str(payload.get("summary") or "").strip()
+    outline = [str(item).strip() for item in (payload.get("outline") or []) if str(item).strip()]
+    raw_sections = payload.get("sections") or []
+    lines: List[str] = [f"# {title}", ""]
+    if summary:
+        lines.extend(["## Summary", "", summary, ""])
+    if outline:
+        lines.extend(["## Outline", ""])
+        lines.extend(f"- {item}" for item in outline)
+        lines.append("")
+    sections_added = False
+    if isinstance(raw_sections, list):
+        for item in raw_sections:
+            if not isinstance(item, dict):
+                continue
+            heading = str(item.get("heading") or "").strip() or "Section"
+            body = str(item.get("body") or "").strip()
+            if not body:
+                continue
+            lines.extend([f"## {heading}", "", body, ""])
+            sections_added = True
+    normalized_body = str(payload.get("normalizedBody") or "").strip()
+    if normalized_body and not sections_added:
+        lines.extend(["## Details", "", normalized_body, ""])
+    return "\n".join(lines).strip()
+
+
+def _build_partial_attachment_payload(file_name: str, text: str, *, effective_mode: str) -> Dict[str, Any]:
+    cleaned_lines = [line.strip() for line in (text or "").splitlines() if line.strip()]
+    summary = cleaned_lines[0] if cleaned_lines else f"Extracted content from {file_name}"
+    excerpt = "\n".join(cleaned_lines[:80]).strip() or f"Unable to extract detailed content from {file_name}."
+    sections = [{"heading": "Source Excerpt", "body": excerpt}]
+    payload = {
+        "title": file_name,
+        "summary": summary,
+        "outline": ["Source Excerpt"],
+        "sections": sections,
+        "effectiveMode": effective_mode,
+        "status": "partial",
+    }
+    payload["markdown"] = _markdown_from_attachment_payload(payload)
+    return payload
+
+
+def _docling_available() -> bool:
+    try:
+        __import__("docling")
+    except Exception:
+        return False
+    cli_path = shutil.which("docling")
+    if cli_path:
+        return True
+    venv_candidates = [
+        Path(sys.executable).parent / "docling",
+        Path(sys.prefix) / "bin" / "docling",
+    ]
+    return any(candidate.exists() for candidate in venv_candidates)
+
+
+def _docling_markdown_to_payload(file_name: str, markdown: str, *, effective_mode: str = "parser") -> Dict[str, Any]:
+    cleaned_markdown = (markdown or "").strip()
+    sections = _split_sections_from_markdown(cleaned_markdown)
+    title = file_name
+    title_match = re.search(r"^#\s+(.+)$", cleaned_markdown, flags=re.MULTILINE)
+    if title_match and title_match.group(1).strip():
+        title = title_match.group(1).strip()
+    summary = ""
+    for section in sections:
+        body = str(section.get("body") or "").strip()
+        if body:
+            summary = body.splitlines()[0].strip()
+            if summary:
+                break
+    outline = [str(section.get("heading") or "").strip() for section in sections if str(section.get("heading") or "").strip()]
+    payload = {
+        "title": title,
+        "summary": summary or f"Parsed content from {file_name}",
+        "outline": outline,
+        "sections": sections,
+        "normalizedBody": cleaned_markdown,
+        "effectiveMode": effective_mode,
+        "status": "ready",
+    }
+    payload["markdown"] = cleaned_markdown or _markdown_from_attachment_payload(payload)
+    return payload
+
+
+def _extract_docling_payload(file_name: str, mime_type: str, buffer: bytes) -> Tuple[str, List[Dict[str, Any]]]:
+    suffix = Path(file_name).suffix.lower()
+    guessed_suffix = mimetypes.guess_extension(mime_type or "") or ""
+    if not suffix and guessed_suffix:
+        suffix = guessed_suffix.lower()
+    if not suffix:
+        suffix = ".bin"
+    with tempfile.TemporaryDirectory(prefix="helpudoc-docling-") as temp_dir:
+        temp_root = Path(temp_dir)
+        temp_input = temp_root / f"source{suffix}"
+        temp_input.write_bytes(buffer)
+        output_dir = temp_root / "parsed"
+        parser = DoclingParser()
+        content_list = parser.parse_document(temp_input, output_dir=str(output_dir))
+        stem = temp_input.stem
+        docling_dir = output_dir / stem / "docling"
+        md_path = docling_dir / f"{stem}.md"
+        if not md_path.exists():
+            raise RuntimeError(f"Docling did not produce markdown for {file_name}")
+        markdown = md_path.read_text(encoding="utf-8", errors="replace").strip()
+        if not markdown:
+            raise RuntimeError(f"Docling produced empty markdown for {file_name}")
+        extracted_assets: List[Dict[str, Any]] = []
+        seen_paths: set[str] = set()
+        for item in content_list:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("type") or "").strip().lower() != "image":
+                continue
+            img_path_raw = str(item.get("img_path") or "").strip()
+            if not img_path_raw or img_path_raw in seen_paths:
+                continue
+            seen_paths.add(img_path_raw)
+            img_path = Path(img_path_raw)
+            if not img_path.exists():
+                continue
+            mime = mimetypes.guess_type(img_path.name)[0] or "image/png"
+            try:
+                source_path = str(img_path.relative_to(docling_dir)).replace("\\", "/")
+            except Exception:
+                source_path = img_path.name
+            extracted_assets.append(
+                {
+                    "name": img_path.name,
+                    "mimeType": mime,
+                    "contentB64": base64.b64encode(img_path.read_bytes()).decode("ascii"),
+                    "sourcePath": source_path,
+                    "caption": str(item.get("image_caption") or "").strip() or None,
+                    "footnote": str(item.get("image_footnote") or "").strip() or None,
+                }
+            )
+        return markdown, extracted_assets
+
+
+def _extract_text_from_docx(buffer: bytes) -> str:
+    from docx import Document  # type: ignore
+
+    document = Document(BytesIO(buffer))
+    chunks: List[str] = []
+    for paragraph in document.paragraphs:
+        text = (paragraph.text or "").strip()
+        if text:
+            chunks.append(text)
+    for table in document.tables:
+        for row in table.rows:
+            cells = [cell.text.strip() for cell in row.cells if cell.text and cell.text.strip()]
+            if cells:
+                chunks.append(" | ".join(cells))
+    return "\n".join(chunks).strip()
+
+
+def _extract_text_from_pptx(buffer: bytes) -> str:
+    from pptx import Presentation  # type: ignore
+
+    presentation = Presentation(BytesIO(buffer))
+    chunks: List[str] = []
+    for index, slide in enumerate(presentation.slides, start=1):
+        slide_lines: List[str] = [f"Slide {index}"]
+        for shape in slide.shapes:
+            text = getattr(shape, "text", None)
+            if isinstance(text, str) and text.strip():
+                slide_lines.append(text.strip())
+        if getattr(slide, "has_notes_slide", False):
+            try:
+                notes_text = slide.notes_slide.notes_text_frame.text
+            except Exception:
+                notes_text = ""
+            if notes_text and notes_text.strip():
+                slide_lines.append(f"Notes: {notes_text.strip()}")
+        chunks.append("\n".join(slide_lines))
+    return "\n\n".join(chunks).strip()
+
+
+def _extract_text_from_pdf(buffer: bytes) -> str:
+    from pypdf import PdfReader  # type: ignore
+
+    reader = PdfReader(BytesIO(buffer))
+    chunks: List[str] = []
+    for index, page in enumerate(reader.pages, start=1):
+        text = (page.extract_text() or "").strip()
+        if text:
+            chunks.append(f"Page {index}\n{text}")
+    return "\n\n".join(chunks).strip()
+
+
+def _guess_attachment_strategy(file_name: str, mime_type: str) -> Tuple[str, str]:
+    suffix = Path(file_name).suffix.lower()
+    normalized_mime = (mime_type or "").lower()
+    if normalized_mime.startswith("image/") or suffix in {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}:
+        return "image", "part"
+    if suffix == ".docx" or "wordprocessingml" in normalized_mime:
+        return "docx", "parser"
+    if suffix == ".pptx" or "presentationml" in normalized_mime:
+        return "pptx", "parser"
+    if suffix == ".pdf" or normalized_mime == "application/pdf":
+        return "pdf", "parser"
+    return "text", "part"
+
+
+def _attachment_understanding_prompt(file_name: str, extracted_text: str | None, kind: str) -> str:
+    base = (
+        "Return strict JSON only with keys: "
+        "title, summary, outline, sections, normalizedBody, effectiveMode, status. "
+        "sections must be an array of objects with heading and body. "
+        "effectiveMode must be one of part, parser, hybrid. "
+        "status must be ready or partial. "
+        "Preserve the document structure and factual detail instead of over-summarizing. "
+        f"File name: {file_name}. "
+        f"Kind: {kind}."
+    )
+    if extracted_text is None:
+        return (
+            f"{base} Understand the attached file directly. "
+            "If details are uncertain, say so briefly in the summary instead of inventing content."
+        )
+    excerpt = extracted_text[:30000]
+    return f"{base}\n\nSource content:\n{excerpt}"
+
+
+def _parse_attachment_payload(raw_text: str, file_name: str, *, fallback_text: str, fallback_mode: str) -> Dict[str, Any]:
+    try:
+        parsed = json.loads(_extract_json_block(raw_text))
+    except Exception:
+        return _build_partial_attachment_payload(file_name, fallback_text, effective_mode=fallback_mode)
+    if not isinstance(parsed, dict):
+        return _build_partial_attachment_payload(file_name, fallback_text, effective_mode=fallback_mode)
+    payload = {
+        "title": str(parsed.get("title") or file_name).strip() or file_name,
+        "summary": str(parsed.get("summary") or "").strip(),
+        "outline": [str(item).strip() for item in (parsed.get("outline") or []) if str(item).strip()],
+        "sections": [
+            {
+                "heading": str(item.get("heading") or "").strip() or "Section",
+                "body": str(item.get("body") or "").strip(),
+            }
+            for item in (parsed.get("sections") or [])
+            if isinstance(item, dict) and str(item.get("body") or "").strip()
+        ],
+        "normalizedBody": str(parsed.get("normalizedBody") or "").strip(),
+        "effectiveMode": str(parsed.get("effectiveMode") or fallback_mode).strip() or fallback_mode,
+        "status": "partial" if str(parsed.get("status") or "").strip().lower() == "partial" else "ready",
+    }
+    payload["markdown"] = _markdown_from_attachment_payload(payload)
+    return payload
+
+
+def _copy_content_block(block: Any) -> Any:
+    if isinstance(block, dict):
+        return dict(block)
+    return block
+
+
+def _extract_text_from_content(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: List[str] = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append(item)
+                continue
+            if isinstance(item, dict):
+                if isinstance(item.get("text"), str):
+                    parts.append(item["text"])
+                    continue
+                if item.get("type") == "text-plain" and isinstance(item.get("text"), str):
+                    parts.append(item["text"])
+                    continue
+                if "content" in item and isinstance(item.get("content"), str):
+                    parts.append(item["content"])
+        return "\n".join(part for part in parts if part).strip()
+    return str(content or "").strip()
+
+
+def _replace_content_text(content: Any, text: str) -> Any:
+    if isinstance(content, str):
+        return text
+    if isinstance(content, list):
+        updated: List[Any] = []
+        replaced = False
+        for item in content:
+            if isinstance(item, dict):
+                copied = dict(item)
+                block_type = str(copied.get("type") or "").strip().lower()
+                if block_type in {"text", "text-plain"} or isinstance(copied.get("text"), str):
+                    copied["text"] = text
+                    updated.append(copied)
+                    replaced = True
+                    continue
+                if isinstance(copied.get("content"), str):
+                    copied["content"] = text
+                    updated.append(copied)
+                    replaced = True
+                    continue
+                updated.append(copied)
+                continue
+            updated.append(item)
+        if replaced:
+            return updated
+        return [{"type": "text", "text": text}, *updated]
+    return text
 
 
 class EmbeddedDirective(BaseModel):
@@ -411,13 +859,62 @@ def create_app() -> FastAPI:
     config_path: Optional[Path] = None
     env_config_path = os.getenv("AGENT_CONFIG_PATH")
     if env_config_path:
-        candidate = Path(env_config_path)
+        candidate = Path(env_config_path).expanduser()
+        if not candidate.is_absolute():
+            candidate = (BASE_DIR.parent.parent / candidate).resolve()
         if candidate.exists():
             config_path = candidate
         else:
             logger.warning("AGENT_CONFIG_PATH is set but file does not exist; falling back to built-in config", extra={"path": env_config_path})
 
     settings = load_settings(config_path)
+    workspace_root_diagnostic = describe_workspace_root(settings)
+    workspace_root_message = (
+        f"[agent] Workspace root: {workspace_root_diagnostic['resolved_path']} "
+        f"(source={workspace_root_diagnostic['source']} "
+        f"raw={workspace_root_diagnostic['raw_value'] or '<config>'})"
+    )
+    print(workspace_root_message)
+    logger.info(workspace_root_message)
+    file_understanding_mode = (os.getenv("FILE_UNDERSTANDING_MODE", "part-first") or "part-first").strip()
+    rag_parser_pipeline = (os.getenv("RAG_PARSER_PIPELINE", "raganything") or "raganything").strip().lower()
+    raganything_parser = (os.getenv("RAGANYTHING_PARSER", "docling") or "docling").strip().lower()
+    parser_enrichment_mode = (
+        os.getenv("PARSER_ENRICHMENT_MODE")
+        or os.getenv("PARSER")
+        or raganything_parser
+    ).strip() or raganything_parser
+    dependency_diag = {
+        "lightrag": True,
+        "raganything": True,
+        "docling": _docling_available(),
+    }
+    try:
+        importlib.import_module("lightrag")
+    except Exception:
+        dependency_diag["lightrag"] = False
+    try:
+        importlib.import_module("raganything")
+    except Exception:
+        try:
+            importlib.import_module("paper2slides.raganything")
+        except Exception:
+            dependency_diag["raganything"] = False
+    if rag_parser_pipeline in {"raganything", "rag_anything", "rag-everything", "rageverything"} and raganything_parser == "docling":
+        if not dependency_diag["docling"]:
+            raise RuntimeError(
+                "Docling is configured as the global parser, but the docling package/CLI is unavailable. "
+                "Install docling and ensure the `docling` command is on PATH."
+            )
+    logger.info(
+        "[agent] File understanding: mode=%s parserPipeline=%s ragParser=%s parserEnrichment=%s deps=%s python=%s",
+        file_understanding_mode,
+        rag_parser_pipeline,
+        raganything_parser,
+        parser_enrichment_mode,
+        dependency_diag,
+        sys.executable,
+    )
     source_tracker = SourceTracker()
     gemini_manager = GeminiClientManager(settings)
     tool_factory = ToolFactory(settings, source_tracker, gemini_manager)
@@ -504,6 +1001,143 @@ def create_app() -> FastAPI:
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 
+    @app.post("/attachments/understand", response_model=AttachmentUnderstandingResponse)
+    async def understand_attachment(req: AttachmentUnderstandingRequest = Body(...)):
+        if not req.fileName.strip():
+            raise HTTPException(status_code=400, detail="fileName is required")
+        if not req.contentB64.strip():
+            raise HTTPException(status_code=400, detail="contentB64 is required")
+        try:
+            buffer = base64.b64decode(req.contentB64)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail="contentB64 must be valid base64") from exc
+
+        kind, fallback_mode = _guess_attachment_strategy(req.fileName, req.mimeType)
+        extracted_text: str | None = None
+        try:
+            contents: List[Any]
+            if kind in {"docx", "pptx", "pdf"}:
+                try:
+                    markdown, extracted_assets = await asyncio.to_thread(
+                        _extract_docling_payload,
+                        req.fileName,
+                        req.mimeType,
+                        buffer,
+                    )
+                    payload = _docling_markdown_to_payload(req.fileName, markdown, effective_mode="parser")
+                    return AttachmentUnderstandingResponse(
+                        title=str(payload.get("title") or req.fileName),
+                        summary=str(payload.get("summary") or ""),
+                        outline=[str(item) for item in (payload.get("outline") or [])],
+                        markdown=str(payload.get("markdown") or ""),
+                        sections=[
+                            AttachmentUnderstandingSection(
+                                heading=str(item.get("heading") or "Section"),
+                                body=str(item.get("body") or ""),
+                            )
+                            for item in (payload.get("sections") or [])
+                            if isinstance(item, dict) and str(item.get("body") or "").strip()
+                        ],
+                        extractedAssets=[
+                            AttachmentUnderstandingAsset(
+                                name=str(item.get("name") or "image.png"),
+                                mimeType=str(item.get("mimeType") or "image/png"),
+                                contentB64=str(item.get("contentB64") or ""),
+                                sourcePath=str(item.get("sourcePath") or "") or None,
+                                caption=str(item.get("caption") or "") or None,
+                                footnote=str(item.get("footnote") or "") or None,
+                            )
+                            for item in extracted_assets
+                            if str(item.get("contentB64") or "").strip()
+                        ],
+                        effectiveMode="parser",
+                        status="ready",
+                    )
+                except Exception:
+                    logger.exception("Docling extraction failed for %s; falling back to legacy extraction", req.fileName)
+                    if kind == "docx":
+                        extracted_text = _extract_text_from_docx(buffer)
+                    elif kind == "pptx":
+                        extracted_text = _extract_text_from_pptx(buffer)
+                    else:
+                        extracted_text = _extract_text_from_pdf(buffer)
+                    contents = [_attachment_understanding_prompt(req.fileName, extracted_text, kind)]
+            elif kind == "image":
+                contents = [
+                    genai_types.Part.from_bytes(data=buffer, mime_type=req.mimeType),
+                    _attachment_understanding_prompt(req.fileName, None, kind),
+                ]
+            else:
+                try:
+                    extracted_text = buffer.decode("utf-8", errors="replace")
+                except Exception:
+                    extracted_text = ""
+                contents = [_attachment_understanding_prompt(req.fileName, extracted_text, kind)]
+
+            fallback_text = extracted_text or f"Unable to extract textual content from {req.fileName}."
+            raw_response_text = ""
+            for attempt in range(2):
+                response = gemini_manager.client.models.generate_content(
+                    model=gemini_manager.model_name,
+                    contents=contents,
+                    config=genai_types.GenerateContentConfig(
+                        candidate_count=1,
+                        temperature=0.1,
+                    ),
+                )
+                raw_response_text = _response_text(response)
+                payload = _parse_attachment_payload(
+                    raw_response_text,
+                    req.fileName,
+                    fallback_text=fallback_text,
+                    fallback_mode=fallback_mode,
+                )
+                if payload.get("status") != "partial" or attempt == 1:
+                    return AttachmentUnderstandingResponse(
+                        title=str(payload.get("title") or req.fileName),
+                        summary=str(payload.get("summary") or ""),
+                        outline=[str(item) for item in (payload.get("outline") or [])],
+                        markdown=str(payload.get("markdown") or ""),
+                        sections=[
+                            AttachmentUnderstandingSection(
+                                heading=str(item.get("heading") or "Section"),
+                                body=str(item.get("body") or ""),
+                            )
+                            for item in (payload.get("sections") or [])
+                            if isinstance(item, dict) and str(item.get("body") or "").strip()
+                        ],
+                        effectiveMode=str(payload.get("effectiveMode") or fallback_mode),
+                        status=str(payload.get("status") or "partial"),
+                    )
+                contents = [
+                    "Repair the previous response into strict JSON only using the required schema.",
+                    raw_response_text,
+                ]
+        except Exception:
+            logger.exception("Attachment understanding failed for %s", req.fileName)
+
+        partial = _build_partial_attachment_payload(
+            req.fileName,
+            extracted_text or f"Unable to understand {req.fileName}.",
+            effective_mode=fallback_mode,
+        )
+        return AttachmentUnderstandingResponse(
+            title=str(partial.get("title") or req.fileName),
+            summary=str(partial.get("summary") or ""),
+            outline=[str(item) for item in (partial.get("outline") or [])],
+            markdown=str(partial.get("markdown") or ""),
+            sections=[
+                AttachmentUnderstandingSection(
+                    heading=str(item.get("heading") or "Section"),
+                    body=str(item.get("body") or ""),
+                )
+                for item in (partial.get("sections") or [])
+                if isinstance(item, dict) and str(item.get("body") or "").strip()
+            ],
+            effectiveMode=str(partial.get("effectiveMode") or fallback_mode),
+            status="partial",
+        )
+
     @app.get("/agents")
     def list_agents():
         skills = load_skills(settings.backend.skills_root) if settings.backend.skills_root else []
@@ -544,13 +1178,23 @@ def create_app() -> FastAPI:
         }
 
     def _prepare_payload(message: ChatRequest) -> List[Dict[str, Any]]:
+        payload: List[Dict[str, Any]] = []
         if message.history:
-            payload: List[Dict[str, Any]] = []
             for item in message.history:
                 if isinstance(item, dict):
                     payload.append(dict(item))
                 else:
                     payload.append({"role": "user", "content": str(item)})
+        if message.messageContent:
+            copied_blocks = [_copy_content_block(block) for block in message.messageContent]
+            for index in range(len(payload) - 1, -1, -1):
+                role = str(payload[index].get("role") or "").strip().lower()
+                if role in {"user", "human"}:
+                    payload[index]["content"] = copied_blocks
+                    return payload
+            payload.append({"role": "user", "content": copied_blocks})
+            return payload
+        if payload:
             return payload
         return [{"role": "user", "content": message.message}]
 
@@ -655,21 +1299,28 @@ def create_app() -> FastAPI:
             if role not in {"user", "human"}:
                 continue
             content = message.get("content")
-            if not isinstance(content, str):
+            latest_text = _extract_text_from_content(content)
+            if not latest_text:
                 break
-            directive, stripped_text = _extract_directive_from_text(content)
+            directive, stripped_text = _extract_directive_from_text(latest_text)
             latest_user_text = stripped_text
             if directive is None:
-                message["content"] = stripped_text
+                message["content"] = _replace_content_text(content, stripped_text)
                 break
             if directive.kind == "skill" and directive.skillId:
                 runtime.workspace_state.context.pop("preferred_mcp_server", None)
-                message["content"] = _build_preloaded_skill_prompt(runtime, directive.skillId, stripped_text)
+                message["content"] = _replace_content_text(
+                    content,
+                    _build_preloaded_skill_prompt(runtime, directive.skillId, stripped_text),
+                )
             elif directive.kind == "mcp" and directive.serverId:
                 runtime.workspace_state.context["preferred_mcp_server"] = directive.serverId
-                message["content"] = _build_preferred_mcp_prompt(directive.serverId, stripped_text)
+                message["content"] = _replace_content_text(
+                    content,
+                    _build_preferred_mcp_prompt(directive.serverId, stripped_text),
+                )
             else:
-                message["content"] = stripped_text
+                message["content"] = _replace_content_text(content, stripped_text)
             break
         return payload, latest_user_text
 
@@ -730,6 +1381,28 @@ def create_app() -> FastAPI:
             context["skip_plan_approvals"] = payload["skipPlanApprovals"]
         return context
 
+    def _seed_initial_skill_context(initial_context: Dict[str, Any], message: ChatRequest) -> Dict[str, Any]:
+        seeded = dict(initial_context or {})
+        payload = _prepare_payload(message)
+        for index in range(len(payload) - 1, -1, -1):
+            item = payload[index]
+            role = str(item.get("role") or "").strip().lower()
+            if role not in {"user", "human"}:
+                continue
+            content = item.get("content")
+            directive, _ = _extract_directive_from_text(_extract_text_from_content(content))
+            if directive is None:
+                break
+            if directive.kind == "skill" and directive.skillId:
+                skill = find_skill(settings.backend.skills_root, directive.skillId)
+                if skill is not None and is_skill_allowed(skill, seeded):
+                    seeded.pop("preferred_mcp_server", None)
+                    activate_skill_context(seeded, skill)
+            elif directive.kind == "mcp" and directive.serverId:
+                seeded["preferred_mcp_server"] = directive.serverId
+            break
+        return seeded
+
 
     def _extract_tagged_files(content: str) -> List[str]:
         if not content:
@@ -755,6 +1428,36 @@ def create_app() -> FastAPI:
                     break
         return tagged
 
+    def _normalize_file_context_refs(raw_refs: Any) -> List[Dict[str, Any]]:
+        normalized: List[Dict[str, Any]] = []
+        if not isinstance(raw_refs, list):
+            return normalized
+        for item in raw_refs:
+            if not isinstance(item, dict):
+                continue
+            source_name = str(item.get("sourceName") or "").strip()
+            fingerprint = str(item.get("sourceVersionFingerprint") or "").strip()
+            artifact_id = str(item.get("artifactId") or "").strip()
+            if not source_name or not fingerprint or not artifact_id:
+                continue
+            normalized.append(
+                {
+                    "sourceFileId": item.get("sourceFileId"),
+                    "sourceName": source_name,
+                    "sourceMimeType": str(item.get("sourceMimeType") or "").strip() or None,
+                    "sourceVersionFingerprint": fingerprint,
+                    "artifactId": artifact_id,
+                    "artifactVersion": item.get("artifactVersion"),
+                    "derivedArtifactFileId": item.get("derivedArtifactFileId"),
+                    "derivedArtifactPath": str(item.get("derivedArtifactPath") or "").strip() or None,
+                    "effectiveMode": str(item.get("effectiveMode") or "part").strip() or "part",
+                    "status": str(item.get("status") or "failed").strip() or "failed",
+                    "summary": str(item.get("summary") or "").strip() or None,
+                    "lastError": str(item.get("lastError") or "").strip() or None,
+                }
+            )
+        return normalized
+
     def _load_mineru_text(workspace_id: str, tagged_paths: List[str]) -> str | None:
         output_root = rag_worker.store.config.raganything_output_dir
         for raw in tagged_paths:
@@ -764,16 +1467,20 @@ def create_app() -> FastAPI:
             base = name
             if base.lower().endswith(".pdf"):
                 base = base[:-4]
-            md_path = output_root / workspace_id / base / "auto" / f"{base}.md"
-            if not md_path.exists():
-                continue
-            try:
-                text = md_path.read_text(encoding="utf-8", errors="replace").strip()
-            except Exception:
-                logger.exception("Failed reading MinerU markdown: %s", md_path)
-                continue
-            if text:
-                return text
+            candidates = [
+                output_root / workspace_id / base / "docling" / f"{base}.md",
+                output_root / workspace_id / base / "auto" / f"{base}.md",
+            ]
+            for md_path in candidates:
+                if not md_path.exists():
+                    continue
+                try:
+                    text = md_path.read_text(encoding="utf-8", errors="replace").strip()
+                except Exception:
+                    logger.exception("Failed reading parser markdown: %s", md_path)
+                    continue
+                if text:
+                    return text
         return None
 
     def _load_tagged_html_outline(workspace_id: str, tagged_paths: List[str]) -> str | None:
@@ -794,11 +1501,15 @@ def create_app() -> FastAPI:
                 return outline
         return None
 
-    async def _prefetch_rag_context(workspace_id: str, prompt: str) -> str | None:
+    async def _prefetch_rag_context(
+        workspace_id: str,
+        prompt: str,
+        tagged_paths_override: Sequence[str] | None = None,
+    ) -> str | None:
         # Use extraction rather than relying on an exact marker string so backend text can evolve.
-        if not prompt:
+        if not prompt and not tagged_paths_override:
             return None
-        tagged_paths = _extract_tagged_files(prompt)
+        tagged_paths = list(tagged_paths_override or _extract_tagged_files(prompt))
         rag_tagged_paths = _filter_rag_prefetchable_tagged_files(tagged_paths)
         if not rag_tagged_paths:
             return None
@@ -956,7 +1667,7 @@ def create_app() -> FastAPI:
     class _CallbackStreamingHandler(AsyncCallbackHandler):
         """Streams LangChain callback events into JSON payloads for the UI."""
 
-        def __init__(self, text_fn):
+        def __init__(self, text_fn, *, suppress_interrupt_tool_start: bool = False):
             super().__init__()
             self.queue: asyncio.Queue[Any] = asyncio.Queue()
             self._tool_names: Dict[str, str] = {}
@@ -967,6 +1678,7 @@ def create_app() -> FastAPI:
             self._has_assistant_text = False
             self._interrupt_emitted = False
             self._cancel_run: Optional[Callable[[], None]] = None
+            self._suppress_interrupt_tool_start = suppress_interrupt_tool_start
 
         @property
         def has_events(self) -> bool:
@@ -1056,6 +1768,11 @@ def create_app() -> FastAPI:
             name = (serialized or {}).get("name") or (metadata or {}).get("name") or "tool"
             self._tool_names[str(run_id)] = name
             if name in _INTERRUPT_TOOL_NAMES:
+                # On resumed clarification/action flows, let the tool consume the
+                # resume payload first. Eagerly re-emitting the interrupt here can
+                # cancel the resumed run before the answer is applied.
+                if self._suppress_interrupt_tool_start:
+                    return
                 interrupt_payload = extract_interrupt_payload_from_tool_call(name, input_str)
                 if interrupt_payload:
                     self._interrupt_emitted = True
@@ -1160,6 +1877,17 @@ def create_app() -> FastAPI:
             start = max(end, start + 1)
         return chunks
 
+    _INTERNAL_STREAM_TEXT_PATTERNS = (
+        re.compile(r"^PLAN_(APPROVAL|EDIT|REJECTION|REJECT|CLARIFICATION|ACTION)_[A-Z_]+", re.IGNORECASE),
+        re.compile(r"^Command\s*\(", re.IGNORECASE),
+    )
+
+    def _is_internal_stream_text(text: str) -> bool:
+        normalized = (text or "").strip()
+        if not normalized:
+            return False
+        return any(pattern.match(normalized) for pattern in _INTERNAL_STREAM_TEXT_PATTERNS)
+
     def _message_role(message: Any) -> str:
         for attr in ("type", "role"):
             value = getattr(message, attr, None)
@@ -1221,29 +1949,7 @@ def create_app() -> FastAPI:
         if not isinstance(interrupt_value, dict):
             return None
 
-        action_requests = interrupt_value.get("action_requests")
-        review_configs = interrupt_value.get("review_configs")
-        actions = interrupt_value.get("actions")
-        payload = {
-            "type": "interrupt",
-            "kind": interrupt_value.get("kind"),
-            "title": interrupt_value.get("title"),
-            "description": interrupt_value.get("description"),
-            "stepIndex": interrupt_value.get("step_index"),
-            "stepCount": interrupt_value.get("step_count"),
-            "actions": actions if isinstance(actions, list) else [],
-            "actionRequests": action_requests if isinstance(action_requests, list) else [],
-            "reviewConfigs": review_configs if isinstance(review_configs, list) else [],
-        }
-        response_spec = interrupt_value.get("response_spec")
-        if isinstance(response_spec, dict):
-            payload["responseSpec"] = response_spec
-        display_payload = interrupt_value.get("display_payload")
-        if isinstance(display_payload, dict):
-            payload["displayPayload"] = display_payload
-        if isinstance(interrupt_id, str) and interrupt_id:
-            payload["interruptId"] = interrupt_id
-        return payload
+        return normalize_interrupt_payload_value(interrupt_value, interrupt_id if isinstance(interrupt_id, str) else None)
 
     def _extract_interrupt_payload(chunk: Any) -> Dict[str, Any] | None:
         if not isinstance(chunk, dict):
@@ -1292,13 +1998,11 @@ def create_app() -> FastAPI:
             return []
         if not bool(policy.get("requires_workspace_artifacts", False)):
             return []
-        mode = str(policy.get("required_artifacts_mode") or "").strip().lower()
-        if mode != "full_pack":
-            return []
-
         root = runtime.workspace_state.root_path
         required = policy.get("required_artifacts") or []
         required_items = [str(item).strip() for item in required if str(item).strip()]
+        if not required_items:
+            return []
         missing: List[str] = []
         for item in required_items:
             if item.startswith("pattern:"):
@@ -1347,27 +2051,69 @@ def create_app() -> FastAPI:
             _reset_turn_context(runtime)
         payload, latest_user_text = _apply_embedded_directives(runtime, payload)
 
-        prompt_for_tagged_files = latest_user_text or message.message or ""
-        tagged_files = _extract_tagged_files(prompt_for_tagged_files)
+        prompt_for_tagged_files = latest_user_text
+        if not prompt_for_tagged_files:
+            for index in range(len(payload) - 1, -1, -1):
+                role = str(payload[index].get("role") or "").strip().lower()
+                if role in {"user", "human"}:
+                    prompt_for_tagged_files = _extract_text_from_content(payload[index].get("content"))
+                    break
+        if not prompt_for_tagged_files:
+            prompt_for_tagged_files = message.message or ""
+        message_file_context_refs = _normalize_file_context_refs(message.fileContextRefs)
+        if message_file_context_refs:
+            runtime.workspace_state.context["file_context_refs"] = message_file_context_refs
+        active_file_context_refs = _normalize_file_context_refs(runtime.workspace_state.context.get("file_context_refs"))
+        explicit_artifact_paths = [
+            str(item.get("derivedArtifactPath") or "").strip()
+            for item in active_file_context_refs
+            if str(item.get("status") or "").strip().lower() in {"ready", "partial"}
+            and str(item.get("derivedArtifactPath") or "").strip()
+        ]
+        pending_files = [
+            str(item.get("sourceName") or "").strip()
+            for item in active_file_context_refs
+            if str(item.get("status") or "").strip().lower() == "pending"
+        ]
+        tagged_files = explicit_artifact_paths or _extract_tagged_files(prompt_for_tagged_files)
         guided_prompt = _append_tagged_file_guidance(prompt_for_tagged_files, tagged_files)
+        guided_prompt = _append_artifact_first_guidance(
+            guided_prompt,
+            active_file_context_refs,
+            tagged_files,
+            multimodal_active=bool(message.messageContent),
+        )
+        if pending_files:
+            pending_note = (
+                "Attached files still being processed: "
+                + ", ".join(pending_files)
+                + ". Be explicit that understanding is still in progress."
+            )
+            guided_prompt = f"{guided_prompt.rstrip()}\n\n{pending_note}".strip()
         if guided_prompt != prompt_for_tagged_files:
             for index in range(len(payload) - 1, -1, -1):
                 role = str(payload[index].get("role") or "").strip().lower()
                 if role in {"user", "human"}:
-                    payload[index]["content"] = guided_prompt
+                    payload[index]["content"] = _replace_content_text(payload[index].get("content"), guided_prompt)
                     break
             prompt_for_tagged_files = guided_prompt
         runtime.workspace_state.context["tagged_files"] = tagged_files
-        tagged_files_rag_only = (os.getenv("TAGGED_FILES_RAG_ONLY", "false") or "false").strip().lower() in {
+        env_tagged_files_rag_only = (os.getenv("TAGGED_FILES_RAG_ONLY", "false") or "false").strip().lower() in {
             "1",
             "true",
             "yes",
             "y",
             "on",
         }
+        artifact_only_guidance = bool(explicit_artifact_paths) and not bool(message.messageContent)
+        tagged_files_rag_only = env_tagged_files_rag_only or artifact_only_guidance
         runtime.workspace_state.context["tagged_files_only"] = bool(tagged_files) and tagged_files_rag_only
         if tagged_files:
-            rag_context = await _prefetch_rag_context(runtime.workspace_state.workspace_id, prompt_for_tagged_files)
+            rag_context = await _prefetch_rag_context(
+                runtime.workspace_state.workspace_id,
+                prompt_for_tagged_files,
+                tagged_paths_override=tagged_files,
+            )
             if rag_context:
                 runtime.workspace_state.context["tagged_rag_context"] = rag_context
                 if tagged_files_rag_only:
@@ -1375,7 +2121,10 @@ def create_app() -> FastAPI:
                         role = str(payload[index].get("role") or "").strip().lower()
                         if role in {"user", "human"}:
                             payload[index]["content"] = (
-                                f"{prompt_for_tagged_files}\n\nRAG_CONTEXT:\n{rag_context}\n\nAnswer using only RAG_CONTEXT."
+                                _replace_content_text(
+                                    payload[index].get("content"),
+                                    f"{prompt_for_tagged_files}\n\nRAG_CONTEXT:\n{rag_context}\n\nAnswer using only RAG_CONTEXT.",
+                                )
                             )
                             break
         return payload
@@ -1387,6 +2136,8 @@ def create_app() -> FastAPI:
         if not text:
             return []
         if role in _ASSISTANT_ROLES:
+            if _is_internal_stream_text(text):
+                return []
             return [
                 {"type": "token", "content": piece, "role": "assistant"}
                 for piece in _chunk_text(text)
@@ -1417,7 +2168,10 @@ def create_app() -> FastAPI:
             payload = await _prepare_turn_payload(runtime, message, fresh_turn=True)
         else:
             payload = _prepare_payload(message)
-        handler = _CallbackStreamingHandler(_message_to_text)
+        handler = _CallbackStreamingHandler(
+            _message_to_text,
+            suppress_interrupt_tool_start=resume_decisions is not None or resume_value is not None,
+        )
         sentinel = object()
         stream_started = asyncio.get_running_loop().time()
         saw_interrupt = False
@@ -1470,7 +2224,7 @@ def create_app() -> FastAPI:
                                 await handler._emit(event_payload)
                 elif not handler.has_assistant_text:
                     text = _message_to_text(final_result)
-                    if text:
+                    if text and not _is_internal_stream_text(text):
                         emitted = True
                         for event_payload in _emit_text("assistant", text):
                             await handler._emit(event_payload)
@@ -1541,7 +2295,7 @@ def create_app() -> FastAPI:
     @app.post("/agents/{agent_name}/workspace/{workspace_id}/chat", response_model=ChatResponse)
     async def chat(agent_name: str, workspace_id: str, chat_request: ChatRequest, request: Request):
         try:
-            initial_context = _extract_request_context(request)
+            initial_context = _seed_initial_skill_context(_extract_request_context(request), chat_request)
             runtime = await registry.get_or_create(agent_name, workspace_id, initial_context=initial_context)
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -1553,7 +2307,7 @@ def create_app() -> FastAPI:
     @app.post("/agents/{agent_name}/workspace/{workspace_id}/chat/stream")
     async def chat_stream(agent_name: str, workspace_id: str, chat_request: ChatRequest, request: Request):
         try:
-            initial_context = _extract_request_context(request)
+            initial_context = _seed_initial_skill_context(_extract_request_context(request), chat_request)
             runtime = await registry.get_or_create(agent_name, workspace_id, initial_context=initial_context)
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc

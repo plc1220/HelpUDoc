@@ -191,6 +191,46 @@ steps:
         tar -C skills -cf - . | kubectl -n helpudoc exec -i "$${APP_POD}" -c backend -- sh -lc "tar -xf - -C /app/skills"
         kubectl -n helpudoc exec "$${APP_POD}" -c backend -- sh -lc "test -f /app/skills/research/SKILL.md"
 
+  # 6b. Sync repo agent/config/runtime.yaml into the agent-config PVC.
+  #
+  # Why:
+  # - The agent process reads /agent/config/runtime.yaml at startup and caches it.
+  # - In GKE, /agent/config is PVC-backed and can drift from the repo defaults.
+  # - If it drifts, prompts like "use aws-knowledge / aws pricing" may be ignored because the MCP
+  #   servers were never registered in the runtime.
+  - id: sync-agent-config-pvc
+    name: 'gcr.io/cloud-builders/kubectl'
+    waitFor: ['deploy']
+    env:
+      - 'CLOUDSDK_COMPUTE_ZONE=$_GKE_LOCATION'
+      - 'CLOUDSDK_CONTAINER_CLUSTER=$_GKE_CLUSTER'
+    entrypoint: 'sh'
+    args:
+      - '-c'
+      - |
+        set -eu
+        APP_POD="$$(kubectl -n helpudoc get pods -l app=helpudoc-app -o jsonpath='{.items[0].metadata.name}')"
+        test -n "$${APP_POD}"
+        echo "Syncing repo agent/config/runtime.yaml to /agent/config in pod: $${APP_POD}"
+
+        kubectl -n helpudoc exec "$${APP_POD}" -c backend -- sh -lc "set -eu; mkdir -p /agent/config; rm -f /agent/config/runtime.yaml"
+        tar -C agent/config -cf - runtime.yaml | kubectl -n helpudoc exec -i "$${APP_POD}" -c backend -- sh -lc "tar -xf - -C /agent/config"
+        kubectl -n helpudoc exec "$${APP_POD}" -c backend -- sh -lc "test -f /agent/config/runtime.yaml"
+
+  - id: restart-app-after-runtime-sync
+    name: 'gcr.io/cloud-builders/kubectl'
+    waitFor: ['sync-agent-config-pvc']
+    env:
+      - 'CLOUDSDK_COMPUTE_ZONE=$_GKE_LOCATION'
+      - 'CLOUDSDK_CONTAINER_CLUSTER=$_GKE_CLUSTER'
+    entrypoint: 'sh'
+    args:
+      - '-c'
+      - |
+        set -eu
+        kubectl -n helpudoc rollout restart deployment/helpudoc-app
+        kubectl -n helpudoc rollout status deployment/helpudoc-app --timeout=180s
+
   # 7. Bootstrap default admin (optional, idempotent).
   - id: bootstrap-admin
     name: 'gcr.io/cloud-builders/kubectl'
@@ -244,7 +284,7 @@ steps:
   # 8. Post-deploy drift guard (fails if PVC-backed runtime/skills are stale)
   - id: post-deploy-drift-guard
     name: 'gcr.io/cloud-builders/kubectl'
-    waitFor: ['sync-skills-pvc', 'bootstrap-admin', 'bootstrap-langfuse-db']
+    waitFor: ['sync-skills-pvc', 'restart-app-after-runtime-sync', 'bootstrap-admin', 'bootstrap-langfuse-db']
     env:
       - 'CLOUDSDK_COMPUTE_ZONE=$_GKE_LOCATION'
       - 'CLOUDSDK_CONTAINER_CLUSTER=$_GKE_CLUSTER'
@@ -261,6 +301,8 @@ steps:
         echo "Checking mounted runtime config and skills in pod: $${APP_POD}"
 
         kubectl -n helpudoc exec "$${APP_POD}" -c agent -- sh -lc "grep -q 'request_plan_approval' /agent/config/runtime.yaml"
+        kubectl -n helpudoc exec "$${APP_POD}" -c agent -- sh -lc "grep -q 'name: aws-pricing' /agent/config/runtime.yaml"
+        kubectl -n helpudoc exec "$${APP_POD}" -c agent -- sh -lc "grep -q 'name: aws-knowledge' /agent/config/runtime.yaml"
         kubectl -n helpudoc exec "$${APP_POD}" -c agent -- sh -lc "grep -q 'request_plan_approval' /app/skills/research/SKILL.md"
         kubectl -n helpudoc exec "$${APP_POD}" -c agent -- python -c "import requests; data=requests.get('http://localhost:8001/agents', timeout=10).json(); tools=data['agents'][0]['tools']; assert 'request_plan_approval' in tools, tools; print('request_plan_approval available in /agents')"
 

@@ -34,6 +34,8 @@ cd frontend && npm run dev
 docker compose -f infra/docker-compose.yml --env-file env/local/stack.env up --build
 ```
 
+The Docker Compose frontend is published at `http://localhost:5173`.
+
 ## 4) GKE deployment (recommended)
 
 ### 4.1 Configure GCP
@@ -93,6 +95,8 @@ cp env/prod/config.env.example env/prod/config.env
 # - GOOGLE_OAUTH_POST_LOGIN_REDIRECT=https://lc-demo.com/login
 # - GOOGLE_OAUTH_CLIENT_SECRET (in secrets.env)
 # - OAUTH_TOKEN_ENCRYPTION_KEY (in secrets.env)
+# - AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY (in secrets.env, for AWS Pricing MCP)
+# - AWS_REGION=us-east-1 (in config.env)
 
 kubectl apply -f infra/gke/k8s/00-namespace.yaml
 kubectl -n helpudoc create secret generic helpudoc-secrets --from-env-file=env/prod/secrets.env
@@ -111,6 +115,7 @@ kubectl apply -f infra/gke/k8s/42-minio.yaml
 kubectl apply -f infra/gke/k8s/43-minio-setup.yaml
 kubectl apply -f infra/gke/k8s/44-clickhouse.yaml
 kubectl apply -f infra/gke/k8s/45-langfuse.yaml
+kubectl apply -f infra/gke/k8s/51-aws-pricing-mcp.yaml
 kubectl apply -f infra/gke/k8s/50-app.yaml
 kubectl apply -f infra/gke/k8s/60-frontend.yaml
 kubectl apply -f infra/gke/k8s/70-caddy.yaml
@@ -120,6 +125,9 @@ kubectl apply -f infra/gke/k8s/71-ingress.yaml
 Storage notes:
 - `infra/gke/k8s/30-storage.yaml` includes `agent-config-pvc`, used by `/api/settings/agent-config` to persist the agent runtime config at `/agent/config/runtime.yaml`.
 - `skills-pvc` is mounted at `/app/skills` for the backend settings "skills" page.
+- `infra/gke/k8s/51-aws-pricing-mcp.yaml` runs a FastMCP HTTP proxy in front of
+  the `awslabs.aws-pricing-mcp-server` stdio process so the agent can consume it
+  as a normal remote MCP server inside the cluster.
 
 ### 4.5 Get public URL and verify
 

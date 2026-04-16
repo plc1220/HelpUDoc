@@ -11,6 +11,8 @@ rag_storage
 **/__pycache__
 **/*.pyc
 **/.pytest_cache
+**/.venv
+**/venv
 
 # Node artifacts
 **/node_modules

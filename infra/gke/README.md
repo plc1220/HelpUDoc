@@ -13,6 +13,7 @@ The GKE setup covers the same services as local Compose:
 
 - backend API
 - agent service
+- AWS Pricing MCP proxy
 - frontend
 - PostgreSQL
 - Redis
@@ -36,6 +37,7 @@ The backend and agent are intentionally co-located around shared workspace/confi
 | `k8s/43-minio-setup.yaml` | Bucket/bootstrap job (includes `langfuse` bucket) |
 | `k8s/44-clickhouse.yaml` | ClickHouse for Langfuse |
 | `k8s/45-langfuse.yaml` | Langfuse web + worker + `langfuse-web` Service |
+| `k8s/51-aws-pricing-mcp.yaml` | AWS Pricing MCP deployment/service |
 | `k8s/50-app.yaml` | Combined backend + agent application deployment |
 | `k8s/60-frontend.yaml` | Frontend deployment/service |
 | `k8s/70-caddy.yaml` | Caddy proxy deployment/service |
@@ -61,7 +63,7 @@ From the repo root, the most reliable path is:
    cp env/prod/secrets.env.example env/prod/secrets.env
    cp env/prod/config.env.example env/prod/config.env
    ```
-2. Fill in the real values for database passwords, session secrets, OAuth settings, Gemini keys, storage URLs, and **Langfuse** keys (`CLICKHOUSE_PASSWORD`, `LANGFUSE_*` — see `env/prod/secrets.env.example` and `env/prod/config.env.example`).
+2. Fill in the real values for database passwords, session secrets, OAuth settings, Gemini keys, storage URLs, **Langfuse** keys (`CLICKHOUSE_PASSWORD`, `LANGFUSE_*` — see `env/prod/secrets.env.example` and `env/prod/config.env.example`), and **AWS Pricing MCP** keys (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, optional `AWS_SESSION_TOKEN`, plus `AWS_REGION` / `AWS_PRICING_MCP_LOG_LEVEL` in config).
 3. Point **`LANGFUSE_NEXTAUTH_URL`** at the public Langfuse origin (must match the Ingress host). The sample Ingress uses `langfuse.lc-demo.com`; add a DNS **A** record for that host to the same load balancer IP as the main app, and include the domain in `ManagedCertificate` (already listed in `k8s/71-ingress.yaml` for the demo hostname).
 4. Authenticate to the cluster:
    ```bash
@@ -99,6 +101,7 @@ kubectl apply -f infra/gke/k8s/42-minio.yaml
 kubectl apply -f infra/gke/k8s/43-minio-setup.yaml
 kubectl apply -f infra/gke/k8s/44-clickhouse.yaml
 kubectl apply -f infra/gke/k8s/45-langfuse.yaml
+kubectl apply -f infra/gke/k8s/51-aws-pricing-mcp.yaml
 kubectl apply -f infra/gke/k8s/50-app.yaml
 kubectl apply -f infra/gke/k8s/60-frontend.yaml
 kubectl apply -f infra/gke/k8s/70-caddy.yaml
@@ -114,11 +117,37 @@ infra/gke/scripts/bootstrap-langfuse-db.sh --wait-rollout
 
 If you are not using Cloud Build's image-tag rewriting, update the deployment image references yourself with `kubectl set image` or by editing the manifests before apply.
 
+## Sync PVC-backed runtime/skills (manual)
+
+In GKE, `skills-pvc` and `agent-config-pvc` are mounted into the running pod. If you change `skills/` or `agent/config/runtime.yaml` in the repo, the cluster can keep using stale PVC contents until you sync them.
+
+After applying manifests (or after a Cloud Build deploy if you're debugging drift), you can sync both:
+
+```bash
+APP_POD="$(kubectl -n helpudoc get pods -l app=helpudoc-app -o jsonpath='{.items[0].metadata.name}')"
+test -n "$APP_POD"
+
+# Sync skills
+kubectl -n helpudoc exec "$APP_POD" -c backend -- sh -lc "set -eu; mkdir -p /app/skills; find /app/skills -mindepth 1 -maxdepth 1 -exec rm -rf {} +"
+tar -C skills -cf - . | kubectl -n helpudoc exec -i "$APP_POD" -c backend -- sh -lc "tar -xf - -C /app/skills"
+
+# Sync agent runtime config
+kubectl -n helpudoc exec "$APP_POD" -c backend -- sh -lc "set -eu; mkdir -p /agent/config; rm -f /agent/config/runtime.yaml"
+tar -C agent/config -cf - runtime.yaml | kubectl -n helpudoc exec -i "$APP_POD" -c backend -- sh -lc "tar -xf - -C /agent/config"
+
+# Agent caches runtime.yaml at startup, so restart to pick up changes
+kubectl -n helpudoc rollout restart deployment/helpudoc-app
+kubectl -n helpudoc rollout status deployment/helpudoc-app
+```
+
 ## Storage and config notes
 
 - `30-storage.yaml` provisions PVCs used by workspaces, agent config, and shared skills.
 - The backend settings UI expects a writable skills mount and a writable `runtime.yaml` mount.
 - `templates/` files are examples only; the live cluster normally gets `helpudoc-secrets` and `helpudoc-config` from `kubectl create ... --from-env-file`.
+- The default runtime config now points `aws-pricing` at the in-cluster service
+  `http://helpudoc-aws-pricing-mcp:8000/mcp` and `aws-knowledge` directly at
+  `https://knowledge-mcp.global.api.aws`.
 
 ## Verification
 

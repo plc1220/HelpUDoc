@@ -37,7 +37,7 @@ The repo currently combines:
    docker compose -f infra/docker-compose.yml --env-file env/local/stack.env up --build
    ```
 3. Open the local services:
-   - Frontend: `http://localhost:8080`
+   - Frontend: `http://localhost:5173`
    - Backend API: `http://localhost:3000/api`
    - Agent service: `http://localhost:8001`
    - Google Workspace MCP sidecar: `http://localhost:8000`
