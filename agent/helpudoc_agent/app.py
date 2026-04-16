@@ -820,6 +820,14 @@ _LEGACY_MCP_PROMPT_RE = re.compile(
     r'[\s\S]*?(?:User request:\s*(?P<prompt>[\s\S]*))?$',
     re.IGNORECASE,
 )
+_LINE_SKILL_DIRECTIVE_RE = re.compile(
+    r"^\s*(?:(?:please\s+)?use\s+)?/skill\s+(?P<skill_id>[^\s]+)(?:\s+(?P<prompt>[\s\S]*))?$",
+    re.IGNORECASE,
+)
+_LINE_MCP_DIRECTIVE_RE = re.compile(
+    r"^\s*(?:(?:please\s+)?use\s+)?/mcp\s+(?P<server_id>[^\s]+)(?:\s+(?P<prompt>[\s\S]*))?$",
+    re.IGNORECASE,
+)
 
 
 def _infer_mime_type(file_path: str) -> str:
@@ -1269,6 +1277,37 @@ def create_app() -> FastAPI:
                 EmbeddedDirective(kind="mcp", serverId=(legacy_mcp_match.group("server_id") or "").strip()),
                 (legacy_mcp_match.group("prompt") or "").strip(),
             )
+
+        lines = text.splitlines()
+        for index, raw_line in enumerate(lines):
+            if not raw_line.strip():
+                continue
+            skill_line_match = _LINE_SKILL_DIRECTIVE_RE.match(raw_line)
+            if skill_line_match:
+                remainder = "\n".join(lines[index + 1 :]).strip()
+                prompt_parts = [
+                    (skill_line_match.group("prompt") or "").strip(),
+                    remainder,
+                ]
+                prompt = "\n\n".join(part for part in prompt_parts if part)
+                return (
+                    EmbeddedDirective(kind="skill", skillId=(skill_line_match.group("skill_id") or "").strip()),
+                    prompt,
+                )
+
+            mcp_line_match = _LINE_MCP_DIRECTIVE_RE.match(raw_line)
+            if mcp_line_match:
+                remainder = "\n".join(lines[index + 1 :]).strip()
+                prompt_parts = [
+                    (mcp_line_match.group("prompt") or "").strip(),
+                    remainder,
+                ]
+                prompt = "\n\n".join(part for part in prompt_parts if part)
+                return (
+                    EmbeddedDirective(kind="mcp", serverId=(mcp_line_match.group("server_id") or "").strip()),
+                    prompt,
+                )
+            break
 
         return None, text
 

@@ -226,8 +226,9 @@ class AgentRegistry:
         )
         mcp_manager = MCPServerManager(self.settings, workspace_state)
         logger.info(
-            "MCP bind candidates resolved (workspace=%s allowed_by_skill=%s preferred=%s)",
+            "MCP bind candidates resolved (workspace=%s active_skill=%s allowed_by_skill=%s preferred=%s)",
             workspace_id,
+            (active_skill or {}).get("skill_id") if isinstance(active_skill, dict) else None,
             candidate_mcp_servers,
             preferred_mcp_server,
         )
@@ -254,8 +255,9 @@ class AgentRegistry:
                 )
 
         logger.info(
-            "MCP bind results (workspace=%s allowed_by_rbac=%s accepted=%s rejected=%s)",
+            "MCP bind results (workspace=%s active_skill=%s allowed_by_rbac=%s accepted=%s rejected=%s)",
             workspace_id,
+            (active_skill or {}).get("skill_id") if isinstance(active_skill, dict) else None,
             mcp_manager.get_allowed_server_names(),
             list(mcp_manager.get_tools_by_server().keys()),
             mcp_manager.get_rejected_servers(),
