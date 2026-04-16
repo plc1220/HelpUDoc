@@ -4,8 +4,8 @@ uvicorn
 # Force CPU-only PyTorch wheels to avoid pulling multi-GB CUDA runtime deps.
 --index-url https://download.pytorch.org/whl/cpu
 --extra-index-url https://pypi.org/simple
-torch==2.5.1
-torchvision==0.20.1
+torch==2.6.0
+torchvision==0.21.0
 
 # LangChain + Gemini stack aligned with pydantic v2
 langchain==1.2.15
@@ -31,9 +31,19 @@ matplotlib
 altair
 plotly
 kaleido
-lightrag-hku[api]
-raganything
-docling
+# Document parsing/RAG stack. Keep this cluster pinned together: raganything pulls
+# mineru, whose current releases require torch >=2.6, and loose pins cause pip to
+# backtrack through hundreds of docling/mineru/lightrag combinations.
+numpy==1.26.4
+lightrag-hku[api]==1.4.14
+raganything==1.2.10
+docling==2.88.0
+mineru[core]==3.0.9
+accelerate==1.13.0
+safetensors==0.7.0
+transformers==4.57.6
+opencv-python==4.11.0.86
+opencv-python-headless==4.11.0.86
 pypdf
 redis
 # Keep major aligned with self-hosted Langfuse images (langfuse/langfuse:3 in infra).
