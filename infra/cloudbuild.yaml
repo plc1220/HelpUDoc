@@ -156,6 +156,21 @@ steps:
       # Pulling the agent image can exceed the default 5m readiness wait (5GB+ image).
       - '--timeout=15m'
 
+  # 5b. Ensure Postgres database for Langfuse exists, then restart Langfuse so migrations can run.
+  - id: bootstrap-langfuse-db
+    name: 'gcr.io/cloud-builders/kubectl'
+    waitFor: ['deploy']
+    env:
+      - 'CLOUDSDK_COMPUTE_ZONE=$_GKE_LOCATION'
+      - 'CLOUDSDK_CONTAINER_CLUSTER=$_GKE_CLUSTER'
+    entrypoint: 'sh'
+    args:
+      - '-c'
+      - |
+        set -eu
+        chmod +x infra/gke/scripts/bootstrap-langfuse-db.sh
+        infra/gke/scripts/bootstrap-langfuse-db.sh --wait-rollout
+
   # 6. Sync repo skills/ into skills PVC (workspace PVC is intentionally untouched).
   - id: sync-skills-pvc
     name: 'gcr.io/cloud-builders/kubectl'
@@ -269,7 +284,7 @@ steps:
   # 8. Post-deploy drift guard (fails if PVC-backed runtime/skills are stale)
   - id: post-deploy-drift-guard
     name: 'gcr.io/cloud-builders/kubectl'
-    waitFor: ['sync-skills-pvc', 'restart-app-after-runtime-sync', 'bootstrap-admin']
+    waitFor: ['sync-skills-pvc', 'restart-app-after-runtime-sync', 'bootstrap-admin', 'bootstrap-langfuse-db']
     env:
       - 'CLOUDSDK_COMPUTE_ZONE=$_GKE_LOCATION'
       - 'CLOUDSDK_CONTAINER_CLUSTER=$_GKE_CLUSTER'

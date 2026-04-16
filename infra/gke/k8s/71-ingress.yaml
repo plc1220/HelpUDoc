@@ -8,6 +8,7 @@ spec:
   domains:
     - lc-demo.com
     - www.lc-demo.com
+    - langfuse.lc-demo.com
 ---
 apiVersion: networking.gke.io/v1beta1
 kind: FrontendConfig
@@ -50,5 +51,15 @@ spec:
             backend:
               service:
                 name: helpudoc-caddy
+                port:
+                  number: 80
+    - host: langfuse.lc-demo.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: langfuse-web
                 port:
                   number: 80

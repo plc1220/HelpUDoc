@@ -1,0 +1,125 @@
+name: Deploy Langfuse to GKE
+
+concurrency:
+  group: deploy-gke-langfuse-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  workflow_dispatch:
+
+env:
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  GKE_LOCATION: ${{ secrets.GKE_LOCATION }}
+  GKE_CLUSTER: ${{ secrets.GKE_CLUSTER }}
+  USE_GKE_GCLOUD_AUTH_PLUGIN: "True"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Google auth mode
+        id: auth_mode
+        env:
+          WIF_PROVIDER: ${{ secrets.GCP_WORKLOAD_PROVIDER }}
+          WIF_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+          CREDENTIALS_JSON: ${{ secrets.GCP_CREDENTIALS_JSON }}
+        run: |
+          set -euo pipefail
+          has_wif=false
+          has_json=false
+          if [[ -n "${WIF_PROVIDER}" && -n "${WIF_SERVICE_ACCOUNT}" ]]; then has_wif=true; fi
+          if [[ -n "${CREDENTIALS_JSON}" ]]; then has_json=true; fi
+          if [[ "${has_wif}" == "true" && "${has_json}" == "true" ]]; then
+            echo "Configure only one auth method: WIF OR JSON key." >&2
+            exit 1
+          fi
+          if [[ "${has_wif}" == "true" ]]; then echo "mode=wif" >> "${GITHUB_OUTPUT}"; exit 0; fi
+          if [[ "${has_json}" == "true" ]]; then echo "mode=json" >> "${GITHUB_OUTPUT}"; exit 0; fi
+          echo "Missing GCP auth secrets." >&2
+          exit 1
+
+      - name: Authenticate to Google Cloud (Workload Identity)
+        if: ${{ steps.auth_mode.outputs.mode == 'wif' }}
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Authenticate to Google Cloud (Service Account Key)
+        if: ${{ steps.auth_mode.outputs.mode == 'json' }}
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_CREDENTIALS_JSON }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          install_components: gke-gcloud-auth-plugin
+
+      - name: Get GKE Credentials
+        run: |
+          set -euo pipefail
+          gcloud container clusters get-credentials "${GKE_CLUSTER}" --location "${GKE_LOCATION}" --project "${PROJECT_ID}"
+
+      - name: Validate Langfuse config and secrets
+        run: |
+          set -euo pipefail
+          ns=helpudoc
+          need_cm_key() {
+            local k="$1"
+            local v
+            v="$(kubectl -n "${ns}" get configmap helpudoc-config -o "jsonpath={.data.${k}}" 2>/dev/null || true)"
+            if [[ -z "${v}" ]]; then
+              echo "helpudoc-config missing or empty data key: ${k}" >&2
+              exit 1
+            fi
+          }
+          need_secret_key() {
+            local k="$1"
+            local v
+            v="$(kubectl -n "${ns}" get secret helpudoc-secrets -o "jsonpath={.data.${k}}" 2>/dev/null || true)"
+            if [[ -z "${v}" ]]; then
+              echo "helpudoc-secrets missing or empty data key: ${k}" >&2
+              exit 1
+            fi
+          }
+          kubectl -n "${ns}" get configmap helpudoc-config >/dev/null
+          kubectl -n "${ns}" get secret helpudoc-secrets >/dev/null
+          need_cm_key LANGFUSE_NEXTAUTH_URL
+          need_cm_key POSTGRES_USER
+          need_cm_key LANGFUSE_INIT_ORG_ID
+          need_cm_key LANGFUSE_INIT_ORG_NAME
+          need_cm_key LANGFUSE_INIT_PROJECT_ID
+          need_cm_key LANGFUSE_INIT_PROJECT_NAME
+          need_cm_key LANGFUSE_INIT_USER_EMAIL
+          need_cm_key LANGFUSE_INIT_USER_NAME
+          need_secret_key POSTGRES_PASSWORD
+          need_secret_key CLICKHOUSE_PASSWORD
+          need_secret_key LANGFUSE_NEXTAUTH_SECRET
+          need_secret_key LANGFUSE_SALT
+          need_secret_key LANGFUSE_ENCRYPTION_KEY
+          need_secret_key LANGFUSE_PUBLIC_KEY
+          need_secret_key LANGFUSE_SECRET_KEY
+          need_secret_key LANGFUSE_INIT_USER_PASSWORD
+          need_secret_key MINIO_ROOT_USER
+          need_secret_key MINIO_ROOT_PASSWORD
+
+      - name: Apply Langfuse infrastructure manifests
+        run: |
+          set -euo pipefail
+          kubectl -n helpudoc apply -f infra/gke/k8s/30-storage.yaml
+          kubectl -n helpudoc apply -f infra/gke/k8s/44-clickhouse.yaml
+          kubectl -n helpudoc apply -f infra/gke/k8s/45-langfuse.yaml
+
+      - name: Bootstrap Langfuse database and wait for rollouts
+        run: |
+          set -euo pipefail
+          chmod +x infra/gke/scripts/bootstrap-langfuse-db.sh
+          infra/gke/scripts/bootstrap-langfuse-db.sh --wait-rollout

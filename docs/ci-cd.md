@@ -11,12 +11,15 @@ The primary deploy pipelines are GitHub workflows:
 - `.github/workflows/deploy-frontend-gke.yml` (frontend only)
 - `.github/workflows/deploy-backend-gke.yml` (backend only)
 - `.github/workflows/deploy-agent-gke.yml` (agent only)
+- `.github/workflows/deploy-langfuse-gke.yml` (ClickHouse + Langfuse only: storage, manifests, Postgres `langfuse` DB bootstrap, rollout health)
 
 Each workflow:
 1. Authenticates to GCP (WIF or JSON key).
 2. Builds and pushes service images to `gcr.io/$PROJECT_ID/*` tagged by commit SHA.
 3. Gets cluster credentials and deploys via `kubectl`.
 4. Waits for rollout status.
+
+**Langfuse (ClickHouse + Langfuse):** Use **`Deploy Langfuse to GKE`** when you need observability infra without rebuilding app images. It applies `30-storage.yaml`, `44-clickhouse.yaml`, and `45-langfuse.yaml`, validates required `helpudoc-config` / `helpudoc-secrets` keys, runs `infra/gke/scripts/bootstrap-langfuse-db.sh --wait-rollout`, and waits for Langfuse web/worker rollouts. **`deploy-gke.yml`** applies `infra/gke/k8s/` (no ConfigMap in that directory; the demo `helpudoc-config` lives in `infra/gke/bootstrap/20-configmap.demo.yaml` and is applied **only** when `helpudoc-config` is missing), then runs the Langfuse bootstrap script, then merges OAuth keys from GitHub secrets—so routine full-stack deploys do not overwrite production `LANGFUSE_*` or Postgres settings. **Backend** and **agent** workflows only touch `50-app.yaml` and OAuth patches (backend). Populate Langfuse keys from `env/prod/config.env.example` and `env/prod/secrets.env.example` before running the Langfuse workflow (`infra/gke/README.md` for DNS and ingress).
 
 ## One Command Deploy (Manual)
 
@@ -71,10 +74,11 @@ Run one of these in GitHub Actions:
 - `Deploy Frontend to GKE`
 - `Deploy Backend to GKE`
 - `Deploy Agent to GKE`
+- `Deploy Langfuse to GKE`
 
 ## What Gets Persisted (PVCs)
 
-GKE storage is defined in `infra/gke/k8s/30-storage.yaml`.
+GKE storage is defined in `infra/gke/k8s/30-storage.yaml` (includes `clickhouse-pvc` for Langfuse).
 
 Key mounts used by the app:
 - `skills-pvc` mounted at `/app/skills` (backend reads this via `SKILLS_ROOT`).

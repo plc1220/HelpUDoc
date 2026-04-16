@@ -113,6 +113,8 @@ kubectl apply -f infra/gke/k8s/40-postgres.yaml
 kubectl apply -f infra/gke/k8s/41-redis.yaml
 kubectl apply -f infra/gke/k8s/42-minio.yaml
 kubectl apply -f infra/gke/k8s/43-minio-setup.yaml
+kubectl apply -f infra/gke/k8s/44-clickhouse.yaml
+kubectl apply -f infra/gke/k8s/45-langfuse.yaml
 kubectl apply -f infra/gke/k8s/51-aws-pricing-mcp.yaml
 kubectl apply -f infra/gke/k8s/50-app.yaml
 kubectl apply -f infra/gke/k8s/60-frontend.yaml

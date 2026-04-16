@@ -18,6 +18,8 @@ The GKE setup covers the same services as local Compose:
 - PostgreSQL
 - Redis
 - MinIO
+- ClickHouse (for Langfuse v3)
+- Langfuse web + worker (LLM observability)
 - Caddy ingress/proxy components
 
 The backend and agent are intentionally co-located around shared workspace/config volumes to match the current application architecture.
@@ -27,11 +29,14 @@ The backend and agent are intentionally co-located around shared workspace/confi
 | Path | Purpose |
 | ---- | ------- |
 | `k8s/00-namespace.yaml` | Namespace creation |
+| `bootstrap/20-configmap.demo.yaml` | Optional demo `helpudoc-config` (first install only; not applied by `kubectl apply -f k8s/` or Cloud Build) |
 | `k8s/30-storage.yaml` | PVCs for workspaces, agent config, and skills |
 | `k8s/40-postgres.yaml` | PostgreSQL workload |
 | `k8s/41-redis.yaml` | Redis workload |
 | `k8s/42-minio.yaml` | MinIO workload |
-| `k8s/43-minio-setup.yaml` | Bucket/bootstrap job |
+| `k8s/43-minio-setup.yaml` | Bucket/bootstrap job (includes `langfuse` bucket) |
+| `k8s/44-clickhouse.yaml` | ClickHouse for Langfuse |
+| `k8s/45-langfuse.yaml` | Langfuse web + worker + `langfuse-web` Service |
 | `k8s/51-aws-pricing-mcp.yaml` | AWS Pricing MCP deployment/service |
 | `k8s/50-app.yaml` | Combined backend + agent application deployment |
 | `k8s/60-frontend.yaml` | Frontend deployment/service |
@@ -40,6 +45,7 @@ The backend and agent are intentionally co-located around shared workspace/confi
 | `k8s/72-backendconfig.yaml` | GKE BackendConfig |
 | `templates/10-secrets.yaml` | Example secret template |
 | `templates/20-configmap.yaml` | Example config template |
+| `scripts/bootstrap-langfuse-db.sh` | Idempotent `CREATE DATABASE langfuse` + optional Langfuse rollout wait (used by Cloud Build and GitHub Actions) |
 
 ## Prerequisites
 
@@ -57,20 +63,19 @@ From the repo root, the most reliable path is:
    cp env/prod/secrets.env.example env/prod/secrets.env
    cp env/prod/config.env.example env/prod/config.env
    ```
-2. Fill in the real values for database passwords, session secrets, OAuth settings, Gemini keys, and storage URLs.
-3. Authenticate to the cluster:
+2. Fill in the real values for database passwords, session secrets, OAuth settings, Gemini keys, storage URLs, **Langfuse** keys (`CLICKHOUSE_PASSWORD`, `LANGFUSE_*` — see `env/prod/secrets.env.example` and `env/prod/config.env.example`), and **AWS Pricing MCP** keys (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, optional `AWS_SESSION_TOKEN`, plus `AWS_REGION` / `AWS_PRICING_MCP_LOG_LEVEL` in config).
+3. Point **`LANGFUSE_NEXTAUTH_URL`** at the public Langfuse origin (must match the Ingress host). The sample Ingress uses `langfuse.lc-demo.com`; add a DNS **A** record for that host to the same load balancer IP as the main app, and include the domain in `ManagedCertificate` (already listed in `k8s/71-ingress.yaml` for the demo hostname).
+4. Authenticate to the cluster:
    ```bash
    gcloud container clusters get-credentials <CLUSTER> --region <REGION> --project <PROJECT_ID>
    ```
-4. Create namespace and config objects:
+5. Create namespace and config objects:
    ```bash
    kubectl apply -f infra/gke/k8s/00-namespace.yaml
    kubectl -n helpudoc create secret generic helpudoc-secrets --from-env-file=env/prod/secrets.env
    kubectl -n helpudoc create configmap helpudoc-config --from-env-file=env/prod/config.env
    ```
-   The AWS Pricing MCP deployment reads `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`,
-   optional `AWS_SESSION_TOKEN`, and `AWS_REGION` from those same resources.
-5. Submit the build and deploy pipeline:
+6. Submit the build and deploy pipeline:
    ```bash
    gcloud builds submit . \
      --config=infra/cloudbuild.yaml \
@@ -78,7 +83,11 @@ From the repo root, the most reliable path is:
      --substitutions=_GKE_LOCATION=<REGION_OR_ZONE>,_GKE_CLUSTER=<CLUSTER>,_RUN_E2E=false
    ```
 
-Cloud Build handles image builds and applies the manifests in `infra/gke/k8s/`.
+Cloud Build handles image builds and applies the manifests in `infra/gke/k8s/` (the checked-in **demo** `helpudoc-config` is under `bootstrap/20-configmap.demo.yaml`, not in `k8s/`, so each deploy does not reset an existing production ConfigMap), then runs `infra/gke/scripts/bootstrap-langfuse-db.sh --wait-rollout` so the Langfuse Postgres database exists before rollouts are considered successful.
+
+### GitHub Actions: Langfuse-only
+
+For clusters where app images are already deployed but Langfuse (ClickHouse + Langfuse + DB bootstrap) must be installed or updated without a full stack build, use the **`Deploy Langfuse to GKE`** workflow (`.github/workflows/deploy-langfuse-gke.yml`). It validates required ConfigMap/Secret keys, applies `30-storage.yaml`, `44-clickhouse.yaml`, and `45-langfuse.yaml`, then runs the same bootstrap script with rollout waits. Backend and agent workflows intentionally do not apply these manifests so they cannot roll out Langfuse without its prerequisites.
 
 ## Manual manifest apply
 
@@ -90,12 +99,20 @@ kubectl apply -f infra/gke/k8s/40-postgres.yaml
 kubectl apply -f infra/gke/k8s/41-redis.yaml
 kubectl apply -f infra/gke/k8s/42-minio.yaml
 kubectl apply -f infra/gke/k8s/43-minio-setup.yaml
+kubectl apply -f infra/gke/k8s/44-clickhouse.yaml
+kubectl apply -f infra/gke/k8s/45-langfuse.yaml
 kubectl apply -f infra/gke/k8s/51-aws-pricing-mcp.yaml
 kubectl apply -f infra/gke/k8s/50-app.yaml
 kubectl apply -f infra/gke/k8s/60-frontend.yaml
 kubectl apply -f infra/gke/k8s/70-caddy.yaml
 kubectl apply -f infra/gke/k8s/71-ingress.yaml
 kubectl apply -f infra/gke/k8s/72-backendconfig.yaml
+```
+
+After `45-langfuse.yaml` (with Postgres running), create the `langfuse` database and wait for Langfuse to become ready:
+
+```bash
+infra/gke/scripts/bootstrap-langfuse-db.sh --wait-rollout
 ```
 
 If you are not using Cloud Build's image-tag rewriting, update the deployment image references yourself with `kubectl set image` or by editing the manifests before apply.

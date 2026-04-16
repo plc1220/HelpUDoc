@@ -41,4 +41,5 @@ spec:
                 sleep 1
               done
               mc mb -p local/"$S3_BUCKET_NAME" || true
+              mc mb -p local/langfuse || true
               mc anonymous set download local/"$S3_BUCKET_NAME"

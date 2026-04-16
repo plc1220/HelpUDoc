@@ -120,10 +120,27 @@ jobs:
           docker push "gcr.io/${PROJECT_ID}/helpudoc-frontend:${IMAGE_TAG}"
           docker push "gcr.io/${PROJECT_ID}/helpudoc-agent:${IMAGE_TAG}"
 
-      - name: Apply Base Manifests
+      - name: Apply Kubernetes manifests (ConfigMap is bootstrap-only; see next step)
         run: |
           set -euo pipefail
           kubectl apply -f infra/gke/k8s/
+
+      - name: Ensure helpudoc-config exists (first install only)
+        run: |
+          set -euo pipefail
+          if kubectl -n helpudoc get configmap helpudoc-config >/dev/null 2>&1; then
+            echo "helpudoc-config already present; not applying demo ConfigMap."
+            exit 0
+          fi
+          echo "No helpudoc-config: applying infra/gke/bootstrap/20-configmap.demo.yaml (demo defaults)."
+          echo "For production, create the ConfigMap from env/prod/config.env instead (see infra/gke/README.md)."
+          kubectl apply -f infra/gke/bootstrap/20-configmap.demo.yaml
+
+      - name: Bootstrap Langfuse database and wait for Langfuse
+        run: |
+          set -euo pipefail
+          chmod +x infra/gke/scripts/bootstrap-langfuse-db.sh
+          infra/gke/scripts/bootstrap-langfuse-db.sh --wait-rollout
 
       - name: Sync OAuth Config and Secrets
         run: |
