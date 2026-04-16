@@ -64,7 +64,10 @@ type RunAgentOptions = {
 export type AttachmentUnderstandingPayload = {
   fileName: string;
   mimeType: string;
-  contentB64: string;
+  contentB64?: string;
+  /** When set with relativePath, the agent reads bytes from the shared workspace volume instead of contentB64. */
+  workspaceId?: string;
+  relativePath?: string;
 };
 
 export type AttachmentUnderstandingResponse = {
