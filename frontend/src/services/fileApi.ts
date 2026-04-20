@@ -1,4 +1,4 @@
-import { API_URL, apiFetch } from './apiClient';
+import { API_URL, apiFetch, buildApiUrl } from './apiClient';
 import type {
   FileContextRef,
   GoogleDrivePickerScope,
@@ -22,7 +22,7 @@ export const getFileContent = async (workspaceId: string, fileId: string) => {
 };
 
 export const getWorkspaceFilePreview = async (workspaceId: string, relativePath: string) => {
-  const url = new URL(`${API_URL}/workspaces/${workspaceId}/files/preview`);
+  const url = buildApiUrl(`/workspaces/${workspaceId}/files/preview`);
   url.searchParams.set('path', relativePath);
   const response = await apiFetch(url.toString());
   if (!response.ok) {
@@ -96,7 +96,7 @@ export const deleteFile = async (workspaceId: string, fileId: string) => {
 };
 
 export const deleteFolder = async (workspaceId: string, folderPath: string) => {
-  const url = new URL(`${API_URL}/workspaces/${workspaceId}/files/folders`);
+  const url = buildApiUrl(`/workspaces/${workspaceId}/files/folders`);
   url.searchParams.set('path', folderPath);
   const response = await apiFetch(url.toString(), {
     method: 'DELETE',
@@ -145,7 +145,7 @@ export const searchGoogleDriveFiles = async (
   workspaceId: string,
   params: { query?: string; scope?: GoogleDrivePickerScope; pageToken?: string },
 ): Promise<GoogleDriveSearchResult> => {
-  const url = new URL(`${API_URL}/workspaces/${workspaceId}/files/drive/search`);
+  const url = buildApiUrl(`/workspaces/${workspaceId}/files/drive/search`);
   if (params.query?.trim()) {
     url.searchParams.set('query', params.query.trim());
   }
