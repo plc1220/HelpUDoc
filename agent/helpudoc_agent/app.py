@@ -15,6 +15,7 @@ import re
 import shutil
 import sys
 import tempfile
+from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
 from uuid import uuid4
@@ -781,6 +782,37 @@ def _replace_content_text(content: Any, text: str) -> Any:
             return updated
         return [{"type": "text", "text": text}, *updated]
     return text
+
+
+def _host_datetime_context_block() -> str:
+    """Wall-clock snapshot for the model; agent system prompts are cached and omit real time."""
+    utc_now = datetime.now(timezone.utc)
+    local_now = datetime.now().astimezone()
+    return (
+        "[Host time — authoritative for \"today\", calendar years, deadlines, and filenames; "
+        "ignore default assumptions from training data]\n"
+        f"UTC: {utc_now.isoformat(timespec='seconds')}\n"
+        f"Server local: {local_now.isoformat(timespec='seconds')}"
+    )
+
+
+def _prepend_host_datetime_to_latest_user_message(payload: List[Dict[str, Any]]) -> None:
+    """Prepend once per turn so each request carries fresh datetime without rebuilding the cached agent."""
+    block = _host_datetime_context_block()
+    for index in range(len(payload) - 1, -1, -1):
+        role = str(payload[index].get("role") or "").strip().lower()
+        if role not in {"user", "human"}:
+            continue
+        content = payload[index].get("content")
+        if isinstance(content, str):
+            stripped = content.strip()
+            payload[index]["content"] = f"{block}\n\n{stripped}" if stripped else block
+        elif isinstance(content, list):
+            payload[index]["content"] = [{"type": "text", "text": block}, *content]
+        else:
+            text = str(content or "").strip()
+            payload[index]["content"] = f"{block}\n\n{text}" if text else block
+        return
 
 
 class EmbeddedDirective(BaseModel):
@@ -2196,6 +2228,7 @@ def create_app() -> FastAPI:
                                 )
                             )
                             break
+        _prepend_host_datetime_to_latest_user_message(payload)
         return payload
 
     _ASSISTANT_ROLES = {"assistant", "ai", "aimessagechunk"}

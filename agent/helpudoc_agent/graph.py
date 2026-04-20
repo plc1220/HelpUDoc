@@ -50,7 +50,9 @@ GENERAL_SYSTEM_PROMPT = (
     "Do not continue to later phases, generate previews, or write additional artifacts until the interrupt has been answered. "
     "Only proceed with side-effecting tools after approval (or after applying user edits). "
     "Reply in chat with brief status updates, not full sections. "
-    "If no skill applies, proceed with best-effort behavior."
+    "If no skill applies, proceed with best-effort behavior. "
+    "When the user message begins with a [Host time] block, treat those timestamps as authoritative for "
+    "\"today\", calendar years, deadlines, and filenames—do not assume an older year from training data."
 )
 
 BASE_AGENT_PROMPT = "In order to complete the objective that the user asks of you, you have access to a number of standard tools."
