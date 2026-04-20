@@ -3,6 +3,13 @@ import { getAuthUser } from '../auth/authStore';
 export const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000/api';
 export const AUTH_MODE = (import.meta.env.VITE_AUTH_MODE || 'hybrid').toLowerCase();
 
+export function buildApiUrl(path: string): URL {
+  const base = API_URL.endsWith('/') ? API_URL.slice(0, -1) : API_URL;
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  const origin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost';
+  return new URL(`${base}${normalizedPath}`, origin);
+}
+
 function shouldAttachHeaderIdentity() {
   if (AUTH_MODE === 'headers') {
     return true;
