@@ -42,7 +42,7 @@ def _env_int(name: str, default: int) -> int:
 
 
 DEFAULT_LAYOUT_MODEL = os.getenv("LAYOUT_MODEL") or os.getenv("LLM_MODEL", "gemini-2.5-flash")
-DEFAULT_IMAGE_MODEL = os.getenv("IMAGE_GEN_MODEL", "gemini-3-pro-image-preview")
+DEFAULT_IMAGE_MODEL = os.getenv("IMAGE_GEN_MODEL", "gemini-3.1-flash-image-preview")
 DEFAULT_CLEAN_IMAGE_MODEL = os.getenv("CLEAN_IMAGE_MODEL")
 DEFAULT_REFINE_ASSETS = _env_bool("REFINE_ASSETS", True)
 DEFAULT_CLEAN_ASSETS = _env_bool("CLEAN_ASSETS", True)

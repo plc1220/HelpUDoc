@@ -27,6 +27,10 @@ class ModelConfig(BaseModel):
     lite_name: Optional[str] = None
     pro_name: Optional[str] = None
     image_name: Optional[str] = None
+    thinking_level: Optional[str] = None
+    fast_thinking_level: Optional[str] = None
+    lite_thinking_level: Optional[str] = None
+    pro_thinking_level: Optional[str] = None
     project: Optional[str] = None
     location: Optional[str] = None
     api_key: Optional[str] = Field(default_factory=lambda: os.getenv("GEMINI_API_KEY"))
@@ -45,10 +49,21 @@ class ModelConfig(BaseModel):
         if normalized == "lite":
             return self.lite_name or self.fast_name or self.name
         if normalized == "pro":
-            return self.pro_name or self.name
+            return self.name
         if normalized == "fast":
             return self.fast_name or self.name
         return self.name
+
+    def resolve_thinking_level(self, mode: Optional[str]) -> Optional[str]:
+        """Resolve Gemini thinking depth for the requested mode."""
+        normalized = (mode or "").strip().lower()
+        if normalized == "lite":
+            return self.lite_thinking_level or self.fast_thinking_level or self.thinking_level
+        if normalized == "pro":
+            return self.pro_thinking_level or self.thinking_level
+        if normalized == "fast":
+            return self.fast_thinking_level or self.thinking_level
+        return self.thinking_level
 
     @property
     def image_model_name(self) -> str:

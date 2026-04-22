@@ -115,7 +115,7 @@ class ImageGenerator:
         model: str = None,
     ):
         self.api_key = api_key or os.getenv("IMAGE_GEN_API_KEY", "")
-        self.model = model or os.getenv("IMAGE_GEN_MODEL", "gemini-3-pro-image-preview")
+        self.model = model or os.getenv("IMAGE_GEN_MODEL", "gemini-3.1-flash-image-preview")
         self.client = create_client(api_key=self.api_key)
     
     def generate(
