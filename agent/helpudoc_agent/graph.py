@@ -111,17 +111,25 @@ class AgentRegistry:
             return "fast"
         return "fast"
 
-    def _get_model(self, model_name: str):
-        model = self._models.get(model_name)
+    def _get_model(self, model_name: str, *, thinking_level: str | None = None):
+        cache_key = json.dumps(
+            {"model": model_name, "thinking_level": thinking_level},
+            sort_keys=True,
+        )
+        model = self._models.get(cache_key)
         if model is not None:
             return model
         cfg = self.settings.model
+        model_kwargs = {}
+        if thinking_level:
+            model_kwargs["thinking_level"] = thinking_level
         if cfg.use_vertex_ai:
             model = init_chat_model(
                 model_name,
                 model_provider="google_vertex_ai",
                 project=cfg.project,
                 location=cfg.location,
+                **model_kwargs,
             )
         else:
             # Force public Gemini (API key) path to avoid accidental Vertex calls.
@@ -129,8 +137,9 @@ class AgentRegistry:
                 model_name,
                 model_provider="google_genai",
                 api_key=cfg.api_key,
+                **model_kwargs,
             )
-        self._models[model_name] = model
+        self._models[cache_key] = model
         return model
 
     async def get_or_create(
@@ -141,6 +150,7 @@ class AgentRegistry:
     ) -> AgentRuntimeState:
         mode = self._resolve_mode(agent_name)
         model_name = self.settings.model.resolve_chat_model_name(mode)
+        thinking_level = self.settings.model.resolve_thinking_level(mode)
         resolved_name = f"{self._default_agent_name}:{mode}"
         context_payload = initial_context or {}
         policy_key = json.dumps(context_payload.get("mcp_policy", {}) or {}, sort_keys=True, default=str)
@@ -270,7 +280,7 @@ class AgentRegistry:
             virtual_mode=self.settings.backend.virtual_mode,
         )
 
-        model = self._get_model(model_name)
+        model = self._get_model(model_name, thinking_level=thinking_level)
         interrupt_on = dict(self.settings.backend.interrupt_on or {})
         if bool(context_payload.get("skip_plan_approvals") or context_payload.get("skipPlanApprovals")):
             interrupt_on.pop("request_plan_approval", None)

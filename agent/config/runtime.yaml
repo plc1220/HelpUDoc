@@ -3,8 +3,11 @@ model:
   name: gemini-3-flash-preview
   fast_name: gemini-3-flash-preview
   lite_name: gemini-3.1-flash-lite-preview
-  pro_name: gemini-3-pro-preview
-  image_name: gemini-3-pro-image-preview
+  thinking_level: low
+  fast_thinking_level: low
+  lite_thinking_level: high
+  pro_thinking_level: high
+  image_name: gemini-3.1-flash-image-preview
   project: my-rd-coe-demo-gen-ai
   location: us-central1
   api_key: ${GEMINI_API_KEY}
