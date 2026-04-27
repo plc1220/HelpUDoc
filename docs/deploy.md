@@ -93,6 +93,9 @@ cp env/prod/config.env.example env/prod/config.env
 # - GOOGLE_OAUTH_CLIENT_ID
 # - GOOGLE_OAUTH_REDIRECT_URI=https://lc-demo.com/api/auth/google/callback
 # - GOOGLE_OAUTH_POST_LOGIN_REDIRECT=https://lc-demo.com/login
+# - GOOGLE_OAUTH_SCOPES must include https://www.googleapis.com/auth/cloud-platform for google-developer-knowledge
+# - GOOGLE_DEVELOPER_KNOWLEDGE_PROJECT_ID=my-rd-coe-demo-gen-ai
+# - GCP_COST_SERVICE_ACCOUNT_JSON_B64 (recommended if gcp-cost cannot use node ADC)
 # - GOOGLE_OAUTH_CLIENT_SECRET (in secrets.env)
 # - OAUTH_TOKEN_ENCRYPTION_KEY (in secrets.env)
 # - AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY (in secrets.env, for AWS Pricing MCP)

@@ -73,3 +73,31 @@ def test_describe_mcp_servers_includes_delegated_auth_provider():
             "default_access": "allow",
         }
     ]
+
+
+def test_mcp_server_config_accepts_stdio_env_passthrough_for_gcp_cost_wrapper():
+    settings = _build_settings(
+        {
+            "model": {},
+            "backend": {"workspace_root": "backend/workspaces"},
+            "tools": {},
+            "mcp_servers": {
+                "gcp-cost": {
+                    "name": "gcp-cost",
+                    "transport": "stdio",
+                    "command": "/usr/local/bin/gcp-cost-mcp-wrapper",
+                    "env_passthrough": [
+                        "GOOGLE_APPLICATION_CREDENTIALS",
+                        "GCP_COST_SERVICE_ACCOUNT_JSON_B64",
+                    ],
+                }
+            },
+        }
+    )
+
+    server = settings.mcp_servers["gcp-cost"]
+    assert server.command == "/usr/local/bin/gcp-cost-mcp-wrapper"
+    assert server.env_passthrough == [
+        "GOOGLE_APPLICATION_CREDENTIALS",
+        "GCP_COST_SERVICE_ACCOUNT_JSON_B64",
+    ]

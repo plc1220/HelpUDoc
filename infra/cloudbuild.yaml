@@ -301,8 +301,11 @@ steps:
         echo "Checking mounted runtime config and skills in pod: $${APP_POD}"
 
         kubectl -n helpudoc exec "$${APP_POD}" -c agent -- sh -lc "grep -q 'request_plan_approval' /agent/config/runtime.yaml"
+        kubectl -n helpudoc exec "$${APP_POD}" -c agent -- sh -lc "grep -q 'name: google-developer-knowledge' /agent/config/runtime.yaml"
+        kubectl -n helpudoc exec "$${APP_POD}" -c agent -- sh -lc "grep -q 'name: gcp-cost' /agent/config/runtime.yaml"
         kubectl -n helpudoc exec "$${APP_POD}" -c agent -- sh -lc "grep -q 'name: aws-pricing' /agent/config/runtime.yaml"
         kubectl -n helpudoc exec "$${APP_POD}" -c agent -- sh -lc "grep -q 'name: aws-knowledge' /agent/config/runtime.yaml"
+        kubectl -n helpudoc exec "$${APP_POD}" -c agent -- sh -lc "test -x /usr/local/bin/gcp-cost-mcp-server"
         kubectl -n helpudoc exec "$${APP_POD}" -c agent -- sh -lc "grep -q 'request_plan_approval' /app/skills/research/SKILL.md"
         kubectl -n helpudoc exec "$${APP_POD}" -c agent -- python -c "import requests; data=requests.get('http://localhost:8001/agents', timeout=10).json(); tools=data['agents'][0]['tools']; assert 'request_plan_approval' in tools, tools; print('request_plan_approval available in /agents')"
 

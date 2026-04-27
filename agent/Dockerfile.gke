@@ -8,6 +8,7 @@ ARG PYPI_INDEX_URL=https://pypi.org/simple
 # System libs required by mineru/opencv (paper2slides parser)
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
+    curl \
     libxcb1 \
     libx11-6 \
     libxext6 \
@@ -25,6 +26,14 @@ COPY agent/requirements.txt /app/agent/requirements.txt
 RUN PIP_INDEX_URL="${PYTORCH_CPU_INDEX_URL}" \
   PIP_EXTRA_INDEX_URL="${PYPI_INDEX_URL}" \
   pip install --no-cache-dir -r /app/agent/requirements.txt
+
+ARG GCP_COST_MCP_VERSION=v0.8.0
+RUN curl -fsSL -o /usr/local/bin/gcp-cost-mcp-server \
+    "https://github.com/nozomi-koborinai/gcp-cost-mcp-server/releases/download/${GCP_COST_MCP_VERSION}/gcp-cost-mcp-server-linux-amd64" \
+  && chmod +x /usr/local/bin/gcp-cost-mcp-server
+
+COPY agent/scripts/gcp-cost-mcp-wrapper.sh /usr/local/bin/gcp-cost-mcp-wrapper
+RUN chmod +x /usr/local/bin/gcp-cost-mcp-wrapper
 
 # Copy agent code and shared skills into the image so list_skills works in GKE.
 COPY agent/ /app/agent/

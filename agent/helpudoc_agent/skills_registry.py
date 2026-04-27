@@ -41,8 +41,12 @@ TOOL_FACTORY_EXPANSIONS: dict[str, tuple[str, ...]] = {
 
 
 SKILL_MCP_SERVER_ELIGIBILITY: dict[str, tuple[str, ...]] = {
-    "proposal-writing": ("aws-pricing", "aws-knowledge"),
-    "general": ("aws-pricing", "aws-knowledge"),
+    "proposal-writing": (
+        "aws-pricing",
+        "aws-knowledge",
+        "google-developer-knowledge",
+        "gcp-cost",
+    ),
 }
 
 

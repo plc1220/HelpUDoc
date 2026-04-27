@@ -285,6 +285,45 @@ def _append_artifact_first_guidance(
     return f"{prompt.rstrip()}\n\n" + "\n".join(guidance_lines)
 
 
+_EXTERNAL_FRESHNESS_HINTS = (
+    "latest",
+    "current",
+    "today",
+    "up-to-date",
+    "up to date",
+    "as of ",
+    "verify",
+    "check",
+    "pricing",
+    "price",
+    "cost",
+    "thinking token",
+    "thinking tokens",
+    "model version",
+)
+
+
+def _should_force_tagged_files_rag_only(
+    *,
+    env_tagged_files_rag_only: bool,
+    explicit_artifact_paths: Sequence[str],
+    message_content: Sequence[Dict[str, Any]] | None,
+    preferred_mcp_server: str | None,
+    prompt_for_tagged_files: str,
+) -> bool:
+    """Keep artifact-first turns narrow, except when the user explicitly asks for fresh external checks."""
+    if env_tagged_files_rag_only:
+        return True
+    if not explicit_artifact_paths or message_content:
+        return False
+    if str(preferred_mcp_server or "").strip():
+        return False
+    lowered_prompt = str(prompt_for_tagged_files or "").strip().lower()
+    if lowered_prompt and any(marker in lowered_prompt for marker in _EXTERNAL_FRESHNESS_HINTS):
+        return False
+    return True
+
+
 class ChatRequest(BaseModel):
     message: str
     history: List[Dict[str, Any]] | None = None
@@ -788,17 +827,22 @@ def _host_datetime_context_block() -> str:
     """Wall-clock snapshot for the model; agent system prompts are cached and omit real time."""
     utc_now = datetime.now(timezone.utc)
     local_now = datetime.now().astimezone()
+    local_tz_name = local_now.tzname() or "local"
     return (
-        "[Host time — authoritative for \"today\", calendar years, deadlines, and filenames; "
-        "ignore default assumptions from training data]\n"
+        "[Host time]\n"
+        "Use this block as the authoritative current date/time for this turn. "
+        "If the user says \"today\", \"tomorrow\", \"this week\", a calendar year, a deadline, or asks for a dated filename, "
+        "use these timestamps instead of model priors.\n"
+        f"Authoritative local date: {local_now.date().isoformat()}\n"
         f"UTC: {utc_now.isoformat(timespec='seconds')}\n"
-        f"Server local: {local_now.isoformat(timespec='seconds')}"
+        f"Server local ({local_tz_name}): {local_now.isoformat(timespec='seconds')}"
     )
 
 
-def _prepend_host_datetime_to_latest_user_message(payload: List[Dict[str, Any]]) -> None:
-    """Prepend once per turn so each request carries fresh datetime without rebuilding the cached agent."""
+def _inject_host_datetime_context(payload: List[Dict[str, Any]]) -> None:
+    """Inject a fresh host-time system message and also prefix the latest user message for extra salience."""
     block = _host_datetime_context_block()
+    payload.insert(0, {"role": "system", "content": block})
     for index in range(len(payload) - 1, -1, -1):
         role = str(payload[index].get("role") or "").strip().lower()
         if role not in {"user", "human"}:
@@ -828,6 +872,7 @@ _FILE_RESULT_PATTERNS = [
     re.compile(r"Updated file (?P<path>/[^\s]+)"),
     re.compile(r"in '(?P<path>/[^']+)'"),
     re.compile(r"Appended (?P<src>/[^\s]+) to (?P<dst>/[^\s]+)"),
+    re.compile(r"Created PDF (?P<path>/[^\s]+)"),
 ]
 _DIRECTIVE_BLOCK_RE = re.compile(
     r"^\s*<<<HELPUDOC_DIRECTIVE\s*\n(?P<payload>\{.*?\})\n>>>\s*(?P<rest>[\s\S]*)$",
@@ -887,6 +932,12 @@ def _extract_output_files_from_tool_result(name: str, text: str) -> List[Dict[st
         match = _FILE_RESULT_PATTERNS[2].search(text)
         if match:
             path = match.group("dst")
+            outputs.append({"path": path.lstrip("/"), "mimeType": _infer_mime_type(path)})
+        return outputs
+    if name == "create_pdf_from_images":
+        match = _FILE_RESULT_PATTERNS[3].search(text)
+        if match:
+            path = match.group("path")
             outputs.append({"path": path.lstrip("/"), "mimeType": _infer_mime_type(path)})
         return outputs
     return outputs
@@ -1342,6 +1393,8 @@ def create_app() -> FastAPI:
             break
 
         return None, text
+
+    globals()["_extract_directive_from_text"] = _extract_directive_from_text
 
     def _build_preloaded_skill_prompt(
         runtime: AgentRuntimeState,
@@ -2137,6 +2190,8 @@ def create_app() -> FastAPI:
         context.pop("preferred_mcp_server", None)
         context.pop("tagged_files", None)
         context.pop("tagged_rag_context", None)
+        context.pop("loaded_skill_ids_this_turn", None)
+        context.pop("skill_load_attempts_this_turn", None)
         context["tagged_files_only"] = False
         context["plan_approved"] = skip_plan_approvals
         context["pre_plan_search_count"] = 0
@@ -2206,8 +2261,13 @@ def create_app() -> FastAPI:
             "y",
             "on",
         }
-        artifact_only_guidance = bool(explicit_artifact_paths) and not bool(message.messageContent)
-        tagged_files_rag_only = env_tagged_files_rag_only or artifact_only_guidance
+        tagged_files_rag_only = _should_force_tagged_files_rag_only(
+            env_tagged_files_rag_only=env_tagged_files_rag_only,
+            explicit_artifact_paths=explicit_artifact_paths,
+            message_content=message.messageContent,
+            preferred_mcp_server=str(runtime.workspace_state.context.get("preferred_mcp_server") or "").strip() or None,
+            prompt_for_tagged_files=prompt_for_tagged_files,
+        )
         runtime.workspace_state.context["tagged_files_only"] = bool(tagged_files) and tagged_files_rag_only
         if tagged_files:
             rag_context = await _prefetch_rag_context(
@@ -2224,11 +2284,16 @@ def create_app() -> FastAPI:
                             payload[index]["content"] = (
                                 _replace_content_text(
                                     payload[index].get("content"),
-                                    f"{prompt_for_tagged_files}\n\nRAG_CONTEXT:\n{rag_context}\n\nAnswer using only RAG_CONTEXT.",
+                                    (
+                                        f"{prompt_for_tagged_files}\n\nRAG_CONTEXT:\n{rag_context}\n\n"
+                                        "Use RAG_CONTEXT as the primary file-grounded source for attached artifacts. "
+                                        "If the user explicitly asks to verify current facts, pricing, dates, or model versions, "
+                                        "you may use the requested MCP server or other allowed fresh sources to validate or correct the artifact."
+                                    ),
                                 )
                             )
                             break
-        _prepend_host_datetime_to_latest_user_message(payload)
+        _inject_host_datetime_context(payload)
         return payload
 
     _ASSISTANT_ROLES = {"assistant", "ai", "aimessagechunk"}
