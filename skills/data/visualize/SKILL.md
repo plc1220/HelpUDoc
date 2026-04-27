@@ -1,8 +1,6 @@
 ---
-name: data/visualize
-description: >
-  Turn validated SQL query output into publication-quality Plotly charts. Select
-  the right chart type, apply design best practices, and produce chart artifacts.
+name: data-visualize
+description: "Turns validated SQL query output into publication-quality Plotly charts. Selects the right chart type, applies design best practices, and produces chart artifacts. Use when the user asks to create a chart, graph, visualization, plot data, or generate visual representations of query results."
 tools:
   - data_agent_tools
   - get_table_schema

@@ -1,8 +1,6 @@
 ---
-name: data/explore
-description: >
-  Profile and explore a dataset — inspect source options, schema, join keys,
-  filters, and connector choice — before writing any SQL or analysis.
+name: data-explore
+description: "Profiles and explores a dataset — inspects source options, schema, join keys, filters, and connector choice — before writing any SQL or analysis. Use when the user asks to explore a dataset, profile a table, inspect data quality, check column types, or understand a data source before running queries."
 tools:
   - data_agent_tools
   - get_table_schema
