@@ -1,10 +1,6 @@
 ---
-name: data/analyze
-description: >
-  End-to-end data analysis — from a quick metric lookup to a formal stakeholder
-  report. Combines schema discovery, SQL execution, optional visualization, and
-  an evidence-based summary. Use for general "analyze / what's happening with…"
-  requests.
+name: data-analyze
+description: "End-to-end data analysis — from a quick metric lookup to a formal stakeholder report. Combines schema discovery, SQL execution, optional visualization, and an evidence-based summary. Use when the user asks to analyze data, investigate trends, compute metrics, generate reports, or asks 'what's happening with…' questions about datasets, tables, or warehouse data."
 tools:
   - data_agent_tools
   - get_table_schema

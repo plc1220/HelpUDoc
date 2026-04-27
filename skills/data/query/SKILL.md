@@ -1,8 +1,6 @@
 ---
-name: data/query
-description: >
-  Write and refine optimized, connector-specific SQL — BigQuery or DuckDB —
-  following best practices for readability, performance, and correctness.
+name: data-query
+description: "Writes and refines optimized, connector-specific SQL — BigQuery or DuckDB — following best practices for readability, performance, and correctness. Use when the user asks to write SQL, build a query, optimize a query, or needs help with BigQuery or DuckDB syntax for data extraction and transformation."
 tools:
   - data_agent_tools
   - get_table_schema

@@ -1,8 +1,6 @@
 ---
-name: data/dashboard
-description: >
-  Assemble all charts and query results from the current analysis run into a single
-  self-contained interactive HTML dashboard artifact.
+name: data-dashboard
+description: "Assembles all charts and query results from the current analysis run into a single self-contained interactive HTML dashboard artifact. Use when the user asks to build a dashboard, create an interactive report, bundle charts into one page, or wants a shareable HTML view of their analysis results."
 tools:
   - data_agent_tools
   - get_table_schema
