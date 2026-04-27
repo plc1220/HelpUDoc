@@ -93,6 +93,34 @@ function sumDailyMetrics(
   return { traces, observations };
 }
 
+function readCountMetric(data: unknown): number {
+  const rows: Array<Record<string, unknown>> = Array.isArray((data as { data?: unknown })?.data)
+    ? ((data as { data: Array<Record<string, unknown>> }).data)
+    : Array.isArray(data)
+      ? (data as Array<Record<string, unknown>>)
+      : [];
+
+  let total = 0;
+  for (const row of rows) {
+    const raw = row.count_count ?? row.count;
+    const value = typeof raw === 'number' ? raw : Number(raw);
+    if (Number.isFinite(value)) {
+      total += value;
+    }
+  }
+  return total;
+}
+
+function buildMetricsQuery(view: 'traces' | 'observations', fromIso: string, toIso: string): string {
+  return JSON.stringify({
+    view,
+    metrics: [{ measure: 'count', aggregation: 'count' }],
+    filters: [],
+    fromTimestamp: fromIso,
+    toTimestamp: toIso,
+  });
+}
+
 /**
  * Fetches 7d aggregates and a few recent traces from Langfuse public API (self-hosted v3).
  * Uses legacy daily metrics when present; does not throw on 404/5xx.
@@ -138,14 +166,17 @@ export async function fetchLangfuseAggregates(
   if (dailyStatus === 404) {
     try {
       const v2Url = new URL('/api/public/metrics', base);
-      v2Url.searchParams.set('fromTimestamp', fromIso);
-      v2Url.searchParams.set('toTimestamp', toIso);
-      const v2 = await fetcher(v2Url.toString(), { method: 'GET', headers: commonHeaders });
-      if (v2.ok) {
-        const j = await v2.json();
-        const s = sumDailyMetrics(j);
-        traces = s.traces;
-        observations = s.observations;
+      v2Url.searchParams.set('query', buildMetricsQuery('traces', fromIso, toIso));
+      const traceMetrics = await fetcher(v2Url.toString(), { method: 'GET', headers: commonHeaders });
+      if (traceMetrics.ok) {
+        traces = readCountMetric(await traceMetrics.json());
+      }
+
+      const observationsUrl = new URL('/api/public/metrics', base);
+      observationsUrl.searchParams.set('query', buildMetricsQuery('observations', fromIso, toIso));
+      const observationMetrics = await fetcher(observationsUrl.toString(), { method: 'GET', headers: commonHeaders });
+      if (observationMetrics.ok) {
+        observations = readCountMetric(await observationMetrics.json());
       }
     } catch {
       // ignore
