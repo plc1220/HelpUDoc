@@ -4,6 +4,8 @@ description: Create a multi-section Statement of Work (SOW) proposal for data/an
 mcp_servers:
   - aws-pricing
   - aws-knowledge
+  - google-developer-knowledge
+  - gcp-cost
 ---
 
 # proposal-writing
@@ -27,9 +29,12 @@ mcp_servers:
 2. If the user explicitly wants an AWS proposal, AWS service guidance, or AWS cost detail:
    - prefer `aws-knowledge` for AWS service capabilities, implementation references, and feature availability
    - prefer `aws-pricing` for cost and SKU lookups before falling back to assumptions
-3. If search fails or times out, proceed with reasonable assumptions and label them as assumptions.
-4. Write findings to /research_context.md with write_file. Highlight specific business pains the solution addresses.
-5. Respond: Research complete. Saved to /research_context.md.
+3. If the user explicitly wants a Google Cloud / GCP proposal, Google implementation guidance, or GCP cost detail:
+   - prefer `google-developer-knowledge` for official Google Cloud, Firebase, Android, Maps, and broader Google developer documentation
+   - prefer `gcp-cost` for Google Cloud service, SKU, and pricing estimates before falling back to assumptions
+4. If search fails or times out, proceed with reasonable assumptions and label them as assumptions.
+5. Write findings to /research_context.md with write_file. Highlight specific business pains the solution addresses.
+6. Respond: Research complete. Saved to /research_context.md.
 
 ### Phase 2 - Plan
 1. Read /research_context.md.
@@ -126,6 +131,7 @@ Only run this phase if the user asked for static image outputs.
 
 ### 7) Commercials
 - Provide pricing/engagement assumptions, timeline estimate, and next steps.
+- When the proposal is GCP-specific and `gcp-cost` results are available, anchor commercials to those MCP-derived estimates and clearly label any remaining assumptions.
 - Include change-request handling and optional services.
 
 ## Critical rules

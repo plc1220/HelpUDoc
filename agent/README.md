@@ -61,6 +61,8 @@ Service URL: `http://localhost:8001`
 | `REDIS_URL` | Redis connection used by RAG worker flows. |
 | `S3_ENDPOINT`, `S3_BUCKET_NAME`, `S3_PUBLIC_BASE_URL` | Shared object storage settings for generated artifacts. |
 | `GOOGLE_WORKSPACE_MCP_URL` | Hosted Google Workspace MCP endpoint when delegated tools are enabled. |
+| `GOOGLE_DEVELOPER_KNOWLEDGE_PROJECT_ID` | Quota/billing project header used by the Google Developer Knowledge MCP endpoint. |
+| `GCP_COST_SERVICE_ACCOUNT_JSON` / `GCP_COST_SERVICE_ACCOUNT_JSON_B64` | Optional service-account JSON for `gcp-cost` when node ADC scopes are insufficient. |
 
 ## Main API surfaces
 

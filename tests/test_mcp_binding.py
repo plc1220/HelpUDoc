@@ -330,25 +330,21 @@ def test_preflight_accepts_simple_gemini_safe_tool():
     _preflight_gemini_tools([_good_tool()])
 
 
-def test_candidate_servers_only_for_general_and_proposal_skills():
+def test_candidate_servers_only_for_proposal_skill_and_preferred_server():
     assert get_candidate_mcp_servers(None) == []
     assert get_candidate_mcp_servers(None, preferred_server="google-workspace") == ["google-workspace"]
     assert get_candidate_mcp_servers({"skill_id": "research", "tools": [], "mcp_servers": []}) == []
-    assert get_candidate_mcp_servers({"skill_id": "general", "tools": [], "mcp_servers": []}) == [
-        "aws-pricing",
-        "aws-knowledge",
-    ]
     assert get_candidate_mcp_servers(
-        {"skill_id": "general", "tools": [], "mcp_servers": []},
+        {"skill_id": "research", "tools": [], "mcp_servers": []},
         preferred_server="google-workspace",
     ) == [
-        "aws-pricing",
-        "aws-knowledge",
         "google-workspace",
     ]
     assert get_candidate_mcp_servers({"skill_id": "proposal-writing", "tools": [], "mcp_servers": []}) == [
         "aws-pricing",
         "aws-knowledge",
+        "google-developer-knowledge",
+        "gcp-cost",
     ]
 
 
@@ -412,7 +408,7 @@ def test_manager_accepts_wrapped_aws_pricing_and_compatible_server(
     assert "Rejected MCP server during Gemini preflight" not in caplog.text
 
 
-def test_agent_registry_builds_runtime_with_wrapped_aws_pricing_candidate(
+def test_agent_registry_builds_runtime_with_wrapped_proposal_writing_candidates(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -470,7 +466,7 @@ def test_agent_registry_builds_runtime_with_wrapped_aws_pricing_candidate(
             "workspace-123",
             initial_context={
                 "active_skill_scope": {
-                    "skill_id": "general",
+                    "skill_id": "proposal-writing",
                     "tools": [],
                     "mcp_servers": [],
                 }
@@ -479,7 +475,10 @@ def test_agent_registry_builds_runtime_with_wrapped_aws_pricing_candidate(
     )
 
     assert runtime is not None
-    assert captured["tool_names"] == ["get_pricing", "aws___search_documentation"]
+    assert captured["tool_names"] == [
+        "get_pricing",
+        "aws___search_documentation",
+    ]
 
 
 def test_agent_registry_rebuilds_runtime_when_preferred_mcp_server_changes(

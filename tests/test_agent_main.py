@@ -109,6 +109,12 @@ class StreamingAgent:
     def __init__(self, messages):
         self._messages = messages
 
+    async def astream(self, *_args, **_kwargs):
+        accumulated = ""
+        for message in self._messages:
+            accumulated += message
+            yield {"messages": [{"role": "assistant", "content": accumulated}]}
+
     async def ainvoke(self, *_args, **_kwargs):
         return {
             "messages": [
@@ -134,6 +140,60 @@ def _collect_stream_payloads(response):
             line = line.decode("utf-8")
         payloads.append(json.loads(line))
     return payloads
+
+
+def test_host_datetime_context_is_injected_as_system_message(client_with_stubs):
+    client_with_stubs
+    import helpudoc_agent.app as app_module
+
+    payload = [{"role": "user", "content": "What is today's date?"}]
+
+    app_module._inject_host_datetime_context(payload)
+
+    assert payload[0]["role"] == "system"
+    assert "[Host time]" in payload[0]["content"]
+    assert "Authoritative local date:" in payload[0]["content"]
+    assert payload[1]["role"] == "user"
+    assert "What is today's date?" in payload[1]["content"]
+
+
+def test_tagged_file_rag_only_disabled_when_preferred_mcp_is_set(client_with_stubs):
+    client_with_stubs
+    import helpudoc_agent.app as app_module
+
+    assert app_module._should_force_tagged_files_rag_only(
+        env_tagged_files_rag_only=False,
+        explicit_artifact_paths=["/.system/derived-artifacts/doc/v1.md"],
+        message_content=None,
+        preferred_mcp_server="gcp-cost",
+        prompt_for_tagged_files="check /mcp gcp-cost if necessary",
+    ) is False
+
+
+def test_tagged_file_rag_only_disabled_for_freshness_requests(client_with_stubs):
+    client_with_stubs
+    import helpudoc_agent.app as app_module
+
+    assert app_module._should_force_tagged_files_rag_only(
+        env_tagged_files_rag_only=False,
+        explicit_artifact_paths=["/.system/derived-artifacts/doc/v1.md"],
+        message_content=None,
+        preferred_mcp_server=None,
+        prompt_for_tagged_files="review this and verify the latest Gemini pricing including thinking tokens",
+    ) is False
+
+
+def test_tagged_file_rag_only_remains_enabled_for_normal_artifact_only_turns(client_with_stubs):
+    client_with_stubs
+    import helpudoc_agent.app as app_module
+
+    assert app_module._should_force_tagged_files_rag_only(
+        env_tagged_files_rag_only=False,
+        explicit_artifact_paths=["/.system/derived-artifacts/doc/v1.md"],
+        message_content=None,
+        preferred_mcp_server=None,
+        prompt_for_tagged_files="update the attached proposal section",
+    ) is True
 
 
 def _install_dependency_stubs():
@@ -170,6 +230,19 @@ def _install_dependency_stubs():
         backends.FilesystemBackend = _FilesystemBackend
         sys.modules["deepagents.backends"] = backends
         deepagents.backends = backends
+
+        middleware_pkg = ModuleType("deepagents.middleware")
+        filesystem_middleware = ModuleType("deepagents.middleware.filesystem")
+
+        class _FilesystemMiddleware:
+            def __init__(self, *_args, **_kwargs):
+                pass
+
+        filesystem_middleware.FilesystemMiddleware = _FilesystemMiddleware
+        sys.modules["deepagents.middleware"] = middleware_pkg
+        sys.modules["deepagents.middleware.filesystem"] = filesystem_middleware
+        middleware_pkg.filesystem = filesystem_middleware
+        deepagents.middleware = middleware_pkg
 
     if "langchain" not in sys.modules:
         langchain = _ensure_module("langchain")
@@ -324,6 +397,30 @@ def _install_dependency_stubs():
         sys.modules["redis.asyncio"] = redis_asyncio
         redis_pkg.asyncio = redis_asyncio
 
+    if "paper2slides" not in sys.modules:
+        paper2slides_pkg = _ensure_module("paper2slides")
+    else:
+        paper2slides_pkg = sys.modules["paper2slides"]
+
+    if "paper2slides.raganything" not in sys.modules:
+        raganything_pkg = ModuleType("paper2slides.raganything")
+        raganything_pkg.__dict__.setdefault("__path__", [])
+        sys.modules["paper2slides.raganything"] = raganything_pkg
+        paper2slides_pkg.raganything = raganything_pkg
+    else:
+        raganything_pkg = sys.modules["paper2slides.raganything"]
+
+    if "paper2slides.raganything.parser" not in sys.modules:
+        rag_parser = ModuleType("paper2slides.raganything.parser")
+
+        class _DoclingParser:
+            def __init__(self, *_args, **_kwargs):
+                pass
+
+        rag_parser.DoclingParser = _DoclingParser
+        sys.modules["paper2slides.raganything.parser"] = rag_parser
+        raganything_pkg.parser = rag_parser
+
 
 @pytest.fixture
 def client_with_stubs(monkeypatch):
@@ -336,6 +433,9 @@ def client_with_stubs(monkeypatch):
     saved_modules = {name: sys.modules.pop(name, None) for name in module_names}
 
     _install_dependency_stubs()
+    monkeypatch.setenv("RAG_PARSER_PIPELINE", "stub")
+    monkeypatch.setenv("RAGANYTHING_PARSER", "stub")
+    monkeypatch.setenv("PARSER_ENRICHMENT_MODE", "stub")
 
     graph_stub = ModuleType("helpudoc_agent.graph")
     graph_stub.AgentRegistry = RegistryStub

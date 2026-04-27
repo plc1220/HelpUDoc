@@ -160,6 +160,24 @@ spec:
                   name: helpudoc-config
                   key: GOOGLE_WORKSPACE_MCP_URL
                   optional: true
+            - name: GOOGLE_DEVELOPER_KNOWLEDGE_PROJECT_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: GOOGLE_DEVELOPER_KNOWLEDGE_PROJECT_ID
+                  optional: true
+            - name: GCP_COST_SERVICE_ACCOUNT_JSON
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: GCP_COST_SERVICE_ACCOUNT_JSON
+                  optional: true
+            - name: GCP_COST_SERVICE_ACCOUNT_JSON_B64
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: GCP_COST_SERVICE_ACCOUNT_JSON_B64
+                  optional: true
             - name: OAUTH_TOKEN_ENCRYPTION_KEY
               valueFrom:
                 secretKeyRef:
@@ -316,6 +334,24 @@ spec:
                 configMapKeyRef:
                   name: helpudoc-config
                   key: GOOGLE_WORKSPACE_MCP_URL
+                  optional: true
+            - name: GOOGLE_DEVELOPER_KNOWLEDGE_PROJECT_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: GOOGLE_DEVELOPER_KNOWLEDGE_PROJECT_ID
+                  optional: true
+            - name: GCP_COST_SERVICE_ACCOUNT_JSON
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: GCP_COST_SERVICE_ACCOUNT_JSON
+                  optional: true
+            - name: GCP_COST_SERVICE_ACCOUNT_JSON_B64
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: GCP_COST_SERVICE_ACCOUNT_JSON_B64
                   optional: true
             - name: OAUTH_TOKEN_ENCRYPTION_KEY
               valueFrom:

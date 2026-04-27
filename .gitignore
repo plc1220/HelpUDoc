@@ -16,6 +16,7 @@ Thumbs.db
 *.swp
 .vscode/
 .idea/
+.cursor/
 .venv/
 agent/.venv/
 licheng_accessKeys.csv
@@ -42,3 +43,6 @@ rag_storage/
 .cgcignore
 mcp.json
 .gstack/
+.codex/
+graphify-out/
+AGENTS.md

@@ -97,6 +97,10 @@ def _non_null_anyof_members(raw_schema: Dict[str, Any]) -> List[Dict[str, Any]]:
     return results
 
 
+def _has_union_schema(schema: Dict[str, Any]) -> bool:
+    return any(isinstance(schema.get(key), list) for key in ("anyOf", "oneOf", "any_of", "one_of"))
+
+
 def _validate_gemini_schema_pair(
     raw_schema: Dict[str, Any],
     converted_schema: Dict[str, Any],
@@ -104,11 +108,15 @@ def _validate_gemini_schema_pair(
     path: str = "parameters",
 ) -> None:
     converted_type = _schema_type_name(converted_schema.get("type_"))
-    if converted_type == "array" and not isinstance(converted_schema.get("items"), dict):
+    if (
+        converted_type == "array"
+        and not isinstance(converted_schema.get("items"), dict)
+        and not (_has_union_schema(raw_schema) or _has_union_schema(converted_schema))
+    ):
         raise ValueError(f"{path}.items missing after Gemini conversion")
 
     non_null_members = _non_null_anyof_members(raw_schema)
-    if len(non_null_members) > 1 and converted_type in {"array", "object"}:
+    if len(non_null_members) > 1 and converted_type in {"array", "object"} and not _has_union_schema(converted_schema):
         has_scalar_member = any(member.get("type") in {"string", "number", "integer", "boolean"} for member in non_null_members)
         has_complex_member = any(member.get("type") in {"array", "object"} for member in non_null_members)
         if has_scalar_member and has_complex_member:
@@ -155,6 +163,8 @@ def _validate_gemini_schema_pair(
     raw_items = raw_schema.get("items")
     converted_items = converted_schema.get("items")
     if isinstance(raw_items, dict):
+        if _has_union_schema(converted_schema):
+            return
         if not isinstance(converted_items, dict):
             raise ValueError(f"{path}.items missing after Gemini conversion")
         _validate_gemini_schema_pair(raw_items, converted_items, path=f"{path}.items")

@@ -51,6 +51,11 @@ GENERAL_SYSTEM_PROMPT = (
     "Only proceed with side-effecting tools after approval (or after applying user edits). "
     "Reply in chat with brief status updates, not full sections. "
     "If no skill applies, proceed with best-effort behavior. "
+    "Treat attached files, derived artifacts, and prior workspace documents as grounded project context, "
+    "but not as authoritative sources for facts that may have changed recently. "
+    "When the user asks for the latest/current model version, pricing, dates, schedules, or other time-sensitive facts, "
+    "verify them with allowed fresh sources such as the requested MCP server, official documentation, or web search instead of repeating stale artifact text. "
+    "If fresh sources disagree with an attached artifact, say so clearly and prefer the verified fresh source for the answer. "
     "When the user message begins with a [Host time] block, treat those timestamps as authoritative for "
     "\"today\", calendar years, deadlines, and filenames—do not assume an older year from training data."
 )

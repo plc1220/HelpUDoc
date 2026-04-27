@@ -84,6 +84,14 @@ mcp_servers:
     default_access: allow
     url: ${GOOGLE_WORKSPACE_MCP_URL}
     delegatedAuthProvider: google
+  - name: google-developer-knowledge
+    transport: http
+    default_access: allow
+    url: https://developerknowledge.googleapis.com/mcp
+    delegated_auth_provider: google
+    headers_from_env:
+      X-goog-user-project: GOOGLE_DEVELOPER_KNOWLEDGE_PROJECT_ID
+    description: Official Google Developer Knowledge MCP endpoint for grounded Google documentation retrieval
   - name: aws-pricing
     transport: http
     default_access: allow
@@ -94,3 +102,14 @@ mcp_servers:
     default_access: allow
     url: https://knowledge-mcp.global.api.aws
     description: Hosted AWS Knowledge MCP endpoint
+  - name: gcp-cost
+    transport: stdio
+    default_access: allow
+    command: /usr/local/bin/gcp-cost-mcp-wrapper
+    env_passthrough:
+      - GOOGLE_APPLICATION_CREDENTIALS
+      - GOOGLE_CLOUD_PROJECT
+      - GOOGLE_CLOUD_QUOTA_PROJECT
+      - GCP_COST_SERVICE_ACCOUNT_JSON
+      - GCP_COST_SERVICE_ACCOUNT_JSON_B64
+    description: GCP Cost MCP server for Google Cloud pricing and cost estimation via the Cloud Billing Catalog API
