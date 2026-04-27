@@ -39,15 +39,15 @@ tools:
   - name: export_bigquery_query
     kind: builtin
     description: Export read-only BigQuery query results to workspace CSV or Parquet
+  - name: create_pdf_from_images
+    kind: builtin
+    description: Create a multi-page PDF from workspace image files
   - name: data_agent_tools
     entrypoint: helpudoc_agent.data_agent_tools:build_data_agent_tools
     description: Tools for Data Agent (DuckDB, Charts)
   - name: arxiv_search
     entrypoint: helpudoc_agent.arxiv_tools:build_arxiv_tools
     description: Search arXiv and summarize relevant papers
-  - name: run_skill_python_script
-    entrypoint: helpudoc_agent.skill_script_tools:build_skill_script_tools
-    description: Restricted Python script runner for active skill scripts
   - name: get_image_url
     kind: builtin
     description: Get public URLs for images stored in MinIO/S3

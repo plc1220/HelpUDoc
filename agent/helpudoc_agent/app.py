@@ -828,6 +828,7 @@ _FILE_RESULT_PATTERNS = [
     re.compile(r"Updated file (?P<path>/[^\s]+)"),
     re.compile(r"in '(?P<path>/[^']+)'"),
     re.compile(r"Appended (?P<src>/[^\s]+) to (?P<dst>/[^\s]+)"),
+    re.compile(r"Created PDF (?P<path>/[^\s]+)"),
 ]
 _DIRECTIVE_BLOCK_RE = re.compile(
     r"^\s*<<<HELPUDOC_DIRECTIVE\s*\n(?P<payload>\{.*?\})\n>>>\s*(?P<rest>[\s\S]*)$",
@@ -887,6 +888,12 @@ def _extract_output_files_from_tool_result(name: str, text: str) -> List[Dict[st
         match = _FILE_RESULT_PATTERNS[2].search(text)
         if match:
             path = match.group("dst")
+            outputs.append({"path": path.lstrip("/"), "mimeType": _infer_mime_type(path)})
+        return outputs
+    if name == "create_pdf_from_images":
+        match = _FILE_RESULT_PATTERNS[3].search(text)
+        if match:
+            path = match.group("path")
             outputs.append({"path": path.lstrip("/"), "mimeType": _infer_mime_type(path)})
         return outputs
     return outputs
@@ -2137,6 +2144,8 @@ def create_app() -> FastAPI:
         context.pop("preferred_mcp_server", None)
         context.pop("tagged_files", None)
         context.pop("tagged_rag_context", None)
+        context.pop("loaded_skill_ids_this_turn", None)
+        context.pop("skill_load_attempts_this_turn", None)
         context["tagged_files_only"] = False
         context["plan_approved"] = skip_plan_approvals
         context["pre_plan_search_count"] = 0

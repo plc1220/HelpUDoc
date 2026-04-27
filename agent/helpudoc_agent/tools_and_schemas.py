@@ -44,6 +44,9 @@ from .utils import SourceTracker, extract_web_url
 
 logger = logging.getLogger(__name__)
 
+_MAX_SKILL_LOAD_ATTEMPTS_PER_TURN = 8
+_MAX_DISTINCT_SKILLS_PER_TURN = 3
+
 
 class MissingToolBuilderError(RuntimeError):
     """Raised when a configured tool builder cannot be loaded."""
@@ -255,6 +258,7 @@ class ToolFactory:
             "google_grounded_search": self._build_google_grounded_search_tool,
             "export_bigquery_query": self._build_export_bigquery_query_tool,
             "append_to_report": self._build_append_to_report_tool,
+            "create_pdf_from_images": self._build_create_pdf_from_images_tool,
             "get_image_url": self._build_get_image_url_tool,
             "rag_query": self._build_rag_query_tool,
             "list_skills": self._build_list_skills_tool,
@@ -385,6 +389,27 @@ class ToolFactory:
             if skill is not None:
                 if not is_skill_allowed(skill, workspace_state.context):
                     return f"Skill '{skill.skill_id}' is not allowed for this user."
+
+                attempts = int(workspace_state.context.get("skill_load_attempts_this_turn") or 0) + 1
+                workspace_state.context["skill_load_attempts_this_turn"] = attempts
+                if attempts > _MAX_SKILL_LOAD_ATTEMPTS_PER_TURN:
+                    return (
+                        "Skill load limit reached for this user turn. "
+                        "Stop loading skills and either use the active skill's tools or ask for clarification."
+                    )
+
+                loaded = workspace_state.context.get("loaded_skill_ids_this_turn")
+                loaded_ids = [str(item).strip() for item in loaded] if isinstance(loaded, list) else []
+                if skill.skill_id not in loaded_ids:
+                    if len(loaded_ids) >= _MAX_DISTINCT_SKILLS_PER_TURN:
+                        return (
+                            "Skill switch limit reached for this user turn. "
+                            f"Already loaded: {', '.join(loaded_ids)}. "
+                            "Continue with the active skill or ask for clarification."
+                        )
+                    loaded_ids.append(skill.skill_id)
+                    workspace_state.context["loaded_skill_ids_this_turn"] = loaded_ids
+
                 try:
                     content = read_skill_content(skill)
                 except Exception as exc:  # pragma: no cover - filesystem guard
@@ -831,6 +856,123 @@ class ToolFactory:
         append_to_report.name = "append_to_report"
         append_to_report.description = "Stitch a generated section into the final proposal."
         return append_to_report
+
+    def _build_create_pdf_from_images_tool(self, workspace_state: WorkspaceState) -> Tool:
+        """Create a multi-page PDF from workspace images."""
+        root = workspace_state.root_path.resolve()
+
+        def _is_inside_workspace(path_obj: Path) -> bool:
+            return path_obj == root or root in path_obj.parents
+
+        def _display(path_obj: Path) -> str:
+            try:
+                return "/" + path_obj.relative_to(root).as_posix()
+            except ValueError:
+                return str(path_obj)
+
+        def _resolve_output(path_str: str) -> Path:
+            normalized = str(path_str or "").strip() or "stitched_images.pdf"
+            if not normalized.lower().endswith(".pdf"):
+                normalized += ".pdf"
+            candidate = (root / normalized.lstrip("/")).resolve()
+            if not _is_inside_workspace(candidate):
+                raise ValueError("Output path must remain inside the workspace")
+            return candidate
+
+        def _resolve_image(path_str: str) -> Path:
+            raw = str(path_str or "").strip().replace("\\", "/")
+            if not raw:
+                raise ValueError("Image path cannot be empty")
+
+            candidates: list[Path] = []
+            raw_path = Path(raw)
+            if raw_path.is_absolute():
+                candidates.append(raw_path)
+            candidates.append(root / raw.lstrip("/"))
+
+            for candidate in candidates:
+                resolved = candidate.resolve()
+                if _is_inside_workspace(resolved) and resolved.is_file():
+                    return resolved
+
+            matches = [path for path in root.rglob("*") if path.is_file() and path.name == raw]
+            if not matches:
+                needle = raw.lower()
+                matches = [path for path in root.rglob("*") if path.is_file() and needle in path.name.lower()]
+            if len(matches) == 1:
+                return matches[0].resolve()
+            if len(matches) > 1:
+                options = ", ".join(_display(match) for match in matches[:8])
+                raise ValueError(f"Image path '{raw}' is ambiguous. Matches: {options}")
+            raise ValueError(f"Image file '{raw}' not found in the workspace")
+
+        def _page_size_points(page_size: str, width: int, height: int) -> tuple[float, float]:
+            normalized = (page_size or "image").strip().lower()
+            if normalized in {"a4", "a4_portrait"}:
+                return 595.2756, 841.8898
+            if normalized in {"letter", "us-letter"}:
+                return 612.0, 792.0
+            if normalized in {"image", "auto", "source"}:
+                return float(width), float(height)
+            raise ValueError("page_size must be one of: image, auto, A4, letter")
+
+        @tool
+        def create_pdf_from_images(
+            image_paths: List[str],
+            output_path: str = "/stitched_images.pdf",
+            page_size: str = "image",
+            fit_mode: str = "contain",
+        ) -> str:
+            """Create a multi-page PDF with one workspace image per page."""
+            blocked = tagged_files_mode_guard(workspace_state.context, "create_pdf_from_images")
+            if blocked:
+                return blocked
+            if not image_paths:
+                return "No image paths provided."
+
+            try:
+                output = _resolve_output(output_path)
+                resolved_images = [_resolve_image(path) for path in image_paths]
+                normalized_fit = (fit_mode or "contain").strip().lower()
+                if normalized_fit not in {"contain", "cover", "stretch"}:
+                    return "fit_mode must be one of: contain, cover, stretch"
+
+                import fitz  # PyMuPDF
+
+                doc = fitz.open()
+                for image_path in resolved_images:
+                    with Image.open(image_path) as img:
+                        width, height = img.size
+                    page_width, page_height = _page_size_points(page_size, width, height)
+                    page = doc.new_page(width=page_width, height=page_height)
+
+                    if normalized_fit == "stretch":
+                        rect = fitz.Rect(0, 0, page_width, page_height)
+                    else:
+                        scale = min(page_width / width, page_height / height)
+                        if normalized_fit == "cover":
+                            scale = max(page_width / width, page_height / height)
+                        draw_width = width * scale
+                        draw_height = height * scale
+                        left = (page_width - draw_width) / 2
+                        top = (page_height - draw_height) / 2
+                        rect = fitz.Rect(left, top, left + draw_width, top + draw_height)
+                    page.insert_image(rect, filename=str(image_path), keep_proportion=normalized_fit != "stretch")
+
+                output.parent.mkdir(parents=True, exist_ok=True)
+                doc.save(output)
+                doc.close()
+            except Exception as exc:
+                return f"Error creating PDF: {exc}"
+
+            image_list = ", ".join(_display(path) for path in resolved_images)
+            return f"Created PDF {_display(output)} with {len(resolved_images)} pages from: {image_list}"
+
+        create_pdf_from_images.name = "create_pdf_from_images"
+        create_pdf_from_images.description = (
+            "Create a multi-page PDF from workspace image files, preserving the supplied image order."
+        )
+        return create_pdf_from_images
 
     def _build_get_image_url_tool(self, workspace_state: WorkspaceState) -> Tool:
         """Get public URLs for images stored in MinIO/S3."""
