@@ -7,6 +7,11 @@ import crypto from 'crypto';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import { existsSync } from 'fs';
 import type { WorkspaceService } from '../services/workspaceService';
+import type { DatabaseService } from '../services/databaseService';
+import type { UserService } from '../services/userService';
+import { buildWorkspaceOverview } from '../services/workspaceOverviewService';
+import { fetchLangfuseAggregates } from '../services/langfuseClient';
+import { collectSkillIds } from '../lib/skillsRegistry';
 import { HttpError } from '../errors';
 import { resolveWorkspaceRoot } from '../config/workspaceRoot';
 import {
@@ -282,24 +287,6 @@ function resolveSkillDir(id: string) {
     throw new Error('Invalid skill id');
   }
   return path.join(skillsRoot, normalizedId);
-}
-
-async function collectSkillIds(rootDir: string, relativeDir = ''): Promise<string[]> {
-  const entries = await fs.readdir(rootDir, { withFileTypes: true });
-  let ids: string[] = [];
-
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-    const relPath = relativeDir ? path.posix.join(relativeDir, entry.name) : entry.name;
-    const fullPath = path.join(rootDir, entry.name);
-    const skillFile = path.join(fullPath, 'SKILL.md');
-    if (await pathExists(skillFile)) {
-      ids.push(relPath);
-    }
-    ids = ids.concat(await collectSkillIds(fullPath, relPath));
-  }
-
-  return ids.sort((a, b) => a.localeCompare(b));
 }
 
 function isAllowedActionPath(relativePath: string, prefixes = ACTION_ALLOWED_PREFIXES): boolean {
@@ -609,8 +596,29 @@ function extractActionsFromText(text: string): unknown[] {
   throw new Error('No actions array found in input text');
 }
 
-export default function settingsRoutes(_workspaceService: WorkspaceService) {
+export default function settingsRoutes(
+  _workspaceService: WorkspaceService,
+  userService: UserService,
+  databaseService: DatabaseService,
+) {
   const router = Router();
+
+  router.get('/workspace-overview', async (_req, res) => {
+    try {
+      const body = await buildWorkspaceOverview({
+        db: databaseService.getDb(),
+        userService,
+        skillsRoot,
+        nodeEnv: process.env.NODE_ENV,
+        fetchLangfuse: fetchLangfuseAggregates,
+        now: () => Date.now(),
+      });
+      res.json(body);
+    } catch (error) {
+      console.error('Failed to load workspace overview', error);
+      res.status(500).json({ error: 'Failed to load workspace overview' });
+    }
+  });
 
   router.get('/agent-config', async (_req, res) => {
     try {

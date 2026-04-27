@@ -115,6 +115,48 @@ const unwrapError = async (response: Response, fallback: string) => {
   throw new Error(message);
 };
 
+export type WorkspaceOverviewActivityItem = {
+  source: 'app' | 'langfuse';
+  id: string;
+  title: string;
+  meta: string;
+  at: string;
+};
+
+export type WorkspaceOverview = {
+  skills: { count: number };
+  users: { total: number; messaged24h: number };
+  langfuse: {
+    available: boolean;
+    configured: boolean;
+    publicUrl: string | null;
+    error?: string;
+    traces7d: number;
+    observations7d: number;
+    recentTraces: Array<{ id: string; name?: string | null; timestamp?: string | null }>;
+  };
+  activity: { items: WorkspaceOverviewActivityItem[] };
+  focus: Array<{
+    title: string;
+    description: string;
+    to: string;
+    action: string;
+  }>;
+};
+
+export const fetchWorkspaceOverview = async (): Promise<WorkspaceOverview> => {
+  const response = await apiFetch(`${API_URL}/settings/workspace-overview`);
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    const apiError = typeof data.error === 'string' ? data.error : '';
+    if (response.status === 401 || response.status === 403 || /admin access required/i.test(apiError)) {
+      throw new Error('Admin access required to open Settings.');
+    }
+    throw new Error(apiError || 'Failed to load workspace overview');
+  }
+  return response.json() as Promise<WorkspaceOverview>;
+};
+
 export const fetchAgentConfig = async (): Promise<string> => {
   const response = await apiFetch(`${API_URL}/settings/agent-config`);
   if (!response.ok) {

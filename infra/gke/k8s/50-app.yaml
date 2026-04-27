@@ -383,6 +383,12 @@ spec:
                   name: helpudoc-secrets
                   key: LANGFUSE_SECRET_KEY
                   optional: true
+            - name: LANGFUSE_NEXTAUTH_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: LANGFUSE_NEXTAUTH_URL
+                  optional: true
           volumeMounts:
             - name: workspace-data
               mountPath: /app/workspaces

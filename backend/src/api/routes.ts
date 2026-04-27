@@ -45,7 +45,7 @@ export default function(dbService: DatabaseService, userService: UserService) {
 
   router.use('/auth', authRoutes(userService, googleOAuthService));
   router.use('/agent', agentRoutes(workspaceService, fileService, googleOAuthService, userService));
-  router.use('/settings', requireSystemAdmin(userService), settingsRoutes(workspaceService));
+  router.use('/settings', requireSystemAdmin(userService), settingsRoutes(workspaceService, userService, dbService));
   router.use('/users', requireSystemAdmin(userService), usersRoutes(userService, workspaceService));
   router.use('/workspaces', workspaceRoutes(workspaceService, userService));
   router.use('/workspaces/:workspaceId/attachments', attachmentRoutes(workspaceService, attachmentPrepJobService));
