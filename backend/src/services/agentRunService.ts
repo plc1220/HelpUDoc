@@ -8,6 +8,7 @@ import {
   resumeAgentResponseStream,
   type AgentDecision,
   type AgentMessageContentBlock,
+  type AgentTraceContext,
   type AgentInterruptActionResponse,
   type AgentInterruptResponse,
   type AgentHistoryEntry,
@@ -26,6 +27,7 @@ type StartRunParams = {
   workspaceId: string;
   persona: string;
   prompt: string;
+  userId?: string;
   history?: AgentHistoryEntry[];
   forceReset?: boolean;
   turnId?: string;
@@ -92,6 +94,7 @@ type PersistedRunContext = {
   workspaceId: string;
   persona: string;
   prompt: string;
+  userId?: string;
   history?: AgentHistoryEntry[];
   forceReset?: boolean;
   turnId?: string;
@@ -329,6 +332,7 @@ const serializeRunContext = (params: StartRunParams): string =>
     workspaceId: params.workspaceId,
     persona: params.persona,
     prompt: params.prompt,
+    userId: params.userId,
     history: params.history,
     forceReset: params.forceReset,
     turnId: params.turnId,
@@ -357,6 +361,7 @@ const parseRunContext = (raw: string | undefined): RunContext | undefined => {
         workspaceId: parsed.workspaceId,
         persona: parsed.persona,
         prompt: parsed.prompt,
+        userId: typeof parsed.userId === 'string' ? parsed.userId : undefined,
         history: Array.isArray(parsed.history) ? parsed.history : undefined,
         forceReset: typeof parsed.forceReset === 'boolean' ? parsed.forceReset : undefined,
         turnId: typeof parsed.turnId === 'string' ? parsed.turnId : undefined,
@@ -497,6 +502,13 @@ async function runAgentRunWorker(
 ) {
   const controller = new AbortController();
   runAbortControllers.set(runId, controller);
+  const traceContext: AgentTraceContext = {
+    runId,
+    turnId: params.turnId,
+    userId: params.userId,
+    workspaceId: params.workspaceId,
+    persona: params.persona,
+  };
 
   if (DEBUG_AGENT_RUN_STREAM) {
     console.info('[agent-run-stream] start', {
@@ -645,16 +657,19 @@ async function runAgentRunWorker(
       ? await resumeAgentStream(params.persona, params.workspaceId, resumePayload.decisions, {
           signal: controller.signal,
           authToken: params.authToken,
+          traceContext,
         })
       : resumePayload && 'response' in resumePayload && resumePayload.response
       ? await resumeAgentResponseStream(params.persona, params.workspaceId, resumePayload.response, {
           signal: controller.signal,
           authToken: params.authToken,
+          traceContext,
         })
       : resumePayload && 'action' in resumePayload && resumePayload.action
       ? await resumeAgentActionStream(params.persona, params.workspaceId, resumePayload.action, {
           signal: controller.signal,
           authToken: params.authToken,
+          traceContext,
         })
       : await runAgentStream(params.persona, params.workspaceId, params.prompt, params.history, {
           forceReset: params.forceReset,
@@ -662,6 +677,7 @@ async function runAgentRunWorker(
           authToken: params.authToken,
           fileContextRefs: params.fileContextRefs,
           messageContent: params.messageContent,
+          traceContext,
         });
     upstream = response.data;
     upstream.on('data', (chunk: Buffer) => {

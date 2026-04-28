@@ -772,6 +772,11 @@ export default function(
         authToken: authToken || undefined,
         fileContextRefs,
         messageContent,
+        traceContext: {
+          userId: user.userId,
+          workspaceId,
+          persona,
+        },
       });
       res.json(response);
     } catch (error: any) {
@@ -825,6 +830,11 @@ export default function(
         authToken: authToken || undefined,
         fileContextRefs,
         messageContent,
+        traceContext: {
+          userId: user.userId,
+          workspaceId,
+          persona,
+        },
       });
       res.setHeader('Content-Type', 'application/jsonl');
       streamResponse.data.on('data', (chunk: Buffer) => {
@@ -884,6 +894,7 @@ export default function(
         persona,
         workspaceId,
         prompt: enrichedPrompt,
+        userId: user.userId,
         history,
         forceReset,
         turnId,

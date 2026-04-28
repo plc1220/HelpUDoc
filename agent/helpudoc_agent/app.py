@@ -330,6 +330,7 @@ class ChatRequest(BaseModel):
     forceReset: bool = False
     fileContextRefs: List[Dict[str, Any]] | None = None
     messageContent: List[Dict[str, Any]] | None = None
+    langfuseTraceContext: Dict[str, Any] | None = None
 
 
 class ChatResponse(BaseModel):
@@ -349,6 +350,7 @@ class Decision(BaseModel):
 
 class ResumeChatRequest(BaseModel):
     decisions: List[Decision]
+    langfuseTraceContext: Dict[str, Any] | None = None
 
 
 class InterruptResponseRequest(BaseModel):
@@ -356,6 +358,7 @@ class InterruptResponseRequest(BaseModel):
     selectedChoiceIds: List[str] = Field(default_factory=list)
     selectedValues: List[str] = Field(default_factory=list)
     answersByQuestionId: Dict[str, str | List[str]] = Field(default_factory=dict)
+    langfuseTraceContext: Dict[str, Any] | None = None
 
 
 class InterruptAction(BaseModel):
@@ -367,6 +370,7 @@ class InterruptAction(BaseModel):
 
 class InterruptActionRequest(BaseModel):
     action: InterruptAction
+    langfuseTraceContext: Dict[str, Any] | None = None
 
 
 class AttachmentUnderstandingRequest(BaseModel):
@@ -1766,9 +1770,73 @@ def create_app() -> FastAPI:
             context["thread_id"] = thread_id
         return context["thread_id"]
 
+    def _clean_langfuse_value(value: Any) -> Optional[str]:
+        if not isinstance(value, str):
+            return None
+        cleaned = value.strip()
+        return cleaned or None
+
+    def _safe_langfuse_tag(prefix: str, value: Any) -> Optional[str]:
+        cleaned = _clean_langfuse_value(value)
+        if not cleaned:
+            return None
+        normalized = re.sub(r"[^A-Za-z0-9_.:-]+", "-", cleaned).strip("-")
+        if not normalized:
+            return None
+        return f"{prefix}:{normalized[:96]}"
+
+    def _build_langfuse_metadata(
+        runtime: AgentRuntimeState,
+        message: ChatRequest,
+        thread_id: str,
+    ) -> Tuple[Dict[str, Any], List[str]]:
+        context = getattr(runtime.workspace_state, "context", None)
+        context = context if isinstance(context, dict) else {}
+        trace_context = message.langfuseTraceContext if isinstance(message.langfuseTraceContext, dict) else {}
+        user_id = (
+            _clean_langfuse_value(trace_context.get("userId"))
+            or _clean_langfuse_value(context.get("user_id"))
+        )
+        run_id = _clean_langfuse_value(trace_context.get("runId"))
+        turn_id = _clean_langfuse_value(trace_context.get("turnId"))
+        workspace_id = (
+            _clean_langfuse_value(trace_context.get("workspaceId"))
+            or _clean_langfuse_value(runtime.workspace_state.workspace_id)
+        )
+        persona = _clean_langfuse_value(trace_context.get("persona")) or _clean_langfuse_value(runtime.agent_name)
+
+        metadata: Dict[str, Any] = {
+            "langfuse_session_id": thread_id,
+            "helpudoc_workspace_id": workspace_id,
+            "helpudoc_agent": persona,
+            "helpudoc_force_reset": bool(message.forceReset),
+        }
+        if user_id:
+            metadata["langfuse_user_id"] = user_id
+        if run_id:
+            metadata["helpudoc_run_id"] = run_id
+        if turn_id:
+            metadata["helpudoc_turn_id"] = turn_id
+
+        tags = [
+            "helpudoc",
+            _safe_langfuse_tag("workspace", workspace_id),
+            _safe_langfuse_tag("agent", persona),
+        ]
+        if message.forceReset:
+            tags.append("force-reset")
+        return metadata, [tag for tag in tags if tag]
+
     def _build_agent_config(runtime: AgentRuntimeState, message: ChatRequest, callbacks=None) -> Dict[str, Any]:
         thread_id = _get_thread_id(runtime, message.forceReset)
-        config: Dict[str, Any] = {"configurable": {"thread_id": thread_id}}
+        metadata, tags = _build_langfuse_metadata(runtime, message, thread_id)
+        trace_name = f"helpudoc.{runtime.agent_name}"
+        config: Dict[str, Any] = {
+            "configurable": {"thread_id": thread_id},
+            "metadata": metadata,
+            "tags": tags,
+            "run_name": trace_name,
+        }
         if callbacks:
             config["callbacks"] = callbacks
         return config
@@ -2501,7 +2569,12 @@ def create_app() -> FastAPI:
                 decisions_payload.append(item.model_dump(exclude_none=True))  # type: ignore[attr-defined]
             else:
                 decisions_payload.append(item.dict(exclude_none=True))  # type: ignore[attr-defined]
-        placeholder = ChatRequest(message="", history=None, forceReset=False)
+        placeholder = ChatRequest(
+            message="",
+            history=None,
+            forceReset=False,
+            langfuseTraceContext=resume_request.langfuseTraceContext,
+        )
         stream = _stream_agent_response(runtime, placeholder, resume_decisions=decisions_payload)
         return StreamingResponse(stream, media_type="application/jsonl")
 
@@ -2519,10 +2592,15 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
         if hasattr(response_request, "model_dump"):
-            response_payload = response_request.model_dump(exclude_none=True)  # type: ignore[attr-defined]
+            response_payload = response_request.model_dump(exclude_none=True, exclude={"langfuseTraceContext"})  # type: ignore[attr-defined]
         else:
-            response_payload = response_request.dict(exclude_none=True)  # type: ignore[attr-defined]
-        placeholder = ChatRequest(message="", history=None, forceReset=False)
+            response_payload = response_request.dict(exclude_none=True, exclude={"langfuseTraceContext"})  # type: ignore[attr-defined]
+        placeholder = ChatRequest(
+            message="",
+            history=None,
+            forceReset=False,
+            langfuseTraceContext=response_request.langfuseTraceContext,
+        )
         stream = _stream_agent_response(runtime, placeholder, resume_value=response_payload)
         return StreamingResponse(stream, media_type="application/jsonl")
 
@@ -2540,10 +2618,15 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
         if hasattr(action_request, "model_dump"):
-            action_payload = action_request.model_dump(exclude_none=True)  # type: ignore[attr-defined]
+            action_payload = action_request.model_dump(exclude_none=True, exclude={"langfuseTraceContext"})  # type: ignore[attr-defined]
         else:
-            action_payload = action_request.dict(exclude_none=True)  # type: ignore[attr-defined]
-        placeholder = ChatRequest(message="", history=None, forceReset=False)
+            action_payload = action_request.dict(exclude_none=True, exclude={"langfuseTraceContext"})  # type: ignore[attr-defined]
+        placeholder = ChatRequest(
+            message="",
+            history=None,
+            forceReset=False,
+            langfuseTraceContext=action_request.langfuseTraceContext,
+        )
         stream = _stream_agent_response(runtime, placeholder, resume_value=action_payload)
         return StreamingResponse(stream, media_type="application/jsonl")
 
