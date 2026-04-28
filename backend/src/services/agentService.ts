@@ -29,6 +29,14 @@ export type AgentMessageContentBlock = {
   [key: string]: unknown;
 };
 
+export type AgentTraceContext = {
+  runId?: string;
+  turnId?: string;
+  userId?: string;
+  workspaceId?: string;
+  persona?: string;
+};
+
 export type AgentDecision = {
   type: 'approve' | 'edit' | 'reject';
   edited_action?: { name: string; args: Record<string, unknown> };
@@ -59,6 +67,7 @@ type RunAgentOptions = {
   authToken?: string;
   fileContextRefs?: FileContextRef[];
   messageContent?: AgentMessageContentBlock[];
+  traceContext?: AgentTraceContext;
 };
 
 export type AttachmentUnderstandingPayload = {
@@ -109,6 +118,9 @@ export async function runAgent(
   if (options?.messageContent?.length) {
     payload.messageContent = options.messageContent;
   }
+  if (options?.traceContext) {
+    payload.langfuseTraceContext = options.traceContext;
+  }
 
   const headers: Record<string, string> = {};
   if (options?.authToken) {
@@ -141,6 +153,9 @@ export async function runAgentStream(
   if (options?.messageContent?.length) {
     payload.messageContent = options.messageContent;
   }
+  if (options?.traceContext) {
+    payload.langfuseTraceContext = options.traceContext;
+  }
 
   const headers: Record<string, string> = {};
   if (options?.authToken) {
@@ -163,9 +178,13 @@ export async function resumeAgentStream(
   if (options?.authToken) {
     headers.Authorization = `Bearer ${options.authToken}`;
   }
+  const payload: Record<string, unknown> = { decisions };
+  if (options?.traceContext) {
+    payload.langfuseTraceContext = options.traceContext;
+  }
   return client.post(
     `/agents/${persona}/workspace/${workspaceId}/chat/stream/resume`,
-    { decisions },
+    payload,
     {
       responseType: "stream",
       signal: options?.signal,
@@ -184,9 +203,13 @@ export async function resumeAgentResponseStream(
   if (options?.authToken) {
     headers.Authorization = `Bearer ${options.authToken}`;
   }
+  const payload: Record<string, unknown> = { ...response };
+  if (options?.traceContext) {
+    payload.langfuseTraceContext = options.traceContext;
+  }
   return client.post(
     `/agents/${persona}/workspace/${workspaceId}/chat/stream/respond`,
-    response,
+    payload,
     {
       responseType: "stream",
       signal: options?.signal,
@@ -205,9 +228,13 @@ export async function resumeAgentActionStream(
   if (options?.authToken) {
     headers.Authorization = `Bearer ${options.authToken}`;
   }
+  const payload: Record<string, unknown> = { ...actionResponse };
+  if (options?.traceContext) {
+    payload.langfuseTraceContext = options.traceContext;
+  }
   return client.post(
     `/agents/${persona}/workspace/${workspaceId}/chat/stream/act`,
-    actionResponse,
+    payload,
     {
       responseType: "stream",
       signal: options?.signal,
