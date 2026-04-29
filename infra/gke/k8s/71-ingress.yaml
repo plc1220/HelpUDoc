@@ -9,6 +9,15 @@ spec:
     - lc-demo.com
     - www.lc-demo.com
 ---
+apiVersion: networking.gke.io/v1
+kind: ManagedCertificate
+metadata:
+  name: helpudoc-managed-cert-langfuse
+  namespace: helpudoc
+spec:
+  domains:
+    - langfuse.lc-demo.com
+---
 apiVersion: networking.gke.io/v1beta1
 kind: FrontendConfig
 metadata:
@@ -25,7 +34,7 @@ metadata:
   namespace: helpudoc
   annotations:
     kubernetes.io/ingress.class: "gce"
-    networking.gke.io/managed-certificates: "helpudoc-managed-cert-main"
+    networking.gke.io/managed-certificates: "helpudoc-managed-cert-main,helpudoc-managed-cert-langfuse"
     networking.gke.io/v1beta1.FrontendConfig: "helpudoc-frontendconfig"
     # Optional: reserve a static IP and attach it for a stable DNS target.
     # kubernetes.io/ingress.global-static-ip-name: "helpudoc-ip"
