@@ -63,7 +63,13 @@ const loadParquetRuntime = async () => {
 };
 
 const decodeBase64ToArrayBuffer = (value: string) => {
-  const normalized = value.trim();
+  let normalized = value.trim();
+  const base64Marker = 'base64,';
+  const markerIndex = normalized.indexOf(base64Marker);
+  if (markerIndex !== -1) {
+    normalized = normalized.slice(markerIndex + base64Marker.length);
+  }
+  normalized = normalized.replace(/\s+/g, '');
   const binary = window.atob(normalized);
   const bytes = new Uint8Array(binary.length);
 
@@ -72,6 +78,18 @@ const decodeBase64ToArrayBuffer = (value: string) => {
   }
 
   return bytes.buffer;
+};
+
+/** Mammoth may emit empty or whitespace-only markup for minimal docs. */
+const isDocxHtmlEffectivelyEmpty = (html: string): boolean => {
+  if (!html.trim()) return true;
+  try {
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const text = doc.body?.textContent ?? '';
+    return text.replace(/\u00a0/g, ' ').trim().length === 0;
+  } catch {
+    return false;
+  }
 };
 
 const formatPreviewCell = (value: unknown): string => {
@@ -140,6 +158,7 @@ const FileRenderer: React.FC<FileRendererProps> = ({
   const [parquetError, setParquetError] = useState<string | null>(null);
   const [isParquetLoading, setIsParquetLoading] = useState(false);
   const [docxHtml, setDocxHtml] = useState<string | null>(null);
+  const [docxHtmlSource, setDocxHtmlSource] = useState<string | null>(null);
   const [docxError, setDocxError] = useState<string | null>(null);
   const [isDocxLoading, setIsDocxLoading] = useState(false);
 
@@ -263,6 +282,7 @@ const FileRenderer: React.FC<FileRendererProps> = ({
   useEffect(() => {
     if (!isDocxFile) {
       setDocxHtml(null);
+      setDocxHtmlSource(null);
       setDocxError(null);
       setIsDocxLoading(false);
       return;
@@ -270,8 +290,9 @@ const FileRenderer: React.FC<FileRendererProps> = ({
 
     if (!fileContent.trim()) {
       setDocxHtml(null);
+      setDocxHtmlSource(null);
       setDocxError(null);
-      setIsDocxLoading(true);
+      setIsDocxLoading(false);
       return;
     }
 
@@ -279,6 +300,8 @@ const FileRenderer: React.FC<FileRendererProps> = ({
 
     const run = async () => {
       setIsDocxLoading(true);
+      setDocxHtml(null);
+      setDocxHtmlSource(null);
       setDocxError(null);
       try {
         const mammoth = await import('mammoth');
@@ -286,13 +309,17 @@ const FileRenderer: React.FC<FileRendererProps> = ({
         const { value } = await mammoth.convertToHtml({ arrayBuffer });
         if (!cancelled) {
           setDocxHtml(value);
+          setDocxHtmlSource(fileContent);
         }
       } catch (error) {
         console.error('DOCX preview error', error);
         if (!cancelled) {
           setDocxHtml(null);
+          setDocxHtmlSource(null);
           setDocxError(
-            error instanceof Error ? error.message : 'Failed to render Word document.',
+            error instanceof Error
+              ? error.message
+              : 'Could not convert this Word file to HTML.',
           );
         }
       } finally {
@@ -499,7 +526,8 @@ const FileRenderer: React.FC<FileRendererProps> = ({
       );
     }
     if (isPdfFile) {
-      const pdfSrc = fileContent ? `data:application/pdf;base64,${fileContent}` : file.publicUrl || undefined;
+      const pdfSrc = file.publicUrl || (fileContent ? `data:application/pdf;base64,${fileContent}` : undefined);
+      const pdfSourceKey = file.publicUrl || `${fileContent.length}:${fileContent.slice(0, 24)}`;
       if (!pdfSrc) {
         return (
           <div className="flex h-full items-center justify-center text-sm text-gray-500">
@@ -513,6 +541,7 @@ const FileRenderer: React.FC<FileRendererProps> = ({
       return (
         <div className="relative h-full w-full">
           <iframe
+            key={`${file.id || file.name}:${pdfSourceKey}`}
             src={pdfSrc}
             title={file.name}
             className="h-full w-full border-none"
@@ -593,50 +622,78 @@ const FileRenderer: React.FC<FileRendererProps> = ({
       );
     }
     if (isDocxFile) {
-      if (isDocxLoading) {
+      const docxBanner = (
+        <div
+          className={`shrink-0 border-b px-4 py-2 text-xs ${
+            colorMode === 'dark'
+              ? 'border-slate-700 text-slate-400'
+              : 'border-gray-200 text-gray-500'
+          }`}
+        >
+          <span
+            className={`font-medium ${colorMode === 'dark' ? 'text-slate-200' : 'text-gray-700'}`}
+          >
+            Word preview
+          </span>
+          {' · '}
+          Approximate layout
+        </div>
+      );
+      const docxProse = [
+        colorMode === 'dark' ? 'prose prose-invert' : 'prose prose-slate',
+        'max-w-none break-words p-4 text-sm',
+        disableInternalScroll ? 'h-auto overflow-y-visible' : 'min-h-0 flex-1 overflow-y-auto',
+      ].join(' ');
+      /** Converts async; first paint may run before useEffect sets isDocxLoading. */
+      const docxAwaitingPreview =
+        isDocxLoading
+        || (fileContent.trim().length > 0 && (docxHtml === null || docxHtmlSource !== fileContent) && !docxError);
+      if (docxAwaitingPreview) {
         return (
-          <div className="flex h-full items-center justify-center text-sm text-gray-500">
-            Loading Word preview…
+          <div className="flex h-full min-h-0 flex-col">
+            {docxBanner}
+            <div className="flex min-h-0 flex-1 items-center justify-center text-sm text-gray-500">
+              Loading preview…
+            </div>
           </div>
         );
       }
       if (docxError) {
         return (
-          <div className="flex h-full items-center justify-center px-4 text-sm text-red-600">
-            {docxError}
+          <div className="flex h-full min-h-0 flex-col">
+            {docxBanner}
+            <div className="flex min-h-0 flex-1 items-center justify-center px-4 text-center text-sm text-red-600">
+              Preview failed: {docxError}
+            </div>
           </div>
         );
       }
-      if (!docxHtml) {
+      if (docxHtml == null) {
         return (
-          <div className="flex h-full items-center justify-center text-sm text-gray-500">
-            Unable to preview this document.
+          <div className="flex h-full min-h-0 flex-col">
+            {docxBanner}
+            <div className="flex min-h-0 flex-1 items-center justify-center px-4 text-center text-sm text-gray-500">
+              No file content loaded. Preview is unavailable.
+            </div>
           </div>
         );
       }
-      const docxProse = [
-        colorMode === 'dark' ? 'prose prose-invert' : 'prose prose-slate',
-        'max-w-none break-words p-4 text-sm',
-        disableInternalScroll ? 'h-auto overflow-y-visible' : 'h-full overflow-y-auto',
-      ].join(' ');
+      if (isDocxHtmlEffectivelyEmpty(docxHtml)) {
+        return (
+          <div className="flex h-full min-h-0 flex-col">
+            {docxBanner}
+            <div className="flex min-h-0 flex-1 items-center justify-center px-4 text-center text-sm text-gray-500">
+              No previewable text in this document.
+            </div>
+          </div>
+        );
+      }
       return (
         <div className="flex h-full min-h-0 flex-col">
-          <div
-            className={`border-b px-4 py-2 text-xs ${
-              colorMode === 'dark'
-                ? 'border-slate-700 text-slate-400'
-                : 'border-gray-200 text-gray-500'
-            }`}
-          >
-            <span className={`font-medium ${colorMode === 'dark' ? 'text-slate-200' : 'text-gray-700'}`}>
-              Word preview
-            </span>
-            {' · '}
-            Approximate layout (not identical to Microsoft Word).
-          </div>
+          {docxBanner}
           <div
             className={`helpudoc-docx-preview min-h-0 flex-1 ${docxProse}`}
-            // mammoth emits semantic HTML only; images use data URLs from the file
+            // mammoth emits semantic HTML; images may be embedded or omitted by the converter
             dangerouslySetInnerHTML={{ __html: docxHtml }}
           />
         </div>

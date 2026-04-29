@@ -544,6 +544,7 @@ export default function WorkspacePage() {
   const workspaceNameInputRef = useRef<HTMLInputElement | null>(null);
   const autoSaveTimerRef = useRef<number | null>(null);
   const lastAutoSavedContentRef = useRef<string>('');
+  const fileContentRequestIdRef = useRef(0);
   const [isMentionOpen, setIsMentionOpen] = useState(false);
   const [mentionQuery, setMentionQuery] = useState('');
   const [mentionTriggerIndex, setMentionTriggerIndex] = useState<number | null>(null);
@@ -2720,8 +2721,13 @@ export default function WorkspacePage() {
   }, [files, selectedWorkspace]);
 
   const fetchFileContent = async () => {
+    const requestId = fileContentRequestIdRef.current + 1;
+    fileContentRequestIdRef.current = requestId;
+    const isCurrentRequest = () => fileContentRequestIdRef.current === requestId;
+
     if (selectedFile && selectedWorkspace) {
       if (isDraftWorkspaceFile(selectedFile)) {
+        if (!isCurrentRequest()) return;
         const draftContent = selectedFile.content || '';
         setSelectedFileDetails(selectedFile);
         setFileContent(draftContent);
@@ -2730,17 +2736,20 @@ export default function WorkspacePage() {
       }
       try {
         const fileWithContent = await getFileContent(selectedWorkspace.id, selectedFile.id);
+        if (!isCurrentRequest()) return;
         const hydratedFile = { ...selectedFile, ...fileWithContent };
         setSelectedFileDetails(hydratedFile);
         const content = hydratedFile.content || '';
         setFileContent(content);
         lastAutoSavedContentRef.current = content;
       } catch (error) {
+        if (!isCurrentRequest()) return;
         console.error('Failed to fetch file content:', error);
         setFileContent('Failed to load file content.');
         setSelectedFileDetails(null);
       }
     } else {
+      if (!isCurrentRequest()) return;
       setFileContent('');
       setSelectedFileDetails(null);
       lastAutoSavedContentRef.current = '';
@@ -2753,10 +2762,10 @@ export default function WorkspacePage() {
 
   useEffect(() => {
     const name = selectedFile?.name ?? '';
-    if (isBinaryOfficeDocument(name)) {
+    if (isBinaryOfficeDocument(name, selectedFile?.mimeType)) {
       setIsEditMode(false);
     }
-  }, [selectedFile?.id, selectedFile?.name]);
+  }, [selectedFile?.id, selectedFile?.name, selectedFile?.mimeType]);
 
   const handleCreateWorkspace = async () => {
     try {

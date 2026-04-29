@@ -31,6 +31,10 @@ class ModelConfig(BaseModel):
     fast_thinking_level: Optional[str] = None
     lite_thinking_level: Optional[str] = None
     pro_thinking_level: Optional[str] = None
+    max_output_tokens: Optional[int] = None
+    fast_max_output_tokens: Optional[int] = None
+    lite_max_output_tokens: Optional[int] = None
+    pro_max_output_tokens: Optional[int] = None
     project: Optional[str] = None
     location: Optional[str] = None
     api_key: Optional[str] = Field(default_factory=lambda: os.getenv("GEMINI_API_KEY"))
@@ -49,7 +53,7 @@ class ModelConfig(BaseModel):
         if normalized == "lite":
             return self.lite_name or self.fast_name or self.name
         if normalized == "pro":
-            return self.name
+            return self.pro_name or self.name
         if normalized == "fast":
             return self.fast_name or self.name
         return self.name
@@ -64,6 +68,17 @@ class ModelConfig(BaseModel):
         if normalized == "fast":
             return self.fast_thinking_level or self.thinking_level
         return self.thinking_level
+
+    def resolve_max_output_tokens(self, mode: Optional[str]) -> Optional[int]:
+        """Resolve max output tokens for the requested mode."""
+        normalized = (mode or "").strip().lower()
+        if normalized == "lite":
+            return self.lite_max_output_tokens or self.fast_max_output_tokens or self.max_output_tokens
+        if normalized == "pro":
+            return self.pro_max_output_tokens or self.max_output_tokens
+        if normalized == "fast":
+            return self.fast_max_output_tokens or self.max_output_tokens
+        return self.max_output_tokens
 
     @property
     def image_model_name(self) -> str:

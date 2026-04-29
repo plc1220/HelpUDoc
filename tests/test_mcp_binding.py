@@ -536,3 +536,60 @@ def test_agent_registry_rebuilds_runtime_when_preferred_mcp_server_changes(
     assert initialize_calls == [[], ["google-workspace"]]
     assert rebound_runtime.workspace_state.context["preferred_mcp_server"] == "google-workspace"
     assert rebound_runtime.workspace_state.context["_bound_mcp_candidates"] == ["google-workspace"]
+
+
+def test_agent_registry_passes_mode_specific_max_output_tokens(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    payload = {
+        "model": {
+            "provider": "gemini",
+            "name": "gemini-flash-latest",
+            "pro_name": "gemini-pro-latest",
+            "max_output_tokens": 16000,
+            "pro_max_output_tokens": 32000,
+        },
+        "backend": {"workspace_root": str(tmp_path / "workspaces"), "skills_root": None},
+        "tools": {},
+        "mcp_servers": {},
+    }
+    try:
+        settings = Settings.model_validate(payload)
+    except AttributeError:
+        settings = Settings.parse_obj(payload)
+    captured: dict[str, object] = {}
+
+    class DummyAgent:
+        def with_config(self, _config):
+            return self
+
+    def fake_init_chat_model(model_name, **kwargs):
+        captured["model_name"] = model_name
+        captured["kwargs"] = kwargs
+        return object()
+
+    def fake_create_agent(*, model, tools, system_prompt, middleware, checkpointer):
+        return DummyAgent()
+
+    async def fake_initialize(self, *, candidate_server_names=None, preflight_gemini=False):
+        self._allowed_servers = {}
+        self._tools_by_server = {}
+        self._clients_by_server = {}
+        self._rejected_servers = {}
+
+    monkeypatch.setattr("helpudoc_agent.graph.create_agent", fake_create_agent)
+    monkeypatch.setattr("helpudoc_agent.graph.init_chat_model", fake_init_chat_model)
+    monkeypatch.setattr("helpudoc_agent.graph.FilesystemBackend", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.graph.TodoListMiddleware", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.graph.FilesystemMiddleware", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.graph.SummarizationMiddleware", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.graph.PatchToolCallsMiddleware", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.graph.HumanInTheLoopMiddleware", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.mcp_manager.MCPServerManager.initialize", fake_initialize)
+
+    registry = AgentRegistry(settings, ToolFactoryStub())
+    asyncio.run(registry.get_or_create("pro", "workspace-pro"))
+
+    assert captured["model_name"] == "gemini-pro-latest"
+    assert captured["kwargs"]["max_output_tokens"] == 32000

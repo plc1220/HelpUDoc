@@ -15,6 +15,7 @@ def test_document_format_skills_are_discoverable() -> None:
     ids = {skill.skill_id for skill in skills}
 
     assert "pdf" in ids
+    assert "docx" in ids
     assert "sheets" in ids
     assert "image" in ids
     assert "pptx" in ids
@@ -30,3 +31,14 @@ def test_proposal_writing_skill_declares_expected_mcp_servers() -> None:
         "google-developer-knowledge",
         "gcp-cost",
     ]
+
+
+def test_proposal_writing_skill_requires_quality_artifacts() -> None:
+    skills = {skill.skill_id: skill for skill in load_skills(REPO_ROOT / "skills")}
+    policy = skills["proposal-writing"].policy
+
+    assert policy.requires_workspace_artifacts is True
+    assert policy.required_artifacts_mode == "strict"
+    assert policy.required_artifacts is not None
+    assert "/proposal_quality_review.md" in policy.required_artifacts
+    assert "/Final_Proposal.md" in policy.required_artifacts

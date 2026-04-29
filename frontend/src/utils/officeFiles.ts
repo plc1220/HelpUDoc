@@ -10,8 +10,15 @@ export const isPowerPointDocument = (fileName: string): boolean => {
   return n.endsWith('.pptx');
 };
 
-export const isBinaryOfficeDocument = (fileName: string): boolean =>
-  isWordDocument(fileName) || isPowerPointDocument(fileName);
+/** Filename or OOXML MIME — workspace treats these as binary, preview-only (no Monaco edit). */
+export const isBinaryOfficeDocument = (
+  fileName: string,
+  mimeType?: string | null,
+): boolean => {
+  if (isWordDocument(fileName) || isPowerPointDocument(fileName)) return true;
+  const m = (mimeType || '').toLowerCase();
+  return m.includes('wordprocessingml') || m.includes('presentationml');
+};
 
 /**
  * Microsoft Office Online embed requires a publicly reachable **HTTPS** URL.

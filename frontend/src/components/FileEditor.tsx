@@ -664,7 +664,7 @@ const FileEditor: React.FC<FileEditorProps> = (props) => {
   if (!props.file) {
     return null;
   }
-  if (isBinaryOfficeDocument(props.file.name ?? '')) {
+  if (isBinaryOfficeDocument(props.file.name ?? '', props.file.mimeType)) {
     return (
       <OfficeDocumentReadOnlyPane
         file={props.file}
