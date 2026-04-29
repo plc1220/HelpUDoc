@@ -91,7 +91,7 @@ class RagConfig:
     def from_env(cls, workspace_root: Path) -> "RagConfig":
         _ensure_pg_storage_env()
         working_dir = Path(_env("RAG_WORKING_DIR", str(workspace_root / ".lightrag_storage"))).resolve()
-        llm_model = _env("RAG_LLM_MODEL", _env("LLM_MODEL", "gemini-3-flash-preview")) or "gemini-3-flash-preview"
+        llm_model = _env("RAG_LLM_MODEL", _env("LLM_MODEL", "gemini-flash-latest")) or "gemini-flash-latest"
         embedding_model = _env("RAG_EMBEDDING_MODEL", _env("EMBEDDING_MODEL", "gemini-embedding-001")) or "gemini-embedding-001"
         embedding_dim = int(_env("RAG_EMBEDDING_DIM", _env("EMBEDDING_DIM", "3072")) or "3072")
         api_key = _env("GEMINI_API_KEY", _env("LLM_BINDING_API_KEY"))

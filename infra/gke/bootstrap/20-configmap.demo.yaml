@@ -18,7 +18,7 @@ data:
   S3_FORCE_PATH_STYLE: "true"
   WORKSPACE_ROOT: /app/workspaces
   RAG_OFFLINE: "true"
-  LLM_MODEL: gemini-3-flash-preview
+  LLM_MODEL: gemini-flash-latest
   AUTH_MODE: hybrid
   SESSION_COOKIE_DOMAIN: .lc-demo.com
   GOOGLE_OAUTH_CLIENT_ID: 16646144790-fvdv7liepgo18aiu20n3btmdr56l33pq.apps.googleusercontent.com
