@@ -152,7 +152,7 @@ def test_registry_preserves_runtime_context_when_auth_fingerprint_rotates(tmp_pa
         def with_config(self, _config):
             return self
 
-    def fake_create_agent(*, model, tools, system_prompt, middleware, checkpointer):
+    def fake_create_agent(*, model, tools, system_prompt, middleware, checkpointer, **_kwargs):
         created_tools.append([getattr(tool, "name", None) for tool in tools])
         return DummyAgent(tools)
 
@@ -424,7 +424,7 @@ def test_agent_registry_builds_runtime_with_wrapped_proposal_writing_candidates(
         def with_config(self, _config):
             return self
 
-    def fake_create_agent(*, model, tools, system_prompt, middleware, checkpointer):
+    def fake_create_agent(*, model, tools, system_prompt, middleware, checkpointer, **_kwargs):
         captured["tool_names"] = [getattr(tool, "name", None) for tool in tools]
         captured["model"] = model
         captured["middleware_count"] = len(middleware)
@@ -495,7 +495,7 @@ def test_agent_registry_rebuilds_runtime_when_preferred_mcp_server_changes(
         def with_config(self, _config):
             return self
 
-    def fake_create_agent(*, model, tools, system_prompt, middleware, checkpointer):
+    def fake_create_agent(*, model, tools, system_prompt, middleware, checkpointer, **_kwargs):
         return DummyAgent(tools)
 
     async def fake_initialize(self, *, candidate_server_names=None, preflight_gemini=False):
@@ -545,7 +545,7 @@ def test_agent_registry_passes_mode_specific_max_output_tokens(
     payload = {
         "model": {
             "provider": "gemini",
-            "name": "gemini-flash-latest",
+            "name": "gemini-3-flash-preview",
             "pro_name": "gemini-pro-latest",
             "max_output_tokens": 16000,
             "pro_max_output_tokens": 32000,
@@ -569,7 +569,7 @@ def test_agent_registry_passes_mode_specific_max_output_tokens(
         captured["kwargs"] = kwargs
         return object()
 
-    def fake_create_agent(*, model, tools, system_prompt, middleware, checkpointer):
+    def fake_create_agent(*, model, tools, system_prompt, middleware, checkpointer, **_kwargs):
         return DummyAgent()
 
     async def fake_initialize(self, *, candidate_server_names=None, preflight_gemini=False):

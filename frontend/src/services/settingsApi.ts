@@ -1,4 +1,4 @@
-import type { SkillDefinition } from '../types';
+import type { SkillDefinition, SkillEvolutionSuggestion } from '../types';
 import type { AgentStreamChunk } from '../../../packages/shared/src/services/agentStream';
 import { API_URL, apiFetch } from './apiClient';
 
@@ -602,4 +602,53 @@ export const saveGroupPromptAccess = async (groupId: string, payload: GroupPromp
     throw new Error(data.error || 'Failed to update group access');
   }
   return response.json();
+};
+
+export const fetchSkillEvolutionSuggestions = async (
+  status = 'pending',
+): Promise<SkillEvolutionSuggestion[]> => {
+  const params = new URLSearchParams();
+  if (status) {
+    params.set('status', status);
+  }
+  const qs = params.toString();
+  const response = await apiFetch(`${API_URL}/settings/skill-evolution/suggestions${qs ? `?${qs}` : ''}`);
+  if (!response.ok) {
+    await unwrapError(response, 'Failed to load skill evolution suggestions');
+  }
+  return response.json() as Promise<SkillEvolutionSuggestion[]>;
+};
+
+export const decideSkillEvolutionSuggestion = async (
+  id: string,
+  body: { decision: 'accept' | 'reject'; editedContent?: string },
+): Promise<SkillEvolutionSuggestion> => {
+  const response = await apiFetch(`${API_URL}/settings/skill-evolution/suggestions/${encodeURIComponent(id)}/decision`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (response.status === 409) {
+    const msg = typeof data.error === 'string' ? data.error : 'Target changed (stale). Refresh and try again.';
+    throw new Error(msg);
+  }
+  if (!response.ok) {
+    throw new Error(typeof data.error === 'string' ? data.error : 'Failed to apply decision');
+  }
+  return data as SkillEvolutionSuggestion;
+};
+
+export const generateSkillEvolutionSuggestions = async (
+  limit?: number,
+): Promise<{ processed: number; inserted: number }> => {
+  const response = await apiFetch(`${API_URL}/settings/skill-evolution/generate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(limit ? { limit } : {}),
+  });
+  if (!response.ok) {
+    await unwrapError(response, 'Failed to generate suggestions');
+  }
+  return response.json() as Promise<{ processed: number; inserted: number }>;
 };

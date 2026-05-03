@@ -1,6 +1,9 @@
 import { createHash, randomUUID } from 'crypto';
 import type { IncomingMessage } from 'http';
 import { redisClient } from './redisService';
+import { RunTelemetryService } from './runTelemetryService';
+import { UserMemoryService } from './userMemoryService';
+import type { SkillEvolutionService } from './skillEvolutionService';
 import {
   runAgentStream,
   resumeAgentStream,
@@ -25,6 +28,7 @@ export type AgentRunStatus =
 
 type StartRunParams = {
   workspaceId: string;
+  conversationId?: string;
   persona: string;
   prompt: string;
   userId?: string;
@@ -92,6 +96,7 @@ type RunContext = {
 
 type PersistedRunContext = {
   workspaceId: string;
+  conversationId?: string;
   persona: string;
   prompt: string;
   userId?: string;
@@ -118,6 +123,19 @@ const DEBUG_AGENT_RUN_STREAM =
 
 const runAbortControllers = new Map<string, AbortController>();
 const runContexts = new Map<string, RunContext>();
+let runTelemetryService: RunTelemetryService | null = null;
+let userMemoryService: UserMemoryService | null = null;
+let skillEvolutionService: SkillEvolutionService | null = null;
+
+export function configureAgentRunServices(services: {
+  telemetryService?: RunTelemetryService | null;
+  userMemoryService?: UserMemoryService | null;
+  skillEvolutionService?: SkillEvolutionService | null;
+}) {
+  runTelemetryService = services.telemetryService || null;
+  userMemoryService = services.userMemoryService || null;
+  skillEvolutionService = services.skillEvolutionService || null;
+}
 
 const buildStreamKey = (runId: string) => `agent:run:${runId}`;
 const buildMetaKey = (runId: string) => `agent:run:${runId}:meta`;
@@ -330,6 +348,7 @@ const parsePendingInterrupt = (raw: string | undefined): RunPendingInterrupt | u
 const serializeRunContext = (params: StartRunParams): string =>
   JSON.stringify({
     workspaceId: params.workspaceId,
+    conversationId: params.conversationId,
     persona: params.persona,
     prompt: params.prompt,
     userId: params.userId,
@@ -359,6 +378,7 @@ const parseRunContext = (raw: string | undefined): RunContext | undefined => {
     return {
       params: {
         workspaceId: parsed.workspaceId,
+        conversationId: typeof parsed.conversationId === 'string' ? parsed.conversationId : undefined,
         persona: parsed.persona,
         prompt: parsed.prompt,
         userId: typeof parsed.userId === 'string' ? parsed.userId : undefined,
@@ -433,6 +453,7 @@ export async function startAgentRun(params: StartRunParams): Promise<{ runId: st
   const runId = randomUUID();
   const streamKey = buildStreamKey(runId);
   const metaKey = buildMetaKey(runId);
+  const queuedAt = new Date().toISOString();
 
   await redisClient.del(streamKey);
   await redisClient.del(metaKey);
@@ -440,7 +461,7 @@ export async function startAgentRun(params: StartRunParams): Promise<{ runId: st
     workspaceId: params.workspaceId,
     persona: params.persona,
     status: 'queued',
-    createdAt: new Date().toISOString(),
+    createdAt: queuedAt,
     turnId: params.turnId,
     pendingInterrupt: '',
     runContext: serializeRunContext(params),
@@ -453,6 +474,17 @@ export async function startAgentRun(params: StartRunParams): Promise<{ runId: st
     );
   }
   runContexts.set(runId, { params });
+  if (runTelemetryService) {
+    await runTelemetryService.recordQueuedRun({
+      runId,
+      workspaceId: params.workspaceId,
+      userId: params.userId,
+      conversationId: params.conversationId,
+      turnId: params.turnId,
+      persona: params.persona,
+      queuedAt,
+    });
+  }
 
   // Fire and forget worker
   void runAgentRunWorker(runId, params);
@@ -502,13 +534,28 @@ async function runAgentRunWorker(
 ) {
   const controller = new AbortController();
   runAbortControllers.set(runId, controller);
+  const startedAt = new Date().toISOString();
+  const runProgress = resumePayload && runTelemetryService
+    ? await runTelemetryService.getRunProgress(runId)
+    : null;
+  let eventIndex = runProgress?.maxEventIndex ?? 0;
+  let skillId: string | null = null;
+  let hadInterrupt = runProgress?.hadInterrupt ?? false;
+  let approvalInterruptCount = runProgress?.approvalInterruptCount ?? 0;
+  let clarificationInterruptCount = runProgress?.clarificationInterruptCount ?? 0;
+  let toolCallCount = runProgress?.toolCallCount ?? 0;
+  let toolErrorCount = runProgress?.toolErrorCount ?? 0;
   const traceContext: AgentTraceContext = {
     runId,
     turnId: params.turnId,
     userId: params.userId,
     workspaceId: params.workspaceId,
     persona: params.persona,
+    conversationId: params.conversationId,
+    skillId: skillId || undefined,
   };
+
+  let langfuseStreamMeta: Record<string, unknown> = {};
 
   if (DEBUG_AGENT_RUN_STREAM) {
     console.info('[agent-run-stream] start', {
@@ -524,9 +571,12 @@ async function runAgentRunWorker(
 
   await persistMeta(runId, {
     status: 'running',
-    startedAt: new Date().toISOString(),
+    startedAt,
     error: '',
   });
+  if (runTelemetryService) {
+    await runTelemetryService.markRunStarted(runId, startedAt);
+  }
 
   let upstream: IncomingMessage | null = null;
   let buffer = '';
@@ -542,10 +592,75 @@ async function runAgentRunWorker(
     }
     settled = true;
     await markRunFinished(runId, status, error);
+    if (runTelemetryService) {
+      await runTelemetryService.finalizeRun(runId, {
+        status,
+        startedAt,
+        completedAt: new Date().toISOString(),
+        error,
+        skillId,
+        hadInterrupt,
+        approvalInterruptCount,
+        clarificationInterruptCount,
+        toolCallCount,
+        toolErrorCount,
+        metadata: {
+          resumed: Boolean(resumePayload),
+          ...langfuseStreamMeta,
+        },
+      });
+    }
+    if (status === 'completed' && userMemoryService) {
+      void userMemoryService
+        .suggestForCompletedRun({
+          runId,
+          userId: params.userId,
+          workspaceId: params.workspaceId,
+          conversationId: params.conversationId,
+        })
+        .catch((memoryError) => {
+          console.error('Failed to build memory suggestions for completed run', { runId, error: memoryError });
+        });
+    }
+    if ((status === 'completed' || status === 'failed') && skillEvolutionService && params.userId && params.conversationId) {
+      void skillEvolutionService
+        .proposeFromRun({
+          runId,
+          workspaceId: params.workspaceId,
+          userId: params.userId,
+          conversationId: params.conversationId,
+          persona: params.persona,
+          status,
+          skillId,
+          hadInterrupt,
+          toolErrorCount,
+          approvalInterruptCount,
+          clarificationInterruptCount,
+        })
+        .catch((err) => {
+          console.error('Failed to build skill evolution suggestions for run', { runId, error: err });
+        });
+    }
     cleanupRun(runId, upstream || undefined);
   };
 
   const stopAtInterrupt = async (parsed: Record<string, unknown>) => {
+    if (runTelemetryService) {
+      await runTelemetryService.finalizeRun(runId, {
+        status: 'awaiting_approval',
+        startedAt,
+        skillId,
+        hadInterrupt,
+        approvalInterruptCount,
+        clarificationInterruptCount,
+        toolCallCount,
+        toolErrorCount,
+        metadata: {
+          resumed: Boolean(resumePayload),
+          ...langfuseStreamMeta,
+        },
+      });
+    }
     await persistInterruptAndStopRun(
       runId,
       parsed,
@@ -580,6 +695,16 @@ async function runAgentRunWorker(
         buffer = buffer.slice(newlineIndex + 1);
         if (line) {
           const parsed = parseLine(line);
+          if (parsed?.type === 'langfuse') {
+            const traceId = typeof parsed.traceId === 'string' ? parsed.traceId.trim() : '';
+            const traceUrl = typeof parsed.traceUrl === 'string' ? parsed.traceUrl.trim() : '';
+            if (traceId) {
+              langfuseStreamMeta.langfuseTraceId = traceId;
+            }
+            if (traceUrl) {
+              langfuseStreamMeta.langfuseTraceUrl = traceUrl;
+            }
+          }
           if (
             parsed?.type === 'interrupt' &&
             isRepeatedClarificationInterrupt(parsed, previousInterrupt, resumePayload)
@@ -591,6 +716,53 @@ async function runAgentRunWorker(
               upstream.destroy();
             }
             break;
+          }
+          if (parsed?.type === 'policy' && typeof parsed.skill === 'string' && parsed.skill.trim()) {
+            skillId = parsed.skill.trim();
+          }
+          if (parsed?.type === 'interrupt') {
+            hadInterrupt = true;
+            if (parsed.kind === 'approval') {
+              approvalInterruptCount += 1;
+            } else if (parsed.kind === 'clarification') {
+              clarificationInterruptCount += 1;
+            }
+          }
+          if (parsed?.type === 'tool_start' || parsed?.type === 'tool_end' || parsed?.type === 'tool_error') {
+            if (parsed.type === 'tool_start') {
+              toolCallCount += 1;
+              if (parsed.name === 'load_skill' && typeof parsed.content === 'string') {
+                const skillMatch = parsed.content.match(/skill[_-]?id["']?\s*[:=]\s*["']([^"']+)["']/i);
+                if (skillMatch?.[1]) {
+                  skillId = skillMatch[1].trim();
+                }
+              }
+            }
+            if (parsed.type === 'tool_error') {
+              toolErrorCount += 1;
+            }
+            eventIndex += 1;
+            if (runTelemetryService && typeof parsed.name === 'string' && parsed.name.trim()) {
+              await runTelemetryService.appendToolEvent({
+                runId,
+                workspaceId: params.workspaceId,
+                userId: params.userId,
+                conversationId: params.conversationId,
+                turnId: params.turnId,
+                eventIndex,
+                toolName: parsed.name.trim(),
+                eventType:
+                  parsed.type === 'tool_start'
+                    ? 'start'
+                    : parsed.type === 'tool_end'
+                      ? 'end'
+                      : 'error',
+                summary: typeof parsed.content === 'string' ? parsed.content : undefined,
+                outputFiles: Array.isArray(parsed.outputFiles) ? parsed.outputFiles as Array<Record<string, unknown>> : undefined,
+                payload: parsed,
+                eventAt: new Date().toISOString(),
+              });
+            }
           }
           await appendStreamEvent(runId, parsed ? JSON.stringify(normalizeInterruptPayloadRecord(parsed)) : line);
           if (parsed?.type === 'interrupt') {
@@ -625,6 +797,16 @@ async function runAgentRunWorker(
       .filter((line) => line.length > 0);
     for (const line of lines) {
       const parsed = parseLine(line);
+      if (parsed?.type === 'langfuse') {
+        const traceId = typeof parsed.traceId === 'string' ? parsed.traceId.trim() : '';
+        const traceUrl = typeof parsed.traceUrl === 'string' ? parsed.traceUrl.trim() : '';
+        if (traceId) {
+          langfuseStreamMeta.langfuseTraceId = traceId;
+        }
+        if (traceUrl) {
+          langfuseStreamMeta.langfuseTraceUrl = traceUrl;
+        }
+      }
       if (
         parsed?.type === 'interrupt' &&
         isRepeatedClarificationInterrupt(parsed, previousInterrupt, resumePayload)
@@ -636,6 +818,53 @@ async function runAgentRunWorker(
           upstream.destroy();
         }
         break;
+      }
+      if (parsed?.type === 'policy' && typeof parsed.skill === 'string' && parsed.skill.trim()) {
+        skillId = parsed.skill.trim();
+      }
+      if (parsed?.type === 'interrupt') {
+        hadInterrupt = true;
+        if (parsed.kind === 'approval') {
+          approvalInterruptCount += 1;
+        } else if (parsed.kind === 'clarification') {
+          clarificationInterruptCount += 1;
+        }
+      }
+      if (parsed?.type === 'tool_start' || parsed?.type === 'tool_end' || parsed?.type === 'tool_error') {
+        if (parsed.type === 'tool_start') {
+          toolCallCount += 1;
+          if (parsed.name === 'load_skill' && typeof parsed.content === 'string') {
+            const skillMatch = parsed.content.match(/skill[_-]?id["']?\s*[:=]\s*["']([^"']+)["']/i);
+            if (skillMatch?.[1]) {
+              skillId = skillMatch[1].trim();
+            }
+          }
+        }
+        if (parsed.type === 'tool_error') {
+          toolErrorCount += 1;
+        }
+        eventIndex += 1;
+        if (runTelemetryService && typeof parsed.name === 'string' && parsed.name.trim()) {
+          await runTelemetryService.appendToolEvent({
+            runId,
+            workspaceId: params.workspaceId,
+            userId: params.userId,
+            conversationId: params.conversationId,
+            turnId: params.turnId,
+            eventIndex,
+            toolName: parsed.name.trim(),
+            eventType:
+              parsed.type === 'tool_start'
+                ? 'start'
+                : parsed.type === 'tool_end'
+                  ? 'end'
+                  : 'error',
+            summary: typeof parsed.content === 'string' ? parsed.content : undefined,
+            outputFiles: Array.isArray(parsed.outputFiles) ? parsed.outputFiles as Array<Record<string, unknown>> : undefined,
+            payload: parsed,
+            eventAt: new Date().toISOString(),
+          });
+        }
       }
       await appendStreamEvent(runId, parsed ? JSON.stringify(normalizeInterruptPayloadRecord(parsed)) : line);
       if (parsed?.type === 'interrupt') {
@@ -650,6 +879,8 @@ async function runAgentRunWorker(
       }
     }
   };
+
+  traceContext.skillId = skillId || undefined;
 
   try {
     const response =

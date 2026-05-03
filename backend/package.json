@@ -7,7 +7,8 @@
   },
   "scripts": {
     "dev": "nodemon --watch 'src/**/*.ts' --exec 'ts-node -r tsconfig-paths/register' src/index.ts",
-    "test": "node -r ts-node/register/transpile-only -r tsconfig-paths/register --test tests/workspaceDashboard.test.ts"
+    "test": "node -r ts-node/register/transpile-only -r tsconfig-paths/register --test tests/workspaceDashboard.test.ts",
+    "generate:daily-reflection": "ts-node -r tsconfig-paths/register src/jobs/generateDailyReflection.ts"
   },
   "keywords": [],
   "author": "",

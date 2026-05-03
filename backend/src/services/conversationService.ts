@@ -32,6 +32,10 @@ interface AppendMessageOptions {
   metadata?: Record<string, unknown>;
 }
 
+interface EnsureConversationAccessOptions {
+  requireEdit?: boolean;
+}
+
 export class ConversationService {
   private db: Knex;
   private workspaceService: WorkspaceService;
@@ -88,6 +92,21 @@ export class ConversationService {
       conversation: conversation as ConversationRecord,
       messages: messages as ConversationMessageRecord[],
     };
+  }
+
+  async ensureConversationAccess(
+    userId: string,
+    workspaceId: string,
+    conversationId: string,
+    options: EnsureConversationAccessOptions = {},
+  ): Promise<ConversationRecord> {
+    const conversation = await this.db('conversations').where({ id: conversationId }).first();
+    if (!conversation || conversation.workspaceId !== workspaceId) {
+      throw new NotFoundError('Conversation not found');
+    }
+
+    await this.workspaceService.ensureMembership(workspaceId, userId, { requireEdit: options.requireEdit });
+    return conversation as ConversationRecord;
   }
 
   async appendMessage(

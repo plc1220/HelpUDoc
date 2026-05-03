@@ -1080,6 +1080,7 @@ export default function settingsRoutes(
 
       const { runId, status } = await startAgentRun({
         workspaceId,
+        userId: user.userId,
         persona: SKILL_BUILDER_PERSONA,
         prompt,
         history: payload.history,

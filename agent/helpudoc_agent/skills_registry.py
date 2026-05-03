@@ -293,6 +293,34 @@ def read_skill_content(skill: SkillMetadata) -> str:
     return skill.path.read_text(encoding="utf-8")
 
 
+_LEARNINGS_FILENAME = "HELPUDOC_LEARNINGS.md"
+
+
+def helpudoc_learnings_path(skill: SkillMetadata) -> Path:
+    return skill.path.parent / "docs" / _LEARNINGS_FILENAME
+
+
+def read_helpudoc_learnings(skill: SkillMetadata) -> str | None:
+    path = helpudoc_learnings_path(skill)
+    try:
+        if path.is_file():
+            return path.read_text(encoding="utf-8")
+    except Exception:
+        return None
+    return None
+
+
+def routing_hint_from_learnings(text: str | None, max_len: int = 220) -> str | None:
+    if not text or not str(text).strip():
+        return None
+    lines = [ln.strip() for ln in str(text).splitlines()]
+    lines = [ln for ln in lines if ln and not ln.startswith("#")]
+    if not lines:
+        return None
+    snippet = " ".join(lines[:4])[:max_len].strip()
+    return snippet or None
+
+
 def build_skill_policy_lines(skill: SkillMetadata) -> List[str]:
     declared_tools = list(skill.tools)
     runtime_tools = expand_runtime_tool_names(declared_tools)

@@ -1,4 +1,4 @@
-import { ChevronRight, History, Maximize2, Minimize2, Plus } from 'lucide-react';
+import { Brain, ChevronRight, History, Maximize2, Minimize2, Plus } from 'lucide-react';
 import type { ChangeEvent } from 'react';
 
 import type { AgentPersona } from '../../types';
@@ -14,6 +14,7 @@ export default function ChatHeader({
   onToggleVisibility,
   onModeChange,
   onToggleHistory,
+  onOpenMemory,
   onNewChat,
   onToggleFullScreen,
 }: {
@@ -27,6 +28,7 @@ export default function ChatHeader({
   onToggleVisibility: () => void;
   onModeChange: (event: ChangeEvent<HTMLSelectElement>) => void;
   onToggleHistory: () => void;
+  onOpenMemory: () => void;
   onNewChat: () => void;
   onToggleFullScreen: () => void;
 }) {
@@ -77,6 +79,17 @@ export default function ChatHeader({
         </div>
         {isAgentPaneVisible && (
           <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onOpenMemory}
+              className={`rounded-xl p-2 transition-all duration-200 ${
+                isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-600 hover:bg-slate-100'
+              }`}
+              title="Open memory panel"
+              aria-label="Open memory panel"
+            >
+              <Brain size={18} />
+            </button>
             <button
               type="button"
               onClick={onToggleHistory}

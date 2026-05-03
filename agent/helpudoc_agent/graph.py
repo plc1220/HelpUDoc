@@ -6,7 +6,7 @@ import json
 import logging
 from typing import Any, Dict, Tuple
 
-from deepagents.backends import FilesystemBackend
+from deepagents.backends import CompositeBackend, FilesystemBackend
 from deepagents.middleware.filesystem import FilesystemMiddleware
 from deepagents.middleware.patch_tool_calls import PatchToolCallsMiddleware
 from langchain.agents import create_agent
@@ -26,6 +26,7 @@ from .skills_registry import (
 )
 from .mcp_manager import MCPServerManager
 from .tool_guard import GuardedTool
+from .memory_store import UserScopedStoreBackend
 
 logger = logging.getLogger(__name__)
 
@@ -92,9 +93,10 @@ def _clone_preservable_context(context: Dict[str, Any] | None) -> Dict[str, Any]
 class AgentRegistry:
     """Caches DeepAgents keyed by (agent_name, workspace_id)."""
 
-    def __init__(self, settings: Settings, tool_factory: ToolFactory):
+    def __init__(self, settings: Settings, tool_factory: ToolFactory, memory_store=None):
         self.settings = settings
         self.tool_factory = tool_factory
+        self._memory_store = memory_store
         self._models: Dict[str, object] = {}
         self._checkpointer = MemorySaver()
         self._cache: Dict[Tuple[str, str, str], AgentRuntimeState] = {}
@@ -293,10 +295,16 @@ class AgentRegistry:
             mcp_manager.get_rejected_servers(),
         )
         tools = builtin_tools + mcp_tools
-        backend = FilesystemBackend(
-            root_dir=str(workspace_state.root_path),
-            virtual_mode=self.settings.backend.virtual_mode,
-        )
+        def make_backend(runtime) -> CompositeBackend:
+            return CompositeBackend(
+                default=FilesystemBackend(
+                    root_dir=str(workspace_state.root_path),
+                    virtual_mode=self.settings.backend.virtual_mode,
+                ),
+                routes={
+                    "/memories/": UserScopedStoreBackend(runtime),
+                },
+            )
 
         model = self._get_model(
             model_name,
@@ -309,7 +317,7 @@ class AgentRegistry:
 
         middleware = [
             TodoListMiddleware(),
-            FilesystemMiddleware(backend=backend),
+            FilesystemMiddleware(backend=make_backend),
             SummarizationMiddleware(
                 model=model,
                 max_tokens_before_summary=170000,
@@ -327,6 +335,7 @@ class AgentRegistry:
             system_prompt=full_prompt,
             middleware=middleware,
             checkpointer=self._checkpointer,
+            store=self._memory_store.store if self._memory_store is not None else None,
         ).with_config({"recursion_limit": 1000})
 
         runtime = AgentRuntimeState(agent_name=resolved_name, workspace_state=workspace_state, agent=agent)
