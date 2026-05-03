@@ -164,6 +164,7 @@ Targeted scripts:
 
 ## Docs worth reading next
 
+- [docs/agent-self-evolution.md](docs/agent-self-evolution.md)
 - [docs/environment.md](docs/environment.md)
 - [docs/deploy.md](docs/deploy.md)
 - [docs/ci-cd.md](docs/ci-cd.md)

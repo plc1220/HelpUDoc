@@ -14,11 +14,14 @@ import type {
   ConversationSummary,
   File as WorkspaceFile,
   InterruptAnswersByQuestionId,
+  UserMemorySuggestion,
+  UserMemoryView,
 } from '../../types';
 import ChatHeader from './ChatHeader';
 import ChatHistoryPanel from './ChatHistoryPanel';
 import ChatInputArea from './ChatInputArea';
 import ChatMessageList from './ChatMessageList';
+import UserMemorySheet from './UserMemorySheet';
 import type { RenderableInterruptAction } from './interruptActions';
 import type { ChatComposerAttachment } from './chatTypes';
 
@@ -82,6 +85,7 @@ export default function AgentChatPane({
   chatInputRef,
   attachmentInputRef,
   workspaceId,
+  workspaceName,
   formatMessageTimestamp,
   interruptFieldKey,
   interruptActionFieldKey,
@@ -95,9 +99,20 @@ export default function AgentChatPane({
   conversationAttentionById,
   workspaceSkipPlanApprovals,
   workspaceSettingsBusy,
+  isMemorySheetOpen,
+  memoryView,
+  memorySuggestions,
+  memoryLoading,
+  memorySaving,
+  memoryError,
   onToggleAgentPaneVisibility,
   onModeChange,
   onToggleHistory,
+  onOpenMemorySheet,
+  onCloseMemorySheet,
+  onRefreshMemory,
+  onSaveMemorySection,
+  onDecideMemorySuggestion,
   onNewChat,
   onToggleFullScreen,
   onCloseHistory,
@@ -166,6 +181,7 @@ export default function AgentChatPane({
   chatInputRef: RefObject<HTMLTextAreaElement | null>;
   attachmentInputRef: RefObject<HTMLInputElement | null>;
   workspaceId?: string;
+  workspaceName?: string | null;
   formatMessageTimestamp: (value?: string) => string;
   interruptFieldKey: (
     messageKey: string,
@@ -188,9 +204,28 @@ export default function AgentChatPane({
   conversationAttentionById: Record<string, ConversationAttentionState>;
   workspaceSkipPlanApprovals: boolean;
   workspaceSettingsBusy: boolean;
+  isMemorySheetOpen: boolean;
+  memoryView: UserMemoryView;
+  memorySuggestions: UserMemorySuggestion[];
+  memoryLoading: boolean;
+  memorySaving: boolean;
+  memoryError?: string | null;
   onToggleAgentPaneVisibility: () => void;
   onModeChange: (event: ChangeEvent<HTMLSelectElement>) => void;
   onToggleHistory: () => void;
+  onOpenMemorySheet: () => void;
+  onCloseMemorySheet: () => void;
+  onRefreshMemory: () => void;
+  onSaveMemorySection: (input: {
+    scope: 'global' | 'workspace';
+    section: 'preferences' | 'context' | 'skill-routing';
+    content: string;
+    workspaceId?: string;
+  }) => Promise<void>;
+  onDecideMemorySuggestion: (
+    suggestionId: string,
+    payload: { decision: 'accept' | 'reject'; editedContent?: string },
+  ) => Promise<void>;
   onNewChat: () => void;
   onToggleFullScreen: () => void;
   onCloseHistory: () => void;
@@ -248,6 +283,7 @@ export default function AgentChatPane({
         onToggleVisibility={onToggleAgentPaneVisibility}
         onModeChange={onModeChange}
         onToggleHistory={onToggleHistory}
+        onOpenMemory={onOpenMemorySheet}
         onNewChat={onNewChat}
         onToggleFullScreen={onToggleFullScreen}
       />
@@ -337,6 +373,21 @@ export default function AgentChatPane({
           onRemoveCommandTag={onRemoveCommandTag}
           onSelectMention={onSelectMention}
           onSelectCommand={onSelectCommand}
+        />
+        <UserMemorySheet
+          colorMode={colorMode}
+          isOpen={isMemorySheetOpen}
+          workspaceId={workspaceId}
+          workspaceName={workspaceName}
+          memory={memoryView}
+          suggestions={memorySuggestions}
+          isLoading={memoryLoading}
+          isSaving={memorySaving}
+          error={memoryError}
+          onClose={onCloseMemorySheet}
+          onRefresh={onRefreshMemory}
+          onSaveSection={onSaveMemorySection}
+          onDecideSuggestion={onDecideMemorySuggestion}
         />
       </div>
     </div>

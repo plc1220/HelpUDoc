@@ -4,7 +4,7 @@
 x-langfuse-env: &langfuse-env
   NEXTAUTH_URL: ${LANGFUSE_NEXTAUTH_URL:-http://localhost:3300}
   NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:-langfuse-nextauth-secret-change-me}
-  DATABASE_URL: postgresql://${POSTGRES_USER:-helpudoc}:${POSTGRES_PASSWORD:-helpudoc}@postgres:5432/langfuse
+  DATABASE_URL: postgresql://${POSTGRES_USER:-helpudoc}:${POSTGRES_PASSWORD}@postgres:5432/langfuse
   SALT: ${LANGFUSE_SALT:-langfuse-local-salt-change-me}
   ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
   TELEMETRY_ENABLED: ${LANGFUSE_TELEMETRY_ENABLED:-false}
@@ -255,7 +255,7 @@ services:
       # Demo: MCP auth for toolbox-bq-demo.
       BQ_ACCESS_TOKEN: ${BQ_ACCESS_TOKEN:-}
       GOOGLE_WORKSPACE_MCP_URL: ${GOOGLE_WORKSPACE_MCP_URL:-http://google-workspace-mcp:8000/mcp}
-      LLM_MODEL: ${LLM_MODEL:-gemini-flash-latest}
+      LLM_MODEL: ${LLM_MODEL:-gemini-3-flash-preview}
       AGENT_JWT_SECRET: ${AGENT_JWT_SECRET:-helpudoc-local-dev-agent-jwt-secret}
       WORKSPACE_ROOT: /app/workspaces
       AGENT_CONFIG_PATH: /agent/config/runtime.yaml

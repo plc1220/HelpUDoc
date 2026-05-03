@@ -182,7 +182,11 @@ jobs:
           ensure_cm_key LANGFUSE_INIT_USER_EMAIL "admin@local.com"
           ensure_cm_key LANGFUSE_INIT_USER_NAME "admin"
 
-          ensure_secret_key CLICKHOUSE_PASSWORD "${CLICKHOUSE_PASSWORD_INPUT:-$(openssl rand -hex 24)}"
+          clickhouse_secret="${CLICKHOUSE_PASSWORD_INPUT:-}"
+          if [[ -z "${clickhouse_secret}" ]]; then
+            clickhouse_secret="$(openssl rand -hex 24)"
+          fi
+          ensure_secret_key CLICKHOUSE_PASSWORD "${clickhouse_secret}"
           ensure_secret_key LANGFUSE_NEXTAUTH_SECRET "${LANGFUSE_NEXTAUTH_SECRET_INPUT:-$(openssl rand -base64 32)}"
           ensure_secret_key LANGFUSE_SALT "${LANGFUSE_SALT_INPUT:-$(openssl rand -base64 32)}"
           ensure_secret_key LANGFUSE_ENCRYPTION_KEY "${LANGFUSE_ENCRYPTION_KEY_INPUT:-$(openssl rand -hex 32)}"

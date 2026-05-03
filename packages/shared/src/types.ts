@@ -199,3 +199,128 @@ export interface SkillDefinition {
   error?: string;
   warning?: string;
 }
+
+export interface ReflectionScorecard {
+  outcome: number;
+  reliability: number;
+  friction: number;
+}
+
+export interface ReflectionRecommendation {
+  id: string;
+  title: string;
+  detail: string;
+  priority: 'high' | 'medium' | 'low';
+}
+
+export interface ReflectionConversationSample {
+  conversationId: string;
+  workspaceId?: string | null;
+  workspaceName?: string | null;
+  userId?: string | null;
+  userDisplayName?: string | null;
+  title?: string | null;
+  status: 'completed' | 'failed' | 'cancelled' | 'awaiting_approval' | 'running' | 'queued';
+  excerpt?: string | null;
+}
+
+export interface ReflectionBreakdown {
+  id: number;
+  reflectionId: number;
+  dimension: 'skill' | 'tool' | 'user' | 'workspace';
+  entityKey: string;
+  label: string;
+  rank: number;
+  metrics: Record<string, unknown>;
+  summary?: string | null;
+}
+
+export interface DailyReflection {
+  id: number;
+  reflectionDate: string;
+  timezone: string;
+  status: 'ready' | 'running' | 'failed';
+  scorecard: ReflectionScorecard;
+  summaryMarkdown: string;
+  metrics: Record<string, unknown>;
+  recommendations: ReflectionRecommendation[];
+  sampledConversations: ReflectionConversationSample[];
+  breakdowns: ReflectionBreakdown[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ReflectionTrendPoint {
+  reflectionDate: string;
+  timezone: string;
+  scorecard: ReflectionScorecard;
+  metrics: Record<string, unknown>;
+}
+
+export type UserMemoryScope = 'global' | 'workspace';
+export type UserMemorySection = 'preferences' | 'context' | 'skill-routing';
+export type UserMemorySuggestionStatus = 'pending' | 'accepted' | 'rejected' | 'stale';
+
+export interface UserMemoryView {
+  globalPreferences: string;
+  globalContext: string;
+  globalSkillRouting: string;
+  workspacePreferences: string;
+  workspaceContext: string;
+  workspaceSkillRouting: string;
+}
+
+export interface UserMemorySuggestion {
+  id: string;
+  userId: string;
+  workspaceId?: string | null;
+  sourceConversationId?: string | null;
+  sourceRunId?: string | null;
+  targetPath: string;
+  targetScope: UserMemoryScope;
+  targetSection: UserMemorySection;
+  baseContentHash: string;
+  proposedContent: string;
+  rationale: string;
+  status: UserMemorySuggestionStatus;
+  reviewedContent?: string | null;
+  reviewedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type SkillEvolutionTargetKind = 'memory_skill_routing' | 'skill_learnings';
+
+export type SkillEvolutionSuggestionStatus = 'pending' | 'accepted' | 'rejected' | 'stale';
+
+export interface SkillEvolutionEvidence {
+  sourceRunIds: string[];
+  sourceConversationIds: string[];
+  workspaceId?: string | null;
+  userId?: string | null;
+  persona?: string | null;
+  skillId?: string | null;
+  transcriptExcerpt?: string | null;
+  telemetrySummary?: string | null;
+}
+
+export interface SkillEvolutionSuggestion {
+  id: string;
+  targetKind: SkillEvolutionTargetKind;
+  memoryUserId: string;
+  memoryTargetPath?: string | null;
+  targetSkillId?: string | null;
+  workspaceId?: string | null;
+  evidence: SkillEvolutionEvidence;
+  rationale: string;
+  baseContentHash: string;
+  /** Snapshot of target file content when the suggestion was created (for admin diff review). */
+  baseContentSnapshot?: string | null;
+  proposedContent: string;
+  status: SkillEvolutionSuggestionStatus;
+  reviewedContent?: string | null;
+  reviewedAt?: string | null;
+  reviewedByUserId?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}

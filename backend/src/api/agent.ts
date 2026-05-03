@@ -30,6 +30,7 @@ import { blockingRedisClient } from '../services/redisService';
 import { signAgentContextToken } from '../services/agentToken';
 import { GoogleOAuthService, GoogleOAuthTokenMissingError } from '../services/googleOAuthService';
 import { UserService } from '../services/userService';
+import { ConversationService } from '../services/conversationService';
 
 const DEFAULT_PRESENTATION_PERSONA = 'fast';
 const IMAGE_NAME_PATTERN = /\.(png|jpe?g|gif|bmp|webp|svg)$/i;
@@ -236,6 +237,7 @@ export default function(
   fileService: FileService,
   googleOAuthService: GoogleOAuthService,
   userService: UserService,
+  conversationService: ConversationService,
 ) {
   const router = Router();
   const paper2SlidesService = new Paper2SlidesService(fileService);
@@ -245,6 +247,7 @@ export default function(
     persona: z.string().min(1),
     prompt: z.string().min(1),
     workspaceId: z.string().min(1),
+    conversationId: z.string().optional(),
     history: z.array(z.object({
       role: z.string().min(1),
       content: z.string().min(1),
@@ -877,8 +880,11 @@ export default function(
   router.post('/runs', async (req, res) => {
     try {
       const user = requireUserContext(req);
-      const { persona, prompt, workspaceId, history, forceReset, turnId, taggedFiles, currentTurnFileIds, fileContextRefs } = runAgentSchema.parse(req.body);
+      const { persona, prompt, workspaceId, conversationId, history, forceReset, turnId, taggedFiles, currentTurnFileIds, fileContextRefs } = runAgentSchema.parse(req.body);
       await workspaceService.ensureMembership(workspaceId, user.userId, { requireEdit: true });
+      if (conversationId) {
+        await conversationService.ensureConversationAccess(user.userId, workspaceId, conversationId, { requireEdit: true });
+      }
       const workspacePolicy = await workspaceService.getMcpServerPolicy(workspaceId, user.userId, { requireEdit: true });
       const policy = await resolveEffectiveAgentPolicy(user.userId, workspacePolicy);
       const settings = await workspaceService.getWorkspaceSettings(workspaceId, user.userId, { requireEdit: true });
@@ -893,6 +899,7 @@ export default function(
       const { runId, status } = await startAgentRun({
         persona,
         workspaceId,
+        conversationId,
         prompt: enrichedPrompt,
         userId: user.userId,
         history,

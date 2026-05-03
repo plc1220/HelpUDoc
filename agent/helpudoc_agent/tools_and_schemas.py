@@ -35,7 +35,9 @@ from .skills_registry import (
     find_skill,
     is_skill_allowed,
     load_skills,
+    read_helpudoc_learnings,
     read_skill_content,
+    routing_hint_from_learnings,
 )
 from .rag_indexer import RagConfig, WorkspaceRagStore
 from .state import WorkspaceState
@@ -361,8 +363,14 @@ class ToolFactory:
                 return "No skills found."
             lines = []
             for skill in skills:
-                desc = f": {skill.description}" if skill.description else ""
-                lines.append(f"- {skill.skill_id}{desc}")
+                parts: List[str] = []
+                if skill.description:
+                    parts.append(str(skill.description).strip())
+                hint = routing_hint_from_learnings(read_helpudoc_learnings(skill))
+                if hint:
+                    parts.append(f"routing hint: {hint}")
+                detail = f": {' | '.join(parts)}" if parts else ""
+                lines.append(f"- {skill.skill_id}{detail}")
             return "Available skills:\n" + "\n".join(lines)
 
         list_skills.name = "list_skills"
@@ -414,6 +422,12 @@ class ToolFactory:
                     content = read_skill_content(skill)
                 except Exception as exc:  # pragma: no cover - filesystem guard
                     return f"Failed to read skill '{skill.skill_id}': {exc}"
+                learnings = read_helpudoc_learnings(skill)
+                if learnings and learnings.strip():
+                    content = (
+                        f"{content.rstrip()}\n\n---\n\n## HelpUDoc approved learnings (docs/HELPUDOC_LEARNINGS.md)\n\n"
+                        f"{learnings.strip()}\n"
+                    )
                 activate_skill_context(workspace_state.context, skill)
                 return build_loaded_skill_text(skill, content)
             available = ", ".join(sorted({skill.skill_id for skill in skills}))
