@@ -55,14 +55,62 @@ gcloud container clusters get-credentials "$CLUSTER" --zone "$GKE_LOCATION" --pr
 # gcloud container clusters get-credentials "$CLUSTER" --region "$GKE_LOCATION" --project "$PROJECT_ID"
 ```
 
-### 4.2 Build and push images (Cloud Build)
+### 4.2 Recommended full-stack deploy (GitHub Actions)
 
-This is the recommended deploy path for GKE.
+The primary full-stack deploy path is the manual **Deploy Full Stack to GKE**
+GitHub Actions workflow in `.github/workflows/deploy-gke.yml`.
 
 What it does:
-- builds and pushes `helpudoc-backend`, `helpudoc-frontend`, `helpudoc-agent`
-- rewrites the Kubernetes manifest image tags to the Cloud Build `$BUILD_ID` (in the build workspace only)
-- runs `gke-deploy` to apply `infra/gke/k8s/*`
+- builds and pushes `helpudoc-backend`, `helpudoc-frontend`, and
+  `helpudoc-agent` in parallel jobs
+- tags all three app images with the same Git commit SHA
+- applies `infra/gke/k8s/`
+- creates the demo `helpudoc-config` only if the ConfigMap is missing
+- ensures Langfuse bootstrap config/secrets, then runs
+  `infra/gke/scripts/bootstrap-langfuse-db.sh --wait-rollout`
+- patches OAuth config/secrets from GitHub repository secrets
+- updates the backend, agent, and frontend deployment images to the commit SHA
+- waits for app/frontend rollouts
+- syncs `skills/` and `agent/config/runtime.yaml` into their PVC-backed mounts
+
+Required GitHub secrets:
+- `GCP_PROJECT_ID`
+- `GKE_LOCATION`
+- `GKE_CLUSTER`
+- one auth mode: `GCP_WORKLOAD_PROVIDER` + `GCP_SERVICE_ACCOUNT`, or
+  `GCP_CREDENTIALS_JSON`
+- `VITE_GOOGLE_CLIENT_ID`
+- `GOOGLE_OAUTH_CLIENT_ID`
+- `GOOGLE_OAUTH_CLIENT_SECRET`
+- `GOOGLE_OAUTH_REDIRECT_URI`
+- `GOOGLE_OAUTH_POST_LOGIN_REDIRECT`
+- `OAUTH_TOKEN_ENCRYPTION_KEY`
+- optional Langfuse overrides: `CLICKHOUSE_PASSWORD`,
+  `LANGFUSE_NEXTAUTH_SECRET`, `LANGFUSE_SALT`, `LANGFUSE_ENCRYPTION_KEY`,
+  `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`,
+  `LANGFUSE_INIT_USER_PASSWORD`
+
+Notes:
+- The deploy is manual-only (`workflow_dispatch`), not automatic on every push.
+- The build jobs do not talk to the cluster; the deploy job does all
+  `kubectl` work after the three image pushes succeed.
+- The checked-in manifests still reference `:latest`; the workflow patches the
+  running `helpudoc-app` and `helpudoc-frontend` deployments to the commit SHA
+  after applying manifests.
+- `infra/gke/k8s/52-daily-reflection-cron.yaml` also exists in the manifest
+  directory. It currently uses the checked-in backend image reference when
+  manifests are applied; update it manually if the CronJob must run a specific
+  SHA image.
+
+See `docs/ci-cd.md` for more workflow details and troubleshooting.
+
+### 4.3 Alternative full-stack deploy (Cloud Build)
+
+`infra/cloudbuild.yaml` remains available for local/operator-triggered deploys.
+It builds the same three app images in parallel, tags them with Cloud Build
+`$BUILD_ID`, rewrites app/frontend manifest image tags in the build workspace,
+applies `infra/gke/k8s/` through `gke-deploy`, bootstraps Langfuse, syncs
+PVC-backed runtime files, optionally bootstraps an admin user, and can run E2E.
 
 ```bash
 gcloud builds submit . \
@@ -72,12 +120,12 @@ gcloud builds submit . \
 ```
 
 Notes:
-- The repo manifests intentionally reference `:latest`. Cloud Build pins them to `$BUILD_ID` at deploy time.
-- `gke-deploy` uses a longer timeout because the agent image is large and can take >5 minutes to pull on a new node.
+- The repo manifests intentionally reference `:latest`. Cloud Build pins the
+  app/frontend deployment manifests to `$BUILD_ID` in the build workspace.
+- `gke-deploy` uses a longer timeout because the agent image is large and can
+  take more than 5 minutes to pull on a new node.
 
-See `docs/ci-cd.md` for Cloud Build trigger setup and troubleshooting.
-
-### 4.3 Create Secret + ConfigMap (one-time or when values change)
+### 4.4 Create Secret + ConfigMap (one-time or when values change)
 
 ```bash
 cp env/prod/secrets.env.example env/prod/secrets.env
@@ -108,9 +156,10 @@ kubectl -n helpudoc create configmap helpudoc-config --from-env-file=env/prod/co
 
 > **Important:** For HTTPS + Caddy, set `S3_PUBLIC_BASE_URL=/helpudoc` so browsers do not request `http://localhost:9000`.
 
-### 4.4 Apply Kubernetes manifests
+### 4.5 Apply Kubernetes manifests
 
 ```bash
+kubectl apply -f infra/gke/k8s/00-namespace.yaml
 kubectl apply -f infra/gke/k8s/30-storage.yaml
 kubectl apply -f infra/gke/k8s/40-postgres.yaml
 kubectl apply -f infra/gke/k8s/41-redis.yaml
@@ -118,21 +167,53 @@ kubectl apply -f infra/gke/k8s/42-minio.yaml
 kubectl apply -f infra/gke/k8s/43-minio-setup.yaml
 kubectl apply -f infra/gke/k8s/44-clickhouse.yaml
 kubectl apply -f infra/gke/k8s/45-langfuse.yaml
+kubectl apply -f infra/gke/k8s/49-skill-sandbox.yaml
 kubectl apply -f infra/gke/k8s/51-aws-pricing-mcp.yaml
+kubectl apply -f infra/gke/k8s/52-daily-reflection-cron.yaml
 kubectl apply -f infra/gke/k8s/50-app.yaml
 kubectl apply -f infra/gke/k8s/60-frontend.yaml
 kubectl apply -f infra/gke/k8s/70-caddy.yaml
 kubectl apply -f infra/gke/k8s/71-ingress.yaml
+kubectl apply -f infra/gke/k8s/72-backendconfig.yaml
 ```
 
 Storage notes:
 - `infra/gke/k8s/30-storage.yaml` includes `agent-config-pvc`, used by `/api/settings/agent-config` to persist the agent runtime config at `/agent/config/runtime.yaml`.
 - `skills-pvc` is mounted at `/app/skills` for the backend settings "skills" page.
+- `infra/gke/k8s/49-skill-sandbox.yaml` creates namespace-scoped `Role` and
+  `RoleBinding` objects for sandbox job execution. On GKE, the deploy identity
+  needs Kubernetes RBAC for these resources and Cloud IAM permissions such as
+  `container.roles.*` and `container.roleBindings.*` (or
+  `roles/container.admin` for a dedicated deploy service account).
 - `infra/gke/k8s/51-aws-pricing-mcp.yaml` runs a FastMCP HTTP proxy in front of
   the `awslabs.aws-pricing-mcp-server` stdio process so the agent can consume it
   as a normal remote MCP server inside the cluster.
+- `infra/gke/k8s/52-daily-reflection-cron.yaml` creates the daily reflection
+  CronJob.
+- `infra/gke/k8s/72-backendconfig.yaml` creates the GKE BackendConfig used by
+  the ingress/service annotations.
 
-### 4.5 Get public URL and verify
+If you apply manifests manually, also run the Langfuse DB bootstrap once
+Postgres is ready:
+
+```bash
+chmod +x infra/gke/scripts/bootstrap-langfuse-db.sh
+infra/gke/scripts/bootstrap-langfuse-db.sh --wait-rollout
+```
+
+For manual deploys that should run a specific image tag, patch the workloads
+after applying manifests:
+
+```bash
+IMAGE_TAG="<commit-sha-or-build-id>"
+kubectl -n helpudoc set image deployment/helpudoc-app \
+  backend="gcr.io/${PROJECT_ID}/helpudoc-backend:${IMAGE_TAG}" \
+  agent="gcr.io/${PROJECT_ID}/helpudoc-agent:${IMAGE_TAG}"
+kubectl -n helpudoc set image deployment/helpudoc-frontend \
+  frontend="gcr.io/${PROJECT_ID}/helpudoc-frontend:${IMAGE_TAG}"
+```
+
+### 4.6 Get public URL and verify
 
 ```bash
 kubectl -n helpudoc get svc helpudoc-caddy
