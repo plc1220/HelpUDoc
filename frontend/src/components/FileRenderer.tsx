@@ -2,6 +2,34 @@ import React, { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'rea
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import Papa from 'papaparse';
+import SyntaxHighlighter from 'react-syntax-highlighter/dist/esm/light';
+import bash from 'react-syntax-highlighter/dist/esm/languages/hljs/bash';
+import cpp from 'react-syntax-highlighter/dist/esm/languages/hljs/cpp';
+import csharp from 'react-syntax-highlighter/dist/esm/languages/hljs/csharp';
+import css from 'react-syntax-highlighter/dist/esm/languages/hljs/css';
+import dockerfile from 'react-syntax-highlighter/dist/esm/languages/hljs/dockerfile';
+import go from 'react-syntax-highlighter/dist/esm/languages/hljs/go';
+import ini from 'react-syntax-highlighter/dist/esm/languages/hljs/ini';
+import java from 'react-syntax-highlighter/dist/esm/languages/hljs/java';
+import javascript from 'react-syntax-highlighter/dist/esm/languages/hljs/javascript';
+import json from 'react-syntax-highlighter/dist/esm/languages/hljs/json';
+import kotlin from 'react-syntax-highlighter/dist/esm/languages/hljs/kotlin';
+import less from 'react-syntax-highlighter/dist/esm/languages/hljs/less';
+import lua from 'react-syntax-highlighter/dist/esm/languages/hljs/lua';
+import php from 'react-syntax-highlighter/dist/esm/languages/hljs/php';
+import plaintext from 'react-syntax-highlighter/dist/esm/languages/hljs/plaintext';
+import powershell from 'react-syntax-highlighter/dist/esm/languages/hljs/powershell';
+import python from 'react-syntax-highlighter/dist/esm/languages/hljs/python';
+import r from 'react-syntax-highlighter/dist/esm/languages/hljs/r';
+import ruby from 'react-syntax-highlighter/dist/esm/languages/hljs/ruby';
+import rust from 'react-syntax-highlighter/dist/esm/languages/hljs/rust';
+import scss from 'react-syntax-highlighter/dist/esm/languages/hljs/scss';
+import sql from 'react-syntax-highlighter/dist/esm/languages/hljs/sql';
+import typescript from 'react-syntax-highlighter/dist/esm/languages/hljs/typescript';
+import xml from 'react-syntax-highlighter/dist/esm/languages/hljs/xml';
+import yaml from 'react-syntax-highlighter/dist/esm/languages/hljs/yaml';
+import atomOneDark from 'react-syntax-highlighter/dist/esm/styles/hljs/atom-one-dark';
+import github from 'react-syntax-highlighter/dist/esm/styles/hljs/github';
 import type { File } from '../types';
 import { parsePlotlySpec } from '../utils/plotlySpec';
 import {
@@ -10,8 +38,10 @@ import {
   useMermaidColorMode,
 } from './markdown/MarkdownShared';
 import {
+  getOfficeDocumentKind,
+  isOfficeDocument,
   isPowerPointDocument,
-  isWordDocument,
+  isSpreadsheetDocument,
   officeOnlineEmbedUrl,
 } from '../utils/officeFiles';
 
@@ -35,6 +65,80 @@ type TabularPreview = {
 
 const PARQUET_PREVIEW_MAX_ROWS = 100;
 const PARQUET_PREVIEW_MAX_COLUMNS = 20;
+SyntaxHighlighter.registerLanguage('bash', bash);
+SyntaxHighlighter.registerLanguage('c', cpp);
+SyntaxHighlighter.registerLanguage('cpp', cpp);
+SyntaxHighlighter.registerLanguage('csharp', csharp);
+SyntaxHighlighter.registerLanguage('css', css);
+SyntaxHighlighter.registerLanguage('docker', dockerfile);
+SyntaxHighlighter.registerLanguage('go', go);
+SyntaxHighlighter.registerLanguage('ini', ini);
+SyntaxHighlighter.registerLanguage('java', java);
+SyntaxHighlighter.registerLanguage('javascript', javascript);
+SyntaxHighlighter.registerLanguage('json', json);
+SyntaxHighlighter.registerLanguage('kotlin', kotlin);
+SyntaxHighlighter.registerLanguage('less', less);
+SyntaxHighlighter.registerLanguage('lua', lua);
+SyntaxHighlighter.registerLanguage('php', php);
+SyntaxHighlighter.registerLanguage('powershell', powershell);
+SyntaxHighlighter.registerLanguage('python', python);
+SyntaxHighlighter.registerLanguage('r', r);
+SyntaxHighlighter.registerLanguage('ruby', ruby);
+SyntaxHighlighter.registerLanguage('rust', rust);
+SyntaxHighlighter.registerLanguage('scss', scss);
+SyntaxHighlighter.registerLanguage('sql', sql);
+SyntaxHighlighter.registerLanguage('text', plaintext);
+SyntaxHighlighter.registerLanguage('typescript', typescript);
+SyntaxHighlighter.registerLanguage('xml', xml);
+SyntaxHighlighter.registerLanguage('yaml', yaml);
+const CODE_LANGUAGE_BY_EXTENSION: Record<string, string> = {
+  '.py': 'python',
+  '.pyw': 'python',
+  '.ts': 'typescript',
+  '.tsx': 'typescript',
+  '.js': 'javascript',
+  '.jsx': 'javascript',
+  '.mjs': 'javascript',
+  '.cjs': 'javascript',
+  '.css': 'css',
+  '.scss': 'scss',
+  '.sass': 'scss',
+  '.less': 'less',
+  '.json': 'json',
+  '.jsonl': 'json',
+  '.yaml': 'yaml',
+  '.yml': 'yaml',
+  '.xml': 'xml',
+  '.svg': 'xml',
+  '.sql': 'sql',
+  '.sh': 'bash',
+  '.bash': 'bash',
+  '.zsh': 'bash',
+  '.fish': 'bash',
+  '.ps1': 'powershell',
+  '.go': 'go',
+  '.rs': 'rust',
+  '.java': 'java',
+  '.kt': 'kotlin',
+  '.kts': 'kotlin',
+  '.c': 'c',
+  '.h': 'c',
+  '.cpp': 'cpp',
+  '.cc': 'cpp',
+  '.cxx': 'cpp',
+  '.hpp': 'cpp',
+  '.cs': 'csharp',
+  '.php': 'php',
+  '.rb': 'ruby',
+  '.r': 'r',
+  '.lua': 'lua',
+  '.vue': 'xml',
+  '.svelte': 'xml',
+  '.toml': 'ini',
+  '.ini': 'ini',
+  '.env': 'ini',
+  '.dockerfile': 'docker',
+};
 let parquetRuntimePromise: Promise<{
   parquetMetadataAsync: any;
   parquetReadObjects: any;
@@ -60,6 +164,43 @@ const loadParquetRuntime = async () => {
   }
 
   return parquetRuntimePromise;
+};
+
+const getFileExtension = (fileName: string): string => {
+  const normalized = fileName.trim().toLowerCase();
+  if (!normalized) return '';
+  if (normalized.endsWith('dockerfile')) return '.dockerfile';
+  const lastSlash = Math.max(normalized.lastIndexOf('/'), normalized.lastIndexOf('\\'));
+  const baseName = normalized.slice(lastSlash + 1);
+  const dotIndex = baseName.lastIndexOf('.');
+  return dotIndex >= 0 ? baseName.slice(dotIndex) : '';
+};
+
+const getCodeLanguage = (fileName: string, mimeType?: string | null): string | null => {
+  const extension = getFileExtension(fileName);
+  if (CODE_LANGUAGE_BY_EXTENSION[extension]) {
+    return CODE_LANGUAGE_BY_EXTENSION[extension];
+  }
+
+  if (isOfficeDocument(fileName, mimeType)) {
+    return null;
+  }
+
+  const m = (mimeType || '').toLowerCase();
+  if (m.includes('python')) return 'python';
+  if (m.includes('typescript')) return 'typescript';
+  if (m.includes('javascript') || m.includes('ecmascript')) return 'javascript';
+  if (m.includes('json')) return 'json';
+  if (m.includes('yaml') || m.includes('yml')) return 'yaml';
+  const baseMime = m.split(';')[0].trim();
+  if (baseMime === 'application/xml' || baseMime === 'text/xml' || baseMime.endsWith('+xml')) {
+    return 'xml';
+  }
+  if (m.includes('css')) return 'css';
+  if (m.includes('x-shellscript') || m.includes('shell')) return 'bash';
+  if (m.startsWith('text/x-')) return 'text';
+
+  return null;
 };
 
 const decodeBase64ToArrayBuffer = (value: string) => {
@@ -147,13 +288,19 @@ const FileRenderer: React.FC<FileRendererProps> = ({
     lowerName.endsWith('.chart.json') ||
     lowerName.endsWith('.plotly');
   const isDocxFile =
-    isWordDocument(lowerName) ||
+    lowerName.endsWith('.docx') ||
     (file?.mimeType || '').toLowerCase().includes(
       'wordprocessingml',
     );
+  const isOfficeFile = isOfficeDocument(lowerName, file?.mimeType);
   const isPptxFile =
     isPowerPointDocument(lowerName) ||
     (file?.mimeType || '').toLowerCase().includes('presentationml');
+  const isSpreadsheetFile =
+    isSpreadsheetDocument(lowerName) ||
+    (file?.mimeType || '').toLowerCase().includes('spreadsheetml') ||
+    (file?.mimeType || '').toLowerCase().includes('ms-excel');
+  const codeLanguage = getCodeLanguage(file?.name || '', file?.mimeType);
   const [parquetPreview, setParquetPreview] = useState<TabularPreview | null>(null);
   const [parquetError, setParquetError] = useState<string | null>(null);
   const [isParquetLoading, setIsParquetLoading] = useState(false);
@@ -343,6 +490,26 @@ const FileRenderer: React.FC<FileRendererProps> = ({
     }),
     [workspaceId, colorMode]
   );
+
+  const downloadBinaryFile = (
+    fallbackMimeType = 'application/octet-stream',
+    fallbackFileName = 'download',
+  ) => {
+    try {
+      const buffer = decodeBase64ToArrayBuffer(fileContent);
+      const blob = new Blob([buffer], {
+        type: file?.mimeType || fallbackMimeType,
+      });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = file?.name || fallbackFileName;
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error('File download failed', e);
+    }
+  };
 
   if (!file) {
     return (
@@ -621,6 +788,51 @@ const FileRenderer: React.FC<FileRendererProps> = ({
         </div>
       );
     }
+    if (codeLanguage) {
+      const syntaxTheme = colorMode === 'dark' ? atomOneDark : github;
+      const lineCount = fileContent ? fileContent.split(/\r\n|\r|\n/).length : 0;
+      return (
+        <div className="flex h-full min-h-0 flex-col">
+          <div
+            className={`shrink-0 border-b px-4 py-2 text-xs ${
+              colorMode === 'dark'
+                ? 'border-slate-700 text-slate-400'
+                : 'border-gray-200 text-gray-500'
+            }`}
+          >
+            <span className={`font-medium ${colorMode === 'dark' ? 'text-slate-200' : 'text-gray-700'}`}>
+              Code preview
+            </span>
+            {' · '}
+            {codeLanguage}
+            {lineCount ? ` · ${lineCount} line${lineCount === 1 ? '' : 's'}` : ''}
+          </div>
+          <div className={disableInternalScroll ? 'h-auto overflow-x-auto' : 'min-h-0 flex-1 overflow-auto'}>
+            <SyntaxHighlighter
+              language={codeLanguage}
+              style={syntaxTheme}
+              showLineNumbers
+              wrapLongLines
+              customStyle={{
+                margin: 0,
+                minHeight: '100%',
+                borderRadius: 0,
+                fontSize: '0.8125rem',
+                lineHeight: 1.55,
+              }}
+              codeTagProps={{
+                style: {
+                  fontFamily:
+                    'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+                },
+              }}
+            >
+              {fileContent || ' '}
+            </SyntaxHighlighter>
+          </div>
+        </div>
+      );
+    }
     if (isDocxFile) {
       const docxBanner = (
         <div
@@ -699,7 +911,8 @@ const FileRenderer: React.FC<FileRendererProps> = ({
         </div>
       );
     }
-    if (isPptxFile) {
+    if (isOfficeFile) {
+      const officeKind = getOfficeDocumentKind(file?.name || '', file?.mimeType);
       const embedSrc = officeOnlineEmbedUrl(file?.publicUrl ?? null);
       if (embedSrc) {
         return (
@@ -712,7 +925,7 @@ const FileRenderer: React.FC<FileRendererProps> = ({
               }`}
             >
               <span className={`font-medium ${colorMode === 'dark' ? 'text-slate-200' : 'text-gray-700'}`}>
-                PowerPoint preview
+                {officeKind} preview
               </span>
               {' · '}
               Via Microsoft Office Online (requires a public HTTPS file URL).
@@ -727,24 +940,11 @@ const FileRenderer: React.FC<FileRendererProps> = ({
           </div>
         );
       }
-      const downloadBlob = () => {
-        try {
-          const buffer = decodeBase64ToArrayBuffer(fileContent);
-          const blob = new Blob([buffer], {
-            type:
-              file?.mimeType
-              || 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-          });
-          const url = URL.createObjectURL(blob);
-          const anchor = document.createElement('a');
-          anchor.href = url;
-          anchor.download = file.name || 'presentation.pptx';
-          anchor.click();
-          URL.revokeObjectURL(url);
-        } catch (e) {
-          console.error('PPTX download failed', e);
-        }
-      };
+      const fallbackMimeType = isPptxFile
+        ? 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+        : isSpreadsheetFile
+          ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+          : 'application/octet-stream';
       return (
         <div
           className={`flex h-full flex-col items-center justify-center gap-4 px-6 text-center text-sm ${
@@ -752,20 +952,21 @@ const FileRenderer: React.FC<FileRendererProps> = ({
           }`}
         >
           <p>
-            Inline PowerPoint preview needs a public <strong className="font-semibold">https</strong> URL to
-            your file. Download the deck and open it locally, or use a workspace with public file URLs.
+            Inline {officeKind.toLowerCase()} preview needs a public{' '}
+            <strong className="font-semibold">https</strong> URL to your file. Download it and open it
+            locally, or use a workspace with public file URLs.
           </p>
           {fileContent.trim() ? (
             <button
               type="button"
-              onClick={downloadBlob}
+              onClick={() => downloadBinaryFile(fallbackMimeType, file?.name || 'office-file')}
               className={`rounded-lg px-4 py-2 text-sm font-medium text-white ${
                 colorMode === 'dark'
                   ? 'bg-slate-600 hover:bg-slate-500'
                   : 'bg-slate-800 hover:bg-slate-700'
               }`}
             >
-              Download .pptx
+              Download file
             </button>
           ) : null}
         </div>
