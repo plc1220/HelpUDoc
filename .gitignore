@@ -20,6 +20,7 @@ Thumbs.db
 .venv/
 agent/.venv/
 licheng_accessKeys.csv
+HelpUDoc_app_one_pager.docx
 
 # Python artifacts
 __pycache__/
