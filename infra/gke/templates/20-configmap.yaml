@@ -17,3 +17,5 @@ data:
   LLM_MODEL: gemini-3-flash-preview
   AWS_REGION: us-east-1
   AWS_PRICING_MCP_LOG_LEVEL: ERROR
+  ENABLE_SKILL_SANDBOX_RUNNER: "false"
+  HELPUDOC_SANDBOX_IMAGE: python:3.12-slim

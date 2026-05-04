@@ -48,5 +48,6 @@ opencv-python==4.11.0.86
 opencv-python-headless==4.11.0.86
 pypdf
 redis
+kubernetes
 # Langfuse v3 (align with self-hosted Langfuse / Langfuse Cloud; see infra).
 langfuse>=3.14.6,<4

@@ -1615,7 +1615,12 @@ def create_app() -> FastAPI:
         allow_ids = payload.get("mcpServerAllowIds") or []
         deny_ids = payload.get("mcpServerDenyIds") or []
         is_admin = bool(payload.get("isAdmin", False))
-        allow_script_runner = bool(payload.get("allowScriptRunner") or payload.get("allow_script_runner"))
+        allow_skill_sandbox = bool(
+            payload.get("allowSkillSandbox")
+            or payload.get("allow_skill_sandbox")
+            or payload.get("allowScriptRunner")
+            or payload.get("allow_script_runner")
+        )
         if isinstance(allow_ids, list) or isinstance(deny_ids, list) or isinstance(is_admin, bool):
             context["mcp_policy"] = {
                 "allowIds": [str(x) for x in (allow_ids or []) if str(x).strip()],
@@ -1643,8 +1648,8 @@ def create_app() -> FastAPI:
         mcp_auth_fingerprint = payload.get("mcpAuthFingerprint")
         if isinstance(mcp_auth_fingerprint, str) and mcp_auth_fingerprint.strip():
             context["mcp_auth_fingerprint"] = mcp_auth_fingerprint.strip()
-        if allow_script_runner:
-            context["allow_script_runner"] = True
+        if allow_skill_sandbox:
+            context["allow_skill_sandbox"] = True
         if isinstance(payload.get("skipPlanApprovals"), bool):
             context["skip_plan_approvals"] = payload["skipPlanApprovals"]
         return context

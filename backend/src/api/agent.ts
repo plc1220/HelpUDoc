@@ -37,6 +37,8 @@ const IMAGE_NAME_PATTERN = /\.(png|jpe?g|gif|bmp|webp|svg)$/i;
 const DEBUG_AGENT_RUN_STREAM =
   process.env.DEBUG_AGENT_RUN_STREAM === '1' || process.env.DEBUG_AGENT_RUN_STREAM === 'true';
 const AUTH_MODE = (process.env.AUTH_MODE || 'headers').trim().toLowerCase();
+const ENABLE_SKILL_SANDBOX_RUNNER =
+  String(process.env.ENABLE_SKILL_SANDBOX_RUNNER ?? 'false').toLowerCase() === 'true';
 const BQ_DELEGATED_MCP_SERVER_ID = 'toolbox-bq-demo';
 const DEFAULT_CURRENT_TURN_MULTIMODAL_MAX_BYTES = 8 * 1024 * 1024;
 const repoRoot = path.resolve(__dirname, '../../..');
@@ -430,6 +432,9 @@ export default function(
       skipPlanApprovals: Boolean(input.skipPlanApprovals),
       ...input.policy,
     };
+    if (ENABLE_SKILL_SANDBOX_RUNNER) {
+      payload.allowSkillSandbox = true;
+    }
 
     if (AUTH_MODE !== 'headers') {
       try {

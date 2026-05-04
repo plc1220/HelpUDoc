@@ -50,7 +50,8 @@ const contextFilesRoot = path.join(skillBuilderStorageRoot, 'context-files');
 
 const ENABLE_SKILL_BUILDER_ASSISTANT = String(process.env.ENABLE_SKILL_BUILDER_ASSISTANT ?? 'true').toLowerCase() !== 'false';
 const ENABLE_GITHUB_SKILL_IMPORTER = String(process.env.ENABLE_GITHUB_SKILL_IMPORTER ?? 'true').toLowerCase() !== 'false';
-const ENABLE_SKILL_SCRIPT_RUNNER = String(process.env.ENABLE_SKILL_SCRIPT_RUNNER ?? 'false').toLowerCase() === 'true';
+const ENABLE_SKILL_SANDBOX_RUNNER =
+  String(process.env.ENABLE_SKILL_SANDBOX_RUNNER ?? process.env.ENABLE_SKILL_SCRIPT_RUNNER ?? 'false').toLowerCase() === 'true';
 
 const CONTEXT_ALLOWED_EXTENSIONS = [
   '.py', '.md', '.txt', '.pdf', '.csv', '.json', '.yaml', '.yml', '.png', '.jpg', '.jpeg', '.webp', '.gif', '.svg',
@@ -1063,7 +1064,7 @@ export default function settingsRoutes(
         : payload.prompt;
 
       let authToken: string | undefined;
-      if (ENABLE_SKILL_SCRIPT_RUNNER) {
+      if (ENABLE_SKILL_SANDBOX_RUNNER) {
         const token = signAgentContextToken({
           sub: user.userId,
           userId: user.userId,
@@ -1071,7 +1072,7 @@ export default function settingsRoutes(
           isAdmin: true,
           mcpServerAllowIds: [],
           mcpServerDenyIds: [],
-          allowScriptRunner: true,
+          allowSkillSandbox: true,
         });
         if (token) {
           authToken = token;

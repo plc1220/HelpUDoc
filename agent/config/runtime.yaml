@@ -74,6 +74,9 @@ tools:
   - name: request_human_action
     kind: builtin
     description: Pause the run and ask the human to choose from arbitrary actions
+  - name: run_skill_python_script
+    kind: builtin
+    description: Run an active skill's declared Python script in a Kubernetes sandbox
 mcp_servers:
   - name: toolbox-bq-demo
     transport: http

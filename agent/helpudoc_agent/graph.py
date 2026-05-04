@@ -224,6 +224,12 @@ class AgentRegistry:
             workspace_state.context.update(preserved_context)
         if context_payload:
             workspace_state.context.update(context_payload)
+        allow_skill_sandbox = bool(
+            context_payload.get("allow_skill_sandbox")
+            or context_payload.get("allowSkillSandbox")
+            or context_payload.get("allow_script_runner")
+            or context_payload.get("allowScriptRunner")
+        )
         system_prompt = GENERAL_SYSTEM_PROMPT
         skills_root = self.settings.backend.skills_root
         if skills_root is not None:
@@ -241,8 +247,9 @@ class AgentRegistry:
                 tool_names.append("load_skill")
             if "list_skills" in self.settings.tools and "list_skills" not in tool_names:
                 tool_names.append("list_skills")
-        allow_script_runner = bool(context_payload.get("allow_script_runner") or context_payload.get("allowScriptRunner"))
-        if allow_script_runner and "run_skill_python_script" in self.settings.tools and "run_skill_python_script" not in tool_names:
+        if not allow_skill_sandbox:
+            tool_names = [name for name in tool_names if name != "run_skill_python_script"]
+        if allow_skill_sandbox and "run_skill_python_script" in self.settings.tools and "run_skill_python_script" not in tool_names:
             tool_names.append("run_skill_python_script")
 
         builtin_tools = [

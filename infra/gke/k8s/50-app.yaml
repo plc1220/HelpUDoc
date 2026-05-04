@@ -15,6 +15,7 @@ spec:
       labels:
         app: helpudoc-app
     spec:
+      serviceAccountName: helpudoc-agent
       containers:
         - name: backend
           image: gcr.io/my-rd-coe-demo-gen-ai/helpudoc-backend:latest
@@ -192,6 +193,12 @@ spec:
                   optional: true
             - name: FILE_UNDERSTANDING_AGENT_READS_WORKSPACE
               value: "true"
+            - name: ENABLE_SKILL_SANDBOX_RUNNER
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: ENABLE_SKILL_SANDBOX_RUNNER
+                  optional: true
           volumeMounts:
             - name: workspace-data
               mountPath: /app/workspaces
@@ -398,6 +405,18 @@ spec:
                 configMapKeyRef:
                   name: helpudoc-config
                   key: LANGFUSE_NEXTAUTH_URL
+                  optional: true
+            - name: HELPUDOC_SANDBOX_NAMESPACE
+              value: helpudoc
+            - name: HELPUDOC_SANDBOX_WORKSPACE_PVC
+              value: workspace-pvc
+            - name: HELPUDOC_SANDBOX_RUNTIME_CLASS
+              value: gvisor
+            - name: HELPUDOC_SANDBOX_IMAGE
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: HELPUDOC_SANDBOX_IMAGE
                   optional: true
           volumeMounts:
             - name: workspace-data

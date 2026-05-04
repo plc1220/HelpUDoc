@@ -37,6 +37,7 @@ The backend and agent are intentionally co-located around shared workspace/confi
 | `k8s/43-minio-setup.yaml` | Bucket/bootstrap job (includes `langfuse` bucket) |
 | `k8s/44-clickhouse.yaml` | ClickHouse for Langfuse |
 | `k8s/45-langfuse.yaml` | Langfuse web + worker + `langfuse-web` Service |
+| `k8s/49-skill-sandbox.yaml` | Skill sandbox ServiceAccount/RBAC and offline NetworkPolicy |
 | `k8s/51-aws-pricing-mcp.yaml` | AWS Pricing MCP deployment/service |
 | `k8s/50-app.yaml` | Combined backend + agent application deployment |
 | `k8s/60-frontend.yaml` | Frontend deployment/service |
@@ -101,6 +102,7 @@ kubectl apply -f infra/gke/k8s/42-minio.yaml
 kubectl apply -f infra/gke/k8s/43-minio-setup.yaml
 kubectl apply -f infra/gke/k8s/44-clickhouse.yaml
 kubectl apply -f infra/gke/k8s/45-langfuse.yaml
+kubectl apply -f infra/gke/k8s/49-skill-sandbox.yaml
 kubectl apply -f infra/gke/k8s/51-aws-pricing-mcp.yaml
 kubectl apply -f infra/gke/k8s/50-app.yaml
 kubectl apply -f infra/gke/k8s/60-frontend.yaml

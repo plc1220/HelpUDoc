@@ -1,0 +1,48 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: helpudoc-agent
+  namespace: helpudoc
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: helpudoc-skill-sandbox-runner
+  namespace: helpudoc
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: helpudoc-skill-sandbox-runner
+  namespace: helpudoc
+subjects:
+  - kind: ServiceAccount
+    name: helpudoc-agent
+    namespace: helpudoc
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: helpudoc-skill-sandbox-runner
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: helpudoc-skill-sandbox-deny-egress
+  namespace: helpudoc
+spec:
+  podSelector:
+    matchLabels:
+      app: helpudoc-skill-sandbox
+  policyTypes:
+    - Egress
+  egress: []

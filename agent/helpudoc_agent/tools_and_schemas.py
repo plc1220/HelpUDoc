@@ -39,6 +39,11 @@ from .skills_registry import (
     read_skill_content,
     routing_hint_from_learnings,
 )
+from .sandbox_runner import (
+    SandboxExecutionError,
+    SandboxUnavailableError,
+    run_skill_python_script_in_kubernetes,
+)
 from .rag_indexer import RagConfig, WorkspaceRagStore
 from .state import WorkspaceState
 from .tagged_file_policy import is_tagged_files_only, tagged_files_mode_guard
@@ -268,6 +273,7 @@ class ToolFactory:
             "request_plan_approval": self._build_request_plan_approval_tool,
             "request_clarification": self._build_request_clarification_tool,
             "request_human_action": self._build_request_human_action_tool,
+            "run_skill_python_script": self._build_run_skill_python_script_tool,
         }
 
     def build_tools(self, tool_names: List[str], workspace_state: WorkspaceState) -> List[Tool]:
@@ -436,6 +442,57 @@ class ToolFactory:
         load_skill.name = "load_skill"
         load_skill.description = "Load the full content of a skill by id or name."
         return load_skill
+
+    def _build_run_skill_python_script_tool(self, workspace_state: WorkspaceState) -> Tool:
+        skills_root = self.settings.backend.skills_root
+
+        @tool
+        def run_skill_python_script(
+            script_name: str,
+            input_paths: Optional[List[str]] = None,
+            args: Optional[List[str]] = None,
+        ) -> str:
+            """Run a declared Python script from the active skill inside a Kubernetes sandbox."""
+            blocked = tagged_files_mode_guard(workspace_state.context, "run_skill_python_script")
+            if blocked:
+                return blocked
+            try:
+                result = run_skill_python_script_in_kubernetes(
+                    skills_root=skills_root,
+                    workspace_state=workspace_state,
+                    script_name=script_name,
+                    input_paths=input_paths or [],
+                    args=args or [],
+                )
+            except SandboxUnavailableError as exc:
+                return str(exc)
+            except SandboxExecutionError as exc:
+                return f"Skill sandbox execution blocked: {exc}"
+
+            lines = [
+                "SKILL_SANDBOX_RUN_COMPLETED",
+                f"Run ID: {result.run_id}",
+                f"Job: {result.job_name}",
+            ]
+            if result.output_files:
+                lines.append("Output files:")
+                lines.extend(f"- {item.path} ({item.size} bytes)" for item in result.output_files)
+            else:
+                lines.append("Output files: (none declared or produced)")
+            if result.stdout:
+                lines.append("STDOUT:")
+                lines.append(result.stdout[:8000])
+            if result.stderr:
+                lines.append("STDERR:")
+                lines.append(result.stderr[:4000])
+            return "\n".join(lines)
+
+        run_skill_python_script.name = "run_skill_python_script"
+        run_skill_python_script.description = (
+            "Run a Python script declared in the active skill's sandbox_scripts frontmatter. "
+            "Scripts execute in a Kubernetes Job sandbox; pass input_paths as workspace files and args as argv."
+        )
+        return run_skill_python_script
 
     def _build_request_plan_approval_tool(self, workspace_state: WorkspaceState) -> Tool:
         """Request human review for a plan before running execution steps."""

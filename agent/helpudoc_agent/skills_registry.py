@@ -1,7 +1,7 @@
 """Skill discovery and workspace syncing helpers."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, List
 import shutil
@@ -26,6 +26,16 @@ class SkillMetadata:
     mcp_servers: List[str]
     policy: SkillPolicy
     path: Path
+    sandbox_scripts: List["SkillSandboxScript"] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class SkillSandboxScript:
+    name: str
+    path: str
+    sha256: str
+    timeout_seconds: int = 120
+    outputs: List[str] = field(default_factory=list)
 
 
 TOOL_FACTORY_EXPANSIONS: dict[str, tuple[str, ...]] = {
@@ -95,6 +105,37 @@ def _normalize_optional_string(value: object) -> str | None:
 def _normalize_string_list(value: object) -> List[str] | None:
     normalized = _normalize_tools(value)
     return normalized or None
+
+
+def _normalize_sandbox_scripts(value: object) -> List[SkillSandboxScript]:
+    if not isinstance(value, list):
+        return []
+    scripts: List[SkillSandboxScript] = []
+    for raw in value:
+        if not isinstance(raw, dict):
+            continue
+        name = str(raw.get("name") or "").strip()
+        path = str(raw.get("path") or "").strip()
+        sha256 = str(raw.get("sha256") or "").strip().lower()
+        if not name or not path or not sha256:
+            continue
+        raw_timeout = raw.get("timeout_seconds", 120)
+        try:
+            timeout_seconds = int(raw_timeout)
+        except (TypeError, ValueError):
+            timeout_seconds = 120
+        timeout_seconds = min(3600, max(1, timeout_seconds))
+        outputs = _normalize_tools(raw.get("outputs"))
+        scripts.append(
+            SkillSandboxScript(
+                name=name,
+                path=path,
+                sha256=sha256,
+                timeout_seconds=timeout_seconds,
+                outputs=outputs,
+            )
+        )
+    return scripts
 
 
 def _infer_skill_policy(skill_id: str, content: str, meta: dict) -> SkillPolicy:
@@ -199,6 +240,7 @@ def load_skills(skills_root: Path) -> List[SkillMetadata]:
         description = meta.get("description")
         tools = _normalize_tools(meta.get("tools"))
         mcp_servers = _normalize_tools(meta.get("mcp_servers"))
+        sandbox_scripts = _normalize_sandbox_scripts(meta.get("sandbox_scripts"))
         policy = _infer_skill_policy(skill_id, content, meta)
         skills.append(
             SkillMetadata(
@@ -209,6 +251,7 @@ def load_skills(skills_root: Path) -> List[SkillMetadata]:
                 mcp_servers=mcp_servers,
                 policy=policy,
                 path=skill_file,
+                sandbox_scripts=sandbox_scripts,
             )
         )
     return skills
@@ -275,6 +318,16 @@ def activate_skill_context(context: dict[str, Any], skill: SkillMetadata) -> Non
         "tools": runtime_tools,
         "declared_tools": list(skill.tools),
         "mcp_servers": allowed_mcp_servers,
+        "sandbox_scripts": [
+            {
+                "name": script.name,
+                "path": script.path,
+                "sha256": script.sha256,
+                "timeout_seconds": script.timeout_seconds,
+                "outputs": list(script.outputs),
+            }
+            for script in skill.sandbox_scripts
+        ],
     }
     context["active_skill_policy"] = {
         "requires_hitl_plan": skill.policy.requires_hitl_plan,
@@ -335,6 +388,11 @@ def build_skill_policy_lines(skill: SkillMetadata) -> List[str]:
     policy_lines.append(
         f"- mcp_servers: {', '.join(skill.mcp_servers) if skill.mcp_servers else '(none declared)'}"
     )
+    if skill.sandbox_scripts:
+        policy_lines.append(
+            "- sandbox_scripts: "
+            + ", ".join(script.name for script in skill.sandbox_scripts)
+        )
     if skill.policy.requires_hitl_plan:
         policy_lines.append(
             "- You must call request_plan_approval before side-effecting execution."
@@ -431,6 +489,8 @@ def is_tool_allowed(
     if active_skill is None:
         return True
     if tool_mcp_server is None:
+        if tool_name == "run_skill_python_script":
+            return tool_name in active_skill.tools
         # Empty tool allowlists are intentionally treated as unrestricted access
         # for backwards compatibility with older skills that omit `tools:`.
         if not active_skill.tools:
