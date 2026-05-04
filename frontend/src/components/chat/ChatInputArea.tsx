@@ -1,4 +1,4 @@
-import { FileIcon, MonitorPlay, Paperclip, Plus, Send, StopCircle, X } from 'lucide-react';
+import { FileIcon, Globe2, MonitorPlay, Paperclip, Plus, Send, StopCircle, X } from 'lucide-react';
 import { type ChangeEvent, type KeyboardEvent, type RefObject, type SyntheticEvent, useEffect, useRef, useState } from 'react';
 
 import type { File as WorkspaceFile } from '../../types';
@@ -24,6 +24,7 @@ export default function ChatInputArea({
   attachmentInputRef,
   isStreaming,
   isPreparingAttachments,
+  internetSearchEnabled,
   showPaper2SlidesControls,
   presentationStatus,
   presentationOptionSummary,
@@ -39,7 +40,7 @@ export default function ChatInputArea({
   onChatInputKeyUp,
   onChatInputSelectionChange,
   onOpenLocalAttachmentPicker,
-  onOpenDrivePicker,
+  onToggleInternetSearch,
   onInsertSlashTrigger,
   onOpenPresentationModal,
   onStopStreaming,
@@ -57,6 +58,7 @@ export default function ChatInputArea({
   attachmentInputRef: RefObject<HTMLInputElement | null>;
   isStreaming: boolean;
   isPreparingAttachments: boolean;
+  internetSearchEnabled: boolean;
   showPaper2SlidesControls: boolean;
   presentationStatus: 'idle' | 'running' | 'success' | 'error';
   presentationOptionSummary: string;
@@ -72,7 +74,7 @@ export default function ChatInputArea({
   onChatInputKeyUp: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
   onChatInputSelectionChange: (event: SyntheticEvent<HTMLTextAreaElement>) => void;
   onOpenLocalAttachmentPicker: () => void;
-  onOpenDrivePicker: () => void;
+  onToggleInternetSearch: () => void;
   onInsertSlashTrigger: () => void;
   onOpenPresentationModal: () => void;
   onStopStreaming: () => void;
@@ -221,24 +223,6 @@ export default function ChatInputArea({
                       </span>
                     </div>
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsAttachmentMenuOpen(false);
-                      onOpenDrivePicker();
-                    }}
-                    className={`mt-1 flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm font-medium transition ${
-                      isDarkMode ? 'text-slate-100 hover:bg-slate-800' : 'text-slate-800 hover:bg-slate-50'
-                    }`}
-                  >
-                    <GoogleDriveIcon className="h-[18px] w-[18px]" />
-                    <div className="flex flex-col">
-                      <span>Add from Google Drive</span>
-                      <span className={`text-[11px] font-normal ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
-                        Search Drive or paste a file URL
-                      </span>
-                    </div>
-                  </button>
                 </div>
               )}
             </div>
@@ -257,6 +241,27 @@ export default function ChatInputArea({
               aria-label="Insert command"
             >
               <span className="text-xs font-semibold">/</span>
+            </button>
+            <button
+              type="button"
+              onClick={onToggleInternetSearch}
+              disabled={isPreparingAttachments}
+              className={`rounded-lg p-2 transition-all duration-200 ${
+                internetSearchEnabled
+                  ? isDarkMode
+                    ? 'bg-emerald-400/15 text-emerald-200 ring-1 ring-emerald-400/25'
+                    : 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200'
+                  : isPreparingAttachments
+                    ? isDarkMode
+                      ? 'cursor-not-allowed text-slate-600'
+                      : 'cursor-not-allowed text-slate-300'
+                    : isDarkMode ? 'text-slate-400 hover:bg-slate-800 hover:text-slate-100' : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'
+              }`}
+              title={internetSearchEnabled ? 'Internet search on' : 'Internet search off'}
+              aria-label={internetSearchEnabled ? 'Disable internet search' : 'Enable internet search'}
+              aria-pressed={internetSearchEnabled}
+            >
+              <Globe2 size={17} />
             </button>
             {showPaper2SlidesControls && (
               <>

@@ -69,6 +69,7 @@ type RunAgentOptions = {
   authToken?: string;
   fileContextRefs?: FileContextRef[];
   messageContent?: AgentMessageContentBlock[];
+  internetSearchEnabled?: boolean;
   traceContext?: AgentTraceContext;
 };
 
@@ -124,6 +125,9 @@ export async function runAgent(
   if (options?.messageContent?.length) {
     payload.messageContent = options.messageContent;
   }
+  if (options?.internetSearchEnabled) {
+    payload.internetSearchEnabled = true;
+  }
   if (options?.traceContext) {
     payload.langfuseTraceContext = options.traceContext;
   }
@@ -158,6 +162,9 @@ export async function runAgentStream(
   }
   if (options?.messageContent?.length) {
     payload.messageContent = options.messageContent;
+  }
+  if (options?.internetSearchEnabled) {
+    payload.internetSearchEnabled = true;
   }
   if (options?.traceContext) {
     payload.langfuseTraceContext = options.traceContext;

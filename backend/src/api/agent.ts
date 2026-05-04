@@ -258,6 +258,7 @@ export default function(
     turnId: z.string().optional(),
     taggedFiles: z.array(z.string().min(1)).optional(),
     currentTurnFileIds: z.array(z.number().int().positive()).optional(),
+    internetSearchEnabled: z.boolean().optional(),
     fileContextRefs: z.array(z.object({
       sourceFileId: z.number().int().positive(),
       sourceName: z.string().min(1),
@@ -763,7 +764,7 @@ export default function(
   router.post('/run', async (req, res) => {
     try {
       const user = requireUserContext(req);
-      const { persona, prompt, workspaceId, history, forceReset, taggedFiles, currentTurnFileIds, fileContextRefs } = runAgentSchema.parse(req.body);
+      const { persona, prompt, workspaceId, history, forceReset, taggedFiles, currentTurnFileIds, internetSearchEnabled, fileContextRefs } = runAgentSchema.parse(req.body);
       const workspacePolicy = await workspaceService.getMcpServerPolicy(workspaceId, user.userId, { requireEdit: true });
       const policy = await resolveEffectiveAgentPolicy(user.userId, workspacePolicy);
       const settings = await workspaceService.getWorkspaceSettings(workspaceId, user.userId, { requireEdit: true });
@@ -780,6 +781,7 @@ export default function(
         authToken: authToken || undefined,
         fileContextRefs,
         messageContent,
+        internetSearchEnabled,
         traceContext: {
           userId: user.userId,
           workspaceId,
@@ -820,7 +822,7 @@ export default function(
 
     try {
       const user = requireUserContext(req);
-      const { persona, prompt, workspaceId, history, forceReset, taggedFiles, currentTurnFileIds, fileContextRefs } = runAgentSchema.parse(req.body);
+      const { persona, prompt, workspaceId, history, forceReset, taggedFiles, currentTurnFileIds, internetSearchEnabled, fileContextRefs } = runAgentSchema.parse(req.body);
       const workspacePolicy = await workspaceService.getMcpServerPolicy(workspaceId, user.userId, { requireEdit: true });
       const policy = await resolveEffectiveAgentPolicy(user.userId, workspacePolicy);
       const settings = await workspaceService.getWorkspaceSettings(workspaceId, user.userId, { requireEdit: true });
@@ -838,6 +840,7 @@ export default function(
         authToken: authToken || undefined,
         fileContextRefs,
         messageContent,
+        internetSearchEnabled,
         traceContext: {
           userId: user.userId,
           workspaceId,
@@ -885,7 +888,7 @@ export default function(
   router.post('/runs', async (req, res) => {
     try {
       const user = requireUserContext(req);
-      const { persona, prompt, workspaceId, conversationId, history, forceReset, turnId, taggedFiles, currentTurnFileIds, fileContextRefs } = runAgentSchema.parse(req.body);
+      const { persona, prompt, workspaceId, conversationId, history, forceReset, turnId, taggedFiles, currentTurnFileIds, internetSearchEnabled, fileContextRefs } = runAgentSchema.parse(req.body);
       await workspaceService.ensureMembership(workspaceId, user.userId, { requireEdit: true });
       if (conversationId) {
         await conversationService.ensureConversationAccess(user.userId, workspaceId, conversationId, { requireEdit: true });
@@ -913,6 +916,7 @@ export default function(
         authToken: authToken || undefined,
         fileContextRefs,
         messageContent,
+        internetSearchEnabled,
       });
       res.json({ runId, status });
     } catch (error: any) {

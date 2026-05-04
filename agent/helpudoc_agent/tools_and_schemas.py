@@ -262,7 +262,6 @@ class ToolFactory:
         self._builtin_map: Dict[str, Callable[[WorkspaceState], Tool]] = {
             "google_search": self._build_google_search_tool,
             "gemini_image": self._build_gemini_image_tool,
-            "google_grounded_search": self._build_google_grounded_search_tool,
             "export_bigquery_query": self._build_export_bigquery_query_tool,
             "append_to_report": self._build_append_to_report_tool,
             "create_pdf_from_images": self._build_create_pdf_from_images_tool,
@@ -335,18 +334,6 @@ class ToolFactory:
             workspace_state=workspace_state,
             client=self.gemini_manager.client,
             model_name=self.gemini_manager.image_model_name,
-        )
-
-    def _build_google_grounded_search_tool(self, workspace_state: WorkspaceState) -> Tool:
-        """Compatibility alias of google_search for existing prompts/skills."""
-        return build_google_search_tool(
-            workspace_state=workspace_state,
-            source_tracker=self.source_tracker,
-            client=self.gemini_manager.search_client,
-            model_name=self.gemini_manager.model_name,
-            tool_name="google_grounded_search",
-            tool_description="Alias of google_search with citations for backward compatibility.",
-            search_label="google_grounded_search",
         )
 
     def _build_export_bigquery_query_tool(self, workspace_state: WorkspaceState) -> Tool:

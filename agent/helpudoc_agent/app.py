@@ -348,6 +348,7 @@ class ChatRequest(BaseModel):
     forceReset: bool = False
     fileContextRefs: List[Dict[str, Any]] | None = None
     messageContent: List[Dict[str, Any]] | None = None
+    internetSearchEnabled: bool = False
     langfuseTraceContext: Dict[str, Any] | None = None
 
 
@@ -1719,6 +1720,7 @@ def create_app() -> FastAPI:
 
     def _seed_initial_skill_context(initial_context: Dict[str, Any], message: ChatRequest) -> Dict[str, Any]:
         seeded = dict(initial_context or {})
+        seeded["internet_search_enabled"] = bool(message.internetSearchEnabled)
         payload = _prepare_payload(message)
         for index in range(len(payload) - 1, -1, -1):
             item = payload[index]
@@ -2485,6 +2487,7 @@ def create_app() -> FastAPI:
         payload = _prepare_payload(message)
         if fresh_turn:
             _reset_turn_context(runtime)
+            runtime.workspace_state.context["internet_search_enabled"] = bool(message.internetSearchEnabled)
         payload, latest_user_text = _apply_embedded_directives(runtime, payload)
         if fresh_turn:
             memory_guidance = _build_memory_system_message(runtime)
@@ -2500,6 +2503,21 @@ def create_app() -> FastAPI:
                     break
         if not prompt_for_tagged_files:
             prompt_for_tagged_files = message.message or ""
+        if message.internetSearchEnabled:
+            internet_guidance = (
+                "Internet search is enabled for this turn. "
+                "Use the google_search tool for current, external, or web-grounded information before answering, "
+                "and cite the useful sources it returns."
+            )
+            for index in range(len(payload) - 1, -1, -1):
+                role = str(payload[index].get("role") or "").strip().lower()
+                if role in {"user", "human"}:
+                    payload[index]["content"] = _replace_content_text(
+                        payload[index].get("content"),
+                        f"{prompt_for_tagged_files.rstrip()}\n\n{internet_guidance}".strip(),
+                    )
+                    prompt_for_tagged_files = _extract_text_from_content(payload[index].get("content"))
+                    break
         message_file_context_refs = _normalize_file_context_refs(message.fileContextRefs)
         if message_file_context_refs:
             runtime.workspace_state.context["file_context_refs"] = message_file_context_refs

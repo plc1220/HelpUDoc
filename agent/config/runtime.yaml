@@ -32,9 +32,6 @@ tools:
   - name: google_search
     kind: builtin
     description: Gemini-native Google search tool
-  - name: google_grounded_search
-    kind: builtin
-    description: Backward-compatible alias of google_search
   - name: gemini_image
     kind: builtin
     description: Generate or edit images using Gemini

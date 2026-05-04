@@ -16,6 +16,7 @@ import {
   getFiles,
   createFile,
   createTextFile,
+  importGoogleDriveFiles,
   updateFileContent,
   deleteFolder,
   deleteFile,
@@ -83,6 +84,7 @@ import AgentChatPane from '../components/chat/AgentChatPane';
 import { buildApprovalDraftContent, buildApprovalReview } from '../components/chat/approvalReview';
 import type { RenderableInterruptAction } from '../components/chat/interruptActions';
 import DrivePickerModal from '../components/chat/DrivePickerModal';
+import GoogleDriveIcon from '../components/chat/GoogleDriveIcon';
 import type { ChatComposerAttachment } from '../components/chat/chatTypes';
 import { useAuth } from '../auth/AuthProvider';
 import {
@@ -506,6 +508,7 @@ export default function WorkspacePage() {
   const [conversationMessages, setConversationMessages] = useState<Record<string, ConversationMessage[]>>({});
   const [chatMessage, setChatMessage] = useState('');
   const [chatAttachments, setChatAttachments] = useState<ChatComposerAttachment[]>([]);
+  const [internetSearchEnabled, setInternetSearchEnabled] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [shareWorkspace, setShareWorkspace] = useState<Workspace | null>(null);
   const personas = DEFAULT_PERSONAS;
@@ -2452,6 +2455,7 @@ export default function WorkspacePage() {
     fileContextRefs?: FileContextRef[];
     currentTurnFileIds?: number[];
     taggedFiles?: string[];
+    internetSearchEnabled?: boolean;
   }) {
     const {
       workspaceId,
@@ -2463,6 +2467,7 @@ export default function WorkspacePage() {
       fileContextRefs,
       currentTurnFileIds,
       taggedFiles,
+      internetSearchEnabled,
     } = params;
     const { runId } = await startAgentRun(
       workspaceId,
@@ -2476,6 +2481,7 @@ export default function WorkspacePage() {
         taggedFiles,
         fileContextRefs,
         currentTurnFileIds,
+        internetSearchEnabled,
       },
     );
     if (STREAM_DEBUG_ENABLED) {
@@ -5633,6 +5639,7 @@ export default function WorkspacePage() {
       const agentPrompt = attachmentPrompt
         ? `${agentPromptBase}${agentPromptBase ? '\n\n' : ''}${attachmentPrompt}`
         : agentPromptBase;
+      const useInternetSearch = internetSearchEnabled;
 
       try {
         await launchPreparedAgentRun({
@@ -5645,6 +5652,7 @@ export default function WorkspacePage() {
           fileContextRefs: resolvedFileContextRefs,
           currentTurnFileIds,
           taggedFiles,
+          internetSearchEnabled: useInternetSearch,
         });
       } catch (error) {
         console.error('Failed to start agent run', error);
@@ -5932,39 +5940,42 @@ export default function WorkspacePage() {
 
   const handleOpenDrivePicker = () => {
     if (!selectedWorkspace) {
-      addLocalSystemMessage('Please select a workspace before attaching Google Drive files.');
+      addLocalSystemMessage('Please select a workspace before importing Google Drive files.');
       return;
     }
     setIsDrivePickerOpen(true);
   };
 
-  const handleDrivePickerConfirm = (items: GoogleDrivePickerItem[]) => {
+  const handleDrivePickerConfirm = async (items: GoogleDrivePickerItem[]) => {
     if (!items.length) {
       setIsDrivePickerOpen(false);
       return;
     }
-    setChatAttachments((prev) => {
-      const existingDriveIds = new Set(
-        prev
-          .filter((attachment): attachment is Extract<ChatComposerAttachment, { source: 'drive' }> => attachment.source === 'drive')
-          .map((attachment) => attachment.driveItem.id),
+    const workspaceId = selectedWorkspace?.id;
+    if (!workspaceId) {
+      setIsDrivePickerOpen(false);
+      addLocalSystemMessage('Please select a workspace before importing Google Drive files.');
+      return;
+    }
+    try {
+      setIsDriveImporting(true);
+      const imported = await importGoogleDriveFiles(workspaceId, items.map((item) => item.id));
+      const importedFiles = Array.isArray(imported.files) ? imported.files : [];
+      if (importedFiles.length && selectedWorkspaceIdRef.current === workspaceId) {
+        await loadFilesForWorkspace(workspaceId);
+      }
+      addLocalSystemMessage(
+        importedFiles.length === 1
+          ? `Imported ${importedFiles[0].name} from Google Drive.`
+          : `Imported ${importedFiles.length} files from Google Drive.`,
       );
-      const next = [...prev];
-      items.forEach((item) => {
-        if (existingDriveIds.has(item.id)) {
-          return;
-        }
-        existingDriveIds.add(item.id);
-        next.push({
-          id: `drive:${item.id}`,
-          name: item.name,
-          source: 'drive',
-          driveItem: item,
-        });
-      });
-      return next;
-    });
-    setIsDrivePickerOpen(false);
+      setIsDrivePickerOpen(false);
+    } catch (error) {
+      console.error('Failed to import Google Drive files:', error);
+      addLocalSystemMessage(error instanceof Error ? error.message : 'Failed to import Google Drive files.');
+    } finally {
+      setIsDriveImporting(false);
+    }
   };
 
   const handleRemoveChatAttachment = (index: number) => {
@@ -6168,8 +6179,23 @@ export default function WorkspacePage() {
                           className={`p-1.5 rounded-lg disabled:opacity-50 ${
                             isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-100'
                           }`}
+                          title="Upload files"
                         >
                           <Plus size={16} className={isDarkMode ? 'text-slate-300' : 'text-gray-600'} />
+                        </button>
+                        <button
+                          onClick={handleOpenDrivePicker}
+                          disabled={!selectedWorkspace || isDriveImporting}
+                          className={`p-1.5 rounded-lg disabled:opacity-50 ${
+                            isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-100'
+                          }`}
+                          title="Import from Google Drive"
+                        >
+                          {isDriveImporting ? (
+                            <Loader2 size={16} className={`animate-spin ${isDarkMode ? 'text-slate-300' : 'text-gray-600'}`} />
+                          ) : (
+                            <GoogleDriveIcon className="h-4 w-4" />
+                          )}
                         </button>
                         <button
                           onClick={handleRefreshFiles}
@@ -6468,6 +6494,7 @@ export default function WorkspacePage() {
               chatInputRef={chatInputRef}
               attachmentInputRef={attachmentInputRef}
               workspaceId={selectedWorkspace?.id}
+              internetSearchEnabled={internetSearchEnabled}
               workspaceName={selectedWorkspace?.name}
               formatMessageTimestamp={formatMessageTimestamp}
               interruptFieldKey={interruptFieldKey}
@@ -6513,7 +6540,7 @@ export default function WorkspacePage() {
               onChatInputKeyUp={handleChatInputKeyUp}
               onChatInputSelectionChange={handleChatInputSelectionChange}
               onOpenLocalAttachmentPicker={handleOpenLocalAttachmentPicker}
-              onOpenDrivePicker={handleOpenDrivePicker}
+              onToggleInternetSearch={() => setInternetSearchEnabled((prev) => !prev)}
               onInsertSlashTrigger={handleInsertSlashTrigger}
               onOpenPresentationModal={handleOpenPresentationModal}
               onStopStreaming={handleStopStreaming}

@@ -85,6 +85,7 @@ export default function AgentChatPane({
   chatInputRef,
   attachmentInputRef,
   workspaceId,
+  internetSearchEnabled,
   workspaceName,
   formatMessageTimestamp,
   interruptFieldKey,
@@ -130,7 +131,7 @@ export default function AgentChatPane({
   onChatInputKeyUp,
   onChatInputSelectionChange,
   onOpenLocalAttachmentPicker,
-  onOpenDrivePicker,
+  onToggleInternetSearch,
   onInsertSlashTrigger,
   onOpenPresentationModal,
   onStopStreaming,
@@ -181,6 +182,7 @@ export default function AgentChatPane({
   chatInputRef: RefObject<HTMLTextAreaElement | null>;
   attachmentInputRef: RefObject<HTMLInputElement | null>;
   workspaceId?: string;
+  internetSearchEnabled: boolean;
   workspaceName?: string | null;
   formatMessageTimestamp: (value?: string) => string;
   interruptFieldKey: (
@@ -251,7 +253,7 @@ export default function AgentChatPane({
   onChatInputKeyUp: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
   onChatInputSelectionChange: (event: SyntheticEvent<HTMLTextAreaElement>) => void;
   onOpenLocalAttachmentPicker: () => void;
-  onOpenDrivePicker: () => void;
+  onToggleInternetSearch: () => void;
   onInsertSlashTrigger: () => void;
   onOpenPresentationModal: () => void;
   onStopStreaming: () => void;
@@ -348,6 +350,7 @@ export default function AgentChatPane({
           attachmentInputRef={attachmentInputRef}
           isStreaming={isStreaming}
           isPreparingAttachments={isPreparingAttachments}
+          internetSearchEnabled={internetSearchEnabled}
           showPaper2SlidesControls={showPaper2SlidesControls}
           presentationStatus={presentationStatus}
           presentationOptionSummary={presentationOptionSummary}
@@ -363,7 +366,7 @@ export default function AgentChatPane({
           onChatInputKeyUp={onChatInputKeyUp}
           onChatInputSelectionChange={onChatInputSelectionChange}
           onOpenLocalAttachmentPicker={onOpenLocalAttachmentPicker}
-          onOpenDrivePicker={onOpenDrivePicker}
+          onToggleInternetSearch={onToggleInternetSearch}
           onInsertSlashTrigger={onInsertSlashTrigger}
           onOpenPresentationModal={onOpenPresentationModal}
           onStopStreaming={onStopStreaming}

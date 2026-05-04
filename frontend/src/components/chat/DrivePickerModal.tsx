@@ -13,7 +13,7 @@ type Props = {
   workspaceId?: string;
   colorMode: 'light' | 'dark';
   onClose: () => void;
-  onConfirm: (items: GoogleDrivePickerItem[]) => void;
+  onConfirm: (items: GoogleDrivePickerItem[]) => void | Promise<void>;
 };
 
 const DRIVE_SCOPE_TABS: Array<{ id: GoogleDrivePickerScope; label: string }> = [
@@ -186,7 +186,7 @@ export default function DrivePickerModal({
             <div>
               <p className="text-sm font-semibold">Select files from Google Drive</p>
               <p className={`text-xs ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
-                Search Drive or paste a file URL, then add the selections to this message.
+                Search Drive or paste a file URL, then import the selections into this workspace.
               </p>
             </div>
           </div>
@@ -324,7 +324,7 @@ export default function DrivePickerModal({
           <aside className={`flex min-h-0 flex-col border-l p-5 ${isDarkMode ? 'border-slate-800 bg-slate-950/60' : 'border-slate-200 bg-slate-50/80'}`}>
             <p className="text-sm font-semibold">Selected</p>
             <p className={`mt-1 text-xs ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
-              {selectedItems.length ? `${selectedItems.length} file${selectedItems.length === 1 ? '' : 's'} ready to attach` : 'Pick one or more Drive files'}
+              {selectedItems.length ? `${selectedItems.length} file${selectedItems.length === 1 ? '' : 's'} ready to import` : 'Pick one or more Drive files'}
             </p>
             <div className="mt-4 min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
               {selectedItems.length ? selectedItems.map((item) => (
@@ -367,7 +367,7 @@ export default function DrivePickerModal({
                     : 'cursor-not-allowed bg-slate-300 text-slate-100 shadow-none'
                 }`}
               >
-                Add to message
+                Import files
               </button>
             </div>
           </aside>

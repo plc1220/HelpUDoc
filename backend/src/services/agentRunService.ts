@@ -38,6 +38,7 @@ type StartRunParams = {
   authToken?: string;
   fileContextRefs?: FileContextRef[];
   messageContent?: AgentMessageContentBlock[];
+  internetSearchEnabled?: boolean;
 };
 
 type RunPendingInterrupt = {
@@ -105,6 +106,7 @@ type PersistedRunContext = {
   turnId?: string;
   fileContextRefs?: FileContextRef[];
   messageContent?: AgentMessageContentBlock[];
+  internetSearchEnabled?: boolean;
 };
 
 type ResumePayload =
@@ -908,6 +910,7 @@ async function runAgentRunWorker(
           authToken: params.authToken,
           fileContextRefs: params.fileContextRefs,
           messageContent: params.messageContent,
+          internetSearchEnabled: params.internetSearchEnabled,
           traceContext,
         });
     upstream = response.data;

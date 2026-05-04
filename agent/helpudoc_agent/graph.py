@@ -175,9 +175,10 @@ class AgentRegistry:
         context_payload = initial_context or {}
         policy_key = json.dumps(context_payload.get("mcp_policy", {}) or {}, sort_keys=True, default=str)
         mcp_auth_fingerprint = str(context_payload.get("mcp_auth_fingerprint") or "")
+        internet_search_key = "search:on" if context_payload.get("internet_search_enabled") else "search:off"
         user_key = str(context_payload.get("user_id") or "")
         cache_scope_prefix = f"{user_key}:{policy_key}:"
-        key = (resolved_name, workspace_id, f"{user_key}:{policy_key}:{mcp_auth_fingerprint}")
+        key = (resolved_name, workspace_id, f"{user_key}:{policy_key}:{mcp_auth_fingerprint}:{internet_search_key}")
         preserved_context: Dict[str, Any] = {}
         if key in self._cache:
             runtime = self._cache[key]
@@ -251,6 +252,8 @@ class AgentRegistry:
             tool_names = [name for name in tool_names if name != "run_skill_python_script"]
         if allow_skill_sandbox and "run_skill_python_script" in self.settings.tools and "run_skill_python_script" not in tool_names:
             tool_names.append("run_skill_python_script")
+        if workspace_state.context.get("internet_search_enabled") and "google_search" in self.settings.tools and "google_search" not in tool_names:
+            tool_names.append("google_search")
 
         builtin_tools = [
             GuardedTool.from_tool(tool, workspace_state=workspace_state)
