@@ -57,15 +57,9 @@ const SettingsShell = ({ title, description, eyebrow = 'Workspace settings', act
             </span>
             <div className="min-w-0">
               <h1 className="text-xl font-semibold text-slate-900">Admin Portal</h1>
-              <p className="mt-1 text-sm leading-6 text-slate-500">Unified settings, people, and knowledge controls.</p>
-              <div className="mt-3 flex flex-wrap items-center gap-2">
-                <span className="settings-portal-chip inline-flex rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em]">
-                  Shared system
-                </span>
-                <span className="inline-flex rounded-full border border-slate-200 bg-slate-50/80 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.18em] text-slate-500">
-                  Operational view
-                </span>
-              </div>
+              <p className="mt-1 text-sm leading-6 text-slate-500">
+                Settings, people, knowledge, and billing for this workspace.
+              </p>
             </div>
           </div>
         </div>
@@ -104,9 +98,6 @@ const SettingsShell = ({ title, description, eyebrow = 'Workspace settings', act
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="settings-portal-chip inline-flex rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em]">
                       {eyebrow}
-                    </span>
-                    <span className="inline-flex rounded-full border border-slate-200 bg-slate-50/80 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.16em] text-slate-500">
-                      Unified admin surface
                     </span>
                   </div>
                   <h2 className="mt-4 text-2xl font-semibold tracking-tight text-slate-900 sm:text-[2rem]">{title}</h2>

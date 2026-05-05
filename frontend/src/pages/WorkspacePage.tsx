@@ -6147,7 +6147,7 @@ export default function WorkspacePage() {
                     <div className={`flex items-center ${isFilePaneVisible ? 'gap-3' : ''}`}>
                       <button
                         onClick={() => setIsFilePaneVisible(!isFilePaneVisible)}
-                        className={`p-1 border rounded-full ${
+                        className={`h-8 w-8 inline-flex items-center justify-center shrink-0 border rounded-full ${
                           isDarkMode
                             ? 'border-slate-700 text-slate-300 hover:bg-slate-800'
                             : 'border-gray-200 hover:bg-gray-100'
@@ -6176,7 +6176,7 @@ export default function WorkspacePage() {
                         <button
                           onClick={() => document.getElementById('file-upload')?.click()}
                           disabled={!selectedWorkspace}
-                          className={`p-1.5 rounded-lg disabled:opacity-50 ${
+                          className={`h-8 w-8 inline-flex items-center justify-center rounded-lg disabled:opacity-50 ${
                             isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-100'
                           }`}
                           title="Upload files"
@@ -6186,7 +6186,7 @@ export default function WorkspacePage() {
                         <button
                           onClick={handleOpenDrivePicker}
                           disabled={!selectedWorkspace || isDriveImporting}
-                          className={`p-1.5 rounded-lg disabled:opacity-50 ${
+                          className={`h-8 w-8 inline-flex items-center justify-center rounded-lg disabled:opacity-50 ${
                             isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-100'
                           }`}
                           title="Import from Google Drive"
@@ -6200,7 +6200,7 @@ export default function WorkspacePage() {
                         <button
                           onClick={handleRefreshFiles}
                           disabled={!selectedWorkspace}
-                          className={`p-1.5 rounded-lg disabled:opacity-50 ${
+                          className={`h-8 w-8 inline-flex items-center justify-center rounded-lg disabled:opacity-50 ${
                             isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-100'
                           }`}
                           title="Refresh files"
@@ -6210,7 +6210,7 @@ export default function WorkspacePage() {
                         <button
                           onClick={handleSelectAllFiles}
                           disabled={visibleFiles.length === 0}
-                          className={`p-1.5 rounded-lg disabled:opacity-50 ${
+                          className={`h-8 w-8 inline-flex items-center justify-center rounded-lg disabled:opacity-50 ${
                             isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-100'
                           }`}
                           title={allFilesSelected ? 'Clear selection' : 'Select all files'}
@@ -6220,7 +6220,7 @@ export default function WorkspacePage() {
                         <button
                           onClick={handleBulkDelete}
                           disabled={selectedFiles.size === 0}
-                          className={`p-1.5 rounded-lg disabled:opacity-50 ${
+                          className={`h-8 w-8 inline-flex items-center justify-center rounded-lg disabled:opacity-50 ${
                             isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-100'
                           }`}
                         >
