@@ -1,7 +1,7 @@
 import { CheckCircle2, Copy, FilePenLine, Loader2, RotateCcw, ShieldCheck } from 'lucide-react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from 'react';
+import { useEffect, useMemo, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react';
 
 import type {
   ConversationMessage,
@@ -16,6 +16,11 @@ import {
   extractStructuredAnswersFromMessage,
   readInterruptAnswerText,
 } from '../../utils/clarifications';
+import {
+  summarizeToolActivity,
+  getFriendlyToolName,
+  isBenignToolNoise,
+} from '../../utils/toolActivitySummary';
 
 const THOUGHT_PREVIEW_LIMIT = 320;
 const DEFAULT_THINKING_PLACEHOLDER = 'Working through your request based on the current workspace context.';
@@ -494,6 +499,11 @@ export default function ChatMessageBubble({
     [message.toolEvents],
   );
   const hasToolEvents = toolEvents.length > 0;
+  const runClockAnchor = toolEvents[0]?.startedAt || message.createdAt;
+  const toolDigest = useMemo(
+    () => summarizeToolActivity(toolEvents, formatMessageTimestamp),
+    [formatMessageTimestamp, toolEvents],
+  );
   const pendingInterrupt = messageMetadata?.pendingInterrupt;
   const interruptKind = getInterruptKind(pendingInterrupt);
   const isClarificationInterrupt = Boolean(pendingInterrupt && interruptKind === 'clarification');
@@ -507,6 +517,7 @@ export default function ChatMessageBubble({
   const [confirmActionId, setConfirmActionId] = useState<string | null>(null);
   const [clarificationDismissed, setClarificationDismissed] = useState(false);
   const isToolActivityExpanded = expandedToolMessages.has(message.id);
+  const [showRawToolLog, setShowRawToolLog] = useState(false);
   const isThinkingExpanded = expandedThinkingMessages.has(message.id);
   const rawThinkingText = message.thinkingText?.trim() || '';
   const activeSkill = messageMetadata?.runPolicy?.skill?.trim().toLowerCase();
@@ -623,18 +634,74 @@ export default function ChatMessageBubble({
     if (rawStatus !== 'running' && rawStatus !== 'awaiting_approval') {
       return null;
     }
+    if (rawStatus === 'awaiting_approval') {
+      const awaitingDetail =
+        pendingInterrupt?.title || pendingInterrupt?.description || 'The agent needs your input to continue.';
+      return {
+        status: rawStatus,
+        title: 'Waiting for you',
+        detail: awaitingDetail as ReactNode,
+        elapsed: formatElapsedTime(message.createdAt, now),
+      };
+    }
+    if (hasToolEvents) {
+      const timedDetail = (
+        <div className="space-y-2">
+          <p className={`text-[15px] font-semibold leading-snug tracking-tight ${
+            isDarkMode ? 'text-slate-50' : 'text-slate-900'
+          }`}>
+            {toolDigest.headline}
+          </p>
+          {toolDigest.milestoneTrail ? (
+            <p className={`text-xs font-medium ${isDarkMode ? 'text-sky-100/90' : 'text-sky-900/85'}`}>
+              {toolDigest.milestoneTrail}
+            </p>
+          ) : null}
+          {toolDigest.reassuranceNotes.length ? (
+            <p className={`text-sm leading-relaxed ${isDarkMode ? 'text-slate-200/95' : 'text-slate-700'}`}>
+              {toolDigest.reassuranceNotes[0]}
+            </p>
+          ) : null}
+          <div className="flex flex-wrap items-center gap-2">
+            <span className={`inline-flex h-1.5 w-1.5 animate-pulse rounded-full ${
+              isDarkMode ? 'bg-sky-300 shadow-[0_0_14px_rgba(125,211,252,0.55)]' : 'bg-sky-500 shadow-[0_0_12px_rgba(14,165,233,0.28)]'
+            }`} />
+            <span className={`text-sm leading-relaxed ${isDarkMode ? 'text-slate-100' : 'text-slate-800'}`}>
+              {toolDigest.currentLabel}
+            </span>
+          </div>
+          {toolDigest.statsLabel ? (
+            <p className={`text-xs font-semibold uppercase tracking-[0.12em] ${
+              isDarkMode ? 'text-slate-400' : 'text-slate-500'
+            }`}>
+              {toolDigest.statsLabel}
+            </p>
+          ) : null}
+          {toolDigest.errorCount > 0 ? (
+            <p className={`text-xs font-semibold ${isDarkMode ? 'text-rose-300' : 'text-rose-600'}`}>
+              {`${toolDigest.errorCount} issue${toolDigest.errorCount === 1 ? '' : 's'} may need attention—open activity for details.`}
+            </p>
+          ) : null}
+        </div>
+      );
+      return {
+        status: rawStatus,
+        title: 'Running',
+        detail: timedDetail,
+        elapsed: formatElapsedTime(runClockAnchor, now),
+      };
+    }
     const latestToolEvent = [...toolEvents].reverse().find(Boolean);
-    const detail = rawStatus === 'awaiting_approval'
-      ? pendingInterrupt?.title || pendingInterrupt?.description || 'The agent needs your input to continue.'
-      : latestToolEvent?.status === 'running'
-        ? `Running ${latestToolEvent.name || 'tool'}...`
+    const fallbackDetail =
+      latestToolEvent?.status === 'running'
+        ? `${getFriendlyToolName(latestToolEvent.name)}…`
         : latestToolEvent?.summary
           ? latestToolEvent.summary
           : visibleAgentText || displayThinkingText || 'Working through the current request.';
     return {
       status: rawStatus,
-      title: rawStatus === 'awaiting_approval' ? 'Waiting for you' : 'Running',
-      detail,
+      title: 'Running',
+      detail: fallbackDetail as ReactNode,
       elapsed: formatElapsedTime(message.createdAt, now),
     };
   })();
@@ -654,6 +721,12 @@ export default function ChatMessageBubble({
     setClarificationDismissed(false);
     setWizardStepIndex(0);
   }, [pendingInterrupt, messageKey]);
+
+  useEffect(() => {
+    if (!isToolActivityExpanded) {
+      setShowRawToolLog(false);
+    }
+  }, [isToolActivityExpanded]);
 
   useEffect(() => {
     if (!hasStructuredClarificationForm) {
@@ -1631,64 +1704,223 @@ export default function ChatMessageBubble({
                   onClick={() => toggleToolActivityVisibility(message.id)}
                   className={toolButtonClassName}
                 >
-                  {isToolActivityExpanded ? 'Hide tool activity' : `Show tool activity (${toolEvents.length})`}
+                  {isToolActivityExpanded ? 'Hide activity' : `Activity summary · ${toolDigest.rawEventCount} ${toolDigest.rawEventCount === 1 ? 'step' : 'steps'}`}
                 </button>
                 {isToolActivityExpanded ? (
-                  <div className={toolExpandedClassName}>
-                    {toolEvents.map((event, index) => {
-                      const isLast = index === toolEvents.length - 1;
-                      return (
-                        <div key={event.id || `${event.name}-${index}`} className="flex min-w-0 gap-3 pb-3 last:pb-0">
-                          <div className="flex flex-col items-center">
-                            <span className={`h-2.5 w-2.5 rounded-full ${event.status === 'completed' ? 'bg-emerald-400' : 'bg-amber-300'}`} />
-                            {!isLast ? <span className={`h-full w-px flex-1 ${isDarkMode ? 'bg-slate-700/80' : 'bg-slate-300'}`} /> : null}
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <p className={`break-words text-[11px] font-semibold uppercase tracking-wide ${
-                              event.status === 'error'
-                                ? isDarkMode ? 'text-rose-300' : 'text-rose-600'
-                                : isDarkMode ? 'text-slate-400' : 'text-slate-500'
-                            }`}>
-                              {event.name}
-                            </p>
-                            <p className={`whitespace-pre-wrap break-words text-sm ${
-                              event.status === 'error'
-                                ? isDarkMode ? 'text-rose-200' : 'text-rose-700'
-                                : isDarkMode ? 'text-slate-200' : 'text-slate-700'
-                            }`}>
-                              {event.summary || (event.status === 'completed' ? 'Completed' : event.status === 'error' ? 'Failed' : 'In progress...')}
-                            </p>
-                            <p className={`mt-1 text-[11px] uppercase tracking-wide ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>
-                              {formatMessageTimestamp(event.startedAt)}
-                              {event.finishedAt ? ` • ${formatMessageTimestamp(event.finishedAt)}` : ''}
-                            </p>
-                            {event.outputFiles?.length ? (
-                              <div className="mt-2 min-w-0 space-y-3">
-                                {event.outputFiles.map((file) => (
-                                  <div
-                                    key={`${event.id}-${file.path}`}
-                                    className={`min-w-0 max-w-full overflow-hidden rounded-xl border p-2 ${
-                                      isDarkMode ? 'border-slate-700/70 bg-slate-950/80' : 'border-slate-200 bg-white'
-                                    }`}
-                                  >
-                                    <div className="flex items-center justify-between gap-3">
-                                      <p className={`break-all text-xs font-semibold ${isDarkMode ? 'text-slate-200' : 'text-slate-700'}`}>{file.path}</p>
-                                      {file.mimeType ? (
-                                        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-                                          isDarkMode ? 'bg-slate-800 text-slate-300' : 'bg-slate-100 text-slate-600'
-                                        }`}>
-                                          {file.mimeType}
-                                        </span>
-                                      ) : null}
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
-                            ) : null}
-                          </div>
+                  <div className="mt-2 space-y-3">
+                    <div className={toolExpandedClassName}>
+                      <p className={`text-[11px] font-semibold uppercase tracking-[0.2em] ${
+                        isDarkMode ? 'text-slate-500' : 'text-slate-500'
+                      }`}>
+                        What changed
+                      </p>
+                      {toolDigest.reviewedFiles.length ? (
+                        <div className="mt-3">
+                          <p className={`text-[11px] font-semibold uppercase tracking-[0.16em] ${
+                            isDarkMode ? 'text-slate-400' : 'text-slate-500'
+                          }`}>
+                            Files reviewed
+                          </p>
+                          <ul className={`mt-1.5 list-inside list-disc space-y-1 text-sm leading-relaxed ${
+                            isDarkMode ? 'text-slate-200' : 'text-slate-800'
+                          }`}>
+                            {toolDigest.reviewedFiles.map((name) => (
+                              <li key={`review-${name}`} className="break-words">
+                                {name}
+                              </li>
+                            ))}
+                          </ul>
                         </div>
-                      );
-                    })}
+                      ) : null}
+                      {toolDigest.updatedFileBasenames.length ? (
+                        <div className="mt-3">
+                          <p className={`text-[11px] font-semibold uppercase tracking-[0.16em] ${
+                            isDarkMode ? 'text-slate-400' : 'text-slate-500'
+                          }`}>
+                            Files being updated
+                          </p>
+                          <ul className={`mt-1.5 list-inside list-disc space-y-1 text-sm leading-relaxed ${
+                            isDarkMode ? 'text-slate-200' : 'text-slate-800'
+                          }`}>
+                            {toolDigest.updatedFileBasenames.map((name) => (
+                              <li key={`upd-${name}`} className="break-words">
+                                {name}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      ) : null}
+                      {toolDigest.updatesInProgress.length ? (
+                        <div className="mt-3">
+                          <p className={`text-[11px] font-semibold uppercase tracking-[0.16em] ${
+                            isDarkMode ? 'text-slate-400' : 'text-slate-500'
+                          }`}>
+                            Updates in progress
+                          </p>
+                          <ul className={`mt-1.5 list-inside list-disc space-y-1 text-sm leading-relaxed ${
+                            isDarkMode ? 'text-slate-200' : 'text-slate-800'
+                          }`}>
+                            {toolDigest.updatesInProgress.map((line) => (
+                              <li key={line} className="break-words">
+                                {line}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      ) : null}
+                      {!toolDigest.reviewedFiles.length && !toolDigest.updatedFileBasenames.length && toolDigest.digestEvents.length ? (
+                        <div className="mt-3 space-y-2">
+                          <p className={`text-[11px] font-semibold uppercase tracking-[0.16em] ${
+                            isDarkMode ? 'text-slate-400' : 'text-slate-500'
+                          }`}>
+                            Recent steps
+                          </p>
+                          <ul className="space-y-2">
+                            {toolDigest.digestEvents.slice(-12).reverse().map((evt) => (
+                              <li
+                                key={evt.id}
+                                className={`rounded-xl border px-2.5 py-2 text-sm ${
+                                  isDarkMode ? 'border-slate-700/80 bg-slate-950/50' : 'border-slate-200 bg-white'
+                                }`}
+                              >
+                                <span className="font-semibold">{evt.title}</span>
+                                {evt.detail ? (
+                                  <span className={`mt-0.5 block text-xs leading-relaxed ${
+                                    isDarkMode ? 'text-slate-300' : 'text-slate-600'
+                                  }`}>
+                                    {evt.detail}
+                                  </span>
+                                ) : null}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      ) : null}
+                      <div className={`mt-3 text-sm font-medium ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>
+                        Currently:&nbsp;
+                        <span className={isDarkMode ? 'text-slate-100' : 'text-slate-900'}>{toolDigest.currentLabel}</span>
+                      </div>
+                      {toolDigest.reassuranceNotes.length ? (
+                        <div className={`mt-3 rounded-xl border px-3 py-2 text-xs leading-relaxed ${
+                          isDarkMode ? 'border-sky-900/70 bg-sky-950/40 text-sky-50' : 'border-sky-100 bg-sky-50 text-sky-950'
+                        }`}>
+                          <p className="font-semibold uppercase tracking-[0.14em]">Notes</p>
+                          <ul className="mt-2 list-inside list-disc space-y-1">
+                            {toolDigest.reassuranceNotes.map((note) => (
+                              <li key={note}>{note}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      ) : null}
+                      {toolDigest.errorCount ? (
+                        <p className={`mt-3 text-xs font-semibold ${isDarkMode ? 'text-rose-300' : 'text-rose-700'}`}>
+                          {`${toolDigest.errorCount} tool issue${toolDigest.errorCount === 1 ? '' : 's'} detected. Open the developer log below for troubleshooting.`}
+                        </p>
+                      ) : null}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowRawToolLog((prev) => !prev)}
+                      className={toolButtonClassName}
+                    >
+                      {showRawToolLog ? 'Hide developer log' : 'Developer details (raw activity log)'}
+                    </button>
+                    {showRawToolLog ? (
+                      <div className={toolExpandedClassName}>
+                        <p className={`mb-2 text-[10px] font-semibold uppercase tracking-[0.18em] ${
+                          isDarkMode ? 'text-slate-500' : 'text-slate-500'
+                        }`}>
+                          Raw tool timeline
+                        </p>
+                        {toolEvents.map((event, index) => {
+                          const isLast = index === toolEvents.length - 1;
+                          const softNote = isBenignToolNoise(event);
+                          const statusDot = event.status === 'completed'
+                            ? 'bg-emerald-400'
+                            : event.status === 'error'
+                              ? 'bg-rose-500'
+                              : 'bg-amber-300';
+                          return (
+                            <div key={event.id || `${event.name}-${index}`} className="flex min-w-0 gap-3 pb-3 last:pb-0">
+                              <div className="flex flex-col items-center">
+                                <span className={`h-2.5 w-2.5 rounded-full ${statusDot}`} />
+                                {!isLast ? (
+                                  <span className={`h-full w-px flex-1 ${
+                                    isDarkMode ? 'bg-slate-700/80' : 'bg-slate-300'
+                                  }`}
+                                  />
+                                ) : null}
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <p className={`break-words font-mono text-[11px] font-semibold uppercase tracking-wide ${
+                                  event.status === 'error' && !softNote
+                                    ? isDarkMode ? 'text-rose-300' : 'text-rose-600'
+                                    : softNote
+                                      ? isDarkMode ? 'text-sky-300' : 'text-sky-700'
+                                      : isDarkMode ? 'text-slate-400' : 'text-slate-500'
+                                }`}>
+                                  {event.name}
+                                </p>
+                                <p className={`whitespace-pre-wrap break-words text-sm ${
+                                  event.status === 'error' && !softNote
+                                    ? isDarkMode ? 'text-rose-200' : 'text-rose-700'
+                                    : isDarkMode ? 'text-slate-200' : 'text-slate-700'
+                                }`}>
+                                  {event.summary
+                                    || (event.status === 'completed'
+                                      ? 'Completed'
+                                      : event.status === 'error' ? 'Reported error' : 'In progress…')}
+                                </p>
+                                <p className={`mt-1 text-[11px] uppercase tracking-wide ${
+                                  isDarkMode ? 'text-slate-500' : 'text-slate-400'
+                                }`}
+                                >
+                                  {formatMessageTimestamp(event.startedAt)}
+                                  {event.finishedAt ? ` • ${formatMessageTimestamp(event.finishedAt)}` : ''}
+                                </p>
+                                {event.outputFiles?.length ? (
+                                  <div className="mt-2 min-w-0 space-y-3">
+                                    {event.outputFiles.map((file) => (
+                                      <div
+                                        key={`${event.id}-${file.path}`}
+                                        className={`min-w-0 max-w-full overflow-hidden rounded-xl border p-2 ${
+                                          isDarkMode ? 'border-slate-700/70 bg-slate-950/80' : 'border-slate-200 bg-white'
+                                        }`}
+                                      >
+                                        <div className="flex items-center justify-between gap-3">
+                                          <p className={`break-all text-xs font-semibold ${
+                                            isDarkMode ? 'text-slate-200' : 'text-slate-700'
+                                          }`}
+                                          >
+                                            {file.path}
+                                          </p>
+                                          {file.mimeType ? (
+                                            <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                                              isDarkMode ? 'bg-slate-800 text-slate-300' : 'bg-slate-100 text-slate-600'
+                                            }`}
+                                            >
+                                              {file.mimeType}
+                                            </span>
+                                          ) : null}
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                ) : null}
+                                {event.relatedFiles?.length && !event.outputFiles?.length ? (
+                                  <div className={`mt-2 rounded-xl border px-2 py-1.5 text-xs ${
+                                    isDarkMode ? 'border-slate-700/70 bg-slate-950/60 text-slate-300' : 'border-slate-200 bg-white text-slate-600'
+                                  }`}>
+                                    <span className="font-semibold">Related files: </span>
+                                    {event.relatedFiles.map((file) => file.path).join(', ')}
+                                  </div>
+                                ) : null}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : null}
                   </div>
                 ) : null}
               </div>

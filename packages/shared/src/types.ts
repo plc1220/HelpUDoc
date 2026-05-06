@@ -88,6 +88,7 @@ export interface ToolEvent {
   startedAt: string;
   finishedAt?: string;
   outputFiles?: ToolOutputFile[];
+  relatedFiles?: ToolOutputFile[];
 }
 
 export interface ToolOutputFile {

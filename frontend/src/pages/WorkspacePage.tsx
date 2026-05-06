@@ -88,6 +88,13 @@ import GoogleDriveIcon from '../components/chat/GoogleDriveIcon';
 import type { ChatComposerAttachment } from '../components/chat/chatTypes';
 import { useAuth } from '../auth/AuthProvider';
 import {
+  extractToolPathFiles,
+  getFriendlyToolName,
+  isBenignToolNoise,
+  isBenignToolStreamContent,
+  translateToolChunkForStorage,
+} from '../utils/toolActivitySummary';
+import {
   CANVAS_ZOOM_STEP,
   MAX_CANVAS_ZOOM,
   MIN_CANVAS_ZOOM,
@@ -299,14 +306,6 @@ const isTerminalRunStatus = (
   status === 'completed' || status === 'failed' || status === 'cancelled'
 );
 
-const titleCaseToolName = (value?: string): string =>
-  String(value || '')
-    .trim()
-    .split(/[_\s-]+/)
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ');
-
 const trimMilestone = (value?: string): string => {
   const normalized = String(value || '').replace(/\s+/g, ' ').trim();
   if (!normalized) {
@@ -344,6 +343,9 @@ const summarizeMessageFromToolEvents = (
       }
       const summary = String(event.summary || '').trim();
       if (!summary || isSummaryLikeAgentText(summary)) {
+        return false;
+      }
+      if (isBenignToolNoise(event)) {
         return false;
       }
       return true;
@@ -3000,9 +3002,32 @@ export default function WorkspacePage() {
     return `${text.slice(0, maxLength)}…`;
   };
 
+  const mergeToolFiles = (
+    ...groups: Array<ToolOutputFile[] | undefined>
+  ): ToolOutputFile[] | undefined => {
+    const byPath = new Map<string, ToolOutputFile>();
+    for (const group of groups) {
+      for (const file of group || []) {
+        const path = file.path?.trim();
+        if (!path) {
+          continue;
+        }
+        byPath.set(path, { ...byPath.get(path), ...file, path });
+      }
+    }
+    return byPath.size ? [...byPath.values()] : undefined;
+  };
+
   const appendToolStart = (conversationId: string, index: number, chunk: AgentStreamChunk & { type: 'tool_start' }) => {
     const label = chunk.name || chunk.content || 'tool';
-    updateToolEvents(conversationId, index, (events) => [...events, createToolEvent(label)]);
+    const relatedFiles = mergeToolFiles(extractToolPathFiles(chunk.content));
+    updateToolEvents(conversationId, index, (events) => [
+      ...events,
+      {
+        ...createToolEvent(label),
+        relatedFiles,
+      },
+    ]);
   };
 
   const appendToolEnd = (
@@ -3012,8 +3037,13 @@ export default function WorkspacePage() {
     status: ToolEvent['status'] = 'completed',
   ) => {
     const label = chunk.name || 'tool';
-    const summary = chunk.content ? truncateToolOutput(chunk.content) : '';
+    const raw = chunk.content?.trim();
+    const translated = raw ? translateToolChunkForStorage(raw, label, 200) : undefined;
+    const summary =
+      translated
+      ?? (raw ? truncateToolOutput(raw) : '');
     const outputFiles = 'outputFiles' in chunk ? chunk.outputFiles : undefined;
+    const relatedFiles = mergeToolFiles(extractToolPathFiles(raw), outputFiles);
     updateToolEvents(conversationId, index, (events) => {
       if (!events.length) {
         return [
@@ -3022,6 +3052,7 @@ export default function WorkspacePage() {
             finishedAt: new Date().toISOString(),
             summary,
             outputFiles,
+            relatedFiles,
           },
         ];
       }
@@ -3033,6 +3064,7 @@ export default function WorkspacePage() {
           finishedAt: new Date().toISOString(),
           summary,
           outputFiles,
+          relatedFiles,
         });
         return next;
       }
@@ -3042,7 +3074,8 @@ export default function WorkspacePage() {
         status,
         finishedAt: new Date().toISOString(),
         summary: summary || next[targetIndex].summary,
-        outputFiles: outputFiles || next[targetIndex].outputFiles,
+        outputFiles: mergeToolFiles(next[targetIndex].outputFiles, outputFiles),
+        relatedFiles: mergeToolFiles(next[targetIndex].relatedFiles, relatedFiles),
       };
       return next;
     });
@@ -3890,7 +3923,7 @@ export default function WorkspacePage() {
       setConversationAttention(
         conversationId,
         'running',
-        `Running ${titleCaseToolName(chunk.name || chunk.content || 'tool') || 'a tool'}...`,
+        `${getFriendlyToolName(chunk.name || chunk.content || '')}…`,
       );
       return;
     }
@@ -3898,10 +3931,15 @@ export default function WorkspacePage() {
     if (chunk.type === 'tool_end') {
       updateMessageMetadataAtIndex(conversationId, agentMessageIndex, markStreamingState);
       appendToolEnd(conversationId, agentMessageIndex, chunk);
+      const streamLabel = chunk.name || 'tool';
+      const streamRaw = chunk.content?.trim();
+      const friendly = streamRaw
+        ? translateToolChunkForStorage(streamRaw, streamLabel, 160) ?? trimMilestone(streamRaw)
+        : '';
       setConversationAttention(
         conversationId,
         'running',
-        chunk.content || `${titleCaseToolName(chunk.name) || 'Tool'} completed.`,
+        friendly || `${getFriendlyToolName(streamLabel)} · done`,
       );
       return;
     }
@@ -3909,10 +3947,21 @@ export default function WorkspacePage() {
     if (chunk.type === 'tool_error') {
       updateMessageMetadataAtIndex(conversationId, agentMessageIndex, markStreamingState);
       appendToolEnd(conversationId, agentMessageIndex, chunk, 'error');
+      const errLabel = chunk.name || 'tool';
+      const errRaw = chunk.content?.trim();
+      const translatedErr = translateToolChunkForStorage(errRaw || '', errLabel, 160);
+      const benignAttention = isBenignToolStreamContent(errRaw || '')
+        || (translatedErr && /File already exists,\s*switching to edit mode/i.test(translatedErr));
       setConversationAttention(
         conversationId,
         'running',
-        chunk.content || `${titleCaseToolName(chunk.name) || 'Tool'} reported an error.`,
+        benignAttention && translatedErr
+          ? translatedErr
+          : benignAttention
+            ? 'File already exists, switching to edit mode.'
+            : translatedErr?.trim()
+              ? translatedErr.trim()
+              : `${getFriendlyToolName(errLabel)} hit a snag—details are in the activity log.`,
       );
       return;
     }
