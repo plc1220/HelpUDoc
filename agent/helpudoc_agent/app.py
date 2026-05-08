@@ -302,45 +302,6 @@ def _append_artifact_first_guidance(
     return f"{prompt.rstrip()}\n\n" + "\n".join(guidance_lines)
 
 
-_EXTERNAL_FRESHNESS_HINTS = (
-    "latest",
-    "current",
-    "today",
-    "up-to-date",
-    "up to date",
-    "as of ",
-    "verify",
-    "check",
-    "pricing",
-    "price",
-    "cost",
-    "thinking token",
-    "thinking tokens",
-    "model version",
-)
-
-
-def _should_force_tagged_files_rag_only(
-    *,
-    env_tagged_files_rag_only: bool,
-    explicit_artifact_paths: Sequence[str],
-    message_content: Sequence[Dict[str, Any]] | None,
-    preferred_mcp_server: str | None,
-    prompt_for_tagged_files: str,
-) -> bool:
-    """Keep artifact-first turns narrow, except when the user explicitly asks for fresh external checks."""
-    if env_tagged_files_rag_only:
-        return True
-    if not explicit_artifact_paths or message_content:
-        return False
-    if str(preferred_mcp_server or "").strip():
-        return False
-    lowered_prompt = str(prompt_for_tagged_files or "").strip().lower()
-    if lowered_prompt and any(marker in lowered_prompt for marker in _EXTERNAL_FRESHNESS_HINTS):
-        return False
-    return True
-
-
 class ChatRequest(BaseModel):
     message: str
     history: List[Dict[str, Any]] | None = None
@@ -2575,28 +2536,24 @@ def create_app() -> FastAPI:
             )
             guided_prompt = f"{guided_prompt.rstrip()}\n\n{pending_note}".strip()
         if guided_prompt != prompt_for_tagged_files:
+            guidance_suffix = ""
+            prompt_prefix = prompt_for_tagged_files.rstrip()
+            if prompt_prefix and guided_prompt.startswith(prompt_prefix):
+                guidance_suffix = guided_prompt[len(prompt_prefix):].strip()
             for index in range(len(payload) - 1, -1, -1):
                 role = str(payload[index].get("role") or "").strip().lower()
                 if role in {"user", "human"}:
-                    payload[index]["content"] = _replace_content_text(payload[index].get("content"), guided_prompt)
+                    current_content = payload[index].get("content")
+                    current_text = _extract_text_from_content(current_content)
+                    if guidance_suffix and current_text and current_text != prompt_for_tagged_files:
+                        next_text = f"{current_text.rstrip()}\n\n{guidance_suffix}".strip()
+                    else:
+                        next_text = guided_prompt
+                    payload[index]["content"] = _replace_content_text(current_content, next_text)
                     break
             prompt_for_tagged_files = guided_prompt
         runtime.workspace_state.context["tagged_files"] = tagged_files
-        env_tagged_files_rag_only = (os.getenv("TAGGED_FILES_RAG_ONLY", "false") or "false").strip().lower() in {
-            "1",
-            "true",
-            "yes",
-            "y",
-            "on",
-        }
-        tagged_files_rag_only = _should_force_tagged_files_rag_only(
-            env_tagged_files_rag_only=env_tagged_files_rag_only,
-            explicit_artifact_paths=explicit_artifact_paths,
-            message_content=message.messageContent,
-            preferred_mcp_server=str(runtime.workspace_state.context.get("preferred_mcp_server") or "").strip() or None,
-            prompt_for_tagged_files=prompt_for_tagged_files,
-        )
-        runtime.workspace_state.context["tagged_files_only"] = bool(tagged_files) and tagged_files_rag_only
+        runtime.workspace_state.context["tagged_files_only"] = False
         if tagged_files:
             rag_context = await _prefetch_rag_context(
                 runtime.workspace_state.workspace_id,
@@ -2605,22 +2562,6 @@ def create_app() -> FastAPI:
             )
             if rag_context:
                 runtime.workspace_state.context["tagged_rag_context"] = rag_context
-                if tagged_files_rag_only:
-                    for index in range(len(payload) - 1, -1, -1):
-                        role = str(payload[index].get("role") or "").strip().lower()
-                        if role in {"user", "human"}:
-                            payload[index]["content"] = (
-                                _replace_content_text(
-                                    payload[index].get("content"),
-                                    (
-                                        f"{prompt_for_tagged_files}\n\nRAG_CONTEXT:\n{rag_context}\n\n"
-                                        "Use RAG_CONTEXT as the primary file-grounded source for attached artifacts. "
-                                        "If the user explicitly asks to verify current facts, pricing, dates, or model versions, "
-                                        "you may use the requested MCP server or other allowed fresh sources to validate or correct the artifact."
-                                    ),
-                                )
-                            )
-                            break
         _inject_host_datetime_context(payload)
         return payload
 

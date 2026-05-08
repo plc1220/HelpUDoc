@@ -943,7 +943,14 @@ export default function WorkspacePage() {
     availableSkills.forEach((skill) => {
       const skillId = typeof skill.id === 'string' ? skill.id.trim() : '';
       if (skillId) {
-        map.set(skillId.toLowerCase(), skill);
+        const normalizedSkillId = skillId.toLowerCase();
+        map.set(normalizedSkillId, skill);
+        if (normalizedSkillId.endsWith('-slides')) {
+          map.set(normalizedSkillId.slice(0, -1), skill);
+        }
+        if (normalizedSkillId.endsWith('/slides')) {
+          map.set(normalizedSkillId.slice(0, -1), skill);
+        }
       }
     });
     return map;
@@ -2104,9 +2111,11 @@ export default function WorkspacePage() {
     }
     const skillMatch = trimmed.match(/^\/skill\s+([^\s]+)(?:\s+([\s\S]*))?$/i);
     if (skillMatch) {
+      const requestedSkillId = (skillMatch[1] || '').trim();
+      const resolvedSkill = requestedSkillId ? availableSkillMap.get(requestedSkillId.toLowerCase()) : undefined;
       return {
         kind: 'skill',
-        skillId: (skillMatch[1] || '').trim(),
+        skillId: resolvedSkill?.id || requestedSkillId,
         prompt: (skillMatch[2] || '').trim(),
         raw: trimmed,
       };
@@ -2125,7 +2134,7 @@ export default function WorkspacePage() {
       prompt: trimmed,
       raw: trimmed,
     };
-  }, []);
+  }, [availableSkillMap]);
 
   const buildAgentPromptFromDirective = useCallback((directive: ParsedSlashDirective): string => {
     switch (directive.kind) {
@@ -5055,8 +5064,8 @@ export default function WorkspacePage() {
       : [];
     const presentationBrief = isPresentationCommand ? stripMentionedFilesFromPrompt(directive.prompt) : '';
     if (directive.kind === 'skill') {
-      if (!directive.skillId || !directive.prompt) {
-        addLocalSystemMessage('Use /skill <skill-id> <task>. Example: /skill sales prep me for tomorrow\'s call.');
+      if (!directive.skillId) {
+        addLocalSystemMessage('Use /skill <skill-id>. Example: /skill sales prep me for tomorrow\'s call.');
         return;
       }
       if (!availableSkillMap.has(directive.skillId.toLowerCase())) {
@@ -5506,8 +5515,8 @@ export default function WorkspacePage() {
           addLocalSystemMessage('Attachments are not supported with /skill yet. Please upload files to the workspace first and reference them in your request.');
           return;
         }
-        if (!directive.skillId || !directive.prompt) {
-          addLocalSystemMessage('Use /skill <skill-id> <task>. Example: /skill sales draft follow-up from today\'s call.');
+        if (!directive.skillId) {
+          addLocalSystemMessage('Use /skill <skill-id>. Example: /skill sales draft follow-up from today\'s call.');
           return;
         }
         if (!availableSkillMap.has(directive.skillId.toLowerCase())) {

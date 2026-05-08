@@ -39,6 +39,21 @@ const isLikelyText = (file: any): boolean => {
   return /\.md$|\.txt$|\.html?$|\.json$/.test(name);
 };
 
+const withPresentationBrief = (buffer: Buffer, brief?: string): Buffer => {
+  const trimmedBrief = String(brief || '').trim();
+  if (!trimmedBrief) {
+    return buffer;
+  }
+  const prefix = [
+    '# Presentation Brief',
+    trimmedBrief,
+    '',
+    '# Source Document',
+    '',
+  ].join('\n');
+  return Buffer.concat([Buffer.from(prefix, 'utf-8'), buffer]);
+};
+
 export class Paper2SlidesJobService {
   private fileService: FileService;
   private workspaceService: WorkspaceService;
@@ -129,15 +144,23 @@ export class Paper2SlidesJobService {
 
     try {
       const paper2SlidesFiles: Array<{ name: string; buffer: Buffer }> = [];
+      let briefInjected = false;
       for (const fileId of job.fileIds) {
         const file = await this.fileService.getFileContent(fileId, job.userId);
         if (file.workspaceId !== job.workspaceId) {
           throw new HttpError(400, 'One or more files do not belong to the selected workspace');
         }
-        const buffer = isLikelyText(file)
+        const textFile = isLikelyText(file);
+        const buffer = textFile
           ? Buffer.from(String(file.content || ''), 'utf-8')
           : Buffer.from(String(file.content || ''), 'base64');
-        paper2SlidesFiles.push({ name: file.name, buffer });
+        paper2SlidesFiles.push({
+          name: file.name,
+          buffer: textFile && !briefInjected ? withPresentationBrief(buffer, job.brief) : buffer,
+        });
+        if (textFile) {
+          briefInjected = true;
+        }
       }
 
       const result = await this.paper2SlidesService.generate(

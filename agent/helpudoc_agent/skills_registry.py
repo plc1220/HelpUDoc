@@ -281,8 +281,13 @@ def find_skill(skills_root: Path | None, skill_id_or_name: str) -> SkillMetadata
     normalized = str(skill_id_or_name or "").strip()
     if not normalized:
         return None
+    candidates = {normalized}
+    if normalized.endswith("-slide"):
+        candidates.add(f"{normalized}s")
+    if normalized.endswith("/slide"):
+        candidates.add(f"{normalized}s")
     for skill in load_skills(skills_root):
-        if normalized in {skill.skill_id, skill.name}:
+        if candidates.intersection({skill.skill_id, skill.name}):
             return skill
     return None
 

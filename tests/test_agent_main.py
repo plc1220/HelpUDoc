@@ -123,6 +123,17 @@ class StreamingAgent:
         }
 
 
+class RecordingStreamingAgent(StreamingAgent):
+    def __init__(self, messages):
+        super().__init__(messages)
+        self.stream_inputs = []
+
+    async def astream(self, *args, **kwargs):
+        self.stream_inputs.append((args, kwargs))
+        async for chunk in super().astream(*args, **kwargs):
+            yield chunk
+
+
 class AsyncInvokeAgent:
     def __init__(self, reply):
         self._reply = reply
@@ -157,43 +168,11 @@ def test_host_datetime_context_is_injected_as_system_message(client_with_stubs):
     assert "What is today's date?" in payload[1]["content"]
 
 
-def test_tagged_file_rag_only_disabled_when_preferred_mcp_is_set(client_with_stubs):
+def test_tagged_file_tool_restriction_decider_removed(client_with_stubs):
     client_with_stubs
     import helpudoc_agent.app as app_module
 
-    assert app_module._should_force_tagged_files_rag_only(
-        env_tagged_files_rag_only=False,
-        explicit_artifact_paths=["/.system/derived-artifacts/doc/v1.md"],
-        message_content=None,
-        preferred_mcp_server="gcp-cost",
-        prompt_for_tagged_files="check /mcp gcp-cost if necessary",
-    ) is False
-
-
-def test_tagged_file_rag_only_disabled_for_freshness_requests(client_with_stubs):
-    client_with_stubs
-    import helpudoc_agent.app as app_module
-
-    assert app_module._should_force_tagged_files_rag_only(
-        env_tagged_files_rag_only=False,
-        explicit_artifact_paths=["/.system/derived-artifacts/doc/v1.md"],
-        message_content=None,
-        preferred_mcp_server=None,
-        prompt_for_tagged_files="review this and verify the latest Gemini pricing including thinking tokens",
-    ) is False
-
-
-def test_tagged_file_rag_only_remains_enabled_for_normal_artifact_only_turns(client_with_stubs):
-    client_with_stubs
-    import helpudoc_agent.app as app_module
-
-    assert app_module._should_force_tagged_files_rag_only(
-        env_tagged_files_rag_only=False,
-        explicit_artifact_paths=["/.system/derived-artifacts/doc/v1.md"],
-        message_content=None,
-        preferred_mcp_server=None,
-        prompt_for_tagged_files="update the attached proposal section",
-    ) is True
+    assert not hasattr(app_module, "_should_force_tagged_files_rag_only")
 
 
 def _install_dependency_stubs():
@@ -227,9 +206,29 @@ def _install_dependency_stubs():
             def __init__(self, *_args, **_kwargs):
                 pass
 
+        class _StoreBackend:
+            def __init__(self, *_args, **_kwargs):
+                pass
+
         backends.FilesystemBackend = _FilesystemBackend
+        backends.StoreBackend = _StoreBackend
         sys.modules["deepagents.backends"] = backends
         deepagents.backends = backends
+
+        backends_utils = ModuleType("deepagents.backends.utils")
+
+        def _create_file_data(content):
+            return {"content": [{"text": content}], "modified_at": None}
+
+        def _file_data_to_string(value):
+            raw_content = value.get("content") if isinstance(value, dict) else None
+            if not isinstance(raw_content, list):
+                return ""
+            return "\n".join(str(item.get("text", "")) for item in raw_content if isinstance(item, dict))
+
+        backends_utils.create_file_data = _create_file_data
+        backends_utils.file_data_to_string = _file_data_to_string
+        sys.modules["deepagents.backends.utils"] = backends_utils
 
         middleware_pkg = ModuleType("deepagents.middleware")
         filesystem_middleware = ModuleType("deepagents.middleware.filesystem")
@@ -316,6 +315,26 @@ def _install_dependency_stubs():
         sys.modules["langchain_core.tools"] = tools_module
         langchain_core.tools = tools_module
 
+    if "langchain_core.messages" not in sys.modules:
+        messages_module = ModuleType("langchain_core.messages")
+
+        class _BaseMessage:
+            def __init__(self, content="", **kwargs):
+                self.content = content
+                for key, value in kwargs.items():
+                    setattr(self, key, value)
+
+        class _HumanMessage(_BaseMessage):
+            pass
+
+        class _SystemMessage(_BaseMessage):
+            pass
+
+        messages_module.HumanMessage = _HumanMessage
+        messages_module.SystemMessage = _SystemMessage
+        sys.modules["langchain_core.messages"] = messages_module
+        langchain_core.messages = messages_module
+
     if "langgraph" not in sys.modules:
         langgraph_pkg = _ensure_module("langgraph")
     else:
@@ -331,6 +350,40 @@ def _install_dependency_stubs():
         langgraph_types.Command = _Command
         sys.modules["langgraph.types"] = langgraph_types
         langgraph_pkg.types = langgraph_types
+
+    if "langgraph.store" not in sys.modules:
+        store_pkg = ModuleType("langgraph.store")
+        sys.modules["langgraph.store"] = store_pkg
+        langgraph_pkg.store = store_pkg
+    else:
+        store_pkg = sys.modules["langgraph.store"]
+
+    if "langgraph.store.base" not in sys.modules:
+        store_base = ModuleType("langgraph.store.base")
+
+        class _BaseStore:
+            pass
+
+        class _Item:
+            def __init__(self, value=None, **kwargs):
+                self.value = value or {}
+                for key, item_value in kwargs.items():
+                    setattr(self, key, item_value)
+
+        store_base.BaseStore = _BaseStore
+        store_base.Item = _Item
+        sys.modules["langgraph.store.base"] = store_base
+        store_pkg.base = store_base
+
+    if "langgraph.store.memory" not in sys.modules:
+        store_memory = ModuleType("langgraph.store.memory")
+
+        class _InMemoryStore:
+            pass
+
+        store_memory.InMemoryStore = _InMemoryStore
+        sys.modules["langgraph.store.memory"] = store_memory
+        store_pkg.memory = store_memory
 
     if "langgraph.errors" not in sys.modules:
         langgraph_errors = ModuleType("langgraph.errors")
@@ -568,6 +621,75 @@ def test_extract_directive_from_text_supports_first_line_skill_command(client_wi
     assert directive.kind == "skill"
     assert directive.skillId == "proposal-writing"
     assert prompt == "Draft a short proposal for Acme.\nFocus on timeline and budget."
+
+
+def test_find_skill_accepts_singular_slide_alias(client_with_stubs, tmp_path):
+    client_with_stubs
+
+    from helpudoc_agent.skills_registry import find_skill
+
+    skill_dir = tmp_path / "frontend-slides"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: frontend-slides\ndescription: Slides\n---\n# Slides skill\n",
+        encoding="utf-8",
+    )
+
+    skill = find_skill(tmp_path, "frontend-slide")
+
+    assert skill is not None
+    assert skill.skill_id == "frontend-slides"
+
+
+def test_skill_directive_survives_tagged_artifact_guidance(client_with_stubs, tmp_path):
+    client, registry, source_tracker = client_with_stubs
+    previous_skills_root = SettingsStub.backend.skills_root
+    skill_dir = tmp_path / "frontend-slides"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: frontend-slides\ndescription: Slides\n---\n# Frontend Slides\nUse request_clarification before generating slides.\n",
+        encoding="utf-8",
+    )
+    SettingsStub.backend.skills_root = tmp_path
+
+    agent = RecordingStreamingAgent(["OK"])
+    runtime = DummyRuntime("workspace-skill-tagged", agent)
+    registry.set_runtime("research", "workspace-skill-tagged", runtime)
+
+    payload = {
+        "message": "<<<HELPUDOC_DIRECTIVE\n{\"kind\":\"skill\",\"skillId\":\"frontend-slides\"}\n>>>\n@Final_Proposal.md",
+        "history": [],
+        "fileContextRefs": [
+            {
+                "sourceFileId": 1,
+                "sourceName": "Final_Proposal.md",
+                "sourceMimeType": "application/pdf",
+                "sourceVersionFingerprint": "abc",
+                "artifactId": "artifact-1",
+                "artifactVersion": 1,
+                "derivedArtifactFileId": 2,
+                "derivedArtifactPath": ".system/derived-artifacts/artifact-1/v1.md",
+                "effectiveMode": "part",
+                "status": "ready",
+            }
+        ],
+    }
+    try:
+        with client.stream("POST", "/agents/research/workspace/workspace-skill-tagged/chat/stream", json=payload) as response:
+            assert response.status_code == 200
+            messages = _collect_stream_payloads(response)
+    finally:
+        SettingsStub.backend.skills_root = previous_skills_root
+
+    assert messages[0]["type"] == "policy"
+    assert messages[0]["skill"] == "frontend-slides"
+    assert agent.stream_inputs
+    stream_input = agent.stream_inputs[0][0][0]
+    user_text = stream_input["messages"][-1]["content"]
+    assert "Loaded skill: frontend-slides" in user_text
+    assert "Use request_clarification before generating slides." in user_text
+    assert "Artifact-first guidance:" in user_text
+    assert source_tracker.updated_workspaces == [runtime.workspace_state]
 
 
 def test_extract_directive_from_text_supports_use_mcp_prefix(client_with_stubs):

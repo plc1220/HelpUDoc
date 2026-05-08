@@ -1,38 +1,24 @@
-"""Policy helpers for tagged-file RAG-only turns."""
+"""Policy helpers for tagged-file turns."""
 from __future__ import annotations
 
 from typing import Any, Mapping
 
 
-_ALLOWED_TOOLS_IN_TAGGED_FILES_MODE = frozenset({
-    "list_skills",
-    "load_skill",
-    "request_plan_approval",
-    "request_clarification",
-    "request_human_action",
-})
-
-_BLOCK_MESSAGE = "Tool disabled: tagged files were provided, use rag_query only."
-
-
 def is_tagged_files_only(context: Mapping[str, Any] | None) -> bool:
-    """Return true when the current turn is restricted to tagged-file RAG access."""
-    return bool((context or {}).get("tagged_files_only"))
+    """Tagged files are scope hints, not a tool-restriction mode."""
+    return False
 
 
 def is_tool_blocked_in_tagged_files_mode(tool_name: str) -> bool:
-    """Return true when a tool should be blocked during tagged-file RAG-only turns."""
-    normalized = (tool_name or "").strip()
-    return normalized not in _ALLOWED_TOOLS_IN_TAGGED_FILES_MODE
+    """Tagged files no longer block tools; the agent may choose the right source."""
+    return False
 
 
 def tagged_files_mode_block_message() -> str:
-    """Consistent user-facing message for blocked tools in tagged-file mode."""
-    return _BLOCK_MESSAGE
+    """Return the legacy block message for compatibility."""
+    return "Tagged files are scope hints; tools are not blocked."
 
 
 def tagged_files_mode_guard(context: Mapping[str, Any] | None, tool_name: str) -> str | None:
-    """Return a block message when the tool should not run in tagged-file mode."""
-    if is_tagged_files_only(context) and is_tool_blocked_in_tagged_files_mode(tool_name):
-        return _BLOCK_MESSAGE
+    """Tagged files no longer impose a tool gate."""
     return None
