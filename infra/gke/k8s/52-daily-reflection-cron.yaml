@@ -19,7 +19,7 @@ spec:
               command:
                 - /bin/sh
                 - -lc
-                - cd /app && npx ts-node --transpile-only src/jobs/generateDailyReflection.ts
+                - cd /app && npm run generate:daily-reflection
               env:
                 - name: NODE_ENV
                   value: production

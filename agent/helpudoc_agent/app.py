@@ -25,7 +25,6 @@ from fastapi import FastAPI, HTTPException, Body, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, model_validator
 from langchain_core.messages import HumanMessage, SystemMessage
-from google.genai import types as genai_types
 
 from .configuration import describe_workspace_root, load_settings
 from .graph import AgentRegistry
@@ -527,6 +526,27 @@ def _response_text(response: Any) -> str:
             if isinstance(value, str) and value.strip():
                 parts.append(value.strip())
     return "\n".join(parts).strip()
+
+
+def _lc_ai_message_text(ai_message: Any) -> str:
+    text = getattr(ai_message, "text", None)
+    if isinstance(text, str) and text.strip():
+        return text.strip()
+    content = getattr(ai_message, "content", None)
+    if isinstance(content, str) and content.strip():
+        return content.strip()
+    if isinstance(content, list):
+        parts: List[str] = []
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "text":
+                fragment = block.get("text")
+                if isinstance(fragment, str) and fragment.strip():
+                    parts.append(fragment.strip())
+            elif isinstance(block, str) and block.strip():
+                parts.append(block.strip())
+        if parts:
+            return "\n".join(parts).strip()
+    return ""
 
 
 def _split_sections_from_markdown(markdown: str) -> List[Dict[str, str]]:
@@ -1242,7 +1262,8 @@ def create_app() -> FastAPI:
         kind, fallback_mode = _guess_attachment_strategy(req.fileName, req.mimeType)
         extracted_text: str | None = None
         try:
-            contents: List[Any]
+            understand_model = gemini_manager.get_attachment_chat_model()
+            message: HumanMessage
             if kind in {"docx", "pptx", "pdf"}:
                 try:
                     markdown, extracted_assets = await asyncio.to_thread(
@@ -1288,31 +1309,34 @@ def create_app() -> FastAPI:
                         extracted_text = _extract_text_from_pptx(buffer)
                     else:
                         extracted_text = _extract_text_from_pdf(buffer)
-                    contents = [_attachment_understanding_prompt(req.fileName, extracted_text, kind)]
+                    message = HumanMessage(
+                        content=_attachment_understanding_prompt(req.fileName, extracted_text, kind)
+                    )
             elif kind == "image":
-                contents = [
-                    genai_types.Part.from_bytes(data=buffer, mime_type=req.mimeType),
-                    _attachment_understanding_prompt(req.fileName, None, kind),
-                ]
+                image_b64 = base64.b64encode(buffer).decode("utf-8")
+                mime = (req.mimeType or "").strip() or "image/jpeg"
+                message = HumanMessage(
+                    content=[
+                        {"type": "text", "text": _attachment_understanding_prompt(req.fileName, None, kind)},
+                        {"type": "image", "base64": image_b64, "mime_type": mime},
+                    ]
+                )
             else:
                 try:
                     extracted_text = buffer.decode("utf-8", errors="replace")
                 except Exception:
                     extracted_text = ""
-                contents = [_attachment_understanding_prompt(req.fileName, extracted_text, kind)]
+                message = HumanMessage(
+                    content=_attachment_understanding_prompt(req.fileName, extracted_text, kind)
+                )
 
             fallback_text = extracted_text or f"Unable to extract textual content from {req.fileName}."
             raw_response_text = ""
             for attempt in range(2):
-                response = gemini_manager.client.models.generate_content(
-                    model=gemini_manager.model_name,
-                    contents=contents,
-                    config=genai_types.GenerateContentConfig(
-                        candidate_count=1,
-                        temperature=0.1,
-                    ),
+                lc_response = await asyncio.to_thread(
+                    lambda m=message: understand_model.invoke([m], temperature=0.1)
                 )
-                raw_response_text = _response_text(response)
+                raw_response_text = _lc_ai_message_text(lc_response)
                 payload = _parse_attachment_payload(
                     raw_response_text,
                     req.fileName,
@@ -1336,10 +1360,12 @@ def create_app() -> FastAPI:
                         effectiveMode=str(payload.get("effectiveMode") or fallback_mode),
                         status=str(payload.get("status") or "partial"),
                     )
-                contents = [
-                    "Repair the previous response into strict JSON only using the required schema.",
-                    raw_response_text,
-                ]
+                message = HumanMessage(
+                    content=(
+                        "Repair the previous response into strict JSON only using the required schema.\n\n"
+                        + raw_response_text
+                    )
+                )
         except Exception:
             logger.exception("Attachment understanding failed for %s", req.fileName)
 

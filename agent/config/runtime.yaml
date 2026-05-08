@@ -32,6 +32,9 @@ tools:
   - name: google_search
     kind: builtin
     description: Gemini-native Google search tool
+  - name: url_context
+    kind: builtin
+    description: Gemini URL context for explicit user-supplied links
   - name: gemini_image
     kind: builtin
     description: Generate or edit images using Gemini

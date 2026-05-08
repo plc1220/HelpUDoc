@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Check,
   ChevronDown,
   ChevronRight,
   Folder,
@@ -25,6 +26,7 @@ interface WorkspaceFileTreeProps {
   colorMode: 'light' | 'dark';
   selectedFileId: string | null;
   selectedFiles: Set<string>;
+  copiedPublicUrlFileId: string | null;
   ragStatuses: Record<string, { status?: string; updatedAt?: string; error?: string }>;
   isDraftWorkspaceFile: (file?: WorkspaceFile | null) => boolean;
   onSelectFile: (file: WorkspaceFile) => void;
@@ -109,6 +111,7 @@ const TreeFileRow: React.FC<{
   onSelectFile: (file: WorkspaceFile) => void;
   onToggleFileSelection: (fileId: string) => void;
   onCopyPublicUrl: (file: WorkspaceFile) => void;
+  copiedPublicUrlFileId: string | null;
   onRenameFile: (file: WorkspaceFile) => void;
   onDeleteFile: (file: WorkspaceFile) => void;
   draggedFileId: string | null;
@@ -124,6 +127,7 @@ const TreeFileRow: React.FC<{
   onSelectFile,
   onToggleFileSelection,
   onCopyPublicUrl,
+  copiedPublicUrlFileId,
   onRenameFile,
   onDeleteFile,
   draggedFileId,
@@ -246,9 +250,14 @@ const TreeFileRow: React.FC<{
                 onCopyPublicUrl(file);
               }}
               className={actionButtonClassName}
-              title={file.publicUrl}
+              title={copiedPublicUrlFileId === file.id ? 'Copied!' : 'Copy public URL'}
+              aria-label={copiedPublicUrlFileId === file.id ? 'Copied to clipboard' : 'Copy public URL'}
             >
-              <LinkIcon size={14} />
+              {copiedPublicUrlFileId === file.id ? (
+                <Check size={14} className={isDarkMode ? 'text-emerald-400' : 'text-emerald-600'} />
+              ) : (
+                <LinkIcon size={14} />
+              )}
             </button>
           )}
           {!isDraft && (
@@ -407,6 +416,7 @@ const renderTreeNodes = (
     onSelectFile: (file: WorkspaceFile) => void;
     onToggleFileSelection: (fileId: string) => void;
     onCopyPublicUrl: (file: WorkspaceFile) => void;
+    copiedPublicUrlFileId: string | null;
     onRenameFile: (file: WorkspaceFile) => void;
     onDeleteFile: (file: WorkspaceFile) => void;
     onDeleteFolder: (folder: WorkspaceFileTreeFolderNode) => void;
@@ -451,6 +461,7 @@ const renderTreeNodes = (
         onSelectFile={options.onSelectFile}
         onToggleFileSelection={options.onToggleFileSelection}
         onCopyPublicUrl={options.onCopyPublicUrl}
+        copiedPublicUrlFileId={options.copiedPublicUrlFileId}
         onRenameFile={options.onRenameFile}
         onDeleteFile={options.onDeleteFile}
         draggedFileId={options.draggedFileId}
@@ -472,6 +483,7 @@ export default function WorkspaceFileTree({
   onSelectFile,
   onToggleFileSelection,
   onCopyPublicUrl,
+  copiedPublicUrlFileId,
   onRenameFile,
   onDeleteFile,
   onDeleteFolder,
@@ -576,6 +588,7 @@ export default function WorkspaceFileTree({
               onSelectFile,
               onToggleFileSelection,
               onCopyPublicUrl,
+              copiedPublicUrlFileId,
               onRenameFile,
               onDeleteFile,
               onDeleteFolder,

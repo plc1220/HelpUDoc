@@ -11,10 +11,14 @@ from importlib import import_module
 from io import BytesIO
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
+
+from pydantic import BaseModel, Field
 from uuid import uuid4
 
+from langchain_core.messages import HumanMessage
 from langchain_core.tools import tool
 from langchain_core.tools import Tool
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.types import interrupt
 
 try:
@@ -51,6 +55,17 @@ from .utils import SourceTracker, extract_web_url
 
 logger = logging.getLogger(__name__)
 
+
+class StructuredWebSource(BaseModel):
+    title: str = ""
+    url: str
+
+
+class StructuredWebAnswer(BaseModel):
+    summary: str
+    sources: list[StructuredWebSource] = Field(default_factory=list)
+
+
 _MAX_SKILL_LOAD_ATTEMPTS_PER_TURN = 8
 _MAX_DISTINCT_SKILLS_PER_TURN = 3
 
@@ -78,7 +93,10 @@ def _interrupt_with_retry(
         if not _dict_has_keys(response, stale_keys) or _dict_has_keys(response, valid_keys):
             return response
         logger.warning("%s received stale interrupt resume payload on attempt %s; retrying", label, attempt + 1)
-    return response
+    raise RuntimeError(
+        f"{label} did not receive a matching human response. "
+        "The run was stopped to avoid re-entering the same interrupt loop."
+    )
 
 
 def _get_active_skill_policy(workspace_state: WorkspaceState) -> SkillPolicy:
@@ -175,25 +193,15 @@ def _seconds_to_ms(seconds: int) -> int:
     return int(seconds) * 1000
 
 
-def _generate_with_timeout(
+def _invoke_lc_with_timeout(
+    invoke: Callable[[], Any],
     *,
-    client,
-    model_name: str,
-    contents: str,
-    config: dict,
     timeout_s: int,
     label: str,
 ):
-    def _call():
-        return client.models.generate_content(
-            model=model_name,
-            contents=contents,
-            config=config,
-        )
-
     start = time.monotonic()
     logger.info("%s started", label)
-    future = _SEARCH_EXECUTOR.submit(_call)
+    future = _SEARCH_EXECUTOR.submit(invoke)
     try:
         response = future.result(timeout=timeout_s)
     except concurrent.futures.TimeoutError:
@@ -208,11 +216,134 @@ def _generate_with_timeout(
     return response, None
 
 
+def _sources_from_grounding_dict(grounding: dict) -> List[Dict[str, str]]:
+    sources: List[Dict[str, str]] = []
+    seen: set[str] = set()
+    for chunk in grounding.get("groundingChunks") or []:
+        if not isinstance(chunk, dict):
+            continue
+        web = chunk.get("web")
+        if not isinstance(web, dict):
+            continue
+        actual_url = extract_web_url(web)
+        if not actual_url or actual_url in seen:
+            continue
+        title_raw = web.get("title")
+        title = str(title_raw).strip() if title_raw else "Untitled"
+        sources.append({"title": title or "Untitled", "url": actual_url})
+        seen.add(actual_url)
+    return sources
+
+
+def _sources_from_citation_annotations(ai_message: Any) -> List[Dict[str, str]]:
+    """Extract URLs from LangChain Google GenAI text block citation annotations."""
+    blocks = getattr(ai_message, "content_blocks", None)
+    if not isinstance(blocks, list):
+        content = getattr(ai_message, "content", None)
+        blocks = content if isinstance(content, list) else []
+
+    sources: List[Dict[str, str]] = []
+    seen: set[str] = set()
+    for block in blocks:
+        if not isinstance(block, dict):
+            continue
+        annotations = block.get("annotations")
+        if not isinstance(annotations, list):
+            continue
+        for ann in annotations:
+            if not isinstance(ann, dict):
+                continue
+            if str(ann.get("type") or "").strip().lower() != "citation":
+                continue
+            url_raw = ann.get("url") or ann.get("uri")
+            url: str | None = url_raw.strip() if isinstance(url_raw, str) and url_raw.strip() else None
+            if url:
+                url = extract_web_url({"uri": url, "resolvedUri": None, "displayUri": None}) or url
+            if not url:
+                extras = ann.get("extras")
+                if isinstance(extras, dict):
+                    meta = extras.get("google_ai_metadata")
+                    if isinstance(meta, dict):
+                        nested = meta.get("web_url") or meta.get("url")
+                        if isinstance(nested, str) and nested.strip():
+                            cand = nested.strip()
+                            url = extract_web_url({"uri": cand, "resolvedUri": None, "displayUri": None}) or cand
+            if not url:
+                continue
+            if url in seen:
+                continue
+            title_raw = ann.get("title")
+            title = str(title_raw).strip() if title_raw else "Untitled"
+            sources.append({"title": title or "Untitled", "url": url})
+            seen.add(url)
+    return sources
+
+
+def _parse_structured_web_answer(ai_message: Any) -> tuple[str, List[Dict[str, str]]]:
+    md = getattr(ai_message, "response_metadata", None) or {}
+    grounding_sources = _sources_from_grounding_dict((md.get("grounding_metadata") or {}) if isinstance(md, dict) else {})
+    citation_sources = _sources_from_citation_annotations(ai_message)
+
+    raw = getattr(ai_message, "text", None) or ""
+    summary = ""
+    sources: List[Dict[str, str]] = []
+
+    if isinstance(raw, str) and raw.strip():
+        try:
+            data = json.loads(raw.strip())
+        except json.JSONDecodeError:
+            data = None
+        if isinstance(data, dict):
+            try:
+                parsed = StructuredWebAnswer.model_validate(data)
+                summary = (parsed.summary or "").strip()
+                sources = [
+                    {"title": (s.title or "Untitled").strip() or "Untitled", "url": s.url.strip()}
+                    for s in parsed.sources
+                    if (s.url or "").strip()
+                ]
+            except Exception:
+                summary = str(data.get("summary") or "").strip()
+                for item in data.get("sources") or []:
+                    if not isinstance(item, dict):
+                        continue
+                    url = str(item.get("url") or "").strip()
+                    if not url:
+                        continue
+                    title = str(item.get("title") or "Untitled").strip() or "Untitled"
+                    sources.append({"title": title, "url": url})
+        elif data is None:
+            summary = raw.strip()
+
+    if not summary:
+        summary = (raw.strip() if isinstance(raw, str) else "") or "No results found."
+
+    if not sources and grounding_sources:
+        sources = list(grounding_sources)
+    if not sources and citation_sources:
+        sources = list(citation_sources)
+
+    seen: set[str] = set()
+    deduped: List[Dict[str, str]] = []
+    for item in sources:
+        url = item.get("url")
+        if not url or url in seen:
+            continue
+        seen.add(url)
+        deduped.append({"title": item.get("title") or "Untitled", "url": url})
+
+    return summary, deduped
+
+
 class GeminiClientManager:
     """Initializes and caches a Gemini client per service."""
 
     def __init__(self, settings: Settings):
         model_cfg = settings.model
+        self._model_cfg = model_cfg
+        self._search_chat_model: ChatGoogleGenerativeAI | None = None
+        self._attachment_chat_model: ChatGoogleGenerativeAI | None = None
+
         if model_cfg.provider != "gemini":
             raise ValueError(f"Unsupported model provider {model_cfg.provider}")
 
@@ -237,19 +368,37 @@ class GeminiClientManager:
         else:
             client_kwargs["vertexai"] = False
 
-        # Main client: used for most model calls (allow longer runtime).
+        # Main client for image generation and other direct google-genai call sites.
         self.client = genai.Client(
             **client_kwargs,
             http_options=HttpOptions(timeout=_seconds_to_ms(_DEFAULT_HTTP_TIMEOUT)),
         )
-        # Search client: used for google_search tool calls (keep timeouts tight so a flaky network
-        # can't stall runs or accumulate hung threads over time).
-        self.search_client = genai.Client(
-            **client_kwargs,
-            http_options=HttpOptions(timeout=_seconds_to_ms(_DEFAULT_SEARCH_HTTP_TIMEOUT)),
-        )
         self.model_name = model_cfg.chat_model_name
         self.image_model_name = model_cfg.image_model_name
+
+    def get_search_chat_model(self) -> ChatGoogleGenerativeAI:
+        """Tight-timeout chat model for built-in google_search / url_context tools."""
+        if self._search_chat_model is None:
+            from .gemini_chat import create_chat_google_generative_ai
+
+            self._search_chat_model = create_chat_google_generative_ai(
+                self._model_cfg,
+                self.model_name,
+                timeout=float(_DEFAULT_SEARCH_HTTP_TIMEOUT),
+            )
+        return self._search_chat_model
+
+    def get_attachment_chat_model(self) -> ChatGoogleGenerativeAI:
+        """Chat model with standard HTTP deadline for multimodal attachment understanding."""
+        if self._attachment_chat_model is None:
+            from .gemini_chat import create_chat_google_generative_ai
+
+            self._attachment_chat_model = create_chat_google_generative_ai(
+                self._model_cfg,
+                self.model_name,
+                timeout=float(_DEFAULT_HTTP_TIMEOUT),
+            )
+        return self._attachment_chat_model
 
 
 class ToolFactory:
@@ -261,6 +410,7 @@ class ToolFactory:
         self.gemini_manager = gemini_manager
         self._builtin_map: Dict[str, Callable[[WorkspaceState], Tool]] = {
             "google_search": self._build_google_search_tool,
+            "url_context": self._build_url_context_tool,
             "gemini_image": self._build_gemini_image_tool,
             "export_bigquery_query": self._build_export_bigquery_query_tool,
             "append_to_report": self._build_append_to_report_tool,
@@ -322,11 +472,24 @@ class ToolFactory:
         return build_google_search_tool(
             workspace_state=workspace_state,
             source_tracker=self.source_tracker,
-            client=self.gemini_manager.search_client,
-            model_name=self.gemini_manager.model_name,
+            llm=self.gemini_manager.get_search_chat_model(),
             tool_name="google_search",
             tool_description="Use Gemini's built-in search to gather fresh information.",
             search_label="google_search",
+        )
+
+    def _build_url_context_tool(self, workspace_state: WorkspaceState) -> Tool:
+        return build_url_context_tool(
+            workspace_state=workspace_state,
+            source_tracker=self.source_tracker,
+            llm=self.gemini_manager.get_search_chat_model(),
+            tool_name="url_context",
+            tool_description=(
+                "Analyze specific HTTP(S) URLs the user provided using Gemini URL context. "
+                "Prefer this when the user pastes explicit links or wants a page summarized; "
+                "use google_search for open-ended discovery."
+            ),
+            label="url_context",
         )
 
     def _build_gemini_image_tool(self, workspace_state: WorkspaceState) -> Tool:
@@ -1303,37 +1466,43 @@ class ToolFactory:
         return rag_query
 
 
+def _apply_search_policy_guard(workspace_state: WorkspaceState, tool_name: str) -> Optional[str]:
+    """Tagged-files gates and optional pre-plan search limits (shared by web tools)."""
+    blocked = tagged_files_mode_guard(workspace_state.context, tool_name)
+    if blocked:
+        return blocked
+    policy = _get_active_skill_policy(workspace_state)
+    if policy.requires_hitl_plan and not _is_plan_approved(workspace_state):
+        limit = max(0, int(policy.pre_plan_search_limit or 0))
+        raw_used = workspace_state.context.get("pre_plan_search_count", 0)
+        try:
+            used = max(0, int(raw_used))
+        except (TypeError, ValueError):
+            used = 0
+        if limit <= 0 or used >= limit:
+            return _plan_gate_with_presearch_message(used, limit)
+        workspace_state.context["pre_plan_search_count"] = used + 1
+    return None
+
+
 def _build_grounded_google_search_tool(
     workspace_state: WorkspaceState,
     source_tracker: SourceTracker,
     *,
-    client,
-    model_name: str,
+    llm: ChatGoogleGenerativeAI,
     tool_name: str,
     tool_description: str,
     search_label: str,
 ) -> Tool:
-    """Create a Gemini-grounded Google search tool and persist discovered sources."""
+    """Google Search via LangChain (structured JSON + grounding metadata)."""
     tracker = source_tracker
 
     @tool
     def grounded_search(query: str, max_results: int = 5) -> str:
-        """Run a Gemini native Google search for the given query."""
-        blocked = tagged_files_mode_guard(workspace_state.context, tool_name)
+        """Run Gemini Google Search for the given query."""
+        blocked = _apply_search_policy_guard(workspace_state, tool_name)
         if blocked:
             return blocked
-        policy = _get_active_skill_policy(workspace_state)
-        if policy.requires_hitl_plan and not _is_plan_approved(workspace_state):
-            limit = max(0, int(policy.pre_plan_search_limit or 0))
-            raw_used = workspace_state.context.get("pre_plan_search_count", 0)
-            try:
-                used = max(0, int(raw_used))
-            except (TypeError, ValueError):
-                used = 0
-            if limit <= 0 or used >= limit:
-                return _plan_gate_with_presearch_message(used, limit)
-            # Count attempts before executing the search to prevent infinite retries on failures.
-            workspace_state.context["pre_plan_search_count"] = used + 1
 
         try:
             max_results = max(1, int(max_results or 1))
@@ -1341,43 +1510,24 @@ def _build_grounded_google_search_tool(
             max_results = 5
         search_prompt = (
             f"Search the web for information about: {query}\n\n"
-            f"Return a comprehensive summary, citing up to {max_results} relevant sources."
+            f"Return JSON with a factual summary (field summary) and up to {max_results} "
+            f"distinct sources each with url and optional title."
         )
-        response, error = _generate_with_timeout(
-            client=client,
-            model_name=model_name,
-            contents=search_prompt,
-            config={
-                "tools": [{"google_search": {}}],
-                "temperature": 0,
-            },
+        llm_search = llm.bind(
+            tools=[{"google_search": {}}],
+            response_mime_type="application/json",
+            response_schema=StructuredWebAnswer.model_json_schema(),
+        )
+        response, error = _invoke_lc_with_timeout(
+            lambda: llm_search.invoke([HumanMessage(content=search_prompt)], temperature=0),
             timeout_s=_DEFAULT_SEARCH_TIMEOUT,
             label=search_label,
         )
-        if error:
-            return f"Search failed ({error})."
+        if error or response is None:
+            return f"Search failed ({error or 'unknown error'})."
 
-        summary = response.text or "No results found."
-        sources: List[Dict[str, str]] = []
+        summary, sources = _parse_structured_web_answer(response)
         sources_str = "\n\n--- SOURCES ---"
-
-        if response.candidates and response.candidates[0].grounding_metadata:
-            grounding_chunks = response.candidates[0].grounding_metadata.grounding_chunks or []
-            web_chunks = [chunk for chunk in grounding_chunks if hasattr(chunk, "web") and chunk.web]
-
-            seen_urls = set()
-            for chunk in web_chunks:
-                actual_url = extract_web_url(chunk.web)
-                if not actual_url or actual_url in seen_urls:
-                    continue
-                sources.append(
-                    {
-                        "title": getattr(chunk.web, "title", None) or "Untitled",
-                        "url": actual_url,
-                    }
-                )
-                seen_urls.add(actual_url)
-
         if sources:
             tracker.record(workspace_state, sources)
             for src in sources[:max_results]:
@@ -1392,27 +1542,108 @@ def _build_grounded_google_search_tool(
     return grounded_search
 
 
+def _build_url_context_lc_tool(
+    workspace_state: WorkspaceState,
+    source_tracker: SourceTracker,
+    *,
+    llm: ChatGoogleGenerativeAI,
+    tool_name: str,
+    tool_description: str,
+    label: str,
+) -> Tool:
+    tracker = source_tracker
+
+    @tool
+    def url_context(urls: List[str], question: str) -> str:
+        """Answer using Gemini URL context for explicit URLs."""
+        blocked = _apply_search_policy_guard(workspace_state, tool_name)
+        if blocked:
+            return blocked
+
+        normalized: List[str] = []
+        for item in urls or []:
+            if not isinstance(item, str):
+                continue
+            stripped = item.strip()
+            if stripped.lower().startswith(("http://", "https://")):
+                normalized.append(stripped)
+        if not normalized:
+            return "Provide at least one http:// or https:// URL in urls."
+
+        url_block = "\n".join(f"- {u}" for u in normalized)
+        prompt = (
+            f"You are answering from these URLs:\n{url_block}\n\nQuestion or instructions:\n{question}\n\n"
+            "Return JSON with summary and sources (url plus title when possible), grounded strictly in fetched page content."
+        )
+        llm_urls = llm.bind(
+            tools=[{"url_context": {}}],
+            response_mime_type="application/json",
+            response_schema=StructuredWebAnswer.model_json_schema(),
+        )
+        response, error = _invoke_lc_with_timeout(
+            lambda: llm_urls.invoke([HumanMessage(content=prompt)], temperature=0),
+            timeout_s=_DEFAULT_SEARCH_TIMEOUT,
+            label=label,
+        )
+        if error or response is None:
+            return f"URL context failed ({error or 'unknown error'})."
+
+        summary, sources = _parse_structured_web_answer(response)
+        sources_str = "\n\n--- SOURCES ---"
+        if sources:
+            tracker.record(workspace_state, sources)
+            for src in sources:
+                sources_str += f"\nTitle: {src['title']}\nURL: {src['url']}\n"
+        else:
+            sources_str += "\nNo URL sources returned."
+
+        return summary + sources_str
+
+    url_context.name = tool_name
+    url_context.description = tool_description
+    return url_context
+
+
 def build_google_search_tool(
     workspace_state: WorkspaceState,
     source_tracker: SourceTracker,
-    client=None,
-    model_name: str | None = None,
+    llm: ChatGoogleGenerativeAI | None = None,
     *,
     tool_name: str = "google_search",
     tool_description: str = "Use Gemini's built-in search to gather fresh information.",
     search_label: str = "google_search",
 ) -> Tool:
     """Public builder so YAML entrypoints stay accurate."""
-    if client is None or model_name is None:
-        raise ValueError("Gemini client and model name are required")
+    if llm is None:
+        raise ValueError("ChatGoogleGenerativeAI instance is required")
     return _build_grounded_google_search_tool(
         workspace_state=workspace_state,
         source_tracker=source_tracker,
-        client=client,
-        model_name=model_name,
+        llm=llm,
         tool_name=tool_name,
         tool_description=tool_description,
         search_label=search_label,
+    )
+
+
+def build_url_context_tool(
+    workspace_state: WorkspaceState,
+    source_tracker: SourceTracker,
+    llm: ChatGoogleGenerativeAI | None = None,
+    *,
+    tool_name: str = "url_context",
+    tool_description: str,
+    label: str = "url_context",
+) -> Tool:
+    if llm is None:
+        raise ValueError("ChatGoogleGenerativeAI instance is required")
+    return _build_url_context_lc_tool(
+        workspace_state=workspace_state,
+        source_tracker=source_tracker,
+        llm=llm,
+        tool_name=tool_name,
+        tool_description=tool_description,
+        label=label,
     )
 
 

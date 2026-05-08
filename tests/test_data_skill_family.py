@@ -434,6 +434,39 @@ class TestGuardedTool:
         assert runtime_result.status == "error"
         assert "preferred mcp server" in str(runtime_result.content).lower()
 
+    def test_guarded_tool_blocks_url_context_when_preferred_mcp_is_bound(self, tmp_path: Path) -> None:
+        from langchain_core.messages import ToolMessage
+        from langchain_core.tools import tool
+
+        from agent.helpudoc_agent.state import WorkspaceState
+        from agent.helpudoc_agent.tool_guard import GuardedTool
+
+        @tool
+        def url_context(urls: list[str], question: str) -> str:
+            """Fetch URL-backed context."""
+            return "ok"
+
+        workspace_state = WorkspaceState(workspace_id="w", root_path=tmp_path)
+        workspace_state.context["preferred_mcp_server"] = "aws-knowledge"
+        workspace_state.context["preferred_mcp_server_bound"] = True
+
+        guarded = GuardedTool.from_tool(url_context, workspace_state=workspace_state)
+        result = guarded.invoke({"urls": ["https://example.com"], "question": "Summarize"})
+        assert isinstance(result, str)
+        assert "blocked for this turn" in result.lower()
+
+        runtime_result = guarded.invoke(
+            {
+                "id": "tool-call-u1",
+                "name": "url_context",
+                "type": "tool_call",
+                "urls": ["https://example.com"],
+                "question": "Summarize",
+            }
+        )
+        assert isinstance(runtime_result, ToolMessage)
+        assert runtime_result.status == "error"
+
     def test_guarded_tool_allows_google_search_when_preferred_mcp_is_not_bound(self, tmp_path: Path) -> None:
         from langchain_core.tools import tool
 

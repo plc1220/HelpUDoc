@@ -8,7 +8,7 @@ import {
   ThemeProvider,
   type PaletteMode,
 } from '@mui/material';
-import { CheckSquare, Copy, Edit, Trash, Plus, Minus, ChevronLeft, RotateCcw, X, Printer, Download, Link as LinkIcon, Loader2 } from 'lucide-react';
+import { Check, CheckSquare, Copy, Edit, Trash, Plus, Minus, ChevronLeft, RotateCcw, X, Printer, Download, Link as LinkIcon, Loader2 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { getWorkspaces, createWorkspace, deleteWorkspace, renameWorkspace, updateWorkspaceSettings } from '../services/workspaceApi';
@@ -268,6 +268,7 @@ type ActiveRunInfo = {
   turnId: string;
   placeholderId: ConversationMessage['id'];
   lastStreamId?: string;
+  streamReconnectAttempts?: number;
   status: AgentRunStatus;
 };
 
@@ -554,6 +555,7 @@ export default function WorkspacePage() {
   const lastPersistedAgentTextRef = useRef<Record<string, string>>({});
   const lastPersistedStatusRef = useRef<Record<string, AgentRunStatus | undefined>>({});
   const lastPersistedMetadataRef = useRef<Record<string, string | undefined>>({});
+  const lastPersistAttemptRef = useRef<Record<string, number>>({});
   const persistInFlightRef = useRef<Set<string>>(new Set());
   const pendingPersistRef = useRef<Record<string, PersistProgressRequest>>({});
   const stopRequestedRef = useRef(false);
@@ -590,6 +592,7 @@ export default function WorkspacePage() {
   const [copiedImageUrl, setCopiedImageUrl] = useState(false);
   const [ragStatuses, setRagStatuses] = useState<Record<string, { status?: string; updatedAt?: string; error?: string }>>({});
   const [copiedWorkspaceContent, setCopiedWorkspaceContent] = useState(false);
+  const [copiedPublicUrlFileId, setCopiedPublicUrlFileId] = useState<string | null>(null);
   const [copiedMessageId, setCopiedMessageId] = useState<ConversationMessage['id'] | null>(null);
   const [availableSkills, setAvailableSkills] = useState<SkillDefinition[]>([]);
   const [availableMcpServers, setAvailableMcpServers] = useState<Array<{ name: string; description?: string }>>([]);
@@ -764,6 +767,7 @@ export default function WorkspacePage() {
         delete lastPersistedAgentTextRef.current[candidateRunId];
         delete lastPersistedStatusRef.current[candidateRunId];
         delete lastPersistedMetadataRef.current[candidateRunId];
+        delete lastPersistAttemptRef.current[candidateRunId];
         resumeInFlightRef.current.delete(candidateRunId);
         resumeAttemptedRef.current.delete(candidateRunId);
       }
@@ -787,6 +791,7 @@ export default function WorkspacePage() {
     delete lastPersistedAgentTextRef.current[runId];
     delete lastPersistedStatusRef.current[runId];
     delete lastPersistedMetadataRef.current[runId];
+    delete lastPersistAttemptRef.current[runId];
     resumeInFlightRef.current.delete(runId);
     resumeAttemptedRef.current.delete(runId);
   }, [persistActiveRuns]);
@@ -1429,6 +1434,10 @@ export default function WorkspacePage() {
     }
     try {
       await navigator.clipboard.writeText(file.publicUrl);
+      setCopiedPublicUrlFileId(file.id);
+      window.setTimeout(() => {
+        setCopiedPublicUrlFileId((current) => (current === file.id ? null : current));
+      }, 1500);
     } catch (error) {
       console.error('Failed to copy file public URL', error);
     }
@@ -3420,6 +3429,16 @@ export default function WorkspacePage() {
         pendingPersistRef.current[runId] = { runInfo, statusOverride, options };
         return;
       }
+      const now = Date.now();
+      const forcedStatus = Boolean(statusOverride || options?.metadataOverride);
+      if (!forcedStatus && runInfo.status !== 'running') {
+        return;
+      }
+      const lastAttempt = lastPersistAttemptRef.current[runId] || 0;
+      if (!forcedStatus && now - lastAttempt < 2000) {
+        return;
+      }
+      lastPersistAttemptRef.current[runId] = now;
       const message = findAgentMessageForRun(conversationId, placeholderId, turnId);
       const bufferedState = getBufferedAgentState(runInfo);
       const nextStatus = statusOverride || message?.metadata?.status || runInfo.status || 'running';
@@ -3570,9 +3589,11 @@ export default function WorkspacePage() {
     const interval = window.setInterval(() => {
       const runs = Object.values(activeRunsRef.current);
       runs.forEach((run) => {
-        void persistAgentProgress(run);
+        if (run.status === 'running') {
+          void persistAgentProgress(run);
+        }
       });
-    }, 450);
+    }, 2000);
     return () => window.clearInterval(interval);
   }, [persistAgentProgress]);
 
@@ -4182,10 +4203,37 @@ export default function WorkspacePage() {
           return;
         }
         if (finalStatus === 'running' || finalStatus === 'queued') {
+          const reconnectAttempts = (runInfo.streamReconnectAttempts || 0) + 1;
+          if (reconnectAttempts > 5) {
+            const failedStatus: AgentRunStatus = 'failed';
+            await syncRunStateToConversation(
+              {
+                ...runInfo,
+                status: failedStatus,
+                lastStreamId,
+              },
+              failedStatus,
+              undefined,
+            );
+            setConversationAttention(
+              conversationId,
+              failedStatus,
+              'The run stream did not settle after several reconnects.',
+            );
+            setStreamingForConversation(conversationId, false);
+            if (streamAbortMapRef.current.get(conversationId) === controller) {
+              streamAbortMapRef.current.delete(conversationId);
+            }
+            stopRequestedRef.current = false;
+            resumeInFlightRef.current.delete(runId);
+            removeActiveRun(runId);
+            return;
+          }
           const resumedRunInfo: ActiveRunInfo = {
             ...runInfo,
             status: 'running',
             lastStreamId,
+            streamReconnectAttempts: reconnectAttempts,
           };
           registerActiveRun(resumedRunInfo);
           setConversationAttention(conversationId, 'running', 'Streaming the latest agent updates...');
@@ -4198,7 +4246,7 @@ export default function WorkspacePage() {
               return;
             }
             void streamRunForConversation(activeRun, false, activeRun.lastStreamId);
-          }, 300);
+          }, Math.min(10000, 1000 * reconnectAttempts));
           return;
         }
         const normalizedFinalStatus = normalizeRunStatus(finalStatus);
@@ -4229,7 +4277,7 @@ export default function WorkspacePage() {
         stopRequestedRef.current = false;
         resumeInFlightRef.current.delete(runId);
         if (finalStatus === 'awaiting_approval') {
-          registerActiveRun({ ...runInfo, status: finalStatus, lastStreamId });
+          registerActiveRun({ ...runInfo, status: finalStatus, lastStreamId, streamReconnectAttempts: 0 });
         } else {
           removeActiveRun(runId);
           removeActiveRunsForTurn(conversationId, turnId);
@@ -6307,6 +6355,7 @@ export default function WorkspacePage() {
                         colorMode={colorMode}
                         selectedFileId={selectedFile?.id || null}
                         selectedFiles={selectedFiles}
+                        copiedPublicUrlFileId={copiedPublicUrlFileId}
                         ragStatuses={ragStatuses}
                         isDraftWorkspaceFile={isDraftWorkspaceFile}
                         onSelectFile={(file) => {
@@ -6345,8 +6394,13 @@ export default function WorkspacePage() {
                           }`}
                           onClick={handleCopyImageUrl}
                           title={copiedImageUrl ? 'Copied!' : 'Copy public URL'}
+                          aria-label={copiedImageUrl ? 'Copied to clipboard' : 'Copy image public URL'}
                         >
-                          <LinkIcon size={16} className={isDarkMode ? 'text-slate-300' : 'text-gray-600'} />
+                          {copiedImageUrl ? (
+                            <Check size={16} className={isDarkMode ? 'text-emerald-400' : 'text-emerald-600'} />
+                          ) : (
+                            <LinkIcon size={16} className={isDarkMode ? 'text-slate-300' : 'text-gray-600'} />
+                          )}
                         </button>
                       )}
                       <button
@@ -6357,8 +6411,13 @@ export default function WorkspacePage() {
                         onClick={handleCopyWorkspaceContent}
                         disabled={!selectedFile}
                         title={copiedWorkspaceContent ? 'Copied!' : 'Copy file content'}
+                        aria-label={copiedWorkspaceContent ? 'Copied to clipboard' : 'Copy file content'}
                       >
-                        <Copy size={16} className={isDarkMode ? 'text-slate-300' : 'text-gray-600'} />
+                        {copiedWorkspaceContent ? (
+                          <Check size={16} className={isDarkMode ? 'text-emerald-400' : 'text-emerald-600'} />
+                        ) : (
+                          <Copy size={16} className={isDarkMode ? 'text-slate-300' : 'text-gray-600'} />
+                        )}
                       </button>
                       {canPrintOrDownloadFile && (
                         <>

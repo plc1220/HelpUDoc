@@ -745,25 +745,29 @@ async function runAgentRunWorker(
             }
             eventIndex += 1;
             if (runTelemetryService && typeof parsed.name === 'string' && parsed.name.trim()) {
-              await runTelemetryService.appendToolEvent({
-                runId,
-                workspaceId: params.workspaceId,
-                userId: params.userId,
-                conversationId: params.conversationId,
-                turnId: params.turnId,
-                eventIndex,
-                toolName: parsed.name.trim(),
-                eventType:
-                  parsed.type === 'tool_start'
-                    ? 'start'
-                    : parsed.type === 'tool_end'
-                      ? 'end'
-                      : 'error',
-                summary: typeof parsed.content === 'string' ? parsed.content : undefined,
-                outputFiles: Array.isArray(parsed.outputFiles) ? parsed.outputFiles as Array<Record<string, unknown>> : undefined,
-                payload: parsed,
-                eventAt: new Date().toISOString(),
-              });
+              try {
+                await runTelemetryService.appendToolEvent({
+                  runId,
+                  workspaceId: params.workspaceId,
+                  userId: params.userId,
+                  conversationId: params.conversationId,
+                  turnId: params.turnId,
+                  eventIndex,
+                  toolName: parsed.name.trim(),
+                  eventType:
+                    parsed.type === 'tool_start'
+                      ? 'start'
+                      : parsed.type === 'tool_end'
+                        ? 'end'
+                        : 'error',
+                  summary: typeof parsed.content === 'string' ? parsed.content : undefined,
+                  outputFiles: parsed.outputFiles,
+                  payload: parsed,
+                  eventAt: new Date().toISOString(),
+                });
+              } catch (telemetryError) {
+                console.error('Failed to append agent run tool event', { runId, eventIndex, error: telemetryError });
+              }
             }
           }
           await appendStreamEvent(runId, parsed ? JSON.stringify(normalizeInterruptPayloadRecord(parsed)) : line);
@@ -847,25 +851,29 @@ async function runAgentRunWorker(
         }
         eventIndex += 1;
         if (runTelemetryService && typeof parsed.name === 'string' && parsed.name.trim()) {
-          await runTelemetryService.appendToolEvent({
-            runId,
-            workspaceId: params.workspaceId,
-            userId: params.userId,
-            conversationId: params.conversationId,
-            turnId: params.turnId,
-            eventIndex,
-            toolName: parsed.name.trim(),
-            eventType:
-              parsed.type === 'tool_start'
-                ? 'start'
-                : parsed.type === 'tool_end'
-                  ? 'end'
-                  : 'error',
-            summary: typeof parsed.content === 'string' ? parsed.content : undefined,
-            outputFiles: Array.isArray(parsed.outputFiles) ? parsed.outputFiles as Array<Record<string, unknown>> : undefined,
-            payload: parsed,
-            eventAt: new Date().toISOString(),
-          });
+          try {
+            await runTelemetryService.appendToolEvent({
+              runId,
+              workspaceId: params.workspaceId,
+              userId: params.userId,
+              conversationId: params.conversationId,
+              turnId: params.turnId,
+              eventIndex,
+              toolName: parsed.name.trim(),
+              eventType:
+                parsed.type === 'tool_start'
+                  ? 'start'
+                  : parsed.type === 'tool_end'
+                    ? 'end'
+                    : 'error',
+              summary: typeof parsed.content === 'string' ? parsed.content : undefined,
+              outputFiles: parsed.outputFiles,
+              payload: parsed,
+              eventAt: new Date().toISOString(),
+            });
+          } catch (telemetryError) {
+            console.error('Failed to append agent run tool event', { runId, eventIndex, error: telemetryError });
+          }
         }
       }
       await appendStreamEvent(runId, parsed ? JSON.stringify(normalizeInterruptPayloadRecord(parsed)) : line);

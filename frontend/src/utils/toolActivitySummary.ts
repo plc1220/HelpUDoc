@@ -33,6 +33,7 @@ const TOOL_LABELS: Record<string, string> = {
   list_files: 'Checking workspace files',
   rag_query: 'Searching your workspace knowledge',
   google_search: 'Checking web sources',
+  url_context: 'Reading linked pages',
   web_search: 'Checking web sources',
   load_skill: 'Loading workflow',
   run_terminal: 'Checking the environment',
@@ -261,6 +262,7 @@ export function headlineForDigest(events: ToolEvent[]): string {
     case 'codebase_search':
       return 'Searching your workspace knowledge';
     case 'google_search':
+    case 'url_context':
     case 'web_search':
       return 'Gathering references from the web';
     default:

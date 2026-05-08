@@ -59,6 +59,12 @@ def _resolve_vertex_redirect(url: str) -> str:
 
 
 def extract_web_url(web_chunk: Any) -> str | None:
+    if isinstance(web_chunk, dict):
+        for key in ("resolvedUri", "displayUri", "uri", "resolved_uri", "display_uri"):
+            url = web_chunk.get(key)
+            if isinstance(url, str) and url.strip():
+                return _resolve_vertex_redirect(url.strip())
+        return None
     candidate_attrs = ("resolved_uri", "display_uri", "uri")
     for attr in candidate_attrs:
         url = getattr(web_chunk, attr, None)

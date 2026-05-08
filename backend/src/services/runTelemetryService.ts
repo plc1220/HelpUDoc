@@ -30,7 +30,7 @@ export type AgentRunToolEventInput = {
   toolName: string;
   eventType: 'start' | 'end' | 'error';
   summary?: string;
-  outputFiles?: Array<Record<string, unknown>>;
+  outputFiles?: unknown;
   payload?: Record<string, unknown>;
   eventAt?: string;
 };
@@ -57,6 +57,72 @@ export type AgentRunProgress = {
   toolErrorCount: number;
   maxEventIndex: number;
 };
+
+const normalizeJsonValue = (value: unknown, options: { parseStrings?: boolean } = {}): unknown => {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return '';
+    }
+    if (options.parseStrings) {
+      try {
+        return normalizeJsonValue(JSON.parse(trimmed), options);
+      } catch {
+        return value;
+      }
+    }
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => normalizeJsonValue(item, options));
+  }
+  if (typeof value === 'object') {
+    const normalized: Record<string, unknown> = {};
+    Object.entries(value as Record<string, unknown>).forEach(([key, item]) => {
+      if (typeof item !== 'undefined') {
+        normalized[key] = normalizeJsonValue(item, {
+          parseStrings: options.parseStrings || key === 'outputFiles',
+        });
+      }
+    });
+    return normalized;
+  }
+  return value;
+};
+
+const normalizeOutputFiles = (value: unknown): Array<Record<string, unknown>> | null => {
+  const normalized = normalizeJsonValue(value, { parseStrings: true });
+  if (!Array.isArray(normalized)) {
+    return null;
+  }
+  const files = normalized
+    .map((item) => {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) {
+        return null;
+      }
+      const path = String((item as Record<string, unknown>).path || '').trim();
+      if (!path) {
+        return null;
+      }
+      return item as Record<string, unknown>;
+    })
+    .filter((item): item is Record<string, unknown> => Boolean(item));
+  return files.length ? files : null;
+};
+
+const jsonbParam = (db: Knex, value: unknown) => (
+  value === null || typeof value === 'undefined'
+    ? null
+    : db.raw('?::jsonb', [JSON.stringify(value)])
+);
+
+export const normalizeToolEventJson = (input: Pick<AgentRunToolEventInput, 'outputFiles' | 'payload'>) => ({
+  outputFiles: normalizeOutputFiles(input.outputFiles),
+  payload: normalizeJsonValue(input.payload),
+});
 
 export class RunTelemetryService {
   private readonly db: Knex;
@@ -131,6 +197,7 @@ export class RunTelemetryService {
   }
 
   async appendToolEvent(input: AgentRunToolEventInput): Promise<void> {
+    const normalizedJson = normalizeToolEventJson(input);
     await this.db('agent_run_tool_events')
       .insert({
         runId: input.runId,
@@ -142,8 +209,8 @@ export class RunTelemetryService {
         toolName: input.toolName,
         eventType: input.eventType,
         summary: input.summary || null,
-        outputFiles: input.outputFiles || null,
-        payload: input.payload || null,
+        outputFiles: jsonbParam(this.db, normalizedJson.outputFiles),
+        payload: jsonbParam(this.db, normalizedJson.payload),
         eventAt: input.eventAt || new Date().toISOString(),
         createdAt: this.db.fn.now(),
       })

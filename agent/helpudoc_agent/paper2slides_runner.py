@@ -414,10 +414,11 @@ def run_paper2slides(files: Iterable[Dict[str, Any]], options: Dict[str, Any]) -
     outputs_root.mkdir(parents=True, exist_ok=True)
 
     with _file_lock(lock_path):
+        base_dir, config_dir = _build_paths_for_options(outputs_root, input_path, options)
+        shutil.rmtree(base_dir, ignore_errors=True)
         args = [sys.executable] + _build_command_args(input_path, options, str(outputs_root))
         _run_command(args, cwd=str(cache_dir))
 
-        base_dir, config_dir = _build_paths_for_options(outputs_root, input_path, options)
         state_error = _read_state_error(config_dir / "state.json")
         if state_error:
             raise RuntimeError(state_error)

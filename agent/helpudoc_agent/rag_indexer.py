@@ -86,6 +86,7 @@ class RagConfig:
     raganything_enable_image_processing: bool
     raganything_enable_table_processing: bool
     raganything_enable_equation_processing: bool
+    enable_rerank: bool
 
     @classmethod
     def from_env(cls, workspace_root: Path) -> "RagConfig":
@@ -110,6 +111,7 @@ class RagConfig:
         raganything_enable_image_processing = (_env("RAGANYTHING_ENABLE_IMAGE_PROCESSING", "false") or "false").strip().lower() in {"1", "true", "yes", "y", "on"}
         raganything_enable_table_processing = (_env("RAGANYTHING_ENABLE_TABLE_PROCESSING", "true") or "true").strip().lower() in {"1", "true", "yes", "y", "on"}
         raganything_enable_equation_processing = (_env("RAGANYTHING_ENABLE_EQUATION_PROCESSING", "true") or "true").strip().lower() in {"1", "true", "yes", "y", "on"}
+        enable_rerank = (_env("RAG_ENABLE_RERANK", "false") or "false").strip().lower() in {"1", "true", "yes", "y", "on"}
         return cls(
             working_dir=working_dir,
             llm_model=llm_model,
@@ -127,6 +129,7 @@ class RagConfig:
             raganything_enable_image_processing=raganything_enable_image_processing,
             raganything_enable_table_processing=raganything_enable_table_processing,
             raganything_enable_equation_processing=raganything_enable_equation_processing,
+            enable_rerank=enable_rerank,
         )
 
 
@@ -514,14 +517,20 @@ class WorkspaceRagStore:
         include_references: bool = False,
     ) -> str:
         rag = await self._get_rag(workspace_id)
-        param = QueryParam(
-            mode=mode,
-            only_need_context=only_need_context,
-            include_references=include_references,
-            hl_keywords=[query],
-            ll_keywords=[query],
-            stream=False,
-        )
+        query_param_kwargs: Dict[str, Any] = {
+            "mode": mode,
+            "only_need_context": only_need_context,
+            "include_references": include_references,
+            "hl_keywords": [query],
+            "ll_keywords": [query],
+            "stream": False,
+            "enable_rerank": self.config.enable_rerank,
+        }
+        try:
+            param = QueryParam(**query_param_kwargs)
+        except TypeError:
+            query_param_kwargs.pop("enable_rerank", None)
+            param = QueryParam(**query_param_kwargs)
         result = await rag.aquery(query, param=param)
         if result is None:
             return ""

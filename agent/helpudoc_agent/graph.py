@@ -13,9 +13,8 @@ from langchain.agents import create_agent
 from langchain.agents.middleware import HumanInTheLoopMiddleware, TodoListMiddleware
 from langchain.agents.middleware.summarization import SummarizationMiddleware
 from langgraph.checkpoint.memory import MemorySaver
-from langchain.chat_models import init_chat_model
-
 from .configuration import Settings
+from .gemini_chat import create_chat_google_generative_ai
 from .state import WorkspaceState, AgentRuntimeState
 from .tools_and_schemas import ToolFactory
 from .skills_registry import (
@@ -55,7 +54,8 @@ GENERAL_SYSTEM_PROMPT = (
     "Treat attached files, derived artifacts, and prior workspace documents as grounded project context, "
     "but not as authoritative sources for facts that may have changed recently. "
     "When the user asks for the latest/current model version, pricing, dates, schedules, or other time-sensitive facts, "
-    "verify them with allowed fresh sources such as the requested MCP server, official documentation, or web search instead of repeating stale artifact text. "
+    "verify them with allowed fresh sources such as the requested MCP server, official documentation, google_search, "
+    "or the url_context tool for explicit user-provided links instead of repeating stale artifact text. "
     "If fresh sources disagree with an attached artifact, say so clearly and prefer the verified fresh source for the answer. "
     "When the user message begins with a [Host time] block, treat those timestamps as authoritative for "
     "\"today\", calendar years, deadlines, and filenames—do not assume an older year from training data."
@@ -137,27 +137,12 @@ class AgentRegistry:
         if model is not None:
             return model
         cfg = self.settings.model
-        model_kwargs = {}
-        if thinking_level:
-            model_kwargs["thinking_level"] = thinking_level
-        if max_output_tokens:
-            model_kwargs["max_output_tokens"] = max_output_tokens
-        if cfg.use_vertex_ai:
-            model = init_chat_model(
-                model_name,
-                model_provider="google_vertex_ai",
-                project=cfg.project,
-                location=cfg.location,
-                **model_kwargs,
-            )
-        else:
-            # Force public Gemini (API key) path to avoid accidental Vertex calls.
-            model = init_chat_model(
-                model_name,
-                model_provider="google_genai",
-                api_key=cfg.api_key,
-                **model_kwargs,
-            )
+        model = create_chat_google_generative_ai(
+            cfg,
+            model_name,
+            thinking_level=thinking_level or None,
+            max_output_tokens=max_output_tokens or None,
+        )
         self._models[cache_key] = model
         return model
 
@@ -252,8 +237,11 @@ class AgentRegistry:
             tool_names = [name for name in tool_names if name != "run_skill_python_script"]
         if allow_skill_sandbox and "run_skill_python_script" in self.settings.tools and "run_skill_python_script" not in tool_names:
             tool_names.append("run_skill_python_script")
-        if workspace_state.context.get("internet_search_enabled") and "google_search" in self.settings.tools and "google_search" not in tool_names:
-            tool_names.append("google_search")
+        if workspace_state.context.get("internet_search_enabled"):
+            if "google_search" in self.settings.tools and "google_search" not in tool_names:
+                tool_names.append("google_search")
+            if "url_context" in self.settings.tools and "url_context" not in tool_names:
+                tool_names.append("url_context")
 
         builtin_tools = [
             GuardedTool.from_tool(tool, workspace_state=workspace_state)

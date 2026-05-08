@@ -163,7 +163,10 @@ def test_registry_preserves_runtime_context_when_auth_fingerprint_rotates(tmp_pa
         self._rejected_servers = {}
 
     monkeypatch.setattr("helpudoc_agent.graph.create_agent", fake_create_agent)
-    monkeypatch.setattr("helpudoc_agent.graph.init_chat_model", lambda *args, **kwargs: object())
+    monkeypatch.setattr(
+        "helpudoc_agent.graph.create_chat_google_generative_ai",
+        lambda *args, **kwargs: object(),
+    )
     monkeypatch.setattr("helpudoc_agent.graph.FilesystemBackend", lambda *args, **kwargs: object())
     monkeypatch.setattr("helpudoc_agent.graph.TodoListMiddleware", lambda *args, **kwargs: object())
     monkeypatch.setattr("helpudoc_agent.graph.FilesystemMiddleware", lambda *args, **kwargs: object())
@@ -431,7 +434,10 @@ def test_agent_registry_builds_runtime_with_wrapped_proposal_writing_candidates(
         return DummyAgent(tools)
 
     monkeypatch.setattr("helpudoc_agent.graph.create_agent", fake_create_agent)
-    monkeypatch.setattr("helpudoc_agent.graph.init_chat_model", lambda *args, **kwargs: object())
+    monkeypatch.setattr(
+        "helpudoc_agent.graph.create_chat_google_generative_ai",
+        lambda *args, **kwargs: object(),
+    )
     monkeypatch.setattr("helpudoc_agent.graph.FilesystemBackend", lambda *args, **kwargs: object())
     monkeypatch.setattr("helpudoc_agent.graph.TodoListMiddleware", lambda *args, **kwargs: object())
     monkeypatch.setattr("helpudoc_agent.graph.FilesystemMiddleware", lambda *args, **kwargs: object())
@@ -506,7 +512,10 @@ def test_agent_registry_rebuilds_runtime_when_preferred_mcp_server_changes(
         self._rejected_servers = {}
 
     monkeypatch.setattr("helpudoc_agent.graph.create_agent", fake_create_agent)
-    monkeypatch.setattr("helpudoc_agent.graph.init_chat_model", lambda *args, **kwargs: object())
+    monkeypatch.setattr(
+        "helpudoc_agent.graph.create_chat_google_generative_ai",
+        lambda *args, **kwargs: object(),
+    )
     monkeypatch.setattr("helpudoc_agent.graph.FilesystemBackend", lambda *args, **kwargs: object())
     monkeypatch.setattr("helpudoc_agent.graph.TodoListMiddleware", lambda *args, **kwargs: object())
     monkeypatch.setattr("helpudoc_agent.graph.FilesystemMiddleware", lambda *args, **kwargs: object())
@@ -564,7 +573,7 @@ def test_agent_registry_passes_mode_specific_max_output_tokens(
         def with_config(self, _config):
             return self
 
-    def fake_init_chat_model(model_name, **kwargs):
+    def fake_create_chat_google(cfg, model_name, **kwargs):
         captured["model_name"] = model_name
         captured["kwargs"] = kwargs
         return object()
@@ -579,7 +588,7 @@ def test_agent_registry_passes_mode_specific_max_output_tokens(
         self._rejected_servers = {}
 
     monkeypatch.setattr("helpudoc_agent.graph.create_agent", fake_create_agent)
-    monkeypatch.setattr("helpudoc_agent.graph.init_chat_model", fake_init_chat_model)
+    monkeypatch.setattr("helpudoc_agent.graph.create_chat_google_generative_ai", fake_create_chat_google)
     monkeypatch.setattr("helpudoc_agent.graph.FilesystemBackend", lambda *args, **kwargs: object())
     monkeypatch.setattr("helpudoc_agent.graph.TodoListMiddleware", lambda *args, **kwargs: object())
     monkeypatch.setattr("helpudoc_agent.graph.FilesystemMiddleware", lambda *args, **kwargs: object())
@@ -592,4 +601,5 @@ def test_agent_registry_passes_mode_specific_max_output_tokens(
     asyncio.run(registry.get_or_create("pro", "workspace-pro"))
 
     assert captured["model_name"] == "gemini-pro-latest"
+    # Graph passes HelpUDoc model_config field; gemini_chat maps to LangChain ChatGoogleGenerativeAI max_tokens.
     assert captured["kwargs"]["max_output_tokens"] == 32000

@@ -1,4 +1,4 @@
-import { CheckCircle2, Copy, FilePenLine, Loader2, RotateCcw, ShieldCheck } from 'lucide-react';
+import { Check, CheckCircle2, Copy, FilePenLine, Loader2, RotateCcw, ShieldCheck } from 'lucide-react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useEffect, useMemo, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react';
@@ -561,7 +561,8 @@ export default function ChatMessageBubble({
   const isLiveAgentStatus = effectiveStatus === 'running' || effectiveStatus === 'awaiting_approval';
   const bodySource = messageMetadata?.bodySource
     || (sanitizedAgentText ? (isSummaryLikeAgentText(sanitizedAgentText) ? 'summary' : 'assistant') : undefined);
-  const copyTitle = copiedMessageId === message.id ? 'Copied!' : 'Copy message';
+  const isCopiedMessage = copiedMessageId === message.id;
+  const copyTitle = isCopiedMessage ? 'Copied!' : 'Copy message';
   const copyButtonPositionClass = message.sender === 'user' ? 'right-10' : 'right-2';
   const planFeedbackKey = interruptFieldKey(messageKey, 'feedback');
   const genericEditKey = interruptFieldKey(messageKey, 'edit-json');
@@ -1939,10 +1940,14 @@ export default function ChatMessageBubble({
             type="button"
             onClick={() => handleCopyMessageText(message)}
             title={copyTitle}
-            aria-label="Copy message text"
+            aria-label={isCopiedMessage ? 'Copied to clipboard' : 'Copy message text'}
             className={copyButtonClassName}
           >
-            <Copy size={14} />
+            {isCopiedMessage ? (
+              <Check size={14} className={isDarkMode ? 'text-emerald-400' : 'text-emerald-600'} />
+            ) : (
+              <Copy size={14} />
+            )}
           </button>
         ) : null}
         {message.sender === 'user' ? (
