@@ -120,6 +120,11 @@ type PersistedRunMeta = Omit<RunMeta, 'pendingInterrupt'> & {
 };
 
 const STREAM_TTL_SECONDS = 60 * 60 * 24; // 24h
+const DEFAULT_RESUMED_RUN_IDLE_TIMEOUT_MS = 2 * 60 * 1000;
+const RESUMED_RUN_IDLE_TIMEOUT_MS = (() => {
+  const raw = Number(process.env.AGENT_RESUME_IDLE_TIMEOUT_MS || '');
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_RESUMED_RUN_IDLE_TIMEOUT_MS;
+})();
 const DEBUG_AGENT_RUN_STREAM =
   process.env.DEBUG_AGENT_RUN_STREAM === '1' || process.env.DEBUG_AGENT_RUN_STREAM === 'true';
 
@@ -239,6 +244,26 @@ const isRepeatedClarificationInterrupt = (
     return true;
   }
   return clarificationSignature(normalized) === clarificationSignature(previousInterrupt);
+};
+
+export const isRealRunProgressEvent = (parsed: Record<string, unknown> | null): boolean => {
+  const type = typeof parsed?.type === 'string' ? parsed.type : '';
+  return Boolean(type && type !== 'keepalive' && type !== 'policy' && type !== 'langfuse');
+};
+
+export const shouldFailResumedRunForIdle = (input: {
+  resumePayload?: ResumePayload;
+  sawInterruptPayload?: Record<string, unknown> | null;
+  activeToolCalls: number;
+  lastRealActivityAt: number;
+  now: number;
+  timeoutMs?: number;
+}): boolean => {
+  if (!input.resumePayload || input.sawInterruptPayload || input.activeToolCalls > 0) {
+    return false;
+  }
+  const timeoutMs = input.timeoutMs ?? RESUMED_RUN_IDLE_TIMEOUT_MS;
+  return timeoutMs > 0 && input.now - input.lastRealActivityAt >= timeoutMs;
 };
 
 const persistMeta = async (runId: string, meta: Partial<PersistedRunMeta>) => {
@@ -585,8 +610,32 @@ async function runAgentRunWorker(
   let sawInterruptPayload: Record<string, unknown> | null = null;
   let contractErrorMessage = '';
   let loopErrorMessage = '';
+  let stallErrorMessage = '';
   let settled = false;
   let processingQueue: Promise<void> = Promise.resolve();
+  let activeToolCalls = 0;
+  let lastRealActivityAt = Date.now();
+
+  const failIfResumedRunIsIdle = async () => {
+    if (stallErrorMessage || settled) {
+      return false;
+    }
+    if (!shouldFailResumedRunForIdle({
+      resumePayload,
+      sawInterruptPayload,
+      activeToolCalls,
+      lastRealActivityAt,
+      now: Date.now(),
+    })) {
+      return false;
+    }
+    stallErrorMessage = 'Agent stalled after human clarification. No tool call, token, interrupt, or completion was emitted after the clarification response.';
+    await appendStreamEvent(runId, JSON.stringify({ type: 'error', message: stallErrorMessage }));
+    if (upstream && !upstream.destroyed) {
+      upstream.destroy();
+    }
+    return true;
+  };
 
   const finalizeRun = async (status: AgentRunStatus, error?: string) => {
     if (settled) {
@@ -697,6 +746,9 @@ async function runAgentRunWorker(
         buffer = buffer.slice(newlineIndex + 1);
         if (line) {
           const parsed = parseLine(line);
+          if (isRealRunProgressEvent(parsed)) {
+            lastRealActivityAt = Date.now();
+          }
           if (parsed?.type === 'langfuse') {
             const traceId = typeof parsed.traceId === 'string' ? parsed.traceId.trim() : '';
             const traceUrl = typeof parsed.traceUrl === 'string' ? parsed.traceUrl.trim() : '';
@@ -732,6 +784,7 @@ async function runAgentRunWorker(
           }
           if (parsed?.type === 'tool_start' || parsed?.type === 'tool_end' || parsed?.type === 'tool_error') {
             if (parsed.type === 'tool_start') {
+              activeToolCalls += 1;
               toolCallCount += 1;
               if (parsed.name === 'load_skill' && typeof parsed.content === 'string') {
                 const skillMatch = parsed.content.match(/skill[_-]?id["']?\s*[:=]\s*["']([^"']+)["']/i);
@@ -741,7 +794,11 @@ async function runAgentRunWorker(
               }
             }
             if (parsed.type === 'tool_error') {
+              activeToolCalls = Math.max(0, activeToolCalls - 1);
               toolErrorCount += 1;
+            }
+            if (parsed.type === 'tool_end') {
+              activeToolCalls = Math.max(0, activeToolCalls - 1);
             }
             eventIndex += 1;
             if (runTelemetryService && typeof parsed.name === 'string' && parsed.name.trim()) {
@@ -781,6 +838,9 @@ async function runAgentRunWorker(
                 ? parsed.message
                 : 'Artifact contract validation failed.';
           }
+          if (parsed?.type === 'keepalive' && await failIfResumedRunIsIdle()) {
+            break;
+          }
         }
         newlineIndex = buffer.indexOf('\n');
       }
@@ -803,6 +863,9 @@ async function runAgentRunWorker(
       .filter((line) => line.length > 0);
     for (const line of lines) {
       const parsed = parseLine(line);
+      if (isRealRunProgressEvent(parsed)) {
+        lastRealActivityAt = Date.now();
+      }
       if (parsed?.type === 'langfuse') {
         const traceId = typeof parsed.traceId === 'string' ? parsed.traceId.trim() : '';
         const traceUrl = typeof parsed.traceUrl === 'string' ? parsed.traceUrl.trim() : '';
@@ -838,6 +901,7 @@ async function runAgentRunWorker(
       }
       if (parsed?.type === 'tool_start' || parsed?.type === 'tool_end' || parsed?.type === 'tool_error') {
         if (parsed.type === 'tool_start') {
+          activeToolCalls += 1;
           toolCallCount += 1;
           if (parsed.name === 'load_skill' && typeof parsed.content === 'string') {
             const skillMatch = parsed.content.match(/skill[_-]?id["']?\s*[:=]\s*["']([^"']+)["']/i);
@@ -847,7 +911,11 @@ async function runAgentRunWorker(
           }
         }
         if (parsed.type === 'tool_error') {
+          activeToolCalls = Math.max(0, activeToolCalls - 1);
           toolErrorCount += 1;
+        }
+        if (parsed.type === 'tool_end') {
+          activeToolCalls = Math.max(0, activeToolCalls - 1);
         }
         eventIndex += 1;
         if (runTelemetryService && typeof parsed.name === 'string' && parsed.name.trim()) {
@@ -886,6 +954,9 @@ async function runAgentRunWorker(
           typeof parsed.message === 'string' && parsed.message.trim()
             ? parsed.message
             : 'Artifact contract validation failed.';
+      }
+      if (parsed?.type === 'keepalive' && await failIfResumedRunIsIdle()) {
+        break;
       }
     }
   };
@@ -943,6 +1014,11 @@ async function runAgentRunWorker(
         return;
       }
 
+      if (stallErrorMessage) {
+        await finalizeRun('failed', stallErrorMessage);
+        return;
+      }
+
       if (controller.signal.aborted) {
         await finalizeRun('cancelled');
         return;
@@ -964,6 +1040,10 @@ async function runAgentRunWorker(
     upstream.on('error', async (error: Error) => {
       if (loopErrorMessage) {
         await finalizeRun('failed', loopErrorMessage);
+        return;
+      }
+      if (stallErrorMessage) {
+        await finalizeRun('failed', stallErrorMessage);
         return;
       }
       if (sawInterruptPayload) {

@@ -134,6 +134,33 @@ class RecordingStreamingAgent(StreamingAgent):
             yield chunk
 
 
+class V2MessageStreamingAgent:
+    async def astream(self, *_args, **_kwargs):
+        yield {"type": "messages", "data": ({"role": "assistant", "content": "Hel"}, {})}
+        yield {"type": "messages", "data": ({"role": "assistant", "content": "lo"}, {})}
+
+
+class V2InterruptStreamingAgent:
+    async def astream(self, *_args, **_kwargs):
+        yield {
+            "type": "updates",
+            "data": {
+                "__interrupt__": [
+                    SimpleNamespace(
+                        value={
+                            "kind": "clarification",
+                            "title": "Need detail",
+                            "description": "Pick a direction.",
+                            "step_index": 0,
+                            "step_count": 1,
+                        },
+                        id="interrupt-123",
+                    )
+                ]
+            },
+        }
+
+
 class AsyncInvokeAgent:
     def __init__(self, reply):
         self._reply = reply
@@ -482,6 +509,9 @@ def client_with_stubs(monkeypatch):
         "helpudoc_agent.app",
         "helpudoc_agent.graph",
         "helpudoc_agent.tools_and_schemas",
+        "paper2slides",
+        "paper2slides.raganything",
+        "paper2slides.raganything.parser",
     ]
     saved_modules = {name: sys.modules.pop(name, None) for name in module_names}
 
@@ -684,11 +714,54 @@ def test_skill_directive_survives_tagged_artifact_guidance(client_with_stubs, tm
     assert messages[0]["type"] == "policy"
     assert messages[0]["skill"] == "frontend-slides"
     assert agent.stream_inputs
+    stream_kwargs = agent.stream_inputs[0][1]
+    assert stream_kwargs["stream_mode"] == ["updates", "messages"]
+    assert stream_kwargs["version"] == "v2"
     stream_input = agent.stream_inputs[0][0][0]
     user_text = stream_input["messages"][-1]["content"]
     assert "Loaded skill: frontend-slides" in user_text
     assert "Use request_clarification before generating slides." in user_text
     assert "Artifact-first guidance:" in user_text
+    assert source_tracker.updated_workspaces == [runtime.workspace_state]
+
+
+def test_chat_stream_reads_v2_message_chunks(client_with_stubs):
+    client, registry, source_tracker = client_with_stubs
+    runtime = DummyRuntime("workspace-v2-message", V2MessageStreamingAgent())
+    registry.set_runtime("research", "workspace-v2-message", runtime)
+
+    with client.stream(
+        "POST",
+        "/agents/research/workspace/workspace-v2-message/chat/stream",
+        json={"message": "Say hello", "history": []},
+    ) as response:
+        assert response.status_code == 200
+        messages = _collect_stream_payloads(response)
+
+    token_text = "".join(item.get("content", "") for item in messages if item.get("type") == "token")
+    assert token_text == "Hello"
+    assert messages[-1]["type"] == "done"
+    assert source_tracker.updated_workspaces == [runtime.workspace_state]
+
+
+def test_chat_stream_reads_v2_interrupt_chunks(client_with_stubs):
+    client, registry, source_tracker = client_with_stubs
+    runtime = DummyRuntime("workspace-v2-interrupt", V2InterruptStreamingAgent())
+    registry.set_runtime("research", "workspace-v2-interrupt", runtime)
+
+    with client.stream(
+        "POST",
+        "/agents/research/workspace/workspace-v2-interrupt/chat/stream",
+        json={"message": "Need clarification", "history": []},
+    ) as response:
+        assert response.status_code == 200
+        messages = _collect_stream_payloads(response)
+
+    interrupt = next(item for item in messages if item.get("type") == "interrupt")
+    assert interrupt["kind"] == "clarification"
+    assert interrupt["title"] == "Need detail"
+    assert interrupt["interruptId"] == "interrupt-123"
+    assert messages[-1]["type"] == "done"
     assert source_tracker.updated_workspaces == [runtime.workspace_state]
 
 
