@@ -10,7 +10,7 @@ import {
   Edit,
 } from 'lucide-react';
 
-import type { File as WorkspaceFile } from '../types';
+import type { DashboardArtifactInfo, File as WorkspaceFile } from '../types';
 import { getFileDisplayName, getFileTypeIcon } from '../utils/files';
 import {
   buildWorkspaceFileTree,
@@ -25,11 +25,14 @@ interface WorkspaceFileTreeProps {
   files: WorkspaceFile[];
   colorMode: 'light' | 'dark';
   selectedFileId: string | null;
+  selectedDashboardPath?: string | null;
   selectedFiles: Set<string>;
   copiedPublicUrlFileId: string | null;
+  dashboardArtifactsByPath?: Record<string, DashboardArtifactInfo>;
   ragStatuses: Record<string, { status?: string; updatedAt?: string; error?: string }>;
   isDraftWorkspaceFile: (file?: WorkspaceFile | null) => boolean;
   onSelectFile: (file: WorkspaceFile) => void;
+  onSelectFolder?: (folderPath: string) => void;
   onToggleFileSelection: (fileId: string) => void;
   onCopyPublicUrl: (file: WorkspaceFile) => void;
   onRenameFile: (file: WorkspaceFile) => void;
@@ -52,6 +55,30 @@ const getFolderLabel = (node: WorkspaceFileTreeFolderNode) => {
     return 'Derived artifacts';
   }
   return node.name;
+};
+
+const isDashboardFolderPath = (folderPath: string) => {
+  const normalized = (folderPath || '').replace(/\\/g, '/').replace(/^\/+/, '').replace(/\/+$/, '');
+  const parts = normalized.split('/').filter(Boolean);
+  return parts.length === 2 && parts[0] === 'dashboards';
+};
+
+const getDashboardArtifactForFolderPath = (
+  dashboardArtifactsByPath: Record<string, DashboardArtifactInfo> | undefined,
+  folderPath: string,
+) => {
+  if (!dashboardArtifactsByPath) {
+    return undefined;
+  }
+  const normalized = (folderPath || '').replace(/\\/g, '/').replace(/^\/+/, '').replace(/\/+$/, '');
+  const exact = dashboardArtifactsByPath[normalized];
+  if (exact) {
+    return exact;
+  }
+  const descendantArtifacts = Object.entries(dashboardArtifactsByPath)
+    .filter(([path]) => path.startsWith(`${normalized}/`))
+    .map(([, artifact]) => artifact);
+  return descendantArtifacts.length === 1 ? descendantArtifacts[0] : undefined;
 };
 
 const getRagStatus = (
@@ -106,6 +133,7 @@ const TreeFileRow: React.FC<{
   node: WorkspaceFileTreeLeafNode;
   selected: boolean;
   selectedFiles: Set<string>;
+  dashboardArtifactsByPath?: Record<string, DashboardArtifactInfo>;
   ragStatuses: Record<string, { status?: string; updatedAt?: string; error?: string }>;
   isDraftWorkspaceFile: (file?: WorkspaceFile | null) => boolean;
   onSelectFile: (file: WorkspaceFile) => void;
@@ -122,6 +150,7 @@ const TreeFileRow: React.FC<{
   node,
   selected,
   selectedFiles,
+  dashboardArtifactsByPath,
   ragStatuses,
   isDraftWorkspaceFile,
   onSelectFile,
@@ -163,6 +192,9 @@ const TreeFileRow: React.FC<{
   const actionButtonClassName = isDarkMode
     ? 'pointer-events-auto rounded p-1.5 text-slate-400 hover:bg-slate-800 hover:text-slate-100'
     : 'pointer-events-auto rounded p-1.5 text-slate-500 hover:bg-slate-200 hover:text-slate-700';
+  const dashboardPath = (file.path || file.name || '').replace(/\\/g, '/');
+  const dashboardArtifact = dashboardPath ? dashboardArtifactsByPath?.[dashboardPath] : undefined;
+  const dashboardBadge = dashboardArtifact?.status;
 
   return (
     <div
@@ -222,6 +254,21 @@ const TreeFileRow: React.FC<{
               {fileIcon}
             </span>
             <SlidingFileName name={displayName} colorMode={colorMode} />
+            {dashboardBadge && (
+              <span
+                className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+                  dashboardBadge === 'ready'
+                    ? 'bg-emerald-100 text-emerald-800'
+                    : dashboardBadge === 'generating'
+                      ? 'bg-amber-100 text-amber-800'
+                      : dashboardBadge === 'error'
+                        ? 'bg-rose-100 text-rose-800'
+                        : 'bg-blue-100 text-blue-800'
+                }`}
+              >
+                {dashboardBadge}
+              </span>
+            )}
           </div>
           {(isUnderstandingPending || understandingFailed || understandingPartial) && (
             <span className={`pl-6 text-[11px] leading-none ${
@@ -293,6 +340,8 @@ const TreeFileRow: React.FC<{
 const TreeFolderRow: React.FC<{
   node: WorkspaceFileTreeFolderNode;
   expanded: boolean;
+  dashboardArtifact?: DashboardArtifactInfo;
+  onSelectFolder?: (folderPath: string) => void;
   onToggle: (folderPath: string) => void;
   onDeleteFolder: (folder: WorkspaceFileTreeFolderNode) => void;
   onDropFileToFolder: (fileId: string, folderPath: string) => void;
@@ -304,6 +353,8 @@ const TreeFolderRow: React.FC<{
 }> = ({
   node,
   expanded,
+  dashboardArtifact,
+  onSelectFolder,
   onToggle,
   onDeleteFolder,
   onDropFileToFolder,
@@ -323,6 +374,8 @@ const TreeFolderRow: React.FC<{
     : isDarkMode
       ? 'hover:bg-slate-800/80'
       : 'hover:bg-slate-100/80';
+  const isDashboardFolder = isDashboardFolderPath(node.path);
+  const dashboardBadge = dashboardArtifact?.status;
 
   return (
     <div className="select-none">
@@ -370,12 +423,33 @@ const TreeFolderRow: React.FC<{
         {expanded ? <FolderOpen size={16} className="shrink-0 text-amber-500" /> : <Folder size={16} className="shrink-0 text-amber-500" />}
         <button
           type="button"
-          onClick={() => onToggle(node.path)}
+          onClick={() => {
+            if (isDashboardFolder && onSelectFolder) {
+              onSelectFolder(node.path);
+              return;
+            }
+            onToggle(node.path);
+          }}
           className="min-w-0 flex-1 text-left"
           title={node.path || node.name}
         >
           <div className="flex items-center gap-2">
             <span className={`truncate text-[13px] font-medium ${isDarkMode ? 'text-slate-200' : 'text-slate-800'}`}>{getFolderLabel(node)}</span>
+            {dashboardBadge && (
+              <span
+                className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+                  dashboardBadge === 'ready'
+                    ? 'bg-emerald-100 text-emerald-800'
+                    : dashboardBadge === 'generating'
+                      ? 'bg-amber-100 text-amber-800'
+                      : dashboardBadge === 'error'
+                        ? 'bg-rose-100 text-rose-800'
+                        : 'bg-blue-100 text-blue-800'
+                }`}
+              >
+                {dashboardBadge}
+              </span>
+            )}
             <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
               isDarkMode ? 'bg-slate-800 text-slate-400' : 'bg-slate-200 text-slate-600'
             }`}>
@@ -410,10 +484,13 @@ const renderTreeNodes = (
   options: {
     expandedFolders: Set<string>;
     selectedFileId: string | null;
+    selectedDashboardPath?: string | null;
     selectedFiles: Set<string>;
+    dashboardArtifactsByPath?: Record<string, DashboardArtifactInfo>;
     ragStatuses: Record<string, { status?: string; updatedAt?: string; error?: string }>;
     isDraftWorkspaceFile: (file?: WorkspaceFile | null) => boolean;
     onSelectFile: (file: WorkspaceFile) => void;
+    onSelectFolder?: (folderPath: string) => void;
     onToggleFileSelection: (fileId: string) => void;
     onCopyPublicUrl: (file: WorkspaceFile) => void;
     copiedPublicUrlFileId: string | null;
@@ -437,6 +514,8 @@ const renderTreeNodes = (
           key={node.id}
           node={node}
           expanded={expanded}
+          dashboardArtifact={getDashboardArtifactForFolderPath(options.dashboardArtifactsByPath, node.path)}
+          onSelectFolder={options.onSelectFolder}
           onToggle={options.onToggleFolder}
           onDeleteFolder={options.onDeleteFolder}
           onDropFileToFolder={options.onDropFileToFolder}
@@ -456,6 +535,7 @@ const renderTreeNodes = (
         node={node}
         selected={options.selectedFileId === node.file.id}
         selectedFiles={options.selectedFiles}
+        dashboardArtifactsByPath={options.dashboardArtifactsByPath}
         ragStatuses={options.ragStatuses}
         isDraftWorkspaceFile={options.isDraftWorkspaceFile}
         onSelectFile={options.onSelectFile}
@@ -477,10 +557,13 @@ export default function WorkspaceFileTree({
   files,
   colorMode,
   selectedFileId,
+  selectedDashboardPath,
   selectedFiles,
+  dashboardArtifactsByPath,
   ragStatuses,
   isDraftWorkspaceFile,
   onSelectFile,
+  onSelectFolder,
   onToggleFileSelection,
   onCopyPublicUrl,
   copiedPublicUrlFileId,
@@ -530,6 +613,27 @@ export default function WorkspaceFileTree({
       return changed ? next : prev;
     });
   }, [fileById, selectedFileId]);
+
+  useEffect(() => {
+    if (!selectedDashboardPath) {
+      return;
+    }
+    const nextPaths = getWorkspaceAncestorFolderPaths(selectedDashboardPath);
+    if (!nextPaths.length) {
+      return;
+    }
+    setExpandedFolders((prev) => {
+      let changed = false;
+      const next = new Set(prev);
+      for (const path of nextPaths) {
+        if (!next.has(path)) {
+          next.add(path);
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [selectedDashboardPath]);
 
   const handleToggleFolder = (folderPath: string) => {
     setExpandedFolders((prev) => {
@@ -582,10 +686,13 @@ export default function WorkspaceFileTree({
             {renderTreeNodes(tree.children, {
               expandedFolders,
               selectedFileId,
+              selectedDashboardPath,
               selectedFiles,
+              dashboardArtifactsByPath,
               ragStatuses,
               isDraftWorkspaceFile,
               onSelectFile,
+              onSelectFolder,
               onToggleFileSelection,
               onCopyPublicUrl,
               copiedPublicUrlFileId,

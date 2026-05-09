@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     "./types": "./src/types.ts",
-    "./services/agentStream": "./src/services/agentStream.ts"
+    "./services/agentStream": "./src/services/agentStream.ts",
+    "./dashboard": "./src/dashboard/index.ts"
   }
 }

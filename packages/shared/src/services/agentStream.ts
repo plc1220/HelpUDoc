@@ -1,3 +1,5 @@
+import type { DashboardArtifactInfo } from '../types';
+
 export type AgentStreamChunk =
   | { type: 'token' | 'chunk'; content?: string; role?: string }
   | { type: 'thought'; content?: string; role?: string }
@@ -11,8 +13,15 @@ export type AgentStreamChunk =
       prePlanSearchUsed?: number;
     }
   | { type: 'tool_start'; content?: string; name?: string }
-  | { type: 'tool_end'; content?: string; name?: string; outputFiles?: Array<{ path: string; mimeType?: string | null; size?: number }> }
+  | {
+      type: 'tool_end';
+      content?: string;
+      name?: string;
+      outputFiles?: Array<{ path: string; mimeType?: string | null; size?: number }>;
+      dashboardArtifact?: DashboardArtifactInfo;
+    }
   | { type: 'tool_error'; content?: string; name?: string }
+  | { type: 'dashboard_artifact'; dashboardArtifact: DashboardArtifactInfo }
   | {
       type: 'interrupt';
       interruptId?: string;

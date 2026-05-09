@@ -27,5 +27,6 @@ RUN PIP_INDEX_URL="${PYTORCH_CPU_INDEX_URL}" \
 COPY agent/ /app/agent/
 COPY skills/ /app/skills/
 
+ENV PYTHONPATH=/app
 EXPOSE 8001
 CMD ["uvicorn", "agent.main:app", "--host", "0.0.0.0", "--port", "8001"]

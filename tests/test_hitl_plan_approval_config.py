@@ -48,3 +48,11 @@ def test_research_skill_declares_its_own_artifact_contract() -> None:
         "/final-research-report.md",
         "pattern:/0[1-9]_*.md",
     ]
+
+
+def test_dashboard_skill_requires_hitl_plan() -> None:
+    skills = {skill.skill_id: skill for skill in load_skills(Path("skills"))}
+    dashboard = skills["data/dashboard"]
+
+    assert dashboard.policy.requires_hitl_plan is True
+    assert "request_plan_approval" in dashboard.tools

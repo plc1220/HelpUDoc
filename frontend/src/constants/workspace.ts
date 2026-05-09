@@ -19,7 +19,7 @@ export const SLASH_COMMANDS = [
   },
 ] as const;
 
-export const SYSTEM_DIR_NAMES = new Set(['__macosx', 'skills']);
+export const SYSTEM_DIR_NAMES = new Set(['__macosx', 'skills', 'charts', 'data_cache']);
 export const SYSTEM_FILE_NAMES = new Set(['thumbs.db', 'desktop.ini']);
 
 export const MIN_CANVAS_ZOOM = 0.6;

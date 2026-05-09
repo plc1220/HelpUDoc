@@ -178,6 +178,32 @@ export default function(
     }
   });
 
+  router.get('/preview/raw', async (req: Request<{ workspaceId: string }>, res: Response) => {
+    try {
+      const { workspaceId } = req.params;
+      const user = requireUserContext(req);
+      const relativePath = req.query.path;
+      if (typeof relativePath !== 'string') {
+        return res.status(400).json({ error: 'Missing file path' });
+      }
+      const preview = await fileService.getWorkspaceFilePreview(workspaceId, relativePath, user.userId);
+      res.setHeader('Content-Type', preview.mimeType || 'application/octet-stream');
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      const lower = relativePath.toLowerCase();
+      if (lower.endsWith('.html') || lower.endsWith('.htm')) {
+        const baseName = relativePath.split(/[/\\]/).pop() || 'export.html';
+        res.setHeader('Content-Disposition', `attachment; filename="${baseName.replace(/"/g, '')}"`);
+      }
+      if (preview.encoding === 'base64') {
+        res.send(Buffer.from(preview.content, 'base64'));
+        return;
+      }
+      res.send(preview.content);
+    } catch (error) {
+      handleError(res, error, 'Failed to preview file');
+    }
+  });
+
   router.get('/:fileId/content', async (req: Request<{ fileId: string }>, res: Response) => {
     try {
       const { fileId } = req.params;

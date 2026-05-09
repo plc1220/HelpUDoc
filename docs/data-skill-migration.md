@@ -4,6 +4,9 @@ This document records the current migration from the legacy `data-analysis` skil
 to the newer `data/*` skill family, along with the remaining work required before
 `data-analysis` can be safely removed.
 
+For the current `data/dashboard` runtime status and the Streamlit-based dashboard
+package work, also see `docs/dashboard-runtime-status.md`.
+
 ## Summary
 
 The data skill surface has been expanded from a single end-to-end skill into a

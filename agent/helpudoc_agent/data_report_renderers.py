@@ -106,6 +106,17 @@ SUMMARY_CSS = """
       padding: 18px;
       min-height: 132px;
     }
+    .section-copy {
+      margin: 6px 0 18px;
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+    .decision-list {
+      margin: 0;
+      padding-left: 18px;
+      color: #455467;
+      line-height: 1.7;
+    }
     .metric-label {
       color: var(--muted);
       font-size: 0.8rem;
@@ -740,22 +751,44 @@ DASHBOARD_FILTER_SCRIPT = """
       }
 
       function aggregateRows(rows, chartDef) {
+        const dimensionField = chartDef.dimensionField || chartDef.xField;
+        const metricField = chartDef.metricField || chartDef.yField;
+        const numeratorField = chartDef.numeratorField || '';
+        const denominatorField = chartDef.denominatorField || '';
         const map = new Map();
         rows.forEach((row) => {
-          const xValue = row[chartDef.xField];
+          const xValue = dimensionField ? row[dimensionField] : '__all__';
           const seriesValue = chartDef.seriesField ? row[chartDef.seriesField] : '__single__';
           const key = JSON.stringify([xValue, seriesValue]);
           if (!map.has(key)) {
-            map.set(key, { x: xValue, series: seriesValue, count: 0, sum: 0, min: null, max: null, values: [] });
+            map.set(key, {
+              x: xValue,
+              series: seriesValue,
+              count: 0,
+              sum: 0,
+              min: null,
+              max: null,
+              values: [],
+              numeratorSum: 0,
+              denominatorSum: 0,
+            });
           }
           const bucket = map.get(key);
           bucket.count += 1;
-          const yRaw = chartDef.yField ? parseNumericValue(row[chartDef.yField]) : null;
+          const yRaw = metricField ? parseNumericValue(row[metricField]) : null;
+          const numeratorRaw = numeratorField ? parseNumericValue(row[numeratorField]) : null;
+          const denominatorRaw = denominatorField ? parseNumericValue(row[denominatorField]) : null;
           if (yRaw !== null) {
             bucket.sum += yRaw;
             bucket.min = bucket.min === null ? yRaw : Math.min(bucket.min, yRaw);
             bucket.max = bucket.max === null ? yRaw : Math.max(bucket.max, yRaw);
             bucket.values.push(yRaw);
+          }
+          if (numeratorRaw !== null) {
+            bucket.numeratorSum += numeratorRaw;
+          }
+          if (denominatorRaw !== null) {
+            bucket.denominatorSum += denominatorRaw;
           }
         });
 
@@ -779,6 +812,10 @@ DASHBOARD_FILTER_SCRIPT = """
             case 'count_distinct':
               yValue = new Set(bucket.values).size;
               break;
+            case 'ratio':
+            case 'rate':
+              yValue = bucket.denominatorSum ? bucket.numeratorSum / bucket.denominatorSum : 0;
+              break;
             case 'count':
             default:
               yValue = bucket.count;
@@ -800,6 +837,8 @@ DASHBOARD_FILTER_SCRIPT = """
       }
 
       function buildPlotlyPayload(rows, chartDef) {
+        const dimensionField = chartDef.dimensionField || chartDef.xField;
+        const metricField = chartDef.metricField || chartDef.yField;
         const grouped = aggregateRows(rows, chartDef);
         const seriesValues = chartDef.seriesField
           ? [...new Set(grouped.map((item) => item.series))]
@@ -844,8 +883,16 @@ DASHBOARD_FILTER_SCRIPT = """
             paper_bgcolor: 'rgba(0,0,0,0)',
             plot_bgcolor: 'rgba(0,0,0,0)',
             margin: { t: 56, r: 24, b: 56, l: 56 },
-            xaxis: chartDef.chartType === 'pie' ? undefined : { title: chartDef.xTitle || chartDef.xField },
-            yaxis: chartDef.chartType === 'pie' ? undefined : { title: chartDef.yTitle || chartDef.yField || chartDef.aggregation },
+            xaxis: chartDef.chartType === 'pie' ? undefined : {
+              title: chartDef.xTitle || (chartDef.chartType === 'bar' && chartDef.orientation === 'h'
+                ? metricField || chartDef.aggregation
+                : dimensionField),
+            },
+            yaxis: chartDef.chartType === 'pie' ? undefined : {
+              title: chartDef.yTitle || (chartDef.chartType === 'bar' && chartDef.orientation === 'h'
+                ? dimensionField
+                : metricField || chartDef.aggregation),
+            },
             legend: { orientation: 'h' },
           },
           config: { responsive: true, displayModeBar: false },
@@ -1022,6 +1069,10 @@ def render_dashboard_html(
     *,
     title: str,
     description: str,
+    hero_eyebrow: str,
+    audience: str,
+    business_question: str,
+    headline_takeaway: str,
     generated_at: str,
     hero_meta: str,
     metric_cards: List[Dict[str, str]],
@@ -1029,6 +1080,11 @@ def render_dashboard_html(
     primary_cards: List[str],
     appendix_cards: List[str],
     query_items: List[str],
+    decision_questions: List[str],
+    insights: List[str],
+    known_risks: List[str],
+    data_quality_notes: List[str],
+    layout_template: str,
     dataset_records: List[Dict[str, Any]],
     filter_config: List[Dict[str, Any]],
     chart_runtime_defs: List[Dict[str, Any]],
@@ -1051,6 +1107,33 @@ def render_dashboard_html(
         + "".join(query_items)
         + "</details>"
     )
+    insight_html = (
+        "<section class=\"panel\"><h2>Executive Takeaways</h2><div class=\"stack\">"
+        + "".join(f"<article class=\"stack-item\"><p>{html.escape(item)}</p></article>" for item in insights)
+        + "</div></section>"
+        if insights
+        else ""
+    )
+    decision_html = (
+        "<section class=\"panel\"><h2>Decision Questions</h2><ul class=\"decision-list\">"
+        + "".join(f"<li>{html.escape(item)}</li>" for item in decision_questions)
+        + "</ul></section>"
+        if decision_questions
+        else ""
+    )
+    note_sections = []
+    if known_risks:
+        note_sections.append(
+            "<details class=\"appendix\"><summary>Known Risks</summary><ul class=\"decision-list\">"
+            + "".join(f"<li>{html.escape(item)}</li>" for item in known_risks)
+            + "</ul></details>"
+        )
+    if data_quality_notes:
+        note_sections.append(
+            "<details class=\"appendix\"><summary>Data Quality Notes</summary><ul class=\"decision-list\">"
+            + "".join(f"<li>{html.escape(item)}</li>" for item in data_quality_notes)
+            + "</ul></details>"
+        )
     return "\n".join(
         [
             "<!doctype html>",
@@ -1067,20 +1150,35 @@ def render_dashboard_html(
             "<body>",
             "  <div class=\"shell\">",
             "    <section class=\"hero\">",
-            "      <div class=\"eyebrow\">Interactive Dashboard</div>",
+            f"      <div class=\"eyebrow\">{html.escape(hero_eyebrow or 'Interactive Dashboard')}</div>",
             f"      <h1>{html.escape(title)}</h1>",
             f"      <p>{html.escape(description)}</p>",
+            (
+                f"      <div class=\"hero-meta\"><strong>Audience:</strong> {html.escape(audience)}"
+                f" • <strong>Business question:</strong> {html.escape(business_question)}</div>"
+                if audience or business_question
+                else ""
+            ),
+            (
+                f"      <div class=\"hero-meta\"><strong>Headline takeaway:</strong> {html.escape(headline_takeaway)}</div>"
+                if headline_takeaway
+                else ""
+            ),
             f"      <div class=\"hero-meta\">Generated {html.escape(generated_at)} • {html.escape(hero_meta)}</div>",
-            _render_metric_cards(metric_cards, "Quick Pulse"),
+            _render_metric_cards(metric_cards, "Executive Snapshot"),
             "    </section>",
+            decision_html,
+            insight_html,
             filter_panel_html,
             "    <section class=\"section\">",
             f"      <h2>{html.escape(highlights_heading)}</h2>",
+            f"      <p class=\"section-copy\">Template: {html.escape(layout_template)} • First-screen visuals are intentionally limited for executive scanning.</p>",
             "      <div class=\"chart-grid\">",
             primary_cards_html,
             "      </div>",
             appendix_html,
             query_html,
+            *note_sections,
             "    </section>",
             "  </div>",
             "  <script>",
