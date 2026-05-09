@@ -2092,6 +2092,7 @@ def create_app() -> FastAPI:
             self._tool_names: Dict[str, str] = {}
             self._tool_meta: Dict[str, Any] = {}
             self._active_llm_runs: Set[str] = set()
+            self._reported_llm_runs: Set[str] = set()
             self._to_text = text_fn
             self._has_events = False
             self._has_assistant_text = False
@@ -2122,6 +2123,22 @@ def create_app() -> FastAPI:
                     self._has_assistant_text = True
             await self.queue.put(payload)
 
+        async def _emit_model_start(self, serialized: Any, run_id: Any) -> None:
+            run_key = str(run_id)
+            if run_key in self._reported_llm_runs:
+                return
+            self._reported_llm_runs.add(run_key)
+            name = ""
+            if isinstance(serialized, dict):
+                name = str(serialized.get("name") or serialized.get("id") or "").strip()
+            await self._emit({"type": "model_start", "name": name or "model"})
+
+        async def on_llm_start(self, serialized, prompts, *, run_id, **_: Any) -> None:
+            await self._emit_model_start(serialized, run_id)
+
+        async def on_chat_model_start(self, serialized, messages, *, run_id, **_: Any) -> None:
+            await self._emit_model_start(serialized, run_id)
+
         async def on_llm_new_token(
             self,
             token: str,
@@ -2135,6 +2152,7 @@ def create_app() -> FastAPI:
             await self._emit({"type": "token", "content": token, "role": "assistant"})
 
         async def on_llm_end(self, response, *, run_id, **_: Any) -> None:
+            await self._emit({"type": "model_end", "name": "model"})
             run_key = str(run_id)
             if run_key in self._active_llm_runs:
                 self._active_llm_runs.discard(run_key)
@@ -2329,10 +2347,21 @@ def create_app() -> FastAPI:
     def _parse_multi_mode_chunk(raw_chunk: Any) -> tuple[str | None, Any]:
         if isinstance(raw_chunk, tuple) and len(raw_chunk) == 2 and isinstance(raw_chunk[0], str):
             return raw_chunk[0], raw_chunk[1]
+        if isinstance(raw_chunk, dict) and isinstance(raw_chunk.get("type"), str) and "data" in raw_chunk:
+            return raw_chunk.get("type"), raw_chunk.get("data")
         return None, raw_chunk
 
     def _extract_messages(chunk: Any) -> List[Any] | None:
         if chunk is None:
+            return None
+        mode, parsed_chunk = _parse_multi_mode_chunk(chunk)
+        if mode == "updates":
+            chunk = parsed_chunk
+        elif mode == "messages":
+            if isinstance(parsed_chunk, (list, tuple)) and parsed_chunk:
+                return [parsed_chunk[0]]
+            if parsed_chunk is not None:
+                return [parsed_chunk]
             return None
         if isinstance(chunk, dict):
             if "messages" in chunk:
@@ -2375,6 +2404,11 @@ def create_app() -> FastAPI:
         return normalize_interrupt_payload_value(interrupt_value, interrupt_id if isinstance(interrupt_id, str) else None)
 
     def _extract_interrupt_payload(chunk: Any) -> Dict[str, Any] | None:
+        mode, parsed_chunk = _parse_multi_mode_chunk(chunk)
+        if mode == "updates":
+            chunk = parsed_chunk
+        elif mode == "messages":
+            return None
         if not isinstance(chunk, dict):
             return None
         return _build_interrupt_payload(chunk.get("__interrupt__"))
@@ -2632,14 +2666,26 @@ def create_app() -> FastAPI:
                     stream_input = Command(resume={"decisions": resume_decisions})
                 elif resume_value is not None:
                     stream_input = Command(resume=resume_value)
+                streamed_message_events: List[Dict[str, Any]] = []
+                streamed_message_tracker = _DeltaTracker()
                 final_result = None
                 async for chunk in agent.astream(
                     stream_input,
                     config=stream_config,
                     context=runtime.workspace_state.context,
-                    stream_mode="values",
+                    stream_mode=["updates", "messages"],
+                    version="v2",
                 ):
-                    final_result = chunk
+                    mode, _parsed_chunk = _parse_multi_mode_chunk(chunk)
+                    if mode == "messages":
+                        for msg in _extract_messages(chunk) or []:
+                            text = _message_to_text(msg)
+                            role = _message_role(msg)
+                            delta = streamed_message_tracker.push(role, text)
+                            if delta:
+                                streamed_message_events.extend(_emit_text(role, delta))
+                    else:
+                        final_result = chunk
                     interrupt_payload = _extract_interrupt_payload(chunk)
                     if interrupt_payload:
                         saw_interrupt = True
@@ -2664,12 +2710,16 @@ def create_app() -> FastAPI:
                             emitted = True
                             for event_payload in _emit_text(role, delta):
                                 await handler._emit(event_payload)
-                elif not handler.has_assistant_text:
+                elif final_result is not None and not handler.has_assistant_text:
                     text = _message_to_text(final_result)
                     if text and not _is_internal_stream_text(text):
                         emitted = True
                         for event_payload in _emit_text("assistant", text):
                             await handler._emit(event_payload)
+                if not emitted and not handler.has_assistant_text and streamed_message_events:
+                    emitted = True
+                    for event_payload in streamed_message_events:
+                        await handler._emit(event_payload)
 
                 if not emitted and not handler.has_events:
                     await handler._emit(
