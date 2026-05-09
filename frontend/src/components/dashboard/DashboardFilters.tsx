@@ -30,19 +30,24 @@ const DashboardFilters = ({ filters, datasetSchema, allRows, values, onChange }:
 
       if (ftype === 'categorical') {
         const options = distinctFieldValues(allRows, field);
-        const selected = Array.isArray(current) ? current.map(String) : current ? [String(current)] : [];
+        const selected = Array.isArray(current) ? String(current[0] || '') : current ? String(current) : '';
         return (
           <label key={id} className="flex min-w-[200px] flex-col gap-1 text-xs text-slate-600">
             <span className="font-semibold text-slate-800">{label}</span>
             <select
-              multiple
-              className="min-h-[96px] rounded-md border border-slate-300 bg-white px-2 py-1 text-sm text-slate-900"
+              className="h-9 rounded-md border border-slate-300 bg-white px-2 py-1 text-sm text-slate-900"
               value={selected}
               onChange={(e) => {
-                const nextSel = Array.from(e.target.selectedOptions, (o) => o.value);
-                onChange({ ...values, [id]: nextSel });
+                const next = { ...values };
+                if (e.target.value) {
+                  next[id] = e.target.value;
+                } else {
+                  delete next[id];
+                }
+                onChange(next);
               }}
             >
+              <option value="">All {label}</option>
               {options.map((opt) => (
                 <option key={opt} value={opt}>
                   {opt}

@@ -15,6 +15,7 @@ export function buildPlotlyPayload(rows: DashboardRow[], chartDef: ChartRuntimeD
   const chartType = normText(chartDef.chartType || 'bar').toLowerCase();
   const dimensionField = normText(chartDef.dimensionField || chartDef.xField);
   const metricField = normText(chartDef.metricField || chartDef.yField || chartDef.aggregation);
+  const pointCount = grouped.length;
   const labels = {
     x: normText(chartDef.labels?.x || chartDef.xTitle),
     y: normText(chartDef.labels?.y || chartDef.yTitle),
@@ -48,11 +49,16 @@ export function buildPlotlyPayload(rows: DashboardRow[], chartDef: ChartRuntimeD
     };
 
     if (chartType === 'line' || chartType === 'area') {
-      trace.mode = normText(chartDef.mode || 'lines+markers');
+      const requestedMode = normText(chartDef.mode);
+      trace.mode = pointCount > 60
+        ? (requestedMode && !requestedMode.includes('markers') ? requestedMode : 'lines')
+        : requestedMode || 'lines+markers';
+      trace.hovertemplate = `%{x}<br>${traceName}: %{y}<extra></extra>`;
       if (chartType === 'area') trace.fill = 'tozeroy';
     }
     if (chartType === 'scatter') {
       trace.mode = normText(chartDef.mode || 'markers');
+      trace.hovertemplate = `%{x}<br>${traceName}: %{y}<extra></extra>`;
     }
     if (chartType === 'bar' && normText(chartDef.orientation).toLowerCase() === 'h') {
       trace = {
@@ -77,6 +83,8 @@ export function buildPlotlyPayload(rows: DashboardRow[], chartDef: ChartRuntimeD
   const layoutSpan = normText(chartDef.layoutSpan || 'half').toLowerCase();
   const isPie = chartType === 'pie';
   const isHorizontalBar = chartType === 'bar' && normText(chartDef.orientation).toLowerCase() === 'h';
+  const categoryValues = [...new Map(grouped.map((point) => [normText(point.x), point.x])).values()];
+  const denseCategoryAxis = chartType === 'bar' && categoryValues.length > 12;
 
   const layout: Record<string, unknown> = {
     title: '',
@@ -87,6 +95,7 @@ export function buildPlotlyPayload(rows: DashboardRow[], chartDef: ChartRuntimeD
     height: layoutSpan === 'wide' ? 430 : 360,
     font: { family: 'Avenir Next, Segoe UI, sans-serif', color: '#0f172a' },
     legend: { orientation: 'h', y: -0.18, font: { size: 11 } },
+    ...(chartType === 'line' || chartType === 'area' ? { hovermode: 'x unified' } : {}),
   };
 
   if (!isPie) {
@@ -97,6 +106,11 @@ export function buildPlotlyPayload(rows: DashboardRow[], chartDef: ChartRuntimeD
       gridcolor: '#e2e8f0',
       tickfont: { size: 12, color: '#475569' },
       titlefont: { size: 12, color: '#475569' },
+      automargin: true,
+      ...(denseCategoryAxis && !isHorizontalBar ? { tickangle: -35 } : {}),
+      ...(denseCategoryAxis && !isHorizontalBar
+        ? { categoryorder: 'array', categoryarray: categoryValues }
+        : {}),
     };
     layout.yaxis = {
       title:
@@ -105,6 +119,7 @@ export function buildPlotlyPayload(rows: DashboardRow[], chartDef: ChartRuntimeD
       gridcolor: '#e2e8f0',
       tickfont: { size: 12, color: '#475569' },
       titlefont: { size: 12, color: '#475569' },
+      automargin: true,
       ...(tickformat ? { tickformat } : {}),
     };
   }

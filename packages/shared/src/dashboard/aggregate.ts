@@ -11,6 +11,38 @@ function parseNumericValue(value: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+function isDateLike(value: unknown): boolean {
+  if (value instanceof Date) return Number.isFinite(value.getTime());
+  if (typeof value !== 'string') return false;
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  if (/^\d{4}-\d{2}-\d{2}/.test(trimmed)) return true;
+  return Number.isFinite(Date.parse(trimmed)) && /[/-]/.test(trimmed);
+}
+
+function toDateBucket(value: unknown, grain: string): unknown {
+  if (!isDateLike(value)) return value;
+  const raw = value instanceof Date ? value.toISOString() : String(value).trim();
+  const day = /^\d{4}-\d{2}-\d{2}/.test(raw)
+    ? raw.slice(0, 10)
+    : new Date(raw).toISOString().slice(0, 10);
+
+  if (grain === 'raw') return value;
+  if (grain === 'month') return day.slice(0, 7);
+  if (grain === 'week') {
+    const date = new Date(`${day}T00:00:00Z`);
+    const dayOfWeek = date.getUTCDay() || 7;
+    date.setUTCDate(date.getUTCDate() - dayOfWeek + 1);
+    return date.toISOString().slice(0, 10);
+  }
+  return day;
+}
+
+function isTimeSeriesChart(chartDef: ChartRuntimeDef): boolean {
+  const chartType = normText(chartDef.chartType || 'bar').toLowerCase();
+  return chartType === 'line' || chartType === 'area' || chartType === 'scatter';
+}
+
 type AggBucket = {
   x: unknown;
   series: unknown;
@@ -29,10 +61,14 @@ export function aggregateChartRows(rows: DashboardRow[], chartDef: ChartRuntimeD
   const numeratorField = normText(chartDef.numeratorField);
   const denominatorField = normText(chartDef.denominatorField);
   const seriesField = normText(chartDef.seriesField);
+  const chartType = normText(chartDef.chartType || 'bar').toLowerCase();
+  const timeGrain = normText(chartDef.timeGrain || 'day').toLowerCase();
+  const shouldBucketTime = isTimeSeriesChart(chartDef) && timeGrain !== 'raw';
   const buckets = new Map<string, AggBucket>();
 
   for (const row of rows) {
-    const xValue = dimensionField ? row[dimensionField] : '__all__';
+    const rawXValue = dimensionField ? row[dimensionField] : '__all__';
+    const xValue = shouldBucketTime ? toDateBucket(rawXValue, timeGrain) : rawXValue;
     const seriesValue = seriesField ? row[seriesField] : '__single__';
     const key = `${JSON.stringify(xValue)}::${JSON.stringify(seriesValue)}`;
     let bucket = buckets.get(key);
@@ -86,8 +122,36 @@ export function aggregateChartRows(rows: DashboardRow[], chartDef: ChartRuntimeD
     points.push({ x: bucket.x, y: yValue, series: bucket.series });
   }
 
-  const sortBy = normText(chartDef.sortBy || 'y').toLowerCase();
-  const sortDirection = normText(chartDef.sortDirection || 'desc').toLowerCase();
+  const hasDateAxis = points.some((point) => isDateLike(point.x));
+  const isTemporal = isTimeSeriesChart(chartDef) && hasDateAxis;
+  const explicitSortBy = normText(chartDef.sortBy).toLowerCase();
+  const sortBy = isTemporal ? 'x' : explicitSortBy || 'y';
+  const sortDirection = isTemporal ? 'asc' : normText(chartDef.sortDirection || 'desc').toLowerCase();
+
+  const explicitLimit = chartDef.limit !== undefined && Number(chartDef.limit) > 0;
+  const shouldDefaultLimit =
+    chartType === 'bar' &&
+    !explicitLimit &&
+    new Set(points.map((point) => normText(point.x))).size > 30;
+  if (shouldDefaultLimit) {
+    const totals = new Map<string, { x: unknown; total: number }>();
+    for (const point of points) {
+      const key = normText(point.x);
+      const current = totals.get(key) || { x: point.x, total: 0 };
+      current.total += Number(point.y) || 0;
+      totals.set(key, current);
+    }
+    const keep = new Set(
+      [...totals.values()]
+        .sort((a, b) => b.total - a.total)
+        .slice(0, 30)
+        .map((item) => normText(item.x)),
+    );
+    for (let index = points.length - 1; index >= 0; index -= 1) {
+      if (!keep.has(normText(points[index].x))) points.splice(index, 1);
+    }
+  }
+
   points.sort((a, b) => {
     let cmp: number;
     if (sortBy === 'x') {

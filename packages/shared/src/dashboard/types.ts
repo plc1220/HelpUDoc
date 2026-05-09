@@ -26,6 +26,7 @@ export type ChartRuntimeDef = {
   orientation?: string;
   sortBy?: string;
   sortDirection?: string;
+  timeGrain?: 'day' | 'week' | 'month' | string;
   limit?: number;
   mode?: string;
   xTitle?: string;
