@@ -237,7 +237,7 @@ services:
       - "3000:3000"
     volumes:
       - workspace_data:/app/workspaces
-      - skills_data:/app/skills
+      - ../skills:/app/skills:ro
       - ../agent/config:/agent/config
 
   agent:
@@ -271,8 +271,8 @@ services:
       - "8001:8001"
     volumes:
       - workspace_data:/app/workspaces
-      - skills_data:/app/skills
-      - skills_data:/skills
+      - ../skills:/app/skills:ro
+      - ../skills:/skills:ro
       - ../agent/config:/agent/config
 
   frontend:
@@ -296,4 +296,3 @@ volumes:
   clickhouse_data:
   clickhouse_logs:
   workspace_data:
-  skills_data:

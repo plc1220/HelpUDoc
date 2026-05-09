@@ -22,7 +22,7 @@ from uuid import uuid4
 from dotenv import load_dotenv
 
 from fastapi import FastAPI, HTTPException, Body, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field, model_validator
 from langchain_core.messages import HumanMessage, SystemMessage
 
@@ -79,7 +79,12 @@ def _skill_id_from_loaded_skill_output(text: str) -> Optional[str]:
 _LOCAL_DEV_AGENT_JWT_SECRET = "helpudoc-local-dev-agent-jwt-secret"
 _RAG_PREFETCHABLE_EXTENSIONS: Set[str] = {".pdf", ".doc", ".docx", ".md", ".html", ".htm"}
 _TAGGED_HTML_EXTENSIONS: Set[str] = {".html", ".htm"}
+_TAGGED_DATASET_EXTENSIONS: Set[str] = {".parquet", ".csv"}
 _TAGGED_RAG_CONTEXT_CHAR_BUDGET = 6000
+_STRICT_DASHBOARD_QUERY_BUDGET = 5
+_STRICT_DASHBOARD_PREVIEW_BUDGET = 1
+_STRICT_DASHBOARD_SCHEMA_BUDGET = 1
+_STRICT_DASHBOARD_CHART_BUDGET = 5
 
 
 def _get_agent_jwt_secret() -> str:
@@ -112,6 +117,45 @@ def _filter_rag_prefetchable_tagged_files(tagged_paths: Sequence[str]) -> List[s
         if suffix in _RAG_PREFETCHABLE_EXTENSIONS:
             candidates.append(cleaned)
     return candidates
+
+
+def _filter_tagged_dataset_files(tagged_paths: Sequence[str]) -> List[str]:
+    candidates: List[str] = []
+    for raw in tagged_paths:
+        if not isinstance(raw, str):
+            continue
+        cleaned = raw.strip()
+        if not cleaned:
+            continue
+        suffix = Path(cleaned).suffix.lower()
+        if suffix in _TAGGED_DATASET_EXTENSIONS:
+            candidates.append(cleaned)
+    return candidates
+
+
+def _extract_tagged_files_from_text(content: str) -> List[str]:
+    if not content:
+        return []
+    lines = content.splitlines()
+    tagged: List[str] = []
+    in_block = False
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            if in_block:
+                break
+            continue
+        if stripped.startswith("Tagged files"):
+            in_block = True
+            continue
+        if in_block:
+            if stripped.startswith("-"):
+                candidate = stripped.lstrip("-").strip()
+                if candidate:
+                    tagged.append(candidate)
+            else:
+                break
+    return tagged
 
 
 def _normalize_tagged_file_paths(tagged_paths: Sequence[str]) -> List[str]:
@@ -300,6 +344,47 @@ def _append_artifact_first_guidance(
         guidance_lines.append("- Tagged derived artifacts:")
         guidance_lines.extend(f"  - {path}" for path in tagged_paths)
     return f"{prompt.rstrip()}\n\n" + "\n".join(guidance_lines)
+
+
+def _build_dashboard_mode_context(
+    context: Dict[str, Any],
+    tagged_paths: Sequence[str],
+) -> Dict[str, Any] | None:
+    if str(context.get("active_skill") or "").strip() != "data/dashboard":
+        return None
+    dataset_paths = _filter_tagged_dataset_files(tagged_paths)
+    return {
+        "strictLocalDatasets": bool(dataset_paths),
+        "taggedDatasetPaths": dataset_paths,
+        "queryBudget": _STRICT_DASHBOARD_QUERY_BUDGET,
+        "preApprovalPreviewBudget": _STRICT_DASHBOARD_PREVIEW_BUDGET,
+        "schemaBudget": _STRICT_DASHBOARD_SCHEMA_BUDGET,
+        "chartBudget": _STRICT_DASHBOARD_CHART_BUDGET,
+    }
+
+
+def _build_dashboard_runtime_guidance(user_request: str) -> str:
+    tagged_paths = _extract_tagged_files_from_text(user_request)
+    dataset_paths = _filter_tagged_dataset_files(tagged_paths)
+    guidance_lines = [
+        "Dashboard runtime guidance:",
+        "- This skill is low-variance and review-first.",
+        "- Before request_plan_approval: inspect schema once and use at most one lightweight preview query only if needed.",
+        "- Before approval, do not run aggregate analysis, do not generate charts, and do not materialize new warehouse datasets.",
+        "- After approval, use one bounded prep bundle for KPI summary, time trend, top geography breakdowns, top device/browser breakdowns, top category drivers, and an optional driver table.",
+        "- Reuse aggregate outputs instead of re-querying the same dimension repeatedly.",
+        "- Do not run duplicate country, device, browser, or category passes unless the approved plan explicitly requires a distinct visual.",
+        "- Generate 3 to 5 approved charts only, then call generate_dashboard exactly once.",
+        "- If the dataset cannot support the approved visuals, stop with a clear insufficiency message instead of ending with charts only.",
+    ]
+    if dataset_paths:
+        guidance_lines.insert(
+            1,
+            "- Tagged local dataset(s): "
+            + ", ".join(dataset_paths)
+            + ". Use these as the source of truth and do not rediscover upstream tables.",
+        )
+    return "\n".join(guidance_lines)
 
 
 class ChatRequest(BaseModel):
@@ -1521,11 +1606,15 @@ def create_app() -> FastAPI:
             )
 
         activate_skill_context(runtime.workspace_state.context, skill)
+        dashboard_guidance = ""
+        if skill.skill_id == "data/dashboard":
+            dashboard_guidance = _build_dashboard_runtime_guidance(user_request)
         return "\n\n".join(
             [
                 f"The selected skill '{skill.skill_id}' is already loaded and active for this turn.",
                 "Do not call list_skills or load_skill again unless you need to switch to a different skill.",
                 build_loaded_skill_text(skill, content),
+                dashboard_guidance,
                 f"User request:\n{fallback_request}",
             ]
         )
@@ -1730,28 +1819,7 @@ def create_app() -> FastAPI:
 
 
     def _extract_tagged_files(content: str) -> List[str]:
-        if not content:
-            return []
-        lines = content.splitlines()
-        tagged: List[str] = []
-        in_block = False
-        for line in lines:
-            stripped = line.strip()
-            if not stripped:
-                if in_block:
-                    break
-                continue
-            if stripped.startswith("Tagged files"):
-                in_block = True
-                continue
-            if in_block:
-                if stripped.startswith("-"):
-                    candidate = stripped.lstrip("-").strip()
-                    if candidate:
-                        tagged.append(candidate)
-                else:
-                    break
-        return tagged
+        return _extract_tagged_files_from_text(content)
 
     def _normalize_file_context_refs(raw_refs: Any) -> List[Dict[str, Any]]:
         normalized: List[Dict[str, Any]] = []
@@ -2257,6 +2325,8 @@ def create_app() -> FastAPI:
                 loaded_skill_id = _skill_id_from_loaded_skill_output(text)
                 if loaded_skill_id:
                     patch_current_trace_skill(loaded_skill_id)
+            if meta and meta.get("dashboardArtifact"):
+                payload["dashboardArtifact"] = meta["dashboardArtifact"]
             await self._emit(payload)
 
         async def on_tool_error(self, error, *, run_id, **_: Any) -> None:
@@ -2281,8 +2351,17 @@ def create_app() -> FastAPI:
             run_id,
             **_: Any,
         ) -> None:
+            run_key = str(run_id)
             if name == "tool_artifacts" and isinstance(data, dict):
-                self._tool_meta[str(run_id)] = data
+                bucket = self._tool_meta.get(run_key) or {}
+                bucket["files"] = list(data.get("files") or [])
+                self._tool_meta[run_key] = bucket
+                return
+            if name == "dashboard_artifact" and isinstance(data, dict):
+                bucket = self._tool_meta.get(run_key) or {}
+                bucket["dashboardArtifact"] = data
+                self._tool_meta[run_key] = bucket
+                await self._emit({"type": "dashboard_artifact", "dashboardArtifact": data})
 
     class _DeltaTracker:
         def __init__(self) -> None:
@@ -2495,6 +2574,7 @@ def create_app() -> FastAPI:
         context.pop("tagged_rag_context", None)
         context.pop("loaded_skill_ids_this_turn", None)
         context.pop("skill_load_attempts_this_turn", None)
+        context.pop("dashboard_mode", None)
         context["tagged_files_only"] = False
         context["plan_approved"] = skip_plan_approvals
         context["pre_plan_search_count"] = 0
@@ -2587,7 +2667,19 @@ def create_app() -> FastAPI:
                     break
             prompt_for_tagged_files = guided_prompt
         runtime.workspace_state.context["tagged_files"] = tagged_files
-        runtime.workspace_state.context["tagged_files_only"] = False
+        dashboard_mode = _build_dashboard_mode_context(runtime.workspace_state.context, tagged_files)
+        if dashboard_mode is not None:
+            runtime.workspace_state.context["dashboard_mode"] = dashboard_mode
+        else:
+            runtime.workspace_state.context.pop("dashboard_mode", None)
+        tagged_files_rag_only = (os.getenv("TAGGED_FILES_RAG_ONLY", "false") or "false").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "y",
+            "on",
+        }
+        runtime.workspace_state.context["tagged_files_only"] = bool(tagged_files) and tagged_files_rag_only
         if tagged_files:
             rag_context = await _prefetch_rag_context(
                 runtime.workspace_state.workspace_id,
@@ -2892,5 +2984,27 @@ def create_app() -> FastAPI:
         )
         stream = _stream_agent_response(runtime, placeholder, resume_value=action_payload)
         return StreamingResponse(stream, media_type="application/jsonl")
+
+    @app.get("/skills/{skill_id:path}/contract")
+    async def skill_contract(skill_id: str):
+        skills_root = settings.backend.skills_root
+        skill = find_skill(skills_root, skill_id)
+        if skill is None:
+            raise HTTPException(status_code=404, detail=f"Skill '{skill_id}' not found.")
+        policy = skill.policy
+        return JSONResponse(
+            {
+                "skillId": skill.skill_id,
+                "name": skill.name,
+                "description": skill.description,
+                "tools": list(skill.tools),
+                "mcpServers": list(skill.mcp_servers),
+                "requiresHitlPlan": bool(policy.requires_hitl_plan),
+                "requiresWorkspaceArtifacts": bool(policy.requires_workspace_artifacts),
+                "requiredArtifactsMode": policy.required_artifacts_mode,
+                "prePlanSearchLimit": int(policy.pre_plan_search_limit or 0),
+                "sourcePath": str(skill.path),
+            }
+        )
 
     return app

@@ -835,9 +835,10 @@ export default function ChatMessageBubble({
     setInterruptStructuredAnswersByMessageId((prev) => {
       const next = { ...prev };
       const current = { ...(next[messageKey] || {}) };
-      const normalizedValue = value.trim();
-      if (normalizedValue) {
-        current[questionId] = normalizedValue;
+      const trimmedValue = value.trim();
+      if (trimmedValue) {
+        // Preserve internal spaces while still treating all-whitespace input as empty.
+        current[questionId] = value;
       } else {
         delete current[questionId];
       }

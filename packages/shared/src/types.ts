@@ -97,6 +97,15 @@ export interface ToolOutputFile {
   size?: number;
 }
 
+/** Stream event + durable dashboard package; no TTL or live URL. */
+export interface DashboardArtifactInfo {
+  dashboardPath: string;
+  workspaceId?: string;
+  dashboardId?: string;
+  title?: string;
+  status: 'generating' | 'ready' | 'error';
+}
+
 export interface InterruptChoice {
   id: string;
   label: string;

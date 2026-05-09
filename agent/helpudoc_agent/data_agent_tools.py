@@ -8,11 +8,13 @@ import multiprocessing as mp
 import os
 import re
 import shutil
+import threading
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from queue import Empty
 from typing import Annotated, Any, Dict, List, Optional, Set, Tuple
+from uuid import uuid4
 
 import duckdb
 import numpy as np
@@ -67,6 +69,10 @@ MAX_RESULT_ROWS = 20
 MAX_SESSION_ROWS = 1000
 MAX_QUERY_COUNT = 10
 MAX_CHART_COUNT = 5
+STRICT_DASHBOARD_QUERY_COUNT = 5
+STRICT_DASHBOARD_PREVIEW_QUERY_COUNT = 1
+STRICT_DASHBOARD_SCHEMA_COUNT = 1
+STRICT_DASHBOARD_MIN_CHART_COUNT = 3
 DEFAULT_CACHE_TTL_HOURS = 24
 MAX_MATERIALIZED_ROWS = 100000
 MAX_QUERY_RESULT_ROWS = MAX_SESSION_ROWS + 1
@@ -88,6 +94,15 @@ WORKSPACE_SCAN_EXCLUDED_DIRS = {
     ".vscode",
 }
 DATA_FILE_EXTENSIONS = {".csv", ".parquet"}
+STRICT_DASHBOARD_DIMENSION_FIELDS = (
+    "country",
+    "device_type",
+    "browser",
+    "traffic_source",
+    "category",
+    "product_category",
+    "age_group",
+)
 DATA_DISCOVERY_DIR_CANDIDATES = (
     "data",
     "datasets",
@@ -130,16 +145,19 @@ class DataAgentSessionState:
 
     def reset(self) -> None:
         self.schema_inspected = False
+        self.schema_read_count = 0
         self.query_count = 0
         self.chart_count = 0
         self.summary_generated = False
         self.dashboard_generated = False
         self.last_query_result: Optional[pd.DataFrame] = None
         self.last_query_sql: Optional[str] = None
+        self.last_schema_result: Optional[str] = None
         self.query_history: List[_QueryRecord] = []
         self.chart_history: List[_ChartRecord] = []
         self.materialization_history: List[_MaterializationRecord] = []
         self.run_artifacts: List[Dict[str, Any]] = []
+        self.dashboard_dimension_signatures: Set[str] = set()
 
 
 class SafePandasProxy:
@@ -192,7 +210,7 @@ def _utc_now() -> datetime:
 
 
 def _workspace_rel(path: Path, root: Path) -> str:
-    return path.relative_to(root).as_posix()
+    return path.resolve().relative_to(root.resolve()).as_posix()
 
 
 def _safe_slug(value: str, default: str) -> str:
@@ -381,6 +399,69 @@ def _query_looks_aggregated(query: str) -> bool:
         re.search(r"\bgroup\s+by\b", query, re.IGNORECASE)
         or re.search(r"\bhaving\b", query, re.IGNORECASE)
     )
+
+
+def _get_dashboard_mode(workspace_state: WorkspaceState) -> Dict[str, Any]:
+    context = getattr(workspace_state, "context", {}) or {}
+    raw = context.get("dashboard_mode")
+    if isinstance(raw, dict):
+        return raw
+    active_skill = str(context.get("active_skill") or "").strip()
+    tagged_files = context.get("tagged_files") or []
+    tagged_dataset_paths = [
+        str(path).strip()
+        for path in tagged_files
+        if str(path).strip() and Path(str(path).strip()).suffix.lower() in DATA_FILE_EXTENSIONS
+    ]
+    return {
+        "strictLocalDatasets": active_skill == "data/dashboard" and bool(tagged_dataset_paths),
+        "taggedDatasetPaths": tagged_dataset_paths,
+    }
+
+
+def _is_strict_dashboard_mode(workspace_state: WorkspaceState) -> bool:
+    mode = _get_dashboard_mode(workspace_state)
+    return bool(mode.get("strictLocalDatasets"))
+
+
+def _is_plan_approved(workspace_state: WorkspaceState) -> bool:
+    context = getattr(workspace_state, "context", {}) or {}
+    if context.get("skip_plan_approvals"):
+        return True
+    return bool(context.get("plan_approved"))
+
+
+def _dashboard_plan_gate_message() -> str:
+    return (
+        "Dashboard planning mode is active. Draft the dashboard plan, call request_plan_approval, "
+        "and wait for approval before running aggregate analysis or generating charts."
+    )
+
+
+def _looks_like_preview_query(query: str) -> bool:
+    if _query_looks_aggregated(query):
+        return False
+    limit_match = re.search(r"\blimit\s+(\d+)\b", query, re.IGNORECASE)
+    if limit_match:
+        try:
+            return int(limit_match.group(1)) <= 50
+        except ValueError:
+            return False
+    return bool(re.search(r"\bselect\s+\*\s+from\b", query, re.IGNORECASE))
+
+
+def _extract_dashboard_dimension_signature(query: str) -> Optional[str]:
+    if not _query_looks_aggregated(query):
+        return None
+    lower = query.lower()
+    matched = [
+        field
+        for field in STRICT_DASHBOARD_DIMENSION_FIELDS
+        if re.search(rf"\b{re.escape(field)}\b", lower)
+    ]
+    if not matched:
+        return None
+    return "|".join(sorted(set(matched)))
 
 
 def _json_safe_chart_value(value: Any) -> Any:
@@ -715,6 +796,34 @@ def _resolve_workspace_html_path(
     return resolved
 
 
+def _resolve_workspace_dashboard_dir(
+    workspace_root: Path,
+    output_path: str,
+    *,
+    default_dir: str,
+    default_stem: str,
+) -> Path:
+    raw = (output_path or "").strip()
+    if not raw:
+        raw = f"{default_dir}/{default_stem}"
+    elif raw.endswith("/"):
+        raw = raw.rstrip("/")
+    else:
+        candidate = Path(raw)
+        suffix = candidate.suffix.lower()
+        if suffix in {".html", ".htm"}:
+            raw = str(candidate.with_suffix(""))
+
+    candidate = Path(raw)
+    if candidate.is_absolute():
+        candidate = Path(str(candidate).lstrip("/"))
+    resolved = (workspace_root / candidate).resolve()
+    root_resolved = workspace_root.resolve()
+    if root_resolved not in resolved.parents and resolved != root_resolved:
+        raise ValueError("output_path must remain inside the workspace.")
+    return resolved
+
+
 def _resolve_workspace_data_path(workspace_root: Path, raw_path: str) -> Path:
     candidate = Path((raw_path or "").strip())
     if not str(candidate):
@@ -793,6 +902,39 @@ def _load_dashboard_dataset(workspace_root: Path, dataset_path: str) -> Tuple[Li
     return records, schema, format_name
 
 
+def _build_dataset_reference(workspace_root: Path, dataset_path: str) -> Dict[str, Any]:
+    cleaned = _coerce_text_arg(dataset_path).strip()
+    if not cleaned:
+        return {}
+    resolved = _resolve_workspace_data_path(workspace_root, cleaned)
+    if not resolved.exists():
+        return {"path": cleaned}
+    stat = resolved.stat()
+    return {
+        "path": _workspace_rel(resolved, workspace_root),
+        "format": resolved.suffix.lower().lstrip("."),
+        "size": stat.st_size,
+        "updatedAt": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
+        "version": f"{int(stat.st_mtime)}-{stat.st_size}",
+    }
+
+
+def _build_dashboard_dataset_block(
+    workspace_root: Path,
+    dashboard_dataset_path: str,
+    dataset_records: List[Dict[str, Any]],
+    preview_rel_path: str,
+) -> Dict[str, Any]:
+    """Canonical dataset path plus browser-friendly preview rows (v1 JSON)."""
+    base = _build_dataset_reference(workspace_root, dashboard_dataset_path)
+    if not dataset_records:
+        return base
+    block = dict(base)
+    block["previewPath"] = preview_rel_path
+    block["rowCount"] = len(dataset_records)
+    return block
+
+
 def _normalize_filter_schema(raw_filters: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
     normalized: List[Dict[str, Any]] = []
     for idx, raw in enumerate(raw_filters or [], start=1):
@@ -832,7 +974,11 @@ def _normalize_chart_bindings(raw_bindings: Optional[List[Dict[str, Any]]]) -> D
             "chart_type": _coerce_text_arg(raw.get("chart_type"), "bar").strip().lower() or "bar",
             "x_field": _coerce_text_arg(raw.get("x_field")).strip(),
             "y_field": _coerce_text_arg(raw.get("y_field")).strip(),
+            "dimension_field": _coerce_text_arg(raw.get("dimension_field")).strip(),
+            "metric_field": _coerce_text_arg(raw.get("metric_field")).strip(),
             "aggregation": _coerce_text_arg(raw.get("aggregation"), "count").strip().lower() or "count",
+            "numerator_field": _coerce_text_arg(raw.get("numerator_field")).strip(),
+            "denominator_field": _coerce_text_arg(raw.get("denominator_field")).strip(),
             "series_field": _coerce_text_arg(raw.get("series_field")).strip(),
             "orientation": _coerce_text_arg(raw.get("orientation")).strip().lower(),
             "sort_by": _coerce_text_arg(raw.get("sort_by"), "y").strip().lower() or "y",
@@ -842,9 +988,194 @@ def _normalize_chart_bindings(raw_bindings: Optional[List[Dict[str, Any]]]) -> D
             "title": _coerce_text_arg(raw.get("title")).strip(),
             "x_title": _coerce_text_arg(raw.get("x_title")).strip(),
             "y_title": _coerce_text_arg(raw.get("y_title")).strip(),
+            "question_answered": _coerce_text_arg(raw.get("question_answered")).strip(),
+            "why_it_matters": _coerce_text_arg(raw.get("why_it_matters")).strip(),
+            "highlight_rule": _coerce_text_arg(raw.get("highlight_rule")).strip(),
+            "format": _coerce_text_arg(raw.get("format")).strip(),
+            "interactive": _coerce_bool_arg(raw.get("interactive"), True),
+            "layout_span": _coerce_text_arg(raw.get("layout_span"), "half").strip().lower() or "half",
+            "layout_section": _coerce_text_arg(raw.get("layout_section"), "drivers").strip().lower() or "drivers",
             "static_reason": _coerce_text_arg(raw.get("static_reason")).strip(),
         }
     return normalized
+
+
+def _schema_type_map(dataset_schema: List[Dict[str, Any]]) -> Dict[str, str]:
+    return {
+        str(item.get("name") or "").strip(): str(item.get("type") or "").strip().lower()
+        for item in dataset_schema
+        if str(item.get("name") or "").strip()
+    }
+
+
+def _is_numeric_schema_type(type_name: str) -> bool:
+    normalized = str(type_name or "").strip().lower()
+    return any(
+        token in normalized
+        for token in ("int", "float", "double", "decimal", "numeric", "real", "bigint", "smallint")
+    )
+
+
+def _build_dashboard_chart_specs(
+    normalized_bindings: Dict[int, Dict[str, Any]],
+    dataset_schema: List[Dict[str, Any]],
+) -> Dict[int, Dict[str, Any]]:
+    schema_types = _schema_type_map(dataset_schema)
+    normalized_specs: Dict[int, Dict[str, Any]] = {}
+    for chart_index, binding in normalized_bindings.items():
+        x_field = _coerce_text_arg(binding.get("x_field")).strip()
+        y_field = _coerce_text_arg(binding.get("y_field")).strip()
+        dimension_field = _coerce_text_arg(binding.get("dimension_field")).strip() or x_field
+        metric_field = _coerce_text_arg(binding.get("metric_field")).strip() or y_field
+        orientation = _coerce_text_arg(binding.get("orientation")).strip().lower()
+        numerator_field = _coerce_text_arg(binding.get("numerator_field")).strip()
+        denominator_field = _coerce_text_arg(binding.get("denominator_field")).strip()
+
+        if orientation == "h" and x_field and y_field:
+            x_is_numeric = _is_numeric_schema_type(schema_types.get(x_field, ""))
+            y_is_numeric = _is_numeric_schema_type(schema_types.get(y_field, ""))
+            if x_is_numeric and not y_is_numeric:
+                dimension_field = y_field
+                metric_field = x_field
+
+        aggregation = _coerce_text_arg(binding.get("aggregation"), "count").strip().lower() or "count"
+        if numerator_field and denominator_field and aggregation in {"avg", "mean"}:
+            aggregation = "ratio"
+
+        live_capable = bool(
+            dimension_field
+            and (
+                aggregation == "count"
+                or metric_field
+                or (numerator_field and denominator_field)
+            )
+        )
+        chart_id = _coerce_text_arg(binding.get("chart_id"), f"chart_{chart_index}").strip() or f"chart_{chart_index}"
+        normalized_specs[chart_index] = {
+            "chartId": chart_id,
+            "chartIndex": chart_index,
+            "chartType": _coerce_text_arg(binding.get("chart_type"), "bar").strip().lower() or "bar",
+            "dimensionField": dimension_field,
+            "metricField": metric_field,
+            "numeratorField": numerator_field,
+            "denominatorField": denominator_field,
+            "aggregation": aggregation,
+            "orientation": orientation,
+            "seriesField": _coerce_text_arg(binding.get("series_field")).strip(),
+            "sort": {
+                "by": _coerce_text_arg(binding.get("sort_by"), "y").strip().lower() or "y",
+                "direction": _coerce_text_arg(binding.get("sort_direction"), "desc").strip().lower() or "desc",
+            },
+            "limit": _coerce_int_arg(binding.get("limit"), 0, minimum=0),
+            "mode": _coerce_text_arg(binding.get("mode"), "lines+markers").strip(),
+            "labels": {
+                "title": _coerce_text_arg(binding.get("title")).strip(),
+                "x": _coerce_text_arg(binding.get("x_title")).strip(),
+                "y": _coerce_text_arg(binding.get("y_title")).strip(),
+            },
+            "questionAnswered": _coerce_text_arg(binding.get("question_answered")).strip(),
+            "whyItMatters": _coerce_text_arg(binding.get("why_it_matters")).strip(),
+            "highlightRule": _coerce_text_arg(binding.get("highlight_rule")).strip(),
+            "format": _coerce_text_arg(binding.get("format")).strip(),
+            "interactive": _coerce_bool_arg(binding.get("interactive"), True),
+            "layoutSpan": _coerce_text_arg(binding.get("layout_span"), "half").strip().lower() or "half",
+            "layoutSection": _coerce_text_arg(binding.get("layout_section"), "drivers").strip().lower() or "drivers",
+            "filters": list(binding.get("filters") or []),
+            "liveCapable": live_capable,
+            "snapshotOnly": not live_capable,
+            "staticReason": _coerce_text_arg(binding.get("static_reason")).strip(),
+        }
+    return normalized_specs
+
+
+_GENERIC_DASHBOARD_TITLE_TOKENS = {
+    "chart",
+    "overview",
+    "analysis",
+    "trends",
+    "breakdown",
+    "geographic trends",
+    "top categories",
+    "browser/device segmentation",
+    "country comparison",
+}
+
+
+def _looks_schema_like_title(value: str) -> bool:
+    normalized = re.sub(r"\s+", " ", _coerce_text_arg(value).strip().lower())
+    if not normalized:
+        return True
+    if normalized in _GENERIC_DASHBOARD_TITLE_TOKENS:
+        return True
+    return bool(re.fullmatch(r"[a-z0-9_ /-]+", normalized) and "_" in normalized)
+
+
+def _validate_dashboard_spec_inputs(
+    *,
+    strict_dashboard_mode: bool,
+    dashboard_dataset_path: str,
+    audience: str,
+    business_question: str,
+    decision_questions: List[str],
+    layout_template: str,
+    metric_cards: List[Dict[str, str]],
+    chart_specs: Dict[int, Dict[str, Any]],
+) -> Optional[str]:
+    if not chart_specs:
+        return (
+            "Dashboard package incomplete: no structured charts were provided. "
+            "Pass approved chart bindings so the live runtime has charts to render."
+        )
+    if not _coerce_text_arg(dashboard_dataset_path).strip():
+        return (
+            "Dashboard package incomplete: dashboard_dataset_path is required so the live runtime "
+            "and snapshot share the same canonical dataset."
+        )
+    if not strict_dashboard_mode:
+        return None
+    if not audience.strip():
+        return "Dashboard spec incomplete: audience is required for executive dashboard mode."
+    if not business_question.strip():
+        return "Dashboard spec incomplete: business_question is required for executive dashboard mode."
+    if not decision_questions:
+        return "Dashboard spec incomplete: provide at least one decision question for executive dashboard mode."
+    if not layout_template.strip():
+        return "Dashboard spec incomplete: layout_template is required for executive dashboard mode."
+    if not metric_cards or len(metric_cards) > 3:
+        return "Dashboard spec incomplete: provide 2 to 3 KPI cards for the executive hero."
+    if len(chart_specs) < STRICT_DASHBOARD_MIN_CHART_COUNT or len(chart_specs) > MAX_CHART_COUNT:
+        return (
+            f"Dashboard spec incomplete: provide {STRICT_DASHBOARD_MIN_CHART_COUNT} to {MAX_CHART_COUNT} "
+            "structured charts for executive dashboard mode."
+        )
+    for chart_spec in chart_specs.values():
+        title = _coerce_text_arg((chart_spec.get("labels") or {}).get("title"))
+        if _looks_schema_like_title(title):
+            return (
+                "Dashboard spec validation failed: chart titles must be business-readable and insight-led, "
+                f"not generic placeholders ('{title or 'untitled'}')."
+            )
+        if not _coerce_text_arg(chart_spec.get("questionAnswered")).strip():
+            return f"Dashboard spec validation failed: {title} is missing questionAnswered."
+        if not _coerce_text_arg(chart_spec.get("whyItMatters")).strip():
+            return f"Dashboard spec validation failed: {title} is missing whyItMatters."
+    return None
+
+
+def _emit_dashboard_artifact(
+    callbacks: Optional[CallbackManagerForToolRun],
+    payload: Dict[str, Any],
+) -> None:
+    if not callbacks or not payload:
+        return
+    try:
+        run_id = getattr(callbacks, "run_id", None)
+        if run_id is not None:
+            callbacks.on_custom_event("dashboard_artifact", payload, run_id=run_id)
+        else:
+            callbacks.on_custom_event("dashboard_artifact", payload)
+    except Exception:  # pragma: no cover - best effort
+        logger.warning("Failed to dispatch dashboard_artifact event", exc_info=True)
 
 
 def _cache_key_for_query(sql_query: str, workspace_id: str, cache_key_hint: str) -> str:
@@ -893,6 +1224,10 @@ class DuckDBManager:
     def __init__(self, workspace_state: WorkspaceState):
         self.workspace_state = workspace_state
         self.con = duckdb.connect(database=":memory:")
+        # The agent can emit multiple local SQL tool calls in one model step. DuckDB's
+        # Python connection is not safe for overlapping use, so serialize all access
+        # through a per-manager lock to avoid orphaned/stuck runs.
+        self._con_lock = threading.RLock()
         self.session = DataAgentSessionState()
         self._registered_tables: Set[str] = set()
         self._register_files()
@@ -904,78 +1239,89 @@ class DuckDBManager:
 
     def _register_files(self):
         """Scans workspace for CSV and Parquet files and registers them as tables."""
-        self._registered_tables.clear()
-        root = self.workspace_state.root_path
-        preferred_dirs = tuple(
-            dirname
-            for dirname in DATA_DISCOVERY_DIR_CANDIDATES
-            if (root / dirname).exists()
-        )
-        data_files = _iter_workspace_files(
-            root,
-            allowed_extensions=DATA_FILE_EXTENSIONS,
-            preferred_dirs=preferred_dirs,
-        )
-        used_names: Set[str] = set()
-        for file_path in sorted(data_files):
-            relative_stem = file_path.relative_to(root).with_suffix("").as_posix()
-            base_name = re.sub(r"[^a-zA-Z0-9_]", "_", file_path.stem)
-            path_name = re.sub(r"[^a-zA-Z0-9_]", "_", relative_stem)
-            ext_name = f"{base_name}_{file_path.suffix.lstrip('.').lower()}"
-            table_name = base_name
-            if table_name in used_names:
-                table_name = path_name or ext_name
-            if table_name in used_names:
-                table_name = ext_name
-            safe_path = file_path.as_posix().replace("'", "''")
-            try:
-                if file_path.suffix.lower() == ".csv":
-                    self.con.execute(
-                        f"CREATE OR REPLACE TABLE {table_name} "
-                        f"AS SELECT * FROM read_csv_auto('{safe_path}')"
-                    )
-                else:
-                    self.con.execute(
-                        f"CREATE OR REPLACE TABLE {table_name} "
-                        f"AS SELECT * FROM read_parquet('{safe_path}')"
-                    )
-                used_names.add(table_name)
-                self._registered_tables.add(table_name)
-                logger.info("Registered table %s from %s", table_name, file_path)
-            except Exception as exc:
-                logger.error("Failed to register %s: %s", file_path, exc)
+        with self._con_lock:
+            self._registered_tables.clear()
+            root = self.workspace_state.root_path
+            preferred_dirs = tuple(
+                dirname
+                for dirname in DATA_DISCOVERY_DIR_CANDIDATES
+                if (root / dirname).exists()
+            )
+            data_files = _iter_workspace_files(
+                root,
+                allowed_extensions=DATA_FILE_EXTENSIONS,
+                preferred_dirs=preferred_dirs,
+            )
+            used_names: Set[str] = set()
+            for file_path in sorted(data_files):
+                relative_stem = file_path.relative_to(root).with_suffix("").as_posix()
+                base_name = re.sub(r"[^a-zA-Z0-9_]", "_", file_path.stem)
+                path_name = re.sub(r"[^a-zA-Z0-9_]", "_", relative_stem)
+                ext_name = f"{base_name}_{file_path.suffix.lstrip('.').lower()}"
+                table_name = base_name
+                if table_name in used_names:
+                    table_name = path_name or ext_name
+                if table_name in used_names:
+                    table_name = ext_name
+                safe_path = file_path.as_posix().replace("'", "''")
+                try:
+                    if file_path.suffix.lower() == ".csv":
+                        self.con.execute(
+                            f"CREATE OR REPLACE TABLE {table_name} "
+                            f"AS SELECT * FROM read_csv_auto('{safe_path}')"
+                        )
+                    else:
+                        self.con.execute(
+                            f"CREATE OR REPLACE TABLE {table_name} "
+                            f"AS SELECT * FROM read_parquet('{safe_path}')"
+                        )
+                    used_names.add(table_name)
+                    self._registered_tables.add(table_name)
+                    logger.info("Registered table %s from %s", table_name, file_path)
+                except Exception as exc:
+                    logger.error("Failed to register %s: %s", file_path, exc)
 
     def get_schema(self, table_names: Optional[List[str]] = None) -> str:
-        tables = self.con.execute("SHOW TABLES").fetchall()
-        if not tables:
-            return "No tables found in the workspace."
-
-        schema_lines: List[str] = []
-        for table in tables:
-            table_name = table[0]
-            if table_names and table_name not in table_names:
-                continue
-
-            schema_lines.append(f"Table: {table_name}")
-            columns = self.con.execute(f"DESCRIBE {table_name}").fetchall()
-            sample_rows = self.con.execute(f"SELECT * FROM {table_name} LIMIT 3").df()
-            for col in columns:
-                sample_values: List[str] = []
-                if not sample_rows.empty and col[0] in sample_rows.columns:
-                    non_null = sample_rows[col[0]].dropna().tolist()
-                    for value in non_null:
-                        formatted = _format_sample_value(value)
-                        if formatted not in sample_values:
-                            sample_values.append(formatted)
-                        if len(sample_values) == 2:
-                            break
-                sample_suffix = (
-                    f" [examples: {', '.join(sample_values)}]" if sample_values else ""
+        if _is_strict_dashboard_mode(self.workspace_state):
+            if self.session.last_schema_result is not None and self.session.schema_read_count >= STRICT_DASHBOARD_SCHEMA_COUNT:
+                return (
+                    "Dashboard planning mode reuses the existing schema snapshot to avoid duplicated discovery.\n\n"
+                    f"{self.session.last_schema_result}"
                 )
-                schema_lines.append(f"  - {col[0]} ({col[1]}){sample_suffix}")
-            schema_lines.append("")
+        with self._con_lock:
+            tables = self.con.execute("SHOW TABLES").fetchall()
+            if not tables:
+                return "No tables found in the workspace."
 
-        return "\n".join(schema_lines).strip()
+            schema_lines: List[str] = []
+            for table in tables:
+                table_name = table[0]
+                if table_names and table_name not in table_names:
+                    continue
+
+                schema_lines.append(f"Table: {table_name}")
+                columns = self.con.execute(f"DESCRIBE {table_name}").fetchall()
+                sample_rows = self.con.execute(f"SELECT * FROM {table_name} LIMIT 3").df()
+                for col in columns:
+                    sample_values: List[str] = []
+                    if not sample_rows.empty and col[0] in sample_rows.columns:
+                        non_null = sample_rows[col[0]].dropna().tolist()
+                        for value in non_null:
+                            formatted = _format_sample_value(value)
+                            if formatted not in sample_values:
+                                sample_values.append(formatted)
+                            if len(sample_values) == 2:
+                                break
+                    sample_suffix = (
+                        f" [examples: {', '.join(sample_values)}]" if sample_values else ""
+                    )
+                    schema_lines.append(f"  - {col[0]} ({col[1]}){sample_suffix}")
+                schema_lines.append("")
+
+            rendered = "\n".join(schema_lines).strip()
+            self.session.schema_read_count += 1
+            self.session.last_schema_result = rendered
+            return rendered
 
     def run_query(
         self,
@@ -984,24 +1330,31 @@ class DuckDBManager:
         record_sql: Optional[str] = None,
         truncated: bool = False,
     ) -> pd.DataFrame:
-        if self.session.query_count >= MAX_QUERY_COUNT:
-            raise ValueError(
-                f"Query budget exhausted: at most {MAX_QUERY_COUNT} queries are allowed per run."
+        with self._con_lock:
+            strict_dashboard_mode = _is_strict_dashboard_mode(self.workspace_state)
+            max_query_count = STRICT_DASHBOARD_QUERY_COUNT if strict_dashboard_mode else MAX_QUERY_COUNT
+            if self.session.query_count >= max_query_count:
+                raise ValueError(
+                    f"Query budget exhausted: at most {max_query_count} queries are allowed per run."
+                )
+            df = self.con.execute(query).df()
+            self.session.query_count += 1
+            self.session.last_query_result = df
+            stored_sql = record_sql or query
+            self.session.last_query_sql = stored_sql
+            if strict_dashboard_mode:
+                signature = _extract_dashboard_dimension_signature(stored_sql)
+                if signature:
+                    self.session.dashboard_dimension_signatures.add(signature)
+            self.session.query_history.append(
+                _QueryRecord(
+                    sql=stored_sql,
+                    row_count=len(df),
+                    preview=df.head(MAX_RESULT_ROWS).copy(),
+                    truncated=truncated,
+                )
             )
-        df = self.con.execute(query).df()
-        self.session.query_count += 1
-        self.session.last_query_result = df
-        stored_sql = record_sql or query
-        self.session.last_query_sql = stored_sql
-        self.session.query_history.append(
-            _QueryRecord(
-                sql=stored_sql,
-                row_count=len(df),
-                preview=df.head(MAX_RESULT_ROWS).copy(),
-                truncated=truncated,
-            )
-        )
-        return df
+            return df
 
     def record_chart(self, title: str, artifact_paths: List[str]) -> None:
         self.session.chart_count += 1
@@ -1155,6 +1508,25 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
             cleaned_query = sql_query.strip()
             if cleaned_query.endswith(";"):
                 cleaned_query = cleaned_query[:-1].rstrip()
+            strict_dashboard_mode = _is_strict_dashboard_mode(workspace_state)
+            if strict_dashboard_mode and not _is_plan_approved(workspace_state):
+                if db_manager.session.query_count >= STRICT_DASHBOARD_PREVIEW_QUERY_COUNT:
+                    return (
+                        f"{_dashboard_plan_gate_message()} Only {STRICT_DASHBOARD_PREVIEW_QUERY_COUNT} preview query "
+                        "is allowed before approval."
+                    )
+                if not _looks_like_preview_query(cleaned_query):
+                    return (
+                        f"{_dashboard_plan_gate_message()} Before approval, only one lightweight preview query "
+                        "with a small LIMIT is allowed."
+                    )
+            if strict_dashboard_mode and _is_plan_approved(workspace_state):
+                signature = _extract_dashboard_dimension_signature(cleaned_query)
+                if signature and signature in db_manager.session.dashboard_dimension_signatures:
+                    return (
+                        "Duplicate dashboard dimension pass blocked. Reuse the existing aggregate for this dimension "
+                        "or update the approved plan before querying it again."
+                    )
             cleaned_query = _rewrite_virtual_paths(
                 cleaned_query, db_manager.workspace_state.root_path
             )
@@ -1220,6 +1592,13 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
         blocked = tagged_files_mode_guard(workspace_state.context, "cache_bigquery_query")
         if blocked:
             return blocked
+        if workspace_state.context.get("tagged_files_only"):
+            return "Tool disabled: tagged files were provided, use rag_query only."
+        if _is_strict_dashboard_mode(workspace_state):
+            return (
+                "Dashboard planning mode is bound to tagged local datasets. "
+                "Skip warehouse rediscovery and use the tagged parquet/csv as the source of truth."
+            )
 
         normalized_sql = _coerce_text_arg(sql_query).strip().rstrip(";")
         if not normalized_sql:
@@ -1447,6 +1826,13 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
         callbacks: Optional[CallbackManagerForToolRun] = None,
     ) -> str:
         """Generate visualizations from the last SQL query result."""
+        if _is_strict_dashboard_mode(workspace_state) and not _is_plan_approved(workspace_state):
+            return _dashboard_plan_gate_message()
+        if _is_strict_dashboard_mode(workspace_state):
+            return (
+                "Dashboard mode uses structured chart specs instead of generated chart code. "
+                "Skip generate_chart_config and pass the approved chart bindings directly to generate_dashboard."
+            )
         try:
             db_manager.require_query_before_chart()
             db_manager.require_chart_budget()
@@ -1555,6 +1941,11 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
         callbacks: Optional[CallbackManagerForToolRun] = None,
     ) -> str:
         """Produce a summary of the results and save it as a self-contained HTML report."""
+        if str(workspace_state.context.get("active_skill") or "").strip() == "data/dashboard":
+            return (
+                "The active skill is data/dashboard. Stay on the dashboard path: request plan approval, "
+                "generate the approved charts, then call generate_dashboard."
+            )
         if db_manager.session.query_count == 0:
             return "Run at least one SQL query before summarizing the findings."
         try:
@@ -1733,13 +2124,49 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
             str,
             Field(description="Short paragraph describing what this dashboard shows and who it's for"),
         ],
+        audience: Annotated[
+            str,
+            Field(description="Primary audience for this dashboard, such as Ops leadership or the Board."),
+        ] = "",
+        business_question: Annotated[
+            str,
+            Field(description="The core business question this dashboard answers."),
+        ] = "",
+        decision_questions: Annotated[
+            Optional[List[str]],
+            Field(description="Ordered list of the decisions or questions the dashboard should help answer."),
+        ] = None,
+        layout_template: Annotated[
+            str,
+            Field(description="Named layout template to use for the dashboard, such as executive_driver_dashboard."),
+        ] = "executive_driver_dashboard",
+        hero_eyebrow: Annotated[
+            str,
+            Field(description="Optional short eyebrow label displayed above the dashboard title."),
+        ] = "Interactive Dashboard",
+        headline_takeaway: Annotated[
+            str,
+            Field(description="Optional one-line headline takeaway shown in the hero section."),
+        ] = "",
+        insights: Annotated[
+            Optional[List[str]],
+            Field(description="Optional list of executive takeaways rendered near the top of the dashboard."),
+        ] = None,
+        known_risks: Annotated[
+            Optional[List[str]],
+            Field(description="Optional list of known dashboard caveats or risks."),
+        ] = None,
+        data_quality_notes: Annotated[
+            Optional[List[str]],
+            Field(description="Optional list of data quality or normalization notes."),
+        ] = None,
         section_titles: Annotated[
             Optional[List[str]],
             Field(description="Optional ordered list of section headings, one per chart produced in this run."),
         ] = None,
         output_path: Annotated[
             str,
-            Field(description="Optional stable HTML output path such as dashboards/orders_overview.html."),
+            Field(description="Optional stable dashboard package path such as dashboards/orders_overview or dashboards/orders_overview/."),
         ] = "",
         dashboard_dataset_path: Annotated[
             str,
@@ -1768,29 +2195,62 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
                 )
             ),
         ] = None,
+        metric_cards: Annotated[
+            Optional[List[Dict[str, Any]]],
+            Field(
+                description=(
+                    "Optional KPI cards for the hero section. Each item may include label, value, and meta."
+                )
+            ),
+        ] = None,
         callbacks: Optional[CallbackManagerForToolRun] = None,
     ) -> str:
         """Assemble all charts and query history from the current run into one HTML dashboard."""
+        if _is_strict_dashboard_mode(workspace_state) and not _is_plan_approved(workspace_state):
+            return _dashboard_plan_gate_message()
         try:
             db_manager.ensure_single_dashboard()
         except ValueError as exc:
             return str(exc)
         if db_manager.session.query_count == 0:
             return "Run at least one SQL query before building a dashboard."
-        if not db_manager.session.chart_history:
+        strict_dashboard_mode = _is_strict_dashboard_mode(workspace_state)
+        normalized_bindings = _normalize_chart_bindings(chart_bindings)
+        if strict_dashboard_mode and len(normalized_bindings) < STRICT_DASHBOARD_MIN_CHART_COUNT:
+            return (
+                "Dashboard plan incomplete: pass 3 to 5 approved chart bindings to generate_dashboard "
+                "before building the dashboard package."
+            )
+        if strict_dashboard_mode and not _coerce_text_arg(dashboard_dataset_path).strip():
+            return "Dashboard mode requires dashboard_dataset_path so the native renderer and HTML export share the same dataset."
+        if not strict_dashboard_mode and not db_manager.session.chart_history:
             return "Generate at least one chart before building a dashboard."
+        if strict_dashboard_mode and len(normalized_bindings) > MAX_CHART_COUNT:
+            return (
+                f"Dashboard plan too large: at most {MAX_CHART_COUNT} approved charts are allowed per dashboard package."
+            )
 
         stable_title = _safe_slug(title, "dashboard")
-        dashboard_path = _resolve_workspace_html_path(
+        dashboard_dir = _resolve_workspace_dashboard_dir(
             workspace_state.root_path,
             output_path,
             default_dir="dashboards",
             default_stem=stable_title,
         )
+        dashboard_rel_path = _workspace_rel(dashboard_dir, workspace_state.root_path)
+        dashboard_meta_path = dashboard_dir / "dashboard.meta.json"
+        dashboard_spec_path = dashboard_dir / "dashboard.spec.json"
+        dashboard_snapshot_path = dashboard_dir / "dashboard.snapshot.html"
+        dashboard_meta_rel_path = _workspace_rel(dashboard_meta_path, workspace_state.root_path)
+        dashboard_spec_rel_path = _workspace_rel(dashboard_spec_path, workspace_state.root_path)
+        dashboard_snapshot_rel_path = _workspace_rel(dashboard_snapshot_path, workspace_state.root_path)
+        dashboard_data_dir = dashboard_dir / "data"
+        dashboard_rows_path = dashboard_data_dir / "dashboard.rows.json"
+        dashboard_rows_rel_path = _workspace_rel(dashboard_rows_path, workspace_state.root_path)
 
         chart_entries: List[Dict[str, Any]] = []
+        chart_entries_by_index: Dict[int, Dict[str, Any]] = {}
         chosen_titles = list(section_titles or [])
-        normalized_bindings = _normalize_chart_bindings(chart_bindings)
 
         for chart_index, chart_record in enumerate(db_manager.session.chart_history, start=1):
             preferred_path: Optional[Path] = None
@@ -1818,7 +2278,7 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
                 else chart_record.title
                 or _chart_title_from_path(preferred_path)
             )
-            chart_entries.append(
+            chart_entry = (
                 {
                     "chart_index": chart_index,
                     "title": section_title,
@@ -1827,6 +2287,8 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
                     "binding": normalized_bindings.get(chart_index),
                 }
             )
+            chart_entries.append(chart_entry)
+            chart_entries_by_index[chart_index] = chart_entry
 
         filter_config = _normalize_filter_schema(filter_schema)
         dataset_records: List[Dict[str, Any]] = []
@@ -1839,57 +2301,130 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
                 dashboard_dataset_path,
             )
             data_filtering_enabled = bool(dataset_records and filter_config)
+        if strict_dashboard_mode and not dataset_records:
+            return (
+                "Dashboard mode could not load the canonical dataset. "
+                "Confirm dashboard_dataset_path points to a valid workspace CSV, Parquet, or JSON artifact."
+            )
+
+        normalized_chart_specs = _build_dashboard_chart_specs(normalized_bindings, dataset_schema)
+        normalized_decision_questions = [
+            _coerce_text_arg(item).strip() for item in (decision_questions or []) if _coerce_text_arg(item).strip()
+        ]
+        normalized_insights = [
+            _coerce_text_arg(item).strip() for item in (insights or []) if _coerce_text_arg(item).strip()
+        ]
+        normalized_known_risks = [
+            _coerce_text_arg(item).strip() for item in (known_risks or []) if _coerce_text_arg(item).strip()
+        ]
+        normalized_data_quality_notes = [
+            _coerce_text_arg(item).strip() for item in (data_quality_notes or []) if _coerce_text_arg(item).strip()
+        ]
+        workspace_id = _coerce_text_arg(getattr(workspace_state, "workspace_id", "")).strip() or "workspace"
+        dashboard_id = uuid4().hex
+        dashboard_meta: Dict[str, Any] = {
+            "dashboardId": dashboard_id,
+            "slug": stable_title,
+            "title": title,
+            "specVersion": 2,
+            "runtimeKind": "native",
+            "createdAt": _utc_now().isoformat(),
+            "updatedAt": _utc_now().isoformat(),
+            "status": "generating",
+            "snapshotPath": dashboard_snapshot_rel_path,
+            "specPath": dashboard_spec_rel_path,
+            "metaPath": dashboard_meta_rel_path,
+            "datasetRef": _build_dataset_reference(workspace_state.root_path, dashboard_dataset_path),
+        }
+        dashboard_dir.mkdir(parents=True, exist_ok=True)
+        dashboard_meta_path.write_text(_json_dump(dashboard_meta), encoding="utf-8")
+        _emit_dashboard_artifact(
+            callbacks,
+            {
+                "dashboardPath": dashboard_rel_path,
+                "workspaceId": workspace_id,
+                "dashboardId": dashboard_id,
+                "title": title,
+                "status": "generating",
+            },
+        )
 
         bound_cards: List[str] = []
         static_cards: List[str] = []
         chart_runtime_defs: List[Dict[str, Any]] = []
+        normalized_dashboard_charts: List[Dict[str, Any]] = []
+        dataset_backed_charts_enabled = bool(dataset_records)
+        approved_chart_count = max(len(normalized_chart_specs), len(chart_entries))
 
-        for entry in chart_entries:
-            chart_index = entry["chart_index"]
-            section_title = entry["title"]
-            chart_path = entry["path"]
-            chart_kind = entry["kind"]
-            binding = entry.get("binding") or {}
-            binding_is_compatible = bool(
-                data_filtering_enabled
-                and binding
-                and binding.get("x_field")
-                and (binding.get("aggregation") == "count" or binding.get("y_field"))
+        for chart_index in range(1, approved_chart_count + 1):
+            entry = chart_entries_by_index.get(chart_index)
+            chart_spec = normalized_chart_specs.get(chart_index) or {}
+            binding = normalized_bindings.get(chart_index) or {}
+            section_title = (
+                _coerce_text_arg((chart_spec.get("labels") or {}).get("title"))
+                or _coerce_text_arg(binding.get("title"))
+                or (entry or {}).get("title")
+                or (chosen_titles[chart_index - 1] if chart_index - 1 < len(chosen_titles) else "")
+                or f"Chart {chart_index}"
             )
 
+            if chart_spec:
+                normalized_dashboard_charts.append(
+                    {
+                        **chart_spec,
+                        "title": section_title,
+                    }
+                )
+
+            binding_is_compatible = bool(
+                dataset_backed_charts_enabled
+                and chart_spec
+                and chart_spec.get("liveCapable")
+            )
             if binding_is_compatible:
                 div_id = f"dashboard-chart-{chart_index}"
                 chart_runtime_defs.append(
                     {
+                        "chartId": chart_spec.get("chartId") or f"chart_{chart_index}",
                         "chartIndex": chart_index,
                         "divId": div_id,
                         "title": section_title,
-                        "chartType": binding.get("chart_type") or "bar",
-                        "xField": binding.get("x_field"),
-                        "yField": binding.get("y_field"),
-                        "aggregation": binding.get("aggregation") or "count",
-                        "seriesField": binding.get("series_field") or "",
-                        "orientation": binding.get("orientation") or "",
-                        "sortBy": binding.get("sort_by") or "y",
-                        "sortDirection": binding.get("sort_direction") or "desc",
-                        "limit": binding.get("limit") or 0,
-                        "mode": binding.get("mode") or "lines+markers",
-                        "xTitle": binding.get("x_title") or "",
-                        "yTitle": binding.get("y_title") or "",
+                        "chartType": chart_spec.get("chartType") or "bar",
+                        "dimensionField": chart_spec.get("dimensionField") or "",
+                        "metricField": chart_spec.get("metricField") or "",
+                        "numeratorField": chart_spec.get("numeratorField") or "",
+                        "denominatorField": chart_spec.get("denominatorField") or "",
+                        "xField": chart_spec.get("dimensionField") or "",
+                        "yField": chart_spec.get("metricField") or "",
+                        "aggregation": chart_spec.get("aggregation") or "count",
+                        "seriesField": chart_spec.get("seriesField") or "",
+                        "orientation": chart_spec.get("orientation") or "",
+                        "sortBy": ((chart_spec.get("sort") or {}).get("by")) or "y",
+                        "sortDirection": ((chart_spec.get("sort") or {}).get("direction")) or "desc",
+                        "limit": chart_spec.get("limit") or 0,
+                        "mode": chart_spec.get("mode") or "lines+markers",
+                        "xTitle": ((chart_spec.get("labels") or {}).get("x")) or "",
+                        "yTitle": ((chart_spec.get("labels") or {}).get("y")) or "",
                     }
                 )
+                chart_descriptor = "Filter-aware chart bound to the canonical dashboard dataset" if data_filtering_enabled else "Interactive chart bound to the canonical dashboard dataset"
                 bound_cards.append(
                     f"<article class=\"chart-card filter-aware\" data-chart-index=\"{chart_index}\">"
                     f"<h3>{html.escape(section_title)}</h3>"
-                    f"<p class=\"chart-meta\">Filter-aware chart bound to the canonical dashboard dataset</p>"
+                    f"<p class=\"chart-meta\">{html.escape(chart_descriptor)}</p>"
                     f"<div id=\"{div_id}\" class=\"plotly-embed\"></div>"
                     f"<p class=\"chart-note\" id=\"{div_id}-status\"></p>"
                     f"</article>"
                 )
                 continue
 
+            if not entry:
+                continue
+
+            chart_path = entry["path"]
+            chart_kind = entry["kind"]
             static_reason = (
-                _coerce_text_arg(binding.get("static_reason"))
+                _coerce_text_arg(chart_spec.get("staticReason") or binding.get("static_reason"))
                 or "Static appendix artifact because this chart is not bound to the dashboard dataset."
             )
             try:
@@ -1949,28 +2484,62 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
             f"Charts embedded: {len(bound_cards) + len(static_cards)} • "
             f"Queries embedded: {len(db_manager.session.query_history)}"
         )
-        dashboard_metric_cards = [
+        normalized_metric_cards: List[Dict[str, str]] = []
+        for raw_card in metric_cards or []:
+            if not isinstance(raw_card, dict):
+                continue
+            label = _coerce_text_arg(raw_card.get("label")).strip()
+            value = _coerce_text_arg(raw_card.get("value")).strip()
+            meta = _coerce_text_arg(raw_card.get("meta")).strip()
+            if not label or not value:
+                continue
+            normalized_metric_cards.append({"label": label, "value": value, "meta": meta})
+        dashboard_metric_cards = normalized_metric_cards[:3] if normalized_metric_cards else [
             {
-                "label": "Charts Embedded",
-                "value": str(len(bound_cards) + len(static_cards)),
-                "meta": "Across live and appendix sections",
+                "label": "Charts",
+                "value": str(len(chart_runtime_defs) or len(normalized_dashboard_charts)),
+                "meta": "Approved visuals in the dashboard package",
             },
             {
-                "label": "Filter-Aware",
-                "value": str(len(bound_cards)),
-                "meta": "Charts bound to the canonical dataset",
-            },
-            {
-                "label": "Static Appendix",
-                "value": str(len(static_cards)),
-                "meta": "Snapshot-only visual artifacts",
+                "label": "Shared Filters",
+                "value": str(len(filter_config)),
+                "meta": "Controls applied across the dashboard dataset",
             },
             {
                 "label": "Dataset Rows",
                 "value": str(len(dataset_records)) if dataset_records else "n/a",
-                "meta": "Browser-side filter dataset payload",
+                "meta": "Canonical dataset rows available to the native renderer",
             },
         ]
+        validation_error = _validate_dashboard_spec_inputs(
+            strict_dashboard_mode=strict_dashboard_mode,
+            dashboard_dataset_path=dashboard_dataset_path,
+            audience=audience,
+            business_question=business_question,
+            decision_questions=normalized_decision_questions,
+            layout_template=layout_template,
+            metric_cards=dashboard_metric_cards,
+            chart_specs=normalized_chart_specs,
+        )
+        if validation_error:
+            dashboard_meta.update(
+                {
+                    "updatedAt": _utc_now().isoformat(),
+                    "status": "error",
+                }
+            )
+            dashboard_meta_path.write_text(_json_dump(dashboard_meta), encoding="utf-8")
+            _emit_dashboard_artifact(
+                callbacks,
+                {
+                    "dashboardPath": dashboard_rel_path,
+                    "workspaceId": workspace_id,
+                    "dashboardId": dashboard_id,
+                    "title": title,
+                    "status": "error",
+                },
+            )
+            return validation_error
         filter_panel_html = ""
         if data_filtering_enabled:
             filter_panel_html = (
@@ -1991,36 +2560,172 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
                 "</div>"
                 "</details>"
             )
-        html_output = render_dashboard_html(
-            title=title,
-            description=description,
-            generated_at=generated_at,
-            hero_meta=hero_meta,
-            metric_cards=dashboard_metric_cards,
-            filter_panel_html=filter_panel_html,
-            primary_cards=bound_cards or static_cards,
-            appendix_cards=static_cards if bound_cards and static_cards else [],
-            query_items=query_items,
-            dataset_records=dataset_records,
-            filter_config=filter_config,
-            chart_runtime_defs=chart_runtime_defs,
-            dataset_schema=dataset_schema,
-            highlights_heading="Highlights" if bound_cards else "Charts",
+        try:
+            html_output = render_dashboard_html(
+                title=title,
+                description=description,
+                hero_eyebrow=hero_eyebrow,
+                audience=audience,
+                business_question=business_question,
+                headline_takeaway=headline_takeaway,
+                generated_at=generated_at,
+                hero_meta=hero_meta,
+                metric_cards=dashboard_metric_cards,
+                filter_panel_html=filter_panel_html,
+                primary_cards=bound_cards or static_cards,
+                appendix_cards=static_cards if bound_cards and static_cards else [],
+                query_items=query_items,
+                decision_questions=normalized_decision_questions,
+                insights=normalized_insights,
+                known_risks=normalized_known_risks,
+                data_quality_notes=normalized_data_quality_notes,
+                layout_template=layout_template,
+                dataset_records=dataset_records,
+                filter_config=filter_config,
+                chart_runtime_defs=chart_runtime_defs,
+                dataset_schema=dataset_schema,
+                highlights_heading="Decision Drivers" if bound_cards else "Charts",
+            )
+        except Exception:
+            dashboard_meta.update(
+                {
+                    "updatedAt": _utc_now().isoformat(),
+                    "status": "error",
+                }
+            )
+            try:
+                dashboard_meta_path.write_text(_json_dump(dashboard_meta), encoding="utf-8")
+            except Exception:
+                logger.warning("Failed to persist dashboard error manifest", exc_info=True)
+            _emit_dashboard_artifact(
+                callbacks,
+                {
+                    "dashboardPath": dashboard_rel_path,
+                    "workspaceId": workspace_id,
+                    "dashboardId": dashboard_id,
+                    "title": title,
+                    "status": "error",
+                },
+            )
+            raise
+        preview_rel_written = ""
+        if dataset_records:
+            dashboard_data_dir.mkdir(parents=True, exist_ok=True)
+            dashboard_rows_path.write_text(_json_dump({"rows": dataset_records}), encoding="utf-8")
+            preview_rel_written = dashboard_rows_rel_path
+        dataset_block = _build_dashboard_dataset_block(
+            workspace_state.root_path,
+            dashboard_dataset_path,
+            dataset_records,
+            preview_rel_written,
         )
+        dashboard_spec = {
+            "version": 2,
+            "dashboardId": dashboard_id,
+            "runtimeKind": "native",
+            "slug": stable_title,
+            "title": title,
+            "audience": audience,
+            "businessQuestion": business_question,
+            "decisionQuestions": normalized_decision_questions,
+            "description": description,
+            "generatedAt": generated_at,
+            "dashboardPath": dashboard_rel_path,
+            "snapshotPath": dashboard_snapshot_rel_path,
+            "specPath": dashboard_spec_rel_path,
+            "metaPath": dashboard_meta_rel_path,
+            "heroMeta": hero_meta,
+            "highlightsHeading": "Decision Drivers" if bound_cards else "Charts",
+            "hero": {
+                "eyebrow": hero_eyebrow,
+                "description": description,
+                "headlineTakeaway": headline_takeaway,
+                "kpis": dashboard_metric_cards,
+            },
+            "filters": filter_config,
+            "charts": normalized_dashboard_charts,
+            "chartRuntimeDefs": chart_runtime_defs,
+            "metricCards": dashboard_metric_cards,
+            "layout": {
+                "template": layout_template,
+                "gridColumns": 2,
+                "maxFirstScreenVisuals": 5,
+            },
+            "insights": normalized_insights,
+            "knownRisks": normalized_known_risks,
+            "dataQualityNotes": normalized_data_quality_notes,
+            "dataset": dataset_block,
+            "datasetRef": dataset_block,
+            "datasetSchema": dataset_schema,
+            "fallbackMode": "read_only_html",
+        }
 
         try:
-            dashboard_path.parent.mkdir(parents=True, exist_ok=True)
-            dashboard_path.write_text(html_output, encoding="utf-8")
+            dashboard_dir.mkdir(parents=True, exist_ok=True)
+            dashboard_spec_path.write_text(_json_dump(dashboard_spec), encoding="utf-8")
+            dashboard_snapshot_path.write_text(html_output, encoding="utf-8")
+            dashboard_meta.update(
+                {
+                    "updatedAt": _utc_now().isoformat(),
+                    "status": "ready",
+                    "runtimeKind": "native",
+                    "specVersion": 2,
+                    "datasetRef": dashboard_spec.get("dataset") or {},
+                }
+            )
+            dashboard_meta_path.write_text(_json_dump(dashboard_meta), encoding="utf-8")
             db_manager.mark_dashboard_generated()
-            artifact = {
-                "path": _workspace_rel(dashboard_path, workspace_state.root_path),
-                "mimeType": ALLOWED_ARTIFACT_EXTENSIONS[".html"],
-                "size": dashboard_path.stat().st_size,
-            }
-            db_manager.register_artifact(artifact)
-            _emit_artifacts(callbacks, [artifact])
-            return f"Dashboard saved to: {_workspace_rel(dashboard_path, workspace_state.root_path)}"
+            artifacts_out: List[Dict[str, Any]] = [
+                {
+                    "path": dashboard_snapshot_rel_path,
+                    "mimeType": ALLOWED_ARTIFACT_EXTENSIONS[".html"],
+                    "size": dashboard_snapshot_path.stat().st_size,
+                }
+            ]
+            if preview_rel_written:
+                artifacts_out.append(
+                    {
+                        "path": preview_rel_written,
+                        "mimeType": ALLOWED_ARTIFACT_EXTENSIONS[".json"],
+                        "size": dashboard_rows_path.stat().st_size,
+                    }
+                )
+            for art in artifacts_out:
+                db_manager.register_artifact(art)
+            _emit_artifacts(callbacks, artifacts_out)
+            _emit_dashboard_artifact(
+                callbacks,
+                {
+                    "dashboardPath": dashboard_rel_path,
+                    "workspaceId": workspace_id,
+                    "dashboardId": dashboard_id,
+                    "title": title,
+                    "status": "ready",
+                },
+            )
+            return f"Dashboard package saved to: {dashboard_rel_path}"
         except Exception as exc:  # pragma: no cover - defensive
+            dashboard_meta.update(
+                {
+                    "updatedAt": _utc_now().isoformat(),
+                    "status": "error",
+                }
+            )
+            try:
+                dashboard_dir.mkdir(parents=True, exist_ok=True)
+                dashboard_meta_path.write_text(_json_dump(dashboard_meta), encoding="utf-8")
+            except Exception:
+                logger.warning("Failed to persist dashboard error manifest", exc_info=True)
+            _emit_dashboard_artifact(
+                callbacks,
+                {
+                    "dashboardPath": dashboard_rel_path,
+                    "workspaceId": workspace_id,
+                    "dashboardId": dashboard_id,
+                    "title": title,
+                    "status": "error",
+                },
+            )
             logger.warning("Failed to save dashboard HTML: %s", exc)
             return f"Failed to save dashboard file: {exc}"
 

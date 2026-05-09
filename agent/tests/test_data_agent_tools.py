@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from helpudoc_agent.data_agent_tools import (
     DuckDBManager,
+    _build_dashboard_chart_specs,
     _format_sample_value,
     _snapshot_workspace,
     build_data_agent_tools,
@@ -251,6 +252,51 @@ class DataAgentToolsTest(unittest.TestCase):
             manager = workspace.context["data_agent_manager"]
             self.assertFalse(manager.session.chart_history)
 
+    def test_build_dashboard_chart_specs_swaps_horizontal_bar_dimension_and_metric(self) -> None:
+        bindings = {
+            1: {
+                "chart_index": 1,
+                "chart_type": "bar",
+                "x_field": "cancellation_rate",
+                "y_field": "country",
+                "orientation": "h",
+                "aggregation": "avg",
+            }
+        }
+        dataset_schema = [
+            {"name": "country", "type": "object"},
+            {"name": "cancellation_rate", "type": "float64"},
+        ]
+
+        specs = _build_dashboard_chart_specs(bindings, dataset_schema)
+
+        self.assertEqual(specs[1]["dimensionField"], "country")
+        self.assertEqual(specs[1]["metricField"], "cancellation_rate")
+        self.assertTrue(specs[1]["liveCapable"])
+
+    def test_build_dashboard_chart_specs_promotes_ratio_binding(self) -> None:
+        bindings = {
+            1: {
+                "chart_index": 1,
+                "chart_type": "bar",
+                "x_field": "country",
+                "aggregation": "avg",
+                "numerator_field": "cancelled_orders",
+                "denominator_field": "total_orders",
+            }
+        }
+        dataset_schema = [
+            {"name": "country", "type": "object"},
+            {"name": "cancelled_orders", "type": "int64"},
+            {"name": "total_orders", "type": "int64"},
+        ]
+
+        specs = _build_dashboard_chart_specs(bindings, dataset_schema)
+
+        self.assertEqual(specs[1]["aggregation"], "ratio")
+        self.assertEqual(specs[1]["numeratorField"], "cancelled_orders")
+        self.assertEqual(specs[1]["denominatorField"], "total_orders")
+
     def test_run_sql_query_caps_scalar_subquery_aggregate_results(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -279,6 +325,89 @@ class DataAgentToolsTest(unittest.TestCase):
             manager = workspace.context["data_agent_manager"]
             self.assertEqual(len(manager.session.last_query_result), 1000)
             self.assertTrue(manager.session.query_history[-1].truncated)
+
+    def test_generate_dashboard_writes_package_folder(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "datasets").mkdir()
+            (root / "datasets" / "orders.csv").write_text(
+                "country,cancelled_orders,total_orders,cancellation_rate\n"
+                "Spain,5,100,0.05\n"
+                "Japan,8,120,0.0667\n"
+                "Spain,4,80,0.05\n",
+                encoding="utf-8",
+            )
+            workspace = self._workspace(root)
+            tools = self._tool_map(workspace)
+
+            tools["get_table_schema"].invoke({"table_names": ["orders"]})
+            tools["run_sql_query"].invoke(
+                {
+                    "sql_query": (
+                        "SELECT country, cancelled_orders, total_orders, cancellation_rate "
+                        "FROM orders"
+                    )
+                }
+            )
+            tools["generate_chart_config"].invoke(
+                {
+                    "chart_title": "Cancellation_Rate",
+                    "python_code": (
+                        "chart_config = {\n"
+                        "  'data': [{'x': df['country'].tolist(), 'y': df['cancellation_rate'].tolist(), 'type': 'bar'}],\n"
+                        "  'layout': {'title': 'Cancellation rate'}\n"
+                        "}\n"
+                    ),
+                }
+            )
+
+            raw = tools["generate_dashboard"].invoke(
+                {
+                    "title": "Order Cancellations",
+                    "description": "Tracks cancellation risk by country.",
+                    "output_path": "dashboards/order_cancellations",
+                    "dashboard_dataset_path": "datasets/orders.csv",
+                    "filter_schema": [{"id": "country", "field": "country", "label": "Country"}],
+                    "chart_bindings": [
+                        {
+                            "chart_index": 1,
+                            "chart_type": "bar",
+                            "x_field": "country",
+                            "y_field": "cancellation_rate",
+                            "aggregation": "avg",
+                        }
+                    ],
+                }
+            )
+
+            self.assertIn("Dashboard package saved to: dashboards/order_cancellations", raw)
+
+            meta_path = root / "dashboards" / "order_cancellations" / "dashboard.meta.json"
+            spec_path = root / "dashboards" / "order_cancellations" / "dashboard.spec.json"
+            snapshot_path = root / "dashboards" / "order_cancellations" / "dashboard.snapshot.html"
+
+            self.assertTrue(meta_path.exists())
+            self.assertTrue(spec_path.exists())
+            self.assertTrue(snapshot_path.exists())
+
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            spec = json.loads(spec_path.read_text(encoding="utf-8"))
+
+            self.assertEqual(meta["status"], "ready")
+            self.assertEqual(meta["runtimeKind"], "native")
+            self.assertEqual(meta["snapshotPath"], "dashboards/order_cancellations/dashboard.snapshot.html")
+            self.assertEqual(spec["dashboardPath"], "dashboards/order_cancellations")
+            self.assertEqual(spec["runtimeKind"], "native")
+            self.assertEqual(spec["dataset"]["path"], "datasets/orders.csv")
+            self.assertIn("previewPath", spec["dataset"])
+            self.assertTrue(spec["dataset"]["previewPath"].endswith("data/dashboard.rows.json"))
+            self.assertEqual(spec["fallbackMode"], "read_only_html")
+
+            rows_path = root / "dashboards" / "order_cancellations" / "data" / "dashboard.rows.json"
+            self.assertTrue(rows_path.exists())
+            rows_payload = json.loads(rows_path.read_text(encoding="utf-8"))
+            self.assertIn("rows", rows_payload)
+            self.assertGreater(len(rows_payload["rows"]), 0)
 
 
 if __name__ == "__main__":

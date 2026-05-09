@@ -3,13 +3,12 @@ name: data
 description: >
   Data analysis skill hub. Routes to the right specialist subskill depending on the
   request — exploration, query writing, end-to-end analysis, visualization, validation,
-  interactive dashboard assembly, or recurring snapshot refresh.
+  dashboard planning plus assembly, or recurring snapshot refresh.
 tools:
   - data_agent_tools
   - get_table_schema
   - run_sql_query
   - materialize_bigquery_to_parquet
-  - generate_chart_config
   - generate_summary
   - generate_dashboard
 mcp_servers:
@@ -45,11 +44,14 @@ Choose the right data connector for the source:
   system of record and DuckDB over workspace snapshots as the local serving layer.
 - **Local files (CSV / Parquet in the workspace)** — use `data_agent_tools`.
   Available tools: `get_table_schema`, `run_sql_query`,
-  `materialize_bigquery_to_parquet`, `generate_chart_config`, `generate_summary`,
+  `materialize_bigquery_to_parquet`, `generate_summary`,
   `generate_dashboard`.
 - **Recurring dashboards / canned reports** — use `data/refresh` to publish a stable
   snapshot such as `datasets/<slug>/latest.parquet`, optionally mirror it to CSV, and
   regenerate a stable HTML artifact in `dashboards/` or `reports/`.
+- **Dashboard creation** — `data/dashboard` is review-first. It should inspect the tagged
+  dataset/report context, propose a dashboard plan, wait for approval, then generate the
+  dashboard package.
 - **Do not attempt cross-source SQL joins in v1.** Orchestrate at the workflow level
   (query each source separately; combine in Python / summary prose).
 
@@ -62,3 +64,6 @@ Choose the right data connector for the source:
 - One `generate_summary` OR one `generate_dashboard` per run.
 - Reports and dashboards only include artifacts from the **current run** — never
   from prior runs.
+- Dashboard requests should prefer a tagged dataset artifact as the source of truth and
+  avoid fresh warehouse rediscovery unless the tagged inputs are unusable.
+- In `data/dashboard`, prefer structured chart bindings over `generate_chart_config` on the main path.

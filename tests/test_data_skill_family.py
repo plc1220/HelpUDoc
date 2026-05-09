@@ -10,6 +10,8 @@ Covers:
 from __future__ import annotations
 
 import json
+import threading
+import time
 import textwrap
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -573,6 +575,59 @@ class TestQueryBudgetEnforcement:
         assert mgr.session.query_history[0].sql == "SELECT 1 AS a"
         assert mgr.session.query_history[1].sql == "SELECT 2 AS b"
 
+    def test_run_query_serializes_shared_duckdb_connection(self, tmp_path: Path) -> None:
+        from agent.helpudoc_agent.data_agent_tools import DuckDBManager
+        from unittest.mock import MagicMock
+
+        ws = MagicMock()
+        ws.root_path = tmp_path
+        ws.context = {}
+        mgr = DuckDBManager(ws)
+        mgr.session.schema_inspected = True
+
+        state = {
+            "active": 0,
+            "max_active": 0,
+        }
+        state_lock = threading.Lock()
+
+        class FakeResult:
+            def df(self) -> pd.DataFrame:
+                return pd.DataFrame({"value": [1]})
+
+        class FakeConnection:
+            def execute(self, query: str) -> FakeResult:
+                with state_lock:
+                    state["active"] += 1
+                    state["max_active"] = max(state["max_active"], state["active"])
+                time.sleep(0.05)
+                with state_lock:
+                    state["active"] -= 1
+                return FakeResult()
+
+        mgr.con = FakeConnection()
+
+        errors: list[Exception] = []
+
+        def _run(sql: str) -> None:
+            try:
+                mgr.run_query(sql)
+            except Exception as exc:  # pragma: no cover - regression guard
+                errors.append(exc)
+
+        threads = [
+            threading.Thread(target=_run, args=("SELECT 1 AS value",)),
+            threading.Thread(target=_run, args=("SELECT 2 AS value",)),
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=2)
+
+        assert not errors
+        assert all(not thread.is_alive() for thread in threads)
+        assert state["max_active"] == 1
+
 
 class TestChartBudgetEnforcement:
     """Chart count is capped at MAX_CHART_COUNT."""
@@ -679,6 +734,221 @@ class TestRunScopedHistory:
         assert "charts/old_chart.plotly.json" not in run_chart_paths
 
 
+class TestStrictDashboardMode:
+    def _write_dashboard_dataset(self, tmp_path: Path) -> None:
+        datasets_dir = tmp_path / "datasets"
+        datasets_dir.mkdir(exist_ok=True)
+        pd.DataFrame(
+            {
+                "country": ["US", "US", "CA", "CA"],
+                "device_type": ["Mobile", "Desktop", "Mobile", "Desktop"],
+                "browser": ["Chrome", "Safari", "Chrome", "Firefox"],
+                "cancelled_orders": [10, 5, 7, 3],
+                "total_orders": [100, 50, 70, 30],
+            }
+        ).to_csv(datasets_dir / "cancellations_6m_v2.csv", index=False)
+
+    def test_dashboard_preapproval_blocks_aggregate_queries(self, tmp_path: Path) -> None:
+        from agent.helpudoc_agent.data_agent_tools import build_data_agent_tools
+
+        self._write_dashboard_dataset(tmp_path)
+        workspace = _build_workspace(tmp_path)
+        tools = {tool.name: tool for tool in build_data_agent_tools(workspace)}
+        workspace.context.update(
+            {
+                "active_skill": "data/dashboard",
+                "plan_approved": False,
+                "dashboard_mode": {
+                    "strictLocalDatasets": True,
+                    "taggedDatasetPaths": ["datasets/cancellations_6m_v2.csv"],
+                },
+            }
+        )
+
+        tools["get_table_schema"].invoke({"table_names": []})
+        result = tools["run_sql_query"].invoke(
+            {"sql_query": "SELECT country, COUNT(*) AS total_orders FROM cancellations_6m_v2 GROUP BY country"}
+        )
+
+        assert "Dashboard planning mode is active" in result
+        assert "Before approval" in result
+
+    def test_dashboard_preapproval_allows_single_preview_query(self, tmp_path: Path) -> None:
+        from agent.helpudoc_agent.data_agent_tools import build_data_agent_tools
+
+        self._write_dashboard_dataset(tmp_path)
+        workspace = _build_workspace(tmp_path)
+        tools = {tool.name: tool for tool in build_data_agent_tools(workspace)}
+        workspace.context.update(
+            {
+                "active_skill": "data/dashboard",
+                "plan_approved": False,
+                "dashboard_mode": {
+                    "strictLocalDatasets": True,
+                    "taggedDatasetPaths": ["datasets/cancellations_6m_v2.csv"],
+                },
+            }
+        )
+
+        tools["get_table_schema"].invoke({"table_names": []})
+        first = tools["run_sql_query"].invoke({"sql_query": "SELECT * FROM cancellations_6m_v2 LIMIT 5"})
+        second = tools["run_sql_query"].invoke({"sql_query": "SELECT * FROM cancellations_6m_v2 LIMIT 5"})
+
+        assert "Result shape:" in first
+        assert "preview query is allowed before approval" in second
+
+    def test_dashboard_duplicate_dimension_pass_is_blocked_after_approval(self, tmp_path: Path) -> None:
+        from agent.helpudoc_agent.data_agent_tools import build_data_agent_tools
+
+        self._write_dashboard_dataset(tmp_path)
+        workspace = _build_workspace(tmp_path)
+        tools = {tool.name: tool for tool in build_data_agent_tools(workspace)}
+        workspace.context.update(
+            {
+                "active_skill": "data/dashboard",
+                "plan_approved": True,
+                "dashboard_mode": {
+                    "strictLocalDatasets": True,
+                    "taggedDatasetPaths": ["datasets/cancellations_6m_v2.csv"],
+                },
+            }
+        )
+
+        tools["get_table_schema"].invoke({"table_names": []})
+        first = tools["run_sql_query"].invoke(
+            {"sql_query": "SELECT country, COUNT(*) AS total_orders FROM cancellations_6m_v2 GROUP BY country"}
+        )
+        second = tools["run_sql_query"].invoke(
+            {"sql_query": "SELECT country, SUM(cancelled_orders) AS cancelled_orders FROM cancellations_6m_v2 GROUP BY country"}
+        )
+
+        assert "Result shape:" in first
+        assert "Duplicate dashboard dimension pass blocked" in second
+
+    def test_dashboard_mode_blocks_chart_code_generation_happy_path(self, tmp_path: Path) -> None:
+        from agent.helpudoc_agent.data_agent_tools import build_data_agent_tools
+
+        self._write_dashboard_dataset(tmp_path)
+        workspace = _build_workspace(tmp_path)
+        tools = {tool.name: tool for tool in build_data_agent_tools(workspace)}
+        workspace.context.update(
+            {
+                "active_skill": "data/dashboard",
+                "plan_approved": True,
+                "dashboard_mode": {
+                    "strictLocalDatasets": True,
+                    "taggedDatasetPaths": ["datasets/cancellations_6m_v2.csv"],
+                },
+            }
+        )
+
+        tools["get_table_schema"].invoke({"table_names": []})
+        tools["run_sql_query"].invoke({"sql_query": "SELECT country, COUNT(*) AS cancellations FROM cancellations_6m_v2 GROUP BY country"})
+        result = tools["generate_chart_config"].invoke(
+            {
+                "chart_title": "Should_Be_Spec_Driven",
+                "python_code": "chart_config = {'data': [], 'layout': {}}",
+            }
+        )
+
+        assert "structured chart specs" in result
+
+    def test_dashboard_mode_requires_three_chart_bindings_before_package(self, tmp_path: Path) -> None:
+        from agent.helpudoc_agent.data_agent_tools import build_data_agent_tools
+
+        self._write_dashboard_dataset(tmp_path)
+        workspace = _build_workspace(tmp_path)
+        tools = {tool.name: tool for tool in build_data_agent_tools(workspace)}
+        workspace.context.update(
+            {
+                "active_skill": "data/dashboard",
+                "plan_approved": True,
+                "dashboard_mode": {
+                    "strictLocalDatasets": True,
+                    "taggedDatasetPaths": ["datasets/cancellations_6m_v2.csv"],
+                },
+            }
+        )
+
+        tools["get_table_schema"].invoke({"table_names": []})
+        tools["run_sql_query"].invoke({"sql_query": "SELECT 42 AS val"})
+
+        result = tools["generate_dashboard"].invoke(
+            {
+                "title": "Too Sparse",
+                "description": "Not enough charts yet.",
+                "dashboard_dataset_path": "datasets/cancellations_6m_v2.csv",
+                "chart_bindings": [
+                    {
+                        "chart_index": 1,
+                        "chart_type": "bar",
+                        "x_field": "country",
+                        "aggregation": "count",
+                        "title": "Only one approved chart",
+                    }
+                ],
+            }
+        )
+        assert "pass 3 to 5 approved chart bindings" in result
+
+    def test_dashboard_mode_requires_executive_spec_fields(self, tmp_path: Path) -> None:
+        from agent.helpudoc_agent.data_agent_tools import build_data_agent_tools
+
+        self._write_dashboard_dataset(tmp_path)
+        workspace = _build_workspace(tmp_path)
+        tools = {tool.name: tool for tool in build_data_agent_tools(workspace)}
+        workspace.context.update(
+            {
+                "active_skill": "data/dashboard",
+                "plan_approved": True,
+                "dashboard_mode": {
+                    "strictLocalDatasets": True,
+                    "taggedDatasetPaths": ["datasets/cancellations_6m_v2.csv"],
+                },
+            }
+        )
+
+        tools["get_table_schema"].invoke({"table_names": []})
+        tools["run_sql_query"].invoke({"sql_query": "SELECT 42 AS val"})
+        result = tools["generate_dashboard"].invoke(
+            {
+                "title": "Executive Dashboard",
+                "description": "Missing executive fields should be rejected.",
+                "dashboard_dataset_path": "datasets/cancellations_6m_v2.csv",
+                "chart_bindings": [
+                    {
+                        "chart_index": 1,
+                        "chart_type": "line",
+                        "dimension_field": "country",
+                        "aggregation": "count",
+                        "title": "Cancellation risk is highest in a few countries",
+                        "question_answered": "Where is risk concentrated?",
+                        "why_it_matters": "Country variance helps prioritize interventions.",
+                    },
+                    {
+                        "chart_index": 2,
+                        "chart_type": "bar",
+                        "dimension_field": "browser",
+                        "aggregation": "count",
+                        "title": "Browser friction concentrates cancellation pressure",
+                        "question_answered": "Which browser segments underperform?",
+                        "why_it_matters": "Browser-level friction may indicate UX or checkout issues.",
+                    },
+                    {
+                        "chart_index": 3,
+                        "chart_type": "bar",
+                        "dimension_field": "device_type",
+                        "aggregation": "count",
+                        "title": "Mobile journeys create a disproportionate share of cancellations",
+                        "question_answered": "Which device journeys create the most risk?",
+                        "why_it_matters": "Device context guides operational fixes.",
+                    },
+                ],
+            }
+        )
+        assert "audience is required" in result.lower()
+
+
 class TestDashboardTool:
     """generate_dashboard produces a single self-contained HTML artifact."""
 
@@ -713,9 +983,121 @@ class TestDashboardTool:
         })
         dashboards_dir = tmp_path / "dashboards"
         assert dashboards_dir.exists(), "dashboards/ dir should be created"
-        html_files = list(dashboards_dir.glob("*.html"))
-        assert len(html_files) == 1, f"Expected 1 dashboard HTML, got {html_files}"
-        assert "Dashboard saved to" in result or "dashboards/" in result
+        snapshot_path = dashboards_dir / "My_Dashboard" / "dashboard.snapshot.html"
+        spec_path = dashboards_dir / "My_Dashboard" / "dashboard.spec.json"
+        meta_path = dashboards_dir / "My_Dashboard" / "dashboard.meta.json"
+        assert snapshot_path.exists()
+        assert spec_path.exists()
+        assert meta_path.exists()
+        assert "Dashboard package saved to" in result or "dashboards/" in result
+
+    def test_strict_dashboard_writes_spec_v2_and_native_metadata(self, tmp_path: Path) -> None:
+        from agent.helpudoc_agent.data_agent_tools import build_data_agent_tools
+
+        datasets_dir = tmp_path / "datasets"
+        datasets_dir.mkdir(parents=True, exist_ok=True)
+        pd.DataFrame(
+            {
+                "week": ["2026-W01", "2026-W02", "2026-W03"],
+                "country": ["US", "CA", "US"],
+                "browser": ["Chrome", "Safari", "Chrome"],
+                "device_type": ["Mobile", "Desktop", "Mobile"],
+                "cancelled_orders": [10, 5, 11],
+                "total_orders": [100, 60, 110],
+            }
+        ).to_csv(datasets_dir / "cancellations.csv", index=False)
+
+        workspace = _build_workspace(tmp_path)
+        workspace.context.update(
+            {
+                "active_skill": "data/dashboard",
+                "plan_approved": True,
+                "dashboard_mode": {
+                    "strictLocalDatasets": True,
+                    "taggedDatasetPaths": ["datasets/cancellations.csv"],
+                },
+            }
+        )
+        tools = {tool.name: tool for tool in build_data_agent_tools(workspace)}
+        tools["get_table_schema"].invoke({"table_names": []})
+        tools["run_sql_query"].invoke({"sql_query": "SELECT 1 AS val"})
+        result = tools["generate_dashboard"].invoke(
+            {
+                "title": "Cancellation Drivers",
+                "description": "Executive dashboard for cancellation drivers.",
+                "audience": "Ops leadership",
+                "business_question": "Which segments drive the highest cancellation risk?",
+                "decision_questions": [
+                    "Where is cancellation risk rising over time?",
+                    "Which customer segments deserve intervention first?",
+                ],
+                "layout_template": "executive_driver_dashboard",
+                "headline_takeaway": "Cancellation risk is concentrated in a few segments.",
+                "insights": [
+                    "Weekly cancellation volume is rising.",
+                    "Browser and country concentration suggest prioritized fixes.",
+                ],
+                "known_risks": ["Dataset is a six-month snapshot."],
+                "data_quality_notes": ["Cancellation rate is weighted from totals, not average-of-averages."],
+                "metric_cards": [
+                    {"label": "Cancellation Rate", "value": "15.1%", "meta": "Weighted across all orders"},
+                    {"label": "Cancelled Orders", "value": "5,155", "meta": "Last 6 months"},
+                    {"label": "Highest-Risk Segment", "value": "Chrome / Mobile", "meta": "Largest contributor"},
+                ],
+                "dashboard_dataset_path": "datasets/cancellations.csv",
+                "chart_bindings": [
+                    {
+                        "chart_index": 1,
+                        "chart_type": "line",
+                        "dimension_field": "week",
+                        "metric_field": "cancelled_orders",
+                        "aggregation": "sum",
+                        "title": "Cancellation pressure is rising week over week",
+                        "question_answered": "Is cancellation volume rising over time?",
+                        "why_it_matters": "Leadership needs to know whether risk is improving or worsening.",
+                        "layout_span": "wide",
+                    },
+                    {
+                        "chart_index": 2,
+                        "chart_type": "bar",
+                        "dimension_field": "country",
+                        "metric_field": "cancelled_orders",
+                        "aggregation": "sum",
+                        "orientation": "h",
+                        "title": "A small group of countries drives the bulk of cancellations",
+                        "question_answered": "Which geographies contribute most to cancellations?",
+                        "why_it_matters": "Geographic concentration highlights where remediation should start.",
+                    },
+                    {
+                        "chart_index": 3,
+                        "chart_type": "bar",
+                        "dimension_field": "browser",
+                        "metric_field": "cancelled_orders",
+                        "aggregation": "sum",
+                        "title": "Browser friction appears concentrated in a few user journeys",
+                        "question_answered": "Which browser contexts need the most attention?",
+                        "why_it_matters": "Browser-level issues may map to UX or checkout defects.",
+                    },
+                ],
+            }
+        )
+
+        assert "Dashboard package saved to" in result
+        spec_path = tmp_path / "dashboards" / "Cancellation_Drivers" / "dashboard.spec.json"
+        meta_path = tmp_path / "dashboards" / "Cancellation_Drivers" / "dashboard.meta.json"
+        spec = json.loads(spec_path.read_text(encoding="utf-8"))
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        assert spec["version"] == 2
+        assert spec["runtimeKind"] == "native"
+        assert spec["dataset"].get("previewPath", "").endswith("data/dashboard.rows.json")
+        assert spec["dataset"].get("rowCount", 0) > 0
+        assert meta.get("runtimeKind") == "native"
+        assert spec["audience"] == "Ops leadership"
+        assert spec["businessQuestion"]
+        assert spec["decisionQuestions"]
+        assert spec["hero"]["headlineTakeaway"]
+        assert spec["layout"]["template"] == "executive_driver_dashboard"
+        assert meta["specVersion"] == 2
 
     def test_dashboard_html_is_self_contained(self, tmp_path: Path) -> None:
         tools = self._run_analysis_and_chart(tmp_path)
@@ -724,15 +1106,14 @@ class TestDashboardTool:
             "description": "No external deps.",
             "section_titles": [],
         })
-        html_files = list((tmp_path / "dashboards").glob("*.html"))
-        content = html_files[0].read_text(encoding="utf-8")
+        content = (tmp_path / "dashboards" / "Self_Contained" / "dashboard.snapshot.html").read_text(encoding="utf-8")
         # Should embed Plotly CDN and the chart spec inline
         assert "plotly" in content.lower()
         assert "<!doctype html>" in content.lower()
         # Should include query block  
         assert "42" in content  # the SELECT 42 result
-        assert "Quick Pulse" in content
-        assert "Charts Embedded" in content
+        assert "Executive Snapshot" in content
+        assert "Charts" in content
 
     def test_dashboard_accepts_section_titles(self, tmp_path: Path) -> None:
         tools = self._run_analysis_and_chart(tmp_path)
@@ -741,8 +1122,7 @@ class TestDashboardTool:
             "description": "Uses custom section headings.",
             "section_titles": ["Insight-Led Title"],
         })
-        html_files = list((tmp_path / "dashboards").glob("*.html"))
-        content = html_files[0].read_text(encoding="utf-8")
+        content = (tmp_path / "dashboards" / "Structured_Dashboard" / "dashboard.snapshot.html").read_text(encoding="utf-8")
         assert "Insight-Led Title" in content
 
     def test_dashboard_requires_at_least_one_query(self, tmp_path: Path) -> None:
@@ -855,8 +1235,7 @@ class TestDashboardTool:
             }
         )
 
-        html_files = list((tmp_path / "dashboards").glob("*.html"))
-        content = html_files[0].read_text(encoding="utf-8")
+        content = (tmp_path / "dashboards" / "Order_Cancellation_Dashboard" / "dashboard.snapshot.html").read_text(encoding="utf-8")
         assert "Shared data filters" in content
         assert "dashboard-filter-controls" in content
         assert "filter-panel-summary" in content
@@ -889,8 +1268,7 @@ class TestDashboardTool:
                 "dashboard_dataset_path": "datasets/orders.csv",
             }
         )
-        html_files = list((tmp_path / "dashboards").glob("*.html"))
-        content = html_files[0].read_text(encoding="utf-8")
+        content = (tmp_path / "dashboards" / "No_Filters_Dashboard" / "dashboard.snapshot.html").read_text(encoding="utf-8")
         assert "Shared data filters" not in content
 
     def test_dashboard_serializes_date_filter_dataset_values(self, tmp_path: Path) -> None:
@@ -940,7 +1318,7 @@ class TestDashboardTool:
                 ],
             }
         )
-        assert "Dashboard saved to:" in result
+        assert "Dashboard package saved to:" in result
 
     def test_dashboard_failure_does_not_consume_single_dashboard_budget(self, tmp_path: Path, monkeypatch) -> None:
         tools = _tools_for_workspace(tmp_path)
@@ -985,7 +1363,7 @@ class TestDashboardTool:
                 "section_titles": [],
             }
         )
-        assert "Dashboard saved to:" in second
+        assert "Dashboard package saved to:" in second
 
     def test_generate_chart_config_persists_plotly_json_only_by_default(self, tmp_path: Path) -> None:
         tools = _tools_for_workspace(tmp_path)
@@ -1309,7 +1687,7 @@ class TestStableArtifactOutputs:
             }
         )
 
-        dashboard_path = tmp_path / "dashboards" / "orders.html"
+        dashboard_path = tmp_path / "dashboards" / "orders" / "dashboard.snapshot.html"
         content = dashboard_path.read_text(encoding="utf-8")
         assert dashboard_path.exists()
         assert "Second description" in content

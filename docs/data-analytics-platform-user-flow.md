@@ -2,6 +2,9 @@
 
 This document explains how a user would use HelpUDoc as a data analytics platform after the snapshot-refresh workflow changes.
 
+For the current dashboard-runtime implementation status, known QA issues, and
+likely next changes, also see `docs/dashboard-runtime-status.md`.
+
 The short version:
 
 - BigQuery remains the system of record.

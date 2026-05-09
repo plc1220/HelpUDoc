@@ -154,9 +154,13 @@ flowchart TB
 - The frontend is a separate Kubernetes deployment and service.
 - Caddy is the runtime reverse proxy. It routes `/api` to the backend, `/helpudoc` to MinIO, and other paths to the frontend.
 - The backend and agent are co-located in the same `helpudoc-app` pod today. Backend-to-agent traffic uses `http://localhost:8001`.
+- The current dashboard runtime is a shared Streamlit runtime hosted inside the
+  agent image and proxied through the backend under `/api/dashboard/*`.
 - Delegated MCP auth is not a standalone service. The backend signs a short-lived context JWT for the agent and can embed per-server `mcpAuth` headers for delegated access.
 - Code execution is currently restricted in process for specific tools, not isolated in a dedicated sandbox enclave.
 - Langfuse should be shown as a planned observability sink until instrumentation is actually added to the backend and agent services.
+- For recent dashboard-runtime decisions, current gaps, and likely next steps,
+  see `docs/dashboard-runtime-status.md`.
 
 ## Repo Sources
 

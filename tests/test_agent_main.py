@@ -795,6 +795,20 @@ def test_append_tagged_file_guidance_warns_for_html(client_with_stubs):
     assert "Do not read an entire report HTML" in guided
 
 
+def test_build_dashboard_runtime_guidance_prefers_tagged_local_dataset(client_with_stubs):
+    client_with_stubs
+
+    import helpudoc_agent.app as app_module
+
+    guidance = app_module._build_dashboard_runtime_guidance(
+        "Use /skill data/dashboard\n\nTagged files:\n- datasets/cancellations_6m_v2.parquet\n"
+    )
+
+    assert "Tagged local dataset(s): datasets/cancellations_6m_v2.parquet" in guidance
+    assert "Before request_plan_approval" in guidance
+    assert "Generate 3 to 5 approved charts only" in guidance
+
+
 def test_filter_rag_prefetchable_tagged_files_includes_html(client_with_stubs):
     client_with_stubs
 
@@ -894,3 +908,58 @@ def test_chat_stream_prefetches_tagged_html_with_scoped_keywords(client_with_stu
     assert runtime.workspace_state.context["tagged_rag_context"] == "Story chunk"
     assert messages[-1]["type"] == "done"
     assert source_tracker.updated_workspaces == [runtime.workspace_state]
+
+
+def test_skill_contract_endpoint_reports_loaded_dashboard_policy(monkeypatch, tmp_path):
+    module_names = [
+        "agent.main",
+        "helpudoc_agent.app",
+        "helpudoc_agent.graph",
+        "helpudoc_agent.tools_and_schemas",
+    ]
+    saved_modules = {name: sys.modules.pop(name, None) for name in module_names}
+    _install_dependency_stubs()
+
+    graph_stub = ModuleType("helpudoc_agent.graph")
+    graph_stub.AgentRegistry = RegistryStub
+    sys.modules["helpudoc_agent.graph"] = graph_stub
+
+    tools_stub = ModuleType("helpudoc_agent.tools_and_schemas")
+    tools_stub.ToolFactory = ToolFactoryStub
+    tools_stub.GeminiClientManager = GeminiClientManagerStub
+    sys.modules["helpudoc_agent.tools_and_schemas"] = tools_stub
+
+    import helpudoc_agent.app as app_module
+
+    class CustomSettings(SettingsStub):
+        backend = SimpleNamespace(
+            workspace_root=tmp_path / "workspaces",
+            skills_root=CURRENT_DIR / "skills",
+        )
+
+    monkeypatch.setattr(app_module, "load_settings", lambda *_args, **_kwargs: CustomSettings())
+    monkeypatch.setattr(app_module, "SourceTracker", SourceTrackerStub)
+    monkeypatch.setattr(app_module, "GeminiClientManager", GeminiClientManagerStub)
+    monkeypatch.setattr(app_module, "ToolFactory", ToolFactoryStub)
+    monkeypatch.setattr(app_module, "AgentRegistry", RegistryStub)
+    monkeypatch.setattr(app_module, "RagIndexWorker", RagIndexWorkerStub)
+
+    import agent.main as agent_main
+
+    client = TestClient(agent_main.app)
+    try:
+        response = client.get("/skills/data/dashboard/contract")
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["skillId"] == "data/dashboard"
+        assert payload["requiresHitlPlan"] is True
+        assert "request_plan_approval" in payload["tools"]
+    finally:
+        client.close()
+        sys.modules.pop("helpudoc_agent.graph", None)
+        sys.modules.pop("helpudoc_agent.tools_and_schemas", None)
+        for name, module in saved_modules.items():
+            if module is not None:
+                sys.modules[name] = module
+            elif name not in ("helpudoc_agent.graph", "helpudoc_agent.tools_and_schemas"):
+                sys.modules.pop(name, None)

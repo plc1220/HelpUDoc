@@ -21,6 +21,7 @@ import {
   deleteFolder,
   deleteFile,
   getFileContent,
+  getWorkspaceFilePreview,
   renameFile,
   getRagStatuses,
   resolveFileContextRefs,
@@ -65,6 +66,7 @@ import type {
   ConversationMessage,
   ToolEvent,
   ToolOutputFile,
+  DashboardArtifactInfo,
   ConversationMessageMetadata,
   InterruptAction,
   InterruptAnswersByQuestionId,
@@ -80,6 +82,7 @@ import WorkspaceShareDialog from '../components/WorkspaceShareDialog';
 import type { UIBlock } from '../components/UIBlockRenderer';
 import ExpandableSidebar from '../components/ExpandableSidebar';
 import WorkspaceFileTree from '../components/WorkspaceFileTree';
+import DashboardCanvas, { downloadDashboardHtmlExport } from '../components/dashboard/DashboardCanvas';
 import AgentChatPane from '../components/chat/AgentChatPane';
 import { buildApprovalDraftContent, buildApprovalReview } from '../components/chat/approvalReview';
 import type { RenderableInterruptAction } from '../components/chat/interruptActions';
@@ -399,11 +402,49 @@ const hydrateWorkspace = (workspace: Omit<Workspace, 'lastUsed'> & { lastUsed?: 
   lastUsed: workspace.lastUsed ?? formatWorkspaceLastUsed(workspace.updatedAt),
 });
 
-const normalizeWorkspaceRelativePath = (value?: string): string =>
+const normalizeWorkspaceRelativePath = (value?: string | null): string =>
   String(value || '')
     .replace(/\\/g, '/')
     .replace(/^\/+/, '')
     .trim();
+
+const getDashboardManifestPath = (dashboardPath?: string | null) => {
+  const normalized = normalizeWorkspaceRelativePath(dashboardPath);
+  return normalized ? `${normalized}/dashboard.meta.json` : '';
+};
+
+const getDashboardPackagePathFromManifestPath = (manifestPath?: string | null) => {
+  const normalized = normalizeWorkspaceRelativePath(manifestPath);
+  if (!normalized.endsWith('/dashboard.meta.json')) {
+    return '';
+  }
+  return normalized.slice(0, -'/dashboard.meta.json'.length);
+};
+
+const resolveDashboardPackagePath = (
+  files: WorkspaceFile[],
+  dashboardPath?: string | null,
+) => {
+  const normalized = normalizeWorkspaceRelativePath(dashboardPath);
+  if (!normalized) {
+    return '';
+  }
+  const exactManifestPath = getDashboardManifestPath(normalized);
+  if (files.some((file) => normalizeWorkspaceRelativePath(file.path || file.name) === exactManifestPath)) {
+    return normalized;
+  }
+  const descendantPackagePaths = new Set(
+    files
+      .map((file) => normalizeWorkspaceRelativePath(file.path || file.name))
+      .filter((path) => path.startsWith(`${normalized}/`) && path.endsWith('/dashboard.meta.json'))
+      .map((path) => getDashboardPackagePathFromManifestPath(path))
+      .filter(Boolean),
+  );
+  if (descendantPackagePaths.size === 1) {
+    return Array.from(descendantPackagePaths)[0];
+  }
+  return normalized;
+};
 
 const isDraftWorkspaceFile = (file?: WorkspaceFile | null): boolean =>
   Boolean(file && typeof file.id === 'string' && String(file.id).startsWith('draft:'));
@@ -506,7 +547,9 @@ export default function WorkspacePage() {
   const [files, setFiles] = useState<WorkspaceFile[]>([]);
   const [selectedFile, setSelectedFile] = useState<WorkspaceFile | null>(null);
   const [selectedFileDetails, setSelectedFileDetails] = useState<WorkspaceFile | null>(null);
+  const [selectedDashboardPath, setSelectedDashboardPath] = useState<string | null>(null);
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
+  const [dashboardArtifactsByPath, setDashboardArtifactsByPath] = useState<Record<string, DashboardArtifactInfo>>({});
   const [fileContent, setFileContent] = useState('');
   const [conversationMessages, setConversationMessages] = useState<Record<string, ConversationMessage[]>>({});
   const [chatMessage, setChatMessage] = useState('');
@@ -1288,8 +1331,22 @@ export default function WorkspacePage() {
   const messageBubbleMaxWidth = isAgentPaneFullScreen ? '100%' : '720px';
   const isDarkMode = colorMode === 'dark';
 
-  const activeFile = selectedFileDetails || selectedFile;
+  const activeFile = selectedDashboardPath ? null : (selectedFileDetails || selectedFile);
   const activeFileName = activeFile?.name ?? '';
+  const activeDashboardPath = normalizeWorkspaceRelativePath(selectedDashboardPath || activeFile?.path || activeFile?.name);
+  const isDashboardCanvas = Boolean(selectedDashboardPath);
+  const activeDashboardArtifact = activeDashboardPath ? dashboardArtifactsByPath[activeDashboardPath] : undefined;
+  const activeDashboardDisplayName = activeDashboardPath
+    ? (activeDashboardArtifact?.title || activeDashboardPath.split('/').filter(Boolean).pop() || 'Dashboard')
+    : '';
+  const resolvedDashboardFolder = useMemo(
+    () =>
+      selectedDashboardPath
+        ? resolveDashboardPackagePath(files, selectedDashboardPath)
+          || normalizeWorkspaceRelativePath(selectedDashboardPath)
+        : '',
+    [files, selectedDashboardPath],
+  );
   const normalizedFileName = activeFileName.toLowerCase();
   const isMarkdownFile = !!activeFile && MARKDOWN_FILE_EXTENSIONS.some((ext) => normalizedFileName.endsWith(ext));
   const isHtmlFile = !!activeFile && HTML_FILE_EXTENSIONS.some((ext) => normalizedFileName.endsWith(ext));
@@ -1310,7 +1367,7 @@ export default function WorkspacePage() {
       },
     ];
   }, [activeFile, fileContent]);
-  const canvasTitle = selectedFile ? selectedFile.name : 'Editor';
+  const canvasTitle = activeDashboardPath ? activeDashboardDisplayName : selectedFile ? selectedFile.name : 'Editor';
   const canZoomOutCanvas = canvasZoom > MIN_CANVAS_ZOOM;
   const canZoomInCanvas = canvasZoom < MAX_CANVAS_ZOOM;
   const handleCanvasZoomIn = useCallback(() => {
@@ -1679,7 +1736,7 @@ export default function WorkspacePage() {
     setConversationStreaming({});
   }, []);
 
-  const handleStopStreaming = () => {
+  const handleStopStreaming = async () => {
     stopRequestedRef.current = true;
     const activeRun = getActiveRunForConversation(activeConversationId);
     if (activeRun) {
@@ -1707,6 +1764,17 @@ export default function WorkspacePage() {
           };
         }),
       );
+      await persistAgentProgress(
+        { ...activeRun, status: 'cancelled' },
+        'cancelled',
+        {
+          metadataOverride: {
+            pendingInterrupt: undefined,
+          },
+        },
+      ).catch((error) => {
+        console.error('Failed to persist cancelled run state', error);
+      });
       removeActiveRun(activeRun.runId);
       resumeInFlightRef.current.delete(activeRun.runId);
       resumeAttemptedRef.current.add(activeRun.runId);
@@ -1740,6 +1808,91 @@ export default function WorkspacePage() {
       console.error('Failed to load files for workspace', error);
     }
   }, []);
+
+  const upsertDashboardPlaceholder = useCallback((artifact: DashboardArtifactInfo) => {
+    const normalizedPath = normalizeWorkspaceRelativePath(artifact.dashboardPath);
+    if (!normalizedPath || !selectedWorkspace) {
+      return;
+    }
+    if (artifact.workspaceId && artifact.workspaceId !== selectedWorkspace.id) {
+      return;
+    }
+    const draftId = `draft:${normalizedPath}/dashboard.meta.json`;
+    const manifestPath = getDashboardManifestPath(normalizedPath);
+    const placeholder: WorkspaceFile = {
+      id: draftId,
+      name: manifestPath,
+      path: manifestPath,
+      workspaceId: selectedWorkspace.id,
+      storageType: 'local',
+      mimeType: 'application/json',
+      content: '',
+    };
+    setFiles((prev) => {
+      if (prev.some((file) => normalizeWorkspaceRelativePath(file.path || file.name) === manifestPath)) {
+        return prev;
+      }
+      return [placeholder, ...prev];
+    });
+    setSelectedDashboardPath((prev) => prev || normalizedPath);
+    setSelectedFile(null);
+    setSelectedFileDetails(null);
+    setFileContent('');
+  }, [selectedWorkspace]);
+
+  const mergeDashboardArtifact = useCallback((artifact: DashboardArtifactInfo) => {
+    const normalizedPath = normalizeWorkspaceRelativePath(artifact.dashboardPath);
+    if (!normalizedPath) {
+      return;
+    }
+    if (artifact.workspaceId && selectedWorkspace && artifact.workspaceId !== selectedWorkspace.id) {
+      return;
+    }
+    const next: DashboardArtifactInfo = { ...artifact, dashboardPath: normalizedPath };
+    setDashboardArtifactsByPath((prev) => ({
+      ...prev,
+      [normalizedPath]: next,
+    }));
+    if (next.status === 'generating' || next.status === 'ready') {
+      upsertDashboardPlaceholder(next);
+    }
+    if (next.status === 'ready' && (!selectedDashboardPath || selectedDashboardPath === normalizedPath)) {
+      setSelectedDashboardPath(normalizedPath);
+      setSelectedFile(null);
+      setSelectedFileDetails(null);
+      setFileContent('');
+    }
+  }, [selectedDashboardPath, selectedWorkspace, upsertDashboardPlaceholder]);
+
+  const handleDownloadDashboardHtmlExport = useCallback(async () => {
+    if (!selectedWorkspace || !selectedDashboardPath) {
+      return;
+    }
+    const folder =
+      resolveDashboardPackagePath(files, selectedDashboardPath)
+      || normalizeWorkspaceRelativePath(selectedDashboardPath);
+    if (!folder) {
+      return;
+    }
+    try {
+      await downloadDashboardHtmlExport(selectedWorkspace.id, folder);
+    } catch (error) {
+      console.error('Failed to download dashboard HTML export', error);
+    }
+  }, [files, selectedDashboardPath, selectedWorkspace]);
+
+  const handleDashboardFolderSelect = useCallback((dashboardPath: string) => {
+    const normalizedPath = resolveDashboardPackagePath(files, dashboardPath);
+    if (!normalizedPath) {
+      return;
+    }
+    setSelectedDashboardPath(normalizedPath);
+    setSelectedFile(null);
+    setSelectedFileDetails(null);
+    setFileContent('');
+    setIsEditMode(false);
+    setCanvasZoom(1);
+  }, [files]);
 
   const fetchRagStatusForFiles = useCallback(async () => {
     if (!selectedWorkspace) {
@@ -2845,6 +2998,12 @@ export default function WorkspacePage() {
     fileContentRequestIdRef.current = requestId;
     const isCurrentRequest = () => fileContentRequestIdRef.current === requestId;
 
+    if (selectedDashboardPath) {
+      setFileContent('');
+      setSelectedFileDetails(null);
+      lastAutoSavedContentRef.current = '';
+      return;
+    }
     if (selectedFile && selectedWorkspace) {
       if (isDraftWorkspaceFile(selectedFile)) {
         if (!isCurrentRequest()) return;
@@ -2878,7 +3037,48 @@ export default function WorkspacePage() {
 
   useEffect(() => {
     fetchFileContent();
-  }, [selectedFile, selectedWorkspace]);
+  }, [selectedDashboardPath, selectedFile, selectedWorkspace]);
+
+  useEffect(() => {
+    if (!selectedWorkspace || !selectedDashboardPath) {
+      return;
+    }
+    const dashboardPath = resolveDashboardPackagePath(files, selectedDashboardPath);
+    if (dashboardPath && dashboardPath !== selectedDashboardPath) {
+      setSelectedDashboardPath(dashboardPath);
+    }
+  }, [files, selectedDashboardPath, selectedWorkspace]);
+
+  useEffect(() => {
+    setDashboardArtifactsByPath({});
+    setSelectedDashboardPath(null);
+  }, [selectedWorkspace?.id]);
+
+  useEffect(() => {
+    if (selectedFile) {
+      setSelectedDashboardPath(null);
+    }
+  }, [selectedFile]);
+
+  useEffect(() => {
+    if (!selectedFile || !String(selectedFile.id).startsWith('draft:')) {
+      return;
+    }
+    const selectedPath = normalizeWorkspaceRelativePath(selectedFile.path || selectedFile.name);
+    if (!selectedPath) {
+      return;
+    }
+    const persistedFile = files.find(
+      (file) =>
+        !String(file.id).startsWith('draft:') &&
+        normalizeWorkspaceRelativePath(file.path || file.name) === selectedPath,
+    );
+    if (!persistedFile) {
+      return;
+    }
+    setSelectedFile(persistedFile);
+    setSelectedFileDetails(null);
+  }, [files, selectedFile]);
 
   useEffect(() => {
     const name = selectedFile?.name ?? '';
@@ -3960,6 +4160,9 @@ export default function WorkspacePage() {
 
     if (chunk.type === 'tool_end') {
       updateMessageMetadataAtIndex(conversationId, agentMessageIndex, markStreamingState);
+      if (chunk.dashboardArtifact) {
+        mergeDashboardArtifact(chunk.dashboardArtifact);
+      }
       appendToolEnd(conversationId, agentMessageIndex, chunk);
       const streamLabel = chunk.name || 'tool';
       const streamRaw = chunk.content?.trim();
@@ -3993,6 +4196,11 @@ export default function WorkspacePage() {
               ? translatedErr.trim()
               : `${getFriendlyToolName(errLabel)} hit a snag—details are in the activity log.`,
       );
+      return;
+    }
+
+    if (chunk.type === 'dashboard_artifact') {
+      mergeDashboardArtifact(chunk.dashboardArtifact);
       return;
     }
 
@@ -4949,6 +5157,17 @@ export default function WorkspacePage() {
                 resumeInFlightRef.current.delete(activeRun.runId);
               });
           } else {
+            void persistAgentProgress(
+              { ...activeRun, status: status.status },
+              status.status,
+              {
+                metadataOverride: {
+                  pendingInterrupt: undefined,
+                },
+              },
+            ).catch((error) => {
+              console.error('Failed to persist settled run state', error);
+            });
             resumeInFlightRef.current.delete(activeRun.runId);
             const staleMessage = findAgentMessageForRun(
               activeRun.conversationId,
@@ -4988,6 +5207,17 @@ export default function WorkspacePage() {
         .catch((error) => {
           console.error('Failed to resume run status', error);
           resumeInFlightRef.current.delete(activeRun.runId);
+          void persistAgentProgress(
+            { ...activeRun, status: 'failed' },
+            'failed',
+            {
+              metadataOverride: {
+                pendingInterrupt: undefined,
+              },
+            },
+          ).catch((persistError) => {
+            console.error('Failed to persist stale run failure state', persistError);
+          });
           const staleMessage = findAgentMessageForRun(
             activeRun.conversationId,
             activeRun.placeholderId,
@@ -5014,6 +5244,7 @@ export default function WorkspacePage() {
     findAgentMessageForRun,
     getActiveRunForConversation,
     isAgentMessageEmpty,
+    persistAgentProgress,
     removeActiveRun,
     setConversationAttention,
     syncRunStateToConversation,
@@ -6363,8 +6594,10 @@ export default function WorkspacePage() {
                         files={visibleFiles}
                         colorMode={colorMode}
                         selectedFileId={selectedFile?.id || null}
+                        selectedDashboardPath={selectedDashboardPath}
                         selectedFiles={selectedFiles}
                         copiedPublicUrlFileId={copiedPublicUrlFileId}
+                        dashboardArtifactsByPath={dashboardArtifactsByPath}
                         ragStatuses={ragStatuses}
                         isDraftWorkspaceFile={isDraftWorkspaceFile}
                         onSelectFile={(file) => {
@@ -6373,6 +6606,7 @@ export default function WorkspacePage() {
                           setFileContent('');
                           setIsEditMode(shouldForceEditMode(file.name));
                         }}
+                        onSelectFolder={handleDashboardFolderSelect}
                         onToggleFileSelection={handleFileSelect}
                         onCopyPublicUrl={handleCopyFilePublicUrl}
                         onRenameFile={handleRenameFile}
@@ -6541,28 +6775,42 @@ export default function WorkspacePage() {
                         />
                       </Suspense>
                     ) : (
-                      <div className="h-full w-full overflow-y-auto overflow-x-hidden">
-                        <div
-                          className="h-full origin-top-left"
-                          style={{
-                            transform: `scale(${canvasZoom})`,
-                            width: `${100 / canvasZoom}%`,
-                            minHeight: `${100 / canvasZoom}%`,
-                          }}
-                        >
-                          <Suspense fallback={canvasLoadingFallback}>
-                            <UIBlockRenderer
-                              blocks={canvasBlocks}
-                              workspaceId={selectedWorkspace?.id}
-                              className="h-full w-full"
-                              emptyState={
-                                <div className={`text-center ${isDarkMode ? 'text-slate-500' : 'text-gray-400'}`}>
-                                  <p>Select a file to view its content</p>
-                                </div>
-                              }
+                      <div className={isDashboardCanvas ? 'flex h-full w-full min-h-0 flex-col overflow-hidden' : 'h-full w-full overflow-y-auto overflow-x-hidden'}>
+                        {isDashboardCanvas ? (
+                          selectedWorkspace && resolvedDashboardFolder ? (
+                            <DashboardCanvas
+                              workspaceId={selectedWorkspace.id}
+                              dashboardPath={resolvedDashboardFolder}
+                              onDownloadHtmlExport={handleDownloadDashboardHtmlExport}
                             />
-                          </Suspense>
-                        </div>
+                          ) : (
+                            <div className="flex h-full items-center justify-center bg-white text-sm text-slate-500">
+                              Opening dashboard…
+                            </div>
+                          )
+                        ) : (
+                          <div
+                            className="h-full origin-top-left"
+                            style={{
+                              transform: `scale(${canvasZoom})`,
+                              width: `${100 / canvasZoom}%`,
+                              minHeight: `${100 / canvasZoom}%`,
+                            }}
+                          >
+                            <Suspense fallback={canvasLoadingFallback}>
+                              <UIBlockRenderer
+                                blocks={canvasBlocks}
+                                workspaceId={selectedWorkspace?.id}
+                                className="h-full w-full"
+                                emptyState={
+                                  <div className={`text-center ${isDarkMode ? 'text-slate-500' : 'text-gray-400'}`}>
+                                    <p>Select a file to view its content</p>
+                                  </div>
+                                }
+                              />
+                            </Suspense>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>

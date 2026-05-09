@@ -1,22 +1,32 @@
 ---
 name: data/dashboard
 description: >
-  Assemble all charts and query results from the current analysis run into a single
-  self-contained interactive HTML dashboard artifact.
+  Plan, review, and then assemble a stakeholder-ready dashboard package from the
+  current analysis run, with a live dashboard session plus snapshot fallback.
+requires_hitl_plan: true
 tools:
   - data_agent_tools
   - get_table_schema
   - run_sql_query
   - materialize_bigquery_to_parquet
-  - generate_chart_config
   - generate_summary
   - generate_dashboard
+  - request_plan_approval
+  - request_clarification
 ---
 
-# data/dashboard — Build an Interactive HTML Dashboard
+# data/dashboard — Plan and Build a Dashboard Package
 
-Produce one portable, self-contained HTML file that embeds all charts and queries
-from the current run. No external dependencies — everything inlined.
+This skill is review-first and low-variance. Before any dashboard package is generated, you must:
+1. inspect the tagged dataset/report context
+2. draft a concrete dashboard plan
+3. call `request_plan_approval`
+4. wait for approval or edits
+5. only then call `generate_dashboard`
+
+Produce one workspace-native dashboard package that can power:
+- a live dashboard session in the canvas
+- a snapshot fallback/export for sharing
 
 This skill is not a generic file bundler. Treat it as a presentation step:
 - Curate the strongest visuals from the current run.
@@ -31,7 +41,7 @@ charts into a single file.
 
 ## Prerequisites (enforced in code)
 - At least one SQL query must have been executed in this run.
-- At least one chart must have been generated in this run.
+- Prefer at least one usable chart or one reusable dataset already prepared in this run.
 - `generate_dashboard` can only be called **once per run**.
 
 ## Connector scope
@@ -99,12 +109,21 @@ If the report is large, extract only the minimum needed story elements:
 - chart titles or section headings
 - 2-4 key takeaways
 
-### 1. Ensure analysis is complete
-- All SQL queries for the dashboard should already be done.
-- All charts (`generate_chart_config`) should already be generated.
-- Do not start fresh analysis here unless a clearly missing visualization prevents a usable
-  dashboard. If the run only contains weak or redundant charts, first generate better charts
-  before calling `generate_dashboard`.
+### 1. Keep analysis bounded
+For tagged local parquet/csv dashboards, prefer a deterministic prep path over open-ended exploration.
+
+- Before approval:
+  - at most **1 schema inspection**
+  - at most **1 lightweight preview query**
+  - no aggregate analysis
+  - no chart generation
+- After approval:
+  - use a bounded chart-prep bundle for KPI summary, time trend, top country/device/category breakdowns, and optional driver table
+  - prefer one reusable aggregate pass over repeated dimension-specific queries
+  - produce **3-5 approved chart bindings max**
+
+Do not rediscover upstream tables or rerun exploratory profiling when the tagged local dataset is already sufficient.
+Do not use `generate_chart_config` on the happy path for `data/dashboard`; pass structured chart bindings directly to `generate_dashboard`.
 
 ### 2. Curate before assembling
 Before generating the dashboard, review the current run and be selective.
@@ -114,7 +133,7 @@ Before generating the dashboard, review the current run and be selective.
   "Top Categories" unless the title is rewritten to state the insight.
 - Do not include charts that merely restate the same ranking with a different dimension
   unless the contrast matters.
-- If a chart is visually weak, re-generate it first with better encoding and labeling.
+- If a chart is visually weak, revise the structured binding and labels before package generation.
 
 Use these chart-quality rules:
 - Match chart type to question:
@@ -129,8 +148,8 @@ Use these chart-quality rules:
   - Long category labels without horizontal orientation or truncation.
   - Chart titles that describe the dimension but not the takeaway.
 
-### 3. Plan the dashboard like an executive artifact
-Decide:
+### 3. Draft the dashboard plan before any generation
+Decide and write down:
 - **Dashboard title**: clear, stakeholder-facing heading.
 - **Description**: one paragraph explaining what this dashboard shows and why it matters.
 - **Section titles**: one heading per included chart. Write insight-led titles, not file names.
@@ -140,11 +159,48 @@ Decide:
   2. Main drivers and breakdowns
   3. Supporting detail or appendix
 
+Your plan must also include:
+- **Audience**: who this dashboard is for
+- **Business question**: the one question this dashboard must answer
+- **Decision questions**: 1-3 concrete decisions the dashboard should support
+- **Source of truth**: the tagged dataset path or canonical dataset artifact
+- **KPIs**: exact definitions, including weighted-rate logic where applicable
+- **Chart list**: 3-6 proposed visuals with purpose and chart type
+- **Layout template**: choose a constrained executive layout and freeze the chart lineup
+- **Risks / gaps**: anything that could make the dashboard misleading or low-value
+- **Fallback note**: whether the dashboard will be truly filter-aware or mostly snapshot/static
+
 The final dashboard should feel like:
 - An executive summary at the top
 - A curated set of visuals in the middle
 - Visible filter controls near the top of the page
 - Raw SQL and verbose technical detail demoted to an appendix
+
+### 3.1 Request plan approval (required)
+Before calling `generate_dashboard`, call `request_plan_approval`.
+
+Use:
+- `plan_title`: the proposed dashboard title
+- `plan_summary` or `plan_summary_markdown`: concise dashboard brief with:
+  - audience
+  - business question
+  - dataset source
+  - KPI definitions
+  - proposed chart set
+  - filter strategy
+  - narrative order
+  - known risks
+- `execution_checklist`: the concrete build steps you will take after approval
+- `plan_file_path`: `dashboard_plan.md`
+- `status_label`: `Review Dashboard Plan`
+- `risky_actions`: mention any risk of weak proxy metrics, static-only charts, or missing fields
+
+If the reviewer chooses:
+- `approve`: continue to generation
+- `edit`: revise the dashboard plan and call `request_plan_approval` again
+- `reject`: stop and do not generate the dashboard
+
+Do not call `generate_dashboard` before approval.
 
 ### 4. Write titles and copy that explain the insight
 Good section titles:
@@ -157,47 +213,58 @@ Weak section titles to avoid:
 - "Top Categories"
 - "Browser/Device Segmentation"
 
-### 5. Generate the dashboard
+### 5. Generate the dashboard package
 Call `generate_dashboard` with:
 - `title`: the dashboard heading.
 - `description`: the context paragraph.
+- `audience`: the primary audience for the dashboard.
+- `business_question`: the core business question.
+- `decision_questions`: 1-3 concrete questions/decisions the dashboard supports.
+- `layout_template`: the approved executive layout template.
+- `headline_takeaway`: optional hero takeaway.
+- `insights`: 2-4 concise executive takeaways.
+- `known_risks`: key caveats or proxy-metric risks.
+- `data_quality_notes`: normalization and data quality notes.
 - `section_titles`: ordered list of polished section headings, one per chart. Do not pass
   raw file names or generic placeholders.
-- `kpis` (optional): explicit KPI cards for the hero area.
+- `metric_cards` (optional): 2-3 explicit KPI cards for the hero area.
 - `dashboard_dataset_path` (optional but required for true shared data filters): a canonical
   Parquet/CSV/JSON dataset materialized for this run.
 - `filter_schema` (optional): structured filter definitions describing field, label, type,
   options, presets, and applicability.
 - `chart_bindings` (optional): per-chart bindings that map charts to dataset fields and
-  aggregations so they can re-render from filtered rows.
+  aggregations so both the live runtime and snapshot can render from the same spec.
+  Include `question_answered`, `why_it_matters`, and layout metadata on the main path.
 - `sections` (optional): named chart groups with `chart_indexes` to control narrative flow.
 - `chart_tags` (optional): tags aligned to chart order so controls can filter charts by theme
   or audience.
 
 The tool will:
-- Embed all charts produced in this run (Plotly JSON → interactive, PNG → static).
-- Embed all queries with their row counts in a technical appendix.
-- Write a single self-contained HTML file to `dashboards/<title>.html`.
-- Emit a `tool_artifacts` event so the frontend surfaces the file.
+- Build a dashboard package under `dashboards/<slug>/`.
+- Write:
+  - `dashboard.meta.json`
+  - `dashboard.spec.json`
+  - `dashboard.snapshot.html`
+- Register a live dashboard session when possible.
+- Emit workspace artifacts so the frontend surfaces the dashboard folder as one object.
 - Only include artifacts from the **current run** — prior-run charts are excluded.
 
 ### 6. Report to user
 After `generate_dashboard` returns:
-- Tell the user the dashboard path so they know where to open it.
+- Tell the user the dashboard folder path so they know what to open.
 - Summarize the story the dashboard tells, not just the file count.
 - Mention what was curated in or left out if that affected quality.
 - Mention any charts that could not be embedded (logged as warnings).
 
 ## Dashboard format
-The HTML output:
+The resulting dashboard package:
 - Should feel polished, editorial, and browser-ready.
 - Should use a light theme by default unless the user asked for dark mode.
 - Should present charts as cards with consistent spacing, hierarchy, and labeling.
-- Must include filter controls that update the view without reloading the page.
+- Must include filter controls when the dashboard is truly dataset-backed.
 - Should place technical SQL details in a lower-priority appendix, not at the top.
-- Plotly charts render interactively (pan, zoom, hover).
-- PNG charts are embedded as base64 (no external file dependencies).
-- No CDN dependency except `cdn.plot.ly` for Plotly runtime.
+- Should make it clear when the snapshot is read-only versus live/filter-aware.
+- Uses a shared Streamlit live runtime plus `dashboard.snapshot.html` fallback from the same `dashboard.spec.json`.
 
 ## Filter expectations
 Filtering is required for dashboards.
@@ -214,28 +281,16 @@ Filtering is required for dashboards.
   - provide `filter_schema` and `chart_bindings`
   - only charts with valid bindings should claim to be filter-aware
 - If the run only contains finished chart artifacts and no reusable underlying dataset:
-  - the dashboard may still be generated, but those charts should be treated as static appendix
-    content rather than pretending to support shared data filtering
+  - the dashboard may still be generated, but those charts should be treated as snapshot/static
+    appendix content rather than pretending to support shared data filtering
   - tell the user that richer cross-filtering requires embedding a canonical dataset or
     pre-aggregated tables instead of only chart outputs
 
-## Quality bar
-The generated dashboard is not acceptable if it looks like:
-- a raw notebook export
-- a query log with charts attached
-- generic default Plotly output with no visual system
-- a wall of similarly styled bar charts without narrative progression
-
-It is acceptable when:
-- the first screen communicates the main story quickly
-- the charts are visually distinct, readable, and ordered with intent
-- titles and descriptive copy explain why each visual matters
-- filters are obvious, responsive, and useful
-- technical details are available but visually de-emphasized
-
 ## Guardrails
+- Do not skip the approval checkpoint for this skill unless the workspace is explicitly in trusted mode.
 - Do not call `generate_summary` and `generate_dashboard` in the same run — pick one.
 - Do not blindly include every query and chart just because it exists.
 - Do not expose raw SQL as the main content of the page.
 - Do not accept generic section titles if you can rewrite them.
+- Do not pretend a snapshot-only dashboard is live or filter-aware.
 - The `dashboards/` directory is separate from `charts/` and `reports/`.
