@@ -75,7 +75,7 @@ Before full research begins, classify the request into one of these modes and re
 
 Use when the user asks for a narrow factual answer or a short explanation.
 
-- Final length: 800-1,500 words
+- Final report length: 800-1,500 words in `/final-research-report.md`
 - Minimum credible sources: 4
 - Minimum primary sources: 1 where available
 - Use only essential artifacts when the topic is narrow
@@ -84,7 +84,7 @@ Use when the user asks for a narrow factual answer or a short explanation.
 
 Use for normal explanatory or comparative research.
 
-- Final length: 2,500-4,500 words
+- Final report length: 2,500-4,500 words in `/final-research-report.md`
 - Minimum credible sources: 10
 - Minimum primary sources: 3 where available
 
@@ -101,7 +101,7 @@ Use when the query involves:
 
 Requirements:
 
-- Final length: 6,000-10,000 words
+- Final report length: 6,000-10,000 words in `/final-research-report.md`
 - Minimum credible sources: 18
 - Minimum primary sources: 8 where available
 - One standalone dossier per major entity
@@ -115,7 +115,7 @@ Requirements:
 
 Use when the user explicitly asks for an exhaustive landscape, investment memo, policy review, academic-style report, or due-diligence report.
 
-- Final length: 10,000-18,000 words
+- Final report length: 10,000-18,000 words in `/final-research-report.md`
 - Minimum credible sources: 30
 - Minimum primary sources: 12 where available
 - Multiple synthesis passes required
@@ -139,7 +139,27 @@ If the user does not specify a depth, choose the appropriate mode automatically 
   - Inline numeric citations
   - A Sources section
   - A Limits of Evidence section when evidence is incomplete
-  - Word count at the bottom, not shown in chat
+  - A computed word count at the bottom, not shown in chat
+
+## Word Count Definition
+
+Unless explicitly stated otherwise, "final report word count" refers only to the words in `/final-research-report.md`.
+
+Do not count:
+
+- `/claim_evidence_matrix.md`
+- `/research_notes.md`
+- `/comparison_matrix.md`
+- `/knowledge_graph.md`
+- Entity dossier drafts
+- `/synthesis.md`
+- `/source_register.md`
+- `/final_quality_check.md`
+- Any other supporting artifact
+
+Supporting artifacts may be longer than the final report, but they do not count toward the final report word-count requirement.
+
+Never report an estimated final report word count. Always compute the count from the actual final report file.
 
 ## Workflow
 
@@ -157,7 +177,7 @@ Include:
 
 - Selected mode: Quick / Standard / Deep / Exhaustive
 - Reason for selection
-- Expected word count
+- Expected final report word count
 - Expected source count
 - Expected primary-source count
 - Whether entity dossiers are required
@@ -173,7 +193,7 @@ Selected mode: Deep Research
 Reason:
 The user is comparing multiple entities and asks for technical and strategic evaluation.
 
-Expected final length:
+Expected final report length:
 6,000-10,000 words
 
 Minimum sources:
@@ -614,6 +634,8 @@ Create `/final-research-report.md`, unless the user specifies another filename.
 
 The final report must be based on the section files, synthesis file, comparison matrix when present, and claim-evidence matrix.
 
+The final report must itself satisfy the selected mode's word-count range. Supporting artifacts are evidence and drafting material; they are not part of the final report word count.
+
 Do not merely stitch sections mechanically.
 
 The final consolidation must:
@@ -628,6 +650,7 @@ The final consolidation must:
 - Include practical recommendations where appropriate
 - Avoid unsupported superlatives
 - Use simple, professional language
+- Compute the actual word count from `/final-research-report.md` after writing; do not estimate it
 
 ### 18. Final Report Required Structure
 
@@ -789,7 +812,41 @@ Never fabricate missing data to meet word count.
 
 Never fill gaps with confident-sounding assumptions.
 
-### 22. Quality Gate Before Final Report
+### 22. Under-Length Final Report Handling
+
+If `/final-research-report.md` is below the selected mode minimum:
+
+1. Do not claim completion.
+2. Do not report an estimated word count.
+3. Expand the final report section by section using only existing dossiers, synthesis, comparison matrix, source register, research notes, and claim-evidence matrix.
+4. Preserve citations and evidence confidence.
+5. Recompute the word count after expansion.
+6. Repeat until the computed word count is within the selected mode range, or explicitly downgrade the mode through plan approval before finalizing.
+
+For Deep Research mode, if `/final-research-report.md` is below 6,000 words, it fails the quality gate even if all supporting artifacts combined exceed 6,000 words.
+
+For Exhaustive Research mode, if `/final-research-report.md` is below 10,000 words, it fails the quality gate even if all supporting artifacts combined exceed 10,000 words.
+
+### 23. Mandatory Computed Word Count
+
+Before finalizing, compute the actual word count of `/final-research-report.md`. Prefer a deterministic file-based count such as `wc -w final-research-report.md` from the workspace root.
+
+Write this to `/final_quality_check.md`:
+
+```markdown
+## Mandatory Computed Word Count
+
+- Final report file: `/final-research-report.md`
+- Computed word count:
+- Required word count range:
+- Pass / fail:
+```
+
+The computed word count must be derived from the final report file only. Do not estimate it. Do not count workspace artifacts, notes, dossiers, matrices, source registers, quality checks, or chat messages.
+
+If the computed word count is below the selected mode minimum, do not finalize. Expand the final report using the existing dossiers, synthesis, comparison matrix, source register, research notes, and claim-evidence matrix, then recompute the word count.
+
+### 24. Quality Gate Before Final Report
 
 Before finalizing, run a self-check and record it in `/final_quality_check.md`.
 
@@ -806,13 +863,15 @@ Check:
 - [ ] Red flags and exclusions recorded
 - [ ] Knowledge graph completed
 - [ ] Synthesis completed
+- [ ] Mandatory computed word count completed from `/final-research-report.md` only
+- [ ] Computed final report word count is within the selected mode range
 - [ ] Final report cites only registered sources
 - [ ] Unsupported claims removed
 - [ ] Uncertainty clearly marked
 - [ ] No fake citations
 - [ ] No unsupported numbers
 - [ ] No unsupported superlatives
-- [ ] Report length matches selected mode
+- [ ] Report length claim, if any, matches the computed word count
 ```
 
 Do not finalize the report until this check is complete.
