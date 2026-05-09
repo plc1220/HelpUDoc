@@ -1157,6 +1157,91 @@ class TestDashboardTool:
         })
         assert "chart" in result.lower()
 
+    def test_native_dashboard_can_render_from_dataset_without_chart_artifacts(self, tmp_path: Path) -> None:
+        tools = _tools_for_workspace(tmp_path)
+        dataset_path = tmp_path / "datasets" / "daily_orders.csv"
+        dataset_path.parent.mkdir(parents=True, exist_ok=True)
+        dataset_path.write_text(
+            "\n".join(
+                [
+                    "order_date,country,orders,cancellation_rate",
+                    "2026-01-01,US,120,0.21",
+                    "2026-01-02,US,90,0.14",
+                    "2026-01-01,UK,75,0.32",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        result = tools["generate_dashboard"].invoke(
+            {
+                "title": "Native Dataset Dashboard",
+                "description": "Filterable without pre-rendered chart artifacts.",
+                "dashboard_dataset_path": "datasets/daily_orders.csv",
+                "filter_schema": [
+                    {"field": "order_date", "label": "Order date", "type": "date"},
+                    {"field": "country", "label": "Country", "type": "categorical"},
+                ],
+                "chart_bindings": [
+                    {
+                        "chart_index": 1,
+                        "title": "Orders trend by country",
+                        "chart_type": "line",
+                        "x_field": "order_date",
+                        "y_field": "orders",
+                        "aggregation": "sum",
+                        "series_field": "country",
+                        "sort_by": "x",
+                        "sort_direction": "asc",
+                    },
+                    {
+                        "chart_index": 2,
+                        "title": "Cancellation rate by country",
+                        "chart_type": "bar",
+                        "x_field": "country",
+                        "y_field": "cancellation_rate",
+                        "aggregation": "avg",
+                    },
+                ],
+            }
+        )
+
+        assert "Dashboard package saved to:" in result
+        content = (
+            tmp_path / "dashboards" / "Native_Dataset_Dashboard" / "dashboard.snapshot.html"
+        ).read_text(encoding="utf-8")
+        assert "Orders trend by country" in content
+        assert "Cancellation rate by country" in content
+        assert "Filter-aware" in content
+        assert "Static appendix charts" not in content
+
+    def test_native_dashboard_rejects_unsupported_table_binding(self, tmp_path: Path) -> None:
+        tools = _tools_for_workspace(tmp_path)
+        dataset_path = tmp_path / "datasets" / "orders.csv"
+        dataset_path.parent.mkdir(parents=True, exist_ok=True)
+        dataset_path.write_text("country,orders\nUS,10\n", encoding="utf-8")
+
+        result = tools["generate_dashboard"].invoke(
+            {
+                "title": "Bad Dashboard",
+                "description": "Should fail fast.",
+                "dashboard_dataset_path": "datasets/orders.csv",
+                "filter_schema": [{"field": "country", "type": "categorical"}],
+                "chart_bindings": [
+                    {
+                        "chart_index": 1,
+                        "chart_type": "table",
+                        "x_field": "country",
+                        "y_field": "orders",
+                        "aggregation": "sum",
+                    }
+                ],
+            }
+        )
+
+        assert "Dashboard chart binding validation failed" in result
+        assert "unsupported chart_type 'table'" in result
+
     def test_dashboard_can_only_be_called_once(self, tmp_path: Path) -> None:
         tools = self._run_analysis_and_chart(tmp_path)
         tools["generate_dashboard"].invoke({
@@ -1461,6 +1546,19 @@ class TestSummaryDashboardExclusivity:
 
 class TestBigQueryMaterialization:
     """Warehouse slices can be exported to workspace Parquet and reused."""
+
+    def test_materialize_bigquery_rejects_workspace_file_paths(self, tmp_path: Path) -> None:
+        tools = _tools_for_workspace(tmp_path)
+
+        raw = tools["materialize_bigquery_to_parquet"].invoke(
+            {
+                "sql_query": "SELECT * FROM '/uc1_batch_feature_fact.parquet'",
+                "cache_key_hint": "bad_local_path",
+            }
+        )
+
+        assert "expects BigQuery SQL" in raw
+        assert "DuckDB-registered local table" in raw
 
     def test_materialize_bigquery_to_parquet_creates_cache_files(self, tmp_path: Path) -> None:
         tools = _tools_for_workspace(tmp_path)

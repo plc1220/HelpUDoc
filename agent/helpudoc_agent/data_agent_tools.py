@@ -77,6 +77,11 @@ DEFAULT_CACHE_TTL_HOURS = 24
 MAX_MATERIALIZED_ROWS = 100000
 MAX_QUERY_RESULT_ROWS = MAX_SESSION_ROWS + 1
 CHART_EXECUTION_TIMEOUT_SECONDS = 5.0
+NATIVE_DASHBOARD_CHART_TYPES = {"bar", "line", "scatter", "pie", "area"}
+NATIVE_DASHBOARD_AGGREGATIONS = {"count", "sum", "avg", "mean", "min", "max", "nunique", "count_distinct"}
+NATIVE_DASHBOARD_SORT_FIELDS = {"x", "y"}
+NATIVE_DASHBOARD_SORT_DIRECTIONS = {"asc", "desc"}
+NATIVE_DASHBOARD_ORIENTATIONS = {"", "h", "v"}
 WORKSPACE_SCAN_EXCLUDED_DIRS = {
     ".git",
     ".hg",
@@ -1002,9 +1007,9 @@ def _normalize_chart_bindings(raw_bindings: Optional[List[Dict[str, Any]]]) -> D
 
 def _schema_type_map(dataset_schema: List[Dict[str, Any]]) -> Dict[str, str]:
     return {
-        str(item.get("name") or "").strip(): str(item.get("type") or "").strip().lower()
+        _coerce_text_arg(item.get("name")).strip(): _coerce_text_arg(item.get("type")).strip().lower()
         for item in dataset_schema
-        if str(item.get("name") or "").strip()
+        if isinstance(item, dict) and _coerce_text_arg(item.get("name")).strip()
     }
 
 
@@ -1014,6 +1019,11 @@ def _is_numeric_schema_type(type_name: str) -> bool:
         token in normalized
         for token in ("int", "float", "double", "decimal", "numeric", "real", "bigint", "smallint")
     )
+
+
+def _is_datetime_schema_type(dtype: str) -> bool:
+    normalized = dtype.lower()
+    return "date" in normalized or "time" in normalized
 
 
 def _build_dashboard_chart_specs(
@@ -1088,6 +1098,77 @@ def _build_dashboard_chart_specs(
     return normalized_specs
 
 
+def _validate_dashboard_runtime_config(
+    *,
+    filter_config: List[Dict[str, Any]],
+    chart_bindings: Dict[int, Dict[str, Any]],
+    dataset_schema: List[Dict[str, Any]],
+) -> List[str]:
+    errors: List[str] = []
+    fields = _schema_type_map(dataset_schema)
+    field_names = set(fields)
+
+    for filter_def in filter_config:
+        field = _coerce_text_arg(filter_def.get("field")).strip()
+        if field and field not in field_names:
+            errors.append(f"Filter field '{field}' is not present in the dashboard dataset.")
+
+    for chart_index, binding in sorted(chart_bindings.items()):
+        prefix = f"Chart {chart_index}"
+        chart_type = _coerce_text_arg(binding.get("chart_type")).strip().lower()
+        aggregation = _coerce_text_arg(binding.get("aggregation")).strip().lower()
+        x_field = _coerce_text_arg(binding.get("x_field")).strip()
+        y_field = _coerce_text_arg(binding.get("y_field")).strip()
+        dimension_field = _coerce_text_arg(binding.get("dimension_field")).strip() or x_field
+        metric_field = _coerce_text_arg(binding.get("metric_field")).strip() or y_field
+        numerator_field = _coerce_text_arg(binding.get("numerator_field")).strip()
+        denominator_field = _coerce_text_arg(binding.get("denominator_field")).strip()
+        series_field = _coerce_text_arg(binding.get("series_field")).strip()
+        sort_by = _coerce_text_arg(binding.get("sort_by")).strip().lower()
+        sort_direction = _coerce_text_arg(binding.get("sort_direction")).strip().lower()
+        orientation = _coerce_text_arg(binding.get("orientation")).strip().lower()
+
+        if chart_type not in NATIVE_DASHBOARD_CHART_TYPES:
+            errors.append(
+                f"{prefix} uses unsupported chart_type '{chart_type}'. "
+                f"Use one of: {', '.join(sorted(NATIVE_DASHBOARD_CHART_TYPES))}."
+            )
+        if aggregation not in NATIVE_DASHBOARD_AGGREGATIONS and not (numerator_field and denominator_field):
+            errors.append(
+                f"{prefix} uses unsupported aggregation '{aggregation}'. "
+                f"Use one of: {', '.join(sorted(NATIVE_DASHBOARD_AGGREGATIONS))}."
+            )
+        if sort_by not in NATIVE_DASHBOARD_SORT_FIELDS:
+            errors.append(f"{prefix} sort_by must be 'x' or 'y'.")
+        if sort_direction not in NATIVE_DASHBOARD_SORT_DIRECTIONS:
+            errors.append(f"{prefix} sort_direction must be 'asc' or 'desc'.")
+        if orientation not in NATIVE_DASHBOARD_ORIENTATIONS:
+            errors.append(f"{prefix} orientation must be '', 'h', or 'v'.")
+        if not dimension_field:
+            errors.append(f"{prefix} is missing x_field or dimension_field.")
+        elif dimension_field not in field_names:
+            errors.append(f"{prefix} dimension field '{dimension_field}' is not present in the dashboard dataset.")
+        if aggregation != "count" and not numerator_field and not denominator_field:
+            if not metric_field:
+                errors.append(f"{prefix} is missing y_field or metric_field for aggregation '{aggregation}'.")
+            elif metric_field not in field_names:
+                errors.append(f"{prefix} metric field '{metric_field}' is not present in the dashboard dataset.")
+        for role, field in (
+            ("numerator_field", numerator_field),
+            ("denominator_field", denominator_field),
+            ("series_field", series_field),
+        ):
+            if field and field not in field_names:
+                errors.append(f"{prefix} {role} '{field}' is not present in the dashboard dataset.")
+        if series_field and series_field == dimension_field:
+            errors.append(f"{prefix} uses the same field for dimension and series; choose a different grouping.")
+        if chart_type in {"line", "area", "scatter"} and dimension_field and _is_datetime_schema_type(fields.get(dimension_field, "")):
+            if sort_by != "x" or sort_direction != "asc":
+                errors.append(f"{prefix} is time-based and must use sort_by='x' with sort_direction='asc'.")
+
+    return errors
+
+
 _GENERIC_DASHBOARD_TITLE_TOKENS = {
     "chart",
     "overview",
@@ -1121,6 +1202,8 @@ def _validate_dashboard_spec_inputs(
     metric_cards: List[Dict[str, str]],
     chart_specs: Dict[int, Dict[str, Any]],
 ) -> Optional[str]:
+    if not strict_dashboard_mode:
+        return None
     if not chart_specs:
         return (
             "Dashboard package incomplete: no structured charts were provided. "
@@ -1131,8 +1214,6 @@ def _validate_dashboard_spec_inputs(
             "Dashboard package incomplete: dashboard_dataset_path is required so the live runtime "
             "and snapshot share the same canonical dataset."
         )
-    if not strict_dashboard_mode:
-        return None
     if not audience.strip():
         return "Dashboard spec incomplete: audience is required for executive dashboard mode."
     if not business_question.strip():
@@ -1176,6 +1257,15 @@ def _emit_dashboard_artifact(
             callbacks.on_custom_event("dashboard_artifact", payload)
     except Exception:  # pragma: no cover - best effort
         logger.warning("Failed to dispatch dashboard_artifact event", exc_info=True)
+
+
+def _looks_like_local_file_query(sql_query: str) -> bool:
+    normalized = (sql_query or "").strip().lower()
+    if not normalized:
+        return False
+    if "read_parquet" in normalized or "read_csv_auto" in normalized:
+        return True
+    return bool(re.search(r"['\"]/?[^'\"]+\.(parquet|csv|jsonl?|ndjson)['\"]", sql_query, re.IGNORECASE))
 
 
 def _cache_key_for_query(sql_query: str, workspace_id: str, cache_key_hint: str) -> str:
@@ -1603,6 +1693,11 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
         normalized_sql = _coerce_text_arg(sql_query).strip().rstrip(";")
         if not normalized_sql:
             return "SQL query is required."
+        if _looks_like_local_file_query(normalized_sql):
+            return (
+                "materialize_bigquery_to_parquet expects BigQuery SQL, not workspace file paths. "
+                "Use get_table_schema and run_sql_query against the DuckDB-registered local table instead."
+            )
 
         try:
             validate_read_only_sql(normalized_sql)
@@ -1816,7 +1911,9 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
         chart_title: str = Field(description="The title of the chart"),
         python_code: str = Field(
             description=(
-                "Python code to create visualizations. Two approaches:\n"
+                "Python code to create visualizations from the provided df variable, which contains "
+                "the last run_sql_query result. Do not read files directly; use DuckDB via "
+                "run_sql_query before calling this tool. Two approaches:\n"
                 "1. Matplotlib/Seaborn: Use plt.figure(), plt.plot(), sns.barplot(), etc. "
                 "Figures are auto-saved as PNG.\n"
                 "2. Plotly (preferred): Build a Plotly figure or a dict with data/layout/config assigned to 'chart_config'. "
@@ -2212,10 +2309,16 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
             db_manager.ensure_single_dashboard()
         except ValueError as exc:
             return str(exc)
-        if db_manager.session.query_count == 0:
+        normalized_bindings = _normalize_chart_bindings(chart_bindings)
+        filter_config = _normalize_filter_schema(filter_schema)
+        has_native_dataset_dashboard = bool(
+            dashboard_dataset_path.strip()
+            and normalized_bindings
+        )
+
+        if db_manager.session.query_count == 0 and not has_native_dataset_dashboard:
             return "Run at least one SQL query before building a dashboard."
         strict_dashboard_mode = _is_strict_dashboard_mode(workspace_state)
-        normalized_bindings = _normalize_chart_bindings(chart_bindings)
         if strict_dashboard_mode and len(normalized_bindings) < STRICT_DASHBOARD_MIN_CHART_COUNT:
             return (
                 "Dashboard plan incomplete: pass 3 to 5 approved chart bindings to generate_dashboard "
@@ -2223,8 +2326,11 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
             )
         if strict_dashboard_mode and not _coerce_text_arg(dashboard_dataset_path).strip():
             return "Dashboard mode requires dashboard_dataset_path so the native renderer and HTML export share the same dataset."
-        if not strict_dashboard_mode and not db_manager.session.chart_history:
-            return "Generate at least one chart before building a dashboard."
+        if not db_manager.session.chart_history and not has_native_dataset_dashboard:
+            return (
+                "Generate at least one chart before building a static dashboard, or provide "
+                "dashboard_dataset_path, filter_schema, and chart_bindings for a native filterable dashboard."
+            )
         if strict_dashboard_mode and len(normalized_bindings) > MAX_CHART_COUNT:
             return (
                 f"Dashboard plan too large: at most {MAX_CHART_COUNT} approved charts are allowed per dashboard package."
@@ -2290,7 +2396,6 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
             chart_entries.append(chart_entry)
             chart_entries_by_index[chart_index] = chart_entry
 
-        filter_config = _normalize_filter_schema(filter_schema)
         dataset_records: List[Dict[str, Any]] = []
         dataset_schema: List[Dict[str, Any]] = []
         dataset_format = ""
@@ -2306,6 +2411,14 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
                 "Dashboard mode could not load the canonical dataset. "
                 "Confirm dashboard_dataset_path points to a valid workspace CSV, Parquet, or JSON artifact."
             )
+        if dataset_records and normalized_bindings:
+            validation_errors = _validate_dashboard_runtime_config(
+                filter_config=filter_config,
+                chart_bindings=normalized_bindings,
+                dataset_schema=dataset_schema,
+            )
+            if validation_errors:
+                return "Dashboard chart binding validation failed:\n- " + "\n- ".join(validation_errors)
 
         normalized_chart_specs = _build_dashboard_chart_specs(normalized_bindings, dataset_schema)
         normalized_decision_questions = [

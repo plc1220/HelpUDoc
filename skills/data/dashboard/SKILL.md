@@ -2,7 +2,7 @@
 name: data/dashboard
 description: >
   Plan, review, and then assemble a stakeholder-ready dashboard package from the
-  current analysis run, with a live dashboard session plus snapshot fallback.
+  current analysis run, with a native interactive canvas experience plus snapshot fallback.
 requires_hitl_plan: true
 tools:
   - data_agent_tools
@@ -25,7 +25,7 @@ This skill is review-first and low-variance. Before any dashboard package is gen
 5. only then call `generate_dashboard`
 
 Produce one workspace-native dashboard package that can power:
-- a live dashboard session in the canvas
+- a native interactive dashboard in the canvas
 - a snapshot fallback/export for sharing
 
 This skill is not a generic file bundler. Treat it as a presentation step:
@@ -40,14 +40,15 @@ the user asks for a shareable dashboard, interactive report, or wants to bundle 
 charts into a single file.
 
 ## Prerequisites (enforced in code)
-- At least one SQL query must have been executed in this run.
-- Prefer at least one usable chart or one reusable dataset already prepared in this run.
+- Static dashboards require at least one SQL query and at least one chart artifact from this run.
+- Native filterable dashboards require `dashboard_dataset_path`, `filter_schema`, and `chart_bindings`.
 - `generate_dashboard` can only be called **once per run**.
 
 ## Connector scope
-The dashboard tool only uses `data_agent_tools` (local data). BigQuery queries are
-surfaced as embedded SQL + row-count metadata — the dashboard itself does not make
-live warehouse connections.
+The dashboard tool renders from workspace-local data. For BigQuery or other connected
+sources, first materialize a scoped, read-only slice into workspace Parquet with
+`materialize_bigquery_to_parquet`, then continue through DuckDB and `generate_dashboard`.
+The generated dashboard itself does not make live warehouse connections.
 
 ## Workflow
 
@@ -124,6 +125,14 @@ For tagged local parquet/csv dashboards, prefer a deterministic prep path over o
 
 Do not rediscover upstream tables or rerun exploratory profiling when the tagged local dataset is already sufficient.
 Do not use `generate_chart_config` on the happy path for `data/dashboard`; pass structured chart bindings directly to `generate_dashboard`.
+
+Source handling:
+- **Local CSV/Parquet**: use `get_table_schema` and `run_sql_query` against the DuckDB
+  registered table names. Do not use `pd.read_parquet`, `pd.read_csv`, or direct file reads in
+  chart code.
+- **BigQuery / MCP datasource**: use the MCP tools to inspect/query the warehouse, then
+  materialize the scoped result with `materialize_bigquery_to_parquet`. Treat the resulting
+  Parquet as the dashboard dataset.
 
 ### 2. Curate before assembling
 Before generating the dashboard, review the current run and be selective.
@@ -228,7 +237,7 @@ Call `generate_dashboard` with:
 - `section_titles`: ordered list of polished section headings, one per chart. Do not pass
   raw file names or generic placeholders.
 - `metric_cards` (optional): 2-3 explicit KPI cards for the hero area.
-- `dashboard_dataset_path` (optional but required for true shared data filters): a canonical
+- `dashboard_dataset_path` (required for native shared data filters): a canonical
   Parquet/CSV/JSON dataset materialized for this run.
 - `filter_schema` (optional): structured filter definitions describing field, label, type,
   options, presets, and applicability.
@@ -245,7 +254,8 @@ The tool will:
   - `dashboard.meta.json`
   - `dashboard.spec.json`
   - `dashboard.snapshot.html`
-- Register a live dashboard session when possible.
+  - `data/dashboard.rows.json` when a reusable dataset is embedded
+- Emit a `dashboard_artifact` event so the frontend can surface the dashboard folder.
 - Emit workspace artifacts so the frontend surfaces the dashboard folder as one object.
 - Only include artifacts from the **current run** — prior-run charts are excluded.
 
@@ -264,7 +274,7 @@ The resulting dashboard package:
 - Must include filter controls when the dashboard is truly dataset-backed.
 - Should place technical SQL details in a lower-priority appendix, not at the top.
 - Should make it clear when the snapshot is read-only versus live/filter-aware.
-- Uses a shared Streamlit live runtime plus `dashboard.snapshot.html` fallback from the same `dashboard.spec.json`.
+- Uses native chart bindings plus `dashboard.snapshot.html` fallback from the same `dashboard.spec.json`.
 
 ## Filter expectations
 Filtering is required for dashboards.

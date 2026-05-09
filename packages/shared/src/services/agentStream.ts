@@ -75,6 +75,41 @@ type StreamArgs = {
   debug?: boolean;
 };
 
+const coerceStreamContent = (value: unknown, stringifyObjects = false): string => {
+  if (value === undefined || value === null) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
+    return String(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => coerceStreamContent(item, stringifyObjects)).filter(Boolean).join('');
+  }
+  if (typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    for (const key of ['text', 'content', 'message', 'output']) {
+      const coerced = coerceStreamContent(record[key], stringifyObjects);
+      if (coerced) return coerced;
+    }
+    return stringifyObjects ? JSON.stringify(record) : '';
+  }
+  return '';
+};
+
+const normalizeAgentStreamChunk = (chunk: unknown): AgentStreamChunk & { id?: unknown } => {
+  if (!chunk || typeof chunk !== 'object') {
+    return { type: 'chunk', content: coerceStreamContent(chunk), role: 'assistant' };
+  }
+  const next = { ...(chunk as Record<string, unknown>) };
+  if ('content' in next) {
+    const type = typeof next.type === 'string' ? next.type : '';
+    next.content = coerceStreamContent(next.content, type.startsWith('tool_'));
+  }
+  if (typeof next.message !== 'string' && next.message !== undefined && next.type === 'error') {
+    next.message = coerceStreamContent(next.message, true);
+  }
+  return next as AgentStreamChunk & { id?: unknown };
+};
+
 export const streamAgentRunWithReconnect = async ({
   runId,
   baseUrl,
@@ -139,7 +174,7 @@ export const streamAgentRunWithReconnect = async ({
 
           if (line) {
             try {
-              const chunk = JSON.parse(line);
+              const chunk = normalizeAgentStreamChunk(JSON.parse(line));
               onChunkWithResume(chunk);
               sawChunk = true;
               if (chunk?.type === 'done') {
@@ -164,7 +199,7 @@ export const streamAgentRunWithReconnect = async ({
 
       if (!sawTerminalChunk && buffer.trim()) {
         try {
-          const chunk = JSON.parse(buffer.trim());
+          const chunk = normalizeAgentStreamChunk(JSON.parse(buffer.trim()));
           onChunkWithResume(chunk);
           sawChunk = true;
           if (chunk?.type === 'done') {
