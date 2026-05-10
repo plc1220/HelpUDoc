@@ -1,6 +1,6 @@
 import { Suspense, lazy, type FC, type ReactElement } from 'react';
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
-import { useAuth } from './auth/AuthProvider';
+import { useAuth } from './auth/useAuth';
 
 const WorkspacePage = lazy(() => import('./pages/WorkspacePage'));
 const AgentSettingsPage = lazy(() => import('./pages/AgentSettingsPage'));

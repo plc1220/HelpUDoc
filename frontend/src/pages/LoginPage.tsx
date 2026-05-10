@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { PaletteMode } from '@mui/material';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Sun, Moon } from 'lucide-react';
-import { useAuth } from '../auth/AuthProvider';
+import { useAuth } from '../auth/useAuth';
 import { applyColorModeToDocument, resolveInitialColorMode } from '../colorMode';
 
 interface LocationState {

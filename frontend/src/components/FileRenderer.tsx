@@ -140,10 +140,10 @@ const CODE_LANGUAGE_BY_EXTENSION: Record<string, string> = {
   '.dockerfile': 'docker',
 };
 let parquetRuntimePromise: Promise<{
-  parquetMetadataAsync: any;
-  parquetReadObjects: any;
-  parquetSchema: any;
-  compressors: any;
+  parquetMetadataAsync: typeof import('hyparquet').parquetMetadataAsync;
+  parquetReadObjects: typeof import('hyparquet').parquetReadObjects;
+  parquetSchema: typeof import('hyparquet').parquetSchema;
+  compressors: import('hyparquet').Compressors;
 }> | null = null;
 
 const loadParquetRuntime = async () => {

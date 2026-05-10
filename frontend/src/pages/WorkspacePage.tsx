@@ -21,7 +21,6 @@ import {
   deleteFolder,
   deleteFile,
   getFileContent,
-  getWorkspaceFilePreview,
   renameFile,
   getRagStatuses,
   resolveFileContextRefs,
@@ -82,14 +81,15 @@ import WorkspaceShareDialog from '../components/WorkspaceShareDialog';
 import type { UIBlock } from '../components/UIBlockRenderer';
 import ExpandableSidebar from '../components/ExpandableSidebar';
 import WorkspaceFileTree from '../components/WorkspaceFileTree';
-import DashboardCanvas, { downloadDashboardHtmlExport } from '../components/dashboard/DashboardCanvas';
+import DashboardCanvas from '../components/dashboard/DashboardCanvas';
+import { downloadDashboardHtmlExport } from '../components/dashboard/dashboardDownload';
 import AgentChatPane from '../components/chat/AgentChatPane';
 import { buildApprovalDraftContent, buildApprovalReview } from '../components/chat/approvalReview';
 import type { RenderableInterruptAction } from '../components/chat/interruptActions';
 import DrivePickerModal from '../components/chat/DrivePickerModal';
 import GoogleDriveIcon from '../components/chat/GoogleDriveIcon';
 import type { ChatComposerAttachment } from '../components/chat/chatTypes';
-import { useAuth } from '../auth/AuthProvider';
+import { useAuth } from '../auth/useAuth';
 import {
   extractToolPathFiles,
   getFriendlyToolName,
@@ -4416,10 +4416,7 @@ export default function WorkspacePage() {
           console.debug('[WorkspacePage] stream finished', { runId, status: finalStatus });
         }
         flushBufferedAgentChunks();
-        if (supersededByNewerStream) {
-          return;
-        }
-        if (finalStatus === 'running' || finalStatus === 'queued') {
+        if (!supersededByNewerStream && (finalStatus === 'running' || finalStatus === 'queued')) {
           const reconnectAttempts = (runInfo.streamReconnectAttempts || 0) + 1;
           if (reconnectAttempts > 5) {
             const failedStatus: AgentRunStatus = 'failed';
@@ -4444,63 +4441,63 @@ export default function WorkspacePage() {
             stopRequestedRef.current = false;
             resumeInFlightRef.current.delete(runId);
             removeActiveRun(runId);
-            return;
+          } else {
+            const resumedRunInfo: ActiveRunInfo = {
+              ...runInfo,
+              status: 'running',
+              lastStreamId,
+              streamReconnectAttempts: reconnectAttempts,
+            };
+            registerActiveRun(resumedRunInfo);
+            setConversationAttention(conversationId, 'running', 'Streaming the latest agent updates...');
+            if (streamAbortMapRef.current.get(conversationId) === controller) {
+              streamAbortMapRef.current.delete(conversationId);
+            }
+            window.setTimeout(() => {
+              const activeRun = activeRunsRef.current[runId];
+              if (!activeRun || activeRun.status !== 'running') {
+                return;
+              }
+              void streamRunForConversation(activeRun, false, activeRun.lastStreamId);
+            }, Math.min(10000, 1000 * reconnectAttempts));
           }
-          const resumedRunInfo: ActiveRunInfo = {
-            ...runInfo,
-            status: 'running',
-            lastStreamId,
-            streamReconnectAttempts: reconnectAttempts,
-          };
-          registerActiveRun(resumedRunInfo);
-          setConversationAttention(conversationId, 'running', 'Streaming the latest agent updates...');
+        } else if (!supersededByNewerStream) {
+          const normalizedFinalStatus = normalizeRunStatus(finalStatus);
+          await syncRunStateToConversation(
+            {
+              ...runInfo,
+              status: normalizedFinalStatus,
+              lastStreamId,
+            },
+            normalizedFinalStatus,
+            normalizedFinalStatus === 'awaiting_approval' ? effectivePendingInterrupt : undefined,
+          );
+          setConversationAttention(
+            conversationId,
+            normalizedFinalStatus,
+            normalizedFinalStatus === 'awaiting_approval'
+              ? effectivePendingInterrupt?.title || effectivePendingInterrupt?.description || 'Waiting for your input.'
+              : normalizedFinalStatus === 'completed'
+                ? 'The latest run completed.'
+                : normalizedFinalStatus === 'cancelled'
+                  ? 'The latest run was stopped.'
+                  : latestRunMeta?.error || 'The latest run failed.',
+          );
+          setStreamingForConversation(conversationId, false);
           if (streamAbortMapRef.current.get(conversationId) === controller) {
             streamAbortMapRef.current.delete(conversationId);
           }
-          window.setTimeout(() => {
-            const activeRun = activeRunsRef.current[runId];
-            if (!activeRun || activeRun.status !== 'running') {
-              return;
+          stopRequestedRef.current = false;
+          resumeInFlightRef.current.delete(runId);
+          if (finalStatus === 'awaiting_approval') {
+            registerActiveRun({ ...runInfo, status: finalStatus, lastStreamId, streamReconnectAttempts: 0 });
+          } else {
+            removeActiveRun(runId);
+            removeActiveRunsForTurn(conversationId, turnId);
+            const workspaceId = selectedWorkspace?.id;
+            if (workspaceId) {
+              loadFilesForWorkspace(workspaceId);
             }
-            void streamRunForConversation(activeRun, false, activeRun.lastStreamId);
-          }, Math.min(10000, 1000 * reconnectAttempts));
-          return;
-        }
-        const normalizedFinalStatus = normalizeRunStatus(finalStatus);
-        await syncRunStateToConversation(
-          {
-            ...runInfo,
-            status: normalizedFinalStatus,
-            lastStreamId,
-          },
-          normalizedFinalStatus,
-          normalizedFinalStatus === 'awaiting_approval' ? effectivePendingInterrupt : undefined,
-        );
-        setConversationAttention(
-          conversationId,
-          normalizedFinalStatus,
-          normalizedFinalStatus === 'awaiting_approval'
-            ? effectivePendingInterrupt?.title || effectivePendingInterrupt?.description || 'Waiting for your input.'
-            : normalizedFinalStatus === 'completed'
-              ? 'The latest run completed.'
-              : normalizedFinalStatus === 'cancelled'
-                ? 'The latest run was stopped.'
-                : latestRunMeta?.error || 'The latest run failed.',
-        );
-        setStreamingForConversation(conversationId, false);
-        if (streamAbortMapRef.current.get(conversationId) === controller) {
-          streamAbortMapRef.current.delete(conversationId);
-        }
-        stopRequestedRef.current = false;
-        resumeInFlightRef.current.delete(runId);
-        if (finalStatus === 'awaiting_approval') {
-          registerActiveRun({ ...runInfo, status: finalStatus, lastStreamId, streamReconnectAttempts: 0 });
-        } else {
-          removeActiveRun(runId);
-          removeActiveRunsForTurn(conversationId, turnId);
-          const workspaceId = selectedWorkspace?.id;
-          if (workspaceId) {
-            loadFilesForWorkspace(workspaceId);
           }
         }
       }

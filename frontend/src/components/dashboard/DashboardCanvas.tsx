@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import PlotlyChart from '../PlotlyChart';
 import type { PlotlySpec } from '../PlotlyChart';
 import { getWorkspaceFilePreview } from '../../services/fileApi';
-import { apiFetch, buildApiUrl } from '../../services/apiClient';
 import {
   applyDashboardFilters,
   buildPlotlyPayload,
@@ -214,21 +213,3 @@ function inferSchemaFromRows(sample: DashboardRow[]): DatasetSchemaColumn[] {
 }
 
 export default DashboardCanvas;
-
-/** Fetch snapshot HTML as a download (avoids executing HTML in a same-origin iframe). */
-export async function downloadDashboardHtmlExport(workspaceId: string, dashboardPath: string, filename?: string) {
-  const base = normalizePath(dashboardPath);
-  const path = `${base}/dashboard.snapshot.html`;
-  const url = buildApiUrl(`/workspaces/${workspaceId}/files/preview/raw`);
-  url.searchParams.set('path', path);
-  const res = await apiFetch(url.toString());
-  if (!res.ok) {
-    throw new Error('Failed to download HTML export');
-  }
-  const blob = await res.blob();
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = filename || 'dashboard.snapshot.html';
-  a.click();
-  URL.revokeObjectURL(a.href);
-}

@@ -103,7 +103,7 @@ const checklistToSteps = (checklist: string): PlanReviewStep[] =>
     .split('\n')
     .map((line) => line.trim())
     .filter(Boolean)
-    .map((line) => line.replace(/^[-*]\s+/, '').replace(/^\d+[\.\)]\s+/, '').trim())
+    .map((line) => line.replace(/^[-*]\s+/, '').replace(/^\d+[.)]\s+/, '').trim())
     .filter(Boolean)
     .map((title) => ({
       title,

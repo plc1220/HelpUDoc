@@ -1,5 +1,6 @@
 import { ArrowDown, MessageSquareText } from 'lucide-react';
 import { type Dispatch, type ReactNode, type SetStateAction, useEffect, useMemo, useRef, useState } from 'react';
+import type { Components } from 'react-markdown';
 
 import type {
   ConversationMessage,
@@ -50,7 +51,7 @@ export default function ChatMessageList({
   isStreaming: boolean;
   personaDisplayName: string;
   messageBubbleMaxWidth: string;
-  markdownComponents: Record<string, any>;
+  markdownComponents: Components;
   expandedToolMessages: Set<ConversationMessage['id']>;
   expandedThinkingMessages: Set<ConversationMessage['id']>;
   copiedMessageId: ConversationMessage['id'] | null;
