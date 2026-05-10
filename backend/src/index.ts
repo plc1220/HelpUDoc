@@ -24,30 +24,11 @@ import { userContextMiddleware } from './middleware/userContext';
 import { blockingRedisClient, redisClient } from './services/redisService';
 import { startCollabServer } from './collab/collabServer';
 import { logWorkspaceRootDiagnostic } from './config/workspaceRoot';
+import { getBackendEnv } from './config/env';
+
 const app = express();
-const port = process.env.PORT || 3000;
-
-function resolveCookieSecure(): boolean {
-  const raw = (process.env.SESSION_COOKIE_SECURE || '').trim().toLowerCase();
-  if (raw === 'true') {
-    return true;
-  }
-  if (raw === 'false') {
-    return false;
-  }
-  return process.env.NODE_ENV === 'production';
-}
-
-function resolveSaveUninitialized(): boolean {
-  const raw = (process.env.SESSION_SAVE_UNINITIALIZED || '').trim().toLowerCase();
-  if (raw === 'true') {
-    return true;
-  }
-  if (raw === 'false') {
-    return false;
-  }
-  return false;
-}
+const backendEnv = getBackendEnv();
+const port = backendEnv.port;
 
 async function startServer() {
   app.get('/api/health', (_req, res) => {
@@ -65,10 +46,7 @@ async function startServer() {
   });
   await Promise.all([redisClient.connect(), blockingRedisClient.connect()]);
 
-  const sessionTtlSeconds = Number(process.env.SESSION_TTL_SECONDS);
-  const sessionMaxAgeSeconds = Number.isFinite(sessionTtlSeconds) && sessionTtlSeconds > 0
-    ? sessionTtlSeconds
-    : 60 * 60 * 24 * 7; // default to 7 days
+  const sessionMaxAgeSeconds = backendEnv.session.ttlSeconds;
 
   app.use(helmet());
   app.use(cors({
@@ -79,21 +57,21 @@ async function startServer() {
   }));
   app.set('trust proxy', 1);
   app.use(session({
-    name: process.env.SESSION_NAME || 'helpudoc.sid',
+    name: backendEnv.session.name,
     store: new RedisStore({
       client: redisClient,
       prefix: 'sess:',
     }),
-    secret: process.env.SESSION_SECRET || 'dev-secret-change-me',
+    secret: backendEnv.session.secret,
     resave: false,
-    saveUninitialized: resolveSaveUninitialized(),
+    saveUninitialized: backendEnv.session.saveUninitialized,
     rolling: true,
     cookie: {
       maxAge: sessionMaxAgeSeconds * 1000,
       httpOnly: true,
       sameSite: 'lax',
-      secure: resolveCookieSecure(),
-      domain: process.env.SESSION_COOKIE_DOMAIN || undefined,
+      secure: backendEnv.session.cookieSecure,
+      domain: backendEnv.session.cookieDomain,
     },
   }));
   app.use(loggingMiddleware);

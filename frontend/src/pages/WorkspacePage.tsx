@@ -43,6 +43,7 @@ import {
   type AgentRunStatus,
   type AgentStreamChunk,
 } from '../services/agentApi';
+import { vitePublicEnv } from '../config/env';
 import {
   fetchRecentConversations,
   createConversation as createConversationApi,
@@ -220,10 +221,7 @@ const normalizePersonaName = (name: string): string => {
   }
   return 'fast';
 };
-const STREAM_DEBUG_ENABLED =
-  typeof import.meta !== 'undefined' &&
-  typeof import.meta.env !== 'undefined' &&
-  (import.meta.env.VITE_DEBUG_STREAM === '1' || import.meta.env.VITE_DEBUG_STREAM === 'true');
+const STREAM_DEBUG_ENABLED = vitePublicEnv.debugStream;
 
 const editorLoadingFallback = (
   <div className="flex h-full items-center justify-center text-sm text-slate-500">

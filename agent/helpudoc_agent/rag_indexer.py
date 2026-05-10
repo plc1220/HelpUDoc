@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import re
 import hashlib
 from datetime import datetime, timezone
@@ -39,33 +38,11 @@ except Exception:  # pragma: no cover - optional dependency for some test enviro
         return f"{prefix}{hashlib.md5(text.encode('utf-8')).hexdigest()}"
 
 
+from .config.env import ensure_lightrag_postgres_env_defaults, env_trim, gemini_key_for_embeddings
+
 logger = logging.getLogger(__name__)
 
 RAG_INDEXABLE_SUFFIXES = {".pdf", ".doc", ".docx", ".ppt", ".pptx", ".md", ".html", ".htm"}
-
-
-def _env(name: str, default: str | None = None) -> str | None:
-    value = os.getenv(name)
-    if value is None:
-        return default
-    value = value.strip()
-    return value if value else default
-
-
-def _ensure_pg_storage_env() -> None:
-    os.environ.setdefault("LIGHTRAG_KV_STORAGE", "PGKVStorage")
-    os.environ.setdefault("LIGHTRAG_DOC_STATUS_STORAGE", "PGDocStatusStorage")
-    os.environ.setdefault("LIGHTRAG_GRAPH_STORAGE", "PGGraphStorage")
-    os.environ.setdefault("LIGHTRAG_VECTOR_STORAGE", "PGVectorStorage")
-
-    if "POSTGRES_DATABASE" not in os.environ and "POSTGRES_DB" in os.environ:
-        os.environ["POSTGRES_DATABASE"] = os.environ["POSTGRES_DB"]
-
-    os.environ.setdefault("POSTGRES_HOST", "localhost")
-    os.environ.setdefault("POSTGRES_PORT", "5432")
-    os.environ.setdefault("POSTGRES_USER", "helpudoc")
-    os.environ.setdefault("POSTGRES_PASSWORD", "helpudoc")
-    os.environ.setdefault("POSTGRES_DATABASE", "helpudoc")
 
 
 @dataclass(frozen=True)
@@ -90,28 +67,28 @@ class RagConfig:
 
     @classmethod
     def from_env(cls, workspace_root: Path) -> "RagConfig":
-        _ensure_pg_storage_env()
-        working_dir = Path(_env("RAG_WORKING_DIR", str(workspace_root / ".lightrag_storage"))).resolve()
-        llm_model = _env("RAG_LLM_MODEL", _env("LLM_MODEL", "gemini-3-flash-preview")) or "gemini-3-flash-preview"
-        embedding_model = _env("RAG_EMBEDDING_MODEL", _env("EMBEDDING_MODEL", "gemini-embedding-001")) or "gemini-embedding-001"
-        embedding_dim = int(_env("RAG_EMBEDDING_DIM", _env("EMBEDDING_DIM", "3072")) or "3072")
-        api_key = _env("GEMINI_API_KEY", _env("LLM_BINDING_API_KEY"))
-        base_url = _env("LLM_BINDING_HOST")
-        max_file_bytes = int(_env("RAG_MAX_FILE_BYTES", str(25 * 1024 * 1024)) or str(25 * 1024 * 1024))
-        max_text_chars = int(_env("RAG_MAX_TEXT_CHARS", "250000") or "250000")
-        offline_env = (_env("RAG_OFFLINE", "false") or "false").lower()
+        ensure_lightrag_postgres_env_defaults()
+        working_dir = Path(env_trim("RAG_WORKING_DIR", str(workspace_root / ".lightrag_storage"))).resolve()
+        llm_model = env_trim("RAG_LLM_MODEL", env_trim("LLM_MODEL", "gemini-3-flash-preview")) or "gemini-3-flash-preview"
+        embedding_model = env_trim("RAG_EMBEDDING_MODEL", env_trim("EMBEDDING_MODEL", "gemini-embedding-001")) or "gemini-embedding-001"
+        embedding_dim = int(env_trim("RAG_EMBEDDING_DIM", env_trim("EMBEDDING_DIM", "3072")) or "3072")
+        api_key = env_trim("GEMINI_API_KEY", env_trim("LLM_BINDING_API_KEY"))
+        base_url = env_trim("LLM_BINDING_HOST")
+        max_file_bytes = int(env_trim("RAG_MAX_FILE_BYTES", str(25 * 1024 * 1024)) or str(25 * 1024 * 1024))
+        max_text_chars = int(env_trim("RAG_MAX_TEXT_CHARS", "250000") or "250000")
+        offline_env = (env_trim("RAG_OFFLINE", "false") or "false").lower()
         offline = offline_env in {"1", "true", "yes", "y", "on"} or not api_key
-        pipeline = (_env("RAG_PARSER_PIPELINE", "raganything") or "raganything").strip().lower()
+        pipeline = (env_trim("RAG_PARSER_PIPELINE", "raganything") or "raganything").strip().lower()
         use_raganything = pipeline in {"raganything", "rag_anything", "rag-everything", "rageverything"}
-        raganything_parser = (_env("RAGANYTHING_PARSER", "docling") or "docling").strip().lower()
-        raganything_parse_method = (_env("RAGANYTHING_PARSE_METHOD", "auto") or "auto").strip().lower()
+        raganything_parser = (env_trim("RAGANYTHING_PARSER", "docling") or "docling").strip().lower()
+        raganything_parse_method = (env_trim("RAGANYTHING_PARSE_METHOD", "auto") or "auto").strip().lower()
         raganything_output_dir = Path(
-            _env("RAGANYTHING_OUTPUT_DIR", str(workspace_root / ".raganything_output")) or str(workspace_root / ".raganything_output")
+            env_trim("RAGANYTHING_OUTPUT_DIR", str(workspace_root / ".raganything_output")) or str(workspace_root / ".raganything_output")
         ).resolve()
-        raganything_enable_image_processing = (_env("RAGANYTHING_ENABLE_IMAGE_PROCESSING", "false") or "false").strip().lower() in {"1", "true", "yes", "y", "on"}
-        raganything_enable_table_processing = (_env("RAGANYTHING_ENABLE_TABLE_PROCESSING", "true") or "true").strip().lower() in {"1", "true", "yes", "y", "on"}
-        raganything_enable_equation_processing = (_env("RAGANYTHING_ENABLE_EQUATION_PROCESSING", "true") or "true").strip().lower() in {"1", "true", "yes", "y", "on"}
-        enable_rerank = (_env("RAG_ENABLE_RERANK", "false") or "false").strip().lower() in {"1", "true", "yes", "y", "on"}
+        raganything_enable_image_processing = (env_trim("RAGANYTHING_ENABLE_IMAGE_PROCESSING", "false") or "false").strip().lower() in {"1", "true", "yes", "y", "on"}
+        raganything_enable_table_processing = (env_trim("RAGANYTHING_ENABLE_TABLE_PROCESSING", "true") or "true").strip().lower() in {"1", "true", "yes", "y", "on"}
+        raganything_enable_equation_processing = (env_trim("RAGANYTHING_ENABLE_EQUATION_PROCESSING", "true") or "true").strip().lower() in {"1", "true", "yes", "y", "on"}
+        enable_rerank = (env_trim("RAG_ENABLE_RERANK", "false") or "false").strip().lower() in {"1", "true", "yes", "y", "on"}
         return cls(
             working_dir=working_dir,
             llm_model=llm_model,
@@ -158,7 +135,7 @@ async def _embed_gemini(
     except Exception as exc:  # pragma: no cover
         raise RuntimeError("google-genai is required for Gemini embeddings") from exc
 
-    key = api_key or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    key = gemini_key_for_embeddings(api_key)
     if not key:
         raise RuntimeError("Missing GEMINI_API_KEY/GOOGLE_API_KEY for embeddings")
 

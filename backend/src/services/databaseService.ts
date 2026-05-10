@@ -1,4 +1,5 @@
 import knex, { Knex } from 'knex';
+import { getBackendEnv } from '../config/env';
 
 type PgConnection = Knex.PgConnectionConfig | string | Knex.StaticConnectionConfig;
 
@@ -6,12 +7,13 @@ export class DatabaseService {
   private db: Knex;
 
   constructor() {
+    const env = getBackendEnv();
     this.db = knex({
       client: 'pg',
-      connection: this.buildConnectionConfig(),
+      connection: this.buildConnectionConfig(env),
       pool: {
-        min: Number(process.env.DB_POOL_MIN ?? 0),
-        max: Number(process.env.DB_POOL_MAX ?? 10),
+        min: env.database.poolMin,
+        max: env.database.poolMax,
       },
     });
   }
@@ -46,9 +48,9 @@ export class DatabaseService {
     await this.createSkillEvolutionSuggestionsTable();
   }
 
-  private buildConnectionConfig(): PgConnection {
-    const ssl = this.buildSSLConfig();
-    const connectionString = process.env.DATABASE_URL;
+  private buildConnectionConfig(env: ReturnType<typeof getBackendEnv>): PgConnection {
+    const ssl = this.buildSSLConfig(env.database.sslRaw);
+    const connectionString = env.database.connectionString;
     if (connectionString) {
       if (ssl) {
         return {
@@ -60,11 +62,11 @@ export class DatabaseService {
     }
 
     const config: Knex.PgConnectionConfig = {
-      host: process.env.POSTGRES_HOST || 'localhost',
-      port: Number(process.env.POSTGRES_PORT || 5432),
-      database: process.env.POSTGRES_DB || 'helpudoc',
-      user: process.env.POSTGRES_USER || 'helpudoc',
-      password: process.env.POSTGRES_PASSWORD || 'helpudoc',
+      host: env.database.host,
+      port: env.database.port,
+      database: env.database.database,
+      user: env.database.user,
+      password: env.database.password,
     };
 
     if (ssl) {
@@ -74,8 +76,8 @@ export class DatabaseService {
     return config;
   }
 
-  private buildSSLConfig(): false | { rejectUnauthorized: boolean } {
-    const raw = (process.env.DATABASE_SSL || '').toLowerCase();
+  private buildSSLConfig(rawOverride: string | undefined): false | { rejectUnauthorized: boolean } {
+    const raw = (rawOverride || '').toLowerCase();
     if (!raw || raw === 'false' || raw === '0') {
       return false;
     }

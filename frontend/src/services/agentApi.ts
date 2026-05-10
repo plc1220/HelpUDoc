@@ -4,10 +4,9 @@ import { API_URL, apiFetch } from './apiClient';
 import type { ConversationMessageMetadata, FileContextRef, InterruptAnswersByQuestionId } from '../types';
 import type { SkillDefinition } from '../types';
 
-const STREAM_DEBUG_ENABLED =
-  typeof import.meta !== 'undefined' &&
-  typeof import.meta.env !== 'undefined' &&
-  (import.meta.env.VITE_DEBUG_STREAM === '1' || import.meta.env.VITE_DEBUG_STREAM === 'true');
+import { vitePublicEnv } from '../config/env';
+
+const STREAM_DEBUG_ENABLED = vitePublicEnv.debugStream;
 
 type AgentStreamOptions = {
   forceReset?: boolean;

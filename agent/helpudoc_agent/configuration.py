@@ -8,12 +8,13 @@ from typing import Any, Dict, List, Optional
 import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from .config.env import get_agent_runtime_env, is_local_dev_node_env
+
 
 PACKAGE_ROOT = Path(__file__).resolve().parent
 AGENT_ROOT = PACKAGE_ROOT.parent
 REPO_ROOT = AGENT_ROOT.parent
 DEFAULT_CONFIG_PATH = AGENT_ROOT / "config" / "runtime.yaml"
-_LOCAL_DEV_ENVIRONMENTS = {"", "development", "test"}
 _SUSPICIOUS_WORKSPACE_ROOTS = {
     (REPO_ROOT / "backend" / "backend" / "workspaces").resolve(),
     (AGENT_ROOT / "backend" / "workspaces").resolve(),
@@ -37,7 +38,7 @@ class ModelConfig(BaseModel):
     pro_max_output_tokens: Optional[int] = None
     project: Optional[str] = None
     location: Optional[str] = None
-    api_key: Optional[str] = Field(default_factory=lambda: os.getenv("GEMINI_API_KEY"))
+    api_key: Optional[str] = Field(default_factory=lambda: get_agent_runtime_env().gemini_api_key)
     use_vertex_ai: bool = Field(default=False)
 
     @property
@@ -278,14 +279,9 @@ def _resolve_env_override_path(value: str, *, base_dir: Path) -> str:
     return str((base_dir / path).resolve())
 
 
-def _is_local_dev_environment() -> bool:
-    env = os.getenv("NODE_ENV", "").strip().lower()
-    return env in _LOCAL_DEV_ENVIRONMENTS
-
-
 def _validate_workspace_root(workspace_root: Path, *, raw_override: str | None = None) -> Path:
     resolved = workspace_root.resolve()
-    if not _is_local_dev_environment():
+    if not is_local_dev_node_env():
         return resolved
 
     if raw_override:
@@ -314,14 +310,14 @@ def _validate_workspace_root(workspace_root: Path, *, raw_override: str | None =
 
 
 def describe_workspace_root(settings: Settings) -> Dict[str, Any]:
-    raw_value = (os.getenv("WORKSPACE_ROOT") or "").strip() or None
+    raw_value = get_agent_runtime_env().workspace_root_raw or None
     resolved = _validate_workspace_root(settings.backend.workspace_root, raw_override=raw_value)
     return {
         "raw_value": raw_value,
         "resolved_path": str(resolved),
         "source": "env" if raw_value else "config",
         "repo_root": str(REPO_ROOT.resolve()),
-        "is_local_dev": _is_local_dev_environment(),
+        "is_local_dev": is_local_dev_node_env(),
     }
 
 
@@ -335,8 +331,9 @@ def load_settings(config_path: Path | None = None) -> Settings:
     override_base_dir = REPO_ROOT
 
     # Allow runtime override for shared workspace volume paths (e.g., Docker Compose).
-    workspace_root_override = os.getenv("WORKSPACE_ROOT")
-    skills_root_override = os.getenv("SKILLS_ROOT")
+    runtime = get_agent_runtime_env()
+    workspace_root_override = runtime.workspace_root_raw
+    skills_root_override = runtime.skills_root_raw
     if workspace_root_override:
         backend_cfg = config_dict.get("backend") or {}
         if isinstance(backend_cfg, dict):

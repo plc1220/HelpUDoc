@@ -1,7 +1,8 @@
 import { getAuthUser } from '../auth/authStore';
+import { vitePublicEnv } from '../config/env';
 
-export const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000/api';
-export const AUTH_MODE = (import.meta.env.VITE_AUTH_MODE || 'hybrid').toLowerCase();
+export const API_URL = vitePublicEnv.apiUrl;
+export const AUTH_MODE = vitePublicEnv.authMode;
 
 export function buildApiUrl(path: string): URL {
   const base = API_URL.endsWith('/') ? API_URL.slice(0, -1) : API_URL;

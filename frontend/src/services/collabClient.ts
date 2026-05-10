@@ -1,8 +1,9 @@
 import { HocuspocusProvider } from '@hocuspocus/provider';
 import * as Y from 'yjs';
 import { getAuthUser } from '../auth/authStore';
+import { vitePublicEnv } from '../config/env';
 
-export const COLLAB_URL = import.meta.env.VITE_COLLAB_URL || 'ws://localhost:1234';
+export const COLLAB_URL = vitePublicEnv.collabUrl;
 
 export type CollabSession = {
   doc: Y.Doc;

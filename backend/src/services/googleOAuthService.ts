@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { getBackendEnv } from '../config/env';
 import { StoredOAuthToken, UserOAuthTokenService } from './userOAuthTokenService';
 
 const GOOGLE_AUTH_BASE = 'https://accounts.google.com/o/oauth2/v2/auth';
@@ -34,16 +35,20 @@ export type DelegatedAccessToken = {
 export class GoogleOAuthConfigError extends Error {}
 export class GoogleOAuthTokenMissingError extends Error {}
 
-function getRequiredEnv(key: string): string {
-  const value = (process.env[key] || '').trim();
-  if (!value) {
-    throw new GoogleOAuthConfigError(`${key} is not configured`);
+function oauthConfig() {
+  return getBackendEnv().googleOauth;
+}
+
+function requireOAuth(value: string | undefined, name: string): string {
+  const v = (value || '').trim();
+  if (!v) {
+    throw new GoogleOAuthConfigError(`${name} is not configured`);
   }
-  return value;
+  return v;
 }
 
 function getScopes(): string[] {
-  const configured = (process.env.GOOGLE_OAUTH_SCOPES || '').trim();
+  const configured = (oauthConfig().scopesRaw || '').trim();
   if (!configured) {
     return [...DEFAULT_SCOPES];
   }
@@ -112,10 +117,11 @@ export class GoogleOAuthService {
   constructor(private readonly tokenStore: UserOAuthTokenService) {}
 
   isConfigured(): boolean {
+    const o = oauthConfig();
     return Boolean(
-      (process.env.GOOGLE_OAUTH_CLIENT_ID || '').trim()
-      && (process.env.GOOGLE_OAUTH_CLIENT_SECRET || '').trim()
-      && (process.env.GOOGLE_OAUTH_REDIRECT_URI || '').trim(),
+      (o.clientId || '').trim()
+      && (o.clientSecret || '').trim()
+      && (o.redirectUri || '').trim(),
     );
   }
 
@@ -132,8 +138,8 @@ export class GoogleOAuthService {
   }
 
   getAuthStartUrl(params: { state: string; codeChallenge: string }): string {
-    const clientId = getRequiredEnv('GOOGLE_OAUTH_CLIENT_ID');
-    const redirectUri = getRequiredEnv('GOOGLE_OAUTH_REDIRECT_URI');
+    const clientId = requireOAuth(oauthConfig().clientId, 'GOOGLE_OAUTH_CLIENT_ID');
+    const redirectUri = requireOAuth(oauthConfig().redirectUri, 'GOOGLE_OAUTH_REDIRECT_URI');
     const url = new URL(GOOGLE_AUTH_BASE);
     url.searchParams.set('client_id', clientId);
     url.searchParams.set('redirect_uri', redirectUri);
@@ -156,9 +162,9 @@ export class GoogleOAuthService {
     scope?: string;
     tokenType?: string;
   }> {
-    const clientId = getRequiredEnv('GOOGLE_OAUTH_CLIENT_ID');
-    const clientSecret = getRequiredEnv('GOOGLE_OAUTH_CLIENT_SECRET');
-    const redirectUri = getRequiredEnv('GOOGLE_OAUTH_REDIRECT_URI');
+    const clientId = requireOAuth(oauthConfig().clientId, 'GOOGLE_OAUTH_CLIENT_ID');
+    const clientSecret = requireOAuth(oauthConfig().clientSecret, 'GOOGLE_OAUTH_CLIENT_SECRET');
+    const redirectUri = requireOAuth(oauthConfig().redirectUri, 'GOOGLE_OAUTH_REDIRECT_URI');
 
     const body = new URLSearchParams({
       code,
@@ -199,7 +205,7 @@ export class GoogleOAuthService {
   }
 
   async verifyIdToken(idToken: string): Promise<void> {
-    const clientId = getRequiredEnv('GOOGLE_OAUTH_CLIENT_ID');
+    const clientId = requireOAuth(oauthConfig().clientId, 'GOOGLE_OAUTH_CLIENT_ID');
     const url = new URL(GOOGLE_TOKENINFO_ENDPOINT);
     url.searchParams.set('id_token', idToken);
 
@@ -292,8 +298,8 @@ export class GoogleOAuthService {
       };
     }
 
-    const clientId = getRequiredEnv('GOOGLE_OAUTH_CLIENT_ID');
-    const clientSecret = getRequiredEnv('GOOGLE_OAUTH_CLIENT_SECRET');
+    const clientId = requireOAuth(oauthConfig().clientId, 'GOOGLE_OAUTH_CLIENT_ID');
+    const clientSecret = requireOAuth(oauthConfig().clientSecret, 'GOOGLE_OAUTH_CLIENT_SECRET');
 
     const body = new URLSearchParams({
       client_id: clientId,
@@ -344,7 +350,12 @@ export class GoogleOAuthService {
   }
 
   getPostLoginRedirectUrl(authError?: string): string {
-    const base = (process.env.GOOGLE_OAUTH_POST_LOGIN_REDIRECT || process.env.FRONTEND_URL || 'http://localhost:5173').trim();
+    const env = getBackendEnv();
+    const base = (
+      env.googleOauth.postLoginRedirect
+      || env.frontendUrl
+      || 'http://localhost:5173'
+    ).trim();
     const url = new URL(base);
     url.pathname = '/login';
     if (authError) {

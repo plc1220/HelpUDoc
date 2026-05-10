@@ -2,7 +2,7 @@
 
 Generated: 2026-05-10
 
-**Branch `ci-cicd-pr1-3`:** PR 1–3 items below are implemented in-repo (workflows, Dockerfiles, `50-app.yaml`, health routes, docs). One PR 3 checklist item remains open: exposing image-vs-PVC revision in the settings UI (revision marker files and `kubectl` inspection are documented in `docs/deploy.md`).
+**Merged in PR #59 (`ci-cicd-pr1-3`):** PR 1–3 items below are implemented on `master` (workflows, Dockerfiles, `50-app.yaml`, health routes, docs). One PR 3 checklist item remains intentionally deferred: exposing image-vs-PVC revision in the settings UI. Until then, revision marker files and `kubectl` inspection are documented in `docs/deploy.md`.
 
 ## Executive View
 
@@ -173,7 +173,7 @@ Goal: fast deploys without changing application architecture.
 | `.github/workflows/deploy-gke.yml` | Add `workflow_dispatch` inputs: `build_backend`, `build_frontend`, `build_agent`, `deploy_infra`, `sync_runtime_assets`, `image_tag_suffix`, and optional `environment`. Default app deploy should build selected components, set images, wait rollout, and run smoke tests. |
 | `.github/workflows/deploy-gke.yml` | Replace `docker build` and `docker push` with `docker buildx build --cache-from type=registry --cache-to type=registry,mode=max --push`. |
 | `.github/workflows/deploy-gke.yml` | Gate RBAC checks, manifest apply, ConfigMap bootstrap, Langfuse secret bootstrap, and Langfuse DB bootstrap behind `inputs.deploy_infra == true`. |
-| `.github/workflows/deploy-gke.yml` | Gate skills/config sync behind `inputs.sync_runtime_assets == true` only as a temporary bridge. Remove this after the init-container/image seeding pattern lands. |
+| `.github/workflows/deploy-gke.yml` | Gate skills/config sync behind `inputs.sync_runtime_assets == true` as a legacy bridge. Keep it default-off; use init-container seeding for normal deploys. |
 | `.github/workflows/deploy-agent-gke.yml` | Convert to a thin wrapper around the reusable build/deploy job, or delete after `deploy-gke.yml` supports component toggles. Keep only if operators strongly prefer one-click component workflows. |
 | `.github/workflows/deploy-backend-gke.yml` | Same as above. |
 | `.github/workflows/deploy-frontend-gke.yml` | Same as above. |
@@ -217,7 +217,7 @@ Goal: normal deploys mutate only image tags; infra/bootstrap runs only when requ
 | `infra/gke/k8s/50-app.yaml` | Patch init-container images in deploy workflow alongside backend/agent images. |
 | `agent/Dockerfile.gke` | Copy `skills/` to `/app/skills-source` instead of only `/app/skills`. Copy `agent/config/runtime.yaml` to `/app/agent-config-source/runtime.yaml`. |
 | `backend/Dockerfile.gke` | If backend remains the settings owner for skills, also copy `skills/` to a source path or rely on the agent init container. Choose one owner. |
-| `.github/workflows/deploy-gke.yml` | Remove `kubectl exec` skills/config sync after init-container seeding is verified. |
+| `.github/workflows/deploy-gke.yml` | Keep legacy `kubectl exec` skills/config sync default-off behind `inputs.sync_runtime_assets`; remove later only if operators no longer need the emergency bridge. |
 | `infra/gke/k8s/30-storage.yaml` | Keep `skills-pvc` and `agent-config-pvc` only if admin UI needs runtime edits. If config becomes ConfigMap-backed, remove or deprecate `agent-config-pvc` later. |
 | `backend/src/api/settings.ts` | During transition, settings page writes to PVC-backed paths as today. Add a visible version/source field later so operators know when PVC content diverges from image source. |
 | `docs/deploy.md` | Document normal deploy versus infra/bootstrap deploy. |
@@ -226,7 +226,7 @@ Goal: normal deploys mutate only image tags; infra/bootstrap runs only when requ
 Important decision:
 
 - If skills are product code, image-bundle them and use init-container copy.
-- If skills are admin-editable runtime content, keep the PVC as the live layer and record the image source version. Do not keep syncing by `kubectl exec`.
+- If skills are admin-editable runtime content, keep the PVC as the live layer and record the image source version. Do not use `kubectl exec` sync for normal deploys; keep it only as an explicit legacy bridge while operators still need it.
 
 ## Phase 3 - Environment and Config Unification
 
@@ -691,7 +691,7 @@ PR CI, smoke routes/checks, and deployment docs.
 - [x] Add Python smoke/test job for `tests/test_agent_import_smoke.py` and core agent tests.
 - [x] Add no-push Docker build check for backend image.
 - [x] Add no-push Docker build check for frontend image.
-- [x] Add no-push Docker build check for agent image if CI time is acceptable.
+- [x] Add no-push Docker build check for agent image on default-branch pushes; PRs use Python agent smoke/core tests plus the CI gate to avoid duplicate heavy dependency installs.
 - [x] Add or expose backend health endpoint under `/api/health`.
 - [x] Add or expose agent runtime health endpoint under `/health`.
 - [x] Add post-deploy backend smoke check in `.github/workflows/deploy-gke.yml`.
@@ -714,8 +714,8 @@ Image-bundled skills/config source and init-container copy, replacing `kubectl e
 - [x] Add a version/source marker file for seeded agent config.
 - [x] Ensure init containers do not overwrite admin-edited runtime assets unless explicitly configured.
 - [x] Patch init-container images in deploy workflow when app image tags change.
-- [x] Remove or disable `kubectl exec` skills sync after seeding is verified.
-- [x] Remove or disable `kubectl exec` agent config sync after seeding is verified.
+- [x] Disable `kubectl exec` skills sync by default behind `inputs.sync_runtime_assets`.
+- [x] Disable `kubectl exec` agent config sync by default behind `inputs.sync_runtime_assets`.
 - [ ] Update settings API or UI to show image source version versus live PVC version if both exist (deferred; revision markers documented for operators in `docs/deploy.md`).
 - [x] Update `docs/deploy.md` and `docs/ci-cd.md`.
 
@@ -723,27 +723,27 @@ Image-bundled skills/config source and init-container copy, replacing `kubectl e
 
 Canonical env schema plus backend/agent typed env loaders.
 
-- [ ] Add `infra/env/helpudoc.env.schema.yaml`.
-- [ ] Catalog backend-owned env vars in the schema.
-- [ ] Catalog agent-owned env vars in the schema.
-- [ ] Catalog frontend `VITE_*` vars in the schema.
-- [ ] Mark secrets versus non-secrets.
-- [ ] Mark local required, prod required, and optional vars.
-- [ ] Add deprecated alias notes for variables such as `PARSER` versus `RAGANYTHING_PARSER`.
-- [ ] Add `backend/src/config/env.ts` using Zod or an equivalent typed parser.
-- [ ] Update `backend/src/index.ts` to read session/server config from `backend/src/config/env.ts`.
-- [ ] Update `backend/src/services/databaseService.ts` to read DB config from the env module.
-- [ ] Update `backend/src/services/s3Service.ts` to read S3 config from the env module.
-- [ ] Update `backend/src/services/googleOAuthService.ts` to read OAuth config from the env module.
-- [ ] Add `agent/helpudoc_agent/config/env.py` using Pydantic or dataclasses.
-- [ ] Update `agent/helpudoc_agent/configuration.py` env override logic to use the new env helper.
-- [ ] Update `agent/helpudoc_agent/rag_indexer.py` / future RAG config to use the new env helper.
-- [ ] Update `agent/helpudoc_agent/sandbox_runner.py` to use the new env helper.
-- [ ] Add `frontend/src/config/env.ts` for typed Vite env access.
-- [ ] Add env validation script under `scripts/`.
-- [ ] Validate `env/local/*.env.example` against schema.
-- [ ] Validate `env/prod/*.env.example` against schema.
-- [ ] Update `docs/environment.md`.
+- [x] Add `infra/env/helpudoc.env.schema.yaml`.
+- [x] Catalog backend-owned env vars in the schema.
+- [x] Catalog agent-owned env vars in the schema.
+- [x] Catalog frontend `VITE_*` vars in the schema.
+- [x] Mark secrets versus non-secrets.
+- [x] Mark local required, prod required, and optional vars.
+- [x] Add deprecated alias notes for variables such as `PARSER` versus `RAGANYTHING_PARSER`.
+- [x] Add `backend/src/config/env.ts` using Zod or an equivalent typed parser.
+- [x] Update `backend/src/index.ts` to read session/server config from `backend/src/config/env.ts`.
+- [x] Update `backend/src/services/databaseService.ts` to read DB config from the env module.
+- [x] Update `backend/src/services/s3Service.ts` to read S3 config from the env module.
+- [x] Update `backend/src/services/googleOAuthService.ts` to read OAuth config from the env module.
+- [x] Add `agent/helpudoc_agent/config/env.py` using Pydantic or dataclasses.
+- [x] Update `agent/helpudoc_agent/configuration.py` env override logic to use the new env helper.
+- [x] Update `agent/helpudoc_agent/rag_indexer.py` / future RAG config to use the new env helper.
+- [x] Update `agent/helpudoc_agent/sandbox_runner.py` to use the new env helper.
+- [x] Add `frontend/src/config/env.ts` for typed Vite env access.
+- [x] Add env validation script under `scripts/`.
+- [x] Validate `env/local/*.env.example` against schema.
+- [x] Validate `env/prod/*.env.example` against schema.
+- [x] Update `docs/environment.md`.
 
 ### PR 5 - `agent-runtime-rename`
 

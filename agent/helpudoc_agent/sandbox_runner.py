@@ -11,6 +11,7 @@ import time
 from typing import Any, Iterable, List
 from uuid import uuid4
 
+from .config.env import load_sandbox_k8s_env
 from .skills_registry import SkillMetadata, SkillSandboxScript, find_skill
 from .state import WorkspaceState
 
@@ -53,35 +54,17 @@ class SandboxConfig:
 
     @classmethod
     def from_env(cls) -> "SandboxConfig":
-        namespace = (
-            os.getenv("HELPUDOC_SANDBOX_NAMESPACE")
-            or os.getenv("POD_NAMESPACE")
-            or _read_service_account_namespace()
-            or "helpudoc"
-        )
+        e = load_sandbox_k8s_env()
         return cls(
-            namespace=namespace,
-            image=os.getenv("HELPUDOC_SANDBOX_IMAGE", "python:3.12-slim"),
-            workspace_pvc=os.getenv("HELPUDOC_SANDBOX_WORKSPACE_PVC", "workspace-pvc"),
-            runtime_class_name=os.getenv("HELPUDOC_SANDBOX_RUNTIME_CLASS", "gvisor"),
-            cpu_limit=os.getenv("HELPUDOC_SANDBOX_CPU_LIMIT", "500m"),
-            memory_limit=os.getenv("HELPUDOC_SANDBOX_MEMORY_LIMIT", "512Mi"),
-            ephemeral_storage_limit=os.getenv("HELPUDOC_SANDBOX_EPHEMERAL_STORAGE_LIMIT", "1Gi"),
-            poll_interval_seconds=max(
-                0.25,
-                float(os.getenv("HELPUDOC_SANDBOX_POLL_INTERVAL_SECONDS", "1")),
-            ),
+            namespace=e.namespace,
+            image=e.image,
+            workspace_pvc=e.workspace_pvc,
+            runtime_class_name=e.runtime_class_name,
+            cpu_limit=e.cpu_limit,
+            memory_limit=e.memory_limit,
+            ephemeral_storage_limit=e.ephemeral_storage_limit,
+            poll_interval_seconds=e.poll_interval_seconds,
         )
-
-
-def _read_service_account_namespace() -> str | None:
-    path = Path("/var/run/secrets/kubernetes.io/serviceaccount/namespace")
-    try:
-        if path.is_file():
-            return path.read_text(encoding="utf-8").strip() or None
-    except Exception:
-        return None
-    return None
 
 
 def _sha256_file(path: Path) -> str:
@@ -230,7 +213,7 @@ def _load_kubernetes_clients() -> tuple[Any, Any]:
     try:
         config.load_incluster_config()
     except Exception as incluster_exc:
-        if os.getenv("HELPUDOC_SANDBOX_ALLOW_KUBECONFIG", "").strip().lower() not in {"1", "true", "yes"}:
+        if not load_sandbox_k8s_env().allow_kubeconfig:
             raise SandboxUnavailableError(
                 "Skill sandbox is disabled: Kubernetes in-cluster config is unavailable."
             ) from incluster_exc

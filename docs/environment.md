@@ -2,6 +2,20 @@
 
 This repo separates local development env vars from production deployment secrets.
 
+## Canonical inventory
+
+The machine-readable catalog of variables (owner service, secrecy, local/prod expectations, defaults, and deprecated aliases such as `PARSER` vs `RAGANYTHING_PARSER`) lives in `infra/env/helpudoc.env.schema.yaml`.
+
+- **Backend** reads typed values via `backend/src/config/env.ts` (`getBackendEnv()`), after `dotenv` runs in `backend/src/index.ts`.
+- **Agent** uses `agent/helpudoc_agent/config/env.py` (`env_trim`, `get_agent_runtime_env`, `ensure_lightrag_postgres_env_defaults`, `load_sandbox_k8s_env`, etc.).
+- **Frontend** uses `frontend/src/config/env.ts` (`vitePublicEnv`) for `VITE_*` build-time variables.
+
+To verify that committed `*.env.example` files only reference cataloged names:
+
+```bash
+cd backend && npm run validate:env
+```
+
 ## Local development (run services directly)
 
 1) Copy env templates:

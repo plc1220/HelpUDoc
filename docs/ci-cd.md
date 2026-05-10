@@ -18,7 +18,7 @@ On every pull request and push to `master` / `main`, `.github/workflows/ci.yml` 
 
 **Jobs (parallel where enabled)**
 
-- **Backend tests** — `cd backend && npm test`
+- **Backend tests** — `cd backend && npm run validate:env && npm test` (env examples must match `infra/env/helpudoc.env.schema.yaml`, then unit tests)
 - **Frontend** — `cd frontend && npm run lint && npm run build`
 - **Python agent** — installs `agent/requirements.txt` plus `pytest`, then runs `tests/test_agent_import_smoke.py`, `tests/test_agent_configuration.py`, `tests/test_mcp_binding.py`, and `tests/test_tool_factory.py`
 - **Docker build validation (no push)** — `docker/build-push-action@v6` with GitHub Actions cache (`cache-from` / `cache-to` `type=gha`, separate scope per image). These verify Dockerfile syntax, base image pulls, installs, and copy steps; they do **not** push, vulnerability-scan, or deploy. Backend/frontend builds do not load the image into the runner. The agent job on main **loads** the image and runs `python /app/agent/scripts/smoke_import.py` inside the container.
