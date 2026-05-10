@@ -1,0 +1,210 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [master, main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    name: Path filter
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+      agent: ${{ steps.filter.outputs.agent }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            backend:
+              - 'backend/**'
+              - 'infra/gke/**'
+              - '.github/workflows/ci.yml'
+            frontend:
+              - 'frontend/**'
+              - 'packages/shared/**'
+              - '.github/workflows/ci.yml'
+            agent:
+              - 'agent/**'
+              - 'skills/**'
+              - 'tests/test_agent_*.py'
+              - '.github/workflows/ci.yml'
+
+  backend-test:
+    name: Backend tests
+    needs: [changes]
+    if: >
+      (github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main'))
+      || needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci --legacy-peer-deps
+      - run: npm test
+
+  frontend:
+    name: Frontend lint and build
+    needs: [changes]
+    if: >
+      (github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main'))
+      || needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
+
+  python-agent:
+    name: Python agent smoke and core tests
+    needs: [changes]
+    if: >
+      (github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main'))
+      || needs.changes.outputs.agent == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: agent/requirements.txt
+      - name: Install agent dependencies
+        run: pip install -r agent/requirements.txt pytest
+      - name: Run agent tests
+        run: |
+          python -m pytest \
+            tests/test_agent_import_smoke.py \
+            tests/test_agent_configuration.py \
+            tests/test_mcp_binding.py \
+            tests/test_tool_factory.py
+
+  docker-backend:
+    name: Docker build validation (backend)
+    needs: [changes]
+    if: >
+      (github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main'))
+      || needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: backend/Dockerfile.gke
+          push: false
+          tags: helpudoc-backend:ci-${{ github.sha }}
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,scope=backend,mode=max
+
+  docker-frontend:
+    name: Docker build validation (frontend)
+    needs: [changes]
+    if: >
+      (github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main'))
+      || needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: frontend/Dockerfile.gke
+          push: false
+          tags: helpudoc-frontend:ci-${{ github.sha }}
+          build-args: |
+            VITE_GOOGLE_CLIENT_ID=dummy
+            VITE_AUTH_MODE=hybrid
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,scope=frontend,mode=max
+
+  docker-agent:
+    name: Docker build validation (agent)
+    needs: [changes]
+    # Heavy image: validate on default-branch pushes only (avoids pip + full Docker agent
+    # install on every PR that touches agent/). PRs still get python-agent when agent paths change.
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: agent/Dockerfile.gke
+          push: false
+          load: true
+          tags: helpudoc-agent:ci-smoke
+          build-args: |
+            GIT_COMMIT=${{ github.sha }}
+          cache-from: type=gha,scope=agent
+          cache-to: type=gha,scope=agent,mode=max
+      - name: Smoke import inside loaded image
+        run: docker run --rm helpudoc-agent:ci-smoke python /app/agent/scripts/smoke_import.py
+
+  ci-gate:
+    name: CI status
+    needs:
+      - changes
+      - backend-test
+      - frontend
+      - python-agent
+      - docker-backend
+      - docker-frontend
+      - docker-agent
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if any executed job failed
+        run: |
+          set -euo pipefail
+          fail=0
+          for name_result in \
+            "backend-test:${{ needs.backend-test.result }}" \
+            "frontend:${{ needs.frontend.result }}" \
+            "python-agent:${{ needs.python-agent.result }}" \
+            "docker-backend:${{ needs.docker-backend.result }}" \
+            "docker-frontend:${{ needs.docker-frontend.result }}" \
+            "docker-agent:${{ needs.docker-agent.result }}"; do
+            name="${name_result%%:*}"
+            result="${name_result#*:}"
+            case "$result" in
+              failure|cancelled)
+                echo "::error::Job $name ended with $result"
+                fail=1
+                ;;
+              success|skipped) ;;
+              *)
+                echo "::warning::Job $name unexpected result: $result"
+                ;;
+            esac
+          done
+          exit "$fail"

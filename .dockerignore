@@ -5,6 +5,10 @@
 # Local/runtime data (never needed for image builds)
 .minio-data
 .postgres-data
+.redis-data
+backend/workspaces
+agent/outputs
+graphify-out
 rag_storage
 
 # Python caches

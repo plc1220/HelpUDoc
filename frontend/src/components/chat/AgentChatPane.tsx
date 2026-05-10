@@ -7,6 +7,7 @@ import type {
   SetStateAction,
   SyntheticEvent,
 } from 'react';
+import type { Components } from 'react-markdown';
 import type {
   AgentPersona,
   ConversationMessage,
@@ -158,7 +159,7 @@ export default function AgentChatPane({
   isPreparingAttachments: boolean;
   personaDisplayName: string;
   messageBubbleMaxWidth: string;
-  markdownComponents: Record<string, any>;
+  markdownComponents: Components;
   expandedToolMessages: Set<ConversationMessage['id']>;
   expandedThinkingMessages: Set<ConversationMessage['id']>;
   copiedMessageId: ConversationMessage['id'] | null;

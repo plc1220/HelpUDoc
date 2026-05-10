@@ -57,21 +57,24 @@ gcloud container clusters get-credentials "$CLUSTER" --zone "$GKE_LOCATION" --pr
 
 ### 4.2 Recommended full-stack deploy (GitHub Actions)
 
-The primary full-stack deploy path is the manual **Deploy Full Stack to GKE**
-GitHub Actions workflow in `.github/workflows/deploy-gke.yml`.
+The primary full-stack deploy path is the manual **Deploy Full Stack to GKE** workflow in `.github/workflows/deploy-gke.yml`.
 
-What it does:
-- builds and pushes `helpudoc-backend`, `helpudoc-frontend`, and
-  `helpudoc-agent` in parallel jobs
-- tags all three app images with the same Git commit SHA
-- applies `infra/gke/k8s/`
-- creates the demo `helpudoc-config` only if the ConfigMap is missing
-- ensures Langfuse bootstrap config/secrets, then runs
-  `infra/gke/scripts/bootstrap-langfuse-db.sh --wait-rollout`
-- patches OAuth config/secrets from GitHub repository secrets
-- updates the backend, agent, and frontend deployment images to the commit SHA
-- waits for app/frontend rollouts
-- syncs `skills/` and `agent/config/runtime.yaml` into their PVC-backed mounts
+**App deploy (default)** — leave **`deploy_infra`** false and **`sync_runtime_assets`** false:
+
+- Builds and pushes only the images you select (`build_backend`, `build_frontend`, `build_agent`; all default true) using **Docker Buildx** with **registry layer cache** (`gcr.io/$PROJECT_ID/helpudoc-buildcache-*`).
+- Tags selected images with `github.sha` plus optional **`image_tag_suffix`**.
+- Requires an existing `helpudoc-config` ConfigMap (bootstrap the cluster once before relying on app-only deploys).
+- Patches deployment images only for components you built; when the agent image changes, it also patches the **init-container** images used for runtime asset seeding.
+- Merges OAuth keys from GitHub repository secrets (same as before).
+- Waits for `helpudoc-app` and `helpudoc-frontend` rollouts, then runs **post-deploy smoke checks** against `GET /api/health` on the backend service, a GET on the frontend service, and `GET /health` on the agent container (`127.0.0.1:8001`).
+
+**Infra / bootstrap deploy** — set **`deploy_infra`** true (use sparingly):
+
+- Runs the Kubernetes RBAC preflight, `kubectl apply -f infra/gke/k8s/`, first-time demo `helpudoc-config` if missing, Langfuse secret/config patching, Langfuse DB bootstrap + rollout wait, then continues with OAuth + image rollout as in an app deploy.
+
+**Runtime assets (skills + agent config on PVCs):** the `helpudoc-app` pod includes **init containers** (`seed-skills`, `seed-agent-config`) that copy from image paths **`/app/skills-source`** and **`/app/agent-config-source/runtime.yaml`** into the PVC mounts **only when the target paths are empty**, so normal pod restarts do not wipe admin edits. Each image carries `.HELPUDOC_SOURCE_REVISION` (build tag / commit) beside the bundled tree; after a successful seed, the same filename may appear under the PVC for operators to diff **image revision** versus **live PVC** content (`kubectl exec` into the backend container and `cat /app/skills/.HELPUDOC_IMAGE_SOURCE_REVISION` or `/agent/config/.HELPUDOC_IMAGE_SOURCE_REVISION`).
+
+**Legacy PVC sync:** if you temporarily need the old `kubectl exec` tar/rsync behaviour, set **`sync_runtime_assets`** true. It is destructive for `/app/skills` when enabled; prefer init seeding for new clusters.
 
 Required GitHub secrets:
 - `GCP_PROJECT_ID`
@@ -92,11 +95,11 @@ Required GitHub secrets:
 
 Notes:
 - The deploy is manual-only (`workflow_dispatch`), not automatic on every push.
-- The build jobs do not talk to the cluster; the deploy job does all
-  `kubectl` work after the three image pushes succeed.
+- PR validation runs `.github/workflows/ci.yml` on pushes and pull requests to `master` / `main` (path-filtered on PRs; full matrix on merge to `master` / `main`; see `docs/ci-cd.md`).
+- The build jobs do not talk to the cluster; the deploy job does all `kubectl` work after selected image pushes succeed.
 - The checked-in manifests still reference `:latest`; the workflow patches the
   running `helpudoc-app` and `helpudoc-frontend` deployments to the commit SHA
-  after applying manifests.
+  after rollout (and patches init-container agent images when the agent image is rebuilt).
 - `infra/gke/k8s/52-daily-reflection-cron.yaml` also exists in the manifest
   directory. It currently uses the checked-in backend image reference when
   manifests are applied; update it manually if the CronJob must run a specific

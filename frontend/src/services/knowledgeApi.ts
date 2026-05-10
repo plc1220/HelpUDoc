@@ -28,8 +28,8 @@ export const createKnowledge = async (
     content?: string;
     fileId?: number;
     sourceUrl?: string;
-    tags?: any;
-    metadata?: Record<string, any>;
+    tags?: unknown;
+    metadata?: Record<string, unknown>;
   },
 ) => {
   const response = await apiFetch(`${API_URL}/workspaces/${workspaceId}/knowledge`, {
@@ -50,8 +50,8 @@ export const updateKnowledge = async (
     content?: string;
     fileId?: number | null;
     sourceUrl?: string;
-    tags?: any;
-    metadata?: Record<string, any>;
+    tags?: unknown;
+    metadata?: Record<string, unknown>;
   }>,
 ) => {
   const response = await apiFetch(`${API_URL}/workspaces/${workspaceId}/knowledge/${knowledgeId}`, {

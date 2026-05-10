@@ -434,7 +434,6 @@ export default function ChatMessageBubble({
   handleInterruptAction,
   enableTrustedPlanMode,
   isStreaming,
-  workspaceId: _workspaceId,
 }: {
   colorMode: 'light' | 'dark';
   message: ConversationMessage;

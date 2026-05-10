@@ -6,6 +6,29 @@ For local development and one-time cluster setup, start with `docs/deploy.md`.
 
 ## Overview
 
+### Pull request CI (`ci.yml`)
+
+On every pull request and push to `master` / `main`, `.github/workflows/ci.yml` runs.
+
+**When jobs run**
+
+- A **`changes`** job uses [`dorny/paths-filter`](https://github.com/dorny/paths-filter) so unrelated PRs skip stacks they did not touch (for example, a frontend-only PR skips backend tests and backend Docker validation).
+- On **push to `master` or `main`** (including after a PR merge), **all** test and Docker validation jobs run so the default branch always gets a full pass.
+- **Agent Docker** runs on **default-branch pushes only** (with `load: true` and `docker run … smoke_import.py`) so PRs that touch `agent/` are not charged twice for heavy dependencies (once for `pip install -r agent/requirements.txt` in **python-agent**, again inside a full image build). Merge to main still proves the image builds and that imports succeed inside the container.
+
+**Jobs (parallel where enabled)**
+
+- **Backend tests** — `cd backend && npm test`
+- **Frontend** — `cd frontend && npm run lint && npm run build`
+- **Python agent** — installs `agent/requirements.txt` plus `pytest`, then runs `tests/test_agent_import_smoke.py`, `tests/test_agent_configuration.py`, `tests/test_mcp_binding.py`, and `tests/test_tool_factory.py`
+- **Docker build validation (no push)** — `docker/build-push-action@v6` with GitHub Actions cache (`cache-from` / `cache-to` `type=gha`, separate scope per image). These verify Dockerfile syntax, base image pulls, installs, and copy steps; they do **not** push, vulnerability-scan, or deploy. Backend/frontend builds do not load the image into the runner. The agent job on main **loads** the image and runs `python /app/agent/scripts/smoke_import.py` inside the container.
+
+**Branch protection:** require the **`CI status`** (`ci-gate`) job so one check reflects the whole workflow (skipped jobs count as success for the gate).
+
+**Secret scanning:** `.github/workflows/secret-scan.yml` still runs on its own triggers (`push` / `pull_request`). It is not folded into `ci.yml`; keep it as a separate required check if your branch protection rules need it.
+
+### Manual deploy: `deploy-gke.yml`
+
 The primary deploy pipelines are GitHub workflows:
 - `.github/workflows/deploy-gke.yml` (full stack)
 - `.github/workflows/deploy-frontend-gke.yml` (frontend only)
@@ -13,13 +36,31 @@ The primary deploy pipelines are GitHub workflows:
 - `.github/workflows/deploy-agent-gke.yml` (agent only)
 - `.github/workflows/deploy-langfuse-gke.yml` (ClickHouse + Langfuse only: storage, manifests, Postgres `langfuse` DB bootstrap, rollout health)
 
-Each workflow:
-1. Authenticates to GCP (WIF or JSON key).
-2. Builds and pushes service images to `gcr.io/$PROJECT_ID/*` tagged by commit SHA.
-3. Gets cluster credentials and deploys via `kubectl`.
-4. Waits for rollout status.
+**Deploy Full Stack to GKE** (`.github/workflows/deploy-gke.yml`) is manual-only and supports component toggles, registry Buildx cache, infra gating, and post-rollout smoke checks.
 
-**Langfuse (ClickHouse + Langfuse):** Use **`Deploy Langfuse to GKE`** when you need observability infra without rebuilding app images. It applies `30-storage.yaml`, `44-clickhouse.yaml`, and `45-langfuse.yaml`, validates required `helpudoc-config` / `helpudoc-secrets` keys, runs `infra/gke/scripts/bootstrap-langfuse-db.sh --wait-rollout`, and waits for Langfuse web/worker rollouts. **`deploy-gke.yml`** applies `infra/gke/k8s/` (no ConfigMap in that directory; the demo `helpudoc-config` lives in `infra/gke/bootstrap/20-configmap.demo.yaml` and is applied **only** when `helpudoc-config` is missing), then runs the Langfuse bootstrap script, then merges OAuth keys from GitHub secrets—so routine full-stack deploys do not overwrite production `LANGFUSE_*` or Postgres settings. **Backend** and **agent** workflows only touch `50-app.yaml` and OAuth patches (backend). Populate Langfuse keys from `env/prod/config.env.example` and `env/prod/secrets.env.example` before running the Langfuse workflow (`infra/gke/README.md` for DNS and ingress).
+When you run **Deploy Full Stack to GKE**, configure these `workflow_dispatch` inputs:
+
+| Input | Default | Purpose |
+| --- | ---: | --- |
+| `build_backend` | true | Build/push `helpudoc-backend` and patch the backend + reflection CronJob images when true. |
+| `build_frontend` | true | Build/push `helpudoc-frontend` and patch the frontend deployment when true. |
+| `build_agent` | true | Build/push `helpudoc-agent`, patch the agent container, align init-container seed images, and run the image smoke import after push. |
+| `deploy_infra` | false | When true: RBAC preflight, `kubectl apply -f infra/gke/k8s/`, first-time demo ConfigMap bootstrap, Langfuse key patching + DB bootstrap/wait. When false: skips manifest/bootstrap work (cluster must already have `helpudoc-config`). |
+| `sync_runtime_assets` | false | Legacy `kubectl exec` sync of `skills/` and `agent/config/runtime.yaml` into PVCs. Prefer init-container seeding (see `docs/deploy.md`); leave false unless you need the old bridge. |
+| `environment` | empty | Echo-only label for operators (does not switch GitHub Environment protection rules). |
+| `image_tag_suffix` | empty | Appended to `github.sha` for all image tags in that run (for example `-hotfix1`). |
+
+At least one of `build_backend`, `build_frontend`, or `build_agent` must be true.
+
+**Buildx registry cache:** each image build uses `docker buildx build` with `--cache-from` / `--cache-to` pointing at `gcr.io/$PROJECT_ID/helpudoc-buildcache-{backend,frontend,agent}:buildcache` so repeated builds reuse layers.
+
+**Post-deploy smoke checks** (always after rollout wait): an ephemeral `curlimages/curl` pod hits `http://backend.helpudoc.svc.cluster.local:3000/api/health` and fetches the frontend service root; the workflow then runs `python -c 'urllib.request.urlopen("http://127.0.0.1:8001/health")...'` inside the `agent` container of `deployment/helpudoc-app`.
+
+The smaller **Deploy Frontend / Backend / Agent to GKE** workflows still build one image at a time and patch the matching deployment. Prefer **`deploy-gke.yml`** when you want Buildx cache, component toggles, and smoke checks in one place.
+
+**Langfuse-only:** **`Deploy Langfuse to GKE`** applies `30-storage.yaml`, `44-clickhouse.yaml`, and `45-langfuse.yaml`, validates required `helpudoc-config` / `helpudoc-secrets` keys, runs `infra/gke/scripts/bootstrap-langfuse-db.sh --wait-rollout`, and waits for Langfuse web/worker rollouts.
+
+In **`deploy-gke.yml`**, when **`deploy_infra` is true**, the workflow applies `infra/gke/k8s/`, creates the demo `helpudoc-config` only if it is missing (`infra/gke/bootstrap/20-configmap.demo.yaml`), runs Langfuse key patching + DB bootstrap, then merges OAuth keys from GitHub secrets. When **`deploy_infra` is false**, none of that runs: the cluster must already have `helpudoc-config` and the workloads you expect (run an infra deploy first on a brand-new cluster). Routine app deploys should keep **`deploy_infra` false** so image tags and rollouts are the only mutations.
 
 ## One Command Deploy (Manual)
 
@@ -81,8 +122,8 @@ Run one of these in GitHub Actions:
 GKE storage is defined in `infra/gke/k8s/30-storage.yaml` (includes `clickhouse-pvc` for Langfuse).
 
 Key mounts used by the app:
-- `skills-pvc` mounted at `/app/skills` (backend reads this via `SKILLS_ROOT`).
-- `agent-config-pvc` mounted at `/agent/config` (backend reads runtime config via `AGENT_CONFIG_PATH=/agent/config/runtime.yaml`).
+- `skills-pvc` mounted at `/app/skills` (backend reads this via `SKILLS_ROOT`). On pod start, init containers may copy bundled skills from the agent image into an **empty** PVC once; see `docs/deploy.md`.
+- `agent-config-pvc` mounted at `/agent/config` (backend reads runtime config via `AGENT_CONFIG_PATH=/agent/config/runtime.yaml`). Init containers may copy bundled `runtime.yaml` from the agent image when the PVC file is missing.
 - `workspace-pvc` mounted at `/app/workspaces` (user data; deploy sync does not modify this path).
 
 If the settings pages are broken in a new cluster, confirm these PVCs exist and are mounted into the `helpudoc-app` deployment.

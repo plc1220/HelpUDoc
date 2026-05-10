@@ -6,6 +6,35 @@ concurrency:
 
 on:
   workflow_dispatch:
+    inputs:
+      build_backend:
+        description: Build and push backend image
+        type: boolean
+        default: true
+      build_frontend:
+        description: Build and push frontend image
+        type: boolean
+        default: true
+      build_agent:
+        description: Build and push agent image
+        type: boolean
+        default: true
+      deploy_infra:
+        description: Apply manifests, RBAC checks, ConfigMap/Langfuse bootstrap (use sparingly)
+        type: boolean
+        default: false
+      sync_runtime_assets:
+        description: Legacy kubectl exec sync of skills/config to PVCs (prefer init-container seeding)
+        type: boolean
+        default: false
+      environment:
+        description: Optional label for operators (echo only; does not switch GitHub Environments)
+        type: string
+        default: ""
+      image_tag_suffix:
+        description: Optional suffix appended to commit SHA for image tags (e.g. -hotfix1)
+        type: string
+        default: ""
 
 env:
   PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
@@ -20,30 +49,31 @@ env:
   USE_GKE_GCLOUD_AUTH_PLUGIN: "True"
 
 jobs:
-  build-images:
-    name: Build and Push ${{ matrix.component }} Image
+  guard:
+    name: Validate workflow inputs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require at least one component build
+        run: |
+          set -euo pipefail
+          if [[ "${{ inputs.build_backend }}" != "true" && "${{ inputs.build_frontend }}" != "true" && "${{ inputs.build_agent }}" != "true" ]]; then
+            echo "Select at least one of build_backend, build_frontend, or build_agent." >&2
+            exit 1
+          fi
+      - name: Echo operator environment label
+        if: ${{ inputs.environment != '' }}
+        run: 'echo "environment=${{ inputs.environment }}"'
+
+  build-backend:
+    name: Build and push backend
+    needs: [guard]
+    if: ${{ inputs.build_backend }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - component: backend
-            dockerfile: backend/Dockerfile.gke
-            image: helpudoc-backend
-          - component: frontend
-            dockerfile: frontend/Dockerfile.gke
-            image: helpudoc-frontend
-          - component: agent
-            dockerfile: agent/Dockerfile.gke
-            image: helpudoc-agent
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
+      - uses: actions/checkout@v4
       - name: Select Google auth mode
         id: auth_mode
         env:
@@ -52,87 +82,192 @@ jobs:
           CREDENTIALS_JSON: ${{ secrets.GCP_CREDENTIALS_JSON }}
         run: |
           set -euo pipefail
-
           has_wif=false
           has_json=false
-
-          if [[ -n "${WIF_PROVIDER}" && -n "${WIF_SERVICE_ACCOUNT}" ]]; then
-            has_wif=true
-          fi
-
-          if [[ -n "${CREDENTIALS_JSON}" ]]; then
-            has_json=true
-          fi
-
+          if [[ -n "${WIF_PROVIDER}" && -n "${WIF_SERVICE_ACCOUNT}" ]]; then has_wif=true; fi
+          if [[ -n "${CREDENTIALS_JSON}" ]]; then has_json=true; fi
           if [[ "${has_wif}" == "true" && "${has_json}" == "true" ]]; then
-            echo "Configure only one auth method: WIF (GCP_WORKLOAD_PROVIDER + GCP_SERVICE_ACCOUNT) OR GCP_CREDENTIALS_JSON." >&2
+            echo "Configure only one auth method: WIF OR GCP_CREDENTIALS_JSON." >&2
             exit 1
           fi
-
-          if [[ "${has_wif}" == "true" ]]; then
-            echo "mode=wif" >> "${GITHUB_OUTPUT}"
-            exit 0
-          fi
-
-          if [[ "${has_json}" == "true" ]]; then
-            echo "mode=json" >> "${GITHUB_OUTPUT}"
-            exit 0
-          fi
-
-          echo "Missing GCP auth secrets. Set either GCP_WORKLOAD_PROVIDER + GCP_SERVICE_ACCOUNT, or GCP_CREDENTIALS_JSON." >&2
+          if [[ "${has_wif}" == "true" ]]; then echo "mode=wif" >> "${GITHUB_OUTPUT}"; exit 0; fi
+          if [[ "${has_json}" == "true" ]]; then echo "mode=json" >> "${GITHUB_OUTPUT}"; exit 0; fi
+          echo "Missing GCP auth secrets." >&2
           exit 1
-
       - name: Authenticate to Google Cloud (Workload Identity)
         if: ${{ steps.auth_mode.outputs.mode == 'wif' }}
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
-
       - name: Authenticate to Google Cloud (Service Account Key)
         if: ${{ steps.auth_mode.outputs.mode == 'json' }}
         uses: google-github-actions/auth@v2
         with:
           credentials_json: ${{ secrets.GCP_CREDENTIALS_JSON }}
-
-      - name: Set up gcloud
-        uses: google-github-actions/setup-gcloud@v2
-
+      - uses: google-github-actions/setup-gcloud@v2
+      - uses: docker/setup-buildx-action@v3
       - name: Configure Docker Auth
-        run: |
-          set -euo pipefail
-          gcloud auth configure-docker gcr.io --quiet
-
-      - name: Build and Push Image
+        run: gcloud auth configure-docker gcr.io --quiet
+      - name: Build and push backend
         env:
-          IMAGE_TAG: ${{ github.sha }}
-          COMPONENT: ${{ matrix.component }}
-          DOCKERFILE: ${{ matrix.dockerfile }}
-          IMAGE: ${{ matrix.image }}
+          IMAGE_TAG: ${{ format('{0}{1}', github.sha, inputs.image_tag_suffix) }}
         run: |
           set -euo pipefail
+          CACHE_REF="gcr.io/${PROJECT_ID}/helpudoc-buildcache-backend:buildcache"
+          docker buildx build \
+            -f backend/Dockerfile.gke \
+            --cache-from "type=registry,ref=${CACHE_REF}" \
+            --cache-to "type=registry,ref=${CACHE_REF},mode=max" \
+            -t "gcr.io/${PROJECT_ID}/helpudoc-backend:${IMAGE_TAG}" \
+            --push \
+            .
 
-          docker_args=()
-          if [[ "${COMPONENT}" == "frontend" ]]; then
-            docker_args+=(
-              --build-arg "VITE_GOOGLE_CLIENT_ID=${VITE_GOOGLE_CLIENT_ID}"
-              --build-arg "VITE_AUTH_MODE=hybrid"
-            )
+  build-frontend:
+    name: Build and push frontend
+    needs: [guard]
+    if: ${{ inputs.build_frontend }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Google auth mode
+        id: auth_mode
+        env:
+          WIF_PROVIDER: ${{ secrets.GCP_WORKLOAD_PROVIDER }}
+          WIF_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+          CREDENTIALS_JSON: ${{ secrets.GCP_CREDENTIALS_JSON }}
+        run: |
+          set -euo pipefail
+          has_wif=false
+          has_json=false
+          if [[ -n "${WIF_PROVIDER}" && -n "${WIF_SERVICE_ACCOUNT}" ]]; then has_wif=true; fi
+          if [[ -n "${CREDENTIALS_JSON}" ]]; then has_json=true; fi
+          if [[ "${has_wif}" == "true" && "${has_json}" == "true" ]]; then
+            echo "Configure only one auth method: WIF OR GCP_CREDENTIALS_JSON." >&2
+            exit 1
           fi
+          if [[ "${has_wif}" == "true" ]]; then echo "mode=wif" >> "${GITHUB_OUTPUT}"; exit 0; fi
+          if [[ "${has_json}" == "true" ]]; then echo "mode=json" >> "${GITHUB_OUTPUT}"; exit 0; fi
+          echo "Missing GCP auth secrets." >&2
+          exit 1
+      - name: Authenticate to Google Cloud (Workload Identity)
+        if: ${{ steps.auth_mode.outputs.mode == 'wif' }}
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+      - name: Authenticate to Google Cloud (Service Account Key)
+        if: ${{ steps.auth_mode.outputs.mode == 'json' }}
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_CREDENTIALS_JSON }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - uses: docker/setup-buildx-action@v3
+      - name: Configure Docker Auth
+        run: gcloud auth configure-docker gcr.io --quiet
+      - name: Build and push frontend
+        env:
+          IMAGE_TAG: ${{ format('{0}{1}', github.sha, inputs.image_tag_suffix) }}
+        run: |
+          set -euo pipefail
+          CACHE_REF="gcr.io/${PROJECT_ID}/helpudoc-buildcache-frontend:buildcache"
+          docker buildx build \
+            -f frontend/Dockerfile.gke \
+            --build-arg "VITE_GOOGLE_CLIENT_ID=${VITE_GOOGLE_CLIENT_ID}" \
+            --build-arg "VITE_AUTH_MODE=hybrid" \
+            --cache-from "type=registry,ref=${CACHE_REF}" \
+            --cache-to "type=registry,ref=${CACHE_REF},mode=max" \
+            -t "gcr.io/${PROJECT_ID}/helpudoc-frontend:${IMAGE_TAG}" \
+            --push \
+            .
 
-          docker build -f "${DOCKERFILE}" "${docker_args[@]}" -t "gcr.io/${PROJECT_ID}/${IMAGE}:${IMAGE_TAG}" .
-          docker push "gcr.io/${PROJECT_ID}/${IMAGE}:${IMAGE_TAG}"
+  build-agent:
+    name: Build and push agent
+    needs: [guard]
+    if: ${{ inputs.build_agent }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Google auth mode
+        id: auth_mode
+        env:
+          WIF_PROVIDER: ${{ secrets.GCP_WORKLOAD_PROVIDER }}
+          WIF_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+          CREDENTIALS_JSON: ${{ secrets.GCP_CREDENTIALS_JSON }}
+        run: |
+          set -euo pipefail
+          has_wif=false
+          has_json=false
+          if [[ -n "${WIF_PROVIDER}" && -n "${WIF_SERVICE_ACCOUNT}" ]]; then has_wif=true; fi
+          if [[ -n "${CREDENTIALS_JSON}" ]]; then has_json=true; fi
+          if [[ "${has_wif}" == "true" && "${has_json}" == "true" ]]; then
+            echo "Configure only one auth method: WIF OR GCP_CREDENTIALS_JSON." >&2
+            exit 1
+          fi
+          if [[ "${has_wif}" == "true" ]]; then echo "mode=wif" >> "${GITHUB_OUTPUT}"; exit 0; fi
+          if [[ "${has_json}" == "true" ]]; then echo "mode=json" >> "${GITHUB_OUTPUT}"; exit 0; fi
+          echo "Missing GCP auth secrets." >&2
+          exit 1
+      - name: Authenticate to Google Cloud (Workload Identity)
+        if: ${{ steps.auth_mode.outputs.mode == 'wif' }}
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+      - name: Authenticate to Google Cloud (Service Account Key)
+        if: ${{ steps.auth_mode.outputs.mode == 'json' }}
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_CREDENTIALS_JSON }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - uses: docker/setup-buildx-action@v3
+      - name: Configure Docker Auth
+        run: gcloud auth configure-docker gcr.io --quiet
+      - name: Build and push agent
+        env:
+          IMAGE_TAG: ${{ format('{0}{1}', github.sha, inputs.image_tag_suffix) }}
+        run: |
+          set -euo pipefail
+          CACHE_REF="gcr.io/${PROJECT_ID}/helpudoc-buildcache-agent:buildcache"
+          docker buildx build \
+            -f agent/Dockerfile.gke \
+            --build-arg "GIT_COMMIT=${IMAGE_TAG}" \
+            --cache-from "type=registry,ref=${CACHE_REF}" \
+            --cache-to "type=registry,ref=${CACHE_REF},mode=max" \
+            -t "gcr.io/${PROJECT_ID}/helpudoc-agent:${IMAGE_TAG}" \
+            --push \
+            .
+      - name: Agent image smoke import
+        env:
+          IMAGE_TAG: ${{ format('{0}{1}', github.sha, inputs.image_tag_suffix) }}
+        run: |
+          set -euo pipefail
+          docker pull "gcr.io/${PROJECT_ID}/helpudoc-agent:${IMAGE_TAG}"
+          docker run --rm "gcr.io/${PROJECT_ID}/helpudoc-agent:${IMAGE_TAG}" \
+            python /app/agent/scripts/smoke_import.py
 
   deploy:
-    needs: build-images
+    name: Deploy to GKE
+    needs: [guard, build-backend, build-frontend, build-agent]
+    if: >
+      always()
+      && needs.guard.result == 'success'
+      && (needs.build-backend.result == 'success' || needs.build-backend.result == 'skipped')
+      && (needs.build-frontend.result == 'success' || needs.build-frontend.result == 'skipped')
+      && (needs.build-agent.result == 'success' || needs.build-agent.result == 'skipped')
     runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Select Google auth mode
         id: auth_mode
@@ -142,34 +277,17 @@ jobs:
           CREDENTIALS_JSON: ${{ secrets.GCP_CREDENTIALS_JSON }}
         run: |
           set -euo pipefail
-
           has_wif=false
           has_json=false
-
-          if [[ -n "${WIF_PROVIDER}" && -n "${WIF_SERVICE_ACCOUNT}" ]]; then
-            has_wif=true
-          fi
-
-          if [[ -n "${CREDENTIALS_JSON}" ]]; then
-            has_json=true
-          fi
-
+          if [[ -n "${WIF_PROVIDER}" && -n "${WIF_SERVICE_ACCOUNT}" ]]; then has_wif=true; fi
+          if [[ -n "${CREDENTIALS_JSON}" ]]; then has_json=true; fi
           if [[ "${has_wif}" == "true" && "${has_json}" == "true" ]]; then
-            echo "Configure only one auth method: WIF (GCP_WORKLOAD_PROVIDER + GCP_SERVICE_ACCOUNT) OR GCP_CREDENTIALS_JSON." >&2
+            echo "Configure only one auth method: WIF OR GCP_CREDENTIALS_JSON." >&2
             exit 1
           fi
-
-          if [[ "${has_wif}" == "true" ]]; then
-            echo "mode=wif" >> "${GITHUB_OUTPUT}"
-            exit 0
-          fi
-
-          if [[ "${has_json}" == "true" ]]; then
-            echo "mode=json" >> "${GITHUB_OUTPUT}"
-            exit 0
-          fi
-
-          echo "Missing GCP auth secrets. Set either GCP_WORKLOAD_PROVIDER + GCP_SERVICE_ACCOUNT, or GCP_CREDENTIALS_JSON." >&2
+          if [[ "${has_wif}" == "true" ]]; then echo "mode=wif" >> "${GITHUB_OUTPUT}"; exit 0; fi
+          if [[ "${has_json}" == "true" ]]; then echo "mode=json" >> "${GITHUB_OUTPUT}"; exit 0; fi
+          echo "Missing GCP auth secrets." >&2
           exit 1
 
       - name: Authenticate to Google Cloud (Workload Identity)
@@ -185,8 +303,7 @@ jobs:
         with:
           credentials_json: ${{ secrets.GCP_CREDENTIALS_JSON }}
 
-      - name: Set up gcloud
-        uses: google-github-actions/setup-gcloud@v2
+      - uses: google-github-actions/setup-gcloud@v2
         with:
           install_components: gke-gcloud-auth-plugin
 
@@ -202,10 +319,19 @@ jobs:
           set -euo pipefail
           gcloud container clusters get-credentials "${GKE_CLUSTER}" --location "${GKE_LOCATION}" --project "${PROJECT_ID}"
 
-      - name: Verify Kubernetes RBAC apply permissions
+      - name: Ensure helpudoc-config exists (app deploys only)
+        if: ${{ !inputs.deploy_infra }}
         run: |
           set -euo pipefail
+          if ! kubectl -n helpudoc get configmap helpudoc-config >/dev/null 2>&1; then
+            echo "helpudoc-config is missing. Run this workflow once with deploy_infra=true, or create the ConfigMap manually (see docs/deploy.md)." >&2
+            exit 1
+          fi
 
+      - name: Verify Kubernetes RBAC apply permissions
+        if: ${{ inputs.deploy_infra }}
+        run: |
+          set -euo pipefail
           missing=()
           for check in \
             "create roles.rbac.authorization.k8s.io" \
@@ -216,34 +342,32 @@ jobs:
               missing+=("${check}")
             fi
           done
-
           if (( ${#missing[@]} > 0 )); then
             echo "The active deploy identity cannot apply infra/gke/k8s/49-skill-sandbox.yaml." >&2
-            echo "Missing Kubernetes permissions:" >&2
             printf '  - %s\n' "${missing[@]}" >&2
-            echo "" >&2
-            echo "On GKE, grant the deploy service account IAM permissions that cover RBAC objects, such as roles/container.admin, or a custom role including container.roles.* and container.roleBindings.*." >&2
             exit 1
           fi
 
-      - name: Apply Kubernetes manifests (ConfigMap is bootstrap-only; see next step)
+      - name: Apply Kubernetes manifests
+        if: ${{ inputs.deploy_infra }}
         run: |
           set -euo pipefail
           kubectl -n helpudoc delete job helpudoc-minio-setup --ignore-not-found
           kubectl apply -f infra/gke/k8s/
 
       - name: Ensure helpudoc-config exists (first install only)
+        if: ${{ inputs.deploy_infra }}
         run: |
           set -euo pipefail
           if kubectl -n helpudoc get configmap helpudoc-config >/dev/null 2>&1; then
             echo "helpudoc-config already present; not applying demo ConfigMap."
             exit 0
           fi
-          echo "No helpudoc-config: applying infra/gke/bootstrap/20-configmap.demo.yaml (demo defaults)."
-          echo "For production, create the ConfigMap from env/prod/config.env instead (see infra/gke/README.md)."
+          echo "Applying infra/gke/bootstrap/20-configmap.demo.yaml"
           kubectl apply -f infra/gke/bootstrap/20-configmap.demo.yaml
 
       - name: Ensure Langfuse bootstrap config and secrets
+        if: ${{ inputs.deploy_infra }}
         env:
           CLICKHOUSE_PASSWORD_INPUT: ${{ secrets.CLICKHOUSE_PASSWORD }}
           LANGFUSE_NEXTAUTH_SECRET_INPUT: ${{ secrets.LANGFUSE_NEXTAUTH_SECRET }}
@@ -254,10 +378,8 @@ jobs:
           LANGFUSE_INIT_USER_PASSWORD_INPUT: ${{ secrets.LANGFUSE_INIT_USER_PASSWORD }}
         run: |
           set -euo pipefail
-
           kubectl -n helpudoc get configmap helpudoc-config >/dev/null
           kubectl -n helpudoc get secret helpudoc-secrets >/dev/null
-
           ensure_cm_key() {
             local key="$1"
             local value="$2"
@@ -267,7 +389,6 @@ jobs:
             kubectl -n helpudoc patch configmap helpudoc-config --type merge -p \
               "$(jq -n --arg key "${key}" --arg value "${value}" '{data:{($key):$value}}')"
           }
-
           ensure_secret_key() {
             local key="$1"
             local value="$2"
@@ -277,7 +398,6 @@ jobs:
             kubectl -n helpudoc patch secret helpudoc-secrets --type merge -p \
               "$(jq -n --arg key "${key}" --arg value "${value}" '{stringData:{($key):$value}}')"
           }
-
           ensure_cm_key LANGFUSE_NEXTAUTH_URL "https://langfuse.lc-demo.com"
           ensure_cm_key LANGFUSE_BASE_URL "http://langfuse-web"
           ensure_cm_key LANGFUSE_TRACING_ENABLED "true"
@@ -287,7 +407,6 @@ jobs:
           ensure_cm_key LANGFUSE_INIT_PROJECT_NAME "gke"
           ensure_cm_key LANGFUSE_INIT_USER_EMAIL "admin@local.com"
           ensure_cm_key LANGFUSE_INIT_USER_NAME "admin"
-
           clickhouse_secret="${CLICKHOUSE_PASSWORD_INPUT:-}"
           if [[ -z "${clickhouse_secret}" ]]; then
             clickhouse_secret="$(openssl rand -hex 24)"
@@ -301,6 +420,7 @@ jobs:
           ensure_secret_key LANGFUSE_INIT_USER_PASSWORD "${LANGFUSE_INIT_USER_PASSWORD_INPUT:-$(openssl rand -base64 24)}"
 
       - name: Bootstrap Langfuse database and wait for Langfuse
+        if: ${{ inputs.deploy_infra }}
         run: |
           set -euo pipefail
           chmod +x infra/gke/scripts/bootstrap-langfuse-db.sh
@@ -309,13 +429,11 @@ jobs:
       - name: Sync OAuth Config and Secrets
         run: |
           set -euo pipefail
-
           test -n "${GOOGLE_OAUTH_CLIENT_ID}"
           test -n "${GOOGLE_OAUTH_CLIENT_SECRET}"
           test -n "${GOOGLE_OAUTH_REDIRECT_URI}"
           test -n "${GOOGLE_OAUTH_POST_LOGIN_REDIRECT}"
           test -n "${OAUTH_TOKEN_ENCRYPTION_KEY}"
-
           kubectl -n helpudoc patch configmap helpudoc-config --type merge -p "$(jq -n \
             --arg auth_mode "hybrid" \
             --arg cid "${GOOGLE_OAUTH_CLIENT_ID}" \
@@ -324,32 +442,57 @@ jobs:
             --arg scopes "openid email profile https://www.googleapis.com/auth/bigquery https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/spreadsheets.readonly" \
             --arg domain ".lc-demo.com" \
             '{data:{AUTH_MODE:$auth_mode,GOOGLE_OAUTH_CLIENT_ID:$cid,GOOGLE_OAUTH_REDIRECT_URI:$redir,GOOGLE_OAUTH_POST_LOGIN_REDIRECT:$post,GOOGLE_OAUTH_SCOPES:$scopes,SESSION_COOKIE_DOMAIN:$domain}}')"
-
           kubectl -n helpudoc patch secret helpudoc-secrets --type merge -p "$(jq -n \
             --arg client_secret "${GOOGLE_OAUTH_CLIENT_SECRET}" \
             --arg enc_key "${OAUTH_TOKEN_ENCRYPTION_KEY}" \
             '{stringData:{GOOGLE_OAUTH_CLIENT_SECRET:$client_secret,OAUTH_TOKEN_ENCRYPTION_KEY:$enc_key}}')"
 
-      - name: Update Images
+      - name: Update workload images
         env:
-          IMAGE_TAG: ${{ github.sha }}
+          IMAGE_TAG: ${{ format('{0}{1}', github.sha, inputs.image_tag_suffix) }}
         run: |
           set -euo pipefail
-          kubectl -n helpudoc set image deployment/helpudoc-app \
-            backend="gcr.io/${PROJECT_ID}/helpudoc-backend:${IMAGE_TAG}" \
-            agent="gcr.io/${PROJECT_ID}/helpudoc-agent:${IMAGE_TAG}"
-          kubectl -n helpudoc set image deployment/helpudoc-frontend \
-            frontend="gcr.io/${PROJECT_ID}/helpudoc-frontend:${IMAGE_TAG}"
-          kubectl -n helpudoc set image cronjob/helpudoc-daily-reflection \
-            reflection-job="gcr.io/${PROJECT_ID}/helpudoc-backend:${IMAGE_TAG}"
+          TAG="${IMAGE_TAG}"
+          BACKEND_IMG="gcr.io/${PROJECT_ID}/helpudoc-backend:${TAG}"
+          FRONTEND_IMG="gcr.io/${PROJECT_ID}/helpudoc-frontend:${TAG}"
+          AGENT_IMG="gcr.io/${PROJECT_ID}/helpudoc-agent:${TAG}"
 
-      - name: Wait for Rollout
+          APP_ARGS=()
+          if [[ "${{ inputs.build_backend }}" == "true" ]]; then
+            APP_ARGS+=("backend=${BACKEND_IMG}")
+          fi
+          if [[ "${{ inputs.build_agent }}" == "true" ]]; then
+            APP_ARGS+=("agent=${AGENT_IMG}")
+          fi
+          if (( ${#APP_ARGS[@]} > 0 )); then
+            kubectl -n helpudoc set image deployment/helpudoc-app "${APP_ARGS[@]}"
+          fi
+
+          if [[ "${{ inputs.build_agent }}" == "true" ]]; then
+            kubectl -n helpudoc patch deployment helpudoc-app --type=json -p "$(jq -n \
+              --arg img "${AGENT_IMG}" \
+              '[{"op":"replace","path":"/spec/template/spec/initContainers/0/image","value":$img},
+                {"op":"replace","path":"/spec/template/spec/initContainers/1/image","value":$img}]')"
+          fi
+
+          if [[ "${{ inputs.build_frontend }}" == "true" ]]; then
+            kubectl -n helpudoc set image deployment/helpudoc-frontend \
+              frontend="${FRONTEND_IMG}"
+          fi
+
+          if [[ "${{ inputs.build_backend }}" == "true" ]]; then
+            kubectl -n helpudoc set image cronjob/helpudoc-daily-reflection \
+              reflection-job="${BACKEND_IMG}"
+          fi
+
+      - name: Wait for rollout
         run: |
           set -euo pipefail
           kubectl -n helpudoc rollout status deployment/helpudoc-app --timeout=20m
           kubectl -n helpudoc rollout status deployment/helpudoc-frontend --timeout=10m
 
-      - name: Sync Skills PVC
+      - name: Legacy sync Skills PVC (kubectl exec)
+        if: ${{ inputs.sync_runtime_assets }}
         run: |
           set -euo pipefail
           APP_POD="$(kubectl -n helpudoc get pods -l app=helpudoc-app -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.phase}{"\n"}{end}' | awk '$2 == "Running" {print $1; exit}')"
@@ -358,10 +501,24 @@ jobs:
           tar -C skills -cf - . | kubectl -n helpudoc exec -i "${APP_POD}" -c backend -- sh -lc "tar -xf - -C /app/skills"
           kubectl -n helpudoc exec "${APP_POD}" -c backend -- sh -lc "test -f /app/skills/research/SKILL.md"
 
-      - name: Sync Agent Config PVC
+      - name: Legacy sync Agent Config PVC (kubectl exec)
+        if: ${{ inputs.sync_runtime_assets }}
         run: |
           set -euo pipefail
           APP_POD="$(kubectl -n helpudoc get pods -l app=helpudoc-app -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.phase}{"\n"}{end}' | awk '$2 == "Running" {print $1; exit}')"
           test -n "${APP_POD}"
           kubectl -n helpudoc exec "${APP_POD}" -c backend -- sh -lc "mkdir -p /agent/config"
           kubectl -n helpudoc exec -i "${APP_POD}" -c backend -- sh -lc "cat > /agent/config/runtime.yaml" < agent/config/runtime.yaml
+
+      - name: Post-deploy smoke (in-cluster HTTP)
+        run: |
+          set -euo pipefail
+          POD="helpudoc-smoke-${{ github.run_id }}-${{ github.run_attempt }}"
+          kubectl -n helpudoc run "${POD}" --rm --restart=Never --image=curlimages/curl:8.5.0 -- \
+            sh -ec 'curl -fsS "http://backend.helpudoc.svc.cluster.local:3000/api/health"; curl -fsS "http://helpudoc-frontend.helpudoc.svc.cluster.local/" >/dev/null'
+
+      - name: Post-deploy smoke (agent sidecar)
+        run: |
+          set -euo pipefail
+          kubectl -n helpudoc exec deploy/helpudoc-app -c agent -- \
+            python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health').read()"

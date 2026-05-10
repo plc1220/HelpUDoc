@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.7
 FROM node:20-bookworm-slim AS base
 
 WORKDIR /app
@@ -6,8 +7,8 @@ WORKDIR /app
 COPY backend/package*.json ./
 COPY backend/tsconfig.json ./
 
-# Install all dependencies
-RUN npm ci --legacy-peer-deps
+RUN --mount=type=cache,target=/root/.npm \
+  npm ci --legacy-peer-deps
 
 # Copy the rest of the backend source code
 COPY backend/src ./src

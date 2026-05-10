@@ -16,6 +16,51 @@ spec:
         app: helpudoc-app
     spec:
       serviceAccountName: helpudoc-agent
+      initContainers:
+        # Copy image-bundled skills/config into PVCs only when the mount is empty,
+        # so admin edits on the PVC are preserved across restarts.
+        - name: seed-skills
+          image: gcr.io/my-rd-coe-demo-gen-ai/helpudoc-agent:latest
+          imagePullPolicy: Always
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              if [ -f /pvc-skills/research/SKILL.md ]; then
+                echo "seed-skills: PVC already has skills; skipping."
+                exit 0
+              fi
+              echo "seed-skills: copying from image to PVC..."
+              mkdir -p /pvc-skills
+              cp -a /app/skills-source/. /pvc-skills/
+              if [ -f /app/skills-source/.HELPUDOC_SOURCE_REVISION ]; then
+                cp /app/skills-source/.HELPUDOC_SOURCE_REVISION /pvc-skills/.HELPUDOC_IMAGE_SOURCE_REVISION || true
+              fi
+          volumeMounts:
+            - name: skills-data
+              mountPath: /pvc-skills
+        - name: seed-agent-config
+          image: gcr.io/my-rd-coe-demo-gen-ai/helpudoc-agent:latest
+          imagePullPolicy: Always
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              if [ -f /pvc-agent-config/runtime.yaml ]; then
+                echo "seed-agent-config: PVC already has runtime.yaml; skipping."
+                exit 0
+              fi
+              echo "seed-agent-config: copying runtime.yaml from image to PVC..."
+              mkdir -p /pvc-agent-config
+              cp /app/agent-config-source/runtime.yaml /pvc-agent-config/runtime.yaml
+              if [ -f /app/agent-config-source/.HELPUDOC_SOURCE_REVISION ]; then
+                cp /app/agent-config-source/.HELPUDOC_SOURCE_REVISION /pvc-agent-config/.HELPUDOC_IMAGE_SOURCE_REVISION || true
+              fi
+          volumeMounts:
+            - name: agent-config-data
+              mountPath: /pvc-agent-config
       containers:
         - name: backend
           image: gcr.io/my-rd-coe-demo-gen-ai/helpudoc-backend:latest
