@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.7
 FROM python:3.12-slim
 WORKDIR /app
 
@@ -20,9 +21,10 @@ RUN apt-get update \
 
 # Install deps before copying the rest so the layer caches across code changes.
 COPY agent/requirements.txt /app/agent/requirements.txt
-RUN PIP_INDEX_URL="${PYTORCH_CPU_INDEX_URL}" \
+RUN --mount=type=cache,target=/root/.cache/pip \
+  PIP_INDEX_URL="${PYTORCH_CPU_INDEX_URL}" \
   PIP_EXTRA_INDEX_URL="${PYPI_INDEX_URL}" \
-  pip install --no-cache-dir -r /app/agent/requirements.txt
+  pip install -r /app/agent/requirements.txt
 
 COPY agent/ /app/agent/
 COPY skills/ /app/skills/

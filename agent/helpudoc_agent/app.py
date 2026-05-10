@@ -1129,6 +1129,15 @@ def create_app() -> FastAPI:
     app = FastAPI(title="DeepAgents Service", version="0.2.0")
     rag_worker = RagIndexWorker(settings.backend.workspace_root)
 
+    @app.get("/health")
+    async def health() -> dict[str, object]:
+        """Lightweight liveness/readiness probe for orchestrators and deploy smoke tests."""
+        return {
+            "status": "ok",
+            "service": "helpudoc-agent",
+            "dependencies": dependency_diag,
+        }
+
     @app.on_event("startup")
     async def _startup() -> None:
         try:

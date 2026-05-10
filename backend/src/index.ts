@@ -50,6 +50,10 @@ function resolveSaveUninitialized(): boolean {
 }
 
 async function startServer() {
+  app.get('/api/health', (_req, res) => {
+    res.status(200).json({ status: 'ok', service: 'helpudoc-backend' });
+  });
+
   logWorkspaceRootDiagnostic('backend');
   const databaseService = new DatabaseService();
   await databaseService.initialize();
