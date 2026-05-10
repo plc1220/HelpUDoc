@@ -255,6 +255,12 @@ jobs:
   deploy:
     name: Deploy to GKE
     needs: [guard, build-backend, build-frontend, build-agent]
+    if: >
+      always()
+      && needs.guard.result == 'success'
+      && (needs.build-backend.result == 'success' || needs.build-backend.result == 'skipped')
+      && (needs.build-frontend.result == 'success' || needs.build-frontend.result == 'skipped')
+      && (needs.build-agent.result == 'success' || needs.build-agent.result == 'skipped')
     runs-on: ubuntu-latest
     permissions:
       contents: read
