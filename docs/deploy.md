@@ -95,7 +95,7 @@ Required GitHub secrets:
 
 Notes:
 - The deploy is manual-only (`workflow_dispatch`), not automatic on every push.
-- PR validation runs `.github/workflows/ci.yml` on pushes and pull requests to `master` / `main`.
+- PR validation runs `.github/workflows/ci.yml` on pushes and pull requests to `master` / `main` (path-filtered on PRs; full matrix on merge to `master` / `main`; see `docs/ci-cd.md`).
 - The build jobs do not talk to the cluster; the deploy job does all `kubectl` work after selected image pushes succeed.
 - The checked-in manifests still reference `:latest`; the workflow patches the
   running `helpudoc-app` and `helpudoc-frontend` deployments to the commit SHA
