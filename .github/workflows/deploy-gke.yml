@@ -469,10 +469,50 @@ jobs:
           fi
 
           if [[ "${{ inputs.build_agent }}" == "true" ]]; then
-            kubectl -n helpudoc patch deployment helpudoc-app --type=json -p "$(jq -n \
+            kubectl -n helpudoc patch deployment helpudoc-app --type=strategic -p "$(jq -n \
               --arg img "${AGENT_IMG}" \
-              '[{"op":"replace","path":"/spec/template/spec/initContainers/0/image","value":$img},
-                {"op":"replace","path":"/spec/template/spec/initContainers/1/image","value":$img}]')"
+              '{
+                spec: {
+                  template: {
+                    spec: {
+                      initContainers: [
+                        {
+                          name: "seed-skills",
+                          image: $img,
+                          imagePullPolicy: "Always",
+                          command: [
+                            "/bin/sh",
+                            "-c",
+                            "set -eu\nif [ -f /pvc-skills/research/SKILL.md ]; then\n  echo \"seed-skills: PVC already has skills; skipping.\"\n  exit 0\nfi\necho \"seed-skills: copying from image to PVC...\"\nmkdir -p /pvc-skills\ncp -a /app/skills-source/. /pvc-skills/\nif [ -f /app/skills-source/.HELPUDOC_SOURCE_REVISION ]; then\n  cp /app/skills-source/.HELPUDOC_SOURCE_REVISION /pvc-skills/.HELPUDOC_IMAGE_SOURCE_REVISION || true\nfi\n"
+                          ],
+                          volumeMounts: [
+                            {
+                              name: "skills-data",
+                              mountPath: "/pvc-skills"
+                            }
+                          ]
+                        },
+                        {
+                          name: "seed-agent-config",
+                          image: $img,
+                          imagePullPolicy: "Always",
+                          command: [
+                            "/bin/sh",
+                            "-c",
+                            "set -eu\nif [ -f /pvc-agent-config/runtime.yaml ]; then\n  echo \"seed-agent-config: PVC already has runtime.yaml; skipping.\"\n  exit 0\nfi\necho \"seed-agent-config: copying runtime.yaml from image to PVC...\"\nmkdir -p /pvc-agent-config\ncp /app/agent-config-source/runtime.yaml /pvc-agent-config/runtime.yaml\nif [ -f /app/agent-config-source/.HELPUDOC_SOURCE_REVISION ]; then\n  cp /app/agent-config-source/.HELPUDOC_SOURCE_REVISION /pvc-agent-config/.HELPUDOC_IMAGE_SOURCE_REVISION || true\nfi\n"
+                          ],
+                          volumeMounts: [
+                            {
+                              name: "agent-config-data",
+                              mountPath: "/pvc-agent-config"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  }
+                }
+              }')"
           fi
 
           if [[ "${{ inputs.build_frontend }}" == "true" ]]; then
