@@ -5,7 +5,7 @@ import type {
   AgentInterruptResponse,
   AgentMessageContentBlock,
 } from '../agentService';
-import type { FileContextRef } from '/contracts/types';
+import type { FileContextRef } from '@helpudoc/contracts/types';
 
 export type AgentRunStatus =
   | 'queued'
