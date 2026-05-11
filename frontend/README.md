@@ -58,11 +58,24 @@ npm run e2e
 | Path | Purpose |
 | ---- | ------- |
 | `src/auth/` | Auth provider and persisted auth state. |
-| `src/pages/` | Route-level screens like workspace, login, dashboard, and settings pages. |
-| `src/components/` | Workspace UI, chat UI, file rendering, markdown helpers, and settings widgets. |
+| `src/pages/` | Thin route entry-points; the workspace route re-exports `features/workspace/WorkspacePage`. |
+| `src/features/` | Feature modules that own their components, hooks, and utilities. See the feature map below. |
+| `src/components/` | Cross-cutting/legacy components that have not yet been pulled into a feature module. Some sub-paths (`dashboard/`, `settings/`, `chat/approvalReview`, `chat/interruptActions`, `chat/chatTypes`) are kept as re-export shims pointing at `features/` and will be removed once consumers migrate. |
 | `src/services/` | API clients for workspaces, files, conversations, agent runs, paper-to-slides, settings, and auth-aware fetches. |
 | `src/constants/` | Shared UI constants such as slash commands and paper-to-slides presets. |
 | `src/utils/` | File, message, and rendering helpers. |
+
+### Feature modules
+
+| Feature | Path | Owns |
+| ------- | ---- | ---- |
+| Workspace | `src/features/workspace/` | `WorkspacePage` route component, workspace-path helpers (`utils/workspacePaths.ts`). |
+| Chat | `src/features/chat/` | Chat composer/interrupt contracts: `types.ts`, `interrupts/approvalReview.ts`, `interrupts/actions.ts`. |
+| Paper2Slides | `src/features/paper2slides/` | Presentation options modal and presentation option types. |
+| Dashboard | `src/features/dashboard/` | `DashboardCanvas`, `DashboardFilters`, and snapshot-download helper. |
+| Settings | `src/features/settings/` | Settings shell/scaffold and admin tabs (`AgentSettingsTabs`, `ToolsTab`, `SkillsRegistryTab`, `SkillEvolutionTab`). |
+
+Hook extraction and the full `ChatMessageBubble` split (tool events, interrupt card, artifact preview) are tracked as follow-up sub-PRs of PR 10 in `docs/repo-cicd-restructure-plan.md`.
 
 ## Routing
 

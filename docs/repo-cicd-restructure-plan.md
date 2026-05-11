@@ -848,22 +848,25 @@ Split backend agent/settings routes and agent run service.
 
 Split workspace route and chat renderers.
 
-- [ ] Create `frontend/src/features/workspace/`.
-- [ ] Move `WorkspacePage` implementation to `frontend/src/features/workspace/WorkspacePage.tsx`.
-- [ ] Keep `frontend/src/pages/WorkspacePage.tsx` as a thin route re-export.
-- [ ] Extract workspace selection logic into `features/workspace/hooks/useWorkspaceSelection.ts`.
-- [ ] Extract file tree/content logic into `features/workspace/hooks/useWorkspaceFiles.ts`.
-- [ ] Extract agent run lifecycle logic into `features/chat/hooks/useAgentRun.ts`.
-- [ ] Extract conversation state logic into `features/chat/hooks/useConversationState.ts`.
-- [ ] Extract Paper2Slides polling/options into `features/paper2slides/hooks/usePaper2SlidesJob.ts`.
-- [ ] Extract dashboard artifact state into `features/dashboard/hooks/useDashboardArtifacts.ts`.
-- [ ] Move `PresentationModal` into `features/paper2slides/components/PresentationModal.tsx`.
-- [ ] Split `ChatMessageBubble.tsx` into message shell, tool events, interrupts, and artifact previews.
-- [ ] Move dashboard components under `features/dashboard/components`.
-- [ ] Move settings components under `features/settings/components`.
-- [ ] Run `cd frontend && npm run lint`.
-- [ ] Run `cd frontend && npm run build`.
-- [ ] Run relevant Playwright smoke tests if available.
+- [x] Create `frontend/src/features/workspace/`.
+- [x] Move `WorkspacePage` implementation to `frontend/src/features/workspace/WorkspacePage.tsx`.
+- [x] Keep `frontend/src/pages/WorkspacePage.tsx` as a thin route re-export.
+- [ ] Extract workspace selection logic into `features/workspace/hooks/useWorkspaceSelection.ts` (deferred: state is tightly coupled to the rest of `WorkspacePage`; tracked as a follow-up sub-PR).
+- [ ] Extract file tree/content logic into `features/workspace/hooks/useWorkspaceFiles.ts` (deferred: same coupling; follow-up sub-PR).
+- [ ] Extract agent run lifecycle logic into `features/chat/hooks/useAgentRun.ts` (deferred: streaming state shared with conversation/interrupt logic; follow-up sub-PR).
+- [ ] Extract conversation state logic into `features/chat/hooks/useConversationState.ts` (deferred; follow-up sub-PR).
+- [ ] Extract Paper2Slides polling/options into `features/paper2slides/hooks/usePaper2SlidesJob.ts` (deferred; follow-up sub-PR).
+- [ ] Extract dashboard artifact state into `features/dashboard/hooks/useDashboardArtifacts.ts` (deferred; follow-up sub-PR).
+- [x] Move `PresentationModal` into `features/paper2slides/components/PresentationModal.tsx` (also exposes `PresentationOptionsState`/`Paper2SlidesStage`/`Paper2SlidesStylePreset` from `features/paper2slides/types.ts`).
+- [ ] Split `ChatMessageBubble.tsx` into message shell, tool events, interrupts, and artifact previews (deferred: chat helper modules `approvalReview`, `interruptActions`, `chatTypes` were relocated under `features/chat/` with legacy shims to start the split; the large component itself is tracked as a follow-up sub-PR).
+- [x] Move dashboard components under `features/dashboard/components` (`DashboardCanvas`, `DashboardFilters`, `dashboardDownload`; old paths remain as re-export shims).
+- [x] Move settings components under `features/settings/components` (`SettingsShell`, `SettingsScaffold`, `AgentSettingsTabs`, `ToolsTab`, `SkillsRegistryTab`, `SkillEvolutionTab`; old paths remain as re-export shims).
+- [x] Extract workspace path utilities (`normalizeWorkspaceRelativePath`, `getDashboardManifestPath`, `getDashboardPackagePathFromManifestPath`, `resolveDashboardPackagePath`) into `features/workspace/utils/workspacePaths.ts`.
+- [x] Run `cd frontend && npm run lint` (0 errors; pre-existing `react-hooks/exhaustive-deps` warnings unchanged).
+- [x] Run `cd frontend && npm run build` (succeeds; bundle layout matches pre-rename baseline).
+- [ ] Run relevant Playwright smoke tests if available (deferred: existing specs target the live `lc-demo.com` deployment and cannot run from the worktree without a deployed stack; rerun against staging after PR 7 lands).
+
+PR 7 (`shared-packages-split`) is being worked in parallel. Dashboard components in `features/dashboard/components/*` still import from `@helpudoc/shared/dashboard`; once PR 7 lands, rebase this branch and switch the imports to `@helpudoc/dashboard-runtime`. No other PR 7 surface area is touched here, so the rebase should be a focused find-and-replace.
 
 ### PR 11 - `presentation-parser-split`
 
