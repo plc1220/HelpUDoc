@@ -510,6 +510,8 @@ def client_with_stubs(monkeypatch):
     module_names = [
         "agent.main",
         "helpudoc_agent.app",
+        "helpudoc_agent.api",
+        "helpudoc_agent.api.app",
         "helpudoc_agent.runtime",
         "helpudoc_agent.runtime.agent_registry",
         "helpudoc_agent.tools_and_schemas",
@@ -538,18 +540,20 @@ def client_with_stubs(monkeypatch):
         tools_stub.GeminiClientManager = GeminiClientManagerStub
         sys.modules["helpudoc_agent.tools_and_schemas"] = tools_stub
 
-        import helpudoc_agent.app as app_module
+        import helpudoc_agent.api.app as api_app_module
 
         # Reset singleton references for each test run.
         RegistryStub.instance = None
         SourceTrackerStub.instance = None
 
-        monkeypatch.setattr(app_module, "load_settings", lambda *_args, **_kwargs: SettingsStub())
-        monkeypatch.setattr(app_module, "SourceTracker", SourceTrackerStub)
-        monkeypatch.setattr(app_module, "GeminiClientManager", GeminiClientManagerStub)
-        monkeypatch.setattr(app_module, "ToolFactory", ToolFactoryStub)
-        monkeypatch.setattr(app_module, "AgentRegistry", RegistryStub)
-        monkeypatch.setattr(app_module, "RagIndexWorker", RagIndexWorkerStub)
+        monkeypatch.setattr(api_app_module, "load_settings", lambda *_args, **_kwargs: SettingsStub())
+        monkeypatch.setattr(api_app_module, "SourceTracker", SourceTrackerStub)
+        monkeypatch.setattr(api_app_module, "GeminiClientManager", GeminiClientManagerStub)
+        monkeypatch.setattr(api_app_module, "ToolFactory", ToolFactoryStub)
+        monkeypatch.setattr(api_app_module, "AgentRegistry", RegistryStub)
+        monkeypatch.setattr(api_app_module, "RagIndexWorker", RagIndexWorkerStub)
+
+        import helpudoc_agent.app as _app_shim  # noqa: F401 — ensure shim loads after api stubs
 
         import agent.main as agent_main
 
@@ -566,6 +570,9 @@ def client_with_stubs(monkeypatch):
         sys.modules.pop("helpudoc_agent.runtime.agent_registry", None)
         sys.modules.pop("helpudoc_agent.runtime", None)
         sys.modules.pop("helpudoc_agent.tools_and_schemas", None)
+        sys.modules.pop("helpudoc_agent.api.app", None)
+        sys.modules.pop("helpudoc_agent.api", None)
+        sys.modules.pop("helpudoc_agent.app", None)
         for name, module in saved_modules.items():
             if module is not None:
                 sys.modules[name] = module
@@ -573,6 +580,9 @@ def client_with_stubs(monkeypatch):
                 "helpudoc_agent.runtime",
                 "helpudoc_agent.runtime.agent_registry",
                 "helpudoc_agent.tools_and_schemas",
+                "helpudoc_agent.api",
+                "helpudoc_agent.api.app",
+                "helpudoc_agent.app",
             ):
                 sys.modules.pop(name, None)
 
@@ -928,6 +938,8 @@ def test_skill_contract_endpoint_reports_loaded_dashboard_policy(monkeypatch, tm
     module_names = [
         "agent.main",
         "helpudoc_agent.app",
+        "helpudoc_agent.api",
+        "helpudoc_agent.api.app",
         "helpudoc_agent.runtime",
         "helpudoc_agent.runtime.agent_registry",
         "helpudoc_agent.tools_and_schemas",
@@ -953,7 +965,7 @@ def test_skill_contract_endpoint_reports_loaded_dashboard_policy(monkeypatch, tm
         tools_stub.GeminiClientManager = GeminiClientManagerStub
         sys.modules["helpudoc_agent.tools_and_schemas"] = tools_stub
 
-        import helpudoc_agent.app as app_module
+        import helpudoc_agent.api.app as api_app_module
 
         repo_scoped_workspace = (
             CURRENT_DIR / "backend" / "workspaces" / ".pytest-skill-contract" / tmp_path.name
@@ -966,12 +978,14 @@ def test_skill_contract_endpoint_reports_loaded_dashboard_policy(monkeypatch, tm
                 skills_root=CURRENT_DIR / "skills",
             )
 
-        monkeypatch.setattr(app_module, "load_settings", lambda *_args, **_kwargs: CustomSettings())
-        monkeypatch.setattr(app_module, "SourceTracker", SourceTrackerStub)
-        monkeypatch.setattr(app_module, "GeminiClientManager", GeminiClientManagerStub)
-        monkeypatch.setattr(app_module, "ToolFactory", ToolFactoryStub)
-        monkeypatch.setattr(app_module, "AgentRegistry", RegistryStub)
-        monkeypatch.setattr(app_module, "RagIndexWorker", RagIndexWorkerStub)
+        monkeypatch.setattr(api_app_module, "load_settings", lambda *_args, **_kwargs: CustomSettings())
+        monkeypatch.setattr(api_app_module, "SourceTracker", SourceTrackerStub)
+        monkeypatch.setattr(api_app_module, "GeminiClientManager", GeminiClientManagerStub)
+        monkeypatch.setattr(api_app_module, "ToolFactory", ToolFactoryStub)
+        monkeypatch.setattr(api_app_module, "AgentRegistry", RegistryStub)
+        monkeypatch.setattr(api_app_module, "RagIndexWorker", RagIndexWorkerStub)
+
+        import helpudoc_agent.app as _app_shim  # noqa: F401
 
         import agent.main as agent_main
 
@@ -988,6 +1002,9 @@ def test_skill_contract_endpoint_reports_loaded_dashboard_policy(monkeypatch, tm
         sys.modules.pop("helpudoc_agent.runtime.agent_registry", None)
         sys.modules.pop("helpudoc_agent.runtime", None)
         sys.modules.pop("helpudoc_agent.tools_and_schemas", None)
+        sys.modules.pop("helpudoc_agent.api.app", None)
+        sys.modules.pop("helpudoc_agent.api", None)
+        sys.modules.pop("helpudoc_agent.app", None)
         for name, module in saved_modules.items():
             if module is not None:
                 sys.modules[name] = module
@@ -995,5 +1012,8 @@ def test_skill_contract_endpoint_reports_loaded_dashboard_policy(monkeypatch, tm
                 "helpudoc_agent.runtime",
                 "helpudoc_agent.runtime.agent_registry",
                 "helpudoc_agent.tools_and_schemas",
+                "helpudoc_agent.api",
+                "helpudoc_agent.api.app",
+                "helpudoc_agent.app",
             ):
                 sys.modules.pop(name, None)
