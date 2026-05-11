@@ -803,6 +803,10 @@ Split `packages/shared` into `contracts` and `dashboard-runtime`.
 - [x] Run frontend build.
 - [x] Run backend tests/type checks.
 
+Notes:
+- Root npm workspaces were intentionally not added in this phase.
+- `packages/shared` remains as a compatibility layer while mobile still imports from it.
+
 ### PR 8 - `data-tools-split`
 
 Data tools package and renderer split.
@@ -816,33 +820,39 @@ Data tools package and renderer split.
 - [x] Move `build_data_agent_tools` to `tools/data/factory.py`.
 - [x] Keep `agent/helpudoc_agent/data_agent_tools.py` as a compatibility shim.
 - [x] Split `agent/helpudoc_agent/data_report_renderers.py` into data renderer modules.
-- [ ] Update `agent/config/runtime.yaml` entrypoint for `data_agent_tools` when compatibility shim is no longer needed (deferred: `runtime.yaml` still targets the shim; entrypoint remains valid).
-- [x] Update `tests/test_data_skill_family.py` (existing tests pass; monkeypatch paths unchanged).
-- [x] Split or update `agent/tests/test_data_agent_tools.py` (added `agent/tests/test_tools_data_package.py` for package boundaries).
+- [ ] Update `agent/config/runtime.yaml` entrypoint for `data_agent_tools` when compatibility shim is no longer needed.
+- [ ] Update `tests/test_data_skill_family.py`.
+- [ ] Split or update `agent/tests/test_data_agent_tools.py`.
 - [x] Run data-tool tests.
-- [x] Run `graphify update .` (local run; `graphify-out/` remains gitignored).
+- [x] Run `graphify update .`.
+
+Notes:
+- `agent/config/runtime.yaml` still intentionally points to `helpudoc_agent.data_agent_tools:build_data_agent_tools` while shim compatibility remains active.
 
 ### PR 9 - `backend-api-split`
 
 Split backend agent/settings routes and agent run service.
 
 - [x] Create `backend/src/api/agent/index.ts`.
-- [ ] Move agent run endpoints to `backend/src/api/agent/runs.ts` (deferred: route behavior remains in `agent/index.ts`; `policy.ts` was extracted first to reduce risk).
-- [ ] Move slash metadata endpoint to `backend/src/api/agent/slash.ts` (deferred with the remaining route-surface split).
-- [ ] Move Paper2Slides endpoints to `backend/src/api/agent/paper2slides.ts` (deferred with the remaining route-surface split).
-- [ ] Move presentation endpoint to `backend/src/api/agent/presentation.ts` (deferred with the remaining route-surface split).
+- [ ] Move agent run endpoints to `backend/src/api/agent/runs.ts`.
+- [ ] Move slash metadata endpoint to `backend/src/api/agent/slash.ts`.
+- [ ] Move Paper2Slides endpoints to `backend/src/api/agent/paper2slides.ts`.
+- [ ] Move presentation endpoint to `backend/src/api/agent/presentation.ts`.
 - [x] Move effective agent policy helpers to `backend/src/api/agent/policy.ts` or a service module.
 - [x] Update `backend/src/api/routes.ts` to import the new agent router.
 - [x] Create `backend/src/api/settings/index.ts`.
-- [ ] Move agent config routes to `backend/src/api/settings/agentConfig.ts` (deferred: settings behavior remains in `settings/index.ts`; shared skill helpers were extracted first).
-- [ ] Move skills CRUD routes to `backend/src/api/settings/skills.ts` (deferred with the remaining settings route split).
-- [ ] Move skill builder routes to `backend/src/api/settings/skillBuilder.ts` (deferred with the remaining settings route split).
-- [ ] Move GitHub import routes to `backend/src/api/settings/githubImport.ts` (deferred with the remaining settings route split).
+- [ ] Move agent config routes to `backend/src/api/settings/agentConfig.ts`.
+- [ ] Move skills CRUD routes to `backend/src/api/settings/skills.ts`.
+- [ ] Move skill builder routes to `backend/src/api/settings/skillBuilder.ts`.
+- [ ] Move GitHub import routes to `backend/src/api/settings/githubImport.ts`.
 - [x] Move skill path/frontmatter helpers to `backend/src/services/skills/`.
 - [x] Split `backend/src/services/agentRunService.ts` into `services/agent-runs/*`.
 - [x] Keep a compatibility barrel for old `agentRunService` exports.
 - [x] Update backend tests.
 - [x] Run `cd backend && npm test`.
+
+Notes:
+- Agent and settings route files are still only partially decomposed; `backend/src/api/agent/index.ts` and `backend/src/api/settings/index.ts` remain large and hold the remaining split debt.
 
 ### PR 10 - `frontend-workspace-split`
 
@@ -851,22 +861,22 @@ Split workspace route and chat renderers.
 - [x] Create `frontend/src/features/workspace/`.
 - [x] Move `WorkspacePage` implementation to `frontend/src/features/workspace/WorkspacePage.tsx`.
 - [x] Keep `frontend/src/pages/WorkspacePage.tsx` as a thin route re-export.
-- [ ] Extract workspace selection logic into `features/workspace/hooks/useWorkspaceSelection.ts` (deferred: state is tightly coupled to the rest of `WorkspacePage`; tracked as a follow-up sub-PR).
-- [ ] Extract file tree/content logic into `features/workspace/hooks/useWorkspaceFiles.ts` (deferred: same coupling; follow-up sub-PR).
-- [ ] Extract agent run lifecycle logic into `features/chat/hooks/useAgentRun.ts` (deferred: streaming state shared with conversation/interrupt logic; follow-up sub-PR).
-- [ ] Extract conversation state logic into `features/chat/hooks/useConversationState.ts` (deferred; follow-up sub-PR).
-- [ ] Extract Paper2Slides polling/options into `features/paper2slides/hooks/usePaper2SlidesJob.ts` (deferred; follow-up sub-PR).
-- [ ] Extract dashboard artifact state into `features/dashboard/hooks/useDashboardArtifacts.ts` (deferred; follow-up sub-PR).
-- [x] Move `PresentationModal` into `features/paper2slides/components/PresentationModal.tsx` (also exposes `PresentationOptionsState`/`Paper2SlidesStage`/`Paper2SlidesStylePreset` from `features/paper2slides/types.ts`).
-- [ ] Split `ChatMessageBubble.tsx` into message shell, tool events, interrupts, and artifact previews (deferred: chat helper modules `approvalReview`, `interruptActions`, `chatTypes` were relocated under `features/chat/` with legacy shims to start the split; the large component itself is tracked as a follow-up sub-PR).
-- [x] Move dashboard components under `features/dashboard/components` (`DashboardCanvas`, `DashboardFilters`, `dashboardDownload`; old paths remain as re-export shims).
-- [x] Move settings components under `features/settings/components` (`SettingsShell`, `SettingsScaffold`, `AgentSettingsTabs`, `ToolsTab`, `SkillsRegistryTab`, `SkillEvolutionTab`; old paths remain as re-export shims).
-- [x] Extract workspace path utilities (`normalizeWorkspaceRelativePath`, `getDashboardManifestPath`, `getDashboardPackagePathFromManifestPath`, `resolveDashboardPackagePath`) into `features/workspace/utils/workspacePaths.ts`.
-- [x] Run `cd frontend && npm run lint` (0 errors; pre-existing `react-hooks/exhaustive-deps` warnings unchanged).
-- [x] Run `cd frontend && npm run build` (succeeds; bundle layout matches pre-rename baseline).
-- [ ] Run relevant Playwright smoke tests if available (deferred: existing specs target the live `lc-demo.com` deployment and cannot run from the worktree without a deployed stack; rerun against staging after deployment).
+- [ ] Extract workspace selection logic into `features/workspace/hooks/useWorkspaceSelection.ts`.
+- [ ] Extract file tree/content logic into `features/workspace/hooks/useWorkspaceFiles.ts`.
+- [ ] Extract agent run lifecycle logic into `features/chat/hooks/useAgentRun.ts`.
+- [ ] Extract conversation state logic into `features/chat/hooks/useConversationState.ts`.
+- [ ] Extract Paper2Slides polling/options into `features/paper2slides/hooks/usePaper2SlidesJob.ts`.
+- [ ] Extract dashboard artifact state into `features/dashboard/hooks/useDashboardArtifacts.ts`.
+- [x] Move `PresentationModal` into `features/paper2slides/components/PresentationModal.tsx`.
+- [ ] Split `ChatMessageBubble.tsx` into message shell, tool events, interrupts, and artifact previews.
+- [x] Move dashboard components under `features/dashboard/components`.
+- [x] Move settings components under `features/settings/components`.
+- [x] Run `cd frontend && npm run lint`.
+- [x] Run `cd frontend && npm run build`.
+- [ ] Run relevant Playwright smoke tests if available.
 
-PR 10 was rebased after PR 7 landed; dashboard feature components now import `@helpudoc/dashboard-runtime`.
+Notes:
+- Major structural move is complete; the hook extraction and `ChatMessageBubble.tsx` decomposition are still open follow-up debt.
 
 ### PR 11 - `presentation-parser-split`
 
