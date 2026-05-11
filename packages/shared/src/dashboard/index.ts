@@ -1,10 +1,15 @@
+/** Compatibility shim: prefer `@helpudoc/dashboard-runtime`. */
 export type {
   ChartRuntimeDef,
   DashboardFilterDef,
   DashboardRow,
   DatasetSchemaColumn,
   FilterValues,
-} from './types';
-export { applyDashboardFilters, inferFieldType, distinctFieldValues } from './filters';
-export { aggregateChartRows } from './aggregate';
-export { buildPlotlyPayload } from './plotly';
+} from '../../dashboard-runtime/src/index';
+export {
+  applyDashboardFilters,
+  inferFieldType,
+  distinctFieldValues,
+} from '../../dashboard-runtime/src/index';
+export { aggregateChartRows } from '../../dashboard-runtime/src/index';
+export { buildPlotlyPayload } from '../../dashboard-runtime/src/index';

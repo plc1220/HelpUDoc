@@ -16,7 +16,9 @@ The repo currently combines:
 | `backend/` | API server, persistence layer, auth/session handling, collaboration server, and admin endpoints. |
 | `agent/` | FastAPI agent runtime, prompt catalog, RAG worker, and `paper2slides` pipeline. |
 | `mobile/` | Expo-based mobile spike that currently proves shared-type reuse. |
-| `packages/shared/` | Shared TypeScript exports used across apps. |
+| `packages/contracts/` | Shared API and stream TypeScript types (`@helpudoc/contracts`). |
+| `packages/dashboard-runtime/` | Browser dashboard filters, aggregates, and Plotly payload helpers. |
+| `packages/shared/` | Compatibility re-exports forwarding to contracts and dashboard-runtime. |
 | `skills/` | Bundled skill prompts used by the agent runtime and editable through the settings flow. |
 | `infra/` | Docker Compose files, Cloud Build configs, and Kubernetes manifests. |
 | `env/` | Example environment files for local development and production deployment. |

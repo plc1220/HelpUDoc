@@ -17,7 +17,7 @@ import {
   type AgentInterruptResponse,
   type AgentHistoryEntry,
 } from './agentService';
-import type { ConversationMessageMetadata, FileContextRef, ToolEvent, ToolOutputFile } from '../../../packages/shared/src/types';
+import type { ConversationMessageMetadata, FileContextRef, ToolEvent, ToolOutputFile } from '@helpudoc/contracts/types';
 
 export type AgentRunStatus =
   | 'queued'

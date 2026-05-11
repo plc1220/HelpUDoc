@@ -1,7 +1,8 @@
 FROM node:20-alpine AS deps
 WORKDIR /app
 COPY frontend/package*.json ./frontend/
-COPY packages/shared/package*.json ./packages/shared/
+COPY packages/contracts/package*.json ./packages/contracts/
+COPY packages/dashboard-runtime/package*.json ./packages/dashboard-runtime/
 RUN cd frontend && npm ci
 
 FROM node:20-alpine AS build
@@ -25,7 +26,8 @@ COPY --from=deps /app/frontend/node_modules ./frontend/node_modules
 COPY frontend/public ./frontend/public
 COPY frontend/scripts ./frontend/scripts
 COPY frontend/src ./frontend/src
-COPY packages/shared ./packages/shared
+COPY packages/contracts ./packages/contracts
+COPY packages/dashboard-runtime ./packages/dashboard-runtime
 
 RUN cd frontend && npm run build
 

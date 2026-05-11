@@ -27,6 +27,7 @@ jobs:
           filters: |
             backend:
               - 'backend/**'
+              - 'packages/contracts/**'
               - 'infra/gke/**'
               - 'infra/env/**'
               - 'env/**'
@@ -34,6 +35,8 @@ jobs:
             frontend:
               - 'frontend/**'
               - 'packages/shared/**'
+              - 'packages/contracts/**'
+              - 'packages/dashboard-runtime/**'
               - 'infra/env/**'
               - 'env/**'
               - '.github/workflows/ci.yml'

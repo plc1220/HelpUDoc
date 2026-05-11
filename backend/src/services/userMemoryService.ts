@@ -16,7 +16,7 @@ import {
   type UserMemoryScope,
   type UserMemorySection,
 } from './userMemoryPaths';
-import type { UserMemorySuggestion, UserMemoryView } from '../../../packages/shared/src/types';
+import type { UserMemorySuggestion, UserMemoryView } from '@helpudoc/contracts/types';
 import { ConflictError, NotFoundError } from '../errors';
 
 type UpdateMemoryInput = {

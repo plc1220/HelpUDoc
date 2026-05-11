@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto';
-import type { FileContextRef } from '../../../packages/shared/src/types';
+import type { FileContextRef } from '@helpudoc/contracts/types';
 import { redisClient } from './redisService';
 import { WorkspaceService } from './workspaceService';
 import { GoogleDriveService } from './googleDriveService';

@@ -1,4 +1,4 @@
-import { streamAgentRunWithReconnect, type AgentStreamChunk } from '../../../packages/shared/src/services/agentStream';
+import { streamAgentRunWithReconnect, type AgentStreamChunk } from '@helpudoc/contracts/agentStream';
 export type { AgentStreamChunk };
 import { API_URL, apiFetch } from './apiClient';
 import type { ConversationMessageMetadata, FileContextRef, InterruptAnswersByQuestionId } from '../types';

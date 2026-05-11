@@ -11,7 +11,10 @@
       "./src/types",
       "./node_modules/@types"
     ],
+    // @helpudoc/contracts uses package.json "exports"; map subpaths here for classic moduleResolution.
     "paths": {
+      "@helpudoc/contracts/types": ["../packages/contracts/src/types.ts"],
+      "@helpudoc/contracts/agentStream": ["../packages/contracts/src/agentStream.ts"],
       "*": ["node_modules/*"]
     }
   },

@@ -17,7 +17,7 @@ import type {
   SkillEvolutionSuggestion,
   SkillEvolutionSuggestionStatus,
   SkillEvolutionTargetKind,
-} from '../../../packages/shared/src/types';
+} from '@helpudoc/contracts/types';
 import { ConflictError, NotFoundError } from '../errors';
 
 const repoRoot = path.resolve(__dirname, '../../..');

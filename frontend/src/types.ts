@@ -1,1 +1,1 @@
-export * from '../../packages/shared/src/types';
+export * from '@helpudoc/contracts/types';
