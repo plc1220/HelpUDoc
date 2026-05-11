@@ -161,6 +161,17 @@ Supporting artifacts may be longer than the final report, but they do not count 
 
 Never report an estimated final report word count. Always compute the count from the actual final report file.
 
+Forbidden final-report word-count phrases:
+
+- "approx"
+- "approximately"
+- "estimated"
+- "manual count"
+- "roughly"
+- "about"
+
+If any of these phrases appear in the final report's Word Count section, the report fails the completion gate.
+
 ## Workflow
 
 ### 1. Record the Question
@@ -373,12 +384,16 @@ For every source, include:
 
 Title:
 URL:
+Final URL after redirects:
 Publisher / author:
 Date:
 Access date:
+Fetch status: reachable / unreachable / paywalled / redirected / failed
 Source tier: A / B / C
 Primary or secondary:
 Key claims:
+Claims supported:
+Claims not supported:
 Useful for:
 Limitations:
 Reliability notes:
@@ -386,7 +401,28 @@ Reliability notes:
 
 The final report may cite only sources that appear in the source register.
 
-### 8. Research Notes
+### 8. Source Link Validation
+
+Before finalizing, open every URL listed in the final report's Sources section.
+
+For each cited source, record in `/source_register.md`:
+
+- URL
+- Final URL after redirects
+- Fetch status: reachable / unreachable / paywalled / redirected / failed
+- Source tier
+- Claims supported
+- Claims not supported
+
+Rules:
+
+- If a cited URL is unreachable, do not cite it in the final report unless the report clearly marks it as unavailable and explains why it is still relevant.
+- If a URL redirects, cite the final working URL unless the original URL is itself the evidence target.
+- If the page is paywalled, use it only for claims visible in accessible metadata, snippets, abstracts, or other legally accessible text.
+- Do not use a source for a claim when the opened page does not directly support that claim.
+- Re-run source link validation after changing the Sources section.
+
+### 9. Research Notes
 
 Create `/research_notes.md`.
 
@@ -404,7 +440,7 @@ Include:
 
 No report prose should begin before this file exists.
 
-### 9. Claim-Evidence Matrix
+### 10. Claim-Evidence Matrix
 
 Create `/claim_evidence_matrix.md`.
 
@@ -432,7 +468,7 @@ Rules:
 - Excluded claims must not appear in the final report.
 - Do not cite a source if it does not directly support the claim.
 
-### 10. Contradiction Search
+### 11. Contradiction Search
 
 Create `/contradictions_and_uncertainties.md`.
 
@@ -462,7 +498,7 @@ Record:
 - Missing primary evidence
 - Whether the claim should be downgraded, excluded, or reframed
 
-### 11. Red Flags and Exclusions
+### 12. Red Flags and Exclusions
 
 Create `/red_flags_and_exclusions.md`.
 
@@ -494,7 +530,7 @@ Claims that require caution include:
 - "Zero risk"
 - "Guaranteed"
 
-### 12. Entity Dossiers
+### 13. Entity Dossiers
 
 For Standard, Deep, and Exhaustive comparative reports, create one standalone dossier per major entity.
 
@@ -531,7 +567,7 @@ For Deep Research mode, each dossier should be 800-1,500 words.
 
 For Exhaustive Research mode, dossiers may be longer.
 
-### 13. Section Writing
+### 14. Section Writing
 
 Write each major section as a separate Markdown file using zero-padded filenames:
 
@@ -556,7 +592,7 @@ Rules:
 - For Deep Research mode, major sections should generally be 700-1,200 words.
 - For Standard Research mode, major sections should generally be 300-700 words.
 
-### 14. Knowledge Graph
+### 15. Knowledge Graph
 
 Create `/knowledge_graph.md`.
 
@@ -581,7 +617,7 @@ graph TD
 
 The knowledge graph should reflect the actual evidence, not generic grouping.
 
-### 15. Comparative Matrix
+### 16. Comparative Matrix
 
 For comparative research, create `/comparison_matrix.md` before final synthesis.
 
@@ -607,7 +643,7 @@ For technical or product comparisons, include:
 - Best-fit use cases
 - Evidence confidence
 
-### 16. Cross-Source Synthesis
+### 17. Cross-Source Synthesis
 
 Create `/synthesis.md`.
 
@@ -628,7 +664,7 @@ Include:
 
 The synthesis must go beyond summarizing sources. Explain what the evidence means.
 
-### 17. Final Report Consolidation
+### 18. Final Report Consolidation
 
 Create `/final-research-report.md`, unless the user specifies another filename.
 
@@ -652,7 +688,7 @@ The final consolidation must:
 - Use simple, professional language
 - Compute the actual word count from `/final-research-report.md` after writing; do not estimate it
 
-### 18. Final Report Required Structure
+### 19. Final Report Required Structure
 
 Adapt as needed, but default to:
 
@@ -734,7 +770,7 @@ For market topics, include:
 ## Risks to the Thesis
 ```
 
-### 19. Citation Rules
+### 20. Citation Rules
 
 Use numeric citations:
 
@@ -745,6 +781,7 @@ This is a factual claim [1].
 Rules:
 
 - Every factual claim involving numbers, dates, benchmarks, pricing, legal status, funding, security, or architecture must include a citation.
+- Every factual claim involving CVEs, vulnerabilities, privilege escalation, remote code execution, adoption, community preference, or "best fit" claims must include a direct citation or be framed as analysis.
 - Do not cite the same source more than 3 times unless essential.
 - Prefer primary sources.
 - Use secondary sources mainly for commentary and context.
@@ -752,6 +789,7 @@ Rules:
 - Do not use fake citations.
 - Do not cite a source if it does not directly support the claim.
 - If evidence is weak, say so.
+- Do not cite unreachable URLs unless clearly marked as unavailable.
 
 End with:
 
@@ -762,7 +800,7 @@ End with:
 [2] Source Title: URL
 ```
 
-### 20. Writing Style Rules
+### 21. Writing Style Rules
 
 Use a clear, professional tone.
 
@@ -785,6 +823,11 @@ Do not use these unless directly supported by strong evidence:
 - fully autonomous
 - uncensored
 - guaranteed
+- favorite
+- preferred choice
+- only viable choice
+- highest intelligence ceiling
+- dominated by
 
 Prefer:
 
@@ -797,8 +840,12 @@ Prefer:
 - "is claimed to"
 - "could indicate"
 - "the evidence is insufficient to confirm"
+- "is suitable for"
+- "illustrates a different architectural pattern"
+- "appears better suited to"
+- "based on the available sources"
 
-### 21. Failure Handling
+### 22. Failure Handling
 
 If evidence is limited, include a **Limits of Evidence** section.
 
@@ -812,7 +859,7 @@ Never fabricate missing data to meet word count.
 
 Never fill gaps with confident-sounding assumptions.
 
-### 22. Under-Length Final Report Handling
+### 23. Under-Length Final Report Handling
 
 If `/final-research-report.md` is below the selected mode minimum:
 
@@ -827,9 +874,9 @@ For Deep Research mode, if `/final-research-report.md` is below 6,000 words, it 
 
 For Exhaustive Research mode, if `/final-research-report.md` is below 10,000 words, it fails the quality gate even if all supporting artifacts combined exceed 10,000 words.
 
-### 23. Mandatory Computed Word Count
+### 24. Mandatory Computed Word Count
 
-Before finalizing, compute the actual word count of `/final-research-report.md`. Prefer a deterministic file-based count such as `wc -w final-research-report.md` from the workspace root.
+Before finalizing, compute the actual word count of `/final-research-report.md` programmatically. Prefer a deterministic file-based count such as `wc -w final-research-report.md` from the workspace root.
 
 Write this to `/final_quality_check.md`:
 
@@ -842,11 +889,36 @@ Write this to `/final_quality_check.md`:
 - Pass / fail:
 ```
 
-The computed word count must be derived from the final report file only. Do not estimate it. Do not count workspace artifacts, notes, dossiers, matrices, source registers, quality checks, or chat messages.
+The computed word count must be derived from the final report file only. Do not estimate it. Do not use manual estimates. Do not count workspace artifacts, notes, dossiers, matrices, source registers, quality checks, or chat messages.
 
 If the computed word count is below the selected mode minimum, do not finalize. Expand the final report using the existing dossiers, synthesis, comparison matrix, source register, research notes, and claim-evidence matrix, then recompute the word count.
 
-### 24. Quality Gate Before Final Report
+### 25. Final Report Completion Gate
+
+Before declaring completion, produce `/final_quality_check.md` with:
+
+- Final report path
+- Computed word count of `/final-research-report.md`
+- Required word count range
+- Source count
+- Primary source count
+- Number of claims in `/claim_evidence_matrix.md`
+- Number of excluded claims
+- Number of low-confidence claims still present in the final report
+- Number of source URLs checked
+- Number of source URLs unreachable, paywalled, redirected, or failed
+
+Completion is forbidden if:
+
+- Computed word count is below the selected mode minimum.
+- Any source URL in the final Sources section is unreachable and not clearly marked unavailable.
+- Any factual claim with numbers, CVEs, benchmarks, architecture, pricing, legal status, security impact, funding, or adoption lacks citation.
+- Final report cites sources not present in `/source_register.md`.
+- The final report says "manual count", "approx", "approximately", "estimated", "roughly", or "about" in its Word Count section.
+- Any Low-confidence claim appears in the main report outside a clearly labeled uncertainty or limits-of-evidence section.
+- Any Excluded claim appears in the final report.
+
+### 26. Quality Gate Before Final Report
 
 Before finalizing, run a self-check and record it in `/final_quality_check.md`.
 
@@ -861,12 +933,18 @@ Check:
 - [ ] Claim-evidence matrix completed
 - [ ] Contradiction search completed
 - [ ] Red flags and exclusions recorded
+- [ ] Every cited source URL was opened and recorded with fetch status in `/source_register.md`
+- [ ] Unreachable URLs are removed or clearly marked unavailable
 - [ ] Knowledge graph completed
 - [ ] Synthesis completed
 - [ ] Mandatory computed word count completed from `/final-research-report.md` only
 - [ ] Computed final report word count is within the selected mode range
+- [ ] Final report Word Count section does not use approximate/manual/estimated wording
+- [ ] Final report completion gate passed
 - [ ] Final report cites only registered sources
 - [ ] Unsupported claims removed
+- [ ] Low-confidence claims appear only in uncertainty or limits-of-evidence sections
+- [ ] Excluded claims do not appear in the final report
 - [ ] Uncertainty clearly marked
 - [ ] No fake citations
 - [ ] No unsupported numbers
