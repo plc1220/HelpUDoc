@@ -807,20 +807,20 @@ Split `packages/shared` into `contracts` and `dashboard-runtime`.
 
 Data tools package and renderer split.
 
-- [ ] Create `agent/helpudoc_agent/tools/data/`.
-- [ ] Move `DataAgentSessionState` and record types to `tools/data/state.py`.
-- [ ] Move `DuckDBManager` to `tools/data/duckdb_manager.py`.
-- [ ] Move SQL/schema/materialization tools to `tools/data/query_tools.py`.
-- [ ] Move chart tools to `tools/data/chart_tools.py`.
-- [ ] Move dashboard generation tools to `tools/data/dashboard_tools.py`.
-- [ ] Move `build_data_agent_tools` to `tools/data/factory.py`.
-- [ ] Keep `agent/helpudoc_agent/data_agent_tools.py` as a compatibility shim.
-- [ ] Split `agent/helpudoc_agent/data_report_renderers.py` into data renderer modules.
-- [ ] Update `agent/config/runtime.yaml` entrypoint for `data_agent_tools` when compatibility shim is no longer needed.
-- [ ] Update `tests/test_data_skill_family.py`.
-- [ ] Split or update `agent/tests/test_data_agent_tools.py`.
-- [ ] Run data-tool tests.
-- [ ] Run `graphify update .`.
+- [x] Create `agent/helpudoc_agent/tools/data/`.
+- [x] Move `DataAgentSessionState` and record types to `tools/data/state.py`.
+- [x] Move `DuckDBManager` to `tools/data/duckdb_manager.py`.
+- [x] Move SQL/schema/materialization tools to `tools/data/query_tools.py`.
+- [x] Move chart tools to `tools/data/chart_tools.py`.
+- [x] Move dashboard generation tools to `tools/data/dashboard_tools.py`.
+- [x] Move `build_data_agent_tools` to `tools/data/factory.py`.
+- [x] Keep `agent/helpudoc_agent/data_agent_tools.py` as a compatibility shim.
+- [x] Split `agent/helpudoc_agent/data_report_renderers.py` into data renderer modules.
+- [ ] Update `agent/config/runtime.yaml` entrypoint for `data_agent_tools` when compatibility shim is no longer needed (deferred: `runtime.yaml` still targets the shim; entrypoint remains valid).
+- [x] Update `tests/test_data_skill_family.py` (existing tests pass; monkeypatch paths unchanged).
+- [x] Split or update `agent/tests/test_data_agent_tools.py` (added `agent/tests/test_tools_data_package.py` for package boundaries).
+- [x] Run data-tool tests.
+- [x] Run `graphify update .` (local run; `graphify-out/` remains gitignored).
 
 ### PR 9 - `backend-api-split`
 

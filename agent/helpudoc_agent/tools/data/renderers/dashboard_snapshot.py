@@ -1,0 +1,884 @@
+from __future__ import annotations
+
+import html
+import json
+from typing import Any, Dict, List
+
+DASHBOARD_CSS = """
+    :root {
+      --bg: #f3ede2;
+      --panel: rgba(255, 251, 245, 0.94);
+      --panel-strong: #fffdf8;
+      --ink: #24313f;
+      --muted: #667085;
+      --line: rgba(143, 119, 91, 0.18);
+      --accent: #0f5c4d;
+      --accent-soft: rgba(15, 92, 77, 0.1);
+      --warm: #c9792b;
+      --shadow: 0 22px 60px rgba(71, 51, 25, 0.12);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top left, rgba(201, 121, 43, 0.16), transparent 28%),
+        radial-gradient(circle at top right, rgba(15, 92, 77, 0.14), transparent 26%),
+        linear-gradient(180deg, #f9f5ef 0%, var(--bg) 100%);
+      font-family: "Avenir Next", "Segoe UI", sans-serif;
+    }
+    .shell { max-width: 1340px; margin: 0 auto; padding: 28px 20px 56px; }
+    .hero, .section, .filter-card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 28px;
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(8px);
+    }
+    .hero { padding: 32px; position: relative; overflow: hidden; }
+    .hero::after {
+      content: "";
+      position: absolute;
+      inset: auto -40px -60px auto;
+      width: 240px;
+      height: 240px;
+      border-radius: 999px;
+      background: radial-gradient(circle, rgba(15, 92, 77, 0.18), transparent 70%);
+      pointer-events: none;
+    }
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 12px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.72);
+      color: var(--accent);
+      font-size: 0.78rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .hero h1 {
+      margin: 16px 0 10px;
+      font-family: "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+      font-size: clamp(2.4rem, 5vw, 4.3rem);
+      line-height: 0.96;
+      letter-spacing: -0.05em;
+    }
+    .hero p {
+      max-width: 760px;
+      margin: 0;
+      color: #455467;
+      font-size: 1rem;
+      line-height: 1.72;
+    }
+    .hero-meta { margin-top: 18px; color: var(--muted); font-size: 0.92rem; }
+    .metric-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 14px;
+      margin-top: 22px;
+    }
+    .metric-card {
+      background: linear-gradient(180deg, rgba(255,255,255,0.86), rgba(255, 250, 244, 0.96));
+      border: 1px solid rgba(143, 119, 91, 0.14);
+      border-radius: 20px;
+      padding: 18px;
+      min-height: 132px;
+    }
+    .metric-label {
+      color: var(--muted);
+      font-size: 0.8rem;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+    .metric-value {
+      margin-top: 10px;
+      font-size: clamp(1.8rem, 3vw, 2.5rem);
+      font-weight: 700;
+      line-height: 1;
+    }
+    .metric-meta {
+      margin-top: 10px;
+      color: #516172;
+      font-size: 0.92rem;
+      line-height: 1.5;
+    }
+    .section, .filter-card { margin-top: 22px; padding: 28px 30px; }
+    .section h2, .filter-card h2 {
+      margin: 0 0 12px;
+      font-family: "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+      font-size: 1.75rem;
+      letter-spacing: -0.03em;
+    }
+    .chart-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 18px;
+    }
+    .chart-card {
+      background: linear-gradient(180deg, #fffefb 0%, #fbf8f2 100%);
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      padding: 18px;
+      min-height: 100%;
+    }
+    .chart-card.filter-aware { grid-column: span 1; }
+    .chart-card h3 { margin: 0 0 8px; font-size: 1.08rem; }
+    .chart-meta {
+      margin: 0 0 12px;
+      color: var(--muted);
+      font-size: 0.88rem;
+    }
+    .chart-note {
+      margin: 10px 0 0;
+      color: #516172;
+      font-size: 0.92rem;
+      line-height: 1.5;
+    }
+    .plotly-embed { width: 100%; height: 340px; }
+    img.chart-img {
+      width: 100%;
+      border-radius: 16px;
+      border: 1px solid var(--line);
+    }
+    .filter-controls {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+    }
+    .filter-control { display: flex; flex-direction: column; gap: 6px; }
+    .filter-control label {
+      font-size: 0.88rem;
+      font-weight: 700;
+      color: #374151;
+    }
+    .filter-control select,
+    .filter-control input,
+    .filter-actions button {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 10px 12px;
+      background: #fff;
+      color: var(--ink);
+      font: inherit;
+    }
+    .filter-actions {
+      display: flex;
+      gap: 10px;
+      align-items: end;
+      margin-top: 14px;
+    }
+    .filter-actions button {
+      cursor: pointer;
+      background: var(--accent);
+      color: #fff;
+      font-weight: 700;
+    }
+    .filter-actions button.secondary {
+      background: #fff;
+      color: var(--ink);
+    }
+    .filter-panel {
+      padding: 0;
+      overflow: hidden;
+    }
+    .filter-panel-summary {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 24px 30px;
+      color: var(--ink);
+    }
+    .filter-panel-summary::after {
+      content: "Show filters";
+      color: var(--accent);
+      font-size: 0.9rem;
+      font-weight: 700;
+    }
+    .filter-panel[open] .filter-panel-summary::after {
+      content: "Hide filters";
+    }
+    .filter-panel-body {
+      padding: 0 30px 28px;
+      border-top: 1px solid var(--line);
+    }
+    .filter-summary-copy {
+      color: #455467;
+      line-height: 1.65;
+    }
+    .filter-summary-copy strong {
+      display: block;
+      margin-bottom: 4px;
+      font-size: 1.15rem;
+      color: var(--ink);
+    }
+    .filter-dropdown {
+      position: relative;
+    }
+    .filter-dropdown summary {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      min-height: 44px;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #fff;
+      color: var(--ink);
+    }
+    .filter-dropdown summary::after {
+      content: "▾";
+      color: var(--muted);
+      font-size: 0.86rem;
+    }
+    .filter-dropdown[open] summary::after {
+      content: "▴";
+    }
+    .filter-dropdown-label {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .filter-dropdown-menu {
+      position: absolute;
+      z-index: 20;
+      top: calc(100% + 8px);
+      left: 0;
+      right: 0;
+      max-height: 260px;
+      overflow: auto;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: var(--panel-strong);
+      box-shadow: 0 18px 32px rgba(36, 49, 63, 0.12);
+    }
+    .filter-dropdown-option {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 6px;
+      border-radius: 10px;
+      cursor: pointer;
+    }
+    .filter-dropdown-option:hover {
+      background: rgba(15, 92, 77, 0.06);
+    }
+    .filter-dropdown-option input {
+      margin: 0;
+    }
+    .dataset-meta { margin-top: 14px; color: var(--muted); font-size: 0.86rem; }
+    details.appendix { margin-top: 18px; }
+    summary {
+      cursor: pointer;
+      color: var(--accent);
+      font-weight: 700;
+      list-style: none;
+    }
+    summary::-webkit-details-marker { display: none; }
+    .query-item {
+      background: #faf7f1;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 16px;
+      margin-top: 12px;
+    }
+    .query-meta {
+      font-size: 0.82rem;
+      color: var(--warm);
+      font-weight: 700;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+      margin-bottom: 8px;
+    }
+    .query-block {
+      margin: 0;
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 14px 16px;
+      overflow-x: auto;
+      white-space: pre-wrap;
+      color: #374151;
+    }
+    @media (max-width: 768px) {
+      .shell { padding: 16px 14px 40px; }
+      .hero, .section, .filter-card { padding: 22px 18px; border-radius: 22px; }
+      .filter-panel { padding: 0; }
+      .filter-panel-summary { padding: 20px 18px; }
+      .filter-panel-body { padding: 0 18px 22px; }
+      .chart-grid { grid-template-columns: 1fr; }
+      .plotly-embed { height: 300px; }
+    }
+"""
+
+DASHBOARD_FILTER_SCRIPT = """
+    (function() {
+      if (!DASHBOARD_DATASET.length || !DASHBOARD_FILTER_SCHEMA.length || !DASHBOARD_CHART_DEFS.length) {
+        return;
+      }
+
+      const controlHost = document.getElementById('dashboard-filter-controls');
+      const applyButton = document.getElementById('dashboard-apply-filters');
+      const resetButton = document.getElementById('dashboard-reset-filters');
+      const fieldTypes = Object.fromEntries((DASHBOARD_DATASET_SCHEMA || []).map((item) => [item.name, String(item.type || '').toLowerCase()]));
+
+      function inferFieldType(filterDef) {
+        if (filterDef.type === 'numeric' || filterDef.type === 'date' || filterDef.type === 'datetime') {
+          return filterDef.type;
+        }
+        const raw = fieldTypes[filterDef.field] || '';
+        if (raw.includes('date') || raw.includes('time')) return 'date';
+        if (raw.includes('int') || raw.includes('float') || raw.includes('double') || raw.includes('decimal')) return 'numeric';
+        return 'categorical';
+      }
+
+      function parseDateValue(value) {
+        if (value === null || value === undefined || value === '') return null;
+        const parsed = new Date(value);
+        return Number.isNaN(parsed.getTime()) ? null : parsed;
+      }
+
+      function parseNumericValue(value) {
+        if (value === null || value === undefined || value === '') return null;
+        const parsed = Number(value);
+        return Number.isFinite(parsed) ? parsed : null;
+      }
+
+      function normalizeComparable(value, type) {
+        if (type === 'date' || type === 'datetime') {
+          const parsed = parseDateValue(value);
+          return parsed ? parsed.getTime() : null;
+        }
+        if (type === 'numeric') {
+          return parseNumericValue(value);
+        }
+        return value;
+      }
+
+      function distinctValues(field) {
+        const values = [];
+        const seen = new Set();
+        DASHBOARD_DATASET.forEach((row) => {
+          const value = row[field];
+          const key = value === null || value === undefined ? '__null__' : String(value);
+          if (!seen.has(key) && value !== null && value !== undefined && value !== '') {
+            seen.add(key);
+            values.push(value);
+          }
+        });
+        return values.sort((a, b) => String(a).localeCompare(String(b)));
+      }
+
+      function fieldExtent(field, type) {
+        let min = null;
+        let max = null;
+        DASHBOARD_DATASET.forEach((row) => {
+          const value = normalizeComparable(row[field], type);
+          if (value === null) return;
+          if (min === null || value < min) min = value;
+          if (max === null || value > max) max = value;
+        });
+        return { min, max };
+      }
+
+      function categoricalSummary(values, totalCount) {
+        if (!values.length) return 'All values';
+        if (values.length === 1) return values[0];
+        if (values.length === totalCount) return 'All values';
+        if (values.length <= 2) return values.join(', ');
+        return values.length + ' selected';
+      }
+
+      function updateCategoricalSummary(filterDef) {
+        const labelNode = document.getElementById(filterDef.id + '__label');
+        if (!labelNode) return;
+        const checkedValues = Array.from(document.querySelectorAll('input[name=\"' + filterDef.id + '__option\"]:checked'))
+          .map((input) => input.value);
+        labelNode.textContent = categoricalSummary(checkedValues, filterDef._optionCount || 0);
+      }
+
+      function createControl(filterDef) {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'filter-control';
+        const label = document.createElement('label');
+        label.textContent = filterDef.label;
+        wrapper.appendChild(label);
+        const fieldType = inferFieldType(filterDef);
+        filterDef.resolvedType = fieldType;
+
+        if (fieldType === 'categorical') {
+          const values = (filterDef.options && filterDef.options.length ? filterDef.options : distinctValues(filterDef.field));
+          filterDef._optionCount = values.length;
+          const dropdown = document.createElement('details');
+          dropdown.className = 'filter-dropdown';
+          dropdown.id = filterDef.id + '__dropdown';
+          const summary = document.createElement('summary');
+          const summaryLabel = document.createElement('span');
+          summaryLabel.className = 'filter-dropdown-label';
+          summaryLabel.id = filterDef.id + '__label';
+          summaryLabel.textContent = 'All values';
+          summary.appendChild(summaryLabel);
+          dropdown.appendChild(summary);
+          const menu = document.createElement('div');
+          menu.className = 'filter-dropdown-menu';
+          values.forEach((value, index) => {
+            const optionLabel = document.createElement('label');
+            optionLabel.className = 'filter-dropdown-option';
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.name = filterDef.id + '__option';
+            checkbox.id = filterDef.id + '__option_' + index;
+            checkbox.value = String(value);
+            checkbox.addEventListener('change', () => updateCategoricalSummary(filterDef));
+            const textNode = document.createElement('span');
+            textNode.textContent = String(value);
+            optionLabel.appendChild(checkbox);
+            optionLabel.appendChild(textNode);
+            menu.appendChild(optionLabel);
+          });
+          dropdown.appendChild(menu);
+          wrapper.appendChild(dropdown);
+          return wrapper;
+        }
+
+        if (fieldType === 'date' || fieldType === 'datetime') {
+          const extent = fieldExtent(filterDef.field, 'date');
+          const preset = document.createElement('select');
+          preset.id = filterDef.id + '__preset';
+          ['', 'last_30_days', 'last_90_days', 'last_180_days'].forEach((value) => {
+            const option = document.createElement('option');
+            option.value = value;
+            option.textContent = value ? value.replaceAll('_', ' ') : 'Custom range';
+            preset.appendChild(option);
+          });
+          wrapper.appendChild(preset);
+          const startInput = document.createElement('input');
+          startInput.type = 'date';
+          startInput.id = filterDef.id + '__start';
+          const endInput = document.createElement('input');
+          endInput.type = 'date';
+          endInput.id = filterDef.id + '__end';
+          if (extent.min !== null) startInput.value = new Date(extent.min).toISOString().slice(0, 10);
+          if (extent.max !== null) endInput.value = new Date(extent.max).toISOString().slice(0, 10);
+          preset.addEventListener('change', () => {
+            if (!preset.value || extent.max === null) return;
+            const end = new Date(extent.max);
+            const start = new Date(end);
+            const days = preset.value === 'last_30_days' ? 30 : preset.value === 'last_90_days' ? 90 : 180;
+            start.setDate(start.getDate() - days);
+            startInput.value = start.toISOString().slice(0, 10);
+            endInput.value = end.toISOString().slice(0, 10);
+          });
+          wrapper.appendChild(startInput);
+          wrapper.appendChild(endInput);
+          return wrapper;
+        }
+
+        const extent = fieldExtent(filterDef.field, 'numeric');
+        const minInput = document.createElement('input');
+        minInput.type = 'number';
+        minInput.id = filterDef.id + '__min';
+        minInput.placeholder = extent.min === null ? 'Min' : String(extent.min);
+        const maxInput = document.createElement('input');
+        maxInput.type = 'number';
+        maxInput.id = filterDef.id + '__max';
+        maxInput.placeholder = extent.max === null ? 'Max' : String(extent.max);
+        wrapper.appendChild(minInput);
+        wrapper.appendChild(maxInput);
+        return wrapper;
+      }
+
+      function readFilterValue(filterDef) {
+        const type = filterDef.resolvedType || inferFieldType(filterDef);
+        if (type === 'categorical') {
+          return Array.from(document.querySelectorAll('input[name=\"' + filterDef.id + '__option\"]:checked')).map((input) => input.value);
+        }
+        if (type === 'date' || type === 'datetime') {
+          return {
+            start: document.getElementById(filterDef.id + '__start')?.value || '',
+            end: document.getElementById(filterDef.id + '__end')?.value || '',
+          };
+        }
+        return {
+          min: document.getElementById(filterDef.id + '__min')?.value || '',
+          max: document.getElementById(filterDef.id + '__max')?.value || '',
+        };
+      }
+
+      function rowMatchesFilter(row, filterDef, value) {
+        const type = filterDef.resolvedType || inferFieldType(filterDef);
+        const rowValue = row[filterDef.field];
+        if (type === 'categorical') {
+          if (!value || !value.length) return true;
+          return value.includes(String(rowValue));
+        }
+        if (type === 'date' || type === 'datetime') {
+          const rowTime = normalizeComparable(rowValue, 'date');
+          if (rowTime === null) return false;
+          const start = value.start ? parseDateValue(value.start) : null;
+          const end = value.end ? parseDateValue(value.end) : null;
+          if (start && rowTime < start.getTime()) return false;
+          if (end) {
+            const inclusiveEnd = new Date(end);
+            inclusiveEnd.setHours(23, 59, 59, 999);
+            if (rowTime > inclusiveEnd.getTime()) return false;
+          }
+          return true;
+        }
+        const numericValue = normalizeComparable(rowValue, 'numeric');
+        if (numericValue === null) return false;
+        const minValue = parseNumericValue(value.min);
+        const maxValue = parseNumericValue(value.max);
+        if (minValue !== null && numericValue < minValue) return false;
+        if (maxValue !== null && numericValue > maxValue) return false;
+        return true;
+      }
+
+      function aggregateRows(rows, chartDef) {
+        const dimensionField = chartDef.dimensionField || chartDef.xField;
+        const metricField = chartDef.metricField || chartDef.yField;
+        const numeratorField = chartDef.numeratorField || '';
+        const denominatorField = chartDef.denominatorField || '';
+        const map = new Map();
+        rows.forEach((row) => {
+          const xValue = dimensionField ? row[dimensionField] : '__all__';
+          const seriesValue = chartDef.seriesField ? row[chartDef.seriesField] : '__single__';
+          const key = JSON.stringify([xValue, seriesValue]);
+          if (!map.has(key)) {
+            map.set(key, {
+              x: xValue,
+              series: seriesValue,
+              count: 0,
+              sum: 0,
+              min: null,
+              max: null,
+              values: [],
+              numeratorSum: 0,
+              denominatorSum: 0,
+            });
+          }
+          const bucket = map.get(key);
+          bucket.count += 1;
+          const yRaw = metricField ? parseNumericValue(row[metricField]) : null;
+          const numeratorRaw = numeratorField ? parseNumericValue(row[numeratorField]) : null;
+          const denominatorRaw = denominatorField ? parseNumericValue(row[denominatorField]) : null;
+          if (yRaw !== null) {
+            bucket.sum += yRaw;
+            bucket.min = bucket.min === null ? yRaw : Math.min(bucket.min, yRaw);
+            bucket.max = bucket.max === null ? yRaw : Math.max(bucket.max, yRaw);
+            bucket.values.push(yRaw);
+          }
+          if (numeratorRaw !== null) {
+            bucket.numeratorSum += numeratorRaw;
+          }
+          if (denominatorRaw !== null) {
+            bucket.denominatorSum += denominatorRaw;
+          }
+        });
+
+        const points = Array.from(map.values()).map((bucket) => {
+          let yValue = bucket.count;
+          switch (chartDef.aggregation) {
+            case 'sum':
+              yValue = bucket.sum;
+              break;
+            case 'avg':
+            case 'mean':
+              yValue = bucket.values.length ? bucket.sum / bucket.values.length : 0;
+              break;
+            case 'min':
+              yValue = bucket.min === null ? 0 : bucket.min;
+              break;
+            case 'max':
+              yValue = bucket.max === null ? 0 : bucket.max;
+              break;
+            case 'nunique':
+            case 'count_distinct':
+              yValue = new Set(bucket.values).size;
+              break;
+            case 'ratio':
+            case 'rate':
+              yValue = bucket.denominatorSum ? bucket.numeratorSum / bucket.denominatorSum : 0;
+              break;
+            case 'count':
+            default:
+              yValue = bucket.count;
+              break;
+          }
+          return { x: bucket.x, y: yValue, series: bucket.series };
+        });
+
+        points.sort((left, right) => {
+          const direction = chartDef.sortDirection === 'asc' ? 1 : -1;
+          const leftValue = chartDef.sortBy === 'x' ? String(left.x ?? '') : Number(left.y ?? 0);
+          const rightValue = chartDef.sortBy === 'x' ? String(right.x ?? '') : Number(right.y ?? 0);
+          if (leftValue < rightValue) return -1 * direction;
+          if (leftValue > rightValue) return 1 * direction;
+          return 0;
+        });
+
+        return chartDef.limit > 0 ? points.slice(0, chartDef.limit) : points;
+      }
+
+      function buildPlotlyPayload(rows, chartDef) {
+        const dimensionField = chartDef.dimensionField || chartDef.xField;
+        const metricField = chartDef.metricField || chartDef.yField;
+        const grouped = aggregateRows(rows, chartDef);
+        const seriesValues = chartDef.seriesField
+          ? [...new Set(grouped.map((item) => item.series))]
+          : ['__single__'];
+        const traces = seriesValues.map((seriesKey) => {
+          const points = grouped.filter((item) => item.series === seriesKey);
+          const trace = {
+            type: chartDef.chartType === 'area' ? 'scatter' : chartDef.chartType,
+            name: seriesKey === '__single__' ? chartDef.title : String(seriesKey),
+            x: points.map((item) => item.x),
+            y: points.map((item) => item.y),
+          };
+          if (chartDef.chartType === 'line' || chartDef.chartType === 'area') {
+            trace.type = 'scatter';
+            trace.mode = chartDef.mode || 'lines+markers';
+            if (chartDef.chartType === 'area') trace.fill = 'tozeroy';
+          }
+          if (chartDef.chartType === 'scatter') {
+            trace.mode = chartDef.mode && !String(chartDef.mode).includes('lines') ? chartDef.mode : 'markers';
+          }
+          if (chartDef.chartType === 'bar' && chartDef.orientation === 'h') {
+            trace.orientation = 'h';
+            trace.x = points.map((item) => item.y);
+            trace.y = points.map((item) => item.x);
+          }
+          if (chartDef.chartType === 'pie') {
+            trace.type = 'pie';
+            trace.labels = points.map((item) => item.x);
+            trace.values = points.map((item) => item.y);
+            delete trace.x;
+            delete trace.y;
+          }
+          return trace;
+        });
+        return {
+          data: traces,
+          layout: {
+            title: chartDef.title,
+            template: 'plotly_white',
+            colorway: ['#0f5c4d', '#c9792b', '#2f6db0', '#7b5ea7', '#d35f5f'],
+            font: { family: '\"Avenir Next\", \"Segoe UI\", sans-serif', color: '#24313f' },
+            paper_bgcolor: 'rgba(0,0,0,0)',
+            plot_bgcolor: 'rgba(0,0,0,0)',
+            margin: { t: 56, r: 24, b: 56, l: 56 },
+            xaxis: chartDef.chartType === 'pie' ? undefined : {
+              title: chartDef.xTitle || (chartDef.chartType === 'bar' && chartDef.orientation === 'h'
+                ? metricField || chartDef.aggregation
+                : dimensionField),
+            },
+            yaxis: chartDef.chartType === 'pie' ? undefined : {
+              title: chartDef.yTitle || (chartDef.chartType === 'bar' && chartDef.orientation === 'h'
+                ? dimensionField
+                : metricField || chartDef.aggregation),
+            },
+            legend: { orientation: 'h' },
+          },
+          config: { responsive: true, displayModeBar: false },
+        };
+      }
+
+      function renderCharts() {
+        const filterState = Object.fromEntries(DASHBOARD_FILTER_SCHEMA.map((filterDef) => [filterDef.id, readFilterValue(filterDef)]));
+        const filteredRows = DASHBOARD_DATASET.filter((row) =>
+          DASHBOARD_FILTER_SCHEMA.every((filterDef) => rowMatchesFilter(row, filterDef, filterState[filterDef.id]))
+        );
+
+        DASHBOARD_CHART_DEFS.forEach((chartDef) => {
+          const statusNode = document.getElementById(chartDef.divId + '-status');
+          const plotNode = document.getElementById(chartDef.divId);
+          if (!plotNode) return;
+          const payload = buildPlotlyPayload(filteredRows, chartDef);
+          if (!payload.data.length || !payload.data.some((trace) => (trace.x && trace.x.length) || (trace.labels && trace.labels.length))) {
+            Plotly.purge(plotNode);
+            if (statusNode) statusNode.textContent = 'No data matches the current filters for this chart.';
+            return;
+          }
+          Plotly.newPlot(plotNode, payload.data, payload.layout, payload.config);
+          if (statusNode) statusNode.textContent = filteredRows.length + ' rows match the current filters.';
+        });
+      }
+
+      DASHBOARD_FILTER_SCHEMA.forEach((filterDef) => {
+        controlHost.appendChild(createControl(filterDef));
+      });
+      if (applyButton) applyButton.addEventListener('click', renderCharts);
+      if (resetButton) {
+        resetButton.addEventListener('click', () => {
+          DASHBOARD_FILTER_SCHEMA.forEach((filterDef) => {
+            const type = filterDef.resolvedType || inferFieldType(filterDef);
+            if (type === 'categorical') {
+              Array.from(document.querySelectorAll('input[name=\"' + filterDef.id + '__option\"]')).forEach((input) => {
+                input.checked = false;
+              });
+              const dropdown = document.getElementById(filterDef.id + '__dropdown');
+              if (dropdown) dropdown.removeAttribute('open');
+              updateCategoricalSummary(filterDef);
+            } else if (type === 'date' || type === 'datetime') {
+              const preset = document.getElementById(filterDef.id + '__preset');
+              const start = document.getElementById(filterDef.id + '__start');
+              const end = document.getElementById(filterDef.id + '__end');
+              if (preset) preset.value = '';
+              if (start) start.value = '';
+              if (end) end.value = '';
+            } else {
+              const minInput = document.getElementById(filterDef.id + '__min');
+              const maxInput = document.getElementById(filterDef.id + '__max');
+              if (minInput) minInput.value = '';
+              if (maxInput) maxInput.value = '';
+            }
+          });
+          renderCharts();
+        });
+      }
+      document.addEventListener('click', (event) => {
+        document.querySelectorAll('.filter-dropdown[open]').forEach((node) => {
+          if (!node.contains(event.target)) {
+            node.removeAttribute('open');
+          }
+        });
+      });
+      renderCharts();
+    })();
+"""
+
+from ._shared import PLOTLY_CDN, _render_metric_cards
+
+def render_dashboard_html(
+    *,
+    title: str,
+    description: str,
+    hero_eyebrow: str,
+    audience: str,
+    business_question: str,
+    headline_takeaway: str,
+    generated_at: str,
+    hero_meta: str,
+    metric_cards: List[Dict[str, str]],
+    filter_panel_html: str,
+    primary_cards: List[str],
+    appendix_cards: List[str],
+    query_items: List[str],
+    decision_questions: List[str],
+    insights: List[str],
+    known_risks: List[str],
+    data_quality_notes: List[str],
+    layout_template: str,
+    dataset_records: List[Dict[str, Any]],
+    filter_config: List[Dict[str, Any]],
+    chart_runtime_defs: List[Dict[str, Any]],
+    dataset_schema: List[Dict[str, Any]],
+    highlights_heading: str,
+) -> str:
+    primary_cards_html = "".join(primary_cards)
+    appendix_html = (
+        "<details class=\"appendix\">"
+        "<summary>Static appendix charts</summary>"
+        "<div class=\"chart-grid\">"
+        + "".join(appendix_cards)
+        + "</div></details>"
+        if appendix_cards
+        else ""
+    )
+    query_html = (
+        "<details class=\"appendix\">"
+        "<summary>Technical appendix</summary>"
+        + "".join(query_items)
+        + "</details>"
+    )
+    insight_html = (
+        "<section class=\"panel\"><h2>Executive Takeaways</h2><div class=\"stack\">"
+        + "".join(f"<article class=\"stack-item\"><p>{html.escape(item)}</p></article>" for item in insights)
+        + "</div></section>"
+        if insights
+        else ""
+    )
+    decision_html = (
+        "<section class=\"panel\"><h2>Decision Questions</h2><ul class=\"decision-list\">"
+        + "".join(f"<li>{html.escape(item)}</li>" for item in decision_questions)
+        + "</ul></section>"
+        if decision_questions
+        else ""
+    )
+    note_sections = []
+    if known_risks:
+        note_sections.append(
+            "<details class=\"appendix\"><summary>Known Risks</summary><ul class=\"decision-list\">"
+            + "".join(f"<li>{html.escape(item)}</li>" for item in known_risks)
+            + "</ul></details>"
+        )
+    if data_quality_notes:
+        note_sections.append(
+            "<details class=\"appendix\"><summary>Data Quality Notes</summary><ul class=\"decision-list\">"
+            + "".join(f"<li>{html.escape(item)}</li>" for item in data_quality_notes)
+            + "</ul></details>"
+        )
+    return "\n".join(
+        [
+            "<!doctype html>",
+            "<html lang=\"en\">",
+            "<head>",
+            "  <meta charset=\"utf-8\" />",
+            "  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />",
+            f"  <title>{html.escape(title)}</title>",
+            "  <style>",
+            DASHBOARD_CSS,
+            "  </style>",
+            f"  <script src=\"{PLOTLY_CDN}\"></script>",
+            "</head>",
+            "<body>",
+            "  <div class=\"shell\">",
+            "    <section class=\"hero\">",
+            f"      <div class=\"eyebrow\">{html.escape(hero_eyebrow or 'Interactive Dashboard')}</div>",
+            f"      <h1>{html.escape(title)}</h1>",
+            f"      <p>{html.escape(description)}</p>",
+            (
+                f"      <div class=\"hero-meta\"><strong>Audience:</strong> {html.escape(audience)}"
+                f" • <strong>Business question:</strong> {html.escape(business_question)}</div>"
+                if audience or business_question
+                else ""
+            ),
+            (
+                f"      <div class=\"hero-meta\"><strong>Headline takeaway:</strong> {html.escape(headline_takeaway)}</div>"
+                if headline_takeaway
+                else ""
+            ),
+            f"      <div class=\"hero-meta\">Generated {html.escape(generated_at)} • {html.escape(hero_meta)}</div>",
+            _render_metric_cards(metric_cards, "Executive Snapshot"),
+            "    </section>",
+            decision_html,
+            insight_html,
+            filter_panel_html,
+            "    <section class=\"section\">",
+            f"      <h2>{html.escape(highlights_heading)}</h2>",
+            f"      <p class=\"section-copy\">Template: {html.escape(layout_template)} • First-screen visuals are intentionally limited for executive scanning.</p>",
+            "      <div class=\"chart-grid\">",
+            primary_cards_html,
+            "      </div>",
+            appendix_html,
+            query_html,
+            *note_sections,
+            "    </section>",
+            "  </div>",
+            "  <script>",
+            f"    const DASHBOARD_DATASET = {json.dumps(dataset_records, ensure_ascii=False)};",
+            f"    const DASHBOARD_FILTER_SCHEMA = {json.dumps(filter_config, ensure_ascii=False)};",
+            f"    const DASHBOARD_CHART_DEFS = {json.dumps(chart_runtime_defs, ensure_ascii=False)};",
+            f"    const DASHBOARD_DATASET_SCHEMA = {json.dumps(dataset_schema, ensure_ascii=False)};",
+            DASHBOARD_FILTER_SCRIPT,
+            "  </script>",
+            "</body>",
+            "</html>",
+        ]
+    )
