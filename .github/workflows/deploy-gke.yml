@@ -554,8 +554,34 @@ jobs:
         run: |
           set -euo pipefail
           POD="helpudoc-smoke-${{ github.run_id }}-${{ github.run_attempt }}"
-          kubectl -n helpudoc run "${POD}" --rm --attach=true --restart=Never --image=curlimages/curl:8.5.0 -- \
-            sh -ec 'curl -fsS "http://backend.helpudoc.svc.cluster.local:3000/api/health"; curl -fsS "http://helpudoc-frontend.helpudoc.svc.cluster.local/" >/dev/null'
+          if ! kubectl -n helpudoc run "${POD}" --rm --attach=true --restart=Never --image=curlimages/curl:8.5.0 -- \
+            sh -ec '
+              wait_for_url() {
+                url="$1"
+                attempts=30
+                delay=5
+                i=1
+                while [ "$i" -le "$attempts" ]; do
+                  if curl -fsS --connect-timeout 2 "$url" >/dev/null; then
+                    echo "ok: $url"
+                    return 0
+                  fi
+                  echo "waiting for $url ($i/$attempts)"
+                  i=$((i + 1))
+                  sleep "$delay"
+                done
+                echo "timed out waiting for $url" >&2
+                return 1
+              }
+              wait_for_url "http://backend.helpudoc.svc.cluster.local:3000/api/health"
+              wait_for_url "http://helpudoc-frontend.helpudoc.svc.cluster.local/"
+            '; then
+            kubectl -n helpudoc get svc backend helpudoc-frontend -o wide || true
+            kubectl -n helpudoc get endpoints backend helpudoc-frontend -o wide || true
+            kubectl -n helpudoc get pods -l app=helpudoc-app -o wide || true
+            kubectl -n helpudoc logs deploy/helpudoc-app -c backend --tail=200 || true
+            exit 1
+          fi
 
       - name: Post-deploy smoke (agent sidecar)
         run: |
