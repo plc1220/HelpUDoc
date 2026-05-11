@@ -826,23 +826,23 @@ Data tools package and renderer split.
 
 Split backend agent/settings routes and agent run service.
 
-- [ ] Create `backend/src/api/agent/index.ts`.
-- [ ] Move agent run endpoints to `backend/src/api/agent/runs.ts`.
-- [ ] Move slash metadata endpoint to `backend/src/api/agent/slash.ts`.
-- [ ] Move Paper2Slides endpoints to `backend/src/api/agent/paper2slides.ts`.
-- [ ] Move presentation endpoint to `backend/src/api/agent/presentation.ts`.
-- [ ] Move effective agent policy helpers to `backend/src/api/agent/policy.ts` or a service module.
-- [ ] Update `backend/src/api/routes.ts` to import the new agent router.
-- [ ] Create `backend/src/api/settings/index.ts`.
-- [ ] Move agent config routes to `backend/src/api/settings/agentConfig.ts`.
-- [ ] Move skills CRUD routes to `backend/src/api/settings/skills.ts`.
-- [ ] Move skill builder routes to `backend/src/api/settings/skillBuilder.ts`.
-- [ ] Move GitHub import routes to `backend/src/api/settings/githubImport.ts`.
-- [ ] Move skill path/frontmatter helpers to `backend/src/services/skills/`.
-- [ ] Split `backend/src/services/agentRunService.ts` into `services/agent-runs/*`.
-- [ ] Keep a compatibility barrel for old `agentRunService` exports.
-- [ ] Update backend tests.
-- [ ] Run `cd backend && npm test`.
+- [x] Create `backend/src/api/agent/index.ts`.
+- [ ] Move agent run endpoints to `backend/src/api/agent/runs.ts` (deferred: route behavior remains in `agent/index.ts`; `policy.ts` was extracted first to reduce risk).
+- [ ] Move slash metadata endpoint to `backend/src/api/agent/slash.ts` (deferred with the remaining route-surface split).
+- [ ] Move Paper2Slides endpoints to `backend/src/api/agent/paper2slides.ts` (deferred with the remaining route-surface split).
+- [ ] Move presentation endpoint to `backend/src/api/agent/presentation.ts` (deferred with the remaining route-surface split).
+- [x] Move effective agent policy helpers to `backend/src/api/agent/policy.ts` or a service module.
+- [x] Update `backend/src/api/routes.ts` to import the new agent router.
+- [x] Create `backend/src/api/settings/index.ts`.
+- [ ] Move agent config routes to `backend/src/api/settings/agentConfig.ts` (deferred: settings behavior remains in `settings/index.ts`; shared skill helpers were extracted first).
+- [ ] Move skills CRUD routes to `backend/src/api/settings/skills.ts` (deferred with the remaining settings route split).
+- [ ] Move skill builder routes to `backend/src/api/settings/skillBuilder.ts` (deferred with the remaining settings route split).
+- [ ] Move GitHub import routes to `backend/src/api/settings/githubImport.ts` (deferred with the remaining settings route split).
+- [x] Move skill path/frontmatter helpers to `backend/src/services/skills/`.
+- [x] Split `backend/src/services/agentRunService.ts` into `services/agent-runs/*`.
+- [x] Keep a compatibility barrel for old `agentRunService` exports.
+- [x] Update backend tests.
+- [x] Run `cd backend && npm test`.
 
 ### PR 10 - `frontend-workspace-split`
 
@@ -864,9 +864,9 @@ Split workspace route and chat renderers.
 - [x] Extract workspace path utilities (`normalizeWorkspaceRelativePath`, `getDashboardManifestPath`, `getDashboardPackagePathFromManifestPath`, `resolveDashboardPackagePath`) into `features/workspace/utils/workspacePaths.ts`.
 - [x] Run `cd frontend && npm run lint` (0 errors; pre-existing `react-hooks/exhaustive-deps` warnings unchanged).
 - [x] Run `cd frontend && npm run build` (succeeds; bundle layout matches pre-rename baseline).
-- [ ] Run relevant Playwright smoke tests if available (deferred: existing specs target the live `lc-demo.com` deployment and cannot run from the worktree without a deployed stack; rerun against staging after PR 7 lands).
+- [ ] Run relevant Playwright smoke tests if available (deferred: existing specs target the live `lc-demo.com` deployment and cannot run from the worktree without a deployed stack; rerun against staging after deployment).
 
-PR 7 (`shared-packages-split`) is being worked in parallel. Dashboard components in `features/dashboard/components/*` still import from `@helpudoc/shared/dashboard`; once PR 7 lands, rebase this branch and switch the imports to `@helpudoc/dashboard-runtime`. No other PR 7 surface area is touched here, so the rebase should be a focused find-and-replace.
+PR 10 was rebased after PR 7 landed; dashboard feature components now import `@helpudoc/dashboard-runtime`.
 
 ### PR 11 - `presentation-parser-split`
 
