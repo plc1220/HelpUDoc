@@ -69,6 +69,7 @@ const CONTEXT_ALLOWED_EXTENSIONS = [
 const CONTEXT_MAX_FILE_SIZE = 20 * 1024 * 1024;
 
 const SKILL_BUILDER_PERSONA = 'skill-builder';
+type ContextFileMeta = {
   fileId: string;
   userId: string;
   name: string;
