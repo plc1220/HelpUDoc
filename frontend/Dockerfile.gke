@@ -2,7 +2,8 @@
 FROM node:20-bookworm-slim AS deps
 WORKDIR /app
 COPY frontend/package*.json ./frontend/
-COPY packages/shared/package*.json ./packages/shared/
+COPY packages/contracts/package*.json ./packages/contracts/
+COPY packages/dashboard-runtime/package*.json ./packages/dashboard-runtime/
 RUN --mount=type=cache,target=/root/.npm cd frontend && npm ci
 
 FROM node:20-bookworm-slim AS build
@@ -27,7 +28,8 @@ COPY frontend/scripts ./frontend/scripts
 COPY --from=deps /app/frontend/node_modules ./frontend/node_modules
 COPY frontend/public ./frontend/public
 COPY frontend/src ./frontend/src
-COPY packages/shared ./packages/shared
+COPY packages/contracts ./packages/contracts
+COPY packages/dashboard-runtime ./packages/dashboard-runtime
 
 WORKDIR /app/frontend
 RUN npm run build:docker

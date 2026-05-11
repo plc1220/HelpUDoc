@@ -6,7 +6,7 @@ import {
   type DashboardRow,
   type DatasetSchemaColumn,
   type FilterValues,
-} from '@helpudoc/shared/dashboard';
+} from '@helpudoc/dashboard-runtime';
 
 type Props = {
   filters: DashboardFilterDef[];

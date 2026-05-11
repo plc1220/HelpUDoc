@@ -1,7 +1,7 @@
 import axios from "axios";
 import type { AxiosResponse } from "axios";
 import type { IncomingMessage } from "http";
-import type { FileContextRef } from '../../../packages/shared/src/types';
+import type { FileContextRef } from '@helpudoc/contracts/types';
 
 const AGENT_URL = process.env.AGENT_URL || "http://localhost:8001";
 

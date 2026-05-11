@@ -99,7 +99,7 @@ from the product shape in favor of:
 - **`runtimeKind: "native"`** in generated metadata/spec
 - **`chartRuntimeDefs`** as the executable chart contract (deterministic;
   frontend does not interpret open-ended narrative chart metadata)
-- **`@helpudoc/shared`** dashboard module: filters, aggregates, Plotly payload
+- **`@helpudoc/dashboard-runtime`**: filters, aggregates, Plotly payload
   building
 - stream events: **`dashboard_artifact`** carrying paths/ids for the package the
   user should open

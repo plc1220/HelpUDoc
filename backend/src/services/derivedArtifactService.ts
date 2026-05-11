@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'crypto';
 import * as path from 'path';
 import type { Knex } from 'knex';
-import type { DerivedArtifactMode, DerivedArtifactStatus, FileContextRef } from '../../../packages/shared/src/types';
+import type { DerivedArtifactMode, DerivedArtifactStatus, FileContextRef } from '@helpudoc/contracts/types';
 import { DatabaseService } from './databaseService';
 import { FileService } from './fileService';
 import { WorkspaceService } from './workspaceService';

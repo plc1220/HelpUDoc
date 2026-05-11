@@ -9,7 +9,7 @@ import type {
   ReflectionRecommendation,
   ReflectionScorecard,
   ReflectionTrendPoint,
-} from '../../../packages/shared/src/types';
+} from '@helpudoc/contracts/types';
 import { NotFoundError } from '../errors';
 import type { SkillEvolutionService } from './skillEvolutionService';
 

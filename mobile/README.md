@@ -8,7 +8,7 @@ The mobile app is still a lightweight spike rather than a full product surface. 
 
 - boots with Expo
 - renders a simple HelpUDoc screen
-- imports shared TypeScript types from `packages/shared`
+- imports shared TypeScript types from `packages/shared` (compatibility re-export of `@helpudoc/contracts`)
 
 It does not yet implement authentication, backend API calls, workspace syncing, or agent chat.
 
@@ -30,5 +30,5 @@ That launches the Expo dev server defined by the package's `start` script.
 
 ## Related code
 
-- `packages/shared/`: shared type exports already used by the app scaffold
+- `packages/shared/`: thin compatibility layer re-exporting `@helpudoc/contracts` (same import path as before)
 - `docs/mobile-app-development-plan.md`: planning notes for the broader mobile roadmap

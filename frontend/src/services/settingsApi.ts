@@ -1,5 +1,5 @@
 import type { SkillDefinition, SkillEvolutionSuggestion } from '../types';
-import type { AgentStreamChunk } from '../../../packages/shared/src/services/agentStream';
+import type { AgentStreamChunk } from '@helpudoc/contracts/agentStream';
 import { API_URL, apiFetch } from './apiClient';
 
 export type ManagedUser = {

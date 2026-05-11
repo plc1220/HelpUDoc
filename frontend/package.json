@@ -13,7 +13,8 @@
     "e2e": "playwright test --project=chromium"
   },
   "dependencies": {
-    "@helpudoc/shared": "file:../packages/shared",
+    "@helpudoc/contracts": "file:../packages/contracts",
+    "@helpudoc/dashboard-runtime": "file:../packages/dashboard-runtime",
     "@copilotkit/react-core": "^1.51.3",
     "@copilotkit/react-ui": "^1.51.3",
     "@emotion/react": "^11.14.0",

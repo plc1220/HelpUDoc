@@ -2,15 +2,18 @@ FROM node:20-alpine AS base
 
 WORKDIR /app
 
+# Local `file:` dependency: install from repo root context (see infra/docker-compose.yml).
+COPY packages/contracts /packages/contracts
+
 # Copy dependency manifests first for better layer caching
-COPY package*.json ./
-COPY tsconfig.json ./
+COPY backend/package*.json ./
+COPY backend/tsconfig.json ./
 
 # Install all dependencies (ts-node lives in devDependencies)
 RUN npm ci --legacy-peer-deps
 
 # Copy the backend source code
-COPY src ./src
+COPY backend/src ./src
 
 # Runtime workspace content is persisted via volume mounts in deploy envs.
 # Ensure directory exists even when no seed data is tracked in git.

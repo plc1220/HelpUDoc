@@ -187,7 +187,8 @@ services:
 
   backend:
     build:
-      context: ../backend
+      context: ..
+      dockerfile: backend/Dockerfile
     depends_on:
       postgres:
         condition: service_healthy

@@ -786,22 +786,22 @@ Split `agent/helpudoc_agent/app.py` into API modules.
 
 Split `packages/shared` into `contracts` and `dashboard-runtime`.
 
-- [ ] Add `packages/contracts/package.json`.
-- [ ] Move API/domain types from `packages/shared/src/types.ts` to `packages/contracts/src/types.ts`.
-- [ ] Move agent stream helper from `packages/shared/src/services/agentStream.ts` to `packages/contracts/src/agentStream.ts`.
-- [ ] Add package exports for `@helpudoc/contracts/types`.
-- [ ] Add package exports for `@helpudoc/contracts/agentStream`.
-- [ ] Add `packages/dashboard-runtime/package.json`.
-- [ ] Move `packages/shared/src/dashboard/*` to `packages/dashboard-runtime/src/*`.
-- [ ] Add package exports for `@helpudoc/dashboard-runtime`.
-- [ ] Update `frontend/package.json` dependencies.
-- [ ] Update `backend/package.json` dependencies if backend imports contracts directly.
-- [ ] Replace frontend relative imports from `packages/shared`.
-- [ ] Replace backend relative imports from `packages/shared`.
-- [ ] Decide whether to add npm workspaces at the repo root.
-- [ ] Keep `packages/shared` as a compatibility package or remove after all imports are migrated.
-- [ ] Run frontend build.
-- [ ] Run backend tests/type checks.
+- [x] Add `packages/contracts/package.json`.
+- [x] Move API/domain types from `packages/shared/src/types.ts` to `packages/contracts/src/types.ts`.
+- [x] Move agent stream helper from `packages/shared/src/services/agentStream.ts` to `packages/contracts/src/agentStream.ts`.
+- [x] Add package exports for `@helpudoc/contracts/types`.
+- [x] Add package exports for `@helpudoc/contracts/agentStream`.
+- [x] Add `packages/dashboard-runtime/package.json`.
+- [x] Move `packages/shared/src/dashboard/*` to `packages/dashboard-runtime/src/*`.
+- [x] Add package exports for `@helpudoc/dashboard-runtime`.
+- [x] Update `frontend/package.json` dependencies.
+- [x] Update `backend/package.json` dependencies if backend imports contracts directly.
+- [x] Replace frontend relative imports from `packages/shared`.
+- [x] Replace backend relative imports from `packages/shared`.
+- [x] Decide whether to add npm workspaces at the repo root.
+- [x] Keep `packages/shared` as a compatibility package or remove after all imports are migrated.
+- [x] Run frontend build.
+- [x] Run backend tests/type checks.
 
 ### PR 8 - `data-tools-split`
 

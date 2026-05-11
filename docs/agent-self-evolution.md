@@ -512,7 +512,7 @@ Frontend:
 - `frontend/src/components/settings/AgentSettingsTabs.tsx`
 - `frontend/src/services/memoryApi.ts`
 - `frontend/src/services/settingsApi.ts`
-- `packages/shared/src/types.ts`
+- `packages/contracts/src/types.ts`
 
 Deployment/config:
 
