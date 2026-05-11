@@ -27,6 +27,7 @@ required_artifacts:
   - /red_flags_and_exclusions.md
   - /knowledge_graph.md
   - /synthesis.md
+  - /final_report_audit.md
   - /final_quality_check.md
   - /final-research-report.md
   - pattern:/0[1-9]_*.md
@@ -161,6 +162,16 @@ Supporting artifacts may be longer than the final report, but they do not count 
 
 Never report an estimated final report word count. Always compute the count from the actual final report file.
 
+The final report's Word Count section must use this exact form:
+
+```markdown
+## Word Count
+
+1234 words
+```
+
+Use the actual integer count. Do not add qualifiers, parentheses, methodology notes, estimates, or explanations in the final report.
+
 Forbidden final-report word-count phrases:
 
 - "approx"
@@ -171,6 +182,21 @@ Forbidden final-report word-count phrases:
 - "about"
 
 If any of these phrases appear in the final report's Word Count section, the report fails the completion gate.
+
+Known failing examples:
+
+```markdown
+## Word Count
+(Manual count of /final-research-report.md content)
+Approx 6,400 words.
+```
+
+```markdown
+## Word Count
+Approximately 7,200 words.
+```
+
+Both examples fail because they are not computed integer counts and contain forbidden qualifiers.
 
 ## Workflow
 
@@ -893,7 +919,48 @@ The computed word count must be derived from the final report file only. Do not 
 
 If the computed word count is below the selected mode minimum, do not finalize. Expand the final report using the existing dossiers, synthesis, comparison matrix, source register, research notes, and claim-evidence matrix, then recompute the word count.
 
-### 25. Final Report Completion Gate
+### 25. Final Report Audit
+
+Before declaring completion, create `/final_report_audit.md`.
+
+This audit must inspect `/final-research-report.md` itself, not the artifact pack.
+
+Include:
+
+```markdown
+# Final Report Audit
+
+Final report path:
+Computed final report word count:
+Required range:
+Word count command or method:
+Word Count section exact text:
+Forbidden word-count phrase present: yes / no
+Sources listed in final report:
+Source URLs opened:
+Unreachable sources:
+Sources missing from source register:
+High-risk uncited claims found:
+Low-confidence claims outside uncertainty sections:
+Excluded claims found in final report:
+Completion decision: pass / fail
+```
+
+The audit fails if the final report contains:
+
+- `(Manual count of /final-research-report.md content)`
+- `Approx`
+- `approximately`
+- `estimated`
+- Any non-integer or qualified word count
+- A cited source URL that was not opened
+- A source URL that returned 404, DNS failure, network failure, or unrelated content
+- A final citation source missing from `/source_register.md`
+- High-risk factual claims without direct citation
+
+If `/final_report_audit.md` says `Completion decision: fail`, do not finalize and do not claim completion in chat.
+
+### 26. Final Report Completion Gate
 
 Before declaring completion, produce `/final_quality_check.md` with:
 
@@ -907,6 +974,7 @@ Before declaring completion, produce `/final_quality_check.md` with:
 - Number of low-confidence claims still present in the final report
 - Number of source URLs checked
 - Number of source URLs unreachable, paywalled, redirected, or failed
+- `/final_report_audit.md` completion decision
 
 Completion is forbidden if:
 
@@ -915,10 +983,12 @@ Completion is forbidden if:
 - Any factual claim with numbers, CVEs, benchmarks, architecture, pricing, legal status, security impact, funding, or adoption lacks citation.
 - Final report cites sources not present in `/source_register.md`.
 - The final report says "manual count", "approx", "approximately", "estimated", "roughly", or "about" in its Word Count section.
+- The final report Word Count section is not exactly an integer followed by `words`.
+- `/final_report_audit.md` is missing or says `Completion decision: fail`.
 - Any Low-confidence claim appears in the main report outside a clearly labeled uncertainty or limits-of-evidence section.
 - Any Excluded claim appears in the final report.
 
-### 26. Quality Gate Before Final Report
+### 27. Quality Gate Before Final Report
 
 Before finalizing, run a self-check and record it in `/final_quality_check.md`.
 
@@ -940,6 +1010,8 @@ Check:
 - [ ] Mandatory computed word count completed from `/final-research-report.md` only
 - [ ] Computed final report word count is within the selected mode range
 - [ ] Final report Word Count section does not use approximate/manual/estimated wording
+- [ ] Final report Word Count section is exactly an integer followed by `words`
+- [ ] `/final_report_audit.md` exists and says `Completion decision: pass`
 - [ ] Final report completion gate passed
 - [ ] Final report cites only registered sources
 - [ ] Unsupported claims removed
