@@ -21,7 +21,7 @@ if str(AGENT_DIR) not in sys.path:
 from langchain_core.tools import StructuredTool, tool  # noqa: E402
 
 from helpudoc_agent.configuration import Settings  # noqa: E402
-from helpudoc_agent.graph import AgentRegistry, _clone_preservable_context  # noqa: E402
+from helpudoc_agent.runtime.agent_registry import AgentRegistry, _clone_preservable_context  # noqa: E402
 from helpudoc_agent.mcp_manager import (  # noqa: E402
     MCPServerManager,
     _preflight_gemini_tools,
@@ -162,17 +162,17 @@ def test_registry_preserves_runtime_context_when_auth_fingerprint_rotates(tmp_pa
         self._clients_by_server = {}
         self._rejected_servers = {}
 
-    monkeypatch.setattr("helpudoc_agent.graph.create_agent", fake_create_agent)
+    monkeypatch.setattr("helpudoc_agent.runtime.agent_registry.create_agent", fake_create_agent)
     monkeypatch.setattr(
-        "helpudoc_agent.graph.create_chat_google_generative_ai",
+        "helpudoc_agent.runtime.agent_registry.create_chat_google_generative_ai",
         lambda *args, **kwargs: object(),
     )
-    monkeypatch.setattr("helpudoc_agent.graph.FilesystemBackend", lambda *args, **kwargs: object())
-    monkeypatch.setattr("helpudoc_agent.graph.TodoListMiddleware", lambda *args, **kwargs: object())
-    monkeypatch.setattr("helpudoc_agent.graph.FilesystemMiddleware", lambda *args, **kwargs: object())
-    monkeypatch.setattr("helpudoc_agent.graph.SummarizationMiddleware", lambda *args, **kwargs: object())
-    monkeypatch.setattr("helpudoc_agent.graph.PatchToolCallsMiddleware", lambda *args, **kwargs: object())
-    monkeypatch.setattr("helpudoc_agent.graph.HumanInTheLoopMiddleware", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.runtime.agent_registry.FilesystemBackend", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.runtime.agent_registry.TodoListMiddleware", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.runtime.agent_registry.FilesystemMiddleware", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.runtime.agent_registry.SummarizationMiddleware", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.runtime.agent_registry.PatchToolCallsMiddleware", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.runtime.agent_registry.HumanInTheLoopMiddleware", lambda *args, **kwargs: object())
     monkeypatch.setattr("helpudoc_agent.mcp_manager.MCPServerManager.initialize", fake_initialize)
 
     registry = AgentRegistry(settings, ToolFactoryStub())
@@ -433,17 +433,17 @@ def test_agent_registry_builds_runtime_with_wrapped_proposal_writing_candidates(
         captured["middleware_count"] = len(middleware)
         return DummyAgent(tools)
 
-    monkeypatch.setattr("helpudoc_agent.graph.create_agent", fake_create_agent)
+    monkeypatch.setattr("helpudoc_agent.runtime.agent_registry.create_agent", fake_create_agent)
     monkeypatch.setattr(
-        "helpudoc_agent.graph.create_chat_google_generative_ai",
+        "helpudoc_agent.runtime.agent_registry.create_chat_google_generative_ai",
         lambda *args, **kwargs: object(),
     )
-    monkeypatch.setattr("helpudoc_agent.graph.FilesystemBackend", lambda *args, **kwargs: object())
-    monkeypatch.setattr("helpudoc_agent.graph.TodoListMiddleware", lambda *args, **kwargs: object())
-    monkeypatch.setattr("helpudoc_agent.graph.FilesystemMiddleware", lambda *args, **kwargs: object())
-    monkeypatch.setattr("helpudoc_agent.graph.SummarizationMiddleware", lambda *args, **kwargs: object())
-    monkeypatch.setattr("helpudoc_agent.graph.PatchToolCallsMiddleware", lambda *args, **kwargs: object())
-    monkeypatch.setattr("helpudoc_agent.graph.HumanInTheLoopMiddleware", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.runtime.agent_registry.FilesystemBackend", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.runtime.agent_registry.TodoListMiddleware", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.runtime.agent_registry.FilesystemMiddleware", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.runtime.agent_registry.SummarizationMiddleware", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.runtime.agent_registry.PatchToolCallsMiddleware", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.runtime.agent_registry.HumanInTheLoopMiddleware", lambda *args, **kwargs: object())
 
     class FakeClient:
         def __init__(self, configs):
@@ -511,17 +511,17 @@ def test_agent_registry_rebuilds_runtime_when_preferred_mcp_server_changes(
         self._clients_by_server = {}
         self._rejected_servers = {}
 
-    monkeypatch.setattr("helpudoc_agent.graph.create_agent", fake_create_agent)
+    monkeypatch.setattr("helpudoc_agent.runtime.agent_registry.create_agent", fake_create_agent)
     monkeypatch.setattr(
-        "helpudoc_agent.graph.create_chat_google_generative_ai",
+        "helpudoc_agent.runtime.agent_registry.create_chat_google_generative_ai",
         lambda *args, **kwargs: object(),
     )
-    monkeypatch.setattr("helpudoc_agent.graph.FilesystemBackend", lambda *args, **kwargs: object())
-    monkeypatch.setattr("helpudoc_agent.graph.TodoListMiddleware", lambda *args, **kwargs: object())
-    monkeypatch.setattr("helpudoc_agent.graph.FilesystemMiddleware", lambda *args, **kwargs: object())
-    monkeypatch.setattr("helpudoc_agent.graph.SummarizationMiddleware", lambda *args, **kwargs: object())
-    monkeypatch.setattr("helpudoc_agent.graph.PatchToolCallsMiddleware", lambda *args, **kwargs: object())
-    monkeypatch.setattr("helpudoc_agent.graph.HumanInTheLoopMiddleware", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.runtime.agent_registry.FilesystemBackend", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.runtime.agent_registry.TodoListMiddleware", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.runtime.agent_registry.FilesystemMiddleware", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.runtime.agent_registry.SummarizationMiddleware", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.runtime.agent_registry.PatchToolCallsMiddleware", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.runtime.agent_registry.HumanInTheLoopMiddleware", lambda *args, **kwargs: object())
     monkeypatch.setattr("helpudoc_agent.mcp_manager.MCPServerManager.initialize", fake_initialize)
 
     registry = AgentRegistry(settings, ToolFactoryStub())
@@ -587,14 +587,14 @@ def test_agent_registry_passes_mode_specific_max_output_tokens(
         self._clients_by_server = {}
         self._rejected_servers = {}
 
-    monkeypatch.setattr("helpudoc_agent.graph.create_agent", fake_create_agent)
-    monkeypatch.setattr("helpudoc_agent.graph.create_chat_google_generative_ai", fake_create_chat_google)
-    monkeypatch.setattr("helpudoc_agent.graph.FilesystemBackend", lambda *args, **kwargs: object())
-    monkeypatch.setattr("helpudoc_agent.graph.TodoListMiddleware", lambda *args, **kwargs: object())
-    monkeypatch.setattr("helpudoc_agent.graph.FilesystemMiddleware", lambda *args, **kwargs: object())
-    monkeypatch.setattr("helpudoc_agent.graph.SummarizationMiddleware", lambda *args, **kwargs: object())
-    monkeypatch.setattr("helpudoc_agent.graph.PatchToolCallsMiddleware", lambda *args, **kwargs: object())
-    monkeypatch.setattr("helpudoc_agent.graph.HumanInTheLoopMiddleware", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.runtime.agent_registry.create_agent", fake_create_agent)
+    monkeypatch.setattr("helpudoc_agent.runtime.agent_registry.create_chat_google_generative_ai", fake_create_chat_google)
+    monkeypatch.setattr("helpudoc_agent.runtime.agent_registry.FilesystemBackend", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.runtime.agent_registry.TodoListMiddleware", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.runtime.agent_registry.FilesystemMiddleware", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.runtime.agent_registry.SummarizationMiddleware", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.runtime.agent_registry.PatchToolCallsMiddleware", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.runtime.agent_registry.HumanInTheLoopMiddleware", lambda *args, **kwargs: object())
     monkeypatch.setattr("helpudoc_agent.mcp_manager.MCPServerManager.initialize", fake_initialize)
 
     registry = AgentRegistry(settings, ToolFactoryStub())

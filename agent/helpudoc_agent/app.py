@@ -27,7 +27,7 @@ from pydantic import BaseModel, Field, model_validator
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from .configuration import describe_workspace_root, load_settings
-from .graph import AgentRegistry
+from .runtime.agent_registry import AgentRegistry
 from .state import AgentRuntimeState
 from .tools_and_schemas import ToolFactory, GeminiClientManager
 from .mcp_manager import describe_mcp_servers

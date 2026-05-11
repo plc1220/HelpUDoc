@@ -749,17 +749,17 @@ Canonical env schema plus backend/agent typed env loaders.
 
 Move `graph.py` to runtime registry with compatibility shim.
 
-- [ ] Create `agent/helpudoc_agent/runtime/__init__.py`.
-- [ ] Move `AgentRegistry` from `agent/helpudoc_agent/graph.py` to `agent/helpudoc_agent/runtime/agent_registry.py`.
-- [ ] Move `_clone_preservable_context` to `agent/helpudoc_agent/runtime/agent_registry.py`.
-- [ ] Keep `agent/helpudoc_agent/graph.py` as a compatibility shim.
-- [ ] Update `agent/helpudoc_agent/app.py` imports to use `helpudoc_agent.runtime.agent_registry`.
-- [ ] Update `tests/test_mcp_binding.py` imports and monkeypatch paths.
-- [ ] Update `tests/test_agent_main.py` stubs and cleanup lists.
-- [ ] Add a small test proving `from helpudoc_agent.graph import AgentRegistry` still works.
-- [ ] Update references in `docs/repo-cicd-restructure-plan.md` if the target path changes.
-- [ ] Run focused Python tests.
-- [ ] Run `graphify update .`.
+- [x] Create `agent/helpudoc_agent/runtime/__init__.py`.
+- [x] Move `AgentRegistry` from `agent/helpudoc_agent/graph.py` to `agent/helpudoc_agent/runtime/agent_registry.py`.
+- [x] Move `_clone_preservable_context` to `agent/helpudoc_agent/runtime/agent_registry.py`.
+- [x] Keep `agent/helpudoc_agent/graph.py` as a compatibility shim.
+- [x] Update `agent/helpudoc_agent/app.py` imports to use `helpudoc_agent.runtime.agent_registry`.
+- [x] Update `tests/test_mcp_binding.py` imports and monkeypatch paths.
+- [x] Update `tests/test_agent_main.py` stubs and cleanup lists.
+- [x] Add a small test proving `from helpudoc_agent.graph import AgentRegistry` still works.
+- [x] Update references in `docs/repo-cicd-restructure-plan.md` if the target path changes.
+- [x] Run focused Python tests.
+- [x] Run `graphify update .`.
 
 ### PR 6 - `agent-api-split`
 

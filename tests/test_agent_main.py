@@ -15,6 +15,9 @@ AGENT_DIR = CURRENT_DIR / "agent"
 if str(AGENT_DIR) not in sys.path:
     sys.path.insert(0, str(AGENT_DIR))
 
+# Workspace root must stay inside the repo for local/dev validation in configuration.
+AGENT_MAIN_TEST_WORKSPACE = CURRENT_DIR / "backend" / "workspaces" / ".pytest-agent-main"
+
 
 class SettingsStub:
     """Minimal settings object used by the FastAPI app during tests."""
@@ -22,7 +25,7 @@ class SettingsStub:
     mcp_servers = {}
     tools = {}
     backend = SimpleNamespace(
-        workspace_root=Path("/tmp/helpudoc-agent-tests"),
+        workspace_root=AGENT_MAIN_TEST_WORKSPACE,
         skills_root=None,
     )
 
@@ -507,59 +510,70 @@ def client_with_stubs(monkeypatch):
     module_names = [
         "agent.main",
         "helpudoc_agent.app",
-        "helpudoc_agent.graph",
+        "helpudoc_agent.runtime",
+        "helpudoc_agent.runtime.agent_registry",
         "helpudoc_agent.tools_and_schemas",
         "paper2slides",
         "paper2slides.raganything",
         "paper2slides.raganything.parser",
     ]
     saved_modules = {name: sys.modules.pop(name, None) for name in module_names}
-
-    _install_dependency_stubs()
-    monkeypatch.setenv("RAG_PARSER_PIPELINE", "stub")
-    monkeypatch.setenv("RAGANYTHING_PARSER", "stub")
-    monkeypatch.setenv("PARSER_ENRICHMENT_MODE", "stub")
-
-    graph_stub = ModuleType("helpudoc_agent.graph")
-    graph_stub.AgentRegistry = RegistryStub
-    sys.modules["helpudoc_agent.graph"] = graph_stub
-
-    tools_stub = ModuleType("helpudoc_agent.tools_and_schemas")
-    tools_stub.ToolFactory = ToolFactoryStub
-    tools_stub.GeminiClientManager = GeminiClientManagerStub
-    sys.modules["helpudoc_agent.tools_and_schemas"] = tools_stub
-
-    import helpudoc_agent.app as app_module
-
-    # Reset singleton references for each test run.
-    RegistryStub.instance = None
-    SourceTrackerStub.instance = None
-
-    monkeypatch.setattr(app_module, "load_settings", lambda *_args, **_kwargs: SettingsStub())
-    monkeypatch.setattr(app_module, "SourceTracker", SourceTrackerStub)
-    monkeypatch.setattr(app_module, "GeminiClientManager", GeminiClientManagerStub)
-    monkeypatch.setattr(app_module, "ToolFactory", ToolFactoryStub)
-    monkeypatch.setattr(app_module, "AgentRegistry", RegistryStub)
-    monkeypatch.setattr(app_module, "RagIndexWorker", RagIndexWorkerStub)
-
-    import agent.main as agent_main
-
-    client = TestClient(agent_main.app)
-    registry = RegistryStub.instance
-    source_tracker = SourceTrackerStub.instance
-    assert registry is not None, "Registry stub was not initialized"
-    assert source_tracker is not None, "Source tracker stub was not initialized"
-
+    client = None
     try:
+        _install_dependency_stubs()
+        monkeypatch.setenv("RAG_PARSER_PIPELINE", "stub")
+        monkeypatch.setenv("RAGANYTHING_PARSER", "stub")
+        monkeypatch.setenv("PARSER_ENRICHMENT_MODE", "stub")
+
+        runtime_pkg = ModuleType("helpudoc_agent.runtime")
+        runtime_pkg.__path__ = []
+        sys.modules["helpudoc_agent.runtime"] = runtime_pkg
+
+        agent_registry_stub = ModuleType("helpudoc_agent.runtime.agent_registry")
+        agent_registry_stub.AgentRegistry = RegistryStub
+        sys.modules["helpudoc_agent.runtime.agent_registry"] = agent_registry_stub
+
+        tools_stub = ModuleType("helpudoc_agent.tools_and_schemas")
+        tools_stub.ToolFactory = ToolFactoryStub
+        tools_stub.GeminiClientManager = GeminiClientManagerStub
+        sys.modules["helpudoc_agent.tools_and_schemas"] = tools_stub
+
+        import helpudoc_agent.app as app_module
+
+        # Reset singleton references for each test run.
+        RegistryStub.instance = None
+        SourceTrackerStub.instance = None
+
+        monkeypatch.setattr(app_module, "load_settings", lambda *_args, **_kwargs: SettingsStub())
+        monkeypatch.setattr(app_module, "SourceTracker", SourceTrackerStub)
+        monkeypatch.setattr(app_module, "GeminiClientManager", GeminiClientManagerStub)
+        monkeypatch.setattr(app_module, "ToolFactory", ToolFactoryStub)
+        monkeypatch.setattr(app_module, "AgentRegistry", RegistryStub)
+        monkeypatch.setattr(app_module, "RagIndexWorker", RagIndexWorkerStub)
+
+        import agent.main as agent_main
+
+        client = TestClient(agent_main.app)
+        registry = RegistryStub.instance
+        source_tracker = SourceTrackerStub.instance
+        assert registry is not None, "Registry stub was not initialized"
+        assert source_tracker is not None, "Source tracker stub was not initialized"
+
         yield client, registry, source_tracker
     finally:
-        client.close()
-        sys.modules.pop("helpudoc_agent.graph", None)
+        if client is not None:
+            client.close()
+        sys.modules.pop("helpudoc_agent.runtime.agent_registry", None)
+        sys.modules.pop("helpudoc_agent.runtime", None)
         sys.modules.pop("helpudoc_agent.tools_and_schemas", None)
         for name, module in saved_modules.items():
             if module is not None:
                 sys.modules[name] = module
-            elif name not in ("helpudoc_agent.graph", "helpudoc_agent.tools_and_schemas"):
+            elif name not in (
+                "helpudoc_agent.runtime",
+                "helpudoc_agent.runtime.agent_registry",
+                "helpudoc_agent.tools_and_schemas",
+            ):
                 sys.modules.pop(name, None)
 
 
@@ -914,40 +928,54 @@ def test_skill_contract_endpoint_reports_loaded_dashboard_policy(monkeypatch, tm
     module_names = [
         "agent.main",
         "helpudoc_agent.app",
-        "helpudoc_agent.graph",
+        "helpudoc_agent.runtime",
+        "helpudoc_agent.runtime.agent_registry",
         "helpudoc_agent.tools_and_schemas",
     ]
     saved_modules = {name: sys.modules.pop(name, None) for name in module_names}
-    _install_dependency_stubs()
-
-    graph_stub = ModuleType("helpudoc_agent.graph")
-    graph_stub.AgentRegistry = RegistryStub
-    sys.modules["helpudoc_agent.graph"] = graph_stub
-
-    tools_stub = ModuleType("helpudoc_agent.tools_and_schemas")
-    tools_stub.ToolFactory = ToolFactoryStub
-    tools_stub.GeminiClientManager = GeminiClientManagerStub
-    sys.modules["helpudoc_agent.tools_and_schemas"] = tools_stub
-
-    import helpudoc_agent.app as app_module
-
-    class CustomSettings(SettingsStub):
-        backend = SimpleNamespace(
-            workspace_root=tmp_path / "workspaces",
-            skills_root=CURRENT_DIR / "skills",
-        )
-
-    monkeypatch.setattr(app_module, "load_settings", lambda *_args, **_kwargs: CustomSettings())
-    monkeypatch.setattr(app_module, "SourceTracker", SourceTrackerStub)
-    monkeypatch.setattr(app_module, "GeminiClientManager", GeminiClientManagerStub)
-    monkeypatch.setattr(app_module, "ToolFactory", ToolFactoryStub)
-    monkeypatch.setattr(app_module, "AgentRegistry", RegistryStub)
-    monkeypatch.setattr(app_module, "RagIndexWorker", RagIndexWorkerStub)
-
-    import agent.main as agent_main
-
-    client = TestClient(agent_main.app)
+    client = None
     try:
+        _install_dependency_stubs()
+        monkeypatch.setenv("RAG_PARSER_PIPELINE", "stub")
+        monkeypatch.setenv("RAGANYTHING_PARSER", "stub")
+        monkeypatch.setenv("PARSER_ENRICHMENT_MODE", "stub")
+
+        runtime_pkg = ModuleType("helpudoc_agent.runtime")
+        runtime_pkg.__path__ = []
+        sys.modules["helpudoc_agent.runtime"] = runtime_pkg
+
+        agent_registry_stub = ModuleType("helpudoc_agent.runtime.agent_registry")
+        agent_registry_stub.AgentRegistry = RegistryStub
+        sys.modules["helpudoc_agent.runtime.agent_registry"] = agent_registry_stub
+
+        tools_stub = ModuleType("helpudoc_agent.tools_and_schemas")
+        tools_stub.ToolFactory = ToolFactoryStub
+        tools_stub.GeminiClientManager = GeminiClientManagerStub
+        sys.modules["helpudoc_agent.tools_and_schemas"] = tools_stub
+
+        import helpudoc_agent.app as app_module
+
+        repo_scoped_workspace = (
+            CURRENT_DIR / "backend" / "workspaces" / ".pytest-skill-contract" / tmp_path.name
+        )
+        repo_scoped_workspace.mkdir(parents=True, exist_ok=True)
+
+        class CustomSettings(SettingsStub):
+            backend = SimpleNamespace(
+                workspace_root=repo_scoped_workspace,
+                skills_root=CURRENT_DIR / "skills",
+            )
+
+        monkeypatch.setattr(app_module, "load_settings", lambda *_args, **_kwargs: CustomSettings())
+        monkeypatch.setattr(app_module, "SourceTracker", SourceTrackerStub)
+        monkeypatch.setattr(app_module, "GeminiClientManager", GeminiClientManagerStub)
+        monkeypatch.setattr(app_module, "ToolFactory", ToolFactoryStub)
+        monkeypatch.setattr(app_module, "AgentRegistry", RegistryStub)
+        monkeypatch.setattr(app_module, "RagIndexWorker", RagIndexWorkerStub)
+
+        import agent.main as agent_main
+
+        client = TestClient(agent_main.app)
         response = client.get("/skills/data/dashboard/contract")
         assert response.status_code == 200
         payload = response.json()
@@ -955,11 +983,17 @@ def test_skill_contract_endpoint_reports_loaded_dashboard_policy(monkeypatch, tm
         assert payload["requiresHitlPlan"] is True
         assert "request_plan_approval" in payload["tools"]
     finally:
-        client.close()
-        sys.modules.pop("helpudoc_agent.graph", None)
+        if client is not None:
+            client.close()
+        sys.modules.pop("helpudoc_agent.runtime.agent_registry", None)
+        sys.modules.pop("helpudoc_agent.runtime", None)
         sys.modules.pop("helpudoc_agent.tools_and_schemas", None)
         for name, module in saved_modules.items():
             if module is not None:
                 sys.modules[name] = module
-            elif name not in ("helpudoc_agent.graph", "helpudoc_agent.tools_and_schemas"):
+            elif name not in (
+                "helpudoc_agent.runtime",
+                "helpudoc_agent.runtime.agent_registry",
+                "helpudoc_agent.tools_and_schemas",
+            ):
                 sys.modules.pop(name, None)

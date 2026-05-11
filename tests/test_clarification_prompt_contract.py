@@ -4,12 +4,12 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-GRAPH_FILE = REPO_ROOT / "agent" / "helpudoc_agent" / "graph.py"
+GENERAL_PROMPT_SOURCE = REPO_ROOT / "agent" / "helpudoc_agent" / "runtime" / "agent_registry.py"
 FRONTEND_SLIDES_SKILL = REPO_ROOT / "skills" / "frontend-slides" / "SKILL.md"
 
 
 def test_general_prompt_requires_structured_interrupts_for_skill_questions() -> None:
-    content = GRAPH_FILE.read_text(encoding="utf-8")
+    content = GENERAL_PROMPT_SOURCE.read_text(encoding="utf-8")
     assert "When a loaded skill says AskUserQuestion" in content
     assert "populate questions_json" in content
     assert "stop and wait for the resume payload" in content
