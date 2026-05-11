@@ -765,22 +765,22 @@ Move `graph.py` to runtime registry with compatibility shim.
 
 Split `agent/helpudoc_agent/app.py` into API modules.
 
-- [ ] Create `agent/helpudoc_agent/api/__init__.py`.
-- [ ] Create `agent/helpudoc_agent/api/app.py` and move `create_app`.
-- [ ] Keep `agent/helpudoc_agent/app.py` as a compatibility shim or thin wrapper.
-- [ ] Move Pydantic request/response models to `agent/helpudoc_agent/api/schemas.py`.
-- [ ] Move startup/shutdown setup to `agent/helpudoc_agent/api/lifecycle.py`.
-- [ ] Move internal analysis/memory routes to `agent/helpudoc_agent/api/routes/internal.py`.
-- [ ] Move RAG query/status routes to `agent/helpudoc_agent/api/routes/rag.py`.
-- [ ] Move Paper2Slides routes to `agent/helpudoc_agent/api/routes/paper2slides.py`.
-- [ ] Move attachment understanding route to `agent/helpudoc_agent/api/routes/attachments.py`.
-- [ ] Move chat/stream/resume/respond/act routes to `agent/helpudoc_agent/api/routes/chat.py`.
-- [ ] Move skill contract route to `agent/helpudoc_agent/api/routes/skills.py`.
-- [ ] Move health/diagnostics route to `agent/helpudoc_agent/api/routes/health.py`.
-- [ ] Update `agent/main.py` to import `create_app` from the new API package.
-- [ ] Update tests that import `helpudoc_agent.app`.
-- [ ] Run focused agent API tests.
-- [ ] Run `graphify update .`.
+- [x] Create `agent/helpudoc_agent/api/__init__.py`.
+- [x] Create `agent/helpudoc_agent/api/app.py` and move `create_app`.
+- [x] Keep `agent/helpudoc_agent/app.py` as a compatibility shim or thin wrapper.
+- [x] Move Pydantic request/response models to `agent/helpudoc_agent/api/schemas.py`.
+- [x] Move startup/shutdown setup to `agent/helpudoc_agent/api/lifecycle.py`.
+- [x] Move internal analysis/memory routes to `agent/helpudoc_agent/api/routes/internal.py`.
+- [x] Move RAG query/status routes to `agent/helpudoc_agent/api/routes/rag.py`.
+- [x] Move Paper2Slides routes to `agent/helpudoc_agent/api/routes/paper2slides.py`.
+- [x] Move attachment understanding route to `agent/helpudoc_agent/api/routes/attachments.py`.
+- [x] Move chat/stream/resume/respond/act routes to `agent/helpudoc_agent/api/routes/chat.py`.
+- [x] Move skill contract route to `agent/helpudoc_agent/api/routes/skills.py`.
+- [x] Move health/diagnostics route to `agent/helpudoc_agent/api/routes/health.py`.
+- [x] Update `agent/main.py` to import `create_app` from the new API package.
+- [x] Update tests that import `helpudoc_agent.app`.
+- [x] Run focused agent API tests.
+- [x] Run `graphify update .`.
 
 ### PR 7 - `shared-packages-split`
 

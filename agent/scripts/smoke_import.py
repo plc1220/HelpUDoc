@@ -23,7 +23,7 @@ def main() -> None:
     from langchain.agents import create_agent  # noqa: F401
     import deepagents  # noqa: F401
     from deepagents.backends import FilesystemBackend  # noqa: F401
-    from helpudoc_agent.app import create_app  # noqa: F401
+    from helpudoc_agent.api.app import create_app  # noqa: F401
 
     versions = {
         "deepagents": _version("deepagents"),
