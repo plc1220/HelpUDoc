@@ -882,4 +882,3 @@ def render_dashboard_html(
             "</html>",
         ]
     )
-

@@ -290,4 +290,3 @@ def render_summary_html(
             "</html>",
         ]
     )
-

@@ -119,4 +119,3 @@ def _cleanup_new_files(
                 path.unlink()
         except OSError:
             logger.warning("Failed to clean up artifact %s", path, exc_info=True)
-

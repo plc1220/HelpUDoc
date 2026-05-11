@@ -53,4 +53,3 @@ class DataAgentSessionState:
         self.materialization_history: List[_MaterializationRecord] = []
         self.run_artifacts: List[Dict[str, Any]] = []
         self.dashboard_dimension_signatures: Set[str] = set()
-

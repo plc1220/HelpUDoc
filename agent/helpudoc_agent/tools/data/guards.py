@@ -79,4 +79,3 @@ def _extract_dashboard_dimension_signature(query: str) -> Optional[str]:
     if not matched:
         return None
     return "|".join(sorted(set(matched)))
-

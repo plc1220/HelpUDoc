@@ -238,5 +238,3 @@ class DuckDBManager:
         if len(result) > MAX_SESSION_ROWS:
             return result.head(MAX_SESSION_ROWS).copy()
         return result.copy()
-
-

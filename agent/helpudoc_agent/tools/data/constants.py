@@ -73,4 +73,3 @@ _GENERIC_DASHBOARD_TITLE_TOKENS = {
     "browser/device segmentation",
     "country comparison",
 }
-

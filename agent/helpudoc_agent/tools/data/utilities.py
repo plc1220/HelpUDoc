@@ -112,4 +112,3 @@ def _coerce_bool_arg(value: Any, default: bool = False) -> bool:
         if normalized in {"0", "false", "no", "n", "off"}:
             return False
     return bool(default if value is None else value)
-

@@ -139,5 +139,3 @@ def _markdown_to_html(markdown_text: str) -> str:
         else:
             wrapped.append(f"<p>{stripped}</p>")
     return "\n".join(wrapped)
-
-

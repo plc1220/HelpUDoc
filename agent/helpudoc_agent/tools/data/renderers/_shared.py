@@ -25,4 +25,3 @@ def _render_metric_cards(cards: List[Dict[str, str]], heading: str) -> str:
         + "".join(card_html)
         + "</div></section>"
     )
-
