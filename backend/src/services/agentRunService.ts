@@ -4,6 +4,7 @@ import { redisClient } from './redisService';
 import { RunTelemetryService } from './runTelemetryService';
 import { UserMemoryService } from './userMemoryService';
 import type { SkillEvolutionService } from './skillEvolutionService';
+import type { ConversationService } from './conversationService';
 import {
   runAgentStream,
   resumeAgentStream,
@@ -16,7 +17,7 @@ import {
   type AgentInterruptResponse,
   type AgentHistoryEntry,
 } from './agentService';
-import type { FileContextRef } from '../../../packages/shared/src/types';
+import type { ConversationMessageMetadata, FileContextRef, ToolEvent, ToolOutputFile } from '../../../packages/shared/src/types';
 
 export type AgentRunStatus =
   | 'queued'
@@ -133,15 +134,26 @@ const runContexts = new Map<string, RunContext>();
 let runTelemetryService: RunTelemetryService | null = null;
 let userMemoryService: UserMemoryService | null = null;
 let skillEvolutionService: SkillEvolutionService | null = null;
+let conversationService: ConversationService | null = null;
 
 export function configureAgentRunServices(services: {
   telemetryService?: RunTelemetryService | null;
   userMemoryService?: UserMemoryService | null;
   skillEvolutionService?: SkillEvolutionService | null;
+  conversationService?: ConversationService | null;
 }) {
-  runTelemetryService = services.telemetryService || null;
-  userMemoryService = services.userMemoryService || null;
-  skillEvolutionService = services.skillEvolutionService || null;
+  if ('telemetryService' in services) {
+    runTelemetryService = services.telemetryService || null;
+  }
+  if ('userMemoryService' in services) {
+    userMemoryService = services.userMemoryService || null;
+  }
+  if ('skillEvolutionService' in services) {
+    skillEvolutionService = services.skillEvolutionService || null;
+  }
+  if ('conversationService' in services) {
+    conversationService = services.conversationService || null;
+  }
 }
 
 const buildStreamKey = (runId: string) => `agent:run:${runId}`;
@@ -298,6 +310,129 @@ const appendStreamEvent = async (runId: string, line: string) => {
   } catch (error) {
     console.error('[agent-run-stream] failed to append', { runId, streamKey, error });
     throw error;
+  }
+};
+
+type ConversationRunPolicy = NonNullable<ConversationMessageMetadata['runPolicy']>;
+
+type ConversationRunSnapshot = {
+  assistantText?: string;
+  thinkingText?: string;
+  toolEvents?: ToolEvent[];
+  runPolicy?: ConversationRunPolicy;
+  pendingInterrupt?: RunPendingInterrupt;
+  error?: string;
+};
+
+const coerceText = (value: unknown): string => {
+  if (typeof value === 'string') return value;
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
+    return String(value);
+  }
+  return '';
+};
+
+const normalizeToolFiles = (value: unknown): ToolOutputFile[] | undefined => {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const files = value
+    .map((item) => {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) {
+        return null;
+      }
+      const payload = item as Record<string, unknown>;
+      const path = coerceText(payload.path).trim();
+      if (!path) {
+        return null;
+      }
+      const file: ToolOutputFile = { path };
+      const mimeType = payload.mimeType;
+      if (typeof mimeType === 'string' || mimeType === null) {
+        file.mimeType = mimeType;
+      }
+      if (typeof payload.size === 'number' && Number.isFinite(payload.size) && payload.size >= 0) {
+        file.size = payload.size;
+      }
+      return file;
+    })
+    .filter((item): item is ToolOutputFile => item !== null);
+  return files.length ? files : undefined;
+};
+
+const buildTerminalConversationSummary = (status: AgentRunStatus, error?: string): string => {
+  if (status === 'completed') {
+    return 'Completed successfully.';
+  }
+  if (status === 'cancelled') {
+    return 'The run was stopped.';
+  }
+  if (status === 'failed') {
+    return error?.trim() ? `The run failed: ${error.trim()}` : 'The run failed.';
+  }
+  return '';
+};
+
+const persistRunConversationMessage = async (
+  runId: string,
+  params: StartRunParams,
+  status: Exclude<AgentRunStatus, 'queued'>,
+  snapshot: ConversationRunSnapshot = {},
+) => {
+  if (!conversationService || !params.userId || !params.conversationId || !params.turnId) {
+    return;
+  }
+
+  const assistantText = snapshot.assistantText?.trim() ? snapshot.assistantText : '';
+  const terminalSummary =
+    !assistantText && (status === 'completed' || status === 'failed' || status === 'cancelled')
+      ? buildTerminalConversationSummary(status, snapshot.error)
+      : '';
+  const text = assistantText || terminalSummary;
+  const metadata: ConversationMessageMetadata = {
+    runId,
+    status,
+  };
+
+  if (snapshot.thinkingText?.trim()) {
+    metadata.thinkingText = snapshot.thinkingText;
+  }
+  if (snapshot.toolEvents?.length) {
+    metadata.toolEvents = snapshot.toolEvents;
+  }
+  if (snapshot.runPolicy && Object.keys(snapshot.runPolicy).length) {
+    metadata.runPolicy = snapshot.runPolicy;
+  }
+  if (snapshot.pendingInterrupt) {
+    metadata.pendingInterrupt = snapshot.pendingInterrupt as ConversationMessageMetadata['pendingInterrupt'];
+  }
+  if (assistantText) {
+    metadata.bodySource = 'assistant';
+  } else if (terminalSummary) {
+    metadata.bodySource = 'summary';
+  }
+
+  try {
+    await conversationService.appendMessage(
+      params.userId,
+      params.conversationId,
+      'agent',
+      text,
+      {
+        turnId: params.turnId,
+        replaceExisting: true,
+        metadata: metadata as Record<string, unknown>,
+      },
+    );
+  } catch (error) {
+    console.error('Failed to persist agent run conversation message', {
+      runId,
+      conversationId: params.conversationId,
+      turnId: params.turnId,
+      status,
+      error,
+    });
   }
 };
 
@@ -615,6 +750,107 @@ async function runAgentRunWorker(
   let processingQueue: Promise<void> = Promise.resolve();
   let activeToolCalls = 0;
   let lastRealActivityAt = Date.now();
+  let assistantText = '';
+  let thinkingText = '';
+  let conversationRunPolicy: ConversationRunPolicy | undefined;
+  const toolEvents: ToolEvent[] = [];
+
+  const snapshotConversationRun = (overrides: Partial<ConversationRunSnapshot> = {}): ConversationRunSnapshot => ({
+    assistantText,
+    thinkingText,
+    toolEvents: toolEvents.length ? [...toolEvents] : undefined,
+    runPolicy: conversationRunPolicy,
+    ...overrides,
+  });
+
+  const updateConversationFromRun = (
+    status: Exclude<AgentRunStatus, 'queued'>,
+    overrides: Partial<ConversationRunSnapshot> = {},
+  ) => persistRunConversationMessage(runId, params, status, snapshotConversationRun(overrides));
+
+  const upsertToolEvent = (
+    parsed: Record<string, unknown>,
+    status: ToolEvent['status'],
+  ) => {
+    const name = coerceText(parsed.name || parsed.content).trim() || 'tool';
+    const now = new Date().toISOString();
+    const outputFiles = normalizeToolFiles(parsed.outputFiles);
+    const relatedFiles = normalizeToolFiles(parsed.relatedFiles);
+    const summary = coerceText(parsed.summary || parsed.content).trim();
+    const existingIndex =
+      status === 'running'
+        ? -1
+        : [...toolEvents]
+          .reverse()
+          .findIndex((event) => event.name === name && event.status === 'running');
+    const targetIndex = existingIndex >= 0 ? toolEvents.length - 1 - existingIndex : -1;
+
+    if (targetIndex >= 0) {
+      toolEvents[targetIndex] = {
+        ...toolEvents[targetIndex],
+        status,
+        summary: summary || toolEvents[targetIndex].summary,
+        finishedAt: status === 'running' ? undefined : now,
+        outputFiles: outputFiles || toolEvents[targetIndex].outputFiles,
+        relatedFiles: relatedFiles || toolEvents[targetIndex].relatedFiles,
+      };
+      return;
+    }
+
+    toolEvents.push({
+      id: coerceText(parsed.id).trim() || `tool-${toolEvents.length + 1}-${name.replace(/[^a-z0-9_-]+/gi, '-').slice(0, 40)}`,
+      name,
+      status,
+      startedAt: now,
+      finishedAt: status === 'running' ? undefined : now,
+      summary: summary || undefined,
+      outputFiles,
+      relatedFiles,
+    });
+  };
+
+  const captureConversationEvent = (parsed: Record<string, unknown> | null) => {
+    if (!parsed) {
+      return;
+    }
+    if ((parsed.type === 'token' || parsed.type === 'chunk') && (!parsed.role || parsed.role === 'assistant')) {
+      assistantText += coerceText(parsed.content);
+      return;
+    }
+    if (parsed.type === 'thought') {
+      const content = coerceText(parsed.content).trim();
+      if (content) {
+        thinkingText = thinkingText ? `${thinkingText}\n${content}` : content;
+      }
+      return;
+    }
+    if (parsed.type === 'policy') {
+      conversationRunPolicy = {
+        ...(typeof parsed.skill === 'string' && parsed.skill.trim() ? { skill: parsed.skill.trim() } : {}),
+        ...(typeof parsed.requiresHitlPlan === 'boolean' ? { requiresHitlPlan: parsed.requiresHitlPlan } : {}),
+        ...(typeof parsed.requiresArtifacts === 'boolean' ? { requiresArtifacts: parsed.requiresArtifacts } : {}),
+        ...(typeof parsed.requiredArtifactsMode === 'string' && parsed.requiredArtifactsMode.trim()
+          ? { requiredArtifactsMode: parsed.requiredArtifactsMode.trim() }
+          : {}),
+        ...(typeof parsed.prePlanSearchLimit === 'number' ? { prePlanSearchLimit: parsed.prePlanSearchLimit } : {}),
+        ...(typeof parsed.prePlanSearchUsed === 'number' ? { prePlanSearchUsed: parsed.prePlanSearchUsed } : {}),
+      };
+      return;
+    }
+    if (parsed.type === 'tool_start') {
+      upsertToolEvent(parsed, 'running');
+      return;
+    }
+    if (parsed.type === 'tool_end') {
+      upsertToolEvent(parsed, 'completed');
+      return;
+    }
+    if (parsed.type === 'tool_error') {
+      upsertToolEvent(parsed, 'error');
+    }
+  };
+
+  await updateConversationFromRun('running');
 
   const failIfResumedRunIsIdle = async () => {
     if (stallErrorMessage || settled) {
@@ -642,6 +878,7 @@ async function runAgentRunWorker(
       return;
     }
     settled = true;
+    await updateConversationFromRun(status === 'queued' ? 'running' : status, { error });
     await markRunFinished(runId, status, error);
     if (runTelemetryService) {
       await runTelemetryService.finalizeRun(runId, {
@@ -696,6 +933,8 @@ async function runAgentRunWorker(
   };
 
   const stopAtInterrupt = async (parsed: Record<string, unknown>) => {
+    const normalizedInterrupt = normalizeInterruptPayloadRecord(parsed);
+    const pendingInterrupt = parsePendingInterrupt(JSON.stringify(normalizedInterrupt));
     if (runTelemetryService) {
       await runTelemetryService.finalizeRun(runId, {
         status: 'awaiting_approval',
@@ -712,6 +951,7 @@ async function runAgentRunWorker(
         },
       });
     }
+    await updateConversationFromRun('awaiting_approval', { pendingInterrupt });
     await persistInterruptAndStopRun(
       runId,
       parsed,
@@ -746,6 +986,7 @@ async function runAgentRunWorker(
         buffer = buffer.slice(newlineIndex + 1);
         if (line) {
           const parsed = parseLine(line);
+          captureConversationEvent(parsed);
           if (isRealRunProgressEvent(parsed)) {
             lastRealActivityAt = Date.now();
           }
@@ -863,6 +1104,7 @@ async function runAgentRunWorker(
       .filter((line) => line.length > 0);
     for (const line of lines) {
       const parsed = parseLine(line);
+      captureConversationEvent(parsed);
       if (isRealRunProgressEvent(parsed)) {
         lastRealActivityAt = Date.now();
       }
@@ -1136,6 +1378,10 @@ export async function cancelAgentRun(runId: string) {
   const controller = runAbortControllers.get(runId);
   if (controller && !controller.signal.aborted) {
     controller.abort();
+  }
+  const context = await loadRunContext(runId);
+  if (context?.params) {
+    await persistRunConversationMessage(runId, context.params, 'cancelled');
   }
   await markRunFinished(runId, 'cancelled');
 }

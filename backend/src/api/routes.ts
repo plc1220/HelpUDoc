@@ -28,6 +28,7 @@ import { GoogleOAuthService } from '../services/googleOAuthService';
 import { DerivedArtifactService } from '../services/derivedArtifactService';
 import { GoogleDriveService } from '../services/googleDriveService';
 import { AttachmentPrepJobService } from '../services/attachmentPrepJobService';
+import { configureAgentRunServices } from '../services/agentRunService';
 
 export default function(dbService: DatabaseService, userService: UserService) {
   const router = Router();
@@ -38,6 +39,7 @@ export default function(dbService: DatabaseService, userService: UserService) {
   derivedArtifactService.logDiagnostics();
   fileService.setDerivedArtifactCleanup(derivedArtifactService);
   const conversationService = new ConversationService(dbService, workspaceService);
+  configureAgentRunServices({ conversationService });
   const knowledgeService = new KnowledgeService(dbService, workspaceService);
   const userOAuthTokenService = new UserOAuthTokenService(dbService);
   const googleOAuthService = new GoogleOAuthService(userOAuthTokenService);

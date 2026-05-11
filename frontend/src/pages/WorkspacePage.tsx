@@ -2674,38 +2674,8 @@ export default function WorkspacePage() {
     registerActiveRun(runInfo);
     setConversationAttention(conversationId, 'running', 'Queued the latest run...');
     await streamRunForConversation(runInfo, true);
-
-    const messagesSnapshot = getConversationMessagesSnapshot(conversationId);
-    const targetIndex = messagesSnapshot.findIndex((message) => message.id === placeholderId);
-    const agentMessage = targetIndex >= 0 ? messagesSnapshot[targetIndex] : null;
-    const metadata = buildMessageMetadata(agentMessage) || {};
-    const bufferedText =
-      placeholderId !== null && placeholderId !== undefined
-        ? agentMessageBufferRef.current.get(placeholderId) ?? agentMessage?.text
-        : agentMessage?.text;
-    const placeholderTurnId = agentMessage?.turnId || turnId;
-    if (bufferedText) {
-      try {
-        const persisted = await appendConversationMessage(conversationId, 'agent', bufferedText, {
-          turnId: placeholderTurnId,
-          metadata: { ...metadata, runId },
-          replaceExisting: true,
-        });
-        upsertPersistedAgentMessage(conversationId, persisted, {
-          placeholderId,
-          existing: agentMessage,
-        });
-        if (placeholderId !== null && placeholderId !== undefined) {
-          agentMessageBufferRef.current.delete(placeholderId);
-        }
-        agentMessageBufferRef.current.set(persisted.id, persisted.text || '');
-        await refreshConversationHistory(workspaceId);
-      } catch (error) {
-        console.error('Failed to store agent message', error);
-      }
-    } else if (placeholderId !== null && placeholderId !== undefined) {
-      agentMessageBufferRef.current.delete(placeholderId);
-    }
+    agentMessageBufferRef.current.delete(placeholderId);
+    await refreshConversationHistory(workspaceId);
   }
 
   useEffect(() => {
@@ -3649,6 +3619,9 @@ export default function WorkspacePage() {
       const message = findAgentMessageForRun(conversationId, placeholderId, turnId);
       const bufferedState = getBufferedAgentState(runInfo);
       const nextStatus = statusOverride || message?.metadata?.status || runInfo.status || 'running';
+      if (nextStatus === 'completed' || nextStatus === 'failed' || nextStatus === 'cancelled') {
+        return;
+      }
       const assistantText = bufferedState.text;
       const summaryText =
         !assistantText.trim() && isTerminalRunStatus(nextStatus)
@@ -5407,38 +5380,8 @@ export default function WorkspacePage() {
       registerActiveRun(runInfo);
       setConversationAttention(conversationId, 'running', 'Queued the latest run...');
       await streamRunForConversation(runInfo, true);
-
-      const messagesSnapshot = getConversationMessagesSnapshot(conversationId);
-      const targetIndex = messagesSnapshot.findIndex((message) => message.id === placeholderId);
-      const agentMessage = targetIndex >= 0 ? messagesSnapshot[targetIndex] : null;
-      const metadata = buildMessageMetadata(agentMessage) || {};
-      const bufferedText =
-        placeholderId !== null && placeholderId !== undefined
-          ? agentMessageBufferRef.current.get(placeholderId) ?? agentMessage?.text
-          : agentMessage?.text;
-      const placeholderTurnId = agentMessage?.turnId || targetTurnId;
-      if (bufferedText) {
-        try {
-          const persisted = await appendConversationMessage(conversationId, 'agent', bufferedText, {
-            turnId: placeholderTurnId,
-            replaceExisting: true,
-            metadata: { ...metadata, runId },
-          });
-          upsertPersistedAgentMessage(conversationId, persisted, {
-            placeholderId,
-            existing: agentMessage,
-          });
-          if (placeholderId !== null && placeholderId !== undefined) {
-            agentMessageBufferRef.current.delete(placeholderId);
-          }
-          agentMessageBufferRef.current.set(persisted.id, persisted.text || '');
-          await refreshConversationHistory(selectedWorkspace.id);
-        } catch (error) {
-          console.error('Failed to store rerun agent message', error);
-        }
-      } else if (placeholderId !== null && placeholderId !== undefined) {
-        agentMessageBufferRef.current.delete(placeholderId);
-      }
+      agentMessageBufferRef.current.delete(placeholderId);
+      await refreshConversationHistory(selectedWorkspace.id);
     } catch (error) {
       console.error('Failed to rerun agent response', error);
       addLocalSystemMessage('Rerun failed. Please try again.');
