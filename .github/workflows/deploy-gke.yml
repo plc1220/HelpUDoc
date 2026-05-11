@@ -554,7 +554,7 @@ jobs:
         run: |
           set -euo pipefail
           POD="helpudoc-smoke-${{ github.run_id }}-${{ github.run_attempt }}"
-          kubectl -n helpudoc run "${POD}" --rm --restart=Never --image=curlimages/curl:8.5.0 -- \
+          kubectl -n helpudoc run "${POD}" --rm --attach=true --restart=Never --image=curlimages/curl:8.5.0 -- \
             sh -ec 'curl -fsS "http://backend.helpudoc.svc.cluster.local:3000/api/health"; curl -fsS "http://helpudoc-frontend.helpudoc.svc.cluster.local/" >/dev/null'
 
       - name: Post-deploy smoke (agent sidecar)
