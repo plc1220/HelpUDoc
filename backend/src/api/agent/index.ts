@@ -1,22 +1,19 @@
 import { Router, Request, Response } from 'express';
-import crypto from 'crypto';
 import path from 'path';
 import { promises as fs } from 'fs';
-import { existsSync } from 'fs';
 import { z } from 'zod';
-import { parse as parseYaml } from 'yaml';
-import { runAgent, runAgentStream, type AgentMessageContentBlock } from '../services/agentService';
-import { WorkspaceService } from '../services/workspaceService';
-import { FileService } from '../services/fileService';
-import { HttpError } from '../errors';
+import { runAgent, runAgentStream, type AgentMessageContentBlock } from '../../services/agentService';
+import { WorkspaceService } from '../../services/workspaceService';
+import { FileService } from '../../services/fileService';
+import { HttpError } from '../../errors';
 import {
   buildPresentationHtmlPrompt,
   extractHtmlFromAgentResponse,
   renderFallbackPresentation,
-} from '../services/presentationService';
-import { Paper2SlidesService } from '../services/paper2SlidesService';
-import { Paper2SlidesJobService } from '../services/paper2SlidesJobService';
-import type { PresentationSourceFile } from '../types/presentation';
+} from '../../services/presentationService';
+import { Paper2SlidesService } from '../../services/paper2SlidesService';
+import { Paper2SlidesJobService } from '../../services/paper2SlidesJobService';
+import type { PresentationSourceFile } from '../../types/presentation';
 import {
   cancelAgentRun,
   getRunMeta,
@@ -25,69 +22,21 @@ import {
   resumeAgentRunWithAction,
   resumeAgentRunWithResponse,
   startAgentRun,
-} from '../services/agentRunService';
-import { blockingRedisClient } from '../services/redisService';
-import { signAgentContextToken } from '../services/agentToken';
-import { GoogleOAuthService, GoogleOAuthTokenMissingError } from '../services/googleOAuthService';
-import { UserService } from '../services/userService';
-import { ConversationService } from '../services/conversationService';
+} from '../../services/agentRunService';
+import { blockingRedisClient } from '../../services/redisService';
+import { GoogleOAuthService } from '../../services/googleOAuthService';
+import { UserService } from '../../services/userService';
+import { ConversationService } from '../../services/conversationService';
+import { skillsRoot } from '../../services/skills/constants';
+import { collectSkillIds } from '../../services/skills/registry';
+import { getSkillMetadata } from '../../services/skills/metadata';
+import { createAgentPolicyApi, loadRuntimeMcpServers } from './policy';
 
 const DEFAULT_PRESENTATION_PERSONA = 'fast';
 const IMAGE_NAME_PATTERN = /\.(png|jpe?g|gif|bmp|webp|svg)$/i;
 const DEBUG_AGENT_RUN_STREAM =
   process.env.DEBUG_AGENT_RUN_STREAM === '1' || process.env.DEBUG_AGENT_RUN_STREAM === 'true';
-const AUTH_MODE = (process.env.AUTH_MODE || 'headers').trim().toLowerCase();
-const ENABLE_SKILL_SANDBOX_RUNNER =
-  String(process.env.ENABLE_SKILL_SANDBOX_RUNNER ?? 'false').toLowerCase() === 'true';
-const BQ_DELEGATED_MCP_SERVER_ID = 'toolbox-bq-demo';
 const DEFAULT_CURRENT_TURN_MULTIMODAL_MAX_BYTES = 8 * 1024 * 1024;
-const repoRoot = path.resolve(__dirname, '../../..');
-const skillsRoot = process.env.SKILLS_ROOT || path.join(repoRoot, 'skills');
-const resolveRepoRelativePath = (value?: string | null): string | undefined => {
-  const trimmed = value?.trim();
-  if (!trimmed) {
-    return undefined;
-  }
-  return path.isAbsolute(trimmed) ? trimmed : path.resolve(repoRoot, trimmed);
-};
-const defaultAgentConfigDir = existsSync('/agent/config')
-  ? '/agent/config'
-  : path.join(repoRoot, 'agent', 'config');
-const agentConfigPath = resolveRepoRelativePath(process.env.AGENT_CONFIG_PATH)
-  || path.join(resolveRepoRelativePath(process.env.AGENT_CONFIG_DIR) || defaultAgentConfigDir, 'runtime.yaml');
-const repoAgentConfigPath = path.join(repoRoot, 'agent', 'config', 'runtime.yaml');
-
-type RuntimeConfigShape = {
-  mcp_servers?: RuntimeMcpServerConfig[];
-  [key: string]: unknown;
-};
-
-type RuntimeMcpServerConfig = {
-  name: string;
-  transport?: string;
-  default_access?: string;
-  defaultAccess?: string;
-  delegated_auth_provider?: string;
-  delegatedAuthProvider?: string;
-};
-
-type SlashSkillMetadata = {
-  id: string;
-  name: string;
-  description?: string;
-  valid: boolean;
-  error?: string;
-  warning?: string;
-};
-
-type EffectiveAgentPolicy = {
-  isAdmin: boolean;
-  skillAllowIds: string[];
-  mcpServerAllowIds: string[];
-  mcpServerDenyIds: string[];
-};
-
-const normalizeUniqueIds = (values: string[]) => Array.from(new Set(values.map((value) => value.trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b));
 
 const resolveCurrentTurnMultimodalMaxBytes = (): number => {
   const raw = Number(process.env.CURRENT_TURN_MULTIMODAL_MAX_BYTES || DEFAULT_CURRENT_TURN_MULTIMODAL_MAX_BYTES);
@@ -96,56 +45,13 @@ const resolveCurrentTurnMultimodalMaxBytes = (): number => {
 
 const CURRENT_TURN_MULTIMODAL_MAX_BYTES = resolveCurrentTurnMultimodalMaxBytes();
 
-const extractFrontmatterString = (frontmatter: Record<string, unknown>, key: string): string | undefined => {
-  const value = frontmatter[key];
-  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
-};
-
-const parseSkillFrontmatter = (content: string): Record<string, unknown> => {
-  if (!content.startsWith('---')) {
-    return {};
-  }
-  const closingIndex = content.indexOf('\n---', 3);
-  if (closingIndex < 0) {
-    return {};
-  }
-  const frontmatter = content.slice(3, closingIndex).trim();
-  const parsed = parseYaml(frontmatter);
-  return parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : {};
-};
-
-const collectSkillIds = async (rootDir: string, relativeDir = ''): Promise<string[]> => {
-  const entries = await fs.readdir(path.join(rootDir, relativeDir), { withFileTypes: true });
-  const results: string[] = [];
-
-  for (const entry of entries) {
-    if (!entry.isDirectory()) {
-      continue;
-    }
-    const relPath = path.join(relativeDir, entry.name);
-    const skillFile = path.join(rootDir, relPath, 'SKILL.md');
-    if (existsSync(skillFile)) {
-      results.push(relPath.replace(/\\/g, '/'));
-    }
-    const nested = await collectSkillIds(rootDir, relPath);
-    results.push(...nested);
-  }
-
-  return Array.from(new Set(results)).sort((a, b) => a.localeCompare(b));
-};
-
-const getSkillMetadata = async (skillId: string): Promise<SlashSkillMetadata> => {
-  const skillPath = path.join(skillsRoot, skillId, 'SKILL.md');
-  const content = await fs.readFile(skillPath, 'utf-8');
-  const frontmatter = parseSkillFrontmatter(content);
-  const description = extractFrontmatterString(frontmatter, 'description');
-  const name = extractFrontmatterString(frontmatter, 'name') || skillId;
-  return {
-    id: skillId,
-    name,
-    description,
-    valid: true,
-  };
+type SlashSkillMetadata = {
+  id: string;
+  name: string;
+  description?: string;
+  valid: boolean;
+  error?: string;
+  warning?: string;
 };
 
 const extractTextFromAgentReply = (reply: unknown): string => {
@@ -177,60 +83,6 @@ const extractTextFromAgentReply = (reply: unknown): string => {
     return JSON.stringify(reply);
   } catch {
     return String(reply);
-  }
-};
-
-const normalizeDelegatedAuthProvider = (value: unknown): string | null => {
-  if (typeof value !== 'string') {
-    return null;
-  }
-  const normalized = value.trim().toLowerCase();
-  return normalized || null;
-};
-
-const normalizeDefaultAccess = (value: unknown): 'allow' | 'deny' => {
-  const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
-  return normalized === 'deny' ? 'deny' : 'allow';
-};
-
-const mergeRuntimeMcpServers = (
-  baseEntries: unknown,
-  overrideEntries: unknown,
-): RuntimeMcpServerConfig[] => {
-  const merged = new Map<string, RuntimeMcpServerConfig>();
-  for (const source of [baseEntries, overrideEntries]) {
-    if (!Array.isArray(source)) continue;
-    for (const entry of source) {
-      if (!entry || typeof entry !== 'object' || typeof (entry as any).name !== 'string') continue;
-      const name = (entry as any).name;
-      merged.set(name, { ...(merged.get(name) || {}), ...(entry as RuntimeMcpServerConfig) });
-    }
-  }
-  return Array.from(merged.values());
-};
-
-const loadRuntimeMcpServers = async (): Promise<RuntimeMcpServerConfig[]> => {
-  try {
-    const [baseContent, liveContent] = await Promise.all([
-      fs.readFile(repoAgentConfigPath, 'utf-8').catch(() => ''),
-      fs.readFile(agentConfigPath, 'utf-8'),
-    ]);
-    const baseParsed = (parseYaml(baseContent) as RuntimeConfigShape | null) || {};
-    const liveParsed = (parseYaml(liveContent) as RuntimeConfigShape | null) || {};
-    return mergeRuntimeMcpServers(baseParsed.mcp_servers, liveParsed.mcp_servers)
-      .filter((entry): entry is RuntimeMcpServerConfig => Boolean(entry && typeof entry === 'object' && (entry as any).name));
-  } catch (error: any) {
-    if (error?.code !== 'ENOENT') {
-      console.warn('Failed to read runtime MCP config; falling back to BigQuery delegated MCP server only', error);
-    }
-    return [
-      {
-        name: BQ_DELEGATED_MCP_SERVER_ID,
-        transport: 'http',
-        delegated_auth_provider: 'google',
-        default_access: 'allow',
-      },
-    ];
   }
 };
 
@@ -322,6 +174,8 @@ export default function(
     return req.userContext;
   };
 
+  const policyApi = createAgentPolicyApi(googleOAuthService, userService);
+
   router.get('/slash-metadata', async (req, res) => {
     try {
       const user = requireUserContext(req);
@@ -338,7 +192,7 @@ export default function(
           continue;
         }
         try {
-          skills.push(await getSkillMetadata(skillId));
+          skills.push(await getSkillMetadata(skillId) as SlashSkillMetadata);
         } catch (error) {
           const message = error instanceof Error ? error.message : 'Failed to read skill';
           skills.push({
@@ -368,174 +222,6 @@ export default function(
       return res.status(500).json({ error: 'Failed to load slash metadata' });
     }
   });
-
-  const getAllowedDelegatedGoogleServerIds = async (policy: {
-    isAdmin: boolean;
-    mcpServerAllowIds: string[];
-    mcpServerDenyIds: string[];
-  }): Promise<string[]> => {
-    const configuredServers = await loadRuntimeMcpServers();
-    const allowIds = new Set(policy.mcpServerAllowIds || []);
-    const denyIds = new Set(policy.mcpServerDenyIds || []);
-
-    return configuredServers
-      .filter((server) => {
-        const serverId = typeof server.name === 'string' ? server.name.trim() : '';
-        if (!serverId) {
-          return false;
-        }
-        const transport = typeof server.transport === 'string' ? server.transport.trim().toLowerCase() : '';
-        if (transport !== 'http') {
-          return false;
-        }
-        if (normalizeDelegatedAuthProvider(server.delegated_auth_provider ?? server.delegatedAuthProvider) !== 'google') {
-          return false;
-        }
-        if (policy.isAdmin) {
-          return true;
-        }
-        if (denyIds.has(serverId)) {
-          return false;
-        }
-        if (normalizeDefaultAccess(server.default_access ?? server.defaultAccess) === 'deny' && !allowIds.has(serverId)) {
-          return false;
-        }
-        return true;
-      })
-      .map((server) => server.name.trim())
-      .sort();
-  };
-
-  const buildMcpAuthFingerprint = (
-    provider: string,
-    serverIds: string[],
-    bearerToken: string,
-    expiresAt: number,
-  ): string => {
-    const tokenHash = crypto.createHash('sha256').update(bearerToken).digest('hex');
-    const expBucket = Math.floor(expiresAt / 60);
-    return crypto
-      .createHash('sha256')
-      .update(`${provider}|${serverIds.join(',')}|${expBucket}|${tokenHash}`)
-      .digest('hex');
-  };
-
-  const buildAgentAuthToken = async (input: {
-    userId: string;
-    workspaceId: string;
-    policy: EffectiveAgentPolicy;
-    skipPlanApprovals?: boolean;
-  }): Promise<string | null> => {
-    const payload: Record<string, unknown> = {
-      sub: input.userId,
-      userId: input.userId,
-      workspaceId: input.workspaceId,
-      skipPlanApprovals: Boolean(input.skipPlanApprovals),
-      ...input.policy,
-    };
-    if (ENABLE_SKILL_SANDBOX_RUNNER) {
-      payload.allowSkillSandbox = true;
-    }
-
-    if (AUTH_MODE !== 'headers') {
-      try {
-        const delegatedServerIds = await getAllowedDelegatedGoogleServerIds(input.policy);
-        if (!delegatedServerIds.length) {
-          return signAgentContextToken(payload);
-        }
-        const delegated = await googleOAuthService.getDelegatedAccessToken(input.userId);
-        const authorization = `Bearer ${delegated.accessToken}`;
-        const fingerprint = buildMcpAuthFingerprint(
-          'google',
-          delegatedServerIds,
-          delegated.accessToken,
-          delegated.expiresAt,
-        );
-        payload.mcpAuth = Object.fromEntries(
-          delegatedServerIds.map((serverId) => [
-            serverId,
-            {
-              Authorization: authorization,
-            },
-          ]),
-        );
-        payload.mcpAuthFingerprint = fingerprint;
-        console.info('[mcp-auth]', {
-          userId: input.userId,
-          workspaceId: input.workspaceId,
-          provider: 'google',
-          serverIds: delegatedServerIds,
-          tokenSource: delegated.source,
-          expBucket: Math.floor(delegated.expiresAt / 60),
-        });
-      } catch (error) {
-        if (error instanceof GoogleOAuthTokenMissingError) {
-          throw new HttpError(
-            403,
-            'Google access for MCP tools is not connected or is missing required permissions. Please sign in with Google again.',
-          );
-        }
-        throw error;
-      }
-    }
-
-    return signAgentContextToken(payload);
-  };
-
-  const resolveEffectiveAgentPolicy = async (
-    userId: string,
-    workspacePolicy: {
-      mcpServerAllowIds: string[];
-      mcpServerDenyIds: string[];
-    },
-  ): Promise<EffectiveAgentPolicy> => {
-    const promptAccess = await userService.getEffectivePromptAccess(userId);
-    if (!promptAccess) {
-      throw new HttpError(401, 'User not found');
-    }
-    if (promptAccess.isAdmin) {
-      return {
-        isAdmin: true,
-        skillAllowIds: [],
-        mcpServerAllowIds: [],
-        mcpServerDenyIds: [],
-      };
-    }
-
-    const configuredServers = await loadRuntimeMcpServers();
-    const groupAllowedServerIds = new Set(promptAccess.mcpServerIds);
-    const workspaceAllowIds = new Set(normalizeUniqueIds(workspacePolicy.mcpServerAllowIds || []));
-    const workspaceDenyIds = new Set(normalizeUniqueIds(workspacePolicy.mcpServerDenyIds || []));
-    const finalAllowIds = new Set<string>();
-    const finalDenyIds = new Set<string>(workspaceDenyIds);
-
-    configuredServers.forEach((server) => {
-      const serverId = typeof server.name === 'string' ? server.name.trim() : '';
-      if (!serverId) {
-        return;
-      }
-      if (!groupAllowedServerIds.has(serverId)) {
-        finalDenyIds.add(serverId);
-        return;
-      }
-      if (workspaceDenyIds.has(serverId)) {
-        finalDenyIds.add(serverId);
-        return;
-      }
-      if (normalizeDefaultAccess(server.default_access ?? server.defaultAccess) === 'deny' && !workspaceAllowIds.has(serverId)) {
-        finalDenyIds.add(serverId);
-        return;
-      }
-      finalAllowIds.add(serverId);
-    });
-
-    return {
-      isAdmin: false,
-      skillAllowIds: normalizeUniqueIds(promptAccess.skillIds),
-      mcpServerAllowIds: Array.from(finalAllowIds).sort((a, b) => a.localeCompare(b)),
-      mcpServerDenyIds: Array.from(finalDenyIds).sort((a, b) => a.localeCompare(b)),
-    };
-  };
 
   router.post('/paper2slides/jobs', async (req, res) => {
     try {
@@ -766,10 +452,10 @@ export default function(
       const user = requireUserContext(req);
       const { persona, prompt, workspaceId, history, forceReset, taggedFiles, currentTurnFileIds, internetSearchEnabled, fileContextRefs } = runAgentSchema.parse(req.body);
       const workspacePolicy = await workspaceService.getMcpServerPolicy(workspaceId, user.userId, { requireEdit: true });
-      const policy = await resolveEffectiveAgentPolicy(user.userId, workspacePolicy);
+      const policy = await policyApi.resolveEffectiveAgentPolicy(user.userId, workspacePolicy);
       const settings = await workspaceService.getWorkspaceSettings(workspaceId, user.userId, { requireEdit: true });
       const enrichedPrompt = await injectTaggedFileUrls(prompt, workspaceId, user.userId, taggedFiles);
-      const authToken = await buildAgentAuthToken({
+      const authToken = await policyApi.buildAgentAuthToken({
         userId: user.userId,
         workspaceId,
         policy,
@@ -824,10 +510,10 @@ export default function(
       const user = requireUserContext(req);
       const { persona, prompt, workspaceId, history, forceReset, taggedFiles, currentTurnFileIds, internetSearchEnabled, fileContextRefs } = runAgentSchema.parse(req.body);
       const workspacePolicy = await workspaceService.getMcpServerPolicy(workspaceId, user.userId, { requireEdit: true });
-      const policy = await resolveEffectiveAgentPolicy(user.userId, workspacePolicy);
+      const policy = await policyApi.resolveEffectiveAgentPolicy(user.userId, workspacePolicy);
       const settings = await workspaceService.getWorkspaceSettings(workspaceId, user.userId, { requireEdit: true });
       const enrichedPrompt = await injectTaggedFileUrls(prompt, workspaceId, user.userId, taggedFiles);
-      const authToken = await buildAgentAuthToken({
+      const authToken = await policyApi.buildAgentAuthToken({
         userId: user.userId,
         workspaceId,
         policy,
@@ -894,10 +580,10 @@ export default function(
         await conversationService.ensureConversationAccess(user.userId, workspaceId, conversationId, { requireEdit: true });
       }
       const workspacePolicy = await workspaceService.getMcpServerPolicy(workspaceId, user.userId, { requireEdit: true });
-      const policy = await resolveEffectiveAgentPolicy(user.userId, workspacePolicy);
+      const policy = await policyApi.resolveEffectiveAgentPolicy(user.userId, workspacePolicy);
       const settings = await workspaceService.getWorkspaceSettings(workspaceId, user.userId, { requireEdit: true });
       const enrichedPrompt = await injectTaggedFileUrls(prompt, workspaceId, user.userId, taggedFiles);
-      const authToken = await buildAgentAuthToken({
+      const authToken = await policyApi.buildAgentAuthToken({
         userId: user.userId,
         workspaceId,
         policy,
@@ -966,9 +652,9 @@ export default function(
       }
       await workspaceService.ensureMembership(meta.workspaceId, user.userId, { requireEdit: true });
       const workspacePolicy = await workspaceService.getMcpServerPolicy(meta.workspaceId, user.userId, { requireEdit: true });
-      const policy = await resolveEffectiveAgentPolicy(user.userId, workspacePolicy);
+      const policy = await policyApi.resolveEffectiveAgentPolicy(user.userId, workspacePolicy);
       const settings = await workspaceService.getWorkspaceSettings(meta.workspaceId, user.userId, { requireEdit: true });
-      const authToken = await buildAgentAuthToken({
+      const authToken = await policyApi.buildAgentAuthToken({
         userId: user.userId,
         workspaceId: meta.workspaceId,
         policy,
@@ -1023,9 +709,9 @@ export default function(
       }
       await workspaceService.ensureMembership(meta.workspaceId, user.userId, { requireEdit: true });
       const workspacePolicy = await workspaceService.getMcpServerPolicy(meta.workspaceId, user.userId, { requireEdit: true });
-      const policy = await resolveEffectiveAgentPolicy(user.userId, workspacePolicy);
+      const policy = await policyApi.resolveEffectiveAgentPolicy(user.userId, workspacePolicy);
       const settings = await workspaceService.getWorkspaceSettings(meta.workspaceId, user.userId, { requireEdit: true });
-      const authToken = await buildAgentAuthToken({
+      const authToken = await policyApi.buildAgentAuthToken({
         userId: user.userId,
         workspaceId: meta.workspaceId,
         policy,
@@ -1075,9 +761,9 @@ export default function(
       }
       await workspaceService.ensureMembership(meta.workspaceId, user.userId, { requireEdit: true });
       const workspacePolicy = await workspaceService.getMcpServerPolicy(meta.workspaceId, user.userId, { requireEdit: true });
-      const policy = await resolveEffectiveAgentPolicy(user.userId, workspacePolicy);
+      const policy = await policyApi.resolveEffectiveAgentPolicy(user.userId, workspacePolicy);
       const settings = await workspaceService.getWorkspaceSettings(meta.workspaceId, user.userId, { requireEdit: true });
-      const authToken = await buildAgentAuthToken({
+      const authToken = await policyApi.buildAgentAuthToken({
         userId: user.userId,
         workspaceId: meta.workspaceId,
         policy,

@@ -6,25 +6,36 @@ import { promises as fs } from 'fs';
 import crypto from 'crypto';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import { existsSync } from 'fs';
-import type { WorkspaceService } from '../services/workspaceService';
-import type { DatabaseService } from '../services/databaseService';
-import type { UserService } from '../services/userService';
-import { buildWorkspaceOverview } from '../services/workspaceOverviewService';
-import { fetchLangfuseAggregates } from '../services/langfuseClient';
-import { collectSkillIds } from '../lib/skillsRegistry';
-import { HttpError } from '../errors';
-import { resolveWorkspaceRoot } from '../config/workspaceRoot';
+import type { WorkspaceService } from '../../services/workspaceService';
+import type { DatabaseService } from '../../services/databaseService';
+import type { UserService } from '../../services/userService';
+import { buildWorkspaceOverview } from '../../services/workspaceOverviewService';
+import { fetchLangfuseAggregates } from '../../services/langfuseClient';
+import { HttpError } from '../../errors';
+import { resolveWorkspaceRoot } from '../../config/workspaceRoot';
 import {
   cancelAgentRun,
   getRunMeta,
   getRunStreamKey,
   resumeAgentRun,
   startAgentRun,
-} from '../services/agentRunService';
-import { blockingRedisClient } from '../services/redisService';
-import { signAgentContextToken } from '../services/agentToken';
+} from '../../services/agentRunService';
+import { blockingRedisClient } from '../../services/redisService';
+import { signAgentContextToken } from '../../services/agentToken';
+import { skillsRoot } from '../../services/skills/constants';
+import { collectSkillIds, pathExists } from '../../services/skills/registry';
+import {
+  ACTION_ALLOWED_PREFIXES,
+  IMPORT_ALLOWED_PREFIXES,
+  IMPORT_BLOCKED_EXTENSIONS,
+  resolveSkillDir,
+  resolveSkillFile,
+  isAllowedActionPath,
+  isValidSkillId,
+} from '../../services/skills/paths';
+import { getSkillMetadata, type SkillMetadata } from '../../services/skills/metadata';
 
-const repoRoot = path.resolve(__dirname, '../../..');
+const repoRoot = path.resolve(__dirname, '../../../../');
 const workspaceRoot = resolveWorkspaceRoot();
 const resolveRepoRelativePath = (value?: string | null): string | undefined => {
   const trimmed = value?.trim();
@@ -43,7 +54,6 @@ const defaultAgentConfigDir = existsSync('/agent/config')
 const agentConfigPath = resolveRepoRelativePath(process.env.AGENT_CONFIG_PATH)
   || path.join(resolveRepoRelativePath(process.env.AGENT_CONFIG_DIR) || defaultAgentConfigDir, 'runtime.yaml');
 const repoAgentConfigPath = path.join(repoRoot, 'agent', 'config', 'runtime.yaml');
-const skillsRoot = process.env.SKILLS_ROOT || path.join(repoRoot, 'skills');
 
 const skillBuilderStorageRoot = path.join(repoRoot, '.local-run', 'skill-builder');
 const contextFilesRoot = path.join(skillBuilderStorageRoot, 'context-files');
@@ -58,22 +68,7 @@ const CONTEXT_ALLOWED_EXTENSIONS = [
 ];
 const CONTEXT_MAX_FILE_SIZE = 20 * 1024 * 1024;
 
-const ACTION_ALLOWED_PREFIXES = ['SKILL.md', 'scripts/', 'references/', 'assets/', 'templates/'];
-const IMPORT_ALLOWED_PREFIXES = ['SKILL.md', 'scripts/', 'references/', 'assets/', 'templates/', 'docs/', 'examples/'];
-const IMPORT_BLOCKED_EXTENSIONS = new Set(['.exe', '.dll', '.so', '.dylib', '.bat', '.cmd', '.com']);
-
 const SKILL_BUILDER_PERSONA = 'skill-builder';
-
-type SkillMetadata = {
-  id: string;
-  name: string;
-  description?: string;
-  valid: boolean;
-  error?: string;
-  warning?: string;
-};
-
-type ContextFileMeta = {
   fileId: string;
   userId: string;
   name: string;
@@ -212,15 +207,6 @@ const parseActionsSchema = z.object({
   text: z.string().min(1),
 });
 
-async function pathExists(targetPath: string) {
-  try {
-    await fs.stat(targetPath);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 type RuntimeConfigShape = {
   tools?: Array<Record<string, unknown>>;
   mcp_servers?: Array<Record<string, unknown>>;
@@ -275,82 +261,6 @@ async function loadEffectiveAgentConfig(): Promise<{ content: string; changed: b
       return { content: stringifyYaml(baseParsed), changed: true };
     }
     throw error;
-  }
-}
-
-const isValidSkillId = (id: string) => /^[a-zA-Z0-9_-]+(?:\/[a-zA-Z0-9_-]+)*$/.test(id);
-
-const normalizeSkillId = (id: string) => id.trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
-
-function resolveSkillDir(id: string) {
-  const normalizedId = normalizeSkillId(id);
-  if (!isValidSkillId(normalizedId)) {
-    throw new Error('Invalid skill id');
-  }
-  return path.join(skillsRoot, normalizedId);
-}
-
-function isAllowedActionPath(relativePath: string, prefixes = ACTION_ALLOWED_PREFIXES): boolean {
-  const normalized = relativePath.replace(/\\/g, '/').replace(/^\/+/, '');
-  if (normalized === 'SKILL.md') return true;
-  return prefixes.some((prefix) => normalized.startsWith(prefix));
-}
-
-function resolveSkillFile(id: string, relativePath: string, prefixes = ACTION_ALLOWED_PREFIXES) {
-  const skillDir = resolveSkillDir(id);
-  const normalized = relativePath.replace(/\\/g, '/').replace(/^\/+/, '');
-  if (normalized.includes('..')) {
-    throw new Error('Invalid path');
-  }
-  if (!isAllowedActionPath(normalized, prefixes)) {
-    throw new Error('Unsupported target path');
-  }
-  const resolved = path.resolve(skillDir, normalized);
-  if (!resolved.startsWith(skillDir)) {
-    throw new Error('Invalid path');
-  }
-  return resolved;
-}
-
-function extractFrontmatter(content: string) {
-  const match = content.match(/^---\s*\n([\s\S]*?)\n---/);
-  if (!match) {
-    return null;
-  }
-  return match[1];
-}
-
-async function getSkillMetadata(skillId: string): Promise<SkillMetadata> {
-  const skillDir = resolveSkillDir(skillId);
-  const skillFile = path.join(skillDir, 'SKILL.md');
-
-  if (!await pathExists(skillFile)) {
-    return {
-      id: skillId,
-      name: skillId,
-      description: 'No SKILL.md found',
-      valid: false,
-      error: 'Missing SKILL.md',
-    };
-  }
-
-  try {
-    const content = await fs.readFile(skillFile, 'utf-8');
-    const frontmatterRaw = extractFrontmatter(content);
-    if (!frontmatterRaw) {
-      return { id: skillId, name: skillId, valid: true, warning: 'No frontmatter' };
-    }
-
-    const frontmatter = parseYaml(frontmatterRaw) as { name?: string; description?: string } | null;
-    return {
-      id: skillId,
-      name: frontmatter?.name?.toString() || skillId,
-      description: frontmatter?.description?.toString() || '',
-      valid: true,
-    };
-  } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : 'Failed to parse SKILL.md';
-    return { id: skillId, name: skillId, valid: false, error: message };
   }
 }
 
