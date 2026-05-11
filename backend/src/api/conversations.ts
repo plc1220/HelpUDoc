@@ -67,6 +67,23 @@ export default function conversationRoutes(conversationService: ConversationServ
     }
   });
 
+  const toolOutputFileSchema = z.object({
+    path: z.string(),
+    mimeType: z.string().nullable().optional(),
+    size: z.number().int().nonnegative().optional(),
+  }).passthrough();
+
+  const toolEventSchema = z.object({
+    id: z.string().optional(),
+    name: z.string(),
+    status: z.enum(['running', 'completed', 'error']).optional(),
+    summary: z.string().optional(),
+    startedAt: z.string().optional(),
+    finishedAt: z.string().optional(),
+    outputFiles: z.array(toolOutputFileSchema).optional(),
+    relatedFiles: z.array(toolOutputFileSchema).optional(),
+  }).passthrough();
+
   const addMessageSchema = z.object({
     sender: z.enum(['user', 'agent']),
     text: z.string(),
@@ -74,19 +91,7 @@ export default function conversationRoutes(conversationService: ConversationServ
     replaceExisting: z.boolean().optional(),
     metadata: z.object({
       thinkingText: z.string().optional(),
-      toolEvents: z.array(z.object({
-        id: z.string().optional(),
-        name: z.string(),
-        status: z.enum(['running', 'completed', 'error']).optional(),
-        summary: z.string().optional(),
-        startedAt: z.string().optional(),
-        finishedAt: z.string().optional(),
-        outputFiles: z.array(z.object({
-          path: z.string(),
-          mimeType: z.string().nullable().optional(),
-          size: z.number().int().nonnegative().optional(),
-        }).strict()).optional(),
-      }).strict()).optional(),
+      toolEvents: z.array(toolEventSchema).optional(),
       bodySource: z.enum(['assistant', 'summary']).optional(),
       runId: z.string().optional(),
       status: z.enum(['queued', 'running', 'awaiting_approval', 'completed', 'failed', 'cancelled']).optional(),
@@ -169,7 +174,7 @@ export default function conversationRoutes(conversationService: ConversationServ
       res.status(201).json(message);
     } catch (error) {
       if (error instanceof z.ZodError) {
-        return res.status(400).json({ error: 'Invalid input' });
+        return res.status(400).json({ error: 'Invalid input', details: error.issues });
       }
       handleError(res, error, 'Failed to append message');
     }

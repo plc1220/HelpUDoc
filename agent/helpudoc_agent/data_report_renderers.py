@@ -857,7 +857,7 @@ DASHBOARD_FILTER_SCRIPT = """
             if (chartDef.chartType === 'area') trace.fill = 'tozeroy';
           }
           if (chartDef.chartType === 'scatter') {
-            trace.mode = chartDef.mode || 'markers';
+            trace.mode = chartDef.mode && !String(chartDef.mode).includes('lines') ? chartDef.mode : 'markers';
           }
           if (chartDef.chartType === 'bar' && chartDef.orientation === 'h') {
             trace.orientation = 'h';

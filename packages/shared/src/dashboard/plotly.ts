@@ -57,7 +57,8 @@ export function buildPlotlyPayload(rows: DashboardRow[], chartDef: ChartRuntimeD
       if (chartType === 'area') trace.fill = 'tozeroy';
     }
     if (chartType === 'scatter') {
-      trace.mode = normText(chartDef.mode || 'markers');
+      const requestedMode = normText(chartDef.mode);
+      trace.mode = requestedMode && !requestedMode.includes('lines') ? requestedMode : 'markers';
       trace.hovertemplate = `%{x}<br>${traceName}: %{y}<extra></extra>`;
     }
     if (chartType === 'bar' && normText(chartDef.orientation).toLowerCase() === 'h') {
