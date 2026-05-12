@@ -1,1 +1,1 @@
-from paper2slides.raganything.utils import *  # noqa: F403
+from document_intelligence.raganything.utils import *  # noqa: F403

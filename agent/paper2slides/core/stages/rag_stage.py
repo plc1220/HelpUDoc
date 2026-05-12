@@ -96,9 +96,9 @@ async def run_rag_stage(base_dir: Path, config: Dict) -> Dict:
     output_dir = base_dir / "rag_output"
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    from paper2slides.rag import RAGClient, RAG_PAPER_QUERIES, RAG_QUERY_MODES, RAG_AVAILABLE
-    from paper2slides.rag.query import get_general_overview, generate_general_queries
-    from paper2slides.rag.config import RAGConfig
+    from presentation_pipeline.rag import RAGClient, RAG_PAPER_QUERIES, RAG_QUERY_MODES, RAG_AVAILABLE
+    from presentation_pipeline.rag.query import get_general_overview, generate_general_queries
+    from presentation_pipeline.rag.config import RAGConfig
 
     # If LightRAG isn't available, create a minimal checkpoint so downstream
     # stages can continue using direct markdown content.

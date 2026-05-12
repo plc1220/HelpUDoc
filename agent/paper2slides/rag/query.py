@@ -3,7 +3,7 @@ from typing import List, Dict, Union, Any, TYPE_CHECKING, TypedDict
 if TYPE_CHECKING:
     from .client import RAGClient
 
-from paper2slides.llm.genai_client import create_client, extract_text, generate_text
+from presentation_pipeline.llm.genai_client import create_client, extract_text, generate_text
 
 
 class RAGQueryResult(TypedDict, total=False):
@@ -212,7 +212,7 @@ async def get_general_overview(
     mode: str = "mix",
     max_section_length: int = 0,  # 0 = no truncation
 ) -> str:
-    from paper2slides.summary.clean import clean_references
+    from presentation_pipeline.summary.clean import clean_references
     
     overview_parts = []
     
