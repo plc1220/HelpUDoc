@@ -19,7 +19,9 @@ def _version(name: str) -> str:
 
 
 def main() -> None:
-    from langgraph.runtime import ExecutionInfo  # noqa: F401
+    # LangGraph runtime symbols can shift between minor versions.
+    # Import the module itself as the stable smoke target.
+    import langgraph.runtime as _langgraph_runtime  # noqa: F401
     from langchain.agents import create_agent  # noqa: F401
     import deepagents  # noqa: F401
     from deepagents.backends import FilesystemBackend  # noqa: F401
