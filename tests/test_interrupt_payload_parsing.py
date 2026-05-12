@@ -79,6 +79,31 @@ def test_extract_interrupt_payload_from_human_action_tool_call() -> None:
     assert parsed["actions"][0]["id"] == "style-a"
 
 
+def test_extract_interrupt_payload_from_plan_approval_tool_call() -> None:
+    tool_input = """{
+        'plan_title': 'Manufacturing Dashboard Plan',
+        'plan_summary_markdown': 'Build the four requested dashboard pages.',
+        'execution_checklist': '- Inspect Parquet schemas\\n- Build dashboard',
+        'steps': [{'title': 'Inspect data', 'toolNames': ['get_table_schema'], 'fileImpacts': []}],
+        'plan_file_path': 'research_plan.md',
+        'status_label': 'Pending Dashboard Approval',
+        'step_index': 0,
+        'step_count': 1,
+        'risky_actions': 'Creates dashboard files'
+    }"""
+
+    parsed = extract_interrupt_payload_from_tool_call("request_plan_approval", tool_input)
+
+    assert parsed is not None
+    assert parsed["type"] == "interrupt"
+    assert parsed["kind"] == "approval"
+    assert parsed["title"] == "Pending Dashboard Approval"
+    assert parsed["actionRequests"][0]["name"] == "request_plan_approval"
+    assert parsed["actionRequests"][0]["args"]["plan_title"] == "Manufacturing Dashboard Plan"
+    assert parsed["reviewConfigs"][0]["allowed_decisions"] == ["approve", "edit", "reject"]
+    assert parsed["displayPayload"]["planTitle"] == "Manufacturing Dashboard Plan"
+
+
 def test_normalize_interrupt_payload_value_synthesizes_stable_interrupt_id() -> None:
     payload = {
         "kind": "clarification",

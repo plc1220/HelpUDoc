@@ -233,6 +233,48 @@ def test_clone_preservable_context_skips_uncopyable_handles():
     assert "data_agent_manager" not in cloned
 
 
+def test_registry_excludes_plan_approval_from_generic_hitl_middleware(tmp_path, monkeypatch):
+    settings = _build_settings(tmp_path)
+    settings.backend.interrupt_on = {
+        "request_plan_approval": {"allowed_decisions": ["approve", "edit", "reject"]},
+        "write_file": False,
+        "read_file": False,
+        "edit_file": False,
+    }
+
+    class DummyAgent:
+        def with_config(self, _config):
+            return self
+
+    def fake_create_agent(*, model, tools, system_prompt, middleware, checkpointer, **_kwargs):
+        return DummyAgent()
+
+    async def fake_initialize(self, *, candidate_server_names=None, preflight_gemini=False):
+        self._allowed_servers = {}
+        self._tools_by_server = {}
+        self._clients_by_server = {}
+        self._rejected_servers = {}
+
+    def fail_hitl(*args, **kwargs):
+        raise AssertionError("request_plan_approval should not use HumanInTheLoopMiddleware")
+
+    monkeypatch.setattr("helpudoc_agent.runtime.agent_registry.create_agent", fake_create_agent)
+    monkeypatch.setattr(
+        "helpudoc_agent.runtime.agent_registry.create_chat_google_generative_ai",
+        lambda *args, **kwargs: object(),
+    )
+    monkeypatch.setattr("helpudoc_agent.runtime.agent_registry.FilesystemBackend", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.runtime.agent_registry.TodoListMiddleware", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.runtime.agent_registry.FilesystemMiddleware", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.runtime.agent_registry.SummarizationMiddleware", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.runtime.agent_registry.PatchToolCallsMiddleware", lambda *args, **kwargs: object())
+    monkeypatch.setattr("helpudoc_agent.runtime.agent_registry.HumanInTheLoopMiddleware", fail_hitl)
+    monkeypatch.setattr("helpudoc_agent.mcp_manager.MCPServerManager.initialize", fake_initialize)
+
+    registry = AgentRegistry(settings, ToolFactoryStub())
+    asyncio.run(registry.get_or_create("fast", "workspace-plan-approval"))
+
+
 def test_aws_pricing_wrapper_sanitizes_schema_and_normalizes_inputs():
     pytest.importorskip("langchain_google_genai")
     captured = {}

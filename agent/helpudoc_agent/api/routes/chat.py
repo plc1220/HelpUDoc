@@ -766,7 +766,7 @@ def register_chat_routes(
             name = (serialized or {}).get("name") or (metadata or {}).get("name") or "tool"
             self._tool_names[str(run_id)] = name
             if name in _INTERRUPT_TOOL_NAMES:
-                # On resumed clarification/action flows, let the tool consume the
+                # On resumed human-interrupt flows, let the tool consume the
                 # resume payload first. Eagerly re-emitting the interrupt here can
                 # cancel the resumed run before the answer is applied.
                 if self._suppress_interrupt_tool_start:

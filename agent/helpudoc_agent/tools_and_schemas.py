@@ -32,6 +32,7 @@ except ImportError as exc:  # pragma: no cover
 from .bigquery_export_tools import build_export_bigquery_query_tool
 from .clarification_responses import normalize_clarification_resume_payload
 from .configuration import Settings, ToolConfig
+from .interrupt_payloads import build_plan_approval_interrupt_value
 from .skills_registry import (
     SkillPolicy,
     activate_skill_context,
@@ -97,6 +98,24 @@ def _interrupt_with_retry(
         f"{label} did not receive a matching human response. "
         "The run was stopped to avoid re-entering the same interrupt loop."
     )
+
+
+def _first_decision(response: Any) -> Dict[str, Any]:
+    if not isinstance(response, dict):
+        return {}
+    decisions = response.get("decisions")
+    if not isinstance(decisions, list) or not decisions:
+        return {}
+    first = decisions[0]
+    return first if isinstance(first, dict) else {}
+
+
+def _edited_action_args(decision: Dict[str, Any]) -> Dict[str, Any]:
+    edited_action = decision.get("edited_action") or decision.get("editedAction")
+    if not isinstance(edited_action, dict):
+        return {}
+    args = edited_action.get("args")
+    return args if isinstance(args, dict) else {}
 
 
 def _get_active_skill_policy(workspace_state: WorkspaceState) -> SkillPolicy:
@@ -697,10 +716,76 @@ class ToolFactory:
                     "Workspace trusted mode is enabled, so plan approval was skipped. Continue executing the plan."
                 )
 
+            interrupt_payload = build_plan_approval_interrupt_value(
+                {
+                    "plan_title": title,
+                    "plan_summary": summary,
+                    "execution_checklist": checklist,
+                    "plan_summary_markdown": summary_markdown,
+                    "steps": normalized_steps,
+                    "plan_file_path": plan_path,
+                    "status_label": status,
+                    "step_index": step_index,
+                    "step_count": step_count,
+                    "risky_actions": risks,
+                }
+            )
+            if interrupt_payload is None:
+                return "Plan approval blocked: unable to build review payload."
+
+            response = _interrupt_with_retry(
+                interrupt_payload,
+                valid_keys={"decisions"},
+                stale_keys={"message", "selectedChoiceIds", "selectedValues", "answersByQuestionId", "action"},
+                label="request_plan_approval",
+            )
+            decision = _first_decision(response)
+            if not decision:
+                workspace_state.context["plan_approved"] = False
+                return (
+                    "PLAN_APPROVAL_DECISION_MISSING\n"
+                    "Do not execute yet. Ask for plan approval again."
+                )
+            decision_type = str(decision.get("type") or "").strip().lower()
+            edited_args = _edited_action_args(decision)
+            decision_message = str(decision.get("message") or "").strip()
+            edit_feedback = ""
+            if decision_type == "edit":
+                edit_feedback = (
+                    str(edited_args.get("reviewer_feedback") or "").strip()
+                    or decision_message
+                    or feedback
+                )
+            elif feedback:
+                edit_feedback = feedback
+            edited_draft_content = str(edited_args.get("edited_plan_content") or "").strip() or draft_content
+            edited_plan_path = str(edited_args.get("plan_file_path") or "").strip()
+            if edited_plan_path:
+                plan_path = edited_plan_path
+                workspace_state.context["last_plan_file_path"] = plan_path
+
+            if decision_type == "reject":
+                workspace_state.context["plan_approved"] = False
+                workspace_state.context["last_plan_feedback"] = decision_message or "Rejected by user"
+                return (
+                    "PLAN_REJECTION_RECORDED\n"
+                    f"Title: {title}\n"
+                    f"Summary: {summary_markdown or summary}\n"
+                    f"Execution checklist: {checklist or json.dumps(normalized_steps, ensure_ascii=False)}\n"
+                    f"Plan file path: {plan_path}\n"
+                    f"Status label: {status}\n"
+                    f"Risky actions: {risks}\n"
+                    f"Reviewer feedback: {workspace_state.context['last_plan_feedback']}\n"
+                    "Do not execute this plan. Ask for a revised direction before continuing."
+                )
+
             # If a reviewer provides edit feedback, require one more approval round.
             # This prevents immediate continuation after edit and enforces explicit
             # confirmation of the revised plan.
-            if feedback:
+            if decision_type == "edit" or edit_feedback:
+                feedback = edit_feedback
+                draft_content = edited_draft_content
+                workspace_state.context["last_plan_feedback"] = feedback
                 workspace_state.context["plan_approved"] = False
                 return (
                     "PLAN_EDIT_FEEDBACK_RECORDED\n"
@@ -713,6 +798,14 @@ class ToolFactory:
                     f"Reviewer feedback: {feedback}\n"
                     f"Edited draft included: {'yes' if draft_content else 'no'}\n"
                     "Do not execute yet. Revise the plan and call request_plan_approval again for final approval."
+                )
+
+            if decision_type and decision_type != "approve":
+                workspace_state.context["plan_approved"] = False
+                return (
+                    "PLAN_APPROVAL_DECISION_UNRECOGNIZED\n"
+                    f"Decision: {decision_type}\n"
+                    "Do not execute yet. Ask for plan approval again."
                 )
 
             workspace_state.context["plan_approved"] = True

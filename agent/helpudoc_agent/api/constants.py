@@ -4,7 +4,11 @@ from __future__ import annotations
 import re
 from typing import Set
 
-_INTERRUPT_TOOL_NAMES: Set[str] = {"request_clarification", "request_human_action"}
+_INTERRUPT_TOOL_NAMES: Set[str] = {
+    "request_clarification",
+    "request_human_action",
+    "request_plan_approval",
+}
 _LOADED_SKILL_OUTPUT_ID = re.compile(r"^Loaded skill:\s*(\S+)", re.MULTILINE)
 _LOCAL_DEV_AGENT_JWT_SECRET = "helpudoc-local-dev-agent-jwt-secret"
 _RAG_PREFETCHABLE_EXTENSIONS: Set[str] = {".pdf", ".doc", ".docx", ".md", ".html", ".htm"}

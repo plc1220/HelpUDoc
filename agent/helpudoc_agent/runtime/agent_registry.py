@@ -310,8 +310,10 @@ class AgentRegistry:
             max_output_tokens=max_output_tokens,
         )
         interrupt_on = dict(self.settings.backend.interrupt_on or {})
-        if bool(context_payload.get("skip_plan_approvals") or context_payload.get("skipPlanApprovals")):
-            interrupt_on.pop("request_plan_approval", None)
+        # request_plan_approval uses HelpUDoc's explicit interrupt tool so it can
+        # coexist with clarification/action resume payloads in the same graph.
+        interrupt_on.pop("request_plan_approval", None)
+        interrupt_on = {name: config for name, config in interrupt_on.items() if config}
 
         middleware = [
             TodoListMiddleware(),

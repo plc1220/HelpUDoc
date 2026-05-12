@@ -73,6 +73,14 @@ def _parse_json_dict(raw: Any) -> Dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
+def _coerce_int(raw: Any, *, default: int, minimum: int) -> int:
+    try:
+        parsed = int(raw if raw is not None else default)
+    except (TypeError, ValueError):
+        parsed = default
+    return max(minimum, parsed)
+
+
 def _parse_clarification_questions(raw: Any) -> List[Dict[str, Any]]:
     parsed_questions: List[Dict[str, Any]] = []
     for index, item in enumerate(_parse_json_list(raw)):
@@ -276,6 +284,71 @@ def _build_human_action_payload(args: Dict[str, Any]) -> Dict[str, Any] | None:
     return _normalize_interrupt_payload(interrupt_value)
 
 
+def build_plan_approval_interrupt_value(args: Dict[str, Any]) -> Dict[str, Any] | None:
+    prompt_title = str(args.get("plan_title") or args.get("title") or "").strip()
+    if not prompt_title:
+        return None
+
+    summary_markdown = str(args.get("plan_summary_markdown") or "").strip()
+    summary = str(args.get("plan_summary") or "").strip()
+    checklist = str(args.get("execution_checklist") or "").strip()
+    raw_steps = args.get("steps")
+    steps = raw_steps if isinstance(raw_steps, list) else []
+    plan_file_path = str(args.get("plan_file_path") or "research_plan.md").strip() or "research_plan.md"
+    status_label = str(args.get("status_label") or "Pending Approval").strip() or "Pending Approval"
+    risky_actions = str(args.get("risky_actions") or "None").strip() or "None"
+
+    action_args = {
+        "plan_title": prompt_title,
+        "plan_summary": summary,
+        "execution_checklist": checklist,
+        "plan_summary_markdown": summary_markdown,
+        "steps": steps,
+        "plan_file_path": plan_file_path,
+        "status_label": status_label,
+        "step_index": _coerce_int(args.get("step_index"), default=0, minimum=0),
+        "step_count": _coerce_int(args.get("step_count"), default=1, minimum=1),
+        "risky_actions": risky_actions,
+    }
+
+    return {
+        "kind": "approval",
+        "title": status_label,
+        "description": summary_markdown or summary or "Review the proposed plan before execution continues.",
+        "step_index": action_args["step_index"],
+        "step_count": action_args["step_count"],
+        "action_requests": [
+            {
+                "name": "request_plan_approval",
+                "args": action_args,
+            }
+        ],
+        "review_configs": [
+            {
+                "action_name": "request_plan_approval",
+                "allowed_decisions": ["approve", "edit", "reject"],
+            }
+        ],
+        "display_payload": {
+            "planTitle": prompt_title,
+            "planSummary": summary,
+            "planSummaryMarkdown": summary_markdown,
+            "executionChecklist": checklist,
+            "steps": steps,
+            "planFilePath": plan_file_path,
+            "statusLabel": status_label,
+            "riskyActions": risky_actions,
+        },
+    }
+
+
+def _build_plan_approval_payload(args: Dict[str, Any]) -> Dict[str, Any] | None:
+    interrupt_value = build_plan_approval_interrupt_value(args)
+    if interrupt_value is None:
+        return None
+    return _normalize_interrupt_payload(interrupt_value)
+
+
 def extract_interrupt_payload_from_tool_call(tool_name: str, tool_input: str) -> Dict[str, Any] | None:
     """Build an interrupt payload directly from a clarification/action tool call."""
     try:
@@ -289,6 +362,8 @@ def extract_interrupt_payload_from_tool_call(tool_name: str, tool_input: str) ->
         return _build_clarification_payload(parsed)
     if tool_name == "request_human_action":
         return _build_human_action_payload(parsed)
+    if tool_name == "request_plan_approval":
+        return _build_plan_approval_payload(parsed)
     return None
 
 

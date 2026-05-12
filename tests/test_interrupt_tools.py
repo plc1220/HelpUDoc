@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 from helpudoc_agent.tagged_file_policy import is_tool_blocked_in_tagged_files_mode
+from helpudoc_agent.tools_and_schemas import ToolFactory
 import helpudoc_agent.tools_and_schemas as tools_and_schemas
 
 
@@ -68,3 +70,67 @@ def test_interrupt_with_retry_stops_after_stale_resume_payload(monkeypatch) -> N
         raise AssertionError("expected stale interrupt resume payload to stop the run")
 
     assert calls == 2
+
+
+def test_request_plan_approval_retries_stale_clarification_payload(monkeypatch) -> None:
+    responses = [
+        {"message": "Use a tighter scope"},
+        {"decisions": [{"type": "approve"}]},
+    ]
+
+    def fake_interrupt(_payload):
+        return responses.pop(0)
+
+    monkeypatch.setattr(tools_and_schemas, "interrupt", fake_interrupt)
+    workspace = SimpleNamespace(context={})
+    factory = ToolFactory.__new__(ToolFactory)
+    tool = factory._build_request_plan_approval_tool(workspace)
+
+    result = tool.invoke(
+        {
+            "plan_title": "Dashboard plan",
+            "plan_summary": "Build the dashboard",
+            "execution_checklist": "- Inspect data\n- Generate pages",
+        }
+    )
+
+    assert "PLAN_APPROVAL_RECORDED" in result
+    assert workspace.context["plan_approved"] is True
+    assert responses == []
+
+
+def test_request_plan_approval_records_edit_decision(monkeypatch) -> None:
+    def fake_interrupt(_payload):
+        return {
+            "decisions": [
+                {
+                    "type": "edit",
+                    "message": "Narrow to tagged files only",
+                    "edited_action": {
+                        "name": "request_plan_approval",
+                        "args": {
+                            "reviewer_feedback": "Use only the tagged Parquet files.",
+                            "edited_plan_content": "# Revised plan",
+                        },
+                    },
+                }
+            ]
+        }
+
+    monkeypatch.setattr(tools_and_schemas, "interrupt", fake_interrupt)
+    workspace = SimpleNamespace(context={})
+    factory = ToolFactory.__new__(ToolFactory)
+    tool = factory._build_request_plan_approval_tool(workspace)
+
+    result = tool.invoke(
+        {
+            "plan_title": "Dashboard plan",
+            "plan_summary": "Build the dashboard",
+            "execution_checklist": "- Inspect data\n- Generate pages",
+        }
+    )
+
+    assert "PLAN_EDIT_FEEDBACK_RECORDED" in result
+    assert "Use only the tagged Parquet files." in result
+    assert "Edited draft included: yes" in result
+    assert workspace.context["plan_approved"] is False
