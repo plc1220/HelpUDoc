@@ -882,26 +882,38 @@ Notes:
 
 Move parser out of Paper2Slides and split requirements.
 
-- [ ] Create `agent/presentation_pipeline/`.
-- [ ] Move Paper2Slides CLI/core/generator/summary/utils modules into `presentation_pipeline`.
-- [ ] Keep `agent/paper2slides` as a compatibility shim package.
-- [ ] Create `agent/document_intelligence/`.
-- [ ] Move `agent/paper2slides/raganything/*` into `agent/document_intelligence/raganything/`.
-- [ ] Keep `paper2slides.raganything` as a compatibility shim.
-- [ ] Update `agent/helpudoc_agent/paper2slides_runner.py` or rename it to `presentation_runner.py`.
-- [ ] Update RAG imports that currently reference `paper2slides.raganything`.
-- [ ] Update tests for new package paths.
-- [ ] Add shim tests for old package paths.
-- [ ] Create `agent/requirements-api.txt`.
-- [ ] Create `agent/requirements-parser.txt`.
-- [ ] Create `agent/requirements-reporting.txt`.
-- [ ] Create `agent/requirements-runtime.txt`.
-- [ ] Keep `agent/requirements.txt` as a temporary umbrella file.
-- [ ] Add `agent/Dockerfile.base`.
-- [ ] Update `agent/Dockerfile.gke` to use the split requirements or base image.
-- [ ] Run Paper2Slides cache/frontend-flow tests.
-- [ ] Run agent import smoke test.
-- [ ] Run `graphify update .`.
+- [x] Create `agent/presentation_pipeline/`.
+- [x] Move Paper2Slides CLI/core/generator/summary/utils modules into `presentation_pipeline`.
+- [x] Keep `agent/paper2slides` as a compatibility shim package.
+- [x] Create `agent/document_intelligence/`.
+- [x] Move `agent/paper2slides/raganything/*` into `agent/document_intelligence/raganything/`.
+- [x] Keep `paper2slides.raganything` as a compatibility shim.
+- [x] Update `agent/helpudoc_agent/paper2slides_runner.py` or rename it to `presentation_runner.py`.
+- [x] Update RAG imports that currently reference `paper2slides.raganything`.
+- [x] Update tests for new package paths.
+- [x] Add shim tests for old package paths.
+- [x] Create `agent/requirements-api.txt`.
+- [x] Create `agent/requirements-parser.txt`.
+- [x] Create `agent/requirements-reporting.txt`.
+- [x] Create `agent/requirements-runtime.txt`.
+- [x] Keep `agent/requirements.txt` as a temporary umbrella file.
+- [x] Add `agent/Dockerfile.base`.
+- [x] Update `agent/Dockerfile.gke` to use the split requirements or base image.
+- [x] Run Paper2Slides cache/frontend-flow tests.
+- [x] Run agent import smoke test.
+- [x] Run `graphify update .`.
+
+Notes:
+- `presentation_pipeline.main` now owns the CLI implementation, while `paper2slides.main` is a compatibility shim.
+- `presentation_pipeline.export_pptx` now owns export CLI logic, while `paper2slides.export_pptx` remains a compatibility shim.
+- `presentation_pipeline` now includes compatibility bridge packages (`core`, `generator`, `summary`, `utils`, `prompts`, `rag`, `llm`) that resolve to legacy `paper2slides/*` modules.
+- `file_utils`, `logging`, and `path_utils` now live in `presentation_pipeline/utils`, with legacy shim files retained under `paper2slides/utils`.
+- `presentation_pipeline.utils.export_service` and `presentation_pipeline.utils.pptx_builder` now own implementation; `paper2slides.utils.export_service` and `paper2slides.utils.pptx_builder` are legacy shims.
+- Paper2Slides runtime call sites now import `ExportService`/`PPTXBuilder`/path helpers through `presentation_pipeline.utils.*`; legacy `paper2slides.utils.*` imports are retained via shim/bridge compatibility.
+- Added `tests/test_presentation_pipeline_utils_imports.py` to validate both new and legacy utils import paths.
+- `document_intelligence/raganything/*` now exists as the canonical module surface (compatibility bridge modules), while legacy `paper2slides.raganything` imports remain shimmed.
+- Core stage internals now resolve generator/summary/rag/llm imports via `presentation_pipeline.*` namespaces.
+- The migration currently uses compatibility bridges and shim files to preserve import stability while ownership shifts to `presentation_pipeline`/`document_intelligence`.
 
 ### PR 12 - `artifact-registry-and-overlays`
 

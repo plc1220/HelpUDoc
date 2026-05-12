@@ -22,13 +22,13 @@ RUN apt-get update \
     libsm6 \
   && rm -rf /var/lib/apt/lists/*
 
-# Copy dependency manifest first so `pip install` layer caches across code/skills changes.
-COPY agent/requirements.txt /app/agent/requirements.txt
+# Copy dependency manifests first so `pip install` layer caches across code/skills changes.
+COPY agent/requirements*.txt /app/agent/
 
 RUN --mount=type=cache,target=/root/.cache/pip \
   PIP_INDEX_URL="${PYTORCH_CPU_INDEX_URL}" \
   PIP_EXTRA_INDEX_URL="${PYPI_INDEX_URL}" \
-  pip install -r /app/agent/requirements.txt
+  pip install -r /app/agent/requirements-runtime.txt
 
 ARG GCP_COST_MCP_VERSION=v0.8.0
 RUN curl -fsSL -o /usr/local/bin/gcp-cost-mcp-server \

@@ -1,0 +1,10 @@
+python-pptx
+duckdb
+pandas
+tabulate
+seaborn
+matplotlib
+altair
+plotly
+kaleido
+

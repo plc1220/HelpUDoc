@@ -20,11 +20,11 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 
 # Install deps before copying the rest so the layer caches across code changes.
-COPY agent/requirements.txt /app/agent/requirements.txt
+COPY agent/requirements*.txt /app/agent/
 RUN --mount=type=cache,target=/root/.cache/pip \
   PIP_INDEX_URL="${PYTORCH_CPU_INDEX_URL}" \
   PIP_EXTRA_INDEX_URL="${PYPI_INDEX_URL}" \
-  pip install -r /app/agent/requirements.txt
+  pip install -r /app/agent/requirements-runtime.txt
 
 COPY agent/ /app/agent/
 COPY skills/ /app/skills/

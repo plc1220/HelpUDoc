@@ -13,8 +13,6 @@ from io import BytesIO
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
-from paper2slides.raganything.parser import DoclingParser
-
 logger = logging.getLogger(__name__)
 
 
@@ -170,6 +168,8 @@ def _docling_markdown_to_payload(file_name: str, markdown: str, *, effective_mod
 
 
 def _extract_docling_payload(file_name: str, mime_type: str, buffer: bytes) -> Tuple[str, List[Dict[str, Any]]]:
+    from document_intelligence.raganything.parser import DoclingParser
+
     suffix = Path(file_name).suffix.lower()
     guessed_suffix = mimetypes.guess_extension(mime_type or "") or ""
     if not suffix and guessed_suffix:

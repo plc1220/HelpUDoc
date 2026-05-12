@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Optional, Dict, Any, Union
 from enum import Enum
 
-from paper2slides.summary import OriginalElements, PaperContent, GeneralContent
+from presentation_pipeline.summary import OriginalElements, PaperContent, GeneralContent
 
 
 class OutputType(str, Enum):

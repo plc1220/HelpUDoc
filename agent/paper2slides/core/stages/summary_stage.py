@@ -14,10 +14,10 @@ logger = logging.getLogger(__name__)
 
 async def run_summary_stage(base_dir: Path, config: Dict) -> Dict:
     """Stage 2: Extract content from RAG results."""
-    from paper2slides.summary import extract_paper, extract_general, extract_tables_and_figures, OriginalElements
-    from paper2slides.summary.paper import extract_paper_metadata_from_markdown
-    from paper2slides.llm.genai_client import create_client
-    from paper2slides.rag.query import RAGQueryResult
+    from presentation_pipeline.summary import extract_paper, extract_general, extract_tables_and_figures, OriginalElements
+    from presentation_pipeline.summary.paper import extract_paper_metadata_from_markdown
+    from presentation_pipeline.llm.genai_client import create_client
+    from presentation_pipeline.rag.query import RAGQueryResult
 
     rag_data = load_json(get_rag_checkpoint(base_dir, config))
     input_path = config.get("input_path", "")

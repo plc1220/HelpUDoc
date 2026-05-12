@@ -38,7 +38,7 @@ def _map_stage(stage: Optional[str]) -> Optional[str]:
 
 
 def _build_command_args(input_path: str, options: Dict[str, Any], output_dir: Optional[str]) -> List[str]:
-    args = ["-m", "paper2slides", "--input", input_path]
+    args = ["-m", "presentation_pipeline", "--input", input_path]
     args += ["--output", options.get("output") or "slides"]
     args += ["--content", options.get("content") or "paper"]
     args += ["--style", options.get("style") or "academic"]
@@ -257,8 +257,8 @@ def _atomic_write_bytes(path: Path, payload: bytes) -> None:
 
 
 def _build_paths_for_options(outputs_root: Path, input_path: str, options: Dict[str, Any]) -> Tuple[Path, Path]:
-    from paper2slides.core.paths import get_base_dir, get_config_dir
-    from paper2slides.utils.path_utils import get_project_name, parse_style
+    from presentation_pipeline.core.paths import get_base_dir, get_config_dir
+    from presentation_pipeline.utils.path_utils import get_project_name, parse_style
 
     content_type = options.get("content") or "paper"
     output_type = options.get("output") or "slides"
@@ -461,7 +461,7 @@ def export_pptx_from_pdf(file_name: str, content_b64: str) -> Dict[str, Any]:
         input_path.write_bytes(data)
 
         output_path = temp_dir / "export.pptx"
-        args = [sys.executable, "-m", "paper2slides.export_pptx", "--input", str(input_path), "--output", str(output_path)]
+        args = [sys.executable, "-m", "presentation_pipeline.export_pptx", "--input", str(input_path), "--output", str(output_path)]
         _run_command(args, cwd=str(temp_dir))
 
         if not output_path.exists():

@@ -27,11 +27,11 @@ def _resolve_asset_flag(value, env_name: str, default: bool) -> bool:
 
 async def run_generate_stage(base_dir: Path, config_dir: Path, config: Dict) -> Dict:
     """Stage 4: Generate images."""
-    from paper2slides.summary import PaperContent, GeneralContent, TableInfo, FigureInfo, OriginalElements
-    from paper2slides.generator import GenerationConfig, GenerationInput
-    from paper2slides.generator.config import OutputType, PosterDensity, SlidesLength, StyleType
-    from paper2slides.generator.content_planner import ContentPlan, Section, TableRef, FigureRef
-    from paper2slides.generator.image_generator import ImageGenerator, save_images_as_pdf
+    from presentation_pipeline.summary import PaperContent, GeneralContent, TableInfo, FigureInfo, OriginalElements
+    from presentation_pipeline.generator import GenerationConfig, GenerationInput
+    from presentation_pipeline.generator.config import OutputType, PosterDensity, SlidesLength, StyleType
+    from presentation_pipeline.generator.content_planner import ContentPlan, Section, TableRef, FigureRef
+    from presentation_pipeline.generator.image_generator import ImageGenerator, save_images_as_pdf
     
     plan_data = load_json(get_plan_checkpoint(config_dir))
     summary_data = load_json(get_summary_checkpoint(base_dir, config))
@@ -129,7 +129,7 @@ async def run_generate_stage(base_dir: Path, config_dir: Path, config: Dict) -> 
         logger.info(f"  Saved: slides.pdf")
 
     if output_type == "slides" and image_paths:
-        from paper2slides.utils.export_service import ExportService
+        from presentation_pipeline.utils.export_service import ExportService
 
         export_pptx = bool(config.get("export_pptx"))
         if export_pptx:
@@ -155,7 +155,7 @@ async def run_generate_stage(base_dir: Path, config_dir: Path, config: Dict) -> 
                     logger.warning("Failed to export editable PPTX: %s", exc)
 
         if config.get("extract_assets"):
-            from paper2slides.utils.slide_assets import SlideAssetConfig, SlideAssetExtractor
+            from presentation_pipeline.utils.slide_assets import SlideAssetConfig, SlideAssetExtractor
 
             api_key = (
                 config.get("image_api_key")

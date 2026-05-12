@@ -17,7 +17,7 @@ try:  # pragma: no cover - exercised at runtime
 except Exception:  # pragma: no cover - allow optional LightRAG
     _LIGHRAG_AVAILABLE = False
 
-from paper2slides.llm.genai_client import create_client, embed_texts, extract_text, generate_text
+from presentation_pipeline.llm.genai_client import create_client, embed_texts, extract_text, generate_text
 
 from .config import RAGConfig
 

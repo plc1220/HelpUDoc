@@ -1,26 +1,6 @@
-"""
-Logging utilities
-"""
-import logging
+"""Legacy shim for presentation pipeline logging utilities."""
 
-logger = logging.getLogger(__name__)
+from presentation_pipeline.utils.logging import log_section, setup_logging
 
-
-def setup_logging(level: int = logging.INFO):
-    """Configure logging with console output."""
-    logging.basicConfig(
-        level=level,
-        format='%(asctime)s [%(levelname)s] %(message)s',
-        datefmt='%H:%M:%S',
-        force=True
-    )
-
-
-def log_section(title: str):
-    """Log a section separator for better readability."""
-    logger = logging.getLogger("paper2slides")
-    logger.info("")
-    logger.info(f"{'─' * 60}")
-    logger.info(f"{title}")
-    logger.info(f"{'─' * 60}")
+__all__ = ["setup_logging", "log_section"]
 

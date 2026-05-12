@@ -1,0 +1,25 @@
+fastapi
+uvicorn
+
+# LangChain + Gemini stack aligned with pydantic v2
+langchain==1.2.15
+langchain-core==1.2.26
+langgraph==1.1.6
+langchain-google-genai==4.2.1
+google-genai==1.70.0
+langchain-google-vertexai==3.2.2
+deepagents==0.4.12
+langchain-mcp-adapters==0.2.2
+langgraph-checkpoint-postgres>=3.0.5
+psycopg[binary]>=3.3.0
+python-dotenv
+pydantic
+pyyaml
+requests
+pillow
+redis
+kubernetes
+
+# Langfuse v3 (align with self-hosted Langfuse / Langfuse Cloud; see infra).
+langfuse>=3.14.6,<4
+

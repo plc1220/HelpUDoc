@@ -14,8 +14,8 @@ logger = logging.getLogger(__name__)
 
 async def run_plan_stage(base_dir: Path, config_dir: Path, config: Dict) -> Dict:
     """Stage 3: Plan content sections."""
-    from paper2slides.summary import PaperContent, GeneralContent, TableInfo, FigureInfo, OriginalElements
-    from paper2slides.generator import (
+    from presentation_pipeline.summary import PaperContent, GeneralContent, TableInfo, FigureInfo, OriginalElements
+    from presentation_pipeline.generator import (
         GenerationConfig, GenerationInput, ContentPlanner,
         OutputType, PosterDensity, SlidesLength, StyleType,
     )

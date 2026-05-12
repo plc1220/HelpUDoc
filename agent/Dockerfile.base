@@ -1,0 +1,31 @@
+# syntax=docker/dockerfile:1.7
+FROM python:3.12-slim
+
+WORKDIR /app/agent
+
+ARG PYTORCH_CPU_INDEX_URL=https://download.pytorch.org/whl/cpu
+ARG PYPI_INDEX_URL=https://pypi.org/simple
+
+# System libs required by mineru/opencv (parser and report workloads).
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
+    curl \
+    libxcb1 \
+    libx11-6 \
+    libxext6 \
+    libxrender1 \
+    libxfixes3 \
+    libxi6 \
+    libgl1 \
+    libglib2.0-0 \
+    libsm6 \
+  && rm -rf /var/lib/apt/lists/*
+
+COPY agent/requirements-parser.txt /app/agent/requirements-parser.txt
+COPY agent/requirements-reporting.txt /app/agent/requirements-reporting.txt
+
+RUN --mount=type=cache,target=/root/.cache/pip \
+  PIP_INDEX_URL="${PYTORCH_CPU_INDEX_URL}" \
+  PIP_EXTRA_INDEX_URL="${PYPI_INDEX_URL}" \
+  pip install -r /app/agent/requirements-parser.txt -r /app/agent/requirements-reporting.txt
+

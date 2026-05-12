@@ -392,8 +392,8 @@ class WorkspaceRagStore:
         file_path: Path,
     ) -> str:
         try:
-            from paper2slides.raganything.parser import DoclingParser  # type: ignore
-            from paper2slides.raganything.utils import separate_content  # type: ignore
+            from document_intelligence.raganything.parser import DoclingParser  # type: ignore
+            from document_intelligence.raganything.utils import separate_content  # type: ignore
         except Exception as exc:  # pragma: no cover
             raise RuntimeError("Vendored docling parser is not available") from exc
 

@@ -5,7 +5,7 @@ import asyncio
 
 from fastapi import Body, FastAPI, HTTPException
 
-from helpudoc_agent.paper2slides_runner import export_pptx_from_pdf, run_paper2slides
+from helpudoc_agent.presentation_runner import export_pptx_from_pdf, run_paper2slides
 
 from ..schemas import (
     Paper2SlidesExportRequest,
