@@ -22,3 +22,10 @@ def test_presentation_pipeline_generator_public_exports() -> None:
     assert GenerationConfig is not None
     assert GenerationInput is not None
 
+
+def test_presentation_pipeline_core_state_exports() -> None:
+    from presentation_pipeline.core import create_state, load_state, save_state
+
+    assert create_state is not None
+    assert load_state is not None
+    assert save_state is not None
