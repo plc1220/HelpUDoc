@@ -8,7 +8,7 @@ import {
   ThemeProvider,
   type PaletteMode,
 } from '@mui/material';
-import { Check, CheckSquare, Copy, Edit, Trash, Plus, Minus, ChevronLeft, RotateCcw, Printer, Download, Link as LinkIcon, Loader2, FolderPlus, FolderUp } from 'lucide-react';
+import { Check, CheckSquare, Copy, Edit, Trash, Plus, Minus, ChevronLeft, RotateCcw, Printer, Download, Link as LinkIcon, Loader2, FolderPlus, FolderUp, Upload } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { getWorkspaces, createWorkspace, deleteWorkspace, renameWorkspace, updateWorkspaceSettings } from '../../services/workspaceApi';
@@ -529,6 +529,7 @@ export default function WorkspacePage() {
   const [canvasZoom, setCanvasZoom] = useState(1);
   const [isAgentPaneVisible, setIsAgentPaneVisible] = useState(true);
   const [isFilePaneVisible, setIsFilePaneVisible] = useState(true);
+  const [isFileActionMenuOpen, setIsFileActionMenuOpen] = useState(false);
   const [showSystemFiles, setShowSystemFiles] = useState(false);
   const [conversationStreaming, setConversationStreaming] = useState<Record<string, boolean>>({});
   const [isAgentPaneFullScreen, setIsAgentPaneFullScreen] = useState(false);
@@ -573,7 +574,9 @@ export default function WorkspacePage() {
   const attachmentPrepResumeRef = useRef<Set<string>>(new Set());
   const chatInputRef = useRef<HTMLTextAreaElement | null>(null);
   const attachmentInputRef = useRef<HTMLInputElement | null>(null);
+  const fileUploadInputRef = useRef<HTMLInputElement | null>(null);
   const folderUploadInputRef = useRef<HTMLInputElement | null>(null);
+  const fileActionMenuRef = useRef<HTMLDivElement | null>(null);
   const workspaceNameInputRef = useRef<HTMLInputElement | null>(null);
   const autoSaveTimerRef = useRef<number | null>(null);
   const lastAutoSavedContentRef = useRef<string>('');
@@ -628,6 +631,23 @@ export default function WorkspacePage() {
   useEffect(() => {
     selectedWorkspaceIdRef.current = selectedWorkspace?.id ?? null;
   }, [selectedWorkspace]);
+
+  useEffect(() => {
+    if (!isFileActionMenuOpen) {
+      return;
+    }
+
+    const handlePointerDown = (event: MouseEvent) => {
+      const menu = fileActionMenuRef.current;
+      if (menu && event.target instanceof Node && menu.contains(event.target)) {
+        return;
+      }
+      setIsFileActionMenuOpen(false);
+    };
+
+    document.addEventListener('mousedown', handlePointerDown);
+    return () => document.removeEventListener('mousedown', handlePointerDown);
+  }, [isFileActionMenuOpen]);
 
   const messages = useMemo(
     () => (activeConversationId ? conversationMessages[activeConversationId] || [] : []),
@@ -1518,37 +1538,32 @@ export default function WorkspacePage() {
     }
   };
 
-  const handleMoveFile = async (file: WorkspaceFile, destinationFolderPath?: string) => {
-    if (!selectedWorkspace || isDraftWorkspaceFile(file)) {
+  const handleMoveFiles = async (filesToMove: WorkspaceFile[], destinationFolderPath: string) => {
+    if (!selectedWorkspace || filesToMove.length === 0) {
       return;
     }
 
-    const currentFolder = getWorkspaceParentFolderPath(file.name);
-    const nextFolderPath = destinationFolderPath !== undefined
-      ? destinationFolderPath
-      : window.prompt(
-          'Move file to folder',
-          currentFolder,
-        )?.trim();
+    const normalizedFolder = normalizeWorkspaceFolderPath(destinationFolderPath);
+    const uniqueFiles = Array.from(
+      new Map(filesToMove.map((file) => [file.id, file])).values(),
+    ).filter((file) => !isDraftWorkspaceFile(file));
 
-    if (nextFolderPath === undefined || nextFolderPath === null) {
-      return;
-    }
-
-    const normalizedFolder = normalizeWorkspaceFolderPath(nextFolderPath);
-    const destinationPath = buildWorkspaceDestinationPath(file.name, normalizedFolder);
-    if (destinationPath === file.name) {
-      return;
-    }
-
-    try {
-      const updated = await renameFile(selectedWorkspace.id, file.id, { path: normalizedFolder });
-      applyWorkspaceFileUpdate(file.name, updated);
-      if (normalizedFolder) {
-        setFolderPaths((prev) => addFolderPath(prev, normalizedFolder));
+    for (const file of uniqueFiles) {
+      const destinationPath = buildWorkspaceDestinationPath(file.name, normalizedFolder);
+      if (destinationPath === file.name) {
+        continue;
       }
-    } catch (error) {
-      console.error('Failed to move file:', error);
+
+      try {
+        const updated = await renameFile(selectedWorkspace.id, file.id, { path: normalizedFolder });
+        applyWorkspaceFileUpdate(file.name, updated);
+      } catch (error) {
+        console.error('Failed to move file:', error);
+      }
+    }
+
+    if (normalizedFolder) {
+      setFolderPaths((prev) => addFolderPath(prev, normalizedFolder));
     }
   };
 
@@ -6533,6 +6548,7 @@ export default function WorkspacePage() {
                         <input
                           type="file"
                           id="file-upload"
+                          ref={fileUploadInputRef}
                           style={{ display: 'none' }}
                           onChange={handleFileUpload}
                           multiple
@@ -6549,36 +6565,74 @@ export default function WorkspacePage() {
                           onChange={handleFolderUpload}
                           multiple
                         />
-                        <button
-                          onClick={() => document.getElementById('file-upload')?.click()}
-                          disabled={!selectedWorkspace}
-                          className={`h-8 w-8 inline-flex items-center justify-center rounded-lg disabled:opacity-50 ${
-                            isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-100'
-                          }`}
-                          title="Upload files"
-                        >
-                          <Plus size={16} className={isDarkMode ? 'text-slate-300' : 'text-gray-600'} />
-                        </button>
-                        <button
-                          onClick={handleCreateFolder}
-                          disabled={!selectedWorkspace}
-                          className={`h-8 w-8 inline-flex items-center justify-center rounded-lg disabled:opacity-50 ${
-                            isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-100'
-                          }`}
-                          title="Create folder"
-                        >
-                          <FolderPlus size={16} className={isDarkMode ? 'text-slate-300' : 'text-gray-600'} />
-                        </button>
-                        <button
-                          onClick={() => folderUploadInputRef.current?.click()}
-                          disabled={!selectedWorkspace}
-                          className={`h-8 w-8 inline-flex items-center justify-center rounded-lg disabled:opacity-50 ${
-                            isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-100'
-                          }`}
-                          title="Upload folder"
-                        >
-                          <FolderUp size={16} className={isDarkMode ? 'text-slate-300' : 'text-gray-600'} />
-                        </button>
+                        <div ref={fileActionMenuRef} className="relative">
+                          <button
+                            type="button"
+                            onClick={() => setIsFileActionMenuOpen((prev) => !prev)}
+                            disabled={!selectedWorkspace}
+                            className={`h-8 w-8 inline-flex items-center justify-center rounded-lg disabled:opacity-50 ${
+                              isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-100'
+                            }`}
+                            title="Add files or folders"
+                            aria-haspopup="menu"
+                            aria-expanded={isFileActionMenuOpen}
+                          >
+                            <Plus size={16} className={isDarkMode ? 'text-slate-300' : 'text-gray-600'} />
+                          </button>
+                          {isFileActionMenuOpen && (
+                            <div
+                              role="menu"
+                              className={`absolute right-0 top-full z-30 mt-2 w-44 rounded-lg border py-1 text-sm shadow-xl ${
+                                isDarkMode
+                                  ? 'border-slate-700 bg-slate-950 text-slate-200'
+                                  : 'border-slate-200 bg-white text-slate-700'
+                              }`}
+                            >
+                              <button
+                                type="button"
+                                role="menuitem"
+                                onClick={() => {
+                                  setIsFileActionMenuOpen(false);
+                                  fileUploadInputRef.current?.click();
+                                }}
+                                className={`flex w-full items-center gap-2 px-3 py-2 text-left ${
+                                  isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-slate-100'
+                                }`}
+                              >
+                                <Upload size={15} />
+                                <span>Upload files</span>
+                              </button>
+                              <button
+                                type="button"
+                                role="menuitem"
+                                onClick={() => {
+                                  setIsFileActionMenuOpen(false);
+                                  void handleCreateFolder();
+                                }}
+                                className={`flex w-full items-center gap-2 px-3 py-2 text-left ${
+                                  isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-slate-100'
+                                }`}
+                              >
+                                <FolderPlus size={15} />
+                                <span>Create folder</span>
+                              </button>
+                              <button
+                                type="button"
+                                role="menuitem"
+                                onClick={() => {
+                                  setIsFileActionMenuOpen(false);
+                                  folderUploadInputRef.current?.click();
+                                }}
+                                className={`flex w-full items-center gap-2 px-3 py-2 text-left ${
+                                  isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-slate-100'
+                                }`}
+                              >
+                                <FolderUp size={15} />
+                                <span>Upload folder</span>
+                              </button>
+                            </div>
+                          )}
+                        </div>
                         <button
                           onClick={handleOpenDrivePicker}
                           disabled={!selectedWorkspace || isDriveImporting}
@@ -6672,7 +6726,7 @@ export default function WorkspacePage() {
                         onRenameFile={handleRenameFile}
                         onDeleteFile={handleDeleteSingleFile}
                         onDeleteFolder={handleDeleteFolder}
-                        onMoveFile={handleMoveFile}
+                        onMoveFiles={handleMoveFiles}
                       />
                     </div>
                   </div>

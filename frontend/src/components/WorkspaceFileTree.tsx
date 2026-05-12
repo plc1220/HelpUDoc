@@ -39,7 +39,7 @@ interface WorkspaceFileTreeProps {
   onRenameFile: (file: WorkspaceFile) => void;
   onDeleteFile: (file: WorkspaceFile) => void;
   onDeleteFolder: (folder: WorkspaceFileTreeFolderNode) => void;
-  onMoveFile: (file: WorkspaceFile, destinationFolderPath?: string) => void;
+  onMoveFiles: (files: WorkspaceFile[], destinationFolderPath: string) => void;
 }
 
 const getFolderLabel = (node: WorkspaceFileTreeFolderNode) => {
@@ -345,7 +345,7 @@ const TreeFolderRow: React.FC<{
   onSelectFolder?: (folderPath: string) => void;
   onToggle: (folderPath: string) => void;
   onDeleteFolder: (folder: WorkspaceFileTreeFolderNode) => void;
-  onDropFileToFolder: (fileId: string, folderPath: string) => void;
+  onDropFilesToFolder: (fileId: string, folderPath: string) => void;
   draggedFileId: string | null;
   setDropTargetPath: (path: string | null) => void;
   dropTargetPath: string | null;
@@ -358,7 +358,7 @@ const TreeFolderRow: React.FC<{
   onSelectFolder,
   onToggle,
   onDeleteFolder,
-  onDropFileToFolder,
+  onDropFilesToFolder,
   draggedFileId,
   setDropTargetPath,
   dropTargetPath,
@@ -405,7 +405,7 @@ const TreeFolderRow: React.FC<{
           if (!fileId) {
             return;
           }
-          onDropFileToFolder(fileId, node.path);
+          onDropFilesToFolder(fileId, node.path);
           setDropTargetPath(null);
         }}
       >
@@ -499,7 +499,7 @@ const renderTreeNodes = (
     onDeleteFile: (file: WorkspaceFile) => void;
     onDeleteFolder: (folder: WorkspaceFileTreeFolderNode) => void;
     onToggleFolder: (folderPath: string) => void;
-    onDropFileToFolder: (fileId: string, folderPath: string) => void;
+    onDropFilesToFolder: (fileId: string, folderPath: string) => void;
     draggedFileId: string | null;
     setDraggedFileId: (fileId: string | null) => void;
     setDropTargetPath: (path: string | null) => void;
@@ -519,7 +519,7 @@ const renderTreeNodes = (
           onSelectFolder={options.onSelectFolder}
           onToggle={options.onToggleFolder}
           onDeleteFolder={options.onDeleteFolder}
-          onDropFileToFolder={options.onDropFileToFolder}
+          onDropFilesToFolder={options.onDropFilesToFolder}
           draggedFileId={options.draggedFileId}
           setDropTargetPath={options.setDropTargetPath}
           dropTargetPath={options.dropTargetPath}
@@ -572,7 +572,7 @@ export default function WorkspaceFileTree({
   onRenameFile,
   onDeleteFile,
   onDeleteFolder,
-  onMoveFile,
+  onMoveFiles,
 }: WorkspaceFileTreeProps) {
   const isDarkMode = colorMode === 'dark';
   const tree = useMemo(() => buildWorkspaceFileTree(files, explicitFolderPaths), [files, explicitFolderPaths]);
@@ -649,12 +649,21 @@ export default function WorkspaceFileTree({
     });
   };
 
-  const handleDropFileToFolder = (fileId: string, folderPath: string) => {
+  const handleDropFilesToFolder = (fileId: string, folderPath: string) => {
     const file = fileById.get(fileId);
     if (!file) {
       return;
     }
-    onMoveFile(file, folderPath);
+    const draggedFileIsSelected = selectedFiles.has(fileId);
+    const filesToMove = draggedFileIsSelected
+      ? Array.from(selectedFiles)
+          .map((selectedFileId) => fileById.get(selectedFileId))
+          .filter((selectedFile): selectedFile is WorkspaceFile => Boolean(selectedFile))
+          .filter((selectedFile) => selectedFile.mimeType !== 'application/vnd.helpudoc.paper2slides-job' && !isDraftWorkspaceFile(selectedFile))
+      : [file];
+    if (filesToMove.length > 0) {
+      onMoveFiles(filesToMove, folderPath);
+    }
     setDraggedFileId(null);
     setDropTargetPath(null);
   };
@@ -665,7 +674,7 @@ export default function WorkspaceFileTree({
     if (!fileId) {
       return;
     }
-    handleDropFileToFolder(fileId, '');
+    handleDropFilesToFolder(fileId, '');
   };
 
   return (
@@ -702,7 +711,7 @@ export default function WorkspaceFileTree({
               onDeleteFile,
               onDeleteFolder,
               onToggleFolder: handleToggleFolder,
-              onDropFileToFolder: handleDropFileToFolder,
+              onDropFilesToFolder: handleDropFilesToFolder,
               draggedFileId,
               setDraggedFileId,
               setDropTargetPath,
