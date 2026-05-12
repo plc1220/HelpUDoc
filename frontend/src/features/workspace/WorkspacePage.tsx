@@ -8,14 +8,16 @@ import {
   ThemeProvider,
   type PaletteMode,
 } from '@mui/material';
-import { Check, CheckSquare, Copy, Edit, Trash, Plus, Minus, ChevronLeft, RotateCcw, Printer, Download, Link as LinkIcon, Loader2 } from 'lucide-react';
+import { Check, CheckSquare, Copy, Edit, Trash, Plus, Minus, ChevronLeft, RotateCcw, Printer, Download, Link as LinkIcon, Loader2, FolderPlus, FolderUp } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { getWorkspaces, createWorkspace, deleteWorkspace, renameWorkspace, updateWorkspaceSettings } from '../../services/workspaceApi';
 import {
   getFiles,
   createFile,
+  createFolder,
   createTextFile,
+  getFolders,
   importGoogleDriveFiles,
   updateFileContent,
   deleteFolder,
@@ -194,6 +196,24 @@ const mergeFileContextRefs = (
 };
 
 const delay = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
+
+const addFolderPath = (paths: string[], folderPath: string) => {
+  const normalized = normalizeWorkspaceFolderPath(folderPath);
+  if (!normalized) {
+    return paths;
+  }
+  const next = new Set(paths);
+  const parts = normalized.split('/');
+  for (let index = 1; index <= parts.length; index += 1) {
+    next.add(parts.slice(0, index).join('/'));
+  }
+  return Array.from(next).sort((left, right) => left.localeCompare(right, undefined, { numeric: true, sensitivity: 'base' }));
+};
+
+const getUploadRelativePath = (file: File) => {
+  const relativePath = file.webkitRelativePath || file.name;
+  return normalizeFilePath(relativePath).replace(/^\/+/, '');
+};
 
 const DEFAULT_PERSONA_NAME = 'fast';
 const DEFAULT_PERSONAS: AgentPersona[] = [
@@ -490,6 +510,7 @@ export default function WorkspacePage() {
   const [workspaceNameDraft, setWorkspaceNameDraft] = useState('');
   const [workspaceRenameBusy, setWorkspaceRenameBusy] = useState(false);
   const [files, setFiles] = useState<WorkspaceFile[]>([]);
+  const [folderPaths, setFolderPaths] = useState<string[]>([]);
   const [selectedFile, setSelectedFile] = useState<WorkspaceFile | null>(null);
   const [selectedFileDetails, setSelectedFileDetails] = useState<WorkspaceFile | null>(null);
   const [selectedDashboardPath, setSelectedDashboardPath] = useState<string | null>(null);
@@ -552,6 +573,7 @@ export default function WorkspacePage() {
   const attachmentPrepResumeRef = useRef<Set<string>>(new Set());
   const chatInputRef = useRef<HTMLTextAreaElement | null>(null);
   const attachmentInputRef = useRef<HTMLInputElement | null>(null);
+  const folderUploadInputRef = useRef<HTMLInputElement | null>(null);
   const workspaceNameInputRef = useRef<HTMLInputElement | null>(null);
   const autoSaveTimerRef = useRef<number | null>(null);
   const lastAutoSavedContentRef = useRef<string>('');
@@ -637,6 +659,10 @@ export default function WorkspacePage() {
   const visibleFiles = useMemo(
     () => (showSystemFiles ? files : files.filter((file) => !isSystemFile(file))),
     [files, showSystemFiles],
+  );
+  const visibleFolderPaths = useMemo(
+    () => (showSystemFiles ? folderPaths : folderPaths.filter((path) => !isSystemFile({ id: `folder:${path}`, name: path }))),
+    [folderPaths, showSystemFiles],
   );
   const visibleFileIds = useMemo(() => new Set(visibleFiles.map((file) => file.id)), [visibleFiles]);
   const allFilesSelected = useMemo(() => {
@@ -1518,6 +1544,9 @@ export default function WorkspacePage() {
     try {
       const updated = await renameFile(selectedWorkspace.id, file.id, { path: normalizedFolder });
       applyWorkspaceFileUpdate(file.name, updated);
+      if (normalizedFolder) {
+        setFolderPaths((prev) => addFolderPath(prev, normalizedFolder));
+      }
     } catch (error) {
       console.error('Failed to move file:', error);
     }
@@ -1570,20 +1599,17 @@ export default function WorkspacePage() {
       const name = file.name || '';
       return name === folder.path || name.startsWith(prefix);
     });
-    const persistedFiles = filesInFolder.filter((file) => !isDraftWorkspaceFile(file));
-
     const confirmed = window.confirm(
       `Delete folder ${folder.path} and ${folder.fileCount} file${folder.fileCount === 1 ? '' : 's'} inside it?`,
     );
     if (!confirmed) return;
 
     try {
-      if (persistedFiles.length > 0) {
-        await deleteFolder(selectedWorkspace.id, folder.path);
-      }
+      await deleteFolder(selectedWorkspace.id, folder.path);
 
       const deletedIds = new Set(filesInFolder.map((file) => file.id));
       const deletedNames = new Set(filesInFolder.map((file) => file.name));
+      const folderPrefix = `${folder.path}/`;
 
       setFiles((prev) =>
         prev.filter((file) => {
@@ -1591,6 +1617,7 @@ export default function WorkspacePage() {
           return name !== folder.path && !name.startsWith(prefix);
         }),
       );
+      setFolderPaths((prev) => prev.filter((path) => path !== folder.path && !path.startsWith(folderPrefix)));
       setSelectedFiles((prev) => {
         const next = new Set(prev);
         for (const fileId of deletedIds) {
@@ -1733,7 +1760,11 @@ export default function WorkspacePage() {
   const loadFilesForWorkspace = useCallback(async (workspaceId: string | null) => {
     if (!workspaceId) return;
     try {
-      const files = await getFiles(workspaceId);
+      const [files, folders] = await Promise.all([
+        getFiles(workspaceId),
+        getFolders(workspaceId),
+      ]);
+      setFolderPaths(folders);
       const pending = pendingPresentationJobsRef.current.get(workspaceId) || [];
       if (pending.length) {
         const placeholders: WorkspaceFile[] = pending.map((entry) => ({
@@ -2850,6 +2881,7 @@ export default function WorkspacePage() {
   const handleSelectWorkspace = useCallback((workspace: Workspace) => {
     setIsWorkspaceRenameActive(false);
     setWorkspaceNameDraft(workspace.name);
+    setFolderPaths([]);
     setSelectedWorkspace(workspace);
   }, []);
 
@@ -3041,6 +3073,7 @@ export default function WorkspacePage() {
       };
       setWorkspaces((prev) => [newWorkspace, ...prev]);
       setSelectedWorkspace(newWorkspace);
+      setFolderPaths([]);
       setWorkspaceSearchQuery('');
       setWorkspaceNameDraft(newWorkspace.name);
       setIsWorkspaceRenameActive(true);
@@ -6060,6 +6093,7 @@ export default function WorkspacePage() {
       setWorkspaces(workspaces.filter((workspace) => workspace.id !== id));
       setSelectedWorkspace(null);
       setFiles([]);
+      setFolderPaths([]);
     } catch (error) {
       console.error('Failed to delete workspace:', error);
     }
@@ -6181,6 +6215,28 @@ export default function WorkspacePage() {
     setSelectedFiles(new Set(visibleFiles.map((file) => file.id)));
   };
 
+  const handleCreateFolder = async () => {
+    if (!selectedWorkspace) {
+      return;
+    }
+    const proposedPath = window.prompt('Create folder')?.trim();
+    if (!proposedPath) {
+      return;
+    }
+    const normalizedFolder = normalizeWorkspaceFolderPath(proposedPath);
+    if (!normalizedFolder) {
+      return;
+    }
+
+    try {
+      const created = await createFolder(selectedWorkspace.id, normalizedFolder);
+      const createdPath = typeof created?.path === 'string' ? created.path : normalizedFolder;
+      setFolderPaths((prev) => addFolderPath(prev, createdPath));
+    } catch (error) {
+      console.error('Failed to create folder:', error);
+    }
+  };
+
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     if (!selectedWorkspace || !event.target.files || event.target.files.length === 0) {
       return;
@@ -6195,6 +6251,35 @@ export default function WorkspacePage() {
       }
     } catch (error) {
       console.error('Failed to upload file:', error);
+    } finally {
+      event.target.value = '';
+    }
+  };
+
+  const handleFolderUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    if (!selectedWorkspace || !event.target.files || event.target.files.length === 0) {
+      return;
+    }
+
+    const filesToUpload = Array.from(event.target.files);
+
+    try {
+      for (const file of filesToUpload) {
+        const relativePath = getUploadRelativePath(file);
+        if (!relativePath) {
+          continue;
+        }
+        const newFileData = (await createFile(selectedWorkspace.id, file, relativePath)) as WorkspaceFile;
+        setFiles((prevFiles) => [...prevFiles, newFileData]);
+        const folderPath = getWorkspaceParentFolderPath(relativePath);
+        if (folderPath) {
+          setFolderPaths((prev) => addFolderPath(prev, folderPath));
+        }
+      }
+    } catch (error) {
+      console.error('Failed to upload folder:', error);
+    } finally {
+      event.target.value = '';
     }
   };
 
@@ -6452,6 +6537,18 @@ export default function WorkspacePage() {
                           onChange={handleFileUpload}
                           multiple
                         />
+                        <input
+                          type="file"
+                          id="folder-upload"
+                          ref={(element) => {
+                            folderUploadInputRef.current = element;
+                            element?.setAttribute('webkitdirectory', '');
+                            element?.setAttribute('directory', '');
+                          }}
+                          style={{ display: 'none' }}
+                          onChange={handleFolderUpload}
+                          multiple
+                        />
                         <button
                           onClick={() => document.getElementById('file-upload')?.click()}
                           disabled={!selectedWorkspace}
@@ -6461,6 +6558,26 @@ export default function WorkspacePage() {
                           title="Upload files"
                         >
                           <Plus size={16} className={isDarkMode ? 'text-slate-300' : 'text-gray-600'} />
+                        </button>
+                        <button
+                          onClick={handleCreateFolder}
+                          disabled={!selectedWorkspace}
+                          className={`h-8 w-8 inline-flex items-center justify-center rounded-lg disabled:opacity-50 ${
+                            isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-100'
+                          }`}
+                          title="Create folder"
+                        >
+                          <FolderPlus size={16} className={isDarkMode ? 'text-slate-300' : 'text-gray-600'} />
+                        </button>
+                        <button
+                          onClick={() => folderUploadInputRef.current?.click()}
+                          disabled={!selectedWorkspace}
+                          className={`h-8 w-8 inline-flex items-center justify-center rounded-lg disabled:opacity-50 ${
+                            isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-100'
+                          }`}
+                          title="Upload folder"
+                        >
+                          <FolderUp size={16} className={isDarkMode ? 'text-slate-300' : 'text-gray-600'} />
                         </button>
                         <button
                           onClick={handleOpenDrivePicker}
@@ -6534,6 +6651,7 @@ export default function WorkspacePage() {
                     <div className="h-full min-h-0 px-3 py-2">
                       <WorkspaceFileTree
                         files={visibleFiles}
+                        folderPaths={visibleFolderPaths}
                         colorMode={colorMode}
                         selectedFileId={selectedFile?.id || null}
                         selectedDashboardPath={selectedDashboardPath}

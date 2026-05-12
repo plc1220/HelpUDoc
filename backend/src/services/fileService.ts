@@ -78,6 +78,42 @@ export class FileService {
     return Boolean(existing);
   }
 
+  async listFolders(workspaceId: string, userId: string): Promise<string[]> {
+    await this.workspaceService.ensureMembership(workspaceId, userId);
+    const workspaceRoot = path.resolve(WORKSPACE_DIR, workspaceId);
+    try {
+      await fs.access(workspaceRoot);
+    } catch {
+      return [];
+    }
+
+    const folders = await this.walkWorkspaceFolders(workspaceRoot);
+    return folders
+      .map((folderPath) => path.relative(workspaceRoot, folderPath).replace(/\\/g, '/'))
+      .filter(Boolean)
+      .sort((left, right) => left.localeCompare(right, undefined, { numeric: true, sensitivity: 'base' }));
+  }
+
+  async createFolder(workspaceId: string, folderPath: string, userId: string) {
+    await this.workspaceService.ensureMembership(workspaceId, userId, { requireEdit: true });
+
+    const normalizedFolder = this.normalizeRelativeFolderPath(folderPath);
+    if (!normalizedFolder) {
+      throw new ConflictError('Folder path is required');
+    }
+
+    const workspaceRoot = path.resolve(WORKSPACE_DIR, workspaceId);
+    const absoluteFolderPath = path.resolve(workspaceRoot, normalizedFolder);
+    if (!absoluteFolderPath.startsWith(`${workspaceRoot}${path.sep}`)) {
+      throw new ConflictError('Invalid folder path');
+    }
+
+    await fs.mkdir(absoluteFolderPath, { recursive: true });
+    await this.workspaceService.touchWorkspace(workspaceId, userId);
+
+    return { path: normalizedFolder };
+  }
+
   private isTextFile(fileName: string, mimeType: string): boolean {
     const ext = path.extname(fileName).toLowerCase();
     if (TEXT_FILE_EXTENSIONS.includes(ext)) {
@@ -517,7 +553,7 @@ export class FileService {
 
     const workspaceRoot = path.resolve(WORKSPACE_DIR, workspaceId);
     const absoluteFolderPath = path.resolve(workspaceRoot, normalizedFolder);
-    if (!absoluteFolderPath.startsWith(workspaceRoot)) {
+    if (!absoluteFolderPath.startsWith(`${workspaceRoot}${path.sep}`)) {
       throw new ConflictError('Invalid folder path');
     }
 
@@ -799,6 +835,26 @@ export class FileService {
         } else if (entry.isFile()) {
           results.push(entryPath);
         }
+      }
+    }
+
+    return results;
+  }
+
+  private async walkWorkspaceFolders(root: string): Promise<string[]> {
+    const results: string[] = [];
+    const stack: string[] = [root];
+
+    while (stack.length) {
+      const current = stack.pop()!;
+      const dirEntries = await fs.readdir(current, { withFileTypes: true });
+      for (const entry of dirEntries) {
+        if (!entry.isDirectory()) {
+          continue;
+        }
+        const entryPath = path.join(current, entry.name);
+        results.push(entryPath);
+        stack.push(entryPath);
       }
     }
 

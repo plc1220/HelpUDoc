@@ -23,6 +23,7 @@ import {
 
 interface WorkspaceFileTreeProps {
   files: WorkspaceFile[];
+  folderPaths?: string[];
   colorMode: 'light' | 'dark';
   selectedFileId: string | null;
   selectedDashboardPath?: string | null;
@@ -555,6 +556,7 @@ const renderTreeNodes = (
 
 export default function WorkspaceFileTree({
   files,
+  folderPaths: explicitFolderPaths = [],
   colorMode,
   selectedFileId,
   selectedDashboardPath,
@@ -573,7 +575,7 @@ export default function WorkspaceFileTree({
   onMoveFile,
 }: WorkspaceFileTreeProps) {
   const isDarkMode = colorMode === 'dark';
-  const tree = useMemo(() => buildWorkspaceFileTree(files), [files]);
+  const tree = useMemo(() => buildWorkspaceFileTree(files, explicitFolderPaths), [files, explicitFolderPaths]);
   const folderPaths = useMemo(() => collectWorkspaceFolderPaths(tree), [tree]);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   const [draggedFileId, setDraggedFileId] = useState<string | null>(null);

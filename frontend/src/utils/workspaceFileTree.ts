@@ -90,7 +90,7 @@ const countFiles = (node: WorkspaceFileTreeFolderNode): number => {
   return total;
 };
 
-export const buildWorkspaceFileTree = (files: WorkspaceFile[]): WorkspaceFileTreeFolderNode => {
+export const buildWorkspaceFileTree = (files: WorkspaceFile[], explicitFolderPaths: string[] = []): WorkspaceFileTreeFolderNode => {
   const root: WorkspaceFileTreeFolderNode = {
     kind: 'folder',
     id: 'workspace-root',
@@ -104,24 +104,12 @@ export const buildWorkspaceFileTree = (files: WorkspaceFile[]): WorkspaceFileTre
   const folderIndex = new Map<string, WorkspaceFileTreeFolderNode>();
   folderIndex.set('', root);
 
-  const sortedFiles = [...files].sort((left, right) =>
-    normalizeFilePath(left.name || '').localeCompare(
-      normalizeFilePath(right.name || ''),
-      undefined,
-      { numeric: true, sensitivity: 'base' },
-    ),
-  );
-
-  for (const file of sortedFiles) {
-    const parts = splitWorkspacePath(file.name || '');
-    if (!parts.length) {
-      continue;
-    }
-
+  const ensureFolder = (folderPath: string) => {
+    const parts = splitWorkspacePath(folderPath);
     let currentFolder = root;
     let currentPath = '';
 
-    for (let index = 0; index < parts.length - 1; index += 1) {
+    for (let index = 0; index < parts.length; index += 1) {
       const segment = parts[index];
       currentPath = currentPath ? `${currentPath}/${segment}` : segment;
       let folderNode = folderIndex.get(currentPath);
@@ -140,6 +128,27 @@ export const buildWorkspaceFileTree = (files: WorkspaceFile[]): WorkspaceFileTre
       }
       currentFolder = folderNode;
     }
+
+    return currentFolder;
+  };
+
+  explicitFolderPaths.forEach(ensureFolder);
+
+  const sortedFiles = [...files].sort((left, right) =>
+    normalizeFilePath(left.name || '').localeCompare(
+      normalizeFilePath(right.name || ''),
+      undefined,
+      { numeric: true, sensitivity: 'base' },
+    ),
+  );
+
+  for (const file of sortedFiles) {
+    const parts = splitWorkspacePath(file.name || '');
+    if (!parts.length) {
+      continue;
+    }
+
+    const currentFolder = ensureFolder(parts.slice(0, -1).join('/'));
 
     const leafName = parts[parts.length - 1];
     currentFolder.children.push({

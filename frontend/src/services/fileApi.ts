@@ -31,9 +31,12 @@ export const getWorkspaceFilePreview = async (workspaceId: string, relativePath:
   return response.json();
 };
 
-export const createFile = async (workspaceId: string, file: File) => {
+export const createFile = async (workspaceId: string, file: File, path?: string) => {
   const formData = new FormData();
   formData.append('file', file);
+  if (path?.trim()) {
+    formData.append('path', path.trim());
+  }
 
   const response = await apiFetch(`${API_URL}/workspaces/${workspaceId}/files`, {
     method: 'POST',
@@ -41,6 +44,29 @@ export const createFile = async (workspaceId: string, file: File) => {
   });
   if (!response.ok) {
     throw new Error('Failed to create file');
+  }
+  return response.json();
+};
+
+export const getFolders = async (workspaceId: string): Promise<string[]> => {
+  const response = await apiFetch(`${API_URL}/workspaces/${workspaceId}/files/folders`);
+  if (!response.ok) {
+    throw new Error('Failed to fetch folders');
+  }
+  const payload = await response.json();
+  return Array.isArray(payload?.folders) ? payload.folders : [];
+};
+
+export const createFolder = async (workspaceId: string, path: string) => {
+  const response = await apiFetch(`${API_URL}/workspaces/${workspaceId}/files/folders`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ path }),
+  });
+  if (!response.ok) {
+    throw new Error('Failed to create folder');
   }
   return response.json();
 };

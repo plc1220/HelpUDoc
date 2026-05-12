@@ -60,6 +60,14 @@ export default function(
     path: z.string().min(1),
   });
 
+  const createFolderSchema = z.object({
+    path: z.string().min(1),
+  });
+
+  const uploadFileSchema = z.object({
+    path: z.string().min(1).optional(),
+  });
+
   const googleDriveSearchSchema = z.object({
     query: z.string().optional(),
     scope: z.enum(['recent', 'my-drive', 'shared']).optional(),
@@ -163,6 +171,17 @@ export default function(
     }
   });
 
+  router.get('/folders', async (req: Request<{ workspaceId: string }>, res: Response) => {
+    try {
+      const { workspaceId } = req.params;
+      const user = requireUserContext(req);
+      const folders = await fileService.listFolders(workspaceId, user.userId);
+      res.json({ folders });
+    } catch (error) {
+      handleError(res, error, 'Failed to list folders');
+    }
+  });
+
   router.get('/preview', async (req: Request<{ workspaceId: string }>, res: Response) => {
     try {
       const { workspaceId } = req.params;
@@ -260,6 +279,7 @@ export default function(
         if (!req.file) {
           return res.status(400).json({ error: 'No file uploaded' });
         }
+        const payload = uploadFileSchema.parse(req.body);
         const diskPath = req.file.path;
         let fileBuffer: Buffer;
         try {
@@ -269,7 +289,7 @@ export default function(
         }
         const newFile = await fileService.createFile(
           workspaceId,
-          req.file.originalname,
+          payload.path || req.file.originalname,
           fileBuffer,
           req.file.mimetype,
           user.userId,
@@ -296,10 +316,28 @@ export default function(
           ...(understandingState || {}),
         });
       } catch (error) {
+        if (error instanceof z.ZodError) {
+          return res.status(400).json({ error: 'Invalid file upload payload' });
+        }
         handleError(res, error, 'Failed to create file');
       }
     },
   );
+
+  router.post('/folders', async (req: Request<{ workspaceId: string }>, res: Response) => {
+    try {
+      const { workspaceId } = req.params;
+      const user = requireUserContext(req);
+      const payload = createFolderSchema.parse(req.body);
+      const folder = await fileService.createFolder(workspaceId, payload.path, user.userId);
+      res.status(201).json(folder);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: 'Invalid folder create payload' });
+      }
+      handleError(res, error, 'Failed to create folder');
+    }
+  });
 
   router.post('/text', async (req: Request<{ workspaceId: string }>, res: Response) => {
     try {
