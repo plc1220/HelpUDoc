@@ -104,6 +104,10 @@ Notes:
   directory. It currently uses the checked-in backend image reference when
   manifests are applied; update it manually if the CronJob must run a specific
   SHA image.
+- Until PR12 migrates or retires legacy registry paths, prefer
+  `.github/workflows/deploy-gke.yml` for app deploys. The smaller component
+  workflows and Cloud Build configs still contain direct `gcr.io` assumptions
+  and may lag the target registry strategy.
 
 See `docs/ci-cd.md` for more workflow details and troubleshooting.
 
@@ -114,6 +118,9 @@ It builds the same three app images in parallel, tags them with Cloud Build
 `$BUILD_ID`, rewrites app/frontend manifest image tags in the build workspace,
 applies `infra/gke/k8s/` through `gke-deploy`, bootstraps Langfuse, syncs
 PVC-backed runtime files, optionally bootstraps an admin user, and can run E2E.
+It currently builds and deploys `gcr.io/$PROJECT_ID/helpudoc-{backend,frontend,agent}`.
+If PR12 moves app images to Artifact Registry, this Cloud Build path must be
+updated in the same PR or clearly retired.
 
 ```bash
 gcloud builds submit . \
@@ -127,6 +134,27 @@ Notes:
   app/frontend deployment manifests to `$BUILD_ID` in the build workspace.
 - `gke-deploy` uses a longer timeout because the agent image is large and can
   take more than 5 minutes to pull on a new node.
+
+### 4.3.1 PR12 registry surface
+
+The current deploy surface still has these Container Registry references:
+
+| Path | Registry surface |
+| --- | --- |
+| `.github/workflows/deploy-gke.yml` | Preferred interim deploy path; still authenticates to `gcr.io`, uses Buildx registry cache at `gcr.io/$PROJECT_ID/helpudoc-buildcache-*`, builds/pushes backend/frontend/agent images to `gcr.io/$PROJECT_ID/...`, pulls the agent image for smoke import, and patches deployment/init-container/CronJob images to `gcr.io/$PROJECT_ID/...`. |
+| `.github/workflows/deploy-backend-gke.yml` | One-off backend path; builds/pushes `gcr.io/$PROJECT_ID/helpudoc-backend:$GITHUB_SHA`, applies `50-app.yaml` and `52-daily-reflection-cron.yaml`, then patches backend and reflection CronJob images. |
+| `.github/workflows/deploy-frontend-gke.yml` | One-off frontend path; builds/pushes `gcr.io/$PROJECT_ID/helpudoc-frontend:$GITHUB_SHA`, applies `60-frontend.yaml`, then patches the frontend image. |
+| `.github/workflows/deploy-agent-gke.yml` | One-off agent path; builds/runs/pushes `gcr.io/$PROJECT_ID/helpudoc-agent:$GITHUB_SHA`, applies `50-app.yaml`, patches the agent image, then runs legacy PVC sync. |
+| `infra/cloudbuild.yaml` | Full-stack Cloud Build path; uses `gcr.io/cloud-builders/*`, pulls `:latest` app images for cache, builds/tags/pushes backend/frontend/agent images under `gcr.io/$PROJECT_ID/...`, rewrites manifests in the build workspace, and declares `gcr.io/$PROJECT_ID/...` outputs. |
+| `infra/cloudbuild-frontend.yaml` | Frontend-only Cloud Build path; uses `gcr.io/cloud-builders/*`, pulls/builds/tags/pushes frontend under `gcr.io/$PROJECT_ID/...`, rewrites `60-frontend.yaml`, and declares a `gcr.io/$PROJECT_ID/...` output. |
+| `infra/gke/k8s/50-app.yaml` | Checked-in defaults still point backend, agent, and agent init containers at `gcr.io/my-rd-coe-demo-gen-ai/...:latest`. |
+| `infra/gke/k8s/52-daily-reflection-cron.yaml` | Checked-in default reflection job image is `gcr.io/my-rd-coe-demo-gen-ai/helpudoc-backend:latest`. |
+| `infra/gke/k8s/60-frontend.yaml` | Checked-in default frontend image is `gcr.io/my-rd-coe-demo-gen-ai/helpudoc-frontend:latest`. |
+
+Operator docs with registry references include `docs/ci-cd.md`, this guide,
+`docs/environment.md`, `docs/repo-cicd-restructure-plan.md`, and
+`infra/gke/README.md`. PR12 should update the docs that remain true after the
+registry migration and remove or mark any retired path.
 
 ### 4.4 Create Secret + ConfigMap (one-time or when values change)
 

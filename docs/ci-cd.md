@@ -58,11 +58,32 @@ At least one of `build_backend`, `build_frontend`, or `build_agent` must be true
 
 The smaller **Deploy Frontend / Backend / Agent to GKE** workflows still build one image at a time and patch the matching deployment. Prefer **`deploy-gke.yml`** when you want Buildx cache, component toggles, and smoke checks in one place.
 
+Until PR12 lands, **`deploy-gke.yml` is the preferred app deploy path**. The one-off component workflows and Cloud Build configs may lag the registry strategy because they still carry direct `gcr.io` assumptions. If PR12 migrates images from Container Registry to Artifact Registry, it must update these legacy paths at the same time or retire them so operators do not accidentally deploy from the old registry.
+
+### PR12 registry surface
+
+Current app image and cache references are still tied to `gcr.io` in these deploy surfaces:
+
+| Surface | Current `gcr.io` usage PR12 must address |
+| --- | --- |
+| `.github/workflows/deploy-gke.yml` | Authenticates Docker to `gcr.io`, uses Buildx cache refs under `gcr.io/$PROJECT_ID/helpudoc-buildcache-*`, builds/pushes backend/frontend/agent images under `gcr.io/$PROJECT_ID/...`, pulls the agent image for smoke import, and patches backend/frontend/agent/init-container/CronJob images to `gcr.io/$PROJECT_ID/...`. |
+| `.github/workflows/deploy-backend-gke.yml` | Authenticates to `gcr.io`, builds/pushes `helpudoc-backend`, applies `50-app.yaml` and `52-daily-reflection-cron.yaml`, then patches backend and reflection CronJob images to `gcr.io/$PROJECT_ID/...`. |
+| `.github/workflows/deploy-frontend-gke.yml` | Authenticates to `gcr.io`, builds/pushes `helpudoc-frontend`, applies `60-frontend.yaml`, then patches the frontend image to `gcr.io/$PROJECT_ID/...`. |
+| `.github/workflows/deploy-agent-gke.yml` | Authenticates to `gcr.io`, builds/runs/pushes `helpudoc-agent`, applies `50-app.yaml`, then patches the agent image to `gcr.io/$PROJECT_ID/...`. It also runs the legacy PVC sync path after deploy. |
+| `infra/cloudbuild.yaml` | Uses Cloud Build builder images from `gcr.io/cloud-builders/*`, pulls cache/source images from `gcr.io/$PROJECT_ID/...:latest`, builds/tags/pushes backend/frontend/agent images to `gcr.io/$PROJECT_ID/...`, rewrites manifest image refs with `sed`, and declares `images:` outputs under `gcr.io/$PROJECT_ID/...`. |
+| `infra/cloudbuild-frontend.yaml` | Uses Cloud Build builder images from `gcr.io/cloud-builders/*`, pulls/builds/tags/pushes `helpudoc-frontend` to `gcr.io/$PROJECT_ID/...`, rewrites `60-frontend.yaml`, and declares a `gcr.io/$PROJECT_ID/...` image output. |
+| `infra/gke/k8s/50-app.yaml` | Checked-in defaults reference `gcr.io/my-rd-coe-demo-gen-ai/helpudoc-agent:latest` for both init containers and the agent container, plus `gcr.io/my-rd-coe-demo-gen-ai/helpudoc-backend:latest` for the backend container. |
+| `infra/gke/k8s/52-daily-reflection-cron.yaml` | Checked-in default reflection job image is `gcr.io/my-rd-coe-demo-gen-ai/helpudoc-backend:latest`. |
+| `infra/gke/k8s/60-frontend.yaml` | Checked-in default frontend image is `gcr.io/my-rd-coe-demo-gen-ai/helpudoc-frontend:latest`. |
+| Current docs | `docs/ci-cd.md`, `docs/deploy.md`, `docs/environment.md`, `docs/repo-cicd-restructure-plan.md`, and `infra/gke/README.md` mention Container Registry, Cloud Build, `gcr.io`, Artifact Registry planning, or manual image patch commands. PR12 should update operator-facing docs for the final registry strategy. |
+
 **Langfuse-only:** **`Deploy Langfuse to GKE`** applies `30-storage.yaml`, `44-clickhouse.yaml`, and `45-langfuse.yaml`, validates required `helpudoc-config` / `helpudoc-secrets` keys, runs `infra/gke/scripts/bootstrap-langfuse-db.sh --wait-rollout`, and waits for Langfuse web/worker rollouts.
 
 In **`deploy-gke.yml`**, when **`deploy_infra` is true**, the workflow applies `infra/gke/k8s/`, creates the demo `helpudoc-config` only if it is missing (`infra/gke/bootstrap/20-configmap.demo.yaml`), runs Langfuse key patching + DB bootstrap, then merges OAuth keys from GitHub secrets. When **`deploy_infra` is false**, none of that runs: the cluster must already have `helpudoc-config` and the workloads you expect (run an infra deploy first on a brand-new cluster). Routine app deploys should keep **`deploy_infra` false** so image tags and rollouts are the only mutations.
 
 ## One Command Deploy (Manual)
+
+Prefer the GitHub Actions full-stack workflow above for routine app deploys until PR12 updates or retires the older deploy paths. These Cloud Build commands remain useful for operator-triggered one-offs, but they still assume `gcr.io` image locations today.
 
 Prereqs:
 - `gcloud` authenticated

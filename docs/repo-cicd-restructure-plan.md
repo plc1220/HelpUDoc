@@ -39,9 +39,9 @@ Large files worth splitting:
 | `agent/helpudoc_agent/data_agent_tools.py` | 2852 | DuckDB, state, charts, dashboards, report generation, and tool factory together. |
 | `frontend/src/components/chat/ChatMessageBubble.tsx` | 1968 | Message rendering, tool rendering, markdown, interrupts, and artifact previews together. |
 | `agent/helpudoc_agent/tools_and_schemas.py` | 1849 | Tool registry plus many concrete tool implementations. |
-| `backend/src/api/agent.ts` | 1384 | Agent run routes, slash metadata, Paper2Slides, policy, streaming, and proxy concerns together. |
-| `backend/src/api/settings.ts` | 1266 | Runtime config, skills CRUD, skill builder, GitHub import, and admin settings together. |
-| `backend/src/services/agentRunService.ts` | 1162 | Stream persistence, run lifecycle, resume, interrupts, cancellation, and telemetry together. |
+| `backend/src/api/agent/runs.ts` | 720 | Agent run start/resume/cancel/status/stream routes are now split out, but still the largest route leaf. |
+| `backend/src/api/settings/skillBuilder.ts` | 462 | Skill builder route handling is now split out, but remains a sizable settings leaf module. |
+| `backend/src/services/agent-runs/lifecycle.ts` | 1408 | Stream persistence, run lifecycle, resume, interrupts, cancellation, and telemetry are split from the barrel but still concentrated in one lifecycle module. |
 
 Local workspace size is also noisy even though these files are ignored by git:
 
@@ -132,7 +132,7 @@ scripts/
 
 ### Naming Decisions
 
-| Current name | Target name | Why |
+| Current or legacy name | Target name | Why |
 | --- | --- | --- |
 | `agent/helpudoc_agent/graph.py` | `agent/helpudoc_agent/runtime/agent_registry.py` | The file no longer describes a LangGraph graph. It builds/caches DeepAgents/LangChain agents. |
 | `agent/paper2slides/` | `agent/presentation_pipeline/` | The feature now supports more than papers and may generate slides/posters from general docs. |
@@ -219,7 +219,7 @@ Goal: normal deploys mutate only image tags; infra/bootstrap runs only when requ
 | `backend/Dockerfile.gke` | If backend remains the settings owner for skills, also copy `skills/` to a source path or rely on the agent init container. Choose one owner. |
 | `.github/workflows/deploy-gke.yml` | Keep legacy `kubectl exec` skills/config sync default-off behind `inputs.sync_runtime_assets`; remove later only if operators no longer need the emergency bridge. |
 | `infra/gke/k8s/30-storage.yaml` | Keep `skills-pvc` and `agent-config-pvc` only if admin UI needs runtime edits. If config becomes ConfigMap-backed, remove or deprecate `agent-config-pvc` later. |
-| `backend/src/api/settings.ts` | During transition, settings page writes to PVC-backed paths as today. Add a visible version/source field later so operators know when PVC content diverges from image source. |
+| `backend/src/api/settings/*` | During transition, settings page writes to PVC-backed paths as today. Add a visible version/source field later so operators know when PVC content diverges from image source. |
 | `docs/deploy.md` | Document normal deploy versus infra/bootstrap deploy. |
 | `docs/ci-cd.md` | Document component toggles and when to use `deploy_infra`. |
 
@@ -266,8 +266,8 @@ Goal: one canonical env inventory, typed loaders per runtime, and fewer duplicat
 | `backend/src/services/s3Service.ts` | Read typed S3 config from env module. |
 | `backend/src/services/googleOAuthService.ts` | Read typed OAuth config from env module. |
 | `backend/src/services/langfuseClient.ts` | Read typed Langfuse config from env module. |
-| `backend/src/api/agent.ts` | Replace duplicated path/env helpers with config modules. |
-| `backend/src/api/settings.ts` | Replace duplicated path/env helpers with config modules. |
+| `backend/src/api/agent/*` | Keep split route modules on shared config helpers instead of duplicated path/env parsing. |
+| `backend/src/api/settings/*` | Keep split settings route modules on shared config helpers instead of duplicated path/env parsing. |
 | `agent/helpudoc_agent/configuration.py` | Split settings models from env override logic. |
 | `agent/helpudoc_agent/rag_indexer.py` | Move `RagConfig.from_env` into `agent/helpudoc_agent/rag/config.py`. |
 | `agent/helpudoc_agent/rag_worker.py` | Move queue env parsing into `agent/helpudoc_agent/rag/config.py`. |
@@ -284,7 +284,7 @@ Goal: split the agent service by responsibility while keeping imports stable.
 
 ### Runtime and Config
 
-| Current file | Target file(s) | Action |
+| Original file | Target file(s) | Action |
 | --- | --- | --- |
 | `agent/helpudoc_agent/graph.py` | `agent/helpudoc_agent/runtime/agent_registry.py` | Move `AgentRegistry`, `_clone_preservable_context`, model selection, tool binding, and middleware construction. |
 | `agent/helpudoc_agent/graph.py` | Compatibility shim | Re-export `AgentRegistry` for one or two releases so tests and imports do not break immediately. |
@@ -296,7 +296,7 @@ Goal: split the agent service by responsibility while keeping imports stable.
 
 ### FastAPI Surface
 
-| Current file | Target file(s) | Action |
+| Original file | Target file(s) | Action |
 | --- | --- | --- |
 | `agent/helpudoc_agent/app.py` | `agent/helpudoc_agent/api/app.py` | Keep `create_app` only: load settings, register routes, lifecycle. |
 | `agent/helpudoc_agent/app.py` | `agent/helpudoc_agent/api/schemas.py` | Move Pydantic request/response classes. |
@@ -310,7 +310,7 @@ Goal: split the agent service by responsibility while keeping imports stable.
 
 ### Tools
 
-| Current file | Target file(s) | Action |
+| Original file | Target file(s) | Action |
 | --- | --- | --- |
 | `agent/helpudoc_agent/tools_and_schemas.py` | `agent/helpudoc_agent/tools/factory.py` | Move `ToolFactory`. |
 | `agent/helpudoc_agent/tools_and_schemas.py` | `agent/helpudoc_agent/tools/gemini.py` | Move `GeminiClientManager` and Gemini-native tools. |
@@ -322,7 +322,7 @@ Goal: split the agent service by responsibility while keeping imports stable.
 
 ### Skills
 
-| Current file | Target file(s) | Action |
+| Original file | Target file(s) | Action |
 | --- | --- | --- |
 | `agent/helpudoc_agent/skills_registry.py` | `agent/helpudoc_agent/skills/registry.py` | Move discovery/loading. |
 | `agent/helpudoc_agent/skills_registry.py` | `agent/helpudoc_agent/skills/policy.py` | Move `SkillPolicy` and policy helpers. |
@@ -834,17 +834,17 @@ Notes:
 Split backend agent/settings routes and agent run service.
 
 - [x] Create `backend/src/api/agent/index.ts`.
-- [ ] Move agent run endpoints to `backend/src/api/agent/runs.ts`.
-- [ ] Move slash metadata endpoint to `backend/src/api/agent/slash.ts`.
-- [ ] Move Paper2Slides endpoints to `backend/src/api/agent/paper2slides.ts`.
-- [ ] Move presentation endpoint to `backend/src/api/agent/presentation.ts`.
+- [x] Move agent run endpoints to `backend/src/api/agent/runs.ts`.
+- [x] Move slash metadata endpoint to `backend/src/api/agent/slash.ts`.
+- [x] Move Paper2Slides endpoints to `backend/src/api/agent/paper2slides.ts`.
+- [x] Move presentation endpoint to `backend/src/api/agent/presentation.ts`.
 - [x] Move effective agent policy helpers to `backend/src/api/agent/policy.ts` or a service module.
 - [x] Update `backend/src/api/routes.ts` to import the new agent router.
 - [x] Create `backend/src/api/settings/index.ts`.
-- [ ] Move agent config routes to `backend/src/api/settings/agentConfig.ts`.
-- [ ] Move skills CRUD routes to `backend/src/api/settings/skills.ts`.
-- [ ] Move skill builder routes to `backend/src/api/settings/skillBuilder.ts`.
-- [ ] Move GitHub import routes to `backend/src/api/settings/githubImport.ts`.
+- [x] Move agent config routes to `backend/src/api/settings/agentConfig.ts`.
+- [x] Move skills CRUD routes to `backend/src/api/settings/skills.ts`.
+- [x] Move skill builder routes to `backend/src/api/settings/skillBuilder.ts`.
+- [x] Move GitHub import routes to `backend/src/api/settings/githubImport.ts`.
 - [x] Move skill path/frontmatter helpers to `backend/src/services/skills/`.
 - [x] Split `backend/src/services/agentRunService.ts` into `services/agent-runs/*`.
 - [x] Keep a compatibility barrel for old `agentRunService` exports.
@@ -852,7 +852,8 @@ Split backend agent/settings routes and agent run service.
 - [x] Run `cd backend && npm test`.
 
 Notes:
-- Agent and settings route files are still only partially decomposed; `backend/src/api/agent/index.ts` and `backend/src/api/settings/index.ts` remain large and hold the remaining split debt.
+- Agent and settings route split files now exist; `backend/src/api/agent/index.ts` and `backend/src/api/settings/index.ts` are small composition files.
+- Remaining split debt is in the larger leaf route modules and any follow-up service extraction they still need.
 
 ### PR 10 - `frontend-workspace-split`
 
@@ -876,7 +877,8 @@ Split workspace route and chat renderers.
 - [ ] Run relevant Playwright smoke tests if available.
 
 Notes:
-- Major structural move is complete; the hook extraction and `ChatMessageBubble.tsx` decomposition are still open follow-up debt.
+- Major structural move is complete; the hook extraction and `ChatMessageBubble.tsx` decomposition remain open follow-up debt.
+- These PR 10 open items are non-blocking for PR 12; Playwright smoke tests remain unchecked.
 
 ### PR 11 - `presentation-parser-split`
 
@@ -929,6 +931,7 @@ Artifact Registry and Kustomize overlays.
 - [ ] Add `infra/gke/overlays/dev/kustomization.yaml` if needed.
 - [ ] Add `infra/gke/overlays/prod/kustomization.yaml` if needed.
 - [ ] Remove hard-coded `gcr.io/my-rd-coe-demo-gen-ai/...` image references from manifests or isolate them in overlays.
+- [ ] Migrate or intentionally deprecate the old component deploy workflows and Cloud Build configs, not only `.github/workflows/deploy-gke.yml` and Kubernetes manifests.
 - [ ] Update `infra/gke/README.md` with Artifact Registry setup and IAM.
 - [ ] Update `docs/ci-cd.md`.
 - [ ] Update `docs/deploy.md`.
