@@ -6,7 +6,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from paper2slides.utils.export_service import ExportService
+from presentation_pipeline.utils.export_service import ExportService
 
 
 class SlideAssetsPPTXTest(unittest.TestCase):
