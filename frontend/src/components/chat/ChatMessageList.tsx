@@ -41,6 +41,7 @@ export default function ChatMessageList({
   toggleToolActivityVisibility,
   handleCopyMessageText,
   handleRerunMessage,
+  handleEditAndRerunMessage,
   handlePrepareInterruptAction,
   handleInterruptAction,
   enableTrustedPlanMode,
@@ -85,6 +86,7 @@ export default function ChatMessageList({
   toggleToolActivityVisibility: (messageId: ConversationMessage['id']) => void;
   handleCopyMessageText: (message: ConversationMessage) => void;
   handleRerunMessage: (messageId: ConversationMessage['id']) => void;
+  handleEditAndRerunMessage: (message: ConversationMessage) => void;
   handlePrepareInterruptAction: (
     message: ConversationMessage,
     action: RenderableInterruptAction,
@@ -194,6 +196,7 @@ export default function ChatMessageList({
           toggleToolActivityVisibility={toggleToolActivityVisibility}
           handleCopyMessageText={handleCopyMessageText}
           handleRerunMessage={handleRerunMessage}
+          handleEditAndRerunMessage={handleEditAndRerunMessage}
           handlePrepareInterruptAction={handlePrepareInterruptAction}
           handleInterruptAction={handleInterruptAction}
           enableTrustedPlanMode={enableTrustedPlanMode}
@@ -221,6 +224,7 @@ export default function ChatMessageList({
     getPrimaryInterruptAction,
     handleCopyMessageText,
     handleInterruptAction,
+    handleEditAndRerunMessage,
     handleRerunMessage,
     isPlanApprovalInterrupt,
     isStreaming,

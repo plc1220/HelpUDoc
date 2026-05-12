@@ -124,6 +124,7 @@ export default function AgentChatPane({
   onToggleToolActivityVisibility,
   onCopyMessageText,
   onRerunMessage,
+  onEditAndRerunMessage,
   onPrepareInterruptAction,
   onInterruptAction,
   onEnableTrustedPlanMode,
@@ -238,6 +239,7 @@ export default function AgentChatPane({
   onToggleToolActivityVisibility: (messageId: ConversationMessage['id']) => void;
   onCopyMessageText: (message: ConversationMessage) => void;
   onRerunMessage: (messageId: ConversationMessage['id']) => void;
+  onEditAndRerunMessage: (message: ConversationMessage) => void;
   onPrepareInterruptAction: (
     message: ConversationMessage,
     action: RenderableInterruptAction,
@@ -338,6 +340,7 @@ export default function AgentChatPane({
           toggleToolActivityVisibility={onToggleToolActivityVisibility}
           handleCopyMessageText={onCopyMessageText}
           handleRerunMessage={onRerunMessage}
+          handleEditAndRerunMessage={onEditAndRerunMessage}
           handlePrepareInterruptAction={onPrepareInterruptAction}
           handleInterruptAction={onInterruptAction}
           enableTrustedPlanMode={onEnableTrustedPlanMode}

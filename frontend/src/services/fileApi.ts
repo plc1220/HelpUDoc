@@ -26,7 +26,16 @@ export const getWorkspaceFilePreview = async (workspaceId: string, relativePath:
   url.searchParams.set('path', relativePath);
   const response = await apiFetch(url.toString());
   if (!response.ok) {
-    throw new Error('Failed to preview file');
+    let detail = '';
+    try {
+      const payload = await response.json();
+      if (payload && typeof payload === 'object' && typeof payload.error === 'string' && payload.error.trim()) {
+        detail = payload.error.trim();
+      }
+    } catch {
+      // ignore non-JSON error bodies
+    }
+    throw new Error(detail || `Failed to preview file (${response.status})`);
   }
   return response.json();
 };

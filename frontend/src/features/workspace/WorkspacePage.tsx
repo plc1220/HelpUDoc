@@ -519,6 +519,7 @@ export default function WorkspacePage() {
   const [fileContent, setFileContent] = useState('');
   const [conversationMessages, setConversationMessages] = useState<Record<string, ConversationMessage[]>>({});
   const [chatMessage, setChatMessage] = useState('');
+  const [editingRetryMessageId, setEditingRetryMessageId] = useState<ConversationMessage['id'] | null>(null);
   const [chatAttachments, setChatAttachments] = useState<ChatComposerAttachment[]>([]);
   const [internetSearchEnabled, setInternetSearchEnabled] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -4879,6 +4880,12 @@ export default function WorkspacePage() {
       const actionText = (interruptInputByMessageId[actionTextKey] || '').trim();
 
       if (action.source === 'clarification-choice') {
+        if (getInterruptKind(pendingInterrupt) !== 'clarification') {
+          addLocalSystemMessage(
+            'This run is waiting for a plan approval. Use Approve, Edit plan, or Reject instead of a quick reply.',
+          );
+          return;
+        }
         if (pendingInterrupt?.responseSpec?.multiple && action.choiceId) {
           toggleInterruptSelectedChoice(messageKey, action.choiceId, true);
           return;
@@ -5011,6 +5018,7 @@ export default function WorkspacePage() {
     [
       addLocalSystemMessage,
       findRunIdForMessage,
+      getInterruptKind,
       handleClarificationResponse,
       handleInterruptDecision,
       interruptActionFieldKey,
@@ -5246,7 +5254,10 @@ export default function WorkspacePage() {
     bufferAgentChunk(conversationId, index, chunk);
   };
 
-  const handleRerunMessage = async (messageId: ConversationMessage['id']) => {
+  const handleRerunMessage = async (
+    messageId: ConversationMessage['id'],
+    options?: { replacementText?: string; skipConfirm?: boolean },
+  ) => {
     if (!selectedWorkspace || !activeConversationId) {
       addLocalSystemMessage('Please select a workspace and conversation before rerunning messages.');
       return;
@@ -5266,7 +5277,7 @@ export default function WorkspacePage() {
       addLocalSystemMessage('Only your own messages can be rerun.');
       return;
     }
-    const trimmed = targetMessage.text?.trim();
+    const trimmed = (options?.replacementText ?? targetMessage.text ?? '').trim();
     if (!trimmed) {
       addLocalSystemMessage('Cannot rerun an empty message.');
       return;
@@ -5309,11 +5320,13 @@ export default function WorkspacePage() {
       return;
     }
 
-    const confirmed = window.confirm(
-      'Redo from this message? This will remove all messages below it.'
-    );
-    if (!confirmed) {
-      return;
+    if (!options?.skipConfirm) {
+      const confirmed = window.confirm(
+        'Redo from this message? This will remove all messages below it.'
+      );
+      if (!confirmed) {
+        return;
+      }
     }
 
     const targetMessageId = Number(targetMessage.id);
@@ -5324,6 +5337,26 @@ export default function WorkspacePage() {
 
     stopRequestedRef.current = false;
     const targetTurnId = targetMessage.turnId || generateTurnId();
+    let effectiveTargetMessage = targetMessage;
+
+    if (options?.replacementText !== undefined) {
+      if (!targetMessage.turnId) {
+        addLocalSystemMessage('This message cannot be edited for retry because it is missing a turn id.');
+        return;
+      }
+      try {
+        const updatedMessage = await appendConversationMessage(conversationId, 'user', trimmed, {
+          turnId: targetTurnId,
+          replaceExisting: true,
+          metadata: targetMessage.metadata as ConversationMessageMetadata | undefined,
+        });
+        effectiveTargetMessage = mergeMessageMetadata(updatedMessage);
+      } catch (error) {
+        console.error('Failed to update message for retry', error);
+        addLocalSystemMessage('Failed to update your message for retry. Please try again.');
+        return;
+      }
+    }
 
     cancelStreamForConversation(conversationId);
 
@@ -5336,7 +5369,10 @@ export default function WorkspacePage() {
     }
 
     const removedMessages = currentMessages.slice(targetIndex + 1);
-    const historyMessages = currentMessages.slice(0, targetIndex + 1);
+    const historyMessages = [
+      ...currentMessages.slice(0, targetIndex),
+      effectiveTargetMessage,
+    ];
     const historyPayload = mapMessagesToAgentHistory(historyMessages);
 
     if (removedMessages.length) {
@@ -5365,7 +5401,7 @@ export default function WorkspacePage() {
       await runPresentationCommand({
         workspaceId: selectedWorkspace.id,
         conversationId,
-        turnId: targetTurnId,
+        turnId: effectiveTargetMessage.turnId || targetTurnId,
         brief: presentationBrief,
         fileIds: presentationFileIds,
         fileNames: mentionedFiles.map((file) => file.name),
@@ -5383,7 +5419,7 @@ export default function WorkspacePage() {
         persona,
         agentPrompt,
         historyPayload.length ? historyPayload : undefined,
-        targetTurnId,
+        effectiveTargetMessage.turnId || targetTurnId,
         { forceReset: true }
       );
       const placeholderId = `agent-${runId}`;
@@ -5438,6 +5474,28 @@ export default function WorkspacePage() {
       console.error('Failed to rerun agent response', error);
       addLocalSystemMessage('Rerun failed. Please try again.');
     }
+  };
+
+  const handleEditAndRerunMessage = (message: ConversationMessage) => {
+    if (message.sender !== 'user') {
+      addLocalSystemMessage('Only your own messages can be edited for retry.');
+      return;
+    }
+    const draft = message.text?.trim();
+    if (!draft) {
+      addLocalSystemMessage('Cannot edit an empty message for retry.');
+      return;
+    }
+    setEditingRetryMessageId(message.id);
+    setChatMessage(draft);
+    requestAnimationFrame(() => {
+      const input = chatInputRef.current;
+      if (!input) {
+        return;
+      }
+      input.focus();
+      input.setSelectionRange(draft.length, draft.length);
+    });
   };
 
   const runPresentationCommand = useCallback(
@@ -5707,6 +5765,23 @@ export default function WorkspacePage() {
     sendLockRef.current = true;
 
     try {
+      if (editingRetryMessageId !== null) {
+        if (hasAttachments) {
+          addLocalSystemMessage('Attachments cannot be changed while editing a message for retry.');
+          return;
+        }
+        const retryMessageId = editingRetryMessageId;
+        setEditingRetryMessageId(null);
+        setChatMessage('');
+        closeMention();
+        closeCommand();
+        await handleRerunMessage(retryMessageId, {
+          replacementText: trimmed,
+          skipConfirm: true,
+        });
+        return;
+      }
+
       stopRequestedRef.current = false;
       const directive = parseSlashDirective(trimmed);
       const isPresentationCommand = directive.kind === 'presentation';
@@ -7011,6 +7086,7 @@ export default function WorkspacePage() {
               onToggleToolActivityVisibility={toggleToolActivityVisibility}
               onCopyMessageText={handleCopyMessageText}
               onRerunMessage={handleRerunMessage}
+              onEditAndRerunMessage={handleEditAndRerunMessage}
               onPrepareInterruptAction={prepareInterruptAction}
               onInterruptAction={handleInterruptAction}
               onEnableTrustedPlanMode={() => handleUpdateWorkspacePlanApprovalSetting(true, true)}

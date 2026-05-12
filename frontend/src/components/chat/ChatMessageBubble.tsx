@@ -430,6 +430,7 @@ export default function ChatMessageBubble({
   toggleToolActivityVisibility,
   handleCopyMessageText,
   handleRerunMessage,
+  handleEditAndRerunMessage,
   handlePrepareInterruptAction,
   handleInterruptAction,
   enableTrustedPlanMode,
@@ -474,6 +475,7 @@ export default function ChatMessageBubble({
   toggleToolActivityVisibility: (messageId: ConversationMessage['id']) => void;
   handleCopyMessageText: (message: ConversationMessage) => void;
   handleRerunMessage: (messageId: ConversationMessage['id']) => void;
+  handleEditAndRerunMessage: (message: ConversationMessage) => void;
   handlePrepareInterruptAction: (
     message: ConversationMessage,
     action: RenderableInterruptAction,
@@ -562,7 +564,6 @@ export default function ChatMessageBubble({
     || (sanitizedAgentText ? (isSummaryLikeAgentText(sanitizedAgentText) ? 'summary' : 'assistant') : undefined);
   const isCopiedMessage = copiedMessageId === message.id;
   const copyTitle = isCopiedMessage ? 'Copied!' : 'Copy message';
-  const copyButtonPositionClass = message.sender === 'user' ? 'right-10' : 'right-2';
   const planFeedbackKey = interruptFieldKey(messageKey, 'feedback');
   const genericEditKey = interruptFieldKey(messageKey, 'edit-json');
   const rejectNoteKey = interruptFieldKey(messageKey, 'reject-note');
@@ -1353,20 +1354,12 @@ export default function ChatMessageBubble({
   const userBubbleClassName = isDarkMode
     ? 'rounded-[1.7rem] bg-[linear-gradient(135deg,rgba(56,189,248,0.94),rgba(59,130,246,0.92))] px-4 py-3 text-sm text-white shadow-[0_20px_48px_-28px_rgba(56,189,248,0.75)] [text-shadow:0_1px_1px_rgba(15,23,42,0.35)]'
     : 'rounded-[1.7rem] bg-[linear-gradient(135deg,rgba(96,165,250,0.95),rgba(59,130,246,0.9))] px-4 py-3 text-sm text-white shadow-[0_20px_48px_-28px_rgba(59,130,246,0.35)] [text-shadow:0_1px_1px_rgba(15,23,42,0.2)]';
-  const copyButtonClassName = isDarkMode
-    ? `absolute -top-2 ${copyButtonPositionClass} rounded-full border border-slate-700/70 bg-slate-950/95 p-1.5 text-slate-300 shadow ring-1 ring-white/5 transition-all duration-200 opacity-0 hover:bg-slate-900 hover:text-white group-hover:opacity-100 focus-visible:opacity-100`
-    : `absolute -top-2 ${copyButtonPositionClass} rounded-full border border-slate-200 bg-white/95 p-1.5 text-slate-500 shadow transition-all duration-200 opacity-0 hover:bg-slate-50 hover:text-slate-800 group-hover:opacity-100 focus-visible:opacity-100`;
-  const rerunButtonClassName = isDarkMode
-    ? `absolute -right-2 -top-2 rounded-full bg-[linear-gradient(135deg,rgba(56,189,248,0.92),rgba(59,130,246,0.92))] p-1.5 text-white shadow-[0_16px_36px_-22px_rgba(56,189,248,0.85)] transition-all duration-200 opacity-0 ${
-      isStreaming
-        ? 'cursor-not-allowed group-hover:opacity-60 hover:opacity-60'
-        : 'group-hover:opacity-100 hover:opacity-100 focus-visible:opacity-100'
-    }`
-    : `absolute -right-2 -top-2 rounded-full bg-[linear-gradient(135deg,rgba(96,165,250,0.95),rgba(59,130,246,0.92))] p-1.5 text-white shadow-[0_16px_36px_-22px_rgba(59,130,246,0.45)] transition-all duration-200 opacity-0 ${
-      isStreaming
-        ? 'cursor-not-allowed group-hover:opacity-60 hover:opacity-60'
-        : 'group-hover:opacity-100 hover:opacity-100 focus-visible:opacity-100'
-    }`;
+  const messageActionBarClassName = isDarkMode
+    ? 'absolute -top-3 right-2 inline-flex items-center gap-0.5 rounded-full border border-slate-700/70 bg-slate-950/95 p-0.5 text-slate-300 opacity-0 shadow-lg shadow-slate-950/30 ring-1 ring-white/5 transition-all duration-200 group-hover:opacity-100 focus-within:opacity-100'
+    : 'absolute -top-3 right-2 inline-flex items-center gap-0.5 rounded-full border border-slate-200 bg-white/95 p-0.5 text-slate-500 opacity-0 shadow-lg shadow-slate-200/70 transition-all duration-200 group-hover:opacity-100 focus-within:opacity-100';
+  const messageActionButtonClassName = isDarkMode
+    ? 'inline-flex h-7 w-7 items-center justify-center rounded-full transition-colors duration-200 hover:bg-slate-800 hover:text-white focus-visible:bg-slate-800 focus-visible:text-white focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50'
+    : 'inline-flex h-7 w-7 items-center justify-center rounded-full transition-colors duration-200 hover:bg-slate-100 hover:text-slate-900 focus-visible:bg-slate-100 focus-visible:text-slate-900 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50';
 
   useEffect(() => {
     if (!inlineStatus) {
@@ -1935,31 +1928,48 @@ export default function ChatMessageBubble({
             ) : null}
           </div>
         )}
-        {canCopyMessage ? (
-          <button
-            type="button"
-            onClick={() => handleCopyMessageText(message)}
-            title={copyTitle}
-            aria-label={isCopiedMessage ? 'Copied to clipboard' : 'Copy message text'}
-            className={copyButtonClassName}
-          >
-            {isCopiedMessage ? (
-              <Check size={14} className={isDarkMode ? 'text-emerald-400' : 'text-emerald-600'} />
-            ) : (
-              <Copy size={14} />
-            )}
-          </button>
-        ) : null}
-        {message.sender === 'user' ? (
-          <button
-            type="button"
-            onClick={() => handleRerunMessage(message.id)}
-            disabled={isStreaming}
-            title="Rerun this message"
-            className={rerunButtonClassName}
-          >
-            <RotateCcw size={14} />
-          </button>
+        {canCopyMessage || message.sender === 'user' ? (
+          <div className={messageActionBarClassName}>
+            {canCopyMessage ? (
+              <button
+                type="button"
+                onClick={() => handleCopyMessageText(message)}
+                title={copyTitle}
+                aria-label={isCopiedMessage ? 'Copied to clipboard' : 'Copy message text'}
+                className={messageActionButtonClassName}
+              >
+                {isCopiedMessage ? (
+                  <Check size={14} className={isDarkMode ? 'text-emerald-400' : 'text-emerald-600'} />
+                ) : (
+                  <Copy size={14} />
+                )}
+              </button>
+            ) : null}
+            {message.sender === 'user' ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => handleEditAndRerunMessage(message)}
+                  disabled={isStreaming}
+                  title="Edit and retry"
+                  aria-label="Edit message and retry"
+                  className={messageActionButtonClassName}
+                >
+                  <FilePenLine size={14} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleRerunMessage(message.id)}
+                  disabled={isStreaming}
+                  title="Retry this message"
+                  aria-label="Retry this message"
+                  className={messageActionButtonClassName}
+                >
+                  <RotateCcw size={14} />
+                </button>
+              </>
+            ) : null}
+          </div>
         ) : null}
       </div>
     </div>

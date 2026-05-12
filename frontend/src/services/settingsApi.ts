@@ -193,7 +193,15 @@ export const saveAgentConfig = async (content: string) => {
 export const fetchSkills = async (): Promise<SkillDefinition[]> => {
   const response = await apiFetch(`${API_URL}/settings/skills`);
   if (!response.ok) {
-    throw new Error('Failed to load skills');
+    const data = await response.json().catch(() => ({}));
+    const apiError = typeof data.error === 'string' ? data.error.trim() : '';
+    if (response.status === 401) {
+      throw new Error(apiError || 'Sign in required to load skills.');
+    }
+    if (response.status === 403) {
+      throw new Error(apiError || 'System admin access is required to manage skills.');
+    }
+    throw new Error(apiError || 'Failed to load skills');
   }
   const data = await response.json();
   return data.skills;

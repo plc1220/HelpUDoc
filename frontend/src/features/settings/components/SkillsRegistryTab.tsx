@@ -145,7 +145,7 @@ const SkillsRegistryTab: React.FC = () => {
       setError(null);
     } catch (err) {
       console.error('Failed to load skills', err);
-      setError('Failed to load skills');
+      setError(err instanceof Error ? err.message : 'Failed to load skills');
     } finally {
       setLoading(false);
     }
