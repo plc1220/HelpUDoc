@@ -168,8 +168,11 @@ flowchart TB
 - `infra/gke/k8s/60-frontend.yaml`
 - `infra/gke/k8s/70-caddy.yaml`
 - `infra/gke/k8s/71-ingress.yaml`
-- `backend/src/api/agent.ts`
+- `backend/src/api/agent/index.ts`
+- `backend/src/api/agent/*`
+- `backend/src/api/settings/index.ts`
+- `backend/src/api/settings/*`
 - `backend/src/services/agentService.ts`
 - `backend/src/middleware/userContext.ts`
 - `agent/helpudoc_agent/mcp_manager.py`
-- `agent/helpudoc_agent/data_agent_tools.py`
+- `agent/helpudoc_agent/tools/data/*`
