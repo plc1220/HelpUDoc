@@ -9,6 +9,7 @@ import os
 import re
 import sys
 from typing import Any, AsyncGenerator, Callable, Dict, Iterable, List, Optional, Set, Tuple
+from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse

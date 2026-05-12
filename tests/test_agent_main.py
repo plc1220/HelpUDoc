@@ -602,6 +602,28 @@ def test_chat_stream_emits_tokens_and_done(client_with_stubs):
     assert source_tracker.updated_workspaces == [runtime.workspace_state]
 
 
+def test_chat_stream_force_reset_uses_fresh_thread_id(client_with_stubs):
+    client, registry, source_tracker = client_with_stubs
+    agent = RecordingStreamingAgent(["Reset ok"])
+    runtime = DummyRuntime("workspace-reset", agent)
+    runtime.workspace_state.context["thread_id"] = "test-agent:workspace-reset"
+    registry.set_runtime("research", "workspace-reset", runtime)
+
+    payload = {"message": "start over", "history": [], "forceReset": True}
+    with client.stream("POST", "/agents/research/workspace/workspace-reset/chat/stream", json=payload) as response:
+        assert response.status_code == 200
+        messages = _collect_stream_payloads(response)
+
+    assert messages[-1]["type"] == "done"
+    assert len(agent.stream_inputs) == 1
+    _args, kwargs = agent.stream_inputs[0]
+    thread_id = kwargs["config"]["configurable"]["thread_id"]
+    assert thread_id.startswith("test-agent:workspace-reset:")
+    assert runtime.workspace_state.context["thread_id"] == thread_id
+    assert "force-reset" in kwargs["config"]["tags"]
+    assert source_tracker.updated_workspaces == [runtime.workspace_state]
+
+
 def test_chat_stream_returns_error_when_agent_missing(client_with_stubs):
     client, registry, source_tracker = client_with_stubs
     runtime = DummyRuntime("workspace-abc", agent=None)
