@@ -8,7 +8,7 @@ import {
   ThemeProvider,
   type PaletteMode,
 } from '@mui/material';
-import { Check, CheckSquare, Copy, Edit, Trash, Plus, Minus, ChevronLeft, RotateCcw, Printer, Download, Link as LinkIcon, Loader2, FolderPlus, FolderUp, Upload, Home, ArrowUp } from 'lucide-react';
+import { Check, CheckSquare, Copy, Edit, Trash, Plus, Minus, ChevronLeft, RotateCcw, Printer, Download, Link as LinkIcon, Loader2, FolderPlus, FolderUp, Upload, Home, ArrowUp, File as FileIcon, Presentation, Wrench, Plug, Sparkles, Info } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { getWorkspaces, createWorkspace, deleteWorkspace, renameWorkspace } from '../../services/workspaceApi';
@@ -267,6 +267,19 @@ type CommandSuggestion = {
   description: string;
 };
 
+const getCommandCategory = (command: CommandSuggestion) => {
+  if (command.command.startsWith('/presentation')) {
+    return 'Creation';
+  }
+  if (command.command.startsWith('/skill')) {
+    return 'Skills';
+  }
+  if (command.command.startsWith('/mcp')) {
+    return 'Data Sources';
+  }
+  return 'Automation';
+};
+
 type ParsedSlashDirective =
   | { kind: 'presentation'; prompt: string; raw: string }
   | { kind: 'skill'; skillId: string; prompt: string; raw: string }
@@ -500,7 +513,7 @@ type PersistProgressRequest = {
 
 export default function WorkspacePage() {
   const navigate = useNavigate();
-  const { signOut } = useAuth();
+  const { signOut, user: authUser } = useAuth();
   const [colorMode, setColorMode] = useState<PaletteMode>(resolveInitialColorMode);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [selectedWorkspace, setSelectedWorkspace] = useState<Workspace | null>(null);
@@ -553,6 +566,7 @@ export default function WorkspacePage() {
   const [isPresentationModalOpen, setIsPresentationModalOpen] = useState(false);
   const [isDrivePickerOpen, setIsDrivePickerOpen] = useState(false);
   const [isDriveImporting, setIsDriveImporting] = useState(false);
+  const [isLandingAttachmentMenuOpen, setIsLandingAttachmentMenuOpen] = useState(false);
   const [draftPresentationOptions, setDraftPresentationOptions] = useState<PresentationOptionsState | null>(null);
   const [isPptxExporting, setIsPptxExporting] = useState(false);
   const streamAbortMapRef = useRef<Map<string, AbortController>>(new Map());
@@ -604,6 +618,13 @@ export default function WorkspacePage() {
     }
     return workspaces.filter((workspace) => workspace.name.toLowerCase().includes(query));
   }, [workspaceSearchQuery, workspaces]);
+  const landingUserName = useMemo(() => {
+    const normalized = authUser?.name?.trim();
+    if (!normalized) {
+      return '';
+    }
+    return normalized.split(/\s+/)[0] || normalized;
+  }, [authUser?.name]);
   const landingPersonas = useMemo(
     () => [...personas].sort((left, right) => {
       const leftIndex = LANDING_PERSONA_ORDER.indexOf(left.name);
@@ -1084,6 +1105,16 @@ export default function WorkspacePage() {
     }
     return matches;
   }, [availableMcpServers, availableSkills, commandQuery, isCommandOpen]);
+
+  const landingCommandGroups = useMemo(() => {
+    const order = ['Creation', 'Skills', 'Data Sources', 'Automation'];
+    return order
+      .map((category) => ({
+        category,
+        commands: commandSuggestions.filter((command) => getCommandCategory(command) === category),
+      }))
+      .filter((group) => group.commands.length > 0);
+  }, [commandSuggestions]);
 
   const personaDisplayName = useMemo(() => {
     const personaId = activeConversationPersona || selectedPersona;
@@ -2138,7 +2169,7 @@ export default function WorkspacePage() {
 
   const updateMentionState = useCallback(
     (value: string, cursor: number | null | undefined) => {
-      if (!selectedWorkspace || cursor === null || cursor === undefined) {
+      if (cursor === null || cursor === undefined) {
         closeMention();
         return;
       }
@@ -2156,7 +2187,7 @@ export default function WorkspacePage() {
       setMentionCursorPosition(cursor);
       setMentionSelectedIndex(0);
     },
-    [closeMention, selectedWorkspace]
+    [closeMention]
   );
 
   const updateCommandState = useCallback(
@@ -6541,23 +6572,26 @@ export default function WorkspacePage() {
                     <h1 className={`mb-12 text-center text-4xl font-semibold tracking-normal md:text-5xl ${
                       isDarkMode ? 'text-slate-100' : 'text-slate-900'
                     }`}>
-                      What should we build in HelpUDoc?
+                      {landingUserName ? `Hi ${landingUserName}, what should we build in HelpUDoc?` : 'What should we build in HelpUDoc?'}
                     </h1>
-                    <div className={`overflow-hidden rounded-[2rem] border shadow-[0_28px_70px_-48px_rgba(15,23,42,0.7)] ${
+                    <div className={`relative rounded-[2rem] border shadow-[0_28px_70px_-48px_rgba(15,23,42,0.7)] ${
                       isDarkMode ? 'border-slate-700/80 bg-slate-950/80' : 'border-slate-200 bg-white'
                     }`}>
                       <textarea
-                        placeholder="Ask HelpUDoc anything. @ to mention files"
+                        placeholder="Ask HelpUDoc anything..."
                         value={chatMessage}
                         ref={chatInputRef}
                         onChange={handleChatInputChange}
                         onKeyDown={(event) => {
+                          handleChatInputKeyDown(event);
+                          if (event.defaultPrevented) {
+                            return;
+                          }
                           if (event.key === 'Enter' && !event.shiftKey) {
                             event.preventDefault();
                             void handleLandingSendMessage();
                             return;
                           }
-                          handleChatInputKeyDown(event);
                         }}
                         onKeyUp={handleChatInputKeyUp}
                         onSelect={handleChatInputSelectionChange}
@@ -6566,22 +6600,186 @@ export default function WorkspacePage() {
                         }`}
                         rows={4}
                       />
+                      {(isMentionOpen || isCommandOpen) && (
+                        <div className="absolute left-6 top-20 z-30 w-[30rem] max-w-[calc(100%-3rem)]">
+                          {isMentionOpen ? (
+                            <div className={`max-h-64 overflow-y-auto rounded-2xl border p-1 text-sm shadow-2xl backdrop-blur-md ${
+                              isDarkMode ? 'border-slate-700/80 bg-slate-900/95' : 'border-slate-200 bg-white/95'
+                            }`}>
+                              {!selectedWorkspace ? (
+                                <div className={`px-3 py-2 text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                                  Select workspace
+                                </div>
+                              ) : mentionSuggestions.length ? (
+                                mentionSuggestions.map((file, index) => (
+                                  <button
+                                    key={file.id}
+                                    type="button"
+                                    onMouseDown={(event) => {
+                                      event.preventDefault();
+                                      handleSelectMention(file);
+                                    }}
+                                    className={`flex w-full items-center rounded-xl px-3 py-2 text-left transition ${
+                                      index === mentionSelectedIndex
+                                        ? isDarkMode
+                                          ? 'bg-sky-500/15 text-sky-200'
+                                          : 'bg-sky-50 text-sky-700'
+                                        : isDarkMode
+                                          ? 'text-slate-200 hover:bg-slate-800'
+                                          : 'text-slate-700 hover:bg-slate-50'
+                                    }`}
+                                  >
+                                    <FileIcon size={16} className={`mr-2 shrink-0 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`} />
+                                    <span className="min-w-0 flex-1 truncate">{file.name}</span>
+                                    <span className={`ml-3 shrink-0 text-[10px] uppercase ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>
+                                      {file.mimeType?.split('/').pop() || file.name.split('.').pop() || 'file'}
+                                    </span>
+                                  </button>
+                                ))
+                              ) : (
+                                <div className={`px-3 py-2 text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                                  No matching files
+                                </div>
+                              )}
+                            </div>
+                          ) : null}
+                          {isCommandOpen ? (
+                            <div className={`max-h-72 overflow-y-auto rounded-2xl border p-1 text-sm shadow-2xl backdrop-blur-md ${
+                              isDarkMode ? 'border-slate-700/80 bg-slate-900/95' : 'border-slate-200 bg-white/95'
+                            }`}>
+                              {landingCommandGroups.length ? (
+                                landingCommandGroups.map((group) => (
+                                  <div key={group.category} className="py-0.5">
+                                    <div className={`px-2 py-1 text-[10px] font-semibold uppercase tracking-normal ${
+                                      isDarkMode ? 'text-slate-500' : 'text-slate-400'
+                                    }`}>
+                                      {group.category}
+                                    </div>
+                                    {group.commands.map((command) => {
+                                      const absoluteIndex = commandSuggestions.findIndex((item) => item.id === command.id);
+                                      const isSelectedCommand = absoluteIndex === commandSelectedIndex;
+                                      const Icon = command.command.startsWith('/presentation')
+                                        ? Presentation
+                                        : command.command.startsWith('/skill')
+                                          ? Wrench
+                                          : command.command.startsWith('/mcp')
+                                            ? Plug
+                                            : Sparkles;
+                                      return (
+                                        <button
+                                          key={command.id}
+                                          type="button"
+                                          onMouseDown={(event) => {
+                                            event.preventDefault();
+                                            handleSelectCommand(command);
+                                          }}
+                                          className={`group flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left transition ${
+                                            isSelectedCommand
+                                              ? isDarkMode
+                                                ? 'bg-sky-500/15 text-sky-200'
+                                                : 'bg-sky-50 text-sky-700'
+                                              : isDarkMode
+                                                ? 'text-slate-200 hover:bg-slate-800'
+                                                : 'text-slate-700 hover:bg-slate-50'
+                                          }`}
+                                        >
+                                          <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${
+                                            isDarkMode ? 'bg-slate-800 text-slate-300' : 'bg-slate-100 text-slate-500'
+                                          }`}>
+                                            <Icon size={15} />
+                                          </span>
+                                          <span className="min-w-0 flex-1 truncate font-semibold">
+                                            {command.command}
+                                          </span>
+                                          <span
+                                            title={command.description}
+                                            className={`shrink-0 opacity-0 transition group-hover:opacity-100 group-focus-visible:opacity-100 ${
+                                              isDarkMode ? 'text-slate-500' : 'text-slate-400'
+                                            }`}
+                                          >
+                                            <Info size={14} />
+                                          </span>
+                                          {isSelectedCommand ? (
+                                            <span className={`hidden shrink-0 items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-medium sm:flex ${
+                                              isDarkMode ? 'border-slate-700 text-slate-400' : 'border-slate-200 text-slate-500'
+                                            }`}>
+                                              Enter
+                                              <span className={isDarkMode ? 'text-slate-600' : 'text-slate-300'}>/</span>
+                                              Tab
+                                            </span>
+                                          ) : null}
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                ))
+                              ) : (
+                                <div className={`px-3 py-2 text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                                  No matching commands, skills, or MCP servers
+                                </div>
+                              )}
+                            </div>
+                          ) : null}
+                        </div>
+                      )}
                       <div className={`flex flex-wrap items-center justify-between gap-3 border-t px-4 py-3 ${
                         isDarkMode ? 'border-slate-800' : 'border-slate-100'
                       }`}>
                         <div className="flex min-w-0 flex-wrap items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={handleOpenLocalAttachmentPicker}
-                            disabled={isDriveImporting}
-                            className={`inline-flex h-10 w-10 items-center justify-center rounded-full transition disabled:opacity-50 ${
-                              isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-500 hover:bg-slate-100'
-                            }`}
-                            title="Attach files"
-                            aria-label="Attach files"
-                          >
-                            <Plus size={22} />
-                          </button>
+                          <div className="relative">
+                            <button
+                              type="button"
+                              onClick={() => setIsLandingAttachmentMenuOpen((prev) => !prev)}
+                              disabled={isDriveImporting}
+                              className={`inline-flex h-10 w-10 items-center justify-center rounded-full transition disabled:opacity-50 ${
+                                isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-500 hover:bg-slate-100'
+                              }`}
+                              title="Attach files"
+                              aria-label="Attach files"
+                              aria-expanded={isLandingAttachmentMenuOpen}
+                            >
+                              <Plus size={22} />
+                            </button>
+                            {isLandingAttachmentMenuOpen ? (
+                              <div className={`absolute bottom-full left-0 z-40 mb-2 w-56 rounded-2xl border p-1.5 text-sm shadow-2xl backdrop-blur-md ${
+                                isDarkMode ? 'border-slate-700/80 bg-slate-900/95 text-slate-100' : 'border-slate-200 bg-white/95 text-slate-800'
+                              }`}>
+                                <button
+                                  type="button"
+                                  onMouseDown={(event) => event.preventDefault()}
+                                  onClick={() => {
+                                    setIsLandingAttachmentMenuOpen(false);
+                                    handleOpenLocalAttachmentPicker();
+                                  }}
+                                  className={`flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left transition ${
+                                    isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-slate-50'
+                                  }`}
+                                >
+                                  <Upload size={16} className={isDarkMode ? 'text-slate-400' : 'text-slate-500'} />
+                                  <span>Upload files</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onMouseDown={(event) => event.preventDefault()}
+                                  onClick={() => {
+                                    setIsLandingAttachmentMenuOpen(false);
+                                    handleOpenDrivePicker();
+                                  }}
+                                  disabled={isDriveImporting}
+                                  className={`flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                                    isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-slate-50'
+                                  }`}
+                                >
+                                  {isDriveImporting ? (
+                                    <Loader2 size={16} className={`animate-spin ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`} />
+                                  ) : (
+                                    <GoogleDriveIcon className="h-4 w-4 shrink-0" />
+                                  )}
+                                  <span>Google Drive</span>
+                                </button>
+                              </div>
+                            ) : null}
+                          </div>
                           <select
                             value={selectedWorkspace?.id || ''}
                             onChange={handleLandingWorkspaceChange}
