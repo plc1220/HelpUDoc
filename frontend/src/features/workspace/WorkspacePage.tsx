@@ -6613,7 +6613,7 @@ export default function WorkspacePage() {
                           {isFileActionMenuOpen && (
                             <div
                               role="menu"
-                              className={`absolute right-0 top-full z-30 mt-2 w-44 rounded-lg border py-1 text-sm shadow-xl ${
+                              className={`absolute left-0 top-full z-[1300] mt-2 min-w-[12rem] rounded-lg border py-1 text-sm shadow-xl ${
                                 isDarkMode
                                   ? 'border-slate-700 bg-slate-950 text-slate-200'
                                   : 'border-slate-200 bg-white text-slate-700'
@@ -6661,23 +6661,28 @@ export default function WorkspacePage() {
                                 <FolderUp size={15} />
                                 <span>Upload folder</span>
                               </button>
+                              <button
+                                type="button"
+                                role="menuitem"
+                                onClick={() => {
+                                  setIsFileActionMenuOpen(false);
+                                  handleOpenDrivePicker();
+                                }}
+                                disabled={!selectedWorkspace || isDriveImporting}
+                                className={`flex w-full items-center gap-2 px-3 py-2 text-left disabled:cursor-not-allowed disabled:opacity-50 ${
+                                  isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-slate-100'
+                                }`}
+                              >
+                                {isDriveImporting ? (
+                                  <Loader2 size={15} className={`shrink-0 animate-spin ${isDarkMode ? 'text-slate-300' : 'text-gray-600'}`} />
+                                ) : (
+                                  <GoogleDriveIcon className="h-4 w-4 shrink-0" />
+                                )}
+                                <span>Google Drive</span>
+                              </button>
                             </div>
                           )}
                         </div>
-                        <button
-                          onClick={handleOpenDrivePicker}
-                          disabled={!selectedWorkspace || isDriveImporting}
-                          className={`h-8 w-8 inline-flex items-center justify-center rounded-lg disabled:opacity-50 ${
-                            isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-100'
-                          }`}
-                          title="Import from Google Drive"
-                        >
-                          {isDriveImporting ? (
-                            <Loader2 size={16} className={`animate-spin ${isDarkMode ? 'text-slate-300' : 'text-gray-600'}`} />
-                          ) : (
-                            <GoogleDriveIcon className="h-4 w-4" />
-                          )}
-                        </button>
                         <button
                           onClick={handleRefreshFiles}
                           disabled={!selectedWorkspace}
