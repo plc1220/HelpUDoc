@@ -8,7 +8,7 @@ import {
   ThemeProvider,
   type PaletteMode,
 } from '@mui/material';
-import { Check, CheckSquare, Copy, Edit, Trash, Plus, Minus, ChevronLeft, RotateCcw, Printer, Download, Link as LinkIcon, Loader2, FolderPlus, FolderUp, Upload } from 'lucide-react';
+import { Check, CheckSquare, Copy, Edit, Trash, Plus, Minus, ChevronLeft, RotateCcw, Printer, Download, Link as LinkIcon, Loader2, FolderPlus, FolderUp, Upload, Home, ArrowUp } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { getWorkspaces, createWorkspace, deleteWorkspace, renameWorkspace } from '../../services/workspaceApi';
@@ -233,6 +233,7 @@ const DEFAULT_PERSONAS: AgentPersona[] = [
     description: 'Gemini 3 Pro (Preview)',
   },
 ];
+const LANDING_PERSONA_ORDER = ['lite', 'fast', 'pro'];
 const normalizePersonaName = (name: string): string => {
   const normalized = String(name || '').trim().toLowerCase();
   if (!normalized || normalized === 'general-assistant') {
@@ -503,6 +504,7 @@ export default function WorkspacePage() {
   const [colorMode, setColorMode] = useState<PaletteMode>(resolveInitialColorMode);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [selectedWorkspace, setSelectedWorkspace] = useState<Workspace | null>(null);
+  const [isLandingPageVisible, setIsLandingPageVisible] = useState(true);
   const selectedWorkspaceIdRef = useRef<string | null>(null);
   const [workspaceSearchQuery, setWorkspaceSearchQuery] = useState('');
   const [isWorkspaceRenameActive, setIsWorkspaceRenameActive] = useState(false);
@@ -602,6 +604,15 @@ export default function WorkspacePage() {
     }
     return workspaces.filter((workspace) => workspace.name.toLowerCase().includes(query));
   }, [workspaceSearchQuery, workspaces]);
+  const landingPersonas = useMemo(
+    () => [...personas].sort((left, right) => {
+      const leftIndex = LANDING_PERSONA_ORDER.indexOf(left.name);
+      const rightIndex = LANDING_PERSONA_ORDER.indexOf(right.name);
+      return (leftIndex === -1 ? Number.MAX_SAFE_INTEGER : leftIndex)
+        - (rightIndex === -1 ? Number.MAX_SAFE_INTEGER : rightIndex);
+    }),
+    [personas],
+  );
   const [copiedImageUrl, setCopiedImageUrl] = useState(false);
   const [ragStatuses, setRagStatuses] = useState<Record<string, { status?: string; updatedAt?: string; error?: string }>>({});
   const [copiedWorkspaceContent, setCopiedWorkspaceContent] = useState(false);
@@ -1092,6 +1103,23 @@ export default function WorkspacePage() {
     },
     [],
   );
+
+  const handleLandingWorkspaceChange = useCallback(
+    (event: ChangeEvent<HTMLSelectElement>) => {
+      const workspace = workspaces.find((item) => item.id === event.target.value) || null;
+      setIsWorkspaceRenameActive(false);
+      setWorkspaceNameDraft(workspace?.name || '');
+      setFolderPaths([]);
+      setSelectedWorkspace(workspace);
+    },
+    [workspaces],
+  );
+
+  const handleOpenLandingPage = useCallback(() => {
+    setIsLandingPageVisible(true);
+    setIsAgentPaneFullScreen(false);
+    setIsHistoryOpen(false);
+  }, []);
 
   const presentationOptionSummary = useMemo(() => {
     const parts = [
@@ -2526,21 +2554,22 @@ export default function WorkspacePage() {
     toNumericFileId,
   ]);
 
-  const ensureConversation = useCallback(async () => {
+  const ensureConversation = useCallback(async (workspaceOverride?: Workspace | null) => {
     if (activeConversationId) {
       return activeConversationId;
     }
-    if (!selectedWorkspace || !selectedPersona) {
+    const workspace = workspaceOverride || selectedWorkspace;
+    if (!workspace || !selectedPersona) {
       return null;
     }
     try {
-      const conversation = await createConversationApi(selectedWorkspace.id, selectedPersona);
+      const conversation = await createConversationApi(workspace.id, selectedPersona);
       setActiveConversationId(conversation.id);
       setActiveConversationPersona(normalizePersonaName(conversation.persona));
       setSelectedPersona(normalizePersonaName(conversation.persona));
       setConversationMessages((prev) => ({ ...prev, [conversation.id]: [] }));
       setStreamingForConversation(conversation.id, false);
-      await refreshConversationHistory(selectedWorkspace.id);
+      await refreshConversationHistory(workspace.id);
       return conversation.id;
     } catch (error) {
       console.error('Failed to create conversation', error);
@@ -2889,6 +2918,7 @@ export default function WorkspacePage() {
     setWorkspaceNameDraft(workspace.name);
     setFolderPaths([]);
     setSelectedWorkspace(workspace);
+    setIsLandingPageVisible(false);
   }, []);
 
   useEffect(() => {
@@ -3040,7 +3070,7 @@ export default function WorkspacePage() {
     }
   }, [selectedFile?.id, selectedFile?.name, selectedFile?.mimeType]);
 
-  const handleCreateWorkspace = async () => {
+  const handleCreateWorkspace = async (options?: { stayOnLanding?: boolean; rename?: boolean }): Promise<Workspace | null> => {
     try {
       const newWorkspace = {
         ...hydrateWorkspace(await createWorkspace()),
@@ -3052,9 +3082,12 @@ export default function WorkspacePage() {
       setFolderPaths([]);
       setWorkspaceSearchQuery('');
       setWorkspaceNameDraft(newWorkspace.name);
-      setIsWorkspaceRenameActive(true);
+      setIsWorkspaceRenameActive(options?.rename ?? true);
+      setIsLandingPageVisible(options?.stayOnLanding ?? false);
+      return newWorkspace;
     } catch (error) {
       console.error('Failed to create workspace:', error);
+      return null;
     }
   };
 
@@ -5708,7 +5741,7 @@ export default function WorkspacePage() {
     ],
   );
 
-  const handleSendMessage = async () => {
+  const handleSendMessage = async (workspaceOverride?: Workspace | null) => {
     if (sendLockRef.current || isDriveImporting) {
       return;
     }
@@ -5799,19 +5832,20 @@ export default function WorkspacePage() {
         return;
       }
 
-      if (!selectedWorkspace) {
+      const activeWorkspace = workspaceOverride || selectedWorkspace;
+      if (!activeWorkspace) {
         addLocalSystemMessage('Please select a workspace before chatting with an agent.');
         return;
       }
 
-      const workspaceId = selectedWorkspace.id;
+      const workspaceId = activeWorkspace.id;
       const persona = normalizePersonaName(activeConversationPersona || selectedPersona || DEFAULT_PERSONA_NAME);
       const attachmentSummary = hasAttachments ? `Attachments: ${summarizeComposerAttachments(chatAttachments)}` : '';
       const messageContent = hasAttachments
         ? `${trimmed}${trimmed ? '\n\n' : ''}[${attachmentSummary}]`
         : trimmed;
       const agentPromptBase = buildAgentPromptFromDirective(directive) || messageContent;
-      const conversationId = await ensureConversation();
+      const conversationId = await ensureConversation(activeWorkspace);
       if (!conversationId) {
         addLocalSystemMessage('Unable to start a conversation right now.');
         return;
@@ -6026,6 +6060,21 @@ export default function WorkspacePage() {
     }
   };
 
+  const handleLandingSendMessage = async () => {
+    if (!chatMessage.trim() && !chatAttachments.length) {
+      return;
+    }
+    const workspace = selectedWorkspace || await handleCreateWorkspace({ stayOnLanding: true, rename: false });
+    if (!workspace) {
+      addLocalSystemMessage('Unable to create a workspace right now. Please try again.');
+      return;
+    }
+    setIsLandingPageVisible(false);
+    setIsAgentPaneVisible(true);
+    setIsAgentPaneFullScreen(false);
+    await handleSendMessage(workspace);
+  };
+
   const handleChatInputChange = (event: React.ChangeEvent<HTMLTextAreaElement>) => {
     const value = event.target.value;
     setChatMessage(value);
@@ -6144,6 +6193,7 @@ export default function WorkspacePage() {
       setSelectedWorkspace(null);
       setFiles([]);
       setFolderPaths([]);
+      setIsLandingPageVisible(true);
     } catch (error) {
       console.error('Failed to delete workspace:', error);
     }
@@ -6440,10 +6490,10 @@ export default function WorkspacePage() {
           selectedWorkspace={selectedWorkspace}
           workspaceSearchQuery={workspaceSearchQuery}
           setWorkspaceSearchQuery={setWorkspaceSearchQuery}
-          handleCreateWorkspace={handleCreateWorkspace}
           handleDeleteWorkspace={handleDeleteWorkspace}
           onShareWorkspace={handleShareWorkspace}
           onSelectWorkspace={handleSelectWorkspace}
+          onOpenLandingPage={handleOpenLandingPage}
           onOpenSettings={handleOpenAgentSettings}
           colorMode={colorMode}
           onToggleColorMode={toggleColorMode}
@@ -6482,6 +6532,119 @@ export default function WorkspacePage() {
             }`}
             style={{ height: layoutHeight }}
           >
+            {isLandingPageVisible ? (
+              <div className={`flex min-h-0 flex-1 flex-col overflow-hidden ${
+                isDarkMode ? 'bg-[#020817]' : 'bg-slate-50'
+              }`}>
+                <div className="flex flex-1 items-center justify-center px-6 py-8">
+                  <div className="w-full max-w-4xl">
+                    <h1 className={`mb-12 text-center text-4xl font-semibold tracking-normal md:text-5xl ${
+                      isDarkMode ? 'text-slate-100' : 'text-slate-900'
+                    }`}>
+                      What should we build in HelpUDoc?
+                    </h1>
+                    <div className={`overflow-hidden rounded-[2rem] border shadow-[0_28px_70px_-48px_rgba(15,23,42,0.7)] ${
+                      isDarkMode ? 'border-slate-700/80 bg-slate-950/80' : 'border-slate-200 bg-white'
+                    }`}>
+                      <textarea
+                        placeholder="Ask HelpUDoc anything. @ to mention files"
+                        value={chatMessage}
+                        ref={chatInputRef}
+                        onChange={handleChatInputChange}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter' && !event.shiftKey) {
+                            event.preventDefault();
+                            void handleLandingSendMessage();
+                            return;
+                          }
+                          handleChatInputKeyDown(event);
+                        }}
+                        onKeyUp={handleChatInputKeyUp}
+                        onSelect={handleChatInputSelectionChange}
+                        className={`block min-h-36 w-full resize-none bg-transparent px-6 py-6 text-lg leading-relaxed outline-none ${
+                          isDarkMode ? 'text-slate-100 placeholder:text-slate-500' : 'text-slate-900 placeholder:text-slate-400'
+                        }`}
+                        rows={4}
+                      />
+                      <div className={`flex flex-wrap items-center justify-between gap-3 border-t px-4 py-3 ${
+                        isDarkMode ? 'border-slate-800' : 'border-slate-100'
+                      }`}>
+                        <div className="flex min-w-0 flex-wrap items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={handleOpenLocalAttachmentPicker}
+                            disabled={isDriveImporting}
+                            className={`inline-flex h-10 w-10 items-center justify-center rounded-full transition disabled:opacity-50 ${
+                              isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-500 hover:bg-slate-100'
+                            }`}
+                            title="Attach files"
+                            aria-label="Attach files"
+                          >
+                            <Plus size={22} />
+                          </button>
+                          <select
+                            value={selectedWorkspace?.id || ''}
+                            onChange={handleLandingWorkspaceChange}
+                            className={`h-10 max-w-[18rem] rounded-xl border px-3 text-sm font-medium outline-none transition ${
+                              isDarkMode
+                                ? 'border-slate-700 bg-slate-900 text-slate-100 focus:border-sky-400 focus:ring-2 focus:ring-sky-400/20'
+                                : 'border-slate-200 bg-slate-50 text-slate-700 focus:border-blue-400 focus:ring-2 focus:ring-blue-100'
+                            }`}
+                            aria-label="Select workspace"
+                          >
+                            <option value="">Select workspace</option>
+                            {workspaces.map((workspace) => (
+                              <option key={workspace.id} value={workspace.id}>
+                                {workspace.name}
+                              </option>
+                            ))}
+                          </select>
+                          <select
+                            value={normalizePersonaName(activeConversationPersona || selectedPersona || DEFAULT_PERSONA_NAME)}
+                            onChange={handleModeChange}
+                            className={`h-10 rounded-xl border px-3 text-sm font-medium capitalize outline-none transition ${
+                              isDarkMode
+                                ? 'border-slate-700 bg-slate-900 text-slate-100 focus:border-sky-400 focus:ring-2 focus:ring-sky-400/20'
+                                : 'border-slate-200 bg-slate-50 text-slate-700 focus:border-blue-400 focus:ring-2 focus:ring-blue-100'
+                            }`}
+                            aria-label="Select model mode"
+                          >
+                            {landingPersonas.map((persona) => (
+                              <option key={persona.name} value={persona.name}>
+                                {(persona.displayName || persona.name).toLowerCase()}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => void handleLandingSendMessage()}
+                          disabled={isDriveImporting || (!chatMessage.trim() && !chatAttachments.length)}
+                          className={`inline-flex h-12 w-12 items-center justify-center rounded-full transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                            isDarkMode
+                              ? 'bg-slate-100 text-slate-950 hover:bg-white'
+                              : 'bg-slate-900 text-white hover:bg-slate-700'
+                          }`}
+                          title="Send message"
+                          aria-label="Send message"
+                        >
+                          <ArrowUp size={22} />
+                        </button>
+                      </div>
+                    </div>
+                    <input
+                      type="file"
+                      ref={attachmentInputRef}
+                      className="hidden"
+                      multiple
+                      accept="image/*,.pdf,.md,.txt,.doc,.docx"
+                      onChange={handleChatAttachmentChange}
+                    />
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <>
             {/* Middle Pane: Files & Editor */}
             <div
               className={`flex flex-col min-w-0 min-h-0 overflow-hidden ${
@@ -6490,9 +6653,23 @@ export default function WorkspacePage() {
               style={workspacePaneStyles}
             >
               {/* Workspace Header */}
-              <div className={`px-4 py-3 flex justify-between items-center ${
+              <div className={`px-4 py-3 flex items-center gap-3 ${
                 isDarkMode ? 'border-b border-slate-800 bg-[#08111f]' : 'border-b border-gray-200'
               }`}>
+                <button
+                  type="button"
+                  onClick={handleOpenLandingPage}
+                  className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border transition ${
+                    isDarkMode
+                      ? 'border-slate-700 text-slate-300 hover:bg-slate-800 hover:text-slate-100'
+                      : 'border-slate-200 text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                  }`}
+                  title="Home"
+                  aria-label="Go to landing page"
+                >
+                  <Home size={17} />
+                </button>
+                <div className="min-w-0 flex-1">
                 {selectedWorkspace ? (
                   isWorkspaceRenameActive && selectedWorkspace.canEdit ? (
                     <input
@@ -6540,6 +6717,7 @@ export default function WorkspacePage() {
                 ) : (
                   <h2 className={`text-lg font-semibold ${isDarkMode ? 'text-slate-100' : 'text-gray-800'}`}>No workspace selected</h2>
                 )}
+                </div>
               </div>
               <div className="flex-1 flex min-h-0">
                 {/* File Explorer */}
@@ -7064,6 +7242,8 @@ export default function WorkspacePage() {
               onSelectMention={handleSelectMention}
               onSelectCommand={handleSelectCommand}
             />
+              </>
+            )}
           </div>
         </Box>
       </Box>
