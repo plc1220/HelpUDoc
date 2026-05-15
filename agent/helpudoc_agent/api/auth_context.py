@@ -69,8 +69,7 @@ def extract_agent_request_context(request: Request, *, agent_jwt_secret: str) ->
         context["mcp_auth_fingerprint"] = mcp_auth_fingerprint.strip()
     if allow_skill_sandbox:
         context["allow_skill_sandbox"] = True
-    if isinstance(payload.get("skipPlanApprovals"), bool):
-        context["skip_plan_approvals"] = payload["skipPlanApprovals"]
+    context["skip_plan_approvals"] = bool(payload.get("skipPlanApprovals", True))
     return context
 
 

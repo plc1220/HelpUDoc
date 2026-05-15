@@ -11,7 +11,7 @@ import {
 import { Check, CheckSquare, Copy, Edit, Trash, Plus, Minus, ChevronLeft, RotateCcw, Printer, Download, Link as LinkIcon, Loader2, FolderPlus, FolderUp, Upload } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { getWorkspaces, createWorkspace, deleteWorkspace, renameWorkspace, updateWorkspaceSettings } from '../../services/workspaceApi';
+import { getWorkspaces, createWorkspace, deleteWorkspace, renameWorkspace } from '../../services/workspaceApi';
 import {
   getFiles,
   createFile,
@@ -504,7 +504,6 @@ export default function WorkspacePage() {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [selectedWorkspace, setSelectedWorkspace] = useState<Workspace | null>(null);
   const selectedWorkspaceIdRef = useRef<string | null>(null);
-  const [workspaceSettingsBusy, setWorkspaceSettingsBusy] = useState(false);
   const [workspaceSearchQuery, setWorkspaceSearchQuery] = useState('');
   const [isWorkspaceRenameActive, setIsWorkspaceRenameActive] = useState(false);
   const [workspaceNameDraft, setWorkspaceNameDraft] = useState('');
@@ -2849,15 +2848,6 @@ export default function WorkspacePage() {
     }
   }, [isWorkspaceRenameActive]);
 
-  const applyWorkspacePlanApprovalSetting = useCallback((workspaceId: string, skipPlanApprovals: boolean) => {
-    setWorkspaces((prev) => prev.map((workspace) => (
-      workspace.id === workspaceId ? { ...workspace, skipPlanApprovals } : workspace
-    )));
-    setSelectedWorkspace((prev) => (
-      prev && prev.id === workspaceId ? { ...prev, skipPlanApprovals } : prev
-    ));
-  }, []);
-
   const commitWorkspaceRename = useCallback(async () => {
     if (!selectedWorkspace || !selectedWorkspace.canEdit || workspaceRenameBusy) {
       return;
@@ -2900,36 +2890,6 @@ export default function WorkspacePage() {
     setFolderPaths([]);
     setSelectedWorkspace(workspace);
   }, []);
-
-  const handleUpdateWorkspacePlanApprovalSetting = useCallback(
-    async (skipPlanApprovals: boolean, requireConfirm = false) => {
-      if (!selectedWorkspace || workspaceSettingsBusy) {
-        return false;
-      }
-      if (
-        skipPlanApprovals &&
-        requireConfirm &&
-        !window.confirm(
-          'Enable trusted mode for this workspace and skip future plan approvals? You can turn approvals back on from the workspace sidebar.',
-        )
-      ) {
-        return false;
-      }
-      try {
-        setWorkspaceSettingsBusy(true);
-        const settings = await updateWorkspaceSettings(selectedWorkspace.id, { skipPlanApprovals });
-        applyWorkspacePlanApprovalSetting(selectedWorkspace.id, Boolean(settings.skipPlanApprovals));
-        return true;
-      } catch (error) {
-        console.error('Failed to update workspace settings', error);
-        addLocalSystemMessage('Unable to update workspace approval preferences right now.');
-        return false;
-      } finally {
-        setWorkspaceSettingsBusy(false);
-      }
-    },
-    [addLocalSystemMessage, applyWorkspacePlanApprovalSetting, selectedWorkspace, workspaceSettingsBusy],
-  );
 
   useEffect(() => {
     if (selectedWorkspace) {
@@ -6488,10 +6448,6 @@ export default function WorkspacePage() {
           colorMode={colorMode}
           onToggleColorMode={toggleColorMode}
           onSignOut={handleSignOut}
-          onToggleSkipPlanApprovals={(checked) => {
-            void handleUpdateWorkspacePlanApprovalSetting(checked, checked);
-          }}
-          workspaceSettingsBusy={workspaceSettingsBusy}
         />
         <Box
           component="main"
@@ -7061,8 +7017,6 @@ export default function WorkspacePage() {
               setInterruptStructuredAnswersByMessageId={setInterruptStructuredAnswersByMessageId}
               toggleInterruptSelectedChoice={toggleInterruptSelectedChoice}
               conversationAttentionById={conversationAttentionById}
-              workspaceSkipPlanApprovals={Boolean(selectedWorkspace?.skipPlanApprovals)}
-              workspaceSettingsBusy={workspaceSettingsBusy}
               isMemorySheetOpen={isMemorySheetOpen}
               memoryView={memoryView}
               memorySuggestions={memorySuggestions}
@@ -7089,7 +7043,6 @@ export default function WorkspacePage() {
               onEditAndRerunMessage={handleEditAndRerunMessage}
               onPrepareInterruptAction={prepareInterruptAction}
               onInterruptAction={handleInterruptAction}
-              onEnableTrustedPlanMode={() => handleUpdateWorkspacePlanApprovalSetting(true, true)}
               onChatInputChange={handleChatInputChange}
               onChatInputKeyDown={handleChatInputKeyDown}
               onChatInputKeyUp={handleChatInputKeyUp}

@@ -99,8 +99,6 @@ export default function AgentChatPane({
   setInterruptStructuredAnswersByMessageId,
   toggleInterruptSelectedChoice,
   conversationAttentionById,
-  workspaceSkipPlanApprovals,
-  workspaceSettingsBusy,
   isMemorySheetOpen,
   memoryView,
   memorySuggestions,
@@ -127,7 +125,6 @@ export default function AgentChatPane({
   onEditAndRerunMessage,
   onPrepareInterruptAction,
   onInterruptAction,
-  onEnableTrustedPlanMode,
   onChatInputChange,
   onChatInputKeyDown,
   onChatInputKeyUp,
@@ -206,8 +203,6 @@ export default function AgentChatPane({
   setInterruptStructuredAnswersByMessageId: Dispatch<SetStateAction<Record<string, InterruptAnswersByQuestionId>>>;
   toggleInterruptSelectedChoice: (messageKey: string, choiceId: string, multiple: boolean) => void;
   conversationAttentionById: Record<string, ConversationAttentionState>;
-  workspaceSkipPlanApprovals: boolean;
-  workspaceSettingsBusy: boolean;
   isMemorySheetOpen: boolean;
   memoryView: UserMemoryView;
   memorySuggestions: UserMemorySuggestion[];
@@ -250,7 +245,6 @@ export default function AgentChatPane({
     action: RenderableInterruptAction,
     pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
   ) => void;
-  onEnableTrustedPlanMode: () => Promise<boolean> | boolean;
   onChatInputChange: (event: ChangeEvent<HTMLTextAreaElement>) => void;
   onChatInputKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
   onChatInputKeyUp: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
@@ -334,8 +328,6 @@ export default function AgentChatPane({
           setInterruptInputByMessageId={setInterruptInputByMessageId}
           setInterruptStructuredAnswersByMessageId={setInterruptStructuredAnswersByMessageId}
           toggleInterruptSelectedChoice={toggleInterruptSelectedChoice}
-          workspaceSkipPlanApprovals={workspaceSkipPlanApprovals}
-          workspaceSettingsBusy={workspaceSettingsBusy}
           toggleThinkingVisibility={onToggleThinkingVisibility}
           toggleToolActivityVisibility={onToggleToolActivityVisibility}
           handleCopyMessageText={onCopyMessageText}
@@ -343,7 +335,6 @@ export default function AgentChatPane({
           handleEditAndRerunMessage={onEditAndRerunMessage}
           handlePrepareInterruptAction={onPrepareInterruptAction}
           handleInterruptAction={onInterruptAction}
-          enableTrustedPlanMode={onEnableTrustedPlanMode}
           workspaceId={workspaceId}
         />
         <ChatInputArea

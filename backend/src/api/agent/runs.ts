@@ -244,13 +244,11 @@ export function registerRunRoutes(
       const { persona, prompt, workspaceId, history, forceReset, taggedFiles, currentTurnFileIds, internetSearchEnabled, fileContextRefs } = runAgentSchema.parse(req.body);
       const workspacePolicy = await workspaceService.getMcpServerPolicy(workspaceId, user.userId, { requireEdit: true });
       const policy = await policyApi.resolveEffectiveAgentPolicy(user.userId, workspacePolicy);
-      const settings = await workspaceService.getWorkspaceSettings(workspaceId, user.userId, { requireEdit: true });
       const enrichedPrompt = await injectTaggedFileUrls(prompt, workspaceId, user.userId, taggedFiles);
       const authToken = await policyApi.buildAgentAuthToken({
         userId: user.userId,
         workspaceId,
         policy,
-        skipPlanApprovals: settings.skipPlanApprovals,
       });
       const messageContent = await buildCurrentTurnMessageContent(workspaceId, user.userId, enrichedPrompt, currentTurnFileIds);
       const response = await runAgent(persona, workspaceId, enrichedPrompt, history, {
@@ -302,13 +300,11 @@ export function registerRunRoutes(
       const { persona, prompt, workspaceId, history, forceReset, taggedFiles, currentTurnFileIds, internetSearchEnabled, fileContextRefs } = runAgentSchema.parse(req.body);
       const workspacePolicy = await workspaceService.getMcpServerPolicy(workspaceId, user.userId, { requireEdit: true });
       const policy = await policyApi.resolveEffectiveAgentPolicy(user.userId, workspacePolicy);
-      const settings = await workspaceService.getWorkspaceSettings(workspaceId, user.userId, { requireEdit: true });
       const enrichedPrompt = await injectTaggedFileUrls(prompt, workspaceId, user.userId, taggedFiles);
       const authToken = await policyApi.buildAgentAuthToken({
         userId: user.userId,
         workspaceId,
         policy,
-        skipPlanApprovals: settings.skipPlanApprovals,
       });
       const messageContent = await buildCurrentTurnMessageContent(workspaceId, user.userId, enrichedPrompt, currentTurnFileIds);
       streamResponse = await runAgentStream(persona, workspaceId, enrichedPrompt, history, {
@@ -370,13 +366,11 @@ export function registerRunRoutes(
       }
       const workspacePolicy = await workspaceService.getMcpServerPolicy(workspaceId, user.userId, { requireEdit: true });
       const policy = await policyApi.resolveEffectiveAgentPolicy(user.userId, workspacePolicy);
-      const settings = await workspaceService.getWorkspaceSettings(workspaceId, user.userId, { requireEdit: true });
       const enrichedPrompt = await injectTaggedFileUrls(prompt, workspaceId, user.userId, taggedFiles);
       const authToken = await policyApi.buildAgentAuthToken({
         userId: user.userId,
         workspaceId,
         policy,
-        skipPlanApprovals: settings.skipPlanApprovals,
       });
       const messageContent = await buildCurrentTurnMessageContent(workspaceId, user.userId, enrichedPrompt, currentTurnFileIds);
       const { runId, status } = await startAgentRun({
@@ -442,12 +436,10 @@ export function registerRunRoutes(
       await workspaceService.ensureMembership(meta.workspaceId, user.userId, { requireEdit: true });
       const workspacePolicy = await workspaceService.getMcpServerPolicy(meta.workspaceId, user.userId, { requireEdit: true });
       const policy = await policyApi.resolveEffectiveAgentPolicy(user.userId, workspacePolicy);
-      const settings = await workspaceService.getWorkspaceSettings(meta.workspaceId, user.userId, { requireEdit: true });
       const authToken = await policyApi.buildAgentAuthToken({
         userId: user.userId,
         workspaceId: meta.workspaceId,
         policy,
-        skipPlanApprovals: settings.skipPlanApprovals,
       });
       if (meta.status !== 'awaiting_approval') {
         return res.status(409).json({ error: 'Run is not awaiting approval' });
@@ -499,12 +491,10 @@ export function registerRunRoutes(
       await workspaceService.ensureMembership(meta.workspaceId, user.userId, { requireEdit: true });
       const workspacePolicy = await workspaceService.getMcpServerPolicy(meta.workspaceId, user.userId, { requireEdit: true });
       const policy = await policyApi.resolveEffectiveAgentPolicy(user.userId, workspacePolicy);
-      const settings = await workspaceService.getWorkspaceSettings(meta.workspaceId, user.userId, { requireEdit: true });
       const authToken = await policyApi.buildAgentAuthToken({
         userId: user.userId,
         workspaceId: meta.workspaceId,
         policy,
-        skipPlanApprovals: settings.skipPlanApprovals,
       });
       if (meta.status !== 'awaiting_approval') {
         return res.status(409).json({ error: 'Run is not awaiting input' });
@@ -551,12 +541,10 @@ export function registerRunRoutes(
       await workspaceService.ensureMembership(meta.workspaceId, user.userId, { requireEdit: true });
       const workspacePolicy = await workspaceService.getMcpServerPolicy(meta.workspaceId, user.userId, { requireEdit: true });
       const policy = await policyApi.resolveEffectiveAgentPolicy(user.userId, workspacePolicy);
-      const settings = await workspaceService.getWorkspaceSettings(meta.workspaceId, user.userId, { requireEdit: true });
       const authToken = await policyApi.buildAgentAuthToken({
         userId: user.userId,
         workspaceId: meta.workspaceId,
         policy,
-        skipPlanApprovals: settings.skipPlanApprovals,
       });
       if (meta.status !== 'awaiting_approval') {
         return res.status(409).json({ error: 'Run is not awaiting human input' });

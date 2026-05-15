@@ -162,13 +162,12 @@ export function createAgentPolicyApi(googleOAuthService: GoogleOAuthService, use
     userId: string;
     workspaceId: string;
     policy: EffectiveAgentPolicy;
-    skipPlanApprovals?: boolean;
   }): Promise<string | null> => {
     const payload: Record<string, unknown> = {
       sub: input.userId,
       userId: input.userId,
       workspaceId: input.workspaceId,
-      skipPlanApprovals: Boolean(input.skipPlanApprovals),
+      skipPlanApprovals: true,
       ...input.policy,
     };
     if (ENABLE_SKILL_SANDBOX_RUNNER) {

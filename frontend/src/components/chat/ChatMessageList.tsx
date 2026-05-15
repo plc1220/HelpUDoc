@@ -35,8 +35,6 @@ export default function ChatMessageList({
   setInterruptInputByMessageId,
   setInterruptStructuredAnswersByMessageId,
   toggleInterruptSelectedChoice,
-  workspaceSkipPlanApprovals,
-  workspaceSettingsBusy,
   toggleThinkingVisibility,
   toggleToolActivityVisibility,
   handleCopyMessageText,
@@ -44,7 +42,6 @@ export default function ChatMessageList({
   handleEditAndRerunMessage,
   handlePrepareInterruptAction,
   handleInterruptAction,
-  enableTrustedPlanMode,
   workspaceId,
 }: {
   colorMode: 'light' | 'dark';
@@ -80,8 +77,6 @@ export default function ChatMessageList({
   setInterruptInputByMessageId: Dispatch<SetStateAction<Record<string, string>>>;
   setInterruptStructuredAnswersByMessageId: Dispatch<SetStateAction<Record<string, InterruptAnswersByQuestionId>>>;
   toggleInterruptSelectedChoice: (messageKey: string, choiceId: string, multiple: boolean) => void;
-  workspaceSkipPlanApprovals: boolean;
-  workspaceSettingsBusy: boolean;
   toggleThinkingVisibility: (messageId: ConversationMessage['id']) => void;
   toggleToolActivityVisibility: (messageId: ConversationMessage['id']) => void;
   handleCopyMessageText: (message: ConversationMessage) => void;
@@ -97,7 +92,6 @@ export default function ChatMessageList({
     action: RenderableInterruptAction,
     pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
   ) => void;
-  enableTrustedPlanMode: () => Promise<boolean> | boolean;
   workspaceId?: string;
 }) {
   const isDarkMode = colorMode === 'dark';
@@ -190,8 +184,6 @@ export default function ChatMessageList({
           setInterruptInputByMessageId={setInterruptInputByMessageId}
           setInterruptStructuredAnswersByMessageId={setInterruptStructuredAnswersByMessageId}
           toggleInterruptSelectedChoice={toggleInterruptSelectedChoice}
-          workspaceSkipPlanApprovals={workspaceSkipPlanApprovals}
-          workspaceSettingsBusy={workspaceSettingsBusy}
           toggleThinkingVisibility={toggleThinkingVisibility}
           toggleToolActivityVisibility={toggleToolActivityVisibility}
           handleCopyMessageText={handleCopyMessageText}
@@ -199,7 +191,6 @@ export default function ChatMessageList({
           handleEditAndRerunMessage={handleEditAndRerunMessage}
           handlePrepareInterruptAction={handlePrepareInterruptAction}
           handleInterruptAction={handleInterruptAction}
-          enableTrustedPlanMode={enableTrustedPlanMode}
           isStreaming={isStreaming}
           workspaceId={workspaceId}
           colorMode={colorMode}
@@ -228,8 +219,6 @@ export default function ChatMessageList({
     handleRerunMessage,
     isPlanApprovalInterrupt,
     isStreaming,
-    workspaceSkipPlanApprovals,
-    workspaceSettingsBusy,
     markdownComponents,
     messageBubbleMaxWidth,
     messages,
@@ -242,7 +231,6 @@ export default function ChatMessageList({
     toggleToolActivityVisibility,
     workspaceId,
     handlePrepareInterruptAction,
-    enableTrustedPlanMode,
     colorMode,
     isDarkMode,
   ]);

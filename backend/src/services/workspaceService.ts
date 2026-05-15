@@ -19,7 +19,6 @@ export interface WorkspaceRecord {
   slug: string;
   ownerId: string;
   lastModifiedBy?: string | null;
-  skipPlanApprovals?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -80,7 +79,6 @@ export class WorkspaceService {
       slug: row.slug,
       ownerId: row.ownerId,
       lastModifiedBy: row.lastModifiedBy,
-      skipPlanApprovals: Boolean(row.skipPlanApprovals),
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
       role: row.role as WorkspaceRole,
@@ -99,7 +97,6 @@ export class WorkspaceService {
         slug,
         ownerId: user.userId,
         lastModifiedBy: user.userId,
-        skipPlanApprovals: false,
       })
       .returning('*');
 
@@ -112,7 +109,8 @@ export class WorkspaceService {
 
     await this.createWorkspaceDirectory(workspaceId);
 
-    return workspace;
+    const { skipPlanApprovals: _omit, ...created } = workspace as WorkspaceRecord & { skipPlanApprovals?: boolean };
+    return created as WorkspaceRecord;
   }
 
   async renameWorkspace(workspaceId: string, userId: string, name: string): Promise<WorkspaceRecord> {
@@ -134,41 +132,12 @@ export class WorkspaceService {
     if (!workspace) {
       throw new NotFoundError('Workspace not found');
     }
-    return workspace;
+    const { skipPlanApprovals: _omit, ...renamed } = workspace as WorkspaceRecord & { skipPlanApprovals?: boolean };
+    return renamed as WorkspaceRecord;
   }
 
   async getWorkspaceForUser(workspaceId: string, userId: string): Promise<{ workspace: WorkspaceRecord; membership: WorkspaceMembershipRecord }> {
     return this.ensureMembership(workspaceId, userId);
-  }
-
-  async getWorkspaceSettings(
-    workspaceId: string,
-    userId: string,
-    options: MembershipCheckOptions = {},
-  ): Promise<{ skipPlanApprovals: boolean }> {
-    const { workspace } = await this.ensureMembership(workspaceId, userId, options);
-    return {
-      skipPlanApprovals: Boolean(workspace.skipPlanApprovals),
-    };
-  }
-
-  async updateWorkspaceSettings(
-    workspaceId: string,
-    userId: string,
-    settings: { skipPlanApprovals?: boolean },
-  ): Promise<{ skipPlanApprovals: boolean }> {
-    await this.ensureMembership(workspaceId, userId, { requireEdit: true });
-    const updates: Record<string, unknown> = {
-      updatedAt: this.db.fn.now(),
-      lastModifiedBy: userId,
-    };
-    if (typeof settings.skipPlanApprovals === 'boolean') {
-      updates.skipPlanApprovals = settings.skipPlanApprovals;
-    }
-    await this.db<WorkspaceRecord>('workspaces')
-      .where({ id: workspaceId })
-      .update(updates);
-    return this.getWorkspaceSettings(workspaceId, userId, { requireEdit: true });
   }
 
   async ensureMembership(
@@ -180,10 +149,10 @@ export class WorkspaceService {
     if (!workspace) {
       throw new NotFoundError('Workspace not found');
     }
-    const normalizedWorkspace: WorkspaceRecord = {
-      ...workspace,
-      skipPlanApprovals: Boolean(workspace.skipPlanApprovals),
+    const { skipPlanApprovals: _omitPlan, ...workspaceRest } = workspace as WorkspaceRecord & {
+      skipPlanApprovals?: boolean;
     };
+    const normalizedWorkspace: WorkspaceRecord = workspaceRest;
 
     const membership = await this.db<WorkspaceMembershipRecord>('workspace_members')
       .where({ workspaceId, userId })

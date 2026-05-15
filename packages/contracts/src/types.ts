@@ -5,7 +5,6 @@ export interface Workspace {
   slug?: string;
   role?: 'owner' | 'editor' | 'viewer';
   canEdit?: boolean;
-  skipPlanApprovals?: boolean;
   createdAt?: string;
   updatedAt?: string;
 }

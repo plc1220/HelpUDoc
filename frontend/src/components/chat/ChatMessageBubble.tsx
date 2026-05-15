@@ -1,4 +1,4 @@
-import { Check, CheckCircle2, Copy, FilePenLine, Loader2, RotateCcw, ShieldCheck } from 'lucide-react';
+import { Check, CheckCircle2, Copy, FilePenLine, Loader2, RotateCcw } from 'lucide-react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useEffect, useMemo, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react';
@@ -424,8 +424,6 @@ export default function ChatMessageBubble({
   setInterruptInputByMessageId,
   setInterruptStructuredAnswersByMessageId,
   toggleInterruptSelectedChoice,
-  workspaceSkipPlanApprovals,
-  workspaceSettingsBusy,
   toggleThinkingVisibility,
   toggleToolActivityVisibility,
   handleCopyMessageText,
@@ -433,7 +431,6 @@ export default function ChatMessageBubble({
   handleEditAndRerunMessage,
   handlePrepareInterruptAction,
   handleInterruptAction,
-  enableTrustedPlanMode,
   isStreaming,
 }: {
   colorMode: 'light' | 'dark';
@@ -469,8 +466,6 @@ export default function ChatMessageBubble({
   setInterruptInputByMessageId: Dispatch<SetStateAction<Record<string, string>>>;
   setInterruptStructuredAnswersByMessageId: Dispatch<SetStateAction<Record<string, InterruptAnswersByQuestionId>>>;
   toggleInterruptSelectedChoice: (messageKey: string, choiceId: string, multiple: boolean) => void;
-  workspaceSkipPlanApprovals: boolean;
-  workspaceSettingsBusy: boolean;
   toggleThinkingVisibility: (messageId: ConversationMessage['id']) => void;
   toggleToolActivityVisibility: (messageId: ConversationMessage['id']) => void;
   handleCopyMessageText: (message: ConversationMessage) => void;
@@ -486,7 +481,6 @@ export default function ChatMessageBubble({
     action: RenderableInterruptAction,
     pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
   ) => void;
-  enableTrustedPlanMode: () => Promise<boolean> | boolean;
   isStreaming: boolean;
   workspaceId?: string;
 }) {
@@ -1316,13 +1310,6 @@ export default function ChatMessageBubble({
     ? approvalReview.steps.flatMap((step) => step.fileImpacts.filter((impact) => impact.action === 'update'))
     : [];
 
-  const handleEnableTrustedMode = async () => {
-    if (workspaceSkipPlanApprovals || workspaceSettingsBusy) {
-      return;
-    }
-    await Promise.resolve(enableTrustedPlanMode());
-  };
-
   const agentContainerClassName = isDarkMode
     ? 'w-full rounded-[1.8rem] border border-slate-700/70 bg-[linear-gradient(160deg,rgba(15,23,42,0.98),rgba(30,41,59,0.94))] px-4 py-4 text-slate-100 shadow-[0_26px_70px_-36px_rgba(2,6,23,0.95)] ring-1 ring-white/5'
     : 'w-full rounded-[1.8rem] border border-slate-200/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(248,250,252,0.95))] px-4 py-4 text-slate-900 shadow-[0_26px_70px_-36px_rgba(15,23,42,0.16)]';
@@ -1597,31 +1584,6 @@ export default function ChatMessageBubble({
                     </div>
                   )}
 
-                  {isPlanApprovalRequest ? (
-                    <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-[1.2rem] border border-slate-200/80 bg-white/75 px-4 py-3">
-                      <label className="flex min-w-0 items-center gap-3 text-sm text-slate-600">
-                        <input
-                          type="checkbox"
-                          checked={workspaceSkipPlanApprovals}
-                          disabled={workspaceSkipPlanApprovals || workspaceSettingsBusy}
-                          onChange={() => { void handleEnableTrustedMode(); }}
-                          className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
-                        />
-                        <span className="min-w-0">
-                          <span className="font-medium text-slate-700">Don’t ask me again for this workspace</span>
-                          <span className="block text-xs text-slate-500">
-                            Future plan reviews will auto-approve until you switch approvals back on in the sidebar.
-                          </span>
-                        </span>
-                      </label>
-                      {workspaceSkipPlanApprovals ? (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700 ring-1 ring-emerald-200">
-                          <ShieldCheck size={12} />
-                          Trusted mode enabled
-                        </span>
-                      ) : null}
-                    </div>
-                  ) : null}
 
                   {interruptError ? (
                     <div className="mt-4 rounded-xl border border-rose-200/90 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700">
