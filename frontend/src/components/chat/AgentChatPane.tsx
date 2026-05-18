@@ -1,5 +1,6 @@
 import type {
   ChangeEvent,
+  ClipboardEvent,
   CSSProperties,
   Dispatch,
   KeyboardEvent,
@@ -129,6 +130,7 @@ export default function AgentChatPane({
   onChatInputKeyDown,
   onChatInputKeyUp,
   onChatInputSelectionChange,
+  onChatInputPaste,
   onOpenLocalAttachmentPicker,
   onToggleInternetSearch,
   onInsertSlashTrigger,
@@ -249,6 +251,7 @@ export default function AgentChatPane({
   onChatInputKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
   onChatInputKeyUp: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
   onChatInputSelectionChange: (event: SyntheticEvent<HTMLTextAreaElement>) => void;
+  onChatInputPaste: (event: ClipboardEvent<HTMLTextAreaElement>) => void;
   onOpenLocalAttachmentPicker: () => void;
   onToggleInternetSearch: () => void;
   onInsertSlashTrigger: () => void;
@@ -360,6 +363,7 @@ export default function AgentChatPane({
           onChatInputKeyDown={onChatInputKeyDown}
           onChatInputKeyUp={onChatInputKeyUp}
           onChatInputSelectionChange={onChatInputSelectionChange}
+          onChatInputPaste={onChatInputPaste}
           onOpenLocalAttachmentPicker={onOpenLocalAttachmentPicker}
           onToggleInternetSearch={onToggleInternetSearch}
           onInsertSlashTrigger={onInsertSlashTrigger}

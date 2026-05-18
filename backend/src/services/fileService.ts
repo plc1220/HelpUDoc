@@ -78,6 +78,31 @@ export class FileService {
     return Boolean(existing);
   }
 
+  async resolveUniqueRelativePath(workspaceId: string, fileName: string, userId: string): Promise<string> {
+    await this.workspaceService.ensureMembership(workspaceId, userId, { requireEdit: true });
+    const relativePath = this.normalizeRelativePath(fileName);
+    if (!await this.hasFileName(workspaceId, relativePath, userId)) {
+      return relativePath;
+    }
+
+    const parsed = path.posix.parse(relativePath);
+    const directory = parsed.dir ? `${parsed.dir}/` : '';
+    const baseName = parsed.name || 'file';
+    const extension = parsed.ext || '';
+    for (let index = 2; index <= 99; index += 1) {
+      const candidate = `${directory}${baseName} (${index})${extension}`;
+      if (!await this.hasFileName(workspaceId, candidate, userId)) {
+        return candidate;
+      }
+    }
+
+    let candidate = `${directory}${baseName}-${Date.now()}${extension}`;
+    while (await this.hasFileName(workspaceId, candidate, userId)) {
+      candidate = `${directory}${baseName}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}${extension}`;
+    }
+    return candidate;
+  }
+
   async listFolders(workspaceId: string, userId: string): Promise<string[]> {
     await this.workspaceService.ensureMembership(workspaceId, userId);
     const workspaceRoot = path.resolve(WORKSPACE_DIR, workspaceId);
@@ -267,6 +292,10 @@ export class FileService {
   ) {
     await this.workspaceService.ensureMembership(workspaceId, userId, { requireEdit: true });
     const relativePath = this.normalizeRelativePath(fileName);
+    const existingFile = await this.db('files').where({ workspaceId, name: relativePath }).first();
+    if (existingFile) {
+      throw new ConflictError(`File "${relativePath}" already exists`);
+    }
     const localPath = this.getLocalPath(workspaceId, relativePath);
     const isText = this.isTextFile(relativePath, mimeType);
     let storageType: 'local' | 's3';

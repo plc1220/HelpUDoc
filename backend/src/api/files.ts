@@ -287,9 +287,14 @@ export default function(
         } finally {
           await fs.unlink(diskPath).catch(() => undefined);
         }
-        const newFile = await fileService.createFile(
+        const uploadName = await fileService.resolveUniqueRelativePath(
           workspaceId,
           payload.path || req.file.originalname,
+          user.userId,
+        );
+        const newFile = await fileService.createFile(
+          workspaceId,
+          uploadName,
           fileBuffer,
           req.file.mimetype,
           user.userId,

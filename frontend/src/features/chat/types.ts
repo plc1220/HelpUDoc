@@ -6,6 +6,7 @@ export type ChatComposerAttachment =
       name: string;
       source: 'local';
       file: File;
+      previewUrl?: string;
     }
   | {
       id: string;

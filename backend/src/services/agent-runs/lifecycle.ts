@@ -763,6 +763,20 @@ async function runAgentRunWorker(
     ...overrides,
   });
 
+  const settleRunningToolEvents = (status: AgentRunStatus) => {
+    if (status !== 'completed' && status !== 'failed' && status !== 'cancelled') {
+      return;
+    }
+    const now = new Date().toISOString();
+    toolEvents.forEach((event) => {
+      if (event.status !== 'running') {
+        return;
+      }
+      event.status = status === 'completed' ? 'completed' : 'error';
+      event.finishedAt = event.finishedAt || now;
+    });
+  };
+
   const updateConversationFromRun = (
     status: Exclude<AgentRunStatus, 'queued'>,
     overrides: Partial<ConversationRunSnapshot> = {},
@@ -878,6 +892,7 @@ async function runAgentRunWorker(
       return;
     }
     settled = true;
+    settleRunningToolEvents(status);
     await updateConversationFromRun(status === 'queued' ? 'running' : status, { error });
     await markRunFinished(runId, status, error);
     if (runTelemetryService) {

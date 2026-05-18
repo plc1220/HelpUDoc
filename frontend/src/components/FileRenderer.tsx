@@ -65,6 +65,8 @@ type TabularPreview = {
 
 const PARQUET_PREVIEW_MAX_ROWS = 100;
 const PARQUET_PREVIEW_MAX_COLUMNS = 20;
+const SPREADSHEET_PREVIEW_MAX_ROWS = 100;
+const SPREADSHEET_PREVIEW_MAX_COLUMNS = 20;
 SyntaxHighlighter.registerLanguage('bash', bash);
 SyntaxHighlighter.registerLanguage('c', cpp);
 SyntaxHighlighter.registerLanguage('cpp', cpp);
@@ -146,6 +148,8 @@ let parquetRuntimePromise: Promise<{
   compressors: import('hyparquet').Compressors;
 }> | null = null;
 
+let spreadsheetRuntimePromise: Promise<typeof import('xlsx')> | null = null;
+
 const loadParquetRuntime = async () => {
   if (!parquetRuntimePromise) {
     parquetRuntimePromise = (async () => {
@@ -164,6 +168,14 @@ const loadParquetRuntime = async () => {
   }
 
   return parquetRuntimePromise;
+};
+
+const loadSpreadsheetRuntime = async () => {
+  if (!spreadsheetRuntimePromise) {
+    spreadsheetRuntimePromise = import('xlsx');
+  }
+
+  return spreadsheetRuntimePromise;
 };
 
 const getFileExtension = (fileName: string): string => {
@@ -249,6 +261,64 @@ const formatPreviewCell = (value: unknown): string => {
   return String(value);
 };
 
+const renderTabularPreview = (
+  title: string,
+  preview: TabularPreview,
+  maxRows: number,
+  maxColumns: number,
+) => {
+  const summary = [
+    `${preview.totalRows} row${preview.totalRows === 1 ? '' : 's'}`,
+    `${preview.totalColumns} column${preview.totalColumns === 1 ? '' : 's'}`,
+  ].join(' • ');
+
+  const truncationLabel = [
+    preview.truncatedRows ? `showing first ${maxRows} rows` : null,
+    preview.truncatedColumns ? `first ${maxColumns} columns visible` : null,
+  ]
+    .filter(Boolean)
+    .join(' • ');
+
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="border-b border-gray-200 px-4 py-3 text-xs text-gray-500">
+        <span className="font-medium text-gray-700">{title}</span> • {summary}
+        {truncationLabel ? ` • ${truncationLabel}` : ''}
+      </div>
+      <div className="min-h-0 flex-1 overflow-auto">
+        <table className="min-w-full divide-y divide-gray-200 border-collapse">
+          <thead className="sticky top-0 z-10 bg-gray-50">
+            <tr>
+              {preview.headers.map((header) => (
+                <th
+                  key={header}
+                  className="border-b border-gray-200 bg-gray-50 px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500"
+                >
+                  {header}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-200 bg-white">
+            {preview.rows.map((row, rowIndex) => (
+              <tr key={rowIndex} className="hover:bg-gray-50">
+                {row.map((cell, cellIndex) => (
+                  <td
+                    key={`${rowIndex}-${preview.headers[cellIndex]}`}
+                    className="border-b border-gray-200 px-6 py-4 text-sm text-gray-900"
+                  >
+                    <div className="max-w-md whitespace-pre-wrap break-words">{cell}</div>
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+};
+
 const FileRenderer: React.FC<FileRendererProps> = ({
   file,
   fileContent,
@@ -304,6 +374,10 @@ const FileRenderer: React.FC<FileRendererProps> = ({
   const [parquetPreview, setParquetPreview] = useState<TabularPreview | null>(null);
   const [parquetError, setParquetError] = useState<string | null>(null);
   const [isParquetLoading, setIsParquetLoading] = useState(false);
+  const [spreadsheetPreview, setSpreadsheetPreview] = useState<TabularPreview | null>(null);
+  const [spreadsheetPreviewTitle, setSpreadsheetPreviewTitle] = useState('Spreadsheet preview');
+  const [spreadsheetError, setSpreadsheetError] = useState<string | null>(null);
+  const [isSpreadsheetLoading, setIsSpreadsheetLoading] = useState(false);
   const [docxHtml, setDocxHtml] = useState<string | null>(null);
   const [docxHtmlSource, setDocxHtmlSource] = useState<string | null>(null);
   const [docxError, setDocxError] = useState<string | null>(null);
@@ -425,6 +499,108 @@ const FileRenderer: React.FC<FileRendererProps> = ({
       cancelled = true;
     };
   }, [fileContent, isParquetFile]);
+
+  useEffect(() => {
+    if (!isSpreadsheetFile) {
+      setSpreadsheetPreview(null);
+      setSpreadsheetError(null);
+      setIsSpreadsheetLoading(false);
+      return;
+    }
+
+    if (!fileContent.trim()) {
+      setSpreadsheetPreview(null);
+      setSpreadsheetError(null);
+      setIsSpreadsheetLoading(true);
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadSpreadsheetPreview = async () => {
+      setIsSpreadsheetLoading(true);
+      setSpreadsheetError(null);
+
+      try {
+        const XLSX = await loadSpreadsheetRuntime();
+        const workbook = XLSX.read(decodeBase64ToArrayBuffer(fileContent), { type: 'array' });
+        const firstSheetName = workbook.SheetNames[0];
+        const worksheet = firstSheetName ? workbook.Sheets[firstSheetName] : null;
+        const sheetRange = worksheet?.['!ref'] ? XLSX.utils.decode_range(worksheet['!ref']) : null;
+        const values = worksheet
+          ? (XLSX.utils.sheet_to_json(worksheet, {
+              header: 1,
+              raw: false,
+              defval: '',
+              blankrows: false,
+            }) as unknown[][])
+          : [];
+
+        if (!worksheet || values.length === 0) {
+          if (!cancelled) {
+            setSpreadsheetPreview({
+              headers: [],
+              rows: [],
+              totalRows: 0,
+              totalColumns: 0,
+              truncatedRows: false,
+              truncatedColumns: false,
+            });
+            setSpreadsheetPreviewTitle(firstSheetName ? `${firstSheetName} preview` : 'Spreadsheet preview');
+          }
+          return;
+        }
+
+        const totalRows = sheetRange ? sheetRange.e.r + 1 : values.length;
+        const totalColumns = sheetRange
+          ? sheetRange.e.c + 1
+          : values.reduce((max, row) => Math.max(max, row.length), 0);
+        const visibleColumnCount = Math.min(totalColumns, SPREADSHEET_PREVIEW_MAX_COLUMNS);
+        const headers = Array.from({ length: visibleColumnCount }, (_, index) => {
+          const headerValue = values[0]?.[index];
+          const formatted = formatPreviewCell(headerValue).trim();
+          return formatted || `Column ${index + 1}`;
+        });
+        const visibleRows = values
+          .slice(1, SPREADSHEET_PREVIEW_MAX_ROWS + 1)
+          .map((row) =>
+            headers.map((_, columnIndex) => formatPreviewCell(row[columnIndex])),
+          );
+
+        if (!cancelled) {
+          setSpreadsheetPreview({
+            headers,
+            rows: visibleRows,
+            totalRows,
+            totalColumns,
+            truncatedRows: totalRows > SPREADSHEET_PREVIEW_MAX_ROWS + 1,
+            truncatedColumns: totalColumns > SPREADSHEET_PREVIEW_MAX_COLUMNS,
+          });
+          setSpreadsheetPreviewTitle(
+            firstSheetName ? `${firstSheetName} preview` : 'Spreadsheet preview',
+          );
+        }
+      } catch (error) {
+        console.error('Spreadsheet parse error', error);
+        if (!cancelled) {
+          setSpreadsheetPreview(null);
+          setSpreadsheetError(
+            error instanceof Error ? error.message : 'Failed to parse spreadsheet preview.',
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setIsSpreadsheetLoading(false);
+        }
+      }
+    };
+
+    void loadSpreadsheetPreview();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [fileContent, isSpreadsheetFile]);
 
   useEffect(() => {
     if (!isDocxFile) {
@@ -911,6 +1087,52 @@ const FileRenderer: React.FC<FileRendererProps> = ({
         </div>
       );
     }
+    if (isSpreadsheetFile) {
+      if (isSpreadsheetLoading) {
+        return (
+          <div className="flex h-full items-center justify-center text-sm text-gray-500">
+            Loading spreadsheet preview...
+          </div>
+        );
+      }
+      if (spreadsheetError) {
+        return (
+          <div className="flex h-full flex-col items-center justify-center gap-4 px-6 text-center text-sm text-red-600">
+            <p>Failed to parse spreadsheet: {spreadsheetError}</p>
+            {fileContent.trim() ? (
+              <button
+                type="button"
+                onClick={() => downloadBinaryFile(
+                  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                  file?.name || 'spreadsheet',
+                )}
+                className={`rounded-lg px-4 py-2 text-sm font-medium text-white ${
+                  colorMode === 'dark'
+                    ? 'bg-slate-600 hover:bg-slate-500'
+                    : 'bg-slate-800 hover:bg-slate-700'
+                }`}
+              >
+                Download file
+              </button>
+            ) : null}
+          </div>
+        );
+      }
+      if (!spreadsheetPreview || spreadsheetPreview.headers.length === 0) {
+        return (
+          <div className="flex h-full items-center justify-center text-sm text-gray-500">
+            Empty or unsupported spreadsheet file.
+          </div>
+        );
+      }
+
+      return renderTabularPreview(
+        spreadsheetPreviewTitle,
+        spreadsheetPreview,
+        SPREADSHEET_PREVIEW_MAX_ROWS,
+        SPREADSHEET_PREVIEW_MAX_COLUMNS,
+      );
+    }
     if (isOfficeFile) {
       const officeKind = getOfficeDocumentKind(file?.name || '', file?.mimeType);
       const embedSrc = officeOnlineEmbedUrl(file?.publicUrl ?? null);
@@ -995,57 +1217,11 @@ const FileRenderer: React.FC<FileRendererProps> = ({
         );
       }
 
-      const summary = [
-        `${parquetPreview.totalRows} row${parquetPreview.totalRows === 1 ? '' : 's'}`,
-        `${parquetPreview.totalColumns} column${parquetPreview.totalColumns === 1 ? '' : 's'}`,
-      ].join(' • ');
-
-      const truncationLabel = [
-        parquetPreview.truncatedRows ? `showing first ${PARQUET_PREVIEW_MAX_ROWS} rows` : null,
-        parquetPreview.truncatedColumns
-          ? `first ${PARQUET_PREVIEW_MAX_COLUMNS} columns visible`
-          : null,
-      ]
-        .filter(Boolean)
-        .join(' • ');
-
-      return (
-        <div className="flex h-full min-h-0 flex-col">
-          <div className="border-b border-gray-200 px-4 py-3 text-xs text-gray-500">
-            <span className="font-medium text-gray-700">Parquet preview</span> • {summary}
-            {truncationLabel ? ` • ${truncationLabel}` : ''}
-          </div>
-          <div className="min-h-0 flex-1 overflow-auto">
-            <table className="min-w-full divide-y divide-gray-200 border-collapse">
-              <thead className="sticky top-0 z-10 bg-gray-50">
-                <tr>
-                  {parquetPreview.headers.map((header) => (
-                    <th
-                      key={header}
-                      className="border-b border-gray-200 bg-gray-50 px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500"
-                    >
-                      {header}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-200 bg-white">
-                {parquetPreview.rows.map((row, rowIndex) => (
-                  <tr key={rowIndex} className="hover:bg-gray-50">
-                    {row.map((cell, cellIndex) => (
-                      <td
-                        key={`${rowIndex}-${parquetPreview.headers[cellIndex]}`}
-                        className="border-b border-gray-200 px-6 py-4 text-sm text-gray-900"
-                      >
-                        <div className="max-w-md whitespace-pre-wrap break-words">{cell}</div>
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
+      return renderTabularPreview(
+        'Parquet preview',
+        parquetPreview,
+        PARQUET_PREVIEW_MAX_ROWS,
+        PARQUET_PREVIEW_MAX_COLUMNS,
       );
     }
     return <pre className="whitespace-pre-wrap break-words">{fileContent}</pre>;

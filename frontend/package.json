@@ -13,12 +13,12 @@
     "e2e": "playwright test --project=chromium"
   },
   "dependencies": {
-    "@helpudoc/contracts": "file:../packages/contracts",
-    "@helpudoc/dashboard-runtime": "file:../packages/dashboard-runtime",
     "@copilotkit/react-core": "^1.51.3",
     "@copilotkit/react-ui": "^1.51.3",
     "@emotion/react": "^11.14.0",
     "@emotion/styled": "^11.14.1",
+    "@helpudoc/contracts": "file:../packages/contracts",
+    "@helpudoc/dashboard-runtime": "file:../packages/dashboard-runtime",
     "@hocuspocus/provider": "^3.4.3",
     "@mdxeditor/editor": "^3.48.0",
     "@monaco-editor/react": "^4.7.0",
@@ -45,6 +45,7 @@
     "react-simplemde-editor": "^5.2.0",
     "react-syntax-highlighter": "^16.0.0",
     "remark-gfm": "^4.0.1",
+    "xlsx": "^0.18.5",
     "y-monaco": "^0.1.6",
     "yaml": "^2.8.1",
     "yjs": "^13.6.27"

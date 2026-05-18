@@ -8,7 +8,7 @@ import {
   ThemeProvider,
   type PaletteMode,
 } from '@mui/material';
-import { Check, CheckSquare, Copy, Edit, Trash, Plus, Minus, ChevronLeft, ChevronDown, RotateCcw, Printer, Download, Link as LinkIcon, Loader2, FolderPlus, FolderUp, Upload, Home, ArrowUp, Search, File as FileIcon, Presentation, Wrench, Plug, Sparkles, Info } from 'lucide-react';
+import { Check, CheckSquare, Copy, Edit, Trash, Plus, Minus, X, ChevronLeft, ChevronDown, RotateCcw, Printer, Download, Link as LinkIcon, Loader2, FolderPlus, FolderUp, Upload, Home, ArrowUp, Search, File as FileIcon, Presentation, Wrench, Plug, Sparkles, Info } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { getWorkspaces, createWorkspace, deleteWorkspace, renameWorkspace } from '../../services/workspaceApi';
@@ -160,6 +160,20 @@ const summarizeComposerAttachments = (attachments: ChatComposerAttachment[]): st
   return attachments
     .map((attachment) => (attachment.source === 'drive' ? `${attachment.name} (Drive)` : attachment.name))
     .join(', ');
+};
+
+const createLocalComposerAttachment = (file: File): Extract<ChatComposerAttachment, { source: 'local' }> => ({
+  id: `local:${file.name}:${file.size}:${file.lastModified}:${Math.random().toString(16).slice(2)}`,
+  name: file.name || `Pasted image ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
+  source: 'local',
+  file,
+  previewUrl: file.type.startsWith('image/') ? URL.createObjectURL(file) : undefined,
+});
+
+const revokeLocalAttachmentPreview = (attachment: ChatComposerAttachment) => {
+  if (attachment.source === 'local' && attachment.previewUrl) {
+    URL.revokeObjectURL(attachment.previewUrl);
+  }
 };
 
 const findLatestFileContextRefs = (messages: ConversationMessage[]): FileContextRef[] | undefined => {
@@ -399,6 +413,29 @@ const summarizeMessageFromToolEvents = (
   return '';
 };
 
+const settleRunningToolEventsForStatus = (
+  events: ToolEvent[] | undefined,
+  status?: AgentRunStatus,
+): ToolEvent[] | undefined => {
+  if (!events?.length || !isTerminalRunStatus(status)) {
+    return events;
+  }
+  const finishedAt = new Date().toISOString();
+  let changed = false;
+  const next = events.map((event) => {
+    if (event.status !== 'running') {
+      return event;
+    }
+    changed = true;
+    return {
+      ...event,
+      status: status === 'completed' ? 'completed' as const : 'error' as const,
+      finishedAt: event.finishedAt || finishedAt,
+    };
+  });
+  return changed ? next : events;
+};
+
 const formatWorkspaceLastUsed = (updatedAt?: string) => {
   if (!updatedAt) {
     return 'Recently';
@@ -481,7 +518,7 @@ const mergePersistedAgentMessage = (
     ...hydrated,
     text: mergedText,
     thinkingText: hydrated.thinkingText ?? existing?.thinkingText,
-    toolEvents: hydrated.toolEvents ?? existing?.toolEvents,
+    toolEvents: settleRunningToolEventsForStatus(hydrated.toolEvents ?? existing?.toolEvents, effectiveStatus),
     metadata: Object.keys(mergedMetadata).length ? mergedMetadata : undefined,
   };
 };
@@ -575,6 +612,7 @@ export default function WorkspacePage() {
   const presentationJobPollsRef = useRef<Map<string, number>>(new Map());
   const pendingPresentationJobsRef = useRef<Map<string, Array<{ jobId: string; label: string }>>>(new Map());
   const conversationMessagesRef = useRef<Record<string, ConversationMessage[]>>({});
+  const chatAttachmentsRef = useRef<ChatComposerAttachment[]>([]);
   const agentMessageBufferRef = useRef<Map<ConversationMessage['id'], string>>(new Map());
   const agentChunkBufferRef = useRef<Map<string, Map<number, string>>>(new Map());
   const agentChunkFlushTimerRef = useRef<number | null>(null);
@@ -673,6 +711,14 @@ export default function WorkspacePage() {
   useEffect(() => {
     selectedWorkspaceIdRef.current = selectedWorkspace?.id ?? null;
   }, [selectedWorkspace]);
+
+  useEffect(() => {
+    chatAttachmentsRef.current = chatAttachments;
+  }, [chatAttachments]);
+
+  useEffect(() => () => {
+    chatAttachmentsRef.current.forEach(revokeLocalAttachmentPreview);
+  }, []);
 
   useEffect(() => {
     if (!isFileActionMenuOpen) {
@@ -2651,7 +2697,8 @@ export default function WorkspacePage() {
   ]);
 
   const ensureConversation = useCallback(async (workspaceOverride?: Workspace | null) => {
-    if (activeConversationId) {
+    const targetWorkspaceId = workspaceOverride?.id || selectedWorkspace?.id || null;
+    if (activeConversationId && (!targetWorkspaceId || targetWorkspaceId === selectedWorkspaceIdRef.current)) {
       return activeConversationId;
     }
     const workspace = workspaceOverride || selectedWorkspace;
@@ -3837,6 +3884,11 @@ export default function WorkspacePage() {
         runInfo.runId,
       );
       if (agentMessageIndex >= 0) {
+        if (isTerminalRunStatus(status)) {
+          updateToolEvents(runInfo.conversationId, agentMessageIndex, (events) =>
+            settleRunningToolEventsForStatus(events, status) || events,
+          );
+        }
         updateMessageMetadataAtIndex(runInfo.conversationId, agentMessageIndex, (metadata) => ({
           ...metadata,
           runId: runInfo.runId,
@@ -5960,7 +6012,10 @@ export default function WorkspacePage() {
       cancelStreamForConversation(conversationId);
       lastUserMessageMapRef.current[conversationId] = messageContent;
       setChatMessage('');
-      setChatAttachments([]);
+      setChatAttachments((prev) => {
+        prev.forEach(revokeLocalAttachmentPreview);
+        return [];
+      });
       setIsDrivePickerOpen(false);
       closeMention();
       closeCommand();
@@ -6503,14 +6558,32 @@ export default function WorkspacePage() {
     const selected = Array.from(event.target.files);
     setChatAttachments((prev) => [
       ...prev,
-      ...selected.map((file) => ({
-        id: `local:${file.name}:${file.size}:${file.lastModified}:${Math.random().toString(16).slice(2)}`,
-        name: file.name,
-        source: 'local' as const,
-        file,
-      })),
+      ...selected.map(createLocalComposerAttachment),
     ]);
     event.target.value = '';
+  };
+
+  const handleChatInputPaste = (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = Array.from(event.clipboardData?.items ?? []);
+    const imageFiles = items
+      .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+      .map((item) => item.getAsFile())
+      .filter((file): file is File => Boolean(file));
+    if (!imageFiles.length) {
+      return;
+    }
+    event.preventDefault();
+    const timestamp = Date.now();
+    setChatAttachments((prev) => [
+      ...prev,
+      ...imageFiles.map((file, index) => {
+        const extension = file.type.split('/')[1] || 'png';
+        const namedFile = file.name
+          ? file
+          : new File([file], `pasted-image-${timestamp}-${index + 1}.${extension}`, { type: file.type });
+        return createLocalComposerAttachment(namedFile);
+      }),
+    ]);
   };
 
   const handleOpenDrivePicker = () => {
@@ -6554,7 +6627,13 @@ export default function WorkspacePage() {
   };
 
   const handleRemoveChatAttachment = (index: number) => {
-    setChatAttachments((prev) => prev.filter((_, idx) => idx !== index));
+    setChatAttachments((prev) => {
+      const removed = prev[index];
+      if (removed) {
+        revokeLocalAttachmentPreview(removed);
+      }
+      return prev.filter((_, idx) => idx !== index);
+    });
   };
 
   const handleInsertSlashTrigger = () => {
@@ -6675,11 +6754,51 @@ export default function WorkspacePage() {
                         }}
                         onKeyUp={handleChatInputKeyUp}
                         onSelect={handleChatInputSelectionChange}
+                        onPaste={handleChatInputPaste}
                         className={`block min-h-36 w-full resize-none bg-transparent px-6 py-6 text-lg leading-relaxed outline-none ${
                           isDarkMode ? 'text-slate-100 placeholder:text-slate-500' : 'text-slate-900 placeholder:text-slate-400'
                         }`}
                         rows={4}
                       />
+                      {chatAttachments.length > 0 ? (
+                        <div className="flex flex-wrap gap-2 px-5 pb-4">
+                          {chatAttachments.map((attachment, index) => (
+                            <div
+                              key={attachment.id}
+                              className={`group flex max-w-[15rem] items-center gap-2 rounded-xl border p-1.5 pr-2 text-sm font-medium ${
+                                isDarkMode ? 'border-slate-700 bg-slate-900 text-slate-100' : 'border-slate-200 bg-slate-50 text-slate-700'
+                              }`}
+                            >
+                              {attachment.source === 'drive' ? (
+                                <GoogleDriveIcon className="h-8 w-8 shrink-0 rounded-lg p-1.5" />
+                              ) : attachment.previewUrl ? (
+                                <img
+                                  src={attachment.previewUrl}
+                                  alt=""
+                                  className="h-8 w-8 shrink-0 rounded-lg object-cover"
+                                />
+                              ) : (
+                                <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${
+                                  isDarkMode ? 'bg-slate-800 text-slate-400' : 'bg-white text-slate-500'
+                                }`}>
+                                  <FileIcon size={16} />
+                                </span>
+                              )}
+                              <span className="min-w-0 flex-1 truncate">{attachment.name}</span>
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveChatAttachment(index)}
+                                className={`shrink-0 rounded-md p-1 transition ${
+                                  isDarkMode ? 'text-slate-500 hover:bg-slate-800 hover:text-rose-300' : 'text-slate-400 hover:bg-slate-100 hover:text-rose-500'
+                                }`}
+                                aria-label={`Remove ${attachment.name}`}
+                              >
+                                <X size={14} />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
                       {(isMentionOpen || isCommandOpen) && (
                         <div className="absolute left-6 top-20 z-30 w-[30rem] max-w-[calc(100%-3rem)]">
                           {isMentionOpen ? (
@@ -7559,6 +7678,7 @@ export default function WorkspacePage() {
               onChatInputKeyDown={handleChatInputKeyDown}
               onChatInputKeyUp={handleChatInputKeyUp}
               onChatInputSelectionChange={handleChatInputSelectionChange}
+              onChatInputPaste={handleChatInputPaste}
               onOpenLocalAttachmentPicker={handleOpenLocalAttachmentPicker}
               onToggleInternetSearch={() => setInternetSearchEnabled((prev) => !prev)}
               onInsertSlashTrigger={handleInsertSlashTrigger}

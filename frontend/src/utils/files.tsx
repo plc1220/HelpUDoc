@@ -1,10 +1,20 @@
 import {
+  Article as DocumentIcon,
+  Archive as ArchiveIcon,
+  AudioFile as AudioIcon,
+  Code as CodeIcon,
   Description as MarkdownIcon,
+  Folder as FolderIcon,
   Code as HtmlIcon,
+  InsertChartOutlined as ChartIcon,
+  InsertDriveFile as GenericFileIcon,
+  Movie as VideoIcon,
   PictureAsPdf as PdfIcon,
   Image as ImageIcon,
+  Slideshow as PresentationIcon,
+  Storage as DataIcon,
+  TableChart as SpreadsheetIcon,
 } from '@mui/icons-material';
-import { FileIcon } from 'lucide-react';
 
 import { SYSTEM_DIR_NAMES, SYSTEM_FILE_NAMES } from '../constants/workspace';
 import type { File as WorkspaceFile } from '../types';
@@ -44,22 +54,83 @@ export const getFileDisplayName = (value: string) => {
 export const getFileTypeIcon = (value: string) => {
   const normalized = getFileDisplayName(value).toLowerCase();
   const sharedClass = 'text-slate-400 opacity-70';
+  const muiIconProps = { className: sharedClass, fontSize: 'small' as const };
+  if (!normalized.includes('.')) {
+    return <FolderIcon {...muiIconProps} />;
+  }
   if (normalized.endsWith('.md') || normalized.endsWith('.markdown')) {
-    return <MarkdownIcon className={sharedClass} fontSize="small" />;
+    return <MarkdownIcon {...muiIconProps} />;
   }
   if (normalized.endsWith('.html') || normalized.endsWith('.htm')) {
-    return <HtmlIcon className={sharedClass} fontSize="small" />;
+    return <HtmlIcon {...muiIconProps} />;
   }
   if (normalized.endsWith('.pdf')) {
-    return <PdfIcon className={sharedClass} fontSize="small" />;
+    return <PdfIcon {...muiIconProps} />;
+  }
+  if (['.doc', '.docx', '.docm', '.dot', '.dotx', '.odt', '.rtf'].some((ext) => normalized.endsWith(ext))) {
+    return <DocumentIcon {...muiIconProps} />;
+  }
+  if (['.ppt', '.pptx', '.pptm', '.pps', '.ppsx', '.pot', '.potx', '.odp'].some((ext) => normalized.endsWith(ext))) {
+    return <PresentationIcon {...muiIconProps} />;
+  }
+  if (['.xls', '.xlsx', '.xlsm', '.xlsb', '.xlt', '.xltx', '.ods'].some((ext) => normalized.endsWith(ext))) {
+    return <SpreadsheetIcon {...muiIconProps} />;
+  }
+  if (['.csv', '.tsv'].some((ext) => normalized.endsWith(ext))) {
+    return <SpreadsheetIcon {...muiIconProps} />;
   }
   if (normalized.endsWith('.jpg') || normalized.endsWith('.jpeg')) {
-    return <ImageIcon className={sharedClass} fontSize="small" />;
+    return <ImageIcon {...muiIconProps} />;
   }
   if (['.png', '.gif', '.bmp', '.webp', '.svg'].some((ext) => normalized.endsWith(ext))) {
-    return <ImageIcon className={sharedClass} fontSize="small" />;
+    return <ImageIcon {...muiIconProps} />;
   }
-  return <FileIcon size={16} className={sharedClass} />;
+  if (normalized.endsWith('.plotly.json') || normalized.endsWith('.plot.json') || normalized.endsWith('.chart.json')) {
+    return <ChartIcon {...muiIconProps} />;
+  }
+  if (['.json', '.jsonl', '.yaml', '.yml', '.xml', '.parquet', '.pq', '.sqlite', '.db'].some((ext) => normalized.endsWith(ext))) {
+    return <DataIcon {...muiIconProps} />;
+  }
+  if (['.zip', '.tar', '.gz', '.tgz', '.rar', '.7z'].some((ext) => normalized.endsWith(ext))) {
+    return <ArchiveIcon {...muiIconProps} />;
+  }
+  if (['.mp4', '.mov', '.webm', '.mkv'].some((ext) => normalized.endsWith(ext))) {
+    return <VideoIcon {...muiIconProps} />;
+  }
+  if (['.mp3', '.wav', '.m4a', '.flac', '.ogg'].some((ext) => normalized.endsWith(ext))) {
+    return <AudioIcon {...muiIconProps} />;
+  }
+  if (
+    [
+      '.py',
+      '.ts',
+      '.tsx',
+      '.js',
+      '.jsx',
+      '.mjs',
+      '.cjs',
+      '.css',
+      '.scss',
+      '.sql',
+      '.sh',
+      '.bash',
+      '.zsh',
+      '.ps1',
+      '.go',
+      '.rs',
+      '.java',
+      '.kt',
+      '.php',
+      '.rb',
+      '.r',
+      '.lua',
+      '.toml',
+      '.env',
+    ].some((ext) => normalized.endsWith(ext))
+  ) {
+    return <CodeIcon {...muiIconProps} />;
+  }
+  return <GenericFileIcon {...muiIconProps} />;
 };
 
 export const isSystemFile = (file: WorkspaceFile): boolean => {

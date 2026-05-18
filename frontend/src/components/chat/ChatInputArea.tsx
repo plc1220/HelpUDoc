@@ -1,5 +1,5 @@
 import { FileIcon, Globe2, MonitorPlay, Paperclip, Plus, Send, StopCircle, X } from 'lucide-react';
-import { type ChangeEvent, type KeyboardEvent, type RefObject, type SyntheticEvent, useEffect, useRef, useState } from 'react';
+import { type ChangeEvent, type ClipboardEvent, type KeyboardEvent, type RefObject, type SyntheticEvent, useEffect, useRef, useState } from 'react';
 
 import type { File as WorkspaceFile } from '../../types';
 import type { ChatComposerAttachment } from './chatTypes';
@@ -39,6 +39,7 @@ export default function ChatInputArea({
   onChatInputKeyDown,
   onChatInputKeyUp,
   onChatInputSelectionChange,
+  onChatInputPaste,
   onOpenLocalAttachmentPicker,
   onToggleInternetSearch,
   onInsertSlashTrigger,
@@ -73,6 +74,7 @@ export default function ChatInputArea({
   onChatInputKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
   onChatInputKeyUp: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
   onChatInputSelectionChange: (event: SyntheticEvent<HTMLTextAreaElement>) => void;
+  onChatInputPaste: (event: ClipboardEvent<HTMLTextAreaElement>) => void;
   onOpenLocalAttachmentPicker: () => void;
   onToggleInternetSearch: () => void;
   onInsertSlashTrigger: () => void;
@@ -125,6 +127,8 @@ export default function ChatInputArea({
               >
                 {file.source === 'drive' ? (
                   <GoogleDriveIcon className="h-3.5 w-3.5 shrink-0" />
+                ) : file.previewUrl ? (
+                  <img src={file.previewUrl} alt="" className="h-6 w-6 shrink-0 rounded-md object-cover" />
                 ) : (
                   <Paperclip size={12} className={isDarkMode ? 'text-slate-400' : 'text-slate-500'} />
                 )}
@@ -177,6 +181,7 @@ export default function ChatInputArea({
           onKeyDown={onChatInputKeyDown}
           onKeyUp={onChatInputKeyUp}
           onSelect={onChatInputSelectionChange}
+          onPaste={onChatInputPaste}
           className={`w-full max-h-52 resize-none bg-transparent px-3.5 py-2.5 text-sm leading-relaxed focus:outline-none ${
             isDarkMode ? 'text-slate-100 placeholder:text-slate-500' : 'text-slate-800 placeholder:text-slate-400'
           }`}
