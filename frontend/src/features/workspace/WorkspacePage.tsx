@@ -6266,7 +6266,11 @@ export default function WorkspacePage() {
     updateAutocompleteState(target.value, target.selectionStart ?? target.value.length);
   };
 
-  const handleChatInputKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+  const handleChatInputKeyDown = (
+    event: React.KeyboardEvent<HTMLTextAreaElement>,
+    options?: { sendOnEnter?: boolean },
+  ) => {
+    const shouldSendOnEnter = options?.sendOnEnter ?? true;
     if (isCommandOpen) {
       if (event.key === 'ArrowDown' && commandSuggestions.length) {
         event.preventDefault();
@@ -6321,7 +6325,7 @@ export default function WorkspacePage() {
       }
     }
 
-    if (event.key === 'Enter' && !event.shiftKey) {
+    if (shouldSendOnEnter && event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
       handleSendMessage();
     }
@@ -6742,7 +6746,7 @@ export default function WorkspacePage() {
                         ref={chatInputRef}
                         onChange={handleChatInputChange}
                         onKeyDown={(event) => {
-                          handleChatInputKeyDown(event);
+                          handleChatInputKeyDown(event, { sendOnEnter: false });
                           if (event.defaultPrevented) {
                             return;
                           }
