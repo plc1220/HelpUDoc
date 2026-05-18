@@ -6572,7 +6572,7 @@ export default function WorkspacePage() {
                     <h1 className={`mb-12 text-center text-4xl font-semibold tracking-normal md:text-5xl ${
                       isDarkMode ? 'text-slate-100' : 'text-slate-900'
                     }`}>
-                      {landingUserName ? `Hi ${landingUserName}, what should we build in HelpUDoc?` : 'What should we build in HelpUDoc?'}
+                      {landingUserName ? `Hi ${landingUserName}, What are we documenting today?` : 'What are we documenting today?'}
                     </h1>
                     <div className={`relative rounded-[2rem] border shadow-[0_28px_70px_-48px_rgba(15,23,42,0.7)] ${
                       isDarkMode ? 'border-slate-700/80 bg-slate-950/80' : 'border-slate-200 bg-white'
