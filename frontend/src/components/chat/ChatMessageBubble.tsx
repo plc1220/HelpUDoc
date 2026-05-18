@@ -1,4 +1,4 @@
-import { Check, CheckCircle2, Copy, FilePenLine, Loader2, RotateCcw } from 'lucide-react';
+import { Check, CheckCircle2, Copy, FileIcon, FilePenLine, ImageIcon, Loader2, RotateCcw } from 'lucide-react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useEffect, useMemo, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react';
@@ -21,10 +21,51 @@ import {
   getFriendlyToolName,
   isBenignToolNoise,
 } from '../../utils/toolActivitySummary';
+import { buildApiUrl } from '../../services/apiClient';
 
 const THOUGHT_PREVIEW_LIMIT = 320;
 const DEFAULT_THINKING_PLACEHOLDER = 'Working through your request based on the current workspace context.';
 const FRONTEND_SLIDES_DISCOVERY_HEADERS = ['purpose', 'length', 'content', 'images', 'editing'] as const;
+const ATTACHMENT_MARKER_PATTERN = /\n*\[Attachments:\s*([^\]]+)\]\s*$/i;
+
+type MessageAttachmentPreview = {
+  name: string;
+  isDrive: boolean;
+  isImage: boolean;
+  previewUrl?: string;
+};
+
+const IMAGE_EXTENSION_PATTERN = /\.(apng|avif|gif|jpe?g|png|svg|webp)$/i;
+
+const stripAttachmentMarker = (text: string) => text.replace(ATTACHMENT_MARKER_PATTERN, '').trimEnd();
+
+const parseAttachmentNames = (text: string): Array<{ name: string; isDrive: boolean }> => {
+  const match = text.match(ATTACHMENT_MARKER_PATTERN);
+  if (!match?.[1]) {
+    return [];
+  }
+  return match[1]
+    .split(',')
+    .map((rawName) => rawName.trim())
+    .filter(Boolean)
+    .map((rawName) => {
+      const isDrive = /\s+\(Drive\)$/i.test(rawName);
+      return {
+        name: rawName.replace(/\s+\(Drive\)$/i, '').trim(),
+        isDrive,
+      };
+    })
+    .filter((attachment) => attachment.name.length > 0);
+};
+
+const getAttachmentPreviewUrl = (workspaceId: string | undefined, sourceName: string): string | undefined => {
+  if (!workspaceId || !sourceName.trim()) {
+    return undefined;
+  }
+  const url = buildApiUrl(`/workspaces/${workspaceId}/files/preview/raw`);
+  url.searchParams.set('path', sourceName.trim());
+  return url.toString();
+};
 
 const formatElapsedTime = (
   startedAt?: string,
@@ -432,6 +473,7 @@ export default function ChatMessageBubble({
   handlePrepareInterruptAction,
   handleInterruptAction,
   isStreaming,
+  workspaceId,
 }: {
   colorMode: 'light' | 'dark';
   message: ConversationMessage;
@@ -552,6 +594,39 @@ export default function ChatMessageBubble({
       .join('\n')
       .trim();
   })();
+  const userText = isAgentMessage ? '' : stripAttachmentMarker(message.text || '');
+  const attachmentPreviews = useMemo<MessageAttachmentPreview[]>(() => {
+    if (isAgentMessage) {
+      return [];
+    }
+    const parsedAttachments = parseAttachmentNames(message.text || '');
+    const refs = messageMetadata?.fileContextRefs || [];
+    if (!parsedAttachments.length && !refs.length) {
+      return [];
+    }
+    const attachments = parsedAttachments.length
+      ? parsedAttachments
+      : refs.map((ref) => ({
+          name: ref.sourceName,
+          isDrive: false,
+        }));
+
+    return attachments.map((attachment) => {
+      const ref = refs.find((candidate) => {
+        const sourceName = candidate.sourceName || '';
+        return sourceName === attachment.name || sourceName.endsWith(`/${attachment.name}`);
+      });
+      const sourceName = ref?.sourceName || attachment.name;
+      const mimeType = ref?.sourceMimeType || '';
+      const isImage = mimeType.startsWith('image/') || IMAGE_EXTENSION_PATTERN.test(sourceName);
+      return {
+        name: attachment.name,
+        isDrive: attachment.isDrive,
+        isImage,
+        previewUrl: isImage ? getAttachmentPreviewUrl(workspaceId, sourceName) : undefined,
+      };
+    });
+  }, [isAgentMessage, message.text, messageMetadata?.fileContextRefs, workspaceId]);
   const effectiveStatus = pendingInterrupt ? 'awaiting_approval' : messageMetadata?.status;
   const isLiveAgentStatus = effectiveStatus === 'running' || effectiveStatus === 'awaiting_approval';
   const bodySource = messageMetadata?.bodySource
@@ -1884,7 +1959,49 @@ export default function ChatMessageBubble({
           </div>
         ) : (
           <div className={userBubbleClassName}>
-            <p className="whitespace-pre-line leading-relaxed">{message.text}</p>
+            {userText ? <p className="whitespace-pre-line leading-relaxed">{userText}</p> : null}
+            {attachmentPreviews.length ? (
+              <div className="mt-3 space-y-2">
+                <div className="text-[11px] font-semibold uppercase tracking-wide text-white/80">
+                  Attachments
+                </div>
+                <div className="grid gap-2">
+                  {attachmentPreviews.map((attachment, index) => (
+                    <div
+                      key={`${attachment.name}-${index}`}
+                      className="flex min-w-0 items-center gap-2 rounded-lg border border-white/18 bg-white/12 p-2 shadow-inner shadow-black/5"
+                    >
+                      <div className="relative flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-md border border-white/20 bg-white/14 text-white/90">
+                        {attachment.previewUrl ? (
+                          <>
+                            <ImageIcon size={18} />
+                            <img
+                              src={attachment.previewUrl}
+                              alt=""
+                              className="absolute inset-0 h-full w-full object-cover"
+                              loading="lazy"
+                              onError={(event) => {
+                                event.currentTarget.style.display = 'none';
+                              }}
+                            />
+                          </>
+                        ) : attachment.isImage ? (
+                          <ImageIcon size={18} />
+                        ) : (
+                          <FileIcon size={18} />
+                        )}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-sm font-medium leading-5 text-white">{attachment.name}</div>
+                        <div className="text-[11px] font-medium text-white/72">
+                          {attachment.isDrive ? 'Google Drive' : attachment.isImage ? 'Image' : 'File'}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
             {timestampLabel ? (
               <span className="mt-2 block text-[11px] font-medium uppercase tracking-wide text-white/85">{timestampLabel}</span>
             ) : null}
