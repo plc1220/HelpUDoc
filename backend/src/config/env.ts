@@ -91,6 +91,11 @@ const backendEnvSchema = z.object({
     postLoginRedirect: z.string().optional(),
     scopesRaw: z.string().optional(),
   }),
+  license: z.object({
+    required: z.boolean(),
+    token: z.string().optional(),
+    publicKey: z.string().optional(),
+  }),
   frontendUrl: z.string().optional(),
 });
 
@@ -166,6 +171,11 @@ export function parseBackendEnv(e: NodeJS.ProcessEnv = process.env): BackendEnv 
       redirectUri: trimEnv(e, 'GOOGLE_OAUTH_REDIRECT_URI'),
       postLoginRedirect: trimEnv(e, 'GOOGLE_OAUTH_POST_LOGIN_REDIRECT'),
       scopesRaw: trimEnv(e, 'GOOGLE_OAUTH_SCOPES'),
+    },
+    license: {
+      required: (trimEnv(e, 'HELPUDOC_LICENSE_REQUIRED') || '').toLowerCase() === 'true',
+      token: trimEnv(e, 'HELPUDOC_LICENSE_TOKEN'),
+      publicKey: trimEnv(e, 'HELPUDOC_LICENSE_PUBLIC_KEY'),
     },
     frontendUrl: trimEnv(e, 'FRONTEND_URL'),
   };

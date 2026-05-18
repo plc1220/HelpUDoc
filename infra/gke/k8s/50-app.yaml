@@ -236,6 +236,24 @@ spec:
                   name: helpudoc-secrets
                   key: OAUTH_TOKEN_ENCRYPTION_KEY
                   optional: true
+            - name: HELPUDOC_LICENSE_REQUIRED
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: HELPUDOC_LICENSE_REQUIRED
+                  optional: true
+            - name: HELPUDOC_LICENSE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: HELPUDOC_LICENSE_TOKEN
+                  optional: true
+            - name: HELPUDOC_LICENSE_PUBLIC_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: HELPUDOC_LICENSE_PUBLIC_KEY
+                  optional: true
             - name: FILE_UNDERSTANDING_AGENT_READS_WORKSPACE
               value: "true"
             - name: ENABLE_SKILL_SANDBOX_RUNNER

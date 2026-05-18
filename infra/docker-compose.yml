@@ -234,6 +234,9 @@ services:
       GOOGLE_OAUTH_POST_LOGIN_REDIRECT: ${GOOGLE_OAUTH_POST_LOGIN_REDIRECT:-http://localhost:5173/login}
       GOOGLE_OAUTH_SCOPES: ${GOOGLE_OAUTH_SCOPES:-openid email profile https://www.googleapis.com/auth/bigquery https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/spreadsheets.readonly}
       OAUTH_TOKEN_ENCRYPTION_KEY: ${OAUTH_TOKEN_ENCRYPTION_KEY:-}
+      HELPUDOC_LICENSE_REQUIRED: ${HELPUDOC_LICENSE_REQUIRED:-false}
+      HELPUDOC_LICENSE_TOKEN: ${HELPUDOC_LICENSE_TOKEN:-}
+      HELPUDOC_LICENSE_PUBLIC_KEY: ${HELPUDOC_LICENSE_PUBLIC_KEY:-}
     ports:
       - "3000:3000"
     volumes:

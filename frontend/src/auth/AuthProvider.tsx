@@ -8,6 +8,14 @@ type AuthMeResponse = {
   authenticated: boolean;
   authMode?: string;
   googleConfigured?: boolean;
+  license?: {
+    configured: boolean;
+    required: boolean;
+    active: boolean;
+    status: string;
+    expiresAt?: string;
+    message?: string;
+  };
   user?: {
     userId: string;
     externalId: string;

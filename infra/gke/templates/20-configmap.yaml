@@ -19,3 +19,9 @@ data:
   AWS_PRICING_MCP_LOG_LEVEL: ERROR
   ENABLE_SKILL_SANDBOX_RUNNER: "false"
   HELPUDOC_SANDBOX_IMAGE: python:3.12-slim
+  AUTH_MODE: oidc
+  HELPUDOC_LICENSE_REQUIRED: "false"
+  GOOGLE_OAUTH_CLIENT_ID: ""
+  GOOGLE_OAUTH_REDIRECT_URI: ""
+  GOOGLE_OAUTH_POST_LOGIN_REDIRECT: ""
+  GOOGLE_OAUTH_SCOPES: "openid email profile https://www.googleapis.com/auth/bigquery https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/spreadsheets.readonly"

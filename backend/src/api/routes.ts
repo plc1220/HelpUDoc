@@ -12,6 +12,7 @@ import settingsReflectionRoutes from './settingsReflections';
 import settingsSkillEvolutionRoutes from './settingsSkillEvolution';
 import meMemoryRoutes from './meMemory';
 import { requireSystemAdmin } from '../middleware/adminOnly';
+import { requireActiveLicense } from '../middleware/license';
 import { DatabaseService } from '../services/databaseService';
 import { WorkspaceService } from '../services/workspaceService';
 import { FileService } from '../services/fileService';
@@ -55,6 +56,7 @@ export default function(dbService: DatabaseService, userService: UserService) {
   );
 
   router.use('/auth', authRoutes(userService, googleOAuthService));
+  router.use(requireActiveLicense);
   router.use('/agent', agentRoutes(workspaceService, fileService, googleOAuthService, userService, conversationService));
   router.use('/settings', requireSystemAdmin(userService), settingsRoutes(workspaceService, userService, dbService));
   router.use('/settings/reflections', requireSystemAdmin(userService), settingsReflectionRoutes(dailyReflectionService));

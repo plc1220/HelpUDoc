@@ -1,6 +1,7 @@
 import { Request, Router } from 'express';
 import { UserService } from '../services/userService';
 import { GoogleOAuthService, GoogleOAuthConfigError } from '../services/googleOAuthService';
+import { licenseService } from '../services/licenseService';
 
 type AuthMode = 'headers' | 'oidc' | 'hybrid';
 
@@ -243,6 +244,7 @@ export default function authRoutes(userService: UserService, googleOAuthService:
       authenticated: Boolean(user),
       authMode: AUTH_MODE,
       googleConfigured: googleOAuthService.isConfigured(),
+      license: licenseService.getPublicState(),
       user,
     });
   });
