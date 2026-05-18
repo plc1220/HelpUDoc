@@ -8,7 +8,7 @@ import {
   ThemeProvider,
   type PaletteMode,
 } from '@mui/material';
-import { Check, CheckSquare, Copy, Edit, Trash, Plus, Minus, ChevronLeft, RotateCcw, Printer, Download, Link as LinkIcon, Loader2, FolderPlus, FolderUp, Upload, Home, ArrowUp, File as FileIcon, Presentation, Wrench, Plug, Sparkles, Info } from 'lucide-react';
+import { Check, CheckSquare, Copy, Edit, Trash, Plus, Minus, ChevronLeft, ChevronDown, RotateCcw, Printer, Download, Link as LinkIcon, Loader2, FolderPlus, FolderUp, Upload, Home, ArrowUp, Search, File as FileIcon, Presentation, Wrench, Plug, Sparkles, Info } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { getWorkspaces, createWorkspace, deleteWorkspace, renameWorkspace } from '../../services/workspaceApi';
@@ -567,6 +567,8 @@ export default function WorkspacePage() {
   const [isDrivePickerOpen, setIsDrivePickerOpen] = useState(false);
   const [isDriveImporting, setIsDriveImporting] = useState(false);
   const [isLandingAttachmentMenuOpen, setIsLandingAttachmentMenuOpen] = useState(false);
+  const [isLandingWorkspacePickerOpen, setIsLandingWorkspacePickerOpen] = useState(false);
+  const [landingWorkspaceQuery, setLandingWorkspaceQuery] = useState('');
   const [draftPresentationOptions, setDraftPresentationOptions] = useState<PresentationOptionsState | null>(null);
   const [isPptxExporting, setIsPptxExporting] = useState(false);
   const streamAbortMapRef = useRef<Map<string, AbortController>>(new Map());
@@ -593,6 +595,7 @@ export default function WorkspacePage() {
   const fileUploadInputRef = useRef<HTMLInputElement | null>(null);
   const folderUploadInputRef = useRef<HTMLInputElement | null>(null);
   const fileActionMenuRef = useRef<HTMLDivElement | null>(null);
+  const landingWorkspacePickerRef = useRef<HTMLDivElement | null>(null);
   const workspaceNameInputRef = useRef<HTMLInputElement | null>(null);
   const autoSaveTimerRef = useRef<number | null>(null);
   const lastAutoSavedContentRef = useRef<string>('');
@@ -618,6 +621,13 @@ export default function WorkspacePage() {
     }
     return workspaces.filter((workspace) => workspace.name.toLowerCase().includes(query));
   }, [workspaceSearchQuery, workspaces]);
+  const landingFilteredWorkspaces = useMemo(() => {
+    const query = landingWorkspaceQuery.trim().toLowerCase();
+    if (!query) {
+      return workspaces;
+    }
+    return workspaces.filter((workspace) => workspace.name.toLowerCase().includes(query));
+  }, [landingWorkspaceQuery, workspaces]);
   const landingUserName = useMemo(() => {
     const normalized = authUser?.name?.trim();
     if (!normalized) {
@@ -680,6 +690,23 @@ export default function WorkspacePage() {
     document.addEventListener('mousedown', handlePointerDown);
     return () => document.removeEventListener('mousedown', handlePointerDown);
   }, [isFileActionMenuOpen]);
+
+  useEffect(() => {
+    if (!isLandingWorkspacePickerOpen) {
+      return;
+    }
+
+    const handlePointerDown = (event: MouseEvent) => {
+      const picker = landingWorkspacePickerRef.current;
+      if (picker && event.target instanceof Node && picker.contains(event.target)) {
+        return;
+      }
+      setIsLandingWorkspacePickerOpen(false);
+    };
+
+    document.addEventListener('mousedown', handlePointerDown);
+    return () => document.removeEventListener('mousedown', handlePointerDown);
+  }, [isLandingWorkspacePickerOpen]);
 
   const messages = useMemo(
     () => (activeConversationId ? conversationMessages[activeConversationId] || [] : []),
@@ -1135,16 +1162,14 @@ export default function WorkspacePage() {
     [],
   );
 
-  const handleLandingWorkspaceChange = useCallback(
-    (event: ChangeEvent<HTMLSelectElement>) => {
-      const workspace = workspaces.find((item) => item.id === event.target.value) || null;
-      setIsWorkspaceRenameActive(false);
-      setWorkspaceNameDraft(workspace?.name || '');
-      setFolderPaths([]);
-      setSelectedWorkspace(workspace);
-    },
-    [workspaces],
-  );
+  const handleLandingWorkspaceSelect = useCallback((workspace: Workspace) => {
+    setIsWorkspaceRenameActive(false);
+    setWorkspaceNameDraft(workspace.name);
+    setFolderPaths([]);
+    setSelectedWorkspace(workspace);
+    setLandingWorkspaceQuery('');
+    setIsLandingWorkspacePickerOpen(false);
+  }, []);
 
   const handleOpenLandingPage = useCallback(() => {
     setIsLandingPageVisible(true);
@@ -2169,6 +2194,10 @@ export default function WorkspacePage() {
 
   const updateMentionState = useCallback(
     (value: string, cursor: number | null | undefined) => {
+      if (!selectedWorkspace) {
+        closeMention();
+        return;
+      }
       if (cursor === null || cursor === undefined) {
         closeMention();
         return;
@@ -2187,7 +2216,7 @@ export default function WorkspacePage() {
       setMentionCursorPosition(cursor);
       setMentionSelectedIndex(0);
     },
-    [closeMention]
+    [closeMention, selectedWorkspace]
   );
 
   const updateCommandState = useCallback(
@@ -2417,6 +2446,42 @@ export default function WorkspacePage() {
     },
     [visibleFiles],
   );
+
+  const deriveWorkspaceNameFromPrompt = useCallback((rawMessage = chatMessage): string | undefined => {
+    const directive = parseSlashDirective(rawMessage);
+    const source = stripMentionedFilesFromPrompt(directive.prompt || directive.raw)
+      .replace(/@\S+/g, ' ')
+      .replace(/https?:\/\/\S+/gi, ' ')
+      .replace(/[^\p{L}\p{N}\s-]/gu, ' ')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+    if (!source) {
+      return undefined;
+    }
+
+    const stopWords = new Set([
+      'a', 'an', 'and', 'are', 'as', 'at', 'build', 'can', 'create', 'draft', 'for',
+      'from', 'generate', 'help', 'in', 'make', 'me', 'of', 'on', 'please', 'prepare',
+      'the', 'to', 'with',
+    ]);
+    const keywords = source
+      .split(/\s+/)
+      .map((word) => word.replace(/^-+|-+$/g, ''))
+      .filter((word) => word && !stopWords.has(word.toLowerCase()))
+      .slice(0, 5);
+    const words = keywords.length ? keywords : source.split(/\s+/).slice(0, 5);
+    const title = words
+      .join(' ')
+      .replace(/\b[\p{L}\p{N}][\p{L}\p{N}-]*/gu, (word) => {
+        if (word.length <= 4 && word === word.toUpperCase()) {
+          return word;
+        }
+        return word.charAt(0).toUpperCase() + word.slice(1);
+      })
+      .slice(0, 60)
+      .trim();
+    return title || undefined;
+  }, [chatMessage, parseSlashDirective, stripMentionedFilesFromPrompt]);
 
   const toNumericFileId = (value: WorkspaceFile['id']): number | null => {
     if (typeof value === 'number') {
@@ -3101,10 +3166,10 @@ export default function WorkspacePage() {
     }
   }, [selectedFile?.id, selectedFile?.name, selectedFile?.mimeType]);
 
-  const handleCreateWorkspace = async (options?: { stayOnLanding?: boolean; rename?: boolean }): Promise<Workspace | null> => {
+  const handleCreateWorkspace = async (options?: { stayOnLanding?: boolean; rename?: boolean; name?: string }): Promise<Workspace | null> => {
     try {
       const newWorkspace = {
-        ...hydrateWorkspace(await createWorkspace()),
+        ...hydrateWorkspace(await createWorkspace(options?.name)),
         canEdit: true,
         role: 'owner' as const,
       };
@@ -3120,6 +3185,16 @@ export default function WorkspacePage() {
       console.error('Failed to create workspace:', error);
       return null;
     }
+  };
+
+  const handleCreateLandingWorkspace = async () => {
+    setIsLandingWorkspacePickerOpen(false);
+    setLandingWorkspaceQuery('');
+    await handleCreateWorkspace({
+      stayOnLanding: true,
+      rename: false,
+      name: deriveWorkspaceNameFromPrompt(),
+    });
   };
 
   const handleSelectConversationFromHistory = async (conversationId: string) => {
@@ -6092,10 +6167,15 @@ export default function WorkspacePage() {
   };
 
   const handleLandingSendMessage = async () => {
-    if (!chatMessage.trim() && !chatAttachments.length) {
+    const trimmed = chatMessage.trim();
+    if (!trimmed && !chatAttachments.length) {
       return;
     }
-    const workspace = selectedWorkspace || await handleCreateWorkspace({ stayOnLanding: true, rename: false });
+    const workspace = selectedWorkspace || await handleCreateWorkspace({
+      stayOnLanding: true,
+      rename: false,
+      name: deriveWorkspaceNameFromPrompt(trimmed),
+    });
     if (!workspace) {
       addLocalSystemMessage('Unable to create a workspace right now. Please try again.');
       return;
@@ -6606,11 +6686,7 @@ export default function WorkspacePage() {
                             <div className={`max-h-64 overflow-y-auto rounded-2xl border p-1 text-sm shadow-2xl backdrop-blur-md ${
                               isDarkMode ? 'border-slate-700/80 bg-slate-900/95' : 'border-slate-200 bg-white/95'
                             }`}>
-                              {!selectedWorkspace ? (
-                                <div className={`px-3 py-2 text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
-                                  Select workspace
-                                </div>
-                              ) : mentionSuggestions.length ? (
+                              {mentionSuggestions.length ? (
                                 mentionSuggestions.map((file, index) => (
                                   <button
                                     key={file.id}
@@ -6780,23 +6856,78 @@ export default function WorkspacePage() {
                               </div>
                             ) : null}
                           </div>
-                          <select
-                            value={selectedWorkspace?.id || ''}
-                            onChange={handleLandingWorkspaceChange}
-                            className={`h-10 max-w-[18rem] rounded-xl border px-3 text-sm font-medium outline-none transition ${
-                              isDarkMode
-                                ? 'border-slate-700 bg-slate-900 text-slate-100 focus:border-sky-400 focus:ring-2 focus:ring-sky-400/20'
-                                : 'border-slate-200 bg-slate-50 text-slate-700 focus:border-blue-400 focus:ring-2 focus:ring-blue-100'
-                            }`}
-                            aria-label="Select workspace"
-                          >
-                            <option value="">Select workspace</option>
-                            {workspaces.map((workspace) => (
-                              <option key={workspace.id} value={workspace.id}>
-                                {workspace.name}
-                              </option>
-                            ))}
-                          </select>
+                          <div ref={landingWorkspacePickerRef} className="relative">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setIsLandingWorkspacePickerOpen((value) => !value);
+                                setLandingWorkspaceQuery('');
+                              }}
+                              className={`flex h-10 w-[18rem] max-w-[44vw] items-center justify-between gap-2 rounded-xl border px-3 text-left text-sm font-medium outline-none transition ${
+                                isDarkMode
+                                  ? 'border-slate-700 bg-slate-900 text-slate-100 hover:border-slate-600 focus:border-sky-400 focus:ring-2 focus:ring-sky-400/20'
+                                  : 'border-slate-200 bg-slate-50 text-slate-700 hover:border-slate-300 focus:border-blue-400 focus:ring-2 focus:ring-blue-100'
+                              }`}
+                              aria-label="Select workspace"
+                              aria-expanded={isLandingWorkspacePickerOpen}
+                            >
+                              <span className="truncate">{selectedWorkspace?.name || 'New Workspace'}</span>
+                              <ChevronDown size={16} className="shrink-0 opacity-70" />
+                            </button>
+                            {isLandingWorkspacePickerOpen ? (
+                              <div className={`absolute bottom-full left-0 z-30 mb-2 w-[28rem] max-w-[min(28rem,calc(100vw-3rem))] overflow-hidden rounded-2xl border shadow-2xl ${
+                                isDarkMode ? 'border-slate-700 bg-slate-950 text-slate-100' : 'border-slate-200 bg-white text-slate-900'
+                              }`}>
+                                <div className={`border-b p-2 ${isDarkMode ? 'border-slate-800' : 'border-slate-100'}`}>
+                                  <label className={`flex h-9 items-center gap-2 rounded-xl px-3 ${
+                                    isDarkMode ? 'bg-slate-900 text-slate-400' : 'bg-slate-50 text-slate-500'
+                                  }`}>
+                                    <Search size={15} className="shrink-0" />
+                                    <input
+                                      value={landingWorkspaceQuery}
+                                      onChange={(event) => setLandingWorkspaceQuery(event.target.value)}
+                                      placeholder="Search workspaces"
+                                      className={`min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-current ${
+                                        isDarkMode ? 'text-slate-100' : 'text-slate-900'
+                                      }`}
+                                    />
+                                  </label>
+                                </div>
+                                <div className="max-h-72 overflow-y-auto p-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={handleCreateLandingWorkspace}
+                                    className={`flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm font-medium transition ${
+                                      isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-slate-50'
+                                    }`}
+                                  >
+                                    <Plus size={15} className="shrink-0" />
+                                    <span>New Workspace</span>
+                                  </button>
+                                  {landingFilteredWorkspaces.map((workspace) => (
+                                    <button
+                                      key={workspace.id}
+                                      type="button"
+                                      onClick={() => handleLandingWorkspaceSelect(workspace)}
+                                      className={`flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2 text-left text-sm transition ${
+                                        selectedWorkspace?.id === workspace.id
+                                          ? isDarkMode ? 'bg-sky-500/15 text-sky-200' : 'bg-blue-50 text-blue-700'
+                                          : isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-slate-50'
+                                      }`}
+                                    >
+                                      <span className="truncate">{workspace.name}</span>
+                                      {selectedWorkspace?.id === workspace.id ? <Check size={15} className="shrink-0" /> : null}
+                                    </button>
+                                  ))}
+                                  {!landingFilteredWorkspaces.length ? (
+                                    <div className={`px-3 py-4 text-sm ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>
+                                      No workspaces found
+                                    </div>
+                                  ) : null}
+                                </div>
+                              </div>
+                            ) : null}
+                          </div>
                           <select
                             value={normalizePersonaName(activeConversationPersona || selectedPersona || DEFAULT_PERSONA_NAME)}
                             onChange={handleModeChange}
