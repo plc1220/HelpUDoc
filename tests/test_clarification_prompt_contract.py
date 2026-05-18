@@ -19,7 +19,11 @@ def test_general_prompt_requires_structured_interrupts_for_skill_questions() -> 
 def test_frontend_slides_skill_requires_request_clarification_at_gating_steps() -> None:
     content = FRONTEND_SLIDES_SKILL.read_text(encoding="utf-8")
     assert "Use `request_clarification` for every decision gate in this skill." in content
+    assert 'If you are about to write phrases like "select from the form above"' in content
+    assert "A UI form only exists when this tool emits an interrupt" in content
     assert "single `request_clarification` call" in content
     assert "Show preset picker via a second `request_clarification` call" in content
+    assert "Call `request_clarification` immediately at this step." in content
+    assert 'submit_label="Generate style previews"' in content
     assert "Then use `request_clarification`:" in content
     assert "Do not generate the final presentation until the user has answered the style-selection interrupt." in content

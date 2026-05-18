@@ -317,6 +317,8 @@ Mentally verify the modified slide at these viewport sizes:
 
 Before designing, understand the content. Use `request_clarification` for every decision gate in this skill. Do not ask these questions in plain chat prose, and do not continue to later phases after a clarification tool call until the user has resumed the run.
 
+**Hard stop for UI forms:** If you are about to write phrases like "select from the form above", "choose from the options above", "please confirm in the UI", or "pick a vibe/style" in normal assistant text, stop and call `request_clarification` instead. A UI form only exists when this tool emits an interrupt; prose alone will not create one.
+
 ### Step 1.1: Presentation Context + Images (Single Form)
 
 **IMPORTANT:** Ask ALL 5 questions in a single `request_clarification` call so the user can fill everything out at once before submitting. Pass them via `questions_json`, not as a prose list in the chat response.
@@ -486,6 +488,8 @@ Use `request_clarification` for this step as well. This is a structured chooser,
   - "Calm/Focused" — Clear, thoughtful, easy to follow
   - "Inspired/Moved" — Emotional, storytelling, memorable
 - multiSelect: true (can choose up to 2)
+
+Call `request_clarification` immediately at this step. Use `options_json`, set `multi_select=true`, `allow_freeform=false`, and `submit_label="Generate style previews"`. Do not say "select the feeling from the form above" unless the tool call has actually happened and the run is stopping on the interrupt.
 
 ### Step 2.2: Generate Style Previews
 

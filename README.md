@@ -166,6 +166,7 @@ Targeted scripts:
 
 ## Docs worth reading next
 
+- [docs/api/](docs/api/README.md) — API guides and reference
 - [docs/agent-self-evolution.md](docs/agent-self-evolution.md)
 - [docs/environment.md](docs/environment.md)
 - [docs/deploy.md](docs/deploy.md)

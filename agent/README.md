@@ -112,5 +112,6 @@ docker compose -f infra/docker-compose.yml --env-file env/local/stack.env up --b
 ## Related docs
 
 - [../README.md](../README.md)
+- [../docs/api/README.md](../docs/api/README.md)
 - [../docs/environment.md](../docs/environment.md)
 - [lightrag_server/README.md](lightrag_server/README.md)

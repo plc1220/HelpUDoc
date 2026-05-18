@@ -148,5 +148,6 @@ These routes are protected by system-admin checks:
 ## Related docs
 
 - [../README.md](../README.md)
+- [../docs/api/README.md](../docs/api/README.md)
 - [../docs/environment.md](../docs/environment.md)
 - [../docs/deploy.md](../docs/deploy.md)
