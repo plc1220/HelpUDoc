@@ -7100,13 +7100,13 @@ export default function WorkspacePage() {
             {/* Middle Pane: Files & Editor */}
             <div
               className={`flex flex-col min-w-0 min-h-0 overflow-hidden ${
-                isDarkMode ? 'border-r border-slate-800' : 'border-r border-gray-200'
+                isDarkMode ? 'border-r border-[#223047]' : 'border-r border-gray-200'
               }`}
               style={workspacePaneStyles}
             >
               {/* Workspace Header */}
               <div className={`px-4 py-3 flex items-center gap-3 ${
-                isDarkMode ? 'border-b border-slate-800 bg-[#08111f]' : 'border-b border-gray-200'
+                isDarkMode ? 'border-b border-[#223047] bg-[#08111f]' : 'border-b border-gray-200'
               }`}>
                 <button
                   type="button"
@@ -7175,13 +7175,13 @@ export default function WorkspacePage() {
                 {/* File Explorer */}
                 <div
                   className={`flex flex-col overflow-hidden min-h-0 ${
-                    isDarkMode ? 'bg-[#08111f] border-r border-slate-800' : 'bg-white border-r border-gray-200'
+                    isDarkMode ? 'bg-[#08111f] border-r border-[#223047]' : 'bg-white border-r border-gray-200'
                   }`}
                   style={filePaneStyles}
                 >
                   <div
                     className={`px-3 py-3 flex items-center ${isFilePaneVisible ? 'justify-between' : 'justify-center'
-                      } ${isDarkMode ? 'border-b border-slate-800' : 'border-b border-gray-200'
+                      } ${isDarkMode ? 'border-b border-[#223047]' : 'border-b border-gray-200'
                       }`}
                   >
                     <div className={`flex items-center ${isFilePaneVisible ? 'gap-3' : ''}`}>
@@ -7400,10 +7400,10 @@ export default function WorkspacePage() {
 
                 {/* Content Editor */}
                 <div className={`flex-1 flex flex-col overflow-hidden min-w-0 min-h-0 ${
-                  isDarkMode ? 'bg-[#0b1323]' : 'bg-gray-50'
+                  isDarkMode ? 'bg-[#0e1728]' : 'bg-gray-50'
                 }`}>
                   <div className={`px-4 py-3 flex justify-between items-center ${
-                    isDarkMode ? 'border-b border-slate-800' : 'border-b border-gray-200'
+                    isDarkMode ? 'border-b border-[#223047]' : 'border-b border-gray-200'
                   }`}>
                     <div className="flex items-center gap-3">
                       <h3 className={`text-base font-semibold ${isDarkMode ? 'text-slate-100' : 'text-gray-800'}`}>{canvasTitle}</h3>

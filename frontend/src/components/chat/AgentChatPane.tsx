@@ -269,7 +269,7 @@ export default function AgentChatPane({
   return (
     <div
       className={`flex min-h-0 flex-col overflow-hidden ${
-        isDarkMode ? 'bg-gradient-to-b from-slate-950 to-slate-900' : 'bg-gradient-to-b from-white to-slate-50'
+        isDarkMode ? 'bg-[#0d1524]' : 'bg-white'
       }`}
       style={agentPaneStyles}
     >

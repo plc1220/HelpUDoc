@@ -35,7 +35,7 @@ export default function ChatHeader({
   const isDarkMode = colorMode === 'dark';
   return (
     <div className={`sticky top-0 z-30 border-b px-3 py-2.5 backdrop-blur-md ${
-      isDarkMode ? 'border-slate-700/70 bg-slate-950/60' : 'border-slate-200/70 bg-white/80'
+      isDarkMode ? 'border-[#223047]/70 bg-[#0d1524]/92' : 'border-slate-200/70 bg-white/80'
     }`}>
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
@@ -62,7 +62,7 @@ export default function ChatHeader({
                 onChange={onModeChange}
                 className={`rounded-xl border px-2.5 py-1 text-xs font-semibold shadow-sm transition-all duration-200 focus:outline-none ${
                   isDarkMode
-                    ? 'border-slate-700/80 bg-slate-800/90 text-slate-100 focus:border-sky-400 focus:ring-2 focus:ring-sky-400/20'
+                    ? 'border-[#2b3a55] bg-[#152033] text-slate-100 focus:border-sky-400 focus:ring-2 focus:ring-sky-400/20'
                     : 'border-slate-200/80 bg-slate-100/90 text-slate-700 focus:border-blue-400 focus:ring-2 focus:ring-blue-200'
                 }`}
                 aria-label="Select agent mode"

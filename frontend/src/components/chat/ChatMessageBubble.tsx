@@ -1311,15 +1311,15 @@ export default function ChatMessageBubble({
     : [];
 
   const agentContainerClassName = isDarkMode
-    ? 'w-full rounded-[1.8rem] border border-slate-700/70 bg-[linear-gradient(160deg,rgba(15,23,42,0.98),rgba(30,41,59,0.94))] px-4 py-4 text-slate-100 shadow-[0_26px_70px_-36px_rgba(2,6,23,0.95)] ring-1 ring-white/5'
-    : 'w-full rounded-[1.8rem] border border-slate-200/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(248,250,252,0.95))] px-4 py-4 text-slate-900 shadow-[0_26px_70px_-36px_rgba(15,23,42,0.16)]';
+    ? 'w-full rounded-xl border border-[#2a3850] bg-[#121c2e] px-4 py-4 text-slate-100 shadow-[0_16px_40px_-32px_rgba(2,6,23,0.88)]'
+    : 'w-full rounded-xl border border-slate-200/90 bg-white px-4 py-4 text-slate-900 shadow-[0_16px_40px_-32px_rgba(15,23,42,0.16)]';
   const agentMetaClassName = isDarkMode
-    ? 'flex flex-wrap items-center justify-between gap-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500'
-    : 'flex flex-wrap items-center justify-between gap-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400';
+    ? 'flex flex-wrap items-center justify-between gap-2 text-[11px] font-bold uppercase tracking-wide text-slate-300'
+    : 'flex flex-wrap items-center justify-between gap-2 text-[11px] font-bold uppercase tracking-wide text-slate-500';
   const agentPersonaClassName = isDarkMode ? 'text-slate-300' : 'text-slate-700';
   const thinkingCardClassName = isDarkMode
-    ? 'mt-3 rounded-[1.5rem] border border-slate-700/70 bg-slate-950/45 px-3 py-3 text-[13px] text-slate-300 shadow-inner shadow-black/20 transition-all duration-200 ease-in-out'
-    : 'mt-3 rounded-[1.5rem] border border-slate-200/80 bg-slate-50/90 px-3 py-3 text-[13px] text-slate-700 shadow-inner shadow-slate-200/40 transition-all duration-200 ease-in-out';
+    ? 'mt-3 rounded-xl border border-[#26354d] bg-[#0d1524] px-3 py-3 text-[13px] text-slate-200 shadow-inner shadow-black/20 transition-all duration-200 ease-in-out'
+    : 'mt-3 rounded-xl border border-slate-200/80 bg-slate-50/90 px-3 py-3 text-[13px] text-slate-700 shadow-inner shadow-slate-200/40 transition-all duration-200 ease-in-out';
   const thinkingHeaderClassName = isDarkMode
     ? 'flex items-center justify-between text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400'
     : 'flex items-center justify-between text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500';
@@ -1330,17 +1330,17 @@ export default function ChatMessageBubble({
     ? 'pointer-events-none absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-slate-950 via-slate-950/70 to-transparent'
     : 'pointer-events-none absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-slate-50 via-slate-50/75 to-transparent';
   const toolPanelClassName = isDarkMode
-    ? 'mt-3 rounded-[1.4rem] border border-slate-700/70 bg-slate-950/45 px-3 py-3'
-    : 'mt-3 rounded-[1.4rem] border border-slate-200/80 bg-white/90 px-3 py-3';
+    ? 'mt-3 rounded-xl border border-[#26354d] bg-[#0d1524] px-3 py-3'
+    : 'mt-3 rounded-xl border border-slate-200/80 bg-white/90 px-3 py-3';
   const toolButtonClassName = isDarkMode
     ? 'text-xs font-semibold uppercase tracking-[0.18em] text-slate-400 transition-all duration-200 hover:text-slate-200'
     : 'text-xs font-semibold uppercase tracking-[0.18em] text-slate-500 transition-all duration-200 hover:text-slate-700';
   const toolExpandedClassName = isDarkMode
-    ? 'mt-3 rounded-2xl border border-slate-700/70 bg-slate-900/70 px-3 py-3 text-xs text-slate-300 shadow-inner shadow-black/15'
-    : 'mt-3 rounded-2xl border border-slate-200/80 bg-slate-50/90 px-3 py-3 text-xs text-slate-600 shadow-inner shadow-slate-200/40';
+    ? 'mt-3 rounded-xl border border-[#26354d] bg-[#0d1524] px-3 py-3 text-xs text-slate-200 shadow-inner shadow-black/15'
+    : 'mt-3 rounded-xl border border-slate-200/80 bg-slate-50/90 px-3 py-3 text-xs text-slate-600 shadow-inner shadow-slate-200/40';
   const userBubbleClassName = isDarkMode
-    ? 'rounded-[1.7rem] bg-[linear-gradient(135deg,rgba(56,189,248,0.94),rgba(59,130,246,0.92))] px-4 py-3 text-sm text-white shadow-[0_20px_48px_-28px_rgba(56,189,248,0.75)] [text-shadow:0_1px_1px_rgba(15,23,42,0.35)]'
-    : 'rounded-[1.7rem] bg-[linear-gradient(135deg,rgba(96,165,250,0.95),rgba(59,130,246,0.9))] px-4 py-3 text-sm text-white shadow-[0_20px_48px_-28px_rgba(59,130,246,0.35)] [text-shadow:0_1px_1px_rgba(15,23,42,0.2)]';
+    ? 'rounded-xl bg-[#2d5f9f] px-4 py-3 text-sm text-white shadow-[0_14px_34px_-28px_rgba(45,95,159,0.82)]'
+    : 'rounded-xl bg-[#315f9f] px-4 py-3 text-sm text-white shadow-[0_14px_34px_-28px_rgba(49,95,159,0.42)]';
   const messageActionBarClassName = isDarkMode
     ? 'absolute -top-3 right-2 inline-flex items-center gap-0.5 rounded-full border border-slate-700/70 bg-slate-950/95 p-0.5 text-slate-300 opacity-0 shadow-lg shadow-slate-950/30 ring-1 ring-white/5 transition-all duration-200 group-hover:opacity-100 focus-within:opacity-100'
     : 'absolute -top-3 right-2 inline-flex items-center gap-0.5 rounded-full border border-slate-200 bg-white/95 p-0.5 text-slate-500 opacity-0 shadow-lg shadow-slate-200/70 transition-all duration-200 group-hover:opacity-100 focus-within:opacity-100';
@@ -1886,7 +1886,7 @@ export default function ChatMessageBubble({
           <div className={userBubbleClassName}>
             <p className="whitespace-pre-line leading-relaxed">{message.text}</p>
             {timestampLabel ? (
-              <span className="mt-2 block text-[11px] uppercase tracking-wide text-white/70">{timestampLabel}</span>
+              <span className="mt-2 block text-[11px] font-medium uppercase tracking-wide text-white/85">{timestampLabel}</span>
             ) : null}
           </div>
         )}

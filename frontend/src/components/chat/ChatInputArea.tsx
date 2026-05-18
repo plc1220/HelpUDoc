@@ -109,12 +109,12 @@ export default function ChatInputArea({
 
   return (
     <div className={`sticky bottom-0 border-t p-3 backdrop-blur-md ${
-      isDarkMode ? 'border-slate-700/70 bg-slate-950/45' : 'border-slate-200/80 bg-white/80'
+      isDarkMode ? 'border-[#223047]/70 bg-[#0d1524]/95' : 'border-slate-200/80 bg-white/90'
     }`}>
-      <div className={`relative rounded-2xl border transition-all duration-200 ${
+      <div className={`relative rounded-xl border transition-all duration-200 ${
         isDarkMode
-          ? 'border-slate-700/80 bg-slate-900/80 shadow-[0_24px_60px_-36px_rgba(15,23,42,0.98)] focus-within:border-sky-400/70 focus-within:ring-2 focus-within:ring-sky-400/15'
-          : 'border-slate-200/90 bg-white shadow-[0_24px_60px_-36px_rgba(15,23,42,0.15)] focus-within:border-sky-400/70 focus-within:ring-2 focus-within:ring-sky-200/50'
+          ? 'border-[#2b3a55] bg-[#111b2e] shadow-[0_20px_44px_-34px_rgba(2,6,23,0.95)] focus-within:border-sky-400/70 focus-within:ring-2 focus-within:ring-sky-400/15'
+          : 'border-slate-300/90 bg-white shadow-[0_20px_44px_-34px_rgba(15,23,42,0.16)] focus-within:border-sky-400/70 focus-within:ring-2 focus-within:ring-sky-200/50'
       }`}>
         {chatAttachments.length > 0 && (
           <div className="flex flex-wrap gap-2 px-3 pt-2.5">
@@ -183,7 +183,7 @@ export default function ChatInputArea({
           onSelect={onChatInputSelectionChange}
           onPaste={onChatInputPaste}
           className={`w-full max-h-52 resize-none bg-transparent px-3.5 py-2.5 text-sm leading-relaxed focus:outline-none ${
-            isDarkMode ? 'text-slate-100 placeholder:text-slate-500' : 'text-slate-800 placeholder:text-slate-400'
+            isDarkMode ? 'text-slate-100 placeholder:text-slate-400' : 'text-slate-800 placeholder:text-slate-500'
           }`}
           rows={Math.min(5, Math.max(1, chatMessage.split('\n').length))}
           style={{ minHeight: '50px' }}
@@ -292,7 +292,7 @@ export default function ChatInputArea({
             )}
           </div>
           <div className="flex items-center gap-2">
-            <span className={`mr-2 hidden text-[10px] sm:inline-block ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>
+            <span className={`mr-2 hidden text-[10px] font-medium sm:inline-block ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
               {isStreaming ? 'Generating...' : isPreparingAttachments ? 'Preparing attachments...' : 'Enter to send'}
             </span>
             <button
@@ -307,7 +307,9 @@ export default function ChatInputArea({
                     ? isDarkMode
                       ? 'bg-rose-500/15 text-rose-300 hover:bg-rose-500/25'
                       : 'bg-rose-50 text-rose-600 hover:bg-rose-100'
-                    : 'bg-[linear-gradient(135deg,rgba(56,189,248,0.92),rgba(59,130,246,0.9))] text-white shadow-[0_12px_30px_-16px_rgba(56,189,248,0.85)] hover:bg-[linear-gradient(135deg,rgba(103,232,249,0.95),rgba(96,165,250,0.92))]'
+                    : isDarkMode
+                      ? 'bg-[#2d5f9f] text-white shadow-[0_12px_30px_-20px_rgba(45,95,159,0.8)] hover:bg-[#366dac]'
+                      : 'bg-[#315f9f] text-white shadow-[0_12px_30px_-20px_rgba(49,95,159,0.48)] hover:bg-[#284f86]'
               }`}
               title={isStreaming ? 'Stop current agent response' : 'Send message'}
             >
