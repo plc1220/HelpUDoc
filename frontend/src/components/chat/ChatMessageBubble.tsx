@@ -1628,16 +1628,16 @@ export default function ChatMessageBubble({
   const toolExpandedClassName = isDarkMode
     ? 'mt-3 space-y-3 text-xs text-slate-200'
     : 'mt-3 space-y-3 text-xs text-slate-600';
-  const userPathPillClassName = 'inline-flex max-w-full items-center gap-1.5 rounded-full border border-white/25 bg-white/15 px-2.5 py-1 text-xs font-medium text-white shadow-sm';
+  const userPathPillClassName = 'inline-flex max-w-full items-center gap-1.5 rounded-full border border-white/20 bg-white/10 px-2.5 py-1 text-xs font-medium text-white';
   const userBubbleClassName = isDarkMode
     ? 'rounded-xl bg-[#2d5f9f] px-4 py-3 text-sm text-white shadow-[0_14px_34px_-28px_rgba(45,95,159,0.82)]'
     : 'rounded-xl bg-[#315f9f] px-4 py-3 text-sm text-white shadow-[0_14px_34px_-28px_rgba(49,95,159,0.42)]';
   const messageActionBarClassName = isDarkMode
-    ? 'absolute -top-3 right-2 inline-flex items-center gap-0.5 rounded-full border border-slate-700/70 bg-slate-950/95 p-0.5 text-slate-300 opacity-0 shadow-lg shadow-slate-950/30 ring-1 ring-white/5 transition-all duration-200 group-hover:opacity-100 focus-within:opacity-100'
-    : 'absolute -top-3 right-2 inline-flex items-center gap-0.5 rounded-full border border-slate-200 bg-white/95 p-0.5 text-slate-500 opacity-0 shadow-lg shadow-slate-200/70 transition-all duration-200 group-hover:opacity-100 focus-within:opacity-100';
+    ? 'absolute -top-2.5 right-2 inline-flex items-center gap-0.5 rounded-lg border border-slate-600/90 bg-slate-900 p-0.5 text-slate-300 opacity-0 shadow-none transition-opacity duration-150 group-hover:opacity-100 focus-within:opacity-100'
+    : 'absolute -top-2.5 right-2 inline-flex items-center gap-0.5 rounded-lg border border-slate-200 bg-white p-0.5 text-slate-500 opacity-0 shadow-none transition-opacity duration-150 group-hover:opacity-100 focus-within:opacity-100';
   const messageActionButtonClassName = isDarkMode
-    ? 'inline-flex h-7 w-7 items-center justify-center rounded-full transition-colors duration-200 hover:bg-slate-800 hover:text-white focus-visible:bg-slate-800 focus-visible:text-white focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50'
-    : 'inline-flex h-7 w-7 items-center justify-center rounded-full transition-colors duration-200 hover:bg-slate-100 hover:text-slate-900 focus-visible:bg-slate-100 focus-visible:text-slate-900 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50';
+    ? 'inline-flex h-7 w-7 items-center justify-center rounded-md transition-colors duration-150 hover:bg-slate-800 hover:text-white focus-visible:bg-slate-800 focus-visible:text-white focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50'
+    : 'inline-flex h-7 w-7 items-center justify-center rounded-md transition-colors duration-150 hover:bg-slate-100 hover:text-slate-900 focus-visible:bg-slate-100 focus-visible:text-slate-900 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50';
 
   useEffect(() => {
     if (!inlineStatus) {
@@ -2176,20 +2176,18 @@ export default function ChatMessageBubble({
           <div className={userBubbleClassName}>
             {userText ? renderFormattedUserText(userText, userPathPillClassName) : null}
             {attachmentPreviews.length ? (
-              <div className="mt-3 space-y-2">
-                <div className="text-[11px] font-semibold uppercase tracking-wide text-white/80">
-                  Attachments
-                </div>
-                <div className="grid gap-2">
-                  {attachmentPreviews.map((attachment, index) => (
-                    <div
-                      key={`${attachment.name}-${index}`}
-                      className="flex min-w-0 items-center gap-2 rounded-lg border border-white/18 bg-white/12 p-2 shadow-inner shadow-black/5"
-                    >
-                      <div className="relative flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-md border border-white/20 bg-white/14 text-white/90">
+              <div className="mt-2.5 overflow-hidden rounded-lg border border-white/15 bg-black/10">
+                {attachmentPreviews.map((attachment, index) => (
+                  <div
+                    key={`${attachment.name}-${index}`}
+                    className={`flex min-w-0 items-center gap-2.5 px-2.5 py-2 ${
+                      index > 0 ? 'border-t border-white/10' : ''
+                    }`}
+                  >
+                      <div className="relative flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-md bg-white/12 text-white/90">
                         {attachment.previewUrl ? (
                           <>
-                            <ImageIcon size={18} />
+                            <ImageIcon size={16} />
                             <img
                               src={attachment.previewUrl}
                               alt=""
@@ -2201,17 +2199,17 @@ export default function ChatMessageBubble({
                             />
                           </>
                         ) : attachment.isImage ? (
-                          <ImageIcon size={18} />
+                          <ImageIcon size={16} />
                         ) : (
                           (() => {
                             const AttachmentIcon = getAttachmentFileIcon(attachment.name, attachment.isImage);
-                            return <AttachmentIcon size={18} />;
+                            return <AttachmentIcon size={16} />;
                           })()
                         )}
                       </div>
                       <div className="min-w-0 flex-1">
                         <div className="truncate text-sm font-medium leading-5 text-white">{attachment.name}</div>
-                        <div className="text-[11px] font-medium text-white/72">
+                        <div className="text-[11px] text-white/65">
                           {getAttachmentTypeLabel(attachment.name, {
                             isDrive: attachment.isDrive,
                             isImage: attachment.isImage,
@@ -2219,8 +2217,7 @@ export default function ChatMessageBubble({
                         </div>
                       </div>
                     </div>
-                  ))}
-                </div>
+                ))}
               </div>
             ) : null}
             {timestampLabel ? (
