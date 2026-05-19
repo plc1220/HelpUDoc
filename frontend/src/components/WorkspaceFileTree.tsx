@@ -21,6 +21,22 @@ import {
   type WorkspaceFileTreeNode,
 } from '../utils/workspaceFileTree';
 
+const WORKSPACE_FILE_DRAG_MIME = 'text/plain';
+
+const canAcceptWorkspaceFileDrop = (
+  event: React.DragEvent,
+  draggedFileIdRef: React.RefObject<string | null>,
+): boolean =>
+  draggedFileIdRef.current != null || event.dataTransfer.types.includes(WORKSPACE_FILE_DRAG_MIME);
+
+const readDroppedFileId = (
+  event: React.DragEvent,
+  draggedFileIdRef: React.RefObject<string | null>,
+): string | null => {
+  const fromDataTransfer = event.dataTransfer.getData(WORKSPACE_FILE_DRAG_MIME);
+  return fromDataTransfer || draggedFileIdRef.current;
+};
+
 interface WorkspaceFileTreeProps {
   files: WorkspaceFile[];
   folderPaths?: string[];
@@ -144,6 +160,7 @@ const TreeFileRow: React.FC<{
   onRenameFile: (file: WorkspaceFile) => void;
   onDeleteFile: (file: WorkspaceFile) => void;
   draggedFileId: string | null;
+  draggedFileIdRef: React.RefObject<string | null>;
   setDraggedFileId: (fileId: string | null) => void;
   setDropTargetPath: (path: string | null) => void;
   colorMode: 'light' | 'dark';
@@ -161,6 +178,7 @@ const TreeFileRow: React.FC<{
   onRenameFile,
   onDeleteFile,
   draggedFileId,
+  draggedFileIdRef,
   setDraggedFileId,
   setDropTargetPath,
   colorMode,
@@ -207,11 +225,13 @@ const TreeFileRow: React.FC<{
         if (!isDraggable) {
           return;
         }
+        draggedFileIdRef.current = file.id;
         setDraggedFileId(file.id);
         event.dataTransfer.effectAllowed = 'move';
-        event.dataTransfer.setData('text/plain', file.id);
+        event.dataTransfer.setData(WORKSPACE_FILE_DRAG_MIME, file.id);
       }}
       onDragEnd={() => {
+        draggedFileIdRef.current = null;
         setDraggedFileId(null);
         setDropTargetPath(null);
       }}
@@ -346,7 +366,7 @@ const TreeFolderRow: React.FC<{
   onToggle: (folderPath: string) => void;
   onDeleteFolder: (folder: WorkspaceFileTreeFolderNode) => void;
   onDropFilesToFolder: (fileId: string, folderPath: string) => void;
-  draggedFileId: string | null;
+  draggedFileIdRef: React.RefObject<string | null>;
   setDropTargetPath: (path: string | null) => void;
   dropTargetPath: string | null;
   children: React.ReactNode;
@@ -359,14 +379,13 @@ const TreeFolderRow: React.FC<{
   onToggle,
   onDeleteFolder,
   onDropFilesToFolder,
-  draggedFileId,
+  draggedFileIdRef,
   setDropTargetPath,
   dropTargetPath,
   children,
   colorMode,
 }) => {
   const isDropTarget = dropTargetPath === node.path;
-  const canAcceptDrop = Boolean(draggedFileId);
   const isDarkMode = colorMode === 'dark';
   const containerClassName = isDropTarget
     ? isDarkMode
@@ -378,36 +397,44 @@ const TreeFolderRow: React.FC<{
   const isDashboardFolder = isDashboardFolderPath(node.path);
   const dashboardBadge = dashboardArtifact?.status;
 
+  const handleFolderDragOver = (event: React.DragEvent) => {
+    if (!canAcceptWorkspaceFileDrop(event, draggedFileIdRef)) {
+      return;
+    }
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+    setDropTargetPath(node.path);
+  };
+
+  const handleFolderDragLeave = (event: React.DragEvent) => {
+    if (event.currentTarget.contains(event.relatedTarget as Node)) {
+      return;
+    }
+    if (dropTargetPath === node.path) {
+      setDropTargetPath(null);
+    }
+  };
+
+  const handleFolderDrop = (event: React.DragEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const fileId = readDroppedFileId(event, draggedFileIdRef);
+    if (!fileId) {
+      return;
+    }
+    onDropFilesToFolder(fileId, node.path);
+    setDropTargetPath(null);
+  };
+
   return (
-    <div className="select-none">
+    <div
+      className="select-none"
+      onDragOver={handleFolderDragOver}
+      onDragLeave={handleFolderDragLeave}
+      onDrop={handleFolderDrop}
+    >
       <div
         className={`group flex items-center gap-2 rounded-lg px-2 py-1.5 transition-colors ${containerClassName}`}
-        onDragOver={(event) => {
-          if (!canAcceptDrop) {
-            return;
-          }
-          event.preventDefault();
-          event.dataTransfer.dropEffect = 'move';
-          setDropTargetPath(node.path);
-        }}
-        onDragLeave={(event) => {
-          if (event.currentTarget.contains(event.relatedTarget as Node)) {
-            return;
-          }
-          if (dropTargetPath === node.path) {
-            setDropTargetPath(null);
-          }
-        }}
-        onDrop={(event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          const fileId = event.dataTransfer.getData('text/plain') || draggedFileId;
-          if (!fileId) {
-            return;
-          }
-          onDropFilesToFolder(fileId, node.path);
-          setDropTargetPath(null);
-        }}
       >
         <button
           type="button"
@@ -501,6 +528,7 @@ const renderTreeNodes = (
     onToggleFolder: (folderPath: string) => void;
     onDropFilesToFolder: (fileId: string, folderPath: string) => void;
     draggedFileId: string | null;
+    draggedFileIdRef: React.RefObject<string | null>;
     setDraggedFileId: (fileId: string | null) => void;
     setDropTargetPath: (path: string | null) => void;
     dropTargetPath: string | null;
@@ -520,7 +548,7 @@ const renderTreeNodes = (
           onToggle={options.onToggleFolder}
           onDeleteFolder={options.onDeleteFolder}
           onDropFilesToFolder={options.onDropFilesToFolder}
-          draggedFileId={options.draggedFileId}
+          draggedFileIdRef={options.draggedFileIdRef}
           setDropTargetPath={options.setDropTargetPath}
           dropTargetPath={options.dropTargetPath}
           colorMode={options.colorMode}
@@ -546,6 +574,7 @@ const renderTreeNodes = (
         onRenameFile={options.onRenameFile}
         onDeleteFile={options.onDeleteFile}
         draggedFileId={options.draggedFileId}
+        draggedFileIdRef={options.draggedFileIdRef}
         setDraggedFileId={options.setDraggedFileId}
         setDropTargetPath={options.setDropTargetPath}
         colorMode={options.colorMode}
@@ -579,6 +608,7 @@ export default function WorkspaceFileTree({
   const folderPaths = useMemo(() => collectWorkspaceFolderPaths(tree), [tree]);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   const [draggedFileId, setDraggedFileId] = useState<string | null>(null);
+  const draggedFileIdRef = useRef<string | null>(null);
   const [dropTargetPath, setDropTargetPath] = useState<string | null>(null);
   const [hasInitializedExpandedFolders, setHasInitializedExpandedFolders] = useState(false);
 
@@ -664,13 +694,14 @@ export default function WorkspaceFileTree({
     if (filesToMove.length > 0) {
       onMoveFiles(filesToMove, folderPath);
     }
+    draggedFileIdRef.current = null;
     setDraggedFileId(null);
     setDropTargetPath(null);
   };
 
   const handleRootDrop = (event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault();
-    const fileId = event.dataTransfer.getData('text/plain') || draggedFileId;
+    const fileId = readDroppedFileId(event, draggedFileIdRef);
     if (!fileId) {
       return;
     }
@@ -683,7 +714,7 @@ export default function WorkspaceFileTree({
         draggedFileId ? (isDarkMode ? 'bg-sky-500/5' : 'bg-blue-50/30') : ''
       }`}
       onDragOver={(event) => {
-        if (!draggedFileId) {
+        if (!canAcceptWorkspaceFileDrop(event, draggedFileIdRef)) {
           return;
         }
         event.preventDefault();
@@ -713,6 +744,7 @@ export default function WorkspaceFileTree({
               onToggleFolder: handleToggleFolder,
               onDropFilesToFolder: handleDropFilesToFolder,
               draggedFileId,
+              draggedFileIdRef,
               setDraggedFileId,
               setDropTargetPath,
               dropTargetPath,
