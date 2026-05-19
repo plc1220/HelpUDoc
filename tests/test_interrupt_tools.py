@@ -4,15 +4,26 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from helpudoc_agent.tagged_file_policy import is_tool_blocked_in_tagged_files_mode
-from helpudoc_agent.tools_and_schemas import ToolFactory
 import helpudoc_agent.tools_and_schemas as tools_and_schemas
+from helpudoc_agent.tools.workspace.builtins.human_interrupts import (
+    build_request_clarification_tool,
+    build_request_plan_approval_tool,
+)
 
 
-TOOLS_FILE = Path(__file__).resolve().parents[1] / "agent" / "helpudoc_agent" / "tools_and_schemas.py"
+HUMAN_INTERRUPTS_FILE = (
+    Path(__file__).resolve().parents[1]
+    / "agent"
+    / "helpudoc_agent"
+    / "tools"
+    / "workspace"
+    / "builtins"
+    / "human_interrupts.py"
+)
 
 
 def _method_block(name: str) -> str:
-    source = TOOLS_FILE.read_text(encoding="utf-8")
+    source = HUMAN_INTERRUPTS_FILE.read_text(encoding="utf-8")
     marker = f"def {name}("
     start = source.index(marker)
     next_method = source.find("\n    def _build_", start + len(marker))
@@ -83,8 +94,7 @@ def test_request_plan_approval_retries_stale_clarification_payload(monkeypatch) 
 
     monkeypatch.setattr(tools_and_schemas, "interrupt", fake_interrupt)
     workspace = SimpleNamespace(context={})
-    factory = ToolFactory.__new__(ToolFactory)
-    tool = factory._build_request_plan_approval_tool(workspace)
+    tool = build_request_plan_approval_tool(workspace)
 
     result = tool.invoke(
         {
@@ -119,8 +129,7 @@ def test_request_plan_approval_records_edit_decision(monkeypatch) -> None:
 
     monkeypatch.setattr(tools_and_schemas, "interrupt", fake_interrupt)
     workspace = SimpleNamespace(context={})
-    factory = ToolFactory.__new__(ToolFactory)
-    tool = factory._build_request_plan_approval_tool(workspace)
+    tool = build_request_plan_approval_tool(workspace)
 
     result = tool.invoke(
         {
@@ -149,8 +158,7 @@ def test_request_clarification_accepts_native_question_and_context_payloads(monk
 
     monkeypatch.setattr(tools_and_schemas, "interrupt", fake_interrupt)
     workspace = SimpleNamespace(context={})
-    factory = ToolFactory.__new__(ToolFactory)
-    tool = factory._build_request_clarification_tool(workspace)
+    tool = build_request_clarification_tool(workspace)
 
     result = tool.invoke(
         {
@@ -183,8 +191,7 @@ def test_request_clarification_accepts_native_question_and_context_payloads(monk
 
 def test_request_clarification_schema_keeps_json_payload_fields_as_strings() -> None:
     workspace = SimpleNamespace(context={})
-    factory = ToolFactory.__new__(ToolFactory)
-    tool = factory._build_request_clarification_tool(workspace)
+    tool = build_request_clarification_tool(workspace)
 
     schema = tool.args_schema.model_json_schema()
 

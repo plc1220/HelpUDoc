@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional
 
 from .constants import DATA_FILE_EXTENSIONS, STRICT_DASHBOARD_DIMENSION_FIELDS
 
+from ...plan_gates import is_plan_approved as _is_plan_approved
 from ...state import WorkspaceState
 
 def _query_looks_aggregated(query: str) -> bool:
@@ -39,13 +40,6 @@ def _get_dashboard_mode(workspace_state: WorkspaceState) -> Dict[str, Any]:
 def _is_strict_dashboard_mode(workspace_state: WorkspaceState) -> bool:
     mode = _get_dashboard_mode(workspace_state)
     return bool(mode.get("strictLocalDatasets"))
-
-
-def _is_plan_approved(workspace_state: WorkspaceState) -> bool:
-    context = getattr(workspace_state, "context", {}) or {}
-    if context.get("skip_plan_approvals"):
-        return True
-    return bool(context.get("plan_approved"))
 
 
 def _dashboard_plan_gate_message() -> str:

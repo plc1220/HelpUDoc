@@ -2,7 +2,7 @@
 
 from langchain_core.messages import AIMessage
 
-from helpudoc_agent.tools_and_schemas import _parse_structured_web_answer
+from helpudoc_agent.tools.workspace.web_sources import parse_structured_web_answer
 
 
 def test_citation_annotation_backfills_when_structured_sources_empty():
@@ -17,7 +17,7 @@ def test_citation_annotation_backfills_when_structured_sources_empty():
             }
         ]
     )
-    summary, sources = _parse_structured_web_answer(ai)
+    summary, sources = parse_structured_web_answer(ai)
     assert summary == "Done."
     assert len(sources) == 1
     assert sources[0]["title"] == "Example"

@@ -32,7 +32,7 @@ def test_build_tools_skips_missing_entrypoint(monkeypatch):
     def fake_import_module(module_path: str):
         raise ModuleNotFoundError(f"No module named '{module_path}'", name=module_path)
 
-    monkeypatch.setattr("helpudoc_agent.tools_and_schemas.import_module", fake_import_module)
+    monkeypatch.setattr("helpudoc_agent.tools.workspace.factory.import_module", fake_import_module)
 
     built = factory.build_tools(["missing_tool"], workspace_state=SimpleNamespace())
 
