@@ -142,7 +142,6 @@ class Paper2SlidesOptions(BaseModel):
     mode: str | None = None
     parallel: int | bool | None = None
     fromStage: str | None = None
-    exportPptx: bool | None = None
 
 
 class Paper2SlidesImage(BaseModel):
@@ -157,17 +156,7 @@ class Paper2SlidesRunRequest(BaseModel):
 
 class Paper2SlidesRunResponse(BaseModel):
     pdfB64: str | None = None
-    pptxB64: str | None = None
     images: List[Paper2SlidesImage] = []
-
-
-class Paper2SlidesExportRequest(BaseModel):
-    fileName: str
-    contentB64: str
-
-
-class Paper2SlidesExportResponse(BaseModel):
-    pptxB64: str
 
 
 class EmbeddedDirective(BaseModel):

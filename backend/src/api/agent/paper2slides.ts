@@ -16,12 +16,6 @@ const presentationSchema = z.object({
   mode: z.enum(['fast', 'normal']).optional(),
   parallel: z.union([z.number().int().positive(), z.boolean()]).optional(),
   fromStage: z.enum(['rag', 'analysis', 'summary', 'plan', 'generate']).optional(),
-  exportPptx: z.boolean().optional(),
-});
-
-const pptxExportSchema = z.object({
-  workspaceId: z.string().min(1),
-  fileId: z.number().int().positive(),
 });
 
 const requireUserContext = (req: Request) => {
@@ -59,7 +53,6 @@ export function registerPaper2SlidesRoutes(
         mode,
         parallel,
         fromStage,
-        exportPptx,
       } = presentationSchema.parse(req.body);
 
       const job = await paper2SlidesJobService.createJob({
@@ -76,7 +69,6 @@ export function registerPaper2SlidesRoutes(
           mode,
           parallel,
           fromStage,
-          exportPptx,
         },
       });
 
@@ -110,23 +102,6 @@ export function registerPaper2SlidesRoutes(
         return res.status(error.statusCode).json({ error: error.message });
       }
       handleError(res, error, 'Failed to fetch Paper2Slides job');
-    }
-  });
-
-  router.post('/paper2slides/export-pptx', async (req, res) => {
-    try {
-      const user = requireUserContext(req);
-      const { workspaceId, fileId } = pptxExportSchema.parse(req.body);
-      const result = await paper2SlidesService.exportPptxFromPdf(workspaceId, user.userId, fileId);
-      res.json(result);
-    } catch (error: any) {
-      if (error instanceof z.ZodError) {
-        return res.status(400).json({ error: 'Invalid input' });
-      }
-      if (error instanceof HttpError) {
-        return res.status(error.statusCode).json({ error: error.message });
-      }
-      handleError(res, error, 'Failed to export PPTX');
     }
   });
 }

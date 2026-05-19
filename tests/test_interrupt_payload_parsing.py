@@ -60,6 +60,25 @@ def test_extract_interrupt_payload_from_clarification_tool_call() -> None:
     assert parsed["displayPayload"]["skill"] == "frontend-slides"
 
 
+def test_extract_interrupt_payload_from_clarification_tool_call_accepts_native_lists() -> None:
+    tool_input = """{
+        'title': 'Presentation Discovery',
+        'description': 'Confirm the setup.',
+        'questions_json': [{'header':'Purpose','question':'What is this presentation for?','options':[{'label':'Pitch deck','value':'Pitch deck'}]}],
+        'options_json': [],
+        'allow_freeform': False,
+        'submit_label': 'Continue',
+        'context_json': {'skill':'frontend-slides'}
+    }"""
+
+    parsed = extract_interrupt_payload_from_tool_call("request_clarification", tool_input)
+
+    assert parsed is not None
+    assert parsed["responseSpec"]["questions"][0]["header"] == "Purpose"
+    assert parsed["responseSpec"]["questions"][0]["options"][0]["label"] == "Pitch deck"
+    assert parsed["displayPayload"]["skill"] == "frontend-slides"
+
+
 def test_extract_interrupt_payload_from_human_action_tool_call() -> None:
     tool_input = """{
         'title': 'Choose a style',

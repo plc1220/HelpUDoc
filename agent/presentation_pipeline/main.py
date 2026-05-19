@@ -52,7 +52,6 @@ def main() -> None:
         default=None,
         help="Enable parallel slide generation with N workers (default: 2 if specified)",
     )
-    parser.add_argument("--export-pptx", action="store_true", help="Export PPTX alongside slide images/PDF (slower)")
     parser.add_argument("--extract-assets", action="store_true", help="Extract slide layout/assets from generated images and build editable PPTX")
     parser.add_argument("--layout-model", help="Gemini model for layout JSON extraction (defaults to LAYOUT_MODEL/LLM_MODEL)")
     parser.add_argument("--image-model", help="Gemini model for background/asset images (defaults to IMAGE_GEN_MODEL)")
@@ -100,7 +99,6 @@ def main() -> None:
         "poster_density": args.density,
         "fast_mode": args.fast,
         "max_workers": args.parallel if args.parallel else 1,
-        "export_pptx": args.export_pptx,
         "extract_assets": args.extract_assets,
         "layout_model": args.layout_model,
         "image_model": args.image_model,

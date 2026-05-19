@@ -12,13 +12,11 @@ export interface PresentationRequest {
   mode?: 'fast' | 'normal';
   parallel?: number | boolean;
   fromStage?: 'rag' | 'analysis' | 'summary' | 'plan' | 'generate';
-  exportPptx?: boolean;
 }
 
 export interface PresentationResponse {
   htmlPath?: string;
   pdfPath?: string;
-  pptxPath?: string;
   slideImages?: string[];
   jobId?: string;
 }

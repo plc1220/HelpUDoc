@@ -134,3 +134,48 @@ def test_request_plan_approval_records_edit_decision(monkeypatch) -> None:
     assert "Use only the tagged Parquet files." in result
     assert "Edited draft included: yes" in result
     assert workspace.context["plan_approved"] is False
+
+
+def test_request_clarification_accepts_native_question_and_context_payloads(monkeypatch) -> None:
+    seen_payload = {}
+
+    def fake_interrupt(payload):
+        seen_payload.update(payload)
+        return {
+            "answersByQuestionId": {
+                "purpose": "Pitch deck",
+            }
+        }
+
+    monkeypatch.setattr(tools_and_schemas, "interrupt", fake_interrupt)
+    workspace = SimpleNamespace(context={})
+    factory = ToolFactory.__new__(ToolFactory)
+    tool = factory._build_request_clarification_tool(workspace)
+
+    result = tool.invoke(
+        {
+            "title": "Presentation Discovery",
+            "questions_json": [
+                {
+                    "id": "purpose",
+                    "header": "Purpose",
+                    "question": "What is this presentation for?",
+                    "options": [
+                        {
+                            "label": "Pitch deck",
+                            "value": "Pitch deck",
+                            "description": "Selling an idea",
+                        }
+                    ],
+                }
+            ],
+            "options_json": [],
+            "allow_freeform": False,
+            "context_json": {"skill": "frontend-slides"},
+        }
+    )
+
+    assert seen_payload["response_spec"]["questions"][0]["header"] == "Purpose"
+    assert seen_payload["response_spec"]["questions"][0]["options"][0]["label"] == "Pitch deck"
+    assert seen_payload["display_payload"]["skill"] == "frontend-slides"
+    assert "Purpose: Pitch deck" in result

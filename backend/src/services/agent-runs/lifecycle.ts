@@ -982,7 +982,7 @@ async function runAgentRunWorker(
     const implicitInput = detectImplicitInputAwaiting({
       status,
       skillId,
-      hadInterrupt,
+      hadInterrupt: resumePayload ? Boolean(sawInterruptPayload) : hadInterrupt,
       assistantText,
     });
 

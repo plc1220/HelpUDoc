@@ -57,8 +57,6 @@ def _build_command_args(input_path: str, options: Dict[str, Any], output_dir: Op
         parallel_value = 0
     if parallel_value and parallel_value > 1:
         args += ["--parallel", str(parallel_value)]
-    if options.get("exportPptx"):
-        args.append("--export-pptx")
     if output_dir:
         args += ["--output-dir", output_dir]
     return args
@@ -376,15 +374,13 @@ def run_paper2slides(files: Iterable[Dict[str, Any]], options: Dict[str, Any]) -
             if state_error:
                 raise RuntimeError(state_error)
 
-            pdf, pptx, images = _collect_outputs(outputs_root)
-            if not pdf and not pptx and not images:
+            pdf, _, images = _collect_outputs(outputs_root)
+            if not pdf and not images:
                 raise RuntimeError("Paper2Slides finished but no outputs were found")
 
             result: Dict[str, Any] = {"images": []}
             if pdf:
                 result["pdfB64"] = base64.b64encode(pdf.read_bytes()).decode("ascii")
-            if pptx:
-                result["pptxB64"] = base64.b64encode(pptx.read_bytes()).decode("ascii")
             if images:
                 result["images"] = [
                     {"name": image.name, "contentB64": base64.b64encode(image.read_bytes()).decode("ascii")}
@@ -427,45 +423,16 @@ def run_paper2slides(files: Iterable[Dict[str, Any]], options: Dict[str, Any]) -
         if latest_run_dir is None:
             raise RuntimeError("Paper2Slides finished but no run outputs were found")
 
-        pdf, pptx, images = _collect_outputs_from_run_dir(latest_run_dir)
-        if not pdf and not pptx and not images:
+        pdf, _, images = _collect_outputs_from_run_dir(latest_run_dir)
+        if not pdf and not images:
             raise RuntimeError("Paper2Slides finished but no outputs were found")
 
         result: Dict[str, Any] = {"images": []}
         if pdf:
             result["pdfB64"] = base64.b64encode(pdf.read_bytes()).decode("ascii")
-        if pptx:
-            result["pptxB64"] = base64.b64encode(pptx.read_bytes()).decode("ascii")
         if images:
             result["images"] = [
                 {"name": image.name, "contentB64": base64.b64encode(image.read_bytes()).decode("ascii")}
                 for image in images
             ]
         return result
-
-
-def export_pptx_from_pdf(file_name: str, content_b64: str) -> Dict[str, Any]:
-    if not content_b64:
-        raise RuntimeError("PDF file content is empty")
-
-    temp_dir = Path(tempfile.mkdtemp(prefix="paper2slides-export-"))
-    try:
-        safe_name = _sanitize_file_name(file_name or "slides.pdf", "slides.pdf")
-        if not safe_name.lower().endswith(".pdf"):
-            safe_name = f"{safe_name}.pdf"
-        input_path = temp_dir / safe_name
-        try:
-            data = base64.b64decode(content_b64)
-        except Exception as exc:
-            raise RuntimeError("invalid base64 for pdf input") from exc
-        input_path.write_bytes(data)
-
-        output_path = temp_dir / "export.pptx"
-        args = [sys.executable, "-m", "presentation_pipeline.export_pptx", "--input", str(input_path), "--output", str(output_path)]
-        _run_command(args, cwd=str(temp_dir))
-
-        if not output_path.exists():
-            raise RuntimeError("PPTX export did not produce an output file")
-        return {"pptxB64": base64.b64encode(output_path.read_bytes()).decode("ascii")}
-    finally:
-        shutil.rmtree(temp_dir, ignore_errors=True)

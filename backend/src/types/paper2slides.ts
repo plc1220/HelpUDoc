@@ -12,5 +12,4 @@ export type Paper2SlidesOptions = {
   mode?: Paper2SlidesMode;
   parallel?: number | boolean;
   fromStage?: Paper2SlidesStage;
-  exportPptx?: boolean;
 };

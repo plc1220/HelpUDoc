@@ -26,7 +26,6 @@ const presentationSchema = z.object({
   mode: z.enum(['fast', 'normal']).optional(),
   parallel: z.union([z.number().int().positive(), z.boolean()]).optional(),
   fromStage: z.enum(['rag', 'analysis', 'summary', 'plan', 'generate']).optional(),
-  exportPptx: z.boolean().optional(),
 });
 
 const requireUserContext = (req: Request) => {
@@ -97,7 +96,6 @@ export function registerPresentationRoutes(
         mode,
         parallel,
         fromStage,
-        exportPptx,
       } = presentationSchema.parse(req.body);
       await workspaceService.ensureMembership(workspaceId, user.userId, { requireEdit: true });
 
@@ -140,7 +138,6 @@ export function registerPresentationRoutes(
         mode,
         parallel,
         fromStage,
-        exportPptx,
       };
 
       try {

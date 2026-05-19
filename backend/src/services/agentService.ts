@@ -277,7 +277,6 @@ export type Paper2SlidesOptionsPayload = {
   mode?: 'fast' | 'normal';
   parallel?: number | boolean;
   fromStage?: 'rag' | 'summary' | 'plan' | 'generate' | 'analysis';
-  exportPptx?: boolean;
 };
 
 export type Paper2SlidesImagePayload = {
@@ -287,7 +286,6 @@ export type Paper2SlidesImagePayload = {
 
 export type Paper2SlidesRunResponse = {
   pdfB64?: string;
-  pptxB64?: string;
   images: Paper2SlidesImagePayload[];
 };
 
@@ -296,18 +294,6 @@ export async function runPaper2Slides(payload: {
   options: Paper2SlidesOptionsPayload;
 }): Promise<Paper2SlidesRunResponse> {
   const res = await client.post(`/paper2slides/run`, payload, {
-    maxContentLength: Infinity,
-    maxBodyLength: Infinity,
-    timeout: PAPER2SLIDES_TIMEOUT_MS,
-  });
-  return res.data;
-}
-
-export async function exportPaper2SlidesPptx(payload: {
-  fileName: string;
-  contentB64: string;
-}): Promise<{ pptxB64: string }> {
-  const res = await client.post(`/paper2slides/export-pptx`, payload, {
     maxContentLength: Infinity,
     maxBodyLength: Infinity,
     timeout: PAPER2SLIDES_TIMEOUT_MS,

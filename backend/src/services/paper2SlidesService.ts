@@ -2,7 +2,7 @@ import * as path from 'path';
 import { randomUUID } from 'crypto';
 import axios from 'axios';
 import { FileService } from './fileService';
-import { exportPaper2SlidesPptx, runPaper2Slides } from './agentService';
+import { runPaper2Slides } from './agentService';
 import type { Paper2SlidesOptions } from '../types/paper2slides';
 
 type InputFile = {
@@ -131,40 +131,13 @@ export class Paper2SlidesService {
     this.fileService = fileService;
   }
 
-  private async resolveUniquePptxPath(workspaceId: string, userId: string, pdfName: string): Promise<string> {
-    const normalized = String(pdfName || '').replace(/\\/g, '/');
-    const folder = path.posix.dirname(normalized);
-    const baseName = path.posix.basename(normalized, path.posix.extname(normalized)) || 'slides';
-    const safeBaseName = sanitizeFileName(baseName, 'slides');
-    const folderPrefix = folder === '.' ? '' : folder;
-    const baseCandidate = folderPrefix
-      ? path.posix.join(folderPrefix, `${safeBaseName}.pptx`)
-      : `${safeBaseName}.pptx`;
-    if (!await this.fileService.hasFileName(workspaceId, baseCandidate, userId)) {
-      return baseCandidate;
-    }
-
-    const timestamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
-    const stampedCandidate = folderPrefix
-      ? path.posix.join(folderPrefix, `${safeBaseName}-export-${timestamp}.pptx`)
-      : `${safeBaseName}-export-${timestamp}.pptx`;
-    if (!await this.fileService.hasFileName(workspaceId, stampedCandidate, userId)) {
-      return stampedCandidate;
-    }
-
-    const randomCandidate = folderPrefix
-      ? path.posix.join(folderPrefix, `${safeBaseName}-export-${randomUUID()}.pptx`)
-      : `${safeBaseName}-export-${randomUUID()}.pptx`;
-    return randomCandidate;
-  }
-
   async generate(
     workspaceId: string,
     userId: string,
     files: InputFile[],
     options: Paper2SlidesOptions,
     jobId?: string,
-  ): Promise<{ pdfPath?: string; pptxPath?: string; slideImages?: string[]; htmlPath?: string; jobId?: string }> {
+  ): Promise<{ pdfPath?: string; slideImages?: string[]; htmlPath?: string; jobId?: string }> {
     if (!files.length) {
       throw new Error('No files provided for Paper2Slides');
     }
@@ -185,12 +158,11 @@ export class Paper2SlidesService {
           mode: options.mode,
           parallel: options.parallel,
           fromStage: options.fromStage,
-          exportPptx: options.exportPptx,
         },
       });
 
       const images = result.images || [];
-      const hasAnyOutput = Boolean(result.pdfB64 || result.pptxB64 || images.length);
+      const hasAnyOutput = Boolean(result.pdfB64 || images.length);
       if (!hasAnyOutput) {
         throw new Error('Paper2Slides finished but no outputs were returned');
       }
@@ -200,9 +172,7 @@ export class Paper2SlidesService {
       const baseName = buildPresentationBaseName(files, 'paper2slides');
       const folder = path.posix.join('presentations', baseName, timestamp);
       let pdfPath: string | undefined;
-      let pptxPath: string | undefined;
       const slideImages: string[] = [];
-      const shouldExportPptx = options.exportPptx === true;
 
       if (result.pdfB64) {
         const pdfBuffer = Buffer.from(result.pdfB64, 'base64');
@@ -211,20 +181,6 @@ export class Paper2SlidesService {
           forceLocal: true,
         });
         pdfPath = relativeName;
-      }
-
-      if (shouldExportPptx && result.pptxB64) {
-        const pptxBuffer = Buffer.from(result.pptxB64, 'base64');
-        const relativeName = path.posix.join(folder, `${baseName}.pptx`);
-        await this.fileService.createFile(
-          workspaceId,
-          relativeName,
-          pptxBuffer,
-          'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-          userId,
-          { forceLocal: true },
-        );
-        pptxPath = relativeName;
       }
 
       for (let i = 0; i < images.length; i += 1) {
@@ -246,64 +202,11 @@ export class Paper2SlidesService {
 
       return {
         pdfPath,
-        pptxPath,
         slideImages,
         jobId: runId,
       };
     } catch (error: any) {
       throw new Error(`Paper2Slides pipeline failed: ${formatAgentFailure(error)}`);
-    }
-  }
-
-  async exportPptxFromPdf(
-    workspaceId: string,
-    userId: string,
-    fileId: number,
-  ): Promise<{ pptxPath: string }> {
-    const file = await this.fileService.getFileContent(fileId, userId);
-    if (file.workspaceId !== workspaceId) {
-      throw new Error('Selected file does not belong to the workspace');
-    }
-
-    const fileName = String(file.name || '');
-    const ext = path.extname(fileName).toLowerCase();
-    const mimeType = typeof file.mimeType === 'string' ? file.mimeType : '';
-    if (ext !== '.pdf' && mimeType !== 'application/pdf') {
-      throw new Error('Only PDF files can be exported to PPTX');
-    }
-
-    const rawContent = typeof file.content === 'string' ? file.content : '';
-    if (!rawContent) {
-      throw new Error('PDF file content is empty');
-    }
-
-    const buffer = Buffer.from(rawContent, 'base64');
-    if (!buffer.length) {
-      throw new Error('PDF file content is empty');
-    }
-    try {
-      const result = await exportPaper2SlidesPptx({
-        fileName,
-        contentB64: buffer.toString('base64'),
-      });
-      if (!result.pptxB64) {
-        throw new Error('PPTX export did not produce an output file');
-      }
-      const pptxBuffer = Buffer.from(result.pptxB64, 'base64');
-
-      const relativeName = await this.resolveUniquePptxPath(workspaceId, userId, fileName);
-      await this.fileService.createFile(
-        workspaceId,
-        relativeName,
-        pptxBuffer,
-        'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-        userId,
-        { forceLocal: true },
-      );
-
-      return { pptxPath: relativeName };
-    } catch (error: any) {
-      throw new Error(`Paper2Slides PPTX export failed: ${formatAgentFailure(error)}`);
     }
   }
 }

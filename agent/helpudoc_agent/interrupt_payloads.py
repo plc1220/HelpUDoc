@@ -58,17 +58,25 @@ def normalize_interrupt_payload_value(interrupt_value: Dict[str, Any], interrupt
 
 
 def _parse_json_list(raw: Any) -> List[Any]:
+    if isinstance(raw, list):
+        return raw
+    if raw is None:
+        return []
     try:
         parsed = json.loads(str(raw or "[]"))
-    except json.JSONDecodeError:
+    except (TypeError, json.JSONDecodeError):
         return []
     return parsed if isinstance(parsed, list) else []
 
 
 def _parse_json_dict(raw: Any) -> Dict[str, Any]:
+    if isinstance(raw, dict):
+        return raw
+    if raw is None:
+        return {}
     try:
         parsed = json.loads(str(raw or "{}"))
-    except json.JSONDecodeError:
+    except (TypeError, json.JSONDecodeError):
         return {}
     return parsed if isinstance(parsed, dict) else {}
 

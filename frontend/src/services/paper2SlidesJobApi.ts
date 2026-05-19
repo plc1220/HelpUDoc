@@ -14,7 +14,6 @@ export interface Paper2SlidesJobRequest {
   mode?: 'fast' | 'normal';
   parallel?: number | boolean;
   fromStage?: 'rag' | 'analysis' | 'summary' | 'plan' | 'generate';
-  exportPptx?: boolean;
 }
 
 export interface Paper2SlidesJobStartResponse {
@@ -28,22 +27,12 @@ export interface Paper2SlidesJobStatusResponse {
   status: Paper2SlidesJobStatus;
   result?: {
     pdfPath?: string;
-    pptxPath?: string;
     slideImages?: string[];
     htmlPath?: string;
   };
   error?: string;
   createdAt: string;
   updatedAt: string;
-}
-
-export interface Paper2SlidesPptxExportRequest {
-  workspaceId: string;
-  fileId: number;
-}
-
-export interface Paper2SlidesPptxExportResponse {
-  pptxPath: string;
 }
 
 export const startPaper2SlidesJob = async (
@@ -68,21 +57,6 @@ export const getPaper2SlidesJob = async (
   if (!response.ok) {
     const details = await response.json().catch(() => ({}));
     throw new Error(details?.error || 'Failed to fetch Paper2Slides job');
-  }
-  return response.json();
-};
-
-export const exportPaper2SlidesPptx = async (
-  payload: Paper2SlidesPptxExportRequest,
-): Promise<Paper2SlidesPptxExportResponse> => {
-  const response = await apiFetch(`${API_URL}/agent/paper2slides/export-pptx`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  if (!response.ok) {
-    const details = await response.json().catch(() => ({}));
-    throw new Error(details?.error || 'Failed to export PPTX');
   }
   return response.json();
 };

@@ -32,7 +32,7 @@ import {
   getAttachmentPrepJob,
   type AttachmentPrepJob,
 } from '../../services/attachmentPrepApi';
-import { startPaper2SlidesJob, getPaper2SlidesJob, exportPaper2SlidesPptx } from '../../services/paper2SlidesJobApi';
+import { startPaper2SlidesJob, getPaper2SlidesJob } from '../../services/paper2SlidesJobApi';
 import {
   cancelRun,
   fetchSlashMetadata,
@@ -598,7 +598,6 @@ export default function WorkspacePage() {
     length: 'medium',
     mode: 'fast',
     parallel: 2,
-    exportPptx: false,
   });
   const [presentationStatus, setPresentationStatus] = useState<'idle' | 'running' | 'success' | 'error'>('idle');
   const [isPresentationModalOpen, setIsPresentationModalOpen] = useState(false);
@@ -608,7 +607,6 @@ export default function WorkspacePage() {
   const [isLandingWorkspacePickerOpen, setIsLandingWorkspacePickerOpen] = useState(false);
   const [landingWorkspaceQuery, setLandingWorkspaceQuery] = useState('');
   const [draftPresentationOptions, setDraftPresentationOptions] = useState<PresentationOptionsState | null>(null);
-  const [isPptxExporting, setIsPptxExporting] = useState(false);
   const streamAbortMapRef = useRef<Map<string, AbortController>>(new Map());
   const presentationJobPollsRef = useRef<Map<string, number>>(new Map());
   const pendingPresentationJobsRef = useRef<Map<string, Array<{ jobId: string; label: string }>>>(new Map());
@@ -1233,7 +1231,6 @@ export default function WorkspacePage() {
         ? presentationOptions.customStyle.trim() || 'Custom'
         : presentationOptions.stylePreset.charAt(0).toUpperCase() + presentationOptions.stylePreset.slice(1),
       presentationOptions.content === 'paper' ? 'Paper' : 'General',
-      presentationOptions.exportPptx ? 'PPTX' : '',
     ];
     return parts.filter(Boolean).join(' · ');
   }, [presentationOptions]);
@@ -2654,48 +2651,6 @@ export default function WorkspacePage() {
     updateMessagesForConversation(conversationId, (prev) => [...prev, systemMessage]);
     agentMessageBufferRef.current.set(systemMessage.id, systemMessage.text || '');
   }, [activeConversationId, updateMessagesForConversation]);
-
-  const handleExportPptxFromPdf = useCallback(async () => {
-    if (!selectedWorkspace || !activeFile) {
-      addLocalSystemMessage('Select a PDF file to export.');
-      return;
-    }
-    if (!isPdfFile) {
-      addLocalSystemMessage('Select a PDF file to export.');
-      return;
-    }
-    const fileId = toNumericFileId(activeFile.id);
-    if (!fileId) {
-      addLocalSystemMessage('Unable to export this file.');
-      return;
-    }
-    if (isPptxExporting) {
-      return;
-    }
-    setIsPptxExporting(true);
-    addLocalSystemMessage('Exporting PPTX from PDF...');
-    try {
-      const response = await exportPaper2SlidesPptx({
-        workspaceId: selectedWorkspace.id,
-        fileId,
-      });
-      await loadFilesForWorkspace(selectedWorkspace.id);
-      addLocalSystemMessage(`PPTX export complete: ${response.pptxPath}`);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to export PPTX.';
-      addLocalSystemMessage(message);
-    } finally {
-      setIsPptxExporting(false);
-    }
-  }, [
-    activeFile,
-    addLocalSystemMessage,
-    isPdfFile,
-    isPptxExporting,
-    loadFilesForWorkspace,
-    selectedWorkspace,
-    toNumericFileId,
-  ]);
 
   const ensureConversation = useCallback(async (workspaceOverride?: Workspace | null) => {
     const targetWorkspaceId = workspaceOverride?.id || selectedWorkspace?.id || null;
@@ -5712,7 +5667,6 @@ export default function WorkspacePage() {
           mode: presentationOptions.mode,
           parallel: presentationOptions.parallel,
           fromStage: presentationOptions.fromStage,
-          exportPptx: presentationOptions.exportPptx,
         });
         addPendingPresentationPlaceholder(startResponse.jobId, workspaceId, presentationLabel);
         const jobLabel = `Paper2Slides job ${startResponse.jobId.slice(0, 8)}`;
@@ -5737,18 +5691,12 @@ export default function WorkspacePage() {
 
         const finalizeMessage = async (
           status: 'completed' | 'failed',
-          payload?: { pdfPath?: string; pptxPath?: string; slideImages?: string[]; htmlPath?: string; error?: string },
+          payload?: { pdfPath?: string; slideImages?: string[]; htmlPath?: string; error?: string },
           finishedAt?: string,
         ) => {
           const outputFiles: ToolOutputFile[] = [];
           if (payload?.pdfPath) {
             outputFiles.push({ path: payload.pdfPath, mimeType: 'application/pdf' });
-          }
-          if (payload?.pptxPath) {
-            outputFiles.push({
-              path: payload.pptxPath,
-              mimeType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-            });
           }
           if (payload?.slideImages?.length) {
             payload.slideImages.forEach((path) => outputFiles.push({ path, mimeType: 'image/png' }));
@@ -5882,7 +5830,6 @@ export default function WorkspacePage() {
       presentationOptions.mode,
       presentationOptions.output,
       presentationOptions.parallel,
-      presentationOptions.exportPptx,
       presentationOptions.stylePreset,
       presentationOptions.customStyle,
       presentationOptions.fromStage,
@@ -7477,20 +7424,6 @@ export default function WorkspacePage() {
                             <Download size={16} className={isDarkMode ? 'text-slate-300' : 'text-gray-600'} />
                           </button>
                         </>
-                      )}
-                      {isPdfFile && (
-                        <button
-                          type="button"
-                          className={`h-8 px-3 inline-flex items-center justify-center gap-2 rounded-lg text-xs font-medium disabled:opacity-50 ${
-                            isDarkMode ? 'text-slate-200 hover:bg-slate-800' : 'text-slate-700 hover:bg-gray-200'
-                          }`}
-                          onClick={handleExportPptxFromPdf}
-                          disabled={!activeFile || isPptxExporting}
-                          title="Export PPTX from PDF"
-                        >
-                          {isPptxExporting ? <Loader2 size={13} className="animate-spin" /> : null}
-                          {isPptxExporting ? 'Exporting PPTX' : 'Export PPTX'}
-                        </button>
                       )}
                       {!shouldForceEditMode(selectedFile?.name || '') && (
                         <button

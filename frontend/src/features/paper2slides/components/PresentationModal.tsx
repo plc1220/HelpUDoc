@@ -136,18 +136,6 @@ export default function PresentationModal({
             </select>
           </label>
         </div>
-        <div className="mt-3 flex flex-wrap items-center gap-3 text-xs font-semibold text-slate-600">
-          <label className="inline-flex items-center gap-2">
-            <input
-              type="checkbox"
-              className="h-4 w-4 rounded border-slate-300 text-blue-600"
-              checked={draft.exportPptx}
-              onChange={(event) => onChange('exportPptx', event.target.checked)}
-            />
-            <span>Export PPTX (slow)</span>
-          </label>
-          <span className="text-[11px] text-slate-500">Run after slide render. You can also export later from a PDF.</span>
-        </div>
         {showCustomStyle && (
           <div className="mt-3">
             <label className="text-xs font-semibold text-slate-600">Style prompt</label>

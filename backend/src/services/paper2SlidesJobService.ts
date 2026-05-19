@@ -22,7 +22,6 @@ type Paper2SlidesJob = {
   error?: string;
   result?: {
     pdfPath?: string;
-    pptxPath?: string;
     slideImages?: string[];
     htmlPath?: string;
   };
@@ -175,7 +174,6 @@ export class Paper2SlidesJobService {
           mode: job.options.mode,
           parallel: job.options.parallel,
           fromStage: job.options.fromStage,
-          exportPptx: job.options.exportPptx,
         },
         jobId,
       );

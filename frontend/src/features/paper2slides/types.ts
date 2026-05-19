@@ -15,5 +15,4 @@ export type PresentationOptionsState = {
   mode: 'fast' | 'normal';
   parallel: number;
   fromStage?: Paper2SlidesStage;
-  exportPptx: boolean;
 };

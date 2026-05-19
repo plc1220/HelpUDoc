@@ -79,6 +79,30 @@ def _dict_has_keys(value: Any, keys: set[str]) -> bool:
     return isinstance(value, dict) and any(key in value for key in keys)
 
 
+def _parse_json_list_arg(raw: Any) -> List[Any]:
+    if isinstance(raw, list):
+        return raw
+    if raw is None:
+        return []
+    try:
+        parsed = json.loads(str(raw or "[]"))
+    except (TypeError, json.JSONDecodeError):
+        return []
+    return parsed if isinstance(parsed, list) else []
+
+
+def _parse_json_dict_arg(raw: Any) -> Dict[str, Any]:
+    if isinstance(raw, dict):
+        return raw
+    if raw is None:
+        return {}
+    try:
+        parsed = json.loads(str(raw or "{}"))
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
 def _interrupt_with_retry(
     payload: Dict[str, Any],
     *,
@@ -835,15 +859,15 @@ class ToolFactory:
         def request_clarification(
             title: str,
             description: str = "",
-            options_json: str = "[]",
-            questions_json: str = "[]",
+            options_json: Any = "[]",
+            questions_json: Any = "[]",
             allow_freeform: bool = True,
             multi_select: bool = False,
             placeholder: str = "",
             submit_label: str = "Continue",
             step_index: int = 0,
             step_count: int = 1,
-            context_json: str = "{}",
+            context_json: Any = "{}",
         ) -> str:
             """Ask the human for clarification with optional selectable choices and typed feedback."""
             prompt_title = (title or "").strip()
@@ -852,10 +876,7 @@ class ToolFactory:
                 return "Clarification request blocked: title is required."
 
             parsed_choices: List[Dict[str, str]] = []
-            try:
-                raw_options = json.loads(options_json or "[]")
-            except json.JSONDecodeError:
-                raw_options = []
+            raw_options = _parse_json_list_arg(options_json)
             if isinstance(raw_options, list):
                 for index, item in enumerate(raw_options):
                     if isinstance(item, str) and item.strip():
@@ -885,10 +906,7 @@ class ToolFactory:
                         )
 
             parsed_questions: List[Dict[str, Any]] = []
-            try:
-                raw_questions = json.loads(questions_json or "[]")
-            except json.JSONDecodeError:
-                raw_questions = []
+            raw_questions = _parse_json_list_arg(questions_json)
             if isinstance(raw_questions, list):
                 for index, item in enumerate(raw_questions):
                     if not isinstance(item, dict):
@@ -942,13 +960,7 @@ class ToolFactory:
                 elif parsed_choices:
                     input_mode = "choice"
 
-            display_payload: Dict[str, Any] = {}
-            try:
-                parsed_context = json.loads(context_json or "{}")
-                if isinstance(parsed_context, dict):
-                    display_payload = parsed_context
-            except json.JSONDecodeError:
-                display_payload = {}
+            display_payload = _parse_json_dict_arg(context_json)
 
             action_choices = [] if parsed_questions else parsed_choices
             interrupt_payload = {
