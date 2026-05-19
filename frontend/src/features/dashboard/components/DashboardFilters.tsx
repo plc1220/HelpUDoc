@@ -134,7 +134,7 @@ const DashboardFilters = ({ filters, datasetSchema, allRows, values, onChange }:
         </div>
       );
     });
-  }, [allRows, datasetSchema, filters, values]);
+  }, [allRows, datasetSchema, filters, onChange, values]);
 
   if (!filters.length) {
     return null;

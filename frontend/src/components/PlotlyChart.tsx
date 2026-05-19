@@ -25,19 +25,18 @@ const PlotlyChart = ({ spec, className, minHeight = 320 }: PlotlyChartProps) => 
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isRuntimeReady, setIsRuntimeReady] = useState(false);
 
-  const data = Array.isArray(spec?.data) ? spec.data : [];
-  const layout = spec?.layout && typeof spec.layout === 'object' ? spec.layout : {};
-  const config = spec?.config && typeof spec.config === 'object' ? spec.config : {};
-  const frames = Array.isArray(spec?.frames) ? spec.frames : undefined;
-  const figure = useMemo(
-    () => ({
+  const figure = useMemo(() => {
+    const data = Array.isArray(spec?.data) ? spec.data : [];
+    const layout = spec?.layout && typeof spec.layout === 'object' ? spec.layout : {};
+    const config = spec?.config && typeof spec.config === 'object' ? spec.config : {};
+    const frames = Array.isArray(spec?.frames) ? spec.frames : undefined;
+    return {
       data,
       layout: { autosize: true, ...layout },
       config: { displaylogo: false, responsive: true, ...config },
       frames,
-    }),
-    [config, data, frames, layout],
-  );
+    };
+  }, [spec]);
 
   useEffect(() => {
     let cancelled = false;
@@ -60,13 +59,6 @@ const PlotlyChart = ({ spec, className, minHeight = 320 }: PlotlyChartProps) => 
     return () => {
       cancelled = true;
       setIsRuntimeReady(false);
-      if (plotlyRef.current && containerRef.current) {
-        try {
-          plotlyRef.current.purge(containerRef.current);
-        } catch (error) {
-          console.warn('Failed to purge Plotly chart', error);
-        }
-      }
     };
   }, []);
 
@@ -87,6 +79,14 @@ const PlotlyChart = ({ spec, className, minHeight = 320 }: PlotlyChartProps) => 
 
     return () => {
       cancelled = true;
+      const runtime = plotlyRef.current;
+      if (runtime && el) {
+        try {
+          runtime.purge(el);
+        } catch (error) {
+          console.warn('Failed to purge Plotly chart', error);
+        }
+      }
     };
   }, [figure, isRuntimeReady, loadError]);
 

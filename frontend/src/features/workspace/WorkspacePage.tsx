@@ -1014,7 +1014,7 @@ export default function WorkspacePage() {
       placeholderId: message.id,
       status: status.status,
     };
-  }, [getRunStatus]);
+  }, []);
 
   const markRunStreamLaunching = useCallback((runId: string) => {
     resumeAttemptedRef.current.add(runId);
@@ -1434,9 +1434,10 @@ export default function WorkspacePage() {
   }, []);
 
   useEffect(() => {
+    const polls = presentationJobPollsRef.current;
     return () => {
-      presentationJobPollsRef.current.forEach((timerId) => window.clearInterval(timerId));
-      presentationJobPollsRef.current.clear();
+      polls.forEach((timerId) => window.clearInterval(timerId));
+      polls.clear();
     };
   }, []);
 
@@ -1470,7 +1471,6 @@ export default function WorkspacePage() {
   const isMarkdownFile = !!activeFile && MARKDOWN_FILE_EXTENSIONS.some((ext) => normalizedFileName.endsWith(ext));
   const isHtmlFile = !!activeFile && HTML_FILE_EXTENSIONS.some((ext) => normalizedFileName.endsWith(ext));
   const isImageFile = !!activeFile && IMAGE_FILE_EXTENSIONS.some((ext) => normalizedFileName.endsWith(ext));
-  const isPdfFile = !!activeFile && (normalizedFileName.endsWith('.pdf') || activeFile?.mimeType === 'application/pdf');
   const canPrintOrDownloadFile = Boolean(activeFile && (isMarkdownFile || isHtmlFile));
   const canCopyImageUrl = Boolean(isImageFile && activeFile?.publicUrl);
   const canvasBlocks = useMemo<UIBlock[]>(() => {
@@ -2737,98 +2737,6 @@ export default function WorkspacePage() {
     [],
   );
 
-  async function launchPreparedAgentRun(params: {
-    workspaceId: string;
-    persona: string;
-    conversationId: string;
-    turnId: string;
-    prompt: string;
-    historyPayload: Array<{ role: string; content: string }>;
-    fileContextRefs?: FileContextRef[];
-    currentTurnFileIds?: number[];
-    taggedFiles?: string[];
-    internetSearchEnabled?: boolean;
-  }) {
-    const {
-      workspaceId,
-      persona,
-      conversationId,
-      turnId,
-      prompt,
-      historyPayload,
-      fileContextRefs,
-      currentTurnFileIds,
-      taggedFiles,
-      internetSearchEnabled,
-    } = params;
-    const { runId } = await startAgentRun(
-      workspaceId,
-      conversationId,
-      persona,
-      prompt,
-      historyPayload.length ? historyPayload : undefined,
-      turnId,
-      {
-        forceReset: true,
-        taggedFiles,
-        fileContextRefs,
-        currentTurnFileIds,
-        internetSearchEnabled,
-      },
-    );
-    if (STREAM_DEBUG_ENABLED) {
-      console.debug('[WorkspacePage] run started', { runId, conversationId });
-    }
-    const placeholderId = `agent-${runId}`;
-    ensureAgentPlaceholder(conversationId, placeholderId, turnId, true);
-    agentMessageBufferRef.current.set(placeholderId, '');
-    const runInfo: ActiveRunInfo = {
-      runId,
-      conversationId,
-      workspaceId,
-      persona,
-      turnId,
-      placeholderId,
-      status: 'running',
-    };
-    markRunStreamLaunching(runId);
-    registerActiveRun(runInfo);
-    setConversationAttention(conversationId, 'running', 'Queued the latest run...');
-    await streamRunForConversation(runInfo, true);
-
-    const messagesSnapshot = getConversationMessagesSnapshot(conversationId);
-    const targetIndex = messagesSnapshot.findIndex((message) => message.id === placeholderId);
-    const agentMessage = targetIndex >= 0 ? messagesSnapshot[targetIndex] : null;
-    const metadata = buildMessageMetadata(agentMessage) || {};
-    const bufferedText =
-      placeholderId !== null && placeholderId !== undefined
-        ? agentMessageBufferRef.current.get(placeholderId) ?? agentMessage?.text
-        : agentMessage?.text;
-    const placeholderTurnId = agentMessage?.turnId || turnId;
-    if (bufferedText) {
-      try {
-        const persisted = await appendConversationMessage(conversationId, 'agent', bufferedText, {
-          turnId: placeholderTurnId,
-          metadata: { ...metadata, runId },
-          replaceExisting: true,
-        });
-        upsertPersistedAgentMessage(conversationId, persisted, {
-          placeholderId,
-          existing: agentMessage,
-        });
-        if (placeholderId !== null && placeholderId !== undefined) {
-          agentMessageBufferRef.current.delete(placeholderId);
-        }
-        agentMessageBufferRef.current.set(persisted.id, persisted.text || '');
-        await refreshConversationHistory(workspaceId);
-      } catch (error) {
-        console.error('Failed to store agent message', error);
-      }
-    } else if (placeholderId !== null && placeholderId !== undefined) {
-      agentMessageBufferRef.current.delete(placeholderId);
-    }
-  }
-
   useEffect(() => {
     const loadConversations = async () => {
       if (!selectedWorkspace) {
@@ -2862,103 +2770,6 @@ export default function WorkspacePage() {
     };
     fetchWorkspaces();
   }, []);
-
-  useEffect(() => {
-    if (!selectedWorkspace?.id || !activeConversationId) {
-      return;
-    }
-    const workspaceId = selectedWorkspace.id;
-    const conversationId = activeConversationId;
-    const messagesForConversation = conversationMessages[conversationId] || [];
-    const pendingMessages = messagesForConversation.filter((message) => {
-      if (message.sender !== 'user' || !message.turnId) {
-        return false;
-      }
-      const metadata = message.metadata as ConversationMessageMetadata | undefined;
-      return Boolean(
-        metadata?.attachmentJobId
-        && (metadata.attachmentPrepStatus === 'pending' || metadata.attachmentPrepStatus === 'running'),
-      );
-    });
-    pendingMessages.forEach((message) => {
-      const metadata = message.metadata as ConversationMessageMetadata | undefined;
-      const jobId = metadata?.attachmentJobId;
-      if (!jobId || attachmentPrepResumeRef.current.has(jobId)) {
-        return;
-      }
-      attachmentPrepResumeRef.current.add(jobId);
-      void (async () => {
-        try {
-          const turnId = message.turnId;
-          if (!turnId) {
-            return;
-          }
-          setIsDriveImporting(true);
-          const settledJob = await waitForAttachmentPrepJob(workspaceId, jobId);
-          if (settledJob.status === 'failed') {
-            await persistUserMessageMetadata(conversationId, message, {
-              ...(metadata || {}),
-              attachmentJobId: jobId,
-              attachmentPrepStatus: 'failed',
-              attachmentPrepError: settledJob.error || 'Failed to prepare attachments.',
-            });
-            return;
-          }
-          const readyRefs = settledJob.result?.fileContextRefs?.length
-            ? settledJob.result.fileContextRefs
-            : undefined;
-          await persistUserMessageMetadata(conversationId, message, {
-            ...(metadata || {}),
-            attachmentJobId: jobId,
-            attachmentPrepStatus: 'ready',
-            attachmentPrepError: undefined,
-            fileContextRefs: readyRefs,
-          });
-          const agentExistsForTurn = getConversationMessagesSnapshot(conversationId).some(
-            (candidate) => candidate.sender === 'agent' && candidate.turnId === message.turnId,
-          );
-          if (agentExistsForTurn) {
-            return;
-          }
-          const updatedMessages = getConversationMessagesSnapshot(conversationId);
-          const historyPayload = mapMessagesToAgentHistory(updatedMessages);
-          const directive = parseSlashDirective(message.text.trim());
-          const agentPromptBase = buildAgentPromptFromDirective(directive) || message.text;
-          const attachmentPrompt = readyRefs?.length
-            ? `Use these attached files as primary context: ${readyRefs.map((ref) => ref.sourceName).join(', ')}`
-            : '';
-          await launchPreparedAgentRun({
-            workspaceId,
-            persona: normalizePersonaName(activeConversationPersona || selectedPersona || DEFAULT_PERSONA_NAME),
-            conversationId,
-            turnId,
-            prompt: attachmentPrompt
-              ? `${agentPromptBase}${agentPromptBase ? '\n\n' : ''}${attachmentPrompt}`
-              : agentPromptBase,
-            historyPayload,
-            fileContextRefs: readyRefs,
-            currentTurnFileIds: settledJob.result?.multimodalFileIds,
-            taggedFiles: readyRefs?.map((ref) => ref.sourceName).filter(Boolean),
-          });
-        } catch (error) {
-          console.error('Failed to resume attachment prep job', error);
-        } finally {
-          attachmentPrepResumeRef.current.delete(jobId);
-          setIsDriveImporting(false);
-        }
-      })();
-    });
-  }, [
-    activeConversationId,
-    activeConversationPersona,
-    conversationMessages,
-    getConversationMessagesSnapshot,
-    launchPreparedAgentRun,
-    persistUserMessageMetadata,
-    selectedPersona,
-    selectedWorkspace?.id,
-    waitForAttachmentPrepJob,
-  ]);
 
   useEffect(() => {
     if (!selectedWorkspace) {
@@ -3075,7 +2886,7 @@ export default function WorkspacePage() {
     lastAutoSavedContentRef.current = draftContent;
   }, [files, selectedWorkspace]);
 
-  const fetchFileContent = async () => {
+  const fetchFileContent = useCallback(async () => {
     const requestId = fileContentRequestIdRef.current + 1;
     fileContentRequestIdRef.current = requestId;
     const isCurrentRequest = () => fileContentRequestIdRef.current === requestId;
@@ -3115,11 +2926,11 @@ export default function WorkspacePage() {
       setSelectedFileDetails(null);
       lastAutoSavedContentRef.current = '';
     }
-  };
+  }, [selectedDashboardPath, selectedFile, selectedWorkspace]);
 
   useEffect(() => {
-    fetchFileContent();
-  }, [selectedDashboardPath, selectedFile, selectedWorkspace]);
+    void fetchFileContent();
+  }, [fetchFileContent]);
 
   useEffect(() => {
     if (!selectedWorkspace || !selectedDashboardPath) {
@@ -3243,7 +3054,7 @@ export default function WorkspacePage() {
     [activeConversationId, cancelStreamForConversation, removeActiveRun],
   );
 
-  const updateToolEvents = (
+  const updateToolEvents = useCallback((
     conversationId: string,
     index: number,
     updater: (events: ToolEvent[]) => ToolEvent[],
@@ -3261,9 +3072,9 @@ export default function WorkspacePage() {
       };
       return updated;
     });
-  };
+  }, [updateMessagesForConversation]);
 
-  const updateMessageMetadataAtIndex = (
+  const updateMessageMetadataAtIndex = useCallback((
     conversationId: string,
     index: number,
     updater: (metadata: ConversationMessageMetadata) => ConversationMessageMetadata,
@@ -3282,7 +3093,7 @@ export default function WorkspacePage() {
       };
       return updated;
     });
-  };
+  }, [updateMessagesForConversation]);
 
   const createToolEvent = (name: string, status: ToolEvent['status'] = 'running'): ToolEvent => ({
     id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
@@ -3291,7 +3102,7 @@ export default function WorkspacePage() {
     startedAt: new Date().toISOString(),
   });
 
-  const appendAgentThought = (conversationId: string, index: number, chunk: string) => {
+  const appendAgentThought = useCallback((conversationId: string, index: number, chunk: string) => {
     if (!chunk || index < 0) {
       return;
     }
@@ -3307,7 +3118,7 @@ export default function WorkspacePage() {
       };
       return updated;
     });
-  };
+  }, [updateMessagesForConversation]);
 
   const truncateToolOutput = (text: string, maxLength = 200) => {
     if (text.length <= maxLength) {
@@ -3332,7 +3143,7 @@ export default function WorkspacePage() {
     return byPath.size ? [...byPath.values()] : undefined;
   };
 
-  const appendToolStart = (conversationId: string, index: number, chunk: AgentStreamChunk & { type: 'tool_start' }) => {
+  const appendToolStart = useCallback((conversationId: string, index: number, chunk: AgentStreamChunk & { type: 'tool_start' }) => {
     const label = chunk.name || chunk.content || 'tool';
     const relatedFiles = mergeToolFiles(extractToolPathFiles(chunk.content));
     updateToolEvents(conversationId, index, (events) => [
@@ -3342,9 +3153,9 @@ export default function WorkspacePage() {
         relatedFiles,
       },
     ]);
-  };
+  }, [updateToolEvents]);
 
-  const appendToolEnd = (
+  const appendToolEnd = useCallback((
     conversationId: string,
     index: number,
     chunk: (AgentStreamChunk & { type: 'tool_end' | 'tool_error' }),
@@ -3393,7 +3204,7 @@ export default function WorkspacePage() {
       };
       return next;
     });
-  };
+  }, [updateToolEvents]);
 
   const combineBufferedAgentText = useCallback(
     (conversationId: string, existingText: string, nextChunk: string): string => {
@@ -3868,17 +3679,17 @@ export default function WorkspacePage() {
             },
       );
     },
-    [findAgentMessageIndexForRun, persistAgentProgress, updateMessageMetadataAtIndex],
+    [findAgentMessageIndexForRun, persistAgentProgress, updateMessageMetadataAtIndex, updateToolEvents],
   );
 
-  const bufferAgentChunk = (conversationId: string, index: number, chunk: string) => {
+  const bufferAgentChunk = useCallback((conversationId: string, index: number, chunk: string) => {
     if (!conversationId || !chunk || index < 0) {
       return;
     }
     const conversationBuffer = agentChunkBufferRef.current.get(conversationId) ?? new Map();
     conversationBuffer.set(index, `${conversationBuffer.get(index) || ''}${chunk}`);
     agentChunkBufferRef.current.set(conversationId, conversationBuffer);
-  };
+  }, []);
 
   useEffect(() => {
     if (agentChunkFlushTimerRef.current !== null) {
@@ -3995,7 +3806,7 @@ export default function WorkspacePage() {
       const name = typeof config?.action_name === 'string' ? config.action_name.trim().toLowerCase() : '';
       return name === 'request_plan_approval' || (name.includes('plan') && name.includes('approval'));
     });
-  }, [getInterruptKind, getPrimaryInterruptAction]);
+  }, [getInterruptKind]);
 
   const interruptFieldKey = useCallback((
     messageKey: string,
@@ -4197,7 +4008,7 @@ export default function WorkspacePage() {
     [waitForInterruptResumeReady],
   );
 
-  const handleStreamChunk = (
+  const handleStreamChunk = useCallback((
     conversationId: string,
     agentMessageIndex: number,
     chunk: AgentStreamChunk,
@@ -4340,7 +4151,7 @@ export default function WorkspacePage() {
       if (chunk.role && chunk.role !== 'assistant') {
         return;
       }
-      appendAgentChunk(conversationId, agentMessageIndex, chunk.content || '');
+      bufferAgentChunk(conversationId, agentMessageIndex, chunk.content || '');
       return;
     }
 
@@ -4352,7 +4163,16 @@ export default function WorkspacePage() {
     if (chunk.type === 'error') {
       setConversationAttention(conversationId, 'failed', chunk.message || 'Agent stream failed.');
     }
-  };
+  }, [
+    appendAgentThought,
+    appendToolEnd,
+    appendToolStart,
+    bufferAgentChunk,
+    mergeDashboardArtifact,
+    setConversationAttention,
+    setStreamingForConversation,
+    updateMessageMetadataAtIndex,
+  ]);
 
   const streamRunForConversation = useCallback(
     async (runInfo: ActiveRunInfo, replayFromStart = false, resumeAfterId?: string) => {
@@ -4609,16 +4429,217 @@ export default function WorkspacePage() {
       ensureAgentPlaceholder,
       handleStreamChunk,
       flushBufferedAgentChunks,
-      getBufferedAgentState,
       findAgentMessageIndexForRun,
-      getRunStatus,
-      addLocalSystemMessage,
       removeActiveRun,
       removeActiveRunsForTurn,
       selectedWorkspace?.id,
       loadFilesForWorkspace,
+      setConversationAttention,
+      setStreamingForConversation,
+      syncRunStateToConversation,
+      updateMessageMetadataAtIndex,
     ],
   );
+
+  const launchPreparedAgentRun = useCallback(async (params: {
+    workspaceId: string;
+    persona: string;
+    conversationId: string;
+    turnId: string;
+    prompt: string;
+    historyPayload: Array<{ role: string; content: string }>;
+    fileContextRefs?: FileContextRef[];
+    currentTurnFileIds?: number[];
+    taggedFiles?: string[];
+    internetSearchEnabled?: boolean;
+  }) => {
+    const {
+      workspaceId,
+      persona,
+      conversationId,
+      turnId,
+      prompt,
+      historyPayload,
+      fileContextRefs,
+      currentTurnFileIds,
+      taggedFiles,
+      internetSearchEnabled,
+    } = params;
+    const { runId } = await startAgentRun(
+      workspaceId,
+      conversationId,
+      persona,
+      prompt,
+      historyPayload.length ? historyPayload : undefined,
+      turnId,
+      {
+        forceReset: true,
+        taggedFiles,
+        fileContextRefs,
+        currentTurnFileIds,
+        internetSearchEnabled,
+      },
+    );
+    if (STREAM_DEBUG_ENABLED) {
+      console.debug('[WorkspacePage] run started', { runId, conversationId });
+    }
+    const placeholderId = `agent-${runId}`;
+    ensureAgentPlaceholder(conversationId, placeholderId, turnId, true);
+    agentMessageBufferRef.current.set(placeholderId, '');
+    const runInfo: ActiveRunInfo = {
+      runId,
+      conversationId,
+      workspaceId,
+      persona,
+      turnId,
+      placeholderId,
+      status: 'running',
+    };
+    markRunStreamLaunching(runId);
+    registerActiveRun(runInfo);
+    setConversationAttention(conversationId, 'running', 'Queued the latest run...');
+    await streamRunForConversation(runInfo, true);
+
+    const messagesSnapshot = getConversationMessagesSnapshot(conversationId);
+    const targetIndex = messagesSnapshot.findIndex((message) => message.id === placeholderId);
+    const agentMessage = targetIndex >= 0 ? messagesSnapshot[targetIndex] : null;
+    const metadata = buildMessageMetadata(agentMessage) || {};
+    const bufferedText =
+      placeholderId !== null && placeholderId !== undefined
+        ? agentMessageBufferRef.current.get(placeholderId) ?? agentMessage?.text
+        : agentMessage?.text;
+    const placeholderTurnId = agentMessage?.turnId || turnId;
+    if (bufferedText) {
+      try {
+        const persisted = await appendConversationMessage(conversationId, 'agent', bufferedText, {
+          turnId: placeholderTurnId,
+          metadata: { ...metadata, runId },
+          replaceExisting: true,
+        });
+        upsertPersistedAgentMessage(conversationId, persisted, {
+          placeholderId,
+          existing: agentMessage,
+        });
+        if (placeholderId !== null && placeholderId !== undefined) {
+          agentMessageBufferRef.current.delete(placeholderId);
+        }
+        agentMessageBufferRef.current.set(persisted.id, persisted.text || '');
+        await refreshConversationHistory(workspaceId);
+      } catch (error) {
+        console.error('Failed to store agent message', error);
+      }
+    } else if (placeholderId !== null && placeholderId !== undefined) {
+      agentMessageBufferRef.current.delete(placeholderId);
+    }
+  }, [
+    ensureAgentPlaceholder,
+    getConversationMessagesSnapshot,
+    markRunStreamLaunching,
+    refreshConversationHistory,
+    registerActiveRun,
+    setConversationAttention,
+    streamRunForConversation,
+    upsertPersistedAgentMessage,
+  ]);
+
+  useEffect(() => {
+    if (!selectedWorkspace?.id || !activeConversationId) {
+      return;
+    }
+    const workspaceId = selectedWorkspace.id;
+    const conversationId = activeConversationId;
+    const messagesForConversation = conversationMessages[conversationId] || [];
+    const pendingMessages = messagesForConversation.filter((message) => {
+      if (message.sender !== 'user' || !message.turnId) {
+        return false;
+      }
+      const metadata = message.metadata as ConversationMessageMetadata | undefined;
+      return Boolean(
+        metadata?.attachmentJobId
+        && (metadata.attachmentPrepStatus === 'pending' || metadata.attachmentPrepStatus === 'running'),
+      );
+    });
+    pendingMessages.forEach((message) => {
+      const metadata = message.metadata as ConversationMessageMetadata | undefined;
+      const jobId = metadata?.attachmentJobId;
+      if (!jobId || attachmentPrepResumeRef.current.has(jobId)) {
+        return;
+      }
+      attachmentPrepResumeRef.current.add(jobId);
+      void (async () => {
+        try {
+          const turnId = message.turnId;
+          if (!turnId) {
+            return;
+          }
+          setIsDriveImporting(true);
+          const settledJob = await waitForAttachmentPrepJob(workspaceId, jobId);
+          if (settledJob.status === 'failed') {
+            await persistUserMessageMetadata(conversationId, message, {
+              ...(metadata || {}),
+              attachmentJobId: jobId,
+              attachmentPrepStatus: 'failed',
+              attachmentPrepError: settledJob.error || 'Failed to prepare attachments.',
+            });
+            return;
+          }
+          const readyRefs = settledJob.result?.fileContextRefs?.length
+            ? settledJob.result.fileContextRefs
+            : undefined;
+          await persistUserMessageMetadata(conversationId, message, {
+            ...(metadata || {}),
+            attachmentJobId: jobId,
+            attachmentPrepStatus: 'ready',
+            attachmentPrepError: undefined,
+            fileContextRefs: readyRefs,
+          });
+          const agentExistsForTurn = getConversationMessagesSnapshot(conversationId).some(
+            (candidate) => candidate.sender === 'agent' && candidate.turnId === message.turnId,
+          );
+          if (agentExistsForTurn) {
+            return;
+          }
+          const updatedMessages = getConversationMessagesSnapshot(conversationId);
+          const historyPayload = mapMessagesToAgentHistory(updatedMessages);
+          const directive = parseSlashDirective(message.text.trim());
+          const agentPromptBase = buildAgentPromptFromDirective(directive) || message.text;
+          const attachmentPrompt = readyRefs?.length
+            ? `Use these attached files as primary context: ${readyRefs.map((ref) => ref.sourceName).join(', ')}`
+            : '';
+          await launchPreparedAgentRun({
+            workspaceId,
+            persona: normalizePersonaName(activeConversationPersona || selectedPersona || DEFAULT_PERSONA_NAME),
+            conversationId,
+            turnId,
+            prompt: attachmentPrompt
+              ? `${agentPromptBase}${agentPromptBase ? '\n\n' : ''}${attachmentPrompt}`
+              : agentPromptBase,
+            historyPayload,
+            fileContextRefs: readyRefs,
+            currentTurnFileIds: settledJob.result?.multimodalFileIds,
+            taggedFiles: readyRefs?.map((ref) => ref.sourceName).filter(Boolean),
+          });
+        } catch (error) {
+          console.error('Failed to resume attachment prep job', error);
+        } finally {
+          attachmentPrepResumeRef.current.delete(jobId);
+          setIsDriveImporting(false);
+        }
+      })();
+    });
+  }, [
+    activeConversationId,
+    activeConversationPersona,
+    buildAgentPromptFromDirective,
+    conversationMessages,
+    getConversationMessagesSnapshot,
+    launchPreparedAgentRun,
+    parseSlashDirective,
+    persistUserMessageMetadata,
+    selectedPersona,
+    selectedWorkspace?.id,
+    waitForAttachmentPrepJob,
+  ]);
 
   const handleInterruptDecision = useCallback(
     async (
@@ -4765,6 +4786,7 @@ export default function WorkspacePage() {
       }
     },
     [
+      activeConversationPersona,
       addLocalSystemMessage,
       fileContent,
       interruptInputByMessageId,
@@ -4774,6 +4796,8 @@ export default function WorkspacePage() {
       getAllowedDecisions,
       isPlanApprovalInterrupt,
       selectedFile,
+      selectedPersona,
+      selectedWorkspace?.id,
       rebuildRunInfoForMessage,
       clearPendingInterruptForRun,
       markRunStreamLaunching,
@@ -4781,6 +4805,7 @@ export default function WorkspacePage() {
       setConversationAttention,
       submitInterruptWithRetry,
       streamRunForConversation,
+      updateMessagesForConversation,
     ],
   );
 
@@ -4913,6 +4938,7 @@ export default function WorkspacePage() {
       }
     },
     [
+      activeConversationPersona,
       addLocalSystemMessage,
       findRunIdForMessage,
       getInterruptKind,
@@ -4921,6 +4947,8 @@ export default function WorkspacePage() {
       interruptStructuredAnswersByMessageId,
       interruptSelectedChoicesByMessageId,
       rebuildRunInfoForMessage,
+      selectedPersona,
+      selectedWorkspace?.id,
       setConversationAttention,
       clearPendingInterruptForRun,
       markRunStreamLaunching,
@@ -5123,6 +5151,7 @@ export default function WorkspacePage() {
       }
     },
     [
+      activeConversationPersona,
       addLocalSystemMessage,
       findRunIdForMessage,
       getInterruptKind,
@@ -5131,6 +5160,8 @@ export default function WorkspacePage() {
       interruptActionFieldKey,
       interruptInputByMessageId,
       rebuildRunInfoForMessage,
+      selectedPersona,
+      selectedWorkspace?.id,
       clearPendingInterruptForRun,
       markRunStreamLaunching,
       registerActiveRun,
@@ -5346,6 +5377,7 @@ export default function WorkspacePage() {
   }, [
     activeConversationId,
     conversationStreaming,
+    ensureAgentPlaceholder,
     findAgentMessageForRun,
     getActiveRunForConversation,
     isAgentMessageEmpty,
@@ -5356,10 +5388,6 @@ export default function WorkspacePage() {
     streamRunForConversation,
     updateMessagesForConversation,
   ]);
-
-  const appendAgentChunk = (conversationId: string, index: number, chunk: string) => {
-    bufferAgentChunk(conversationId, index, chunk);
-  };
 
   const handleRerunMessage = async (
     messageId: ConversationMessage['id'],
@@ -5823,25 +5851,19 @@ export default function WorkspacePage() {
     },
     [
       addLocalSystemMessage,
-      appendConversationMessage,
       loadFilesForWorkspace,
       presentationOptions.content,
       presentationOptions.length,
       presentationOptions.mode,
       presentationOptions.output,
       presentationOptions.parallel,
-      presentationOptions.stylePreset,
-      presentationOptions.customStyle,
       presentationOptions.fromStage,
       refreshConversationHistory,
       resolvePresentationStyle,
       startPresentationProgress,
       stopPresentationProgress,
-      startPaper2SlidesJob,
-      getPaper2SlidesJob,
       removePendingPresentationPlaceholder,
       addPendingPresentationPlaceholder,
-      selectedWorkspace?.id,
       setStreamingForConversation,
       updateMessagesForConversation,
     ],

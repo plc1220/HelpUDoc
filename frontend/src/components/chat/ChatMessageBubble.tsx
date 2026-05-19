@@ -1,7 +1,7 @@
 import { Check, CheckCircle2, Copy, FilePenLine, ImageIcon, Loader2, RotateCcw } from 'lucide-react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { useEffect, useMemo, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react';
+import { useCallback, useEffect, useMemo, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react';
 
 import type {
   ConversationMessage,
@@ -771,7 +771,16 @@ export default function ChatMessageBubble({
   const hasStructuredClarificationForm = isClarificationInterrupt && structuredClarificationQuestions.length > 0;
   const clarificationDraftValue = interruptInputByMessageId[clarificationTextKey] || '';
   const structuredClarificationSubmitActions = interruptActions.filter((action) => action.inputMode === 'text');
-  const structuredAnswerMap = interruptStructuredAnswersByMessageId[messageKey] || {};
+  const structuredAnswerMap = useMemo(
+    () => interruptStructuredAnswersByMessageId[messageKey] || {},
+    [interruptStructuredAnswersByMessageId, messageKey],
+  );
+  const setInterruptValue = useCallback((fieldKey: string, value: string) => {
+    setInterruptInputByMessageId((prev) => ({
+      ...prev,
+      [fieldKey]: value,
+    }));
+  }, [setInterruptInputByMessageId]);
   const hasMultiQuestionClarificationWizard = hasStructuredClarificationForm && structuredClarificationQuestions.length > 1;
   const [wizardStepIndex, setWizardStepIndex] = useState(0);
   const wizardStorageKey = pendingInterrupt?.interruptId
@@ -989,6 +998,7 @@ export default function ChatMessageBubble({
     setInterruptStructuredAnswersByMessageId,
     structuredAnswerMap,
     structuredClarificationQuestions.length,
+    setInterruptValue,
     wizardStorageKey,
   ]);
 
@@ -1015,13 +1025,6 @@ export default function ChatMessageBubble({
     wizardStepIndex,
     wizardStorageKey,
   ]);
-
-  const setInterruptValue = (fieldKey: string, value: string) => {
-    setInterruptInputByMessageId((prev) => ({
-      ...prev,
-      [fieldKey]: value,
-    }));
-  };
 
   const setStructuredAnswer = (questionId: string, value: string) => {
     setInterruptStructuredAnswersByMessageId((prev) => {

@@ -89,8 +89,14 @@ const DashboardCanvas = ({ workspaceId, dashboardPath, onDownloadHtmlExport }: P
   }, [load]);
 
   const schema = spec?.datasetSchema && spec.datasetSchema.length ? spec.datasetSchema : inferSchemaFromRows(rows);
-  const filters = (spec?.filters || []) as DashboardFilterDef[];
-  const chartDefs = (spec?.chartRuntimeDefs || []) as ChartRuntimeDef[];
+  const filters = useMemo(
+    () => (spec?.filters || []) as DashboardFilterDef[],
+    [spec?.filters],
+  );
+  const chartDefs = useMemo(
+    () => (spec?.chartRuntimeDefs || []) as ChartRuntimeDef[],
+    [spec?.chartRuntimeDefs],
+  );
 
   const filteredRows = useMemo(
     () => applyDashboardFilters(rows, filters, filterValues, schema),
