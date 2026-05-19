@@ -102,12 +102,63 @@ test('extracts the trailing question as prompt', () => {
   assert.equal(result.prompt, 'Shall I proceed with Option A?');
 });
 
-test('returns awaiting=false with only one signal (question only, no choices)', () => {
+test('returns awaiting=false with only one signal for non-interactive skill', () => {
   const result = detectImplicitInputAwaiting({
     status: 'completed',
-    skillId: 'frontend-slides',
+    skillId: 'research',
     hadInterrupt: false,
     assistantText: 'Done. Anything else?',
   });
   assert.equal(result.awaiting, false);
+});
+
+test('returns awaiting=true for outline confirmation gate language', () => {
+  const result = detectImplicitInputAwaiting({
+    status: 'completed',
+    skillId: 'frontend-slides',
+    hadInterrupt: false,
+    assistantText: 'Please confirm if this outline looks correct.',
+  });
+  assert.equal(result.awaiting, true);
+});
+
+test('returns awaiting=false for post-deck courtesy refinements question', () => {
+  const result = detectImplicitInputAwaiting({
+    status: 'completed',
+    skillId: 'frontend-slides',
+    hadInterrupt: false,
+    assistantText: 'Your deck is ready. Would you like any refinements?',
+  });
+  assert.equal(result.awaiting, false);
+});
+
+test('detects "using the form above" as phantom UI reference', () => {
+  const result = detectImplicitInputAwaiting({
+    status: 'completed',
+    skillId: 'research',
+    hadInterrupt: false,
+    assistantText: '1. Title Slide\n2. Challenge\n3. Solution\n\nPlease confirm if this outline looks correct using the form above.',
+  });
+  assert.equal(result.awaiting, true);
+});
+
+test('detects numbered list beyond 800 chars when within 1500 char window', () => {
+  const filler = 'A'.repeat(900);
+  const result = detectImplicitInputAwaiting({
+    status: 'completed',
+    skillId: 'frontend-slides',
+    hadInterrupt: false,
+    assistantText: `Here is the outline:\n\n1. Title Slide\n2. Challenge\n3. Solution\n4. Architecture\n5. Business Value\n6. Security\n7. Roadmap\n8. Commercials\n\n${filler}\n\nPlease confirm the outline above.`,
+  });
+  assert.equal(result.awaiting, true);
+});
+
+test('detects "once confirmed" / "after you confirm" patterns', () => {
+  const result = detectImplicitInputAwaiting({
+    status: 'completed',
+    skillId: 'frontend-slides',
+    hadInterrupt: false,
+    assistantText: '1. Title\n2. Body\n3. End\n\nOnce confirmed, we will move to style selection.',
+  });
+  assert.equal(result.awaiting, true);
 });

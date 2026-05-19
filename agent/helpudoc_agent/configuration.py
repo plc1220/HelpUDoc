@@ -102,6 +102,13 @@ class BackendConfig(BaseModel):
             "edit_file": True,
         }
     )
+    implicit_input_guard: bool = Field(
+        default=True,
+        description=(
+            "When true, synthesize a clarification interrupt if a skill turn ends with "
+            "prose that asks for user input but never called request_clarification."
+        ),
+    )
 
     @field_validator("workspace_root", mode="before")
     @classmethod

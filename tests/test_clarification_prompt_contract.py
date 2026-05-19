@@ -30,3 +30,16 @@ def test_frontend_slides_skill_requires_request_clarification_at_gating_steps() 
     assert '"chooser": "style-previews"' in content
     assert '"path": ".claude-design/slide-previews/style-a.html"' in content
     assert "Do not generate the final presentation until the user has answered the style-selection interrupt." in content
+
+
+def test_frontend_slides_skill_has_mandatory_interrupt_checklist() -> None:
+    content = FRONTEND_SLIDES_SKILL.read_text(encoding="utf-8")
+    assert "## MANDATORY INTERRUPT CHECKLIST" in content
+    assert "Outline Confirmation" in content
+    assert "You may NOT skip any gate" in content
+    assert "THIS IS THE MOST COMMONLY SKIPPED GATE" in content
+    assert "your VERY NEXT ACTION must be a `request_clarification` tool call" in content
+    assert 'questions_json=[{' in content
+    assert '"id": "outline"' in content
+    assert "If you find yourself writing" in content
+    assert "that means you forgot to call `request_clarification`" in content

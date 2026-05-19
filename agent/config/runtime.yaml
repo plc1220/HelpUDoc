@@ -19,6 +19,7 @@ backend:
   virtual_mode: true
   skills_root: skills
   sync_skills_to_workspace: false
+  implicit_input_guard: true
   interrupt_on:
     request_plan_approval:
       allowed_decisions:

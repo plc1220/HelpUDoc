@@ -169,7 +169,78 @@ def _parse_clarification_choices(raw: Any) -> List[Dict[str, str]]:
     return parsed_choices
 
 
+def build_clarification_interrupt_payload(
+    *,
+    title: str,
+    description: str = "",
+    choices: List[Dict[str, str]] | None = None,
+    allow_freeform: bool = True,
+    multi_select: bool = False,
+    placeholder: str = "",
+    submit_label: str = "Continue",
+    step_index: int = 0,
+    step_count: int = 1,
+    display_payload: Dict[str, Any] | None = None,
+) -> Dict[str, Any] | None:
+    """Build a normalized clarification interrupt dict for the frontend stream."""
+    raw_value = build_clarification_interrupt_value(
+        title=title,
+        description=description,
+        choices=choices,
+        questions=None,
+        allow_freeform=allow_freeform,
+        multi_select=multi_select,
+        placeholder=placeholder,
+        submit_label=submit_label,
+        step_index=step_index,
+        step_count=step_count,
+        display_payload=display_payload,
+    )
+    if raw_value is None:
+        return None
+    return _normalize_interrupt_payload(raw_value)
+
+
+def build_clarification_interrupt_value(
+    *,
+    title: str,
+    description: str = "",
+    choices: List[Dict[str, str]] | None = None,
+    questions: List[Dict[str, Any]] | None = None,
+    allow_freeform: bool = True,
+    multi_select: bool = False,
+    placeholder: str = "",
+    submit_label: str = "Continue",
+    step_index: int = 0,
+    step_count: int = 1,
+    display_payload: Dict[str, Any] | None = None,
+) -> Dict[str, Any] | None:
+    """Build the raw interrupt value passed to langgraph.types.interrupt()."""
+    return _build_clarification_interrupt_value(
+        {
+            "title": title,
+            "description": description,
+            "options_json": json.dumps(choices or [], ensure_ascii=False),
+            "questions_json": json.dumps(questions or [], ensure_ascii=False),
+            "allow_freeform": allow_freeform,
+            "multi_select": multi_select,
+            "placeholder": placeholder,
+            "submit_label": submit_label,
+            "step_index": step_index,
+            "step_count": step_count,
+            "context_json": json.dumps(display_payload or {}, ensure_ascii=False),
+        }
+    )
+
+
 def _build_clarification_payload(args: Dict[str, Any]) -> Dict[str, Any] | None:
+    raw_value = _build_clarification_interrupt_value(args)
+    if raw_value is None:
+        return None
+    return _normalize_interrupt_payload(raw_value)
+
+
+def _build_clarification_interrupt_value(args: Dict[str, Any]) -> Dict[str, Any] | None:
     prompt_title = str(args.get("title") or "").strip()
     if not prompt_title:
         return None
@@ -230,7 +301,7 @@ def _build_clarification_payload(args: Dict[str, Any]) -> Dict[str, Any] | None:
         },
         "display_payload": _parse_json_dict(args.get("context_json")),
     }
-    return _normalize_interrupt_payload(interrupt_value)
+    return interrupt_value
 
 
 def _build_human_action_payload(args: Dict[str, Any]) -> Dict[str, Any] | None:

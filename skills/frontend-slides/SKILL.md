@@ -313,11 +313,27 @@ Mentally verify the modified slide at these viewport sizes:
 
 ---
 
+## MANDATORY INTERRUPT CHECKLIST
+
+Every new-presentation run MUST emit ALL of these `request_clarification` interrupts before the final HTML is generated. If the run completes without emitting each one, the flow is broken and the user will be stuck.
+
+| Gate | Step | Required `request_clarification` call |
+|------|------|--------------------------------------|
+| 1 | Step 1.1 | Presentation Context (purpose, length, content, images, editing) |
+| 2 | Step 1.2 | Outline Confirmation ("Does this outline look right?") |
+| 3 | Step 2.0 | Style Path Selection ("Show me options" vs "I know what I want") |
+| 4 | Step 2.1 or preset picker | Mood Selection or Direct Preset Selection |
+| 5 | Step 2.3 | Style Preview Selection ("Choose Your Presentation Style") |
+
+**You may NOT skip any gate.** Each gate requires an actual `request_clarification` tool call that pauses the run. Writing "please confirm above" or "select from the form" as prose does NOT create a form — it just prints dead text the user cannot interact with.
+
+---
+
 ## Phase 1: Content Discovery (New Presentations)
 
 Before designing, understand the content. Use `request_clarification` for every decision gate in this skill. Do not ask these questions in plain chat prose, and do not continue to later phases after a clarification tool call until the user has resumed the run.
 
-**Hard stop for UI forms:** If you are about to write phrases like "select from the form above", "choose from the options above", "please confirm in the UI", or "pick a vibe/style" in normal assistant text, stop and call `request_clarification` instead. A UI form only exists when this tool emits an interrupt; prose alone will not create one.
+**Hard stop for UI forms:** If you are about to write phrases like "select from the form above", "choose from the options above", "please confirm in the UI", "confirm using the form", or "pick a vibe/style" in normal assistant text, STOP IMMEDIATELY and call `request_clarification` instead. A UI form only exists when this tool emits an interrupt; prose alone will not create one. This is the single most common failure mode of this skill.
 
 ### Step 1.1: Presentation Context + Images (Single Form)
 
@@ -398,19 +414,33 @@ After evaluation, the **usable** images become context for planning the slide st
 
 This means curated images are factored in **before** style selection (Phase 2) and **before** HTML generation (Phase 3). They are co-equal context in the design process.
 
-5. **Confirm outline via `request_clarification`** — Do NOT break the flow by asking the user to type free text. Use `request_clarification` to confirm:
+5. **Confirm outline via `request_clarification`** (MANDATORY — Gate 2 in the interrupt checklist):
 
-At this point, do not write a normal assistant message that says "Next Steps", "use the forms in the sidebar", "confirm the outline", or "choose your style discovery method". Those words are only valid inside the structured `request_clarification` payload. If you have an outline ready, your next action must be the tool call below, then stop.
+**⚠️ THIS IS THE MOST COMMONLY SKIPPED GATE.** After presenting the outline and image evaluation in your assistant text, your VERY NEXT ACTION must be a `request_clarification` tool call. Do NOT end the turn with prose like "Please confirm the outline above" — that creates dead text with no interactive form.
 
-**Question: Outline Confirmation**
-- Header: "Outline"
-- Question: "Does this slide outline and image selection look right?"
-- Options:
-  - "Looks good, proceed" — Move on to style selection
-  - "Adjust images" — I want to change which images go where
-  - "Adjust outline" — I want to change the slide structure
+At this point, do not write a normal assistant message that says "Next Steps", "use the forms in the sidebar", "confirm the outline", "confirm using the form above", or "choose your style discovery method". Those words are only valid inside the structured `request_clarification` payload. If you have an outline ready, your next action must be the tool call below, then stop.
 
-After this tool call, stop and wait. Do not move into style selection or preview generation until the user responds.
+**Exact tool call parameters:**
+```
+request_clarification(
+  title="Outline Confirmation",
+  description="Review the proposed slide outline and image assignments above.",
+  questions_json=[{
+    "id": "outline",
+    "header": "Outline",
+    "question": "Does this slide outline and image selection look right?",
+    "options": [
+      {"id": "confirm", "label": "Looks good, proceed", "value": "Looks good, proceed", "description": "Move on to style selection"},
+      {"id": "adjust-images", "label": "Adjust images", "value": "Adjust images", "description": "I want to change which images go where"},
+      {"id": "adjust-outline", "label": "Adjust outline", "value": "Adjust outline", "description": "I want to change the slide structure"}
+    ]
+  }],
+  allow_freeform=true,
+  submit_label="Continue"
+)
+```
+
+After this tool call, STOP. Do not move into style selection or preview generation until the user responds. If you find yourself writing "After confirmation, we will move to Style Discovery" — that means you forgot to call `request_clarification`. Go back and call it.
 
 ---
 

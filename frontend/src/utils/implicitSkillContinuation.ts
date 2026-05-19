@@ -29,6 +29,7 @@ export const getImplicitContinuationContext = (
 /**
  * Wraps the raw user reply with a continuation directive that instructs the agent
  * to continue the stalled skill flow instead of starting fresh.
+ * Includes a /skill directive so the agent loads the skill without re-discovering it.
  */
 export const buildContinuationPrompt = (
   userReply: string,
@@ -36,12 +37,14 @@ export const buildContinuationPrompt = (
   implicitPrompt: string,
 ): string => {
   const parts = [
+    `/skill ${skillId}`,
+    '',
     `[CONTINUATION] The previous agent turn (skill: ${skillId}) asked for user input but did not emit a structured interrupt.`,
     `The user has now replied. Continue the "${skillId}" skill flow from where it left off.`,
     implicitPrompt ? `Agent's pending question: "${implicitPrompt}"` : '',
     `User's answer: "${userReply}"`,
     '',
-    'Do NOT restart the skill from the beginning. Pick up from the next logical step using the answer above.',
+    'Do NOT restart the skill from the beginning. Do NOT re-ask questions the user already answered. Pick up from the next logical step using the answer above.',
   ];
   return parts.filter(Boolean).join('\n');
 };

@@ -11,6 +11,8 @@ from deepagents.middleware.filesystem import FilesystemMiddleware
 from deepagents.middleware.patch_tool_calls import PatchToolCallsMiddleware
 from langchain.agents import create_agent
 from langchain.agents.middleware import HumanInTheLoopMiddleware, TodoListMiddleware
+
+from helpudoc_agent.middleware.implicit_input_guard import ImplicitInputGuardMiddleware
 from langchain.agents.middleware.summarization import SummarizationMiddleware
 from langgraph.checkpoint.memory import MemorySaver
 from ..configuration import Settings
@@ -327,6 +329,8 @@ class AgentRegistry:
         ]
         if interrupt_on:
             middleware.append(HumanInTheLoopMiddleware(interrupt_on=interrupt_on))
+        if self.settings.backend.implicit_input_guard:
+            middleware.append(ImplicitInputGuardMiddleware(enabled=True))
 
         full_prompt = system_prompt + "\n\n" + BASE_AGENT_PROMPT if system_prompt else BASE_AGENT_PROMPT
         agent = create_agent(

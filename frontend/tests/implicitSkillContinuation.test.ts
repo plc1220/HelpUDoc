@@ -101,13 +101,15 @@ test('getImplicitContinuationContext uses the last agent message even if user me
   }
 });
 
-test('buildContinuationPrompt wraps user reply with continuation directive', () => {
+test('buildContinuationPrompt wraps user reply with continuation directive and /skill', () => {
   const prompt = buildContinuationPrompt('yes, proceed', 'frontend-slides', 'Would you like to proceed?');
   assert.ok(prompt.includes('[CONTINUATION]'));
   assert.ok(prompt.includes('frontend-slides'));
   assert.ok(prompt.includes('yes, proceed'));
   assert.ok(prompt.includes('Would you like to proceed?'));
   assert.ok(prompt.includes('Do NOT restart the skill from the beginning'));
+  assert.ok(prompt.startsWith('/skill frontend-slides'), 'must start with /skill directive');
+  assert.ok(prompt.includes('Do NOT re-ask questions'));
 });
 
 test('buildContinuationPrompt handles empty implicitPrompt', () => {
@@ -115,6 +117,7 @@ test('buildContinuationPrompt handles empty implicitPrompt', () => {
   assert.ok(prompt.includes('[CONTINUATION]'));
   assert.ok(prompt.includes('confirm'));
   assert.ok(!prompt.includes('Agent\'s pending question'));
+  assert.ok(prompt.startsWith('/skill frontend-slides'), 'must start with /skill directive');
 });
 
 test('explicit pendingInterrupt messages do NOT trigger implicit continuation', () => {

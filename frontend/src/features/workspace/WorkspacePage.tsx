@@ -6199,6 +6199,12 @@ export default function WorkspacePage() {
           continuationCtx.skillId,
           continuationCtx.prompt,
         );
+        for (let i = historyPayload.length - 1; i >= 0; i--) {
+          if (historyPayload[i].role === 'user') {
+            historyPayload[i] = { ...historyPayload[i], content: agentPromptBase2 };
+            break;
+          }
+        }
       }
 
       const attachmentPrompt = resolvedFileContextRefs?.length

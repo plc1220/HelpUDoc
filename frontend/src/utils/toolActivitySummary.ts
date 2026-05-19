@@ -143,7 +143,7 @@ export function stripOperationalThinkingBlocks(text?: string): string {
   if (!raw.trim()) {
     return '';
   }
-  let cleaned = raw
+  const cleaned = raw
     .replace(/Loaded skill:\s*\S+[^\n]*\n+([\s\S]*?)(?=\n\n(?![\s-])|$)/gi, '')
     .replace(/Skill policy for\s+\S+:\s*\n[\s\S]*?(?=\n\n|$)/gi, '')
     .replace(/^\s*-\s*requires_hitl_plan:[^\n]*\n?/gim, '')

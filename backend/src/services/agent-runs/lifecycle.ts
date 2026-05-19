@@ -457,15 +457,109 @@ const buildAgentErrorPayload = (error: any, persona: string): string => {
   return 'Agent run failed.';
 };
 
+const STRONG_GATE_PATTERNS = [
+  /\bconfirm\b.{0,60}\boutline\b/i,
+  /\boutline\b.{0,60}\bconfirm\b/i,
+  /\b(?:please\s+)?confirm\b.{0,40}\b(?:form|UI)\b/i,
+  /\b(?:select|choose)\b.{0,40}\b(?:form|options?|UI)\b/i,
+  /\b(?:once|after)\s+(?:confirmed|you\s+confirm)/i,
+  /\bnext\s+steps\b.{0,120}\b(?:sidebar|form)/i,
+];
+
+const SELECTION_PROMPT_PATTERNS = [
+  /\b(?:please\s+)?select\b/i,
+  /\b(?:please\s+)?choose\b/i,
+  /\bwhich\s+(?:one|option|style|mood|vibe)/i,
+  /\bwhat\s+(?:style|mood|vibe)/i,
+  /\bready to (?:proceed|continue|move)/i,
+  /\bshall I\b/i,
+];
+
+const WEAK_COURTESY_PATTERNS = [
+  /\bwould you like\b/i,
+  /\bany refinements?\b/i,
+  /\blet me know if\b/i,
+  /\banything else\b/i,
+  /\bneed any changes\b/i,
+];
+
+const UI_FORM_MISREF_PATTERNS = [
+  /\b(?:from|in|using|via)\s+the\s+(?:form|options?|UI)\s+(?:above|below)/i,
+  /\b(?:forms?|options?|choices?)\s+in\s+the\s+sidebar/i,
+  /\buse\s+the\s+(?:forms?|options?|choices?)\s+(?:in\s+the\s+sidebar|below|above)/i,
+  /\bselect.*(?:above|below)/i,
+  /\bpick.*(?:above|below)/i,
+  /\bconfirm.*(?:form|UI)\s+above/i,
+];
+
+const collectImplicitInputSignals = (lastParagraphs: string): Set<string> => {
+  const signals = new Set<string>();
+
+  if (/\?\s*$/.test(lastParagraphs)) {
+    signals.add('ends_with_question');
+  }
+  if (STRONG_GATE_PATTERNS.some((pattern) => pattern.test(lastParagraphs))) {
+    signals.add('strong_gate');
+  }
+  if (SELECTION_PROMPT_PATTERNS.some((pattern) => pattern.test(lastParagraphs))) {
+    signals.add('selection_prompt');
+  }
+  if (WEAK_COURTESY_PATTERNS.some((pattern) => pattern.test(lastParagraphs))) {
+    signals.add('weak_courtesy');
+  }
+  if (UI_FORM_MISREF_PATTERNS.some((pattern) => pattern.test(lastParagraphs))) {
+    signals.add('phantom_ui_reference');
+  }
+  if (/(?:^|\n)\s*[-•*]\s+.+(?:\n\s*[-•*]\s+.+){2,}/m.test(lastParagraphs)) {
+    signals.add('enumerated_choices');
+  }
+  if (/(?:^|\n)\s*\d+\.\s+.+(?:\n\s*\d+\.\s+.+){1,}/m.test(lastParagraphs)) {
+    signals.add('enumerated_choices');
+  }
+
+  return signals;
+};
+
+const shouldAwaitImplicitInput = (signals: Set<string>): boolean => {
+  if (signals.size === 0) {
+    return false;
+  }
+  const isOnlyWeakCourtesy = [...signals].every(
+    (signal) => signal === 'weak_courtesy' || signal === 'ends_with_question',
+  );
+  if (isOnlyWeakCourtesy) {
+    return false;
+  }
+  if (signals.has('phantom_ui_reference') || signals.has('strong_gate')) {
+    return true;
+  }
+  if (
+    signals.has('enumerated_choices') &&
+    (signals.has('phantom_ui_reference') || signals.has('strong_gate') || signals.has('selection_prompt'))
+  ) {
+    return true;
+  }
+  const strongCount = ['phantom_ui_reference', 'strong_gate', 'enumerated_choices'].filter((key) =>
+    signals.has(key),
+  ).length;
+  if (strongCount >= 2) {
+    return true;
+  }
+  if (
+    signals.has('phantom_ui_reference') &&
+    (signals.has('selection_prompt') || signals.has('enumerated_choices'))
+  ) {
+    return true;
+  }
+  return false;
+};
+
 /**
  * Detects whether a completed skill run is implicitly awaiting user input
  * (the agent asked a question in prose but failed to emit a request_clarification interrupt).
  *
- * Conditions (ALL must be true):
- *  1. The run completed successfully (not failed/cancelled).
- *  2. A skill was actively running (skillId is present).
- *  3. No interrupt was emitted during the run.
- *  4. The assistant's final text exhibits multiple "awaiting input" signals.
+ * Heuristics mirror agent/helpudoc_agent/implicit_input_detection.py. The graph guard blocks
+ * completion; this fallback only annotates completed runs for frontend continuation.
  */
 export const detectImplicitInputAwaiting = (opts: {
   status: AgentRunStatus;
@@ -482,54 +576,10 @@ export const detectImplicitInputAwaiting = (opts: {
     return { awaiting: false };
   }
 
-  const lastParagraphs = text.slice(-800);
+  const lastParagraphs = text.slice(-1500);
+  const signals = collectImplicitInputSignals(lastParagraphs);
 
-  const signals: string[] = [];
-
-  if (/\?\s*$/.test(lastParagraphs)) {
-    signals.push('ends_with_question');
-  }
-
-  const confirmPatterns = [
-    /\b(?:please\s+)?confirm/i,
-    /\b(?:please\s+)?select/i,
-    /\b(?:please\s+)?choose/i,
-    /\blet me know/i,
-    /\bwhat (?:do you|would you)/i,
-    /\bwhich (?:one|option|style|mood)/i,
-    /\bready to (?:proceed|continue|move)/i,
-    /\bwould you like (?:to|me to)/i,
-    /\bshall I/i,
-  ];
-  for (const pattern of confirmPatterns) {
-    if (pattern.test(lastParagraphs)) {
-      signals.push('confirmation_language');
-      break;
-    }
-  }
-
-  const uiFormMisref = [
-    /\b(?:from|in)\s+the\s+(?:form|options?|UI)\s+(?:above|below)/i,
-    /\b(?:forms?|options?|choices?)\s+in\s+the\s+sidebar/i,
-    /\buse\s+the\s+(?:forms?|options?|choices?)\s+(?:in\s+the\s+sidebar|below|above)/i,
-    /\bselect.*(?:above|below)/i,
-    /\bpick.*(?:above|below)/i,
-  ];
-  for (const pattern of uiFormMisref) {
-    if (pattern.test(lastParagraphs)) {
-      signals.push('phantom_ui_reference');
-      break;
-    }
-  }
-
-  if (/(?:^|\n)\s*[-•*]\s+.+(?:\n\s*[-•*]\s+.+){2,}/m.test(lastParagraphs)) {
-    signals.push('enumerated_choices');
-  }
-  if (/(?:^|\n)\s*\d+\.\s+.+(?:\n\s*\d+\.\s+.+){1,}/m.test(lastParagraphs)) {
-    signals.push('enumerated_choices');
-  }
-
-  if (signals.length < 2) {
+  if (!shouldAwaitImplicitInput(signals)) {
     return { awaiting: false };
   }
 
