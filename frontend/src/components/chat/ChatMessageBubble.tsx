@@ -1,7 +1,7 @@
 import { Check, CheckCircle2, Copy, FilePenLine, ImageIcon, Loader2, RotateCcw } from 'lucide-react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { useCallback, useEffect, useMemo, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react';
 
 import type {
   ConversationMessage,
@@ -20,6 +20,8 @@ import {
   summarizeToolActivity,
   getFriendlyToolName,
   isBenignToolNoise,
+  isOperationalThinkingText,
+  stripOperationalThinkingBlocks,
 } from '../../utils/toolActivitySummary';
 import { buildApiUrl } from '../../services/apiClient';
 import {
@@ -659,6 +661,21 @@ export default function ChatMessageBubble({
     () => summarizeToolActivity(toolEvents, formatMessageTimestamp),
     [formatMessageTimestamp, toolEvents],
   );
+  const prevStepTotalRef = useRef<number | null>(null);
+  const [planRefinedNotice, setPlanRefinedNotice] = useState(false);
+  useEffect(() => {
+    const total = toolDigest.stepProgress?.total;
+    if (total == null) {
+      return;
+    }
+    if (prevStepTotalRef.current != null && total > prevStepTotalRef.current) {
+      setPlanRefinedNotice(true);
+      const timeout = window.setTimeout(() => setPlanRefinedNotice(false), 3200);
+      prevStepTotalRef.current = total;
+      return () => window.clearTimeout(timeout);
+    }
+    prevStepTotalRef.current = total;
+  }, [toolDigest.stepProgress?.total]);
   const pendingInterrupt = messageMetadata?.pendingInterrupt;
   const interruptKind = getInterruptKind(pendingInterrupt);
   const isClarificationInterrupt = Boolean(pendingInterrupt && interruptKind === 'clarification');
@@ -677,9 +694,10 @@ export default function ChatMessageBubble({
   const rawThinkingText = message.thinkingText?.trim() || '';
   const activeSkill = messageMetadata?.runPolicy?.skill?.trim().toLowerCase();
   const isSystemThinking = /available skills/i.test(rawThinkingText);
+  const sanitizedThinkingText = stripOperationalThinkingBlocks(rawThinkingText);
   const displayThinkingText = isSystemThinking
     ? getThinkingPlaceholder(messageMetadata, toolEvents)
-    : rawThinkingText;
+    : sanitizedThinkingText;
   const showThinkingToggle = !isSystemThinking && displayThinkingText.length > THOUGHT_PREVIEW_LIMIT;
   const isThinkingCollapsed = showThinkingToggle && !isThinkingExpanded;
   const sanitizedAgentText = (() => {
@@ -747,6 +765,13 @@ export default function ChatMessageBubble({
   }, [isAgentMessage, message.text, messageMetadata?.fileContextRefs, workspaceId]);
   const effectiveStatus = pendingInterrupt ? 'awaiting_approval' : messageMetadata?.status;
   const isLiveAgentStatus = effectiveStatus === 'running' || effectiveStatus === 'awaiting_approval';
+  const shouldHideThinkingDuringToolRun = Boolean(
+    isAgentMessage
+    && isLatestAgentMessage
+    && isLiveAgentStatus
+    && hasToolEvents
+    && (isOperationalThinkingText(rawThinkingText) || !sanitizedThinkingText.trim()),
+  );
   const bodySource = messageMetadata?.bodySource
     || (sanitizedAgentText ? (isSummaryLikeAgentText(sanitizedAgentText) ? 'summary' : 'assistant') : undefined);
   const isCopiedMessage = copiedMessageId === message.id;
@@ -823,11 +848,14 @@ export default function ChatMessageBubble({
     && !isClarificationInterrupt
     && (approvalReview || interruptKind === 'approval'),
   );
+  const agentTextForDisplay = stripOperationalThinkingBlocks(sanitizedAgentText);
   const visibleAgentText = shouldHideAgentBodyForApproval
     ? ''
     : bodySource === 'summary' && isLiveAgentStatus
       ? ''
-      : sanitizedAgentText;
+      : shouldHideThinkingDuringToolRun && isOperationalThinkingText(agentTextForDisplay)
+        ? ''
+        : agentTextForDisplay;
   const inlineStatus = (() => {
     if (!isAgentMessage || !isLatestAgentMessage) {
       return null;
@@ -849,38 +877,59 @@ export default function ChatMessageBubble({
     if (hasToolEvents) {
       const timedDetail = (
         <div className="space-y-2">
-          <p className={`text-[15px] font-semibold leading-snug tracking-tight ${
-            isDarkMode ? 'text-slate-50' : 'text-slate-900'
-          }`}>
-            {toolDigest.headline}
-          </p>
-          {toolDigest.milestoneTrail ? (
-            <p className={`text-xs font-medium ${isDarkMode ? 'text-sky-100/90' : 'text-sky-900/85'}`}>
-              {toolDigest.milestoneTrail}
+          <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+            <p className={`text-[15px] font-semibold leading-snug tracking-tight ${
+              isDarkMode ? 'text-slate-50' : 'text-slate-900'
+            }`}>
+              {toolDigest.headline}
             </p>
-          ) : null}
-          {toolDigest.reassuranceNotes.length ? (
-            <p className={`text-sm leading-relaxed ${isDarkMode ? 'text-slate-200/95' : 'text-slate-700'}`}>
-              {toolDigest.reassuranceNotes[0]}
-            </p>
-          ) : null}
-          <div className="flex flex-wrap items-center gap-2">
-            <span className={`inline-flex h-1.5 w-1.5 animate-pulse rounded-full ${
-              isDarkMode ? 'bg-sky-300 shadow-[0_0_14px_rgba(125,211,252,0.55)]' : 'bg-sky-500 shadow-[0_0_12px_rgba(14,165,233,0.28)]'
-            }`} />
-            <span className={`text-sm leading-relaxed ${isDarkMode ? 'text-slate-100' : 'text-slate-800'}`}>
-              {toolDigest.currentLabel}
-            </span>
+            {toolDigest.stepProgress ? (
+              <p className={`shrink-0 text-xs font-medium tabular-nums ${
+                isDarkMode ? 'text-slate-400' : 'text-slate-500'
+              }`}>
+                Step {toolDigest.stepProgress.current} of {toolDigest.stepProgress.total}
+              </p>
+            ) : null}
           </div>
-          {toolDigest.statsLabel ? (
-            <p className={`text-xs font-semibold uppercase tracking-[0.12em] ${
+          {planRefinedNotice ? (
+            <p className={`text-xs font-medium ${isDarkMode ? 'text-sky-200/90' : 'text-sky-700'}`}>
+              Refining plan as more steps are needed…
+            </p>
+          ) : null}
+          {(toolDigest.completedMilestones.length > 0 || toolDigest.activeStepLabel) ? (
+            <p className="text-xs leading-relaxed">
+              {toolDigest.completedMilestones.map((label, index) => (
+                <span key={`${label}-${index}`}>
+                  {index > 0 ? (
+                    <span className={isDarkMode ? 'text-slate-600' : 'text-slate-400'}> · </span>
+                  ) : null}
+                  <span className={isDarkMode ? 'text-slate-500' : 'text-slate-400'}>{label}</span>
+                </span>
+              ))}
+              {toolDigest.completedMilestones.length > 0 && toolDigest.activeStepLabel ? (
+                <span className={isDarkMode ? 'text-slate-600' : 'text-slate-400'}> · </span>
+              ) : null}
+              {toolDigest.activeStepLabel ? (
+                <span className={`inline-flex items-center gap-1.5 font-medium ${
+                  isDarkMode ? 'text-sky-100' : 'text-sky-900'
+                }`}>
+                  <span className={`inline-flex h-1.5 w-1.5 shrink-0 animate-pulse rounded-full ${
+                    isDarkMode ? 'bg-sky-300' : 'bg-sky-500'
+                  }`} />
+                  {toolDigest.activeStepLabel}
+                </span>
+              ) : null}
+            </p>
+          ) : null}
+          {toolDigest.statsLabel || toolDigest.reassuranceNotes.length ? (
+            <p className={`text-xs font-medium leading-relaxed ${
               isDarkMode ? 'text-slate-400' : 'text-slate-500'
             }`}>
-              {toolDigest.statsLabel}
+              {[toolDigest.statsLabel, toolDigest.reassuranceNotes[0]].filter(Boolean).join(' · ')}
             </p>
           ) : null}
           {toolDigest.errorCount > 0 ? (
-            <p className={`text-xs font-semibold ${isDarkMode ? 'text-rose-300' : 'text-rose-600'}`}>
+            <p className={`text-xs font-medium ${isDarkMode ? 'text-rose-300' : 'text-rose-600'}`}>
               {`${toolDigest.errorCount} issue${toolDigest.errorCount === 1 ? '' : 's'} may need attention—open activity for details.`}
             </p>
           ) : null}
@@ -1626,8 +1675,11 @@ export default function ChatMessageBubble({
     ? 'mt-3 border-t border-[#26354d] pt-3'
     : 'mt-3 border-t border-slate-200/80 pt-3';
   const toolButtonClassName = isDarkMode
-    ? 'text-xs font-semibold uppercase tracking-[0.18em] text-slate-400 transition-all duration-200 hover:text-slate-200'
-    : 'text-xs font-semibold uppercase tracking-[0.18em] text-slate-500 transition-all duration-200 hover:text-slate-700';
+    ? 'text-xs font-medium text-slate-400 transition-all duration-200 hover:text-slate-200'
+    : 'text-xs font-medium text-slate-500 transition-all duration-200 hover:text-slate-700';
+  const activitySummaryLabel = toolDigest.stepProgress
+    ? `Activity summary · step ${toolDigest.stepProgress.current} of ${toolDigest.stepProgress.total}`
+    : `Activity summary · ${toolDigest.rawEventCount} ${toolDigest.rawEventCount === 1 ? 'step' : 'steps'}`;
   const toolExpandedClassName = isDarkMode
     ? 'mt-3 space-y-3 text-xs text-slate-200'
     : 'mt-3 space-y-3 text-xs text-slate-600';
@@ -1693,7 +1745,7 @@ export default function ChatMessageBubble({
                 {inlineStatus.detail}
               </div>
             ) : null}
-            {displayThinkingText ? (
+            {displayThinkingText && !shouldHideThinkingDuringToolRun ? (
               <div className={thinkingCardClassName}>
                   <div className={thinkingHeaderClassName}>
                     <span className="inline-flex items-center gap-2">
@@ -1953,19 +2005,19 @@ export default function ChatMessageBubble({
                   onClick={() => toggleToolActivityVisibility(message.id)}
                   className={toolButtonClassName}
                 >
-                  {isToolActivityExpanded ? 'Hide activity' : `Activity summary · ${toolDigest.rawEventCount} ${toolDigest.rawEventCount === 1 ? 'step' : 'steps'}`}
+                  {isToolActivityExpanded ? 'Hide activity' : activitySummaryLabel}
                 </button>
                 {isToolActivityExpanded ? (
                   <div className="mt-2 space-y-3">
                     <div className={toolExpandedClassName}>
-                      <p className={`text-[11px] font-semibold uppercase tracking-[0.2em] ${
-                        isDarkMode ? 'text-slate-500' : 'text-slate-500'
+                      <p className={`text-xs font-medium ${
+                        isDarkMode ? 'text-slate-400' : 'text-slate-500'
                       }`}>
                         What changed
                       </p>
                       {toolDigest.reviewedFiles.length ? (
                         <div className="mt-3">
-                          <p className={`text-[11px] font-semibold uppercase tracking-[0.16em] ${
+                          <p className={`text-xs font-medium ${
                             isDarkMode ? 'text-slate-400' : 'text-slate-500'
                           }`}>
                             Files reviewed
@@ -1983,7 +2035,7 @@ export default function ChatMessageBubble({
                       ) : null}
                       {toolDigest.updatedFileBasenames.length ? (
                         <div className="mt-3">
-                          <p className={`text-[11px] font-semibold uppercase tracking-[0.16em] ${
+                          <p className={`text-xs font-medium ${
                             isDarkMode ? 'text-slate-400' : 'text-slate-500'
                           }`}>
                             Files being updated
@@ -2001,7 +2053,7 @@ export default function ChatMessageBubble({
                       ) : null}
                       {toolDigest.updatesInProgress.length ? (
                         <div className="mt-3">
-                          <p className={`text-[11px] font-semibold uppercase tracking-[0.16em] ${
+                          <p className={`text-xs font-medium ${
                             isDarkMode ? 'text-slate-400' : 'text-slate-500'
                           }`}>
                             Updates in progress
@@ -2019,7 +2071,7 @@ export default function ChatMessageBubble({
                       ) : null}
                       {!toolDigest.reviewedFiles.length && !toolDigest.updatedFileBasenames.length && toolDigest.digestEvents.length ? (
                         <div className="mt-3 space-y-2">
-                          <p className={`text-[11px] font-semibold uppercase tracking-[0.16em] ${
+                          <p className={`text-xs font-medium ${
                             isDarkMode ? 'text-slate-400' : 'text-slate-500'
                           }`}>
                             Recent steps
@@ -2053,7 +2105,7 @@ export default function ChatMessageBubble({
                         <div className={`mt-3 border-t pt-3 text-xs leading-relaxed ${
                           isDarkMode ? 'border-slate-700/70 text-sky-100' : 'border-slate-200 text-sky-950'
                         }`}>
-                          <p className="font-semibold uppercase tracking-[0.14em]">Notes</p>
+                          <p className="text-xs font-medium">Notes</p>
                           <ul className="mt-2 list-inside list-disc space-y-1">
                             {toolDigest.reassuranceNotes.map((note) => (
                               <li key={note}>{note}</li>
@@ -2076,7 +2128,7 @@ export default function ChatMessageBubble({
                     </button>
                     {showRawToolLog ? (
                       <div className={toolExpandedClassName}>
-                        <p className={`mb-2 text-[10px] font-semibold uppercase tracking-[0.18em] ${
+                        <p className={`mb-2 text-xs font-medium ${
                           isDarkMode ? 'text-slate-500' : 'text-slate-500'
                         }`}>
                           Raw tool timeline

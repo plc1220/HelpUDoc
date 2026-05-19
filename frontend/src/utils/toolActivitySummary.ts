@@ -8,11 +8,20 @@ export type ToolActivityDigestEvent = {
   rawToolName?: string;
 };
 
+export type ToolActivityStepProgress = {
+  current: number;
+  total: number;
+};
+
 export type ToolActivityDigest = {
   headline: string;
+  /** @deprecated Use completedMilestones + activeStepLabel */
   milestoneTrail: string;
+  completedMilestones: string[];
+  activeStepLabel: string;
   currentLabel: string;
   statsLabel: string;
+  stepProgress: ToolActivityStepProgress | null;
   reassuranceNotes: string[];
   reviewedFiles: string[];
   updatesInProgress: string[];
@@ -31,6 +40,10 @@ const TOOL_LABELS: Record<string, string> = {
   edit_file: 'Updating a section',
   patch_file: 'Updating a section',
   list_files: 'Checking workspace files',
+  list_dir: 'Listing workspace files',
+  list_directory: 'Listing workspace files',
+  ls: 'Listing workspace files',
+  dir: 'Listing workspace files',
   rag_query: 'Searching your workspace knowledge',
   google_search: 'Checking web sources',
   url_context: 'Reading linked pages',
@@ -39,11 +52,23 @@ const TOOL_LABELS: Record<string, string> = {
   run_terminal: 'Checking the environment',
   run_command: 'Running a workspace command',
   bash: 'Running a workspace command',
+  shell: 'Running a workspace command',
   grep: 'Searching within files',
   glob: 'Finding matching files',
   request_clarification: 'Needs a quick detail',
   codebase_search: 'Searching the codebase',
   ask_question: 'Preparing choices',
+  write_todos: 'Updating task plan',
+  write_todo: 'Updating task plan',
+  todo_write: 'Updating task plan',
+  writetodos: 'Updating task plan',
+  todo_write_tool: 'Updating task plan',
+  str_replace_editor: 'Editing a file',
+  search_replace: 'Editing a file',
+  create_file: 'Creating a file',
+  delete_file: 'Removing a file',
+  semantic_search: 'Searching the codebase',
+  task: 'Running a subtask',
 };
 
 function normalizeToolKey(name?: string): string {
@@ -59,6 +84,22 @@ export function titleCaseToolName(raw?: string): string {
     .join(' ');
 }
 
+function humanizeUnknownToolKey(key: string): string {
+  if (TOOL_LABELS[key]) {
+    return TOOL_LABELS[key];
+  }
+  if (/^(ls|pwd|cd|cat|mkdir|rm|cp|mv|find|head|tail|wc|which)$/i.test(key)) {
+    return TOOL_LABELS[key.toLowerCase()] ?? 'Running a workspace command';
+  }
+  if (key.includes('todo')) {
+    return 'Updating task plan';
+  }
+  if (key.includes('list') && (key.includes('dir') || key.includes('file'))) {
+    return 'Listing workspace files';
+  }
+  return titleCaseToolName(key);
+}
+
 export function getFriendlyToolName(name?: string): string {
   const key = normalizeToolKey(name);
   if (TOOL_LABELS[key]) {
@@ -67,11 +108,66 @@ export function getFriendlyToolName(name?: string): string {
   if (!key) {
     return 'Working on your request';
   }
-  return titleCaseToolName(key);
+  return humanizeUnknownToolKey(key);
 }
 
 export function isSkippedToolSummary(summary?: string): boolean {
   return /^Skipped\b/i.test(String(summary || '').trim());
+}
+
+/** Agent/tool bootstrap text that should not appear in the user-facing thinking panel. */
+export function isOperationalThinkingText(text?: string): boolean {
+  const trimmed = String(text || '').trim();
+  if (!trimmed) {
+    return false;
+  }
+  if (/^Loaded skill:/im.test(trimmed)) {
+    return true;
+  }
+  if (/Skill policy for\s+\S+/i.test(trimmed)) {
+    return true;
+  }
+  if (
+    /requires_hitl_plan:/i.test(trimmed)
+    || /requires_workspace_artifacts:/i.test(trimmed)
+    || /^\s*-\s*mcp_servers:/im.test(trimmed)
+    || /^\s*-\s*tools:\s*\(/im.test(trimmed)
+  ) {
+    return true;
+  }
+  return false;
+}
+
+export function stripOperationalThinkingBlocks(text?: string): string {
+  const raw = String(text || '');
+  if (!raw.trim()) {
+    return '';
+  }
+  let cleaned = raw
+    .replace(/Loaded skill:\s*\S+[^\n]*\n+([\s\S]*?)(?=\n\n(?![\s-])|$)/gi, '')
+    .replace(/Skill policy for\s+\S+:\s*\n[\s\S]*?(?=\n\n|$)/gi, '')
+    .replace(/^\s*-\s*requires_hitl_plan:[^\n]*\n?/gim, '')
+    .replace(/^\s*-\s*requires_workspace_artifacts:[^\n]*\n?/gim, '')
+    .replace(/^\s*-\s*(?:resolved_)?tools:[^\n]*\n?/gim, '')
+    .replace(/^\s*-\s*mcp_servers:[^\n]*\n?/gim, '')
+    .replace(/^\s*-\s*sandbox_scripts:[^\n]*\n?/gim, '')
+    .replace(/^\s*-\s*Do not call request_plan_approval[^\n]*\n?/gim, '')
+    .replace(/^\s*-\s*You must call request_plan_approval[^\n]*\n?/gim, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+  if (isOperationalThinkingText(cleaned)) {
+    return '';
+  }
+  return cleaned;
+}
+
+export function summarizeLoadedSkillThinking(text?: string): string | undefined {
+  const match = String(text || '').match(/Loaded skill:\s*(\S+)/i);
+  if (!match?.[1]) {
+    return undefined;
+  }
+  const skillId = match[1].replace(/[_-]+/g, ' ');
+  return `Loaded ${skillId} workflow`;
 }
 
 export function isBenignToolStreamContent(content: string): boolean {
@@ -177,6 +273,9 @@ export function normalizeUserFacingSummary(raw: string, toolName?: string): stri
   if (!text) {
     return undefined;
   }
+  if (isOperationalThinkingText(text)) {
+    return summarizeLoadedSkillThinking(text) ?? undefined;
+  }
   if (isSkippedToolSummary(text)) {
     return undefined;
   }
@@ -273,7 +372,7 @@ export function headlineForDigest(events: ToolEvent[]): string {
   }
 }
 
-function milestonesFromEvents(events: ToolEvent[]): string[] {
+export function milestonesFromEvents(events: ToolEvent[]): string[] {
   const labels: string[] = [];
   for (const event of events) {
     if (isSkippedToolSummary(event.summary)) {
@@ -288,6 +387,47 @@ function milestonesFromEvents(events: ToolEvent[]): string[] {
     }
   }
   return labels.slice(-3);
+}
+
+function labelForRunningToolEvent(event: ToolEvent): string {
+  const friendly = getFriendlyToolName(event.name);
+  const summaryNorm = normalizeUserFacingSummary(event.summary || '', event.name)?.trim();
+  const hint = extractSectionHint(event.summary || '', event.name);
+  const candidate = summaryNorm ?? hint;
+  if (!candidate) {
+    return friendly;
+  }
+  const candidateKey = normalizeToolKey(candidate);
+  const toolKey = normalizeToolKey(event.name);
+  if (
+    candidateKey === toolKey
+    || TOOL_LABELS[candidateKey]
+    || (candidate.length <= 24 && !candidate.includes(' ') && candidateKey === candidate.toLowerCase())
+  ) {
+    return friendly;
+  }
+  return candidate;
+}
+
+function labelsMatch(a: string, b: string): boolean {
+  return a.trim().toLowerCase() === b.trim().toLowerCase();
+}
+
+export function splitMilestonesForDisplay(
+  milestoneLabels: string[],
+  activeLabel: string,
+): { completedMilestones: string[]; activeStepLabel: string } {
+  if (!milestoneLabels.length) {
+    return { completedMilestones: [], activeStepLabel: activeLabel };
+  }
+  const lastMilestone = milestoneLabels[milestoneLabels.length - 1];
+  const activeMatchesLast = labelsMatch(lastMilestone, activeLabel);
+  const completedRaw = activeMatchesLast ? milestoneLabels.slice(0, -1) : milestoneLabels;
+  const completedMilestones = completedRaw.filter((label) => !labelsMatch(label, activeLabel));
+  return {
+    completedMilestones,
+    activeStepLabel: activeLabel,
+  };
 }
 
 export function reassuranceFromEvents(events: ToolEvent[]): string[] {
@@ -342,9 +482,7 @@ export function summarizeToolActivity(
   const lastNonNoise = [...normalized].reverse().find((e) => !isBenignToolNoise(e));
   let currentLabel = lastNonNoise ? getFriendlyToolName(lastNonNoise.name) : 'Working through your request';
   if (lastNonNoise?.status === 'running') {
-    currentLabel =
-      normalizeUserFacingSummary(lastNonNoise.summary || '', lastNonNoise.name)?.trim()
-      ?? (extractSectionHint(lastNonNoise.summary || '', lastNonNoise.name) ?? currentLabel);
+    currentLabel = labelForRunningToolEvent(lastNonNoise);
   }
 
   const reviewedFiles = collectReviewedBasenames(normalized);
@@ -376,10 +514,21 @@ export function summarizeToolActivity(
   const lastTs = [...normalized].reverse().find((e) => e.startedAt || e.finishedAt);
   const lastActivityIso = lastTs?.finishedAt || lastTs?.startedAt;
 
-  const trail = milestonesFromEvents(normalized).join(' · ');
+  const milestoneLabels = milestonesFromEvents(normalized);
+  const { completedMilestones, activeStepLabel } = splitMilestonesForDisplay(milestoneLabels, currentLabel);
+  const trail = milestoneLabels.join(' · ');
+
+  const totalSteps = digestEventsUncapped.length;
+  let stepProgress: ToolActivityStepProgress | null = null;
+  if (totalSteps > 0) {
+    const runningIndex = digestEventsUncapped.findIndex((e) => e.status === 'running');
+    const currentStep = runningIndex >= 0 ? runningIndex + 1 : totalSteps;
+    stepProgress = { current: currentStep, total: totalSteps };
+  }
+
   const parts: string[] = [];
   if (reviewedFiles.length) {
-    parts.push(`${reviewedFiles.length} ${reviewedFiles.length === 1 ? 'file' : 'files'} reviewed`);
+    parts.push(`Reviewed ${reviewedFiles.length} ${reviewedFiles.length === 1 ? 'file' : 'files'}`);
   }
   const editLikeCount = normalized.filter((e) =>
     ['edit_file', 'patch_file'].includes(normalizeToolKey(e.name))
@@ -388,26 +537,23 @@ export function summarizeToolActivity(
   if (updatesInProgress.length) {
     parts.push(`Updating ${updatesInProgress.length} ${updatesInProgress.length === 1 ? 'area' : 'areas'}`);
   } else if (editLikeCount) {
-    parts.push(`${editLikeCount} ${editLikeCount === 1 ? 'edit' : 'edits'} in progress or completed`);
+    parts.push(`${editLikeCount} ${editLikeCount === 1 ? 'section' : 'sections'} updated`);
   }
   const ragCount = countRagQueries(normalized);
   if (ragCount) {
-    parts.push(`Knowledge search ×${ragCount}`);
+    parts.push(`${ragCount} knowledge ${ragCount === 1 ? 'search' : 'searches'}`);
   }
 
-  let statsLabel = parts.join(' · ');
-  if (formatShortTime && lastActivityIso) {
-    const timeLabel = formatShortTime(lastActivityIso);
-    if (timeLabel) {
-      statsLabel = statsLabel ? `${statsLabel} · Last activity ${timeLabel}` : `Last activity ${timeLabel}`;
-    }
-  }
+  const statsLabel = parts.join(' · ');
 
   return {
     headline: headlineForDigest(normalized.filter((e) => !isBenignToolNoise(e))),
     milestoneTrail: trail || currentLabel,
+    completedMilestones,
+    activeStepLabel,
     currentLabel,
     statsLabel,
+    stepProgress,
     reassuranceNotes: reassuranceFromEvents(events),
     reviewedFiles,
     updatesInProgress,
