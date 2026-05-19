@@ -17,4 +17,5 @@ export {
   resumeAgentRunWithAction,
   cancelAgentRun,
   getRunMeta,
+  detectImplicitInputAwaiting,
 } from './agent-runs/lifecycle';

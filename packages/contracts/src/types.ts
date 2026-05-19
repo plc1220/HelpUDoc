@@ -185,6 +185,9 @@ export interface ConversationMessageMetadata {
     prePlanSearchUsed?: number;
   };
   fileContextRefs?: FileContextRef[];
+  awaitingImplicitInput?: boolean;
+  implicitInputReason?: 'missing_interrupt';
+  implicitInputPrompt?: string;
 }
 
 export interface ConversationMessage {

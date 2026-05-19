@@ -322,6 +322,7 @@ type ConversationRunSnapshot = {
   runPolicy?: ConversationRunPolicy;
   pendingInterrupt?: RunPendingInterrupt;
   error?: string;
+  implicitInput?: { awaiting: boolean; prompt?: string };
 };
 
 const coerceText = (value: unknown): string => {
@@ -407,6 +408,13 @@ const persistRunConversationMessage = async (
   if (snapshot.pendingInterrupt) {
     metadata.pendingInterrupt = snapshot.pendingInterrupt as ConversationMessageMetadata['pendingInterrupt'];
   }
+  if (snapshot.implicitInput?.awaiting) {
+    metadata.awaitingImplicitInput = true;
+    metadata.implicitInputReason = 'missing_interrupt';
+    if (snapshot.implicitInput.prompt) {
+      metadata.implicitInputPrompt = snapshot.implicitInput.prompt;
+    }
+  }
   if (assistantText) {
     metadata.bodySource = 'assistant';
   } else if (terminalSummary) {
@@ -447,6 +455,83 @@ const buildAgentErrorPayload = (error: any, persona: string): string => {
     return error.message;
   }
   return 'Agent run failed.';
+};
+
+/**
+ * Detects whether a completed skill run is implicitly awaiting user input
+ * (the agent asked a question in prose but failed to emit a request_clarification interrupt).
+ *
+ * Conditions (ALL must be true):
+ *  1. The run completed successfully (not failed/cancelled).
+ *  2. A skill was actively running (skillId is present).
+ *  3. No interrupt was emitted during the run.
+ *  4. The assistant's final text exhibits multiple "awaiting input" signals.
+ */
+export const detectImplicitInputAwaiting = (opts: {
+  status: AgentRunStatus;
+  skillId: string | null;
+  hadInterrupt: boolean;
+  assistantText: string;
+}): { awaiting: boolean; prompt?: string } => {
+  if (opts.status !== 'completed' || !opts.skillId || opts.hadInterrupt) {
+    return { awaiting: false };
+  }
+
+  const text = (opts.assistantText || '').trim();
+  if (!text) {
+    return { awaiting: false };
+  }
+
+  const lastParagraphs = text.slice(-800);
+
+  const signals: string[] = [];
+
+  if (/\?\s*$/.test(lastParagraphs)) {
+    signals.push('ends_with_question');
+  }
+
+  const confirmPatterns = [
+    /\b(?:please\s+)?confirm/i,
+    /\b(?:please\s+)?select/i,
+    /\b(?:please\s+)?choose/i,
+    /\blet me know/i,
+    /\bwhat (?:do you|would you)/i,
+    /\bwhich (?:one|option|style|mood)/i,
+    /\bready to (?:proceed|continue|move)/i,
+    /\bwould you like (?:to|me to)/i,
+    /\bshall I/i,
+  ];
+  for (const pattern of confirmPatterns) {
+    if (pattern.test(lastParagraphs)) {
+      signals.push('confirmation_language');
+      break;
+    }
+  }
+
+  const uiFormMisref = [
+    /\b(?:from|in)\s+the\s+(?:form|options?|UI)\s+(?:above|below)/i,
+    /\bselect.*(?:above|below)/i,
+    /\bpick.*(?:above|below)/i,
+  ];
+  for (const pattern of uiFormMisref) {
+    if (pattern.test(lastParagraphs)) {
+      signals.push('phantom_ui_reference');
+      break;
+    }
+  }
+
+  if (/(?:^|\n)\s*[-•*]\s+.+(?:\n\s*[-•*]\s+.+){2,}/m.test(lastParagraphs)) {
+    signals.push('enumerated_choices');
+  }
+
+  if (signals.length < 2) {
+    return { awaiting: false };
+  }
+
+  const promptMatch = lastParagraphs.match(/[^.!?\n]*\?\s*$/);
+  const prompt = promptMatch ? promptMatch[0].trim() : undefined;
+
+  return { awaiting: true, prompt };
 };
 
 const parsePendingInterrupt = (raw: string | undefined): RunPendingInterrupt | undefined => {
@@ -893,7 +978,21 @@ async function runAgentRunWorker(
     }
     settled = true;
     settleRunningToolEvents(status);
-    await updateConversationFromRun(status === 'queued' ? 'running' : status, { error });
+
+    const implicitInput = detectImplicitInputAwaiting({
+      status,
+      skillId,
+      hadInterrupt,
+      assistantText,
+    });
+
+    await updateConversationFromRun(
+      status === 'queued' ? 'running' : status,
+      {
+        error,
+        ...(implicitInput.awaiting ? { implicitInput } : {}),
+      },
+    );
     await markRunFinished(runId, status, error);
     if (runTelemetryService) {
       await runTelemetryService.finalizeRun(runId, {

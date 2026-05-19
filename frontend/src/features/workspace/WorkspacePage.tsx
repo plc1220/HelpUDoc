@@ -127,6 +127,7 @@ import {
   normalizeWorkspaceFolderPath,
 } from '../../utils/workspaceFileTree';
 import { buildMessageMetadata, mapMessagesToAgentHistory, mergeMessageMetadata, sanitizeRunPolicy } from '../../utils/messages';
+import { getImplicitContinuationContext, buildContinuationPrompt } from '../../utils/implicitSkillContinuation';
 import { createMarkdownComponents } from '../../components/markdown/MarkdownShared';
 import { applyColorModeToDocument, buildAppTheme, resolveInitialColorMode } from '../../theme';
 
@@ -6190,12 +6191,23 @@ export default function WorkspacePage() {
 
       const preparedMessages = getConversationMessagesSnapshot(conversationId);
       const historyPayload = mapMessagesToAgentHistory(preparedMessages);
+
+      const continuationCtx = getImplicitContinuationContext(preparedMessages);
+      let agentPromptBase2 = agentPromptBase;
+      if (continuationCtx.shouldContinue && agentPromptBase2) {
+        agentPromptBase2 = buildContinuationPrompt(
+          agentPromptBase2,
+          continuationCtx.skillId,
+          continuationCtx.prompt,
+        );
+      }
+
       const attachmentPrompt = resolvedFileContextRefs?.length
         ? `Use these attached files as primary context: ${resolvedFileContextRefs.map((ref) => ref.sourceName).join(', ')}`
         : '';
       const agentPrompt = attachmentPrompt
-        ? `${agentPromptBase}${agentPromptBase ? '\n\n' : ''}${attachmentPrompt}`
-        : agentPromptBase;
+        ? `${agentPromptBase2}${agentPromptBase2 ? '\n\n' : ''}${attachmentPrompt}`
+        : agentPromptBase2;
       const useInternetSearch = internetSearchEnabled;
 
       try {
