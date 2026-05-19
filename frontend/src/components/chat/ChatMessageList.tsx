@@ -1,5 +1,5 @@
 import { ArrowDown, MessageSquareText } from 'lucide-react';
-import { type Dispatch, type ReactNode, type SetStateAction, useEffect, useMemo, useRef, useState } from 'react';
+import { type Dispatch, type SetStateAction, useEffect, useMemo, useRef, useState } from 'react';
 import type { Components } from 'react-markdown';
 
 import type {
@@ -139,27 +139,42 @@ export default function ChatMessageList({
     return latestAgentMessage?.id ?? null;
   }, [messages]);
 
-  const messageItems = useMemo(() => {
-    const nodes: ReactNode[] = [];
-    let previousDateLabel = '';
+  const messageGroups = useMemo(() => {
+    const groups: { dateLabel: string; messages: ConversationMessage[] }[] = [];
     messages.forEach((message) => {
       const dateLabel = formatDateLabel(message.updatedAt || message.createdAt);
-      if (dateLabel && dateLabel !== previousDateLabel) {
-        nodes.push(
-          <div key={`date-${message.id}-${dateLabel}`} className="pointer-events-none sticky top-2 z-10 flex justify-center py-1">
+      const lastGroup = groups[groups.length - 1];
+      if (!lastGroup || lastGroup.dateLabel !== dateLabel) {
+        groups.push({ dateLabel, messages: [message] });
+        return;
+      }
+      lastGroup.messages.push(message);
+    });
+    return groups;
+  }, [messages]);
+
+  const messageItems = useMemo(() => {
+    return messageGroups.map((group, groupIndex) => (
+      <section
+        key={`date-section-${group.dateLabel || 'undated'}-${group.messages[0]?.id ?? groupIndex}`}
+        className="space-y-3"
+      >
+        {group.dateLabel ? (
+          <div
+            className="pointer-events-none sticky top-2 -mb-1 flex justify-center py-1"
+            style={{ zIndex: 10 + groupIndex }}
+          >
             <span className={`rounded-full border px-3 py-1 text-[10px] font-semibold uppercase tracking-wide shadow-sm backdrop-blur ${
               isDarkMode
                 ? 'border-slate-700/70 bg-slate-900/85 text-slate-300'
                 : 'border-slate-200/80 bg-slate-900 text-slate-100'
             }`}>
-              {dateLabel}
+              {group.dateLabel}
             </span>
-          </div>,
-        );
-        previousDateLabel = dateLabel;
-      }
-      nodes.push(
-        <ChatMessageBubble
+          </div>
+        ) : null}
+        {group.messages.map((message) => (
+          <ChatMessageBubble
           key={message.id}
           message={message}
           isLatestAgentMessage={message.sender === 'agent' && message.id === latestAgentMessageId}
@@ -194,11 +209,12 @@ export default function ChatMessageList({
           isStreaming={isStreaming}
           workspaceId={workspaceId}
           colorMode={colorMode}
-        />,
-      );
-    });
-    return nodes;
+          />
+        ))}
+      </section>
+    ));
   }, [
+    messageGroups,
     interruptFieldKey,
     interruptActionFieldKey,
     interruptInputByMessageId,
@@ -221,7 +237,6 @@ export default function ChatMessageList({
     isStreaming,
     markdownComponents,
     messageBubbleMaxWidth,
-    messages,
     personaDisplayName,
     latestAgentMessageId,
     setInterruptInputByMessageId,
