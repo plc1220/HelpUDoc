@@ -557,16 +557,47 @@ Open each file to see them in action:
 Take a look at the three files, then pause with `request_clarification` so the user can choose in the UI instead of replying in free text.
 ```
 
-Then use `request_clarification`:
+Then use `request_clarification` with preview metadata so HelpUDoc can render a thumbnail chooser window. Do not only mention a "Choose Your Presentation Style" window in prose; the window exists only when this interrupt is emitted.
 
-**Question: Pick Your Style**
-- Header: "Style"
-- Question: "Which style preview do you prefer?"
-- Options:
-  - "Style A: [Name]" — [Brief description]
-  - "Style B: [Name]" — [Brief description]
-  - "Style C: [Name]" — [Brief description]
-  - "Mix elements" — Combine aspects from different styles
+Required tool call shape:
+- `title="Choose Your Presentation Style"`
+- `description="Preview each direction, then choose the one you want me to use for the full deck."`
+- `allow_freeform=false`
+- `multi_select=false`
+- `submit_label="Use selected style"`
+- `options_json` with stable ids and values:
+  - `{"id":"style-a","label":"Style A: [Name]","value":"Style A: [Name]","description":"[Brief description]"}`
+  - `{"id":"style-b","label":"Style B: [Name]","value":"Style B: [Name]","description":"[Brief description]"}`
+  - `{"id":"style-c","label":"Style C: [Name]","value":"Style C: [Name]","description":"[Brief description]"}`
+  - `{"id":"mix-elements","label":"Mix elements","value":"Mix elements","description":"Combine aspects from different styles"}`
+- `context_json` must include:
+
+```json
+{
+  "skill": "frontend-slides",
+  "chooser": "style-previews",
+  "stylePreviews": [
+    {
+      "id": "style-a",
+      "label": "Style A: [Name]",
+      "description": "[Brief description]",
+      "path": ".claude-design/slide-previews/style-a.html"
+    },
+    {
+      "id": "style-b",
+      "label": "Style B: [Name]",
+      "description": "[Brief description]",
+      "path": ".claude-design/slide-previews/style-b.html"
+    },
+    {
+      "id": "style-c",
+      "label": "Style C: [Name]",
+      "description": "[Brief description]",
+      "path": ".claude-design/slide-previews/style-c.html"
+    }
+  ]
+}
+```
 
 If "Mix elements", ask for specifics.
 

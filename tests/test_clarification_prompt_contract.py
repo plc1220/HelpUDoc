@@ -25,5 +25,8 @@ def test_frontend_slides_skill_requires_request_clarification_at_gating_steps() 
     assert "Show preset picker via a second `request_clarification` call" in content
     assert "Call `request_clarification` immediately at this step." in content
     assert 'submit_label="Generate style previews"' in content
-    assert "Then use `request_clarification`:" in content
+    assert "Then use `request_clarification` with preview metadata" in content
+    assert "thumbnail chooser window" in content
+    assert '"chooser": "style-previews"' in content
+    assert '"path": ".claude-design/slide-previews/style-a.html"' in content
     assert "Do not generate the final presentation until the user has answered the style-selection interrupt." in content

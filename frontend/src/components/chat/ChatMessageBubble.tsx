@@ -40,6 +40,15 @@ type MessageAttachmentPreview = {
   previewUrl?: string;
 };
 
+type StylePreviewChoice = {
+  id: string;
+  label: string;
+  value: string;
+  description?: string;
+  path?: string;
+  previewUrl?: string;
+};
+
 const IMAGE_EXTENSION_PATTERN = /\.(apng|avif|gif|jpe?g|png|svg|webp)$/i;
 
 const stripAttachmentMarker = (text: string) => text.replace(ATTACHMENT_MARKER_PATTERN, '').trimEnd();
@@ -276,6 +285,110 @@ const isFrontendSlidesDiscoveryInterrupt = (
   pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
   activeSkill?: string,
 ): boolean => getInterruptSkill(pendingInterrupt, activeSkill) === 'frontend-slides';
+
+const normalizePreviewKey = (value: string): string => (
+  value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+);
+
+const inferStylePreviewPath = (label: string, value: string): string | undefined => {
+  const source = `${label} ${value}`;
+  const styleMatch = source.match(/\bstyle\s*([a-c])\b/i);
+  if (!styleMatch?.[1]) {
+    return undefined;
+  }
+  return `.claude-design/slide-previews/style-${styleMatch[1].toLowerCase()}.html`;
+};
+
+const parseStylePreviewChoiceMetadata = (
+  payload?: Record<string, unknown>,
+): Map<string, Partial<StylePreviewChoice>> => {
+  const previewItems = (() => {
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+      return [];
+    }
+    const candidates = [
+      payload.stylePreviews,
+      payload.previewStyles,
+      payload.previews,
+      payload.previewFiles,
+    ];
+    return candidates.find((candidate): candidate is unknown[] => Array.isArray(candidate)) || [];
+  })();
+  const metadata = new Map<string, Partial<StylePreviewChoice>>();
+  previewItems.forEach((item, index) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+      return;
+    }
+    const raw = item as Record<string, unknown>;
+    const id = String(raw.id || raw.choiceId || `style-${index + 1}`).trim();
+    const label = String(raw.label || raw.name || raw.title || '').trim();
+    const value = String(raw.value || label).trim();
+    const description = String(raw.description || raw.summary || '').trim();
+    const path = String(raw.path || raw.file || raw.filePath || raw.previewPath || '').trim();
+    const entry: Partial<StylePreviewChoice> = {
+      ...(id ? { id } : {}),
+      ...(label ? { label } : {}),
+      ...(value ? { value } : {}),
+      ...(description ? { description } : {}),
+      ...(path ? { path } : {}),
+    };
+    [id, label, value].forEach((key) => {
+      const normalized = normalizePreviewKey(key || '');
+      if (normalized) {
+        metadata.set(normalized, entry);
+      }
+    });
+  });
+  return metadata;
+};
+
+const buildStylePreviewChoices = (
+  pendingInterrupt: ConversationMessageMetadata['pendingInterrupt'] | undefined,
+  activeSkill: string | undefined,
+  workspaceId: string | undefined,
+): StylePreviewChoice[] => {
+  if (!isFrontendSlidesDiscoveryInterrupt(pendingInterrupt, activeSkill)) {
+    return [];
+  }
+  const choices = Array.isArray(pendingInterrupt?.responseSpec?.choices)
+    ? pendingInterrupt.responseSpec.choices
+    : [];
+  if (!choices.length) {
+    return [];
+  }
+
+  const metadata = parseStylePreviewChoiceMetadata(pendingInterrupt?.displayPayload);
+  const previewChoices = choices
+    .map((choice): StylePreviewChoice | null => {
+      const choiceId = String(choice.id || '').trim();
+      const choiceLabel = String(choice.label || '').trim();
+      const choiceValue = String(choice.value || choiceLabel).trim();
+      if (!choiceId || !choiceLabel || !choiceValue) {
+        return null;
+      }
+      const matchingMetadata =
+        metadata.get(normalizePreviewKey(choiceId)) ||
+        metadata.get(normalizePreviewKey(choiceLabel)) ||
+        metadata.get(normalizePreviewKey(choiceValue)) ||
+        {};
+      const label = matchingMetadata.label || choiceLabel;
+      const value = matchingMetadata.value || choiceValue;
+      const path = matchingMetadata.path || inferStylePreviewPath(label, value);
+      const description = matchingMetadata.description || choice.description;
+      return {
+        id: choiceId,
+        label,
+        value,
+        description,
+        path,
+        previewUrl: path ? getAttachmentPreviewUrl(workspaceId, path) : undefined,
+      };
+    })
+    .filter((choice): choice is StylePreviewChoice => Boolean(choice));
+
+  const stylePreviewCount = previewChoices.filter((choice) => Boolean(choice.path)).length;
+  return stylePreviewCount >= 2 ? previewChoices : [];
+};
 
 const getThinkingPlaceholder = (
   metadata?: ConversationMessageMetadata,
@@ -650,6 +763,11 @@ export default function ChatMessageBubble({
     () => parseClarificationQuestions(pendingInterrupt, activeSkill),
     [activeSkill, pendingInterrupt],
   );
+  const stylePreviewChoices = useMemo(
+    () => buildStylePreviewChoices(pendingInterrupt, activeSkill, workspaceId),
+    [activeSkill, pendingInterrupt, workspaceId],
+  );
+  const hasStylePreviewChooser = isClarificationInterrupt && stylePreviewChoices.length > 0;
   const hasStructuredClarificationForm = isClarificationInterrupt && structuredClarificationQuestions.length > 0;
   const clarificationDraftValue = interruptInputByMessageId[clarificationTextKey] || '';
   const structuredClarificationSubmitActions = interruptActions.filter((action) => action.inputMode === 'text');
@@ -1227,6 +1345,98 @@ export default function ChatMessageBubble({
     );
   };
 
+  const renderStylePreviewChooser = () => {
+    if (!hasStylePreviewChooser) {
+      return null;
+    }
+
+    return (
+      <div className="mt-5">
+        <div className="grid gap-4 lg:grid-cols-3">
+          {stylePreviewChoices.map((choice) => {
+            const isSelectedChoice = selectedChoiceIds.includes(choice.id);
+            const previewAction: RenderableInterruptAction = {
+              id: `choice:${choice.id}`,
+              label: choice.label,
+              description: choice.description,
+              style: 'secondary',
+              inputMode: 'none',
+              value: choice.value,
+              source: 'clarification-choice',
+              choiceId: choice.id,
+            };
+            return (
+              <div
+                key={choice.id}
+                className={`overflow-hidden rounded-[1.4rem] border bg-white shadow-sm transition-all duration-200 ${
+                  isSelectedChoice
+                    ? 'border-sky-300 shadow-[0_0_0_1px_rgba(14,165,233,0.24),0_22px_54px_-36px_rgba(14,165,233,0.8)]'
+                    : 'border-slate-200/90 hover:border-slate-300 hover:shadow-[0_22px_54px_-38px_rgba(15,23,42,0.34)]'
+                }`}
+              >
+                <div className="relative aspect-[16/10] overflow-hidden bg-slate-950">
+                  {choice.previewUrl ? (
+                    <iframe
+                      title={`${choice.label} preview`}
+                      src={choice.previewUrl}
+                      loading="lazy"
+                      sandbox=""
+                      className="pointer-events-none h-[250%] w-[250%] origin-top-left scale-[0.4] border-0 bg-white"
+                    />
+                  ) : (
+                    <div className="flex h-full items-center justify-center bg-slate-900 text-slate-400">
+                      <ImageIcon size={28} />
+                    </div>
+                  )}
+                  {isSelectedChoice ? (
+                    <div className="absolute right-3 top-3 rounded-full bg-sky-500 p-1.5 text-white shadow-lg">
+                      <CheckCircle2 size={16} />
+                    </div>
+                  ) : null}
+                </div>
+                <div className="space-y-3 p-4">
+                  <div>
+                    <p className="text-sm font-semibold leading-snug text-slate-900">{choice.label}</p>
+                    {choice.description ? (
+                      <p className="mt-1 text-xs leading-relaxed text-slate-500">{choice.description}</p>
+                    ) : null}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={interruptControlsDisabled}
+                      onClick={() => handleActionTrigger(previewAction)}
+                      className={`rounded-xl border px-3 py-1.5 text-xs font-semibold transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-60 ${
+                        isSelectedChoice
+                          ? 'border-sky-500 bg-sky-500 text-white'
+                          : 'border-slate-900 bg-slate-900 text-white hover:bg-slate-800'
+                      }`}
+                    >
+                      {isSelectedChoice ? 'Selected' : 'Use this style'}
+                    </button>
+                    {choice.previewUrl ? (
+                      <a
+                        href={choice.previewUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 transition-all duration-200 hover:bg-slate-50 hover:text-slate-900"
+                      >
+                        Open preview
+                      </a>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        {pendingInterrupt?.responseSpec?.multiple ? (
+          <div className="mt-4">{renderStructuredSubmitButtons('end')}</div>
+        ) : null}
+      </div>
+    );
+  };
+
   const renderInterruptActions = (tone: 'light' | 'dark') => {
     if (!interruptActions.length) {
       return null;
@@ -1712,6 +1922,8 @@ export default function ChatMessageBubble({
                 ) : null}
                 {hasStructuredClarificationForm ? (
                   renderStructuredClarificationForm()
+                ) : hasStylePreviewChooser ? (
+                  renderStylePreviewChooser()
                 ) : (
                   renderInterruptActions('light')
                 )}
