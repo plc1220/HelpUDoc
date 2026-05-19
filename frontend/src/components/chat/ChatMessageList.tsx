@@ -160,14 +160,16 @@ export default function ChatMessageList({
         className="space-y-3"
       >
         {group.dateLabel ? (
-          <div
-            className="pointer-events-none sticky top-2 -mb-1 flex justify-center py-1"
-            style={{ zIndex: 10 + groupIndex }}
-          >
-            <span className={`rounded-full border px-3 py-1 text-[10px] font-semibold uppercase tracking-wide shadow-sm backdrop-blur ${
+          <div className="relative flex items-center justify-center py-4">
+            <div
+              className={`absolute inset-x-0 top-1/2 h-px -translate-y-1/2 ${
+                isDarkMode ? 'bg-slate-700/80' : 'bg-slate-200'
+              }`}
+            />
+            <span className={`relative rounded-full border px-3 py-1 text-[10px] font-semibold uppercase tracking-wide ${
               isDarkMode
-                ? 'border-slate-700/70 bg-slate-900/85 text-slate-300'
-                : 'border-slate-200/80 bg-slate-900 text-slate-100'
+                ? 'border-slate-700/70 bg-slate-950 text-slate-300'
+                : 'border-slate-200 bg-white text-slate-600 shadow-sm'
             }`}>
               {group.dateLabel}
             </span>

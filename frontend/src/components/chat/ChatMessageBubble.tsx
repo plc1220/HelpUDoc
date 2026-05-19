@@ -1,4 +1,4 @@
-import { Check, CheckCircle2, Copy, FileIcon, FilePenLine, ImageIcon, Loader2, RotateCcw } from 'lucide-react';
+import { Check, CheckCircle2, Copy, FilePenLine, ImageIcon, Loader2, RotateCcw } from 'lucide-react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useEffect, useMemo, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react';
@@ -22,6 +22,11 @@ import {
   isBenignToolNoise,
 } from '../../utils/toolActivitySummary';
 import { buildApiUrl } from '../../services/apiClient';
+import {
+  getAttachmentFileIcon,
+  getAttachmentTypeLabel,
+  renderFormattedUserText,
+} from './messageContentFormatting';
 
 const THOUGHT_PREVIEW_LIMIT = 320;
 const DEFAULT_THINKING_PLACEHOLDER = 'Working through your request based on the current workspace context.';
@@ -1405,14 +1410,15 @@ export default function ChatMessageBubble({
     ? 'pointer-events-none absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-slate-950 via-slate-950/70 to-transparent'
     : 'pointer-events-none absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-slate-50 via-slate-50/75 to-transparent';
   const toolPanelClassName = isDarkMode
-    ? 'mt-3 rounded-xl border border-[#26354d] bg-[#0d1524] px-3 py-3'
-    : 'mt-3 rounded-xl border border-slate-200/80 bg-white/90 px-3 py-3';
+    ? 'mt-3 border-t border-[#26354d] pt-3'
+    : 'mt-3 border-t border-slate-200/80 pt-3';
   const toolButtonClassName = isDarkMode
     ? 'text-xs font-semibold uppercase tracking-[0.18em] text-slate-400 transition-all duration-200 hover:text-slate-200'
     : 'text-xs font-semibold uppercase tracking-[0.18em] text-slate-500 transition-all duration-200 hover:text-slate-700';
   const toolExpandedClassName = isDarkMode
-    ? 'mt-3 rounded-xl border border-[#26354d] bg-[#0d1524] px-3 py-3 text-xs text-slate-200 shadow-inner shadow-black/15'
-    : 'mt-3 rounded-xl border border-slate-200/80 bg-slate-50/90 px-3 py-3 text-xs text-slate-600 shadow-inner shadow-slate-200/40';
+    ? 'mt-3 space-y-3 text-xs text-slate-200'
+    : 'mt-3 space-y-3 text-xs text-slate-600';
+  const userPathPillClassName = 'inline-flex max-w-full items-center gap-1.5 rounded-full border border-white/25 bg-white/15 px-2.5 py-1 text-xs font-medium text-white shadow-sm';
   const userBubbleClassName = isDarkMode
     ? 'rounded-xl bg-[#2d5f9f] px-4 py-3 text-sm text-white shadow-[0_14px_34px_-28px_rgba(45,95,159,0.82)]'
     : 'rounded-xl bg-[#315f9f] px-4 py-3 text-sm text-white shadow-[0_14px_34px_-28px_rgba(49,95,159,0.42)]';
@@ -1440,39 +1446,36 @@ export default function ChatMessageBubble({
               <div className="flex min-w-0 flex-wrap items-center gap-2">
                 <span className={agentPersonaClassName}>{personaDisplayName}</span>
                 {inlineStatus ? (
-                  <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] ${
+                  <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-semibold normal-case tracking-normal ${
                     inlineStatus.status === 'awaiting_approval'
                       ? isDarkMode
-                        ? 'border-amber-400/30 bg-amber-500/10 text-amber-200'
-                        : 'border-amber-200 bg-amber-50 text-amber-700'
+                        ? 'bg-amber-500/15 text-amber-200'
+                        : 'bg-amber-50 text-amber-800'
                       : isDarkMode
-                        ? 'border-sky-400/30 bg-sky-500/10 text-sky-200'
-                        : 'border-sky-200 bg-sky-50 text-sky-700'
+                        ? 'bg-emerald-500/15 text-emerald-200'
+                        : 'bg-emerald-50 text-emerald-800'
                   }`}>
+                    <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+                      inlineStatus.status === 'awaiting_approval'
+                        ? 'bg-amber-400'
+                        : 'animate-pulse bg-emerald-400'
+                    }`} />
                     {inlineStatus.title}
+                    {inlineStatus.elapsed ? ` (${inlineStatus.elapsed})` : ''}
                   </span>
                 ) : null}
               </div>
-              <div className="flex items-center gap-2">
-                {inlineStatus?.elapsed ? (
-                  <span className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold ${
-                    isDarkMode ? 'border-white/10 text-slate-300' : 'border-slate-200 text-slate-600'
-                  }`}>
-                    {inlineStatus.elapsed}
-                  </span>
-                ) : null}
-                {timestampLabel ? <span>{timestampLabel}</span> : null}
-              </div>
+              {timestampLabel ? (
+                <span className={`text-[10px] font-medium normal-case tracking-normal ${
+                  isDarkMode ? 'text-slate-500' : 'text-slate-400'
+                }`}>
+                  {timestampLabel}
+                </span>
+              ) : null}
             </div>
             {inlineStatus ? (
-              <div className={`mt-3 rounded-[1.25rem] border px-3 py-2 text-sm ${
-                inlineStatus.status === 'awaiting_approval'
-                  ? isDarkMode
-                    ? 'border-amber-400/20 bg-amber-500/10 text-amber-100'
-                    : 'border-amber-200 bg-amber-50/80 text-amber-900'
-                  : isDarkMode
-                    ? 'border-sky-400/20 bg-sky-500/10 text-sky-100'
-                    : 'border-sky-200 bg-sky-50/80 text-sky-900'
+              <div className={`mt-3 border-t pt-3 text-sm ${
+                isDarkMode ? 'border-slate-700/70' : 'border-slate-200/80'
               }`}>
                 {inlineStatus.detail}
               </div>
@@ -1810,8 +1813,8 @@ export default function ChatMessageBubble({
                             {toolDigest.digestEvents.slice(-12).reverse().map((evt) => (
                               <li
                                 key={evt.id}
-                                className={`rounded-xl border px-2.5 py-2 text-sm ${
-                                  isDarkMode ? 'border-slate-700/80 bg-slate-950/50' : 'border-slate-200 bg-white'
+                                className={`border-b pb-2 text-sm last:border-b-0 ${
+                                  isDarkMode ? 'border-slate-700/80' : 'border-slate-200'
                                 }`}
                               >
                                 <span className="font-semibold">{evt.title}</span>
@@ -1832,8 +1835,8 @@ export default function ChatMessageBubble({
                         <span className={isDarkMode ? 'text-slate-100' : 'text-slate-900'}>{toolDigest.currentLabel}</span>
                       </div>
                       {toolDigest.reassuranceNotes.length ? (
-                        <div className={`mt-3 rounded-xl border px-3 py-2 text-xs leading-relaxed ${
-                          isDarkMode ? 'border-sky-900/70 bg-sky-950/40 text-sky-50' : 'border-sky-100 bg-sky-50 text-sky-950'
+                        <div className={`mt-3 border-t pt-3 text-xs leading-relaxed ${
+                          isDarkMode ? 'border-slate-700/70 text-sky-100' : 'border-slate-200 text-sky-950'
                         }`}>
                           <p className="font-semibold uppercase tracking-[0.14em]">Notes</p>
                           <ul className="mt-2 list-inside list-disc space-y-1">
@@ -1959,7 +1962,7 @@ export default function ChatMessageBubble({
           </div>
         ) : (
           <div className={userBubbleClassName}>
-            {userText ? <p className="whitespace-pre-line leading-relaxed">{userText}</p> : null}
+            {userText ? renderFormattedUserText(userText, userPathPillClassName) : null}
             {attachmentPreviews.length ? (
               <div className="mt-3 space-y-2">
                 <div className="text-[11px] font-semibold uppercase tracking-wide text-white/80">
@@ -1988,13 +1991,19 @@ export default function ChatMessageBubble({
                         ) : attachment.isImage ? (
                           <ImageIcon size={18} />
                         ) : (
-                          <FileIcon size={18} />
+                          (() => {
+                            const AttachmentIcon = getAttachmentFileIcon(attachment.name, attachment.isImage);
+                            return <AttachmentIcon size={18} />;
+                          })()
                         )}
                       </div>
                       <div className="min-w-0 flex-1">
                         <div className="truncate text-sm font-medium leading-5 text-white">{attachment.name}</div>
                         <div className="text-[11px] font-medium text-white/72">
-                          {attachment.isDrive ? 'Google Drive' : attachment.isImage ? 'Image' : 'File'}
+                          {getAttachmentTypeLabel(attachment.name, {
+                            isDrive: attachment.isDrive,
+                            isImage: attachment.isImage,
+                          })}
                         </div>
                       </div>
                     </div>
