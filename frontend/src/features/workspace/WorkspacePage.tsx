@@ -83,6 +83,8 @@ import CollapsibleDrawer from '../../components/CollapsibleDrawer';
 import WorkspaceShareDialog from '../../components/WorkspaceShareDialog';
 import type { UIBlock } from '../../components/UIBlockRenderer';
 import ExpandableSidebar from '../../components/ExpandableSidebar';
+import PaneResizeHandle from '../../components/PaneResizeHandle';
+import { useHorizontalPaneResize } from '../../hooks/useHorizontalPaneResize';
 import WorkspaceFileTree from '../../components/WorkspaceFileTree';
 import DashboardCanvas from '../dashboard/components/DashboardCanvas';
 import { downloadDashboardHtmlExport } from '../dashboard/components/dashboardDownload';
@@ -135,6 +137,16 @@ const FileEditor = lazy(() => import('../../components/FileEditor'));
 const UIBlockRenderer = lazy(() => import('../../components/UIBlockRenderer'));
 
 const drawerWidth = 280;
+const FILE_PANE_WIDTH_STORAGE_KEY = 'helpudoc.workspace.filePaneWidth';
+const AGENT_PANE_WIDTH_STORAGE_KEY = 'helpudoc.workspace.agentPaneWidth';
+const DEFAULT_FILE_PANE_WIDTH = 320;
+const DEFAULT_AGENT_PANE_WIDTH = 352;
+const COLLAPSED_FILE_PANE_WIDTH = 52;
+const COLLAPSED_AGENT_PANE_WIDTH = 48;
+const MIN_FILE_PANE_WIDTH = 200;
+const MAX_FILE_PANE_WIDTH = 520;
+const MIN_AGENT_PANE_WIDTH = 280;
+const MAX_AGENT_PANE_WIDTH = 720;
 const EMPTY_MEMORY_VIEW: UserMemoryView = {
   globalPreferences: '',
   globalContext: '',
@@ -1411,13 +1423,28 @@ export default function WorkspacePage() {
     }
   }, []);
 
+  const filePaneResize = useHorizontalPaneResize({
+    storageKey: FILE_PANE_WIDTH_STORAGE_KEY,
+    defaultWidth: DEFAULT_FILE_PANE_WIDTH,
+    minWidth: MIN_FILE_PANE_WIDTH,
+    maxWidth: MAX_FILE_PANE_WIDTH,
+    enabled: isFilePaneVisible && !isAgentPaneFullScreen,
+  });
+  const agentPaneResize = useHorizontalPaneResize({
+    storageKey: AGENT_PANE_WIDTH_STORAGE_KEY,
+    defaultWidth: DEFAULT_AGENT_PANE_WIDTH,
+    minWidth: MIN_AGENT_PANE_WIDTH,
+    maxWidth: MAX_AGENT_PANE_WIDTH,
+    enabled: isAgentPaneVisible && !isAgentPaneFullScreen,
+  });
+
+  const filePaneWidth = isFilePaneVisible ? filePaneResize.width : COLLAPSED_FILE_PANE_WIDTH;
   const agentPaneWidth = isAgentPaneFullScreen
     ? '100%'
     : isAgentPaneVisible
-      ? '22rem'
-      : '3rem';
-
-  const filePaneWidth = isFilePaneVisible ? 320 : 52;
+      ? agentPaneResize.width
+      : COLLAPSED_AGENT_PANE_WIDTH;
+  const isPaneResizing = filePaneResize.isResizing || agentPaneResize.isResizing;
 
   const layoutHeight = '100%';
 
@@ -1446,7 +1473,9 @@ export default function WorkspacePage() {
     width: agentPaneWidth,
     flexGrow: isAgentPaneFullScreen ? 1 : 0,
     flexShrink: isAgentPaneFullScreen ? 1 : 0,
-    transition: 'flex-basis 0.35s ease, flex-grow 0.35s ease, width 0.35s ease',
+    transition: isPaneResizing
+      ? 'none'
+      : 'flex-basis 0.35s ease, flex-grow 0.35s ease, width 0.35s ease',
   };
   const messageBubbleMaxWidth = isAgentPaneFullScreen ? '100%' : '720px';
   const isDarkMode = colorMode === 'dark';
@@ -1791,7 +1820,8 @@ export default function WorkspacePage() {
   const filePaneStyles: CSSProperties = {
     width: filePaneWidth,
     minWidth: filePaneWidth,
-    transition: 'width 0.35s ease',
+    flexShrink: 0,
+    transition: isPaneResizing ? 'none' : 'width 0.35s ease',
   };
 
   const workspacePaneStyles: CSSProperties = {
@@ -7080,9 +7110,7 @@ export default function WorkspacePage() {
               <>
             {/* Middle Pane: Files & Editor */}
             <div
-              className={`flex flex-col min-w-0 min-h-0 overflow-hidden ${
-                isDarkMode ? 'border-r border-[#223047]' : 'border-r border-gray-200'
-              }`}
+              className="flex min-w-0 min-h-0 flex-col overflow-hidden"
               style={workspacePaneStyles}
             >
               {/* Workspace Header */}
@@ -7379,6 +7407,13 @@ export default function WorkspacePage() {
                   </div>
                 </div>
 
+                <PaneResizeHandle
+                  disabled={!isFilePaneVisible || isAgentPaneFullScreen}
+                  isDarkMode={isDarkMode}
+                  isResizing={filePaneResize.isResizing}
+                  {...filePaneResize.createHandleProps('ltr')}
+                />
+
                 {/* Content Editor */}
                 <div className={`flex-1 flex flex-col overflow-hidden min-w-0 min-h-0 ${
                   isDarkMode ? 'bg-[#0e1728]' : 'bg-gray-50'
@@ -7564,6 +7599,13 @@ export default function WorkspacePage() {
                 </div>
               </div>
             </div>
+
+            <PaneResizeHandle
+              disabled={!isAgentPaneVisible || isAgentPaneFullScreen}
+              isDarkMode={isDarkMode}
+              isResizing={agentPaneResize.isResizing}
+              {...agentPaneResize.createHandleProps('rtl')}
+            />
 
             <AgentChatPane
               colorMode={colorMode}
