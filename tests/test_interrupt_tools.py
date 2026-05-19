@@ -179,3 +179,15 @@ def test_request_clarification_accepts_native_question_and_context_payloads(monk
     assert seen_payload["response_spec"]["questions"][0]["options"][0]["label"] == "Pitch deck"
     assert seen_payload["display_payload"]["skill"] == "frontend-slides"
     assert "Purpose: Pitch deck" in result
+
+
+def test_request_clarification_schema_keeps_json_payload_fields_as_strings() -> None:
+    workspace = SimpleNamespace(context={})
+    factory = ToolFactory.__new__(ToolFactory)
+    tool = factory._build_request_clarification_tool(workspace)
+
+    schema = tool.args_schema.model_json_schema()
+
+    assert schema["properties"]["options_json"]["type"] == "string"
+    assert schema["properties"]["questions_json"]["type"] == "string"
+    assert schema["properties"]["context_json"]["type"] == "string"

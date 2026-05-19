@@ -12,7 +12,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from uuid import uuid4
 
 from langchain_core.messages import HumanMessage
@@ -65,6 +65,42 @@ class StructuredWebSource(BaseModel):
 class StructuredWebAnswer(BaseModel):
     summary: str
     sources: list[StructuredWebSource] = Field(default_factory=list)
+
+
+class RequestClarificationInput(BaseModel):
+    title: str
+    description: str = ""
+    options_json: str = "[]"
+    questions_json: str = "[]"
+    allow_freeform: bool = True
+    multi_select: bool = False
+    placeholder: str = ""
+    submit_label: str = "Continue"
+    step_index: int = 0
+    step_count: int = 1
+    context_json: str = "{}"
+
+    @field_validator("options_json", "questions_json", mode="before")
+    @classmethod
+    def _coerce_json_list_string(cls, value: Any) -> str:
+        if value is None:
+            return "[]"
+        if isinstance(value, str):
+            return value
+        if isinstance(value, list):
+            return json.dumps(value, ensure_ascii=False)
+        return str(value)
+
+    @field_validator("context_json", mode="before")
+    @classmethod
+    def _coerce_json_dict_string(cls, value: Any) -> str:
+        if value is None:
+            return "{}"
+        if isinstance(value, str):
+            return value
+        if isinstance(value, dict):
+            return json.dumps(value, ensure_ascii=False)
+        return str(value)
 
 
 _MAX_SKILL_LOAD_ATTEMPTS_PER_TURN = 8
@@ -855,19 +891,19 @@ class ToolFactory:
     def _build_request_clarification_tool(self, workspace_state: WorkspaceState) -> Tool:
         """Pause execution and ask the human a clarification question."""
 
-        @tool
+        @tool(args_schema=RequestClarificationInput)
         def request_clarification(
             title: str,
             description: str = "",
-            options_json: Any = "[]",
-            questions_json: Any = "[]",
+            options_json: str = "[]",
+            questions_json: str = "[]",
             allow_freeform: bool = True,
             multi_select: bool = False,
             placeholder: str = "",
             submit_label: str = "Continue",
             step_index: int = 0,
             step_count: int = 1,
-            context_json: Any = "{}",
+            context_json: str = "{}",
         ) -> str:
             """Ask the human for clarification with optional selectable choices and typed feedback."""
             prompt_title = (title or "").strip()
