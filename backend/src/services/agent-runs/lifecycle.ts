@@ -510,6 +510,8 @@ export const detectImplicitInputAwaiting = (opts: {
 
   const uiFormMisref = [
     /\b(?:from|in)\s+the\s+(?:form|options?|UI)\s+(?:above|below)/i,
+    /\b(?:forms?|options?|choices?)\s+in\s+the\s+sidebar/i,
+    /\buse\s+the\s+(?:forms?|options?|choices?)\s+(?:in\s+the\s+sidebar|below|above)/i,
     /\bselect.*(?:above|below)/i,
     /\bpick.*(?:above|below)/i,
   ];
@@ -523,13 +525,21 @@ export const detectImplicitInputAwaiting = (opts: {
   if (/(?:^|\n)\s*[-•*]\s+.+(?:\n\s*[-•*]\s+.+){2,}/m.test(lastParagraphs)) {
     signals.push('enumerated_choices');
   }
+  if (/(?:^|\n)\s*\d+\.\s+.+(?:\n\s*\d+\.\s+.+){1,}/m.test(lastParagraphs)) {
+    signals.push('enumerated_choices');
+  }
 
   if (signals.length < 2) {
     return { awaiting: false };
   }
 
   const promptMatch = lastParagraphs.match(/[^.!?\n]*\?\s*$/);
-  const prompt = promptMatch ? promptMatch[0].trim() : undefined;
+  const sidebarPromptMatch = lastParagraphs.match(/Please use the\s+.+?(?:\n\s*\d+\.\s+.+)+/is);
+  const prompt = promptMatch
+    ? promptMatch[0].trim()
+    : sidebarPromptMatch
+      ? sidebarPromptMatch[0].trim()
+      : undefined;
 
   return { awaiting: true, prompt };
 };

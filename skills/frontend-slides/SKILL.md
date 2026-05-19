@@ -400,6 +400,8 @@ This means curated images are factored in **before** style selection (Phase 2) a
 
 5. **Confirm outline via `request_clarification`** — Do NOT break the flow by asking the user to type free text. Use `request_clarification` to confirm:
 
+At this point, do not write a normal assistant message that says "Next Steps", "use the forms in the sidebar", "confirm the outline", or "choose your style discovery method". Those words are only valid inside the structured `request_clarification` payload. If you have an outline ready, your next action must be the tool call below, then stop.
+
 **Question: Outline Confirmation**
 - Header: "Outline"
 - Question: "Does this slide outline and image selection look right?"

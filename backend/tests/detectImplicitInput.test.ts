@@ -63,6 +63,23 @@ test('returns awaiting=true when assistant references phantom UI and has enumera
   assert.equal(result.awaiting, true);
 });
 
+test('returns awaiting=true when assistant references sidebar forms and numbered next steps', () => {
+  const result = detectImplicitInputAwaiting({
+    status: 'completed',
+    skillId: 'frontend-slides',
+    hadInterrupt: false,
+    assistantText: `The project is ready to move into the visual design phase.
+
+### Next Steps
+Please use the **forms in the sidebar** (or below) to:
+1. **Confirm the outline** and image placement.
+2. **Choose your style discovery method** (I recommend generating 3 custom previews).
+3. **Define the mood** for a professional legal pitch.`,
+  });
+  assert.equal(result.awaiting, true);
+  assert.ok(result.prompt?.includes('forms in the sidebar'));
+});
+
 test('returns awaiting=true when agent asks "which" and lists options', () => {
   const result = detectImplicitInputAwaiting({
     status: 'completed',
