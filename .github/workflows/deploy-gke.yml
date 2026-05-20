@@ -586,5 +586,30 @@ jobs:
       - name: Post-deploy smoke (agent sidecar)
         run: |
           set -euo pipefail
-          kubectl -n helpudoc exec deploy/helpudoc-app -c agent -- \
-            python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health').read()"
+          if ! kubectl -n helpudoc exec -i deploy/helpudoc-app -c agent -- \
+            python - <<'PY'
+          import sys
+          import time
+          import urllib.request
+          import urllib.error
+
+          url = "http://127.0.0.1:8001/health"
+          for attempt in range(1, 31):
+              try:
+                  with urllib.request.urlopen(url, timeout=2) as response:
+                      body = response.read(200).decode("utf-8", errors="replace")
+                  print(f"ok: {url} {body}")
+                  sys.exit(0)
+              except Exception as exc:
+                  print(f"waiting for {url} ({attempt}/30): {exc}", flush=True)
+                  time.sleep(5)
+
+          print(f"timed out waiting for {url}", file=sys.stderr)
+          sys.exit(1)
+          PY
+          then
+            kubectl -n helpudoc get pods -l app=helpudoc-app -o wide || true
+            kubectl -n helpudoc describe deploy/helpudoc-app || true
+            kubectl -n helpudoc logs deploy/helpudoc-app -c agent --tail=200 || true
+            exit 1
+          fi
