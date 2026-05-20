@@ -21,20 +21,53 @@ import {
   type WorkspaceFileTreeNode,
 } from '../utils/workspaceFileTree';
 
-const WORKSPACE_FILE_DRAG_MIME = 'text/plain';
+const WORKSPACE_FILE_DRAG_MIME = 'application/x-helpudoc-workspace-file-id';
 
 const canAcceptWorkspaceFileDrop = (
   event: React.DragEvent,
   draggedFileIdRef: React.RefObject<string | null>,
 ): boolean =>
-  draggedFileIdRef.current != null || event.dataTransfer.types.includes(WORKSPACE_FILE_DRAG_MIME);
+  draggedFileIdRef.current != null
+  || event.dataTransfer.types.includes(WORKSPACE_FILE_DRAG_MIME)
+  || event.dataTransfer.types.includes('text/plain');
 
 const readDroppedFileId = (
   event: React.DragEvent,
   draggedFileIdRef: React.RefObject<string | null>,
 ): string | null => {
   const fromDataTransfer = event.dataTransfer.getData(WORKSPACE_FILE_DRAG_MIME);
-  return fromDataTransfer || draggedFileIdRef.current;
+  const fromText = event.dataTransfer.getData('text/plain');
+  return fromDataTransfer || draggedFileIdRef.current || fromText || null;
+};
+
+const getWorkspaceFolderPathFromPoint = (clientX: number, clientY: number): string | null => {
+  const folderRows = Array.from(document.querySelectorAll<HTMLElement>('[data-workspace-folder-path]'));
+  for (const row of folderRows) {
+    const rect = row.getBoundingClientRect();
+    if (clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom) {
+      return row.dataset.workspaceFolderPath ?? null;
+    }
+  }
+
+  const target = document
+    .elementFromPoint(clientX, clientY)
+    ?.closest<HTMLElement>('[data-workspace-folder-path]');
+  return target?.dataset.workspaceFolderPath ?? null;
+};
+
+const getWorkspaceDropPathFromPoint = (clientX: number, clientY: number): string | null => {
+  const folderPath = getWorkspaceFolderPathFromPoint(clientX, clientY);
+  if (folderPath != null) {
+    return folderPath;
+  }
+  const root = document.querySelector<HTMLElement>('[data-workspace-file-tree-root]');
+  if (!root) {
+    return null;
+  }
+  const rect = root.getBoundingClientRect();
+  return clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom
+    ? ''
+    : null;
 };
 
 interface WorkspaceFileTreeProps {
@@ -159,6 +192,7 @@ const TreeFileRow: React.FC<{
   copiedPublicUrlFileId: string | null;
   onRenameFile: (file: WorkspaceFile) => void;
   onDeleteFile: (file: WorkspaceFile) => void;
+  onDropFilesToFolder: (fileId: string, folderPath: string) => void;
   draggedFileId: string | null;
   draggedFileIdRef: React.RefObject<string | null>;
   setDraggedFileId: (fileId: string | null) => void;
@@ -177,6 +211,7 @@ const TreeFileRow: React.FC<{
   copiedPublicUrlFileId,
   onRenameFile,
   onDeleteFile,
+  onDropFilesToFolder,
   draggedFileId,
   draggedFileIdRef,
   setDraggedFileId,
@@ -196,7 +231,8 @@ const TreeFileRow: React.FC<{
   const fileIcon = getFileTypeIcon(file.name || '');
   const isDraft = isDraftWorkspaceFile(file);
   const isDraggable = !isPendingJob && !isDraft;
-  const isBeingDragged = draggedFileId === file.id;
+  const fileId = String(file.id);
+  const isBeingDragged = draggedFileId === fileId;
   const isDarkMode = colorMode === 'dark';
   const rowClassName = selected
     ? isDarkMode
@@ -214,42 +250,62 @@ const TreeFileRow: React.FC<{
   const dashboardPath = (file.path || file.name || '').replace(/\\/g, '/');
   const dashboardArtifact = dashboardPath ? dashboardArtifactsByPath?.[dashboardPath] : undefined;
   const dashboardBadge = dashboardArtifact?.status;
-
+  const handleDragStart = (event: React.DragEvent) => {
+    if (!isDraggable) {
+      return;
+    }
+    draggedFileIdRef.current = fileId;
+    setDraggedFileId(fileId);
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData(WORKSPACE_FILE_DRAG_MIME, fileId);
+    event.dataTransfer.setData('text/plain', fileId);
+  };
+  const clearDragState = () => {
+    draggedFileIdRef.current = null;
+    setDraggedFileId(null);
+    setDropTargetPath(null);
+  };
   return (
     <div
       className={`group relative flex items-start gap-2 rounded-lg px-2 py-1.5 transition-colors ${rowClassName} ${
         isBeingDragged ? 'opacity-40' : ''
       }`}
+      title={node.path}
       draggable={isDraggable}
-      onDragStart={(event) => {
-        if (!isDraggable) {
+      onDragStart={handleDragStart}
+      onDragEnd={(event) => {
+        const fileIdToDrop = draggedFileIdRef.current;
+        const dropPath = getWorkspaceDropPathFromPoint(event.clientX, event.clientY);
+        if (fileIdToDrop && dropPath != null) {
+          onDropFilesToFolder(fileIdToDrop, dropPath);
           return;
         }
-        draggedFileIdRef.current = file.id;
-        setDraggedFileId(file.id);
-        event.dataTransfer.effectAllowed = 'move';
-        event.dataTransfer.setData(WORKSPACE_FILE_DRAG_MIME, file.id);
-      }}
-      onDragEnd={() => {
-        draggedFileIdRef.current = null;
-        setDraggedFileId(null);
-        setDropTargetPath(null);
+        clearDragState();
       }}
     >
       <input
         type="checkbox"
-        checked={selectedFiles.has(file.id)}
+        checked={selectedFiles.has(fileId)}
         disabled={isPendingJob}
-        onChange={() => onToggleFileSelection(file.id)}
+        onChange={() => onToggleFileSelection(fileId)}
         onClick={(event) => event.stopPropagation()}
         className="mt-1 shrink-0"
       />
-      <button
-        type="button"
+      <div
+        role="button"
+        tabIndex={isPendingJob ? -1 : 0}
+        data-workspace-file-drag-handle="true"
         onClick={() => {
           if (isPendingJob) {
             return;
           }
+          onSelectFile(file);
+        }}
+        onKeyDown={(event) => {
+          if (isPendingJob || (event.key !== 'Enter' && event.key !== ' ')) {
+            return;
+          }
+          event.preventDefault();
           onSelectFile(file);
         }}
         className="flex min-w-0 flex-1 items-start gap-2 text-left"
@@ -307,7 +363,7 @@ const TreeFileRow: React.FC<{
             </span>
           )}
         </div>
-      </button>
+      </div>
       {!isPendingJob && (
         <div className={`pointer-events-none absolute right-2 top-1/2 z-10 flex -translate-y-1/2 items-center gap-1 rounded-lg border pl-2 opacity-0 backdrop-blur-sm transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 ${actionsClassName}`}>
           {file.publicUrl && !isDraft && (
@@ -429,6 +485,7 @@ const TreeFolderRow: React.FC<{
   return (
     <div
       className="select-none"
+      data-workspace-folder-path={node.path}
       onDragOver={handleFolderDragOver}
       onDragLeave={handleFolderDragLeave}
       onDrop={handleFolderDrop}
@@ -562,7 +619,7 @@ const renderTreeNodes = (
       <TreeFileRow
         key={node.id}
         node={node}
-        selected={options.selectedFileId === node.file.id}
+        selected={String(options.selectedFileId) === String(node.file.id)}
         selectedFiles={options.selectedFiles}
         dashboardArtifactsByPath={options.dashboardArtifactsByPath}
         ragStatuses={options.ragStatuses}
@@ -573,6 +630,7 @@ const renderTreeNodes = (
         copiedPublicUrlFileId={options.copiedPublicUrlFileId}
         onRenameFile={options.onRenameFile}
         onDeleteFile={options.onDeleteFile}
+        onDropFilesToFolder={options.onDropFilesToFolder}
         draggedFileId={options.draggedFileId}
         draggedFileIdRef={options.draggedFileIdRef}
         setDraggedFileId={options.setDraggedFileId}
@@ -612,7 +670,7 @@ export default function WorkspaceFileTree({
   const [dropTargetPath, setDropTargetPath] = useState<string | null>(null);
   const [hasInitializedExpandedFolders, setHasInitializedExpandedFolders] = useState(false);
 
-  const fileById = useMemo(() => new Map(files.map((file) => [file.id, file])), [files]);
+  const fileById = useMemo(() => new Map(files.map((file) => [String(file.id), file])), [files]);
 
   useEffect(() => {
     if (!hasInitializedExpandedFolders && folderPaths.length > 0) {
@@ -701,15 +759,23 @@ export default function WorkspaceFileTree({
 
   const handleRootDrop = (event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault();
+    const folderTarget = (event.target as HTMLElement | null)?.closest('[data-workspace-folder-path]');
+    if (folderTarget) {
+      return;
+    }
     const fileId = readDroppedFileId(event, draggedFileIdRef);
     if (!fileId) {
       return;
     }
-    handleDropFilesToFolder(fileId, '');
+    const dropPath = getWorkspaceDropPathFromPoint(event.clientX, event.clientY) ?? dropTargetPath;
+    if (dropPath != null) {
+      handleDropFilesToFolder(fileId, dropPath);
+    }
   };
 
   return (
     <div
+      data-workspace-file-tree-root="true"
       className={`flex h-full min-h-0 flex-col overflow-hidden ${
         draggedFileId ? (isDarkMode ? 'bg-sky-500/5' : 'bg-blue-50/30') : ''
       }`}
@@ -719,6 +785,7 @@ export default function WorkspaceFileTree({
         }
         event.preventDefault();
         event.dataTransfer.dropEffect = 'move';
+        setDropTargetPath(getWorkspaceFolderPathFromPoint(event.clientX, event.clientY));
       }}
       onDrop={handleRootDrop}
     >
