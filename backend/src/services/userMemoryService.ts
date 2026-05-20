@@ -370,6 +370,17 @@ export class UserMemoryService {
         continue;
       }
       const described = describeUserMemoryPath(candidate.targetPath);
+      const reviewedAt = new Date().toISOString();
+
+      if (candidate.proposedContent.trim()) {
+        await putInternalMemoryFile(
+          { path: candidate.targetPath, content: candidate.proposedContent },
+          { authToken },
+        );
+      } else {
+        await deleteInternalMemoryFile(candidate.targetPath, { authToken });
+      }
+
       await this.db('user_memory_suggestions')
         .where({
           userId: input.userId,
@@ -378,7 +389,7 @@ export class UserMemoryService {
         })
         .update({
           status: 'stale',
-          reviewedAt: new Date().toISOString(),
+          reviewedAt,
           updatedAt: this.db.fn.now(),
         });
 
@@ -393,8 +404,10 @@ export class UserMemoryService {
         targetSection: described.section,
         baseContentHash: hashContent(currentContent.content || ''),
         proposedContent: candidate.proposedContent,
-        rationale: candidate.rationale,
-        status: 'pending',
+        rationale: `Auto-applied memory update. ${candidate.rationale}`,
+        status: 'accepted',
+        reviewedContent: candidate.proposedContent,
+        reviewedAt,
         createdAt: this.db.fn.now(),
         updatedAt: this.db.fn.now(),
       });
