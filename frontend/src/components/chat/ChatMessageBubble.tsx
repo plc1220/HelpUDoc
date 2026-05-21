@@ -422,12 +422,72 @@ const formatInterruptValue = (value: unknown): string => {
   }
 };
 
+const normalizePayloadKey = (key: string): string => key.trim().toLowerCase().replace(/[_\s-]+/g, '');
+
+const isEmptyPayloadValue = (value: unknown): boolean => {
+  if (value == null) return true;
+  if (typeof value === 'string') return !value.trim();
+  if (Array.isArray(value)) return value.length === 0;
+  if (typeof value === 'object') return Object.keys(value as Record<string, unknown>).length === 0;
+  return false;
+};
+
+const isMetadataOnlyPayloadRecord = (value: unknown): boolean => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return false;
+  }
+  const keys = Object.keys(value as Record<string, unknown>).map(normalizePayloadKey);
+  return keys.length > 0 && keys.every((key) => ['skill', 'source', 'synthetic'].includes(key));
+};
+
+const isQuestionOnlyPayloadRecord = (value: unknown): boolean => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  const hasQuestion = typeof record.question === 'string' || typeof record.prompt === 'string';
+  const hasChoices = Array.isArray(record.options) || Array.isArray(record.choices);
+  const hasDisplayContent = ['slides', 'slideOutline', 'outlineItems', 'items', 'sections', 'content', 'summary', 'markdown']
+    .some((key) => !isEmptyPayloadValue(record[key]));
+  return hasQuestion && hasChoices && !hasDisplayContent;
+};
+
+const getRenderableDisplayPayloadEntries = (
+  payload?: Record<string, unknown>,
+): Array<[string, unknown]> => {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return [];
+  }
+  const hiddenKeys = new Set([
+    'questions',
+    'context',
+    'skill',
+    'source',
+    'synthetic',
+    'stylepreviews',
+    'previewstyles',
+    'previews',
+    'previewfiles',
+  ]);
+  return Object.entries(payload).filter(([key, value]) => {
+    const normalizedKey = normalizePayloadKey(key);
+    if (hiddenKeys.has(normalizedKey)) {
+      return false;
+    }
+    if (isEmptyPayloadValue(value) || isMetadataOnlyPayloadRecord(value) || isQuestionOnlyPayloadRecord(value)) {
+      return false;
+    }
+    return true;
+  });
+};
+
 const renderDisplayPayload = (
   payload?: Record<string, unknown>,
   heading = 'Details',
   tone: 'dark' | 'light' = 'dark',
 ) => {
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload) || !Object.keys(payload).length) {
+  const entries = getRenderableDisplayPayloadEntries(payload);
+  if (!entries.length) {
     return null;
   }
   const containerClass =
@@ -450,7 +510,7 @@ const renderDisplayPayload = (
     <div className={containerClass}>
       <p className={headingClass}>{heading}</p>
       <div className="mt-3 space-y-3">
-        {Object.entries(payload).map(([key, value]) => (
+        {entries.map(([key, value]) => (
           <div key={key}>
             <p className={keyClass}>{key}</p>
             <p className={valueClass}>{formatInterruptValue(value)}</p>

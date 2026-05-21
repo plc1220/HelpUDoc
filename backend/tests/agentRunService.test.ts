@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   isRealRunProgressEvent,
+  resolveStreamCloseDisposition,
   shouldFailResumedRunForIdle,
 } from '../src/services/agentRunService';
 
@@ -47,5 +48,29 @@ test('shouldFailResumedRunForIdle only fails resumed idle runs with no active to
       timeoutMs: 3_000,
     }),
     false,
+  );
+});
+
+test('resolveStreamCloseDisposition preserves an emitted interrupt ahead of stream errors', () => {
+  const interruptPayload = {
+    type: 'interrupt',
+    kind: 'clarification',
+    title: 'Style Selection Method',
+  };
+
+  assert.deepEqual(
+    resolveStreamCloseDisposition({
+      sawInterruptPayload: interruptPayload,
+      loopErrorMessage: 'Clarification response was not consumed. The same clarification was emitted again.',
+      contractErrorMessage: 'Artifact contract validation failed.',
+    }),
+    { status: 'awaiting_approval', preserveInterrupt: true },
+  );
+
+  assert.deepEqual(
+    resolveStreamCloseDisposition({
+      contractErrorMessage: 'Artifact contract validation failed.',
+    }),
+    { status: 'failed', error: 'Artifact contract validation failed.', preserveInterrupt: false },
   );
 });

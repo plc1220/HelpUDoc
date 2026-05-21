@@ -12,6 +12,7 @@ export {
   configureAgentRunServices,
   startAgentRun,
   persistInterruptAndStopRun,
+  resolveStreamCloseDisposition,
   resumeAgentRun,
   resumeAgentRunWithResponse,
   resumeAgentRunWithAction,

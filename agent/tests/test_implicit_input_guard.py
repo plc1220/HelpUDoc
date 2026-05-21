@@ -81,6 +81,20 @@ def test_build_synthetic_interrupt_uses_structured_outline_question() -> None:
     ]
 
 
+def test_build_synthetic_interrupt_does_not_regress_style_selection_to_outline_confirmation() -> None:
+    payload = build_synthetic_clarification_interrupt(
+        skill_id="frontend-slides",
+        assistant_text=(
+            "Now that the outline is approved, we'll move on to selecting the visual direction "
+            "for the EcoWorld pitch deck. Please choose a style selection method in the form below."
+        ),
+        prompt_hint="Please choose a style selection method in the form below.",
+    )
+    assert payload is not None
+    assert payload["title"] == "Continue"
+    assert payload["response_spec"].get("questions", []) == []
+
+
 def test_guard_skips_when_tool_calls_present() -> None:
     middleware = ImplicitInputGuardMiddleware()
     state = {

@@ -278,6 +278,31 @@ export const shouldFailResumedRunForIdle = (input: {
   return timeoutMs > 0 && input.now - input.lastRealActivityAt >= timeoutMs;
 };
 
+export const resolveStreamCloseDisposition = (input: {
+  sawInterruptPayload?: Record<string, unknown> | null;
+  loopErrorMessage?: string;
+  stallErrorMessage?: string;
+  aborted?: boolean;
+  contractErrorMessage?: string;
+}): { status: AgentRunStatus; error?: string; preserveInterrupt: boolean } => {
+  if (input.sawInterruptPayload) {
+    return { status: 'awaiting_approval', preserveInterrupt: true };
+  }
+  if (input.loopErrorMessage) {
+    return { status: 'failed', error: input.loopErrorMessage, preserveInterrupt: false };
+  }
+  if (input.stallErrorMessage) {
+    return { status: 'failed', error: input.stallErrorMessage, preserveInterrupt: false };
+  }
+  if (input.aborted) {
+    return { status: 'cancelled', preserveInterrupt: false };
+  }
+  if (input.contractErrorMessage) {
+    return { status: 'failed', error: input.contractErrorMessage, preserveInterrupt: false };
+  }
+  return { status: 'completed', preserveInterrupt: false };
+};
+
 const persistMeta = async (runId: string, meta: Partial<PersistedRunMeta>) => {
   const metaKey = buildMetaKey(runId);
   const stringified: Record<string, string> = {};
@@ -1425,48 +1450,41 @@ async function runAgentRunWorker(
         await processTailBuffer();
       }
 
-      if (loopErrorMessage) {
-        await finalizeRun('failed', loopErrorMessage);
-        return;
-      }
+      const disposition = resolveStreamCloseDisposition({
+        sawInterruptPayload,
+        loopErrorMessage,
+        stallErrorMessage,
+        aborted: controller.signal.aborted,
+        contractErrorMessage,
+      });
 
-      if (stallErrorMessage) {
-        await finalizeRun('failed', stallErrorMessage);
-        return;
-      }
-
-      if (controller.signal.aborted) {
-        await finalizeRun('cancelled');
-        return;
-      }
-
-      if (contractErrorMessage) {
-        await finalizeRun('failed', contractErrorMessage);
-        return;
-      }
-
-      if (sawInterruptPayload) {
+      if (disposition.preserveInterrupt && sawInterruptPayload) {
         await markRunAwaitingApproval(runId, JSON.stringify(sawInterruptPayload));
         cleanupRun(runId, upstream || undefined);
         return;
       }
 
-      await finalizeRun('completed');
+      await finalizeRun(disposition.status, disposition.error);
     });
     upstream.on('error', async (error: Error) => {
-      if (loopErrorMessage) {
-        await finalizeRun('failed', loopErrorMessage);
-        return;
-      }
-      if (stallErrorMessage) {
-        await finalizeRun('failed', stallErrorMessage);
-        return;
-      }
-      if (sawInterruptPayload) {
+      const disposition = resolveStreamCloseDisposition({
+        sawInterruptPayload,
+        loopErrorMessage,
+        stallErrorMessage,
+        aborted: controller.signal.aborted,
+      });
+
+      if (disposition.preserveInterrupt && sawInterruptPayload) {
         await markRunAwaitingApproval(runId, JSON.stringify(sawInterruptPayload));
         cleanupRun(runId, upstream || undefined);
         return;
       }
+
+      if (disposition.status !== 'completed') {
+        await finalizeRun(disposition.status, disposition.error);
+        return;
+      }
+
       const status: AgentRunStatus = controller.signal.aborted ? 'cancelled' : 'failed';
       if (!controller.signal.aborted) {
         const errorPayload = JSON.stringify({ type: 'error', message: error.message || 'Agent stream failed.' });

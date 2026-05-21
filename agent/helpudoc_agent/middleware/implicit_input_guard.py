@@ -86,6 +86,19 @@ def _resolve_active_skill_id(context: Any) -> str | None:
 
 def _is_outline_confirmation_context(text: str) -> bool:
     lowered = text.lower()
+    if "outline" in lowered and "approved" in lowered:
+        return False
+    if any(
+        phrase in lowered
+        for phrase in (
+            "style selection",
+            "visual direction",
+            "design presets",
+            "right \"vibe\"",
+            "right vibe",
+        )
+    ):
+        return False
     return "outline" in lowered and (
         "confirm" in lowered
         or "form" in lowered
