@@ -1,7 +1,7 @@
 import { Check, CheckCircle2, Copy, FilePenLine, ImageIcon, Loader2, RotateCcw } from 'lucide-react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react';
+import { useCallback, useEffect, useMemo, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react';
 
 import type {
   ConversationMessage,
@@ -34,6 +34,7 @@ const THOUGHT_PREVIEW_LIMIT = 320;
 const DEFAULT_THINKING_PLACEHOLDER = 'Working through your request based on the current workspace context.';
 const FRONTEND_SLIDES_DISCOVERY_HEADERS = ['purpose', 'length', 'content', 'images', 'editing'] as const;
 const ATTACHMENT_MARKER_PATTERN = /\n*\[Attachments:\s*([^\]]+)\]\s*$/i;
+const TRAILING_TRUNCATION_PATTERN = /(?:\.{3}|…)$/;
 
 type MessageAttachmentPreview = {
   name: string;
@@ -432,15 +433,15 @@ const renderDisplayPayload = (
   const containerClass =
     tone === 'dark'
       ? 'rounded-2xl border border-white/10 bg-white/5 p-4 text-left'
-      : 'rounded-2xl border border-slate-200/70 bg-white/65 p-4 text-left';
+      : 'rounded-xl border border-slate-200/80 bg-slate-50/70 p-3 text-left';
   const headingClass =
     tone === 'dark'
       ? 'text-[11px] font-semibold uppercase tracking-[0.18em] text-white/55'
-      : 'text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400';
+      : 'text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500';
   const keyClass =
     tone === 'dark'
       ? 'text-[11px] font-semibold uppercase tracking-[0.14em] text-white/45'
-      : 'text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500';
+      : 'text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500';
   const valueClass =
     tone === 'dark'
       ? 'mt-1 whitespace-pre-wrap text-sm leading-relaxed text-white/88'
@@ -661,21 +662,6 @@ export default function ChatMessageBubble({
     () => summarizeToolActivity(toolEvents, formatMessageTimestamp),
     [formatMessageTimestamp, toolEvents],
   );
-  const prevStepTotalRef = useRef<number | null>(null);
-  const [planRefinedNotice, setPlanRefinedNotice] = useState(false);
-  useEffect(() => {
-    const total = toolDigest.stepProgress?.total;
-    if (total == null) {
-      return;
-    }
-    if (prevStepTotalRef.current != null && total > prevStepTotalRef.current) {
-      setPlanRefinedNotice(true);
-      const timeout = window.setTimeout(() => setPlanRefinedNotice(false), 3200);
-      prevStepTotalRef.current = total;
-      return () => window.clearTimeout(timeout);
-    }
-    prevStepTotalRef.current = total;
-  }, [toolDigest.stepProgress?.total]);
   const pendingInterrupt = messageMetadata?.pendingInterrupt;
   const interruptKind = getInterruptKind(pendingInterrupt);
   const isClarificationInterrupt = Boolean(pendingInterrupt && interruptKind === 'clarification');
@@ -875,62 +861,40 @@ export default function ChatMessageBubble({
       };
     }
     if (hasToolEvents) {
+      const liveStepLabel = toolDigest.stepProgress
+        ? rawStatus === 'running'
+          ? `Step ${toolDigest.stepProgress.current}`
+          : `Step ${toolDigest.stepProgress.current} of ${toolDigest.stepProgress.total}`
+        : null;
       const timedDetail = (
-        <div className="space-y-2">
+        <div className="space-y-1.5">
           <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
             <p className={`text-[15px] font-semibold leading-snug tracking-tight ${
               isDarkMode ? 'text-slate-50' : 'text-slate-900'
             }`}>
               {toolDigest.headline}
             </p>
-            {toolDigest.stepProgress ? (
+            {liveStepLabel ? (
               <p className={`shrink-0 text-xs font-medium tabular-nums ${
                 isDarkMode ? 'text-slate-400' : 'text-slate-500'
               }`}>
-                Step {toolDigest.stepProgress.current} of {toolDigest.stepProgress.total}
+                {liveStepLabel}
               </p>
             ) : null}
           </div>
-          {planRefinedNotice ? (
-            <p className={`text-xs font-medium ${isDarkMode ? 'text-sky-200/90' : 'text-sky-700'}`}>
-              Refining plan as more steps are needed…
-            </p>
-          ) : null}
-          {(toolDigest.completedMilestones.length > 0 || toolDigest.activeStepLabel) ? (
-            <p className="text-xs leading-relaxed">
-              {toolDigest.completedMilestones.map((label, index) => (
-                <span key={`${label}-${index}`}>
-                  {index > 0 ? (
-                    <span className={isDarkMode ? 'text-slate-600' : 'text-slate-400'}> · </span>
-                  ) : null}
-                  <span className={isDarkMode ? 'text-slate-500' : 'text-slate-400'}>{label}</span>
-                </span>
-              ))}
-              {toolDigest.completedMilestones.length > 0 && toolDigest.activeStepLabel ? (
-                <span className={isDarkMode ? 'text-slate-600' : 'text-slate-400'}> · </span>
-              ) : null}
-              {toolDigest.activeStepLabel ? (
-                <span className={`inline-flex items-center gap-1.5 font-medium ${
-                  isDarkMode ? 'text-sky-100' : 'text-sky-900'
-                }`}>
-                  <span className={`inline-flex h-1.5 w-1.5 shrink-0 animate-pulse rounded-full ${
-                    isDarkMode ? 'bg-sky-300' : 'bg-sky-500'
-                  }`} />
-                  {toolDigest.activeStepLabel}
-                </span>
-              ) : null}
-            </p>
-          ) : null}
-          {toolDigest.statsLabel || toolDigest.reassuranceNotes.length ? (
-            <p className={`text-xs font-medium leading-relaxed ${
-              isDarkMode ? 'text-slate-400' : 'text-slate-500'
+          {toolDigest.activeStepLabel ? (
+            <p className={`inline-flex items-center gap-1.5 text-xs font-medium leading-relaxed ${
+              isDarkMode ? 'text-sky-100' : 'text-sky-900'
             }`}>
-              {[toolDigest.statsLabel, toolDigest.reassuranceNotes[0]].filter(Boolean).join(' · ')}
+              <span className={`inline-flex h-1.5 w-1.5 shrink-0 animate-pulse rounded-full ${
+                isDarkMode ? 'bg-sky-300' : 'bg-sky-500'
+              }`} />
+              {toolDigest.activeStepLabel}
             </p>
           ) : null}
           {toolDigest.errorCount > 0 ? (
             <p className={`text-xs font-medium ${isDarkMode ? 'text-rose-300' : 'text-rose-600'}`}>
-              {`${toolDigest.errorCount} issue${toolDigest.errorCount === 1 ? '' : 's'} may need attention—open activity for details.`}
+              {`${toolDigest.errorCount} issue${toolDigest.errorCount === 1 ? '' : 's'} may need attention.`}
             </p>
           ) : null}
         </div>
@@ -1168,7 +1132,7 @@ export default function ChatMessageBubble({
       return 'rounded-xl border border-slate-900/90 bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition-all duration-200 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60';
     }
     if (isDanger) {
-      return 'rounded-xl border border-slate-300/90 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition-all duration-200 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60';
+      return 'rounded-xl border border-rose-200 bg-white px-3 py-1.5 text-xs font-semibold text-rose-700 transition-all duration-200 hover:border-rose-300 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60';
     }
     return 'rounded-xl border border-slate-300/90 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition-all duration-200 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60';
   };
@@ -1209,16 +1173,16 @@ export default function ChatMessageBubble({
   const renderStructuredQuestionEditor = (question: ClarificationQuestion) => {
     const currentAnswer = readInterruptAnswerText(structuredAnswerMap[question.id]);
     return (
-      <div className="space-y-4">
-        <div className="rounded-[1.5rem] border border-slate-200/80 bg-white/90 p-4 shadow-sm">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-400">
+      <div className="space-y-3">
+        <div className="rounded-xl border border-slate-200/80 bg-slate-50/70 p-3">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
             {question.header}
           </p>
-          <p className="mt-2 text-base font-semibold leading-relaxed text-slate-900">
+          <p className="mt-2 text-sm font-semibold leading-relaxed text-slate-900">
             {question.question}
           </p>
           {question.options.length ? (
-            <div className="mt-4 grid gap-3">
+            <div className="mt-3 grid gap-2">
               {question.options.map((option) => {
                 const isSelected = currentAnswer.trim().toLowerCase() === option.value.trim().toLowerCase();
                 return (
@@ -1227,7 +1191,7 @@ export default function ChatMessageBubble({
                     type="button"
                     disabled={interruptControlsDisabled}
                     onClick={() => setStructuredAnswer(question.id, option.value)}
-                    className={`w-full rounded-[1.2rem] border px-4 py-3 text-left transition-all duration-200 ${
+                    className={`w-full rounded-lg border px-3 py-2.5 text-left transition-all duration-200 ${
                       isSelected
                         ? 'border-sky-300 bg-sky-50 text-sky-900 shadow-[0_0_0_1px_rgba(14,165,233,0.14)]'
                         : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50'
@@ -1244,8 +1208,8 @@ export default function ChatMessageBubble({
               })}
             </div>
           ) : null}
-          <div className="mt-4">
-            <label className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
+          <div className="mt-3">
+            <label className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
               Your answer
             </label>
             <textarea
@@ -1254,7 +1218,7 @@ export default function ChatMessageBubble({
               rows={question.options.length ? 3 : 5}
               disabled={interruptControlsDisabled}
               placeholder="Add the exact answer you want the agent to use."
-              className="mt-2 w-full rounded-[1.2rem] border border-slate-200 bg-white px-4 py-3 text-sm leading-relaxed text-slate-700 placeholder:text-slate-400 focus:border-sky-400 focus:outline-none disabled:cursor-not-allowed disabled:opacity-70"
+              className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm leading-relaxed text-slate-700 placeholder:text-slate-400 focus:border-sky-400 focus:outline-none disabled:cursor-not-allowed disabled:opacity-70"
             />
           </div>
         </div>
@@ -1276,24 +1240,23 @@ export default function ChatMessageBubble({
 
       if (isWizardReviewStep) {
         return (
-          <div className="mt-5 space-y-4">
-            <div className="rounded-[1.5rem] border border-slate-200/80 bg-white/90 p-4 shadow-sm">
+          <div className="mt-3 space-y-3">
+            <div className="rounded-xl border border-slate-200/80 bg-slate-50/70 p-3">
               <div className="flex items-center justify-between gap-3">
                 <div>
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-400">Review</p>
-                  <p className="mt-1 text-sm text-slate-600">Check the answers below before continuing.</p>
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">Review</p>
                 </div>
                 <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600">
                   {answeredCount}/{structuredClarificationQuestions.length} answered
                 </span>
               </div>
-              <div className="mt-4 h-2 overflow-hidden rounded-full bg-slate-100">
+              <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-slate-100">
                 <div className="h-full rounded-full bg-sky-400 transition-all duration-300" style={{ width: `${progress}%` }} />
               </div>
-              <div className="mt-4 space-y-3">
+              <div className="mt-3 space-y-2">
                 {structuredClarificationQuestions.map((question) => (
-                  <div key={question.id} className="rounded-[1.2rem] border border-slate-200/80 bg-slate-50/80 px-4 py-3">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+                  <div key={question.id} className="rounded-lg border border-slate-200/80 bg-white px-3 py-2.5">
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
                       {question.header}
                     </p>
                     <p className="mt-1 text-sm text-slate-700">
@@ -1302,8 +1265,8 @@ export default function ChatMessageBubble({
                   </div>
                 ))}
               </div>
-              <div className="mt-4">
-                <label className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
+              <div className="mt-3">
+                <label className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
                   Notes for the agent
                 </label>
                 <textarea
@@ -1312,7 +1275,7 @@ export default function ChatMessageBubble({
                   rows={4}
                   disabled={interruptControlsDisabled}
                   placeholder="Add any extra constraints, preferences, or context."
-                  className="mt-2 w-full rounded-[1.2rem] border border-slate-200 bg-white px-4 py-3 text-sm leading-relaxed text-slate-700 placeholder:text-slate-400 focus:border-sky-400 focus:outline-none disabled:cursor-not-allowed disabled:opacity-70"
+                  className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm leading-relaxed text-slate-700 placeholder:text-slate-400 focus:border-sky-400 focus:outline-none disabled:cursor-not-allowed disabled:opacity-70"
                 />
               </div>
             </div>
@@ -1335,20 +1298,19 @@ export default function ChatMessageBubble({
         ? readInterruptAnswerText(structuredAnswerMap[currentWizardQuestion.id])
         : '';
       return (
-        <div className="mt-5 space-y-4">
-          <div className="rounded-[1.5rem] border border-slate-200/80 bg-white/90 p-4 shadow-sm">
+        <div className="mt-3 space-y-3">
+          <div className="rounded-xl border border-slate-200/80 bg-slate-50/70 p-3">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-400">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
                   Question {Math.min(wizardStepIndex + 1, structuredClarificationQuestions.length)} of {structuredClarificationQuestions.length}
                 </p>
-                <p className="mt-1 text-sm text-slate-600">Answer one thing at a time, then review everything before submit.</p>
               </div>
               <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600">
                 {answeredCount}/{structuredClarificationQuestions.length} answered
               </span>
             </div>
-            <div className="mt-4 h-2 overflow-hidden rounded-full bg-slate-100">
+            <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-slate-100">
               <div className="h-full rounded-full bg-sky-400 transition-all duration-300" style={{ width: `${progress}%` }} />
             </div>
           </div>
@@ -1377,10 +1339,10 @@ export default function ChatMessageBubble({
 
     const singleQuestion = structuredClarificationQuestions[0];
     return (
-      <div className="mt-5 space-y-4">
+      <div className="mt-3 space-y-3">
         {singleQuestion ? renderStructuredQuestionEditor(singleQuestion) : null}
-        <div className="rounded-[1.5rem] border border-slate-200/80 bg-white/90 p-4 shadow-sm">
-          <label className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
+        <div className="rounded-xl border border-slate-200/80 bg-slate-50/70 p-3">
+          <label className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
             Notes for the agent
           </label>
           <textarea
@@ -1389,7 +1351,7 @@ export default function ChatMessageBubble({
             rows={4}
             disabled={interruptControlsDisabled}
             placeholder="Add any extra context that should travel with your answer."
-            className="mt-2 w-full rounded-[1.2rem] border border-slate-200 bg-white px-4 py-3 text-sm leading-relaxed text-slate-700 placeholder:text-slate-400 focus:border-sky-400 focus:outline-none disabled:cursor-not-allowed disabled:opacity-70"
+            className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm leading-relaxed text-slate-700 placeholder:text-slate-400 focus:border-sky-400 focus:outline-none disabled:cursor-not-allowed disabled:opacity-70"
           />
         </div>
         {renderStructuredSubmitButtons('end')}
@@ -1403,8 +1365,8 @@ export default function ChatMessageBubble({
     }
 
     return (
-      <div className="mt-5">
-        <div className="grid gap-4 lg:grid-cols-3">
+      <div className="mt-3">
+        <div className="grid gap-3 lg:grid-cols-3">
           {stylePreviewChoices.map((choice) => {
             const isSelectedChoice = selectedChoiceIds.includes(choice.id);
             const previewAction: RenderableInterruptAction = {
@@ -1420,10 +1382,10 @@ export default function ChatMessageBubble({
             return (
               <div
                 key={choice.id}
-                className={`overflow-hidden rounded-[1.4rem] border bg-white shadow-sm transition-all duration-200 ${
+                className={`overflow-hidden rounded-xl border bg-white transition-all duration-200 ${
                   isSelectedChoice
-                    ? 'border-sky-300 shadow-[0_0_0_1px_rgba(14,165,233,0.24),0_22px_54px_-36px_rgba(14,165,233,0.8)]'
-                    : 'border-slate-200/90 hover:border-slate-300 hover:shadow-[0_22px_54px_-38px_rgba(15,23,42,0.34)]'
+                    ? 'border-sky-300 shadow-[0_0_0_1px_rgba(14,165,233,0.18)]'
+                    : 'border-slate-200/90 hover:border-slate-300'
                 }`}
               >
                 <div className="relative aspect-[16/10] overflow-hidden bg-slate-950">
@@ -1489,13 +1451,17 @@ export default function ChatMessageBubble({
     );
   };
 
-  const renderInterruptActions = (tone: 'light' | 'dark') => {
+  const renderInterruptActions = (tone: 'light' | 'dark', layout: 'stack' | 'approval-row' = 'stack') => {
     if (!interruptActions.length) {
       return null;
     }
 
     return (
-      <div className={tone === 'dark' ? 'mt-5 space-y-3' : 'mt-3 space-y-2'}>
+      <div className={
+        layout === 'approval-row'
+          ? 'mt-4 flex flex-wrap items-center gap-2'
+          : tone === 'dark' ? 'mt-5 space-y-3' : 'mt-3 space-y-2'
+      }>
         {interruptActions.map((action, index) => {
           const inputKey = getActionInputKey(action);
           const inputValue = interruptInputByMessageId[inputKey] || '';
@@ -1516,7 +1482,18 @@ export default function ChatMessageBubble({
             : '';
 
           return (
-            <div key={action.id} className={tone === 'dark' ? 'space-y-3' : 'space-y-2'}>
+            <div
+              key={action.id}
+              className={
+                layout === 'approval-row' && !isTextMode && !showConfirmationOnly
+                  ? action.style === 'danger'
+                    ? 'ml-1'
+                    : ''
+                  : layout === 'approval-row'
+                    ? 'w-full space-y-2'
+                    : tone === 'dark' ? 'space-y-3' : 'space-y-2'
+              }
+            >
               {showPrimaryRow ? (
                 <button
                   type="button"
@@ -1651,6 +1628,7 @@ export default function ChatMessageBubble({
   const approvalUpdateImpacts = approvalReview
     ? approvalReview.steps.flatMap((step) => step.fileImpacts.filter((impact) => impact.action === 'update'))
     : [];
+  const shouldShowApprovalDescription = Boolean(approvalReview?.description && !approvalReview.summaryMarkdown);
 
   const agentContainerClassName = isDarkMode
     ? 'w-full rounded-xl border border-[#2a3850] bg-[#121c2e] px-4 py-4 text-slate-100 shadow-[0_16px_40px_-32px_rgba(2,6,23,0.88)]'
@@ -1678,8 +1656,19 @@ export default function ChatMessageBubble({
     ? 'text-xs font-medium text-slate-400 transition-all duration-200 hover:text-slate-200'
     : 'text-xs font-medium text-slate-500 transition-all duration-200 hover:text-slate-700';
   const activitySummaryLabel = toolDigest.stepProgress
-    ? `Activity summary · step ${toolDigest.stepProgress.current} of ${toolDigest.stepProgress.total}`
-    : `Activity summary · ${toolDigest.rawEventCount} ${toolDigest.rawEventCount === 1 ? 'step' : 'steps'}`;
+    ? effectiveStatus === 'awaiting_approval'
+      ? 'Workflow status: Interrupted for approval'
+      : toolDigest.lastActivityFormatted
+      ? `Activity · updated ${toolDigest.lastActivityFormatted}`
+      : 'Activity'
+    : 'Activity';
+  const isLiveAgentPreview = Boolean(visibleAgentText && inlineStatus?.status === 'running');
+  const liveAgentPreviewText = isLiveAgentPreview
+    ? visibleAgentText.trimEnd().replace(TRAILING_TRUNCATION_PATTERN, '').trimEnd()
+    : visibleAgentText;
+  const liveAgentPreviewFadeClassName = isDarkMode
+    ? 'pointer-events-none absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-[#121c2e] via-[#121c2e]/85 to-transparent'
+    : 'pointer-events-none absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-white via-white/85 to-transparent';
   const toolExpandedClassName = isDarkMode
     ? 'mt-3 space-y-3 text-xs text-slate-200'
     : 'mt-3 space-y-3 text-xs text-slate-600';
@@ -1717,14 +1706,14 @@ export default function ChatMessageBubble({
                         ? 'bg-amber-500/15 text-amber-200'
                         : 'bg-amber-50 text-amber-800'
                       : isDarkMode
-                        ? 'bg-emerald-500/15 text-emerald-200'
-                        : 'bg-emerald-50 text-emerald-800'
+                        ? 'bg-sky-500/15 text-sky-200'
+                        : 'bg-sky-50 text-sky-800'
                   }`}>
-                    <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${
-                      inlineStatus.status === 'awaiting_approval'
-                        ? 'bg-amber-400'
-                        : 'animate-pulse bg-emerald-400'
-                    }`} />
+                    {inlineStatus.status === 'awaiting_approval' ? (
+                      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" />
+                    ) : (
+                      <Loader2 size={12} className="shrink-0 animate-spin" aria-hidden="true" />
+                    )}
                     {inlineStatus.title}
                     {inlineStatus.elapsed ? ` (${inlineStatus.elapsed})` : ''}
                   </span>
@@ -1777,11 +1766,16 @@ export default function ChatMessageBubble({
                   </div>
                 </div>
             ) : null}
-            {visibleAgentText ? (
-              <div className="agent-markdown mt-3 text-sm">
+            {liveAgentPreviewText ? (
+              <div className={`agent-markdown mt-3 text-sm ${
+                isLiveAgentPreview ? 'relative max-h-40 overflow-hidden pb-4' : ''
+              }`}>
                 <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-                  {visibleAgentText}
+                  {liveAgentPreviewText}
                 </ReactMarkdown>
+                {isLiveAgentPreview ? (
+                  <div className={liveAgentPreviewFadeClassName} />
+                ) : null}
               </div>
             ) : shouldShowFallbackStatus ? (
               <span className={`mt-3 block text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
@@ -1789,45 +1783,41 @@ export default function ChatMessageBubble({
               </span>
             ) : null}
             {pendingInterrupt && !isClarificationInterrupt ? (
-              <div className="relative mt-4 pl-4 before:absolute before:-bottom-2 before:left-1 before:top-2 before:w-px before:bg-slate-200">
-                <span className="absolute left-0 top-3 h-2.5 w-2.5 rounded-full border border-indigo-300 bg-indigo-100" />
-                <div className="rounded-[1.9rem] border border-amber-200/75 bg-[radial-gradient(circle_at_top_left,_rgba(251,191,36,0.12),_transparent_38%),linear-gradient(160deg,rgba(255,255,255,0.98),rgba(248,250,252,0.95))] p-5 shadow-[0_24px_60px_-34px_rgba(120,53,15,0.45)] backdrop-blur-md">
-                  <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="mt-3">
+                <div className="rounded-xl border border-slate-200/90 bg-white px-4 py-4 text-slate-900 shadow-[0_16px_40px_-32px_rgba(15,23,42,0.16)]">
+                  <div className="flex flex-wrap items-start justify-between gap-2">
                     <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-500">
-                          {approvalReview?.cardTitle || pendingInterrupt.title || 'Review Proposed Action'}
-                        </p>
-                        <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-amber-700">
-                          <CheckCircle2 size={12} />
-                          {approvalReview?.badgeLabel || 'Pending Approval'}
-                        </span>
-                      </div>
-                      <p className="mt-3 text-xl font-semibold tracking-tight text-slate-900">
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2.5 py-1 text-[10px] font-semibold text-amber-800">
+                        <CheckCircle2 size={12} />
+                        {approvalReview?.badgeLabel || 'Pending Approval'}
+                      </span>
+                      <p className="mt-3 text-[15px] font-semibold leading-snug tracking-tight text-slate-900">
                         {approvalReview?.planTitle || 'Proposed plan'}
                       </p>
-                      <p className="mt-1 text-sm leading-relaxed text-slate-600">
-                        {approvalReview?.description || pendingInterrupt.description || 'Review the proposed action before execution continues.'}
-                      </p>
+                      {shouldShowApprovalDescription ? (
+                        <p className="mt-1 text-xs leading-relaxed text-slate-500">
+                          {approvalReview?.description || pendingInterrupt.description || 'Review the proposed action before execution continues.'}
+                        </p>
+                      ) : null}
                     </div>
                     {approvalReview?.stepCount && approvalReview.stepCount > 1 ? (
-                      <div className="rounded-full border border-slate-200 bg-white/80 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
-                        Step {typeof approvalReview.stepIndex === 'number' ? approvalReview.stepIndex + 1 : 1} of {approvalReview.stepCount}
+                      <div className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-medium text-slate-500">
+                        Review needed
                       </div>
                     ) : null}
                   </div>
 
                   {approvalReview ? (
-                    <div className="mt-4 space-y-4">
-                      <div className="rounded-[1.4rem] border border-slate-200/80 bg-white/80 p-4 shadow-sm">
-                        <div className="flex flex-wrap items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                    <div className="mt-3 space-y-3">
+                      <div className="rounded-xl border border-slate-200/80 bg-slate-50/70 p-3">
+                        <div className="flex flex-wrap items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
                           <span>Plan File</span>
                           <span className="rounded-full bg-slate-100 px-2.5 py-1 font-mono text-[10px] normal-case tracking-normal text-slate-700">
                             {approvalReview.planFilePath}
                           </span>
                         </div>
                         {approvalReview.summaryMarkdown ? (
-                          <div className="agent-markdown mt-3 text-sm text-slate-700">
+                          <div className="agent-markdown mt-3 text-sm leading-relaxed text-slate-700">
                             <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
                               {approvalReview.summaryMarkdown}
                             </ReactMarkdown>
@@ -1836,21 +1826,27 @@ export default function ChatMessageBubble({
                       </div>
 
                       {approvalReview.steps.length ? (
-                        <div className="rounded-[1.4rem] border border-slate-200/80 bg-white/72 p-4 shadow-sm">
-                          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                        <div className="rounded-xl border border-slate-200/80 bg-slate-50/70 p-3">
+                          <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
                             Execution Map
                           </p>
-                          <div className="mt-3 space-y-3">
+                          <div className="mt-3 space-y-2">
                             {approvalReview.steps.map((step, index) => (
-                              <div key={`${step.title}-${index}`} className="rounded-[1.2rem] border border-slate-200/80 bg-slate-50/80 p-3">
+                              <div key={`${step.title}-${index}`} className="rounded-lg border border-slate-200/80 bg-white p-2.5">
                                 <div className="flex items-start gap-3">
-                                  <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-900 text-[11px] font-semibold text-white">
-                                    {index + 1}
+                                  <span className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold ${
+                                    step.state === 'completed'
+                                      ? 'bg-emerald-500 text-white'
+                                      : step.state === 'pending'
+                                        ? 'bg-slate-200 text-slate-600'
+                                        : 'bg-slate-900 text-white'
+                                  }`}>
+                                    {step.state === 'completed' ? <Check size={14} strokeWidth={2.4} /> : index + 1}
                                   </span>
                                   <div className="min-w-0">
-                                    <p className="text-sm font-semibold text-slate-900">{step.title}</p>
+                                    <p className="text-sm font-semibold leading-snug text-slate-900">{step.title}</p>
                                     {step.detail ? (
-                                      <p className="mt-1 text-sm leading-relaxed text-slate-600">{step.detail}</p>
+                                      <p className="mt-1 text-xs leading-relaxed text-slate-500">{step.detail}</p>
                                     ) : null}
                                     {step.toolNames.length ? (
                                       <div className="mt-3 flex flex-wrap gap-2">
@@ -1890,16 +1886,16 @@ export default function ChatMessageBubble({
 
                       {approvalCreateImpacts.length || approvalUpdateImpacts.length ? (
                         <div className="grid gap-3 md:grid-cols-2">
-                          <div className="rounded-[1.3rem] border border-emerald-200/80 bg-emerald-50/70 p-4">
-                            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-emerald-700">Create</p>
+                          <div className="rounded-xl border border-slate-200/80 bg-slate-50/70 p-3">
+                            <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">Create</p>
                             <div className="mt-2 space-y-1.5 text-sm text-emerald-900">
                               {approvalCreateImpacts.length ? approvalCreateImpacts.map((impact, index) => (
                                 <p key={`${impact.path}-${index}`}>{impact.path}</p>
                               )) : <p className="text-emerald-800/70">No new files.</p>}
                             </div>
                           </div>
-                          <div className="rounded-[1.3rem] border border-blue-200/80 bg-blue-50/75 p-4">
-                            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-blue-700">Update</p>
+                          <div className="rounded-xl border border-slate-200/80 bg-slate-50/70 p-3">
+                            <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">Update</p>
                             <div className="mt-2 space-y-1.5 text-sm text-blue-900">
                               {approvalUpdateImpacts.length ? approvalUpdateImpacts.map((impact, index) => (
                                 <p key={`${impact.path}-${index}`}>{impact.path}</p>
@@ -1910,8 +1906,8 @@ export default function ChatMessageBubble({
                       ) : null}
 
                       {approvalReview.riskyActions ? (
-                        <div className="rounded-[1.3rem] border border-rose-200/80 bg-rose-50/70 p-4">
-                          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-rose-700">Risk Notes</p>
+                        <div className="rounded-xl border border-rose-200/80 bg-rose-50/70 p-3">
+                          <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-rose-700">Risk Notes</p>
                           <p className="mt-2 text-sm leading-relaxed text-rose-900">{approvalReview.riskyActions}</p>
                         </div>
                       ) : null}
@@ -1934,44 +1930,36 @@ export default function ChatMessageBubble({
                     </div>
                   ) : null}
 
-                  {isPlanApprovalRequest ? (
-                    <div className="mt-3 rounded-[1.2rem] border border-slate-200/80 bg-white/70 px-4 py-3 text-xs text-slate-500">
-                      <div className="flex items-center gap-2 font-semibold uppercase tracking-[0.16em] text-slate-500">
-                        <FilePenLine size={13} />
-                        Edit Behavior
-                      </div>
-                      <p className="mt-2 leading-relaxed text-slate-600">
-                        Selecting <span className="font-semibold text-slate-700">Edit</span> opens the plan file in the editor so you can revise the draft before resubmitting feedback.
-                      </p>
-                    </div>
-                  ) : null}
-
-                  <div className="mt-3">{renderInterruptActions('light')}</div>
+                  <div>{renderInterruptActions('light', 'approval-row')}</div>
                 </div>
               </div>
             ) : null}
             {pendingInterrupt && isClarificationInterrupt && !clarificationDismissed ? (
-              <div className="mt-5 rounded-[2rem] border border-slate-200/80 bg-gradient-to-br from-white via-slate-50 to-sky-50/55 p-5 text-slate-900 shadow-[0_26px_80px_-34px_rgba(15,23,42,0.32)] ring-1 ring-white/70">
-                <div className="flex items-start justify-between gap-4">
+              <div className="mt-3 rounded-xl border border-slate-200/90 bg-white px-4 py-4 text-slate-900 shadow-[0_16px_40px_-32px_rgba(15,23,42,0.16)]">
+                <div className="flex flex-wrap items-start justify-between gap-2">
                   <div className="min-w-0">
-                    <p className="text-[30px] font-semibold leading-tight tracking-tight text-slate-900">
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-sky-50 px-2.5 py-1 text-[10px] font-semibold text-sky-800">
+                      <Loader2 size={12} className="animate-spin" />
+                      Input needed
+                    </span>
+                    <p className="mt-3 text-[15px] font-semibold leading-snug tracking-tight text-slate-900">
                       {pendingInterrupt.title || (isDynamicActionInterrupt ? 'Select the next step' : 'The agent needs clarification')}
                     </p>
-                    {pendingInterrupt.description ? (
-                      <p className="mt-3 max-w-2xl text-sm leading-relaxed text-slate-600">
+                    {pendingInterrupt.description && !hasStructuredClarificationForm && !hasStylePreviewChooser ? (
+                      <p className="mt-1 max-w-2xl text-xs leading-relaxed text-slate-500">
                         {pendingInterrupt.description}
                       </p>
                     ) : null}
                   </div>
                   {pendingInterrupt.stepCount && pendingInterrupt.stepCount > 1 ? (
-                    <div className="shrink-0 rounded-full border border-slate-200 bg-white/80 px-4 py-2 text-sm font-medium text-slate-600">
-                      {typeof pendingInterrupt.stepIndex === 'number' ? pendingInterrupt.stepIndex + 1 : 1} of {pendingInterrupt.stepCount}
+                    <div className="shrink-0 rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-medium text-slate-500">
+                      Question {typeof pendingInterrupt.stepIndex === 'number' ? pendingInterrupt.stepIndex + 1 : 1}/{pendingInterrupt.stepCount}
                     </div>
                   ) : null}
                 </div>
-                {clarificationDisplayPayload ? <div className="mt-5">{clarificationDisplayPayload}</div> : null}
+                {clarificationDisplayPayload ? <div className="mt-3">{clarificationDisplayPayload}</div> : null}
                 {interruptError ? (
-                  <div className="mt-4 rounded-[1.25rem] border border-rose-200/90 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                  <div className="mt-3 rounded-xl border border-rose-200/90 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700">
                     {interruptError}
                   </div>
                 ) : null}
@@ -1982,12 +1970,12 @@ export default function ChatMessageBubble({
                 ) : (
                   renderInterruptActions('light')
                 )}
-                <div className="mt-6 flex items-center justify-between gap-4">
+                <div className="mt-3 flex items-center justify-between gap-3">
                   <button
                     type="button"
                     disabled={!allowDismiss || interruptBusy}
                     onClick={() => setClarificationDismissed(true)}
-                    className={`rounded-full px-4 py-2 text-sm font-medium transition-all duration-200 ${
+                    className={`rounded-xl px-3 py-1.5 text-xs font-semibold transition-all duration-200 ${
                       allowDismiss
                         ? 'text-slate-500 hover:bg-slate-100 hover:text-slate-700'
                         : 'cursor-not-allowed text-slate-300'

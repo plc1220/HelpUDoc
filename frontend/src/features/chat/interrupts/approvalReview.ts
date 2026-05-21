@@ -8,6 +8,7 @@ export type PlanFileImpact = {
 export type PlanReviewStep = {
   title: string;
   detail?: string;
+  state?: 'completed' | 'pending';
   toolNames: string[];
   fileImpacts: PlanFileImpact[];
 };
@@ -36,6 +37,17 @@ const DEFAULT_PLAN_PATH = 'draft.md';
 const coerceString = (value: unknown): string => (typeof value === 'string' ? value.trim() : '');
 
 const normalizePath = (value: string): string => value.replace(/^\/+/, '').trim();
+
+const parseChecklistState = (value: string): { title: string; state?: PlanReviewStep['state'] } => {
+  const match = value.trim().match(/^(?:[-*]\s+|\d+[.)]\s+)?\[(x|X|\s)?\]\s*(.+)$/);
+  if (!match) {
+    return { title: value.trim() };
+  }
+  return {
+    title: match[2].trim(),
+    state: match[1]?.trim().toLowerCase() === 'x' ? 'completed' : 'pending',
+  };
+};
 
 const coerceNumber = (value: unknown): number | undefined => {
   if (typeof value === 'number' && Number.isFinite(value)) {
@@ -70,7 +82,8 @@ const parseSteps = (value: unknown): PlanReviewStep[] => {
     if (!item || typeof item !== 'object' || Array.isArray(item)) {
       return [];
     }
-    const title = coerceString((item as Record<string, unknown>).title);
+    const parsedTitle = parseChecklistState(coerceString((item as Record<string, unknown>).title));
+    const title = parsedTitle.title;
     if (!title) {
       return [];
     }
@@ -94,7 +107,7 @@ const parseSteps = (value: unknown): PlanReviewStep[] => {
       }
       return [{ path, action: action as 'create' | 'update' }];
     });
-    return [{ title, ...(detail ? { detail } : {}), toolNames, fileImpacts }];
+    return [{ title, ...(parsedTitle.state ? { state: parsedTitle.state } : {}), ...(detail ? { detail } : {}), toolNames, fileImpacts }];
   });
 };
 
@@ -103,10 +116,11 @@ const checklistToSteps = (checklist: string): PlanReviewStep[] =>
     .split('\n')
     .map((line) => line.trim())
     .filter(Boolean)
-    .map((line) => line.replace(/^[-*]\s+/, '').replace(/^\d+[.)]\s+/, '').trim())
-    .filter(Boolean)
-    .map((title) => ({
+    .map((line) => parseChecklistState(line))
+    .filter((step) => Boolean(step.title))
+    .map(({ title, state }) => ({
       title,
+      ...(state ? { state } : {}),
       toolNames: [],
       fileImpacts: [],
     }));
