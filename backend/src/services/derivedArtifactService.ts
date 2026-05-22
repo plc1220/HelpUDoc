@@ -607,7 +607,7 @@ export class DerivedArtifactService {
         Buffer.from(asset.contentB64, 'base64'),
         asset.mimeType,
         userId,
-        { forceLocal: true },
+        { forceLocal: true, internal: true },
       );
       persistedAssets.push({
         path: String(created.name || assetPath).replace(/\\/g, '/'),
@@ -637,6 +637,7 @@ export class DerivedArtifactService {
         markdownWithExtractedAssets,
         userId,
         'text/markdown',
+        { internal: true },
       );
       derivedFileId = Number(hiddenFile.id);
     }

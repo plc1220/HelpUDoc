@@ -21,6 +21,7 @@ const TEXT_MIME_TYPES = [
 const TEXT_FILE_EXTENSIONS = ['.md', '.mermaid', '.txt', '.json', '.html', '.css', '.js', '.ts', '.tsx', '.jsx', '.svg', '.csv'];
 const DIRECT_RAG_INDEXABLE_EXTENSIONS = new Set(['.doc', '.md']);
 const ARTIFACT_MANAGED_RAG_EXTENSIONS = new Set(['.pdf', '.docx', '.pptx']);
+const INTERNAL_WORKSPACE_DIR_NAMES = new Set(['.system']);
 const BINARY_MIME_TYPES_BY_EXTENSION: Record<string, string> = {
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
@@ -64,12 +65,21 @@ export class FileService {
     this.derivedArtifactCleanup = derivedArtifactCleanup;
   }
 
-  async getFiles(workspaceId: string, userId: string) {
+  private isInternalWorkspacePath(fileName: string): boolean {
+    const normalized = fileName.replace(/\\/g, '/').replace(/^\/+/, '').toLowerCase();
+    const parts = normalized.split('/').filter(Boolean);
+    return parts.some((part) => INTERNAL_WORKSPACE_DIR_NAMES.has(part));
+  }
+
+  async getFiles(workspaceId: string, userId: string, options?: { includeInternal?: boolean }) {
     await this.workspaceService.ensureMembership(workspaceId, userId);
     await this.syncWorkspaceFiles(workspaceId);
     const files = await this.db('files').where({ workspaceId });
-    await Promise.all(files.map((file) => this.ensurePublicUrl(file)));
-    return files;
+    const visibleFiles = options?.includeInternal
+      ? files
+      : files.filter((file) => !this.isInternalWorkspacePath(String(file.name || '')));
+    await Promise.all(visibleFiles.map((file) => this.ensurePublicUrl(file)));
+    return visibleFiles;
   }
 
   async hasFileName(workspaceId: string, fileName: string, userId: string): Promise<boolean> {
@@ -116,6 +126,7 @@ export class FileService {
     return folders
       .map((folderPath) => path.relative(workspaceRoot, folderPath).replace(/\\/g, '/'))
       .filter(Boolean)
+      .filter((folderPath) => !this.isInternalWorkspacePath(folderPath))
       .sort((left, right) => left.localeCompare(right, undefined, { numeric: true, sensitivity: 'base' }));
   }
 
@@ -125,6 +136,9 @@ export class FileService {
     const normalizedFolder = this.normalizeRelativeFolderPath(folderPath);
     if (!normalizedFolder) {
       throw new ConflictError('Folder path is required');
+    }
+    if (this.isInternalWorkspacePath(normalizedFolder)) {
+      throw new ConflictError('System workspace paths are reserved');
     }
 
     const workspaceRoot = path.resolve(WORKSPACE_DIR, workspaceId);
@@ -288,10 +302,14 @@ export class FileService {
       sourceExternalId?: string | null;
       sourceVersionFingerprint?: string | null;
       sourceUrl?: string | null;
+      internal?: boolean;
     },
   ) {
     await this.workspaceService.ensureMembership(workspaceId, userId, { requireEdit: true });
     const relativePath = this.normalizeRelativePath(fileName);
+    if (this.isInternalWorkspacePath(relativePath) && !options?.internal) {
+      throw new ConflictError('System workspace paths are reserved');
+    }
     const existingFile = await this.db('files').where({ workspaceId, name: relativePath }).first();
     if (existingFile) {
       throw new ConflictError(`File "${relativePath}" already exists`);
@@ -364,6 +382,7 @@ export class FileService {
     content: string,
     userId: string,
     mimeType = 'text/markdown',
+    options?: { internal?: boolean },
   ) {
     return this.createFile(
       workspaceId,
@@ -371,7 +390,7 @@ export class FileService {
       Buffer.from(content, 'utf-8'),
       mimeType,
       userId,
-      { forceLocal: true },
+      { forceLocal: true, internal: options?.internal },
     );
   }
 
@@ -832,9 +851,13 @@ export class FileService {
       }
     }
 
-    const missingFiles = diskFiles.filter(
-      (filePath) => !existingPaths.has(path.normalize(filePath))
-    );
+    const missingFiles = diskFiles.filter((filePath) => {
+      if (existingPaths.has(path.normalize(filePath))) {
+        return false;
+      }
+      const relativePath = path.relative(workspacePath, filePath).replace(/\\/g, '/');
+      return !this.isInternalWorkspacePath(relativePath);
+    });
 
     if (!missingFiles.length) {
       return;
@@ -882,6 +905,10 @@ export class FileService {
           continue;
         }
         const entryPath = path.join(current, entry.name);
+        const relativePath = path.relative(root, entryPath).replace(/\\/g, '/');
+        if (this.isInternalWorkspacePath(relativePath)) {
+          continue;
+        }
         results.push(entryPath);
         stack.push(entryPath);
       }
