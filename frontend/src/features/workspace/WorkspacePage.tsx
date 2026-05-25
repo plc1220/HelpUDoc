@@ -239,7 +239,7 @@ const DEFAULT_PERSONAS: AgentPersona[] = [
   {
     name: 'fast',
     displayName: 'Fast',
-    description: 'Gemini Flash (latest)',
+    description: 'Gemini 3.5 Flash',
   },
   {
     name: 'lite',

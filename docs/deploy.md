@@ -6,6 +6,8 @@ If you want the "CI/CD and Cloud Build" view (triggers, build tags, rollback, tr
 
 ## 1) Prerequisites
 
+Customer-facing GCP checklist (Excel): [`helpudoc-gcp-prerequisites.xlsx`](helpudoc-gcp-prerequisites.xlsx) (regenerate with `python3 scripts/generate-gcp-prerequisites-xlsx.py`).
+
 - **Docker** (for local + builds)
 - **kubectl** and **gcloud** (for GKE)
 - A GCP project with:

@@ -450,8 +450,8 @@ Model defaults:
 
 ```yaml
 model:
-  name: gemini-3-flash-preview
-  fast_name: gemini-3-flash-preview
+  name: gemini-3.5-flash
+  fast_name: gemini-3.5-flash
   lite_name: gemini-3.1-flash-lite-preview
 ```
 

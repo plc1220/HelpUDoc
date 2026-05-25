@@ -23,7 +23,7 @@ _SUSPICIOUS_WORKSPACE_ROOTS = {
 
 class ModelConfig(BaseModel):
     provider: str = Field(default="gemini")
-    name: str = Field(default="gemini-3-flash-preview")
+    name: str = Field(default="gemini-3.5-flash")
     fast_name: Optional[str] = None
     lite_name: Optional[str] = None
     pro_name: Optional[str] = None

@@ -596,7 +596,7 @@ def test_agent_registry_passes_mode_specific_max_output_tokens(
     payload = {
         "model": {
             "provider": "gemini",
-            "name": "gemini-3-flash-preview",
+            "name": "gemini-3.5-flash",
             "pro_name": "gemini-pro-latest",
             "max_output_tokens": 16000,
             "pro_max_output_tokens": 32000,
