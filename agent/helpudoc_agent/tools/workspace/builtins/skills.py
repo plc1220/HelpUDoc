@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import List, Optional
 
 from langchain_core.tools import Tool, tool
+from pydantic import BaseModel, Field
 
 from ....configuration import Settings
 from ....sandbox_runner import (
@@ -24,6 +25,18 @@ from ....skills_registry import (
 from ....state import WorkspaceState
 from ....tagged_file_policy import tagged_files_mode_guard
 from ..constants import MAX_DISTINCT_SKILLS_PER_TURN, MAX_SKILL_LOAD_ATTEMPTS_PER_TURN
+
+
+class RunSkillPythonScriptInput(BaseModel):
+    script_name: str = Field(description="Declared sandbox script name from the active skill.")
+    input_paths: Optional[List[str]] = Field(
+        default=None,
+        description="Workspace file paths to stage into the sandbox.",
+    )
+    args: Optional[List[str]] = Field(
+        default=None,
+        description="Command-line arguments to pass to the script.",
+    )
 
 
 def build_list_skills_tool(settings: Settings, workspace_state: WorkspaceState) -> Tool:
@@ -121,7 +134,7 @@ def build_load_skill_tool(settings: Settings, workspace_state: WorkspaceState) -
 def build_run_skill_python_script_tool(settings: Settings, workspace_state: WorkspaceState) -> Tool:
     skills_root = settings.backend.skills_root
 
-    @tool
+    @tool(args_schema=RunSkillPythonScriptInput)
     def run_skill_python_script(
         script_name: str,
         input_paths: Optional[List[str]] = None,
