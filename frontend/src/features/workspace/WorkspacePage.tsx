@@ -166,6 +166,15 @@ const createLocalComposerAttachment = (file: File): Extract<ChatComposerAttachme
   previewUrl: file.type.startsWith('image/') ? URL.createObjectURL(file) : undefined,
 });
 
+const createDriveComposerAttachment = (
+  item: GoogleDrivePickerItem,
+): Extract<ChatComposerAttachment, { source: 'drive' }> => ({
+  id: `drive:${item.id}:${Math.random().toString(16).slice(2)}`,
+  name: item.name,
+  source: 'drive',
+  driveItem: item,
+});
+
 const revokeLocalAttachmentPreview = (attachment: ChatComposerAttachment) => {
   if (attachment.source === 'local' && attachment.previewUrl) {
     URL.revokeObjectURL(attachment.previewUrl);
@@ -6532,6 +6541,22 @@ export default function WorkspacePage() {
       addLocalSystemMessage('Please select a workspace before importing Google Drive files.');
       return;
     }
+
+    const existingDriveIds = new Set(
+      chatAttachmentsRef.current
+        .filter((attachment): attachment is Extract<ChatComposerAttachment, { source: 'drive' }> => attachment.source === 'drive')
+        .map((attachment) => attachment.driveItem.id),
+    );
+    const pendingAttachments = items
+      .filter((item) => !existingDriveIds.has(item.id))
+      .map(createDriveComposerAttachment);
+    const pendingDriveIds = new Set(items.map((item) => item.id));
+
+    if (pendingAttachments.length) {
+      setChatAttachments((prev) => [...prev, ...pendingAttachments]);
+    }
+    setIsDrivePickerOpen(false);
+
     try {
       setIsDriveImporting(true);
       const imported = await importGoogleDriveFiles(workspaceId, items.map((item) => item.id));
@@ -6539,14 +6564,13 @@ export default function WorkspacePage() {
       if (importedFiles.length && selectedWorkspaceIdRef.current === workspaceId) {
         await loadFilesForWorkspace(workspaceId);
       }
-      addLocalSystemMessage(
-        importedFiles.length === 1
-          ? `Imported ${importedFiles[0].name} from Google Drive.`
-          : `Imported ${importedFiles.length} files from Google Drive.`,
-      );
-      setIsDrivePickerOpen(false);
     } catch (error) {
       console.error('Failed to import Google Drive files:', error);
+      setChatAttachments((prev) =>
+        prev.filter(
+          (attachment) => attachment.source !== 'drive' || !pendingDriveIds.has(attachment.driveItem.id),
+        ),
+      );
       addLocalSystemMessage(error instanceof Error ? error.message : 'Failed to import Google Drive files.');
     } finally {
       setIsDriveImporting(false);
