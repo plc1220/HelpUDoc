@@ -384,27 +384,26 @@ class DataAgentToolsTest(unittest.TestCase):
 
             meta_path = root / "dashboards" / "order_cancellations" / "dashboard.meta.json"
             spec_path = root / "dashboards" / "order_cancellations" / "dashboard.spec.json"
-            snapshot_path = root / "dashboards" / "order_cancellations" / "dashboard.snapshot.html"
+            rows_path = root / "dashboards" / "order_cancellations" / "data" / "dashboard.rows.json"
 
             self.assertTrue(meta_path.exists())
             self.assertTrue(spec_path.exists())
-            self.assertTrue(snapshot_path.exists())
+            self.assertTrue(rows_path.exists())
 
             meta = json.loads(meta_path.read_text(encoding="utf-8"))
             spec = json.loads(spec_path.read_text(encoding="utf-8"))
 
             self.assertEqual(meta["status"], "ready")
             self.assertEqual(meta["runtimeKind"], "native")
-            self.assertEqual(meta["snapshotPath"], "dashboards/order_cancellations/dashboard.snapshot.html")
+            self.assertNotIn("snapshotPath", meta)
             self.assertEqual(spec["dashboardPath"], "dashboards/order_cancellations")
             self.assertEqual(spec["runtimeKind"], "native")
             self.assertEqual(spec["dataset"]["path"], "datasets/orders.csv")
             self.assertIn("previewPath", spec["dataset"])
             self.assertTrue(spec["dataset"]["previewPath"].endswith("data/dashboard.rows.json"))
-            self.assertEqual(spec["fallbackMode"], "read_only_html")
+            self.assertNotIn("snapshotPath", spec)
+            self.assertEqual(spec["fallbackMode"], "native_only")
 
-            rows_path = root / "dashboards" / "order_cancellations" / "data" / "dashboard.rows.json"
-            self.assertTrue(rows_path.exists())
             rows_payload = json.loads(rows_path.read_text(encoding="utf-8"))
             self.assertIn("rows", rows_payload)
             self.assertGreater(len(rows_payload["rows"]), 0)

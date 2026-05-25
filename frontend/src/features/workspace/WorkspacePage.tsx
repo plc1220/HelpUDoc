@@ -79,7 +79,6 @@ import PaneResizeHandle from '../../components/PaneResizeHandle';
 import { useHorizontalPaneResize } from '../../hooks/useHorizontalPaneResize';
 import WorkspaceFileTree from '../../components/WorkspaceFileTree';
 import DashboardCanvas from '../dashboard/components/DashboardCanvas';
-import { downloadDashboardHtmlExport } from '../dashboard/components/dashboardDownload';
 import AgentChatPane from '../../components/chat/AgentChatPane';
 import LumoPet from '../../components/lumo/LumoPet';
 import { buildApprovalDraftContent, buildApprovalReview } from '../chat/interrupts/approvalReview';
@@ -1929,23 +1928,6 @@ export default function WorkspacePage() {
     }
   }, [selectedDashboardPath, selectedWorkspace, upsertDashboardPlaceholder]);
 
-  const handleDownloadDashboardHtmlExport = useCallback(async () => {
-    if (!selectedWorkspace || !selectedDashboardPath) {
-      return;
-    }
-    const folder =
-      resolveDashboardPackagePath(files, selectedDashboardPath)
-      || normalizeWorkspaceRelativePath(selectedDashboardPath);
-    if (!folder) {
-      return;
-    }
-    try {
-      await downloadDashboardHtmlExport(selectedWorkspace.id, folder);
-    } catch (error) {
-      console.error('Failed to download dashboard HTML export', error);
-    }
-  }, [files, selectedDashboardPath, selectedWorkspace]);
-
   const handleDashboardFolderSelect = useCallback((dashboardPath: string) => {
     const normalizedPath = resolveDashboardPackagePath(files, dashboardPath);
     if (!normalizedPath) {
@@ -3674,6 +3656,9 @@ export default function WorkspacePage() {
   const getInterruptKind = useCallback((
     pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
   ): 'approval' | 'clarification' => {
+    if (pendingInterrupt?.kind === 'approval') {
+      return 'approval';
+    }
     if (pendingInterrupt?.kind === 'clarification') {
       return 'clarification';
     }
@@ -7514,7 +7499,6 @@ export default function WorkspacePage() {
                             <DashboardCanvas
                               workspaceId={selectedWorkspace.id}
                               dashboardPath={resolvedDashboardFolder}
-                              onDownloadHtmlExport={handleDownloadDashboardHtmlExport}
                             />
                           ) : (
                             <div className="flex h-full items-center justify-center bg-white text-sm text-slate-500">

@@ -2,7 +2,7 @@
 name: data/dashboard
 description: >
   Plan, review, and then assemble a stakeholder-ready dashboard package from the
-  current analysis run, with a native interactive canvas experience plus snapshot fallback.
+  current analysis run, with a native interactive canvas experience.
 requires_hitl_plan: true
 tools:
   - data_agent_tools
@@ -26,7 +26,7 @@ This skill is review-first and low-variance. Before any dashboard package is gen
 
 Produce one workspace-native dashboard package that can power:
 - a native interactive dashboard in the canvas
-- a snapshot fallback/export for sharing
+- shared filters backed by the persisted dashboard rows file
 
 This skill is not a generic file bundler. Treat it as a presentation step:
 - Curate the strongest visuals from the current run.
@@ -40,8 +40,8 @@ the user asks for a shareable dashboard, interactive report, or wants to bundle 
 charts into a single file.
 
 ## Prerequisites (enforced in code)
-- Static dashboards require at least one SQL query and at least one chart artifact from this run.
-- Native filterable dashboards require `dashboard_dataset_path`, `filter_schema`, and `chart_bindings`.
+- Native dashboards require `dashboard_dataset_path`, `filter_schema`, and `chart_bindings`.
+- The dashboard package is not complete unless `data/dashboard.rows.json` is written.
 - `generate_dashboard` can only be called **once per run**.
 
 ## Connector scope
@@ -57,17 +57,17 @@ If the user is asking for a genuinely filterable dashboard, do not guess past mi
 
 This skill should behave like `frontend-slides`: when key dashboard inputs are missing, call `request_clarification` and pause instead of silently continuing.
 
-Call `request_clarification` when the request implies shared data filters but one or more of these are missing or ambiguous:
+Call `request_clarification` when one or more of these are missing or ambiguous:
 - the canonical dataset path to power filtering
 - the time/date field for timeframe filters
 - the main categorical or numeric fields the user wants exposed as filters
-- whether the user wants true cross-filtering or a static dashboard built from existing chart artifacts
+- whether the user already has a reusable dataset or needs one materialized first
 
 Do **not** interrupt for routine dashboard generation when a static/shareable dashboard is sufficient.
 
 Use clarification especially in cases like:
-- the user references only a report HTML and asks for timeframe/country/device/range filters
-- the user references only a dataset and says "build a dashboard" without saying whether it should be static or truly filterable
+- the user references only a report HTML and asks for a dashboard
+- the user references only a dataset and says "build a dashboard" without specifying useful filter fields
 - the request says "add filters" but does not specify the dataset that should power them
 - multiple plausible date or metric fields exist and choosing the wrong one would change the result
 
@@ -76,10 +76,10 @@ Ask all material dashboard questions in a **single** `request_clarification` cal
 
 Preferred questions:
 - Header: `Mode`
-  Question: `Should this be a static dashboard from existing report/chart artifacts, or a true filterable dashboard backed by a reusable dataset?`
+  Question: `Which reusable dataset should back the native dashboard, or should I materialize one first?`
   Options:
-  - `Static dashboard`
-  - `True filterable dashboard`
+  - `Use tagged dataset`
+  - `Materialize dataset first`
 - Header: `Dataset`
   Question: `Which dataset should power shared filters? If you already tagged one, confirm that path; otherwise provide the canonical dataset path.`
 - Header: `Time field`
@@ -88,12 +88,11 @@ Preferred questions:
   Question: `Which fields should users filter by? Name the main categorical and numeric filters you want exposed.`
 
 Preferred clarification framing:
-- explain the tradeoff briefly
-- offer a static-dashboard path and a true-filtered-dashboard path
-- ask for the dataset path and intended filter fields if true filtering is desired
+- explain that the native canvas requires a reusable row file
+- ask for the dataset path and intended filter fields
 
 Example clarification description:
-- `I can build a static dashboard from the existing report/charts, or a truly filterable dashboard if you confirm the canonical dataset and the fields to filter on.`
+- `I can build the native dashboard once we have a canonical dataset and the fields to filter on.`
 
 ### 0.2 Tagged HTML hygiene
 When the user tags a report HTML for story guidance, do **not** read the full raw HTML into context unless absolutely necessary.
@@ -177,7 +176,7 @@ Your plan must also include:
 - **Chart list**: 3-6 proposed visuals with purpose and chart type
 - **Layout template**: choose a constrained executive layout and freeze the chart lineup
 - **Risks / gaps**: anything that could make the dashboard misleading or low-value
-- **Fallback note**: whether the dashboard will be truly filter-aware or mostly snapshot/static
+- **Readiness note**: whether the dashboard has a reusable row file and working native chart bindings
 
 The final dashboard should feel like:
 - An executive summary at the top
@@ -239,10 +238,10 @@ Call `generate_dashboard` with:
 - `metric_cards` (optional): 2-3 explicit KPI cards for the hero area.
 - `dashboard_dataset_path` (required for native shared data filters): a canonical
   Parquet/CSV/JSON dataset materialized for this run.
-- `filter_schema` (optional): structured filter definitions describing field, label, type,
+- `filter_schema`: structured filter definitions describing field, label, type,
   options, presets, and applicability.
-- `chart_bindings` (optional): per-chart bindings that map charts to dataset fields and
-  aggregations so both the live runtime and snapshot can render from the same spec.
+- `chart_bindings`: per-chart bindings that map charts to dataset fields and
+  aggregations so the native canvas can render from the same spec and row file.
   Include `question_answered`, `why_it_matters`, and layout metadata on the main path.
 - `sections` (optional): named chart groups with `chart_indexes` to control narrative flow.
 - `chart_tags` (optional): tags aligned to chart order so controls can filter charts by theme
@@ -253,8 +252,7 @@ The tool will:
 - Write:
   - `dashboard.meta.json`
   - `dashboard.spec.json`
-  - `dashboard.snapshot.html`
-  - `data/dashboard.rows.json` when a reusable dataset is embedded
+  - `data/dashboard.rows.json`
 - Emit a `dashboard_artifact` event so the frontend can surface the dashboard folder.
 - Emit workspace artifacts so the frontend surfaces the dashboard folder as one object.
 - Only include artifacts from the **current run** — prior-run charts are excluded.
@@ -273,8 +271,7 @@ The resulting dashboard package:
 - Should present charts as cards with consistent spacing, hierarchy, and labeling.
 - Must include filter controls when the dashboard is truly dataset-backed.
 - Should place technical SQL details in a lower-priority appendix, not at the top.
-- Should make it clear when the snapshot is read-only versus live/filter-aware.
-- Uses native chart bindings plus `dashboard.snapshot.html` fallback from the same `dashboard.spec.json`.
+- Uses native chart bindings plus `data/dashboard.rows.json`; do not generate or depend on a snapshot HTML file.
 
 ## Filter expectations
 Filtering is required for dashboards.
@@ -291,10 +288,9 @@ Filtering is required for dashboards.
   - provide `filter_schema` and `chart_bindings`
   - only charts with valid bindings should claim to be filter-aware
 - If the run only contains finished chart artifacts and no reusable underlying dataset:
-  - the dashboard may still be generated, but those charts should be treated as snapshot/static
-    appendix content rather than pretending to support shared data filtering
-  - tell the user that richer cross-filtering requires embedding a canonical dataset or
-    pre-aggregated tables instead of only chart outputs
+  - do not call `generate_dashboard` yet
+  - ask for or create a canonical dataset first, because the native canvas requires
+    `data/dashboard.rows.json`
 
 ## Guardrails
 - Do not skip the approval checkpoint for this skill unless the workspace is explicitly in trusted mode.
@@ -302,5 +298,5 @@ Filtering is required for dashboards.
 - Do not blindly include every query and chart just because it exists.
 - Do not expose raw SQL as the main content of the page.
 - Do not accept generic section titles if you can rewrite them.
-- Do not pretend a snapshot-only dashboard is live or filter-aware.
+- Do not mark a dashboard ready unless the package includes `data/dashboard.rows.json`.
 - The `dashboards/` directory is separate from `charts/` and `reports/`.

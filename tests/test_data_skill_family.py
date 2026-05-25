@@ -974,7 +974,7 @@ class TestDashboardTool:
         })
         return tools
 
-    def test_dashboard_tool_creates_html_file(self, tmp_path: Path) -> None:
+    def test_dashboard_tool_creates_native_package_files(self, tmp_path: Path) -> None:
         tools = self._run_analysis_and_chart(tmp_path)
         result = tools["generate_dashboard"].invoke({
             "title": "My Dashboard",
@@ -983,10 +983,8 @@ class TestDashboardTool:
         })
         dashboards_dir = tmp_path / "dashboards"
         assert dashboards_dir.exists(), "dashboards/ dir should be created"
-        snapshot_path = dashboards_dir / "My_Dashboard" / "dashboard.snapshot.html"
         spec_path = dashboards_dir / "My_Dashboard" / "dashboard.spec.json"
         meta_path = dashboards_dir / "My_Dashboard" / "dashboard.meta.json"
-        assert snapshot_path.exists()
         assert spec_path.exists()
         assert meta_path.exists()
         assert "Dashboard package saved to" in result or "dashboards/" in result
@@ -1099,21 +1097,17 @@ class TestDashboardTool:
         assert spec["layout"]["template"] == "executive_driver_dashboard"
         assert meta["specVersion"] == 2
 
-    def test_dashboard_html_is_self_contained(self, tmp_path: Path) -> None:
+    def test_dashboard_package_does_not_write_snapshot_html(self, tmp_path: Path) -> None:
         tools = self._run_analysis_and_chart(tmp_path)
         tools["generate_dashboard"].invoke({
             "title": "Self Contained",
             "description": "No external deps.",
             "section_titles": [],
         })
-        content = (tmp_path / "dashboards" / "Self_Contained" / "dashboard.snapshot.html").read_text(encoding="utf-8")
-        # Should embed Plotly CDN and the chart spec inline
-        assert "plotly" in content.lower()
-        assert "<!doctype html>" in content.lower()
-        # Should include query block  
-        assert "42" in content  # the SELECT 42 result
-        assert "Executive Snapshot" in content
-        assert "Charts" in content
+        dashboard_dir = tmp_path / "dashboards" / "Self_Contained"
+        assert (dashboard_dir / "dashboard.meta.json").exists()
+        assert (dashboard_dir / "dashboard.spec.json").exists()
+        assert not (dashboard_dir / "dashboard.snapshot.html").exists()
 
     def test_dashboard_accepts_section_titles(self, tmp_path: Path) -> None:
         tools = self._run_analysis_and_chart(tmp_path)
@@ -1122,8 +1116,8 @@ class TestDashboardTool:
             "description": "Uses custom section headings.",
             "section_titles": ["Insight-Led Title"],
         })
-        content = (tmp_path / "dashboards" / "Structured_Dashboard" / "dashboard.snapshot.html").read_text(encoding="utf-8")
-        assert "Insight-Led Title" in content
+        spec = json.loads((tmp_path / "dashboards" / "Structured_Dashboard" / "dashboard.spec.json").read_text(encoding="utf-8"))
+        assert spec["highlightsHeading"] == "Charts"
 
     def test_dashboard_requires_at_least_one_query(self, tmp_path: Path) -> None:
         from agent.helpudoc_agent.data_agent_tools import build_data_agent_tools
@@ -1207,13 +1201,15 @@ class TestDashboardTool:
         )
 
         assert "Dashboard package saved to:" in result
-        content = (
-            tmp_path / "dashboards" / "Native_Dataset_Dashboard" / "dashboard.snapshot.html"
-        ).read_text(encoding="utf-8")
-        assert "Orders trend by country" in content
-        assert "Cancellation rate by country" in content
-        assert "Filter-aware" in content
-        assert "Static appendix charts" not in content
+        dashboard_dir = tmp_path / "dashboards" / "Native_Dataset_Dashboard"
+        spec = json.loads((dashboard_dir / "dashboard.spec.json").read_text(encoding="utf-8"))
+        rows = json.loads((dashboard_dir / "data" / "dashboard.rows.json").read_text(encoding="utf-8"))
+        assert [chart["title"] for chart in spec["chartRuntimeDefs"]] == [
+            "Orders trend by country",
+            "Cancellation rate by country",
+        ]
+        assert len(rows["rows"]) == 3
+        assert not (dashboard_dir / "dashboard.snapshot.html").exists()
 
     def test_native_dashboard_rejects_unsupported_table_binding(self, tmp_path: Path) -> None:
         tools = _tools_for_workspace(tmp_path)
@@ -1320,15 +1316,12 @@ class TestDashboardTool:
             }
         )
 
-        content = (tmp_path / "dashboards" / "Order_Cancellation_Dashboard" / "dashboard.snapshot.html").read_text(encoding="utf-8")
-        assert "Shared data filters" in content
-        assert "dashboard-filter-controls" in content
-        assert "filter-panel-summary" in content
-        assert "filter-dropdown" in content
-        assert "datasets/order_cancellations.csv" in content
-        assert "Static appendix charts" in content
-        assert "Filter-aware chart bound to the canonical dashboard dataset" in content
-        assert "Device Orders" in content
+        dashboard_dir = tmp_path / "dashboards" / "Order_Cancellation_Dashboard"
+        spec = json.loads((dashboard_dir / "dashboard.spec.json").read_text(encoding="utf-8"))
+        assert spec["dataset"]["path"] == "datasets/order_cancellations.csv"
+        assert spec["dataset"]["previewPath"].endswith("data/dashboard.rows.json")
+        assert spec["chartRuntimeDefs"][0]["title"] == "Device Orders"
+        assert not (dashboard_dir / "dashboard.snapshot.html").exists()
 
     def test_dashboard_without_filter_schema_stays_static(self, tmp_path: Path) -> None:
         tools = _tools_for_workspace(tmp_path)
@@ -1353,8 +1346,11 @@ class TestDashboardTool:
                 "dashboard_dataset_path": "datasets/orders.csv",
             }
         )
-        content = (tmp_path / "dashboards" / "No_Filters_Dashboard" / "dashboard.snapshot.html").read_text(encoding="utf-8")
-        assert "Shared data filters" not in content
+        dashboard_dir = tmp_path / "dashboards" / "No_Filters_Dashboard"
+        spec = json.loads((dashboard_dir / "dashboard.spec.json").read_text(encoding="utf-8"))
+        assert spec["filters"] == []
+        assert (dashboard_dir / "data" / "dashboard.rows.json").exists()
+        assert not (dashboard_dir / "dashboard.snapshot.html").exists()
 
     def test_dashboard_serializes_date_filter_dataset_values(self, tmp_path: Path) -> None:
         tools = _tools_for_workspace(tmp_path)
@@ -1405,8 +1401,11 @@ class TestDashboardTool:
         )
         assert "Dashboard package saved to:" in result
 
-    def test_dashboard_failure_does_not_consume_single_dashboard_budget(self, tmp_path: Path, monkeypatch) -> None:
+    def test_dashboard_failure_does_not_consume_single_dashboard_budget(self, tmp_path: Path) -> None:
         tools = _tools_for_workspace(tmp_path)
+        dataset_path = tmp_path / "datasets" / "orders.csv"
+        dataset_path.parent.mkdir(parents=True, exist_ok=True)
+        dataset_path.write_text("country,cancellation_rate\nUS,0.21\n", encoding="utf-8")
         tools["get_table_schema"].invoke({"table_names": []})
         tools["run_sql_query"].invoke({"sql_query": "SELECT 'US' AS country, 0.21 AS cancellation_rate"})
         tools["generate_chart_config"].invoke(
@@ -1420,32 +1419,38 @@ class TestDashboardTool:
                 """),
             }
         )
-        import agent.helpudoc_agent.data_agent_tools as data_agent_tools
-
-        original_render = data_agent_tools.render_dashboard_html
-        calls = {"count": 0}
-
-        def flaky_render(*args, **kwargs):
-            calls["count"] += 1
-            if calls["count"] == 1:
-                raise TypeError("boom")
-            return original_render(*args, **kwargs)
-
-        monkeypatch.setattr(data_agent_tools, "render_dashboard_html", flaky_render)
-        with pytest.raises(TypeError):
-            tools["generate_dashboard"].invoke(
-                {
-                    "title": "Retry Dashboard",
-                    "description": "first call fails",
-                    "section_titles": [],
-                }
-            )
+        first = tools["generate_dashboard"].invoke(
+            {
+                "title": "Retry Dashboard",
+                "description": "first call fails validation",
+                "dashboard_dataset_path": "datasets/orders.csv",
+                "chart_bindings": [
+                    {
+                        "chart_index": 1,
+                        "chart_type": "bar",
+                        "x_field": "missing_country",
+                        "y_field": "cancellation_rate",
+                        "aggregation": "avg",
+                    }
+                ],
+            }
+        )
+        assert "validation failed" in first.lower()
 
         second = tools["generate_dashboard"].invoke(
             {
                 "title": "Retry Dashboard",
                 "description": "second call succeeds",
-                "section_titles": [],
+                "dashboard_dataset_path": "datasets/orders.csv",
+                "chart_bindings": [
+                    {
+                        "chart_index": 1,
+                        "chart_type": "bar",
+                        "x_field": "country",
+                        "y_field": "cancellation_rate",
+                        "aggregation": "avg",
+                    }
+                ],
             }
         )
         assert "Dashboard package saved to:" in second
@@ -1785,13 +1790,13 @@ class TestStableArtifactOutputs:
             }
         )
 
-        dashboard_path = tmp_path / "dashboards" / "orders" / "dashboard.snapshot.html"
-        content = dashboard_path.read_text(encoding="utf-8")
+        dashboard_path = tmp_path / "dashboards" / "orders" / "dashboard.spec.json"
+        spec = json.loads(dashboard_path.read_text(encoding="utf-8"))
         assert dashboard_path.exists()
-        assert "Second description" in content
-        assert "Second Chart" in content or "Second_Chart" in content
+        assert spec["description"] == "Second description"
+        assert not (tmp_path / "dashboards" / "orders" / "dashboard.snapshot.html").exists()
 
-    def test_repo_data_refresh_skill_contract_mentions_snapshot_workflow(self) -> None:
+    def test_repo_data_refresh_skill_contract_mentions_materialization_workflow(self) -> None:
         skill_path = Path(__file__).parent.parent / "skills" / "data" / "refresh" / "SKILL.md"
         content = skill_path.read_text(encoding="utf-8")
         assert "materialize_bigquery_to_parquet" in content
@@ -1801,5 +1806,5 @@ class TestStableArtifactOutputs:
         content = skill_path.read_text(encoding="utf-8")
         assert "request_clarification" in content
         assert "frontend-slides" in content
-        assert "True filterable dashboard" in content
+        assert "data/dashboard.rows.json" in content
         assert "generate_dashboard" in content

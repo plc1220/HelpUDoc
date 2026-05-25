@@ -35,10 +35,9 @@ type DashboardSpec = {
 type Props = {
   workspaceId: string;
   dashboardPath: string;
-  onDownloadHtmlExport?: () => void;
 };
 
-const DashboardCanvas = ({ workspaceId, dashboardPath, onDownloadHtmlExport }: Props) => {
+const DashboardCanvas = ({ workspaceId, dashboardPath }: Props) => {
   const base = normalizePath(dashboardPath);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [spec, setSpec] = useState<DashboardSpec | null>(null);
@@ -65,7 +64,14 @@ const DashboardCanvas = ({ workspaceId, dashboardPath, onDownloadHtmlExport }: P
           ? normalizePath(parsed.dataset.previewPath)
           : `${base}/data/dashboard.rows.json`;
 
-      const rowsPreview = await getWorkspaceFilePreview(workspaceId, previewPath);
+      let rowsPreview;
+      try {
+        rowsPreview = await getWorkspaceFilePreview(workspaceId, previewPath);
+      } catch (error) {
+        console.error(error);
+        setLoadError(`Dashboard preview rows are missing at ${previewPath}. Regenerate the dashboard package.`);
+        return;
+      }
       const rowsText = typeof rowsPreview?.content === 'string' ? rowsPreview.content : '';
       if (!rowsText.trim()) {
         setLoadError('Dashboard preview rows are missing. Regenerate the dashboard package.');
@@ -156,15 +162,6 @@ const DashboardCanvas = ({ workspaceId, dashboardPath, onDownloadHtmlExport }: P
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
-            {onDownloadHtmlExport ? (
-              <button
-                type="button"
-                className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
-                onClick={onDownloadHtmlExport}
-              >
-                Download HTML export
-              </button>
-            ) : null}
             <button
               type="button"
               className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"

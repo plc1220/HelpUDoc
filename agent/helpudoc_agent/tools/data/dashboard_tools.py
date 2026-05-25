@@ -58,14 +58,6 @@ def _compat_render_summary_html(**kwargs):
     return mod.render_summary_html(**kwargs)
 
 
-def _compat_render_dashboard_html(**kwargs):
-    """Resolve via data_agent_tools so tests can monkeypatch render_dashboard_html."""
-    from ._shim_targets import get_data_agent_tools_module
-
-    mod = get_data_agent_tools_module()
-    return mod.render_dashboard_html(**kwargs)
-
-
 def _resolve_workspace_html_path(
     workspace_root: Path,
     output_path: str,
@@ -195,6 +187,21 @@ def _load_dashboard_dataset(workspace_root: Path, dataset_path: str) -> Tuple[Li
         for column, dtype in df.dtypes.items()
     ]
     return records, schema, format_name
+
+
+def _coerce_dataframe_dashboard_rows(df: pd.DataFrame) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    records = [
+        {str(key): _normalize_record_value(value) for key, value in row.items()}
+        for row in df.replace({np.nan: None}).to_dict(orient="records")
+    ]
+    schema = [
+        {
+            "name": str(column),
+            "type": str(dtype),
+        }
+        for column, dtype in df.dtypes.items()
+    ]
+    return records, schema
 
 
 def _build_dataset_reference(workspace_root: Path, dataset_path: str) -> Dict[str, Any]:
@@ -382,7 +389,7 @@ def _build_dashboard_chart_specs(
             "layoutSection": _coerce_text_arg(binding.get("layout_section"), "drivers").strip().lower() or "drivers",
             "filters": list(binding.get("filters") or []),
             "liveCapable": live_capable,
-            "snapshotOnly": not live_capable,
+            "staticOnly": not live_capable,
             "staticReason": _coerce_text_arg(binding.get("static_reason")).strip(),
         }
     return normalized_specs
@@ -501,8 +508,8 @@ def _validate_dashboard_spec_inputs(
         )
     if not _coerce_text_arg(dashboard_dataset_path).strip():
         return (
-            "Dashboard package incomplete: dashboard_dataset_path is required so the live runtime "
-            "and snapshot share the same canonical dataset."
+            "Dashboard package incomplete: dashboard_dataset_path is required so the native runtime "
+            "can persist dashboard.rows.json for the canvas."
         )
     if not audience.strip():
         return "Dashboard spec incomplete: audience is required for executive dashboard mode."
@@ -825,7 +832,7 @@ def create_dashboard_tools(db_manager: DuckDBManager, workspace_state: Workspace
         ] = None,
         callbacks: Optional[CallbackManagerForToolRun] = None,
     ) -> str:
-        """Assemble all charts and query history from the current run into one HTML dashboard."""
+        """Assemble chart bindings and rows into one native dashboard package."""
         if _is_strict_dashboard_mode(workspace_state) and not _is_plan_approved(workspace_state):
             return _dashboard_plan_gate_message()
         try:
@@ -848,11 +855,11 @@ def create_dashboard_tools(db_manager: DuckDBManager, workspace_state: Workspace
                 "before building the dashboard package."
             )
         if strict_dashboard_mode and not _coerce_text_arg(dashboard_dataset_path).strip():
-            return "Dashboard mode requires dashboard_dataset_path so the native renderer and HTML export share the same dataset."
+            return "Dashboard mode requires dashboard_dataset_path so the native renderer can persist dashboard.rows.json."
         if not db_manager.session.chart_history and not has_native_dataset_dashboard:
             return (
-                "Generate at least one chart before building a static dashboard, or provide "
-                "dashboard_dataset_path, filter_schema, and chart_bindings for a native filterable dashboard."
+                "Provide dashboard_dataset_path, filter_schema, and chart_bindings so the native dashboard "
+                "package can include data/dashboard.rows.json."
             )
         if strict_dashboard_mode and len(normalized_bindings) > MAX_CHART_COUNT:
             return (
@@ -869,10 +876,8 @@ def create_dashboard_tools(db_manager: DuckDBManager, workspace_state: Workspace
         dashboard_rel_path = _workspace_rel(dashboard_dir, workspace_state.root_path)
         dashboard_meta_path = dashboard_dir / "dashboard.meta.json"
         dashboard_spec_path = dashboard_dir / "dashboard.spec.json"
-        dashboard_snapshot_path = dashboard_dir / "dashboard.snapshot.html"
         dashboard_meta_rel_path = _workspace_rel(dashboard_meta_path, workspace_state.root_path)
         dashboard_spec_rel_path = _workspace_rel(dashboard_spec_path, workspace_state.root_path)
-        dashboard_snapshot_rel_path = _workspace_rel(dashboard_snapshot_path, workspace_state.root_path)
         dashboard_data_dir = dashboard_dir / "data"
         dashboard_rows_path = dashboard_data_dir / "dashboard.rows.json"
         dashboard_rows_rel_path = _workspace_rel(dashboard_rows_path, workspace_state.root_path)
@@ -929,6 +934,11 @@ def create_dashboard_tools(db_manager: DuckDBManager, workspace_state: Workspace
                 dashboard_dataset_path,
             )
             data_filtering_enabled = bool(dataset_records and filter_config)
+        elif db_manager.session.query_history:
+            dataset_records, dataset_schema = _coerce_dataframe_dashboard_rows(
+                db_manager.session.query_history[-1].preview
+            )
+            dataset_format = "query_preview"
         if strict_dashboard_mode and not dataset_records:
             return (
                 "Dashboard mode could not load the canonical dataset. "
@@ -967,7 +977,6 @@ def create_dashboard_tools(db_manager: DuckDBManager, workspace_state: Workspace
             "createdAt": _utc_now().isoformat(),
             "updatedAt": _utc_now().isoformat(),
             "status": "generating",
-            "snapshotPath": dashboard_snapshot_rel_path,
             "specPath": dashboard_spec_rel_path,
             "metaPath": dashboard_meta_rel_path,
             "datasetRef": _build_dataset_reference(workspace_state.root_path, dashboard_dataset_path),
@@ -1176,53 +1185,12 @@ def create_dashboard_tools(db_manager: DuckDBManager, workspace_state: Workspace
                 },
             )
             return validation_error
-        filter_panel_html = ""
-        if data_filtering_enabled:
-            filter_panel_html = (
-                "<details class=\"filter-card filter-panel\" open>"
-                "<summary class=\"filter-panel-summary\">"
-                "<div class=\"filter-summary-copy\">"
-                "<strong>Shared data filters</strong>"
-                "<span>Use collapsible controls to update every compatible chart from the embedded dashboard dataset.</span>"
-                "</div>"
-                "</summary>"
-                "<div class=\"filter-panel-body\">"
-                "<div id=\"dashboard-filter-controls\" class=\"filter-controls\"></div>"
-                "<div class=\"filter-actions\">"
-                "<button type=\"button\" id=\"dashboard-apply-filters\" class=\"secondary\">Apply filters</button>"
-                "<button type=\"button\" id=\"dashboard-reset-filters\">Reset filters</button>"
-                "</div>"
-                f"<div class=\"dataset-meta\">Dataset: {html.escape(dashboard_dataset_path)} • Rows embedded: {len(dataset_records)} • Format: {html.escape(dataset_format)}</div>"
-                "</div>"
-                "</details>"
-            )
-        try:
-            html_output = _compat_render_dashboard_html(
-                title=title,
-                description=description,
-                hero_eyebrow=hero_eyebrow,
-                audience=audience,
-                business_question=business_question,
-                headline_takeaway=headline_takeaway,
-                generated_at=generated_at,
-                hero_meta=hero_meta,
-                metric_cards=dashboard_metric_cards,
-                filter_panel_html=filter_panel_html,
-                primary_cards=bound_cards or static_cards,
-                appendix_cards=static_cards if bound_cards and static_cards else [],
-                query_items=query_items,
-                decision_questions=normalized_decision_questions,
-                insights=normalized_insights,
-                known_risks=normalized_known_risks,
-                data_quality_notes=normalized_data_quality_notes,
-                layout_template=layout_template,
-                dataset_records=dataset_records,
-                filter_config=filter_config,
-                chart_runtime_defs=chart_runtime_defs,
-                dataset_schema=dataset_schema,
-                highlights_heading="Decision Drivers" if bound_cards else "Charts",
-            )
-        except Exception:
+        preview_rel_written = ""
+        if dataset_records:
+            dashboard_data_dir.mkdir(parents=True, exist_ok=True)
+            dashboard_rows_path.write_text(_json_dump({"rows": dataset_records}), encoding="utf-8")
+            preview_rel_written = dashboard_rows_rel_path
+        if normalized_chart_specs and not preview_rel_written:
             dashboard_meta.update(
                 {
                     "updatedAt": _utc_now().isoformat(),
@@ -1243,12 +1211,10 @@ def create_dashboard_tools(db_manager: DuckDBManager, workspace_state: Workspace
                     "status": "error",
                 },
             )
-            raise
-        preview_rel_written = ""
-        if dataset_records:
-            dashboard_data_dir.mkdir(parents=True, exist_ok=True)
-            dashboard_rows_path.write_text(_json_dump({"rows": dataset_records}), encoding="utf-8")
-            preview_rel_written = dashboard_rows_rel_path
+            return (
+                "Dashboard package incomplete: data/dashboard.rows.json was not written. "
+                "Provide a valid dashboard_dataset_path so the native canvas can load the dashboard."
+            )
         dataset_block = _build_dashboard_dataset_block(
             workspace_state.root_path,
             dashboard_dataset_path,
@@ -1267,7 +1233,6 @@ def create_dashboard_tools(db_manager: DuckDBManager, workspace_state: Workspace
             "description": description,
             "generatedAt": generated_at,
             "dashboardPath": dashboard_rel_path,
-            "snapshotPath": dashboard_snapshot_rel_path,
             "specPath": dashboard_spec_rel_path,
             "metaPath": dashboard_meta_rel_path,
             "heroMeta": hero_meta,
@@ -1293,13 +1258,15 @@ def create_dashboard_tools(db_manager: DuckDBManager, workspace_state: Workspace
             "dataset": dataset_block,
             "datasetRef": dataset_block,
             "datasetSchema": dataset_schema,
-            "fallbackMode": "read_only_html",
+            "fallbackMode": "native_only",
         }
 
         try:
             dashboard_dir.mkdir(parents=True, exist_ok=True)
             dashboard_spec_path.write_text(_json_dump(dashboard_spec), encoding="utf-8")
-            dashboard_snapshot_path.write_text(html_output, encoding="utf-8")
+            stale_snapshot_path = dashboard_dir / "dashboard.snapshot.html"
+            if stale_snapshot_path.exists():
+                stale_snapshot_path.unlink()
             dashboard_meta.update(
                 {
                     "updatedAt": _utc_now().isoformat(),
@@ -1313,10 +1280,15 @@ def create_dashboard_tools(db_manager: DuckDBManager, workspace_state: Workspace
             db_manager.mark_dashboard_generated()
             artifacts_out: List[Dict[str, Any]] = [
                 {
-                    "path": dashboard_snapshot_rel_path,
-                    "mimeType": ALLOWED_ARTIFACT_EXTENSIONS[".html"],
-                    "size": dashboard_snapshot_path.stat().st_size,
-                }
+                    "path": dashboard_meta_rel_path,
+                    "mimeType": ALLOWED_ARTIFACT_EXTENSIONS[".json"],
+                    "size": dashboard_meta_path.stat().st_size,
+                },
+                {
+                    "path": dashboard_spec_rel_path,
+                    "mimeType": ALLOWED_ARTIFACT_EXTENSIONS[".json"],
+                    "size": dashboard_spec_path.stat().st_size,
+                },
             ]
             if preview_rel_written:
                 artifacts_out.append(
@@ -1362,7 +1334,7 @@ def create_dashboard_tools(db_manager: DuckDBManager, workspace_state: Workspace
                     "status": "error",
                 },
             )
-            logger.warning("Failed to save dashboard HTML: %s", exc)
-            return f"Failed to save dashboard file: {exc}"
+            logger.warning("Failed to save dashboard package: %s", exc)
+            return f"Failed to save dashboard package: {exc}"
 
     return [generate_summary, generate_dashboard]

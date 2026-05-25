@@ -16,7 +16,6 @@ from helpudoc_agent.tools.data.dashboard_tools import _build_dashboard_chart_spe
 from helpudoc_agent.tools.data.duckdb_manager import DuckDBManager
 from helpudoc_agent.tools.data.factory import build_data_agent_tools
 from helpudoc_agent.tools.data.formatting import _format_sample_value
-from helpudoc_agent.tools.data.renderers.dashboard_snapshot import render_dashboard_html
 from helpudoc_agent.tools.data.renderers.html_summary import render_summary_html
 from helpudoc_agent.tools.data.workspace_files import _snapshot_workspace
 
@@ -29,7 +28,6 @@ __all__ = [
     "_build_dashboard_chart_specs",
     "_format_sample_value",
     "_snapshot_workspace",
-    "render_dashboard_html",
     "render_summary_html",
     "run_bigquery_query",
 ]

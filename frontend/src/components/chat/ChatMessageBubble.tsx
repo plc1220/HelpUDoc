@@ -1717,7 +1717,9 @@ export default function ChatMessageBubble({
     : 'text-xs font-medium text-slate-500 transition-all duration-200 hover:text-slate-700';
   const activitySummaryLabel = toolDigest.stepProgress
     ? effectiveStatus === 'awaiting_approval'
-      ? 'Workflow status: Interrupted for approval'
+      ? interruptKind === 'clarification'
+        ? 'Workflow status: Waiting for input'
+        : 'Workflow status: Interrupted for approval'
       : toolDigest.lastActivityFormatted
       ? `Activity · updated ${toolDigest.lastActivityFormatted}`
       : 'Activity'
