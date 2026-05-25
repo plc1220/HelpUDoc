@@ -9,6 +9,7 @@ tools:
   - get_table_schema
   - run_sql_query
   - materialize_bigquery_to_parquet
+  - export_sql_query
   - generate_summary
   - generate_dashboard
 mcp_servers:

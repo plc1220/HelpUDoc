@@ -450,4 +450,127 @@ def create_query_tools(db_manager: DuckDBManager, workspace_state: WorkspaceStat
         }
         return _json_dump(payload)
 
-    return [get_table_schema, run_sql_query, materialize_bigquery_to_parquet]
+    @tool
+    def export_sql_query(
+        sql_query: Annotated[
+            str,
+            Field(description="The local DuckDB SQL query to execute and export."),
+        ],
+        output_path: Annotated[
+            str,
+            Field(description="The workspace-relative path where the exported file should be saved (e.g., 'data/my_export.csv' or 'data/my_export.parquet')."),
+        ],
+        format: Annotated[
+            str,
+            Field(description="The output format, either 'csv' or 'parquet'."),
+        ] = "csv",
+        max_rows: Annotated[
+            int,
+            Field(description="Safety cap for exported rows. Defaults to MAX_MATERIALIZED_ROWS."),
+        ] = MAX_MATERIALIZED_ROWS,
+        callbacks: Optional[CallbackManagerForToolRun] = None,
+    ) -> str:
+        """Execute a local DuckDB SQL query and export the full un-truncated result to a workspace CSV or Parquet file."""
+        try:
+            db_manager.require_schema_check()
+        except ValueError as exc:
+            return str(exc)
+
+        normalized_sql = _coerce_text_arg(sql_query).strip()
+        if not normalized_sql:
+            return "SQL query is required."
+
+        try:
+            validate_read_only_sql(normalized_sql)
+        except ValueError as exc:
+            return str(exc)
+
+        try:
+            export_format = format.strip().lower()
+            if export_format not in {"csv", "parquet"}:
+                return "format must be either 'csv' or 'parquet'."
+            destination = resolve_output_path(workspace_state.root_path, output_path, export_format)
+        except ValueError as exc:
+            return str(exc)
+
+        row_cap = _coerce_int_arg(
+            max_rows,
+            MAX_MATERIALIZED_ROWS,
+            minimum=1,
+        )
+
+        try:
+            cleaned_query = normalized_sql
+            if cleaned_query.endswith(";"):
+                cleaned_query = cleaned_query[:-1].rstrip()
+            cleaned_query = _rewrite_virtual_paths(
+                cleaned_query, db_manager.workspace_state.root_path
+            )
+
+            strict_dashboard_mode = _is_strict_dashboard_mode(workspace_state)
+            if strict_dashboard_mode and not _is_plan_approved(workspace_state):
+                return f"{_dashboard_plan_gate_message()} Only lightweight preview queries are allowed before plan approval."
+
+            count_query = f"SELECT COUNT(*) FROM ({cleaned_query})"
+            row_count = db_manager.con.execute(count_query).fetchone()[0]
+            if row_count > row_cap:
+                return (
+                    f"Export failed: result set contains {row_count} rows, which exceeds "
+                    f"the maximum allowed export limit of {row_cap} rows. Please narrow the dataset "
+                    "or filter your query first."
+                )
+
+            df = db_manager.con.execute(cleaned_query).df()
+
+            artifact = write_export_dataframe(df, destination, export_format)
+        except Exception as exc:
+            logger.exception("export_sql_query execution failed")
+            return f"Error executing query: {str(exc)}"
+
+        rel_path = _workspace_rel(destination, workspace_state.root_path)
+        db_manager.refresh_registered_files()
+
+        mime_type = ALLOWED_ARTIFACT_EXTENSIONS.get(destination.suffix.lower(), "text/csv")
+        artifact_payload = {
+            "path": rel_path,
+            "mimeType": mime_type,
+            "size": artifact["size"],
+        }
+        db_manager.register_artifact(artifact_payload)
+
+        if callbacks:
+            try:
+                run_id = getattr(callbacks, "run_id", None)
+                event_payload = {"files": [artifact_payload]}
+                if run_id is not None:
+                    callbacks.on_custom_event("tool_artifacts", event_payload, run_id=run_id)
+                else:
+                    callbacks.on_custom_event("tool_artifacts", event_payload)
+            except Exception:
+                logger.warning("Failed to dispatch export_sql_query artifact event", exc_info=True)
+
+        db_manager.record_materialization(
+            _MaterializationRecord(
+                cache_key="local_export",
+                sql=cleaned_query,
+                parquet_path=rel_path,
+                metadata_path="",
+                row_count=row_count,
+                connector="duckdb_export",
+                cached=False,
+                expires_at="",
+            )
+        )
+
+        return _json_dump(
+            {
+                "path": rel_path,
+                "mimeType": mime_type,
+                "bytesWritten": artifact["size"],
+                "rowCount": row_count,
+                "format": export_format,
+                "connector": "duckdb_export",
+            }
+        )
+
+    return [get_table_schema, run_sql_query, materialize_bigquery_to_parquet, export_sql_query]

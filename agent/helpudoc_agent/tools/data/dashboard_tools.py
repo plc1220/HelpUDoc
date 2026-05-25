@@ -33,6 +33,7 @@ from .duckdb_manager import DuckDBManager
 from .formatting import _markdown_to_html
 from .guards import (
     _dashboard_plan_gate_message,
+    _get_dashboard_mode,
     _is_plan_approved,
     _is_strict_dashboard_mode,
 )
@@ -934,6 +935,47 @@ def create_dashboard_tools(db_manager: DuckDBManager, workspace_state: Workspace
                 dashboard_dataset_path,
             )
             data_filtering_enabled = bool(dataset_records and filter_config)
+
+            if strict_dashboard_mode:
+                resolved_dataset_path = _resolve_workspace_data_path(workspace_state.root_path, dashboard_dataset_path)
+                mode = _get_dashboard_mode(workspace_state)
+                tagged_paths = mode.get("taggedDatasetPaths") or []
+                
+                resolved_tagged_paths = []
+                for tp in tagged_paths:
+                    try:
+                        resolved_tagged_paths.append(_resolve_workspace_data_path(workspace_state.root_path, tp))
+                    except Exception:
+                        pass
+                
+                resolved_materialized_paths = []
+                for record in db_manager.session.materialization_history:
+                    try:
+                        if record.parquet_path:
+                            resolved_materialized_paths.append(_resolve_workspace_data_path(workspace_state.root_path, record.parquet_path))
+                    except Exception:
+                        pass
+                
+                is_provenanced = False
+                for rp in resolved_tagged_paths:
+                    if resolved_dataset_path == rp:
+                        is_provenanced = True
+                        break
+                if not is_provenanced:
+                    for rp in resolved_materialized_paths:
+                        if resolved_dataset_path == rp:
+                            is_provenanced = True
+                            break
+                
+                if not is_provenanced:
+                    row_count = len(dataset_records)
+                    if row_count < 100:
+                        return (
+                            f"Dashboard generation rejected: The dataset '{dashboard_dataset_path}' has {row_count} rows, "
+                            "which is less than the required threshold of 100 rows for unprovenanced/fallback datasets. "
+                            "Please use `export_sql_query` to derive a verified, un-truncated dataset from workspace tables "
+                            "or supply a tagged canonical dataset."
+                        )
         elif db_manager.session.query_history:
             dataset_records, dataset_schema = _coerce_dataframe_dashboard_rows(
                 db_manager.session.query_history[-1].preview

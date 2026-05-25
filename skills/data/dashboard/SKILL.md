@@ -9,6 +9,7 @@ tools:
   - get_table_schema
   - run_sql_query
   - materialize_bigquery_to_parquet
+  - export_sql_query
   - generate_summary
   - generate_dashboard
   - request_plan_approval
@@ -294,6 +295,7 @@ Filtering is required for dashboards.
 
 ## Guardrails
 - Do not skip the approval checkpoint for this skill unless the workspace is explicitly in trusted mode.
+- Do not use `write_file` to create canonical dashboard datasets. Always use `export_sql_query` instead to derive verified row data from workspace tables.
 - Do not call `generate_summary` and `generate_dashboard` in the same run — pick one.
 - Do not blindly include every query and chart just because it exists.
 - Do not expose raw SQL as the main content of the page.

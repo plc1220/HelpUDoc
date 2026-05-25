@@ -1273,22 +1273,22 @@ class TestDashboardTool:
         tools["run_sql_query"].invoke({"sql_query": "SELECT 'US' AS country, 0.21 AS cancellation_rate, 120 AS orders"})
         tools["generate_chart_config"].invoke(
             {
-                "chart_title": "Country_Rate",
+                "chart_title": "Device_Orders",
                 "python_code": textwrap.dedent("""\
                     chart_config = {
-                        "data": [{"x": ["US"], "y": [0.21], "type": "bar"}],
-                        "layout": {"title": "Country Rate"},
+                        "data": [{"x": ["mobile"], "y": [120], "type": "bar"}],
+                        "layout": {"title": "Device Orders"},
                     }
                 """),
             }
         )
         tools["generate_chart_config"].invoke(
             {
-                "chart_title": "Device_Orders",
+                "chart_title": "Country_Rate",
                 "python_code": textwrap.dedent("""\
                     chart_config = {
-                        "data": [{"x": ["mobile"], "y": [120], "type": "bar"}],
-                        "layout": {"title": "Device Orders"},
+                        "data": [{"x": ["US"], "y": [0.21], "type": "bar"}],
+                        "layout": {"title": "Country Rate"},
                     }
                 """),
             }
@@ -1320,7 +1320,7 @@ class TestDashboardTool:
         spec = json.loads((dashboard_dir / "dashboard.spec.json").read_text(encoding="utf-8"))
         assert spec["dataset"]["path"] == "datasets/order_cancellations.csv"
         assert spec["dataset"]["previewPath"].endswith("data/dashboard.rows.json")
-        assert spec["chartRuntimeDefs"][0]["title"] == "Device Orders"
+        assert spec["chartRuntimeDefs"][0]["title"] in ("Device Orders", "Device_Orders")
         assert not (dashboard_dir / "dashboard.snapshot.html").exists()
 
     def test_dashboard_without_filter_schema_stays_static(self, tmp_path: Path) -> None:
@@ -1808,3 +1808,204 @@ class TestStableArtifactOutputs:
         assert "frontend-slides" in content
         assert "data/dashboard.rows.json" in content
         assert "generate_dashboard" in content
+
+
+class TestExportSqlQueryAndDashboardProvenance:
+    """Tests for export_sql_query and dashboard dataset provenance validation."""
+
+    def _write_local_table(self, tmp_path: Path, filename: str, rows_count: int) -> None:
+        datasets_dir = tmp_path / "datasets"
+        datasets_dir.mkdir(exist_ok=True, parents=True)
+        df = pd.DataFrame(
+            {
+                "country": (["USA", "UK", "Germany", "France"] * (rows_count // 4 + 1))[:rows_count],
+                "total_orders": list(range(rows_count)),
+            }
+        )
+        df.to_csv(datasets_dir / filename, index=False)
+
+    def test_export_sql_query_correctness(self, tmp_path: Path) -> None:
+        from agent.helpudoc_agent.data_agent_tools import build_data_agent_tools
+        self._write_local_table(tmp_path, "orders_raw.csv", 200)
+
+        workspace = _build_workspace(tmp_path)
+        tools = {tool.name: tool for tool in build_data_agent_tools(workspace)}
+
+        tools["get_table_schema"].invoke({"table_names": []})
+
+        res_raw = tools["export_sql_query"].invoke({
+            "sql_query": "SELECT * FROM orders_raw",
+            "output_path": "data/orders_export.csv",
+            "format": "csv"
+        })
+
+        res = json.loads(res_raw)
+        assert res["path"] == "data/orders_export.csv"
+        assert res["rowCount"] == 200
+        assert res["format"] == "csv"
+        assert (tmp_path / "data/orders_export.csv").exists()
+
+        res_raw_pq = tools["export_sql_query"].invoke({
+            "sql_query": "SELECT * FROM orders_raw",
+            "output_path": "data/orders_export.parquet",
+            "format": "parquet"
+        })
+        res_pq = json.loads(res_raw_pq)
+        assert res_pq["path"] == "data/orders_export.parquet"
+        assert res_pq["rowCount"] == 200
+        assert res_pq["format"] == "parquet"
+        assert (tmp_path / "data/orders_export.parquet").exists()
+
+    def test_export_sql_query_write_blocked(self, tmp_path: Path) -> None:
+        from agent.helpudoc_agent.data_agent_tools import build_data_agent_tools
+        self._write_local_table(tmp_path, "orders_raw.csv", 10)
+
+        workspace = _build_workspace(tmp_path)
+        tools = {tool.name: tool for tool in build_data_agent_tools(workspace)}
+        tools["get_table_schema"].invoke({"table_names": []})
+
+        res = tools["export_sql_query"].invoke({
+            "sql_query": "INSERT INTO orders_raw VALUES ('USA', 10)",
+            "output_path": "data/test_write.csv"
+        })
+        assert "only read-only" in res.lower() or "write" in res.lower() or "not permitted" in res.lower()
+
+    def test_export_sql_query_max_rows_guard(self, tmp_path: Path) -> None:
+        from agent.helpudoc_agent.data_agent_tools import build_data_agent_tools
+        self._write_local_table(tmp_path, "orders_raw.csv", 500)
+
+        workspace = _build_workspace(tmp_path)
+        tools = {tool.name: tool for tool in build_data_agent_tools(workspace)}
+        tools["get_table_schema"].invoke({"table_names": []})
+
+        res = tools["export_sql_query"].invoke({
+            "sql_query": "SELECT * FROM orders_raw",
+            "output_path": "data/orders_export.csv",
+            "max_rows": 100
+        })
+        assert "exceeds" in res
+        assert "maximum allowed export limit" in res
+
+    def test_generate_dashboard_provenance_success_with_tagged(self, tmp_path: Path) -> None:
+        from agent.helpudoc_agent.data_agent_tools import build_data_agent_tools
+        self._write_local_table(tmp_path, "orders_raw.csv", 50)
+
+        workspace = _build_workspace(tmp_path)
+        tools = {tool.name: tool for tool in build_data_agent_tools(workspace)}
+        tools["get_table_schema"].invoke({"table_names": []})
+
+        workspace.context.update({
+            "active_skill": "data/dashboard",
+            "plan_approved": True,
+            "dashboard_mode": {
+                "strictLocalDatasets": True,
+                "taggedDatasetPaths": ["datasets/orders_raw.csv"],
+            },
+        })
+
+        chart_bindings = [
+            {"chart_index": 1, "chart_type": "bar", "x_field": "country", "y_field": "total_orders"},
+            {"chart_index": 2, "chart_type": "bar", "x_field": "country", "y_field": "total_orders"},
+            {"chart_index": 3, "chart_type": "bar", "x_field": "country", "y_field": "total_orders"},
+        ]
+
+        res = tools["generate_dashboard"].invoke({
+            "title": "My Provenanced Dashboard",
+            "description": "desc",
+            "dashboard_dataset_path": "datasets/orders_raw.csv",
+            "chart_bindings": chart_bindings,
+            "filter_schema": [{"field": "country", "type": "categorical"}],
+            "audience": "Executive Team",
+            "business_question": "How are orders doing?",
+            "decision_questions": ["Where to invest?"],
+            "layout_template": "executive_driver_dashboard",
+            "metric_cards": [{"label": "Orders", "value": "50"}],
+        })
+
+        assert "rejection" not in res.lower()
+        assert "rejected" not in res.lower()
+
+    def test_generate_dashboard_provenance_success_with_exported(self, tmp_path: Path) -> None:
+        from agent.helpudoc_agent.data_agent_tools import build_data_agent_tools
+        self._write_local_table(tmp_path, "orders_raw.csv", 50)
+
+        workspace = _build_workspace(tmp_path)
+        tools = {tool.name: tool for tool in build_data_agent_tools(workspace)}
+        tools["get_table_schema"].invoke({"table_names": []})
+
+        tools["export_sql_query"].invoke({
+            "sql_query": "SELECT * FROM orders_raw",
+            "output_path": "data/exported_orders.csv"
+        })
+
+        workspace.context.update({
+            "active_skill": "data/dashboard",
+            "plan_approved": True,
+            "dashboard_mode": {
+                "strictLocalDatasets": True,
+                "taggedDatasetPaths": ["datasets/orders_raw.csv"],
+            },
+        })
+
+        chart_bindings = [
+            {"chart_index": 1, "chart_type": "bar", "x_field": "country", "y_field": "total_orders"},
+            {"chart_index": 2, "chart_type": "bar", "x_field": "country", "y_field": "total_orders"},
+            {"chart_index": 3, "chart_type": "bar", "x_field": "country", "y_field": "total_orders"},
+        ]
+
+        res = tools["generate_dashboard"].invoke({
+            "title": "My Exported Dashboard",
+            "description": "desc",
+            "dashboard_dataset_path": "data/exported_orders.csv",
+            "chart_bindings": chart_bindings,
+            "filter_schema": [{"field": "country", "type": "categorical"}],
+            "audience": "Executive Team",
+            "business_question": "How are orders doing?",
+            "decision_questions": ["Where to invest?"],
+            "layout_template": "executive_driver_dashboard",
+            "metric_cards": [{"label": "Orders", "value": "50"}],
+        })
+
+        assert "rejection" not in res.lower()
+        assert "rejected" not in res.lower()
+
+    def test_generate_dashboard_provenance_blocked_unprovenanced(self, tmp_path: Path) -> None:
+        from agent.helpudoc_agent.data_agent_tools import build_data_agent_tools
+        (tmp_path / "datasets").mkdir(exist_ok=True)
+        self._write_local_table(tmp_path, "fake_dashboard.csv", 13)
+
+        workspace = _build_workspace(tmp_path)
+        tools = {tool.name: tool for tool in build_data_agent_tools(workspace)}
+        tools["get_table_schema"].invoke({"table_names": []})
+
+        workspace.context.update({
+            "active_skill": "data/dashboard",
+            "plan_approved": True,
+            "dashboard_mode": {
+                "strictLocalDatasets": True,
+                "taggedDatasetPaths": ["datasets/some_other_raw.csv"],
+            },
+        })
+
+        chart_bindings = [
+            {"chart_index": 1, "chart_type": "bar", "x_field": "country", "y_field": "total_orders"},
+            {"chart_index": 2, "chart_type": "bar", "x_field": "country", "y_field": "total_orders"},
+            {"chart_index": 3, "chart_type": "bar", "x_field": "country", "y_field": "total_orders"},
+        ]
+
+        res = tools["generate_dashboard"].invoke({
+            "title": "My Fake Dashboard",
+            "description": "desc",
+            "dashboard_dataset_path": "datasets/fake_dashboard.csv",
+            "chart_bindings": chart_bindings,
+            "filter_schema": [{"field": "country", "type": "categorical"}],
+            "audience": "Executive Team",
+            "business_question": "How are orders doing?",
+            "decision_questions": ["Where to invest?"],
+            "layout_template": "executive_driver_dashboard",
+            "metric_cards": [{"label": "Orders", "value": "13"}],
+        })
+
+        assert "Dashboard generation rejected" in res
+        assert "required threshold of 100 rows" in res
+

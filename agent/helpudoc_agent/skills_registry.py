@@ -43,6 +43,7 @@ TOOL_FACTORY_EXPANSIONS: dict[str, tuple[str, ...]] = {
         "get_table_schema",
         "run_sql_query",
         "materialize_bigquery_to_parquet",
+        "export_sql_query",
         "generate_chart_config",
         "generate_summary",
         "generate_dashboard",

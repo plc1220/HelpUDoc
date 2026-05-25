@@ -25,7 +25,9 @@ def build_data_agent_tools(workspace_state: WorkspaceState, source_tracker: Any 
         query_tools[0],
         query_tools[1],
         query_tools[2],
+        query_tools[3],
         chart_tool,
         dashboard_tools[0],
         dashboard_tools[1],
     ]
+
