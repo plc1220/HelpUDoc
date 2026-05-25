@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent, type PointerEvent } from 'react';
 import { Bell, Send, X } from 'lucide-react';
 import lumoSpriteSheet from '../../assets/lumo/lumo-spritesheet.webp';
 import './LumoPet.css';
@@ -71,6 +71,32 @@ const quickPrompts = [
   'Create a concise outline for the document I should write next.',
 ];
 
+const POSITION_STORAGE_KEY = 'helpudoc:lumo-pet-position';
+const DRAG_THRESHOLD_PX = 6;
+
+type LumoPosition = { x: number; y: number };
+
+function readStoredPosition(): LumoPosition | null {
+  try {
+    const raw = localStorage.getItem(POSITION_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as LumoPosition;
+    if (typeof parsed.x === 'number' && typeof parsed.y === 'number') return parsed;
+  } catch {
+    /* ignore corrupt storage */
+  }
+  return null;
+}
+
+function clampPosition(x: number, y: number, width: number, height: number): LumoPosition {
+  const maxX = Math.max(0, window.innerWidth - width);
+  const maxY = Math.max(0, window.innerHeight - height);
+  return {
+    x: Math.min(Math.max(0, x), maxX),
+    y: Math.min(Math.max(0, y), maxY),
+  };
+}
+
 export default function LumoPet({
   colorMode,
   workspaceName,
@@ -83,9 +109,22 @@ export default function LumoPet({
   const [sequenceStep, setSequenceStep] = useState(0);
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState('');
+  const [position, setPosition] = useState<LumoPosition | null>(readStoredPosition);
+  const [dragging, setDragging] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
   const blinkTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const gestureReturnTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dragSession = useRef({
+    active: false,
+    moved: false,
+    pointerId: -1,
+    startX: 0,
+    startY: 0,
+    originX: 0,
+    originY: 0,
+  });
+  const suppressClickRef = useRef(false);
 
   const contextLine = useMemo(() => {
     const bits = [workspaceName, activeFileName].filter(Boolean);
@@ -172,6 +211,94 @@ export default function LumoPet({
     [],
   );
 
+  useEffect(() => {
+    if (!position) return;
+    const clampToViewport = () => {
+      const root = rootRef.current;
+      if (!root) return;
+      setPosition((current) => {
+        if (!current) return current;
+        return clampPosition(current.x, current.y, root.offsetWidth, root.offsetHeight);
+      });
+    };
+    window.addEventListener('resize', clampToViewport);
+    return () => window.removeEventListener('resize', clampToViewport);
+  }, [position]);
+
+  const resolveRootPosition = (): LumoPosition => {
+    const root = rootRef.current;
+    if (!root) return { x: 0, y: 0 };
+    const rect = root.getBoundingClientRect();
+    return { x: rect.left, y: rect.top };
+  };
+
+  const finishDrag = () => {
+    dragSession.current.active = false;
+    setDragging(false);
+    dragSession.current.moved = false;
+  };
+
+  const handlePetPointerDown = (event: PointerEvent<HTMLButtonElement>) => {
+    if (event.button !== 0) return;
+    const root = rootRef.current;
+    if (!root) return;
+    const anchor = position ?? resolveRootPosition();
+    dragSession.current = {
+      active: true,
+      moved: false,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      originX: anchor.x,
+      originY: anchor.y,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
+  const handlePetPointerMove = (event: PointerEvent<HTMLButtonElement>) => {
+    const session = dragSession.current;
+    if (!session.active || event.pointerId !== session.pointerId) return;
+    const root = rootRef.current;
+    if (!root) return;
+
+    const dx = event.clientX - session.startX;
+    const dy = event.clientY - session.startY;
+    if (!session.moved && Math.hypot(dx, dy) < DRAG_THRESHOLD_PX) return;
+
+    session.moved = true;
+    setDragging(true);
+    const next = clampPosition(session.originX + dx, session.originY + dy, root.offsetWidth, root.offsetHeight);
+    setPosition(next);
+  };
+
+  const handlePetPointerUp = (event: PointerEvent<HTMLButtonElement>) => {
+    const session = dragSession.current;
+    if (!session.active || event.pointerId !== session.pointerId) return;
+    if (session.moved) {
+      suppressClickRef.current = true;
+      const root = rootRef.current;
+      if (root) {
+        const rect = root.getBoundingClientRect();
+        const next = clampPosition(rect.left, rect.top, root.offsetWidth, root.offsetHeight);
+        setPosition(next);
+        localStorage.setItem(POSITION_STORAGE_KEY, JSON.stringify(next));
+      }
+    }
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    finishDrag();
+  };
+
+  const handlePetPointerCancel = (event: PointerEvent<HTMLButtonElement>) => {
+    const session = dragSession.current;
+    if (!session.active || event.pointerId !== session.pointerId) return;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    finishDrag();
+  };
+
   const submitPrompt = (prompt: string) => {
     const trimmed = prompt.trim();
     if (!trimmed) return;
@@ -186,8 +313,16 @@ export default function LumoPet({
     submitPrompt(input);
   };
 
+  const rootStyle = position ? { left: position.x, top: position.y } : undefined;
+
   return (
-    <div className="lumo-root" data-state={state} data-theme={colorMode}>
+    <div
+      ref={rootRef}
+      className={`lumo-root${position ? ' lumo-root--placed' : ''}${dragging ? ' lumo-root--dragging' : ''}`}
+      data-state={state}
+      data-theme={colorMode}
+      style={rootStyle}
+    >
       {open ? (
         <section className="lumo-panel" aria-label="Lumo helper">
           <header className="lumo-panel-header">
@@ -241,11 +376,20 @@ export default function LumoPet({
       <button
         type="button"
         className="lumo-pet-button"
+        onPointerDown={handlePetPointerDown}
+        onPointerMove={handlePetPointerMove}
+        onPointerUp={handlePetPointerUp}
+        onPointerCancel={handlePetPointerCancel}
         onClick={() => {
+          if (suppressClickRef.current) {
+            suppressClickRef.current = false;
+            return;
+          }
           setOpen(true);
           setState('wave');
         }}
-        aria-label="Open Lumo"
+        aria-label="Open Lumo. Drag to move."
+        title="Drag to move Lumo"
       >
         {state === 'notification' ? <span className="lumo-notification-dot" aria-hidden /> : null}
         <span
