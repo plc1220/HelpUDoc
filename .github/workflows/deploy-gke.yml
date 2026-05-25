@@ -525,6 +525,28 @@ jobs:
               reflection-job="${BACKEND_IMG}"
           fi
 
+      - name: Enable skill sandbox runtime
+        env:
+          IMAGE_TAG: ${{ format('{0}{1}', github.sha, inputs.image_tag_suffix) }}
+        run: |
+          set -euo pipefail
+          AGENT_IMG="gcr.io/${PROJECT_ID}/helpudoc-agent:${IMAGE_TAG}"
+
+          if [[ "${{ inputs.build_agent }}" == "true" ]]; then
+            kubectl -n helpudoc patch configmap helpudoc-config --type merge -p "$(jq -n \
+              --arg enabled "true" \
+              --arg sandbox_image "${AGENT_IMG}" \
+              '{data:{ENABLE_SKILL_SANDBOX_RUNNER:$enabled,HELPUDOC_SANDBOX_IMAGE:$sandbox_image}}')"
+          else
+            kubectl -n helpudoc patch configmap helpudoc-config --type merge -p "$(jq -n \
+              --arg enabled "true" \
+              '{data:{ENABLE_SKILL_SANDBOX_RUNNER:$enabled}}')"
+          fi
+
+          if [[ "${{ inputs.build_backend }}" != "true" && "${{ inputs.build_agent }}" != "true" ]]; then
+            kubectl -n helpudoc rollout restart deployment/helpudoc-app
+          fi
+
       - name: Wait for rollout
         run: |
           set -euo pipefail
