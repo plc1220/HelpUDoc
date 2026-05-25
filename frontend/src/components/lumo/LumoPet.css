@@ -1,0 +1,306 @@
+.lumo-root {
+  position: fixed;
+  right: clamp(14px, 2.4vw, 28px);
+  bottom: clamp(18px, 3.2vw, 34px);
+  z-index: 80;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.lumo-pet-button {
+  position: relative;
+  width: clamp(76px, 7.5vw, 100px);
+  height: clamp(76px, 7.5vw, 100px);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  filter: drop-shadow(0 14px 22px rgba(15, 23, 42, 0.2));
+  isolation: isolate;
+  padding: 0;
+  transition: transform 160ms ease, filter 160ms ease;
+}
+
+.lumo-pet-button:hover {
+  transform: translateY(-2px) scale(1.03);
+  filter: drop-shadow(0 18px 26px rgba(15, 23, 42, 0.26));
+}
+
+.lumo-pet-button:active {
+  transform: translateY(0) scale(0.97);
+}
+
+.lumo-pet-button::after {
+  content: '';
+  position: absolute;
+  left: 24%;
+  right: 18%;
+  bottom: 8%;
+  height: 9%;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.2);
+  filter: blur(6px);
+  transform-origin: center;
+  z-index: -1;
+}
+
+.lumo-sprite {
+  display: block;
+  width: 96%;
+  aspect-ratio: 192 / 208;
+  background-repeat: no-repeat;
+  pointer-events: none;
+  user-select: none;
+  transform-origin: 50% 86%;
+  will-change: transform;
+}
+
+.lumo-root[data-state='idle'] .lumo-sprite {
+  animation: lumo-breathe 3.4s ease-in-out infinite;
+}
+
+.lumo-root[data-state='idle'] .lumo-pet-button::after {
+  animation: lumo-breath-shadow 3.4s ease-in-out infinite;
+}
+
+.lumo-root[data-state='thinking'] .lumo-pet-button,
+.lumo-root[data-state='typing'] .lumo-pet-button {
+  animation: lumo-attention 0.72s ease-in-out infinite;
+}
+
+.lumo-root[data-state='notification'] .lumo-pet-button {
+  animation: lumo-notify 1.15s ease-in-out infinite;
+}
+
+.lumo-notification-dot {
+  position: absolute;
+  right: 14%;
+  top: 10%;
+  z-index: 2;
+  width: 0.78rem;
+  height: 0.78rem;
+  border: 2px solid #ffffff;
+  border-radius: 999px;
+  background: #f59e0b;
+  box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.18);
+}
+
+.lumo-bubble {
+  position: absolute;
+  right: 6px;
+  bottom: calc(100% - 6px);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border: 1px solid var(--border-color);
+  border-radius: 0.75rem;
+  background: color-mix(in srgb, var(--surface) 96%, transparent);
+  box-shadow: 0 14px 28px rgba(15, 23, 42, 0.18);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 0.58rem 0.72rem;
+  white-space: nowrap;
+}
+
+.lumo-panel {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 10px);
+  width: min(330px, calc(100vw - 28px));
+  display: flex;
+  overflow: hidden;
+  flex-direction: column;
+  border: 1px solid var(--border-color);
+  border-radius: 1rem;
+  background: color-mix(in srgb, var(--surface) 98%, transparent);
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.24);
+  color: var(--text-primary);
+}
+
+.lumo-panel-header {
+  min-height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--surface-subtle);
+  padding: 0.78rem 0.9rem;
+}
+
+.lumo-panel-title {
+  min-width: 0;
+}
+
+.lumo-panel-title strong,
+.lumo-panel-title span {
+  display: block;
+}
+
+.lumo-panel-title strong {
+  color: var(--text-primary);
+  font-size: 16px;
+  line-height: 1.1;
+}
+
+.lumo-panel-title span {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lumo-icon-button {
+  width: 2rem;
+  height: 2rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 0.5rem;
+  color: var(--text-secondary);
+}
+
+.lumo-icon-button:hover {
+  border-color: var(--border-color);
+  background: var(--surface);
+  color: var(--text-primary);
+}
+
+.lumo-panel-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0.9rem;
+}
+
+.lumo-panel-body p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.lumo-quick-row {
+  display: flex;
+  gap: 0.45rem;
+  overflow-x: auto;
+}
+
+.lumo-quick-row button {
+  flex: 0 0 auto;
+  border: 1px solid var(--border-color);
+  border-radius: 0.65rem;
+  background: var(--surface-subtle);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+  padding: 0.56rem 0.64rem;
+}
+
+.lumo-quick-row button:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.lumo-input-row {
+  display: flex;
+  gap: 0.5rem;
+  border-top: 1px solid var(--border-color);
+  background: var(--surface-subtle);
+  padding: 0.7rem;
+}
+
+.lumo-input-row input {
+  min-width: 0;
+  flex: 1;
+  border: 1px solid var(--border-color);
+  border-radius: 0.75rem;
+  background: var(--surface);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.2;
+  outline: none;
+  padding: 0.68rem 0.75rem;
+}
+
+.lumo-input-row input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.lumo-input-row button {
+  width: 2.6rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--accent);
+  border-radius: 0.75rem;
+  background: var(--accent);
+  color: white;
+}
+
+@keyframes lumo-breathe {
+  0%,
+  100% {
+    transform: translateY(0) rotate(0deg) scale(1);
+  }
+
+  50% {
+    transform: translateY(-1.5px) rotate(-0.35deg) scale(1.006, 0.992);
+  }
+}
+
+@keyframes lumo-breath-shadow {
+  0%,
+  100% {
+    opacity: 0.8;
+    transform: scaleX(1);
+  }
+
+  50% {
+    opacity: 0.62;
+    transform: scaleX(0.88);
+  }
+}
+
+@keyframes lumo-attention {
+  0%,
+  100% {
+    transform: translateY(0) rotate(0deg);
+  }
+
+  50% {
+    transform: translateY(-2px) rotate(0.8deg);
+  }
+}
+
+@keyframes lumo-notify {
+  0%,
+  100% {
+    transform: translateY(0) scale(1);
+  }
+
+  45% {
+    transform: translateY(-4px) scale(1.025);
+  }
+}
+
+@media (max-width: 639px) {
+  .lumo-root {
+    right: 10px;
+    bottom: 14px;
+  }
+
+  .lumo-bubble {
+    display: none;
+  }
+}

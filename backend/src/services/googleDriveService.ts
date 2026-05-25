@@ -266,6 +266,15 @@ const extractDriveFileId = (value?: string): string | null => {
 
 const rangeForSheet = (title: string) => `'${title.replace(/'/g, "''")}'`;
 
+const titleFromSheetRange = (range: string): string => {
+  const sheetPart = String(range || '').split('!')[0] || '';
+  const trimmed = sheetPart.trim();
+  if (trimmed.startsWith("'") && trimmed.endsWith("'")) {
+    return trimmed.slice(1, -1).replace(/''/g, "'");
+  }
+  return trimmed;
+};
+
 const toIconHint = (mimeType: string): GoogleDrivePickerItem['iconHint'] => {
   if (mimeType === GOOGLE_DOC_MIME) return 'docs';
   if (mimeType === GOOGLE_SHEET_MIME) return 'sheets';
@@ -563,7 +572,7 @@ export class GoogleDriveService {
     const valuesByTitle = new Map<string, string[][]>();
     for (const valueRange of valuesPayload.valueRanges || []) {
       const range = String(valueRange.range || '');
-      const title = range.replace(/^'(.+)'!?$/, '$1').replace(/!.*$/, '');
+      const title = titleFromSheetRange(range);
       valuesByTitle.set(title, Array.isArray(valueRange.values) ? valueRange.values : []);
     }
 

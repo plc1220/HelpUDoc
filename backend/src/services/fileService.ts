@@ -20,7 +20,7 @@ const TEXT_MIME_TYPES = [
 
 const TEXT_FILE_EXTENSIONS = ['.md', '.mermaid', '.txt', '.json', '.html', '.css', '.js', '.ts', '.tsx', '.jsx', '.svg', '.csv'];
 const DIRECT_RAG_INDEXABLE_EXTENSIONS = new Set(['.doc', '.md']);
-const ARTIFACT_MANAGED_RAG_EXTENSIONS = new Set(['.pdf', '.docx', '.pptx']);
+const ARTIFACT_MANAGED_RAG_EXTENSIONS = new Set(['.pdf', '.docx', '.pptx', '.xlsx']);
 const INTERNAL_WORKSPACE_DIR_NAMES = new Set(['.system']);
 const BINARY_MIME_TYPES_BY_EXTENSION: Record<string, string> = {
   '.png': 'image/png',
@@ -34,6 +34,8 @@ const BINARY_MIME_TYPES_BY_EXTENSION: Record<string, string> = {
   '.parquet': 'application/octet-stream',
   '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  '.xls': 'application/vnd.ms-excel',
+  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
 };
 
 const normalizeS3Key = (workspaceId: string, fileName: string) => {

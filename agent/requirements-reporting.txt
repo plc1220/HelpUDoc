@@ -1,10 +1,10 @@
 python-pptx
 duckdb
 pandas
+openpyxl
 tabulate
 seaborn
 matplotlib
 altair
 plotly
 kaleido
-

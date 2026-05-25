@@ -19,6 +19,7 @@ RUN apt-get update \
     libgl1 \
     libglib2.0-0 \
     libsm6 \
+    libreoffice-calc \
   && rm -rf /var/lib/apt/lists/*
 
 COPY agent/requirements-parser.txt /app/agent/requirements-parser.txt
@@ -28,4 +29,3 @@ RUN --mount=type=cache,target=/root/.cache/pip \
   PIP_INDEX_URL="${PYTORCH_CPU_INDEX_URL}" \
   PIP_EXTRA_INDEX_URL="${PYPI_INDEX_URL}" \
   pip install -r /app/agent/requirements-parser.txt -r /app/agent/requirements-reporting.txt
-

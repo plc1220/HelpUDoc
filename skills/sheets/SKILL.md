@@ -33,13 +33,18 @@ Use this skill for spreadsheet and tabular file requests, including `.csv`, `.ts
    - For `.parquet`:
      - Prefer the data toolchain.
      - Do not attempt UTF-8 decoding.
-   - For `.xlsx`, `.xls`, `.ods`:
+   - For `.xlsx`:
+     - If the deliverable is an Excel workbook or the user asks to create/edit/recalculate/validate a workbook, load the `xlsx` skill.
+     - Prefer the platform's derived Markdown artifact when the workbook was attached through chat or uploaded after workbook understanding support was enabled.
+     - Ask for a CSV export of the relevant sheet when exact formulas, formatting, hidden rows, or full-fidelity workbook behavior is required.
+   - For `.xls` and `.ods`:
      - Do not pretend the workbook is directly readable if no converter is available.
-     - Ask for a CSV export of the relevant sheet when exact cell inspection is required.
+     - Ask for a CSV or `.xlsx` export of the relevant sheet when exact cell inspection is required.
 
 3. Set expectations for workbook files.
-   - If the user asks to inspect formulas, multiple tabs, or formatting from Excel files, say the current runtime does not have native workbook parsing in the core file tools.
-   - Ask for the specific sheet exported as CSV if needed.
+   - `.xlsx` content is converted to a readable Markdown artifact with one CSV block per sheet; this is good for summarization and lightweight Q&A.
+   - If the user asks to inspect formulas, hidden tabs, formatting, pivots, charts, or exact workbook behavior, say the readable artifact may not preserve those details.
+   - Ask for the specific sheet exported as CSV if exact tabular inspection is needed.
 
 4. Stay honest about scope.
    - Do not fabricate sheet names, formulas, or hidden-tab content.

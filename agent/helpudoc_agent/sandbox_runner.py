@@ -117,6 +117,10 @@ def _chmod_best_effort(path: Path, mode: int) -> None:
         logger.debug("Failed chmod for sandbox path %s", path, exc_info=True)
 
 
+def _ignore_script_cache_dirs(_dir: str, names: list[str]) -> set[str]:
+    return {name for name in names if name == "__pycache__" or name.endswith(".pyc")}
+
+
 def _resolve_script(skill: SkillMetadata, script_name: str) -> SkillSandboxScript:
     normalized = str(script_name or "").strip()
     if not normalized:
@@ -180,8 +184,16 @@ def _stage_run(
     _chmod_best_effort(scripts_dir, 0o755)
     _chmod_best_effort(run_dir / "tmp", 0o777)
 
-    staged_script = scripts_dir / script_path.name
-    shutil.copy2(script_path, staged_script)
+    skill_scripts_dir = skill_dir / "scripts"
+    if skill_scripts_dir.is_dir() and (
+        script_path == skill_scripts_dir or skill_scripts_dir in script_path.parents
+    ):
+        shutil.rmtree(scripts_dir)
+        shutil.copytree(skill_scripts_dir, scripts_dir, ignore=_ignore_script_cache_dirs)
+        staged_script = run_dir / script_path.relative_to(skill_dir)
+    else:
+        staged_script = scripts_dir / script_path.name
+        shutil.copy2(script_path, staged_script)
     _chmod_best_effort(staged_script, 0o555)
 
     copied_names: set[str] = set()
@@ -245,6 +257,11 @@ def build_sandbox_job_manifest(
     safe_workspace_id = _safe_subpath_segment(workspace_id, "workspace_id")
     safe_run_id = _safe_subpath_segment(run_id, "run_id")
     timeout_seconds = max(1, int(script.timeout_seconds))
+    staged_script_path = str(staged_script_name or "").strip().replace("\\", "/")
+    if "/" not in staged_script_path:
+        staged_script_path = f"scripts/{staged_script_path}"
+    if not _is_relative_safe(staged_script_path):
+        raise SandboxExecutionError("staged_script_name must be a safe relative path.")
     return {
         "apiVersion": "batch/v1",
         "kind": "Job",
@@ -276,11 +293,13 @@ def build_sandbox_job_manifest(
                             "image": sandbox_config.image,
                             "imagePullPolicy": "IfNotPresent",
                             "workingDir": "/sandbox",
-                            "command": ["python", f"/sandbox/scripts/{staged_script_name}"],
+                            "command": ["python", f"/sandbox/{staged_script_path}"],
                             "args": args,
                             "env": [
                                 {"name": "PYTHONDONTWRITEBYTECODE", "value": "1"},
                                 {"name": "TMPDIR", "value": "/sandbox/tmp"},
+                                {"name": "HOME", "value": "/sandbox/tmp"},
+                                {"name": "PYTHONPATH", "value": "/sandbox/scripts:/sandbox"},
                             ],
                             "resources": {
                                 "limits": {
@@ -402,7 +421,7 @@ def run_skill_python_script_in_kubernetes(
         job_name=job_name,
         workspace_id=workspace_state.workspace_id,
         run_id=run_id,
-        staged_script_name=staged_script.name,
+        staged_script_name=staged_script.relative_to(run_dir).as_posix(),
         args=safe_args,
         script=script,
         sandbox_config=sandbox_config,

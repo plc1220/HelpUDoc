@@ -81,6 +81,7 @@ import WorkspaceFileTree from '../../components/WorkspaceFileTree';
 import DashboardCanvas from '../dashboard/components/DashboardCanvas';
 import { downloadDashboardHtmlExport } from '../dashboard/components/dashboardDownload';
 import AgentChatPane from '../../components/chat/AgentChatPane';
+import LumoPet from '../../components/lumo/LumoPet';
 import { buildApprovalDraftContent, buildApprovalReview } from '../chat/interrupts/approvalReview';
 import type { RenderableInterruptAction } from '../chat/interrupts/actions';
 import DrivePickerModal from '../../components/chat/DrivePickerModal';
@@ -6606,6 +6607,20 @@ export default function WorkspacePage() {
     });
   };
 
+  const handleLumoPrompt = useCallback((prompt: string) => {
+    if (!isAgentPaneVisible) {
+      setIsAgentPaneVisible(true);
+    }
+    setChatMessage(prompt);
+    closeMention();
+    closeCommand();
+    requestAnimationFrame(() => {
+      chatInputRef.current?.focus();
+      chatInputRef.current?.setSelectionRange(prompt.length, prompt.length);
+      updateCommandState(prompt, prompt.length);
+    });
+  }, [closeCommand, closeMention, isAgentPaneVisible, updateCommandState]);
+
   return (
     <ThemeProvider theme={theme}>
       <Box
@@ -7630,6 +7645,14 @@ export default function WorkspacePage() {
             />
               </>
             )}
+            <LumoPet
+              colorMode={colorMode}
+              workspaceName={selectedWorkspace?.name}
+              activeFileName={selectedFile?.name || selectedDashboardPath}
+              aiBusy={isStreaming}
+              hasSuggestion={hasPendingInterruptMessage}
+              onPrompt={handleLumoPrompt}
+            />
           </div>
         </Box>
       </Box>

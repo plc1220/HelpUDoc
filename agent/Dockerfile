@@ -17,6 +17,7 @@ RUN apt-get update \
     libgl1 \
     libglib2.0-0 \
     libsm6 \
+    libreoffice-calc \
   && rm -rf /var/lib/apt/lists/*
 
 # Install deps before copying the rest so the layer caches across code changes.

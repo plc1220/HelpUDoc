@@ -218,11 +218,39 @@ def test_runner_creates_hardened_job_and_deletes_it(tmp_path: Path) -> None:
     assert pod_spec["automountServiceAccountToken"] is False
     assert container["command"] == ["python", "/sandbox/scripts/run.py"]
     assert container["args"] == ["--input", "source.txt"]
+    env = {item["name"]: item["value"] for item in container.get("env", [])}
+    assert env["HOME"] == "/sandbox/tmp"
+    assert env["PYTHONPATH"] == "/sandbox/scripts:/sandbox"
     assert container["securityContext"]["allowPrivilegeEscalation"] is False
     assert container["securityContext"]["readOnlyRootFilesystem"] is True
     assert container["securityContext"]["capabilities"]["drop"] == ["ALL"]
     assert container["volumeMounts"][0]["subPath"].startswith("ws/sandbox-runs/")
     assert "GEMINI_API_KEY" not in {item["name"] for item in container.get("env", [])}
+
+
+def test_runner_stages_skill_scripts_tree_for_imports(tmp_path: Path) -> None:
+    skills_root, _digest = _write_skill(
+        tmp_path,
+        script_body="import helper\nprint(helper.VALUE)\n",
+        script_path="scripts/run.py",
+    )
+    helper = skills_root / "demo" / "scripts" / "helper.py"
+    helper.write_text("VALUE = 'ok'\n", encoding="utf-8")
+    workspace = WorkspaceState(workspace_id="ws", root_path=tmp_path / "workspaces" / "ws")
+    activate_skill_context(workspace.context, load_skills(skills_root)[0])
+
+    result = run_skill_python_script_in_kubernetes(
+        skills_root=skills_root,
+        workspace_state=workspace,
+        script_name="run",
+        batch_api=FakeBatchApi(),
+        core_api=FakeCoreApi(),
+        sandbox_config=SandboxConfig.from_env(),
+    )
+
+    run_dir = workspace.root_path / "sandbox-runs" / result.run_id
+    assert (run_dir / "scripts" / "run.py").is_file()
+    assert (run_dir / "scripts" / "helper.py").is_file()
 
 
 def test_runner_deletes_job_when_wait_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

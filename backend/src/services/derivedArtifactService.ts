@@ -6,6 +6,7 @@ import { DatabaseService } from './databaseService';
 import { FileService } from './fileService';
 import { WorkspaceService } from './workspaceService';
 import { understandAttachment } from './agentService';
+import { workbookBufferToMarkdown } from '../utils/spreadsheetMarkdown';
 
 type PipelineStage = 'part-base' | 'parser-enrichment';
 
@@ -130,7 +131,7 @@ const sanitizeAssetFileName = (index: number, requestedName: string, mimeType: s
 };
 
 const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-const AUTO_PROCESS_EXTENSIONS = new Set(['.pdf', '.docx', '.pptx']);
+const AUTO_PROCESS_EXTENSIONS = new Set(['.pdf', '.docx', '.pptx', '.xlsx']);
 
 const splitMarkdownSections = (markdown: string): Array<{ heading: string; body: string }> => {
   const sections: Array<{ heading: string; body: string }> = [];
@@ -236,7 +237,8 @@ export class DerivedArtifactService {
     const normalizedMime = String(mimeType || '').toLowerCase();
     return normalizedMime === 'application/pdf'
       || normalizedMime === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-      || normalizedMime === 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
+      || normalizedMime === 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+      || normalizedMime === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
   }
 
   async enqueueFileUnderstanding(
@@ -668,6 +670,25 @@ export class DerivedArtifactService {
   }
 
   private async buildArtifactContent(sourceFile: SourceFileRecord, buffer: Buffer): Promise<ArtifactBuildResult> {
+    const ext = path.extname(sourceFile.name).toLowerCase();
+    if (ext === '.xlsx') {
+      const markdown = await workbookBufferToMarkdown(buffer, { title: path.basename(sourceFile.name) });
+      const sections = splitMarkdownSections(markdown);
+      const firstDataLine = markdown
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .find((line) => line && !line.startsWith('#') && !line.startsWith('```') && !line.startsWith('>'));
+      return {
+        markdown,
+        summary: firstDataLine || `Workbook converted from ${path.basename(sourceFile.name)}`,
+        outline: sections.map((section) => section.heading),
+        sections,
+        title: path.basename(sourceFile.name),
+        effectiveMode: 'parser',
+        status: 'ready',
+      };
+    }
+
     if (isMarkdownLike(sourceFile.name, sourceFile.mimeType)) {
       const rawText = buffer.toString('utf-8');
       const title = path.basename(sourceFile.name);
