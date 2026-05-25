@@ -1,75 +1,71 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent, type PointerEvent } from 'react';
-import { Bell, Send, X } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState, useCallback, type PointerEvent } from 'react';
 import lumoSpriteSheet from '../../assets/lumo/lumo-spritesheet.webp';
 import './LumoPet.css';
 
-type LumoState = 'idle' | 'blink' | 'thinking' | 'typing' | 'happy' | 'notification' | 'wave';
+type PetState =
+  | 'idle'
+  | 'blink'
+  | 'walk'
+  | 'wave'
+  | 'think'
+  | 'sad'
+  | 'notify'
+  | 'sleep';
 
 type LumoPetProps = {
-  colorMode: 'light' | 'dark';
+  colorMode?: 'light' | 'dark';
   workspaceName?: string | null;
   activeFileName?: string | null;
   aiBusy?: boolean;
   hasSuggestion?: boolean;
-  onPrompt: (prompt: string) => void;
+  onPrompt?: (prompt: string) => void;
 };
 
 const SPRITE_COLUMNS = 8;
 const SPRITE_ROWS = 9;
 
-type SpriteFrame = readonly [column: number, row: number];
-
-const spriteFrames = {
-  idle: [0, 0],
-  blink: [1, 0],
-  curious: [3, 0],
-  wink: [4, 0],
-  waveStart: [0, 3],
-  waveHigh: [1, 3],
-  waveSettle: [2, 3],
-  waveEnd: [3, 3],
-  happyOpen: [1, 4],
-  happyLift: [2, 4],
-  happyHop: [3, 4],
-  happySettle: [4, 4],
-  thinkingLook: [0, 6],
-  thinkingPaws: [1, 6],
-  thinkingTilt: [2, 6],
-  thinkingCheek: [3, 6],
-  focusStart: [1, 7],
-  focusPinch: [2, 7],
-  focusHold: [3, 7],
-  focusSquint: [4, 7],
-  focusBlink: [5, 7],
-} as const satisfies Record<string, SpriteFrame>;
-
-const lumoSequences: Record<LumoState, SpriteFrame[]> = {
-  idle: [spriteFrames.idle],
-  blink: [spriteFrames.blink, spriteFrames.idle],
-  thinking: [spriteFrames.focusStart, spriteFrames.focusPinch, spriteFrames.focusHold, spriteFrames.focusSquint, spriteFrames.focusBlink, spriteFrames.focusHold],
-  typing: [spriteFrames.thinkingLook, spriteFrames.thinkingPaws, spriteFrames.thinkingTilt, spriteFrames.thinkingCheek],
-  happy: [spriteFrames.happyOpen, spriteFrames.happyLift, spriteFrames.happyHop, spriteFrames.happySettle],
-  notification: [spriteFrames.curious, spriteFrames.wink, spriteFrames.curious, spriteFrames.idle],
-  wave: [spriteFrames.waveStart, spriteFrames.waveHigh, spriteFrames.waveSettle, spriteFrames.waveEnd],
-};
-
-const frameSpeeds: Record<LumoState, number> = {
-  idle: 0,
-  blink: 160,
-  thinking: 260,
-  typing: 180,
-  happy: 170,
-  notification: 360,
-  wave: 150,
-};
-
-const loopingStates = new Set<LumoState>(['thinking', 'typing', 'notification']);
-
-const quickPrompts = [
-  'Summarize the current workspace and suggest the next documentation step.',
-  'Review the selected file for clarity, missing context, and confusing sections.',
-  'Create a concise outline for the document I should write next.',
-];
+const SPRITES = {
+  idle: {
+    row: 0,
+    frames: [0],
+    fps: 1,
+  },
+  blink: {
+    row: 0,
+    frames: [0, 1, 0],
+    fps: 8,
+  },
+  walk: {
+    row: 1,
+    frames: [0, 1, 2, 3, 4, 5, 6, 7],
+    fps: 12,
+  },
+  wave: {
+    row: 3,
+    frames: [0, 1, 2, 3],
+    fps: 7,
+  },
+  think: {
+    row: 6,
+    frames: [0, 1, 2, 3, 4],
+    fps: 5,
+  },
+  sad: {
+    row: 5,
+    frames: [0, 1, 2, 3],
+    fps: 4,
+  },
+  notify: {
+    row: 7,
+    frames: [0, 1, 2, 3, 4],
+    fps: 9,
+  },
+  sleep: {
+    row: 8,
+    frames: [0, 1, 2, 3],
+    fps: 3,
+  },
+} as const;
 
 const POSITION_STORAGE_KEY = 'helpudoc:lumo-pet-position';
 const DRAG_THRESHOLD_PX = 6;
@@ -98,23 +94,22 @@ function clampPosition(x: number, y: number, width: number, height: number): Lum
 }
 
 export default function LumoPet({
-  colorMode,
-  workspaceName,
-  activeFileName,
+  colorMode = 'light',
   aiBusy = false,
   hasSuggestion = false,
-  onPrompt,
 }: LumoPetProps) {
-  const [state, setState] = useState<LumoState>('idle');
-  const [sequenceStep, setSequenceStep] = useState(0);
-  const [open, setOpen] = useState(false);
-  const [input, setInput] = useState('');
+  const [state, setState] = useState<PetState>('idle');
+  const [frame, setFrame] = useState(0);
+  const [facing, setFacing] = useState<'left' | 'right'>('right');
   const [position, setPosition] = useState<LumoPosition | null>(readStoredPosition);
   const [dragging, setDragging] = useState(false);
+
   const rootRef = useRef<HTMLDivElement>(null);
   const blinkTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const gestureReturnTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sleepTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const suppressClickRef = useRef(false);
+
   const dragSession = useRef({
     active: false,
     moved: false,
@@ -124,92 +119,107 @@ export default function LumoPet({
     originX: 0,
     originY: 0,
   });
-  const suppressClickRef = useRef(false);
 
-  const contextLine = useMemo(() => {
-    const bits = [workspaceName, activeFileName].filter(Boolean);
-    return bits.length ? bits.join(' / ') : 'HelpUDoc';
-  }, [activeFileName, workspaceName]);
+  const cfg = SPRITES[state];
 
-  const sequence = lumoSequences[state];
-  const [spriteColumn, spriteRow] = sequence[sequenceStep % sequence.length];
-  const spritePosition = `${(spriteColumn / (SPRITE_COLUMNS - 1)) * 100}% ${(spriteRow / (SPRITE_ROWS - 1)) * 100}%`;
+  const resetSleepTimer = useCallback(() => {
+    if (sleepTimer.current) clearTimeout(sleepTimer.current);
+    sleepTimer.current = setTimeout(() => {
+      setState((current) => (current === 'idle' ? 'sleep' : current));
+    }, 20000);
+  }, []);
 
   useEffect(() => {
     if (aiBusy) {
-      setState('thinking');
+      setState('think');
+      resetSleepTimer();
       return;
     }
     if (hasSuggestion) {
-      setState('notification');
+      setState('notify');
+      resetSleepTimer();
       return;
     }
-    setState((current) => (current === 'thinking' || current === 'notification' ? 'idle' : current));
-  }, [aiBusy, hasSuggestion]);
+    setState((current) => (current === 'think' || current === 'notify' ? 'idle' : current));
+  }, [aiBusy, hasSuggestion, resetSleepTimer]);
 
   useEffect(() => {
-    if (open) return;
+    const handleGlobalTyping = () => {
+      const active = document.activeElement;
+      if (
+        active &&
+        (active.tagName === 'INPUT' ||
+          active.tagName === 'TEXTAREA' ||
+          active.getAttribute('contenteditable') === 'true')
+      ) {
+        setState('think');
+        resetSleepTimer();
+
+        if (typingTimer.current) clearTimeout(typingTimer.current);
+        typingTimer.current = setTimeout(() => {
+          setState('idle');
+        }, 1500);
+      }
+    };
+
+    window.addEventListener('keydown', handleGlobalTyping);
+    return () => {
+      window.removeEventListener('keydown', handleGlobalTyping);
+      if (typingTimer.current) clearTimeout(typingTimer.current);
+    };
+  }, [resetSleepTimer]);
+
+  useEffect(() => {
+    if (state !== 'idle') return;
+
     const scheduleBlink = () => {
       if (blinkTimer.current) clearTimeout(blinkTimer.current);
       blinkTimer.current = setTimeout(() => {
-        setState((current) => (current === 'idle' ? 'blink' : current));
-        scheduleBlink();
-      }, 18000 + Math.random() * 9000);
+        setState('blink');
+      }, 4000 + Math.random() * 5000);
     };
+
     scheduleBlink();
+    resetSleepTimer();
+
     return () => {
       if (blinkTimer.current) clearTimeout(blinkTimer.current);
     };
-  }, [open]);
+  }, [state, resetSleepTimer]);
 
   useEffect(() => {
-    setSequenceStep(0);
-    if (gestureReturnTimer.current) clearTimeout(gestureReturnTimer.current);
-    const speed = frameSpeeds[state];
-    const totalFrames = lumoSequences[state].length;
-    if (!speed || totalFrames <= 1) return;
-
-    const loops = loopingStates.has(state);
-    let raf = 0;
-    let last = performance.now();
-    let accumulated = 0;
-    let virtualStep = 0;
-    let done = false;
-    const tick = (now: number) => {
-      if (done) return;
-      accumulated += now - last;
-      last = now;
-      if (accumulated >= speed) {
-        const steps = Math.floor(accumulated / speed);
-        accumulated %= speed;
-        virtualStep += steps;
-        if (!loops && virtualStep >= totalFrames - 1) {
-          virtualStep = totalFrames - 1;
-          done = true;
-          setSequenceStep(virtualStep);
-          gestureReturnTimer.current = setTimeout(() => setState('idle'), speed);
-          return;
-        }
-        setSequenceStep(virtualStep);
-      }
-      raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => {
-      done = true;
-      if (gestureReturnTimer.current) clearTimeout(gestureReturnTimer.current);
-      cancelAnimationFrame(raf);
-    };
+    if (state !== 'idle') {
+      if (sleepTimer.current) clearTimeout(sleepTimer.current);
+    }
   }, [state]);
 
-  useEffect(
-    () => () => {
-      if (blinkTimer.current) clearTimeout(blinkTimer.current);
-      if (gestureReturnTimer.current) clearTimeout(gestureReturnTimer.current);
-      if (typingTimer.current) clearTimeout(typingTimer.current);
-    },
-    [],
-  );
+  useEffect(() => {
+    setFrame(0);
+
+    const loops =
+      state === 'idle' ||
+      state === 'walk' ||
+      state === 'think' ||
+      state === 'sleep' ||
+      state === 'notify';
+
+    const id = setInterval(() => {
+      setFrame((f) => {
+        const nextFrame = f + 1;
+        if (nextFrame >= cfg.frames.length) {
+          if (!loops) {
+            clearInterval(id);
+            setState('idle');
+            return 0;
+          }
+          return 0;
+        }
+        return nextFrame;
+      });
+    }, 1000 / cfg.fps);
+
+    return () => clearInterval(id);
+  }, [state, cfg.fps, cfg.frames.length]);
 
   useEffect(() => {
     if (!position) return;
@@ -225,34 +235,29 @@ export default function LumoPet({
     return () => window.removeEventListener('resize', clampToViewport);
   }, [position]);
 
-  const resolveRootPosition = (): LumoPosition => {
-    const root = rootRef.current;
-    if (!root) return { x: 0, y: 0 };
-    const rect = root.getBoundingClientRect();
-    return { x: rect.left, y: rect.top };
-  };
-
   const finishDrag = () => {
     dragSession.current.active = false;
     setDragging(false);
     dragSession.current.moved = false;
+    setState('idle');
   };
 
   const handlePetPointerDown = (event: PointerEvent<HTMLButtonElement>) => {
     if (event.button !== 0) return;
     const root = rootRef.current;
     if (!root) return;
-    const anchor = position ?? resolveRootPosition();
+    const rect = root.getBoundingClientRect();
     dragSession.current = {
       active: true,
       moved: false,
       pointerId: event.pointerId,
       startX: event.clientX,
       startY: event.clientY,
-      originX: anchor.x,
-      originY: anchor.y,
+      originX: rect.left,
+      originY: rect.top,
     };
     event.currentTarget.setPointerCapture(event.pointerId);
+    resetSleepTimer();
   };
 
   const handlePetPointerMove = (event: PointerEvent<HTMLButtonElement>) => {
@@ -267,7 +272,15 @@ export default function LumoPet({
 
     session.moved = true;
     setDragging(true);
-    const next = clampPosition(session.originX + dx, session.originY + dy, root.offsetWidth, root.offsetHeight);
+    setFacing(dx > 0 ? 'right' : 'left');
+    setState('walk');
+
+    const next = clampPosition(
+      session.originX + dx,
+      session.originY + dy,
+      root.offsetWidth,
+      root.offsetHeight,
+    );
     setPosition(next);
   };
 
@@ -276,13 +289,7 @@ export default function LumoPet({
     if (!session.active || event.pointerId !== session.pointerId) return;
     if (session.moved) {
       suppressClickRef.current = true;
-      const root = rootRef.current;
-      if (root) {
-        const rect = root.getBoundingClientRect();
-        const next = clampPosition(rect.left, rect.top, root.offsetWidth, root.offsetHeight);
-        setPosition(next);
-        localStorage.setItem(POSITION_STORAGE_KEY, JSON.stringify(next));
-      }
+      localStorage.setItem(POSITION_STORAGE_KEY, JSON.stringify(position));
     }
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
@@ -299,19 +306,25 @@ export default function LumoPet({
     finishDrag();
   };
 
-  const submitPrompt = (prompt: string) => {
-    const trimmed = prompt.trim();
-    if (!trimmed) return;
-    onPrompt(trimmed);
-    setInput('');
-    setOpen(false);
-    setState('happy');
+  const handleDoubleClick = () => {
+    setState('wave');
+    resetSleepTimer();
   };
 
-  const handleSubmit = (event: FormEvent) => {
-    event.preventDefault();
-    submitPrompt(input);
-  };
+  const bg = useMemo(() => {
+    const col = cfg.frames[frame % cfg.frames.length];
+    const row = cfg.row;
+
+    const xPct = (col / (SPRITE_COLUMNS - 1)) * 100;
+    const yPct = (row / (SPRITE_ROWS - 1)) * 100;
+
+    return {
+      backgroundImage: `url(${lumoSpriteSheet})`,
+      backgroundPosition: `${xPct}% ${yPct}%`,
+      backgroundSize: `${SPRITE_COLUMNS * 100}% ${SPRITE_ROWS * 100}%`,
+      transform: facing === 'left' ? 'scaleX(-1)' : 'scaleX(1)',
+    };
+  }, [frame, state, facing, cfg]);
 
   const rootStyle = position ? { left: position.x, top: position.y } : undefined;
 
@@ -323,56 +336,6 @@ export default function LumoPet({
       data-theme={colorMode}
       style={rootStyle}
     >
-      {open ? (
-        <section className="lumo-panel" aria-label="Lumo helper">
-          <header className="lumo-panel-header">
-            <div className="lumo-panel-title">
-              <strong>Lumo</strong>
-              <span>{contextLine}</span>
-            </div>
-            <button type="button" className="lumo-icon-button" onClick={() => setOpen(false)} aria-label="Close Lumo">
-              <X size={16} />
-            </button>
-          </header>
-          <div className="lumo-panel-body">
-            <p>Lumo is ready to help shape the next bit of documentation.</p>
-            <div className="lumo-quick-row">
-              {quickPrompts.map((prompt) => (
-                <button key={prompt} type="button" onClick={() => submitPrompt(prompt)}>
-                  {prompt.split(' ').slice(0, 3).join(' ')}
-                </button>
-              ))}
-            </div>
-          </div>
-          <form className="lumo-input-row" onSubmit={handleSubmit}>
-            <input
-              value={input}
-              placeholder="Ask Lumo..."
-              onChange={(event) => {
-                setInput(event.target.value);
-                if (typingTimer.current) clearTimeout(typingTimer.current);
-                if (event.target.value) {
-                  setState('typing');
-                  typingTimer.current = setTimeout(() => setState('idle'), 850);
-                } else {
-                  setState('idle');
-                }
-              }}
-            />
-            <button type="submit" aria-label="Send Lumo prompt">
-              <Send size={16} />
-            </button>
-          </form>
-        </section>
-      ) : null}
-
-      {!open && state === 'notification' ? (
-        <div className="lumo-bubble">
-          <Bell size={14} />
-          Thought ready
-        </div>
-      ) : null}
-
       <button
         type="button"
         className="lumo-pet-button"
@@ -380,27 +343,16 @@ export default function LumoPet({
         onPointerMove={handlePetPointerMove}
         onPointerUp={handlePetPointerUp}
         onPointerCancel={handlePetPointerCancel}
+        onDoubleClick={handleDoubleClick}
         onClick={() => {
           if (suppressClickRef.current) {
             suppressClickRef.current = false;
-            return;
           }
-          setOpen(true);
-          setState('wave');
         }}
-        aria-label="Open Lumo. Drag to move."
-        title="Drag to move Lumo"
+        aria-label="Lumo. Double click to wave, drag to move."
+        title="Double click to wave. Drag to move."
       >
-        {state === 'notification' ? <span className="lumo-notification-dot" aria-hidden /> : null}
-        <span
-          className="lumo-sprite"
-          aria-hidden
-          style={{
-            backgroundImage: `url(${lumoSpriteSheet})`,
-            backgroundPosition: spritePosition,
-            backgroundSize: `${SPRITE_COLUMNS * 100}% ${SPRITE_ROWS * 100}%`,
-          }}
-        />
+        <span className="lumo-sprite" aria-hidden style={bg} />
         <span className="sr-only">Lumo</span>
       </button>
     </div>

@@ -79,13 +79,20 @@
   animation: lumo-breath-shadow 3.4s ease-in-out infinite;
 }
 
-.lumo-root[data-state='thinking'] .lumo-pet-button,
-.lumo-root[data-state='typing'] .lumo-pet-button {
+.lumo-root[data-state='think'] .lumo-pet-button {
   animation: lumo-attention 0.72s ease-in-out infinite;
 }
 
-.lumo-root[data-state='notification'] .lumo-pet-button {
+.lumo-root[data-state='notify'] .lumo-pet-button {
   animation: lumo-notify 1.15s ease-in-out infinite;
+}
+
+.lumo-root[data-state='sleep'] .lumo-sprite {
+  animation: lumo-sleep-breathe 4.5s ease-in-out infinite;
+}
+
+.lumo-root[data-state='sleep'] .lumo-pet-button::after {
+  animation: lumo-sleep-shadow 4.5s ease-in-out infinite;
 }
 
 .lumo-notification-dot {
@@ -306,6 +313,28 @@
 
   45% {
     transform: translateY(-4px) scale(1.025);
+  }
+}
+
+@keyframes lumo-sleep-breathe {
+  0%, 100% {
+    transform: translateY(0) scale(1, 1);
+    opacity: 0.95;
+  }
+  50% {
+    transform: translateY(1px) scale(0.98, 0.95);
+    opacity: 0.75;
+  }
+}
+
+@keyframes lumo-sleep-shadow {
+  0%, 100% {
+    opacity: 0.7;
+    transform: scaleX(0.95);
+  }
+  50% {
+    opacity: 0.45;
+    transform: scaleX(0.8);
   }
 }
 
