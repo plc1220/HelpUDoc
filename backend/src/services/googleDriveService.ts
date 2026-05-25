@@ -14,6 +14,7 @@ const GOOGLE_FOLDER_MIME = 'application/vnd.google-apps.folder';
 const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 const PDF_MIME = 'application/pdf';
 const PPTX_MIME = 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
+const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
 type WorkspaceFile = {
   id: string | number;
@@ -504,13 +505,25 @@ export class GoogleDriveService {
     }
 
     if (metadata.mimeType === GOOGLE_SHEET_MIME) {
-      const markdown = await this.renderSpreadsheetMarkdown(accessToken, metadata);
-      return {
-        fileName: appendExtension(safeName, '.md'),
-        mimeType: 'text/markdown',
-        buffer: Buffer.from(markdown, 'utf-8'),
-        forceLocal: true,
-      };
+      try {
+        const buffer = await this.exportGoogleWorkspaceFile(accessToken, metadata.id, XLSX_MIME);
+        return {
+          fileName: appendExtension(safeName, '.xlsx'),
+          mimeType: XLSX_MIME,
+          buffer,
+        };
+      } catch (error) {
+        if (!this.isGoogleExportSizeLimitError(error)) {
+          throw error;
+        }
+        const markdown = await this.renderSpreadsheetMarkdown(accessToken, metadata);
+        return {
+          fileName: appendExtension(safeName, '.md'),
+          mimeType: 'text/markdown',
+          buffer: Buffer.from(markdown, 'utf-8'),
+          forceLocal: true,
+        };
+      }
     }
 
     if (metadata.mimeType === GOOGLE_SLIDE_MIME) {
