@@ -253,6 +253,13 @@ const DEFAULT_PERSONAS: AgentPersona[] = [
   },
 ];
 const LANDING_PERSONA_ORDER = ['lite', 'fast', 'pro'];
+type WorkspaceFileDialogState =
+  | { kind: 'create-folder'; value: string; busy: boolean; error?: string }
+  | { kind: 'rename-file'; file: WorkspaceFile; value: string; busy: boolean; error?: string }
+  | { kind: 'delete-file'; file: WorkspaceFile; busy: boolean; error?: string }
+  | { kind: 'delete-folder'; folder: { path: string; fileCount: number }; busy: boolean; error?: string }
+  | { kind: 'bulk-delete'; fileIds: string[]; fileCount: number; busy: boolean; error?: string };
+
 const normalizePersonaName = (name: string): string => {
   const normalized = String(name || '').trim().toLowerCase();
   if (!normalized || normalized === 'general-assistant') {
@@ -607,6 +614,7 @@ export default function WorkspacePage() {
   const [isPresentationModalOpen, setIsPresentationModalOpen] = useState(false);
   const [isDrivePickerOpen, setIsDrivePickerOpen] = useState(false);
   const [isDriveImporting, setIsDriveImporting] = useState(false);
+  const [workspaceFileDialog, setWorkspaceFileDialog] = useState<WorkspaceFileDialogState | null>(null);
   const [isLandingAttachmentMenuOpen, setIsLandingAttachmentMenuOpen] = useState(false);
   const [isLandingWorkspacePickerOpen, setIsLandingWorkspacePickerOpen] = useState(false);
   const [landingWorkspaceQuery, setLandingWorkspaceQuery] = useState('');
@@ -1597,17 +1605,7 @@ export default function WorkspacePage() {
 
   const handleRenameFile = async (file: WorkspaceFile) => {
     if (!selectedWorkspace) return;
-    const proposedName = window.prompt('Rename file', file.name)?.trim();
-    if (!proposedName || proposedName === file.name) {
-      return;
-    }
-
-    try {
-      const updated = await renameFile(selectedWorkspace.id, file.id, { name: proposedName });
-      applyWorkspaceFileUpdate(file.name, updated);
-    } catch (error) {
-      console.error('Failed to rename file:', error);
-    }
+    setWorkspaceFileDialog({ kind: 'rename-file', file, value: file.name, busy: false });
   };
 
   const handleMoveFiles = async (filesToMove: WorkspaceFile[], destinationFolderPath: string) => {
@@ -1640,7 +1638,6 @@ export default function WorkspacePage() {
   };
 
   const handleDeleteSingleFile = async (file: WorkspaceFile) => {
-    if (!selectedWorkspace) return;
     const removeFromState = () => {
       setFiles((prev) => prev.filter((item) => item.id !== file.id));
       setSelectedFiles((prev) => {
@@ -1667,69 +1664,13 @@ export default function WorkspacePage() {
       removeFromState();
       return;
     }
-    const confirmed = window.confirm(`Delete ${file.name}?`);
-    if (!confirmed) return;
-
-    try {
-      await deleteFile(selectedWorkspace.id, file.id);
-      removeFromState();
-    } catch (error) {
-      console.error('Failed to delete file:', error);
-    }
+    if (!selectedWorkspace) return;
+    setWorkspaceFileDialog({ kind: 'delete-file', file, busy: false });
   };
 
   const handleDeleteFolder = async (folder: { path: string; fileCount: number }) => {
     if (!selectedWorkspace || !folder.path) return;
-
-    const prefix = `${folder.path}/`;
-    const filesInFolder = files.filter((file) => {
-      const name = file.name || '';
-      return name === folder.path || name.startsWith(prefix);
-    });
-    const confirmed = window.confirm(
-      `Delete folder ${folder.path} and ${folder.fileCount} file${folder.fileCount === 1 ? '' : 's'} inside it?`,
-    );
-    if (!confirmed) return;
-
-    try {
-      await deleteFolder(selectedWorkspace.id, folder.path);
-
-      const deletedIds = new Set(filesInFolder.map((file) => file.id));
-      const deletedNames = new Set(filesInFolder.map((file) => file.name));
-      const folderPrefix = `${folder.path}/`;
-
-      setFiles((prev) =>
-        prev.filter((file) => {
-          const name = file.name || '';
-          return name !== folder.path && !name.startsWith(prefix);
-        }),
-      );
-      setFolderPaths((prev) => prev.filter((path) => path !== folder.path && !path.startsWith(folderPrefix)));
-      setSelectedFiles((prev) => {
-        const next = new Set(prev);
-        for (const fileId of deletedIds) {
-          next.delete(fileId);
-        }
-        return next;
-      });
-      setRagStatuses((prev) => {
-        const next = { ...prev };
-        for (const fileName of deletedNames) {
-          delete next[fileName];
-        }
-        return next;
-      });
-      if (selectedFile) {
-        const selectedName = selectedFile.name || '';
-        if (selectedName === folder.path || selectedName.startsWith(prefix)) {
-          setSelectedFile(null);
-          setSelectedFileDetails(null);
-          setFileContent('');
-        }
-      }
-    } catch (error) {
-      console.error('Failed to delete folder:', error);
-    }
+    setWorkspaceFileDialog({ kind: 'delete-folder', folder, busy: false });
   };
 
   const filePaneStyles: CSSProperties = {
@@ -6345,40 +6286,15 @@ export default function WorkspacePage() {
 
   const handleBulkDelete = async () => {
     if (!selectedWorkspace) return;
-
-    const confirmed = window.confirm(
-      `Are you sure you want to delete ${selectedFiles.size} files?`
-    );
-    if (!confirmed) {
+    if (selectedFiles.size === 0) {
       return;
     }
-
-    try {
-      for (const fileId of selectedFiles) {
-        if (String(fileId).startsWith('draft:')) {
-          continue;
-        }
-        await deleteFile(selectedWorkspace.id, fileId);
-      }
-      setFiles((prevFiles) =>
-        prevFiles.filter((file) => !selectedFiles.has(file.id))
-      );
-      setRagStatuses((prev) => {
-        const next = { ...prev };
-        for (const file of files) {
-          if (selectedFiles.has(file.id)) {
-            delete next[file.name];
-          }
-        }
-        return next;
-      });
-      setSelectedFiles(new Set());
-      setSelectedFile(null);
-      setSelectedFileDetails(null);
-      setFileContent('');
-    } catch (error) {
-      console.error('Failed to delete files:', error);
-    }
+    setWorkspaceFileDialog({
+      kind: 'bulk-delete',
+      fileIds: Array.from(selectedFiles),
+      fileCount: selectedFiles.size,
+      busy: false,
+    });
   };
 
   const handleFileSelect = (fileId: string) => {
@@ -6407,21 +6323,168 @@ export default function WorkspacePage() {
     if (!selectedWorkspace) {
       return;
     }
-    const proposedPath = window.prompt('Create folder')?.trim();
-    if (!proposedPath) {
+    setWorkspaceFileDialog({ kind: 'create-folder', value: '', busy: false });
+  };
+
+  const handleCloseWorkspaceFileDialog = () => {
+    if (workspaceFileDialog?.busy) {
       return;
     }
-    const normalizedFolder = normalizeWorkspaceFolderPath(proposedPath);
-    if (!normalizedFolder) {
+    setWorkspaceFileDialog(null);
+  };
+
+  const handleWorkspaceFileDialogValueChange = (value: string) => {
+    setWorkspaceFileDialog((current) =>
+      current?.kind === 'create-folder' || current?.kind === 'rename-file'
+        ? { ...current, value, error: undefined }
+        : current,
+    );
+  };
+
+  const handleConfirmWorkspaceFileDialog = async () => {
+    if (!selectedWorkspace || !workspaceFileDialog || workspaceFileDialog.busy) {
       return;
     }
 
+    const currentDialog = workspaceFileDialog;
+    setWorkspaceFileDialog({ ...currentDialog, busy: true, error: undefined });
+
     try {
-      const created = await createFolder(selectedWorkspace.id, normalizedFolder);
-      const createdPath = typeof created?.path === 'string' ? created.path : normalizedFolder;
-      setFolderPaths((prev) => addFolderPath(prev, createdPath));
+      if (currentDialog.kind === 'create-folder') {
+        const normalizedFolder = normalizeWorkspaceFolderPath(currentDialog.value.trim());
+        if (!normalizedFolder) {
+          setWorkspaceFileDialog({ ...currentDialog, busy: false, error: 'Enter a folder name.' });
+          return;
+        }
+
+        const created = await createFolder(selectedWorkspace.id, normalizedFolder);
+        const createdPath = typeof created?.path === 'string' ? created.path : normalizedFolder;
+        setFolderPaths((prev) => addFolderPath(prev, createdPath));
+        setWorkspaceFileDialog(null);
+        return;
+      }
+
+      if (currentDialog.kind === 'rename-file') {
+        const proposedName = currentDialog.value.trim();
+        if (!proposedName) {
+          setWorkspaceFileDialog({ ...currentDialog, busy: false, error: 'Enter a file name.' });
+          return;
+        }
+        if (proposedName === currentDialog.file.name) {
+          setWorkspaceFileDialog(null);
+          return;
+        }
+
+        const updated = await renameFile(selectedWorkspace.id, currentDialog.file.id, { name: proposedName });
+        applyWorkspaceFileUpdate(currentDialog.file.name, updated);
+        setWorkspaceFileDialog(null);
+        return;
+      }
+
+      if (currentDialog.kind === 'delete-file') {
+        const { file } = currentDialog;
+        await deleteFile(selectedWorkspace.id, file.id);
+        setFiles((prev) => prev.filter((item) => item.id !== file.id));
+        setSelectedFiles((prev) => {
+          const next = new Set(prev);
+          next.delete(file.id);
+          return next;
+        });
+        setRagStatuses((prev) => {
+          if (!prev[file.name]) {
+            return prev;
+          }
+          const next = { ...prev };
+          delete next[file.name];
+          return next;
+        });
+        if (selectedFile?.id === file.id) {
+          setSelectedFile(null);
+          setSelectedFileDetails(null);
+          setFileContent('');
+        }
+        setWorkspaceFileDialog(null);
+        return;
+      }
+
+      if (currentDialog.kind === 'delete-folder') {
+        const { folder } = currentDialog;
+        const prefix = `${folder.path}/`;
+        const folderPrefix = `${folder.path}/`;
+        const filesInFolder = files.filter((file) => {
+          const name = file.name || '';
+          return name === folder.path || name.startsWith(prefix);
+        });
+
+        await deleteFolder(selectedWorkspace.id, folder.path);
+
+        const deletedIds = new Set(filesInFolder.map((file) => file.id));
+        const deletedNames = new Set(filesInFolder.map((file) => file.name));
+
+        setFiles((prev) =>
+          prev.filter((file) => {
+            const name = file.name || '';
+            return name !== folder.path && !name.startsWith(prefix);
+          }),
+        );
+        setFolderPaths((prev) => prev.filter((path) => path !== folder.path && !path.startsWith(folderPrefix)));
+        setSelectedFiles((prev) => {
+          const next = new Set(prev);
+          for (const fileId of deletedIds) {
+            next.delete(fileId);
+          }
+          return next;
+        });
+        setRagStatuses((prev) => {
+          const next = { ...prev };
+          for (const fileName of deletedNames) {
+            delete next[fileName];
+          }
+          return next;
+        });
+        if (selectedFile) {
+          const selectedName = selectedFile.name || '';
+          if (selectedName === folder.path || selectedName.startsWith(prefix)) {
+            setSelectedFile(null);
+            setSelectedFileDetails(null);
+            setFileContent('');
+          }
+        }
+        setWorkspaceFileDialog(null);
+        return;
+      }
+
+      const fileIdsToDelete = new Set(currentDialog.fileIds);
+      for (const fileId of fileIdsToDelete) {
+        if (String(fileId).startsWith('draft:')) {
+          continue;
+        }
+        await deleteFile(selectedWorkspace.id, fileId);
+      }
+      setFiles((prevFiles) => prevFiles.filter((file) => !fileIdsToDelete.has(file.id)));
+      setRagStatuses((prev) => {
+        const next = { ...prev };
+        for (const file of files) {
+          if (fileIdsToDelete.has(file.id)) {
+            delete next[file.name];
+          }
+        }
+        return next;
+      });
+      setSelectedFiles(new Set());
+      if (selectedFile && fileIdsToDelete.has(selectedFile.id)) {
+        setSelectedFile(null);
+        setSelectedFileDetails(null);
+        setFileContent('');
+      }
+      setWorkspaceFileDialog(null);
     } catch (error) {
-      console.error('Failed to create folder:', error);
+      console.error('Workspace file action failed:', error);
+      setWorkspaceFileDialog({
+        ...currentDialog,
+        busy: false,
+        error: error instanceof Error ? error.message : 'Action failed. Please try again.',
+      });
     }
   };
 
@@ -7640,6 +7703,117 @@ export default function WorkspacePage() {
           </div>
         </Box>
       </Box>
+      {workspaceFileDialog && (
+        <div
+          className="fixed inset-0 z-[1600] flex items-center justify-center bg-slate-950/50 p-4"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              handleCloseWorkspaceFileDialog();
+            }
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="workspace-file-dialog-title"
+            className={`w-full max-w-md rounded-lg border p-5 shadow-2xl ${
+              isDarkMode
+                ? 'border-slate-700 bg-slate-950 text-slate-100'
+                : 'border-slate-200 bg-white text-slate-950'
+            }`}
+          >
+            <h2 id="workspace-file-dialog-title" className="text-lg font-semibold">
+              {workspaceFileDialog.kind === 'create-folder'
+                ? 'Create folder'
+                : workspaceFileDialog.kind === 'rename-file'
+                  ? 'Rename file'
+                : workspaceFileDialog.kind === 'delete-file'
+                  ? 'Delete file'
+                  : workspaceFileDialog.kind === 'delete-folder'
+                    ? 'Delete folder'
+                    : 'Delete selected files'}
+            </h2>
+            <div className={`mt-3 text-sm ${isDarkMode ? 'text-slate-300' : 'text-slate-600'}`}>
+              {workspaceFileDialog.kind === 'create-folder' || workspaceFileDialog.kind === 'rename-file' ? (
+                <label className="block">
+                  <span className="sr-only">
+                    {workspaceFileDialog.kind === 'create-folder' ? 'Folder name' : 'File name'}
+                  </span>
+                  <input
+                    type="text"
+                    autoFocus
+                    value={workspaceFileDialog.value}
+                    onChange={(event) => handleWorkspaceFileDialogValueChange(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') {
+                        event.preventDefault();
+                        void handleConfirmWorkspaceFileDialog();
+                      }
+                    }}
+                    disabled={workspaceFileDialog.busy}
+                    placeholder={workspaceFileDialog.kind === 'create-folder' ? 'Folder name' : 'File name'}
+                    className={`mt-1 h-10 w-full rounded-lg border px-3 text-sm outline-none transition focus:ring-2 ${
+                      isDarkMode
+                        ? 'border-slate-700 bg-slate-900 text-slate-100 placeholder:text-slate-500 focus:border-sky-500 focus:ring-sky-500/30'
+                        : 'border-slate-300 bg-white text-slate-950 placeholder:text-slate-400 focus:border-blue-500 focus:ring-blue-500/20'
+                    }`}
+                  />
+                </label>
+              ) : workspaceFileDialog.kind === 'delete-file' ? (
+                <p>
+                  Delete <span className="font-medium">{workspaceFileDialog.file.name}</span>?
+                </p>
+              ) : workspaceFileDialog.kind === 'delete-folder' ? (
+                <p>
+                  Delete folder <span className="font-medium">{workspaceFileDialog.folder.path}</span> and{' '}
+                  {workspaceFileDialog.folder.fileCount} file{workspaceFileDialog.folder.fileCount === 1 ? '' : 's'} inside it?
+                </p>
+              ) : (
+                <p>
+                  Delete {workspaceFileDialog.fileCount} selected file{workspaceFileDialog.fileCount === 1 ? '' : 's'}?
+                </p>
+              )}
+              {workspaceFileDialog.error && (
+                <p className={`mt-3 text-sm ${isDarkMode ? 'text-rose-300' : 'text-rose-600'}`}>
+                  {workspaceFileDialog.error}
+                </p>
+              )}
+            </div>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={handleCloseWorkspaceFileDialog}
+                disabled={workspaceFileDialog.busy}
+                className={`inline-flex h-9 items-center justify-center rounded-lg px-4 text-sm font-medium disabled:opacity-50 ${
+                  isDarkMode ? 'bg-slate-800 text-slate-100 hover:bg-slate-700' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                }`}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleConfirmWorkspaceFileDialog()}
+                disabled={workspaceFileDialog.busy}
+                className={`inline-flex h-9 items-center justify-center gap-2 rounded-lg px-4 text-sm font-medium text-white disabled:opacity-50 ${
+                  workspaceFileDialog.kind === 'create-folder'
+                    ? 'bg-blue-600 hover:bg-blue-700'
+                    : workspaceFileDialog.kind === 'rename-file'
+                      ? 'bg-blue-600 hover:bg-blue-700'
+                    : 'bg-rose-600 hover:bg-rose-700'
+                }`}
+              >
+                {workspaceFileDialog.busy && <Loader2 size={15} className="animate-spin" />}
+                {workspaceFileDialog.kind === 'create-folder'
+                  ? 'Create'
+                  : workspaceFileDialog.kind === 'rename-file'
+                    ? 'Rename'
+                    : 'Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       <PresentationModal
         isOpen={isPresentationModalOpen}
         draft={draftPresentationOptions}
