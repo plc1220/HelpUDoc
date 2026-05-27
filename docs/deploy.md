@@ -74,9 +74,9 @@ The primary full-stack deploy path is the manual **Deploy Full Stack to GKE** wo
 
 - Runs the Kubernetes RBAC preflight, `kubectl apply -f infra/gke/k8s/`, first-time demo `helpudoc-config` if missing, Langfuse secret/config patching, Langfuse DB bootstrap + rollout wait, then continues with OAuth + image rollout as in an app deploy.
 
-**Runtime assets (skills + agent config on PVCs):** the `helpudoc-app` pod includes **init containers** (`seed-skills`, `seed-agent-config`) that copy from image paths **`/app/skills-source`** and **`/app/agent-config-source/runtime.yaml`** into the PVC mounts **only when the target paths are empty**, so normal pod restarts do not wipe admin edits. Each image carries `.HELPUDOC_SOURCE_REVISION` (build tag / commit) beside the bundled tree; after a successful seed, the same filename may appear under the PVC for operators to diff **image revision** versus **live PVC** content (`kubectl exec` into the backend container and `cat /app/skills/.HELPUDOC_IMAGE_SOURCE_REVISION` or `/agent/config/.HELPUDOC_IMAGE_SOURCE_REVISION`).
+**Runtime assets:** skills are bundled into the backend and agent images at **`/app/skills`** and are updated only by CD image deploys. The `helpudoc-app` pod still includes **`seed-agent-config`**, which copies **`/app/agent-config-source/runtime.yaml`** into the config PVC only when the target file is missing, so normal pod restarts do not wipe admin config edits.
 
-**Legacy PVC sync:** if you temporarily need the old `kubectl exec` tar/rsync behaviour, set **`sync_runtime_assets`** true. It is destructive for `/app/skills` when enabled; prefer init seeding for new clusters.
+**Legacy config sync:** if you temporarily need the old `kubectl exec` config sync, set **`sync_runtime_assets`** true. Skills are not synced to PVCs.
 
 Required GitHub secrets:
 - `GCP_PROJECT_ID`
@@ -212,7 +212,7 @@ kubectl apply -f infra/gke/k8s/72-backendconfig.yaml
 
 Storage notes:
 - `infra/gke/k8s/30-storage.yaml` includes `agent-config-pvc`, used by `/api/settings/agent-config` to persist the agent runtime config at `/agent/config/runtime.yaml`.
-- `skills-pvc` is mounted at `/app/skills` for the backend settings "skills" page.
+- Skills are image-bundled at `/app/skills`; there is no skills PVC in the current CD-owned skills model.
 - `infra/gke/k8s/49-skill-sandbox.yaml` creates namespace-scoped `Role` and
   `RoleBinding` objects for sandbox job execution. On GKE, the deploy identity
   needs Kubernetes RBAC for these resources and Cloud IAM permissions such as

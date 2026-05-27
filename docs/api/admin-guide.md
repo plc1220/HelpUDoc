@@ -46,46 +46,20 @@ File on disk is controlled by `AGENT_CONFIG_PATH` (often `agent/config/runtime.y
 
 ## Skills catalog
 
-Skills live on disk under `SKILLS_ROOT` (repo `skills/` in dev).
+Skills live on disk under `SKILLS_ROOT` (repo `skills/` in dev, image-bundled `/app/skills` in prod). The admin surface is read-only; skill changes ship through CD.
 
-### List and scaffold
+### List and view
 
 - `GET /api/settings/skills` — metadata per skill (`valid`, errors, descriptions)
-- `POST /api/settings/skills` — `{ id, name?, description? }` creates folder scaffold (`SKILL.md`, `scripts/`, …)
-
-### Edit files
-
 - `GET /api/settings/skills/:skillId/files` — relative paths
 - `GET /api/settings/skills/:skillId/content?path=...` — read UTF-8 file
-- `PUT /api/settings/skills/:skillId/content` — `{ path, content }`
-
-### Batch actions (agent-assisted edits)
-
-1. `POST /api/settings/skills/parse-actions` — `{ text }` extracts JSON action list from model output
-2. `POST /api/settings/skills/apply-actions` — `{ actions: [...] }` executes:
-
-| Action type | Effect |
-| ----------- | ------ |
-| `create_skill` | Scaffold new skill id |
-| `upsert_text` | Write text file under skill |
-| `upload_binary_from_context` | Copy from skill-builder context upload |
-| `delete_file` | Remove file under allowed prefixes |
+- Runtime write endpoints return `405`.
 
 ---
 
 ## GitHub skill import
 
-Feature flag: `ENABLE_GITHUB_SKILL_IMPORTER` (default on).
-
-1. **Inspect** — `POST /api/settings/skills/import/github/inspect`  
-   Body: `{ url, ref?, githubToken? }`  
-   Returns `importSessionId`, file preview, `detectedSkillId`. Folder must contain `SKILL.md`.
-
-2. **Apply** — `POST /api/settings/skills/import/github/apply`  
-   Body: `{ importSessionId, destinationSkillId?, onCollision: "copy" }`  
-   Writes files into `skills/<id>/`.
-
-Sessions are in-memory on the backend process (not durable across restarts).
+Runtime GitHub skill import endpoints return `405`; import skills through the repo/CD path.
 
 ---
 

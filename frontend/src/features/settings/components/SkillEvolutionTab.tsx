@@ -89,9 +89,8 @@ const SkillEvolutionTab = () => {
         <div>
           <h2 className="text-lg font-semibold text-slate-900">Skill evolution</h2>
           <p className="mt-1 max-w-2xl text-sm text-slate-600">
-            Review proposed updates to per-user skill-routing memory or shared HELPUDOC_LEARNINGS.md files.
-            Approvals apply immediately without redeploying the app. New proposals for the same target supersede
-            older pending rows so reviews stay aligned with the latest file state.
+            Review proposed updates to per-user skill-routing memory. Shared skill files are CD-managed and
+            can be viewed or rejected here, but not approved at runtime.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -129,7 +128,9 @@ const SkillEvolutionTab = () => {
         </SettingsTabPanel>
       ) : (
         <div className="space-y-4">
-          {rows.map((row) => (
+          {rows.map((row) => {
+            const skillFileReadOnly = row.targetKind === 'skill_learnings';
+            return (
             <div
               key={row.id}
               className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
@@ -167,11 +168,12 @@ const SkillEvolutionTab = () => {
                 </div>
                 <div>
                   <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500">
-                    Proposed content (edit before approve)
+                    {skillFileReadOnly ? 'Proposed content' : 'Proposed content (edit before approve)'}
                   </label>
                   <textarea
                     value={drafts[row.id] ?? ''}
                     onChange={(e) => setDrafts((d) => ({ ...d, [row.id]: e.target.value }))}
+                    readOnly={skillFileReadOnly}
                     rows={12}
                     className="mt-2 min-h-[12rem] w-full rounded-xl border border-slate-200 px-3 py-2 font-mono text-xs leading-relaxed text-slate-900 md:min-h-0 md:h-[calc(100%-1.5rem)]"
                   />
@@ -180,7 +182,7 @@ const SkillEvolutionTab = () => {
               <div className="mt-4 flex flex-wrap gap-2">
                 <button
                   type="button"
-                  disabled={savingId === row.id}
+                  disabled={savingId === row.id || skillFileReadOnly}
                   onClick={() => void onDecide(row.id, 'accept')}
                   className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
                 >
@@ -196,7 +198,8 @@ const SkillEvolutionTab = () => {
                 </button>
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

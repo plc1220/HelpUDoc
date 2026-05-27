@@ -18,7 +18,7 @@ flowchart LR
   FE["Frontend UI<br/>React / Vite"]
   BE["Backend API<br/>Express / session / RBAC / settings"]
   AG["Agent Service<br/>FastAPI / Gemini orchestration"]
-  CFG["Runtime Config + Skills Registry<br/>PVC-mounted files"]
+  CFG["Runtime Config PVC + Image-bundled Skills Registry"]
   CODE["Restricted In-Process Execution<br/>DuckDB + sanitized Python chart code"]
   PG["PostgreSQL"]
   RD["Redis"]
@@ -118,7 +118,7 @@ flowchart TB
     PG["Postgres service"]
     RD["Redis service"]
     MN["MinIO service"]
-    PVC["PVCs<br/>workspace-pvc<br/>skills-pvc<br/>agent-config-pvc"]
+    PVC["PVCs<br/>workspace-pvc<br/>agent-config-pvc"]
   end
 
   subgraph EXT["External Services"]

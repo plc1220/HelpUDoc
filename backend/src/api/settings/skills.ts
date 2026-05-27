@@ -10,18 +10,9 @@ import {
   resolveSkillFile,
 } from '../../services/skills/paths';
 import { getSkillMetadata, type SkillMetadata } from '../../services/skills/metadata';
-import { getContextFilesForUser } from './skillBuilder';
 
-const createSkillSchema = z.object({
-  id: z.string().min(1, 'Skill id is required'),
-  name: z.string().optional(),
-  description: z.string().optional(),
-});
-
-const updateSkillContentSchema = z.object({
-  path: z.string().min(1, 'Path is required'),
-  content: z.string(),
-});
+const skillsReadOnlyResponse = (res: import('express').Response) =>
+  res.status(405).json({ error: 'Skills are managed by CI/CD and are read-only at runtime.' });
 
 const createSkillActionSchema = z.object({
   type: z.literal('create_skill'),
@@ -82,29 +73,6 @@ async function collectSkillFiles(dir: string, relativeDir = ''): Promise<string[
   return results.sort((a, b) => a.localeCompare(b));
 }
 
-export async function scaffoldSkill(skillId: string, name?: string, description?: string) {
-  const skillDir = resolveSkillDir(skillId);
-  if (await pathExists(skillDir)) {
-    throw new Error('Skill already exists');
-  }
-
-  await fs.mkdir(path.join(skillDir, 'scripts'), { recursive: true });
-  await fs.mkdir(path.join(skillDir, 'references'), { recursive: true });
-  await fs.mkdir(path.join(skillDir, 'assets'), { recursive: true });
-  await fs.mkdir(path.join(skillDir, 'templates'), { recursive: true });
-
-  const title = name || skillId;
-  const desc = (description || '').trim();
-
-  const skillContent = `---\nname: ${title}\ndescription: ${desc}\n---\n\n# ${title}\n\n## Overview\n\n${desc || '(Add skill overview)'}\n\n## Instructions\n\n1. Define the workflow\n2. Reference supporting files in this skill\n\n## Files\n\n- \`scripts/\` for executable helpers\n- \`references/\` for docs\n- \`assets/\` for images and static resources\n- \`templates/\` for reusable templates\n`;
-
-  await fs.writeFile(path.join(skillDir, 'SKILL.md'), skillContent, 'utf-8');
-  await fs.writeFile(path.join(skillDir, 'scripts', 'README.md'), '# Scripts\n\nPlace helper Python scripts here.\n', 'utf-8');
-  await fs.writeFile(path.join(skillDir, 'references', 'README.md'), '# References\n\nPlace reference docs here.\n', 'utf-8');
-  await fs.writeFile(path.join(skillDir, 'assets', 'README.md'), '# Assets\n\nPlace images/assets here.\n', 'utf-8');
-  await fs.writeFile(path.join(skillDir, 'templates', 'README.md'), '# Templates\n\nPlace templates here.\n', 'utf-8');
-}
-
 function extractActionsFromText(text: string): unknown[] {
   const blockMatch = text.match(/```json\s*([\s\S]*?)```/i);
   const candidate = (blockMatch ? blockMatch[1] : text).trim();
@@ -141,20 +109,8 @@ export function registerSkillsRoutes(router: Router) {
     }
   });
 
-  router.post('/skills', async (req, res) => {
-    try {
-      const { id, name, description } = createSkillSchema.parse(req.body);
-      await fs.mkdir(skillsRoot, { recursive: true });
-      await scaffoldSkill(id, name, description);
-      res.json({ success: true, id });
-    } catch (error: unknown) {
-      if (error instanceof z.ZodError) {
-        return res.status(400).json({ error: error.issues?.[0]?.message || 'Invalid input' });
-      }
-      const message = error instanceof Error ? error.message : 'Failed to create skill';
-      const status = /already exists/i.test(message) ? 409 : 500;
-      res.status(status).json({ error: message });
-    }
+  router.post('/skills', (_req, res) => {
+    return skillsReadOnlyResponse(res);
   });
 
   router.get(/^\/skills\/(.+)\/files$/, async (req, res) => {
@@ -200,25 +156,8 @@ export function registerSkillsRoutes(router: Router) {
     }
   });
 
-  router.put(/^\/skills\/(.+)\/content$/, async (req, res) => {
-    try {
-      const { path: filePath, content } = updateSkillContentSchema.parse(req.body);
-      const skillId = req.params[0];
-      const fullPath = resolveSkillFile(skillId, filePath, IMPORT_ALLOWED_PREFIXES);
-      await fs.mkdir(path.dirname(fullPath), { recursive: true });
-      await fs.writeFile(fullPath, content, 'utf-8');
-      res.json({ success: true });
-    } catch (error: unknown) {
-      if (error instanceof z.ZodError) {
-        return res.status(400).json({ error: error.issues?.[0]?.message || 'Invalid input' });
-      }
-      const message = error instanceof Error ? error.message : 'Failed to update skill file';
-      if (['Invalid skill id', 'Invalid path', 'Unsupported target path'].includes(message)) {
-        return res.status(400).json({ error: message });
-      }
-      console.error('Failed to update skill file', error);
-      res.status(500).json({ error: 'Failed to update skill file' });
-    }
+  router.put(/^\/skills\/(.+)\/content$/, (_req, res) => {
+    return skillsReadOnlyResponse(res);
   });
 
   router.post('/skills/parse-actions', async (req, res) => {
@@ -235,57 +174,7 @@ export function registerSkillsRoutes(router: Router) {
     }
   });
 
-  router.post('/skills/apply-actions', async (req, res) => {
-    try {
-      const user = req.userContext;
-      if (!user) {
-        return res.status(401).json({ error: 'Missing user context' });
-      }
-      const { actions } = applyActionsSchema.parse(req.body);
-      await fs.mkdir(skillsRoot, { recursive: true });
-
-      const results: Array<{ index: number; type: string; status: 'ok' | 'error'; message?: string }> = [];
-      const contextFiles = getContextFilesForUser(user.userId);
-
-      for (let i = 0; i < actions.length; i += 1) {
-        const action = actions[i];
-        try {
-          if (action.type === 'create_skill') {
-            await scaffoldSkill(action.skillId, action.name, action.description);
-          } else if (action.type === 'upsert_text') {
-            const fullPath = resolveSkillFile(action.skillId, action.path);
-            await fs.mkdir(path.dirname(fullPath), { recursive: true });
-            await fs.writeFile(fullPath, action.content, 'utf-8');
-          } else if (action.type === 'upload_binary_from_context') {
-            const contextFile = contextFiles.find((item) => item.fileId === action.contextFileId);
-            if (!contextFile) {
-              throw new Error(`Context file not found: ${action.contextFileId}`);
-            }
-            const targetPath = resolveSkillFile(action.skillId, action.targetPath, IMPORT_ALLOWED_PREFIXES);
-            await fs.mkdir(path.dirname(targetPath), { recursive: true });
-            await fs.copyFile(contextFile.absolutePath, targetPath);
-          } else if (action.type === 'delete_file') {
-            const fullPath = resolveSkillFile(action.skillId, action.path, IMPORT_ALLOWED_PREFIXES);
-            if (await pathExists(fullPath)) {
-              await fs.rm(fullPath, { force: true });
-            }
-          }
-
-          results.push({ index: i, type: action.type, status: 'ok' });
-        } catch (error: any) {
-          const message = error?.message || 'Failed to apply action';
-          results.push({ index: i, type: action.type, status: 'error', message });
-          return res.status(400).json({ success: false, results, error: message });
-        }
-      }
-
-      return res.json({ success: true, results });
-    } catch (error: any) {
-      if (error instanceof z.ZodError) {
-        return res.status(400).json({ error: error.issues?.[0]?.message || 'Invalid payload' });
-      }
-      console.error('Failed to apply actions', error);
-      return res.status(500).json({ error: 'Failed to apply actions' });
-    }
+  router.post('/skills/apply-actions', (_req, res) => {
+    return skillsReadOnlyResponse(res);
   });
 }

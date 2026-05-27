@@ -119,19 +119,15 @@ infra/gke/scripts/bootstrap-langfuse-db.sh --wait-rollout
 
 If you are not using Cloud Build's image-tag rewriting, update the deployment image references yourself with `kubectl set image` or by editing the manifests before apply.
 
-## Sync PVC-backed runtime/skills (manual)
+## Sync PVC-backed runtime config (manual)
 
-In GKE, `skills-pvc` and `agent-config-pvc` are mounted into the running pod. If you change `skills/` or `agent/config/runtime.yaml` in the repo, the cluster can keep using stale PVC contents until you sync them.
+In GKE, skills are bundled into the backend and agent images and update through CD image deploys. `agent-config-pvc` is still mounted into the running pod; if you change `agent/config/runtime.yaml` in the repo, the cluster can keep using stale PVC contents until you sync it.
 
-After applying manifests (or after a Cloud Build deploy if you're debugging drift), you can sync both:
+After applying manifests (or after a Cloud Build deploy if you're debugging drift), you can sync the runtime config:
 
 ```bash
 APP_POD="$(kubectl -n helpudoc get pods -l app=helpudoc-app -o jsonpath='{.items[0].metadata.name}')"
 test -n "$APP_POD"
-
-# Sync skills
-kubectl -n helpudoc exec "$APP_POD" -c backend -- sh -lc "set -eu; mkdir -p /app/skills; find /app/skills -mindepth 1 -maxdepth 1 -exec rm -rf {} +"
-tar -C skills -cf - . | kubectl -n helpudoc exec -i "$APP_POD" -c backend -- sh -lc "tar -xf - -C /app/skills"
 
 # Sync agent runtime config
 kubectl -n helpudoc exec "$APP_POD" -c backend -- sh -lc "set -eu; mkdir -p /agent/config; rm -f /agent/config/runtime.yaml"

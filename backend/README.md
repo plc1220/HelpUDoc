@@ -132,9 +132,8 @@ This provisions PostgreSQL, Redis, and MinIO with the same defaults used by the 
 These routes are protected by system-admin checks:
 
 - `GET/PUT /api/settings/agent-config`
-- `GET/POST /api/settings/skills`
-- `GET/PUT /api/settings/skills/.../content`
-- GitHub skill import inspect/apply endpoints
+- `GET /api/settings/skills`
+- `GET /api/settings/skills/.../content`
 - Skill-builder session, uploads, run, stream, cancel, and decision endpoints
 - `GET/PUT /api/users` and group management endpoints
 

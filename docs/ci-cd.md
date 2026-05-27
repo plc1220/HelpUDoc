@@ -46,7 +46,7 @@ When you run **Deploy Full Stack to GKE**, configure these `workflow_dispatch` i
 | `build_frontend` | true | Build/push `helpudoc-frontend` and patch the frontend deployment when true. |
 | `build_agent` | true | Build/push `helpudoc-agent`, patch the agent container, align init-container seed images, and run the image smoke import after push. |
 | `deploy_infra` | false | When true: RBAC preflight, `kubectl apply -f infra/gke/k8s/`, first-time demo ConfigMap bootstrap, Langfuse key patching + DB bootstrap/wait. When false: skips manifest/bootstrap work (cluster must already have `helpudoc-config`). |
-| `sync_runtime_assets` | false | Legacy `kubectl exec` sync of `skills/` and `agent/config/runtime.yaml` into PVCs. Prefer init-container seeding (see `docs/deploy.md`); leave false unless you need the old bridge. |
+| `sync_runtime_assets` | false | Legacy `kubectl exec` sync of `agent/config/runtime.yaml` into the config PVC. Skills are image-bundled and updated by CD image deploys. |
 | `environment` | empty | Echo-only label for operators (does not switch GitHub Environment protection rules). |
 | `image_tag_suffix` | empty | Appended to `github.sha` for all image tags in that run (for example `-hotfix1`). |
 
@@ -69,7 +69,7 @@ Current app image and cache references are still tied to `gcr.io` in these deplo
 | `.github/workflows/deploy-gke.yml` | Authenticates Docker to `gcr.io`, uses Buildx cache refs under `gcr.io/$PROJECT_ID/helpudoc-buildcache-*`, builds/pushes backend/frontend/agent images under `gcr.io/$PROJECT_ID/...`, pulls the agent image for smoke import, and patches backend/frontend/agent/init-container/CronJob images to `gcr.io/$PROJECT_ID/...`. |
 | `.github/workflows/deploy-backend-gke.yml` | Authenticates to `gcr.io`, builds/pushes `helpudoc-backend`, applies `50-app.yaml` and `52-daily-reflection-cron.yaml`, then patches backend and reflection CronJob images to `gcr.io/$PROJECT_ID/...`. |
 | `.github/workflows/deploy-frontend-gke.yml` | Authenticates to `gcr.io`, builds/pushes `helpudoc-frontend`, applies `60-frontend.yaml`, then patches the frontend image to `gcr.io/$PROJECT_ID/...`. |
-| `.github/workflows/deploy-agent-gke.yml` | Authenticates to `gcr.io`, builds/runs/pushes `helpudoc-agent`, applies `50-app.yaml`, then patches the agent image to `gcr.io/$PROJECT_ID/...`. It also runs the legacy PVC sync path after deploy. |
+| `.github/workflows/deploy-agent-gke.yml` | Authenticates to `gcr.io`, builds/runs/pushes `helpudoc-agent`, applies `50-app.yaml`, then patches the agent image to `gcr.io/$PROJECT_ID/...`. |
 | `infra/cloudbuild.yaml` | Uses Cloud Build builder images from `gcr.io/cloud-builders/*`, pulls cache/source images from `gcr.io/$PROJECT_ID/...:latest`, builds/tags/pushes backend/frontend/agent images to `gcr.io/$PROJECT_ID/...`, rewrites manifest image refs with `sed`, and declares `images:` outputs under `gcr.io/$PROJECT_ID/...`. |
 | `infra/cloudbuild-frontend.yaml` | Uses Cloud Build builder images from `gcr.io/cloud-builders/*`, pulls/builds/tags/pushes `helpudoc-frontend` to `gcr.io/$PROJECT_ID/...`, rewrites `60-frontend.yaml`, and declares a `gcr.io/$PROJECT_ID/...` image output. |
 | `infra/gke/k8s/50-app.yaml` | Checked-in defaults reference `gcr.io/my-rd-coe-demo-gen-ai/helpudoc-agent:latest` for both init containers and the agent container, plus `gcr.io/my-rd-coe-demo-gen-ai/helpudoc-backend:latest` for the backend container. |
@@ -143,11 +143,11 @@ Run one of these in GitHub Actions:
 GKE storage is defined in `infra/gke/k8s/30-storage.yaml` (includes `clickhouse-pvc` for Langfuse).
 
 Key mounts used by the app:
-- `skills-pvc` mounted at `/app/skills` (backend reads this via `SKILLS_ROOT`). On pod start, init containers may copy bundled skills from the agent image into an **empty** PVC once; see `docs/deploy.md`.
+- Skills are bundled into the backend and agent images at `/app/skills`; the settings UI reads them from the backend image and does not edit them at runtime.
 - `agent-config-pvc` mounted at `/agent/config` (backend reads runtime config via `AGENT_CONFIG_PATH=/agent/config/runtime.yaml`). Init containers may copy bundled `runtime.yaml` from the agent image when the PVC file is missing.
 - `workspace-pvc` mounted at `/app/workspaces` (user data; deploy sync does not modify this path).
 
-If the settings pages are broken in a new cluster, confirm these PVCs exist and are mounted into the `helpudoc-app` deployment.
+If the settings pages are broken in a new cluster, confirm `workspace-pvc` and `agent-config-pvc` exist and are mounted into the `helpudoc-app` deployment.
 
 ## Verify a Deployment
 

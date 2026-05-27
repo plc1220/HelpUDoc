@@ -24,7 +24,7 @@ on:
         type: boolean
         default: false
       sync_runtime_assets:
-        description: Legacy kubectl exec sync of skills/config to PVCs (prefer init-container seeding)
+        description: Legacy kubectl exec sync of agent runtime config to PVC
         type: boolean
         default: false
       environment:
@@ -457,6 +457,51 @@ jobs:
           FRONTEND_IMG="gcr.io/${PROJECT_ID}/helpudoc-frontend:${TAG}"
           AGENT_IMG="gcr.io/${PROJECT_ID}/helpudoc-agent:${TAG}"
 
+          kubectl -n helpudoc patch deployment helpudoc-app --type=strategic -p '{
+            "spec": {
+              "template": {
+                "spec": {
+                  "initContainers": [
+                    {
+                      "name": "seed-skills",
+                      "$patch": "delete"
+                    }
+                  ],
+                  "containers": [
+                    {
+                      "name": "backend",
+                      "volumeMounts": [
+                        {
+                          "mountPath": "/app/skills",
+                          "$patch": "delete"
+                        }
+                      ]
+                    },
+                    {
+                      "name": "agent",
+                      "volumeMounts": [
+                        {
+                          "mountPath": "/app/skills",
+                          "$patch": "delete"
+                        },
+                        {
+                          "mountPath": "/skills",
+                          "$patch": "delete"
+                        }
+                      ]
+                    }
+                  ],
+                  "volumes": [
+                    {
+                      "name": "skills-data",
+                      "$patch": "delete"
+                    }
+                  ]
+                }
+              }
+            }
+          }'
+
           APP_ARGS=()
           if [[ "${{ inputs.build_backend }}" == "true" ]]; then
             APP_ARGS+=("backend=${BACKEND_IMG}")
@@ -469,50 +514,26 @@ jobs:
           fi
 
           if [[ "${{ inputs.build_agent }}" == "true" ]]; then
-            kubectl -n helpudoc patch deployment helpudoc-app --type=strategic -p "$(jq -n \
+            kubectl -n helpudoc patch deployment helpudoc-app --type=json -p "$(jq -n \
               --arg img "${AGENT_IMG}" \
-              '{
-                spec: {
-                  template: {
-                    spec: {
-                      initContainers: [
-                        {
-                          name: "seed-skills",
-                          image: $img,
-                          imagePullPolicy: "Always",
-                          command: [
-                            "/bin/sh",
-                            "-c",
-                            "set -eu\nif [ -f /pvc-skills/research/SKILL.md ]; then\n  echo \"seed-skills: PVC already has skills; skipping.\"\n  exit 0\nfi\necho \"seed-skills: copying from image to PVC...\"\nmkdir -p /pvc-skills\ncp -a /app/skills-source/. /pvc-skills/\nif [ -f /app/skills-source/.HELPUDOC_SOURCE_REVISION ]; then\n  cp /app/skills-source/.HELPUDOC_SOURCE_REVISION /pvc-skills/.HELPUDOC_IMAGE_SOURCE_REVISION || true\nfi\n"
-                          ],
-                          volumeMounts: [
-                            {
-                              name: "skills-data",
-                              mountPath: "/pvc-skills"
-                            }
-                          ]
-                        },
-                        {
-                          name: "seed-agent-config",
-                          image: $img,
-                          imagePullPolicy: "Always",
-                          command: [
-                            "/bin/sh",
-                            "-c",
-                            "set -eu\nif [ -f /pvc-agent-config/runtime.yaml ]; then\n  echo \"seed-agent-config: PVC already has runtime.yaml; skipping.\"\n  exit 0\nfi\necho \"seed-agent-config: copying runtime.yaml from image to PVC...\"\nmkdir -p /pvc-agent-config\ncp /app/agent-config-source/runtime.yaml /pvc-agent-config/runtime.yaml\nif [ -f /app/agent-config-source/.HELPUDOC_SOURCE_REVISION ]; then\n  cp /app/agent-config-source/.HELPUDOC_SOURCE_REVISION /pvc-agent-config/.HELPUDOC_IMAGE_SOURCE_REVISION || true\nfi\n"
-                          ],
-                          volumeMounts: [
-                            {
-                              name: "agent-config-data",
-                              mountPath: "/pvc-agent-config"
-                            }
-                          ]
-                        }
-                      ]
-                    }
-                  }
-                }
-              }')"
+              '[{
+                op: "replace",
+                path: "/spec/template/spec/initContainers",
+                value: [{
+                  name: "seed-agent-config",
+                  image: $img,
+                  imagePullPolicy: "Always",
+                  command: [
+                    "/bin/sh",
+                    "-c",
+                    "set -eu\nif [ -f /pvc-agent-config/runtime.yaml ]; then\n  echo \"seed-agent-config: PVC already has runtime.yaml; skipping.\"\n  exit 0\nfi\necho \"seed-agent-config: copying runtime.yaml from image to PVC...\"\nmkdir -p /pvc-agent-config\ncp /app/agent-config-source/runtime.yaml /pvc-agent-config/runtime.yaml\nif [ -f /app/agent-config-source/.HELPUDOC_SOURCE_REVISION ]; then\n  cp /app/agent-config-source/.HELPUDOC_SOURCE_REVISION /pvc-agent-config/.HELPUDOC_IMAGE_SOURCE_REVISION || true\nfi\n"
+                  ],
+                  volumeMounts: [{
+                    name: "agent-config-data",
+                    mountPath: "/pvc-agent-config"
+                  }]
+                }]
+              }]')"
           fi
 
           if [[ "${{ inputs.build_frontend }}" == "true" ]]; then
@@ -552,16 +573,6 @@ jobs:
           set -euo pipefail
           kubectl -n helpudoc rollout status deployment/helpudoc-app --timeout=20m
           kubectl -n helpudoc rollout status deployment/helpudoc-frontend --timeout=10m
-
-      - name: Legacy sync Skills PVC (kubectl exec)
-        if: ${{ inputs.sync_runtime_assets }}
-        run: |
-          set -euo pipefail
-          APP_POD="$(kubectl -n helpudoc get pods -l app=helpudoc-app -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.phase}{"\n"}{end}' | awk '$2 == "Running" {print $1; exit}')"
-          test -n "${APP_POD}"
-          kubectl -n helpudoc exec "${APP_POD}" -c backend -- sh -lc "set -eu; mkdir -p /app/skills; find /app/skills -mindepth 1 -maxdepth 1 -exec rm -rf {} +"
-          tar -C skills -cf - . | kubectl -n helpudoc exec -i "${APP_POD}" -c backend -- sh -lc "tar -xf - -C /app/skills"
-          kubectl -n helpudoc exec "${APP_POD}" -c backend -- sh -lc "test -f /app/skills/research/SKILL.md"
 
       - name: Legacy sync Agent Config PVC (kubectl exec)
         if: ${{ inputs.sync_runtime_assets }}

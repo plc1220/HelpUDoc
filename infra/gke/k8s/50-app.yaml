@@ -17,29 +17,8 @@ spec:
     spec:
       serviceAccountName: helpudoc-agent
       initContainers:
-        # Copy image-bundled skills/config into PVCs only when the mount is empty,
+        # Copy image-bundled config into the PVC only when the file is missing,
         # so admin edits on the PVC are preserved across restarts.
-        - name: seed-skills
-          image: gcr.io/my-rd-coe-demo-gen-ai/helpudoc-agent:latest
-          imagePullPolicy: Always
-          command:
-            - /bin/sh
-            - -c
-            - |
-              set -eu
-              if [ -f /pvc-skills/research/SKILL.md ]; then
-                echo "seed-skills: PVC already has skills; skipping."
-                exit 0
-              fi
-              echo "seed-skills: copying from image to PVC..."
-              mkdir -p /pvc-skills
-              cp -a /app/skills-source/. /pvc-skills/
-              if [ -f /app/skills-source/.HELPUDOC_SOURCE_REVISION ]; then
-                cp /app/skills-source/.HELPUDOC_SOURCE_REVISION /pvc-skills/.HELPUDOC_IMAGE_SOURCE_REVISION || true
-              fi
-          volumeMounts:
-            - name: skills-data
-              mountPath: /pvc-skills
         - name: seed-agent-config
           image: gcr.io/my-rd-coe-demo-gen-ai/helpudoc-agent:latest
           imagePullPolicy: Always
@@ -267,8 +246,6 @@ spec:
           volumeMounts:
             - name: workspace-data
               mountPath: /app/workspaces
-            - name: skills-data
-              mountPath: /app/skills
             - name: agent-config-data
               mountPath: /agent/config
         - name: agent
@@ -506,10 +483,6 @@ spec:
           volumeMounts:
             - name: workspace-data
               mountPath: /app/workspaces
-            - name: skills-data
-              mountPath: /app/skills
-            - name: skills-data
-              mountPath: /skills
             - name: agent-config-data
               mountPath: /agent/config
         - name: google-workspace-mcp
@@ -558,9 +531,6 @@ spec:
         - name: workspace-data
           persistentVolumeClaim:
             claimName: workspace-pvc
-        - name: skills-data
-          persistentVolumeClaim:
-            claimName: skills-pvc
         - name: agent-config-data
           persistentVolumeClaim:
             claimName: agent-config-pvc

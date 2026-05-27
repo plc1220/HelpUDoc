@@ -600,23 +600,23 @@ Dashboard aggregates (workspaces, skills, Langfuse, etc.).
 | Method | Path | Description |
 | ------ | ---- | ----------- |
 | `GET` | `/api/settings/skills` | `{ "skills": SkillMetadata[] }` |
-| `POST` | `/api/settings/skills` | `{ "id", "name?", "description?" }` scaffold skill |
+| `POST` | `/api/settings/skills` | `405`; skills are CD-managed |
 | `GET` | `/api/settings/skills/:skillId/files` | `{ "files": ["SKILL.md", ...] }` |
 | `GET` | `/api/settings/skills/:skillId/content?path=rel` | `{ "content": "..." }` |
-| `PUT` | `/api/settings/skills/:skillId/content` | `{ "path", "content" }` |
+| `PUT` | `/api/settings/skills/:skillId/content` | `405`; skills are CD-managed |
 | `POST` | `/api/settings/skills/parse-actions` | `{ "text": "..." }` → parsed action array |
-| `POST` | `/api/settings/skills/apply-actions` | `{ "actions": [...] }` batch file ops |
+| `POST` | `/api/settings/skills/apply-actions` | `405`; skills are CD-managed |
 
 **Action types for `apply-actions`:** `create_skill`, `upsert_text`, `upload_binary_from_context`, `delete_file`.
 
 #### GitHub skill import
 
-Disabled when `ENABLE_GITHUB_SKILL_IMPORTER=false`.
+Runtime import is disabled; use repo/CD for skill changes.
 
 | Method | Path | Description |
 | ------ | ---- | ----------- |
-| `POST` | `/api/settings/skills/import/github/inspect` | `{ "url", "ref?", "githubToken?" }` → session + file preview |
-| `POST` | `/api/settings/skills/import/github/apply` | `{ "importSessionId", "destinationSkillId?", "onCollision": "copy" }` |
+| `POST` | `/api/settings/skills/import/github/inspect` | `405`; skills are CD-managed |
+| `POST` | `/api/settings/skills/import/github/apply` | `405`; skills are CD-managed |
 
 #### Skill Builder assistant
 

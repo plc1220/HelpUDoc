@@ -18,7 +18,7 @@ import type {
   SkillEvolutionSuggestionStatus,
   SkillEvolutionTargetKind,
 } from '@helpudoc/contracts/types';
-import { ConflictError, NotFoundError } from '../errors';
+import { ConflictError, HttpError, NotFoundError } from '../errors';
 
 const repoRoot = path.resolve(__dirname, '../../..');
 const skillsRoot = process.env.SKILLS_ROOT ? path.resolve(process.env.SKILLS_ROOT) : path.join(repoRoot, 'skills');
@@ -28,14 +28,12 @@ const SKILL_ID_PATTERN = /^[a-zA-Z0-9_-]+(?:\/[a-zA-Z0-9_-]+)*$/;
 const LEARNINGS_REL_PATH = path.join('docs', 'HELPUDOC_LEARNINGS.md');
 
 const EVOLUTION_SYSTEM_PROMPT = [
-  'You propose durable skill-routing and shared skill-learning updates for an internal agent platform.',
+  'You propose durable skill-routing memory updates for an internal agent platform.',
   'Return strict JSON only: an array of objects.',
-  'Each object must be one of:',
+  'Each object must be:',
   '- {"targetKind":"memory_skill_routing","memoryScope":"global"|"workspace","rationale":string,"proposedContent":string}',
-  '- {"targetKind":"skill_learnings","skillId":string,"rationale":string,"proposedContent":string}',
   'Rules:',
   '- Propose at most one memory_skill_routing for global and at most one for workspace when workspace applies.',
-  '- Propose at most one skill_learnings per skillId listed in the prompt.',
   '- proposedContent must be the full replacement markdown for that target.',
   '- Focus on routing friction, wrong skill selection, tool failures, interrupts, or repeated corrections shown in evidence.',
   '- If nothing actionable, return [].',
@@ -223,34 +221,7 @@ export class SkillEvolutionService {
         await deleteInternalMemoryFile(targetPath, { authToken: token });
       }
     } else if (suggestion.targetKind === 'skill_learnings') {
-      const skillId = suggestion.targetSkillId;
-      if (!skillId) {
-        throw new NotFoundError('Missing target skill');
-      }
-      const absPath = resolveLearningsFile(skillId);
-      let current = '';
-      try {
-        current = await fs.readFile(absPath, 'utf-8');
-      } catch {
-        current = '';
-      }
-      const currentHash = hashContent(current);
-      if (currentHash !== suggestion.baseContentHash) {
-        const [updated] = await this.db('skill_evolution_suggestions')
-          .where({ id: suggestionId })
-          .update({
-            status: 'stale',
-            reviewedAt,
-            reviewedByUserId: adminUserId,
-            updatedAt: this.db.fn.now(),
-          })
-          .returning('*');
-        throw new ConflictError('Target file changed since this suggestion was created', {
-          suggestion: rowToSuggestion(updated),
-        });
-      }
-      await fs.mkdir(path.dirname(absPath), { recursive: true });
-      await fs.writeFile(absPath, contentToWrite, 'utf-8');
+      throw new HttpError(405, 'Shared skill learnings are managed by CI/CD and are read-only at runtime.');
     } else {
       throw new NotFoundError('Unknown target kind');
     }
@@ -496,63 +467,6 @@ export class SkillEvolutionService {
           rationale,
           baseContentHash: hashContent(currentFile.content || ''),
           baseContentSnapshot: currentFile.content || '',
-          proposedContent,
-          status: 'pending',
-          createdAt: this.db.fn.now(),
-          updatedAt: this.db.fn.now(),
-        });
-        inserted += 1;
-      } else if (targetKind === 'skill_learnings') {
-        const skillId = String(rec.skillId || '').trim();
-        if (!isValidSkillId(skillId)) {
-          continue;
-        }
-        const absPath = resolveLearningsFile(skillId);
-        let current = '';
-        try {
-          current = await fs.readFile(absPath, 'utf-8');
-        } catch {
-          current = '';
-        }
-        if (current.trim() === proposedContent.trim()) {
-          continue;
-        }
-        // Same staleness semantics as memory_skill_routing: one pending row per shared skill doc;
-        // nightly or per-run generation can supersede an unreviewed prior suggestion.
-        await this.db('skill_evolution_suggestions')
-          .where({
-            targetKind: 'skill_learnings',
-            targetSkillId: skillId,
-            status: 'pending',
-          })
-          .update({
-            status: 'stale',
-            reviewedAt: new Date().toISOString(),
-            updatedAt: this.db.fn.now(),
-          });
-
-        const evidence: SkillEvolutionEvidence = {
-          sourceRunIds: [row.runId],
-          sourceConversationIds: [conversationId],
-          workspaceId: row.workspaceId,
-          userId,
-          persona: row.persona,
-          skillId: row.skillId || null,
-          transcriptExcerpt: transcript.slice(0, 4000),
-          telemetrySummary: toolLines.slice(0, 20).join('\n'),
-        };
-
-        await this.db('skill_evolution_suggestions').insert({
-          id: uuidv4(),
-          targetKind: 'skill_learnings',
-          memoryUserId: userId,
-          memoryTargetPath: null,
-          targetSkillId: skillId,
-          workspaceId: row.workspaceId,
-          evidence,
-          rationale,
-          baseContentHash: hashContent(current),
-          baseContentSnapshot: current,
           proposedContent,
           status: 'pending',
           createdAt: this.db.fn.now(),

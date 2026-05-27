@@ -15,6 +15,7 @@ RUN --mount=type=cache,target=/root/.npm \
 
 # Copy the rest of the backend source code
 COPY backend/src ./src
+COPY skills/ ./skills/
 
 # Ensure workspaces directory exists
 RUN mkdir -p workspaces

@@ -14,6 +14,7 @@ RUN npm ci --legacy-peer-deps
 
 # Copy the backend source code
 COPY backend/src ./src
+COPY skills/ ./skills/
 
 # Runtime workspace content is persisted via volume mounts in deploy envs.
 # Ensure directory exists even when no seed data is tracked in git.
