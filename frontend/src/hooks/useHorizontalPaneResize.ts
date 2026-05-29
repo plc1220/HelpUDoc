@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
@@ -39,8 +39,10 @@ export function useHorizontalPaneResize({
   const widthRef = useRef(width);
   widthRef.current = width;
 
+  // Optimize performance: only save to localStorage when resizing has finished,
+  // or when width is adjusted programmatically/via keyboard (isResizing is false).
   useEffect(() => {
-    if (!enabled) {
+    if (!enabled || isResizing) {
       return;
     }
     try {
@@ -48,7 +50,7 @@ export function useHorizontalPaneResize({
     } catch {
       // ignore storage errors
     }
-  }, [enabled, storageKey, width]);
+  }, [enabled, storageKey, width, isResizing]);
 
   const createHandleProps = useCallback(
     (direction: HorizontalPaneResizeDirection) => {
@@ -82,6 +84,38 @@ export function useHorizontalPaneResize({
           target.addEventListener('pointermove', handlePointerMove);
           target.addEventListener('pointerup', endResize);
           target.addEventListener('pointercancel', endResize);
+        },
+        onKeyDown: (event: ReactKeyboardEvent<HTMLDivElement>) => {
+          if (!enabled) {
+            return;
+          }
+          let nextWidth = widthRef.current;
+          const step = event.shiftKey ? 50 : 15;
+          let delta = 0;
+
+          switch (event.key) {
+            case 'ArrowRight':
+              event.preventDefault();
+              delta = step * sign;
+              nextWidth = clamp(nextWidth + delta, minWidth, maxWidth);
+              break;
+            case 'ArrowLeft':
+              event.preventDefault();
+              delta = -step * sign;
+              nextWidth = clamp(nextWidth + delta, minWidth, maxWidth);
+              break;
+            case 'Home':
+              event.preventDefault();
+              nextWidth = minWidth;
+              break;
+            case 'End':
+              event.preventDefault();
+              nextWidth = maxWidth;
+              break;
+            default:
+              return;
+          }
+          setWidth(nextWidth);
         },
       };
     },

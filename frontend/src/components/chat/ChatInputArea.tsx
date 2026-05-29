@@ -1,9 +1,16 @@
 import { FileIcon, Globe2, Paperclip, Plus, Send, StopCircle, X } from 'lucide-react';
 import { type ChangeEvent, type ClipboardEvent, type KeyboardEvent, type RefObject, type SyntheticEvent, useEffect, useRef, useState } from 'react';
 
+import VerticalResizeHandle from '../VerticalResizeHandle';
+import { useVerticalPaneResize } from '../../hooks/useVerticalPaneResize';
 import type { File as WorkspaceFile } from '../../types';
 import type { ChatComposerAttachment } from './chatTypes';
 import GoogleDriveIcon from './GoogleDriveIcon';
+
+const CHAT_INPUT_HEIGHT_STORAGE_KEY = 'helpudoc.chatInputHeight';
+const CHAT_INPUT_DEFAULT_HEIGHT = 80;
+const CHAT_INPUT_MIN_HEIGHT = 50;
+const CHAT_INPUT_MAX_HEIGHT = 480;
 
 type CommandSuggestion = {
   id: string;
@@ -82,6 +89,12 @@ export default function ChatInputArea({
   const isDarkMode = colorMode === 'dark';
   const [isAttachmentMenuOpen, setIsAttachmentMenuOpen] = useState(false);
   const attachmentMenuRef = useRef<HTMLDivElement | null>(null);
+  const { height: chatInputHeight, isResizing, createHandleProps } = useVerticalPaneResize({
+    storageKey: CHAT_INPUT_HEIGHT_STORAGE_KEY,
+    defaultHeight: CHAT_INPUT_DEFAULT_HEIGHT,
+    minHeight: CHAT_INPUT_MIN_HEIGHT,
+    maxHeight: CHAT_INPUT_MAX_HEIGHT,
+  });
 
   useEffect(() => {
     if (!isAttachmentMenuOpen) {
@@ -107,7 +120,13 @@ export default function ChatInputArea({
         isDarkMode
           ? 'border-[#2b3a55] bg-[#111b2e] shadow-[0_20px_44px_-34px_rgba(2,6,23,0.95)] focus-within:border-sky-400/70 focus-within:ring-2 focus-within:ring-sky-400/15'
           : 'border-slate-300/90 bg-white shadow-[0_20px_44px_-34px_rgba(15,23,42,0.16)] focus-within:border-sky-400/70 focus-within:ring-2 focus-within:ring-sky-200/50'
-      }`}>
+      } ${isResizing ? 'select-none' : ''}`}>
+        <VerticalResizeHandle
+          isDarkMode={isDarkMode}
+          isResizing={isResizing}
+          className="-mx-px -mt-px rounded-t-xl px-2 py-1.5"
+          {...createHandleProps()}
+        />
         {chatAttachments.length > 0 && (
           <div className="flex flex-wrap gap-2 px-3 pt-2.5">
             {chatAttachments.map((file, index) => (
@@ -174,11 +193,10 @@ export default function ChatInputArea({
           onKeyUp={onChatInputKeyUp}
           onSelect={onChatInputSelectionChange}
           onPaste={onChatInputPaste}
-          className={`w-full max-h-52 resize-none bg-transparent px-3.5 py-2.5 text-sm leading-relaxed focus:outline-none ${
+          className={`w-full resize-none overflow-y-auto bg-transparent px-3.5 py-2.5 text-sm leading-relaxed focus:outline-none ${
             isDarkMode ? 'text-slate-100 placeholder:text-slate-400' : 'text-slate-800 placeholder:text-slate-500'
           }`}
-          rows={Math.min(5, Math.max(1, chatMessage.split('\n').length))}
-          style={{ minHeight: '50px' }}
+          style={{ height: chatInputHeight }}
         />
         <div className="flex items-center justify-between px-2 pb-1.5">
           <div className="flex items-center gap-1">
