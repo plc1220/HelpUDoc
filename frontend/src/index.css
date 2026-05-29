@@ -82,6 +82,256 @@
   --admin-icon-muted-bg: rgba(148, 163, 184, 0.12);
 }
 
+/* ==========================================
+   MINIMALISM THEME overrides
+   ========================================== */
+
+:root[data-ui-theme='minimalism'] {
+  --app-bg: #f5f5f5;
+  --surface: #ffffff;
+  --surface-subtle: #fafafa;
+  --surface-strong: #e5e5e5;
+  --surface-hover: #eaeaea;
+  --surface-strong-hover: #d4d4d4;
+  --border-color: #e5e5e5;
+  --text-primary: #171717;
+  --text-secondary: #525252;
+  --text-muted: #737373;
+  --accent: #171717;
+  --accent-strong: #000000;
+  --accent-soft: #f5f5f5;
+  --accent-soft-strong: #e5e5e5;
+  --admin-shell-bg: #f5f5f5;
+  --admin-sidebar-bg: #ffffff;
+  --admin-panel-bg: #ffffff;
+  --admin-surface-bg: #ffffff;
+  --admin-surface-muted: #fafafa;
+  --admin-card-bg: #ffffff;
+  --admin-border-subtle: #e5e5e5;
+  --admin-border-strong: #d4d4d4;
+  --admin-shadow-soft: none;
+  --admin-shadow-strong: none;
+  --admin-ring: rgba(23, 23, 23, 0.08);
+  --admin-accent-soft: #f5f5f5;
+  --admin-icon-bg: #171717;
+  --admin-icon-muted-bg: #f5f5f5;
+}
+
+:root[data-theme='dark'][data-ui-theme='minimalism'] {
+  --app-bg: #121212;
+  --surface: #1c1c1c;
+  --surface-subtle: #262626;
+  --surface-strong: #404040;
+  --surface-hover: #2d2d2d;
+  --surface-strong-hover: #525252;
+  --border-color: #262626;
+  --text-primary: #f5f5f5;
+  --text-secondary: #a3a3a3;
+  --text-muted: #737373;
+  --accent: #ffffff;
+  --accent-strong: #f5f5f5;
+  --accent-soft: #262626;
+  --accent-soft-strong: #404040;
+  --admin-shell-bg: #121212;
+  --admin-sidebar-bg: #1c1c1c;
+  --admin-panel-bg: #1c1c1c;
+  --admin-surface-bg: #1c1c1c;
+  --admin-surface-muted: #262626;
+  --admin-card-bg: #1c1c1c;
+  --admin-border-subtle: #262626;
+  --admin-border-strong: #404040;
+  --admin-shadow-soft: none;
+  --admin-shadow-strong: none;
+  --admin-ring: rgba(255, 255, 255, 0.08);
+  --admin-accent-soft: #262626;
+  --admin-icon-bg: #ffffff;
+  --admin-icon-muted-bg: #262626;
+}
+
+/* Minimalism Structural adjustments */
+:root[data-ui-theme='minimalism'] * {
+  font-family: 'Outfit', 'Inter', sans-serif !important;
+}
+
+:root[data-ui-theme='minimalism'] button,
+:root[data-ui-theme='minimalism'] select,
+:root[data-ui-theme='minimalism'] input,
+:root[data-ui-theme='minimalism'] textarea,
+:root[data-ui-theme='minimalism'] .rounded-xl,
+:root[data-ui-theme='minimalism'] .rounded-2xl,
+:root[data-ui-theme='minimalism'] .rounded-3xl,
+:root[data-ui-theme='minimalism'] .rounded-\[28px\],
+:root[data-ui-theme='minimalism'] .settings-portal-card,
+:root[data-ui-theme='minimalism'] .settings-portal-header,
+:root[data-ui-theme='minimalism'] .settings-portal-surface {
+  border-radius: 9999px !important; /* Pills / capsules */
+  border-width: 1px !important;
+  box-shadow: none !important;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
+}
+
+:root[data-ui-theme='minimalism'] button,
+:root[data-ui-theme='minimalism'] select,
+:root[data-ui-theme='minimalism'] .settings-portal-nav-item,
+:root[data-ui-theme='minimalism'] .settings-portal-chip {
+  text-transform: lowercase !important;
+  letter-spacing: 0.08em !important;
+}
+
+/* Keep main page panels and large containers slightly less rounded than buttons */
+:root[data-ui-theme='minimalism'] .settings-portal-surface,
+:root[data-ui-theme='minimalism'] .settings-portal-header,
+:root[data-ui-theme='minimalism'] main,
+:root[data-ui-theme='minimalism'] aside,
+:root[data-ui-theme='minimalism'] .settings-portal-card {
+  border-radius: 20px !important;
+}
+
+:root[data-ui-theme='minimalism'] h1,
+:root[data-ui-theme='minimalism'] h2,
+:root[data-ui-theme='minimalism'] h3,
+:root[data-ui-theme='minimalism'] h4 {
+  font-weight: 300 !important;
+  letter-spacing: -0.03em !important;
+  text-transform: lowercase !important;
+}
+
+/* ==========================================
+   BAUHAUS THEME overrides
+   ========================================== */
+
+:root[data-ui-theme='bauhaus'] {
+  --app-bg: #f3efe0;
+  --surface: #ffffff;
+  --surface-subtle: #fbfbf9;
+  --surface-strong: #000000;
+  --surface-hover: #f3efe0;
+  --surface-strong-hover: #000000;
+  --border-color: #000000;
+  --text-primary: #000000;
+  --text-secondary: #000000;
+  --text-muted: #333333;
+  --accent: #d62828; /* Bauhaus Red */
+  --accent-strong: #003049; /* Bauhaus Blue */
+  --accent-soft: #fcbf49; /* Bauhaus Yellow */
+  --accent-soft-strong: #eae2b7;
+  --admin-shell-bg: #f3efe0;
+  --admin-sidebar-bg: #fbfbf9;
+  --admin-panel-bg: #ffffff;
+  --admin-surface-bg: #ffffff;
+  --admin-surface-muted: #fbfbf9;
+  --admin-card-bg: #ffffff;
+  --admin-border-subtle: #000000;
+  --admin-border-strong: #000000;
+  --admin-shadow-soft: 4px 4px 0px #000000;
+  --admin-shadow-strong: 6px 6px 0px #000000;
+  --admin-ring: transparent;
+  --admin-accent-soft: #fcbf49;
+  --admin-icon-bg: #000000;
+  --admin-icon-muted-bg: #eae2b7;
+}
+
+:root[data-theme='dark'][data-ui-theme='bauhaus'] {
+  --app-bg: #111111;
+  --surface: #1e1e1e;
+  --surface-subtle: #2d2d2d;
+  --surface-strong: #ffffff;
+  --surface-hover: #1e1e1e;
+  --surface-strong-hover: #ffffff;
+  --border-color: #ffffff;
+  --text-primary: #ffffff;
+  --text-secondary: #cccccc;
+  --text-muted: #999999;
+  --accent: #ff4d4d;
+  --accent-strong: #33adff;
+  --accent-soft: #ffd633;
+  --accent-soft-strong: #2d2d2d;
+  --admin-shell-bg: #111111;
+  --admin-sidebar-bg: #1e1e1e;
+  --admin-panel-bg: #1e1e1e;
+  --admin-surface-bg: #1e1e1e;
+  --admin-surface-muted: #2d2d2d;
+  --admin-card-bg: #1e1e1e;
+  --admin-border-subtle: #ffffff;
+  --admin-border-strong: #ffffff;
+  --admin-shadow-soft: 4px 4px 0px #ffffff;
+  --admin-shadow-strong: 6px 6px 0px #ffffff;
+  --admin-ring: transparent;
+  --admin-accent-soft: #ffd633;
+  --admin-icon-bg: #ffffff;
+  --admin-icon-muted-bg: #2d2d2d;
+}
+
+/* Bauhaus Structural overrides */
+:root[data-ui-theme='bauhaus'] * {
+  font-family: 'Space Grotesk', 'Courier New', monospace, sans-serif !important;
+}
+
+:root[data-ui-theme='bauhaus'] button,
+:root[data-ui-theme='bauhaus'] select,
+:root[data-ui-theme='bauhaus'] input,
+:root[data-ui-theme='bauhaus'] textarea,
+:root[data-ui-theme='bauhaus'] .rounded-xl,
+:root[data-ui-theme='bauhaus'] .rounded-2xl,
+:root[data-ui-theme='bauhaus'] .rounded-3xl,
+:root[data-ui-theme='bauhaus'] .rounded-\[28px\],
+:root[data-ui-theme='bauhaus'] .settings-portal-card,
+:root[data-ui-theme='bauhaus'] .settings-portal-header,
+:root[data-ui-theme='bauhaus'] .settings-portal-surface {
+  border-radius: 0px !important; /* Sharp corners */
+  border: 2.5px solid var(--border-color) !important;
+  box-shadow: 4px 4px 0px var(--border-color) !important;
+  font-weight: 700 !important;
+  transition: transform 0.1s, box-shadow 0.1s !important;
+}
+
+:root[data-ui-theme='bauhaus'] button,
+:root[data-ui-theme='bauhaus'] select,
+:root[data-ui-theme='bauhaus'] .settings-portal-nav-item,
+:root[data-ui-theme='bauhaus'] .settings-portal-chip {
+  text-transform: uppercase !important;
+  letter-spacing: 0.05em !important;
+}
+
+:root[data-ui-theme='bauhaus'] button:hover,
+:root[data-ui-theme='bauhaus'] .settings-portal-button-secondary:hover {
+  transform: translate(2px, 2px) !important;
+  box-shadow: 2px 2px 0px var(--border-color) !important;
+}
+
+:root[data-ui-theme='bauhaus'] button:active,
+:root[data-ui-theme='bauhaus'] .settings-portal-button-secondary:active {
+  transform: translate(4px, 4px) !important;
+  box-shadow: 0px 0px 0px var(--border-color) !important;
+}
+
+:root[data-ui-theme='bauhaus'] h1,
+:root[data-ui-theme='bauhaus'] h2,
+:root[data-ui-theme='bauhaus'] h3,
+:root[data-ui-theme='bauhaus'] h4 {
+  font-weight: 800 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.05em !important;
+}
+
+/* Distinctive primary colors for buttons in Bauhaus light mode */
+:root[data-ui-theme='bauhaus'] .settings-button-primary {
+  background: var(--accent) !important; /* Primary Red button */
+  color: #ffffff !important;
+}
+
+:root[data-ui-theme='bauhaus'] .settings-portal-nav-item-active {
+  background: var(--accent-soft) !important; /* Yellow active tab! */
+  color: #000000 !important;
+  border: 2px solid #000000 !important;
+  box-shadow: 3px 3px 0px #000000 !important;
+}
+:root[data-theme='dark'][data-ui-theme='bauhaus'] .settings-portal-nav-item-active {
+  color: #000000 !important;
+  border-color: #ffffff !important;
+  box-shadow: 3px 3px 0px #ffffff !important;
+}
+
 body {
   background-color: var(--app-bg);
   color: var(--text-primary);

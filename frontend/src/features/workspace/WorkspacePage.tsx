@@ -121,7 +121,7 @@ import {
 import { buildMessageMetadata, mapMessagesToAgentHistory, mergeMessageMetadata, sanitizeRunPolicy } from '../../utils/messages';
 import { getImplicitContinuationContext, buildContinuationPrompt } from '../../utils/implicitSkillContinuation';
 import { createMarkdownComponents } from '../../components/markdown/MarkdownShared';
-import { applyColorModeToDocument, buildAppTheme, resolveInitialColorMode } from '../../theme';
+import { applyColorModeToDocument, buildAppTheme, resolveInitialColorMode, useUITheme } from '../../theme';
 
 const FileEditor = lazy(() => import('../../components/FileEditor'));
 const UIBlockRenderer = lazy(() => import('../../components/UIBlockRenderer'));
@@ -562,6 +562,7 @@ export default function WorkspacePage() {
   const navigate = useNavigate();
   const { signOut, user: authUser } = useAuth();
   const [colorMode, setColorMode] = useState<PaletteMode>(resolveInitialColorMode);
+  const [uiTheme] = useUITheme();
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [selectedWorkspace, setSelectedWorkspace] = useState<Workspace | null>(null);
   const [isLandingPageVisible, setIsLandingPageVisible] = useState(true);
@@ -695,7 +696,7 @@ export default function WorkspacePage() {
   const ragStatusFetchedRef = useRef<Record<string, boolean>>({});
   const resumeInFlightRef = useRef<Set<string>>(new Set());
   const resumeAttemptedRef = useRef<Set<string>>(new Set());
-  const theme = useMemo(() => buildAppTheme(colorMode), [colorMode]);
+  const theme = useMemo(() => buildAppTheme(colorMode, uiTheme), [colorMode, uiTheme]);
 
   useEffect(() => {
     selectedWorkspaceIdRef.current = selectedWorkspace?.id ?? null;

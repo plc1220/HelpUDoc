@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo } from 'react';
 import { Link } from 'react-router-dom';
-import { Users2, Hammer, MessageCircle, Activity, Sparkles, ArrowRight, ShieldCheck, BookOpen, ExternalLink } from 'lucide-react';
+import { Users2, Hammer, MessageCircle, Activity, Sparkles, ArrowRight, ShieldCheck, BookOpen, ExternalLink, Palette, Check } from 'lucide-react';
 import SettingsShell from '../components/settings/SettingsShell';
 import {
   SettingsMetricCard,
@@ -9,6 +9,7 @@ import {
   SettingsSurface,
 } from '../components/settings/SettingsScaffold';
 import { fetchWorkspaceOverview, type WorkspaceOverview } from '../services/settingsApi';
+import { useUITheme } from '../colorMode';
 
 const FOCUS_ICONS = [Sparkles, ShieldCheck, BookOpen] as const;
 
@@ -27,6 +28,7 @@ function formatRelativeTime(iso: string): string {
 }
 
 const DashboardPage = () => {
+  const [uiTheme, setUiTheme] = useUITheme();
   const [data, setData] = useState<WorkspaceOverview | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -180,6 +182,125 @@ const DashboardPage = () => {
             </div>
           </SettingsSurface>
         </div>
+
+        {/* Theme Selection */}
+        <SettingsSurface className="space-y-6">
+          <SettingsSectionHeader
+            eyebrow="Aesthetics"
+            title="Workspace Theme"
+            description="Personalize your workflow and dashboard layout. Switch between three carefully crafted visual designs."
+          />
+          <div className="grid gap-6 md:grid-cols-3">
+            {/* Standard Theme Card */}
+            <button
+              onClick={() => setUiTheme('standard')}
+              className={`group relative flex flex-col items-start rounded-2xl p-5 text-left border-2 transition-all duration-300 ${
+                uiTheme === 'standard'
+                  ? 'border-blue-600 dark:border-blue-500 bg-blue-50/20 dark:bg-blue-950/20 shadow-lg shadow-blue-500/5'
+                  : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-slate-300 dark:hover:border-slate-700 hover:shadow-md'
+              }`}
+            >
+              <div className="flex w-full items-center justify-between">
+                <span className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400">
+                  <Palette size={18} />
+                </span>
+                {uiTheme === 'standard' && (
+                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-blue-600 text-white">
+                    <Check size={12} strokeWidth={3} />
+                  </span>
+                )}
+              </div>
+              <h3 className="mt-4 text-base font-semibold text-slate-900 dark:text-slate-100">Standard</h3>
+              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+                The classic corporate aesthetic. Soft shadows, balanced contours, sleek sapphire accents, and fluid layouts.
+              </p>
+
+              <div className="mt-5 flex items-center gap-3 w-full border-t border-slate-100 dark:border-slate-800 pt-4">
+                <div className="flex gap-1.5">
+                  <span className="h-4 w-4 rounded-full bg-[#2563eb]" />
+                  <span className="h-4 w-4 rounded-full bg-[#f8fafc] border border-slate-200 dark:border-slate-700" />
+                  <span className="h-4 w-4 rounded-full bg-[#0f172a] dark:bg-slate-950" />
+                </div>
+                <div className="ml-auto flex items-center gap-1 bg-slate-50 dark:bg-slate-950 px-2.5 py-1 rounded-lg border border-slate-100 dark:border-slate-800">
+                  <span className="h-2 w-2 rounded-full bg-blue-600" />
+                  <span className="text-[10px] font-medium text-slate-500 dark:text-slate-400">Default MUI</span>
+                </div>
+              </div>
+            </button>
+
+            {/* Minimalism Theme Card */}
+            <button
+              onClick={() => setUiTheme('minimalism')}
+              className={`group relative flex flex-col items-start rounded-[32px] p-5 text-left border transition-all duration-300 ${
+                uiTheme === 'minimalism'
+                  ? 'border-neutral-900 dark:border-neutral-200 bg-neutral-100/40 dark:bg-neutral-900/20'
+                  : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-neutral-400 dark:hover:border-neutral-500'
+              }`}
+            >
+              <div className="flex w-full items-center justify-between">
+                <span className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-neutral-100 dark:bg-neutral-800 text-neutral-900 dark:text-neutral-100">
+                  <Palette size={18} />
+                </span>
+                {uiTheme === 'minimalism' && (
+                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-neutral-900 dark:bg-neutral-100 text-white dark:text-black">
+                    <Check size={12} strokeWidth={3} />
+                  </span>
+                )}
+              </div>
+              <h3 className="mt-4 text-base font-light tracking-tight text-neutral-900 dark:text-neutral-100 lowercase">minimalism</h3>
+              <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed lowercase">
+                ultra-sleek and ultra-clean. rounded capsule lines, breathing whitespace, and pitch-black monochrome accents.
+              </p>
+
+              <div className="mt-5 flex items-center gap-3 w-full border-t border-neutral-100 dark:border-neutral-800 pt-4">
+                <div className="flex gap-1">
+                  <span className="h-3 w-6 rounded-full bg-[#171717] dark:bg-white" />
+                  <span className="h-3 w-6 rounded-full bg-[#f5f5f5] dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700" />
+                </div>
+                <div className="ml-auto flex items-center gap-1 bg-neutral-50 dark:bg-neutral-950 px-3 py-1 rounded-full border border-neutral-100 dark:border-neutral-800">
+                  <span className="text-[9px] font-medium tracking-wider text-neutral-500 dark:text-neutral-400 lowercase">pills</span>
+                </div>
+              </div>
+            </button>
+
+            {/* Bauhaus Theme Card */}
+            <button
+              onClick={() => setUiTheme('bauhaus')}
+              className={`group relative flex flex-col items-start p-5 text-left border-[2.5px] transition-all duration-300 ${
+                uiTheme === 'bauhaus'
+                  ? 'border-black dark:border-white bg-[#f3efe0] dark:bg-neutral-900 shadow-[4px_4px_0px_currentColor]'
+                  : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-black dark:hover:border-white hover:shadow-[3px_3px_0px_currentColor]'
+              }`}
+              style={{ borderRadius: '0px' }}
+            >
+              <div className="flex w-full items-center justify-between">
+                <span className="inline-flex h-9 w-9 items-center justify-center border-2 border-black dark:border-white bg-[#fcbf49] text-black" style={{ borderRadius: '0px' }}>
+                  <Palette size={18} />
+                </span>
+                {uiTheme === 'bauhaus' && (
+                  <span className="flex h-5 w-5 items-center justify-center border-2 border-black dark:border-white bg-[#d62828] text-white" style={{ borderRadius: '0px' }}>
+                    <Check size={10} strokeWidth={4} />
+                  </span>
+                )}
+              </div>
+              <h3 className="mt-4 text-base font-extrabold uppercase tracking-wider text-black dark:text-white">BAUHAUS</h3>
+              <p className="mt-1 text-xs text-black/80 dark:text-white/80 leading-relaxed uppercase font-medium">
+                artistic flat brutalism. sharp geometric corners, heavy gridlines, and bold primary color accents.
+              </p>
+
+              <div className="mt-5 flex items-center gap-2 w-full border-t-2 border-black dark:border-white pt-4">
+                <div className="flex gap-1">
+                  <span className="h-4 w-4 bg-[#d62828] border border-black dark:border-white" style={{ borderRadius: '0px' }} />
+                  <span className="h-4 w-4 bg-[#fcbf49] border border-black dark:border-white" style={{ borderRadius: '0px' }} />
+                  <span className="h-4 w-4 bg-[#003049] border border-black dark:border-white" style={{ borderRadius: '0px' }} />
+                </div>
+                <div className="ml-auto flex items-center border-2 border-black dark:border-white bg-white dark:bg-neutral-950 px-2 py-0.5" style={{ borderRadius: '0px' }}>
+                  <span className="text-[9px] font-black tracking-widest text-black dark:text-white">FLAT</span>
+                </div>
+              </div>
+            </button>
+          </div>
+        </SettingsSurface>
 
         <SettingsSurface>
           <SettingsSectionHeader

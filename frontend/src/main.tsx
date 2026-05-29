@@ -4,11 +4,12 @@ import { BrowserRouter } from 'react-router-dom';
 import './index.css';
 import App from './App.tsx';
 import { AuthProvider } from './auth/AuthProvider';
-import { applyColorModeToDocument, resolveInitialColorMode } from './colorMode';
+import { applyColorModeToDocument, resolveInitialColorMode, applyUIThemeToDocument, resolveInitialUITheme } from './colorMode';
 
-// Apply the persisted color mode before React renders so direct-route loads
+// Apply the persisted color mode and UI theme before React renders so direct-route loads
 // (for example /settings) honor the user's theme immediately.
 applyColorModeToDocument(resolveInitialColorMode());
+applyUIThemeToDocument(resolveInitialUITheme());
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
