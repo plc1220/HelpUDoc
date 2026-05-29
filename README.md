@@ -5,16 +5,16 @@ The repo currently combines:
 
 - a React + Vite frontend for the workspace UI, file editing, agent chat, and settings
 - an Express + TypeScript backend for auth, workspaces, files, knowledge, conversations, and admin APIs
-- a FastAPI-based Python agent service for Gemini-powered runs, skills, RAG, and `paper2slides`
+- a FastAPI-based Python agent service for Gemini-powered runs, skills, and RAG
 - shared infrastructure manifests for local Docker Compose and GKE deployment
 
 ## Repository layout
 
 | Path | What lives here |
 | ---- | --------------- |
-| `frontend/` | Main web app, including workspace, chat, file rendering, paper-to-slides, and settings pages. |
+| `frontend/` | Main web app, including workspace, chat, file rendering, and settings pages. |
 | `backend/` | API server, persistence layer, auth/session handling, collaboration server, and admin endpoints. |
-| `agent/` | FastAPI agent runtime, prompt catalog, RAG worker, and `paper2slides` pipeline. |
+| `agent/` | FastAPI agent runtime, prompt catalog, and RAG worker. |
 | `mobile/` | Expo-based mobile spike that currently proves shared-type reuse. |
 | `packages/contracts/` | Shared API and stream TypeScript types (`@helpudoc/contracts`). |
 | `packages/dashboard-runtime/` | Browser dashboard filters, aggregates, and Plotly payload helpers. |
@@ -149,7 +149,6 @@ npm run e2e
 
 Targeted scripts:
 
-- `scripts/test_paper2slides.sh`
 - `backend/scripts/test_frontend_prompt_stream.mjs`
 - `backend/scripts/test_rag_hybrid_flow.mjs`
 - `backend/scripts/test_tagged_rag_query.mjs`
@@ -160,7 +159,6 @@ Targeted scripts:
 - Workspace creation, file CRUD, and live collaborative editing
 - Agent chat with streaming updates, approvals, interrupt actions, and slash command metadata
 - Knowledge source management tied to workspaces
-- Paper-to-slides jobs with optional PPTX export
 - Admin settings for agent config, bundled skills, GitHub skill imports, and skill-builder sessions
 - Hybrid auth: local header-based development plus Google OAuth for delegated Google-backed tooling
 

@@ -62,11 +62,11 @@ The **web refactor** (extracting hooks + service layers) directly enables the mo
 
 ### 3.2 Shared Layer (Extract from Web, Used by Both)
 - `shared/services/`
-  - `workspaceApi`, `fileApi`, `agentApi`, `conversationApi`, `paper2SlidesJobApi` (unchanged)
+  - `workspaceApi`, `fileApi`, `agentApi`, `conversationApi` (unchanged)
 - `shared/types/`
   - TypeScript types: `Workspace`, `WorkspaceFile`, `AgentPersona`, `ConversationMessage`, `ToolEvent`, etc.
 - `shared/hooks/`
-  - `useAgentStream`, `useConversation`, `useFileManager`, `usePresentation`
+  - `useAgentStream`, `useConversation`, `useFileManager`
 - `shared/utils/`
   - `files.ts`, `messages.ts`, `personas.ts` (pure functions, no UI deps)
 
@@ -108,7 +108,7 @@ Use a **bottom tab bar** (not hamburger). Three tabs cover ~90% of mobile use ca
 Notifications are the mechanism that enables users to confidently trigger long-running jobs and walk away.
 
 ### 5.1 End-to-End Flow
-1. User triggers a job (Paper2Slides / agent run) from mobile or web  
+1. User triggers a long-running agent run from mobile or web  
 2. Backend starts job and records the user’s registered push token  
 3. Job completes / fails / requires approval  
 4. Backend sends push via **FCM (Android)** and **APNs (iOS)** (through Expo)  
@@ -119,7 +119,6 @@ Notifications are the mechanism that enables users to confidently trigger long-r
 ### 5.2 Notification Types
 | Event | Notification Text | Deep Link Destination |
 |---|---|---|
-| Paper2Slides complete | “Your slides for [file] are ready” | Artifact Viewer |
 | Agent run complete | “Agent finished your task” | Chat thread |
 | Agent needs approval | “Agent needs your input” | Chat + approval UI |
 | Agent run failed | “Something went wrong” | Chat thread |
@@ -148,7 +147,6 @@ Request only after the user starts their first long-running job (clear value pro
 
 ### What NOT to Build Initially (Intentional Omissions)
 - File editor / code editing
-- Full Paper2Slides option configuration
 - Workspace management (create/delete)
 - Multi-file selection
 
@@ -184,7 +182,6 @@ Each phase ships a complete usable product.
 
 ### Phase 3 (Key-Flow Parity) — **4–6 weeks**
 - HITL approval from mobile (approve/edit/reject)
-- `/presentation` command with sensible mobile defaults
 - File browser (view-only + download)
 - Conversation history + session switching
 - “Open on desktop” deep link generation for unsupported artifacts

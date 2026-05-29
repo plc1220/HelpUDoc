@@ -46,7 +46,6 @@ function parseEnvExampleKeys(contents: string): string[] {
 const EXAMPLE_FILES = [
   'env/local/dev.env.example',
   'env/local/stack.env.example',
-  'env/local/paper2slides.env.example',
   'env/prod/config.env.example',
   'env/prod/secrets.env.example',
   'backend/.env.example',

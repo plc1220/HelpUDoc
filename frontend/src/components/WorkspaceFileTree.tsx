@@ -219,18 +219,17 @@ const TreeFileRow: React.FC<{
   colorMode,
 }) => {
   const { file } = node;
-  const isPendingJob = file.mimeType === 'application/vnd.helpudoc.paper2slides-job';
   const ragStatus = getRagStatus(ragStatuses, file);
   const ragState = ragStatus?.status ? String(ragStatus.status).toLowerCase() : '';
   const understandingState = file.understandingStatus ? String(file.understandingStatus).toLowerCase() : '';
-  const isIndexing = !isPendingJob && ['pending', 'processing', 'preprocessed'].includes(ragState);
-  const isUnderstandingPending = !isPendingJob && understandingState === 'pending';
-  const understandingFailed = !isPendingJob && understandingState === 'failed';
-  const understandingPartial = !isPendingJob && understandingState === 'partial';
+  const isIndexing = ['pending', 'processing', 'preprocessed'].includes(ragState);
+  const isUnderstandingPending = understandingState === 'pending';
+  const understandingFailed = understandingState === 'failed';
+  const understandingPartial = understandingState === 'partial';
   const displayName = getFileDisplayName(file.name || '');
   const fileIcon = getFileTypeIcon(file.name || '');
   const isDraft = isDraftWorkspaceFile(file);
-  const isDraggable = !isPendingJob && !isDraft;
+  const isDraggable = !isDraft;
   const fileId = String(file.id);
   const isBeingDragged = draggedFileId === fileId;
   const isDarkMode = colorMode === 'dark';
@@ -286,23 +285,19 @@ const TreeFileRow: React.FC<{
       <input
         type="checkbox"
         checked={selectedFiles.has(fileId)}
-        disabled={isPendingJob}
         onChange={() => onToggleFileSelection(fileId)}
         onClick={(event) => event.stopPropagation()}
         className="mt-1 shrink-0"
       />
       <div
         role="button"
-        tabIndex={isPendingJob ? -1 : 0}
+        tabIndex={0}
         data-workspace-file-drag-handle="true"
         onClick={() => {
-          if (isPendingJob) {
-            return;
-          }
           onSelectFile(file);
         }}
         onKeyDown={(event) => {
-          if (isPendingJob || (event.key !== 'Enter' && event.key !== ' ')) {
+          if (event.key !== 'Enter' && event.key !== ' ') {
             return;
           }
           event.preventDefault();
@@ -312,7 +307,7 @@ const TreeFileRow: React.FC<{
       >
         <div className="flex min-w-0 flex-col gap-1">
           <div className="flex min-w-0 items-center gap-2">
-            {(isPendingJob || isIndexing || isUnderstandingPending) && (
+            {(isIndexing || isUnderstandingPending) && (
               <span className="inline-flex h-4 w-4 items-center justify-center text-blue-500">
                 <span className="h-2 w-2 animate-pulse rounded-full bg-current" />
               </span>
@@ -364,8 +359,7 @@ const TreeFileRow: React.FC<{
           )}
         </div>
       </div>
-      {!isPendingJob && (
-        <div className={`pointer-events-none absolute right-2 top-1/2 z-10 flex -translate-y-1/2 items-center gap-1 rounded-lg border pl-2 opacity-0 backdrop-blur-sm transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 ${actionsClassName}`}>
+      <div className={`pointer-events-none absolute right-2 top-1/2 z-10 flex -translate-y-1/2 items-center gap-1 rounded-lg border pl-2 opacity-0 backdrop-blur-sm transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 ${actionsClassName}`}>
           {file.publicUrl && !isDraft && (
             <button
               type="button"
@@ -408,8 +402,7 @@ const TreeFileRow: React.FC<{
           >
             <Trash size={14} />
           </button>
-        </div>
-      )}
+      </div>
     </div>
   );
 };
@@ -759,7 +752,7 @@ export default function WorkspaceFileTree({
       ? Array.from(selectedFiles)
           .map((selectedFileId) => fileById.get(selectedFileId))
           .filter((selectedFile): selectedFile is WorkspaceFile => Boolean(selectedFile))
-          .filter((selectedFile) => selectedFile.mimeType !== 'application/vnd.helpudoc.paper2slides-job' && !isDraftWorkspaceFile(selectedFile))
+          .filter((selectedFile) => !isDraftWorkspaceFile(selectedFile))
       : [file];
     if (filesToMove.length > 0) {
       onMoveFiles(filesToMove, folderPath);

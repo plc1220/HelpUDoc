@@ -26,7 +26,6 @@ from .routes.attachments import register_attachments_routes
 from .routes.chat import register_chat_routes
 from .routes.health import register_health_routes
 from .routes.internal import register_internal_routes
-from .routes.paper2slides import register_paper2slides_routes
 from .routes.rag import register_rag_routes
 from .routes.skills import register_skills_routes
 from .text_utils import _get_agent_jwt_secret
@@ -93,7 +92,6 @@ def create_app() -> FastAPI:
         agent_jwt_secret=agent_jwt_secret,
     )
     register_rag_routes(app, rag_worker)
-    register_paper2slides_routes(app)
     register_attachments_routes(app, settings=settings, gemini_manager=gemini_manager)
     register_chat_routes(
         app,

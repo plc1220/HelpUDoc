@@ -48,10 +48,7 @@ def build_dependency_diagnostic() -> Dict[str, Any]:
         try:
             importlib.import_module("document_intelligence.raganything")
         except Exception:
-            try:
-                importlib.import_module("paper2slides.raganything")
-            except Exception:
-                dependency_diag["raganything"] = False
+            dependency_diag["raganything"] = False
     return dependency_diag
 
 

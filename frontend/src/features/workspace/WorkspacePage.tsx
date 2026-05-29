@@ -8,7 +8,7 @@ import {
   ThemeProvider,
   type PaletteMode,
 } from '@mui/material';
-import { Check, CheckSquare, Copy, Edit, Trash, Plus, Minus, X, ChevronLeft, ChevronDown, RotateCcw, Printer, Download, Link as LinkIcon, Loader2, FolderPlus, FolderUp, Upload, Home, ArrowUp, Search, File as FileIcon, Presentation, Wrench, Plug, Sparkles, Info } from 'lucide-react';
+import { Check, CheckSquare, Copy, Edit, Trash, Plus, Minus, X, ChevronLeft, ChevronDown, RotateCcw, Printer, Download, Link as LinkIcon, Loader2, FolderPlus, FolderUp, Upload, Home, ArrowUp, Search, File as FileIcon, Wrench, Plug, Sparkles, Info } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { getWorkspaces, createWorkspace, deleteWorkspace, renameWorkspace } from '../../services/workspaceApi';
@@ -33,7 +33,6 @@ import {
   getAttachmentPrepJob,
   type AttachmentPrepJob,
 } from '../../services/attachmentPrepApi';
-import { startPaper2SlidesJob, getPaper2SlidesJob } from '../../services/paper2SlidesJobApi';
 import {
   cancelRun,
   fetchSlashMetadata,
@@ -87,8 +86,6 @@ import type { RenderableInterruptAction } from '../chat/interrupts/actions';
 import DrivePickerModal from '../../components/chat/DrivePickerModal';
 import GoogleDriveIcon from '../../components/chat/GoogleDriveIcon';
 import type { ChatComposerAttachment } from '../chat/types';
-import PresentationModal from '../paper2slides/components/PresentationModal';
-import type { PresentationOptionsState } from '../paper2slides/types';
 import {
   getDashboardManifestPath,
   normalizeWorkspaceRelativePath,
@@ -140,14 +137,6 @@ const MIN_FILE_PANE_WIDTH = 200;
 const MAX_FILE_PANE_WIDTH = 520;
 const MIN_AGENT_PANE_WIDTH = 280;
 const MAX_AGENT_PANE_WIDTH = 720;
-const sanitizePresentationLabel = (value: string, fallback: string) => {
-  const normalized = normalizeFilePath(value);
-  const baseName = normalized.split('/').pop() || '';
-  const trimmed = baseName.includes('.') ? baseName.slice(0, baseName.lastIndexOf('.')) : baseName;
-  const cleaned = trimmed.replace(/[^a-zA-Z0-9._-]/g, '_').replace(/^_+/, '');
-  return cleaned || fallback;
-};
-
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 const summarizeComposerAttachments = (attachments: ChatComposerAttachment[]): string => {
@@ -307,9 +296,6 @@ type CommandSuggestion = {
 };
 
 const getCommandCategory = (command: CommandSuggestion) => {
-  if (command.command.startsWith('/presentation')) {
-    return 'Creation';
-  }
   if (command.command.startsWith('/skill')) {
     return 'Skills';
   }
@@ -320,7 +306,6 @@ const getCommandCategory = (command: CommandSuggestion) => {
 };
 
 type ParsedSlashDirective =
-  | { kind: 'presentation'; prompt: string; raw: string }
   | { kind: 'skill'; skillId: string; prompt: string; raw: string }
   | { kind: 'mcp'; serverId: string; prompt: string; raw: string }
   | { kind: 'none'; prompt: string; raw: string };
@@ -614,27 +599,13 @@ export default function WorkspacePage() {
   const [conversationHistory, setConversationHistory] = useState<ConversationSummary[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [activeConversationPersona, setActiveConversationPersona] = useState<string | null>(null);
-  const [presentationOptions, setPresentationOptions] = useState<PresentationOptionsState>({
-    output: 'slides',
-    content: 'general',
-    stylePreset: 'academic',
-    customStyle: '',
-    length: 'medium',
-    mode: 'fast',
-    parallel: 2,
-  });
-  const [presentationStatus, setPresentationStatus] = useState<'idle' | 'running' | 'success' | 'error'>('idle');
-  const [isPresentationModalOpen, setIsPresentationModalOpen] = useState(false);
   const [isDrivePickerOpen, setIsDrivePickerOpen] = useState(false);
   const [isDriveImporting, setIsDriveImporting] = useState(false);
   const [workspaceFileDialog, setWorkspaceFileDialog] = useState<WorkspaceFileDialogState | null>(null);
   const [isLandingAttachmentMenuOpen, setIsLandingAttachmentMenuOpen] = useState(false);
   const [isLandingWorkspacePickerOpen, setIsLandingWorkspacePickerOpen] = useState(false);
   const [landingWorkspaceQuery, setLandingWorkspaceQuery] = useState('');
-  const [draftPresentationOptions, setDraftPresentationOptions] = useState<PresentationOptionsState | null>(null);
   const streamAbortMapRef = useRef<Map<string, AbortController>>(new Map());
-  const presentationJobPollsRef = useRef<Map<string, number>>(new Map());
-  const pendingPresentationJobsRef = useRef<Map<string, Array<{ jobId: string; label: string }>>>(new Map());
   const conversationMessagesRef = useRef<Record<string, ConversationMessage[]>>({});
   const chatAttachmentsRef = useRef<ChatComposerAttachment[]>([]);
   const agentMessageBufferRef = useRef<Map<ConversationMessage['id'], string>>(new Map());
@@ -815,10 +786,6 @@ export default function WorkspacePage() {
     return visibleFiles.every((file) => selectedFiles.has(file.id));
   }, [visibleFiles, selectedFiles]);
   const hiddenFileCount = systemFiles.length;
-  const showPaper2SlidesControls = Boolean(
-    selectedFile || chatAttachments.length || chatMessage.trim().length || presentationStatus !== 'idle',
-  );
-
   const persistActiveRuns = useCallback((runs: Record<string, ActiveRunInfo>) => {
     activeRunsRef.current = runs;
     if (typeof window !== 'undefined') {
@@ -1170,67 +1137,6 @@ export default function WorkspacePage() {
     setIsHistoryOpen(false);
   }, []);
 
-  const presentationOptionSummary = useMemo(() => {
-    const parts = [
-      presentationOptions.output === 'slides' ? 'Slides' : 'Poster',
-      presentationOptions.length.charAt(0).toUpperCase() + presentationOptions.length.slice(1),
-      presentationOptions.mode === 'fast' ? 'Fast' : 'Normal',
-      presentationOptions.stylePreset === 'custom'
-        ? presentationOptions.customStyle.trim() || 'Custom'
-        : presentationOptions.stylePreset.charAt(0).toUpperCase() + presentationOptions.stylePreset.slice(1),
-      presentationOptions.content === 'paper' ? 'Paper' : 'General',
-    ];
-    return parts.filter(Boolean).join(' · ');
-  }, [presentationOptions]);
-
-  const resolvePresentationStyle = useCallback(() => {
-    if (presentationOptions.stylePreset === 'custom') {
-      return presentationOptions.customStyle.trim();
-    }
-    return presentationOptions.stylePreset;
-  }, [presentationOptions]);
-
-  const handleDraftPresentationOptionChange = useCallback(
-    <K extends keyof PresentationOptionsState>(key: K, value: PresentationOptionsState[K]) => {
-      setDraftPresentationOptions((prev) => {
-        const base = prev || presentationOptions;
-        return { ...base, [key]: value };
-      });
-    },
-    [presentationOptions],
-  );
-
-  const handleOpenPresentationModal = useCallback(() => {
-    setDraftPresentationOptions(presentationOptions);
-    setIsPresentationModalOpen(true);
-  }, [presentationOptions]);
-
-  const handleClosePresentationModal = useCallback(() => {
-    setIsPresentationModalOpen(false);
-    setDraftPresentationOptions(null);
-  }, []);
-
-  const handleSavePresentationOptions = useCallback(() => {
-    if (draftPresentationOptions) {
-      setPresentationOptions(draftPresentationOptions);
-    }
-    setIsPresentationModalOpen(false);
-  }, [draftPresentationOptions]);
-
-  const startPresentationProgress = useCallback(() => {
-    setPresentationStatus('running');
-  }, []);
-
-  const stopPresentationProgress = useCallback(
-    (status: 'success' | 'error' = 'success') => {
-      setPresentationStatus(status);
-      window.setTimeout(() => {
-        setPresentationStatus('idle');
-      }, 1500);
-    },
-    [],
-  );
-
   const formatMessageTimestamp = useCallback((value?: string) => {
     if (!value) {
       return '';
@@ -1396,14 +1302,6 @@ export default function WorkspacePage() {
     };
   }, []);
 
-  useEffect(() => {
-    const polls = presentationJobPollsRef.current;
-    return () => {
-      polls.forEach((timerId) => window.clearInterval(timerId));
-      polls.clear();
-    };
-  }, []);
-
   const agentPaneStyles: CSSProperties = {
     flexBasis: agentPaneWidth,
     width: agentPaneWidth,
@@ -1538,43 +1436,6 @@ export default function WorkspacePage() {
       console.error('Failed to copy workspace content', error);
     }
   }, [fileContent, selectedFile]);
-
-  const addPendingPresentationPlaceholder = useCallback(
-    (jobId: string, workspaceId: string, label: string) => {
-      const existing = pendingPresentationJobsRef.current.get(workspaceId) || [];
-      if (!existing.some((entry) => entry.jobId === jobId)) {
-        pendingPresentationJobsRef.current.set(workspaceId, [...existing, { jobId, label }]);
-      }
-      const placeholder: WorkspaceFile = {
-        id: `paperjob-${jobId}`,
-        name: `presentations/${label}/ (pending)`,
-        workspaceId,
-        path: `presentations/${label}/`,
-        mimeType: 'application/vnd.helpudoc.paper2slides-job',
-        publicUrl: null,
-        content: undefined,
-      };
-      setFiles((prev) => [...prev, placeholder]);
-    },
-    [],
-  );
-
-  const removePendingPresentationPlaceholder = useCallback((jobId: string) => {
-    setFiles((prev) => prev.filter((file) => file.id !== `paperjob-${jobId}`));
-    setSelectedFiles((prev) => {
-      const next = new Set(prev);
-      next.delete(`paperjob-${jobId}`);
-      return next;
-    });
-    pendingPresentationJobsRef.current.forEach((entries, workspaceId) => {
-      const filtered = entries.filter((entry) => entry.jobId !== jobId);
-      if (filtered.length) {
-        pendingPresentationJobsRef.current.set(workspaceId, filtered);
-      } else {
-        pendingPresentationJobsRef.current.delete(workspaceId);
-      }
-    });
-  }, []);
 
   const handleCopyFilePublicUrl = useCallback(async (file: WorkspaceFile) => {
     if (!file.publicUrl || !navigator?.clipboard) {
@@ -1812,21 +1673,7 @@ export default function WorkspacePage() {
         getFolders(workspaceId),
       ]);
       setFolderPaths(folders);
-      const pending = pendingPresentationJobsRef.current.get(workspaceId) || [];
-      if (pending.length) {
-        const placeholders: WorkspaceFile[] = pending.map((entry) => ({
-          id: `paperjob-${entry.jobId}`,
-          name: `presentations/${entry.label}/ (pending)`,
-          workspaceId,
-          path: `presentations/${entry.label}/`,
-          mimeType: 'application/vnd.helpudoc.paper2slides-job',
-          publicUrl: null,
-          content: undefined,
-        }));
-        setFiles([...files, ...placeholders]);
-      } else {
-        setFiles(files);
-      }
+      setFiles(files);
     } catch (error) {
       console.error('Failed to load files for workspace', error);
     }
@@ -2173,14 +2020,6 @@ export default function WorkspacePage() {
           return false;
         }
       }
-      const presentationDirectiveMatch = textBeforeCursor.match(/^\s*\/presentation(?:\s+([\s\S]*))?$/i);
-      if (presentationDirectiveMatch) {
-        const trailingPrompt = presentationDirectiveMatch[1] || '';
-        if (trailingPrompt.trim().length > 0 || /\s$/.test(textBeforeCursor)) {
-          closeCommand();
-          return false;
-        }
-      }
       const commandMatch = textBeforeCursor.match(/(^|[\s([{])\/([^\n/]*)$/);
       if (!commandMatch) {
         closeCommand();
@@ -2264,14 +2103,6 @@ export default function WorkspacePage() {
 
   const parseSlashDirective = useCallback((rawMessage: string): ParsedSlashDirective => {
     const trimmed = rawMessage.trim();
-    const presentationMatch = trimmed.match(/^\/presentation\b([\s\S]*)$/i);
-    if (presentationMatch) {
-      return {
-        kind: 'presentation',
-        prompt: (presentationMatch[1] || '').trim(),
-        raw: trimmed,
-      };
-    }
     const skillMatch = trimmed.match(/^\/skill\s+([^\s]+)(?:\s+([\s\S]*))?$/i);
     if (skillMatch) {
       const requestedSkillId = (skillMatch[1] || '').trim();
@@ -2315,7 +2146,6 @@ export default function WorkspacePage() {
           '>>>',
           directive.prompt || `Use ${directive.serverId} for this task.`,
         ].join('\n');
-      case 'presentation':
       case 'none':
       default:
         return directive.raw;
@@ -5308,18 +5138,6 @@ export default function WorkspacePage() {
       return;
     }
     const directive = parseSlashDirective(trimmed);
-    const isPresentationCommand = directive.kind === 'presentation';
-    const mentionedFiles = isPresentationCommand ? findMentionedFiles(trimmed) : [];
-    const presentationFileIds = isPresentationCommand
-      ? Array.from(
-        new Set(
-          mentionedFiles
-            .map((file) => toNumericFileId(file.id))
-            .filter((id): id is number => typeof id === 'number' && Number.isFinite(id)),
-        ),
-      )
-      : [];
-    const presentationBrief = isPresentationCommand ? stripMentionedFilesFromPrompt(directive.prompt) : '';
     if (directive.kind === 'skill') {
       if (!directive.skillId) {
         addLocalSystemMessage('Use /skill <skill-id>. Example: /skill sales prep me for tomorrow\'s call.');
@@ -5340,11 +5158,6 @@ export default function WorkspacePage() {
         return;
       }
     }
-    if (isPresentationCommand && !presentationFileIds.length) {
-      addLocalSystemMessage('Tag at least one file using @filename before rerunning /presentation.');
-      return;
-    }
-
     if (!options?.skipConfirm) {
       const confirmed = window.confirm(
         'Redo from this message? This will remove all messages below it.'
@@ -5421,20 +5234,6 @@ export default function WorkspacePage() {
 
     updateMessagesForConversation(conversationId, () => historyMessages);
     lastUserMessageMapRef.current[conversationId] = trimmed;
-
-    if (isPresentationCommand) {
-      await runPresentationCommand({
-        workspaceId: selectedWorkspace.id,
-        conversationId,
-        turnId: effectiveTargetMessage.turnId || targetTurnId,
-        brief: presentationBrief,
-        fileIds: presentationFileIds,
-        fileNames: mentionedFiles.map((file) => file.name),
-        persona,
-        replaceExisting: true,
-      });
-      return;
-    }
 
     try {
       const agentPrompt = buildAgentPromptFromDirective(directive);
@@ -5523,242 +5322,6 @@ export default function WorkspacePage() {
     });
   };
 
-  const runPresentationCommand = useCallback(
-    async ({
-      workspaceId,
-      conversationId,
-      turnId,
-      brief,
-      fileIds,
-      fileNames,
-      persona,
-      replaceExisting = false,
-    }: {
-      workspaceId: string;
-      conversationId: string;
-      turnId: string;
-      brief: string;
-      fileIds: number[];
-      fileNames: string[];
-      persona: string;
-      replaceExisting?: boolean;
-    }) => {
-      if (!fileIds.length) {
-        addLocalSystemMessage('Tag at least one file using @filename before running /presentation.');
-        return;
-      }
-      const resolvedStyle = resolvePresentationStyle();
-      let agentMessageIndex = -1;
-      let placeholderId: ConversationMessage['id'] | null = null;
-      const startedAt = new Date().toISOString();
-      updateMessagesForConversation(conversationId, (prevMessages) => {
-        const placeholder: ConversationMessage = {
-          id: `agent-${Date.now()}-presentation`,
-          conversationId,
-          sender: 'agent',
-          text: 'Queued Paper2Slides job…',
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-          turnId,
-        };
-        placeholderId = placeholder.id;
-        const updated = [...prevMessages, placeholder];
-        agentMessageIndex = updated.length - 1;
-        return updated;
-      });
-      if (placeholderId) {
-        agentMessageBufferRef.current.set(placeholderId, 'Queued Paper2Slides job…');
-      }
-      setStreamingForConversation(conversationId, true);
-      startPresentationProgress();
-      try {
-        const presentationLabel = sanitizePresentationLabel(fileNames[0] || 'paper2slides', 'paper2slides');
-        const startResponse = await startPaper2SlidesJob({
-          workspaceId,
-          brief,
-          fileIds,
-          persona,
-          output: presentationOptions.output,
-          content: presentationOptions.content,
-          style: resolvedStyle || undefined,
-          length: presentationOptions.length,
-          mode: presentationOptions.mode,
-          parallel: presentationOptions.parallel,
-          fromStage: presentationOptions.fromStage,
-        });
-        addPendingPresentationPlaceholder(startResponse.jobId, workspaceId, presentationLabel);
-        const jobLabel = `Paper2Slides job ${startResponse.jobId.slice(0, 8)}`;
-        updateMessagesForConversation(conversationId, (prev) => {
-          const updated = [...prev];
-          if (agentMessageIndex >= 0 && updated[agentMessageIndex]) {
-            updated[agentMessageIndex] = {
-              ...updated[agentMessageIndex],
-              text: `${jobLabel} started…`,
-            };
-          }
-          return updated;
-        });
-
-        const targetLabel =
-          brief ||
-          (fileNames.length === 1
-            ? fileNames[0]
-            : fileNames.length > 1
-              ? `${fileNames.length} files`
-              : 'selected files');
-
-        const finalizeMessage = async (
-          status: 'completed' | 'failed',
-          payload?: { pdfPath?: string; slideImages?: string[]; htmlPath?: string; error?: string },
-          finishedAt?: string,
-        ) => {
-          const outputFiles: ToolOutputFile[] = [];
-          if (payload?.pdfPath) {
-            outputFiles.push({ path: payload.pdfPath, mimeType: 'application/pdf' });
-          }
-          if (payload?.slideImages?.length) {
-            payload.slideImages.forEach((path) => outputFiles.push({ path, mimeType: 'image/png' }));
-          }
-          if (payload?.htmlPath) {
-            outputFiles.push({ path: payload.htmlPath, mimeType: 'text/html' });
-          }
-
-          const summaryText =
-            status === 'completed'
-              ? `Generated ${presentationOptions.output} with Paper2Slides (${presentationOptions.mode}, ${presentationOptions.length})${resolvedStyle ? ` · style: ${resolvedStyle}` : ''} for ${targetLabel}.`
-              : `Paper2Slides job failed: ${payload?.error || 'Unknown error'}`;
-
-          const toolEvent: ToolEvent = {
-            id: `presentation-${startResponse.jobId}`,
-            name: 'paper2slides',
-            status: status === 'completed' ? 'completed' : 'error',
-            startedAt: startedAt,
-            finishedAt: finishedAt || new Date().toISOString(),
-            summary: summaryText,
-            outputFiles,
-          };
-
-          let persisted: ConversationMessage | null = null;
-          try {
-            persisted = await appendConversationMessage(conversationId, 'agent', summaryText, {
-              turnId,
-              metadata: { toolEvents: [toolEvent] },
-              replaceExisting,
-            });
-          } catch (error) {
-            console.error('Failed to persist presentation summary', error);
-          }
-          const hydratedPersisted = persisted ? mergeMessageMetadata(persisted) : null;
-
-          updateMessagesForConversation(conversationId, (prev) => {
-            const updated = [...prev];
-            const target = updated[agentMessageIndex];
-            if (!target) {
-              return updated;
-            }
-            const baseMessage = hydratedPersisted || target;
-            const mergedToolEvents =
-              (baseMessage.toolEvents && baseMessage.toolEvents.length
-                ? baseMessage.toolEvents
-                : [...(target.toolEvents || []), toolEvent]);
-            updated[agentMessageIndex] = {
-              ...baseMessage,
-              text: summaryText,
-              thinkingText: target.thinkingText,
-              toolEvents: mergedToolEvents,
-            };
-            return updated;
-          });
-
-          if (placeholderId) {
-            agentMessageBufferRef.current.delete(placeholderId);
-          }
-          if (persisted?.id) {
-            agentMessageBufferRef.current.set(persisted.id, persisted.text || summaryText);
-          }
-        };
-
-        const poll = async () => {
-          try {
-            const status = await getPaper2SlidesJob(startResponse.jobId);
-            if (status.status === 'completed') {
-              await finalizeMessage('completed', status.result, status.updatedAt);
-              stopPresentationProgress('success');
-              removePendingPresentationPlaceholder(startResponse.jobId);
-              if (selectedWorkspaceIdRef.current === workspaceId) {
-                await loadFilesForWorkspace(workspaceId);
-                await refreshConversationHistory(workspaceId);
-              }
-              return true;
-            }
-            if (status.status === 'failed') {
-              await finalizeMessage('failed', { error: status.error });
-              stopPresentationProgress('error');
-              removePendingPresentationPlaceholder(startResponse.jobId);
-              return true;
-            }
-            return false;
-          } catch (error) {
-            console.error('Failed to poll Paper2Slides job', error);
-            return false;
-          }
-        };
-
-        // kick off poll loop
-        const finishedImmediately = await poll();
-        if (!finishedImmediately) {
-          const timerId = window.setInterval(async () => {
-            const done = await poll();
-            if (done) {
-              window.clearInterval(timerId);
-              presentationJobPollsRef.current.delete(startResponse.jobId);
-            }
-          }, 2500);
-          presentationJobPollsRef.current.set(startResponse.jobId, timerId);
-        }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : 'Failed to generate presentation.';
-        console.error('Presentation generation failed', error);
-        updateMessagesForConversation(conversationId, (prev) => {
-          const updated = [...prev];
-          if (agentMessageIndex >= 0 && updated[agentMessageIndex]) {
-            updated[agentMessageIndex] = {
-              ...updated[agentMessageIndex],
-              text: `Presentation generation failed: ${message}`,
-            };
-          }
-          return updated;
-        });
-        addLocalSystemMessage(`Presentation request failed: ${message}`);
-        stopPresentationProgress('error');
-        if (placeholderId) {
-          agentMessageBufferRef.current.delete(placeholderId);
-        }
-      } finally {
-        setStreamingForConversation(conversationId, false);
-        stopRequestedRef.current = false;
-      }
-    },
-    [
-      addLocalSystemMessage,
-      loadFilesForWorkspace,
-      presentationOptions.content,
-      presentationOptions.length,
-      presentationOptions.mode,
-      presentationOptions.output,
-      presentationOptions.parallel,
-      presentationOptions.fromStage,
-      refreshConversationHistory,
-      resolvePresentationStyle,
-      startPresentationProgress,
-      stopPresentationProgress,
-      removePendingPresentationPlaceholder,
-      addPendingPresentationPlaceholder,
-      setStreamingForConversation,
-      updateMessagesForConversation,
-    ],
-  );
-
   const handleSendMessage = async (workspaceOverride?: Workspace | null) => {
     if (sendLockRef.current || isDriveImporting) {
       return;
@@ -5795,7 +5358,6 @@ export default function WorkspacePage() {
 
       stopRequestedRef.current = false;
       const directive = parseSlashDirective(trimmed);
-      const isPresentationCommand = directive.kind === 'presentation';
       const mentionedFiles = findMentionedFiles(trimmed);
       const mentionedFileIds = Array.from(
         new Set(
@@ -5803,20 +5365,8 @@ export default function WorkspacePage() {
             .map((file) => toNumericFileId(file.id))
             .filter((id): id is number => typeof id === 'number' && Number.isFinite(id)),
         ),
-
-
       );
-      const presentationFileIds = isPresentationCommand
-        ? Array.from(
-          new Set(mentionedFileIds),
-        )
-        : [];
-      const presentationBrief = isPresentationCommand ? stripMentionedFilesFromPrompt(directive.prompt) : '';
 
-      if (isPresentationCommand && hasAttachments) {
-        addLocalSystemMessage('Attachments are not supported for /presentation. Please tag files using @filename instead.');
-        return;
-      }
       if (directive.kind === 'skill') {
         if (hasLocalAttachments) {
           addLocalSystemMessage('Attachments are not supported with /skill yet. Please upload files to the workspace first and reference them in your request.');
@@ -5845,11 +5395,6 @@ export default function WorkspacePage() {
           return;
         }
       }
-      if (isPresentationCommand && !presentationFileIds.length) {
-        addLocalSystemMessage('Tag at least one file using @filename before requesting a presentation.');
-        return;
-      }
-
       const activeWorkspace = workspaceOverride || selectedWorkspace;
       if (!activeWorkspace) {
         addLocalSystemMessage('Please select a workspace before chatting with an agent.');
@@ -5902,19 +5447,6 @@ export default function WorkspacePage() {
       }
       if (!userMessageRecord) {
         addLocalSystemMessage('Failed to record your message. Please try again.');
-        return;
-      }
-
-      if (isPresentationCommand) {
-        await runPresentationCommand({
-          workspaceId,
-          conversationId,
-          turnId: resolvedTurnId,
-          brief: presentationBrief,
-          fileIds: presentationFileIds,
-          fileNames: mentionedFiles.map((file) => file.name),
-          persona,
-        });
         return;
       }
 
@@ -6935,13 +6467,11 @@ export default function WorkspacePage() {
                                     {group.commands.map((command) => {
                                       const absoluteIndex = commandSuggestions.findIndex((item) => item.id === command.id);
                                       const isSelectedCommand = absoluteIndex === commandSelectedIndex;
-                                      const Icon = command.command.startsWith('/presentation')
-                                        ? Presentation
-                                        : command.command.startsWith('/skill')
-                                          ? Wrench
-                                          : command.command.startsWith('/mcp')
-                                            ? Plug
-                                            : Sparkles;
+                                      const Icon = command.command.startsWith('/skill')
+                                        ? Wrench
+                                        : command.command.startsWith('/mcp')
+                                          ? Plug
+                                          : Sparkles;
                                       return (
                                         <button
                                           key={command.id}
@@ -7702,9 +7232,6 @@ export default function WorkspacePage() {
               interruptErrorByMessageId={interruptErrorByMessageId}
               chatMessage={chatMessage}
               chatAttachments={chatAttachments}
-              showPaper2SlidesControls={showPaper2SlidesControls}
-              presentationStatus={presentationStatus}
-              presentationOptionSummary={presentationOptionSummary}
               commandTags={commandTags}
               isMentionOpen={isMentionOpen}
               mentionSuggestions={mentionSuggestions}
@@ -7750,7 +7277,6 @@ export default function WorkspacePage() {
               onOpenLocalAttachmentPicker={handleOpenLocalAttachmentPicker}
               onToggleInternetSearch={() => setInternetSearchEnabled((prev) => !prev)}
               onInsertSlashTrigger={handleInsertSlashTrigger}
-              onOpenPresentationModal={handleOpenPresentationModal}
               onStopStreaming={handleStopStreaming}
               onSendMessage={handleSendMessage}
               onChatAttachmentChange={handleChatAttachmentChange}
@@ -7889,13 +7415,6 @@ export default function WorkspacePage() {
           </div>
         </div>
       )}
-      <PresentationModal
-        isOpen={isPresentationModalOpen}
-        draft={draftPresentationOptions}
-        onChange={handleDraftPresentationOptionChange}
-        onClose={handleClosePresentationModal}
-        onSave={handleSavePresentationOptions}
-      />
       <DrivePickerModal
         isOpen={isDrivePickerOpen}
         workspaceId={selectedWorkspace?.id}

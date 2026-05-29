@@ -1,4 +1,4 @@
-import { FileIcon, Globe2, MonitorPlay, Paperclip, Plus, Send, StopCircle, X } from 'lucide-react';
+import { FileIcon, Globe2, Paperclip, Plus, Send, StopCircle, X } from 'lucide-react';
 import { type ChangeEvent, type ClipboardEvent, type KeyboardEvent, type RefObject, type SyntheticEvent, useEffect, useRef, useState } from 'react';
 
 import type { File as WorkspaceFile } from '../../types';
@@ -25,9 +25,6 @@ export default function ChatInputArea({
   isStreaming,
   isPreparingAttachments,
   internetSearchEnabled,
-  showPaper2SlidesControls,
-  presentationStatus,
-  presentationOptionSummary,
   commandTags,
   isMentionOpen,
   mentionSuggestions,
@@ -43,7 +40,6 @@ export default function ChatInputArea({
   onOpenLocalAttachmentPicker,
   onToggleInternetSearch,
   onInsertSlashTrigger,
-  onOpenPresentationModal,
   onStopStreaming,
   onSendMessage,
   onChatAttachmentChange,
@@ -60,9 +56,6 @@ export default function ChatInputArea({
   isStreaming: boolean;
   isPreparingAttachments: boolean;
   internetSearchEnabled: boolean;
-  showPaper2SlidesControls: boolean;
-  presentationStatus: 'idle' | 'running' | 'success' | 'error';
-  presentationOptionSummary: string;
   commandTags: CommandTag[];
   isMentionOpen: boolean;
   mentionSuggestions: WorkspaceFile[];
@@ -78,7 +71,6 @@ export default function ChatInputArea({
   onOpenLocalAttachmentPicker: () => void;
   onToggleInternetSearch: () => void;
   onInsertSlashTrigger: () => void;
-  onOpenPresentationModal: () => void;
   onStopStreaming: () => void;
   onSendMessage: () => void;
   onChatAttachmentChange: (event: ChangeEvent<HTMLInputElement>) => void;
@@ -268,28 +260,6 @@ export default function ChatInputArea({
             >
               <Globe2 size={17} />
             </button>
-            {showPaper2SlidesControls && (
-              <>
-                <div className={`mx-1 h-4 w-px ${isDarkMode ? 'bg-slate-700/80' : 'bg-slate-200'}`} aria-hidden="true" />
-                <button
-                  type="button"
-                  onClick={onOpenPresentationModal}
-                  className={`rounded-lg p-1.5 transition-all duration-200 ${
-                    presentationStatus === 'running'
-                      ? isDarkMode
-                        ? 'bg-sky-400/12 text-sky-100 ring-1 ring-sky-400/25'
-                        : 'bg-sky-50 text-sky-700 ring-1 ring-sky-200'
-                      : isDarkMode
-                        ? 'text-slate-400 hover:bg-slate-800 hover:text-sky-200'
-                        : 'text-slate-500 hover:bg-slate-100 hover:text-sky-700'
-                  }`}
-                  title={`Configure Paper2Slides: ${presentationOptionSummary || 'Options'}`}
-                  aria-label="Configure Paper2Slides"
-                >
-                  <MonitorPlay size={16} />
-                </button>
-              </>
-            )}
           </div>
           <div className="flex items-center gap-2">
             <span className={`mr-2 hidden text-[10px] font-medium sm:inline-block ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>

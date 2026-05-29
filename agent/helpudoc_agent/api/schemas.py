@@ -129,36 +129,6 @@ class RagStatusResponse(BaseModel):
     statuses: Dict[str, Any]
 
 
-class Paper2SlidesFile(BaseModel):
-    name: str
-    contentB64: str
-
-
-class Paper2SlidesOptions(BaseModel):
-    output: str | None = None
-    content: str | None = None
-    style: str | None = None
-    length: str | None = None
-    mode: str | None = None
-    parallel: int | bool | None = None
-    fromStage: str | None = None
-
-
-class Paper2SlidesImage(BaseModel):
-    name: str
-    contentB64: str
-
-
-class Paper2SlidesRunRequest(BaseModel):
-    files: List[Paper2SlidesFile]
-    options: Paper2SlidesOptions = Field(default_factory=Paper2SlidesOptions)
-
-
-class Paper2SlidesRunResponse(BaseModel):
-    pdfB64: str | None = None
-    images: List[Paper2SlidesImage] = []
-
-
 class EmbeddedDirective(BaseModel):
     kind: str
     skillId: Optional[str] = None

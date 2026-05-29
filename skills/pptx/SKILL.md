@@ -30,7 +30,7 @@ This skill prevents the agent from treating PowerPoint files as plain text and m
 2. Pick the supported path.
    - If there is a companion PDF, use the `pdf` skill for analysis.
    - If there is a text outline or markdown version, use that as the source of truth.
-   - If the task is about turning a PDF into slides, prefer the repo's paper-to-slides workflow rather than inspecting a PPTX binary.
+   - If the task is about turning a PDF into slides, prefer the `frontend-slides` skill rather than inspecting a PPTX binary.
 
 3. Handle unsupported direct-reading cases.
    - If the only source is a `.pptx` and the user wants exact content inspection, explain that the current runtime does not natively parse PowerPoint binaries through the standard file tools.

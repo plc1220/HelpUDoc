@@ -6,7 +6,6 @@ It currently includes:
 - authenticated workspace access
 - file browsing, editing, and rendering
 - streaming agent chat with approvals and interrupt actions
-- paper-to-slides job creation and export flow
 - settings pages for agent configuration, skills, users, and operations surfaces
 
 ## Prerequisites
@@ -61,8 +60,8 @@ npm run e2e
 | `src/pages/` | Thin route entry-points; the workspace route re-exports `features/workspace/WorkspacePage`. |
 | `src/features/` | Feature modules that own their components, hooks, and utilities. See the feature map below. |
 | `src/components/` | Cross-cutting/legacy components that have not yet been pulled into a feature module. Some sub-paths (`dashboard/`, `settings/`, `chat/approvalReview`, `chat/interruptActions`, `chat/chatTypes`) are kept as re-export shims pointing at `features/` and will be removed once consumers migrate. |
-| `src/services/` | API clients for workspaces, files, conversations, agent runs, paper-to-slides, settings, and auth-aware fetches. |
-| `src/constants/` | Shared UI constants such as slash commands and paper-to-slides presets. |
+| `src/services/` | API clients for workspaces, files, conversations, agent runs, settings, and auth-aware fetches. |
+| `src/constants/` | Shared UI constants such as slash commands. |
 | `src/utils/` | File, message, and rendering helpers. |
 
 ### Feature modules
@@ -71,11 +70,10 @@ npm run e2e
 | ------- | ---- | ---- |
 | Workspace | `src/features/workspace/` | `WorkspacePage` route component, workspace-path helpers (`utils/workspacePaths.ts`). |
 | Chat | `src/features/chat/` | Chat composer/interrupt contracts: `types.ts`, `interrupts/approvalReview.ts`, `interrupts/actions.ts`. |
-| Paper2Slides | `src/features/paper2slides/` | Presentation options modal and presentation option types. |
 | Dashboard | `src/features/dashboard/` | `DashboardCanvas`, `DashboardFilters`, and snapshot-download helper. |
 | Settings | `src/features/settings/` | Settings shell/scaffold and admin tabs (`AgentSettingsTabs`, `ToolsTab`, `SkillsRegistryTab`, `SkillEvolutionTab`). |
 
-Hook extraction and the full `ChatMessageBubble` split (tool events, interrupt card, artifact preview) are tracked as follow-up sub-PRs of PR 10 in `docs/repo-cicd-restructure-plan.md`.
+Hook extraction and the full `ChatMessageBubble` split (tool events, interrupt card, artifact preview) are tracked as follow-up cleanup work.
 
 ## Routing
 
@@ -111,15 +109,6 @@ The frontend talks to the backend's run APIs to support:
 - run cancellation and resume flows
 - slash-command metadata discovery
 - conversation history persistence
-
-### Paper-to-slides
-
-The workspace page also exposes the paper-to-slides workflow, including:
-
-- job creation
-- job polling
-- stage/status display
-- PDF/PPTX export handoff
 
 ### Settings and admin tools
 

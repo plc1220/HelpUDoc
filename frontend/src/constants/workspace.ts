@@ -1,12 +1,4 @@
-export const PAPER2SLIDES_STAGE_ORDER = ['rag', 'analysis', 'plan', 'generate'] as const;
-export const PAPER2SLIDES_STYLE_PRESETS = ['academic', 'doraemon', 'custom'] as const;
-
 export const SLASH_COMMANDS = [
-  {
-    id: 'presentation',
-    command: '/presentation',
-    description: 'Generate slides/posters from @files.',
-  },
   {
     id: 'skill',
     command: '/skill',

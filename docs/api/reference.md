@@ -496,51 +496,6 @@ NDJSON; keepalive `{"type":"keepalive"}`.
 
 **Body:** `{ "actionId", "text?" }`
 
-#### `POST /api/agent/presentation`
-
-Generate slides/poster (Paper2Slides pipeline with HTML agent fallback).
-
-**Body**
-
-```json
-{
-  "workspaceId": "required",
-  "fileIds": [1, 2],
-  "brief": "optional",
-  "persona": "optional",
-  "output": "slides" | "poster",
-  "content": "paper" | "general",
-  "style": "string",
-  "length": "short" | "medium" | "long",
-  "mode": "fast" | "normal",
-  "parallel": 1,
-  "fromStage": "rag" | "analysis" | "summary" | "plan" | "generate",
-  "exportPptx": false
-}
-```
-
-**Response `200`:** pipeline-specific (PDF paths, assets, or `{ "htmlPath": "..." }` on fallback).
-
-#### `POST /api/agent/paper2slides/jobs`
-
-Async job variant.
-
-**Body:** same as presentation (without requiring all presentation fields).
-
-**Response `200`:** `{ "jobId", "status", "createdAt" }`
-
-#### `GET /api/agent/paper2slides/jobs/:jobId`
-
-**Response `200`:** `{ "jobId", "status", "result", "error", "createdAt", "updatedAt" }`
-
-#### `POST /api/agent/paper2slides/export-pptx`
-
-**Body:** `{ "workspaceId", "fileId": number }`
-
-**Response `200`:** export result (PPTX location / base64 per service).
-
----
-
 #### Agent run request body
 
 Used by `POST /api/agent/run`, `/run-stream`, and `/runs`.
@@ -808,36 +763,6 @@ Structured interrupt button action.
 **Body:** `{ "files": ["relative/path1", "path2"] }`
 
 **Response `200`:** `{ "statuses": { "<path>": { "status", "updatedAt", "error" } } }`
-
-### Paper2slides
-
-#### `POST /paper2slides/run`
-
-**Body**
-
-```json
-{
-  "files": [{ "name": "paper.pdf", "contentB64": "..." }],
-  "options": {
-    "output": "slides",
-    "content": "paper",
-    "style": "string",
-    "length": "medium",
-    "mode": "normal",
-    "parallel": 1,
-    "fromStage": "rag",
-    "exportPptx": false
-  }
-}
-```
-
-**Response `200`:** `{ "pdfB64", "pptxB64", "images": [{ "name", "contentB64" }] }`
-
-#### `POST /paper2slides/export-pptx`
-
-**Body:** `{ "fileName": "deck.pdf", "contentB64": "..." }`
-
-**Response `200`:** `{ "pptxB64": "..." }`
 
 ### Attachments
 

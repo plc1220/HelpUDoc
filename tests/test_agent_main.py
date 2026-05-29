@@ -480,28 +480,22 @@ def _install_dependency_stubs():
         sys.modules["redis.asyncio"] = redis_asyncio
         redis_pkg.asyncio = redis_asyncio
 
-    if "paper2slides" not in sys.modules:
-        paper2slides_pkg = _ensure_module("paper2slides")
-    else:
-        paper2slides_pkg = sys.modules["paper2slides"]
-
-    if "paper2slides.raganything" not in sys.modules:
-        raganything_pkg = ModuleType("paper2slides.raganything")
+    if "raganything" not in sys.modules:
+        raganything_pkg = ModuleType("raganything")
         raganything_pkg.__dict__.setdefault("__path__", [])
-        sys.modules["paper2slides.raganything"] = raganything_pkg
-        paper2slides_pkg.raganything = raganything_pkg
+        sys.modules["raganything"] = raganything_pkg
     else:
-        raganything_pkg = sys.modules["paper2slides.raganything"]
+        raganything_pkg = sys.modules["raganything"]
 
-    if "paper2slides.raganything.parser" not in sys.modules:
-        rag_parser = ModuleType("paper2slides.raganything.parser")
+    if "raganything.parser" not in sys.modules:
+        rag_parser = ModuleType("raganything.parser")
 
         class _DoclingParser:
             def __init__(self, *_args, **_kwargs):
                 pass
 
         rag_parser.DoclingParser = _DoclingParser
-        sys.modules["paper2slides.raganything.parser"] = rag_parser
+        sys.modules["raganything.parser"] = rag_parser
         raganything_pkg.parser = rag_parser
 
 
@@ -515,9 +509,8 @@ def client_with_stubs(monkeypatch):
         "helpudoc_agent.runtime",
         "helpudoc_agent.runtime.agent_registry",
         "helpudoc_agent.tools_and_schemas",
-        "paper2slides",
-        "paper2slides.raganything",
-        "paper2slides.raganything.parser",
+        "raganything",
+        "raganything.parser",
     ]
     saved_modules = {name: sys.modules.pop(name, None) for name in module_names}
     client = None

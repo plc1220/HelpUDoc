@@ -9,15 +9,7 @@ const client = axios.create({
   baseURL: AGENT_URL,
 });
 
-const resolvePaper2SlidesTimeoutMs = (): number => {
-  const raw = process.env.PAPER2SLIDES_TIMEOUT_MS || process.env.PAPER2SLIDES_AGENT_TIMEOUT_MS || '';
-  if (!raw) return 30 * 60 * 1000; // 30 minutes
-  const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || parsed <= 0) return 30 * 60 * 1000;
-  return Math.floor(parsed);
-};
-
-const PAPER2SLIDES_TIMEOUT_MS = resolvePaper2SlidesTimeoutMs();
+const ATTACHMENT_UNDERSTANDING_TIMEOUT_MS = 30 * 60 * 1000;
 
 export type AgentHistoryEntry = {
   role: string;
@@ -264,43 +256,6 @@ export async function fetchRagStatuses(
   return res.data?.statuses || {};
 }
 
-export type Paper2SlidesFilePayload = {
-  name: string;
-  contentB64: string;
-};
-
-export type Paper2SlidesOptionsPayload = {
-  output?: 'slides' | 'poster';
-  content?: 'paper' | 'general';
-  style?: string;
-  length?: 'short' | 'medium' | 'long';
-  mode?: 'fast' | 'normal';
-  parallel?: number | boolean;
-  fromStage?: 'rag' | 'summary' | 'plan' | 'generate' | 'analysis';
-};
-
-export type Paper2SlidesImagePayload = {
-  name: string;
-  contentB64: string;
-};
-
-export type Paper2SlidesRunResponse = {
-  pdfB64?: string;
-  images: Paper2SlidesImagePayload[];
-};
-
-export async function runPaper2Slides(payload: {
-  files: Paper2SlidesFilePayload[];
-  options: Paper2SlidesOptionsPayload;
-}): Promise<Paper2SlidesRunResponse> {
-  const res = await client.post(`/paper2slides/run`, payload, {
-    maxContentLength: Infinity,
-    maxBodyLength: Infinity,
-    timeout: PAPER2SLIDES_TIMEOUT_MS,
-  });
-  return res.data;
-}
-
 export type InternalAnalyzeResponse = {
   text: string;
 };
@@ -377,7 +332,7 @@ export async function understandAttachment(
   const res = await client.post('/attachments/understand', payload, {
     maxContentLength: Infinity,
     maxBodyLength: Infinity,
-    timeout: PAPER2SLIDES_TIMEOUT_MS,
+    timeout: ATTACHMENT_UNDERSTANDING_TIMEOUT_MS,
   });
   return res.data;
 }

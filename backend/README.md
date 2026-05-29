@@ -6,7 +6,7 @@ The backend is an Express + TypeScript API for HelpUDoc. It handles:
 - workspace membership and collaborator management
 - file CRUD and preview access
 - knowledge source CRUD
-- agent run orchestration and paper-to-slides jobs
+- agent run orchestration
 - conversation history persistence
 - admin-only settings for agent config, skills, users, and skill-builder workflows
 - the live collaboration WebSocket server
@@ -123,9 +123,6 @@ This provisions PostgreSQL, Redis, and MinIO with the same defaults used by the 
 - `POST /api/agent/runs/:runId/decision`
 - `POST /api/agent/runs/:runId/respond`
 - `POST /api/agent/runs/:runId/act`
-- `POST /api/agent/paper2slides/jobs`
-- `GET /api/agent/paper2slides/jobs/:jobId`
-- `POST /api/agent/paper2slides/export-pptx`
 
 ### Admin settings
 

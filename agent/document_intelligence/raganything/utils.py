@@ -1,4 +1,4 @@
 """Compatibility bridge for raganything utils module."""
 
-from paper2slides.raganything.utils import *  # noqa: F403
+from raganything.utils import *  # noqa: F403
 

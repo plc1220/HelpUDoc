@@ -71,9 +71,6 @@ export default function AgentChatPane({
   interruptErrorByMessageId,
   chatMessage,
   chatAttachments,
-  showPaper2SlidesControls,
-  presentationStatus,
-  presentationOptionSummary,
   commandTags,
   isMentionOpen,
   mentionSuggestions,
@@ -119,7 +116,6 @@ export default function AgentChatPane({
   onOpenLocalAttachmentPicker,
   onToggleInternetSearch,
   onInsertSlashTrigger,
-  onOpenPresentationModal,
   onStopStreaming,
   onSendMessage,
   onChatAttachmentChange,
@@ -155,9 +151,6 @@ export default function AgentChatPane({
   interruptErrorByMessageId: Record<string, string>;
   chatMessage: string;
   chatAttachments: ChatComposerAttachment[];
-  showPaper2SlidesControls: boolean;
-  presentationStatus: 'idle' | 'running' | 'success' | 'error';
-  presentationOptionSummary: string;
   commandTags: CommandTag[];
   isMentionOpen: boolean;
   mentionSuggestions: WorkspaceFile[];
@@ -220,7 +213,6 @@ export default function AgentChatPane({
   onOpenLocalAttachmentPicker: () => void;
   onToggleInternetSearch: () => void;
   onInsertSlashTrigger: () => void;
-  onOpenPresentationModal: () => void;
   onStopStreaming: () => void;
   onSendMessage: () => void;
   onChatAttachmentChange: (event: ChangeEvent<HTMLInputElement>) => void;
@@ -313,9 +305,6 @@ export default function AgentChatPane({
           isStreaming={isStreaming}
           isPreparingAttachments={isPreparingAttachments}
           internetSearchEnabled={internetSearchEnabled}
-          showPaper2SlidesControls={showPaper2SlidesControls}
-          presentationStatus={presentationStatus}
-          presentationOptionSummary={presentationOptionSummary}
           commandTags={commandTags}
           isMentionOpen={isMentionOpen}
           mentionSuggestions={mentionSuggestions}
@@ -331,7 +320,6 @@ export default function AgentChatPane({
           onOpenLocalAttachmentPicker={onOpenLocalAttachmentPicker}
           onToggleInternetSearch={onToggleInternetSearch}
           onInsertSlashTrigger={onInsertSlashTrigger}
-          onOpenPresentationModal={onOpenPresentationModal}
           onStopStreaming={onStopStreaming}
           onSendMessage={onSendMessage}
           onChatAttachmentChange={onChatAttachmentChange}

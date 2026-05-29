@@ -6,7 +6,6 @@ It is responsible for:
 - general assistant chat and streaming responses
 - skill-aware execution using the repo's bundled `skills/` catalog
 - RAG status and query endpoints for workspace files
-- the `paper2slides` pipeline and PPTX export helpers
 - interrupt handling for human approvals, clarifications, and follow-up actions
 
 ## Layout
@@ -15,7 +14,6 @@ It is responsible for:
 | ---- | ------- |
 | `main.py` | FastAPI entry point used by local dev and Docker. |
 | `helpudoc_agent/` | App factory, runtime state, tool loading, MCP integration, JWT checks, and chat orchestration. |
-| `paper2slides/` | Multi-stage paper-to-slides pipeline and export utilities. |
 | `prompts/` | Prompt catalog for the general assistant and specialized prompt families. |
 | `config/runtime.yaml` | Runtime configuration for models, tools, MCP servers, and agent behavior. |
 | `docs/` | Supporting notes for image tools and internal agent workflows. |
@@ -80,22 +78,6 @@ Service URL: `http://localhost:8001`
 - `POST /rag/workspaces/{workspace_id}/query`
 - `POST /rag/workspaces/{workspace_id}/status`
 
-### Paper-to-slides
-
-- `POST /paper2slides/run`
-- `POST /paper2slides/export-pptx`
-
-## Paper-to-slides notes
-
-`paper2slides` is a staged pipeline that can:
-
-- ingest uploaded source files
-- run RAG-backed analysis
-- generate slide content and assets
-- return a PDF payload and optional PPTX export
-
-The frontend wraps this through backend job endpoints, while the agent service performs the actual generation work.
-
 ## Running with Docker Compose
 
 From the repo root:
@@ -107,7 +89,6 @@ docker compose -f infra/docker-compose.yml --env-file env/local/stack.env up --b
 ## Useful scripts
 
 - `scripts/start_agent.sh`: starts the agent in the background and writes logs to `logs/agent.log`
-- `scripts/test_paper2slides.sh`: exercises the paper-to-slides pipeline on a local input file
 
 ## Related docs
 
