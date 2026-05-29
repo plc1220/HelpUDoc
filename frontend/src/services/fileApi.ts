@@ -141,6 +141,20 @@ export const deleteFolder = async (workspaceId: string, folderPath: string) => {
   }
 };
 
+export const renameFolder = async (workspaceId: string, folderPath: string, name: string) => {
+  const response = await apiFetch(`${API_URL}/workspaces/${workspaceId}/files/folders`, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ path: folderPath, name }),
+  });
+  if (!response.ok) {
+    throw new Error('Failed to rename folder');
+  }
+  return response.json();
+};
+
 export const renameFile = async (
   workspaceId: string,
   fileId: string,

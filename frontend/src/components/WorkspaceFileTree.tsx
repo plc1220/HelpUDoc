@@ -14,7 +14,6 @@ import type { DashboardArtifactInfo, File as WorkspaceFile } from '../types';
 import { getFileDisplayName, getFileTypeIcon } from '../utils/files';
 import {
   buildWorkspaceFileTree,
-  collectWorkspaceFolderPaths,
   getWorkspaceAncestorFolderPaths,
   type WorkspaceFileTreeFolderNode,
   type WorkspaceFileTreeLeafNode,
@@ -86,6 +85,7 @@ interface WorkspaceFileTreeProps {
   onToggleFileSelection: (fileId: string) => void;
   onCopyPublicUrl: (file: WorkspaceFile) => void;
   onRenameFile: (file: WorkspaceFile) => void;
+  onRenameFolder: (folder: WorkspaceFileTreeFolderNode) => void;
   onDeleteFile: (file: WorkspaceFile) => void;
   onDeleteFolder: (folder: WorkspaceFileTreeFolderNode) => void;
   onMoveFiles: (files: WorkspaceFile[], destinationFolderPath: string) => void;
@@ -420,6 +420,7 @@ const TreeFolderRow: React.FC<{
   dashboardArtifact?: DashboardArtifactInfo;
   onSelectFolder?: (folderPath: string) => void;
   onToggle: (folderPath: string) => void;
+  onRenameFolder: (folder: WorkspaceFileTreeFolderNode) => void;
   onDeleteFolder: (folder: WorkspaceFileTreeFolderNode) => void;
   onDropFilesToFolder: (fileId: string, folderPath: string) => void;
   draggedFileIdRef: React.RefObject<string | null>;
@@ -433,6 +434,7 @@ const TreeFolderRow: React.FC<{
   dashboardArtifact,
   onSelectFolder,
   onToggle,
+  onRenameFolder,
   onDeleteFolder,
   onDropFilesToFolder,
   draggedFileIdRef,
@@ -546,6 +548,22 @@ const TreeFolderRow: React.FC<{
           type="button"
           onClick={(event) => {
             event.stopPropagation();
+            onRenameFolder(node);
+          }}
+          className={`rounded p-1.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 ${
+            isDarkMode
+              ? 'text-slate-400 hover:bg-slate-700/70 hover:text-slate-100'
+              : 'text-slate-500 hover:bg-slate-200 hover:text-slate-700'
+          }`}
+          title={`Rename folder ${node.path}`}
+          aria-label={`Rename folder ${node.path}`}
+        >
+          <Edit size={14} />
+        </button>
+        <button
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation();
             onDeleteFolder(node);
           }}
           className={`rounded p-1.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 ${
@@ -580,6 +598,7 @@ const renderTreeNodes = (
     onCopyPublicUrl: (file: WorkspaceFile) => void;
     copiedPublicUrlFileId: string | null;
     onRenameFile: (file: WorkspaceFile) => void;
+    onRenameFolder: (folder: WorkspaceFileTreeFolderNode) => void;
     onDeleteFile: (file: WorkspaceFile) => void;
     onDeleteFolder: (folder: WorkspaceFileTreeFolderNode) => void;
     onToggleFolder: (folderPath: string) => void;
@@ -603,6 +622,7 @@ const renderTreeNodes = (
           dashboardArtifact={getDashboardArtifactForFolderPath(options.dashboardArtifactsByPath, node.path)}
           onSelectFolder={options.onSelectFolder}
           onToggle={options.onToggleFolder}
+          onRenameFolder={options.onRenameFolder}
           onDeleteFolder={options.onDeleteFolder}
           onDropFilesToFolder={options.onDropFilesToFolder}
           draggedFileIdRef={options.draggedFileIdRef}
@@ -657,27 +677,19 @@ export default function WorkspaceFileTree({
   onCopyPublicUrl,
   copiedPublicUrlFileId,
   onRenameFile,
+  onRenameFolder,
   onDeleteFile,
   onDeleteFolder,
   onMoveFiles,
 }: WorkspaceFileTreeProps) {
   const isDarkMode = colorMode === 'dark';
   const tree = useMemo(() => buildWorkspaceFileTree(files, explicitFolderPaths), [files, explicitFolderPaths]);
-  const folderPaths = useMemo(() => collectWorkspaceFolderPaths(tree), [tree]);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   const [draggedFileId, setDraggedFileId] = useState<string | null>(null);
   const draggedFileIdRef = useRef<string | null>(null);
   const [dropTargetPath, setDropTargetPath] = useState<string | null>(null);
-  const [hasInitializedExpandedFolders, setHasInitializedExpandedFolders] = useState(false);
 
   const fileById = useMemo(() => new Map(files.map((file) => [String(file.id), file])), [files]);
-
-  useEffect(() => {
-    if (!hasInitializedExpandedFolders && folderPaths.length > 0) {
-      setExpandedFolders(new Set(folderPaths));
-      setHasInitializedExpandedFolders(true);
-    }
-  }, [folderPaths, hasInitializedExpandedFolders]);
 
   useEffect(() => {
     if (!selectedFileId) {
@@ -806,6 +818,7 @@ export default function WorkspaceFileTree({
               onCopyPublicUrl,
               copiedPublicUrlFileId,
               onRenameFile,
+              onRenameFolder,
               onDeleteFile,
               onDeleteFolder,
               onToggleFolder: handleToggleFolder,

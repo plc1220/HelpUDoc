@@ -673,6 +673,173 @@ export class FileService {
     }
   }
 
+  async renameFolder(workspaceId: string, folderPath: string, nextFolderName: string, userId: string) {
+    await this.workspaceService.ensureMembership(workspaceId, userId, { requireEdit: true });
+
+    const normalizedFolder = this.normalizeRelativeFolderPath(folderPath);
+    if (!normalizedFolder) {
+      throw new ConflictError('Folder path is required');
+    }
+    if (this.isInternalWorkspacePath(normalizedFolder)) {
+      throw new ConflictError('System workspace paths are reserved');
+    }
+
+    const normalizedName = this.normalizeRelativeFolderPath(nextFolderName);
+    const nameParts = normalizedName.split('/').filter(Boolean);
+    if (nameParts.length !== 1) {
+      throw new ConflictError('Folder name cannot contain path separators');
+    }
+
+    const parentPath = path.posix.dirname(normalizedFolder);
+    const destinationFolder = parentPath === '.'
+      ? normalizedName
+      : path.posix.join(parentPath, normalizedName);
+    if (destinationFolder === normalizedFolder) {
+      return { path: destinationFolder, files: [] };
+    }
+    if (this.isInternalWorkspacePath(destinationFolder)) {
+      throw new ConflictError('System workspace paths are reserved');
+    }
+
+    const workspaceRoot = path.resolve(WORKSPACE_DIR, workspaceId);
+    const absoluteFolderPath = path.resolve(workspaceRoot, normalizedFolder);
+    const absoluteDestinationPath = path.resolve(workspaceRoot, destinationFolder);
+    if (
+      !absoluteFolderPath.startsWith(`${workspaceRoot}${path.sep}`)
+      || !absoluteDestinationPath.startsWith(`${workspaceRoot}${path.sep}`)
+    ) {
+      throw new ConflictError('Invalid folder path');
+    }
+
+    const sourcePrefix = `${normalizedFolder}/`;
+    const destinationPrefix = `${destinationFolder}/`;
+    const existingDestinationFiles = await this.db('files')
+      .where({ workspaceId })
+      .andWhere((query) => {
+        query.where('name', destinationFolder).orWhere('name', 'like', `${destinationPrefix}%`);
+      });
+    if (existingDestinationFiles.length) {
+      throw new ConflictError('A folder or file already exists at the destination');
+    }
+
+    try {
+      await fs.access(absoluteDestinationPath);
+      throw new ConflictError('A folder already exists at the destination');
+    } catch (error: any) {
+      if (error instanceof ConflictError) {
+        throw error;
+      }
+      if (error?.code !== 'ENOENT') {
+        throw error;
+      }
+    }
+
+    const filesInFolder = await this.db('files')
+      .where({ workspaceId })
+      .andWhere((query) => {
+        query.where('name', normalizedFolder).orWhere('name', 'like', `${sourcePrefix}%`);
+      });
+
+    let renamedLocalDirectory = false;
+    try {
+      await fs.mkdir(path.dirname(absoluteDestinationPath), { recursive: true });
+      await fs.rename(absoluteFolderPath, absoluteDestinationPath);
+      renamedLocalDirectory = true;
+    } catch (error: any) {
+      if (error?.code !== 'ENOENT') {
+        console.error('Failed to rename folder on disk:', error);
+        throw error;
+      }
+      if (!filesInFolder.length) {
+        throw new NotFoundError('Folder not found');
+      }
+    }
+
+    const renamedIds: number[] = [];
+    for (const file of filesInFolder) {
+      const currentRelativePath = this.normalizeRelativePath(file.name);
+      const destinationRelativePath = currentRelativePath === normalizedFolder
+        ? destinationFolder
+        : `${destinationPrefix}${currentRelativePath.slice(sourcePrefix.length)}`;
+      const wasDirectRagIndexable = this.shouldEnqueueDirectRagIndex(currentRelativePath);
+      const isDestinationDirectRagIndexable = this.shouldEnqueueDirectRagIndex(destinationRelativePath);
+
+      if (file.storageType === 'local') {
+        const newPath = this.getLocalPath(workspaceId, destinationRelativePath);
+        if (!renamedLocalDirectory) {
+          await fs.mkdir(path.dirname(newPath), { recursive: true });
+          await fs.rename(this.getLocalPath(workspaceId, currentRelativePath), newPath);
+        }
+        await this.db('files').where({ id: file.id }).update({
+          name: destinationRelativePath,
+          path: newPath,
+          updatedBy: userId,
+          updatedAt: this.db.fn.now(),
+          version: this.assertVersion(file.version) + 1,
+        });
+      } else {
+        const currentKey = file.path.replace(/\\/g, '/');
+        const newKey = normalizeS3Key(workspaceId, destinationRelativePath);
+        const newLocalPath = this.getLocalPath(workspaceId, destinationRelativePath);
+        await this.s3Service.copyFile(currentKey, newKey);
+        await this.s3Service.deleteFile(currentKey);
+        if (!renamedLocalDirectory) {
+          try {
+            await fs.mkdir(path.dirname(newLocalPath), { recursive: true });
+            await fs.rename(this.getLocalPath(workspaceId, currentRelativePath), newLocalPath);
+          } catch (error: any) {
+            if (error?.code !== 'ENOENT') {
+              console.error('Failed to rename local copy of S3 file:', error);
+            }
+          }
+        }
+        await this.db('files').where({ id: file.id }).update({
+          name: destinationRelativePath,
+          path: newKey,
+          publicUrl: this.s3Service.getPublicUrl(newKey),
+          updatedBy: userId,
+          updatedAt: this.db.fn.now(),
+          version: this.assertVersion(file.version) + 1,
+        });
+      }
+
+      renamedIds.push(file.id);
+
+      if (wasDirectRagIndexable) {
+        try {
+          await this.ragQueueService?.enqueueFileDelete({
+            workspaceId,
+            relativePath: currentRelativePath,
+          });
+        } catch (error) {
+          console.error('Failed to enqueue RAG delete job after folder rename', error);
+        }
+      }
+
+      if (isDestinationDirectRagIndexable) {
+        try {
+          await this.ragQueueService?.enqueueFileUpsert({
+            workspaceId,
+            fileId: file.id,
+            relativePath: destinationRelativePath,
+            mimeType: file.mimeType ?? null,
+            storageType: file.storageType,
+            publicUrl: file.storageType === 's3' ? this.s3Service.getPublicUrl(normalizeS3Key(workspaceId, destinationRelativePath)) : null,
+          });
+        } catch (error) {
+          console.error('Failed to enqueue RAG upsert job after folder rename', error);
+        }
+      }
+    }
+
+    await this.workspaceService.touchWorkspace(workspaceId, userId);
+
+    const files = renamedIds.length
+      ? await this.db('files').whereIn('id', renamedIds)
+      : [];
+    return { path: destinationFolder, files };
+  }
+
   async renameFile(
     fileId: number,
     target: { name?: string; path?: string },

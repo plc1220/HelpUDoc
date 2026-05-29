@@ -64,6 +64,11 @@ export default function(
     path: z.string().min(1),
   });
 
+  const renameFolderSchema = z.object({
+    path: z.string().min(1),
+    name: z.string().min(1),
+  });
+
   const uploadFileSchema = z.object({
     path: z.string().min(1).optional(),
   });
@@ -389,6 +394,21 @@ export default function(
         return res.status(400).json({ error: 'Invalid folder delete payload' });
       }
       handleError(res, error, 'Failed to delete folder');
+    }
+  });
+
+  router.patch('/folders', async (req: Request<{ workspaceId: string }>, res: Response) => {
+    try {
+      const { workspaceId } = req.params;
+      const user = requireUserContext(req);
+      const payload = renameFolderSchema.parse(req.body);
+      const renamedFolder = await fileService.renameFolder(workspaceId, payload.path, payload.name, user.userId);
+      res.json(renamedFolder);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: 'Invalid folder rename payload' });
+      }
+      handleError(res, error, 'Failed to rename folder');
     }
   });
 

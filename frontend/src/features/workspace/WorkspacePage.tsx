@@ -23,6 +23,7 @@ import {
   deleteFolder,
   deleteFile,
   getFileContent,
+  renameFolder,
   renameFile,
   getRagStatuses,
   resolveFileContextRefs,
@@ -229,6 +230,17 @@ const addFolderPath = (paths: string[], folderPath: string) => {
   return Array.from(next).sort((left, right) => left.localeCompare(right, undefined, { numeric: true, sensitivity: 'base' }));
 };
 
+const replaceFolderPathPrefix = (value: string, sourceFolder: string, destinationFolder: string) => {
+  if (value === sourceFolder) {
+    return destinationFolder;
+  }
+  const sourcePrefix = `${sourceFolder}/`;
+  if (value.startsWith(sourcePrefix)) {
+    return `${destinationFolder}/${value.slice(sourcePrefix.length)}`;
+  }
+  return value;
+};
+
 const getUploadRelativePath = (file: File) => {
   const relativePath = file.webkitRelativePath || file.name;
   return normalizeFilePath(relativePath).replace(/^\/+/, '');
@@ -255,6 +267,7 @@ const DEFAULT_PERSONAS: AgentPersona[] = [
 const LANDING_PERSONA_ORDER = ['lite', 'fast', 'pro'];
 type WorkspaceFileDialogState =
   | { kind: 'create-folder'; value: string; busy: boolean; error?: string }
+  | { kind: 'rename-folder'; folder: { path: string; name: string; fileCount: number }; value: string; busy: boolean; error?: string }
   | { kind: 'rename-file'; file: WorkspaceFile; value: string; busy: boolean; error?: string }
   | { kind: 'delete-file'; file: WorkspaceFile; busy: boolean; error?: string }
   | { kind: 'delete-folder'; folder: { path: string; fileCount: number }; busy: boolean; error?: string }
@@ -1606,6 +1619,11 @@ export default function WorkspacePage() {
   const handleRenameFile = async (file: WorkspaceFile) => {
     if (!selectedWorkspace) return;
     setWorkspaceFileDialog({ kind: 'rename-file', file, value: file.name, busy: false });
+  };
+
+  const handleRenameFolder = async (folder: { path: string; name: string; fileCount: number }) => {
+    if (!selectedWorkspace || !folder.path) return;
+    setWorkspaceFileDialog({ kind: 'rename-folder', folder, value: folder.name, busy: false });
   };
 
   const handleMoveFiles = async (filesToMove: WorkspaceFile[], destinationFolderPath: string) => {
@@ -6335,7 +6353,7 @@ export default function WorkspacePage() {
 
   const handleWorkspaceFileDialogValueChange = (value: string) => {
     setWorkspaceFileDialog((current) =>
-      current?.kind === 'create-folder' || current?.kind === 'rename-file'
+      current?.kind === 'create-folder' || current?.kind === 'rename-folder' || current?.kind === 'rename-file'
         ? { ...current, value, error: undefined }
         : current,
     );
@@ -6360,6 +6378,56 @@ export default function WorkspacePage() {
         const created = await createFolder(selectedWorkspace.id, normalizedFolder);
         const createdPath = typeof created?.path === 'string' ? created.path : normalizedFolder;
         setFolderPaths((prev) => addFolderPath(prev, createdPath));
+        setWorkspaceFileDialog(null);
+        return;
+      }
+
+      if (currentDialog.kind === 'rename-folder') {
+        const proposedName = currentDialog.value.trim();
+        const normalizedName = normalizeWorkspaceFolderPath(proposedName);
+        if (!normalizedName) {
+          setWorkspaceFileDialog({ ...currentDialog, busy: false, error: 'Enter a folder name.' });
+          return;
+        }
+        if (normalizedName.split('/').length !== 1) {
+          setWorkspaceFileDialog({ ...currentDialog, busy: false, error: 'Folder name cannot contain slashes.' });
+          return;
+        }
+        if (normalizedName === currentDialog.folder.name) {
+          setWorkspaceFileDialog(null);
+          return;
+        }
+
+        const sourceFolder = currentDialog.folder.path;
+        const parentFolder = getWorkspaceParentFolderPath(sourceFolder);
+        const destinationFolder = parentFolder ? `${parentFolder}/${normalizedName}` : normalizedName;
+        const renamed = await renameFolder(selectedWorkspace.id, sourceFolder, normalizedName);
+        const updatedFiles = Array.isArray(renamed?.files) ? renamed.files as WorkspaceFile[] : [];
+        const updatedFilesById = new Map(updatedFiles.map((file) => [String(file.id), file]));
+        const renameFilePath = (file: WorkspaceFile): WorkspaceFile => {
+          const serverFile = updatedFilesById.get(String(file.id));
+          if (serverFile) {
+            return { ...file, ...serverFile, content: serverFile.content ?? file.content };
+          }
+          const fileName = file.name || '';
+          const nextName = replaceFolderPathPrefix(fileName, sourceFolder, destinationFolder);
+          return nextName === fileName ? file : { ...file, name: nextName };
+        };
+
+        setFiles((prev) => prev.map(renameFilePath));
+        setSelectedFile((prev) => (prev ? renameFilePath(prev) : prev));
+        setSelectedFileDetails((prev) => (prev ? renameFilePath(prev) : prev));
+        setFolderPaths((prev) => Array.from(new Set(
+          prev.map((path) => replaceFolderPathPrefix(path, sourceFolder, destinationFolder)),
+        )).sort((left, right) => left.localeCompare(right, undefined, { numeric: true, sensitivity: 'base' })));
+        setRagStatuses((prev) => {
+          const next: typeof prev = {};
+          Object.entries(prev).forEach(([fileName, status]) => {
+            next[replaceFolderPathPrefix(fileName, sourceFolder, destinationFolder)] = status;
+          });
+          return next;
+        });
+        setSelectedDashboardPath((prev) => (prev ? replaceFolderPathPrefix(prev, sourceFolder, destinationFolder) : prev));
         setWorkspaceFileDialog(null);
         return;
       }
@@ -7398,6 +7466,7 @@ export default function WorkspacePage() {
                         onToggleFileSelection={handleFileSelect}
                         onCopyPublicUrl={handleCopyFilePublicUrl}
                         onRenameFile={handleRenameFile}
+                        onRenameFolder={handleRenameFolder}
                         onDeleteFile={handleDeleteSingleFile}
                         onDeleteFolder={handleDeleteFolder}
                         onMoveFiles={handleMoveFiles}
@@ -7726,6 +7795,8 @@ export default function WorkspacePage() {
             <h2 id="workspace-file-dialog-title" className="text-lg font-semibold">
               {workspaceFileDialog.kind === 'create-folder'
                 ? 'Create folder'
+                : workspaceFileDialog.kind === 'rename-folder'
+                  ? 'Rename folder'
                 : workspaceFileDialog.kind === 'rename-file'
                   ? 'Rename file'
                 : workspaceFileDialog.kind === 'delete-file'
@@ -7735,10 +7806,10 @@ export default function WorkspacePage() {
                     : 'Delete selected files'}
             </h2>
             <div className={`mt-3 text-sm ${isDarkMode ? 'text-slate-300' : 'text-slate-600'}`}>
-              {workspaceFileDialog.kind === 'create-folder' || workspaceFileDialog.kind === 'rename-file' ? (
+              {workspaceFileDialog.kind === 'create-folder' || workspaceFileDialog.kind === 'rename-folder' || workspaceFileDialog.kind === 'rename-file' ? (
                 <label className="block">
                   <span className="sr-only">
-                    {workspaceFileDialog.kind === 'create-folder' ? 'Folder name' : 'File name'}
+                    {workspaceFileDialog.kind === 'rename-file' ? 'File name' : 'Folder name'}
                   </span>
                   <input
                     type="text"
@@ -7752,12 +7823,12 @@ export default function WorkspacePage() {
                       }
                     }}
                     disabled={workspaceFileDialog.busy}
-                    placeholder={workspaceFileDialog.kind === 'create-folder' ? 'Folder name' : 'File name'}
                     className={`mt-1 h-10 w-full rounded-lg border px-3 text-sm outline-none transition focus:ring-2 ${
                       isDarkMode
                         ? 'border-slate-700 bg-slate-900 text-slate-100 placeholder:text-slate-500 focus:border-sky-500 focus:ring-sky-500/30'
                         : 'border-slate-300 bg-white text-slate-950 placeholder:text-slate-400 focus:border-blue-500 focus:ring-blue-500/20'
                     }`}
+                    placeholder={workspaceFileDialog.kind === 'rename-file' ? 'File name' : 'Folder name'}
                   />
                 </label>
               ) : workspaceFileDialog.kind === 'delete-file' ? (
@@ -7798,6 +7869,8 @@ export default function WorkspacePage() {
                 className={`inline-flex h-9 items-center justify-center gap-2 rounded-lg px-4 text-sm font-medium text-white disabled:opacity-50 ${
                   workspaceFileDialog.kind === 'create-folder'
                     ? 'bg-blue-600 hover:bg-blue-700'
+                    : workspaceFileDialog.kind === 'rename-folder'
+                      ? 'bg-blue-600 hover:bg-blue-700'
                     : workspaceFileDialog.kind === 'rename-file'
                       ? 'bg-blue-600 hover:bg-blue-700'
                     : 'bg-rose-600 hover:bg-rose-700'
@@ -7806,6 +7879,8 @@ export default function WorkspacePage() {
                 {workspaceFileDialog.busy && <Loader2 size={15} className="animate-spin" />}
                 {workspaceFileDialog.kind === 'create-folder'
                   ? 'Create'
+                  : workspaceFileDialog.kind === 'rename-folder'
+                    ? 'Rename'
                   : workspaceFileDialog.kind === 'rename-file'
                     ? 'Rename'
                     : 'Delete'}
