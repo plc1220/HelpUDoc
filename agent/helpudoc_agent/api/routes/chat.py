@@ -372,31 +372,6 @@ def register_chat_routes(
             )
         return normalized
 
-    def _load_mineru_text(workspace_id: str, tagged_paths: List[str]) -> str | None:
-        output_root = rag_worker.store.config.raganything_output_dir
-        for raw in tagged_paths:
-            if not raw:
-                continue
-            name = Path(raw).name
-            base = name
-            if base.lower().endswith(".pdf"):
-                base = base[:-4]
-            candidates = [
-                output_root / workspace_id / base / "docling" / f"{base}.md",
-                output_root / workspace_id / base / "auto" / f"{base}.md",
-            ]
-            for md_path in candidates:
-                if not md_path.exists():
-                    continue
-                try:
-                    text = md_path.read_text(encoding="utf-8", errors="replace").strip()
-                except Exception:
-                    logger.exception("Failed reading parser markdown: %s", md_path)
-                    continue
-                if text:
-                    return text
-        return None
-
     def _load_tagged_html_outline(workspace_id: str, tagged_paths: List[str]) -> str | None:
         workspace_root = Path(settings.backend.workspace_root).resolve() / workspace_id
         for raw in tagged_paths:
@@ -497,11 +472,6 @@ def register_chat_routes(
                     compressed = _compress_tagged_context_lines(lines)
                     if compressed:
                         return compressed
-            mineru_text = _load_mineru_text(workspace_id, rag_tagged_paths)
-            if mineru_text:
-                compressed = _compress_tagged_context_lines([mineru_text])
-                if compressed:
-                    return compressed
             html_outline = _load_tagged_html_outline(workspace_id, rag_tagged_paths)
             if html_outline:
                 return html_outline

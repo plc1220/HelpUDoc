@@ -199,7 +199,7 @@ export class DerivedArtifactService {
 
   logDiagnostics() {
     const understandingMode = (process.env.FILE_UNDERSTANDING_MODE || 'part-first').trim() || 'part-first';
-    const parserPipeline = (process.env.RAG_PARSER_PIPELINE || 'raganything').trim() || 'raganything';
+    const parserPipeline = (process.env.RAG_PARSER_PIPELINE || 'docling').trim() || 'docling';
     const parserMode = (
       process.env.PARSER_ENRICHMENT_MODE
       || process.env.RAGANYTHING_PARSER

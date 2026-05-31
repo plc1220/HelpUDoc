@@ -76,6 +76,20 @@ type StreamArgs = {
   debug?: boolean;
 };
 
+const INTERNAL_STREAM_CONTENT_PATTERNS = [
+  /^PLAN_(APPROVAL|EDIT|REJECTION|REJECT|CLARIFICATION|ACTION)_[A-Z_]+/i,
+  /^Command\s*\(/i,
+  /^\(\s*\{\s*['"]event['"]\s*:\s*['"]message-start['"]/i,
+  /^\(\s*\{\s*['"]event['"]\s*:\s*['"]message-(?:delta|end)['"]/i,
+  /^\{\s*['"]event['"]\s*:\s*['"]message-(?:start|delta|end)['"]/i,
+];
+
+export const isInternalStreamContent = (value: string): boolean => {
+  const normalized = value.trim();
+  if (!normalized) return false;
+  return INTERNAL_STREAM_CONTENT_PATTERNS.some((pattern) => pattern.test(normalized));
+};
+
 const coerceStreamContent = (value: unknown, stringifyObjects = false): string => {
   if (value === undefined || value === null) return '';
   if (typeof value === 'string') return value;
@@ -98,12 +112,24 @@ const coerceStreamContent = (value: unknown, stringifyObjects = false): string =
 
 const normalizeAgentStreamChunk = (chunk: unknown): AgentStreamChunk & { id?: unknown } => {
   if (!chunk || typeof chunk !== 'object') {
-    return { type: 'chunk', content: coerceStreamContent(chunk), role: 'assistant' };
+    const content = coerceStreamContent(chunk);
+    const suppress = isInternalStreamContent(content);
+    return {
+      type: 'chunk',
+      content: suppress ? '' : content,
+      role: 'assistant',
+      ...(suppress ? { __suppressInternalStream: true } : {}),
+    };
   }
   const next = { ...(chunk as Record<string, unknown>) };
   if ('content' in next) {
     const type = typeof next.type === 'string' ? next.type : '';
-    next.content = coerceStreamContent(next.content, type.startsWith('tool_'));
+    const content = coerceStreamContent(next.content, type.startsWith('tool_'));
+    const suppress = (type === 'token' || type === 'chunk') && isInternalStreamContent(content);
+    next.content = suppress ? '' : content;
+    if (suppress) {
+      next.__suppressInternalStream = true;
+    }
   }
   if (typeof next.message !== 'string' && next.message !== undefined && next.type === 'error') {
     next.message = coerceStreamContent(next.message, true);
@@ -161,6 +187,29 @@ export const streamAgentRunWithReconnect = async ({
       let buffer = '';
       let sawChunk = false;
       let sawTerminalChunk = false;
+      let suppressInternalAssistantContent = false;
+
+      const emitNormalizedChunk = (chunk: AgentStreamChunk & { id?: unknown }) => {
+        const isAssistantTextChunk =
+          (chunk.type === 'token' || chunk.type === 'chunk') &&
+          (!chunk.role || chunk.role === 'assistant');
+        const content = isAssistantTextChunk && typeof chunk.content === 'string' ? chunk.content : '';
+        const suppressMarker = (chunk as Record<string, unknown>).__suppressInternalStream === true;
+
+        if (isAssistantTextChunk && (suppressMarker || isInternalStreamContent(content) || suppressInternalAssistantContent)) {
+          suppressInternalAssistantContent = true;
+          const cleanChunk = { ...(chunk as Record<string, unknown>) };
+          delete cleanChunk.__suppressInternalStream;
+          cleanChunk.content = '';
+          onChunkWithResume(cleanChunk as AgentStreamChunk & { id?: unknown });
+          return;
+        }
+
+        if (chunk.type !== 'token' && chunk.type !== 'chunk') {
+          suppressInternalAssistantContent = false;
+        }
+        onChunkWithResume(chunk);
+      };
 
       while (true) {
         const { value, done } = await reader.read();
@@ -176,7 +225,7 @@ export const streamAgentRunWithReconnect = async ({
           if (line) {
             try {
               const chunk = normalizeAgentStreamChunk(JSON.parse(line));
-              onChunkWithResume(chunk);
+              emitNormalizedChunk(chunk);
               sawChunk = true;
               if (chunk?.type === 'done') {
                 sawTerminalChunk = true;
@@ -201,7 +250,7 @@ export const streamAgentRunWithReconnect = async ({
       if (!sawTerminalChunk && buffer.trim()) {
         try {
           const chunk = normalizeAgentStreamChunk(JSON.parse(buffer.trim()));
-          onChunkWithResume(chunk);
+          emitNormalizedChunk(chunk);
           sawChunk = true;
           if (chunk?.type === 'done') {
             sawTerminalChunk = true;

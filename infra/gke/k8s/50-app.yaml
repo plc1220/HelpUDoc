@@ -308,7 +308,7 @@ spec:
             - name: AGENT_CONFIG_PATH
               value: /agent/config/runtime.yaml
             - name: RAG_PARSER_PIPELINE
-              value: raganything
+              value: docling
             - name: RAGANYTHING_PARSER
               value: docling
             - name: PARSER_ENRICHMENT_MODE

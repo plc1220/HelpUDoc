@@ -5,7 +5,7 @@ WORKDIR /app
 ARG PYTORCH_CPU_INDEX_URL=https://download.pytorch.org/whl/cpu
 ARG PYPI_INDEX_URL=https://pypi.org/simple
 
-# System libs required by mineru/opencv for RAGAnything parsing
+# System libs used by Docling/PyMuPDF and image-capable document parsing.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
     libxcb1 \

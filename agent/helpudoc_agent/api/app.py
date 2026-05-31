@@ -60,7 +60,7 @@ def create_app() -> FastAPI:
     print(workspace_root_message)
     logger.info(workspace_root_message)
     file_understanding_mode = (os.getenv("FILE_UNDERSTANDING_MODE", "part-first") or "part-first").strip()
-    rag_parser_pipeline = (os.getenv("RAG_PARSER_PIPELINE", "raganything") or "raganything").strip().lower()
+    rag_parser_pipeline = (os.getenv("RAG_PARSER_PIPELINE", "docling") or "docling").strip().lower()
     raganything_parser = (os.getenv("RAGANYTHING_PARSER", "docling") or "docling").strip().lower()
     parser_enrichment_mode = (
         os.getenv("PARSER_ENRICHMENT_MODE") or os.getenv("PARSER") or raganything_parser

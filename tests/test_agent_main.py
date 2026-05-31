@@ -541,24 +541,6 @@ def _install_dependency_stubs():
         sys.modules["redis.asyncio"] = redis_asyncio
         redis_pkg.asyncio = redis_asyncio
 
-    if "raganything" not in sys.modules:
-        raganything_pkg = ModuleType("raganything")
-        raganything_pkg.__dict__.setdefault("__path__", [])
-        sys.modules["raganything"] = raganything_pkg
-    else:
-        raganything_pkg = sys.modules["raganything"]
-
-    if "raganything.parser" not in sys.modules:
-        rag_parser = ModuleType("raganything.parser")
-
-        class _DoclingParser:
-            def __init__(self, *_args, **_kwargs):
-                pass
-
-        rag_parser.DoclingParser = _DoclingParser
-        sys.modules["raganything.parser"] = rag_parser
-        raganything_pkg.parser = rag_parser
-
 
 @pytest.fixture
 def client_with_stubs(monkeypatch):
@@ -570,15 +552,12 @@ def client_with_stubs(monkeypatch):
         "helpudoc_agent.runtime",
         "helpudoc_agent.runtime.agent_registry",
         "helpudoc_agent.tools_and_schemas",
-        "raganything",
-        "raganything.parser",
     ]
     saved_modules = {name: sys.modules.pop(name, None) for name in module_names}
     client = None
     try:
         _install_dependency_stubs()
         monkeypatch.setenv("RAG_PARSER_PIPELINE", "stub")
-        monkeypatch.setenv("RAGANYTHING_PARSER", "stub")
         monkeypatch.setenv("PARSER_ENRICHMENT_MODE", "stub")
 
         runtime_pkg = ModuleType("helpudoc_agent.runtime")
@@ -1050,7 +1029,6 @@ def test_skill_contract_endpoint_reports_loaded_dashboard_policy(monkeypatch, tm
     try:
         _install_dependency_stubs()
         monkeypatch.setenv("RAG_PARSER_PIPELINE", "stub")
-        monkeypatch.setenv("RAGANYTHING_PARSER", "stub")
         monkeypatch.setenv("PARSER_ENRICHMENT_MODE", "stub")
 
         runtime_pkg = ModuleType("helpudoc_agent.runtime")

@@ -11,6 +11,7 @@ langchain-google-vertexai==3.2.3
 deepagents[quickjs]==0.6.7
 langchain-mcp-adapters==0.2.2
 langgraph-checkpoint-postgres>=3.0.5
+lightrag-hku[api]==1.4.14
 psycopg[binary]>=3.3.0
 python-dotenv
 pydantic

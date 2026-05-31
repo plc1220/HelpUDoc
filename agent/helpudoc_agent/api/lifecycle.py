@@ -35,20 +35,12 @@ def load_process_env_files() -> None:
 def build_dependency_diagnostic() -> Dict[str, Any]:
     dependency_diag: Dict[str, Any] = {
         "lightrag": True,
-        "raganything": True,
         "docling": _docling_available(),
     }
     try:
         importlib.import_module("lightrag")
     except Exception:
         dependency_diag["lightrag"] = False
-    try:
-        importlib.import_module("raganything")
-    except Exception:
-        try:
-            importlib.import_module("document_intelligence.raganything")
-        except Exception:
-            dependency_diag["raganything"] = False
     return dependency_diag
 
 
@@ -61,7 +53,7 @@ def enforce_parser_dependency_policy(
     dependency_diag: Dict[str, Any],
 ) -> None:
     logger.info(
-        "[agent] File understanding: mode=%s parserPipeline=%s ragParser=%s parserEnrichment=%s deps=%s python=%s",
+        "[agent] File understanding: mode=%s parserPipeline=%s parser=%s parserEnrichment=%s deps=%s python=%s",
         file_understanding_mode,
         rag_parser_pipeline,
         raganything_parser,
@@ -69,11 +61,11 @@ def enforce_parser_dependency_policy(
         dependency_diag,
         sys.executable,
     )
-    if rag_parser_pipeline in {"raganything", "rag_anything", "rag-everything", "rageverything"} and raganything_parser == "docling":
+    if rag_parser_pipeline in {"docling", "raganything", "rag_anything", "rag-everything", "rageverything"} and raganything_parser == "docling":
         if not dependency_diag["docling"]:
             raise RuntimeError(
-                "Docling is configured as the global parser, but the docling package/CLI is unavailable. "
-                "Install docling and ensure the `docling` command is on PATH."
+                "Docling is configured as the document parser, but the docling package is unavailable. "
+                "Install docling in the agent/parser runtime."
             )
 
 

@@ -6,8 +6,6 @@ import json
 import logging
 import mimetypes
 import re
-import shutil
-import sys
 import tempfile
 from io import BytesIO
 from pathlib import Path
@@ -127,16 +125,10 @@ def _build_partial_attachment_payload(file_name: str, text: str, *, effective_mo
 def _docling_available() -> bool:
     try:
         __import__("docling")
+        __import__("docling.document_converter")
     except Exception:
         return False
-    cli_path = shutil.which("docling")
-    if cli_path:
-        return True
-    venv_candidates = [
-        Path(sys.executable).parent / "docling",
-        Path(sys.prefix) / "bin" / "docling",
-    ]
-    return any(candidate.exists() for candidate in venv_candidates)
+    return True
 
 
 def _docling_markdown_to_payload(file_name: str, markdown: str, *, effective_mode: str = "parser") -> Dict[str, Any]:
@@ -168,7 +160,7 @@ def _docling_markdown_to_payload(file_name: str, markdown: str, *, effective_mod
 
 
 def _extract_docling_payload(file_name: str, mime_type: str, buffer: bytes) -> Tuple[str, List[Dict[str, Any]]]:
-    from document_intelligence.raganything.parser import DoclingParser
+    from docling.document_converter import DocumentConverter
 
     suffix = Path(file_name).suffix.lower()
     guessed_suffix = mimetypes.guess_extension(mime_type or "") or ""
@@ -181,43 +173,57 @@ def _extract_docling_payload(file_name: str, mime_type: str, buffer: bytes) -> T
         temp_input = temp_root / f"source{suffix}"
         temp_input.write_bytes(buffer)
         output_dir = temp_root / "parsed"
-        parser = DoclingParser()
-        content_list = parser.parse_document(temp_input, output_dir=str(output_dir))
-        stem = temp_input.stem
-        docling_dir = output_dir / stem / "docling"
-        md_path = docling_dir / f"{stem}.md"
-        if not md_path.exists():
-            raise RuntimeError(f"Docling did not produce markdown for {file_name}")
-        markdown = md_path.read_text(encoding="utf-8", errors="replace").strip()
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        converter_kwargs: Dict[str, Any] = {}
+        if suffix == ".pdf":
+            try:
+                from docling.datamodel.base_models import InputFormat
+                from docling.datamodel.pipeline_options import PdfPipelineOptions
+                from docling.document_converter import PdfFormatOption
+
+                pdf_options = PdfPipelineOptions()
+                pdf_options.generate_picture_images = True
+                converter_kwargs["format_options"] = {
+                    InputFormat.PDF: PdfFormatOption(pipeline_options=pdf_options)
+                }
+            except Exception:
+                logger.debug("Docling PDF image export options unavailable; continuing with default conversion", exc_info=True)
+
+        converter = DocumentConverter(**converter_kwargs)
+        conversion = converter.convert(temp_input)
+        document = conversion.document
+        md_path = output_dir / f"{temp_input.stem}.md"
+        try:
+            from docling_core.types.doc import ImageRefMode
+
+            document.save_as_markdown(md_path, image_mode=ImageRefMode.REFERENCED)
+            markdown = md_path.read_text(encoding="utf-8", errors="replace").strip()
+        except Exception:
+            markdown = str(document.export_to_markdown() or "").strip()
+            md_path.write_text(markdown, encoding="utf-8")
         if not markdown:
             raise RuntimeError(f"Docling produced empty markdown for {file_name}")
+
         extracted_assets: List[Dict[str, Any]] = []
-        seen_paths: set[str] = set()
-        for item in content_list:
-            if not isinstance(item, dict):
+        for asset_path in sorted(output_dir.rglob("*")):
+            if not asset_path.is_file() or asset_path == md_path:
                 continue
-            if str(item.get("type") or "").strip().lower() != "image":
+            mime = mimetypes.guess_type(asset_path.name)[0] or ""
+            if not mime.startswith("image/"):
                 continue
-            img_path_raw = str(item.get("img_path") or "").strip()
-            if not img_path_raw or img_path_raw in seen_paths:
-                continue
-            seen_paths.add(img_path_raw)
-            img_path = Path(img_path_raw)
-            if not img_path.exists():
-                continue
-            mime = mimetypes.guess_type(img_path.name)[0] or "image/png"
             try:
-                source_path = str(img_path.relative_to(docling_dir)).replace("\\", "/")
+                source_path = str(asset_path.relative_to(output_dir)).replace("\\", "/")
             except Exception:
-                source_path = img_path.name
+                source_path = asset_path.name
             extracted_assets.append(
                 {
-                    "name": img_path.name,
+                    "name": asset_path.name,
                     "mimeType": mime,
-                    "contentB64": base64.b64encode(img_path.read_bytes()).decode("ascii"),
+                    "contentB64": base64.b64encode(asset_path.read_bytes()).decode("ascii"),
                     "sourcePath": source_path,
-                    "caption": str(item.get("image_caption") or "").strip() or None,
-                    "footnote": str(item.get("image_footnote") or "").strip() or None,
+                    "caption": None,
+                    "footnote": None,
                 }
             )
         return markdown, extracted_assets
