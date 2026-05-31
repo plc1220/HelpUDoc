@@ -10,6 +10,11 @@ import type {
 import ChatMessageBubble from './ChatMessageBubble';
 import type { RenderableInterruptAction } from './interruptActions';
 
+type RerunMessageOptions = {
+  replacementText?: string;
+  skipConfirm?: boolean;
+};
+
 export default function ChatMessageList({
   colorMode,
   messages,
@@ -39,7 +44,6 @@ export default function ChatMessageList({
   toggleToolActivityVisibility,
   handleCopyMessageText,
   handleRerunMessage,
-  handleEditAndRerunMessage,
   handlePrepareInterruptAction,
   handleInterruptAction,
   workspaceId,
@@ -80,8 +84,7 @@ export default function ChatMessageList({
   toggleThinkingVisibility: (messageId: ConversationMessage['id']) => void;
   toggleToolActivityVisibility: (messageId: ConversationMessage['id']) => void;
   handleCopyMessageText: (message: ConversationMessage) => void;
-  handleRerunMessage: (messageId: ConversationMessage['id']) => void;
-  handleEditAndRerunMessage: (message: ConversationMessage) => void;
+  handleRerunMessage: (messageId: ConversationMessage['id'], options?: RerunMessageOptions) => void;
   handlePrepareInterruptAction: (
     message: ConversationMessage,
     action: RenderableInterruptAction,
@@ -205,7 +208,6 @@ export default function ChatMessageList({
           toggleToolActivityVisibility={toggleToolActivityVisibility}
           handleCopyMessageText={handleCopyMessageText}
           handleRerunMessage={handleRerunMessage}
-          handleEditAndRerunMessage={handleEditAndRerunMessage}
           handlePrepareInterruptAction={handlePrepareInterruptAction}
           handleInterruptAction={handleInterruptAction}
           isStreaming={isStreaming}
@@ -233,7 +235,6 @@ export default function ChatMessageList({
     getPrimaryInterruptAction,
     handleCopyMessageText,
     handleInterruptAction,
-    handleEditAndRerunMessage,
     handleRerunMessage,
     isPlanApprovalInterrupt,
     isStreaming,

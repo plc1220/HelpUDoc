@@ -1,7 +1,7 @@
 import { Check, CheckCircle2, Copy, FilePenLine, ImageIcon, Loader2, RotateCcw } from 'lucide-react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { useCallback, useEffect, useMemo, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react';
+import { useCallback, useEffect, useMemo, useState, type Dispatch, type KeyboardEvent, type ReactNode, type SetStateAction } from 'react';
 
 import type {
   ConversationMessage,
@@ -50,6 +50,11 @@ type StylePreviewChoice = {
   description?: string;
   path?: string;
   previewUrl?: string;
+};
+
+type RerunMessageOptions = {
+  replacementText?: string;
+  skipConfirm?: boolean;
 };
 
 const IMAGE_EXTENSION_PATTERN = /\.(apng|avif|gif|jpe?g|png|svg|webp)$/i;
@@ -650,7 +655,6 @@ export default function ChatMessageBubble({
   toggleToolActivityVisibility,
   handleCopyMessageText,
   handleRerunMessage,
-  handleEditAndRerunMessage,
   handlePrepareInterruptAction,
   handleInterruptAction,
   isStreaming,
@@ -692,8 +696,7 @@ export default function ChatMessageBubble({
   toggleThinkingVisibility: (messageId: ConversationMessage['id']) => void;
   toggleToolActivityVisibility: (messageId: ConversationMessage['id']) => void;
   handleCopyMessageText: (message: ConversationMessage) => void;
-  handleRerunMessage: (messageId: ConversationMessage['id']) => void;
-  handleEditAndRerunMessage: (message: ConversationMessage) => void;
+  handleRerunMessage: (messageId: ConversationMessage['id'], options?: RerunMessageOptions) => void;
   handlePrepareInterruptAction: (
     message: ConversationMessage,
     action: RenderableInterruptAction,
@@ -736,6 +739,8 @@ export default function ChatMessageBubble({
   const [clarificationDismissed, setClarificationDismissed] = useState(false);
   const isToolActivityExpanded = expandedToolMessages.has(message.id);
   const [showRawToolLog, setShowRawToolLog] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editValue, setEditValue] = useState(message.text || '');
   const isThinkingExpanded = expandedThinkingMessages.has(message.id);
   const rawThinkingText = message.thinkingText?.trim() || '';
   const activeSkill = messageMetadata?.runPolicy?.skill?.trim().toLowerCase();
@@ -777,6 +782,7 @@ export default function ChatMessageBubble({
       .trim();
   })();
   const userText = isAgentMessage ? '' : stripAttachmentMarker(message.text || '');
+  const editableUserText = stripAttachmentMarker(message.text || '');
   const attachmentPreviews = useMemo<MessageAttachmentPreview[]>(() => {
     if (isAgentMessage) {
       return [];
@@ -1004,6 +1010,12 @@ export default function ChatMessageBubble({
   }, [isToolActivityExpanded]);
 
   useEffect(() => {
+    if (!isEditing) {
+      setEditValue(editableUserText);
+    }
+  }, [editableUserText, isEditing]);
+
+  useEffect(() => {
     if (!hasStructuredClarificationForm) {
       return;
     }
@@ -1160,6 +1172,40 @@ export default function ChatMessageBubble({
   const handleActionCancel = () => {
     setActiveTextActionId(null);
     setConfirmActionId(null);
+  };
+
+  const startInlineEdit = () => {
+    setEditValue(editableUserText);
+    setIsEditing(true);
+  };
+
+  const cancelInlineEdit = () => {
+    setEditValue(editableUserText);
+    setIsEditing(false);
+  };
+
+  const saveInlineEdit = () => {
+    const trimmed = editValue.trim();
+    if (!trimmed || isStreaming) {
+      return;
+    }
+    setIsEditing(false);
+    handleRerunMessage(message.id, {
+      replacementText: trimmed,
+      skipConfirm: true,
+    });
+  };
+
+  const handleInlineEditKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      cancelInlineEdit();
+      return;
+    }
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
+      saveInlineEdit();
+    }
   };
 
   const clarificationDisplayPayload = renderDisplayPayload(
@@ -1738,6 +1784,10 @@ export default function ChatMessageBubble({
   const userBubbleClassName = isDarkMode
     ? 'rounded-xl bg-[#2d5f9f] px-4 py-3 text-sm text-white shadow-[0_14px_34px_-28px_rgba(45,95,159,0.82)]'
     : 'rounded-xl bg-[#315f9f] px-4 py-3 text-sm text-white shadow-[0_14px_34px_-28px_rgba(49,95,159,0.42)]';
+  const inlineEditTextareaClassName =
+    'min-h-24 w-full resize-y rounded-lg border border-white/10 bg-black/15 px-3 py-2.5 text-sm leading-relaxed text-white placeholder:text-white/45 shadow-inner shadow-black/10 outline-none transition-all duration-150 focus:border-white/25 focus:bg-black/20 focus:ring-2 focus:ring-white/15';
+  const inlineEditButtonBaseClassName =
+    'inline-flex h-8 items-center justify-center rounded-md px-3 text-xs font-semibold transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/25 disabled:cursor-not-allowed disabled:opacity-50';
   const messageActionBarClassName = isDarkMode
     ? 'absolute -top-2.5 right-2 inline-flex items-center gap-0.5 rounded-lg border border-slate-600/90 bg-slate-900 p-0.5 text-slate-300 opacity-0 shadow-none transition-opacity duration-150 group-hover:opacity-100 focus-within:opacity-100'
     : 'absolute -top-2.5 right-2 inline-flex items-center gap-0.5 rounded-lg border border-slate-200 bg-white p-0.5 text-slate-500 opacity-0 shadow-none transition-opacity duration-150 group-hover:opacity-100 focus-within:opacity-100';
@@ -2279,8 +2329,39 @@ export default function ChatMessageBubble({
           </div>
         ) : (
           <div className={userBubbleClassName}>
-            {userText ? renderFormattedUserText(userText, userPathPillClassName) : null}
-            {attachmentPreviews.length ? (
+            {isEditing ? (
+              <div className="space-y-2.5">
+                <textarea
+                  value={editValue}
+                  onChange={(event) => setEditValue(event.target.value)}
+                  onKeyDown={handleInlineEditKeyDown}
+                  disabled={isStreaming}
+                  autoFocus
+                  className={inlineEditTextareaClassName}
+                  aria-label="Edit message text"
+                />
+                <div className="flex items-center justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={cancelInlineEdit}
+                    className={`${inlineEditButtonBaseClassName} bg-white/10 text-white/80 hover:bg-white/15 hover:text-white`}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={saveInlineEdit}
+                    disabled={isStreaming || !editValue.trim()}
+                    className={`${inlineEditButtonBaseClassName} bg-white text-[#255489] shadow-sm hover:bg-white/90`}
+                  >
+                    Retry
+                  </button>
+                </div>
+              </div>
+            ) : userText ? (
+              renderFormattedUserText(userText, userPathPillClassName)
+            ) : null}
+            {!isEditing && attachmentPreviews.length ? (
               <div className="mt-2.5 overflow-hidden rounded-lg border border-white/15 bg-black/10">
                 {attachmentPreviews.map((attachment, index) => (
                   <div
@@ -2330,7 +2411,7 @@ export default function ChatMessageBubble({
             ) : null}
           </div>
         )}
-        {canCopyMessage || message.sender === 'user' ? (
+        {!isEditing && (canCopyMessage || message.sender === 'user') ? (
           <div className={messageActionBarClassName}>
             {canCopyMessage ? (
               <button
@@ -2351,7 +2432,7 @@ export default function ChatMessageBubble({
               <>
                 <button
                   type="button"
-                  onClick={() => handleEditAndRerunMessage(message)}
+                  onClick={startInlineEdit}
                   disabled={isStreaming}
                   title="Edit and retry"
                   aria-label="Edit message and retry"

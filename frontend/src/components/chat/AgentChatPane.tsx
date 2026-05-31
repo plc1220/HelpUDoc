@@ -43,6 +43,11 @@ type ConversationAttentionState = {
   updatedAt: string;
 };
 
+type RerunMessageOptions = {
+  replacementText?: string;
+  skipConfirm?: boolean;
+};
+
 export default function AgentChatPane({
   colorMode,
   agentPaneStyles,
@@ -105,7 +110,6 @@ export default function AgentChatPane({
   onToggleToolActivityVisibility,
   onCopyMessageText,
   onRerunMessage,
-  onEditAndRerunMessage,
   onPrepareInterruptAction,
   onInterruptAction,
   onChatInputChange,
@@ -193,8 +197,7 @@ export default function AgentChatPane({
   onToggleThinkingVisibility: (messageId: ConversationMessage['id']) => void;
   onToggleToolActivityVisibility: (messageId: ConversationMessage['id']) => void;
   onCopyMessageText: (message: ConversationMessage) => void;
-  onRerunMessage: (messageId: ConversationMessage['id']) => void;
-  onEditAndRerunMessage: (message: ConversationMessage) => void;
+  onRerunMessage: (messageId: ConversationMessage['id'], options?: RerunMessageOptions) => void;
   onPrepareInterruptAction: (
     message: ConversationMessage,
     action: RenderableInterruptAction,
@@ -291,7 +294,6 @@ export default function AgentChatPane({
           toggleToolActivityVisibility={onToggleToolActivityVisibility}
           handleCopyMessageText={onCopyMessageText}
           handleRerunMessage={onRerunMessage}
-          handleEditAndRerunMessage={onEditAndRerunMessage}
           handlePrepareInterruptAction={onPrepareInterruptAction}
           handleInterruptAction={onInterruptAction}
           workspaceId={workspaceId}

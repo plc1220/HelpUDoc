@@ -581,7 +581,6 @@ export default function WorkspacePage() {
   const [fileContent, setFileContent] = useState('');
   const [conversationMessages, setConversationMessages] = useState<Record<string, ConversationMessage[]>>({});
   const [chatMessage, setChatMessage] = useState('');
-  const [editingRetryMessageId, setEditingRetryMessageId] = useState<ConversationMessage['id'] | null>(null);
   const [chatAttachments, setChatAttachments] = useState<ChatComposerAttachment[]>([]);
   const [internetSearchEnabled, setInternetSearchEnabled] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -5301,28 +5300,6 @@ export default function WorkspacePage() {
     }
   };
 
-  const handleEditAndRerunMessage = (message: ConversationMessage) => {
-    if (message.sender !== 'user') {
-      addLocalSystemMessage('Only your own messages can be edited for retry.');
-      return;
-    }
-    const draft = message.text?.trim();
-    if (!draft) {
-      addLocalSystemMessage('Cannot edit an empty message for retry.');
-      return;
-    }
-    setEditingRetryMessageId(message.id);
-    setChatMessage(draft);
-    requestAnimationFrame(() => {
-      const input = chatInputRef.current;
-      if (!input) {
-        return;
-      }
-      input.focus();
-      input.setSelectionRange(draft.length, draft.length);
-    });
-  };
-
   const handleSendMessage = async (workspaceOverride?: Workspace | null) => {
     if (sendLockRef.current || isDriveImporting) {
       return;
@@ -5340,23 +5317,6 @@ export default function WorkspacePage() {
     sendLockRef.current = true;
 
     try {
-      if (editingRetryMessageId !== null) {
-        if (hasAttachments) {
-          addLocalSystemMessage('Attachments cannot be changed while editing a message for retry.');
-          return;
-        }
-        const retryMessageId = editingRetryMessageId;
-        setEditingRetryMessageId(null);
-        setChatMessage('');
-        closeMention();
-        closeCommand();
-        await handleRerunMessage(retryMessageId, {
-          replacementText: trimmed,
-          skipConfirm: true,
-        });
-        return;
-      }
-
       stopRequestedRef.current = false;
       const directive = parseSlashDirective(trimmed);
       const mentionedFiles = findMentionedFiles(trimmed);
@@ -7267,7 +7227,6 @@ export default function WorkspacePage() {
               onToggleToolActivityVisibility={toggleToolActivityVisibility}
               onCopyMessageText={handleCopyMessageText}
               onRerunMessage={handleRerunMessage}
-              onEditAndRerunMessage={handleEditAndRerunMessage}
               onPrepareInterruptAction={prepareInterruptAction}
               onInterruptAction={handleInterruptAction}
               onChatInputChange={handleChatInputChange}
