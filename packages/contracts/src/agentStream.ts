@@ -3,6 +3,7 @@ import type { DashboardArtifactInfo } from './types';
 export type AgentStreamChunk =
   | { type: 'token' | 'chunk'; content?: string; role?: string }
   | { type: 'thought'; content?: string; role?: string }
+  | { type: 'model_start' | 'model_end'; name?: string }
   | {
       type: 'policy';
       skill?: string;

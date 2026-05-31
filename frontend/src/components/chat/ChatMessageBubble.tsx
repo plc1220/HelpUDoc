@@ -1,4 +1,4 @@
-import { Check, CheckCircle2, Copy, FilePenLine, ImageIcon, Loader2, RotateCcw } from 'lucide-react';
+import { Check, CheckCircle2, ChevronRight, Copy, FilePenLine, ImageIcon, Loader2, RotateCcw } from 'lucide-react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useCallback, useEffect, useMemo, useState, type Dispatch, type KeyboardEvent, type ReactNode, type SetStateAction } from 'react';
@@ -30,11 +30,9 @@ import {
   renderFormattedUserText,
 } from './messageContentFormatting';
 
-const THOUGHT_PREVIEW_LIMIT = 320;
 const DEFAULT_THINKING_PLACEHOLDER = 'Working through your request based on the current workspace context.';
 const FRONTEND_SLIDES_DISCOVERY_HEADERS = ['purpose', 'length', 'content', 'images', 'editing'] as const;
 const ATTACHMENT_MARKER_PATTERN = /\n*\[Attachments:\s*([^\]]+)\]\s*$/i;
-const TRAILING_TRUNCATION_PATTERN = /(?:\.{3}|…)$/;
 
 type MessageAttachmentPreview = {
   name: string;
@@ -749,8 +747,6 @@ export default function ChatMessageBubble({
   const displayThinkingText = isSystemThinking
     ? getThinkingPlaceholder(messageMetadata, toolEvents)
     : sanitizedThinkingText;
-  const showThinkingToggle = !isSystemThinking && displayThinkingText.length > THOUGHT_PREVIEW_LIMIT;
-  const isThinkingCollapsed = showThinkingToggle && !isThinkingExpanded;
   const sanitizedAgentText = (() => {
     const raw = message.text || '';
     if (!raw) {
@@ -1743,18 +1739,6 @@ export default function ChatMessageBubble({
     ? 'flex flex-wrap items-center justify-between gap-2 text-[11px] font-bold uppercase tracking-wide text-slate-300'
     : 'flex flex-wrap items-center justify-between gap-2 text-[11px] font-bold uppercase tracking-wide text-slate-500';
   const agentPersonaClassName = isDarkMode ? 'text-slate-300' : 'text-slate-700';
-  const thinkingCardClassName = isDarkMode
-    ? 'mt-3 rounded-xl border border-[#26354d] bg-[#0d1524] px-3 py-3 text-[13px] text-slate-200 shadow-inner shadow-black/20 transition-all duration-200 ease-in-out'
-    : 'mt-3 rounded-xl border border-slate-200/80 bg-slate-50/90 px-3 py-3 text-[13px] text-slate-700 shadow-inner shadow-slate-200/40 transition-all duration-200 ease-in-out';
-  const thinkingHeaderClassName = isDarkMode
-    ? 'flex items-center justify-between text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400'
-    : 'flex items-center justify-between text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500';
-  const thinkingToggleClassName = isDarkMode
-    ? 'rounded-full border border-slate-700/70 px-2.5 py-1 text-[10px] text-slate-300 transition-all duration-200 hover:border-slate-600 hover:bg-slate-800 hover:text-white'
-    : 'rounded-full border border-slate-200 px-2.5 py-1 text-[10px] text-slate-600 transition-all duration-200 hover:border-slate-300 hover:bg-white hover:text-slate-900';
-  const thinkingFadeClassName = isDarkMode
-    ? 'pointer-events-none absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-slate-950 via-slate-950/70 to-transparent'
-    : 'pointer-events-none absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-slate-50 via-slate-50/75 to-transparent';
   const toolPanelClassName = isDarkMode
     ? 'mt-3 border-t border-[#26354d] pt-3'
     : 'mt-3 border-t border-slate-200/80 pt-3';
@@ -1770,13 +1754,24 @@ export default function ChatMessageBubble({
       ? `Activity · updated ${toolDigest.lastActivityFormatted}`
       : 'Activity'
     : 'Activity';
-  const isLiveAgentPreview = Boolean(visibleAgentText && inlineStatus?.status === 'running');
-  const liveAgentPreviewText = isLiveAgentPreview
-    ? visibleAgentText.trimEnd().replace(TRAILING_TRUNCATION_PATTERN, '').trimEnd()
-    : visibleAgentText;
-  const liveAgentPreviewFadeClassName = isDarkMode
-    ? 'pointer-events-none absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-[#121c2e] via-[#121c2e]/85 to-transparent'
-    : 'pointer-events-none absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-white via-white/85 to-transparent';
+  const liveAgentPreviewText = visibleAgentText;
+  const latestToolFinishedAt = [...toolEvents].reverse().find((event) => event.finishedAt)?.finishedAt;
+  const thoughtEndedAt = isLiveAgentStatus ? undefined : latestToolFinishedAt || message.updatedAt || message.createdAt;
+  const thoughtElapsed = formatElapsedTime(runClockAnchor || message.createdAt, now, thoughtEndedAt);
+  const compactThoughtElapsed = thoughtElapsed.replace(/^0m\s0?(\d+)s$/, '$1s');
+  const shouldShowThoughtRow = Boolean(
+    isAgentMessage
+    && (isLiveAgentStatus || hasToolEvents || displayThinkingText)
+    && !shouldHideAgentBodyForApproval,
+  );
+  const thoughtSummaryItems = toolDigest.digestEvents.slice(-6);
+  const canExpandThought = Boolean(thoughtSummaryItems.length || toolDigest.currentLabel || displayThinkingText);
+  const thoughtRowClassName = isDarkMode
+    ? 'mt-1 inline-flex items-center gap-1.5 text-sm font-medium text-slate-400 transition-colors hover:text-slate-200'
+    : 'mt-1 inline-flex items-center gap-1.5 text-sm font-medium text-slate-500 transition-colors hover:text-slate-700';
+  const thoughtPanelClassName = isDarkMode
+    ? 'mt-2 rounded-lg border border-[#26354d] bg-[#0d1524] px-3 py-3 text-xs text-slate-200'
+    : 'mt-2 rounded-lg border border-slate-200/80 bg-slate-50/90 px-3 py-3 text-xs text-slate-700';
   const toolExpandedClassName = isDarkMode
     ? 'mt-3 space-y-3 text-xs text-slate-200'
     : 'mt-3 space-y-3 text-xs text-slate-600';
@@ -1811,25 +1806,6 @@ export default function ChatMessageBubble({
             <div className={agentMetaClassName}>
               <div className="flex min-w-0 flex-wrap items-center gap-2">
                 <span className={agentPersonaClassName}>{personaDisplayName}</span>
-                {inlineStatus ? (
-                  <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-semibold normal-case tracking-normal ${
-                    inlineStatus.status === 'awaiting_approval'
-                      ? isDarkMode
-                        ? 'bg-amber-500/15 text-amber-200'
-                        : 'bg-amber-50 text-amber-800'
-                      : isDarkMode
-                        ? 'bg-sky-500/15 text-sky-200'
-                        : 'bg-sky-50 text-sky-800'
-                  }`}>
-                    {inlineStatus.status === 'awaiting_approval' ? (
-                      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" />
-                    ) : (
-                      <Loader2 size={12} className="shrink-0 animate-spin" aria-hidden="true" />
-                    )}
-                    {inlineStatus.title}
-                    {inlineStatus.elapsed ? ` (${inlineStatus.elapsed})` : ''}
-                  </span>
-                ) : null}
               </div>
               {timestampLabel ? (
                 <span className={`text-[10px] font-medium normal-case tracking-normal ${
@@ -1839,55 +1815,55 @@ export default function ChatMessageBubble({
                 </span>
               ) : null}
             </div>
-            {inlineStatus ? (
-              <div className={`mt-3 border-t pt-3 text-sm ${
-                isDarkMode ? 'border-slate-700/70' : 'border-slate-200/80'
-              }`}>
-                {inlineStatus.detail}
+            {shouldShowThoughtRow ? (
+              <div>
+                <button
+                  type="button"
+                  onClick={() => canExpandThought && toggleThinkingVisibility(message.id)}
+                  className={`${thoughtRowClassName} ${canExpandThought ? '' : 'cursor-default hover:text-inherit'}`}
+                  aria-expanded={canExpandThought ? isThinkingExpanded : undefined}
+                >
+                  <span>{`Thought for ${compactThoughtElapsed || '0s'}`}</span>
+                  {canExpandThought ? (
+                    <ChevronRight
+                      size={15}
+                      className={`transition-transform duration-150 ${isThinkingExpanded ? 'rotate-90' : ''}`}
+                      aria-hidden="true"
+                    />
+                  ) : null}
+                </button>
+                {canExpandThought && isThinkingExpanded ? (
+                  <div className={thoughtPanelClassName}>
+                    {thoughtSummaryItems.length ? (
+                      <ul className="space-y-2">
+                        {thoughtSummaryItems.map((event) => (
+                          <li key={event.id} className="leading-relaxed">
+                            <span className="font-semibold">{event.title}</span>
+                            {event.detail ? (
+                              <span className={isDarkMode ? 'block text-slate-400' : 'block text-slate-500'}>
+                                {event.detail}
+                              </span>
+                            ) : null}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="leading-relaxed">{toolDigest.currentLabel || DEFAULT_THINKING_PLACEHOLDER}</p>
+                    )}
+                    {toolDigest.errorCount ? (
+                      <p className={`mt-2 font-semibold ${isDarkMode ? 'text-rose-300' : 'text-rose-700'}`}>
+                        {`${toolDigest.errorCount} tool issue${toolDigest.errorCount === 1 ? '' : 's'} detected.`}
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
               </div>
             ) : null}
-            {displayThinkingText && !shouldHideThinkingDuringToolRun ? (
-              <div className={thinkingCardClassName}>
-                  <div className={thinkingHeaderClassName}>
-                    <span className="inline-flex items-center gap-2">
-                      <span className={`h-2 w-2 rounded-full ${
-                        isDarkMode
-                          ? 'bg-sky-300 shadow-[0_0_14px_rgba(125,211,252,0.6)]'
-                          : 'bg-sky-500 shadow-[0_0_12px_rgba(14,165,233,0.28)]'
-                      }`} />
-                      Thinking
-                    </span>
-                    {showThinkingToggle ? (
-                      <button
-                        type="button"
-                        onClick={() => toggleThinkingVisibility(message.id)}
-                        className={thinkingToggleClassName}
-                      >
-                        {isThinkingExpanded ? 'Show less' : 'Expand'}
-                      </button>
-                    ) : null}
-                  </div>
-                  <div
-                    className="relative mt-2 overflow-hidden whitespace-pre-line leading-relaxed transition-[max-height] duration-300 ease-in-out"
-                    style={{ maxHeight: isThinkingCollapsed ? '7.5rem' : '28rem' }}
-                  >
-                    {displayThinkingText}
-                    {isThinkingCollapsed ? (
-                      <div className={thinkingFadeClassName} />
-                    ) : null}
-                  </div>
-                </div>
-            ) : null}
             {liveAgentPreviewText ? (
-              <div className={`agent-markdown mt-3 text-sm ${
-                isLiveAgentPreview ? 'relative max-h-40 overflow-hidden pb-4' : ''
-              }`}>
+              <div className="agent-markdown mt-3 text-sm">
                 <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
                   {liveAgentPreviewText}
                 </ReactMarkdown>
-                {isLiveAgentPreview ? (
-                  <div className={liveAgentPreviewFadeClassName} />
-                ) : null}
               </div>
             ) : shouldShowFallbackStatus ? (
               <span className={`mt-3 block text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>

@@ -985,6 +985,235 @@ def register_chat_routes(
             return None
         return _build_interrupt_payload(chunk.get("__interrupt__"))
 
+    def _event_method(event: Any) -> str:
+        if not isinstance(event, dict):
+            return ""
+        method = event.get("event") or event.get("method") or event.get("type")
+        return str(method or "").strip()
+
+    def _event_data(event: Any) -> Any:
+        if not isinstance(event, dict):
+            return None
+        if "data" in event:
+            return event.get("data")
+        params = event.get("params")
+        if isinstance(params, dict):
+            return params.get("data")
+        return None
+
+    def _event_name(event: Any) -> str:
+        if not isinstance(event, dict):
+            return ""
+        name = event.get("name")
+        if isinstance(name, str) and name.strip():
+            return name.strip()
+        params = event.get("params")
+        if isinstance(params, dict):
+            data = params.get("data")
+            if isinstance(data, dict):
+                candidate = data.get("name") or data.get("tool_name")
+                if isinstance(candidate, str) and candidate.strip():
+                    return candidate.strip()
+            namespace = params.get("namespace")
+            if isinstance(namespace, list) and namespace:
+                tail = str(namespace[-1] or "")
+                return tail.split(":", 1)[0].strip()
+        return ""
+
+    def _event_run_id(event: Any) -> str:
+        if not isinstance(event, dict):
+            return ""
+        run_id = event.get("run_id") or event.get("runId")
+        if run_id:
+            return str(run_id)
+        params = event.get("params")
+        if isinstance(params, dict):
+            data = params.get("data")
+            if isinstance(data, dict):
+                candidate = data.get("run_id") or data.get("runId") or data.get("id")
+                if candidate:
+                    return str(candidate)
+            namespace = params.get("namespace")
+            if isinstance(namespace, list) and namespace:
+                return str(namespace[-1])
+        return ""
+
+    def _event_text(value: Any, *, stringify_objects: bool = False) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            return value
+        if isinstance(value, (int, float, bool)):
+            return str(value)
+        if isinstance(value, list):
+            return "".join(_event_text(item, stringify_objects=stringify_objects) for item in value)
+        if isinstance(value, dict):
+            for key in ("text", "content", "message", "output", "chunk"):
+                if key in value:
+                    text = _event_text(value.get(key), stringify_objects=stringify_objects)
+                    if text:
+                        return text
+            return json.dumps(value, ensure_ascii=False) if stringify_objects else ""
+        text = _lc_ai_message_text(value) or _message_to_text(value)
+        if text and not re.match(r"^[A-Za-z]+Message", text):
+            return text
+        return json.dumps(value, ensure_ascii=False, default=str) if stringify_objects else text
+
+    def _event_payload_value(data: Any, *keys: str) -> Any:
+        if isinstance(data, dict):
+            for key in keys:
+                if key in data:
+                    return data.get(key)
+        return None
+
+    def _event_input_preview(data: Any) -> str:
+        value = _event_payload_value(data, "input", "inputs", "args")
+        if value is None:
+            value = data
+        return _event_text(value, stringify_objects=True).strip()
+
+    def _event_output_text(data: Any) -> str:
+        value = _event_payload_value(data, "output", "result", "return_value")
+        if value is None:
+            value = data
+        return _event_text(value, stringify_objects=True)
+
+    def _event_chunk_text(data: Any) -> str:
+        value = _event_payload_value(data, "chunk", "message", "delta")
+        if value is None:
+            value = data
+        return _event_text(value)
+
+    def _extract_v3_interrupt_payload(event: Any) -> Dict[str, Any] | None:
+        data = _event_data(event)
+        for candidate in (event, data):
+            if isinstance(candidate, dict):
+                payload = _build_interrupt_payload(candidate.get("__interrupt__"))
+                if payload:
+                    return payload
+                interrupts = candidate.get("interrupts")
+                payload = _build_interrupt_payload(interrupts)
+                if payload:
+                    return payload
+                if str(candidate.get("type") or "").strip() == "interrupt":
+                    normalized = normalize_interrupt_payload_value(candidate)
+                    if normalized:
+                        return normalized
+        return None
+
+    async def _emit_v3_event(
+        event: Any,
+        handler: _CallbackStreamingHandler,
+        *,
+        suppress_interrupt_tool_start: bool,
+    ) -> bool:
+        """Map one LangChain/LangGraph v3 event into HelpUDoc's JSONL contract.
+
+        Returns True when the event emitted a human interrupt and the run should pause.
+        """
+        method = _event_method(event)
+        data = _event_data(event)
+        run_key = _event_run_id(event) or method
+
+        if method in {"on_chat_model_start", "on_llm_start"}:
+            name = _event_name(event) or "model"
+            await handler._emit({"type": "model_start", "name": name})
+            return False
+
+        if method in {"on_chat_model_stream", "on_llm_stream", "messages"}:
+            text = _event_chunk_text(data)
+            if text and not _is_internal_stream_text(text):
+                await handler._emit({"type": "token", "content": text, "role": "assistant"})
+            return False
+
+        if method in {"on_chat_model_end", "on_llm_end"}:
+            await handler._emit({"type": "model_end", "name": _event_name(event) or "model"})
+            return False
+
+        if method in {"on_tool_start", "tools/start", "tool_start"}:
+            name = _event_name(event) or "tool"
+            handler._tool_names[run_key] = name
+            preview = _event_input_preview(data)
+            if name in _INTERRUPT_TOOL_NAMES and not suppress_interrupt_tool_start:
+                interrupt_payload = extract_interrupt_payload_from_tool_call(name, preview)
+                if interrupt_payload:
+                    handler._interrupt_emitted = True
+                    await handler._emit(interrupt_payload)
+                    return True
+            await handler._emit(
+                {
+                    "type": "tool_start",
+                    "name": name,
+                    "content": preview[:200] if preview else "",
+                }
+            )
+            return False
+
+        if method in {"on_tool_end", "tools/end", "tool_end"}:
+            name = handler._tool_names.pop(run_key, _event_name(event) or "tool")
+            text = _event_output_text(data)
+            meta = handler._tool_meta.pop(run_key, None)
+            if name in _INTERRUPT_TOOL_NAMES:
+                interrupt_payload = extract_interrupt_payload_from_tool_text(text)
+                if interrupt_payload:
+                    await handler._emit(interrupt_payload)
+                    return True
+            payload: Dict[str, Any] = {
+                "type": "tool_end",
+                "name": name,
+                "content": text,
+            }
+            output_files = _extract_output_files_from_tool_result(name, text)
+            if meta and meta.get("files"):
+                output_files.extend(meta["files"])
+            if output_files:
+                dedup: Dict[str, Dict[str, Any]] = {}
+                for item in output_files:
+                    path = str(item.get("path") or "").strip()
+                    if path:
+                        dedup[path] = item
+                payload["outputFiles"] = list(dedup.values())
+            if name == "load_skill":
+                loaded_skill_id = _skill_id_from_loaded_skill_output(text)
+                if loaded_skill_id:
+                    patch_current_trace_skill(loaded_skill_id)
+            if meta and meta.get("dashboardArtifact"):
+                payload["dashboardArtifact"] = meta["dashboardArtifact"]
+            await handler._emit(payload)
+            return False
+
+        if method in {"on_tool_error", "tools/error", "tool_error"}:
+            name = handler._tool_names.pop(run_key, _event_name(event) or "tool")
+            text = _event_output_text(data)
+            await handler._emit({"type": "tool_error", "name": name, "content": text})
+            return False
+
+        if method == "on_chain_stream":
+            return False
+
+        custom_name = ""
+        custom_data = data
+        if method == "on_custom_event":
+            custom_name = _event_name(event)
+        elif method in {"custom", "updates"} and isinstance(data, dict):
+            custom_name = str(data.get("name") or data.get("type") or "").strip()
+            custom_data = data.get("data") if "data" in data else data
+
+        if custom_name == "tool_artifacts" and isinstance(custom_data, dict):
+            bucket = handler._tool_meta.get(run_key) or {}
+            bucket["files"] = list(custom_data.get("files") or [])
+            handler._tool_meta[run_key] = bucket
+            return False
+
+        if custom_name == "dashboard_artifact" and isinstance(custom_data, dict):
+            bucket = handler._tool_meta.get(run_key) or {}
+            bucket["dashboardArtifact"] = custom_data
+            handler._tool_meta[run_key] = bucket
+            await handler._emit({"type": "dashboard_artifact", "dashboardArtifact": custom_data})
+            return False
+
+        return False
+
     def _extract_interrupt_from_exception(error: BaseException) -> Dict[str, Any] | None:
         if isinstance(error, BaseExceptionGroup):
             for inner in error.exceptions:
@@ -1251,34 +1480,32 @@ def register_chat_routes(
                     stream_input = Command(resume={"decisions": resume_decisions})
                 elif resume_value is not None:
                     stream_input = Command(resume=resume_value)
-                streamed_message_events: List[Dict[str, Any]] = []
-                streamed_message_tracker = _DeltaTracker()
                 final_result = None
-                async for chunk in agent.astream(
+                async for event in agent.astream_events(
                     stream_input,
                     config=stream_config,
                     context=runtime.workspace_state.context,
-                    stream_mode=["updates", "messages"],
-                    version="v2",
+                    version="v3",
                 ):
-                    mode, _parsed_chunk = _parse_multi_mode_chunk(chunk)
-                    if mode == "messages":
-                        for msg in _extract_messages(chunk) or []:
-                            text = _message_to_text(msg)
-                            role = _message_role(msg)
-                            delta = streamed_message_tracker.push(role, text)
-                            if delta:
-                                streamed_message_events.extend(_emit_text(role, delta))
-                    else:
-                        final_result = chunk
-                    interrupt_payload = _extract_interrupt_payload(chunk)
+                    data = _event_data(event)
+                    method = _event_method(event)
+                    if method in {"on_chain_end", "values", "updates"} and data is not None:
+                        final_result = data
+                    interrupt_payload = _extract_v3_interrupt_payload(event)
                     if interrupt_payload:
                         saw_interrupt = True
                         await handler._emit(interrupt_payload)
                         return
+                    if await _emit_v3_event(
+                        event,
+                        handler,
+                        suppress_interrupt_tool_start=resume_decisions is not None or resume_value is not None,
+                    ):
+                        saw_interrupt = True
+                        return
 
                 emitted = False
-                interrupt_payload = _extract_interrupt_payload(final_result)
+                interrupt_payload = _extract_v3_interrupt_payload(final_result) or _extract_interrupt_payload(final_result)
                 if interrupt_payload:
                     saw_interrupt = True
                     emitted = True
@@ -1301,10 +1528,6 @@ def register_chat_routes(
                         emitted = True
                         for event_payload in _emit_text("assistant", text):
                             await handler._emit(event_payload)
-                if not emitted and not handler.has_assistant_text and streamed_message_events:
-                    emitted = True
-                    for event_payload in streamed_message_events:
-                        await handler._emit(event_payload)
 
                 if not emitted and not handler.has_events:
                     await handler._emit(

@@ -3406,22 +3406,22 @@ export default function WorkspacePage() {
     const conversationBuffer = agentChunkBufferRef.current.get(conversationId) ?? new Map();
     conversationBuffer.set(index, `${conversationBuffer.get(index) || ''}${chunk}`);
     agentChunkBufferRef.current.set(conversationId, conversationBuffer);
-  }, []);
+    if (agentChunkFlushTimerRef.current === null) {
+      agentChunkFlushTimerRef.current = window.requestAnimationFrame(() => {
+        agentChunkFlushTimerRef.current = null;
+        flushBufferedAgentChunks();
+      });
+    }
+  }, [flushBufferedAgentChunks]);
 
   useEffect(() => {
-    if (agentChunkFlushTimerRef.current !== null) {
-      return;
-    }
-    agentChunkFlushTimerRef.current = window.setInterval(() => {
-      flushBufferedAgentChunks();
-    }, 75);
     return () => {
       if (agentChunkFlushTimerRef.current !== null) {
-        window.clearInterval(agentChunkFlushTimerRef.current);
+        window.cancelAnimationFrame(agentChunkFlushTimerRef.current);
         agentChunkFlushTimerRef.current = null;
       }
     };
-  }, [flushBufferedAgentChunks]);
+  }, []);
 
   useEffect(() => {
     const interval = window.setInterval(() => {
@@ -3767,6 +3767,11 @@ export default function WorkspacePage() {
         ...markStreamingState(metadata),
         runPolicy: nextRunPolicy,
       }));
+      return;
+    }
+
+    if (chunk.type === 'model_start' || chunk.type === 'model_end') {
+      updateMessageMetadataAtIndex(conversationId, agentMessageIndex, markStreamingState);
       return;
     }
 

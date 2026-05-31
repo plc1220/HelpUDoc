@@ -112,11 +112,22 @@ class StreamingAgent:
     def __init__(self, messages):
         self._messages = messages
 
-    async def astream(self, *_args, **_kwargs):
+    async def astream_events(self, *_args, **_kwargs):
         accumulated = ""
         for message in self._messages:
             accumulated += message
-            yield {"messages": [{"role": "assistant", "content": accumulated}]}
+            yield {
+                "event": "on_chat_model_stream",
+                "name": "test-model",
+                "run_id": "model-run",
+                "data": {"chunk": {"role": "assistant", "content": message}},
+            }
+        yield {
+            "event": "on_chain_end",
+            "name": "agent",
+            "run_id": "agent-run",
+            "data": {"output": {"messages": [{"role": "assistant", "content": accumulated}]}},
+        }
 
     async def ainvoke(self, *_args, **_kwargs):
         return {
@@ -131,22 +142,34 @@ class RecordingStreamingAgent(StreamingAgent):
         super().__init__(messages)
         self.stream_inputs = []
 
-    async def astream(self, *args, **kwargs):
+    async def astream_events(self, *args, **kwargs):
         self.stream_inputs.append((args, kwargs))
-        async for chunk in super().astream(*args, **kwargs):
+        async for chunk in super().astream_events(*args, **kwargs):
             yield chunk
 
 
-class V2MessageStreamingAgent:
-    async def astream(self, *_args, **_kwargs):
-        yield {"type": "messages", "data": ({"role": "assistant", "content": "Hel"}, {})}
-        yield {"type": "messages", "data": ({"role": "assistant", "content": "lo"}, {})}
-
-
-class V2InterruptStreamingAgent:
-    async def astream(self, *_args, **_kwargs):
+class V3MessageStreamingAgent:
+    async def astream_events(self, *_args, **_kwargs):
         yield {
-            "type": "updates",
+            "event": "on_chat_model_stream",
+            "name": "test-model",
+            "run_id": "model-run",
+            "data": {"chunk": {"role": "assistant", "content": "Hel"}},
+        }
+        yield {
+            "event": "on_chat_model_stream",
+            "name": "test-model",
+            "run_id": "model-run",
+            "data": {"chunk": {"role": "assistant", "content": "lo"}},
+        }
+
+
+class V3InterruptStreamingAgent:
+    async def astream_events(self, *_args, **_kwargs):
+        yield {
+            "event": "on_chain_stream",
+            "name": "agent",
+            "run_id": "agent-run",
             "data": {
                 "__interrupt__": [
                     SimpleNamespace(
@@ -161,6 +184,44 @@ class V2InterruptStreamingAgent:
                     )
                 ]
             },
+        }
+
+
+class V3ToolStreamingAgent:
+    async def astream_events(self, *_args, **_kwargs):
+        yield {
+            "event": "on_tool_start",
+            "name": "read_file",
+            "run_id": "tool-run",
+            "data": {"input": {"path": "README.md"}},
+        }
+        yield {
+            "event": "on_custom_event",
+            "name": "tool_artifacts",
+            "run_id": "tool-run",
+            "data": {"files": [{"path": "README.md", "mimeType": "text/markdown"}]},
+        }
+        yield {
+            "event": "on_tool_end",
+            "name": "read_file",
+            "run_id": "tool-run",
+            "data": {"output": "Read README.md"},
+        }
+        yield {
+            "event": "on_custom_event",
+            "name": "dashboard_artifact",
+            "run_id": "tool-run",
+            "data": {
+                "dashboardPath": "reports/dashboard.html",
+                "status": "ready",
+                "title": "Dashboard",
+            },
+        }
+        yield {
+            "event": "on_chat_model_stream",
+            "name": "test-model",
+            "run_id": "model-run",
+            "data": {"chunk": "Done"},
         }
 
 
@@ -754,8 +815,7 @@ def test_skill_directive_survives_tagged_artifact_guidance(client_with_stubs, tm
     assert messages[0]["skill"] == "frontend-slides"
     assert agent.stream_inputs
     stream_kwargs = agent.stream_inputs[0][1]
-    assert stream_kwargs["stream_mode"] == ["updates", "messages"]
-    assert stream_kwargs["version"] == "v2"
+    assert stream_kwargs["version"] == "v3"
     stream_input = agent.stream_inputs[0][0][0]
     user_text = stream_input["messages"][-1]["content"]
     assert "Loaded skill: frontend-slides" in user_text
@@ -764,14 +824,14 @@ def test_skill_directive_survives_tagged_artifact_guidance(client_with_stubs, tm
     assert source_tracker.updated_workspaces == [runtime.workspace_state]
 
 
-def test_chat_stream_reads_v2_message_chunks(client_with_stubs):
+def test_chat_stream_reads_v3_message_chunks(client_with_stubs):
     client, registry, source_tracker = client_with_stubs
-    runtime = DummyRuntime("workspace-v2-message", V2MessageStreamingAgent())
-    registry.set_runtime("research", "workspace-v2-message", runtime)
+    runtime = DummyRuntime("workspace-v3-message", V3MessageStreamingAgent())
+    registry.set_runtime("research", "workspace-v3-message", runtime)
 
     with client.stream(
         "POST",
-        "/agents/research/workspace/workspace-v2-message/chat/stream",
+        "/agents/research/workspace/workspace-v3-message/chat/stream",
         json={"message": "Say hello", "history": []},
     ) as response:
         assert response.status_code == 200
@@ -783,14 +843,14 @@ def test_chat_stream_reads_v2_message_chunks(client_with_stubs):
     assert source_tracker.updated_workspaces == [runtime.workspace_state]
 
 
-def test_chat_stream_reads_v2_interrupt_chunks(client_with_stubs):
+def test_chat_stream_reads_v3_interrupt_chunks(client_with_stubs):
     client, registry, source_tracker = client_with_stubs
-    runtime = DummyRuntime("workspace-v2-interrupt", V2InterruptStreamingAgent())
-    registry.set_runtime("research", "workspace-v2-interrupt", runtime)
+    runtime = DummyRuntime("workspace-v3-interrupt", V3InterruptStreamingAgent())
+    registry.set_runtime("research", "workspace-v3-interrupt", runtime)
 
     with client.stream(
         "POST",
-        "/agents/research/workspace/workspace-v2-interrupt/chat/stream",
+        "/agents/research/workspace/workspace-v3-interrupt/chat/stream",
         json={"message": "Need clarification", "history": []},
     ) as response:
         assert response.status_code == 200
@@ -800,6 +860,32 @@ def test_chat_stream_reads_v2_interrupt_chunks(client_with_stubs):
     assert interrupt["kind"] == "clarification"
     assert interrupt["title"] == "Need detail"
     assert interrupt["interruptId"] == "interrupt-123"
+    assert messages[-1]["type"] == "done"
+    assert source_tracker.updated_workspaces == [runtime.workspace_state]
+
+
+def test_chat_stream_maps_v3_tool_and_custom_events(client_with_stubs):
+    client, registry, source_tracker = client_with_stubs
+    runtime = DummyRuntime("workspace-v3-tool", V3ToolStreamingAgent())
+    registry.set_runtime("research", "workspace-v3-tool", runtime)
+
+    with client.stream(
+        "POST",
+        "/agents/research/workspace/workspace-v3-tool/chat/stream",
+        json={"message": "Use a tool", "history": []},
+    ) as response:
+        assert response.status_code == 200
+        messages = _collect_stream_payloads(response)
+
+    tool_start = next(item for item in messages if item.get("type") == "tool_start")
+    tool_end = next(item for item in messages if item.get("type") == "tool_end")
+    dashboard = next(item for item in messages if item.get("type") == "dashboard_artifact")
+    assert tool_start["name"] == "read_file"
+    assert "README.md" in tool_start["content"]
+    assert tool_end["name"] == "read_file"
+    assert tool_end["outputFiles"] == [{"path": "README.md", "mimeType": "text/markdown"}]
+    assert dashboard["dashboardArtifact"]["dashboardPath"] == "reports/dashboard.html"
+    assert "".join(item.get("content", "") for item in messages if item.get("type") == "token") == "Done"
     assert messages[-1]["type"] == "done"
     assert source_tracker.updated_workspaces == [runtime.workspace_state]
 
