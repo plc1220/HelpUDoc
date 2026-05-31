@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import fnmatch
+import inspect
 import json
 import logging
 import os
@@ -1481,12 +1482,15 @@ def register_chat_routes(
                 elif resume_value is not None:
                     stream_input = Command(resume=resume_value)
                 final_result = None
-                async for event in agent.astream_events(
+                event_stream = agent.astream_events(
                     stream_input,
                     config=stream_config,
                     context=runtime.workspace_state.context,
                     version="v3",
-                ):
+                )
+                if inspect.isawaitable(event_stream):
+                    event_stream = await event_stream
+                async for event in event_stream:
                     data = _event_data(event)
                     method = _event_method(event)
                     if method in {"on_chain_end", "values", "updates"} and data is not None:
