@@ -11,6 +11,7 @@ from deepagents.middleware.filesystem import FilesystemMiddleware
 from deepagents.middleware.patch_tool_calls import PatchToolCallsMiddleware
 from langchain.agents import create_agent
 from langchain.agents.middleware import HumanInTheLoopMiddleware, TodoListMiddleware
+from langchain_quickjs.middleware import CodeInterpreterMiddleware
 
 from helpudoc_agent.middleware.implicit_input_guard import ImplicitInputGuardMiddleware
 from langchain.agents.middleware.summarization import SummarizationMiddleware
@@ -327,6 +328,25 @@ class AgentRegistry:
             ),
             PatchToolCallsMiddleware(),
         ]
+        code_interpreter = self.settings.backend.code_interpreter
+        if code_interpreter.enabled:
+            middleware.append(
+                CodeInterpreterMiddleware(
+                    tool_name=code_interpreter.tool_name,
+                    memory_limit=code_interpreter.memory_limit_bytes,
+                    timeout=code_interpreter.timeout_seconds,
+                    max_ptc_calls=code_interpreter.max_ptc_calls,
+                    max_result_chars=code_interpreter.max_result_chars,
+                    ptc=code_interpreter.ptc_tools,
+                    snapshot_between_turns=code_interpreter.snapshot_between_turns,
+                    max_snapshot_bytes=code_interpreter.max_snapshot_bytes,
+                )
+            )
+            logger.info(
+                "Code interpreter enabled (workspace=%s ptc_tools=%s)",
+                workspace_id,
+                code_interpreter.ptc_tools,
+            )
         if interrupt_on:
             middleware.append(HumanInTheLoopMiddleware(interrupt_on=interrupt_on))
         if self.settings.backend.implicit_input_guard:

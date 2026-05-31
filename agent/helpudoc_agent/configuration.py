@@ -87,11 +87,74 @@ class ModelConfig(BaseModel):
         return self.image_name or self.name
 
 
+class CodeInterpreterConfig(BaseModel):
+    enabled: bool = Field(default=False)
+    tool_name: str = Field(default="eval")
+    memory_limit_bytes: int = Field(default=64 * 1024 * 1024)
+    timeout_seconds: float = Field(default=5.0)
+    max_ptc_calls: int = Field(default=64)
+    max_result_chars: int = Field(default=4000)
+    snapshot_between_turns: bool = Field(default=True)
+    max_snapshot_bytes: Optional[int] = None
+    ptc_tools: List[str] = Field(
+        default_factory=lambda: [
+            "rag_query",
+            "get_table_schema",
+            "run_sql_query",
+            "google_search",
+            "url_context",
+        ]
+    )
+
+    @field_validator("tool_name")
+    @classmethod
+    def _validate_tool_name(cls, value: str) -> str:
+        normalized = (value or "").strip()
+        if not normalized:
+            raise ValueError("tool_name must not be empty")
+        return normalized
+
+    @field_validator("memory_limit_bytes", "max_result_chars")
+    @classmethod
+    def _validate_positive_ints(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("value must be >= 1")
+        return value
+
+    @field_validator("timeout_seconds")
+    @classmethod
+    def _validate_timeout(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError("timeout_seconds must be > 0")
+        return value
+
+    @field_validator("max_snapshot_bytes")
+    @classmethod
+    def _validate_optional_positive_ints(cls, value: Optional[int]) -> Optional[int]:
+        if value is not None and value < 1:
+            raise ValueError("value must be >= 1 when set")
+        return value
+
+    @field_validator("ptc_tools")
+    @classmethod
+    def _normalize_ptc_tools(cls, value: List[str]) -> List[str]:
+        normalized: List[str] = []
+        seen: set[str] = set()
+        for raw_name in value or []:
+            name = str(raw_name or "").strip()
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            normalized.append(name)
+        return normalized
+
+
 class BackendConfig(BaseModel):
     workspace_root: Path
     virtual_mode: bool = Field(default=True)
     skills_root: Optional[Path] = None
     sync_skills_to_workspace: bool = Field(default=False)
+    code_interpreter: CodeInterpreterConfig = Field(default_factory=CodeInterpreterConfig)
     interrupt_on: Dict[str, Any] = Field(
         default_factory=lambda: {
             "request_plan_approval": {
