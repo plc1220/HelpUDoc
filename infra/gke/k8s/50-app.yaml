@@ -576,3 +576,7 @@ spec:
   ports:
     - port: 3000
       targetPort: 3000
+      name: backend
+    - port: 8001
+      targetPort: 8001
+      name: agent

@@ -23,6 +23,8 @@ spec:
               env:
                 - name: NODE_ENV
                   value: production
+                - name: AGENT_URL
+                  value: http://backend:8001
                 - name: POSTGRES_HOST
                   value: postgres
                 - name: POSTGRES_PORT

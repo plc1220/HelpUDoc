@@ -1,6 +1,6 @@
 import React from 'react';
 import { Drawer, Box, IconButton, TextField } from '@mui/material';
-import { ChevronLeft, Home, Settings, LightMode, DarkMode, Logout } from '@mui/icons-material';
+import { Add, ChevronLeft, Settings, LightMode, DarkMode, Logout } from '@mui/icons-material';
 import WorkspaceList from './WorkspaceList';
 import type { Workspace } from '../types';
 import type { PaletteMode } from '@mui/material';
@@ -15,7 +15,7 @@ interface CollapsibleDrawerProps {
   handleDeleteWorkspace: (id: string) => void;
   onShareWorkspace?: (workspace: Workspace) => void;
   onSelectWorkspace: (workspace: Workspace) => void;
-  onOpenLandingPage: () => void;
+  onCreateWorkspace: () => void | Promise<void>;
   onOpenSettings: () => void;
   colorMode: PaletteMode;
   onToggleColorMode: () => void;
@@ -34,7 +34,7 @@ const CollapsibleDrawer: React.FC<CollapsibleDrawerProps> = ({
   handleDeleteWorkspace,
   onShareWorkspace,
   onSelectWorkspace,
-  onOpenLandingPage,
+  onCreateWorkspace,
   onOpenSettings,
   colorMode,
   onToggleColorMode,
@@ -43,11 +43,6 @@ const CollapsibleDrawer: React.FC<CollapsibleDrawerProps> = ({
   const handleOpenSettingsClick = () => {
     handleDrawerClose();
     onOpenSettings();
-  };
-
-  const handleOpenLandingClick = () => {
-    handleDrawerClose();
-    onOpenLandingPage();
   };
 
   return (
@@ -79,13 +74,15 @@ const CollapsibleDrawer: React.FC<CollapsibleDrawerProps> = ({
       >
         <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
           <IconButton
-            onClick={handleOpenLandingClick}
+            onClick={() => {
+              void onCreateWorkspace();
+            }}
             size="small"
-            title="Home"
-            aria-label="Go to landing page"
+            title="New workspace"
+            aria-label="Create workspace"
             sx={{ border: (theme) => `1px solid ${theme.palette.divider}`, borderRadius: 2 }}
           >
-            <Home fontSize="small" />
+            <Add fontSize="small" />
           </IconButton>
           <IconButton
             onClick={handleDrawerClose}

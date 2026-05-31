@@ -50,6 +50,8 @@ const REFLECTION_ANALYSIS_SYSTEM_PROMPT = [
   'Focus on operational diagnosis and concrete improvement suggestions.',
 ].join('\n');
 
+const jsonbParam = (db: Knex, value: unknown) => db.raw('?::jsonb', [JSON.stringify(value)]);
+
 function resolveAnalyticsTimezone(): string {
   const timezone = String(process.env.ANALYTICS_TIMEZONE || 'UTC').trim();
   return timezone || 'UTC';
@@ -346,9 +348,9 @@ export class DailyReflectionService {
             reliabilityScore: scorecard.reliability,
             frictionScore: scorecard.friction,
             summaryMarkdown: analysis.summaryMarkdown,
-            metrics,
-            recommendations,
-            sampledConversations,
+            metrics: jsonbParam(this.db, metrics),
+            recommendations: jsonbParam(this.db, recommendations),
+            sampledConversations: jsonbParam(this.db, sampledConversations),
             updatedAt: this.db.fn.now(),
           });
         persistedId = Number(existing.id);
@@ -363,9 +365,9 @@ export class DailyReflectionService {
             reliabilityScore: scorecard.reliability,
             frictionScore: scorecard.friction,
             summaryMarkdown: analysis.summaryMarkdown,
-            metrics,
-            recommendations,
-            sampledConversations,
+            metrics: jsonbParam(this.db, metrics),
+            recommendations: jsonbParam(this.db, recommendations),
+            sampledConversations: jsonbParam(this.db, sampledConversations),
             createdAt: this.db.fn.now(),
             updatedAt: this.db.fn.now(),
           })
@@ -382,7 +384,7 @@ export class DailyReflectionService {
             entityKey: item.entityKey,
             label: item.label,
             rank: item.rank,
-            metrics: item.metrics,
+            metrics: jsonbParam(this.db, item.metrics),
             summary: item.summary || null,
             createdAt: this.db.fn.now(),
           })),

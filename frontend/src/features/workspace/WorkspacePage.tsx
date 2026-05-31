@@ -6263,7 +6263,9 @@ export default function WorkspacePage() {
           handleDeleteWorkspace={handleDeleteWorkspace}
           onShareWorkspace={handleShareWorkspace}
           onSelectWorkspace={handleSelectWorkspace}
-          onOpenLandingPage={handleOpenLandingPage}
+          onCreateWorkspace={() => {
+            void handleCreateWorkspace();
+          }}
           onOpenSettings={handleOpenAgentSettings}
           colorMode={colorMode}
           onToggleColorMode={toggleColorMode}
