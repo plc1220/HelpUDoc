@@ -712,6 +712,11 @@ export default function ChatMessageBubble({
   const isAgentMessage = message.sender === 'agent';
   const [now, setNow] = useState(() => Date.now());
   const messageMetadata = (message.metadata as ConversationMessageMetadata | null | undefined) || undefined;
+  const progressEvents = useMemo(() => messageMetadata?.progressEvents || [], [messageMetadata?.progressEvents]);
+  const latestProgress = useMemo(() => [...progressEvents].reverse().find(Boolean), [progressEvents]);
+  const activeProgress = useMemo(() => [...progressEvents].reverse().find(
+    (event) => event.status === 'running',
+  ), [progressEvents]);
   const timestampLabel = formatMessageTimestamp(message.updatedAt || message.createdAt);
   const toolEvents = useMemo(
     () => (message.toolEvents || []).filter((event) => !isSkippedToolEvent(event)),
@@ -920,6 +925,20 @@ export default function ChatMessageBubble({
         title: 'Waiting for you',
         detail: awaitingDetail as ReactNode,
         elapsed: formatElapsedTime(message.createdAt, now),
+      };
+    }
+    if (progressEvents.length > 0) {
+      const stageLabel =
+        activeProgress?.label ||
+        latestProgress?.label ||
+        toolDigest.activeStepLabel ||
+        toolDigest.headline ||
+        'Working through the current request.';
+      return {
+        status: rawStatus,
+        title: 'Running',
+        detail: stageLabel as ReactNode,
+        elapsed: formatElapsedTime(runClockAnchor || message.createdAt, now),
       };
     }
     if (hasToolEvents) {
@@ -1761,11 +1780,16 @@ export default function ChatMessageBubble({
   const compactThoughtElapsed = thoughtElapsed.replace(/^0m\s0?(\d+)s$/, '$1s');
   const shouldShowThoughtRow = Boolean(
     isAgentMessage
-    && (isLiveAgentStatus || hasToolEvents || displayThinkingText)
+    && (isLiveAgentStatus || hasToolEvents || displayThinkingText || progressEvents.length > 0)
     && !shouldHideAgentBodyForApproval,
   );
   const thoughtSummaryItems = toolDigest.digestEvents.slice(-6);
-  const canExpandThought = Boolean(thoughtSummaryItems.length || toolDigest.currentLabel || displayThinkingText);
+  const canExpandThought = Boolean(
+    progressEvents.length > 0 ||
+    thoughtSummaryItems.length ||
+    toolDigest.currentLabel ||
+    displayThinkingText
+  );
   const thoughtRowClassName = isDarkMode
     ? 'mt-1 inline-flex items-center gap-1.5 text-sm font-medium text-slate-400 transition-colors hover:text-slate-200'
     : 'mt-1 inline-flex items-center gap-1.5 text-sm font-medium text-slate-500 transition-colors hover:text-slate-700';
@@ -1823,7 +1847,11 @@ export default function ChatMessageBubble({
                   className={`${thoughtRowClassName} ${canExpandThought ? '' : 'cursor-default hover:text-inherit'}`}
                   aria-expanded={canExpandThought ? isThinkingExpanded : undefined}
                 >
-                  <span>{`Thought for ${compactThoughtElapsed || '0s'}`}</span>
+                  <span>
+                    {progressEvents.length > 0
+                      ? `Process details (${compactThoughtElapsed || '0s'})`
+                      : `Thought for ${compactThoughtElapsed || '0s'}`}
+                  </span>
                   {canExpandThought ? (
                     <ChevronRight
                       size={15}
@@ -1834,7 +1862,53 @@ export default function ChatMessageBubble({
                 </button>
                 {canExpandThought && isThinkingExpanded ? (
                   <div className={thoughtPanelClassName}>
-                    {thoughtSummaryItems.length ? (
+                    {progressEvents.length > 0 ? (
+                      <div className="space-y-3">
+                        <div className={`text-[10px] font-bold uppercase tracking-widest ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>
+                          Process Execution Flow
+                        </div>
+                        <ul className="relative border-l border-slate-200 dark:border-slate-800/80 ml-1.5 pl-4 space-y-4">
+                          {progressEvents.map((event, index) => {
+                            const isRunning = event.status === 'running';
+                            const isCompleted = event.status === 'completed';
+                            const isError = event.status === 'error';
+
+                            return (
+                              <li key={index} className="relative leading-relaxed">
+                                <span className={`absolute -left-[21px] top-1.5 flex h-2 w-2 items-center justify-center rounded-full border ${
+                                  isCompleted
+                                    ? 'bg-sky-500 border-sky-500 shadow-[0_0_8px_rgba(14,165,233,0.3)]'
+                                    : isRunning
+                                      ? 'bg-sky-500 border-sky-500 animate-pulse'
+                                      : isError
+                                        ? 'bg-rose-500 border-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.3)]'
+                                        : 'bg-slate-200 border-slate-300 dark:bg-slate-800 dark:border-slate-700'
+                                }`} />
+                                
+                                <div className="min-w-0">
+                                  <p className={`font-semibold text-xs ${
+                                    isRunning 
+                                      ? 'text-sky-500 animate-pulse' 
+                                      : isCompleted 
+                                        ? isDarkMode ? 'text-slate-200' : 'text-slate-800'
+                                        : isDarkMode ? 'text-slate-500' : 'text-slate-400'
+                                  }`}>
+                                    {event.label}
+                                  </p>
+                                  {event.detail ? (
+                                    <p className={`mt-0.5 text-[11px] leading-normal ${
+                                      isDarkMode ? 'text-slate-400' : 'text-slate-500'
+                                    }`}>
+                                      {event.detail}
+                                    </p>
+                                  ) : null}
+                                </div>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      </div>
+                    ) : thoughtSummaryItems.length ? (
                       <ul className="space-y-2">
                         {thoughtSummaryItems.map((event) => (
                           <li key={event.id} className="leading-relaxed">
@@ -1859,13 +1933,77 @@ export default function ChatMessageBubble({
                 ) : null}
               </div>
             ) : null}
+            {inlineStatus ? (
+              <div className={`mt-3 rounded-xl border p-3.5 backdrop-blur-md shadow-sm transition-all duration-300 ${
+                isDarkMode 
+                  ? 'border-slate-800/80 bg-slate-900/50 text-slate-100' 
+                  : 'border-slate-200/80 bg-slate-50/80 text-slate-900'
+              }`}>
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <span className="relative flex h-2 w-2">
+                      {inlineStatus.status === 'running' ? (
+                        <>
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-sky-400 opacity-75"></span>
+                          <span className="relative inline-flex rounded-full h-2 w-2 bg-sky-500"></span>
+                        </>
+                      ) : (
+                        <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+                      )}
+                    </span>
+                    <div className="min-w-0">
+                      <p className={`text-sm font-semibold leading-snug tracking-tight ${
+                        isDarkMode ? 'text-slate-100' : 'text-slate-900'
+                      }`}>
+                        {inlineStatus.status === 'awaiting_approval' 
+                          ? 'Waiting for approval' 
+                          : (activeProgress?.label || latestProgress?.label || inlineStatus.detail)}
+                      </p>
+                      {activeProgress?.detail ? (
+                        <p className={`mt-0.5 text-xs ${
+                          isDarkMode ? 'text-slate-400' : 'text-slate-500'
+                        }`}>
+                          {activeProgress.detail}
+                        </p>
+                      ) : null}
+                    </div>
+                  </div>
+                  <span className={`text-xs font-medium tabular-nums ${
+                    isDarkMode ? 'text-slate-500' : 'text-slate-400'
+                  }`}>
+                    {inlineStatus.elapsed}
+                  </span>
+                </div>
+
+                {activeProgress?.stepIndex && activeProgress?.stepCount ? (
+                  <div className="mt-3">
+                    <div className={`h-1.5 w-full overflow-hidden rounded-full ${
+                      isDarkMode ? 'bg-slate-800' : 'bg-slate-200'
+                    }`}>
+                      <div
+                        className="h-full rounded-full bg-gradient-to-r from-sky-500 to-indigo-500 transition-all duration-500 ease-out"
+                        style={{
+                          width: `${Math.min(100, Math.max(0, Math.round((activeProgress.stepIndex / activeProgress.stepCount) * 100)))}%`,
+                        }}
+                      />
+                    </div>
+                    <p className={`mt-1.5 text-[11px] font-medium leading-none ${
+                      isDarkMode ? 'text-slate-500' : 'text-slate-400'
+                    }`}>
+                      Step {activeProgress.stepIndex} of {activeProgress.stepCount}
+                    </p>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
             {liveAgentPreviewText ? (
               <div className="agent-markdown mt-3 text-sm">
                 <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
                   {liveAgentPreviewText}
                 </ReactMarkdown>
               </div>
-            ) : shouldShowFallbackStatus ? (
+            ) : shouldShowFallbackStatus && !inlineStatus ? (
               <span className={`mt-3 block text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
                 {displayThinkingText ? 'Finalizing response...' : 'Thinking...'}
               </span>

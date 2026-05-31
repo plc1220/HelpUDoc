@@ -13,6 +13,30 @@ export type AgentStreamChunk =
       prePlanSearchLimit?: number;
       prePlanSearchUsed?: number;
     }
+  | {
+      type: 'progress';
+      phase:
+        | 'queued'
+        | 'preparing_context'
+        | 'routing'
+        | 'loading_skill'
+        | 'planning'
+        | 'retrieving'
+        | 'using_tool'
+        | 'writing_artifact'
+        | 'awaiting_input'
+        | 'finalizing'
+        | 'completed'
+        | 'failed';
+      label: string;
+      detail?: string;
+      status?: 'pending' | 'running' | 'completed' | 'error';
+      stepIndex?: number;
+      stepCount?: number;
+      toolName?: string;
+      artifactPath?: string;
+      timestamp?: string;
+    }
   | { type: 'tool_start'; content?: string; name?: string }
   | {
       type: 'tool_end';
@@ -62,7 +86,7 @@ export type AgentStreamChunk =
       displayPayload?: Record<string, unknown>;
     }
   | { type: 'keepalive' }
-  | { type: 'done' }
+  | { type: 'done'; status?: 'completed' | 'failed' | 'cancelled' }
   | { type: 'error'; message?: string }
   | { type: 'contract_error'; message?: string; missing?: string[] };
 
@@ -187,8 +211,6 @@ export const streamAgentRunWithReconnect = async ({
       let buffer = '';
       let sawChunk = false;
       let sawTerminalChunk = false;
-      let suppressInternalAssistantContent = false;
-
       const emitNormalizedChunk = (chunk: AgentStreamChunk & { id?: unknown }) => {
         const isAssistantTextChunk =
           (chunk.type === 'token' || chunk.type === 'chunk') &&
@@ -196,8 +218,7 @@ export const streamAgentRunWithReconnect = async ({
         const content = isAssistantTextChunk && typeof chunk.content === 'string' ? chunk.content : '';
         const suppressMarker = (chunk as Record<string, unknown>).__suppressInternalStream === true;
 
-        if (isAssistantTextChunk && (suppressMarker || isInternalStreamContent(content) || suppressInternalAssistantContent)) {
-          suppressInternalAssistantContent = true;
+        if (isAssistantTextChunk && (suppressMarker || isInternalStreamContent(content))) {
           const cleanChunk = { ...(chunk as Record<string, unknown>) };
           delete cleanChunk.__suppressInternalStream;
           cleanChunk.content = '';
@@ -205,9 +226,6 @@ export const streamAgentRunWithReconnect = async ({
           return;
         }
 
-        if (chunk.type !== 'token' && chunk.type !== 'chunk') {
-          suppressInternalAssistantContent = false;
-        }
         onChunkWithResume(chunk);
       };
 

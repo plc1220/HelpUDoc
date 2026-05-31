@@ -188,6 +188,17 @@ export interface ConversationMessageMetadata {
   awaitingImplicitInput?: boolean;
   implicitInputReason?: 'missing_interrupt';
   implicitInputPrompt?: string;
+  progressEvents?: Array<{
+    phase: string;
+    label: string;
+    detail?: string;
+    status?: 'pending' | 'running' | 'completed' | 'error';
+    stepIndex?: number;
+    stepCount?: number;
+    toolName?: string;
+    artifactPath?: string;
+    timestamp?: string;
+  }>;
 }
 
 export interface ConversationMessage {

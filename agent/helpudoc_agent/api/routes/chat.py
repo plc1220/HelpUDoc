@@ -9,8 +9,10 @@ import logging
 import os
 import re
 import sys
-from typing import Any, AsyncGenerator, Callable, Dict, Iterable, List, Optional, Set, Tuple
+from typing import Any, AsyncGenerator, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from pathlib import Path
 from uuid import uuid4
+from datetime import datetime
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -54,6 +56,7 @@ from ..constants import (
     _INTERNAL_STREAM_TEXT_PATTERNS,
     _INTERRUPT_TOOL_NAMES,
     _TOOL_ROLES,
+    _TAGGED_HTML_EXTENSIONS,
 )
 from ..directives import _extract_directive_from_text
 from ..message_utils import (
@@ -89,6 +92,52 @@ from ..text_utils import (
     _clean_langfuse_value,
 )
 from ..tool_output import _extract_output_files_from_tool_result
+ 
+def _friendly_tool_label(name: str) -> str:
+    mapping = {
+        "list_skills": "Checking available skills",
+        "load_skill": "Loading the selected skill",
+        "google_search": "Searching the web",
+        "url_context": "Reading the provided link",
+        "run_sql_query": "Querying the database",
+        "write_file": "Writing a workspace file",
+        "edit_file": "Updating a workspace file",
+        "request_plan_approval": "Preparing approval request",
+        "request_clarification": "Preparing a question for you",
+    }
+    return mapping.get(name, f"Using {name.replace('_', ' ')}")
+
+
+async def _emit_progress(
+    handler,
+    phase: str,
+    label: str,
+    *,
+    detail: str | None = None,
+    status: str = "running",
+    step_index: int | None = None,
+    step_count: int | None = None,
+    tool_name: str | None = None,
+    artifact_path: str | None = None,
+) -> None:
+    payload = {
+        "type": "progress",
+        "phase": phase,
+        "label": label,
+        "status": status,
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+    }
+    if detail is not None:
+        payload["detail"] = detail
+    if step_index is not None:
+        payload["stepIndex"] = step_index
+    if step_count is not None:
+        payload["stepCount"] = step_count
+    if tool_name is not None:
+        payload["toolName"] = tool_name
+    if artifact_path is not None:
+        payload["artifactPath"] = artifact_path
+    await handler._emit(payload)
 
 logger = logging.getLogger(__name__)
 
@@ -496,20 +545,7 @@ def register_chat_routes(
             context["thread_id"] = thread_id
         return context["thread_id"]
 
-    def _clean_langfuse_value(value: Any) -> Optional[str]:
-        if not isinstance(value, str):
-            return None
-        cleaned = value.strip()
-        return cleaned or None
 
-    def _safe_langfuse_tag(prefix: str, value: Any) -> Optional[str]:
-        cleaned = _clean_langfuse_value(value)
-        if not cleaned:
-            return None
-        normalized = re.sub(r"[^A-Za-z0-9_.:-]+", "-", cleaned).strip("-")
-        if not normalized:
-            return None
-        return f"{prefix}:{normalized[:96]}"
 
     def _build_langfuse_metadata(
         runtime: AgentRuntimeState,
@@ -663,6 +699,7 @@ def register_chat_routes(
             name = ""
             if isinstance(serialized, dict):
                 name = str(serialized.get("name") or serialized.get("id") or "").strip()
+            await _emit_progress(self, "planning", "Thinking through the next step")
             await self._emit({"type": "model_start", "name": name or "model"})
 
         async def on_llm_start(self, serialized, prompts, *, run_id, **_: Any) -> None:
@@ -745,11 +782,26 @@ def register_chat_routes(
                 interrupt_payload = extract_interrupt_payload_from_tool_call(name, input_str)
                 if interrupt_payload:
                     self._interrupt_emitted = True
+                    await _emit_progress(
+                        self,
+                        "awaiting_input",
+                        "Preparing clarification question",
+                        detail=name,
+                        tool_name=name,
+                        status="pending",
+                    )
                     await self._emit(interrupt_payload)
                     if self._cancel_run:
                         self._cancel_run()
                     return
             preview = input_str.strip()
+            await _emit_progress(
+                self,
+                "using_tool",
+                _friendly_tool_label(name),
+                detail=name,
+                tool_name=name,
+            )
             await self._emit(
                 {
                     "type": "tool_start",
@@ -766,8 +818,24 @@ def register_chat_routes(
                 interrupt_payload = extract_interrupt_payload_from_tool_text(text)
                 if interrupt_payload:
                     self._tool_meta.pop(run_key, None)
+                    await _emit_progress(
+                        self,
+                        "awaiting_input",
+                        "Preparing clarification question",
+                        detail=name,
+                        tool_name=name,
+                        status="pending",
+                    )
                     await self._emit(interrupt_payload)
                     return
+            await _emit_progress(
+                self,
+                "using_tool",
+                f"Finished {_friendly_tool_label(name)}",
+                detail=name,
+                tool_name=name,
+                status="completed",
+            )
             payload: Dict[str, Any] = {
                 "type": "tool_end",
                 "name": name,
@@ -861,10 +929,7 @@ def register_chat_routes(
             start = max(end, start + 1)
         return chunks
 
-    _INTERNAL_STREAM_TEXT_PATTERNS = (
-        re.compile(r"^PLAN_(APPROVAL|EDIT|REJECTION|REJECT|CLARIFICATION|ACTION)_[A-Z_]+", re.IGNORECASE),
-        re.compile(r"^Command\s*\(", re.IGNORECASE),
-    )
+
 
     def _is_internal_stream_text(text: str) -> bool:
         normalized = (text or "").strip()
@@ -1088,6 +1153,12 @@ def register_chat_routes(
 
         if method in {"on_chat_model_start", "on_llm_start"}:
             name = _event_name(event) or "model"
+            await _emit_progress(
+                handler,
+                "planning",
+                "Thinking through the next step",
+                status="running",
+            )
             await handler._emit({"type": "model_start", "name": name})
             return False
 
@@ -1109,8 +1180,24 @@ def register_chat_routes(
                 interrupt_payload = extract_interrupt_payload_from_tool_call(name, preview)
                 if interrupt_payload:
                     handler._interrupt_emitted = True
+                    await _emit_progress(
+                        handler,
+                        "awaiting_input",
+                        "Preparing clarification question",
+                        detail=name,
+                        tool_name=name,
+                        status="pending",
+                    )
                     await handler._emit(interrupt_payload)
                     return True
+            await _emit_progress(
+                handler,
+                "using_tool",
+                _friendly_tool_label(name),
+                detail=name,
+                tool_name=name,
+                status="running",
+            )
             await handler._emit(
                 {
                     "type": "tool_start",
@@ -1127,8 +1214,24 @@ def register_chat_routes(
             if name in _INTERRUPT_TOOL_NAMES:
                 interrupt_payload = extract_interrupt_payload_from_tool_text(text)
                 if interrupt_payload:
+                    await _emit_progress(
+                        handler,
+                        "awaiting_input",
+                        "Preparing clarification question",
+                        detail=name,
+                        tool_name=name,
+                        status="pending",
+                    )
                     await handler._emit(interrupt_payload)
                     return True
+            await _emit_progress(
+                handler,
+                "using_tool",
+                f"Finished {_friendly_tool_label(name)}",
+                detail=name,
+                tool_name=name,
+                status="completed",
+            )
             payload: Dict[str, Any] = {
                 "type": "tool_end",
                 "name": name,
@@ -1156,6 +1259,14 @@ def register_chat_routes(
         if method in {"on_tool_error", "tools/error", "tool_error"}:
             name = handler._tool_names.pop(run_key, _event_name(event) or "tool")
             text = _event_output_text(data)
+            await _emit_progress(
+                handler,
+                "using_tool",
+                f"Error in {_friendly_tool_label(name)}",
+                detail=name,
+                tool_name=name,
+                status="error",
+            )
             await handler._emit({"type": "tool_error", "name": name, "content": text})
             return False
 
@@ -1384,8 +1495,7 @@ def register_chat_routes(
         _inject_host_datetime_context(payload)
         return payload
 
-    _ASSISTANT_ROLES = {"assistant", "ai", "aimessagechunk"}
-    _TOOL_ROLES = {"tool"}
+
 
     def _emit_text(role: str, text: str) -> Iterable[Dict[str, str]]:
         if not text:
@@ -1440,11 +1550,17 @@ def register_chat_routes(
         async def _agent_runner():
             lf_handlers = langfuse_langchain_callbacks()
             try:
+                await _emit_progress(
+                    handler,
+                    "preparing_context",
+                    "Preparing workspace context",
+                    status="running",
+                )
                 nonlocal saw_interrupt
                 stream_config = _build_agent_config(
                     runtime,
                     message,
-                    callbacks=[handler, *lf_handlers],
+                    callbacks=lf_handlers or None,
                 )
                 stream_input: Any = {"messages": payload}
                 if resume_decisions is not None:
@@ -1468,6 +1584,12 @@ def register_chat_routes(
                     interrupt_payload = _extract_v3_interrupt_payload(event)
                     if interrupt_payload:
                         saw_interrupt = True
+                        await _emit_progress(
+                            handler,
+                            "awaiting_input",
+                            "Awaiting your input to proceed",
+                            status="pending",
+                        )
                         await handler._emit(interrupt_payload)
                         return
                     if await _emit_v3_event(
@@ -1478,11 +1600,24 @@ def register_chat_routes(
                         saw_interrupt = True
                         return
 
+                await _emit_progress(
+                    handler,
+                    "finalizing",
+                    "Preparing final response",
+                    status="running",
+                )
+
                 emitted = False
                 interrupt_payload = _extract_v3_interrupt_payload(final_result) or _extract_interrupt_payload(final_result)
                 if interrupt_payload:
                     saw_interrupt = True
                     emitted = True
+                    await _emit_progress(
+                        handler,
+                        "awaiting_input",
+                        "Awaiting your input to proceed",
+                        status="pending",
+                    )
                     await handler._emit(interrupt_payload)
 
                 messages = _extract_messages(final_result)
@@ -1515,6 +1650,12 @@ def register_chat_routes(
                 interrupt_payload = _extract_interrupt_from_exception(exc)
                 if interrupt_payload:
                     saw_interrupt = True
+                    await _emit_progress(
+                        handler,
+                        "awaiting_input",
+                        "Awaiting your input to proceed",
+                        status="pending",
+                    )
                     await handler._emit(interrupt_payload)
                     return
                 raise
@@ -1527,6 +1668,13 @@ def register_chat_routes(
                 error_message = _format_exception(exc)
                 logger.exception("Agent stream error: %s", error_message)
                 await handler._emit({"type": "error", "message": error_message})
+                await _emit_progress(
+                    handler,
+                    "failed",
+                    "Execution failed",
+                    detail=error_message,
+                    status="error",
+                )
                 raise
             finally:
                 elapsed = asyncio.get_running_loop().time() - stream_started
@@ -1561,6 +1709,13 @@ def register_chat_routes(
                 missing = _missing_required_artifacts(runtime)
                 if missing:
                     runtime.workspace_state.context["artifact_contract_failed"] = True
+                    yield _json_line({
+                        "type": "progress",
+                        "phase": "failed",
+                        "label": "Artifact contract not satisfied",
+                        "status": "error",
+                        "timestamp": datetime.utcnow().isoformat() + "Z",
+                    })
                     yield _json_line(
                         {
                             "type": "contract_error",
@@ -1568,7 +1723,16 @@ def register_chat_routes(
                             "missing": missing,
                         }
                     )
-            yield _json_line({"type": "done"})
+                    yield _json_line({"type": "done", "status": "failed"})
+                else:
+                    yield _json_line({
+                        "type": "progress",
+                        "phase": "completed",
+                        "label": "Completed response generation",
+                        "status": "completed",
+                        "timestamp": datetime.utcnow().isoformat() + "Z",
+                    })
+                    yield _json_line({"type": "done", "status": "completed"})
         finally:
             await task
 
