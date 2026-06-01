@@ -162,6 +162,16 @@ test('detects "fill out the form above" as phantom UI reference', () => {
   assert.equal(result.awaiting, true);
 });
 
+test('detects context form below plus fill this out wording', () => {
+  const result = detectImplicitInputAwaiting({
+    status: 'completed',
+    skillId: 'frontend-slides',
+    hadInterrupt: false,
+    assistantText: "I've analyzed the Final_Proposal.md for the Texas Chicken Malaysia Sales Intelligence project. I've prepared a context form below.\n\nPlease fill this out so I can structure the slides correctly. After you submit, I'll provide a proposed slide outline for your review.",
+  });
+  assert.equal(result.awaiting, true);
+});
+
 test('detects numbered list beyond 800 chars when within 1500 char window', () => {
   const filler = 'A'.repeat(900);
   const result = detectImplicitInputAwaiting({

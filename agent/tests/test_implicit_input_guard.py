@@ -61,6 +61,19 @@ def test_detect_implicit_input_fill_out_form_above() -> None:
     assert result.awaiting is True
 
 
+def test_detect_implicit_input_context_form_below_fill_this_out() -> None:
+    result = detect_implicit_input_awaiting(
+        skill_id="frontend-slides",
+        assistant_text=(
+            "I've analyzed the Final_Proposal.md for the Texas Chicken Malaysia project. "
+            "I've prepared a context form below.\n\n"
+            "Please fill this out so I can structure the slides correctly. "
+            "After you submit, I'll provide a proposed slide outline for your review."
+        ),
+    )
+    assert result.awaiting is True
+
+
 def test_build_synthetic_interrupt_uses_structured_outline_question() -> None:
     payload = build_synthetic_clarification_interrupt(
         skill_id="frontend-slides",
