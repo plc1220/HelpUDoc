@@ -48,6 +48,8 @@ type StylePreviewChoice = {
   description?: string;
   path?: string;
   previewUrl?: string;
+  downloadUrl?: string;
+  isHtmlPreview?: boolean;
 };
 
 type RerunMessageOptions = {
@@ -78,12 +80,19 @@ const parseAttachmentNames = (text: string): Array<{ name: string; isDrive: bool
     .filter((attachment) => attachment.name.length > 0);
 };
 
-const getAttachmentPreviewUrl = (workspaceId: string | undefined, sourceName: string): string | undefined => {
+const getAttachmentPreviewUrl = (
+  workspaceId: string | undefined,
+  sourceName: string,
+  options?: { inline?: boolean },
+): string | undefined => {
   if (!workspaceId || !sourceName.trim()) {
     return undefined;
   }
   const url = buildApiUrl(`/workspaces/${workspaceId}/files/preview/raw`);
   url.searchParams.set('path', sourceName.trim());
+  if (options?.inline) {
+    url.searchParams.set('disposition', 'inline');
+  }
   return url.toString();
 };
 
@@ -381,13 +390,16 @@ const buildStylePreviewChoices = (
       const value = matchingMetadata.value || choiceValue;
       const path = matchingMetadata.path || inferStylePreviewPath(label, value);
       const description = matchingMetadata.description || choice.description;
+      const isHtmlPreview = Boolean(path && /\.html?$/i.test(path));
       return {
         id: choiceId,
         label,
         value,
         description,
         path,
-        previewUrl: path ? getAttachmentPreviewUrl(workspaceId, path) : undefined,
+        previewUrl: path ? getAttachmentPreviewUrl(workspaceId, path, { inline: isHtmlPreview }) : undefined,
+        downloadUrl: path ? getAttachmentPreviewUrl(workspaceId, path) : undefined,
+        isHtmlPreview,
       };
     })
     .filter((choice): choice is StylePreviewChoice => Boolean(choice));
@@ -846,6 +858,18 @@ export default function ChatMessageBubble({
     [activeSkill, pendingInterrupt, workspaceId],
   );
   const hasStylePreviewChooser = isClarificationInterrupt && stylePreviewChoices.length > 0;
+  const [activeStylePreviewId, setActiveStylePreviewId] = useState<string | null>(null);
+  const activeStylePreviewChoice = useMemo(() => {
+    if (!stylePreviewChoices.length) {
+      return null;
+    }
+    return (
+      stylePreviewChoices.find((choice) => choice.id === activeStylePreviewId)
+      || stylePreviewChoices.find((choice) => selectedChoiceIds.includes(choice.id))
+      || stylePreviewChoices.find((choice) => choice.previewUrl)
+      || stylePreviewChoices[0]
+    );
+  }, [activeStylePreviewId, selectedChoiceIds, stylePreviewChoices]);
   const hasStructuredClarificationForm = isClarificationInterrupt && structuredClarificationQuestions.length > 0;
   const clarificationDraftValue = interruptInputByMessageId[clarificationTextKey] || '';
   const structuredClarificationSubmitActions = interruptActions.filter((action) => action.inputMode === 'text');
@@ -872,6 +896,24 @@ export default function ChatMessageBubble({
   const structuredAnswersComplete = hasStructuredClarificationForm
     ? areStructuredClarificationQuestionsComplete(structuredClarificationQuestions, structuredAnswerMap)
     : false;
+
+  useEffect(() => {
+    if (!stylePreviewChoices.length) {
+      setActiveStylePreviewId(null);
+      return;
+    }
+    setActiveStylePreviewId((current) => {
+      if (current && stylePreviewChoices.some((choice) => choice.id === current)) {
+        return current;
+      }
+      return (
+        stylePreviewChoices.find((choice) => selectedChoiceIds.includes(choice.id))?.id
+        || stylePreviewChoices.find((choice) => choice.previewUrl)?.id
+        || stylePreviewChoices[0]?.id
+        || null
+      );
+    });
+  }, [selectedChoiceIds, stylePreviewChoices]);
 
   const planText = useMemo(() => {
     const args = primaryInterruptAction?.args;
@@ -1486,10 +1528,51 @@ export default function ChatMessageBubble({
     }
 
     return (
-      <div className="mt-3">
-        <div className="grid gap-3 lg:grid-cols-3">
+      <div className="mt-3 space-y-4">
+        {activeStylePreviewChoice ? (
+          <div className="overflow-hidden rounded-2xl border border-slate-200/90 bg-slate-950 shadow-[0_18px_48px_-32px_rgba(15,23,42,0.32)]">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 bg-slate-900 px-4 py-3">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-semibold text-white">{activeStylePreviewChoice.label}</p>
+                {activeStylePreviewChoice.description ? (
+                  <p className="mt-0.5 truncate text-xs text-slate-300">{activeStylePreviewChoice.description}</p>
+                ) : null}
+              </div>
+              {activeStylePreviewChoice.downloadUrl ? (
+                <a
+                  href={activeStylePreviewChoice.downloadUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="shrink-0 rounded-lg border border-white/15 bg-white/10 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-white/15"
+                >
+                  Download preview
+                </a>
+              ) : null}
+            </div>
+            <div className="relative aspect-[16/10] min-h-[260px] bg-slate-950 sm:min-h-[360px]">
+              {activeStylePreviewChoice.previewUrl ? (
+                <iframe
+                  key={activeStylePreviewChoice.previewUrl}
+                  title={`${activeStylePreviewChoice.label} live preview`}
+                  src={activeStylePreviewChoice.previewUrl}
+                  loading="lazy"
+                  sandbox="allow-scripts"
+                  referrerPolicy="no-referrer"
+                  className="h-full w-full border-0 bg-white"
+                />
+              ) : (
+                <div className="flex h-full items-center justify-center text-slate-400">
+                  <ImageIcon size={32} />
+                </div>
+              )}
+            </div>
+          </div>
+        ) : null}
+
+        <div className="grid gap-3 md:grid-cols-3">
           {stylePreviewChoices.map((choice) => {
             const isSelectedChoice = selectedChoiceIds.includes(choice.id);
+            const isActiveChoice = activeStylePreviewChoice?.id === choice.id;
             const previewAction: RenderableInterruptAction = {
               id: `choice:${choice.id}`,
               label: choice.label,
@@ -1503,8 +1586,26 @@ export default function ChatMessageBubble({
             return (
               <div
                 key={choice.id}
-                className={`overflow-hidden rounded-xl border bg-white transition-all duration-200 ${
-                  isSelectedChoice
+                role="button"
+                tabIndex={interruptControlsDisabled ? -1 : 0}
+                onClick={() => {
+                  if (!interruptControlsDisabled) {
+                    setActiveStylePreviewId(choice.id);
+                  }
+                }}
+                onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
+                  if (interruptControlsDisabled) {
+                    return;
+                  }
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    setActiveStylePreviewId(choice.id);
+                  }
+                }}
+                className={`overflow-hidden rounded-xl border bg-white text-left transition-all duration-200 ${
+                  interruptControlsDisabled ? 'cursor-not-allowed opacity-70' : 'cursor-pointer'
+                } ${
+                  isSelectedChoice || isActiveChoice
                     ? 'border-sky-300 shadow-[0_0_0_1px_rgba(14,165,233,0.18)]'
                     : 'border-slate-200/90 hover:border-slate-300'
                 }`}
@@ -1515,7 +1616,8 @@ export default function ChatMessageBubble({
                       title={`${choice.label} preview`}
                       src={choice.previewUrl}
                       loading="lazy"
-                      sandbox=""
+                      sandbox="allow-scripts"
+                      referrerPolicy="no-referrer"
                       className="pointer-events-none h-[250%] w-[250%] origin-top-left scale-[0.4] border-0 bg-white"
                     />
                   ) : (

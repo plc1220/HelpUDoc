@@ -35,6 +35,7 @@ _WEAK_COURTESY_PATTERNS: tuple[Pattern[str], ...] = (
 
 _UI_FORM_MISREF_PATTERNS: tuple[Pattern[str], ...] = (
     re.compile(r"\b(?:from|in|using|via)\s+the\s+(?:form|options?|UI)\s+(?:above|below)", re.IGNORECASE),
+    re.compile(r"\b(?:fill\s+out|complete|submit)\s+the\s+(?:form|questions?)\s+(?:above|below)", re.IGNORECASE),
     re.compile(r"\b(?:forms?|options?|choices?)\s+in\s+the\s+sidebar", re.IGNORECASE),
     re.compile(
         r"\buse\s+the\s+(?:forms?|options?|choices?)\s+(?:in\s+the\s+sidebar|below|above)",

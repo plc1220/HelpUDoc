@@ -90,11 +90,38 @@ export type AgentStreamChunk =
   | { type: 'error'; message?: string }
   | { type: 'contract_error'; message?: string; missing?: string[] };
 
+export type LangChainCompatibleMessage = {
+  id?: string;
+  role: 'assistant' | 'user' | 'system' | 'tool';
+  content: string;
+  additional_kwargs?: Record<string, unknown>;
+};
+
+export type LangChainCompatibleToolCall = {
+  id?: string;
+  name: string;
+  args?: Record<string, unknown>;
+  status: 'started' | 'completed' | 'error';
+  content?: string;
+  outputFiles?: Array<{ path: string; mimeType?: string | null; size?: number }>;
+};
+
+export type LangChainCompatibleInterrupt = Extract<AgentStreamChunk, { type: 'interrupt' }>;
+
+export type LangChainStreamProjection = {
+  messages?: LangChainCompatibleMessage[];
+  toolCalls?: LangChainCompatibleToolCall[];
+  interrupts?: LangChainCompatibleInterrupt[];
+  values?: Record<string, unknown>;
+  custom?: Array<{ name: string; data: unknown }>;
+};
+
 type StreamArgs = {
   runId: string;
   baseUrl: string;
   fetchImpl: typeof fetch;
   onChunk: (chunk: AgentStreamChunk) => void;
+  onLangChainProjection?: (projection: LangChainStreamProjection, chunk: AgentStreamChunk) => void;
   signal?: AbortSignal;
   afterId?: string;
   debug?: boolean;
@@ -164,11 +191,83 @@ export const normalizeAgentStreamChunk = (chunk: unknown): AgentStreamChunk & { 
   return next as AgentStreamChunk & { id?: unknown };
 };
 
+export const toLangChainStreamProjection = (
+  chunk: AgentStreamChunk & { id?: unknown },
+): LangChainStreamProjection => {
+  if ((chunk.type === 'token' || chunk.type === 'chunk') && (!chunk.role || chunk.role === 'assistant')) {
+    return {
+      messages: [
+        {
+          id: typeof chunk.id === 'string' ? chunk.id : undefined,
+          role: 'assistant',
+          content: chunk.content || '',
+        },
+      ],
+    };
+  }
+
+  if (chunk.type === 'tool_start') {
+    return {
+      toolCalls: [
+        {
+          id: typeof chunk.id === 'string' ? chunk.id : undefined,
+          name: chunk.name || chunk.content || 'tool',
+          status: 'started',
+          content: chunk.content,
+        },
+      ],
+    };
+  }
+
+  if (chunk.type === 'tool_end' || chunk.type === 'tool_error') {
+    return {
+      toolCalls: [
+        {
+          id: typeof chunk.id === 'string' ? chunk.id : undefined,
+          name: chunk.name || 'tool',
+          status: chunk.type === 'tool_error' ? 'error' : 'completed',
+          content: chunk.content,
+          outputFiles: chunk.type === 'tool_end' ? chunk.outputFiles : undefined,
+        },
+      ],
+    };
+  }
+
+  if (chunk.type === 'interrupt') {
+    return { interrupts: [chunk] };
+  }
+
+  if (chunk.type === 'done') {
+    return { values: { status: chunk.status || 'completed' } };
+  }
+
+  if (chunk.type === 'error' || chunk.type === 'contract_error') {
+    return {
+      values: {
+        status: 'failed',
+        message: chunk.message,
+        ...(chunk.type === 'contract_error' ? { missing: chunk.missing } : {}),
+      },
+    };
+  }
+
+  if (chunk.type === 'progress' || chunk.type === 'policy' || chunk.type === 'dashboard_artifact') {
+    return { custom: [{ name: chunk.type, data: chunk }] };
+  }
+
+  if (chunk.type === 'thought' && chunk.content) {
+    return { custom: [{ name: 'thought', data: chunk }] };
+  }
+
+  return {};
+};
+
 export const streamAgentRunWithReconnect = async ({
   runId,
   baseUrl,
   fetchImpl,
   onChunk,
+  onLangChainProjection,
   signal,
   afterId,
   debug = false,
@@ -184,6 +283,7 @@ export const streamAgentRunWithReconnect = async ({
       lastId = chunk.id;
     }
     onChunk(chunk);
+    onLangChainProjection?.(toLangChainStreamProjection(chunk), chunk);
   };
 
   while (true) {

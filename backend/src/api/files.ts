@@ -216,7 +216,8 @@ export default function(
       const lower = relativePath.toLowerCase();
       if (lower.endsWith('.html') || lower.endsWith('.htm')) {
         const baseName = relativePath.split(/[/\\]/).pop() || 'export.html';
-        res.setHeader('Content-Disposition', `attachment; filename="${baseName.replace(/"/g, '')}"`);
+        const disposition = req.query.disposition === 'inline' ? 'inline' : 'attachment';
+        res.setHeader('Content-Disposition', `${disposition}; filename="${baseName.replace(/"/g, '')}"`);
       }
       if (preview.encoding === 'base64') {
         res.send(Buffer.from(preview.content, 'base64'));

@@ -3849,6 +3849,33 @@ export default function WorkspacePage() {
     }
 
     if (chunk.type === 'interrupt') {
+      const isSyntheticImplicitInterrupt =
+        chunk.displayPayload?.source === 'implicit_input_guard' &&
+        chunk.displayPayload?.synthetic === true;
+      if (isSyntheticImplicitInterrupt) {
+        const conversationBuffer = agentChunkBufferRef.current.get(conversationId);
+        if (conversationBuffer) {
+          conversationBuffer.delete(agentMessageIndex);
+          if (!conversationBuffer.size) {
+            agentChunkBufferRef.current.delete(conversationId);
+          }
+        }
+        updateMessagesForConversation(conversationId, (prevMessages) => {
+          const updated = [...prevMessages];
+          const target = updated[agentMessageIndex];
+          if (!target) {
+            return updated;
+          }
+          updated[agentMessageIndex] = {
+            ...target,
+            text: '',
+          };
+          if (target.id !== undefined && target.id !== null) {
+            agentMessageBufferRef.current.set(target.id, '');
+          }
+          return updated;
+        });
+      }
       updateMessageMetadataAtIndex(conversationId, agentMessageIndex, (metadata) => ({
         ...metadata,
         ...(runId ? { runId } : {}),
@@ -3907,6 +3934,7 @@ export default function WorkspacePage() {
     setConversationAttention,
     setStreamingForConversation,
     updateMessageMetadataAtIndex,
+    updateMessagesForConversation,
   ]);
 
   const streamRunForConversation = useCallback(

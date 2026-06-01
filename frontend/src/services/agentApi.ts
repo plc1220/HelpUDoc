@@ -3,8 +3,9 @@ import {
   normalizeAgentStreamChunk,
   streamAgentRunWithReconnect,
   type AgentStreamChunk,
+  type LangChainStreamProjection,
 } from '@helpudoc/contracts/agentStream';
-export type { AgentStreamChunk };
+export type { AgentStreamChunk, LangChainStreamProjection };
 export { isInternalStreamContent };
 import { API_URL, apiFetch } from './apiClient';
 import type { ConversationMessageMetadata, FileContextRef, InterruptAnswersByQuestionId } from '../types';
@@ -94,12 +95,14 @@ export const streamAgentRun = async (
   onChunk: (chunk: AgentStreamChunk) => void,
   signal?: AbortSignal,
   afterId?: string,
+  onLangChainProjection?: (projection: LangChainStreamProjection, chunk: AgentStreamChunk) => void,
 ) => {
   await streamAgentRunWithReconnect({
     runId,
     baseUrl: API_URL,
     fetchImpl: apiFetch,
     onChunk,
+    onLangChainProjection,
     signal,
     afterId,
     debug: STREAM_DEBUG_ENABLED,

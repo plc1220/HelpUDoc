@@ -49,6 +49,18 @@ def test_detect_implicit_input_using_form_above() -> None:
     assert result.awaiting is True
 
 
+def test_detect_implicit_input_fill_out_form_above() -> None:
+    result = detect_implicit_input_awaiting(
+        skill_id="frontend-slides",
+        assistant_text=(
+            "I've reviewed the Texas Chicken Malaysia Sales Intelligence Proposal. "
+            "I need a few more details about your goals and any visual assets you'd like to use.\n\n"
+            "Please fill out the form above to get started."
+        ),
+    )
+    assert result.awaiting is True
+
+
 def test_build_synthetic_interrupt_uses_structured_outline_question() -> None:
     payload = build_synthetic_clarification_interrupt(
         skill_id="frontend-slides",
@@ -79,6 +91,33 @@ def test_build_synthetic_interrupt_uses_structured_outline_question() -> None:
             "submitLabel": "Continue",
         }
     ]
+
+
+def test_build_synthetic_interrupt_uses_frontend_slides_discovery_form() -> None:
+    payload = build_synthetic_clarification_interrupt(
+        skill_id="frontend-slides",
+        assistant_text=(
+            "I've reviewed the Texas Chicken Malaysia Sales Intelligence Proposal. "
+            "I need a few more details about your goals and any visual assets you'd like to use.\n\n"
+            "Please fill out the form above to get started."
+        ),
+        prompt_hint=None,
+    )
+    assert payload is not None
+    assert payload["kind"] == "clarification"
+    assert payload["title"] == "Presentation Context + Images"
+    assert payload["display_payload"]["synthetic"] is True
+
+    questions = payload["response_spec"]["questions"]
+    assert [question["id"] for question in questions] == [
+        "purpose",
+        "length",
+        "content",
+        "images",
+        "editing",
+    ]
+    assert questions[0]["header"] == "Purpose"
+    assert questions[3]["options"][0]["label"] == "No images"
 
 
 def test_build_synthetic_interrupt_does_not_regress_style_selection_to_outline_confirmation() -> None:

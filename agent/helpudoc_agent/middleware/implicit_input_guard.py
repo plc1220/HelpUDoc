@@ -54,6 +54,128 @@ _GENERIC_CONTINUE_CHOICES = [
     },
 ]
 
+FRONTEND_SLIDES_DISCOVERY_QUESTIONS = [
+    {
+        "id": "purpose",
+        "header": "Purpose",
+        "question": "What is this presentation for?",
+        "options": [
+            {
+                "id": "purpose-pitch-deck",
+                "label": "Pitch deck",
+                "value": "Pitch deck",
+                "description": "Selling an idea, product, or company to investors/clients",
+            },
+            {
+                "id": "purpose-teaching",
+                "label": "Teaching/Tutorial",
+                "value": "Teaching/Tutorial",
+                "description": "Explaining concepts, how-to guides, educational content",
+            },
+            {
+                "id": "purpose-conference",
+                "label": "Conference talk",
+                "value": "Conference talk",
+                "description": "Speaking at an event, tech talk, keynote",
+            },
+            {
+                "id": "purpose-internal",
+                "label": "Internal presentation",
+                "value": "Internal presentation",
+                "description": "Team updates, strategy meetings, company updates",
+            },
+        ],
+    },
+    {
+        "id": "length",
+        "header": "Length",
+        "question": "Approximately how many slides?",
+        "options": [
+            {
+                "id": "length-short",
+                "label": "Short (5-10)",
+                "value": "Short (5-10)",
+                "description": "Quick pitch, lightning talk",
+            },
+            {
+                "id": "length-medium",
+                "label": "Medium (10-20)",
+                "value": "Medium (10-20)",
+                "description": "Standard presentation",
+            },
+            {
+                "id": "length-long",
+                "label": "Long (20+)",
+                "value": "Long (20+)",
+                "description": "Deep dive, comprehensive talk",
+            },
+        ],
+    },
+    {
+        "id": "content",
+        "header": "Content",
+        "question": "Do you have the content ready, or do you need help structuring it?",
+        "options": [
+            {
+                "id": "content-ready",
+                "label": "I have all content ready",
+                "value": "I have all content ready",
+                "description": "Just need to design the presentation",
+            },
+            {
+                "id": "content-notes",
+                "label": "I have rough notes",
+                "value": "I have rough notes",
+                "description": "Need help organizing into slides",
+            },
+            {
+                "id": "content-topic",
+                "label": "I have a topic only",
+                "value": "I have a topic only",
+                "description": "Need help creating the full outline",
+            },
+        ],
+    },
+    {
+        "id": "images",
+        "header": "Images",
+        "question": "Do you have images to include? Select 'No images' or select Other and type/paste your image folder path.",
+        "options": [
+            {
+                "id": "images-none",
+                "label": "No images",
+                "value": "No images",
+                "description": "Text-only presentation",
+            },
+            {
+                "id": "images-assets",
+                "label": "./assets",
+                "value": "./assets",
+                "description": "Use the assets folder in the current project",
+            },
+        ],
+    },
+    {
+        "id": "editing",
+        "header": "Editing",
+        "question": "Do you need to edit text directly in the browser after generation?",
+        "options": [
+            {
+                "id": "editing-yes",
+                "label": "Yes (Recommended)",
+                "value": "Yes (Recommended)",
+                "description": "Can edit text in-browser, auto-save to localStorage, export file",
+            },
+            {
+                "id": "editing-no",
+                "label": "No",
+                "value": "No",
+                "description": "Presentation only, keeps file smaller",
+            },
+        ],
+    },
+]
+
 
 def _extract_message_text(message: AIMessage) -> str:
     content = message.content
@@ -107,6 +229,28 @@ def _is_outline_confirmation_context(text: str) -> bool:
     )
 
 
+def _is_frontend_slides_discovery_context(text: str) -> bool:
+    lowered = text.lower()
+    if "outline" in lowered and ("confirm" in lowered or "approved" in lowered):
+        return False
+    if any(
+        phrase in lowered
+        for phrase in (
+            "presentation context",
+            "few more details",
+            "your goals",
+            "visual assets",
+            "form above",
+            "form below",
+            "get started",
+        )
+    ):
+        return True
+    return "presentation" in lowered and "form" in lowered and (
+        "images" in lowered or "assets" in lowered or "goals" in lowered
+    )
+
+
 def _clarification_resume_context(
     interrupt_payload: dict[str, Any],
 ) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
@@ -148,6 +292,17 @@ def build_synthetic_clarification_interrupt(
             title="Outline Confirmation",
             description="Review the proposed slide outline and image assignments above.",
             questions=FRONTEND_SLIDES_OUTLINE_QUESTIONS,
+            choices=[],
+            allow_freeform=True,
+            submit_label="Continue",
+            display_payload=display_payload,
+        )
+
+    if skill_id == "frontend-slides" and _is_frontend_slides_discovery_context(assistant_text):
+        return build_clarification_interrupt_value(
+            title="Presentation Context + Images",
+            description="Share the setup details so the presentation workflow can continue.",
+            questions=FRONTEND_SLIDES_DISCOVERY_QUESTIONS,
             choices=[],
             allow_freeform=True,
             submit_label="Continue",
