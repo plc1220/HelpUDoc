@@ -645,6 +645,7 @@ const WEAK_COURTESY_PATTERNS = [
 
 const UI_FORM_MISREF_PATTERNS = [
   /\b(?:from|in|using|via)\s+the\s+(?:form|options?|UI)\s+(?:above|below)/i,
+  /\b(?:fill\s+out|complete|submit)\s+the\s+(?:form|questions?)\s+(?:above|below)/i,
   /\b(?:forms?|options?|choices?)\s+in\s+the\s+sidebar/i,
   /\buse\s+the\s+(?:forms?|options?|choices?)\s+(?:in\s+the\s+sidebar|below|above)/i,
   /\bselect.*(?:above|below)/i,

@@ -152,6 +152,16 @@ test('detects prose asking for details using the form above', () => {
   assert.equal(result.awaiting, true);
 });
 
+test('detects "fill out the form above" as phantom UI reference', () => {
+  const result = detectImplicitInputAwaiting({
+    status: 'completed',
+    skillId: 'frontend-slides',
+    hadInterrupt: false,
+    assistantText: 'Before I can build the slides, I need a few details about the purpose and scope of this deck. Please fill out the form above to proceed.',
+  });
+  assert.equal(result.awaiting, true);
+});
+
 test('detects numbered list beyond 800 chars when within 1500 char window', () => {
   const filler = 'A'.repeat(900);
   const result = detectImplicitInputAwaiting({

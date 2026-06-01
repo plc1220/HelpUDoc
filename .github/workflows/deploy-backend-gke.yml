@@ -115,7 +115,9 @@ jobs:
             --arg enc_key "${OAUTH_TOKEN_ENCRYPTION_KEY}" \
             '{stringData:{GOOGLE_OAUTH_CLIENT_SECRET:$client_secret,OAUTH_TOKEN_ENCRYPTION_KEY:$enc_key}}')"
 
-          kubectl -n helpudoc apply -f infra/gke/k8s/50-app.yaml
+          # Do not apply 50-app.yaml in the backend-only deploy. The checked-in manifest
+          # contains default images for the co-located agent/init containers, so applying it
+          # here can roll a healthy agent back to `helpudoc-agent:latest` and break rollout.
           kubectl -n helpudoc set image deployment/helpudoc-app backend="gcr.io/${PROJECT_ID}/helpudoc-backend:${IMAGE_TAG}"
           kubectl -n helpudoc apply -f infra/gke/k8s/52-daily-reflection-cron.yaml
           kubectl -n helpudoc set image cronjob/helpudoc-daily-reflection reflection-job="gcr.io/${PROJECT_ID}/helpudoc-backend:${IMAGE_TAG}"
