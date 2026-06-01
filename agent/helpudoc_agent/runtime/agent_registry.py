@@ -249,6 +249,7 @@ class AgentRegistry:
         builtin_tools = [
             GuardedTool.from_tool(tool, workspace_state=workspace_state)
             for tool in self.tool_factory.build_tools(tool_names, workspace_state)
+            if tool is not None
         ]
 
         active_skill = workspace_state.context.get("active_skill_scope")
@@ -303,7 +304,10 @@ class AgentRegistry:
                     virtual_mode=self.settings.backend.virtual_mode,
                 ),
                 routes={
-                    "/memories/": UserScopedStoreBackend(runtime),
+                    "/memories/": UserScopedStoreBackend(
+                        runtime,
+                        store=self._memory_store.store if self._memory_store is not None else None,
+                    ),
                 },
             )
 

@@ -3755,6 +3755,43 @@ export default function WorkspacePage() {
       return;
     }
 
+    if (chunk.type === 'progress') {
+      updateMessageMetadataAtIndex(conversationId, agentMessageIndex, (metadata) => {
+        const nextMetadata = markStreamingState(metadata);
+        const previousEvents = nextMetadata.progressEvents || [];
+        const nextEvent = {
+          phase: chunk.phase,
+          label: chunk.label,
+          detail: chunk.detail,
+          status: chunk.status,
+          stepIndex: chunk.stepIndex,
+          stepCount: chunk.stepCount,
+          toolName: chunk.toolName,
+          artifactPath: chunk.artifactPath,
+          timestamp: chunk.timestamp || new Date().toISOString(),
+        };
+        const lastEvent = previousEvents[previousEvents.length - 1];
+        const isDuplicate = lastEvent
+          && lastEvent.phase === nextEvent.phase
+          && lastEvent.label === nextEvent.label
+          && lastEvent.status === nextEvent.status
+          && lastEvent.detail === nextEvent.detail
+          && lastEvent.stepIndex === nextEvent.stepIndex
+          && lastEvent.stepCount === nextEvent.stepCount
+          && lastEvent.toolName === nextEvent.toolName
+          && lastEvent.artifactPath === nextEvent.artifactPath;
+        const progressEvents = isDuplicate ? previousEvents : [...previousEvents, nextEvent].slice(-80);
+        return {
+          ...nextMetadata,
+          progressEvents,
+        };
+      });
+      if (chunk.label?.trim()) {
+        setConversationAttention(conversationId, 'running', chunk.detail?.trim() || chunk.label.trim());
+      }
+      return;
+    }
+
     if (chunk.type === 'policy') {
       const nextRunPolicy = sanitizeRunPolicy({
         skill: chunk.skill,

@@ -221,6 +221,98 @@ const hasClarificationResumeInput = (payload?: AgentInterruptResponse): boolean 
     hasStructuredAnswers(payload?.answersByQuestionId),
   );
 
+const isSyntheticClarificationInterrupt = (interrupt?: RunPendingInterrupt): boolean =>
+  Boolean(interrupt?.kind === 'clarification' && interrupt.displayPayload?.synthetic === true);
+
+const formatClarificationResponseForPrompt = (
+  response: AgentInterruptResponse,
+  previousInterrupt?: RunPendingInterrupt,
+): string => {
+  const lines: string[] = [];
+  const questions = Array.isArray(previousInterrupt?.responseSpec?.questions)
+    ? previousInterrupt.responseSpec.questions
+    : [];
+  const questionLabelById = new Map(
+    questions
+      .map((question) => {
+        const id = typeof question.id === 'string' ? question.id : '';
+        const label = typeof question.header === 'string' && question.header.trim()
+          ? question.header.trim()
+          : typeof question.question === 'string'
+            ? question.question.trim()
+            : id;
+        return id ? [id, label] as const : null;
+      })
+      .filter((entry): entry is readonly [string, string] => Boolean(entry)),
+  );
+
+  if (hasStructuredAnswers(response.answersByQuestionId)) {
+    Object.entries(response.answersByQuestionId || {}).forEach(([id, value]) => {
+      const answer = Array.isArray(value) ? value.join(', ') : String(value || '').trim();
+      if (answer) {
+        lines.push(`${questionLabelById.get(id) || id}: ${answer}`);
+      }
+    });
+  }
+  if (response.selectedValues?.length) {
+    lines.push(`Selected values: ${response.selectedValues.join(', ')}`);
+  } else if (response.selectedChoiceIds?.length) {
+    const choices = Array.isArray(previousInterrupt?.responseSpec?.choices)
+      ? previousInterrupt.responseSpec.choices
+      : [];
+    const labels = response.selectedChoiceIds
+      .map((choiceId) => {
+        const choice = choices.find((item) => item.id === choiceId);
+        return choice?.value || choice?.label || choiceId;
+      })
+      .filter(Boolean);
+    if (labels.length) {
+      lines.push(`Selected values: ${labels.join(', ')}`);
+    }
+  }
+  if (response.message?.trim()) {
+    lines.push(`Notes: ${response.message.trim()}`);
+  }
+  return lines.join('\n').trim() || 'Continue.';
+};
+
+const formatOriginalPromptForContinuation = (prompt: string): string => {
+  const trimmed = String(prompt || '').trim();
+  const withoutSkillRouting = trimmed
+    .split('\n')
+    .map((line) => line.replace(/^(\s*)\/skill\s+\S+\s*/i, '$1'))
+    .join('\n')
+    .trim();
+  return withoutSkillRouting || trimmed;
+};
+
+export const buildSyntheticClarificationFollowupPrompt = (
+  originalPrompt: string,
+  response: AgentInterruptResponse,
+  previousInterrupt?: RunPendingInterrupt,
+): string => {
+  const skill = typeof previousInterrupt?.displayPayload?.skill === 'string'
+    ? previousInterrupt.displayPayload.skill
+    : 'current';
+  const answers = formatClarificationResponseForPrompt(response, previousInterrupt);
+  const originalRequest = formatOriginalPromptForContinuation(originalPrompt);
+  const frontendSlidesGate = previousInterrupt?.displayPayload?.skill === 'frontend-slides'
+    ? previousInterrupt.displayPayload?.chooser === 'style-previews'
+      ? 'For frontend-slides: the user has selected a visual style. Continue directly into building the deck with that selected style. Do not ask for Presentation Context again and do not show the style chooser again unless the user explicitly requests it.'
+      : 'For frontend-slides: the user has completed Presentation Context. Generate 2-3 style previews/templates next, then pause with a style-selection request_clarification interrupt. Do not ask for Presentation Context again and do not generate the final presentation until the style-selection interrupt is answered.'
+    : '';
+  return [
+    `[Clarification response — continue the '${skill}' skill from where you left off; do not restart from the beginning.]`,
+    'The user has already answered the structured UI gate below. Do not ask for this same Presentation Context / setup form again.',
+    'Treat these answers as final for the current gate and move to the next required phase of the skill.',
+    frontendSlidesGate,
+    answers,
+    '',
+    'Original request content, with command routing removed:',
+    originalRequest,
+  ].filter((line) => line !== '').join('\n');
+};
+
 const clarificationSignature = (value: Record<string, unknown> | RunPendingInterrupt | undefined): string => {
   if (!value) {
     return '';
@@ -416,18 +508,148 @@ const FRONTEND_SLIDES_DISCOVERY_QUESTIONS = [
   },
 ];
 
+const DEFAULT_FRONTEND_SLIDES_STYLE_CHOICES = [
+  {
+    id: 'style-a',
+    label: 'Style A',
+    value: 'Style A',
+    description: 'Use the first generated preview direction.',
+  },
+  {
+    id: 'style-b',
+    label: 'Style B',
+    value: 'Style B',
+    description: 'Use the second generated preview direction.',
+  },
+  {
+    id: 'style-c',
+    label: 'Style C',
+    value: 'Style C',
+    description: 'Use the third generated preview direction.',
+  },
+  {
+    id: 'mix-elements',
+    label: 'Mix elements',
+    value: 'Mix elements',
+    description: 'Combine aspects from the generated previews.',
+  },
+];
+
 const isFrontendSlidesSkill = (skillId: string | null | undefined): boolean => {
   const normalized = String(skillId || '').trim().toLowerCase();
   return normalized === 'frontend-slides' || normalized.endsWith('/frontend-slides');
+};
+
+const isFrontendSlidesStyleSelectionContext = (assistantText: string): boolean => {
+  const text = String(assistantText || '').toLowerCase();
+  return (
+    /\b(?:style|visual)\b.{0,180}\b(?:preview|archetype|aesthetic|selector|chooser|window)\b/is.test(text)
+    || /\b(?:preview|archetype|aesthetic|selector|chooser|window)\b.{0,180}\b(?:style|visual)\b/is.test(text)
+    || /\bstyle\s*[a-c]\s*:/i.test(text)
+  ) && (
+    /\b(?:choose|select|pick|preferred|favorite)\b.{0,180}\b(?:style|preview|direction|aesthetic|selector|chooser)\b/is.test(text)
+    || /\b(?:interactive|thumbnail)\s+(?:selector|chooser|window)\b/is.test(text)
+  );
+};
+
+const inferImplicitInputSkillId = (assistantText: string): string | null => {
+  const text = String(assistantText || '').toLowerCase();
+  const mentionsPresentation =
+    /\b(frontend-slides|html presentation|slide deck|slides?|presentation)\b/.test(text);
+  if (mentionsPresentation && isFrontendSlidesStyleSelectionContext(text)) {
+    return 'frontend-slides';
+  }
+  const asksForPresentationContext =
+    /\b(?:presentation|deck|slides?)\b.{0,240}\b(?:form|purpose|audience|style|visual|length|assets?)\b/is.test(text)
+    || /\b(?:form|purpose|audience|style|visual|length|assets?)\b.{0,240}\b(?:presentation|deck|slides?)\b/is.test(text);
+  return mentionsPresentation && asksForPresentationContext ? 'frontend-slides' : null;
+};
+
+const normalizeStyleChoiceId = (label: string, index: number): string => {
+  const styleLetter = label.match(/\bstyle\s*([a-c])\b/i)?.[1]?.toLowerCase();
+  if (styleLetter) {
+    return `style-${styleLetter}`;
+  }
+  return `style-${String.fromCharCode(97 + index)}`;
+};
+
+const extractFrontendSlidesStyleChoices = (assistantText: string) => {
+  const matches = [...String(assistantText || '').matchAll(
+    /(?:Style\s*([A-C])\s*:\s*([^—\n*]+)(?:[—-]\s*([^\n]+))?)/gi,
+  )];
+  const choices = matches.slice(0, 3).map((match, index) => {
+    const letter = (match[1] || String.fromCharCode(65 + index)).toLowerCase();
+    const name = String(match[2] || '').replace(/[()"“”]/g, '').trim();
+    const description = String(match[3] || '').replace(/\s+/g, ' ').trim();
+    const label = `Style ${letter.toUpperCase()}${name ? `: ${name}` : ''}`;
+    return {
+      id: `style-${letter}`,
+      label,
+      value: label,
+      description: description || `Use ${name || `style ${letter.toUpperCase()}`} for the final presentation.`,
+    };
+  });
+  const deduped = choices.filter(
+    (choice, index, all) => all.findIndex((candidate) => candidate.id === choice.id) === index,
+  );
+  const baseChoices = deduped.length >= 2
+    ? deduped
+    : DEFAULT_FRONTEND_SLIDES_STYLE_CHOICES.slice(0, 3).map((choice, index) => ({
+        ...choice,
+        id: normalizeStyleChoiceId(choice.label, index),
+      }));
+  return [
+    ...baseChoices,
+    {
+      id: 'mix-elements',
+      label: 'Mix elements',
+      value: 'Mix elements',
+      description: 'Combine aspects from the generated previews.',
+    },
+  ];
 };
 
 const buildImplicitInputPendingInterrupt = (opts: {
   runId: string;
   skillId: string | null;
   prompt?: string;
+  interruptType?: 'frontend_slides_context' | 'frontend_slides_style' | 'generic';
+  assistantText?: string;
 }): RunPendingInterrupt => {
   const interruptId = `implicit-${createHash('sha256').update(`${opts.runId}:${opts.prompt || ''}`).digest('hex').slice(0, 20)}`;
   if (isFrontendSlidesSkill(opts.skillId)) {
+    if (opts.interruptType === 'frontend_slides_style') {
+      const choices = extractFrontendSlidesStyleChoices(opts.assistantText || opts.prompt || '');
+      const stylePreviews = choices
+        .filter((choice) => /^style-[a-c]$/.test(choice.id))
+        .map((choice) => ({
+          id: choice.id,
+          label: choice.label,
+          description: choice.description,
+          path: `.claude-design/slide-previews/${choice.id}.html`,
+        }));
+      return {
+        kind: 'clarification',
+        interruptId,
+        title: 'Choose Your Presentation Style',
+        description: opts.prompt || 'Preview each direction, then choose the one to use for the full deck.',
+        actions: [],
+        responseSpec: {
+          inputMode: 'choice',
+          submitLabel: 'Use selected style',
+          allowDismiss: true,
+          dismissLabel: 'Dismiss',
+          choices,
+        },
+        displayPayload: {
+          source: 'implicit_completion_guard',
+          synthetic: true,
+          skill: 'frontend-slides',
+          chooser: 'style-previews',
+          stylePreviews,
+        },
+      };
+    }
     return {
       kind: 'clarification',
       interruptId,
@@ -445,6 +667,8 @@ const buildImplicitInputPendingInterrupt = (opts: {
       responseSpec: {
         inputMode: 'text',
         submitLabel: 'Continue',
+        allowDismiss: true,
+        dismissLabel: 'Dismiss',
         questions: FRONTEND_SLIDES_DISCOVERY_QUESTIONS,
       },
       displayPayload: {
@@ -473,6 +697,8 @@ const buildImplicitInputPendingInterrupt = (opts: {
       inputMode: 'text',
       placeholder: 'Enter your response...',
       submitLabel: 'Continue',
+      allowDismiss: true,
+      dismissLabel: 'Dismiss',
     },
     displayPayload: {
       source: 'implicit_completion_guard',
@@ -621,7 +847,7 @@ const STRONG_GATE_PATTERNS = [
   /\bconfirm\b.{0,60}\boutline\b/i,
   /\boutline\b.{0,60}\bconfirm\b/i,
   /\b(?:please\s+)?confirm\b.{0,40}\b(?:form|UI)\b/i,
-  /\b(?:select|choose)\b.{0,40}\b(?:form|options?|UI)\b/i,
+  /\b(?:select|choose)\b.{0,60}\b(?:form|options?|UI|selector|chooser|previews?|styles?)\b/i,
   /\b(?:once|after)\s+(?:confirmed|you\s+confirm)/i,
   /\bnext\s+steps\b.{0,120}\b(?:sidebar|form)/i,
 ];
@@ -646,10 +872,13 @@ const WEAK_COURTESY_PATTERNS = [
 const UI_FORM_MISREF_PATTERNS = [
   /\b(?:from|in|using|via)\s+the\s+(?:form|options?|UI)\s+(?:above|below)/i,
   /\b(?:fill\s+out|complete|submit)\s+the\s+(?:form|questions?)\s+(?:above|below)/i,
+  /\b(?:fill\s+out|complete|submit)\s+the\s+[\w\s&-]{1,120}?\s+(?:form|questions?)\s+(?:above|below)/i,
   /\b(?:prepared|created|generated|provided)\s+(?:a\s+)?(?:context\s+)?form\s+(?:above|below)/i,
   /\bfill\s+(?:this|it)\s+out\b.{0,180}\b(?:submit|proceed|continue|outline|review)\b/is,
-  /\b(?:forms?|options?|choices?)\s+in\s+the\s+sidebar/i,
-  /\buse\s+the\s+(?:forms?|options?|choices?)\s+(?:in\s+the\s+sidebar|below|above)/i,
+  /\b(?:forms?|options?|choices?|selectors?|choosers?)\s+in\s+the\s+sidebar/i,
+  /\buse\s+the\s+(?:forms?|options?|choices?|selectors?|choosers?)\s+(?:in\s+the\s+sidebar|below|above)/i,
+  /\b(?:interactive|thumbnail)\s+(?:selector|chooser|window)\s+(?:above|below)?/i,
+  /\b(?:select|choose|pick|review).{0,120}\b(?:selector|chooser|preview|style).{0,80}\b(?:above|below|window)\b/i,
   /\bselect.*(?:above|below)/i,
   /\bpick.*(?:above|below)/i,
   /\bconfirm.*(?:form|UI)\s+above/i,
@@ -729,8 +958,8 @@ export const detectImplicitInputAwaiting = (opts: {
   skillId: string | null;
   hadInterrupt: boolean;
   assistantText: string;
-}): { awaiting: boolean; prompt?: string } => {
-  if (opts.status !== 'completed' || !opts.skillId || opts.hadInterrupt) {
+}): { awaiting: boolean; prompt?: string; skillId?: string | null; interruptType?: 'frontend_slides_context' | 'frontend_slides_style' | 'generic' } => {
+  if (opts.status !== 'completed' || opts.hadInterrupt) {
     return { awaiting: false };
   }
 
@@ -739,10 +968,17 @@ export const detectImplicitInputAwaiting = (opts: {
     return { awaiting: false };
   }
 
+  const inferredSkillId = inferImplicitInputSkillId(text);
+  const effectiveSkillId = inferredSkillId || opts.skillId;
+  if (!effectiveSkillId) {
+    return { awaiting: false };
+  }
+  const isFrontendSlidesStyle = isFrontendSlidesSkill(effectiveSkillId) && isFrontendSlidesStyleSelectionContext(text);
+
   const lastParagraphs = text.slice(-1500);
   const signals = collectImplicitInputSignals(lastParagraphs);
 
-  if (!shouldAwaitImplicitInput(signals)) {
+  if (!isFrontendSlidesStyle && !shouldAwaitImplicitInput(signals)) {
     return { awaiting: false };
   }
 
@@ -754,7 +990,13 @@ export const detectImplicitInputAwaiting = (opts: {
       ? sidebarPromptMatch[0].trim()
       : undefined;
 
-  return { awaiting: true, prompt };
+  const interruptType = isFrontendSlidesStyle
+    ? 'frontend_slides_style'
+    : isFrontendSlidesSkill(effectiveSkillId)
+      ? 'frontend_slides_context'
+      : 'generic';
+
+  return { awaiting: true, prompt, skillId: effectiveSkillId, interruptType };
 };
 
 const parsePendingInterrupt = (raw: string | undefined): RunPendingInterrupt | undefined => {
@@ -904,11 +1146,12 @@ const markRunFinished = async (runId: string, status: AgentRunStatus, error?: st
   }
 };
 
-const markRunAwaitingApproval = async (runId: string, interruptPayload: string) => {
+const markRunAwaitingApproval = async (runId: string, interruptPayload: string, params?: StartRunParams) => {
   await persistMeta(runId, {
     status: 'awaiting_approval',
     pendingInterrupt: interruptPayload,
     error: '',
+    ...(params ? { runContext: serializeRunContext(params) } : {}),
   });
 };
 
@@ -983,7 +1226,8 @@ export async function persistInterruptAndStopRun(
   runId: string,
   parsed: Record<string, unknown>,
   state: InterruptStopState,
-  persistInterrupt: (runId: string, interruptPayload: string) => Promise<void> = markRunAwaitingApproval,
+  persistInterrupt: (runId: string, interruptPayload: string) => Promise<void> = (pendingRunId, interruptPayload) =>
+    markRunAwaitingApproval(pendingRunId, interruptPayload),
 ): Promise<boolean> {
   if (state.sawInterruptPayload) {
     return false;
@@ -1251,7 +1495,13 @@ async function runAgentRunWorker(
       assistantText,
     });
     const implicitPendingInterrupt = implicitInput.awaiting
-      ? buildImplicitInputPendingInterrupt({ runId, skillId, prompt: implicitInput.prompt })
+      ? buildImplicitInputPendingInterrupt({
+          runId,
+          skillId: implicitInput.skillId || skillId,
+          prompt: implicitInput.prompt,
+          interruptType: implicitInput.interruptType,
+          assistantText,
+        })
       : undefined;
 
     await updateConversationFromRun(
@@ -1263,7 +1513,7 @@ async function runAgentRunWorker(
       },
     );
     if (implicitPendingInterrupt) {
-      await markRunAwaitingApproval(runId, JSON.stringify({ type: 'interrupt', ...implicitPendingInterrupt }));
+    await markRunAwaitingApproval(runId, JSON.stringify({ type: 'interrupt', ...implicitPendingInterrupt }), params);
       if (runTelemetryService) {
         await runTelemetryService.finalizeRun(runId, {
           status: 'awaiting_approval',
@@ -1382,6 +1632,7 @@ async function runAgentRunWorker(
           upstream = value;
         },
       },
+      (pendingRunId, interruptPayload) => markRunAwaitingApproval(pendingRunId, interruptPayload, params),
     );
   };
 
@@ -1582,7 +1833,7 @@ async function runAgentRunWorker(
       });
 
       if (disposition.preserveInterrupt && sawInterruptPayload) {
-        await markRunAwaitingApproval(runId, JSON.stringify(sawInterruptPayload));
+        await markRunAwaitingApproval(runId, JSON.stringify(sawInterruptPayload), params);
         cleanupRun(runId, upstream || undefined);
         return;
       }
@@ -1598,7 +1849,7 @@ async function runAgentRunWorker(
       });
 
       if (disposition.preserveInterrupt && sawInterruptPayload) {
-        await markRunAwaitingApproval(runId, JSON.stringify(sawInterruptPayload));
+        await markRunAwaitingApproval(runId, JSON.stringify(sawInterruptPayload), params);
         cleanupRun(runId, upstream || undefined);
         return;
       }
@@ -1642,6 +1893,7 @@ export async function resumeAgentRun(
     startedAt: new Date().toISOString(),
     error: '',
     pendingInterrupt: '',
+    runContext: serializeRunContext(nextParams),
   });
   void runAgentRunWorker(runId, nextParams, { decisions });
   return { runId, status: 'queued' };
@@ -1656,15 +1908,32 @@ export async function resumeAgentRunWithResponse(
   if (!context) {
     throw new Error('Run context not found. Start a new run.');
   }
-  const nextParams = options?.authToken ? { ...context.params, authToken: options.authToken } : context.params;
+  const baseParams = options?.authToken ? { ...context.params, authToken: options.authToken } : context.params;
+  const nextParams = isSyntheticClarificationInterrupt(options?.previousInterrupt)
+    ? {
+        ...baseParams,
+        prompt: buildSyntheticClarificationFollowupPrompt(
+          context.params.prompt,
+          response,
+          options?.previousInterrupt,
+        ),
+        forceReset: false,
+      }
+    : baseParams;
   runContexts.set(runId, { params: nextParams });
   await persistMeta(runId, {
     status: 'queued',
     startedAt: new Date().toISOString(),
     error: '',
     pendingInterrupt: '',
+    runContext: serializeRunContext(nextParams),
   });
-  void runAgentRunWorker(runId, nextParams, { response }, options?.previousInterrupt);
+  void runAgentRunWorker(
+    runId,
+    nextParams,
+    isSyntheticClarificationInterrupt(options?.previousInterrupt) ? undefined : { response },
+    options?.previousInterrupt,
+  );
   return { runId, status: 'queued' };
 }
 
@@ -1684,6 +1953,7 @@ export async function resumeAgentRunWithAction(
     startedAt: new Date().toISOString(),
     error: '',
     pendingInterrupt: '',
+    runContext: serializeRunContext(nextParams),
   });
   void runAgentRunWorker(runId, nextParams, { action });
   return { runId, status: 'queued' };

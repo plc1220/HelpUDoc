@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import re
+import inspect
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, Optional
@@ -91,20 +92,43 @@ def user_memory_namespace(user_id: str) -> tuple[str, ...]:
 class UserScopedStoreBackend(StoreBackend):
     """Route /memories/* files to a per-user namespace in the shared store."""
 
+    def __init__(self, runtime: Any = None, *, store: BaseStore | None = None) -> None:
+        self._fallback_runtime = runtime
+        params = inspect.signature(StoreBackend.__init__).parameters
+        if "namespace" in params:
+            kwargs: Dict[str, Any] = {"namespace": self._namespace_from_runtime}
+            if "store" in params:
+                kwargs["store"] = store
+            super().__init__(**kwargs)
+        else:
+            super().__init__(runtime)
+            self.runtime = runtime
+
     def _get_namespace(self) -> tuple[str, ...]:
-        runtime_context = getattr(self.runtime, "context", None)
+        if "namespace" in inspect.signature(StoreBackend.__init__).parameters:
+            return super()._get_namespace()
+        return self._namespace_from_runtime(getattr(self, "runtime", None))
+
+    def _namespace_from_runtime(self, runtime: Any) -> tuple[str, ...]:
+        runtime_context = getattr(runtime, "context", None)
         if isinstance(runtime_context, dict):
             user_id = runtime_context.get("user_id") or runtime_context.get("userId")
             if isinstance(user_id, str) and user_id.strip():
                 return user_memory_namespace(user_id)
 
-        runtime_cfg = getattr(self.runtime, "config", None)
+        runtime_cfg = getattr(runtime, "config", None)
         if isinstance(runtime_cfg, dict):
             configurable = runtime_cfg.get("configurable") or {}
             if isinstance(configurable, dict):
                 user_id = configurable.get("user_id") or configurable.get("userId")
                 if isinstance(user_id, str) and user_id.strip():
                     return user_memory_namespace(user_id)
+
+        fallback_context = getattr(self._fallback_runtime, "context", None)
+        if isinstance(fallback_context, dict):
+            user_id = fallback_context.get("user_id") or fallback_context.get("userId")
+            if isinstance(user_id, str) and user_id.strip():
+                return user_memory_namespace(user_id)
         raise ValueError("user_id is required for persistent memory access")
 
 

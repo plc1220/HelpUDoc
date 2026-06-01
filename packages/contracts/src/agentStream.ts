@@ -130,6 +130,8 @@ type StreamArgs = {
 const INTERNAL_STREAM_CONTENT_PATTERNS = [
   /^PLAN_(APPROVAL|EDIT|REJECTION|REJECT|CLARIFICATION|ACTION)_[A-Z_]+/i,
   /^Command\s*\(/i,
+  /^\(?HumanMessage\s*\(/i,
+  /^\[Clarification response\b/i,
   /^\(\s*\{\s*['"]event['"]\s*:\s*['"]message-start['"]/i,
   /^\(\s*\{\s*['"]event['"]\s*:\s*['"]message-(?:delta|end)['"]/i,
   /^\(\s*\{\s*['"]event['"]\s*:\s*['"]content-block-/i,

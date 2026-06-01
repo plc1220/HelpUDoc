@@ -61,6 +61,8 @@ _LINE_MCP_DIRECTIVE_RE = re.compile(
 _INTERNAL_STREAM_TEXT_PATTERNS = (
     re.compile(r"^PLAN_(APPROVAL|EDIT|REJECTION|REJECT|CLARIFICATION|ACTION)_[A-Z_]+", re.IGNORECASE),
     re.compile(r"^Command\s*\(", re.IGNORECASE),
+    re.compile(r"^\(?HumanMessage\s*\(", re.IGNORECASE),
+    re.compile(r"^\[Clarification response\b", re.IGNORECASE),
     re.compile(r"^\(\s*\{\s*['\"]event['\"]\s*:\s*['\"](?:message|content-block)-", re.IGNORECASE),
     re.compile(r"^\{\s*['\"]event['\"]\s*:\s*['\"](?:message|content-block)-", re.IGNORECASE),
     re.compile(r"^\[\s*\{\s*['\"]event['\"]\s*:\s*['\"]content-block-", re.IGNORECASE),

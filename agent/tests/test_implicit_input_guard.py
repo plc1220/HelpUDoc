@@ -74,6 +74,20 @@ def test_detect_implicit_input_context_form_below_fill_this_out() -> None:
     assert result.awaiting is True
 
 
+def test_detect_implicit_input_style_selector_above() -> None:
+    result = detect_implicit_input_awaiting(
+        skill_id="frontend-slides",
+        assistant_text=(
+            "I have successfully generated 3 distinctive HTML style previews.\n\n"
+            "Style A: Swiss Modern — Clean and precise.\n"
+            "Style B: Bold Signal — High impact.\n"
+            "Style C: Notebook Tabs — Editorial and structured.\n\n"
+            "Please choose your favorite direction in the interactive selector above."
+        ),
+    )
+    assert result.awaiting is True
+
+
 def test_build_synthetic_interrupt_uses_structured_outline_question() -> None:
     payload = build_synthetic_clarification_interrupt(
         skill_id="frontend-slides",
@@ -131,6 +145,7 @@ def test_build_synthetic_interrupt_uses_frontend_slides_discovery_form() -> None
     ]
     assert questions[0]["header"] == "Purpose"
     assert questions[3]["options"][0]["label"] == "No images"
+    assert payload["response_spec"]["allowDismiss"] is True
 
 
 def test_build_synthetic_interrupt_does_not_regress_style_selection_to_outline_confirmation() -> None:
@@ -145,6 +160,31 @@ def test_build_synthetic_interrupt_does_not_regress_style_selection_to_outline_c
     assert payload is not None
     assert payload["title"] == "Continue"
     assert payload["response_spec"].get("questions", []) == []
+
+
+def test_build_synthetic_interrupt_uses_style_preview_chooser() -> None:
+    payload = build_synthetic_clarification_interrupt(
+        skill_id="frontend-slides",
+        assistant_text=(
+            "I have successfully generated 3 distinctive HTML style previews.\n\n"
+            "Style A: Swiss Modern — Clean, high-contrast, orange safety accents.\n"
+            "Style B: Bold Signal — Dark mode, vibrant neon teal glows.\n"
+            "Style C: Notebook Tabs — Clean paper interface.\n\n"
+            "Please choose your favorite direction in the interactive selector above."
+        ),
+        prompt_hint=None,
+    )
+    assert payload is not None
+    assert payload["title"] == "Choose Your Presentation Style"
+    assert payload["display_payload"]["chooser"] == "style-previews"
+    assert payload["response_spec"]["inputMode"] == "choice"
+    assert payload["response_spec"]["allowDismiss"] is True
+    assert [choice["id"] for choice in payload["response_spec"]["choices"][:3]] == [
+        "style-a",
+        "style-b",
+        "style-c",
+    ]
+    assert payload["display_payload"]["stylePreviews"][0]["path"] == ".claude-design/slide-previews/style-a.html"
 
 
 def test_guard_skips_when_tool_calls_present() -> None:

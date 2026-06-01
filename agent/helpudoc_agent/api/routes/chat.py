@@ -1093,7 +1093,13 @@ def register_chat_routes(
             return value
         if isinstance(value, (int, float, bool)):
             return str(value)
-        if isinstance(value, list):
+        if isinstance(value, (list, tuple)):
+            if len(value) == 2 and isinstance(value[1], dict):
+                candidate = value[0]
+                role = _message_role(candidate)
+                if role not in _ASSISTANT_ROLES:
+                    return ""
+                return _event_text(candidate, stringify_objects=stringify_objects)
             return "".join(_event_text(item, stringify_objects=stringify_objects) for item in value)
         if isinstance(value, dict):
             for key in ("text", "content", "message", "output", "chunk"):

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from langchain.agents.middleware.types import AgentMiddleware, AgentState, hook_config
@@ -176,6 +177,33 @@ FRONTEND_SLIDES_DISCOVERY_QUESTIONS = [
     },
 ]
 
+DEFAULT_FRONTEND_SLIDES_STYLE_CHOICES = [
+    {
+        "id": "style-a",
+        "label": "Style A",
+        "value": "Style A",
+        "description": "Use the first generated preview direction.",
+    },
+    {
+        "id": "style-b",
+        "label": "Style B",
+        "value": "Style B",
+        "description": "Use the second generated preview direction.",
+    },
+    {
+        "id": "style-c",
+        "label": "Style C",
+        "value": "Style C",
+        "description": "Use the third generated preview direction.",
+    },
+    {
+        "id": "mix-elements",
+        "label": "Mix elements",
+        "value": "Mix elements",
+        "description": "Combine aspects from the generated previews.",
+    },
+]
+
 
 def _extract_message_text(message: AIMessage) -> str:
     content = message.content
@@ -251,6 +279,55 @@ def _is_frontend_slides_discovery_context(text: str) -> bool:
     )
 
 
+def _is_frontend_slides_style_selection_context(text: str) -> bool:
+    lowered = text.lower()
+    has_style_preview_context = bool(
+        re.search(r"\b(?:style|visual)\b.{0,180}\b(?:preview|archetype|aesthetic|selector|chooser|window)\b", lowered, re.DOTALL)
+        or re.search(r"\b(?:preview|archetype|aesthetic|selector|chooser|window)\b.{0,180}\b(?:style|visual)\b", lowered, re.DOTALL)
+        or re.search(r"\bstyle\s*[a-c]\s*:", lowered)
+    )
+    asks_for_choice = bool(
+        re.search(r"\b(?:choose|select|pick|preferred|favorite)\b.{0,180}\b(?:style|preview|direction|aesthetic|selector|chooser)\b", lowered, re.DOTALL)
+        or re.search(r"\b(?:interactive|thumbnail)\s+(?:selector|chooser|window)\b", lowered)
+    )
+    return has_style_preview_context and asks_for_choice
+
+
+def _extract_frontend_slides_style_choices(text: str) -> list[dict[str, str]]:
+    matches = list(
+        re.finditer(
+            r"Style\s*([A-C])\s*:\s*([^—\n*]+)(?:[—-]\s*([^\n]+))?",
+            text or "",
+            re.IGNORECASE,
+        )
+    )
+    choices: list[dict[str, str]] = []
+    seen_ids: set[str] = set()
+    for index, match in enumerate(matches[:3]):
+        letter = (match.group(1) or chr(ord("A") + index)).lower()
+        choice_id = f"style-{letter}"
+        if choice_id in seen_ids:
+            continue
+        seen_ids.add(choice_id)
+        name = re.sub(r"[()\"“”]", "", (match.group(2) or "")).strip()
+        description = re.sub(r"\s+", " ", (match.group(3) or "")).strip()
+        label = f"Style {letter.upper()}" + (f": {name}" if name else "")
+        choices.append(
+            {
+                "id": choice_id,
+                "label": label,
+                "value": label,
+                "description": description or f"Use {name or f'style {letter.upper()}'} for the final presentation.",
+            }
+        )
+
+    if len(choices) < 2:
+        choices = [dict(choice) for choice in DEFAULT_FRONTEND_SLIDES_STYLE_CHOICES[:3]]
+
+    choices.append(dict(DEFAULT_FRONTEND_SLIDES_STYLE_CHOICES[-1]))
+    return choices
+
+
 def _clarification_resume_context(
     interrupt_payload: dict[str, Any],
 ) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
@@ -287,8 +364,39 @@ def build_synthetic_clarification_interrupt(
         "skill": skill_id,
     }
 
+    if skill_id == "frontend-slides" and _is_frontend_slides_style_selection_context(assistant_text):
+        choices = _extract_frontend_slides_style_choices(assistant_text)
+        style_previews = [
+            {
+                "id": choice["id"],
+                "label": choice["label"],
+                "description": choice.get("description", ""),
+                "path": f".claude-design/slide-previews/{choice['id']}.html",
+            }
+            for choice in choices
+            if re.match(r"^style-[a-c]$", choice["id"])
+        ]
+        payload = build_clarification_interrupt_value(
+            title="Choose Your Presentation Style",
+            description="Preview each direction, then choose the one you want me to use for the full deck.",
+            choices=choices,
+            allow_freeform=False,
+            submit_label="Use selected style",
+            display_payload={
+                **display_payload,
+                "chooser": "style-previews",
+                "stylePreviews": style_previews,
+            },
+        )
+        if payload is not None:
+            response_spec = payload.setdefault("response_spec", {})
+            if isinstance(response_spec, dict):
+                response_spec["allowDismiss"] = True
+                response_spec["dismissLabel"] = "Dismiss"
+        return payload
+
     if skill_id == "frontend-slides" and _is_outline_confirmation_context(assistant_text):
-        return build_clarification_interrupt_value(
+        payload = build_clarification_interrupt_value(
             title="Outline Confirmation",
             description="Review the proposed slide outline and image assignments above.",
             questions=FRONTEND_SLIDES_OUTLINE_QUESTIONS,
@@ -297,9 +405,15 @@ def build_synthetic_clarification_interrupt(
             submit_label="Continue",
             display_payload=display_payload,
         )
+        if payload is not None:
+            response_spec = payload.setdefault("response_spec", {})
+            if isinstance(response_spec, dict):
+                response_spec["allowDismiss"] = True
+                response_spec["dismissLabel"] = "Dismiss"
+        return payload
 
     if skill_id == "frontend-slides" and _is_frontend_slides_discovery_context(assistant_text):
-        return build_clarification_interrupt_value(
+        payload = build_clarification_interrupt_value(
             title="Presentation Context + Images",
             description="Share the setup details so the presentation workflow can continue.",
             questions=FRONTEND_SLIDES_DISCOVERY_QUESTIONS,
@@ -308,8 +422,14 @@ def build_synthetic_clarification_interrupt(
             submit_label="Continue",
             display_payload=display_payload,
         )
+        if payload is not None:
+            response_spec = payload.setdefault("response_spec", {})
+            if isinstance(response_spec, dict):
+                response_spec["allowDismiss"] = True
+                response_spec["dismissLabel"] = "Dismiss"
+        return payload
 
-    return build_clarification_interrupt_value(
+    payload = build_clarification_interrupt_value(
         title="Continue",
         description=description,
         choices=list(_GENERIC_CONTINUE_CHOICES),
@@ -317,6 +437,12 @@ def build_synthetic_clarification_interrupt(
         submit_label="Continue",
         display_payload=display_payload,
     )
+    if payload is not None:
+        response_spec = payload.setdefault("response_spec", {})
+        if isinstance(response_spec, dict):
+            response_spec["allowDismiss"] = True
+            response_spec["dismissLabel"] = "Dismiss"
+    return payload
 
 
 class ImplicitInputGuardMiddleware(AgentMiddleware):

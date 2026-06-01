@@ -164,6 +164,34 @@ class V3MessageStreamingAgent:
         }
 
 
+class V3HumanMessageTupleStreamingAgent:
+    async def astream_events(self, *_args, **_kwargs):
+        yield {
+            "event": "on_chat_model_stream",
+            "name": "test-model",
+            "run_id": "model-run",
+            "data": {"chunk": {"role": "assistant", "content": "Working on style previews."}},
+        }
+        yield {
+            "event": "messages",
+            "name": "ImplicitInputGuardMiddleware.after_model",
+            "run_id": "human-message-run",
+            "data": (
+                SimpleNamespace(
+                    type="human",
+                    content="[Clarification response — continue the 'frontend-slides' skill from where you left off.]\n{\"answersByQuestionId\":{\"presentation_goal\":\"Pitch deck\"}}",
+                ),
+                {"langgraph_node": "ImplicitInputGuardMiddleware.after_model"},
+            ),
+        }
+        yield {
+            "event": "on_chat_model_stream",
+            "name": "test-model",
+            "run_id": "model-run",
+            "data": {"chunk": {"role": "assistant", "content": " Done."}},
+        }
+
+
 class V3InterruptStreamingAgent:
     async def astream_events(self, *_args, **_kwargs):
         yield {
@@ -862,6 +890,27 @@ def test_chat_stream_reads_v3_message_chunks(client_with_stubs):
 
     token_text = "".join(item.get("content", "") for item in messages if item.get("type") == "token")
     assert token_text == "Hello"
+    assert messages[-1]["type"] == "done"
+    assert source_tracker.updated_workspaces == [runtime.workspace_state]
+
+
+def test_chat_stream_suppresses_v3_human_message_tuple_events(client_with_stubs):
+    client, registry, source_tracker = client_with_stubs
+    runtime = DummyRuntime("workspace-v3-human-message", V3HumanMessageTupleStreamingAgent())
+    registry.set_runtime("research", "workspace-v3-human-message", runtime)
+
+    with client.stream(
+        "POST",
+        "/agents/research/workspace/workspace-v3-human-message/chat/stream",
+        json={"message": "Continue", "history": []},
+    ) as response:
+        assert response.status_code == 200
+        messages = _collect_stream_payloads(response)
+
+    token_text = "".join(item.get("content", "") for item in messages if item.get("type") == "token")
+    assert token_text == "Working on style previews. Done."
+    assert "HumanMessage" not in token_text
+    assert "answersByQuestionId" not in token_text
     assert messages[-1]["type"] == "done"
     assert source_tracker.updated_workspaces == [runtime.workspace_state]
 

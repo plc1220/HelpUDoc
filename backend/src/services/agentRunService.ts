@@ -19,4 +19,5 @@ export {
   cancelAgentRun,
   getRunMeta,
   detectImplicitInputAwaiting,
+  buildSyntheticClarificationFollowupPrompt,
 } from './agent-runs/lifecycle';

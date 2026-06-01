@@ -408,6 +408,16 @@ const buildStylePreviewChoices = (
   return stylePreviewCount >= 2 ? previewChoices : [];
 };
 
+const stripDeadFrontendSlidesUiReferences = (text: string): string => (
+  text
+    .replace(/\b(?:I have|I've)\s+(?:created|prepared|provided|opened|set up)\b[^.!?]*(?:Presentation Context|context)[^.!?]*\bform\b[^.!?]*[.!?]/gis, '')
+    .replace(/\bPlease\s+(?:fill out|complete|submit)\b[^.!?]*\b(?:form|questions?)\s+(?:above|below)\b[^.!?]*[.!?]/gis, '')
+    .replace(/\bPlease\s+(?:review\s+and\s+)?(?:select|choose|pick)\b[^.!?]*\b(?:interactive\s+)?(?:selector|chooser|form)\s+(?:above|below)\b[^.!?]*[.!?]/gis, '')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+);
+
 const getThinkingPlaceholder = (
   metadata?: ConversationMessageMetadata,
   toolEvents: ConversationMessage['toolEvents'] = [],
@@ -943,10 +953,23 @@ export default function ChatMessageBubble({
     && !isClarificationInterrupt
     && (approvalReview || interruptKind === 'approval'),
   );
-  const agentTextForDisplay = stripOperationalThinkingBlocks(sanitizedAgentText);
+  const shouldHideAgentBodyForClarification = Boolean(
+    pendingInterrupt
+    && isClarificationInterrupt
+    && (
+      Array.isArray(pendingInterrupt.responseSpec?.questions)
+      || hasStylePreviewChooser
+      || Array.isArray(pendingInterrupt.displayPayload?.questions)
+    ),
+  );
+  const agentTextForDisplay = stripDeadFrontendSlidesUiReferences(
+    stripOperationalThinkingBlocks(sanitizedAgentText),
+  );
   const visibleAgentText = shouldHideAgentBodyForApproval
     ? ''
-    : bodySource === 'summary' && isLiveAgentStatus
+    : shouldHideAgentBodyForClarification
+      ? ''
+      : bodySource === 'summary' && isLiveAgentStatus
       ? ''
       : shouldHideThinkingDuringToolRun && isOperationalThinkingText(agentTextForDisplay)
         ? ''
@@ -1950,9 +1973,7 @@ export default function ChatMessageBubble({
                   aria-expanded={canExpandThought ? isThinkingExpanded : undefined}
                 >
                   <span>
-                    {progressEvents.length > 0
-                      ? `Process details (${compactThoughtElapsed || '0s'})`
-                      : `Thought for ${compactThoughtElapsed || '0s'}`}
+                    {`Thought for ${compactThoughtElapsed || '0s'}`}
                   </span>
                   {canExpandThought ? (
                     <ChevronRight
@@ -2041,7 +2062,7 @@ export default function ChatMessageBubble({
                   ? 'border-slate-800/80 bg-slate-900/50 text-slate-100' 
                   : 'border-slate-200/80 bg-slate-50/80 text-slate-900'
               }`}>
-                <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
                   <div className="flex items-center gap-2.5 min-w-0">
                     <span className="relative flex h-2 w-2">
                       {inlineStatus.status === 'running' ? (
@@ -2070,11 +2091,6 @@ export default function ChatMessageBubble({
                       ) : null}
                     </div>
                   </div>
-                  <span className={`text-xs font-medium tabular-nums ${
-                    isDarkMode ? 'text-slate-500' : 'text-slate-400'
-                  }`}>
-                    {inlineStatus.elapsed}
-                  </span>
                 </div>
 
                 {activeProgress?.stepIndex && activeProgress?.stepCount ? (

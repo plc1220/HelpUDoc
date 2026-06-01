@@ -11,7 +11,7 @@ _STRONG_GATE_PATTERNS: tuple[Pattern[str], ...] = (
     re.compile(r"\bconfirm\b.{0,60}\boutline\b", re.IGNORECASE),
     re.compile(r"\boutline\b.{0,60}\bconfirm\b", re.IGNORECASE),
     re.compile(r"\b(?:please\s+)?confirm\b.{0,40}\b(?:form|UI)\b", re.IGNORECASE),
-    re.compile(r"\b(?:select|choose)\b.{0,40}\b(?:form|options?|UI)\b", re.IGNORECASE),
+    re.compile(r"\b(?:select|choose)\b.{0,60}\b(?:form|options?|UI|selector|chooser|previews?|styles?)\b", re.IGNORECASE),
     re.compile(r"\b(?:once|after)\s+(?:confirmed|you\s+confirm)", re.IGNORECASE),
     re.compile(r"\bnext\s+steps\b.{0,120}\b(?:sidebar|form)", re.IGNORECASE),
 )
@@ -36,13 +36,16 @@ _WEAK_COURTESY_PATTERNS: tuple[Pattern[str], ...] = (
 _UI_FORM_MISREF_PATTERNS: tuple[Pattern[str], ...] = (
     re.compile(r"\b(?:from|in|using|via)\s+the\s+(?:form|options?|UI)\s+(?:above|below)", re.IGNORECASE),
     re.compile(r"\b(?:fill\s+out|complete|submit)\s+the\s+(?:form|questions?)\s+(?:above|below)", re.IGNORECASE),
+    re.compile(r"\b(?:fill\s+out|complete|submit)\s+the\s+[\w\s&-]{1,120}?\s+(?:form|questions?)\s+(?:above|below)", re.IGNORECASE),
     re.compile(r"\b(?:prepared|created|generated|provided)\s+(?:a\s+)?(?:context\s+)?form\s+(?:above|below)", re.IGNORECASE),
     re.compile(r"\bfill\s+(?:this|it)\s+out\b.{0,180}\b(?:submit|proceed|continue|outline|review)\b", re.IGNORECASE | re.DOTALL),
-    re.compile(r"\b(?:forms?|options?|choices?)\s+in\s+the\s+sidebar", re.IGNORECASE),
+    re.compile(r"\b(?:forms?|options?|choices?|selectors?|choosers?)\s+in\s+the\s+sidebar", re.IGNORECASE),
     re.compile(
-        r"\buse\s+the\s+(?:forms?|options?|choices?)\s+(?:in\s+the\s+sidebar|below|above)",
+        r"\buse\s+the\s+(?:forms?|options?|choices?|selectors?|choosers?)\s+(?:in\s+the\s+sidebar|below|above)",
         re.IGNORECASE,
     ),
+    re.compile(r"\b(?:interactive|thumbnail)\s+(?:selector|chooser|window)\s+(?:above|below)?", re.IGNORECASE),
+    re.compile(r"\b(?:select|choose|pick|review).{0,120}\b(?:selector|chooser|preview|style).{0,80}\b(?:above|below|window)\b", re.IGNORECASE),
     re.compile(r"\bselect.*(?:above|below)", re.IGNORECASE),
     re.compile(r"\bpick.*(?:above|below)", re.IGNORECASE),
     re.compile(r"\bconfirm.*(?:form|UI)\s+above", re.IGNORECASE),

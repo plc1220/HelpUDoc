@@ -22,6 +22,47 @@ test('returns awaiting=false when no skill is active', () => {
   assert.equal(result.awaiting, false);
 });
 
+test('infers frontend-slides when presentation form prose appears without skill metadata', () => {
+  const result = detectImplicitInputAwaiting({
+    status: 'completed',
+    skillId: null,
+    hadInterrupt: false,
+    assistantText: 'I have set up the initial presentation context form. Please fill out the form above to specify the primary purpose, desired length, style, and assets before I build the slides.',
+  });
+  assert.equal(result.awaiting, true);
+  assert.equal(result.skillId, 'frontend-slides');
+});
+
+test('infers frontend-slides from labeled presentation form prose even with generic skill metadata', () => {
+  const result = detectImplicitInputAwaiting({
+    status: 'completed',
+    skillId: 'research',
+    hadInterrupt: false,
+    assistantText: 'Please fill out the Presentation Context & Setup form above so we can proceed with planning and designing your HelpUDoc local testing presentation!',
+  });
+  assert.equal(result.awaiting, true);
+  assert.equal(result.skillId, 'frontend-slides');
+});
+
+test('detects prose-only frontend-slides style selector requests', () => {
+  const result = detectImplicitInputAwaiting({
+    status: 'completed',
+    skillId: 'frontend-slides',
+    hadInterrupt: false,
+    assistantText: `I have successfully generated 3 distinctive HTML style previews.
+
+### Sibling Style Previews
+- **Style A: Swiss Modern (Minimalist)** — Clean, high-contrast, orange safety accents.
+- **Style B: Bold Signal (High Impact Tech)** — Dark mode, vibrant neon teal glows.
+- **Style C: Notebook Tabs (Editorial Grid)** — Clean paper interface.
+
+Please choose your favorite direction in the interactive selector above to proceed with the complete presentation!`,
+  });
+  assert.equal(result.awaiting, true);
+  assert.equal(result.skillId, 'frontend-slides');
+  assert.equal(result.interruptType, 'frontend_slides_style');
+});
+
 test('returns awaiting=false when an interrupt was already emitted', () => {
   const result = detectImplicitInputAwaiting({
     status: 'completed',

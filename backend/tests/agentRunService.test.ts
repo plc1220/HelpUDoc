@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  buildSyntheticClarificationFollowupPrompt,
   isRealRunProgressEvent,
   resolveStreamCloseDisposition,
   shouldFailResumedRunForIdle,
@@ -73,4 +74,57 @@ test('resolveStreamCloseDisposition preserves an emitted interrupt ahead of stre
     }),
     { status: 'failed', error: 'Artifact contract validation failed.', preserveInterrupt: false },
   );
+});
+
+test('buildSyntheticClarificationFollowupPrompt advances frontend-slides context to style previews', () => {
+  const prompt = buildSyntheticClarificationFollowupPrompt(
+    '/skill frontend-slides Create a deck\nOriginal request:\n/skill frontend-slides Create a deck',
+    {
+      message: 'Use a concise technical deck.',
+      answersByQuestionId: {
+        presentation_goal: 'Explain the solution.',
+        audience: 'Technical team.',
+      },
+    },
+    {
+      kind: 'clarification',
+      title: 'Presentation Context',
+      displayPayload: { synthetic: true, skill: 'frontend-slides' },
+      responseSpec: {
+        questions: [
+          { id: 'presentation_goal', header: 'Goal', question: 'What is the goal?' },
+          { id: 'audience', header: 'Audience', question: 'Who is it for?' },
+        ],
+      },
+    } as any,
+  );
+
+  assert.match(prompt, /Generate 2-3 style previews\/templates next/);
+  assert.doesNotMatch(prompt, /^\/skill frontend-slides/m);
+});
+
+test('buildSyntheticClarificationFollowupPrompt advances frontend-slides style choice to deck building', () => {
+  const prompt = buildSyntheticClarificationFollowupPrompt(
+    'Create a deck',
+    {
+      selectedChoiceIds: ['style-b'],
+      selectedValues: ['Style B'],
+      message: 'Use Style B.',
+    },
+    {
+      kind: 'clarification',
+      title: 'Choose Your Presentation Style',
+      displayPayload: { synthetic: true, skill: 'frontend-slides', chooser: 'style-previews' },
+      responseSpec: {
+        choices: [
+          { id: 'style-a', label: 'Style A', value: 'Style A' },
+          { id: 'style-b', label: 'Style B', value: 'Style B' },
+        ],
+      },
+    } as any,
+  );
+
+  assert.match(prompt, /selected a visual style/);
+  assert.match(prompt, /Continue directly into building the deck/);
+  assert.match(prompt, /Do not ask for Presentation Context again/);
 });
