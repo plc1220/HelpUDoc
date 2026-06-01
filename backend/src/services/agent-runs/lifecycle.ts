@@ -363,6 +363,125 @@ type ConversationRunSnapshot = {
   progressEvents?: RunProgressEvent[];
 };
 
+const FRONTEND_SLIDES_DISCOVERY_QUESTIONS = [
+  {
+    id: 'presentation_goal',
+    header: 'Goal',
+    question: 'What should this presentation accomplish?',
+    options: [
+      { id: 'win_approval', label: 'Win approval', description: 'Persuade decision makers to approve the proposal.', value: 'Win stakeholder approval for the proposal.' },
+      { id: 'explain_solution', label: 'Explain solution', description: 'Make the solution and implementation path easy to understand.', value: 'Clearly explain the solution and implementation path.' },
+      { id: 'sales_pitch', label: 'Sales pitch', description: 'Create a polished commercial pitch for buyers.', value: 'Create a polished sales pitch for buyers.' },
+    ],
+  },
+  {
+    id: 'audience',
+    header: 'Audience',
+    question: 'Who is the primary audience?',
+    options: [
+      { id: 'executives', label: 'Executives', description: 'Focus on business value, risk, and outcomes.', value: 'Executives and senior decision makers.' },
+      { id: 'technical', label: 'Technical team', description: 'Include architecture, workflow, and implementation detail.', value: 'Technical evaluators and implementation teams.' },
+      { id: 'mixed', label: 'Mixed audience', description: 'Balance business outcomes with technical confidence.', value: 'A mixed business and technical audience.' },
+    ],
+  },
+  {
+    id: 'deck_length',
+    header: 'Length',
+    question: 'How long should the deck be?',
+    options: [
+      { id: 'concise', label: 'Concise', description: 'About 6 to 8 slides.', value: 'Concise deck, about 6 to 8 slides.' },
+      { id: 'standard', label: 'Standard', description: 'About 10 to 14 slides.', value: 'Standard deck, about 10 to 14 slides.' },
+      { id: 'detailed', label: 'Detailed', description: 'About 15 to 20 slides with more supporting detail.', value: 'Detailed deck, about 15 to 20 slides.' },
+    ],
+  },
+  {
+    id: 'visual_style',
+    header: 'Style',
+    question: 'What visual direction should the first draft use?',
+    options: [
+      { id: 'consulting', label: 'Consulting', description: 'Clean enterprise slides with strong executive hierarchy.', value: 'Clean enterprise consulting style.' },
+      { id: 'modern', label: 'Modern product', description: 'Sharper product storytelling with richer visual contrast.', value: 'Modern product storytelling style.' },
+      { id: 'generate_previews', label: 'Show previews', description: 'Generate a few HTML style previews before choosing.', value: 'Generate several HTML style previews before finalizing the deck direction.' },
+    ],
+  },
+  {
+    id: 'asset_preference',
+    header: 'Assets',
+    question: 'How should images and brand assets be handled?',
+    options: [
+      { id: 'use_document', label: 'Use document only', description: 'Use visuals already implied by the source document.', value: 'Use only visuals and content implied by the source document.' },
+      { id: 'find_assets', label: 'Find assets', description: 'Use relevant external or generated imagery where helpful.', value: 'Find or generate relevant supporting imagery where helpful.' },
+      { id: 'minimal_assets', label: 'Minimal', description: 'Keep the deck mostly typography, charts, and diagrams.', value: 'Keep visuals minimal, focused on typography, charts, and diagrams.' },
+    ],
+  },
+];
+
+const isFrontendSlidesSkill = (skillId: string | null | undefined): boolean => {
+  const normalized = String(skillId || '').trim().toLowerCase();
+  return normalized === 'frontend-slides' || normalized.endsWith('/frontend-slides');
+};
+
+const buildImplicitInputPendingInterrupt = (opts: {
+  runId: string;
+  skillId: string | null;
+  prompt?: string;
+}): RunPendingInterrupt => {
+  const interruptId = `implicit-${createHash('sha256').update(`${opts.runId}:${opts.prompt || ''}`).digest('hex').slice(0, 20)}`;
+  if (isFrontendSlidesSkill(opts.skillId)) {
+    return {
+      kind: 'clarification',
+      interruptId,
+      title: 'Presentation Context',
+      description: opts.prompt || 'The agent needs a few details before continuing.',
+      actions: [
+        {
+          id: 'submit_context',
+          label: 'Continue',
+          style: 'primary',
+          inputMode: 'text',
+          submitLabel: 'Continue',
+        },
+      ],
+      responseSpec: {
+        inputMode: 'text',
+        submitLabel: 'Continue',
+        questions: FRONTEND_SLIDES_DISCOVERY_QUESTIONS,
+      },
+      displayPayload: {
+        source: 'implicit_completion_guard',
+        synthetic: true,
+        skill: 'frontend-slides',
+      },
+    };
+  }
+  return {
+    kind: 'clarification',
+    interruptId,
+    title: 'Input Needed',
+    description: opts.prompt || 'The agent needs your input to continue.',
+    actions: [
+      {
+        id: 'submit_response',
+        label: 'Continue',
+        style: 'primary',
+        inputMode: 'text',
+        placeholder: 'Enter your response...',
+        submitLabel: 'Continue',
+      },
+    ],
+    responseSpec: {
+      inputMode: 'text',
+      placeholder: 'Enter your response...',
+      submitLabel: 'Continue',
+    },
+    displayPayload: {
+      source: 'implicit_completion_guard',
+      synthetic: true,
+      ...(opts.skillId ? { skill: opts.skillId } : {}),
+    },
+  };
+};
+
 const coerceText = (value: unknown): string => {
   if (typeof value === 'string') return value;
   if (value === null || value === undefined) return '';
@@ -1128,14 +1247,42 @@ async function runAgentRunWorker(
       hadInterrupt: resumePayload ? Boolean(sawInterruptPayload) : hadInterrupt,
       assistantText,
     });
+    const implicitPendingInterrupt = implicitInput.awaiting
+      ? buildImplicitInputPendingInterrupt({ runId, skillId, prompt: implicitInput.prompt })
+      : undefined;
 
     await updateConversationFromRun(
-      status === 'queued' ? 'running' : status,
+      implicitPendingInterrupt ? 'awaiting_approval' : status === 'queued' ? 'running' : status,
       {
         error,
         ...(implicitInput.awaiting ? { implicitInput } : {}),
+        ...(implicitPendingInterrupt ? { pendingInterrupt: implicitPendingInterrupt } : {}),
       },
     );
+    if (implicitPendingInterrupt) {
+      await markRunAwaitingApproval(runId, JSON.stringify({ type: 'interrupt', ...implicitPendingInterrupt }));
+      if (runTelemetryService) {
+        await runTelemetryService.finalizeRun(runId, {
+          status: 'awaiting_approval',
+          startedAt,
+          completedAt: new Date().toISOString(),
+          error,
+          skillId,
+          hadInterrupt: true,
+          approvalInterruptCount,
+          clarificationInterruptCount: clarificationInterruptCount + 1,
+          toolCallCount,
+          toolErrorCount,
+          metadata: {
+            resumed: Boolean(resumePayload),
+            implicitInputReason: 'missing_interrupt',
+            ...langfuseStreamMeta,
+          },
+        });
+      }
+      cleanupRun(runId, upstream || undefined);
+      return;
+    }
     await markRunFinished(runId, status, error);
     if (runTelemetryService) {
       await runTelemetryService.finalizeRun(runId, {

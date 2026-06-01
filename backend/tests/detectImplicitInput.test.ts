@@ -142,6 +142,16 @@ test('detects "using the form above" as phantom UI reference', () => {
   assert.equal(result.awaiting, true);
 });
 
+test('detects prose asking for details using the form above', () => {
+  const result = detectImplicitInputAwaiting({
+    status: 'completed',
+    skillId: 'frontend-slides',
+    hadInterrupt: false,
+    assistantText: 'To ensure the slides effectively communicate the strategic vision and technical foundation of the Sales Intelligence POC, please provide a few details using the form above. Once submitted, I will generate a proposed slide outline for your review.',
+  });
+  assert.equal(result.awaiting, true);
+});
+
 test('detects numbered list beyond 800 chars when within 1500 char window', () => {
   const filler = 'A'.repeat(900);
   const result = detectImplicitInputAwaiting({
