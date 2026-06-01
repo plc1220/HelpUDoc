@@ -187,6 +187,50 @@ class V3InterruptStreamingAgent:
         }
 
 
+class V3ContentBlockInterruptStreamingAgent:
+    async def astream_events(self, *_args, **_kwargs):
+        metadata = {"ls_provider": "google_genai"}
+        yield (
+            {
+                "event": "content-block-start",
+                "index": 0,
+                "content": {
+                    "type": "tool_call",
+                    "id": "clarify-1",
+                    "name": "request_clarification",
+                    "args": {},
+                },
+            },
+            metadata,
+        )
+        yield (
+            {
+                "event": "content-block-finish",
+                "index": 0,
+                "content": {
+                    "type": "tool_call",
+                    "id": "clarify-1",
+                    "name": "request_clarification",
+                    "args": {
+                        "title": "Presentation Context + Images",
+                        "questions_json": [
+                            {
+                                "header": "Purpose",
+                                "question": "What is this presentation for?",
+                                "options": [
+                                    {"label": "Pitch deck", "value": "Pitch deck"},
+                                ],
+                            }
+                        ],
+                        "allow_freeform": False,
+                        "context_json": {"skill": "frontend-slides"},
+                    },
+                },
+            },
+            metadata,
+        )
+
+
 class V3ToolStreamingAgent:
     async def astream_events(self, *_args, **_kwargs):
         yield {
@@ -839,6 +883,30 @@ def test_chat_stream_reads_v3_interrupt_chunks(client_with_stubs):
     assert interrupt["kind"] == "clarification"
     assert interrupt["title"] == "Need detail"
     assert interrupt["interruptId"] == "interrupt-123"
+    assert messages[-1]["type"] == "done"
+    assert source_tracker.updated_workspaces == [runtime.workspace_state]
+
+
+def test_chat_stream_reads_v3_content_block_tool_call_interrupt(client_with_stubs):
+    client, registry, source_tracker = client_with_stubs
+    runtime = DummyRuntime("workspace-v3-content-block-interrupt", V3ContentBlockInterruptStreamingAgent())
+    registry.set_runtime("research", "workspace-v3-content-block-interrupt", runtime)
+
+    with client.stream(
+        "POST",
+        "/agents/research/workspace/workspace-v3-content-block-interrupt/chat/stream",
+        json={"message": "Need clarification", "history": []},
+    ) as response:
+        assert response.status_code == 200
+        messages = _collect_stream_payloads(response)
+
+    interrupt = next(item for item in messages if item.get("type") == "interrupt")
+    token_text = "".join(item.get("content", "") for item in messages if item.get("type") == "token")
+    assert interrupt["kind"] == "clarification"
+    assert interrupt["title"] == "Presentation Context + Images"
+    assert interrupt["responseSpec"]["questions"][0]["header"] == "Purpose"
+    assert interrupt["displayPayload"]["skill"] == "frontend-slides"
+    assert token_text == ""
     assert messages[-1]["type"] == "done"
     assert source_tracker.updated_workspaces == [runtime.workspace_state]
 

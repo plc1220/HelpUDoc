@@ -1,5 +1,11 @@
-import { streamAgentRunWithReconnect, type AgentStreamChunk } from '@helpudoc/contracts/agentStream';
+import {
+  isInternalStreamContent,
+  normalizeAgentStreamChunk,
+  streamAgentRunWithReconnect,
+  type AgentStreamChunk,
+} from '@helpudoc/contracts/agentStream';
 export type { AgentStreamChunk };
+export { isInternalStreamContent };
 import { API_URL, apiFetch } from './apiClient';
 import type { ConversationMessageMetadata, FileContextRef, InterruptAnswersByQuestionId } from '../types';
 import type { SkillDefinition } from '../types';
@@ -240,7 +246,7 @@ export const runAgentStream = async (
       buffer = buffer.slice(newlineIndex + 1);
       if (line) {
         try {
-          const chunk = JSON.parse(line);
+          const chunk = normalizeAgentStreamChunk(JSON.parse(line));
           onChunk(chunk);
           if (STREAM_DEBUG_ENABLED) {
             console.debug('[AgentStream] chunk', chunk);
@@ -255,7 +261,7 @@ export const runAgentStream = async (
 
   if (buffer.trim()) {
     try {
-      const chunk = JSON.parse(buffer.trim());
+      const chunk = normalizeAgentStreamChunk(JSON.parse(buffer.trim()));
       onChunk(chunk);
       if (STREAM_DEBUG_ENABLED) {
         console.debug('[AgentStream] chunk', chunk);

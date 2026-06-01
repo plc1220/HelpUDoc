@@ -22,6 +22,7 @@ from langgraph.types import Command
 
 from helpudoc_agent.configuration import Settings
 from helpudoc_agent.interrupt_payloads import (
+    extract_interrupt_payload_from_tool_args,
     extract_interrupt_payload_from_tool_call,
     extract_interrupt_payload_from_tool_text,
     normalize_interrupt_payload_value,
@@ -1021,13 +1022,22 @@ def register_chat_routes(
             return None
         return _build_interrupt_payload(chunk.get("__interrupt__"))
 
+    def _event_record(event: Any) -> Dict[str, Any] | None:
+        if isinstance(event, dict):
+            return event
+        if isinstance(event, (list, tuple)) and event and isinstance(event[0], dict):
+            return event[0]
+        return None
+
     def _event_method(event: Any) -> str:
+        event = _event_record(event)
         if not isinstance(event, dict):
             return ""
         method = event.get("event") or event.get("method") or event.get("type")
         return str(method or "").strip()
 
     def _event_data(event: Any) -> Any:
+        event = _event_record(event)
         if not isinstance(event, dict):
             return None
         if "data" in event:
@@ -1038,6 +1048,7 @@ def register_chat_routes(
         return None
 
     def _event_name(event: Any) -> str:
+        event = _event_record(event)
         if not isinstance(event, dict):
             return ""
         name = event.get("name")
@@ -1057,6 +1068,7 @@ def register_chat_routes(
         return ""
 
     def _event_run_id(event: Any) -> str:
+        event = _event_record(event)
         if not isinstance(event, dict):
             return ""
         run_id = event.get("run_id") or event.get("runId")
@@ -1120,7 +1132,35 @@ def register_chat_routes(
             value = data
         return _event_text(value)
 
+    def _content_block_payload(event: Any) -> Dict[str, Any] | None:
+        event = _event_record(event)
+        if not isinstance(event, dict):
+            return None
+        content = event.get("content")
+        return content if isinstance(content, dict) else None
+
+    def _content_block_text(event: Any) -> str:
+        content = _content_block_payload(event)
+        if not content:
+            return ""
+        return _event_text(content.get("delta") or content.get("text") or content.get("content"))
+
+    def _extract_content_block_interrupt_payload(event: Any) -> Dict[str, Any] | None:
+        content = _content_block_payload(event)
+        if not content or content.get("type") != "tool_call":
+            return None
+        name = str(content.get("name") or "").strip()
+        if name not in _INTERRUPT_TOOL_NAMES:
+            return None
+        args = content.get("args")
+        if isinstance(args, dict):
+            return extract_interrupt_payload_from_tool_args(name, args)
+        if isinstance(args, str):
+            return extract_interrupt_payload_from_tool_call(name, args)
+        return None
+
     def _extract_v3_interrupt_payload(event: Any) -> Dict[str, Any] | None:
+        event = _event_record(event)
         data = _event_data(event)
         for candidate in (event, data):
             if isinstance(candidate, dict):
@@ -1164,6 +1204,26 @@ def register_chat_routes(
 
         if method in {"on_chat_model_stream", "on_llm_stream", "messages"}:
             text = _event_chunk_text(data)
+            if text and not _is_internal_stream_text(text):
+                await handler._emit({"type": "token", "content": text, "role": "assistant"})
+            return False
+
+        if method in {"content-block-start", "content-block-delta", "content-block-finish"}:
+            interrupt_payload = _extract_content_block_interrupt_payload(event)
+            if interrupt_payload and not suppress_interrupt_tool_start:
+                content = _content_block_payload(event) or {}
+                handler._interrupt_emitted = True
+                await _emit_progress(
+                    handler,
+                    "awaiting_input",
+                    "Preparing clarification question",
+                    detail=str(content.get("name") or ""),
+                    tool_name=str(content.get("name") or ""),
+                    status="pending",
+                )
+                await handler._emit(interrupt_payload)
+                return True
+            text = _content_block_text(event)
             if text and not _is_internal_stream_text(text):
                 await handler._emit({"type": "token", "content": text, "role": "assistant"})
             return False
@@ -1705,7 +1765,9 @@ def register_chat_routes(
                     break
                 yield _json_line(event)
             source_tracker.update_final_report(runtime.workspace_state)
-            if not saw_interrupt:
+            if saw_interrupt:
+                yield _json_line({"type": "done", "status": "interrupted"})
+            else:
                 missing = _missing_required_artifacts(runtime)
                 if missing:
                     runtime.workspace_state.context["artifact_contract_failed"] = True

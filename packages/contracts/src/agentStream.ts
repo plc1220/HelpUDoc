@@ -86,7 +86,7 @@ export type AgentStreamChunk =
       displayPayload?: Record<string, unknown>;
     }
   | { type: 'keepalive' }
-  | { type: 'done'; status?: 'completed' | 'failed' | 'cancelled' }
+  | { type: 'done'; status?: 'completed' | 'failed' | 'cancelled' | 'interrupted' }
   | { type: 'error'; message?: string }
   | { type: 'contract_error'; message?: string; missing?: string[] };
 
@@ -105,7 +105,10 @@ const INTERNAL_STREAM_CONTENT_PATTERNS = [
   /^Command\s*\(/i,
   /^\(\s*\{\s*['"]event['"]\s*:\s*['"]message-start['"]/i,
   /^\(\s*\{\s*['"]event['"]\s*:\s*['"]message-(?:delta|end)['"]/i,
+  /^\(\s*\{\s*['"]event['"]\s*:\s*['"]content-block-/i,
+  /^\[\s*\{\s*['"]event['"]\s*:\s*['"]content-block-/i,
   /^\{\s*['"]event['"]\s*:\s*['"]message-(?:start|delta|end)['"]/i,
+  /^\{\s*['"]event['"]\s*:\s*['"]content-block-/i,
 ];
 
 export const isInternalStreamContent = (value: string): boolean => {
@@ -134,7 +137,7 @@ const coerceStreamContent = (value: unknown, stringifyObjects = false): string =
   return '';
 };
 
-const normalizeAgentStreamChunk = (chunk: unknown): AgentStreamChunk & { id?: unknown } => {
+export const normalizeAgentStreamChunk = (chunk: unknown): AgentStreamChunk & { id?: unknown } => {
   if (!chunk || typeof chunk !== 'object') {
     const content = coerceStreamContent(chunk);
     const suppress = isInternalStreamContent(content);

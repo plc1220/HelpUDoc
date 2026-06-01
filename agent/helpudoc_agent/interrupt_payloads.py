@@ -65,7 +65,10 @@ def _parse_json_list(raw: Any) -> List[Any]:
     try:
         parsed = json.loads(str(raw or "[]"))
     except (TypeError, json.JSONDecodeError):
-        return []
+        try:
+            parsed = ast.literal_eval(str(raw or "[]"))
+        except (ValueError, SyntaxError):
+            return []
     return parsed if isinstance(parsed, list) else []
 
 
@@ -77,7 +80,10 @@ def _parse_json_dict(raw: Any) -> Dict[str, Any]:
     try:
         parsed = json.loads(str(raw or "{}"))
     except (TypeError, json.JSONDecodeError):
-        return {}
+        try:
+            parsed = ast.literal_eval(str(raw or "{}"))
+        except (ValueError, SyntaxError):
+            return {}
     return parsed if isinstance(parsed, dict) else {}
 
 
@@ -431,12 +437,21 @@ def _build_plan_approval_payload(args: Dict[str, Any]) -> Dict[str, Any] | None:
 def extract_interrupt_payload_from_tool_call(tool_name: str, tool_input: str) -> Dict[str, Any] | None:
     """Build an interrupt payload directly from a clarification/action tool call."""
     try:
-        parsed = ast.literal_eval((tool_input or "").strip())
+        raw = (tool_input or "").strip()
+        parsed = json.loads(raw)
     except (ValueError, SyntaxError):
-        logger.warning("Failed to parse interrupt tool input: %s", (tool_input or "")[:240])
-        return None
+        try:
+            parsed = ast.literal_eval((tool_input or "").strip())
+        except (ValueError, SyntaxError):
+            logger.warning("Failed to parse interrupt tool input: %s", (tool_input or "")[:240])
+            return None
     if not isinstance(parsed, dict):
         return None
+    return extract_interrupt_payload_from_tool_args(tool_name, parsed)
+
+
+def extract_interrupt_payload_from_tool_args(tool_name: str, parsed: Dict[str, Any]) -> Dict[str, Any] | None:
+    """Build an interrupt payload from already-structured tool arguments."""
     if tool_name == "request_clarification":
         return _build_clarification_payload(parsed)
     if tool_name == "request_human_action":

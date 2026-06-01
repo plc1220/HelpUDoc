@@ -37,6 +37,7 @@ import {
   cancelRun,
   fetchSlashMetadata,
   getRunStatus,
+  isInternalStreamContent,
   startAgentRun,
   streamAgentRun,
   submitRunAction,
@@ -3777,6 +3778,9 @@ export default function WorkspacePage() {
 
     if (chunk.type === 'thought') {
       updateMessageMetadataAtIndex(conversationId, agentMessageIndex, markStreamingState);
+      if (isInternalStreamContent(chunk.content || '')) {
+        return;
+      }
       appendAgentThought(conversationId, agentMessageIndex, chunk.content || '');
       if (chunk.content?.trim()) {
         setConversationAttention(conversationId, 'running', chunk.content);
@@ -3786,6 +3790,9 @@ export default function WorkspacePage() {
 
     if (chunk.type === 'tool_start') {
       updateMessageMetadataAtIndex(conversationId, agentMessageIndex, markStreamingState);
+      if (isInternalStreamContent(chunk.content || chunk.name || '')) {
+        return;
+      }
       appendToolStart(conversationId, agentMessageIndex, chunk);
       setConversationAttention(
         conversationId,
@@ -3874,6 +3881,9 @@ export default function WorkspacePage() {
         bodySource: 'assistant',
       }));
       if (chunk.role && chunk.role !== 'assistant') {
+        return;
+      }
+      if (isInternalStreamContent(chunk.content || '')) {
         return;
       }
       bufferAgentChunk(conversationId, agentMessageIndex, chunk.content || '');
