@@ -63,6 +63,41 @@ Please choose your favorite direction in the interactive selector above to proce
   assert.equal(result.interruptType, 'frontend_slides_style');
 });
 
+test('detects frontend-slides visual theme selection without preview wording', () => {
+  const result = detectImplicitInputAwaiting({
+    status: 'completed',
+    skillId: 'frontend-slides',
+    hadInterrupt: false,
+    assistantText: `The visual theme selection form is now active! Please choose your preferred styling direction:
+
+*   Theme A (Bold QSR Modern - Brand Dark): Uses Texas Orange-Gold and Crimson Red on Deep Charcoal.
+*   Theme B (Sleek Enterprise Tech - Data Dark): Cool Slate Navy, Teal, and Amber.
+*   Theme C (Clean Minimalist Light - Editorial Light): Clean off-white and cream layout.
+
+Once you confirm your choice, I will immediately construct the self-contained, interactive HTML slide deck!`,
+  });
+  assert.equal(result.awaiting, true);
+  assert.equal(result.skillId, 'frontend-slides');
+  assert.equal(result.interruptType, 'frontend_slides_style');
+});
+
+test('detects frontend-slides option-numbered HTML style chooser', () => {
+  const result = detectImplicitInputAwaiting({
+    status: 'completed',
+    skillId: 'frontend-slides',
+    hadInterrupt: false,
+    assistantText: `Based on your selected configuration, I have developed three custom HTML slide style options:
+
+### Option 1: Bold & Energetic (Texas Chicken Brand Core)
+### Option 2: Sleek Enterprise Tech (Data Dark)
+### Option 3: Clean Minimalist Light (Editorial Light)
+
+Please select one for generating the complete slide deck.`,
+  });
+  assert.equal(result.awaiting, true);
+  assert.equal(result.interruptType, 'frontend_slides_style');
+});
+
 test('returns awaiting=false when an interrupt was already emitted', () => {
   const result = detectImplicitInputAwaiting({
     status: 'completed',
@@ -191,6 +226,22 @@ test('detects prose asking for details using the form above', () => {
     assistantText: 'To ensure the slides effectively communicate the strategic vision and technical foundation of the Sales Intelligence POC, please provide a few details using the form above. Once submitted, I will generate a proposed slide outline for your review.',
   });
   assert.equal(result.awaiting, true);
+});
+
+test('detects frontend-slides context gate without explicit form wording', () => {
+  const result = detectImplicitInputAwaiting({
+    status: 'completed',
+    skillId: 'frontend-slides',
+    hadInterrupt: false,
+    assistantText: `I've analyzed the Texas Chicken Malaysia Sales Intelligence Proposal and am ready to transform it into a professional presentation. To ensure the deck meets your expectations, This will help me determine the ideal length, structure, and technical features (like inline editing). Once submitted, I will:
+
+Propose a slide outline based on the proposal's sections (Executive Summary, Business Requirements, Architecture, etc.).
+
+Move to Style Discovery to find the perfect visual aesthetic for your audience.`,
+  });
+  assert.equal(result.awaiting, true);
+  assert.equal(result.skillId, 'frontend-slides');
+  assert.equal(result.interruptType, 'frontend_slides_context');
 });
 
 test('detects "fill out the form above" as phantom UI reference', () => {

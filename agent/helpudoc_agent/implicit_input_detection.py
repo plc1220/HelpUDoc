@@ -13,6 +13,20 @@ _STRONG_GATE_PATTERNS: tuple[Pattern[str], ...] = (
     re.compile(r"\b(?:please\s+)?confirm\b.{0,40}\b(?:form|UI)\b", re.IGNORECASE),
     re.compile(r"\b(?:select|choose)\b.{0,60}\b(?:form|options?|UI|selector|chooser|previews?|styles?)\b", re.IGNORECASE),
     re.compile(r"\b(?:once|after)\s+(?:confirmed|you\s+confirm)", re.IGNORECASE),
+    re.compile(
+        r"\b(?:once|after)\s+(?:submitted|you\s+submit)\b.{0,260}\b(?:outline|style\s+discovery|visual\s+aesthetic|proposal|review|generate|move)\b",
+        re.IGNORECASE | re.DOTALL,
+    ),
+    re.compile(
+        r"\bto\s+ensure\b.{0,260}\b(?:deck|slides?|presentation)\b.{0,260}\b(?:expectations|ideal\s+length|length|structure|technical\s+features|audience|visual\s+style)\b",
+        re.IGNORECASE | re.DOTALL,
+    ),
+    re.compile(
+        r"\b(?:custom\s+html\s+slide\s+style\s+options?|html\s+style\s+previews?|visual\s+theme\s+selection)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(r"\b(?:style|theme)\s*[a-c]\s*:", re.IGNORECASE),
+    re.compile(r"\boption\s*[1-3]\s*:", re.IGNORECASE),
     re.compile(r"\bnext\s+steps\b.{0,120}\b(?:sidebar|form)", re.IGNORECASE),
 )
 
@@ -84,6 +98,17 @@ def _collect_signals(last_paragraphs: str) -> set[str]:
         signals.add("phantom_ui_reference")
 
     if _ENUM_BULLETS.search(last_paragraphs) or _ENUM_NUMBERED.search(last_paragraphs):
+        signals.add("enumerated_choices")
+
+    if re.search(
+        r"\b(?:propose|generate)\s+a?\s*(?:proposed\s+)?slide\s+outline\b",
+        last_paragraphs,
+        re.IGNORECASE,
+    ) and re.search(
+        r"\b(?:move|proceed|continue)\s+to\s+(?:style\s+discovery|visual\s+(?:direction|aesthetic)|style\s+selection)\b",
+        last_paragraphs,
+        re.IGNORECASE,
+    ):
         signals.add("enumerated_choices")
 
     return signals

@@ -47,6 +47,7 @@ type StylePreviewChoice = {
   value: string;
   description?: string;
   path?: string;
+  html?: string;
   previewUrl?: string;
   downloadUrl?: string;
   isHtmlPreview?: boolean;
@@ -340,12 +341,14 @@ const parseStylePreviewChoiceMetadata = (
     const value = String(raw.value || label).trim();
     const description = String(raw.description || raw.summary || '').trim();
     const path = String(raw.path || raw.file || raw.filePath || raw.previewPath || '').trim();
+    const html = String(raw.html || raw.srcDoc || raw.srcdoc || raw.content || '').trim();
     const entry: Partial<StylePreviewChoice> = {
       ...(id ? { id } : {}),
       ...(label ? { label } : {}),
       ...(value ? { value } : {}),
       ...(description ? { description } : {}),
       ...(path ? { path } : {}),
+      ...(html ? { html } : {}),
     };
     [id, label, value].forEach((key) => {
       const normalized = normalizePreviewKey(key || '');
@@ -390,6 +393,7 @@ const buildStylePreviewChoices = (
       const value = matchingMetadata.value || choiceValue;
       const path = matchingMetadata.path || inferStylePreviewPath(label, value);
       const description = matchingMetadata.description || choice.description;
+      const html = matchingMetadata.html;
       const isHtmlPreview = Boolean(path && /\.html?$/i.test(path));
       return {
         id: choiceId,
@@ -397,14 +401,15 @@ const buildStylePreviewChoices = (
         value,
         description,
         path,
+        html,
         previewUrl: path ? getAttachmentPreviewUrl(workspaceId, path, { inline: isHtmlPreview }) : undefined,
         downloadUrl: path ? getAttachmentPreviewUrl(workspaceId, path) : undefined,
-        isHtmlPreview,
+        isHtmlPreview: isHtmlPreview || Boolean(html),
       };
     })
     .filter((choice): choice is StylePreviewChoice => Boolean(choice));
 
-  const stylePreviewCount = previewChoices.filter((choice) => Boolean(choice.path)).length;
+  const stylePreviewCount = previewChoices.filter((choice) => Boolean(choice.path || choice.html)).length;
   return stylePreviewCount >= 2 ? previewChoices : [];
 };
 
@@ -1583,6 +1588,16 @@ export default function ChatMessageBubble({
                   referrerPolicy="no-referrer"
                   className="h-full w-full border-0 bg-white"
                 />
+              ) : activeStylePreviewChoice.html ? (
+                <iframe
+                  key={`${activeStylePreviewChoice.id}:inline`}
+                  title={`${activeStylePreviewChoice.label} live preview`}
+                  srcDoc={activeStylePreviewChoice.html}
+                  loading="lazy"
+                  sandbox="allow-scripts"
+                  referrerPolicy="no-referrer"
+                  className="h-full w-full border-0 bg-white"
+                />
               ) : (
                 <div className="flex h-full items-center justify-center text-slate-400">
                   <ImageIcon size={32} />
@@ -1638,6 +1653,15 @@ export default function ChatMessageBubble({
                     <iframe
                       title={`${choice.label} preview`}
                       src={choice.previewUrl}
+                      loading="lazy"
+                      sandbox="allow-scripts"
+                      referrerPolicy="no-referrer"
+                      className="pointer-events-none h-[250%] w-[250%] origin-top-left scale-[0.4] border-0 bg-white"
+                    />
+                  ) : choice.html ? (
+                    <iframe
+                      title={`${choice.label} preview`}
+                      srcDoc={choice.html}
                       loading="lazy"
                       sandbox="allow-scripts"
                       referrerPolicy="no-referrer"

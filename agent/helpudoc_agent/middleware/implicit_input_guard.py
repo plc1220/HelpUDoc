@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import re
+from html import escape
 from typing import Any
 
 from langchain.agents.middleware.types import AgentMiddleware, AgentState, hook_config
@@ -274,6 +275,20 @@ def _is_frontend_slides_discovery_context(text: str) -> bool:
         )
     ):
         return True
+    if re.search(
+        r"\bto\s+ensure\b.{0,260}\b(?:deck|slides?|presentation)\b.{0,260}\b(?:expectations|ideal\s+length|length|structure|technical\s+features|audience|visual\s+style)\b",
+        lowered,
+        re.DOTALL,
+    ):
+        return True
+    if re.search(
+        r"\b(?:propose|generate)\s+a?\s*(?:proposed\s+)?slide\s+outline\b",
+        lowered,
+    ) and re.search(
+        r"\b(?:move|proceed|continue)\s+to\s+(?:style\s+discovery|visual\s+(?:direction|aesthetic)|style\s+selection)\b",
+        lowered,
+    ):
+        return True
     return "presentation" in lowered and "form" in lowered and (
         "images" in lowered or "assets" in lowered or "goals" in lowered
     )
@@ -285,9 +300,18 @@ def _is_frontend_slides_style_selection_context(text: str) -> bool:
         re.search(r"\b(?:style|visual)\b.{0,180}\b(?:preview|archetype|aesthetic|selector|chooser|window)\b", lowered, re.DOTALL)
         or re.search(r"\b(?:preview|archetype|aesthetic|selector|chooser|window)\b.{0,180}\b(?:style|visual)\b", lowered, re.DOTALL)
         or re.search(r"\bstyle\s*[a-c]\s*:", lowered)
+        or re.search(r"\btheme\s*[a-c]\s*:", lowered)
+        or re.search(r"\boption\s*[1-3]\s*:", lowered)
+        or re.search(r"\bcustom\s+html\s+slide\s+style\s+options?\b", lowered)
+        or re.search(r"\bhtml\s+style\s+previews?\b", lowered)
+        or re.search(r"\bvisual\s+theme\s+selection\b", lowered)
+        or re.search(r"\b(?:styling|visual)\s+direction\b", lowered)
     )
     asks_for_choice = bool(
         re.search(r"\b(?:choose|select|pick|preferred|favorite)\b.{0,180}\b(?:style|preview|direction|aesthetic|selector|chooser)\b", lowered, re.DOTALL)
+        or re.search(r"\b(?:choose|select|pick|preferred|favorite)\b.{0,180}\b(?:theme|styling\s+direction|visual\s+theme)\b", lowered, re.DOTALL)
+        or re.search(r"\b(?:selection|choose|select|pick)\b.{0,220}\b(?:generating|complete|deck|slides?)\b", lowered, re.DOTALL)
+        or re.search(r"\bonce\s+you\s+confirm\b.{0,180}\b(?:choice|theme|style|deck|slides?)\b", lowered, re.DOTALL)
         or re.search(r"\b(?:interactive|thumbnail)\s+(?:selector|chooser|window)\b", lowered)
     )
     return has_style_preview_context and asks_for_choice
@@ -296,7 +320,7 @@ def _is_frontend_slides_style_selection_context(text: str) -> bool:
 def _extract_frontend_slides_style_choices(text: str) -> list[dict[str, str]]:
     matches = list(
         re.finditer(
-            r"Style\s*([A-C])\s*:\s*([^—\n*]+)(?:[—-]\s*([^\n]+))?",
+            r"(?:(?:Style|Theme)\s*([A-C])|Option\s*([1-3]))\s*(?:\(([^)]+)\))?\s*:\s*([^—\n*]+)?(?:[—-]\s*([^\n]+))?",
             text or "",
             re.IGNORECASE,
         )
@@ -304,13 +328,14 @@ def _extract_frontend_slides_style_choices(text: str) -> list[dict[str, str]]:
     choices: list[dict[str, str]] = []
     seen_ids: set[str] = set()
     for index, match in enumerate(matches[:3]):
-        letter = (match.group(1) or chr(ord("A") + index)).lower()
+        option_number = int(match.group(2)) if match.group(2) else None
+        letter = (match.group(1) or (chr(ord("A") + option_number - 1) if option_number else chr(ord("A") + index))).lower()
         choice_id = f"style-{letter}"
         if choice_id in seen_ids:
             continue
         seen_ids.add(choice_id)
-        name = re.sub(r"[()\"“”]", "", (match.group(2) or "")).strip()
-        description = re.sub(r"\s+", " ", (match.group(3) or "")).strip()
+        name = re.sub(r"[()\"“”]", "", (match.group(3) or match.group(4) or "")).strip()
+        description = re.sub(r"\s+", " ", (match.group(5) or "")).strip()
         label = f"Style {letter.upper()}" + (f": {name}" if name else "")
         choices.append(
             {
@@ -326,6 +351,51 @@ def _extract_frontend_slides_style_choices(text: str) -> list[dict[str, str]]:
 
     choices.append(dict(DEFAULT_FRONTEND_SLIDES_STYLE_CHOICES[-1]))
     return choices
+
+
+def _build_fallback_style_preview_html(choice: dict[str, str]) -> str:
+    palette_by_id = {
+        "style-a": {"bg": "#f8fafc", "fg": "#0f172a", "accent": "#0ea5e9", "muted": "#475569"},
+        "style-b": {"bg": "#111827", "fg": "#f9fafb", "accent": "#22c55e", "muted": "#cbd5e1"},
+        "style-c": {"bg": "#fff7ed", "fg": "#1f2937", "accent": "#f97316", "muted": "#64748b"},
+    }
+    palette = palette_by_id.get(choice.get("id", ""), palette_by_id["style-a"])
+    label = escape(choice.get("label") or "Style preview")
+    description = escape(choice.get("description") or "Presentation style preview.")
+    return f"""<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    * {{ box-sizing: border-box; }}
+    body {{ margin: 0; min-height: 100vh; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: {palette["bg"]}; color: {palette["fg"]}; }}
+    .slide {{ min-height: 100vh; padding: 9vh 8vw; display: grid; grid-template-rows: auto 1fr auto; gap: 5vh; }}
+    .eyebrow {{ color: {palette["accent"]}; font-size: 13px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }}
+    h1 {{ margin: 0; max-width: 980px; font-size: clamp(42px, 7vw, 88px); line-height: .95; letter-spacing: 0; }}
+    p {{ margin: 0; max-width: 740px; color: {palette["muted"]}; font-size: clamp(18px, 2vw, 28px); line-height: 1.35; }}
+    .grid {{ display: grid; grid-template-columns: 1.2fr .8fr; align-items: end; gap: 5vw; }}
+    .metric {{ border-top: 4px solid {palette["accent"]}; padding-top: 18px; font-size: clamp(38px, 6vw, 72px); font-weight: 900; }}
+    .label {{ margin-top: 8px; color: {palette["muted"]}; font-size: 15px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; }}
+  </style>
+</head>
+<body>
+  <main class="slide">
+    <div class="eyebrow">HTML style preview</div>
+    <section class="grid">
+      <div>
+        <h1>{label}</h1>
+        <p>{description}</p>
+      </div>
+      <div>
+        <div class="metric">01</div>
+        <div class="label">Title slide direction</div>
+      </div>
+    </section>
+    <div class="eyebrow">Choose to generate the full deck</div>
+  </main>
+</body>
+</html>"""
 
 
 def _clarification_resume_context(
@@ -372,6 +442,7 @@ def build_synthetic_clarification_interrupt(
                 "label": choice["label"],
                 "description": choice.get("description", ""),
                 "path": f".claude-design/slide-previews/{choice['id']}.html",
+                "html": _build_fallback_style_preview_html(choice),
             }
             for choice in choices
             if re.match(r"^style-[a-c]$", choice["id"])

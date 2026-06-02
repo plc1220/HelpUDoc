@@ -546,8 +546,17 @@ const isFrontendSlidesStyleSelectionContext = (assistantText: string): boolean =
     /\b(?:style|visual)\b.{0,180}\b(?:preview|archetype|aesthetic|selector|chooser|window)\b/is.test(text)
     || /\b(?:preview|archetype|aesthetic|selector|chooser|window)\b.{0,180}\b(?:style|visual)\b/is.test(text)
     || /\bstyle\s*[a-c]\s*:/i.test(text)
+    || /\btheme\s*[a-c]\s*:/i.test(text)
+    || /\boption\s*[1-3]\s*:/i.test(text)
+    || /\bcustom\s+html\s+slide\s+style\s+options?\b/i.test(text)
+    || /\bhtml\s+style\s+previews?\b/i.test(text)
+    || /\bvisual\s+theme\s+selection\b/i.test(text)
+    || /\b(?:styling|visual)\s+direction\b/i.test(text)
   ) && (
     /\b(?:choose|select|pick|preferred|favorite)\b.{0,180}\b(?:style|preview|direction|aesthetic|selector|chooser)\b/is.test(text)
+    || /\b(?:choose|select|pick|preferred|favorite)\b.{0,180}\b(?:theme|styling\s+direction|visual\s+theme)\b/is.test(text)
+    || /\b(?:selection|choose|select|pick)\b.{0,220}\b(?:generating|complete|deck|slides?)\b/is.test(text)
+    || /\bonce\s+you\s+confirm\b.{0,180}\b(?:choice|theme|style|deck|slides?)\b/is.test(text)
     || /\b(?:interactive|thumbnail)\s+(?:selector|chooser|window)\b/is.test(text)
   );
 };
@@ -561,7 +570,12 @@ const inferImplicitInputSkillId = (assistantText: string): string | null => {
   }
   const asksForPresentationContext =
     /\b(?:presentation|deck|slides?)\b.{0,240}\b(?:form|purpose|audience|style|visual|length|assets?)\b/is.test(text)
-    || /\b(?:form|purpose|audience|style|visual|length|assets?)\b.{0,240}\b(?:presentation|deck|slides?)\b/is.test(text);
+    || /\b(?:form|purpose|audience|style|visual|length|assets?)\b.{0,240}\b(?:presentation|deck|slides?)\b/is.test(text)
+    || /\bto\s+ensure\b.{0,260}\b(?:deck|slides?|presentation)\b.{0,260}\b(?:expectations|ideal\s+length|length|structure|technical\s+features|audience|visual\s+style)\b/is.test(text)
+    || (
+      /\b(?:propose|generate)\s+a?\s*(?:proposed\s+)?slide\s+outline\b/i.test(text) &&
+      /\b(?:move|proceed|continue)\s+to\s+(?:style\s+discovery|visual\s+(?:direction|aesthetic)|style\s+selection)\b/i.test(text)
+    );
   return mentionsPresentation && asksForPresentationContext ? 'frontend-slides' : null;
 };
 
@@ -575,12 +589,13 @@ const normalizeStyleChoiceId = (label: string, index: number): string => {
 
 const extractFrontendSlidesStyleChoices = (assistantText: string) => {
   const matches = [...String(assistantText || '').matchAll(
-    /(?:Style\s*([A-C])\s*:\s*([^—\n*]+)(?:[—-]\s*([^\n]+))?)/gi,
+    /(?:(?:Style|Theme)\s*([A-C])|Option\s*([1-3]))\s*(?:\(([^)]+)\))?\s*:\s*([^—\n*]+)?(?:[—-]\s*([^\n]+))?/gi,
   )];
   const choices = matches.slice(0, 3).map((match, index) => {
-    const letter = (match[1] || String.fromCharCode(65 + index)).toLowerCase();
-    const name = String(match[2] || '').replace(/[()"“”]/g, '').trim();
-    const description = String(match[3] || '').replace(/\s+/g, ' ').trim();
+    const optionNumber = match[2] ? Number(match[2]) : undefined;
+    const letter = (match[1] || (optionNumber ? String.fromCharCode(64 + optionNumber) : String.fromCharCode(65 + index))).toLowerCase();
+    const name = String(match[3] || match[4] || '').replace(/[()"“”]/g, '').trim();
+    const description = String(match[5] || '').replace(/\s+/g, ' ').trim();
     const label = `Style ${letter.toUpperCase()}${name ? `: ${name}` : ''}`;
     return {
       id: `style-${letter}`,
@@ -609,6 +624,62 @@ const extractFrontendSlidesStyleChoices = (assistantText: string) => {
   ];
 };
 
+const escapeHtmlText = (value: string): string =>
+  value.replace(/[&<>"']/g, (char) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  }[char] || char));
+
+const buildFallbackStylePreviewHtml = (choice: {
+  id: string;
+  label: string;
+  description?: string;
+}): string => {
+  const paletteById: Record<string, { bg: string; fg: string; accent: string; muted: string }> = {
+    'style-a': { bg: '#f8fafc', fg: '#0f172a', accent: '#0ea5e9', muted: '#475569' },
+    'style-b': { bg: '#111827', fg: '#f9fafb', accent: '#22c55e', muted: '#cbd5e1' },
+    'style-c': { bg: '#fff7ed', fg: '#1f2937', accent: '#f97316', muted: '#64748b' },
+  };
+  const palette = paletteById[choice.id] || paletteById['style-a'];
+  return `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: ${palette.bg}; color: ${palette.fg}; }
+    .slide { min-height: 100vh; padding: 9vh 8vw; display: grid; grid-template-rows: auto 1fr auto; gap: 5vh; }
+    .eyebrow { color: ${palette.accent}; font-size: 13px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+    h1 { margin: 0; max-width: 980px; font-size: clamp(42px, 7vw, 88px); line-height: .95; letter-spacing: 0; }
+    p { margin: 0; max-width: 740px; color: ${palette.muted}; font-size: clamp(18px, 2vw, 28px); line-height: 1.35; }
+    .grid { display: grid; grid-template-columns: 1.2fr .8fr; align-items: end; gap: 5vw; }
+    .metric { border-top: 4px solid ${palette.accent}; padding-top: 18px; font-size: clamp(38px, 6vw, 72px); font-weight: 900; }
+    .label { margin-top: 8px; color: ${palette.muted}; font-size: 15px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; }
+  </style>
+</head>
+<body>
+  <main class="slide">
+    <div class="eyebrow">HTML style preview</div>
+    <section class="grid">
+      <div>
+        <h1>${escapeHtmlText(choice.label)}</h1>
+        <p>${escapeHtmlText(choice.description || 'Presentation style preview.')}</p>
+      </div>
+      <div>
+        <div class="metric">01</div>
+        <div class="label">Title slide direction</div>
+      </div>
+    </section>
+    <div class="eyebrow">Choose to generate the full deck</div>
+  </main>
+</body>
+</html>`;
+};
+
 const buildImplicitInputPendingInterrupt = (opts: {
   runId: string;
   skillId: string | null;
@@ -627,6 +698,7 @@ const buildImplicitInputPendingInterrupt = (opts: {
           label: choice.label,
           description: choice.description,
           path: `.claude-design/slide-previews/${choice.id}.html`,
+          html: buildFallbackStylePreviewHtml(choice),
         }));
       return {
         kind: 'clarification',
@@ -849,6 +921,8 @@ const STRONG_GATE_PATTERNS = [
   /\b(?:please\s+)?confirm\b.{0,40}\b(?:form|UI)\b/i,
   /\b(?:select|choose)\b.{0,60}\b(?:form|options?|UI|selector|chooser|previews?|styles?)\b/i,
   /\b(?:once|after)\s+(?:confirmed|you\s+confirm)/i,
+  /\b(?:once|after)\s+(?:submitted|you\s+submit)\b.{0,260}\b(?:outline|style\s+discovery|visual\s+aesthetic|proposal|review|generate|move)\b/is,
+  /\bto\s+ensure\b.{0,260}\b(?:deck|slides?|presentation)\b.{0,260}\b(?:expectations|ideal\s+length|length|structure|technical\s+features|audience|visual\s+style)\b/is,
   /\bnext\s+steps\b.{0,120}\b(?:sidebar|form)/i,
 ];
 
@@ -906,6 +980,12 @@ const collectImplicitInputSignals = (lastParagraphs: string): Set<string> => {
     signals.add('enumerated_choices');
   }
   if (/(?:^|\n)\s*\d+\.\s+.+(?:\n\s*\d+\.\s+.+){1,}/m.test(lastParagraphs)) {
+    signals.add('enumerated_choices');
+  }
+  if (
+    /\b(?:propose|generate)\s+a?\s*(?:proposed\s+)?slide\s+outline\b/i.test(lastParagraphs) &&
+    /\b(?:move|proceed|continue)\s+to\s+(?:style\s+discovery|visual\s+(?:direction|aesthetic)|style\s+selection)\b/i.test(lastParagraphs)
+  ) {
     signals.add('enumerated_choices');
   }
 

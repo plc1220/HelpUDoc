@@ -74,6 +74,22 @@ def test_detect_implicit_input_context_form_below_fill_this_out() -> None:
     assert result.awaiting is True
 
 
+def test_detect_implicit_input_context_gate_without_form_wording() -> None:
+    result = detect_implicit_input_awaiting(
+        skill_id="frontend-slides",
+        assistant_text=(
+            "I've analyzed the Texas Chicken Malaysia Sales Intelligence Proposal and am ready "
+            "to transform it into a professional presentation. To ensure the deck meets your "
+            "expectations, This will help me determine the ideal length, structure, and technical "
+            "features (like inline editing). Once submitted, I will:\n\n"
+            "Propose a slide outline based on the proposal's sections (Executive Summary, "
+            "Business Requirements, Architecture, etc.).\n\n"
+            "Move to Style Discovery to find the perfect visual aesthetic for your audience."
+        ),
+    )
+    assert result.awaiting is True
+
+
 def test_detect_implicit_input_style_selector_above() -> None:
     result = detect_implicit_input_awaiting(
         skill_id="frontend-slides",
@@ -83,6 +99,34 @@ def test_detect_implicit_input_style_selector_above() -> None:
             "Style B: Bold Signal — High impact.\n"
             "Style C: Notebook Tabs — Editorial and structured.\n\n"
             "Please choose your favorite direction in the interactive selector above."
+        ),
+    )
+    assert result.awaiting is True
+
+
+def test_detect_implicit_input_visual_theme_selection_without_preview_wording() -> None:
+    result = detect_implicit_input_awaiting(
+        skill_id="frontend-slides",
+        assistant_text=(
+            "The visual theme selection form is now active! Please choose your preferred styling direction:\n\n"
+            "*   Theme A (Bold QSR Modern - Brand Dark): Uses Texas Orange-Gold and Crimson Red on Deep Charcoal.\n"
+            "*   Theme B (Sleek Enterprise Tech - Data Dark): Cool Slate Navy, Teal, and Amber.\n"
+            "*   Theme C (Clean Minimalist Light - Editorial Light): Clean off-white and cream layout.\n\n"
+            "Once you confirm your choice, I will immediately construct the self-contained, interactive HTML slide deck!"
+        ),
+    )
+    assert result.awaiting is True
+
+
+def test_detect_implicit_input_option_numbered_html_style_chooser() -> None:
+    result = detect_implicit_input_awaiting(
+        skill_id="frontend-slides",
+        assistant_text=(
+            "Based on your selected configuration, I have developed three custom HTML slide style options:\n\n"
+            "### Option 1: Bold & Energetic (Texas Chicken Brand Core)\n"
+            "### Option 2: Sleek Enterprise Tech (Data Dark)\n"
+            "### Option 3: Clean Minimalist Light (Editorial Light)\n\n"
+            "Please select one for generating the complete slide deck."
         ),
     )
     assert result.awaiting is True
@@ -158,7 +202,7 @@ def test_build_synthetic_interrupt_does_not_regress_style_selection_to_outline_c
         prompt_hint="Please choose a style selection method in the form below.",
     )
     assert payload is not None
-    assert payload["title"] == "Continue"
+    assert payload["title"] == "Choose Your Presentation Style"
     assert payload["response_spec"].get("questions", []) == []
 
 
@@ -185,6 +229,43 @@ def test_build_synthetic_interrupt_uses_style_preview_chooser() -> None:
         "style-c",
     ]
     assert payload["display_payload"]["stylePreviews"][0]["path"] == ".claude-design/slide-previews/style-a.html"
+    assert "<!doctype html>" in payload["display_payload"]["stylePreviews"][0]["html"]
+
+
+def test_build_synthetic_interrupt_parses_theme_choices_as_style_previews() -> None:
+    payload = build_synthetic_clarification_interrupt(
+        skill_id="frontend-slides",
+        assistant_text=(
+            "The visual theme selection form is now active! Please choose your preferred styling direction:\n\n"
+            "Theme A (Bold QSR Modern - Brand Dark): Uses Texas Orange-Gold and Crimson Red.\n"
+            "Theme B (Sleek Enterprise Tech - Data Dark): Cool Slate Navy and Teal.\n"
+            "Theme C (Clean Minimalist Light - Editorial Light): Clean off-white layout.\n\n"
+            "Once you confirm your choice, I will construct the HTML slide deck."
+        ),
+        prompt_hint=None,
+    )
+    assert payload is not None
+    assert payload["title"] == "Choose Your Presentation Style"
+    assert payload["response_spec"]["choices"][0]["label"].startswith("Style A: Bold QSR")
+    assert "<!doctype html>" in payload["display_payload"]["stylePreviews"][0]["html"]
+
+
+def test_build_synthetic_interrupt_parses_option_choices_as_style_previews() -> None:
+    payload = build_synthetic_clarification_interrupt(
+        skill_id="frontend-slides",
+        assistant_text=(
+            "I have developed three custom HTML slide style options:\n\n"
+            "Option 1: Bold & Energetic (Texas Chicken Brand Core)\n"
+            "Option 2: Sleek Enterprise Tech (Data Dark)\n"
+            "Option 3: Clean Minimalist Light (Editorial Light)\n\n"
+            "Please select one for generating the complete slide deck."
+        ),
+        prompt_hint=None,
+    )
+    assert payload is not None
+    assert payload["title"] == "Choose Your Presentation Style"
+    assert payload["response_spec"]["choices"][0]["id"] == "style-a"
+    assert payload["response_spec"]["choices"][0]["label"].startswith("Style A: Bold")
 
 
 def test_guard_skips_when_tool_calls_present() -> None:
