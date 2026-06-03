@@ -1,4 +1,4 @@
-import type { DashboardArtifactInfo } from './types';
+import type { DashboardArtifactInfo, UIRequest } from './types';
 
 export type AgentStreamChunk =
   | { type: 'token' | 'chunk'; content?: string; role?: string }
@@ -84,6 +84,7 @@ export type AgentStreamChunk =
         }>;
       };
       displayPayload?: Record<string, unknown>;
+      uiRequest?: UIRequest;
     }
   | { type: 'keepalive' }
   | { type: 'done'; status?: 'completed' | 'failed' | 'cancelled' | 'interrupted' }

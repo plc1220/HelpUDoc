@@ -152,6 +152,16 @@ export interface InterruptResponseSpec {
   questions?: InterruptQuestion[];
 }
 
+export interface UIRequest {
+  id: string;
+  component: 'clarification_form' | 'style_preview_chooser' | 'approval' | 'artifact_preview';
+  props: Record<string, unknown>;
+  resume: {
+    action: string;
+    schema?: Record<string, unknown>; // JSON Schema
+  };
+}
+
 export interface PendingInterrupt {
   kind?: 'approval' | 'clarification';
   interruptId?: string;
@@ -164,6 +174,7 @@ export interface PendingInterrupt {
   reviewConfigs?: Array<{ action_name?: string; allowed_decisions?: string[] }>;
   responseSpec?: InterruptResponseSpec;
   displayPayload?: Record<string, unknown>;
+  uiRequest?: UIRequest;
 }
 
 export interface ConversationMessageMetadata {

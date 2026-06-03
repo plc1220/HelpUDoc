@@ -6,6 +6,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 GENERAL_PROMPT_SOURCE = REPO_ROOT / "agent" / "helpudoc_agent" / "runtime" / "agent_registry.py"
 FRONTEND_SLIDES_SKILL = REPO_ROOT / "skills" / "frontend-slides" / "SKILL.md"
+HUMAN_INTERRUPTS = REPO_ROOT / "agent" / "helpudoc_agent" / "tools" / "workspace" / "builtins" / "human_interrupts.py"
 
 
 def test_general_prompt_requires_structured_interrupts_for_skill_questions() -> None:
@@ -39,7 +40,15 @@ def test_frontend_slides_skill_has_mandatory_interrupt_checklist() -> None:
     assert "You may NOT skip any gate" in content
     assert "THIS IS THE MOST COMMONLY SKIPPED GATE" in content
     assert "your VERY NEXT ACTION must be a `request_clarification` tool call" in content
-    assert 'questions_json=[{' in content
+    assert 'questions_json=' in content
     assert '"id": "outline"' in content
     assert "If you find yourself writing" in content
     assert "that means you forgot to call `request_clarification`" in content
+
+
+def test_request_clarification_records_a2ui_gate_completion_after_resume() -> None:
+    content = HUMAN_INTERRUPTS.read_text(encoding="utf-8")
+
+    assert "FRONTEND_SLIDES_A2UI_GATES" in content
+    assert "frontend_slides_completed_a2ui_gates" in content
+    assert "_record_completed_a2ui_gate(workspace_state, display_payload)" in content

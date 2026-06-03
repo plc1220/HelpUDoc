@@ -191,7 +191,26 @@ def build_google_search_tool(
             label=search_label,
         )
         if error or response is None:
-            return f"Search failed ({error or 'unknown error'})."
+            error_text = str(error or "unknown error")
+            safe_error_text = error_text[:300].replace('"', "'")
+            if "timeout" in error_text.lower() or "deadline" in error_text.lower():
+                workspace_state.context["google_search_terminal_error"] = True
+                return (
+                    "{"
+                    '"ok": false, '
+                    '"error_type": "timeout", '
+                    f'"message": "Google search timed out after {DEFAULT_SEARCH_TIMEOUT}s. '
+                    'Do not retry google_search in this run; continue from available context or ask the user to retry later."'
+                    "}"
+                )
+            return (
+                "{"
+                '"ok": false, '
+                '"error_type": "search_error", '
+                f'"message": "Google search failed: {safe_error_text}. '
+                'Do not retry google_search unless the user explicitly asks."'
+                "}"
+            )
 
         summary, sources = parse_structured_web_answer(response)
         if sources:

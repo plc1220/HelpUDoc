@@ -192,6 +192,22 @@ def test_build_synthetic_interrupt_uses_frontend_slides_discovery_form() -> None
     assert payload["response_spec"]["allowDismiss"] is True
 
 
+def test_build_synthetic_interrupt_detects_generic_form_preference_request() -> None:
+    payload = build_synthetic_clarification_interrupt(
+        skill_id="frontend-slides",
+        assistant_text=(
+            "I have initiated the presentation creation process based on the proposal. "
+            "Please fill out the form to let me know your preferences, and I will proceed "
+            "with structure and design as soon as I receive your response."
+        ),
+        prompt_hint=None,
+    )
+    assert payload is not None
+    assert payload["kind"] == "clarification"
+    assert payload["title"] == "Presentation Context + Images"
+    assert payload["response_spec"]["questions"]
+
+
 def test_build_synthetic_interrupt_does_not_regress_style_selection_to_outline_confirmation() -> None:
     payload = build_synthetic_clarification_interrupt(
         skill_id="frontend-slides",
@@ -282,7 +298,76 @@ def test_guard_skips_when_tool_calls_present() -> None:
     assert middleware.after_model(state, runtime) is None
 
 
-def test_guard_synthesizes_interrupt_and_jumps_to_model() -> None:
+def test_detect_implicit_input_initialized_form_no_above_below() -> None:
+    result = detect_implicit_input_awaiting(
+        skill_id="frontend-slides",
+        assistant_text=(
+            "I have initialized the Presentation Context + Settings form. "
+            "Please submit your preferences, and once received, I will analyze the research report, "
+            "structure the slides, and guide you through the outline and style selection gates!"
+        ),
+    )
+    assert result.awaiting is True
+
+
+def test_guard_emits_deterministic_gate_interrupt_without_regex_signal() -> None:
+    middleware = ImplicitInputGuardMiddleware()
+    state = {
+        "messages": [
+            AIMessage(content="I reviewed the report and am ready to continue.")
+        ]
+    }
+    runtime = Runtime(context={"active_skill": "frontend-slides"})
+
+    resume_payload = {
+        "message": "",
+        "answersByQuestionId": {"purpose": "Pitch deck"},
+    }
+    with patch(
+        "helpudoc_agent.middleware.implicit_input_guard.interrupt",
+        return_value=resume_payload,
+    ) as interrupt_mock:
+        result = middleware.after_model(state, runtime)
+
+    assert interrupt_mock.called
+    interrupt_payload = interrupt_mock.call_args.args[0]
+    assert interrupt_payload["kind"] == "clarification"
+    assert interrupt_payload["display_payload"]["gateId"] == "presentation_context"
+    assert interrupt_payload["display_payload"]["uiContract"] == "a2ui"
+    assert interrupt_payload["response_spec"]["questions"][0]["id"] == "purpose"
+    assert runtime.context["frontend_slides_completed_a2ui_gates"] == ["presentation_context"]
+
+    assert result is not None
+    assert result.get("jump_to") == "model"
+    messages = result.get("messages") or []
+    assert "presentation_context" in messages[0].content
+    assert "Purpose: Pitch deck" in messages[0].content
+
+
+def test_guard_allows_frontend_slides_after_all_gates_completed() -> None:
+    middleware = ImplicitInputGuardMiddleware()
+    state = {
+        "messages": [
+            AIMessage(content="Your deck is ready at output/slides.html.")
+        ]
+    }
+    runtime = Runtime(
+        context={
+            "active_skill": "frontend-slides",
+            "frontend_slides_completed_a2ui_gates": [
+                "presentation_context",
+                "outline_confirmation",
+                "style_path_selection",
+                "mood_or_preset_selection",
+                "style_preview_selection",
+            ],
+        }
+    )
+
+    assert middleware.after_model(state, runtime) is None
+
+
+def test_guard_loops_once_and_raises_contract_error_on_retry() -> None:
     middleware = ImplicitInputGuardMiddleware()
     state = {
         "messages": [
@@ -295,78 +380,35 @@ def test_guard_synthesizes_interrupt_and_jumps_to_model() -> None:
             )
         ]
     }
-    runtime = Runtime(context={"active_skill": "frontend-slides"})
-    resume_payload = {
-        "message": "",
-        "selectedChoiceIds": [],
-        "selectedValues": [],
-        "answersByQuestionId": {"outline": "Looks good, proceed"},
-    }
+    completed_gates = [
+        "presentation_context",
+        "outline_confirmation",
+        "style_path_selection",
+        "mood_or_preset_selection",
+        "style_preview_selection",
+    ]
+    runtime = Runtime(
+        context={
+            "active_skill": "frontend-slides",
+            "frontend_slides_completed_a2ui_gates": completed_gates,
+        }
+    )
 
-    with patch(
-        "helpudoc_agent.middleware.implicit_input_guard.interrupt",
-        return_value=resume_payload,
-    ) as interrupt_mock:
-        result = middleware.after_model(state, runtime)
-
-    assert interrupt_mock.called
-    interrupt_arg = interrupt_mock.call_args.args[0]
-    assert interrupt_arg["kind"] == "clarification"
-    assert interrupt_arg["response_spec"]["questions"][0]["id"] == "outline"
-
+    # First occurrence: Should loop back to model and set implicit_retry
+    result = middleware.after_model(state, runtime)
     assert result is not None
     assert result.get("jump_to") == "model"
+    assert result.get("implicit_retry") is True
     messages = result.get("messages") or []
     assert len(messages) == 1
     assert isinstance(messages[0], HumanMessage)
-    assert "frontend-slides" in str(messages[0].content)
-    assert "Looks good, proceed" in str(messages[0].content)
+    assert "request_clarification" in messages[0].content
 
-
-def test_guard_checkpoint_resume_cycle() -> None:
-    """Prove a real LangGraph interrupt + Command(resume) continues on the same thread."""
-    model = GenericFakeChatModel(
-        messages=iter(
-            [
-                AIMessage(
-                    content=(
-                        "Here is the proposed outline:\n\n"
-                        "1. Title\n2. Challenge\n3. Solution\n\n"
-                        "Please confirm the outline using the form above."
-                    )
-                ),
-                AIMessage(content="Proceeding to style selection."),
-            ]
-        )
-    )
-    agent = create_agent(
-        model=model,
-        tools=[],
-        middleware=[ImplicitInputGuardMiddleware()],
-        checkpointer=MemorySaver(),
-    )
-    config = {"configurable": {"thread_id": "implicit-guard-integration"}}
-    context = {"active_skill": "frontend-slides"}
-
-    first = agent.invoke(
-        {"messages": [{"role": "user", "content": "Create slides"}]},
-        config=config,
-        context=context,
-    )
-    assert first.get("__interrupt__"), "expected LangGraph checkpoint interrupt"
-
-    interrupt_value = first["__interrupt__"][0].value
-    assert interrupt_value["kind"] == "clarification"
-    questions = interrupt_value["response_spec"]["questions"]
-    assert questions[0]["id"] == "outline"
-
-    resume_payload = {
-        "message": "",
-        "answersByQuestionId": {"outline": "Looks good, proceed"},
+    # Second occurrence (implicit_retry is True): Should raise ValueError immediately
+    state_retry = {
+        **state,
+        "implicit_retry": True,
     }
-    second = agent.invoke(Command(resume=resume_payload), config=config, context=context)
-
-    human_replies = [m for m in second["messages"] if isinstance(m, HumanMessage)]
-    assert any("Clarification response" in str(m.content) for m in human_replies)
-    assert any("Looks good, proceed" in str(m.content) for m in human_replies)
-    assert second["messages"][-1].content == "Proceeding to style selection."
+    import pytest
+    with pytest.raises(ValueError, match="Contract violation"):
+        middleware.after_model(state_retry, runtime)

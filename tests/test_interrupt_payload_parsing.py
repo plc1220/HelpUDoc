@@ -168,3 +168,56 @@ def test_normalize_interrupt_payload_value_synthesizes_stable_interrupt_id() -> 
 
     assert normalized_first["interruptId"].startswith("interrupt-")
     assert normalized_first["interruptId"] == normalized_second["interruptId"]
+
+
+def test_presentation_context_gate_produces_clarification_form() -> None:
+    payload = {
+        "kind": "clarification",
+        "title": "Presentation Discovery",
+        "description": "Confirm the setup.",
+        "response_spec": {
+            "questions": [
+                {
+                    "id": "purpose",
+                    "header": "Purpose",
+                    "question": "What is this presentation for?",
+                }
+            ]
+        },
+        "display_payload": {
+            "skill": "frontend-slides",
+            "gateId": "presentation_context",
+            "uiContract": "a2ui",
+            "expectedComponent": "clarification_form"
+        }
+    }
+    normalized = normalize_interrupt_payload_value(payload)
+    assert normalized.get("uiRequest") is not None
+    assert normalized["uiRequest"]["component"] == "clarification_form"
+    assert normalized["uiRequest"]["props"]["questions"][0]["id"] == "purpose"
+
+
+def test_style_preview_gate_produces_style_preview_chooser() -> None:
+    payload = {
+        "kind": "clarification",
+        "title": "Choose Style",
+        "description": "Pick a style preview.",
+        "response_spec": {
+            "choices": [
+                {"id": "style-a", "label": "Style A", "value": "Style A"}
+            ]
+        },
+        "display_payload": {
+            "skill": "frontend-slides",
+            "gateId": "style_preview_selection",
+            "chooser": "style-previews",
+            "stylePreviews": [
+                {"id": "style-a", "html": "<html>Style A</html>"}
+            ]
+        }
+    }
+    normalized = normalize_interrupt_payload_value(payload)
+    assert normalized.get("uiRequest") is not None
+    assert normalized["uiRequest"]["component"] == "style_preview_chooser"
+    assert normalized["uiRequest"]["props"]["choices"][0]["id"] == "style-a"
+    assert normalized["uiRequest"]["props"]["previews"][0]["id"] == "style-a"

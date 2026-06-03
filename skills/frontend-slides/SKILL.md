@@ -313,19 +313,28 @@ Mentally verify the modified slide at these viewport sizes:
 
 ---
 
-## MANDATORY INTERRUPT CHECKLIST
+## MANDATORY INTERRUPT CHECKLIST & STRICT A2UI CONTRACT
 
-Every new-presentation run MUST emit ALL of these `request_clarification` interrupts before the final HTML is generated. If the run completes without emitting each one, the flow is broken and the user will be stuck.
+Every new-presentation run MUST emit ALL of these `request_clarification` interrupts before the final HTML is generated. Under our strict **A2UI (Agent-to-User Interface) contract**, each required gate must call `request_clarification` with a valid, non-empty payload containing structured gate metadata in `context_json` (and `display_payload`/`displayPayload`).
 
-| Gate | Step | Required `request_clarification` call |
-|------|------|--------------------------------------|
-| 1 | Step 1.1 | Presentation Context (purpose, length, content, images, editing) |
-| 2 | Step 1.2 | Outline Confirmation ("Does this outline look right?") |
-| 3 | Step 2.0 | Style Path Selection ("Show me options" vs "I know what I want") |
-| 4 | Step 2.1 or preset picker | Mood Selection or Direct Preset Selection |
-| 5 | Step 2.3 | Style Preview Selection ("Choose Your Presentation Style") |
+### Strict Contract Rules:
+1. **Tool Calls Required**: Each gate MUST call `request_clarification`. You cannot skip or advance past required human-input gates using assistant text prose alone.
+2. **Include Gate Metadata**: Every call must include `gateId` and expected `expectedComponent` in its `context_json` payload.
+3. **No Prose-Only Forms**: Prose may describe the outline or previews, but it must not be the only request for input. A UI form only exists when the tool call is emitted and the run stops.
+4. **Execution Stops**: The run must stop immediately after the interrupt.
+5. **No Synthetic Fallback**: If the model turn ends with no tool calls while the active gate requires input, the system will loop back with a strict instruction to call `request_clarification`. If it still fails, the run fails with a clear contract error.
 
-**You may NOT skip any gate.** Each gate requires an actual `request_clarification` tool call that pauses the run. Writing "please confirm above" or "select from the form" as prose does NOT create a form — it just prints dead text the user cannot interact with.
+### Gate Definition Table:
+
+| Gate ID | Step | expectedComponent | Description & Purpose |
+|---------|------|-------------------|----------------------|
+| `presentation_context` | Step 1.1 | `clarification_form` | Purpose, length, content, images, editing |
+| `outline_confirmation` | Step 1.2 | `clarification_form` | Slide-by-slide structure & image assignments |
+| `style_path_selection` | Step 2.0 | `clarification_form` | Guided Exploration vs Direct Preset Pick |
+| `mood_or_preset_selection` | Step 2.1 | `clarification_form` | Vibe check / Mood selection or Direct Preset chooser |
+| `style_preview_selection` | Step 2.3 | `style_preview_chooser` | Interactive visual style preview selection |
+
+**You may NOT skip any gate.** Each gate requires an actual `request_clarification` tool call that pauses the run. Writing "please confirm above" or "select from the form" as prose does NOT create a form — it just prints dead text.
 
 ---
 
@@ -382,6 +391,72 @@ The user can select **"Other"** to type or paste any custom folder path (e.g. `~
 
 **Remember the user's choice — it determines whether edit-related HTML/CSS/JS is included in Phase 3.**
 
+**Exact tool call parameters (Gate 1):**
+```python
+request_clarification(
+  title="Presentation Setup",
+  description="Please configure the basic settings for your presentation.",
+  questions_json='''[
+    {
+      "id": "purpose",
+      "header": "Purpose",
+      "question": "What is this presentation for?",
+      "options": [
+        {"id": "pitch", "label": "Pitch deck", "value": "Pitch deck"},
+        {"id": "tutorial", "label": "Teaching/Tutorial", "value": "Teaching/Tutorial"},
+        {"id": "talk", "label": "Conference talk", "value": "Conference talk"},
+        {"id": "internal", "label": "Internal presentation", "value": "Internal presentation"}
+      ]
+    },
+    {
+      "id": "length",
+      "header": "Length",
+      "question": "Approximately how many slides?",
+      "options": [
+        {"id": "short", "label": "Short (5-10)", "value": "Short (5-10)"},
+        {"id": "medium", "label": "Medium (10-20)", "value": "Medium (10-20)"},
+        {"id": "long", "label": "Long (20+)", "value": "Long (20+)"}
+      ]
+    },
+    {
+      "id": "content",
+      "header": "Content",
+      "question": "Do you have the content ready, or do you need help structuring it?",
+      "options": [
+        {"id": "ready", "label": "I have all content ready", "value": "I have all content ready"},
+        {"id": "notes", "label": "I have rough notes", "value": "I have rough notes"},
+        {"id": "topic", "label": "I have a topic only", "value": "I have a topic only"}
+      ]
+    },
+    {
+      "id": "images",
+      "header": "Images",
+      "question": "Do you have images to include?",
+      "options": [
+        {"id": "no-images", "label": "No images", "value": "No images"},
+        {"id": "assets", "label": "./assets", "value": "./assets"}
+      ]
+    },
+    {
+      "id": "editing",
+      "header": "Editing",
+      "question": "Do you need to edit text directly in the browser after generation?",
+      "options": [
+        {"id": "edit-yes", "label": "Yes (Recommended)", "value": "Yes (Recommended)"},
+        {"id": "edit-no", "label": "No", "value": "No"}
+      ]
+    }
+  ]''',
+  context_json='''{
+    "skill": "frontend-slides",
+    "gateId": "presentation_context",
+    "uiContract": "a2ui",
+    "expectedComponent": "clarification_form"
+  }''',
+  submit_label="Continue"
+)
+```
+
 If user has content, ask them to share it (text, bullet points, images, etc.).
 
 ### Step 1.2: Image Evaluation
@@ -420,22 +495,30 @@ This means curated images are factored in **before** style selection (Phase 2) a
 
 At this point, do not write a normal assistant message that says "Next Steps", "use the forms in the sidebar", "confirm the outline", "confirm using the form above", or "choose your style discovery method". Those words are only valid inside the structured `request_clarification` payload. If you have an outline ready, your next action must be the tool call below, then stop.
 
-**Exact tool call parameters:**
-```
+**Exact tool call parameters (Gate 2):**
+```python
 request_clarification(
   title="Outline Confirmation",
   description="Review the proposed slide outline and image assignments above.",
-  questions_json=[{
-    "id": "outline",
-    "header": "Outline",
-    "question": "Does this slide outline and image selection look right?",
-    "options": [
-      {"id": "confirm", "label": "Looks good, proceed", "value": "Looks good, proceed", "description": "Move on to style selection"},
-      {"id": "adjust-images", "label": "Adjust images", "value": "Adjust images", "description": "I want to change which images go where"},
-      {"id": "adjust-outline", "label": "Adjust outline", "value": "Adjust outline", "description": "I want to change the slide structure"}
-    ]
-  }],
+  questions_json='''[
+    {
+      "id": "outline",
+      "header": "Outline",
+      "question": "Does this slide outline and image selection look right?",
+      "options": [
+        {"id": "confirm", "label": "Looks good, proceed", "value": "Looks good, proceed", "description": "Move on to style selection"},
+        {"id": "adjust-images", "label": "Adjust images", "value": "Adjust images", "description": "I want to change which images go where"},
+        {"id": "adjust-outline", "label": "Adjust outline", "value": "Adjust outline", "description": "I want to change the slide structure"}
+      ]
+    }
+  ]''',
   allow_freeform=true,
+  context_json='''{
+    "skill": "frontend-slides",
+    "gateId": "outline_confirmation",
+    "uiContract": "a2ui",
+    "expectedComponent": "clarification_form"
+  }''',
   submit_label="Continue"
 )
 ```
@@ -492,6 +575,32 @@ First, ask how the user wants to choose their style using `request_clarification
   - "Show me options" — Generate 3 previews based on my needs (recommended for most users)
   - "I know what I want" — Let me pick from the preset list directly
 
+**Exact tool call parameters (Gate 3):**
+```python
+request_clarification(
+  title="Choose Style Selection Method",
+  description="Select how you'd like to decide on the presentation's design.",
+  questions_json='''[
+    {
+      "id": "style_path",
+      "header": "Style Selection Method",
+      "question": "How would you like to choose your presentation style?",
+      "options": [
+        {"id": "guided", "label": "Show me options", "value": "Show me options", "description": "Generate 3 previews based on my needs (recommended)"},
+        {"id": "direct", "label": "I know what I want", "value": "I know what I want", "description": "Let me pick from the preset list directly"}
+      ]
+    }
+  ]''',
+  context_json='''{
+    "skill": "frontend-slides",
+    "gateId": "style_path_selection",
+    "uiContract": "a2ui",
+    "expectedComponent": "clarification_form"
+  }''',
+  submit_label="Continue"
+)
+```
+
 **If "Show me options"** → Continue to Step 2.1 (Mood Selection)
 
 **If "I know what I want"** → Show preset picker via a second `request_clarification` call:
@@ -507,6 +616,34 @@ First, ask how the user wants to choose their style using `request_clarification
 
 (If user picks one, skip to Phase 3. If they want to see more options, show additional presets or proceed to guided discovery.)
 
+**Exact tool call parameters if picking preset directly (Gate 4):**
+```python
+request_clarification(
+  title="Select Style Preset",
+  description="Pick one of our premium presentation styles directly.",
+  questions_json='''[
+    {
+      "id": "preset",
+      "header": "Preset",
+      "question": "Which style would you like to use?",
+      "options": [
+        {"id": "bold", "label": "Bold Signal", "value": "Bold Signal", "description": "Vibrant card on dark, confident and high-impact"},
+        {"id": "botanical", "label": "Dark Botanical", "value": "Dark Botanical", "description": "Elegant dark with soft abstract shapes"},
+        {"id": "notebook", "label": "Notebook Tabs", "value": "Notebook Tabs", "description": "Editorial paper look with colorful section tabs"},
+        {"id": "pastel", "label": "Pastel Geometry", "value": "Pastel Geometry", "description": "Friendly pastels with decorative pills"}
+      ]
+    }
+  ]''',
+  context_json='''{
+    "skill": "frontend-slides",
+    "gateId": "mood_or_preset_selection",
+    "uiContract": "a2ui",
+    "expectedComponent": "clarification_form"
+  }''',
+  submit_label="Use selected style"
+)
+```
+
 ### Step 2.1: Mood Selection (Guided Discovery)
 
 Use `request_clarification` for this step as well. This is a structured chooser, not a prose question.
@@ -521,7 +658,36 @@ Use `request_clarification` for this step as well. This is a structured chooser,
   - "Inspired/Moved" — Emotional, storytelling, memorable
 - multiSelect: true (can choose up to 2)
 
-Call `request_clarification` immediately at this step. Use `options_json`, set `multi_select=true`, `allow_freeform=false`, and `submit_label="Generate style previews"`. Do not say "select the feeling from the form above" unless the tool call has actually happened and the run is stopping on the interrupt.
+Call `request_clarification` immediately at this step. Use `questions_json`, set `multi_select=true`, `allow_freeform=false`, and `submit_label="Generate style previews"`. Do not say "select the feeling from the form above" unless the tool call has actually happened and the run is stopping on the interrupt.
+
+**Exact tool call parameters for Guided Mood Selection (Gate 4):**
+```python
+request_clarification(
+  title="Vibe & Mood Selection",
+  description="Tell us about the desired vibe for this presentation.",
+  questions_json='''[
+    {
+      "id": "mood",
+      "header": "Vibe",
+      "question": "What feeling should the audience have when viewing your slides?",
+      "options": [
+        {"id": "impressed", "label": "Impressed/Confident", "value": "Impressed/Confident"},
+        {"id": "excited", "label": "Excited/Energized", "value": "Excited/Energized"},
+        {"id": "calm", "label": "Calm/Focused", "value": "Calm/Focused"},
+        {"id": "inspired", "label": "Inspired/Moved", "value": "Inspired/Moved"}
+      ]
+    }
+  ]''',
+  multi_select=true,
+  context_json='''{
+    "skill": "frontend-slides",
+    "gateId": "mood_or_preset_selection",
+    "uiContract": "a2ui",
+    "expectedComponent": "clarification_form"
+  }''',
+  submit_label="Generate style previews"
+)
+```
 
 ### Step 2.2: Generate Style Previews
 
@@ -607,7 +773,10 @@ Required tool call shape:
 ```json
 {
   "skill": "frontend-slides",
+  "gateId": "style_preview_selection",
   "chooser": "style-previews",
+  "uiContract": "a2ui",
+  "expectedComponent": "style_preview_chooser",
   "stylePreviews": [
     {
       "id": "style-a",
@@ -629,6 +798,50 @@ Required tool call shape:
     }
   ]
 }
+```
+
+**Exact tool call parameters (Gate 5):**
+```python
+request_clarification(
+  title="Choose Your Presentation Style",
+  description="Preview each direction, then choose the one you want me to use for the full deck.",
+  options_json='''[
+    {"id":"style-a","label":"Style A: [Name]","value":"Style A: [Name]","description":"[Brief description]"},
+    {"id":"style-b","label":"Style B: [Name]","value":"Style B: [Name]","description":"[Brief description]"},
+    {"id":"style-c","label":"Style C: [Name]","value":"Style C: [Name]","description":"[Brief description]"},
+    {"id":"mix-elements","label":"Mix elements","value":"Mix elements","description":"Combine aspects from different styles"}
+  ]''',
+  allow_freeform=false,
+  multi_select=false,
+  context_json='''{
+    "skill": "frontend-slides",
+    "gateId": "style_preview_selection",
+    "chooser": "style-previews",
+    "uiContract": "a2ui",
+    "expectedComponent": "style_preview_chooser",
+    "stylePreviews": [
+      {
+        "id": "style-a",
+        "label": "Style A: [Name]",
+        "description": "[Brief description]",
+        "path": ".claude-design/slide-previews/style-a.html"
+      },
+      {
+        "id": "style-b",
+        "label": "Style B: [Name]",
+        "description": "[Brief description]",
+        "path": ".claude-design/slide-previews/style-b.html"
+      },
+      {
+        "id": "style-c",
+        "label": "Style C: [Name]",
+        "description": "[Brief description]",
+        "path": ".claude-design/slide-previews/style-c.html"
+      }
+    ]
+  }''',
+  submit_label="Use selected style"
+)
 ```
 
 If "Mix elements", ask for specifics.

@@ -50,6 +50,111 @@ def _normalize_interrupt_payload(interrupt_value: Dict[str, Any], interrupt_id: 
         else _build_interrupt_id(interrupt_value)
     )
     payload["interruptId"] = normalized_interrupt_id
+
+    # Construct the uiRequest object
+    kind = interrupt_value.get("kind")
+    ui_request = None
+
+    if kind == "clarification":
+        # Check if it's slide style selection chooser
+        is_style_chooser = False
+        if isinstance(display_payload, dict):
+            if display_payload.get("chooser") == "style-previews" or "stylePreviews" in display_payload:
+                is_style_chooser = True
+
+        if is_style_chooser:
+            previews = []
+            if isinstance(display_payload, dict):
+                previews = display_payload.get("stylePreviews") or display_payload.get("previews") or []
+
+            choices = []
+            if isinstance(response_spec, dict):
+                choices = response_spec.get("choices") or []
+
+            ui_request = {
+                "id": normalized_interrupt_id,
+                "component": "style_preview_chooser",
+                "props": {
+                    "previews": previews,
+                    "choices": choices,
+                    "title": payload.get("title"),
+                    "description": payload.get("description")
+                },
+                "resume": {
+                    "action": "style_choice",
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "selectedChoiceId": {"type": "string"},
+                            "styleSelection": {"type": "string"}
+                        },
+                        "required": ["selectedChoiceId"]
+                    }
+                }
+            }
+        else:
+            # Multi-question or single text clarification form
+            questions = []
+            if isinstance(response_spec, dict):
+                questions = response_spec.get("questions") or []
+
+            choices = []
+            if isinstance(response_spec, dict):
+                choices = response_spec.get("choices") or []
+
+            ui_request = {
+                "id": normalized_interrupt_id,
+                "component": "clarification_form",
+                "props": {
+                    "questions": questions,
+                    "choices": choices,
+                    "title": payload.get("title"),
+                    "description": payload.get("description"),
+                    "inputMode": response_spec.get("inputMode") if isinstance(response_spec, dict) else "text",
+                    "multiple": response_spec.get("multiple") if isinstance(response_spec, dict) else False,
+                    "submitLabel": response_spec.get("submitLabel") if isinstance(response_spec, dict) else "Continue"
+                },
+                "resume": {
+                    "action": "submit",
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "response": {"type": "string"},
+                            "selectedChoiceId": {"type": "string"},
+                            "selectedChoiceIds": {"type": "array", "items": {"type": "string"}},
+                            "answers": {"type": "object"}
+                        }
+                    }
+                }
+            }
+    elif kind == "approval":
+        ui_request = {
+            "id": normalized_interrupt_id,
+            "component": "approval",
+            "props": {
+                "title": payload.get("title"),
+                "description": payload.get("description"),
+                "displayPayload": display_payload,
+                "actions": payload.get("actions", []),
+                "actionRequests": payload.get("actionRequests", []),
+                "reviewConfigs": payload.get("reviewConfigs", [])
+            },
+            "resume": {
+                "action": "approve_reject",
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "decision": {"type": "string"},
+                        "feedback": {"type": "string"}
+                    },
+                    "required": ["decision"]
+                }
+            }
+        }
+
+    if ui_request is not None:
+        payload["uiRequest"] = ui_request
+
     return payload
 
 

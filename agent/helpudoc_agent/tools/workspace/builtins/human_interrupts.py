@@ -23,6 +23,37 @@ from ..human_action_parse import parse_human_actions
 from ..json_args import parse_json_dict_arg
 from ..schemas import RequestClarificationInput
 
+FRONTEND_SLIDES_A2UI_GATES = (
+    "presentation_context",
+    "outline_confirmation",
+    "style_path_selection",
+    "mood_or_preset_selection",
+    "style_preview_selection",
+)
+
+
+def _extract_a2ui_gate_id(display_payload: Dict[str, Any]) -> str:
+    gate_id = display_payload.get("gateId")
+    if not isinstance(gate_id, str) or not gate_id.strip():
+        nested_payload = display_payload.get("display_payload") or display_payload.get("displayPayload")
+        if isinstance(nested_payload, dict):
+            gate_id = nested_payload.get("gateId")
+    normalized = str(gate_id or "").strip()
+    return normalized if normalized in FRONTEND_SLIDES_A2UI_GATES else ""
+
+
+def _record_completed_a2ui_gate(workspace_state: WorkspaceState, display_payload: Dict[str, Any]) -> None:
+    if str(display_payload.get("skill") or "").strip().lower() != "frontend-slides":
+        return
+    gate_id = _extract_a2ui_gate_id(display_payload)
+    if not gate_id:
+        return
+    existing = workspace_state.context.get("frontend_slides_completed_a2ui_gates")
+    gates = [item for item in existing if isinstance(item, str)] if isinstance(existing, list) else []
+    if gate_id not in gates:
+        gates.append(gate_id)
+    workspace_state.context["frontend_slides_completed_a2ui_gates"] = gates
+
 
 def build_request_plan_approval_tool(workspace_state: WorkspaceState) -> Tool:
     @tool
@@ -258,6 +289,7 @@ def build_request_clarification_tool(workspace_state: WorkspaceState) -> Tool:
             label="request_clarification",
         )
         if isinstance(response, dict):
+            _record_completed_a2ui_gate(workspace_state, display_payload)
             return normalize_clarification_resume_payload(
                 response,
                 questions=parsed_questions,

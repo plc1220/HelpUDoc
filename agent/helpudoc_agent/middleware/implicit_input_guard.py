@@ -56,6 +56,42 @@ _GENERIC_CONTINUE_CHOICES = [
     },
 ]
 
+FRONTEND_SLIDES_STYLE_PATH_QUESTIONS = [
+    {
+        "id": "style_path",
+        "header": "Style Selection Method",
+        "question": "How would you like to choose your presentation style?",
+        "options": [
+            {
+                "id": "guided",
+                "label": "Show me options",
+                "value": "Show me options",
+                "description": "Generate 3 previews based on my needs",
+            },
+            {
+                "id": "direct",
+                "label": "I know what I want",
+                "value": "I know what I want",
+                "description": "Pick from the preset list directly",
+            },
+        ],
+    },
+]
+
+FRONTEND_SLIDES_MOOD_QUESTIONS = [
+    {
+        "id": "mood",
+        "header": "Vibe",
+        "question": "What feeling should the audience have when viewing your slides?",
+        "options": [
+            {"id": "impressed", "label": "Impressed/Confident", "value": "Impressed/Confident"},
+            {"id": "excited", "label": "Excited/Energized", "value": "Excited/Energized"},
+            {"id": "calm", "label": "Calm/Focused", "value": "Calm/Focused"},
+            {"id": "inspired", "label": "Inspired/Moved", "value": "Inspired/Moved"},
+        ],
+    },
+]
+
 FRONTEND_SLIDES_DISCOVERY_QUESTIONS = [
     {
         "id": "purpose",
@@ -235,6 +271,149 @@ def _resolve_active_skill_id(context: Any) -> str | None:
     return None
 
 
+FRONTEND_SLIDES_A2UI_GATES = (
+    "presentation_context",
+    "outline_confirmation",
+    "style_path_selection",
+    "mood_or_preset_selection",
+    "style_preview_selection",
+)
+
+
+def _is_frontend_slides_skill(skill_id: str | None) -> bool:
+    normalized = str(skill_id or "").strip().lower()
+    return normalized == "frontend-slides" or normalized.endswith("/frontend-slides")
+
+
+def _completed_a2ui_gate_ids(context: Any) -> set[str]:
+    if not isinstance(context, dict):
+        return set()
+    raw = context.get("frontend_slides_completed_a2ui_gates")
+    if not isinstance(raw, list):
+        return set()
+    return {str(item).strip() for item in raw if str(item).strip() in FRONTEND_SLIDES_A2UI_GATES}
+
+
+def _is_edit_existing_frontend_slides_context(context: Any) -> bool:
+    if not isinstance(context, dict):
+        return False
+    raw = " ".join(
+        str(context.get(key) or "")
+        for key in ("prompt", "user_prompt", "original_prompt", "message")
+    ).lower()
+    if not raw:
+        return False
+    mentions_existing_artifact = any(token in raw for token in (".html", ".ppt", ".pptx", "existing deck", "existing slides", "current deck"))
+    asks_for_edit = any(token in raw for token in ("edit", "revise", "update", "modify", "fix", "polish"))
+    return mentions_existing_artifact and asks_for_edit
+
+
+def _frontend_slides_required_gate_missing(context: Any) -> str | None:
+    if _is_edit_existing_frontend_slides_context(context):
+        return None
+    completed = _completed_a2ui_gate_ids(context)
+    for gate_id in FRONTEND_SLIDES_A2UI_GATES:
+        if gate_id not in completed:
+            return gate_id
+    return None
+
+
+def _frontend_slides_gate_display_payload(gate_id: str) -> dict[str, Any]:
+    expected_component = (
+        "style_preview_chooser"
+        if gate_id == "style_preview_selection"
+        else "clarification_form"
+    )
+    return {
+        "skill": "frontend-slides",
+        "gateId": gate_id,
+        "uiContract": "a2ui",
+        "expectedComponent": expected_component,
+        "source": "implicit_input_guard",
+    }
+
+
+def _build_frontend_slides_gate_interrupt(gate_id: str) -> dict[str, Any] | None:
+    display_payload = _frontend_slides_gate_display_payload(gate_id)
+    if gate_id == "presentation_context":
+        return build_clarification_interrupt_value(
+            title="Presentation Setup",
+            description="Configure the basic settings for your presentation.",
+            questions=FRONTEND_SLIDES_DISCOVERY_QUESTIONS,
+            choices=[],
+            allow_freeform=True,
+            submit_label="Continue",
+            display_payload=display_payload,
+        )
+    if gate_id == "outline_confirmation":
+        return build_clarification_interrupt_value(
+            title="Outline Confirmation",
+            description="Review the proposed slide outline and image assignments above.",
+            questions=FRONTEND_SLIDES_OUTLINE_QUESTIONS,
+            choices=[],
+            allow_freeform=True,
+            submit_label="Continue",
+            display_payload=display_payload,
+        )
+    if gate_id == "style_path_selection":
+        return build_clarification_interrupt_value(
+            title="Choose Style Selection Method",
+            description="Select how you would like to decide on the presentation design.",
+            questions=FRONTEND_SLIDES_STYLE_PATH_QUESTIONS,
+            choices=[],
+            allow_freeform=False,
+            submit_label="Continue",
+            display_payload=display_payload,
+        )
+    if gate_id == "mood_or_preset_selection":
+        return build_clarification_interrupt_value(
+            title="Vibe & Mood Selection",
+            description="Choose the desired vibe for this presentation.",
+            questions=FRONTEND_SLIDES_MOOD_QUESTIONS,
+            choices=[],
+            allow_freeform=False,
+            multi_select=True,
+            submit_label="Generate style previews",
+            display_payload=display_payload,
+        )
+    if gate_id == "style_preview_selection":
+        choices = [dict(choice) for choice in DEFAULT_FRONTEND_SLIDES_STYLE_CHOICES]
+        style_previews = [
+            {
+                "id": choice["id"],
+                "label": choice["label"],
+                "description": choice.get("description", ""),
+                "path": f".claude-design/slide-previews/{choice['id']}.html",
+                "html": _build_fallback_style_preview_html(choice),
+            }
+            for choice in choices
+            if re.match(r"^style-[a-c]$", choice["id"])
+        ]
+        return build_clarification_interrupt_value(
+            title="Choose Your Presentation Style",
+            description="Preview each direction, then choose the one you want to use for the full deck.",
+            choices=choices,
+            allow_freeform=False,
+            submit_label="Use selected style",
+            display_payload={
+                **display_payload,
+                "chooser": "style-previews",
+                "stylePreviews": style_previews,
+            },
+        )
+    return None
+
+
+def _record_completed_gate(context: Any, gate_id: str | None) -> None:
+    if not isinstance(context, dict) or not gate_id:
+        return
+    existing = context.get("frontend_slides_completed_a2ui_gates")
+    gates = [item for item in existing if isinstance(item, str)] if isinstance(existing, list) else []
+    if gate_id not in gates:
+        gates.append(gate_id)
+    context["frontend_slides_completed_a2ui_gates"] = gates
+
+
 def _is_outline_confirmation_context(text: str) -> bool:
     lowered = text.lower()
     if "outline" in lowered and "approved" in lowered:
@@ -271,8 +450,17 @@ def _is_frontend_slides_discovery_context(text: str) -> bool:
             "visual assets",
             "form above",
             "form below",
+            "fill out the form",
+            "complete the form",
+            "submit the form",
             "get started",
         )
+    ):
+        return True
+    if re.search(
+        r"\b(?:fill\s+out|complete|submit)\s+the\s+(?:form|questions?)\b.{0,180}\b(?:preferences?|goals?|details?|context|requirements?|purpose|audience|style|assets?|continue|proceed)\b",
+        lowered,
+        re.DOTALL,
     ):
         return True
     if re.search(
@@ -548,38 +736,69 @@ class ImplicitInputGuardMiddleware(AgentMiddleware):
         if not skill_id:
             return None
 
+        runtime_context = getattr(runtime, "context", None)
         assistant_text = _extract_message_text(last_ai_msg)
         detection = detect_implicit_input_awaiting(skill_id=skill_id, assistant_text=assistant_text)
-        if not detection.awaiting:
-            return None
-
-        interrupt_payload = build_synthetic_clarification_interrupt(
-            skill_id=skill_id,
-            assistant_text=assistant_text,
-            prompt_hint=detection.prompt,
+        missing_gate = (
+            _frontend_slides_required_gate_missing(runtime_context)
+            if _is_frontend_slides_skill(skill_id)
+            else None
         )
-        if interrupt_payload is None:
+        if not detection.awaiting and not missing_gate:
             return None
 
-        logger.info(
-            "Implicit input guard: synthesizing clarification interrupt for skill=%s",
+        logger.warning(
+            "A2UI input guard: frontend-slides missing required gate=%s or prose implies a UI form without request_clarification. skill=%s",
+            missing_gate,
             skill_id,
         )
 
-        questions, choices = _clarification_resume_context(interrupt_payload)
-        response = interrupt(interrupt_payload)
-        normalized = normalize_clarification_resume_payload(
-            response,
-            questions=questions,
-            choices=choices,
-        )
-        human_content = (
-            f"[Clarification response — continue the '{skill_id}' skill from where you left off; "
-            f"do not restart from the beginning.]\n{normalized}"
-        )
+        if not _is_frontend_slides_skill(skill_id):
+            return None
+
+        if missing_gate:
+            interrupt_payload = _build_frontend_slides_gate_interrupt(missing_gate)
+            if interrupt_payload is None:
+                raise ValueError(f"Contract violation: unsupported frontend-slides A2UI gate '{missing_gate}'.")
+
+            logger.info("A2UI input guard: emitting deterministic frontend-slides gate interrupt=%s", missing_gate)
+            response = interrupt(interrupt_payload)
+            _record_completed_gate(runtime_context, missing_gate)
+            questions, choices = _clarification_resume_context(interrupt_payload)
+            normalized = normalize_clarification_resume_payload(
+                response,
+                questions=questions,
+                choices=choices,
+            )
+            human_content = (
+                f"[Clarification response — continue the 'frontend-slides' skill from A2UI gate "
+                f"'{missing_gate}'; do not restart from the beginning.]\n{normalized}"
+            )
+            return {
+                "messages": [HumanMessage(content=human_content)],
+                "jump_to": "model",
+            }
+
+        if state.get("implicit_retry"):
+            raise ValueError(
+                "Contract violation: Model referenced implicit UI form but failed to emit explicit "
+                "request_clarification/A2UI tool call on loopback retry."
+            )
+
+        if detection.awaiting:
+            loopback_instruction = (
+                f"You requested the user to fill out a form or select choices in your prose: '{assistant_text}'. "
+                "However, you did not call the 'request_clarification' tool. Under our strict A2UI contract, "
+                "all user inputs must be requested by calling the 'request_clarification' tool with structured questions. "
+                "Please call the 'request_clarification' tool now to request the appropriate questions or style choice form."
+            )
+        else:
+            return None
+
         return {
-            "messages": [HumanMessage(content=human_content)],
+            "messages": [HumanMessage(content=loopback_instruction)],
             "jump_to": "model",
+            "implicit_retry": True,
         }
 
     async def aafter_model(self, state: AgentState, runtime: Runtime) -> dict[str, Any] | None:

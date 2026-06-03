@@ -5,7 +5,7 @@ import type {
   AgentInterruptResponse,
   AgentMessageContentBlock,
 } from '../agentService';
-import type { FileContextRef } from '@helpudoc/contracts/types';
+import type { FileContextRef, UIRequest } from '@helpudoc/contracts/types';
 
 export type AgentRunStatus =
   | 'queued'
@@ -66,6 +66,7 @@ export type RunPendingInterrupt = {
     }>;
   };
   displayPayload?: Record<string, unknown>;
+  uiRequest?: UIRequest;
 };
 
 export type RunMeta = {

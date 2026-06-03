@@ -44,6 +44,18 @@ test('infers frontend-slides from labeled presentation form prose even with gene
   assert.equal(result.skillId, 'frontend-slides');
 });
 
+test('detects frontend-slides generic form preference request', () => {
+  const result = detectImplicitInputAwaiting({
+    status: 'completed',
+    skillId: 'frontend-slides',
+    hadInterrupt: false,
+    assistantText: 'I have initiated the presentation creation process based on the proposal. Please fill out the form to let me know your preferences, and I will proceed with structure and design as soon as I receive your response.',
+  });
+  assert.equal(result.awaiting, true);
+  assert.equal(result.skillId, 'frontend-slides');
+  assert.equal(result.interruptType, 'frontend_slides_context');
+});
+
 test('detects prose-only frontend-slides style selector requests', () => {
   const result = detectImplicitInputAwaiting({
     status: 'completed',
@@ -283,4 +295,196 @@ test('detects "once confirmed" / "after you confirm" patterns', () => {
     assistantText: '1. Title\n2. Body\n3. End\n\nOnce confirmed, we will move to style selection.',
   });
   assert.equal(result.awaiting, true);
+});
+
+test('detects initialized form and preferences submission without explicit above/below qualifiers', () => {
+  const result = detectImplicitInputAwaiting({
+    status: 'completed',
+    skillId: 'frontend-slides',
+    hadInterrupt: false,
+    assistantText: 'I have initialized the Presentation Context + Settings form. Please submit your preferences, and once received, I will analyze the research report, structure the slides, and guide you through the outline and style selection gates!',
+  });
+  assert.equal(result.awaiting, true);
+  assert.equal(result.skillId, 'frontend-slides');
+});
+
+// Import A2UI contract helpers from lifecycle
+import { getFrontendSlidesA2UIGateCompletionError, validateInterrupt } from '../src/services/agent-runs/lifecycle';
+
+test('validateInterrupt passes for non-frontend-slides skill', () => {
+  const parsed = { kind: 'some-other-kind' };
+  const err = validateInterrupt(parsed, 'research');
+  assert.equal(err, null);
+});
+
+test('validateInterrupt allows non-gate approval interrupt for frontend-slides', () => {
+  const parsed = { kind: 'approval' };
+  const err = validateInterrupt(parsed, 'frontend-slides');
+  assert.equal(err, null);
+});
+
+test('validateInterrupt fails when approval pretends to satisfy an A2UI gate', () => {
+  const parsed = {
+    kind: 'approval',
+    displayPayload: {
+      gateId: 'presentation_context',
+      uiContract: 'a2ui'
+    }
+  };
+  const err = validateInterrupt(parsed, 'frontend-slides');
+  assert.match(err || '', /A2UI gate interrupts must use kind "clarification"/);
+});
+
+test('validateInterrupt fails unknown frontend-slides A2UI gate IDs', () => {
+  const parsed = {
+    kind: 'clarification',
+    displayPayload: {
+      gateId: 'surprise_gate',
+      uiContract: 'a2ui'
+    },
+    uiRequest: {
+      component: 'clarification_form',
+      props: {
+        questions: [{ id: 'q1', question: 'hello' }]
+      }
+    }
+  };
+  const err = validateInterrupt(parsed, 'frontend-slides');
+  assert.match(err || '', /unknown frontend-slides A2UI gate/);
+});
+
+test('validateInterrupt fails when missing uiRequest', () => {
+  const parsed = { kind: 'clarification' };
+  const err = validateInterrupt(parsed, 'frontend-slides');
+  assert.match(err || '', /missing "uiRequest" in clarification/);
+});
+
+test('validateInterrupt fails when missing component in uiRequest', () => {
+  const parsed = {
+    kind: 'clarification',
+    uiRequest: {}
+  };
+  const err = validateInterrupt(parsed, 'frontend-slides');
+  assert.match(err || '', /missing "component" in "uiRequest"/);
+});
+
+test('validateInterrupt fails when expectedComponent does not match', () => {
+  const parsed = {
+    kind: 'clarification',
+    uiRequest: {
+      component: 'some_other_component',
+      props: {}
+    },
+    displayPayload: {
+      gateId: 'presentation_context'
+    }
+  };
+  const err = validateInterrupt(parsed, 'frontend-slides');
+  assert.match(err || '', /expected component "clarification_form"/);
+});
+
+test('validateInterrupt fails when clarification_form props.questions is empty', () => {
+  const parsed = {
+    kind: 'clarification',
+    uiRequest: {
+      component: 'clarification_form',
+      props: {
+        questions: []
+      }
+    },
+    displayPayload: {
+      gateId: 'presentation_context'
+    }
+  };
+  const err = validateInterrupt(parsed, 'frontend-slides');
+  assert.match(err || '', /clarification_form props.questions must be a non-empty array/);
+});
+
+test('validateInterrupt fails when style_preview_chooser props.choices and previews are empty', () => {
+  const parsed = {
+    kind: 'clarification',
+    uiRequest: {
+      component: 'style_preview_chooser',
+      props: {
+        previews: [],
+        choices: []
+      }
+    },
+    displayPayload: {
+      gateId: 'style_preview_selection'
+    }
+  };
+  const err = validateInterrupt(parsed, 'frontend-slides');
+  assert.match(err || '', /style_preview_chooser props.previews or props.choices must be a non-empty array/);
+});
+
+test('validateInterrupt passes with valid parameters', () => {
+  const parsed = {
+    kind: 'clarification',
+    uiRequest: {
+      component: 'clarification_form',
+      props: {
+        questions: [{ id: 'q1', question: 'hello' }]
+      }
+    },
+    displayPayload: {
+      gateId: 'presentation_context'
+    }
+  };
+  const err = validateInterrupt(parsed, 'frontend-slides');
+  assert.equal(err, null);
+});
+
+test('gate completion fails frontend-slides final completion before Gate 1 even without regex prose', () => {
+  const err = getFrontendSlidesA2UIGateCompletionError({
+    status: 'completed',
+    skillId: 'frontend-slides',
+    prompt: 'Create a presentation from this report',
+    gateState: { completedGateIds: [] },
+  });
+  assert.match(err || '', /"presentation_context"/);
+});
+
+test('gate completion fails final completion before all required gates', () => {
+  const err = getFrontendSlidesA2UIGateCompletionError({
+    status: 'completed',
+    skillId: 'frontend-slides',
+    prompt: 'Create a presentation from this report',
+    gateState: {
+      completedGateIds: [
+        'presentation_context',
+        'outline_confirmation',
+        'style_path_selection',
+      ],
+    },
+  });
+  assert.match(err || '', /"mood_or_preset_selection"/);
+});
+
+test('gate completion allows completed frontend-slides run after all gates', () => {
+  const err = getFrontendSlidesA2UIGateCompletionError({
+    status: 'completed',
+    skillId: 'frontend-slides',
+    prompt: 'Create a presentation from this report',
+    gateState: {
+      completedGateIds: [
+        'presentation_context',
+        'outline_confirmation',
+        'style_path_selection',
+        'mood_or_preset_selection',
+        'style_preview_selection',
+      ],
+    },
+  });
+  assert.equal(err, null);
+});
+
+test('gate completion allows edit-existing-deck frontend-slides completion', () => {
+  const err = getFrontendSlidesA2UIGateCompletionError({
+    status: 'completed',
+    skillId: 'frontend-slides',
+    prompt: 'Edit the existing deck at output/slides.html and polish slide 3',
+    gateState: { completedGateIds: [] },
+  });
+  assert.equal(err, null);
 });

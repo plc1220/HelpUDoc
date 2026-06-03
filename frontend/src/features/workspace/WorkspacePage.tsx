@@ -3780,7 +3780,12 @@ export default function WorkspacePage() {
           && lastEvent.stepCount === nextEvent.stepCount
           && lastEvent.toolName === nextEvent.toolName
           && lastEvent.artifactPath === nextEvent.artifactPath;
-        const progressEvents = isDuplicate ? previousEvents : [...previousEvents, nextEvent].slice(-80);
+        const settledPreviousEvents = nextEvent.status === 'running'
+          ? previousEvents.map((event) => (
+            event.status === 'running' ? { ...event, status: 'completed' as const } : event
+          ))
+          : previousEvents;
+        const progressEvents = isDuplicate ? previousEvents : [...settledPreviousEvents, nextEvent].slice(-80);
         return {
           ...nextMetadata,
           progressEvents,
@@ -3929,6 +3934,7 @@ export default function WorkspacePage() {
           reviewConfigs: chunk.reviewConfigs,
           responseSpec: chunk.responseSpec,
           displayPayload: chunk.displayPayload,
+          uiRequest: chunk.uiRequest,
         },
       }));
       setConversationAttention(
@@ -4037,6 +4043,7 @@ export default function WorkspacePage() {
                 reviewConfigs: chunk.reviewConfigs,
                 responseSpec: chunk.responseSpec,
                 displayPayload: chunk.displayPayload,
+                uiRequest: chunk.uiRequest,
               };
             }
             handleStreamChunk(conversationId, agentMessageIndex, chunk, runId);

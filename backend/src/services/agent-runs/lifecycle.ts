@@ -17,7 +17,7 @@ import {
   type AgentInterruptResponse,
   type AgentHistoryEntry,
 } from '../agentService';
-import type { ConversationMessageMetadata, FileContextRef, ToolEvent, ToolOutputFile } from '@helpudoc/contracts/types';
+import type { ConversationMessageMetadata, FileContextRef, ToolEvent, ToolOutputFile, UIRequest } from '@helpudoc/contracts/types';
 
 export type AgentRunStatus =
   | 'queued'
@@ -78,6 +78,7 @@ type RunPendingInterrupt = {
     }>;
   };
   displayPayload?: Record<string, unknown>;
+  uiRequest?: UIRequest;
 };
 
 type RunMeta = {
@@ -90,6 +91,11 @@ type RunMeta = {
   error?: string;
   turnId?: string;
   pendingInterrupt?: RunPendingInterrupt;
+  a2uiGateState?: A2UIGateState;
+};
+
+export type A2UIGateState = {
+  completedGateIds: string[];
 };
 
 type RunContext = {
@@ -117,6 +123,7 @@ type ResumePayload =
 
 type PersistedRunMeta = Omit<RunMeta, 'pendingInterrupt'> & {
   pendingInterrupt?: string;
+  a2uiGateState?: string;
   runContext?: string;
 };
 
@@ -535,9 +542,200 @@ const DEFAULT_FRONTEND_SLIDES_STYLE_CHOICES = [
   },
 ];
 
-const isFrontendSlidesSkill = (skillId: string | null | undefined): boolean => {
+export const isFrontendSlidesSkill = (skillId: string | null | undefined): boolean => {
   const normalized = String(skillId || '').trim().toLowerCase();
   return normalized === 'frontend-slides' || normalized.endsWith('/frontend-slides');
+};
+
+const FRONTEND_SLIDES_REQUIRED_GATES = [
+  'presentation_context',
+  'outline_confirmation',
+  'style_path_selection',
+  'mood_or_preset_selection',
+  'style_preview_selection',
+] as const;
+
+type FrontendSlidesGateId = typeof FRONTEND_SLIDES_REQUIRED_GATES[number];
+
+const EXPECTED_GATES: Record<FrontendSlidesGateId, UIRequest['component']> = {
+  presentation_context: 'clarification_form',
+  outline_confirmation: 'clarification_form',
+  style_path_selection: 'clarification_form',
+  mood_or_preset_selection: 'clarification_form',
+  style_preview_selection: 'style_preview_chooser',
+};
+
+const isFrontendSlidesGateId = (value: unknown): value is FrontendSlidesGateId => (
+  typeof value === 'string' && FRONTEND_SLIDES_REQUIRED_GATES.includes(value as FrontendSlidesGateId)
+);
+
+const getRecord = (value: unknown): Record<string, unknown> | undefined => (
+  value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined
+);
+
+const extractDisplayPayload = (payload: Record<string, unknown>): Record<string, unknown> | undefined => (
+  getRecord(payload.displayPayload) || getRecord(payload.display_payload)
+);
+
+const extractA2UIGateId = (payload: Record<string, unknown>): string | undefined => {
+  const displayPayload = extractDisplayPayload(payload);
+  const nestedPayload = getRecord(displayPayload?.displayPayload) || getRecord(displayPayload?.display_payload);
+  const rawGateId = displayPayload?.gateId || nestedPayload?.gateId;
+  return typeof rawGateId === 'string' && rawGateId.trim() ? rawGateId.trim() : undefined;
+};
+
+const isA2UIGatePayload = (payload: Record<string, unknown>): boolean => {
+  const displayPayload = extractDisplayPayload(payload);
+  const nestedPayload = getRecord(displayPayload?.displayPayload) || getRecord(displayPayload?.display_payload);
+  return Boolean(
+    extractA2UIGateId(payload) ||
+    displayPayload?.uiContract === 'a2ui' ||
+    nestedPayload?.uiContract === 'a2ui'
+  );
+};
+
+const parseA2UIGateState = (raw: unknown): A2UIGateState => {
+  const parsed = typeof raw === 'string'
+    ? (() => {
+        try {
+          return JSON.parse(raw);
+        } catch {
+          return undefined;
+        }
+      })()
+    : raw;
+  const record = getRecord(parsed);
+  const completedGateIds = Array.isArray(record?.completedGateIds)
+    ? record.completedGateIds.filter(isFrontendSlidesGateId)
+    : [];
+  return { completedGateIds: Array.from(new Set(completedGateIds)) };
+};
+
+const completeA2UIGate = (state: A2UIGateState, gateId: string | undefined): A2UIGateState => {
+  if (!isFrontendSlidesGateId(gateId)) {
+    return state;
+  }
+  return {
+    completedGateIds: Array.from(new Set([...state.completedGateIds, gateId])),
+  };
+};
+
+const nextMissingFrontendSlidesGate = (state: A2UIGateState): FrontendSlidesGateId | undefined => (
+  FRONTEND_SLIDES_REQUIRED_GATES.find((gateId) => !state.completedGateIds.includes(gateId))
+);
+
+const isFrontendSlidesEditExistingRun = (params: StartRunParams): boolean => {
+  const messageText = (params.messageContent || [])
+    .map((block) => JSON.stringify(block))
+    .join(' ');
+  const text = `${params.prompt || ''} ${messageText}`.toLowerCase();
+  const mentionsExistingArtifact = (
+    text.includes('.html') ||
+    text.includes('.ppt') ||
+    text.includes('.pptx') ||
+    text.includes('existing deck') ||
+    text.includes('existing slides') ||
+    text.includes('current deck')
+  );
+  const asksForEdit = /\b(?:edit|revise|update|modify|fix|polish)\b/.test(text);
+  return mentionsExistingArtifact && asksForEdit;
+};
+
+const isFrontendSlidesRun = (skillId: string | null | undefined, params: StartRunParams): boolean => (
+  isFrontendSlidesSkill(skillId) || /\bfrontend-slides\b/i.test(params.prompt || '')
+);
+
+export const getFrontendSlidesA2UIGateCompletionError = (input: {
+  skillId?: string | null;
+  prompt?: string;
+  status: AgentRunStatus;
+  gateState?: A2UIGateState;
+}): string | null => {
+  const params = { prompt: input.prompt || '' } as StartRunParams;
+  if (
+    input.status !== 'completed' ||
+    !isFrontendSlidesRun(input.skillId, params) ||
+    isFrontendSlidesEditExistingRun(params)
+  ) {
+    return null;
+  }
+  const missingGate = nextMissingFrontendSlidesGate(input.gateState || { completedGateIds: [] });
+  return missingGate
+    ? `Contract violation: frontend-slides completed before required A2UI gate "${missingGate}" was completed with request_clarification.`
+    : null;
+};
+
+export const validateInterrupt = (parsed: Record<string, unknown>, skillId: string | null): string | null => {
+  const normalized = normalizeInterruptPayloadRecord(parsed);
+  const displayPayloadForSkill = extractDisplayPayload(normalized);
+  const payloadSkill = typeof displayPayloadForSkill?.skill === 'string' ? displayPayloadForSkill.skill : null;
+  const effectiveSkillId = isFrontendSlidesSkill(skillId) ? skillId : payloadSkill;
+  if (!isFrontendSlidesSkill(effectiveSkillId)) {
+    return null;
+  }
+
+  const gateId = extractA2UIGateId(normalized);
+  const isA2UI = isA2UIGatePayload(normalized);
+
+  if (gateId && !isFrontendSlidesGateId(gateId)) {
+    return `Contract violation: unknown frontend-slides A2UI gate "${gateId}".`;
+  }
+
+  if (normalized.kind !== 'clarification') {
+    return isA2UI
+      ? `Contract violation: A2UI gate interrupts must use kind "clarification", but got "${normalized.kind}".`
+      : null;
+  }
+
+  const uiRequest = normalized.uiRequest as Record<string, any> | undefined;
+  if (!uiRequest) {
+    return 'Contract violation: missing "uiRequest" in clarification interrupt payload.';
+  }
+
+  const displayPayload = extractDisplayPayload(normalized);
+  const nestedPayload = getRecord(displayPayload?.displayPayload) || getRecord(displayPayload?.display_payload);
+  const expectedComponent = (
+    typeof displayPayload?.expectedComponent === 'string'
+      ? displayPayload.expectedComponent
+      : typeof nestedPayload?.expectedComponent === 'string'
+        ? nestedPayload.expectedComponent
+      : gateId && isFrontendSlidesGateId(gateId)
+        ? EXPECTED_GATES[gateId]
+        : undefined
+  );
+
+  const component = uiRequest.component;
+  if (!component) {
+    return 'Contract violation: missing "component" in "uiRequest".';
+  }
+
+  if (expectedComponent && component !== expectedComponent) {
+    return `Contract violation: expected component "${expectedComponent}" for gate "${gateId}", but got "${component}".`;
+  }
+
+  const props = uiRequest.props as Record<string, any> | undefined;
+  if (!props) {
+    return 'Contract violation: missing "props" in "uiRequest".';
+  }
+
+  if (component === 'clarification_form') {
+    const questions = props.questions;
+    if (!Array.isArray(questions) || questions.length === 0) {
+      return 'Contract violation: clarification_form props.questions must be a non-empty array.';
+    }
+  } else if (component === 'style_preview_chooser') {
+    const previews = props.previews;
+    const choices = props.choices;
+    const hasPreviews = Array.isArray(previews) && previews.length > 0;
+    const hasChoices = Array.isArray(choices) && choices.length > 0;
+    if (!hasPreviews && !hasChoices) {
+      return 'Contract violation: style_preview_chooser props.previews or props.choices must be a non-empty array.';
+    }
+  }
+
+  return null;
 };
 
 const isFrontendSlidesStyleSelectionContext = (assistantText: string): boolean => {
@@ -922,6 +1120,7 @@ const STRONG_GATE_PATTERNS = [
   /\b(?:select|choose)\b.{0,60}\b(?:form|options?|UI|selector|chooser|previews?|styles?)\b/i,
   /\b(?:once|after)\s+(?:confirmed|you\s+confirm)/i,
   /\b(?:once|after)\s+(?:submitted|you\s+submit)\b.{0,260}\b(?:outline|style\s+discovery|visual\s+aesthetic|proposal|review|generate|move)\b/is,
+  /\b(?:once|after)\s+(?:received|submitted|you\s+submit|submitting)\b.{0,260}\b(?:outline|style\s+discovery|visual\s+aesthetic|proposal|review|generate|move|analyze|structure|slides?|gates?)\b/is,
   /\bto\s+ensure\b.{0,260}\b(?:deck|slides?|presentation)\b.{0,260}\b(?:expectations|ideal\s+length|length|structure|technical\s+features|audience|visual\s+style)\b/is,
   /\bnext\s+steps\b.{0,120}\b(?:sidebar|form)/i,
 ];
@@ -944,9 +1143,13 @@ const WEAK_COURTESY_PATTERNS = [
 ];
 
 const UI_FORM_MISREF_PATTERNS = [
+  /\b(?:initialized|prepared|loaded|created|opened)\s+the\s+[\w\s&+-]{1,120}?\s*(?:form|questions?|UI)\b/i,
+  /\b(?:submit|provide|enter|fill)\s+(?:your\s+)?preferences\b/i,
   /\b(?:from|in|using|via)\s+the\s+(?:form|options?|UI)\s+(?:above|below)/i,
   /\b(?:fill\s+out|complete|submit)\s+the\s+(?:form|questions?)\s+(?:above|below)/i,
+  /\b(?:fill\s+out|complete|submit)\s+the\s+(?:form|questions?)\b.{0,180}\b(?:preferences?|goals?|details?|context|requirements?|purpose|audience|style|assets?|continue|proceed)\b/is,
   /\b(?:fill\s+out|complete|submit)\s+the\s+[\w\s&-]{1,120}?\s+(?:form|questions?)\s+(?:above|below)/i,
+  /\b(?:fill\s+out|complete|submit)\s+the\s+[\w\s&-]{1,120}?\s+(?:form|questions?)\b.{0,180}\b(?:preferences?|goals?|details?|context|requirements?|purpose|audience|style|assets?|continue|proceed)\b/is,
   /\b(?:prepared|created|generated|provided)\s+(?:a\s+)?(?:context\s+)?form\s+(?:above|below)/i,
   /\bfill\s+(?:this|it)\s+out\b.{0,180}\b(?:submit|proceed|continue|outline|review)\b/is,
   /\b(?:forms?|options?|choices?|selectors?|choosers?)\s+in\s+the\s+sidebar/i,
@@ -1131,6 +1334,10 @@ const parsePendingInterrupt = (raw: string | undefined): RunPendingInterrupt | u
         payload.displayPayload && typeof payload.displayPayload === 'object' && !Array.isArray(payload.displayPayload)
           ? (payload.displayPayload as Record<string, unknown>)
           : undefined,
+      uiRequest:
+        payload.uiRequest && typeof payload.uiRequest === 'object' && !Array.isArray(payload.uiRequest)
+          ? (payload.uiRequest as RunPendingInterrupt['uiRequest'])
+          : undefined,
     };
   } catch {
     return undefined;
@@ -1259,6 +1466,7 @@ export async function startAgentRun(params: StartRunParams): Promise<{ runId: st
     createdAt: queuedAt,
     turnId: params.turnId,
     pendingInterrupt: '',
+    a2uiGateState: JSON.stringify({ completedGateIds: [] }),
     runContext: serializeRunContext(params),
   });
   if (params.turnId?.trim()) {
@@ -1334,6 +1542,7 @@ async function runAgentRunWorker(
   const runProgress = resumePayload && runTelemetryService
     ? await runTelemetryService.getRunProgress(runId)
     : null;
+  const runMetaAtStart = await getRunMeta(runId);
   let eventIndex = runProgress?.maxEventIndex ?? 0;
   let skillId: string | null = null;
   let hadInterrupt = runProgress?.hadInterrupt ?? false;
@@ -1387,6 +1596,7 @@ async function runAgentRunWorker(
   let assistantText = '';
   let thinkingText = '';
   let conversationRunPolicy: ConversationRunPolicy | undefined;
+  let a2uiGateState = runMetaAtStart?.a2uiGateState || { completedGateIds: [] };
   const toolEvents: ToolEvent[] = [];
   const progressEvents: RunProgressEvent[] = [];
 
@@ -1517,6 +1727,13 @@ async function runAgentRunWorker(
         lastEvent.artifactPath === nextEvent.artifactPath;
 
       if (!isDuplicate) {
+        if (nextEvent.status === 'running') {
+          progressEvents.forEach((event) => {
+            if (event.status === 'running') {
+              event.status = 'completed';
+            }
+          });
+        }
         progressEvents.push(nextEvent);
         const MAX_PROGRESS_EVENTS = 80;
         if (progressEvents.length > MAX_PROGRESS_EVENTS) {
@@ -1566,30 +1783,52 @@ async function runAgentRunWorker(
       return;
     }
     settled = true;
-    settleRunningToolEvents(status);
+
+    let effectiveStatus = status;
+    let effectiveError = error;
+
+    const missingGateError = getFrontendSlidesA2UIGateCompletionError({
+      skillId,
+      prompt: params.prompt,
+      status: effectiveStatus,
+      gateState: a2uiGateState,
+    });
+
+    if (missingGateError) {
+      effectiveStatus = 'failed';
+      effectiveError = missingGateError;
+    }
 
     const implicitInput = detectImplicitInputAwaiting({
-      status,
+      status: effectiveStatus,
       skillId,
       hadInterrupt: resumePayload ? Boolean(sawInterruptPayload) : hadInterrupt,
       assistantText,
     });
-    const implicitPendingInterrupt = implicitInput.awaiting
-      ? buildImplicitInputPendingInterrupt({
-          runId,
-          skillId: implicitInput.skillId || skillId,
-          prompt: implicitInput.prompt,
-          interruptType: implicitInput.interruptType,
-          assistantText,
-        })
-      : undefined;
+
+    if (implicitInput.awaiting) {
+      if (isFrontendSlidesSkill(skillId)) {
+        if (effectiveStatus === 'completed') {
+          effectiveStatus = 'failed';
+          effectiveError = 'Contract violation: run finished with prose-only input request (implicit input) instead of an explicit request_clarification/A2UI tool call.';
+        }
+      } else {
+        console.warn(
+          `[agent-run-stream] Implicit input guard (Shadow Mode): prose implies a UI form but no explicit request_clarification/A2UI tool call was emitted. skill=${skillId}`
+        );
+      }
+    }
+
+    settleRunningToolEvents(effectiveStatus);
+
+    // Shadow Mode: Never emit synthetic implicit interrupts or transition run status to awaiting_approval.
+    const implicitPendingInterrupt = undefined;
 
     await updateConversationFromRun(
-      implicitPendingInterrupt ? 'awaiting_approval' : status === 'queued' ? 'running' : status,
+      effectiveStatus === 'queued' ? 'running' : effectiveStatus,
       {
-        error,
+        error: effectiveError,
         ...(implicitInput.awaiting ? { implicitInput } : {}),
-        ...(implicitPendingInterrupt ? { pendingInterrupt: implicitPendingInterrupt } : {}),
       },
     );
     if (implicitPendingInterrupt) {
@@ -1599,7 +1838,7 @@ async function runAgentRunWorker(
           status: 'awaiting_approval',
           startedAt,
           completedAt: new Date().toISOString(),
-          error,
+          error: effectiveError,
           skillId,
           hadInterrupt: true,
           approvalInterruptCount,
@@ -1609,6 +1848,7 @@ async function runAgentRunWorker(
           metadata: {
             resumed: Boolean(resumePayload),
             implicitInputReason: 'missing_interrupt',
+            a2uiGateState,
             ...langfuseStreamMeta,
           },
         });
@@ -1616,13 +1856,13 @@ async function runAgentRunWorker(
       cleanupRun(runId, upstream || undefined);
       return;
     }
-    await markRunFinished(runId, status, error);
+    await markRunFinished(runId, effectiveStatus, effectiveError);
     if (runTelemetryService) {
       await runTelemetryService.finalizeRun(runId, {
-        status,
+        status: effectiveStatus,
         startedAt,
         completedAt: new Date().toISOString(),
-        error,
+        error: effectiveError,
         skillId,
         hadInterrupt,
         approvalInterruptCount,
@@ -1631,11 +1871,12 @@ async function runAgentRunWorker(
         toolErrorCount,
         metadata: {
           resumed: Boolean(resumePayload),
+          a2uiGateState,
           ...langfuseStreamMeta,
         },
       });
     }
-    if (status === 'completed' && userMemoryService) {
+    if (effectiveStatus === 'completed' && userMemoryService) {
       void userMemoryService
         .suggestForCompletedRun({
           runId,
@@ -1647,7 +1888,7 @@ async function runAgentRunWorker(
           console.error('Failed to build memory suggestions for completed run', { runId, error: memoryError });
         });
     }
-    if ((status === 'completed' || status === 'failed') && skillEvolutionService && params.userId && params.conversationId) {
+    if ((effectiveStatus === 'completed' || effectiveStatus === 'failed') && skillEvolutionService && params.userId && params.conversationId) {
       void skillEvolutionService
         .proposeFromRun({
           runId,
@@ -1655,7 +1896,7 @@ async function runAgentRunWorker(
           userId: params.userId,
           conversationId: params.conversationId,
           persona: params.persona,
-          status,
+          status: effectiveStatus,
           skillId,
           hadInterrupt,
           toolErrorCount,
@@ -1671,6 +1912,7 @@ async function runAgentRunWorker(
 
   const stopAtInterrupt = async (parsed: Record<string, unknown>) => {
     const normalizedInterrupt = normalizeInterruptPayloadRecord(parsed);
+    const pendingGateId = extractA2UIGateId(normalizedInterrupt);
     const pendingInterrupt = parsePendingInterrupt(JSON.stringify(normalizedInterrupt));
     if (runTelemetryService) {
       await runTelemetryService.finalizeRun(runId, {
@@ -1684,6 +1926,8 @@ async function runAgentRunWorker(
         toolErrorCount,
         metadata: {
           resumed: Boolean(resumePayload),
+          a2uiPendingGateId: pendingGateId,
+          a2uiGateState,
           ...langfuseStreamMeta,
         },
       });
@@ -1748,6 +1992,21 @@ async function runAgentRunWorker(
       skillId = parsed.skill.trim();
     }
     if (parsed?.type === 'interrupt') {
+      const interruptDisplayPayload = extractDisplayPayload(parsed);
+      if (!skillId && typeof interruptDisplayPayload?.skill === 'string' && interruptDisplayPayload.skill.trim()) {
+        skillId = interruptDisplayPayload.skill.trim();
+      }
+      const err = validateInterrupt(parsed, skillId);
+      if (err) {
+        contractErrorMessage = err;
+        sawInterruptPayload = null;
+        const errorPayload = JSON.stringify({ type: 'error', message: err });
+        await appendStreamEvent(runId, errorPayload);
+        if (upstream && !upstream.destroyed) {
+          upstream.destroy();
+        }
+        return 'stop';
+      }
       hadInterrupt = true;
       if (parsed.kind === 'approval') {
         approvalInterruptCount += 1;
@@ -2000,12 +2259,25 @@ export async function resumeAgentRunWithResponse(
         forceReset: false,
       }
     : baseParams;
+  const currentMeta = await getRunMeta(runId);
+  const previousGateId = options?.previousInterrupt
+    ? extractA2UIGateId({
+        kind: options.previousInterrupt.kind,
+        displayPayload: options.previousInterrupt.displayPayload,
+        display_payload: options.previousInterrupt.displayPayload,
+      })
+    : undefined;
+  const nextGateState = completeA2UIGate(
+    currentMeta?.a2uiGateState || { completedGateIds: [] },
+    previousGateId,
+  );
   runContexts.set(runId, { params: nextParams });
   await persistMeta(runId, {
     status: 'queued',
     startedAt: new Date().toISOString(),
     error: '',
     pendingInterrupt: '',
+    a2uiGateState: JSON.stringify(nextGateState),
     runContext: serializeRunContext(nextParams),
   });
   void runAgentRunWorker(
@@ -2067,6 +2339,7 @@ export async function getRunMeta(runId: string): Promise<RunMeta | null> {
     error: meta.error,
     turnId: meta.turnId,
     pendingInterrupt: parsePendingInterrupt(meta.pendingInterrupt),
+    a2uiGateState: parseA2UIGateState(meta.a2uiGateState),
   };
 }
 

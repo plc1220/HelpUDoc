@@ -109,6 +109,19 @@ def _friendly_tool_label(name: str) -> str:
     return mapping.get(name, f"Using {name.replace('_', ' ')}")
 
 
+def _is_terminal_tool_failure(name: str, text: str) -> bool:
+    normalized_name = str(name or "").strip().lower()
+    normalized_text = str(text or "").strip().lower()
+    if normalized_name == "google_search":
+        return (
+            normalized_text.startswith('{"ok": false')
+            or normalized_text.startswith("{'ok': false")
+            or "google search timed out" in normalized_text
+            or "search failed" in normalized_text
+        )
+    return False
+
+
 async def _emit_progress(
     handler,
     phase: str,
@@ -700,6 +713,12 @@ def register_chat_routes(
             name = ""
             if isinstance(serialized, dict):
                 name = str(serialized.get("name") or serialized.get("id") or "").strip()
+            await _emit_progress(
+                self,
+                "preparing_context",
+                "Workspace context is ready",
+                status="completed",
+            )
             await _emit_progress(self, "planning", "Thinking through the next step")
             await self._emit({"type": "model_start", "name": name or "model"})
 
@@ -829,16 +848,23 @@ def register_chat_routes(
                     )
                     await self._emit(interrupt_payload)
                     return
+            tool_failed = _is_terminal_tool_failure(name, text)
             await _emit_progress(
                 self,
                 "using_tool",
-                f"Finished {_friendly_tool_label(name)}",
-                detail=name,
+                (
+                    f"{_friendly_tool_label(name)} hit a timeout"
+                    if tool_failed and name == "google_search" and "timed out" in text.lower()
+                    else f"{_friendly_tool_label(name)} failed"
+                    if tool_failed
+                    else f"Finished {_friendly_tool_label(name)}"
+                ),
+                detail=("The agent will continue without retrying this tool." if tool_failed else name),
                 tool_name=name,
-                status="completed",
+                status="error" if tool_failed else "completed",
             )
             payload: Dict[str, Any] = {
-                "type": "tool_end",
+                "type": "tool_error" if tool_failed else "tool_end",
                 "name": name,
                 "content": text,
             }
@@ -1201,6 +1227,12 @@ def register_chat_routes(
             name = _event_name(event) or "model"
             await _emit_progress(
                 handler,
+                "preparing_context",
+                "Workspace context is ready",
+                status="completed",
+            )
+            await _emit_progress(
+                handler,
                 "planning",
                 "Thinking through the next step",
                 status="running",
@@ -1290,16 +1322,23 @@ def register_chat_routes(
                     )
                     await handler._emit(interrupt_payload)
                     return True
+            tool_failed = _is_terminal_tool_failure(name, text)
             await _emit_progress(
                 handler,
                 "using_tool",
-                f"Finished {_friendly_tool_label(name)}",
-                detail=name,
+                (
+                    f"{_friendly_tool_label(name)} hit a timeout"
+                    if tool_failed and name == "google_search" and "timed out" in text.lower()
+                    else f"{_friendly_tool_label(name)} failed"
+                    if tool_failed
+                    else f"Finished {_friendly_tool_label(name)}"
+                ),
+                detail=("The agent will continue without retrying this tool." if tool_failed else name),
                 tool_name=name,
-                status="completed",
+                status="error" if tool_failed else "completed",
             )
             payload: Dict[str, Any] = {
-                "type": "tool_end",
+                "type": "tool_error" if tool_failed else "tool_end",
                 "name": name,
                 "content": text,
             }
@@ -1448,6 +1487,8 @@ def register_chat_routes(
         context["tagged_files_only"] = False
         context["plan_approved"] = skip_plan_approvals
         context["pre_plan_search_count"] = 0
+        context["google_search_count"] = 0
+        context.pop("google_search_terminal_error", None)
 
     async def _prepare_turn_payload(
         runtime: AgentRuntimeState,

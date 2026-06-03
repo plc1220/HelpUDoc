@@ -24,7 +24,7 @@ backend:
     enabled: true
     tool_name: eval
     memory_limit_bytes: 67108864
-    timeout_seconds: 5.0
+    timeout_seconds: 5
     max_ptc_calls: 64
     max_result_chars: 4000
     snapshot_between_turns: true
@@ -111,7 +111,8 @@ mcp_servers:
     delegated_auth_provider: google
     headers_from_env:
       X-goog-user-project: GOOGLE_DEVELOPER_KNOWLEDGE_PROJECT_ID
-    description: Official Google Developer Knowledge MCP endpoint for grounded Google documentation retrieval
+    description: Official Google Developer Knowledge MCP endpoint for grounded
+      Google documentation retrieval
   - name: aws-pricing
     transport: http
     default_access: allow
@@ -132,4 +133,5 @@ mcp_servers:
       - GOOGLE_CLOUD_QUOTA_PROJECT
       - GCP_COST_SERVICE_ACCOUNT_JSON
       - GCP_COST_SERVICE_ACCOUNT_JSON_B64
-    description: GCP Cost MCP server for Google Cloud pricing and cost estimation via the Cloud Billing Catalog API
+    description: GCP Cost MCP server for Google Cloud pricing and cost estimation
+      via the Cloud Billing Catalog API

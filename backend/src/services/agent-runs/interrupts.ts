@@ -177,6 +177,10 @@ export const parsePendingInterrupt = (raw: string | undefined): RunPendingInterr
         payload.displayPayload && typeof payload.displayPayload === 'object' && !Array.isArray(payload.displayPayload)
           ? (payload.displayPayload as Record<string, unknown>)
           : undefined,
+      uiRequest:
+        payload.uiRequest && typeof payload.uiRequest === 'object' && !Array.isArray(payload.uiRequest)
+          ? (payload.uiRequest as RunPendingInterrupt['uiRequest'])
+          : undefined,
     };
   } catch {
     return undefined;

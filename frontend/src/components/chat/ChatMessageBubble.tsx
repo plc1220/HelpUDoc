@@ -31,7 +31,6 @@ import {
 } from './messageContentFormatting';
 
 const DEFAULT_THINKING_PLACEHOLDER = 'Working through your request based on the current workspace context.';
-const FRONTEND_SLIDES_DISCOVERY_HEADERS = ['purpose', 'length', 'content', 'images', 'editing'] as const;
 const ATTACHMENT_MARKER_PATTERN = /\n*\[Attachments:\s*([^\]]+)\]\s*$/i;
 
 type MessageAttachmentPreview = {
@@ -157,150 +156,7 @@ type ClarificationQuestion = {
   options: ClarificationQuestionOption[];
 };
 
-const FRONTEND_SLIDES_DISCOVERY_QUESTIONS: ClarificationQuestion[] = [
-  {
-    id: 'purpose',
-    header: 'Purpose',
-    question: 'What is this presentation for?',
-    options: [
-      {
-        id: 'purpose-pitch',
-        label: 'Pitch deck',
-        value: 'Pitch deck',
-        description: 'Selling an idea, product, or company to investors or clients.',
-      },
-      {
-        id: 'purpose-teaching',
-        label: 'Teaching / Tutorial',
-        value: 'Teaching / Tutorial',
-        description: 'Explaining concepts, how-to guides, or educational material.',
-      },
-      {
-        id: 'purpose-conference',
-        label: 'Conference talk',
-        value: 'Conference talk',
-        description: 'A keynote, event session, or tech talk.',
-      },
-      {
-        id: 'purpose-internal',
-        label: 'Internal presentation',
-        value: 'Internal presentation',
-        description: 'Team updates, strategy reviews, or company meetings.',
-      },
-    ],
-  },
-  {
-    id: 'length',
-    header: 'Length',
-    question: 'Approximately how many slides should it have?',
-    options: [
-      {
-        id: 'length-short',
-        label: 'Short (5-10)',
-        value: 'Short (5-10)',
-        description: 'Quick pitch or lightning talk.',
-      },
-      {
-        id: 'length-medium',
-        label: 'Medium (10-20)',
-        value: 'Medium (10-20)',
-        description: 'Standard presentation length.',
-      },
-      {
-        id: 'length-long',
-        label: 'Long (20+)',
-        value: 'Long (20+)',
-        description: 'Deep dive or comprehensive talk.',
-      },
-    ],
-  },
-  {
-    id: 'content',
-    header: 'Content',
-    question: 'How ready is the content?',
-    options: [
-      {
-        id: 'content-ready',
-        label: 'All content is ready',
-        value: 'I have all content ready',
-        description: 'Only the presentation design is needed.',
-      },
-      {
-        id: 'content-notes',
-        label: 'Rough notes',
-        value: 'I have rough notes',
-        description: 'Need help organizing the material into slides.',
-      },
-      {
-        id: 'content-topic',
-        label: 'Topic only',
-        value: 'I have a topic only',
-        description: 'Need help creating the full outline.',
-      },
-    ],
-  },
-  {
-    id: 'images',
-    header: 'Images',
-    question: 'What should happen with images?',
-    options: [
-      {
-        id: 'images-none',
-        label: 'No images',
-        value: 'No images',
-        description: 'Use CSS-generated visuals instead.',
-      },
-      {
-        id: 'images-assets',
-        label: 'Use ./assets',
-        value: './assets',
-        description: 'Use the assets folder in the current project.',
-      },
-      {
-        id: 'images-other',
-        label: 'Other path',
-        value: 'Custom image path',
-        description: 'Type or paste another image folder path in the notes field.',
-      },
-    ],
-  },
-  {
-    id: 'editing',
-    header: 'Editing',
-    question: 'Should the generated deck support inline browser editing?',
-    options: [
-      {
-        id: 'editing-yes',
-        label: 'Yes (Recommended)',
-        value: 'Yes',
-        description: 'Edit text in-browser, auto-save locally, and export later.',
-      },
-      {
-        id: 'editing-no',
-        label: 'No',
-        value: 'No',
-        description: 'Presentation only, with a smaller output file.',
-      },
-    ],
-  },
-];
 
-const getInterruptSkill = (
-  pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
-  activeSkill?: string,
-): string | undefined => {
-  const normalizedActiveSkill = activeSkill?.trim().toLowerCase();
-  if (normalizedActiveSkill) {
-    return normalizedActiveSkill;
-  }
-  const payloadSkill = pendingInterrupt?.displayPayload?.skill;
-  return typeof payloadSkill === 'string' ? payloadSkill.trim().toLowerCase() : undefined;
-};
-
-const isFrontendSlidesDiscoveryInterrupt = (
-  pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
-  activeSkill?: string,
-): boolean => getInterruptSkill(pendingInterrupt, activeSkill) === 'frontend-slides';
 
 const normalizePreviewKey = (value: string): string => (
   value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
@@ -362,55 +218,56 @@ const parseStylePreviewChoiceMetadata = (
 
 const buildStylePreviewChoices = (
   pendingInterrupt: ConversationMessageMetadata['pendingInterrupt'] | undefined,
-  activeSkill: string | undefined,
   workspaceId: string | undefined,
 ): StylePreviewChoice[] => {
-  if (!isFrontendSlidesDiscoveryInterrupt(pendingInterrupt, activeSkill)) {
-    return [];
-  }
-  const choices = Array.isArray(pendingInterrupt?.responseSpec?.choices)
-    ? pendingInterrupt.responseSpec.choices
-    : [];
-  if (!choices.length) {
-    return [];
-  }
+  if (pendingInterrupt?.uiRequest) {
+    if (pendingInterrupt.uiRequest.component !== 'style_preview_chooser') {
+      return [];
+    }
+    const choices = Array.isArray(pendingInterrupt.uiRequest.props.choices)
+      ? pendingInterrupt.uiRequest.props.choices
+      : [];
+    if (!choices.length) {
+      return [];
+    }
+    const metadata = parseStylePreviewChoiceMetadata(pendingInterrupt.uiRequest.props);
+    const previewChoices = choices
+      .map((choice: any): StylePreviewChoice | null => {
+        const choiceId = String(choice.id || '').trim();
+        const choiceLabel = String(choice.label || '').trim();
+        const choiceValue = String(choice.value || choiceLabel).trim();
+        if (!choiceId || !choiceLabel || !choiceValue) {
+          return null;
+        }
+        const matchingMetadata =
+          metadata.get(normalizePreviewKey(choiceId)) ||
+          metadata.get(normalizePreviewKey(choiceLabel)) ||
+          metadata.get(normalizePreviewKey(choiceValue)) ||
+          {};
+        const label = matchingMetadata.label || choiceLabel;
+        const value = matchingMetadata.value || choiceValue;
+        const path = matchingMetadata.path || inferStylePreviewPath(label, value);
+        const description = matchingMetadata.description || choice.description;
+        const html = matchingMetadata.html;
+        const isHtmlPreview = Boolean(path && /\.html?$/i.test(path));
+        return {
+          id: choiceId,
+          label,
+          value,
+          description,
+          path,
+          html,
+          previewUrl: path ? getAttachmentPreviewUrl(workspaceId, path, { inline: isHtmlPreview }) : undefined,
+          downloadUrl: path ? getAttachmentPreviewUrl(workspaceId, path) : undefined,
+          isHtmlPreview: isHtmlPreview || Boolean(html),
+        };
+      })
+      .filter((choice): choice is StylePreviewChoice => Boolean(choice));
 
-  const metadata = parseStylePreviewChoiceMetadata(pendingInterrupt?.displayPayload);
-  const previewChoices = choices
-    .map((choice): StylePreviewChoice | null => {
-      const choiceId = String(choice.id || '').trim();
-      const choiceLabel = String(choice.label || '').trim();
-      const choiceValue = String(choice.value || choiceLabel).trim();
-      if (!choiceId || !choiceLabel || !choiceValue) {
-        return null;
-      }
-      const matchingMetadata =
-        metadata.get(normalizePreviewKey(choiceId)) ||
-        metadata.get(normalizePreviewKey(choiceLabel)) ||
-        metadata.get(normalizePreviewKey(choiceValue)) ||
-        {};
-      const label = matchingMetadata.label || choiceLabel;
-      const value = matchingMetadata.value || choiceValue;
-      const path = matchingMetadata.path || inferStylePreviewPath(label, value);
-      const description = matchingMetadata.description || choice.description;
-      const html = matchingMetadata.html;
-      const isHtmlPreview = Boolean(path && /\.html?$/i.test(path));
-      return {
-        id: choiceId,
-        label,
-        value,
-        description,
-        path,
-        html,
-        previewUrl: path ? getAttachmentPreviewUrl(workspaceId, path, { inline: isHtmlPreview }) : undefined,
-        downloadUrl: path ? getAttachmentPreviewUrl(workspaceId, path) : undefined,
-        isHtmlPreview: isHtmlPreview || Boolean(html),
-      };
-    })
-    .filter((choice): choice is StylePreviewChoice => Boolean(choice));
-
-  const stylePreviewCount = previewChoices.filter((choice) => Boolean(choice.path || choice.html)).length;
-  return stylePreviewCount >= 2 ? previewChoices : [];
+    const stylePreviewCount = previewChoices.filter((choice) => Boolean(choice.path || choice.html)).length;
+    return stylePreviewCount >= 2 ? previewChoices : [];
+  }
+  return [];
 };
 
 const stripDeadFrontendSlidesUiReferences = (text: string): string => (
@@ -553,102 +410,53 @@ const renderDisplayPayload = (
 
 const parseClarificationQuestions = (
   pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
-  activeSkill?: string,
 ): ClarificationQuestion[] => {
-  const responseQuestions = Array.isArray(pendingInterrupt?.responseSpec?.questions)
-    ? pendingInterrupt.responseSpec.questions
-    : [];
-  if (responseQuestions.length) {
-    return responseQuestions.reduce<ClarificationQuestion[]>((acc, question) => {
-      if (!question || typeof question !== 'object' || !question.question) {
-        return acc;
-      }
-      acc.push({
-        id: question.id,
-        header: question.header,
-        question: question.question,
-        options: Array.isArray(question.options)
-          ? question.options.reduce<ClarificationQuestionOption[]>((optionAcc, option) => {
-              if (!option?.label || !option?.value) {
-                return optionAcc;
-              }
-              optionAcc.push({
-                id: option.id,
-                label: option.label,
-                value: option.value,
-                description: option.description,
-              });
-              return optionAcc;
-            }, [])
-          : [],
-      });
-      return acc;
-    }, []);
-  }
-
-  const rawQuestions = pendingInterrupt?.displayPayload?.questions;
-  if (Array.isArray(rawQuestions)) {
-    const parsedQuestions = rawQuestions
-      .map((item, index) => {
-        if (!item || typeof item !== 'object' || Array.isArray(item)) {
-          return null;
-        }
-        const payload = item as Record<string, unknown>;
-        const header = String(payload.header || payload.title || `Question ${index + 1}`).trim();
-        const question = String(payload.question || payload.prompt || payload.description || '').trim();
-        const rawOptions = Array.isArray(payload.options) ? payload.options : [];
-        const options = rawOptions
-          .map((option, optionIndex) => {
-            if (typeof option === 'string' && option.trim()) {
-              return {
-                id: `${header.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${optionIndex + 1}`,
-                label: option.trim(),
-                value: option.trim(),
-              } satisfies ClarificationQuestionOption;
-            }
-            if (!option || typeof option !== 'object' || Array.isArray(option)) {
-              return null;
-            }
-            const optionPayload = option as Record<string, unknown>;
-            const label = String(optionPayload.label || optionPayload.value || '').trim();
-            const value = String(optionPayload.value || label).trim();
-            if (!label || !value) {
-              return null;
-            }
-            return {
-              id: String(optionPayload.id || `${header.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${optionIndex + 1}`).trim(),
-              label,
-              value,
-              description: String(optionPayload.description || '').trim() || undefined,
-            } satisfies ClarificationQuestionOption;
-          })
-          .filter((option): option is ClarificationQuestionOption => Boolean(option));
-        return {
-          id: String(payload.id || header.toLowerCase().replace(/[^a-z0-9]+/g, '-')).trim(),
-          header,
-          question,
-          options,
-        } satisfies ClarificationQuestion;
-      })
-      .filter((question): question is ClarificationQuestion => question !== null && question.question.length > 0);
-    if (parsedQuestions.length) {
-      return parsedQuestions;
+  if (pendingInterrupt?.uiRequest) {
+    if (pendingInterrupt.uiRequest.component !== 'clarification_form') {
+      return [];
     }
+    const responseQuestions = Array.isArray(pendingInterrupt.uiRequest.props.questions)
+      ? pendingInterrupt.uiRequest.props.questions
+      : [];
+    if (responseQuestions.length) {
+      return responseQuestions.reduce<ClarificationQuestion[]>((acc, question: any) => {
+        if (!question || typeof question !== 'object' || !question.question) {
+          return acc;
+        }
+        acc.push({
+          id: question.id,
+          header: question.header || question.title || '',
+          question: question.question,
+          options: Array.isArray(question.options)
+            ? (question.options as unknown[]).reduce<ClarificationQuestionOption[]>((optionAcc, option) => {
+                const optionRecord = option && typeof option === 'object'
+                  ? option as Record<string, unknown>
+                  : {};
+                const label = typeof option === 'string' ? option : optionRecord.label;
+                const value = typeof option === 'string' ? option : optionRecord.value;
+                if (!label || !value) {
+                  return optionAcc;
+                }
+                const labelText = String(label);
+                const valueText = String(value);
+                optionAcc.push({
+                  id: typeof optionRecord.id === 'string'
+                    ? optionRecord.id
+                    : labelText.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+                  label: labelText,
+                  value: valueText,
+                  description: typeof optionRecord.description === 'string' ? optionRecord.description : undefined,
+                });
+                return optionAcc;
+              }, [])
+            : [],
+        });
+        return acc;
+      }, []);
+    }
+    return [];
   }
-
-  const responseChoices = Array.isArray(pendingInterrupt?.responseSpec?.choices) ? pendingInterrupt?.responseSpec?.choices : [];
-  const normalizedChoiceLabels = responseChoices.map((choice) => choice.label.trim().toLowerCase());
-  const looksLikeFrontendSlidesDiscovery =
-    isFrontendSlidesDiscoveryInterrupt(pendingInterrupt, activeSkill)
-    && (
-      normalizedChoiceLabels.length === 0
-      || (
-        normalizedChoiceLabels.length === FRONTEND_SLIDES_DISCOVERY_HEADERS.length &&
-        normalizedChoiceLabels.every((label) => FRONTEND_SLIDES_DISCOVERY_HEADERS.includes(label as (typeof FRONTEND_SLIDES_DISCOVERY_HEADERS)[number]))
-      )
-    );
-
-  return looksLikeFrontendSlidesDiscovery ? FRONTEND_SLIDES_DISCOVERY_QUESTIONS : [];
+  return [];
 };
 
 export default function ChatMessageBubble({
@@ -740,10 +548,19 @@ export default function ChatMessageBubble({
   const [now, setNow] = useState(() => Date.now());
   const messageMetadata = (message.metadata as ConversationMessageMetadata | null | undefined) || undefined;
   const progressEvents = useMemo(() => messageMetadata?.progressEvents || [], [messageMetadata?.progressEvents]);
-  const latestProgress = useMemo(() => [...progressEvents].reverse().find(Boolean), [progressEvents]);
-  const activeProgress = useMemo(() => [...progressEvents].reverse().find(
+  const effectiveProgressEvents = useMemo(() => {
+    const lastIndex = progressEvents.length - 1;
+    return progressEvents.map((event, index) => {
+      if (event.status !== 'running' || index >= lastIndex) {
+        return event;
+      }
+      return { ...event, status: 'completed' as const };
+    });
+  }, [progressEvents]);
+  const latestProgress = useMemo(() => [...effectiveProgressEvents].reverse().find(Boolean), [effectiveProgressEvents]);
+  const activeProgress = useMemo(() => [...effectiveProgressEvents].reverse().find(
     (event) => event.status === 'running',
-  ), [progressEvents]);
+  ), [effectiveProgressEvents]);
   const timestampLabel = formatMessageTimestamp(message.updatedAt || message.createdAt);
   const toolEvents = useMemo(
     () => (message.toolEvents || []).filter((event) => !isSkippedToolEvent(event)),
@@ -757,13 +574,17 @@ export default function ChatMessageBubble({
   );
   const pendingInterrupt = messageMetadata?.pendingInterrupt;
   const interruptKind = getInterruptKind(pendingInterrupt);
-  const isClarificationInterrupt = Boolean(pendingInterrupt && interruptKind === 'clarification');
+  const isClarificationInterrupt = Boolean(
+    pendingInterrupt?.uiRequest &&
+    (pendingInterrupt.uiRequest.component === 'clarification_form' ||
+      pendingInterrupt.uiRequest.component === 'style_preview_chooser')
+  );
   const interruptActions = getInterruptActions(pendingInterrupt);
   const primaryInterruptAction = getPrimaryInterruptAction(pendingInterrupt);
   const isPlanApprovalRequest = isPlanApprovalInterrupt(pendingInterrupt);
   const messageKey = String(message.id);
   const interruptBusy = Boolean(interruptSubmittingByMessageId[messageKey]);
-  const interruptControlsDisabled = interruptBusy || (Boolean(pendingInterrupt) && isStreaming);
+  const interruptControlsDisabled = interruptBusy;
   const [activeTextActionId, setActiveTextActionId] = useState<string | null>(null);
   const [confirmActionId, setConfirmActionId] = useState<string | null>(null);
   const [clarificationDismissed, setClarificationDismissed] = useState(false);
@@ -773,7 +594,6 @@ export default function ChatMessageBubble({
   const [editValue, setEditValue] = useState(message.text || '');
   const isThinkingExpanded = expandedThinkingMessages.has(message.id);
   const rawThinkingText = message.thinkingText?.trim() || '';
-  const activeSkill = messageMetadata?.runPolicy?.skill?.trim().toLowerCase();
   const isSystemThinking = /available skills/i.test(rawThinkingText);
   const sanitizedThinkingText = stripOperationalThinkingBlocks(rawThinkingText);
   const displayThinkingText = isSystemThinking
@@ -865,12 +685,12 @@ export default function ChatMessageBubble({
   const clarificationAllowsMultiple = Boolean(pendingInterrupt?.responseSpec?.multiple);
   const selectedChoiceIds = interruptSelectedChoicesByMessageId[messageKey] || [];
   const structuredClarificationQuestions = useMemo(
-    () => parseClarificationQuestions(pendingInterrupt, activeSkill),
-    [activeSkill, pendingInterrupt],
+    () => parseClarificationQuestions(pendingInterrupt),
+    [pendingInterrupt],
   );
   const stylePreviewChoices = useMemo(
-    () => buildStylePreviewChoices(pendingInterrupt, activeSkill, workspaceId),
-    [activeSkill, pendingInterrupt, workspaceId],
+    () => buildStylePreviewChoices(pendingInterrupt, workspaceId),
+    [pendingInterrupt, workspaceId],
   );
   const hasStylePreviewChooser = isClarificationInterrupt && stylePreviewChoices.length > 0;
   const [activeStylePreviewId, setActiveStylePreviewId] = useState<string | null>(null);
@@ -911,6 +731,10 @@ export default function ChatMessageBubble({
   const structuredAnswersComplete = hasStructuredClarificationForm
     ? areStructuredClarificationQuestionsComplete(structuredClarificationQuestions, structuredAnswerMap)
     : false;
+
+  useEffect(() => {
+    setClarificationDismissed(false);
+  }, [pendingInterrupt?.interruptId]);
 
   useEffect(() => {
     if (!stylePreviewChoices.length) {
@@ -1933,6 +1757,7 @@ export default function ChatMessageBubble({
     && !shouldHideAgentBodyForApproval,
   );
   const thoughtSummaryItems = toolDigest.digestEvents.slice(-6);
+  const recentToolSummaryItems = toolDigest.digestEvents.slice(-5);
   const canExpandThought = Boolean(
     progressEvents.length > 0 ||
     thoughtSummaryItems.length ||
@@ -2014,8 +1839,8 @@ export default function ChatMessageBubble({
                         <div className={`text-[10px] font-bold uppercase tracking-widest ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>
                           Process Execution Flow
                         </div>
-                        <ul className="relative border-l border-slate-200 dark:border-slate-800/80 ml-1.5 pl-4 space-y-4">
-                          {progressEvents.map((event, index) => {
+                        <ul className="relative ml-1.5 space-y-4 border-l border-slate-200 pl-4 dark:border-slate-800/80">
+                          {effectiveProgressEvents.map((event, index) => {
                             const isRunning = event.status === 'running';
                             const isCompleted = event.status === 'completed';
                             const isError = event.status === 'error';
@@ -2054,6 +1879,44 @@ export default function ChatMessageBubble({
                             );
                           })}
                         </ul>
+                        {recentToolSummaryItems.length ? (
+                          <div className={`rounded-md border px-3 py-2 ${
+                            isDarkMode ? 'border-slate-800 bg-slate-950/45' : 'border-slate-200 bg-white/70'
+                          }`}>
+                            <div className={`mb-2 text-[10px] font-bold uppercase tracking-widest ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>
+                              Recent Activity
+                            </div>
+                            <ul className="space-y-2">
+                              {recentToolSummaryItems.map((event) => (
+                                <li key={event.id} className="flex min-w-0 items-start gap-2 leading-relaxed">
+                                  <span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${
+                                    event.status === 'error'
+                                      ? 'bg-rose-500'
+                                      : event.status === 'completed'
+                                        ? 'bg-emerald-400'
+                                        : 'animate-pulse bg-sky-500'
+                                  }`} />
+                                  <div className="min-w-0 flex-1">
+                                    <p className={`font-semibold ${
+                                      event.status === 'error'
+                                        ? isDarkMode ? 'text-rose-300' : 'text-rose-700'
+                                        : isDarkMode ? 'text-slate-200' : 'text-slate-800'
+                                    }`}>
+                                      {event.title}
+                                    </p>
+                                    {event.detail ? (
+                                      <p className={`mt-0.5 line-clamp-2 text-[11px] leading-normal ${
+                                        isDarkMode ? 'text-slate-400' : 'text-slate-500'
+                                      }`}>
+                                        {event.detail}
+                                      </p>
+                                    ) : null}
+                                  </div>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        ) : null}
                       </div>
                     ) : thoughtSummaryItems.length ? (
                       <ul className="space-y-2">
@@ -2352,6 +2215,26 @@ export default function ChatMessageBubble({
                     {pendingInterrupt.responseSpec?.dismissLabel || 'Dismiss'}
                   </button>
                 </div>
+              </div>
+            ) : null}
+            {pendingInterrupt && isClarificationInterrupt && clarificationDismissed ? (
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200/80 bg-amber-50/70 px-4 py-3 text-slate-900">
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold leading-snug text-slate-900">
+                    Input is hidden
+                  </p>
+                  <p className="mt-0.5 text-xs leading-relaxed text-slate-600">
+                    The agent is still waiting for this response before it can continue.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  disabled={interruptBusy}
+                  onClick={() => setClarificationDismissed(false)}
+                  className="rounded-xl border border-amber-200 bg-white px-3 py-1.5 text-xs font-semibold text-amber-900 transition-all duration-200 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  Show input
+                </button>
               </div>
             ) : null}
             {hasToolEvents ? (

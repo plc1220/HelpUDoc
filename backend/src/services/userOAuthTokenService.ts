@@ -76,6 +76,19 @@ function decryptJson(encrypted: string): Record<string, unknown> {
   return JSON.parse(decrypted.toString('utf-8')) as Record<string, unknown>;
 }
 
+function isDecryptAuthError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  const code = typeof (error as NodeJS.ErrnoException).code === 'string'
+    ? String((error as NodeJS.ErrnoException).code)
+    : '';
+  if (code === 'UnsupportedStateOrUnableToAuthenticateData') {
+    return true;
+  }
+  return /authenticate|decrypt|decipher|unsupported encrypted token|unexpected token/i.test(error.message);
+}
+
 function toStoredToken(raw: Record<string, unknown>): StoredOAuthToken {
   const refreshToken = typeof raw.refreshToken === 'string' ? raw.refreshToken.trim() : '';
   if (!refreshToken) {
@@ -124,8 +137,16 @@ export class UserOAuthTokenService {
       return null;
     }
 
-    const decrypted = decryptJson(String(row.encryptedJson));
-    return toStoredToken(decrypted);
+    try {
+      const decrypted = decryptJson(String(row.encryptedJson));
+      return toStoredToken(decrypted);
+    } catch (error) {
+      if (!isDecryptAuthError(error)) {
+        throw error;
+      }
+      await this.deleteToken(userId, provider);
+      return null;
+    }
   }
 
   async deleteToken(userId: string, provider: OAuthProvider): Promise<void> {

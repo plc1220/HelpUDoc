@@ -267,7 +267,15 @@ services:
       LANGFUSE_BASE_URL: ${LANGFUSE_BASE_URL:-http://langfuse-web:3000}
       LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-${LANGFUSE_INIT_PROJECT_PUBLIC_KEY:-lf_pk_helpudoc_local}}
       LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-${LANGFUSE_INIT_PROJECT_SECRET_KEY:-lf_sk_helpudoc_local}}
-      LANGFUSE_TRACING_ENABLED: ${LANGFUSE_TRACING_ENABLED:-true}
+      LANGFUSE_TRACING_ENABLED: ${LANGFUSE_TRACING_ENABLED:-false}
+      OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-true}
+      AGENT_STORE_DATABASE_URL: postgresql://helpudoc:helpudoc@postgres:5432/helpudoc
+      DATABASE_URL: postgresql://helpudoc:helpudoc@postgres:5432/helpudoc
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: helpudoc
+      POSTGRES_USER: helpudoc
+      POSTGRES_PASSWORD: helpudoc
     ports:
       - "8001:8001"
     volumes:
