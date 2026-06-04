@@ -393,67 +393,69 @@ The user can select **"Other"** to type or paste any custom folder path (e.g. `~
 
 **Exact tool call parameters (Gate 1):**
 ```python
-request_clarification(
-  title="Presentation Setup",
-  description="Please configure the basic settings for your presentation.",
-  questions_json='''[
-    {
-      "id": "purpose",
-      "header": "Purpose",
-      "question": "What is this presentation for?",
-      "options": [
-        {"id": "pitch", "label": "Pitch deck", "value": "Pitch deck"},
-        {"id": "tutorial", "label": "Teaching/Tutorial", "value": "Teaching/Tutorial"},
-        {"id": "talk", "label": "Conference talk", "value": "Conference talk"},
-        {"id": "internal", "label": "Internal presentation", "value": "Internal presentation"}
-      ]
-    },
-    {
-      "id": "length",
-      "header": "Length",
-      "question": "Approximately how many slides?",
-      "options": [
-        {"id": "short", "label": "Short (5-10)", "value": "Short (5-10)"},
-        {"id": "medium", "label": "Medium (10-20)", "value": "Medium (10-20)"},
-        {"id": "long", "label": "Long (20+)", "value": "Long (20+)"}
-      ]
-    },
-    {
-      "id": "content",
-      "header": "Content",
-      "question": "Do you have the content ready, or do you need help structuring it?",
-      "options": [
-        {"id": "ready", "label": "I have all content ready", "value": "I have all content ready"},
-        {"id": "notes", "label": "I have rough notes", "value": "I have rough notes"},
-        {"id": "topic", "label": "I have a topic only", "value": "I have a topic only"}
-      ]
-    },
-    {
-      "id": "images",
-      "header": "Images",
-      "question": "Do you have images to include?",
-      "options": [
-        {"id": "no-images", "label": "No images", "value": "No images"},
-        {"id": "assets", "label": "./assets", "value": "./assets"}
-      ]
-    },
-    {
-      "id": "editing",
-      "header": "Editing",
-      "question": "Do you need to edit text directly in the browser after generation?",
-      "options": [
-        {"id": "edit-yes", "label": "Yes (Recommended)", "value": "Yes (Recommended)"},
-        {"id": "edit-no", "label": "No", "value": "No"}
-      ]
-    }
-  ]''',
-  context_json='''{
-    "skill": "frontend-slides",
-    "gateId": "presentation_context",
-    "uiContract": "a2ui",
-    "expectedComponent": "clarification_form"
+request_ui(
+  component="clarification.form",
+  props_json='''{
+    "title": "Presentation Setup",
+    "description": "Please configure the basic settings for your presentation.",
+    "questions": [
+      {
+        "id": "purpose",
+        "header": "Purpose",
+        "question": "What is this presentation for?",
+        "options": [
+          {"id": "pitch", "label": "Pitch deck", "value": "Pitch deck"},
+          {"id": "tutorial", "label": "Teaching/Tutorial", "value": "Teaching/Tutorial"},
+          {"id": "talk", "label": "Conference talk", "value": "Conference talk"},
+          {"id": "internal", "label": "Internal presentation", "value": "Internal presentation"}
+        ]
+      },
+      {
+        "id": "length",
+        "header": "Length",
+        "question": "Approximately how many slides?",
+        "options": [
+          {"id": "short", "label": "Short (5-10)", "value": "Short (5-10)"},
+          {"id": "medium", "label": "Medium (10-20)", "value": "Medium (10-20)"},
+          {"id": "long", "label": "Long (20+)", "value": "Long (20+)"}
+        ]
+      },
+      {
+        "id": "content",
+        "header": "Content",
+        "question": "Do you have the content ready, or do you need help structuring it?",
+        "options": [
+          {"id": "ready", "label": "I have all content ready", "value": "I have all content ready"},
+          {"id": "notes", "label": "I have rough notes", "value": "I have rough notes"},
+          {"id": "topic", "label": "I have a topic only", "value": "I have a topic only"}
+        ]
+      },
+      {
+        "id": "images",
+        "header": "Images",
+        "question": "Do you have images to include?",
+        "options": [
+          {"id": "no-images", "label": "No images", "value": "No images"},
+          {"id": "assets", "label": "./assets", "value": "./assets"}
+        ]
+      },
+      {
+        "id": "editing",
+        "header": "Editing",
+        "question": "Do you need to edit text directly in the browser after generation?",
+        "options": [
+          {"id": "edit-yes", "label": "Yes (Recommended)", "value": "Yes (Recommended)"},
+          {"id": "edit-no", "label": "No", "value": "No"}
+        ]
+      }
+    ]
   }''',
-  submit_label="Continue"
+  context_json='''{
+    "skill": "frontend-slides"
+  }''',
+  gate_id="presentation_context",
+  required=True,
+  resume_mode="submit"
 )
 ```
 
