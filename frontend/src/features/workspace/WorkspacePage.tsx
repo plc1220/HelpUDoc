@@ -4206,7 +4206,9 @@ export default function WorkspacePage() {
           console.error('Failed to fetch final run status', statusError);
         }
         const effectivePendingInterrupt = latestRunMeta ? latestRunMeta.pendingInterrupt : latestInterrupt;
-        if (!supersededByNewerStream && effectivePendingInterrupt) {
+        const shouldApplyPendingInterrupt =
+          finalStatus === 'awaiting_approval' && Boolean(effectivePendingInterrupt);
+        if (!supersededByNewerStream && shouldApplyPendingInterrupt) {
             const agentMessageIndex = (() => {
               const resolved = findAgentMessageIndexForRun(conversationId, placeholderId, turnId, runId);
               return resolved >= 0 ? resolved : initialAgentMessageIndex;

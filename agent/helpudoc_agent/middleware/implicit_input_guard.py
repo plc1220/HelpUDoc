@@ -423,6 +423,43 @@ def _build_frontend_slides_gate_interrupt(gate_id: str) -> dict[str, Any] | None
     return None
 
 
+def _frontend_slides_gate_loopback_instruction(gate_id: str | None, assistant_text: str) -> str:
+    base = (
+        f"You requested the user to fill out a form or select choices in your prose: '{assistant_text}'. "
+        "However, you did not emit an actual A2UI interrupt. Under our strict A2UI contract, "
+        "all user inputs must be requested with a structured UI tool call, not prose."
+    )
+    if gate_id == "outline_confirmation":
+        return (
+            f"{base} The Presentation Context gate is already complete. Do not ask for the Presentation Setup "
+            "form again. First write a concrete proposed slide outline in your assistant response, then call "
+            "request_ui with component='clarification_form', gate_id='outline_confirmation', and context_json "
+            "containing skill='frontend-slides', gateId='outline_confirmation', uiContract='a2ui', and "
+            "expectedComponent='clarification_form'. The form must ask the user to approve or revise the "
+            "outline. If you use request_clarification instead, include the same display payload gateId."
+        )
+    if gate_id == "style_path_selection":
+        return (
+            f"{base} The outline is already confirmed. Do not ask for Presentation Setup or Outline "
+            "Confirmation again. Call request_ui with component='clarification_form' and "
+            "gate_id='style_path_selection' to ask how the user wants to choose the deck style."
+        )
+    if gate_id == "mood_or_preset_selection":
+        return (
+            f"{base} The style path is already selected. Call request_ui with component='clarification_form' "
+            "and gate_id='mood_or_preset_selection' to collect the desired visual mood or preset direction."
+        )
+    if gate_id == "style_preview_selection":
+        return (
+            f"{base} The mood/preset direction is already selected. Generate the style previews, then call "
+            "request_ui with component='style_preview_chooser' and gate_id='style_preview_selection'."
+        )
+    return (
+        f"{base} Please call request_ui or request_clarification now with the appropriate structured "
+        "questions or style choice form."
+    )
+
+
 def _is_outline_confirmation_context(text: str) -> bool:
     lowered = text.lower()
     if "outline" not in lowered:
@@ -786,12 +823,7 @@ class ImplicitInputGuardMiddleware(AgentMiddleware):
             )
 
         if detection.awaiting:
-            loopback_instruction = (
-                f"You requested the user to fill out a form or select choices in your prose: '{assistant_text}'. "
-                "However, you did not call the 'request_clarification' tool. Under our strict A2UI contract, "
-                "all user inputs must be requested by calling the 'request_clarification' tool with structured questions. "
-                "Please call the 'request_clarification' tool now to request the appropriate questions or style choice form."
-            )
+            loopback_instruction = _frontend_slides_gate_loopback_instruction(raw_missing_gate, assistant_text)
         else:
             return None
 

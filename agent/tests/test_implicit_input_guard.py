@@ -364,6 +364,9 @@ def test_guard_does_not_advance_next_gate_for_repeated_setup_form_prose() -> Non
     messages = result.get("messages") or []
     assert len(messages) == 1
     assert "presentation setup" in messages[0].content.lower()
+    assert "already complete" in messages[0].content.lower()
+    assert "request_ui" in messages[0].content
+    assert "outline_confirmation" in messages[0].content
 
 
 def test_guard_emits_outline_gate_after_completed_presentation_context_when_outline_prose_asks_ui() -> None:
