@@ -9,6 +9,7 @@ import type {
   SyntheticEvent,
 } from 'react';
 import type { Components } from 'react-markdown';
+import type { A2UIRequest, A2UIResponse } from '@helpudoc/contracts/types';
 import type {
   AgentPersona,
   ConversationMessage,
@@ -127,6 +128,7 @@ export default function AgentChatPane({
   onRemoveCommandTag,
   onSelectMention,
   onSelectCommand,
+  onA2UISubmit,
 }: {
   colorMode: 'light' | 'dark';
   agentPaneStyles: CSSProperties;
@@ -223,6 +225,7 @@ export default function AgentChatPane({
   onRemoveCommandTag: (tagId: string) => void;
   onSelectMention: (file: WorkspaceFile) => void;
   onSelectCommand: (command: CommandSuggestion) => void;
+  onA2UISubmit?: (response: A2UIResponse, request: A2UIRequest, message?: any) => Promise<void>;
 }) {
   const isDarkMode = colorMode === 'dark';
 
@@ -297,6 +300,7 @@ export default function AgentChatPane({
           handlePrepareInterruptAction={onPrepareInterruptAction}
           handleInterruptAction={onInterruptAction}
           workspaceId={workspaceId}
+          onA2UISubmit={onA2UISubmit}
         />
         <ChatInputArea
           colorMode={colorMode}

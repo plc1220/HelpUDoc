@@ -152,6 +152,31 @@ export interface InterruptResponseSpec {
   questions?: InterruptQuestion[];
 }
 
+export type A2UIRequest = {
+  contract: 'a2ui';
+  version: '0.9';
+  surfaceId: string;
+  component: string;
+  props: Record<string, unknown>;
+  gateId?: string;
+  skill?: string;
+  required?: boolean;
+  resumeAction?: {
+    endpoint: 'respond' | 'decision' | 'act';
+    actionId?: string;
+  };
+  metadata?: Record<string, unknown>;
+};
+
+export type A2UIResponse = {
+  surfaceId: string;
+  actionId: string;
+  values?: Record<string, unknown>;
+  decision?: 'approve' | 'edit' | 'reject' | 'submit' | 'cancel';
+  message?: string;
+  metadata?: Record<string, unknown>;
+};
+
 export interface UIRequest {
   id: string;
   component: 'clarification_form' | 'style_preview_chooser' | 'approval' | 'artifact_preview';
@@ -175,6 +200,7 @@ export interface PendingInterrupt {
   responseSpec?: InterruptResponseSpec;
   displayPayload?: Record<string, unknown>;
   uiRequest?: UIRequest;
+  a2uiRequest?: A2UIRequest;
 }
 
 export interface ConversationMessageMetadata {

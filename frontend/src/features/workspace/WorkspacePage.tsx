@@ -82,6 +82,7 @@ import WorkspaceFileTree from '../../components/WorkspaceFileTree';
 import DashboardCanvas from '../dashboard/components/DashboardCanvas';
 import AgentChatPane from '../../components/chat/AgentChatPane';
 import LumoPet from '../../components/lumo/LumoPet';
+import type { A2UIRequest, A2UIResponse } from '@helpudoc/contracts/types';
 import { buildApprovalDraftContent, buildApprovalReview } from '../chat/interrupts/approvalReview';
 import type { RenderableInterruptAction } from '../chat/interrupts/actions';
 import DrivePickerModal from '../../components/chat/DrivePickerModal';
@@ -476,6 +477,59 @@ const hydrateWorkspace = (workspace: Omit<Workspace, 'lastUsed'> & { lastUsed?: 
 const isDraftWorkspaceFile = (file?: WorkspaceFile | null): boolean =>
   Boolean(file && typeof file.id === 'string' && String(file.id).startsWith('draft:'));
 
+const toStringArray = (value: unknown): string[] | undefined => {
+  if (Array.isArray(value)) {
+    const items = value.map((item) => String(item).trim()).filter(Boolean);
+    return items.length ? items : undefined;
+  }
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+    const item = String(value).trim();
+    return item ? [item] : undefined;
+  }
+  return undefined;
+};
+
+const toInterruptAnswers = (value: unknown): InterruptAnswersByQuestionId | undefined => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined;
+  }
+  const answers: InterruptAnswersByQuestionId = {};
+  Object.entries(value as Record<string, unknown>).forEach(([key, rawAnswer]) => {
+    if (!key) return;
+    if (Array.isArray(rawAnswer)) {
+      const items = rawAnswer.map((item) => String(item).trim()).filter(Boolean);
+      if (items.length) answers[key] = items;
+    } else if (rawAnswer !== undefined && rawAnswer !== null) {
+      const item = String(rawAnswer).trim();
+      if (item) answers[key] = item;
+    }
+  });
+  return Object.keys(answers).length ? answers : undefined;
+};
+
+const buildClarificationPayloadFromA2UIResponse = (response: A2UIResponse) => {
+  const values = response.values || {};
+  const selectedChoiceIds =
+    toStringArray(values.selectedChoiceIds)
+    || toStringArray(values.selectedChoiceId)
+    || toStringArray(values.choice);
+  const selectedValues = toStringArray(values.selectedValues);
+  const answersByQuestionId = toInterruptAnswers(values.answersByQuestionId || values.answers);
+  const message =
+    response.message
+    || (typeof values.notes === 'string' ? values.notes : undefined)
+    || (typeof values.message === 'string' ? values.message : undefined)
+    || (typeof values.response === 'string' ? values.response : undefined)
+    || '';
+
+  return {
+    message,
+    selectedChoiceIds,
+    selectedValues,
+    answersByQuestionId,
+  };
+};
+
 const mergePersistedAgentMessage = (
   persisted: ConversationMessage,
   existing?: ConversationMessage | null,
@@ -557,6 +611,11 @@ type PersistProgressRequest = {
   options?: {
     metadataOverride?: Partial<ConversationMessageMetadata>;
   };
+};
+
+const isUsableWorkspaceId = (value: string | null | undefined): value is string => {
+  const normalized = typeof value === 'string' ? value.trim() : '';
+  return Boolean(normalized && normalized !== 'undefined' && normalized !== 'null');
 };
 
 export default function WorkspacePage() {
@@ -3945,6 +4004,26 @@ export default function WorkspacePage() {
       return;
     }
 
+    if (chunk.type === 'a2ui') {
+      const a2uiRequest = chunk.message as A2UIRequest;
+      updateMessageMetadataAtIndex(conversationId, agentMessageIndex, (metadata) => ({
+        ...metadata,
+        ...(runId ? { runId } : {}),
+        status: 'awaiting_approval',
+        pendingInterrupt: {
+          ...(metadata?.pendingInterrupt || {}),
+          kind: 'approval' as const,
+          a2uiRequest,
+        },
+      }));
+      setConversationAttention(
+        conversationId,
+        'awaiting_approval',
+        'Waiting for your input on the custom form.',
+      );
+      return;
+    }
+
     if (chunk.type === 'token' || chunk.type === 'chunk') {
       updateMessageMetadataAtIndex(conversationId, agentMessageIndex, (metadata) => ({
         ...markStreamingState(metadata),
@@ -4272,6 +4351,9 @@ export default function WorkspacePage() {
       taggedFiles,
       internetSearchEnabled,
     } = params;
+    if (!isUsableWorkspaceId(workspaceId)) {
+      throw new Error('Cannot start agent run without a valid workspace id.');
+    }
     const { runId } = await startAgentRun(
       workspaceId,
       conversationId,
@@ -4795,6 +4877,45 @@ export default function WorkspacePage() {
     });
   }, []);
 
+  const handleA2UISubmit = useCallback(
+    async (response: A2UIResponse, request: A2UIRequest, message: ConversationMessage) => {
+      const runId = findRunIdForMessage(message);
+      if (!runId) {
+        throw new Error('Missing run id for A2UI submit action.');
+      }
+
+      const endpoint = request.resumeAction?.endpoint || 'respond';
+
+      if (endpoint === 'decision') {
+        const decision = response.decision || 'approve';
+        if (decision === 'approve' || decision === 'edit' || decision === 'reject') {
+          const options: any = {
+            message: response.message,
+            metadata: response.metadata,
+          };
+          if (decision === 'edit' && response.values) {
+            options.editedAction = response.values.editedAction || response.values;
+          }
+          await submitInterruptWithRetry(runId, 'approval', () => submitRunDecision(runId, decision, options));
+        }
+      } else if (endpoint === 'act') {
+        await submitInterruptWithRetry(runId, 'action', () => submitRunAction(runId, {
+          actionId: response.actionId,
+          text: response.message || '',
+        }));
+      } else {
+        await submitInterruptWithRetry(
+          runId,
+          'clarification',
+          () => submitRunResponse(runId, buildClarificationPayloadFromA2UIResponse(response)),
+        );
+      }
+
+      clearPendingInterruptForRun(message.conversationId, runId, message.turnId);
+    },
+    [findRunIdForMessage, submitInterruptWithRetry, submitRunDecision, submitRunAction, submitRunResponse, clearPendingInterruptForRun],
+  );
+
   const handleInterruptAction = useCallback(
     async (
       message: ConversationMessage,
@@ -5200,7 +5321,7 @@ export default function WorkspacePage() {
     messageId: ConversationMessage['id'],
     options?: { replacementText?: string; skipConfirm?: boolean },
   ) => {
-    if (!selectedWorkspace || !activeConversationId) {
+    if (!selectedWorkspace || !isUsableWorkspaceId(selectedWorkspace.id) || !activeConversationId) {
       addLocalSystemMessage('Please select a workspace and conversation before rerunning messages.');
       return;
     }
@@ -5324,8 +5445,9 @@ export default function WorkspacePage() {
 
     try {
       const agentPrompt = buildAgentPromptFromDirective(directive);
+      const workspaceId = selectedWorkspace.id;
       const { runId } = await startAgentRun(
-        selectedWorkspace.id,
+        workspaceId,
         conversationId,
         persona,
         agentPrompt,
@@ -5339,7 +5461,7 @@ export default function WorkspacePage() {
       const runInfo: ActiveRunInfo = {
         runId,
         conversationId,
-        workspaceId: selectedWorkspace.id,
+        workspaceId,
         persona,
         turnId: targetTurnId,
         placeholderId,
@@ -5374,7 +5496,7 @@ export default function WorkspacePage() {
             agentMessageBufferRef.current.delete(placeholderId);
           }
           agentMessageBufferRef.current.set(persisted.id, persisted.text || '');
-          await refreshConversationHistory(selectedWorkspace.id);
+          await refreshConversationHistory(workspaceId);
         } catch (error) {
           console.error('Failed to store rerun agent message', error);
         }
@@ -5443,7 +5565,11 @@ export default function WorkspacePage() {
           return;
         }
       }
-      const activeWorkspace = workspaceOverride || selectedWorkspace;
+      const activeWorkspace = isUsableWorkspaceId(workspaceOverride?.id)
+        ? workspaceOverride
+        : isUsableWorkspaceId(selectedWorkspace?.id)
+          ? selectedWorkspace
+          : null;
       if (!activeWorkspace) {
         addLocalSystemMessage('Please select a workspace before chatting with an agent.');
         return;
@@ -7333,6 +7459,7 @@ export default function WorkspacePage() {
               onRemoveCommandTag={handleRemoveCommandTag}
               onSelectMention={handleSelectMention}
               onSelectCommand={handleSelectCommand}
+              onA2UISubmit={handleA2UISubmit}
             />
               </>
             )}

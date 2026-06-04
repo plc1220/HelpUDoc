@@ -292,6 +292,7 @@ services:
         VITE_API_URL: ${FRONTEND_API_URL:-/api}
         VITE_GOOGLE_CLIENT_ID: ${VITE_GOOGLE_CLIENT_ID:-16646144790-fvdv7liepgo18aiu20n3btmdr56l33pq.apps.googleusercontent.com}
         VITE_AUTH_MODE: ${VITE_AUTH_MODE:-hybrid}
+        VITE_A2UI_NATIVE_ENABLED: ${VITE_A2UI_NATIVE_ENABLED:-true}
     depends_on:
       backend:
         condition: service_started

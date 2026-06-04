@@ -1,6 +1,12 @@
 import type { DashboardArtifactInfo, UIRequest } from './types';
 
 export type AgentStreamChunk =
+  | {
+      type: 'a2ui';
+      message: unknown;
+      surfaceId?: string;
+      runId?: string;
+    }
   | { type: 'token' | 'chunk'; content?: string; role?: string }
   | { type: 'thought'; content?: string; role?: string }
   | { type: 'model_start' | 'model_end'; name?: string }
@@ -254,7 +260,7 @@ export const toLangChainStreamProjection = (
     };
   }
 
-  if (chunk.type === 'progress' || chunk.type === 'policy' || chunk.type === 'dashboard_artifact') {
+  if (chunk.type === 'progress' || chunk.type === 'policy' || chunk.type === 'dashboard_artifact' || chunk.type === 'a2ui') {
     return { custom: [{ name: chunk.type, data: chunk }] };
   }
 

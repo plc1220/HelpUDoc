@@ -13,6 +13,8 @@
     "e2e": "playwright test --project=chromium"
   },
   "dependencies": {
+    "@a2ui/react": "0.10.0",
+    "@a2ui/web_core": "0.10.0",
     "@copilotkit/react-core": "^1.51.3",
     "@copilotkit/react-ui": "^1.51.3",
     "@emotion/react": "^11.14.0",

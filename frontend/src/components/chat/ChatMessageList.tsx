@@ -1,6 +1,7 @@
 import { ArrowDown, MessageSquareText } from 'lucide-react';
 import { type Dispatch, type SetStateAction, useEffect, useMemo, useRef, useState } from 'react';
 import type { Components } from 'react-markdown';
+import type { A2UIRequest, A2UIResponse } from '@helpudoc/contracts/types';
 
 import type {
   ConversationMessage,
@@ -47,6 +48,7 @@ export default function ChatMessageList({
   handlePrepareInterruptAction,
   handleInterruptAction,
   workspaceId,
+  onA2UISubmit,
 }: {
   colorMode: 'light' | 'dark';
   messages: ConversationMessage[];
@@ -96,6 +98,7 @@ export default function ChatMessageList({
     pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
   ) => void;
   workspaceId?: string;
+  onA2UISubmit?: (response: A2UIResponse, request: A2UIRequest, message?: any) => Promise<void>;
 }) {
   const isDarkMode = colorMode === 'dark';
   const listRef = useRef<HTMLDivElement | null>(null);
@@ -210,9 +213,10 @@ export default function ChatMessageList({
           handleRerunMessage={handleRerunMessage}
           handlePrepareInterruptAction={handlePrepareInterruptAction}
           handleInterruptAction={handleInterruptAction}
-          isStreaming={isStreaming}
           workspaceId={workspaceId}
           colorMode={colorMode}
+          isStreaming={isStreaming}
+          onA2UISubmit={onA2UISubmit}
           />
         ))}
       </section>
