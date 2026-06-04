@@ -181,6 +181,10 @@ export const parsePendingInterrupt = (raw: string | undefined): RunPendingInterr
         payload.uiRequest && typeof payload.uiRequest === 'object' && !Array.isArray(payload.uiRequest)
           ? (payload.uiRequest as RunPendingInterrupt['uiRequest'])
           : undefined,
+      a2uiRequest:
+        payload.a2uiRequest && typeof payload.a2uiRequest === 'object' && !Array.isArray(payload.a2uiRequest)
+          ? (payload.a2uiRequest as RunPendingInterrupt['a2uiRequest'])
+          : undefined,
     };
   } catch {
     return undefined;

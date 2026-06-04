@@ -7,9 +7,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "agent"))
 
 from helpudoc_agent.interrupt_payloads import (  # noqa: E402
+    encode_interrupt_payload_marker,
     extract_interrupt_payload_from_tool_call,
     extract_interrupt_payload_from_tool_text,
     normalize_interrupt_payload_value,
+    strip_interrupt_payload_marker,
 )
 
 
@@ -36,6 +38,60 @@ def test_extract_interrupt_payload_from_tool_text_parses_clarification_payload()
 
 def test_extract_interrupt_payload_from_tool_text_ignores_non_interrupt_output() -> None:
     assert extract_interrupt_payload_from_tool_text("plain tool output") is None
+
+
+def test_extract_interrupt_payload_from_internal_marker() -> None:
+    marker = encode_interrupt_payload_marker(
+        {
+            "kind": "clarification",
+            "title": "Presentation Setup",
+            "description": "Configure the presentation.",
+            "response_spec": {
+                "questions": [
+                    {
+                        "id": "purpose",
+                        "header": "Purpose",
+                        "question": "What is this presentation for?",
+                        "options": [{"id": "pitch", "label": "Pitch deck", "value": "Pitch deck"}],
+                    }
+                ],
+                "choices": [],
+            },
+            "display_payload": {
+                "skill": "frontend-slides",
+                "gateId": "presentation_context",
+                "uiContract": "a2ui",
+            },
+        }
+    )
+
+    parsed = extract_interrupt_payload_from_tool_text(marker)
+
+    assert parsed is not None
+    assert parsed["type"] == "interrupt"
+    assert parsed["kind"] == "clarification"
+    assert parsed["displayPayload"]["gateId"] == "presentation_context"
+    assert parsed["uiRequest"]["component"] == "clarification_form"
+
+
+def test_extract_interrupt_payload_from_embedded_internal_marker_and_strip_visible_text() -> None:
+    marker = encode_interrupt_payload_marker(
+        {
+            "kind": "clarification",
+            "title": "Presentation Setup",
+            "description": "Configure the presentation.",
+            "response_spec": {"questions": [], "choices": []},
+            "display_payload": {"skill": "frontend-slides", "gateId": "presentation_context"},
+        }
+    )
+    text = f"I prepared the form for you. {marker}"
+
+    parsed = extract_interrupt_payload_from_tool_text(text)
+
+    assert parsed is not None
+    assert parsed["kind"] == "clarification"
+    assert parsed["displayPayload"]["gateId"] == "presentation_context"
+    assert strip_interrupt_payload_marker(text) == "I prepared the form for you."
 
 
 def test_extract_interrupt_payload_from_clarification_tool_call() -> None:
@@ -218,6 +274,46 @@ def test_style_preview_gate_produces_style_preview_chooser() -> None:
     }
     normalized = normalize_interrupt_payload_value(payload)
     assert normalized.get("uiRequest") is not None
+    assert normalized["uiRequest"]["component"] == "style_preview_chooser"
+    assert normalized["uiRequest"]["props"]["choices"][0]["id"] == "style-a"
+    assert normalized["uiRequest"]["props"]["previews"][0]["id"] == "style-a"
+
+
+def test_native_a2ui_style_preview_request_projects_to_style_preview_chooser() -> None:
+    payload = {
+        "kind": "clarification",
+        "title": "Select a Style Template",
+        "description": "Pick a generated template.",
+        "a2uiRequest": {
+            "contract": "a2ui",
+            "version": "0.9",
+            "surfaceId": "surface-style-preview-selection",
+            "component": "style.previewChooser",
+            "props": {
+                "title": "Select a Style Template",
+                "choices": [
+                    {"id": "style-a", "label": "Style A", "value": "Style A"}
+                ],
+                "previews": [
+                    {"id": "style-a", "html": "<html>Style A</html>"}
+                ],
+            },
+            "gateId": "style_preview_selection",
+            "skill": "frontend-slides",
+            "required": True,
+            "resumeAction": {"endpoint": "respond", "actionId": "submit"},
+        },
+        "display_payload": {
+            "skill": "frontend-slides",
+            "gateId": "style_preview_selection",
+            "uiContract": "a2ui",
+            "expectedComponent": "style_preview_chooser",
+        },
+    }
+
+    normalized = normalize_interrupt_payload_value(payload)
+
+    assert normalized["a2uiRequest"]["component"] == "style.previewChooser"
     assert normalized["uiRequest"]["component"] == "style_preview_chooser"
     assert normalized["uiRequest"]["props"]["choices"][0]["id"] == "style-a"
     assert normalized["uiRequest"]["props"]["previews"][0]["id"] == "style-a"

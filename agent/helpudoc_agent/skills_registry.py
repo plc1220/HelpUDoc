@@ -428,6 +428,7 @@ ALWAYS_ALLOWED_TOOLS: frozenset[str] = frozenset(
         "request_plan_approval",
         "request_clarification",
         "request_human_action",
+        "request_ui",
     }
 )
 

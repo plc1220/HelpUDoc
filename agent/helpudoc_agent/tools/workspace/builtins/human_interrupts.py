@@ -240,10 +240,63 @@ def build_request_clarification_tool(workspace_state: WorkspaceState) -> Tool:
         submit = (submit_label or "Continue").strip() or "Continue"
         action_choices = [] if parsed_questions else parsed_choices
 
+        # Build A2UI request payload for modern frontend
+        import uuid
+        is_style_chooser = False
+        if isinstance(display_payload, dict):
+            if display_payload.get("chooser") == "style-previews" or "stylePreviews" in display_payload:
+                is_style_chooser = True
+
+        comp = "style.previewChooser" if is_style_chooser else "clarification.form"
+
+        if is_style_chooser:
+            previews = []
+            if isinstance(display_payload, dict):
+                previews = display_payload.get("stylePreviews") or display_payload.get("previews") or []
+            a2ui_props = {
+                "title": prompt_title,
+                "description": prompt_description,
+                "previews": previews,
+                "choices": parsed_choices,
+            }
+        else:
+            a2ui_props = {
+                "title": prompt_title,
+                "description": prompt_description,
+                "questions": parsed_questions,
+                "choices": parsed_choices,
+                "inputMode": input_mode,
+                "multiple": bool(multi_select),
+                "placeholder": (placeholder or "").strip(),
+                "submitLabel": submit,
+            }
+
+        gate_id = display_payload.get("gateId") or display_payload.get("gate_id") or ""
+        skill = display_payload.get("skill") or display_payload.get("skillId") or ""
+
+        surface_id = f"surface-{uuid.uuid4().hex[:12]}" if not gate_id else f"surface-{gate_id}"
+
+        a2ui_request = {
+            "contract": "a2ui",
+            "version": "0.9",
+            "surfaceId": surface_id,
+            "component": comp,
+            "props": a2ui_props,
+            "gateId": gate_id or None,
+            "skill": skill or None,
+            "required": True,
+            "resumeAction": {
+                "endpoint": "respond",
+                "actionId": "submit"
+            },
+            "metadata": display_payload
+        }
+
         interrupt_payload = {
             "kind": "clarification",
             "title": prompt_title,
             "description": prompt_description,
+            "a2uiRequest": a2ui_request,
             "step_index": max(0, int(step_index or 0)),
             "step_count": max(1, int(step_count or 1)),
             "actions": [

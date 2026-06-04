@@ -9,6 +9,7 @@ from typing import Any, Dict, List
 
 
 logger = logging.getLogger(__name__)
+_INTERRUPT_PAYLOAD_MARKER = "__HELPUDOC_INTERRUPT_PAYLOAD__"
 
 
 def _build_interrupt_id(interrupt_value: Dict[str, Any]) -> str:
@@ -44,6 +45,9 @@ def _normalize_interrupt_payload(interrupt_value: Dict[str, Any], interrupt_id: 
     display_payload = interrupt_value.get("display_payload")
     if isinstance(display_payload, dict):
         payload["displayPayload"] = display_payload
+    a2ui_request = interrupt_value.get("a2uiRequest") or interrupt_value.get("a2ui_request")
+    if isinstance(a2ui_request, dict):
+        payload["a2uiRequest"] = a2ui_request
     normalized_interrupt_id = (
         interrupt_id.strip()
         if isinstance(interrupt_id, str) and interrupt_id.strip()
@@ -51,11 +55,36 @@ def _normalize_interrupt_payload(interrupt_value: Dict[str, Any], interrupt_id: 
     )
     payload["interruptId"] = normalized_interrupt_id
 
-    # Construct the uiRequest object
+    # Construct the uiRequest object. Native A2UI requests are the source of
+    # truth when present; uiRequest is kept as a compatibility projection for
+    # older frontend/status paths and backend gate validation.
     kind = interrupt_value.get("kind")
     ui_request = None
+    if isinstance(a2ui_request, dict):
+        component = str(a2ui_request.get("component") or "").strip()
+        props = a2ui_request.get("props") if isinstance(a2ui_request.get("props"), dict) else {}
+        resume_action = a2ui_request.get("resumeAction") if isinstance(a2ui_request.get("resumeAction"), dict) else {}
+        action_id = str(resume_action.get("actionId") or "submit").strip() or "submit"
+        component_map = {
+            "clarification.form": "clarification_form",
+            "clarification_form": "clarification_form",
+            "style.previewChooser": "style_preview_chooser",
+            "style_preview_chooser": "style_preview_chooser",
+            "approval.card": "approval",
+            "approval": "approval",
+        }
+        legacy_component = component_map.get(component)
+        if legacy_component:
+            ui_request = {
+                "id": normalized_interrupt_id,
+                "component": legacy_component,
+                "props": props,
+                "resume": {
+                    "action": action_id,
+                },
+            }
 
-    if kind == "clarification":
+    if ui_request is None and kind == "clarification":
         # Check if it's slide style selection chooser
         is_style_chooser = False
         if isinstance(display_payload, dict):
@@ -160,6 +189,19 @@ def _normalize_interrupt_payload(interrupt_value: Dict[str, Any], interrupt_id: 
 
 def normalize_interrupt_payload_value(interrupt_value: Dict[str, Any], interrupt_id: str | None = None) -> Dict[str, Any]:
     return _normalize_interrupt_payload(interrupt_value, interrupt_id)
+
+
+def encode_interrupt_payload_marker(interrupt_value: Dict[str, Any]) -> str:
+    """Encode a raw interrupt value as a machine-only assistant message marker."""
+    return f"{_INTERRUPT_PAYLOAD_MARKER}{json.dumps(interrupt_value, ensure_ascii=False, separators=(',', ':'))}"
+
+
+def strip_interrupt_payload_marker(text: str) -> str:
+    """Remove any machine-only interrupt marker from user-visible assistant text."""
+    marker_index = (text or "").find(_INTERRUPT_PAYLOAD_MARKER)
+    if marker_index < 0:
+        return text
+    return text[:marker_index].rstrip()
 
 
 def _parse_json_list(raw: Any) -> List[Any]:
@@ -501,6 +543,39 @@ def build_plan_approval_interrupt_value(args: Dict[str, Any]) -> Dict[str, Any] 
         "risky_actions": risky_actions,
     }
 
+    import uuid
+    surface_id = f"surface-plan-review-{uuid.uuid4().hex[:8]}"
+    a2ui_request = {
+        "contract": "a2ui",
+        "version": "0.9",
+        "surfaceId": surface_id,
+        "component": "plan.review",
+        "props": {
+            "title": prompt_title,
+            "summary": summary_markdown or summary,
+            "summaryMarkdown": summary_markdown or summary,
+            "checklist": checklist,
+            "steps": steps,
+            "filePath": plan_file_path,
+            "planFilePath": plan_file_path,
+            "riskyActions": risky_actions,
+            "statusLabel": status_label,
+            "stepIndex": action_args["step_index"],
+            "stepCount": action_args["step_count"],
+        },
+        "gateId": None,
+        "skill": None,
+        "required": True,
+        "resumeAction": {
+            "endpoint": "decision",
+            "actionId": "submit",
+        },
+        "metadata": {
+            "planTitle": prompt_title,
+            "planFilePath": plan_file_path,
+        }
+    }
+
     return {
         "kind": "approval",
         "title": status_label,
@@ -529,6 +604,7 @@ def build_plan_approval_interrupt_value(args: Dict[str, Any]) -> Dict[str, Any] 
             "statusLabel": status_label,
             "riskyActions": risky_actions,
         },
+        "a2uiRequest": a2ui_request,
     }
 
 
@@ -569,6 +645,18 @@ def extract_interrupt_payload_from_tool_args(tool_name: str, parsed: Dict[str, A
 def extract_interrupt_payload_from_tool_text(text: str) -> Dict[str, Any] | None:
     """Parse stringified `Interrupt(value=..., id='...')` tool outputs into stream payloads."""
     raw = (text or "").strip()
+    marker_index = raw.find(_INTERRUPT_PAYLOAD_MARKER)
+    if marker_index >= 0:
+        try:
+            decoder = json.JSONDecoder()
+            interrupt_value, _ = decoder.raw_decode(raw[marker_index + len(_INTERRUPT_PAYLOAD_MARKER):].strip())
+        except json.JSONDecodeError:
+            logger.warning("Failed to parse interrupt payload marker: %s", raw[:240])
+            return None
+        if not isinstance(interrupt_value, dict):
+            return None
+        return _normalize_interrupt_payload(interrupt_value)
+
     if not raw.startswith("Interrupt(value="):
         return None
 

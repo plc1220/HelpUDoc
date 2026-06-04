@@ -127,6 +127,51 @@ def normalize_clarification_resume_payload(
 
     resolved_questions = [question for question in (questions or []) if isinstance(question, dict)]
     resolved_choices = [choice for choice in (choices or []) if isinstance(choice, dict)]
+
+    # Translate A2UIResponse to legacy format if detected
+    if "surfaceId" in response or "actionId" in response:
+        raw_values = response.get("values") or {}
+        values = raw_values if isinstance(raw_values, dict) else {}
+        choice_ids = []
+        if "selectedChoiceId" in values:
+            choice_ids.append(str(values["selectedChoiceId"]))
+        elif "selectedChoiceIds" in values:
+            if isinstance(values["selectedChoiceIds"], list):
+                choice_ids.extend([str(x) for x in values["selectedChoiceIds"] if x])
+        elif "choice" in values:
+            choice_ids.append(str(values["choice"]))
+        elif "response" in values and isinstance(values["response"], str) and not resolved_questions:
+            # Maybe the freeform selected choice
+            pass
+
+        decision = str(response.get("decision") or "").strip()
+        if not choice_ids and decision and decision not in {"submit", "cancel"}:
+            choice_ids.append(str(response["decision"]))
+
+        answers = {}
+        nested_answers = values.get("answersByQuestionId") or values.get("answers")
+        if isinstance(nested_answers, dict):
+            answers.update(nested_answers)
+        for k, v in values.items():
+            if k not in {
+                "answers",
+                "answersByQuestionId",
+                "message",
+                "notes",
+                "response",
+                "selectedChoiceId",
+                "selectedChoiceIds",
+                "choice",
+            }:
+                answers[k] = v
+
+        response = {
+            "message": response.get("message") or values.get("notes") or values.get("message") or values.get("response") or "",
+            "selectedChoiceIds": choice_ids,
+            "selectedValues": [],
+            "answersByQuestionId": answers,
+        }
+
     raw_message = str(response.get("message") or "").strip()
     selected_choice_ids = [
         str(item).strip()

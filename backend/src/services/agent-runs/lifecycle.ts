@@ -142,12 +142,19 @@ let runTelemetryService: RunTelemetryService | null = null;
 let userMemoryService: UserMemoryService | null = null;
 let skillEvolutionService: SkillEvolutionService | null = null;
 let conversationService: ConversationService | null = null;
+let agentStreamClient = {
+  runAgentStream,
+  resumeAgentStream,
+  resumeAgentActionStream,
+  resumeAgentResponseStream,
+};
 
 export function configureAgentRunServices(services: {
   telemetryService?: RunTelemetryService | null;
   userMemoryService?: UserMemoryService | null;
   skillEvolutionService?: SkillEvolutionService | null;
   conversationService?: ConversationService | null;
+  agentStreamClient?: Partial<typeof agentStreamClient> | null;
 }) {
   if ('telemetryService' in services) {
     runTelemetryService = services.telemetryService || null;
@@ -160,6 +167,15 @@ export function configureAgentRunServices(services: {
   }
   if ('conversationService' in services) {
     conversationService = services.conversationService || null;
+  }
+  if ('agentStreamClient' in services) {
+    agentStreamClient = {
+      runAgentStream,
+      resumeAgentStream,
+      resumeAgentActionStream,
+      resumeAgentResponseStream,
+      ...(services.agentStreamClient || {}),
+    };
   }
 }
 
@@ -228,8 +244,16 @@ const hasClarificationResumeInput = (payload?: AgentInterruptResponse): boolean 
     hasStructuredAnswers(payload?.answersByQuestionId),
   );
 
-const isSyntheticClarificationInterrupt = (interrupt?: RunPendingInterrupt): boolean =>
-  Boolean(interrupt?.kind === 'clarification' && interrupt.displayPayload?.synthetic === true);
+const isSyntheticClarificationInterrupt = (interrupt?: RunPendingInterrupt): boolean => {
+  if (interrupt?.kind !== 'clarification') {
+    return false;
+  }
+  const displayPayload = interrupt.displayPayload || {};
+  return Boolean(
+    displayPayload.synthetic === true ||
+    (displayPayload.source === 'implicit_input_guard' && displayPayload.uiContract === 'a2ui')
+  );
+};
 
 const formatClarificationResponseForPrompt = (
   response: AgentInterruptResponse,
@@ -283,14 +307,20 @@ const formatClarificationResponseForPrompt = (
   return lines.join('\n').trim() || 'Continue.';
 };
 
+const ORIGINAL_REQUEST_CONTINUATION_MARKER = 'Original request content, with command routing removed:';
+
 const formatOriginalPromptForContinuation = (prompt: string): string => {
-  const trimmed = String(prompt || '').trim();
+  const raw = String(prompt || '').trim();
+  const markerIndex = raw.lastIndexOf(ORIGINAL_REQUEST_CONTINUATION_MARKER);
+  const trimmed = markerIndex >= 0
+    ? raw.slice(markerIndex + ORIGINAL_REQUEST_CONTINUATION_MARKER.length).trim()
+    : raw;
   const withoutSkillRouting = trimmed
     .split('\n')
     .map((line) => line.replace(/^(\s*)\/skill\s+\S+\s*/i, '$1'))
     .join('\n')
     .trim();
-  return withoutSkillRouting || trimmed;
+  return withoutSkillRouting || trimmed || raw;
 };
 
 export const buildSyntheticClarificationFollowupPrompt = (
@@ -303,10 +333,21 @@ export const buildSyntheticClarificationFollowupPrompt = (
     : 'current';
   const answers = formatClarificationResponseForPrompt(response, previousInterrupt);
   const originalRequest = formatOriginalPromptForContinuation(originalPrompt);
+  const gateId = typeof previousInterrupt?.displayPayload?.gateId === 'string'
+    ? previousInterrupt.displayPayload.gateId
+    : undefined;
   const frontendSlidesGate = previousInterrupt?.displayPayload?.skill === 'frontend-slides'
-    ? previousInterrupt.displayPayload?.chooser === 'style-previews'
+    ? previousInterrupt.displayPayload?.chooser === 'style-previews' || gateId === 'style_preview_selection'
       ? 'For frontend-slides: the user has selected a visual style. Continue directly into building the deck with that selected style. Do not ask for Presentation Context again and do not show the style chooser again unless the user explicitly requests it.'
-      : 'For frontend-slides: the user has completed Presentation Context. Generate 2-3 style previews/templates next, then pause with a style-selection request_clarification interrupt. Do not ask for Presentation Context again and do not generate the final presentation until the style-selection interrupt is answered.'
+      : gateId === 'presentation_context'
+      ? 'For frontend-slides: the user has completed Presentation Context. Generate the slide outline next, then pause with an outline_confirmation request_clarification interrupt. Do not ask for Presentation Context again and do not generate style previews yet.'
+      : gateId === 'outline_confirmation'
+      ? 'For frontend-slides: the user has confirmed the outline. Continue to style path selection, then pause with a style_path_selection request_clarification interrupt. Do not ask for Presentation Context or Outline Confirmation again.'
+      : gateId === 'style_path_selection'
+      ? 'For frontend-slides: the user selected the style selection method. Continue to the next style gate. If the user chose generated previews, collect the mood or preset direction next; do not ask for Presentation Context or Outline Confirmation again.'
+      : gateId === 'mood_or_preset_selection'
+      ? 'For frontend-slides: the user selected the mood or preset direction. Generate 2-3 style previews/templates next, then pause with a style_preview_selection request_clarification interrupt. Do not ask for earlier frontend-slides gates again.'
+      : 'For frontend-slides: continue to the next incomplete A2UI gate. Do not ask for already answered frontend-slides gates again.'
     : '';
   return [
     `[Clarification response — continue the '${skill}' skill from where you left off; do not restart from the beginning.]`,
@@ -315,7 +356,7 @@ export const buildSyntheticClarificationFollowupPrompt = (
     frontendSlidesGate,
     answers,
     '',
-    'Original request content, with command routing removed:',
+    ORIGINAL_REQUEST_CONTINUATION_MARKER,
     originalRequest,
   ].filter((line) => line !== '').join('\n');
 };
@@ -1338,6 +1379,10 @@ const parsePendingInterrupt = (raw: string | undefined): RunPendingInterrupt | u
         payload.uiRequest && typeof payload.uiRequest === 'object' && !Array.isArray(payload.uiRequest)
           ? (payload.uiRequest as RunPendingInterrupt['uiRequest'])
           : undefined,
+      a2uiRequest:
+        payload.a2uiRequest && typeof payload.a2uiRequest === 'object' && !Array.isArray(payload.a2uiRequest)
+          ? (payload.a2uiRequest as RunPendingInterrupt['a2uiRequest'])
+          : undefined,
     };
   } catch {
     return undefined;
@@ -1393,6 +1438,41 @@ const parseRunContext = (raw: string | undefined): RunContext | undefined => {
   } catch {
     return undefined;
   }
+};
+
+const findLatestInterruptPayloadInStream = async (runId: string): Promise<Record<string, unknown> | null> => {
+  const streamKey = buildStreamKey(runId);
+  try {
+    const entries = await redisClient.sendCommand([
+      'XREVRANGE',
+      streamKey,
+      '+',
+      '-',
+      'COUNT',
+      '100',
+    ]) as unknown;
+    if (!Array.isArray(entries)) {
+      return null;
+    }
+    for (const entry of entries) {
+      if (!Array.isArray(entry) || entry.length < 2 || !Array.isArray(entry[1])) {
+        continue;
+      }
+      const fields = entry[1] as unknown[];
+      for (let index = 0; index < fields.length - 1; index += 2) {
+        if (fields[index] !== 'data' || typeof fields[index + 1] !== 'string') {
+          continue;
+        }
+        const parsed = parseLine(fields[index + 1] as string);
+        if (parsed?.type === 'interrupt') {
+          return normalizeInterruptPayloadRecord(parsed);
+        }
+      }
+    }
+  } catch (error) {
+    console.error('Failed to inspect run stream for stale interrupt recovery', { runId, error });
+  }
+  return null;
 };
 
 const loadRunContext = async (runId: string): Promise<RunContext | undefined> => {
@@ -1597,6 +1677,7 @@ async function runAgentRunWorker(
   let thinkingText = '';
   let conversationRunPolicy: ConversationRunPolicy | undefined;
   let a2uiGateState = runMetaAtStart?.a2uiGateState || { completedGateIds: [] };
+  traceContext.a2uiGateState = a2uiGateState;
   const toolEvents: ToolEvent[] = [];
   const progressEvents: RunProgressEvent[] = [];
 
@@ -1819,6 +1900,10 @@ async function runAgentRunWorker(
       }
     }
 
+    if (effectiveStatus === 'failed' && effectiveError && status !== 'failed') {
+      await appendStreamEvent(runId, JSON.stringify({ type: 'error', message: effectiveError }));
+    }
+
     settleRunningToolEvents(effectiveStatus);
 
     // Shadow Mode: Never emit synthetic implicit interrupts or transition run status to awaiting_approval.
@@ -1914,28 +1999,9 @@ async function runAgentRunWorker(
     const normalizedInterrupt = normalizeInterruptPayloadRecord(parsed);
     const pendingGateId = extractA2UIGateId(normalizedInterrupt);
     const pendingInterrupt = parsePendingInterrupt(JSON.stringify(normalizedInterrupt));
-    if (runTelemetryService) {
-      await runTelemetryService.finalizeRun(runId, {
-        status: 'awaiting_approval',
-        startedAt,
-        skillId,
-        hadInterrupt,
-        approvalInterruptCount,
-        clarificationInterruptCount,
-        toolCallCount,
-        toolErrorCount,
-        metadata: {
-          resumed: Boolean(resumePayload),
-          a2uiPendingGateId: pendingGateId,
-          a2uiGateState,
-          ...langfuseStreamMeta,
-        },
-      });
-    }
-    await updateConversationFromRun('awaiting_approval', { pendingInterrupt });
     await persistInterruptAndStopRun(
       runId,
-      parsed,
+      normalizedInterrupt,
       {
         get sawInterruptPayload() {
           return sawInterruptPayload;
@@ -1958,6 +2024,27 @@ async function runAgentRunWorker(
       },
       (pendingRunId, interruptPayload) => markRunAwaitingApproval(pendingRunId, interruptPayload, params),
     );
+    if (runTelemetryService) {
+      void runTelemetryService.finalizeRun(runId, {
+        status: 'awaiting_approval',
+        startedAt,
+        skillId,
+        hadInterrupt,
+        approvalInterruptCount,
+        clarificationInterruptCount,
+        toolCallCount,
+        toolErrorCount,
+        metadata: {
+          resumed: Boolean(resumePayload),
+          a2uiPendingGateId: pendingGateId,
+          a2uiGateState,
+          ...langfuseStreamMeta,
+        },
+      }).catch((telemetryError) => {
+        console.error('Failed to finalize interrupted agent run telemetry', { runId, error: telemetryError });
+      });
+    }
+    await updateConversationFromRun('awaiting_approval', { pendingInterrupt });
   };
 
   const processParsedLine = async (line: string): Promise<'continue' | 'stop'> => {
@@ -2059,6 +2146,15 @@ async function runAgentRunWorker(
         }
       }
     }
+    if (parsed?.type === 'interrupt' && parsed.a2uiRequest) {
+      const a2uiChunk = {
+        type: 'a2ui' as const,
+        message: parsed.a2uiRequest,
+        surfaceId: (parsed.a2uiRequest as any).surfaceId,
+        runId,
+      };
+      await appendStreamEvent(runId, JSON.stringify(a2uiChunk));
+    }
     await appendStreamEvent(runId, parsed ? JSON.stringify(normalizeInterruptPayloadRecord(parsed)) : line);
     if (parsed?.type === 'interrupt') {
       await stopAtInterrupt(parsed);
@@ -2120,24 +2216,24 @@ async function runAgentRunWorker(
   try {
     const response =
       resumePayload && 'decisions' in resumePayload && resumePayload.decisions
-      ? await resumeAgentStream(params.persona, params.workspaceId, resumePayload.decisions, {
+      ? await agentStreamClient.resumeAgentStream(params.persona, params.workspaceId, resumePayload.decisions, {
           signal: controller.signal,
           authToken: params.authToken,
           traceContext,
         })
       : resumePayload && 'response' in resumePayload && resumePayload.response
-      ? await resumeAgentResponseStream(params.persona, params.workspaceId, resumePayload.response, {
+      ? await agentStreamClient.resumeAgentResponseStream(params.persona, params.workspaceId, resumePayload.response, {
           signal: controller.signal,
           authToken: params.authToken,
           traceContext,
         })
       : resumePayload && 'action' in resumePayload && resumePayload.action
-      ? await resumeAgentActionStream(params.persona, params.workspaceId, resumePayload.action, {
+      ? await agentStreamClient.resumeAgentActionStream(params.persona, params.workspaceId, resumePayload.action, {
           signal: controller.signal,
           authToken: params.authToken,
           traceContext,
         })
-      : await runAgentStream(params.persona, params.workspaceId, params.prompt, params.history, {
+      : await agentStreamClient.runAgentStream(params.persona, params.workspaceId, params.prompt, params.history, {
           forceReset: params.forceReset,
           signal: controller.signal,
           authToken: params.authToken,
@@ -2256,7 +2352,7 @@ export async function resumeAgentRunWithResponse(
           response,
           options?.previousInterrupt,
         ),
-        forceReset: false,
+        forceReset: true,
       }
     : baseParams;
   const currentMeta = await getRunMeta(runId);
@@ -2328,6 +2424,15 @@ export async function getRunMeta(runId: string): Promise<RunMeta | null> {
   const meta = await redisClient.hGetAll(metaKey);
   if (!Object.keys(meta).length) {
     return null;
+  }
+  if ((meta.status === 'running' || meta.status === 'queued') && !meta.pendingInterrupt?.trim()) {
+    const recoveredInterrupt = await findLatestInterruptPayloadInStream(runId);
+    if (recoveredInterrupt) {
+      await markRunAwaitingApproval(runId, JSON.stringify(recoveredInterrupt));
+      meta.status = 'awaiting_approval';
+      meta.pendingInterrupt = JSON.stringify(recoveredInterrupt);
+      meta.error = '';
+    }
   }
   return {
     workspaceId: meta.workspaceId,

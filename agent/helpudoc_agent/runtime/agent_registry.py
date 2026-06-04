@@ -232,10 +232,9 @@ class AgentRegistry:
         if not tool_names:
             tool_names = list(self.settings.tools.keys())
         else:
-            if "load_skill" in self.settings.tools and "load_skill" not in tool_names:
-                tool_names.append("load_skill")
-            if "list_skills" in self.settings.tools and "list_skills" not in tool_names:
-                tool_names.append("list_skills")
+            for extra in ("load_skill", "list_skills", "request_ui"):
+                if extra in self.settings.tools and extra not in tool_names:
+                    tool_names.append(extra)
         if not allow_skill_sandbox:
             tool_names = [name for name in tool_names if name != "run_skill_python_script"]
         if allow_skill_sandbox and "run_skill_python_script" in self.settings.tools and "run_skill_python_script" not in tool_names:

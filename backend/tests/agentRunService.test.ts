@@ -1,11 +1,227 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { Readable } from 'node:stream';
+import type { AxiosResponse } from 'axios';
+import type { IncomingMessage } from 'node:http';
+import { redisClient } from '../src/services/redisService';
 import {
   buildSyntheticClarificationFollowupPrompt,
+  configureAgentRunServices,
+  getRunMeta,
   isRealRunProgressEvent,
   resolveStreamCloseDisposition,
   shouldFailResumedRunForIdle,
+  startAgentRun,
+  resumeAgentRunWithResponse,
 } from '../src/services/agentRunService';
+
+const makeStreamResponse = (lines: Array<Record<string, unknown>>): Promise<AxiosResponse<IncomingMessage>> =>
+  Promise.resolve({
+    data: Readable.from(lines.map((line) => `${JSON.stringify(line)}\n`)) as IncomingMessage,
+  } as AxiosResponse<IncomingMessage>);
+
+const waitForRunStatus = async (
+  runId: string,
+  predicate: (status: string | undefined, meta: Awaited<ReturnType<typeof getRunMeta>>) => boolean,
+  timeoutMs = 2_000,
+) => {
+  const started = Date.now();
+  let latest = await getRunMeta(runId);
+  while (!predicate(latest?.status, latest) && Date.now() - started < timeoutMs) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    latest = await getRunMeta(runId);
+  }
+  return latest;
+};
+
+const presentationContextInterrupt = {
+  type: 'interrupt',
+  kind: 'clarification',
+  title: 'Presentation Setup',
+  description: 'Configure the basic settings for your presentation.',
+  responseSpec: {
+    inputMode: 'text',
+    questions: [
+      {
+        id: 'purpose',
+        header: 'Purpose',
+        question: 'What is this presentation for?',
+        options: [{ id: 'purpose-pitch-deck', label: 'Pitch deck', value: 'Pitch deck' }],
+      },
+    ],
+  },
+  displayPayload: {
+    skill: 'frontend-slides',
+    gateId: 'presentation_context',
+    uiContract: 'a2ui',
+    expectedComponent: 'clarification_form',
+    source: 'implicit_input_guard',
+  },
+  interruptId: 'interrupt-presentation-context',
+  uiRequest: {
+    id: 'interrupt-presentation-context',
+    component: 'clarification_form',
+    props: {
+      questions: [
+        {
+          id: 'purpose',
+          header: 'Purpose',
+          question: 'What is this presentation for?',
+          options: [{ id: 'purpose-pitch-deck', label: 'Pitch deck', value: 'Pitch deck' }],
+        },
+      ],
+      title: 'Presentation Setup',
+    },
+  },
+};
+
+const outlineConfirmationInterrupt = {
+  type: 'interrupt',
+  kind: 'clarification',
+  title: 'Outline Confirmation',
+  description: 'Confirm the proposed slide outline.',
+  responseSpec: {
+    inputMode: 'text',
+    questions: [
+      {
+        id: 'outline_confirmation',
+        header: 'Outline',
+        question: 'Does this outline look right?',
+        options: [{ id: 'outline-yes', label: 'Yes', value: 'Yes' }],
+      },
+    ],
+  },
+  displayPayload: {
+    skill: 'frontend-slides',
+    gateId: 'outline_confirmation',
+    uiContract: 'a2ui',
+    expectedComponent: 'clarification_form',
+  },
+  interruptId: 'interrupt-outline-confirmation',
+  uiRequest: {
+    id: 'interrupt-outline-confirmation',
+    component: 'clarification_form',
+    props: {
+      questions: [
+        {
+          id: 'outline_confirmation',
+          header: 'Outline',
+          question: 'Does this outline look right?',
+          options: [{ id: 'outline-yes', label: 'Yes', value: 'Yes' }],
+        },
+      ],
+      title: 'Outline Confirmation',
+    },
+  },
+};
+
+const makeClarificationGateInterrupt = (
+  gateId: string,
+  title: string,
+  questionId: string,
+  question: string,
+  option: { id: string; label: string; value: string },
+) => ({
+  type: 'interrupt',
+  kind: 'clarification',
+  title,
+  description: question,
+  responseSpec: {
+    inputMode: 'text',
+    questions: [
+      {
+        id: questionId,
+        header: title,
+        question,
+        options: [option],
+      },
+    ],
+  },
+  displayPayload: {
+    skill: 'frontend-slides',
+    gateId,
+    uiContract: 'a2ui',
+    expectedComponent: 'clarification_form',
+  },
+  interruptId: `interrupt-${gateId}`,
+  uiRequest: {
+    id: `interrupt-${gateId}`,
+    component: 'clarification_form',
+    props: {
+      questions: [
+        {
+          id: questionId,
+          header: title,
+          question,
+          options: [option],
+        },
+      ],
+      title,
+    },
+  },
+});
+
+const stylePathSelectionInterrupt = makeClarificationGateInterrupt(
+  'style_path_selection',
+  'Choose Style Selection Method',
+  'style_path',
+  'How should we choose the presentation style?',
+  { id: 'generate-previews', label: 'Generate previews', value: 'Generate previews' },
+);
+
+const moodOrPresetSelectionInterrupt = makeClarificationGateInterrupt(
+  'mood_or_preset_selection',
+  'Vibe & Mood Selection',
+  'mood',
+  'What mood should the generated templates use?',
+  { id: 'executive-modern', label: 'Executive modern', value: 'Executive modern' },
+);
+
+const stylePreviewSelectionInterrupt = {
+  type: 'interrupt',
+  kind: 'clarification',
+  title: 'Select a Style Template',
+  description: 'Choose one of the generated style previews to apply to your presentation.',
+  responseSpec: {
+    inputMode: 'choice',
+    choices: [
+      { id: 'style-a', label: 'Style A', value: 'Style A' },
+      { id: 'style-b', label: 'Style B', value: 'Style B' },
+    ],
+  },
+  displayPayload: {
+    skill: 'frontend-slides',
+    gateId: 'style_preview_selection',
+    uiContract: 'a2ui',
+    expectedComponent: 'style_preview_chooser',
+  },
+  interruptId: 'interrupt-style-preview-selection',
+  uiRequest: {
+    id: 'interrupt-style-preview-selection',
+    component: 'style_preview_chooser',
+    props: {
+      title: 'Select a Style Template',
+      choices: [
+        { id: 'style-a', label: 'Style A', value: 'Style A' },
+        { id: 'style-b', label: 'Style B', value: 'Style B' },
+      ],
+      previews: [
+        {
+          id: 'style-a',
+          label: 'Style A',
+          description: 'Light technical keynote template.',
+          html: '<!doctype html><html><body><h1>Style A</h1></body></html>',
+        },
+        {
+          id: 'style-b',
+          label: 'Style B',
+          description: 'Dark executive template.',
+          html: '<!doctype html><html><body><h1>Style B</h1></body></html>',
+        },
+      ],
+    },
+  },
+};
 
 test('isRealRunProgressEvent ignores transport-only events', () => {
   assert.equal(isRealRunProgressEvent({ type: 'keepalive' }), false);
@@ -76,7 +292,7 @@ test('resolveStreamCloseDisposition preserves an emitted interrupt ahead of stre
   );
 });
 
-test('buildSyntheticClarificationFollowupPrompt advances frontend-slides context to style previews', () => {
+test('buildSyntheticClarificationFollowupPrompt advances frontend-slides context to outline confirmation', () => {
   const prompt = buildSyntheticClarificationFollowupPrompt(
     '/skill frontend-slides Create a deck\nOriginal request:\n/skill frontend-slides Create a deck',
     {
@@ -89,7 +305,7 @@ test('buildSyntheticClarificationFollowupPrompt advances frontend-slides context
     {
       kind: 'clarification',
       title: 'Presentation Context',
-      displayPayload: { synthetic: true, skill: 'frontend-slides' },
+      displayPayload: { synthetic: true, skill: 'frontend-slides', gateId: 'presentation_context' },
       responseSpec: {
         questions: [
           { id: 'presentation_goal', header: 'Goal', question: 'What is the goal?' },
@@ -99,8 +315,89 @@ test('buildSyntheticClarificationFollowupPrompt advances frontend-slides context
     } as any,
   );
 
-  assert.match(prompt, /Generate 2-3 style previews\/templates next/);
+  assert.match(prompt, /Generate the slide outline next/);
+  assert.match(prompt, /outline_confirmation/);
+  assert.doesNotMatch(prompt, /Generate 2-3 style previews\/templates next/);
   assert.doesNotMatch(prompt, /^\/skill frontend-slides/m);
+});
+
+test('buildSyntheticClarificationFollowupPrompt does not nest prior continuation prompts', () => {
+  const previousInterrupt = {
+    kind: 'clarification',
+    title: 'Presentation Context',
+    displayPayload: { synthetic: true, skill: 'frontend-slides', gateId: 'presentation_context' },
+    responseSpec: {
+      questions: [
+        { id: 'purpose', header: 'Purpose', question: 'What is this presentation for?' },
+      ],
+    },
+  } as any;
+  const wrappedOnce = buildSyntheticClarificationFollowupPrompt(
+    '/skill frontend-slides @final-research-report.md',
+    { answersByQuestionId: { purpose: 'Pitch deck' } },
+    previousInterrupt,
+  );
+  const wrappedTwice = buildSyntheticClarificationFollowupPrompt(
+    wrappedOnce,
+    { answersByQuestionId: { purpose: 'Teaching' } },
+    previousInterrupt,
+  );
+
+  assert.equal((wrappedTwice.match(/\[Clarification response/g) || []).length, 1);
+  assert.equal((wrappedTwice.match(/Original request content, with command routing removed:/g) || []).length, 1);
+  assert.match(wrappedTwice, /@final-research-report\.md/);
+  assert.doesNotMatch(wrappedTwice, /^\/skill frontend-slides/m);
+});
+
+test('buildSyntheticClarificationFollowupPrompt advances frontend-slides outline confirmation to style path selection', () => {
+  const prompt = buildSyntheticClarificationFollowupPrompt(
+    'Create a deck',
+    {
+      answersByQuestionId: {
+        outline_confirmation: 'Approved',
+      },
+    },
+    {
+      kind: 'clarification',
+      title: 'Outline Confirmation',
+      displayPayload: { synthetic: true, skill: 'frontend-slides', gateId: 'outline_confirmation' },
+      responseSpec: {
+        questions: [
+          { id: 'outline_confirmation', header: 'Outline', question: 'Does this outline look right?' },
+        ],
+      },
+    } as any,
+  );
+
+  assert.match(prompt, /confirmed the outline/);
+  assert.match(prompt, /style_path_selection/);
+  assert.doesNotMatch(prompt, /completed Presentation Context/);
+});
+
+test('buildSyntheticClarificationFollowupPrompt advances frontend-slides mood selection to style previews', () => {
+  const prompt = buildSyntheticClarificationFollowupPrompt(
+    'Create a deck',
+    {
+      answersByQuestionId: {
+        mood: 'Executive modern',
+      },
+    },
+    {
+      kind: 'clarification',
+      title: 'Vibe & Mood Selection',
+      displayPayload: { synthetic: true, skill: 'frontend-slides', gateId: 'mood_or_preset_selection' },
+      responseSpec: {
+        questions: [
+          { id: 'mood', header: 'Mood', question: 'What mood should the templates use?' },
+        ],
+      },
+    } as any,
+  );
+
+  assert.match(prompt, /selected the mood or preset direction/);
+  assert.match(prompt, /Generate 2-3 style previews\/templates next/);
+  assert.match(prompt, /style_preview_selection/);
+  assert.doesNotMatch(prompt, /completed Presentation Context/);
 });
 
 test('buildSyntheticClarificationFollowupPrompt advances frontend-slides style choice to deck building', () => {
@@ -114,7 +411,7 @@ test('buildSyntheticClarificationFollowupPrompt advances frontend-slides style c
     {
       kind: 'clarification',
       title: 'Choose Your Presentation Style',
-      displayPayload: { synthetic: true, skill: 'frontend-slides', chooser: 'style-previews' },
+      displayPayload: { synthetic: true, skill: 'frontend-slides', gateId: 'style_preview_selection', chooser: 'style-previews' },
       responseSpec: {
         choices: [
           { id: 'style-a', label: 'Style A', value: 'Style A' },
@@ -127,4 +424,307 @@ test('buildSyntheticClarificationFollowupPrompt advances frontend-slides style c
   assert.match(prompt, /selected a visual style/);
   assert.match(prompt, /Continue directly into building the deck/);
   assert.match(prompt, /Do not ask for Presentation Context again/);
+});
+
+test('frontend-slides A2UI presentation gate resumes through continuation instead of repeating Gate 1', {
+  skip: process.env.RUN_A2UI_E2E !== '1' ? 'set RUN_A2UI_E2E=1 with Redis available to run lifecycle flow test' : false,
+}, async () => {
+  if (!redisClient.isOpen) {
+    await redisClient.connect();
+  }
+
+  const calls: Array<{
+    kind: 'run' | 'respond';
+    prompt?: string;
+    forceReset?: boolean;
+    traceCompletedGates?: string[];
+  }> = [];
+  let runId = '';
+  const turnId = `a2ui-e2e-${Date.now()}`;
+  const workspaceId = 'workspace-a2ui-e2e';
+  try {
+    configureAgentRunServices({
+      telemetryService: null,
+      userMemoryService: null,
+      skillEvolutionService: null,
+      conversationService: null,
+      agentStreamClient: {
+        runAgentStream: async (_persona, _workspaceId, prompt, _history, options) => {
+          calls.push({
+            kind: 'run',
+            prompt,
+            forceReset: options?.forceReset,
+            traceCompletedGates: options?.traceContext?.a2uiGateState?.completedGateIds,
+          });
+          if (calls.length === 1) {
+            return makeStreamResponse([
+              { type: 'policy', skill: 'frontend-slides' },
+              presentationContextInterrupt,
+            ]);
+          }
+          return makeStreamResponse([
+            { type: 'policy', skill: 'frontend-slides' },
+            outlineConfirmationInterrupt,
+          ]);
+        },
+        resumeAgentResponseStream: async () => {
+          calls.push({ kind: 'respond' });
+          return makeStreamResponse([
+            { type: 'policy', skill: 'frontend-slides' },
+            presentationContextInterrupt,
+          ]);
+        },
+      },
+    });
+
+    const started = await startAgentRun({
+      workspaceId,
+      persona: 'fast',
+      prompt: '/skill frontend-slides @final-research-report.md',
+      history: [{ role: 'user', content: '/skill frontend-slides @final-research-report.md' }],
+      turnId,
+      forceReset: true,
+    });
+    runId = started.runId;
+
+    const awaiting = await waitForRunStatus(runId, (status) => status === 'awaiting_approval');
+    assert.equal(awaiting?.status, 'awaiting_approval');
+    assert.equal(awaiting?.pendingInterrupt?.displayPayload?.source, 'implicit_input_guard');
+    assert.equal(awaiting?.pendingInterrupt?.uiRequest?.component, 'clarification_form');
+
+    await resumeAgentRunWithResponse(runId, {
+      answersByQuestionId: {
+        purpose: 'Pitch deck',
+      },
+    }, {
+      previousInterrupt: awaiting?.pendingInterrupt,
+    });
+
+    const settled = await waitForRunStatus(runId, (status, meta) => {
+      if (status === 'failed') {
+        return true;
+      }
+      if (status !== 'awaiting_approval') {
+        return false;
+      }
+      return meta?.pendingInterrupt?.displayPayload?.gateId === 'outline_confirmation';
+    });
+    assert.equal(settled?.status, 'awaiting_approval');
+    assert.equal(settled?.pendingInterrupt?.displayPayload?.gateId, 'outline_confirmation');
+    assert.deepEqual(settled?.a2uiGateState?.completedGateIds, ['presentation_context']);
+    assert.equal(calls.some((call) => call.kind === 'respond'), false);
+    assert.equal(calls[1]?.kind, 'run');
+    assert.equal(calls[1]?.forceReset, true);
+    assert.match(calls[1]?.prompt || '', /Generate the slide outline next/);
+    assert.deepEqual(calls[1]?.traceCompletedGates, ['presentation_context']);
+  } finally {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    if (runId) {
+      await redisClient.del(`agent:run:${runId}`);
+      await redisClient.del(`agent:run:${runId}:meta`);
+    }
+    await redisClient.del(`agent:run:key:${workspaceId}:fast:${turnId}`);
+    configureAgentRunServices({ agentStreamClient: null });
+    if (redisClient.isOpen) {
+      await redisClient.quit();
+    }
+  }
+});
+
+test('frontend-slides A2UI flow reaches final slide generation after all clarification and template gates', {
+  skip: process.env.RUN_A2UI_E2E !== '1' ? 'set RUN_A2UI_E2E=1 with Redis available to run lifecycle flow test' : false,
+}, async () => {
+  if (!redisClient.isOpen) {
+    await redisClient.connect();
+  }
+
+  const requiredGates = [
+    'presentation_context',
+    'outline_confirmation',
+    'style_path_selection',
+    'mood_or_preset_selection',
+    'style_preview_selection',
+  ];
+  const calls: Array<{
+    kind: 'run' | 'respond';
+    prompt?: string;
+    forceReset?: boolean;
+    traceCompletedGates?: string[];
+  }> = [];
+  const seenPendingGates: string[] = [];
+  let runId = '';
+  const turnId = `a2ui-full-flow-${Date.now()}`;
+  const workspaceId = 'workspace-a2ui-full-flow';
+
+  const responseByCompletedGateCount: Record<number, Array<Record<string, unknown>>> = {
+    1: [
+      { type: 'policy', skill: 'frontend-slides' },
+      outlineConfirmationInterrupt,
+    ],
+    2: [
+      { type: 'policy', skill: 'frontend-slides' },
+      stylePathSelectionInterrupt,
+    ],
+    3: [
+      { type: 'policy', skill: 'frontend-slides' },
+      moodOrPresetSelectionInterrupt,
+    ],
+    4: [
+      { type: 'policy', skill: 'frontend-slides' },
+      stylePreviewSelectionInterrupt,
+    ],
+    5: [
+      { type: 'policy', skill: 'frontend-slides' },
+      {
+        type: 'progress',
+        stage: 'writing_artifact',
+        status: 'completed',
+        label: 'Generated final HTML slide deck',
+        artifactPath: 'slides/final-research-report-deck.html',
+      },
+      {
+        type: 'tool_end',
+        name: 'write_file',
+        outputFiles: [
+          {
+            path: 'slides/final-research-report-deck.html',
+            mimeType: 'text/html',
+            size: 4096,
+          },
+        ],
+      },
+      {
+        type: 'token',
+        content: 'Generated the final slide deck at slides/final-research-report-deck.html.',
+      },
+      { type: 'done', status: 'completed' },
+    ],
+  };
+
+  const awaitGate = async (gateId: string) => {
+    const meta = await waitForRunStatus(runId, (status, latest) => {
+      if (status === 'failed') {
+        return true;
+      }
+      return status === 'awaiting_approval' && latest?.pendingInterrupt?.displayPayload?.gateId === gateId;
+    });
+    assert.equal(meta?.status, 'awaiting_approval');
+    assert.equal(meta?.pendingInterrupt?.displayPayload?.gateId, gateId);
+    seenPendingGates.push(gateId);
+    return meta;
+  };
+
+  try {
+    configureAgentRunServices({
+      telemetryService: null,
+      userMemoryService: null,
+      skillEvolutionService: null,
+      conversationService: null,
+      agentStreamClient: {
+        runAgentStream: async (_persona, _workspaceId, prompt, _history, options) => {
+          calls.push({
+            kind: 'run',
+            prompt,
+            forceReset: options?.forceReset,
+            traceCompletedGates: options?.traceContext?.a2uiGateState?.completedGateIds,
+          });
+          const completedCount = options?.traceContext?.a2uiGateState?.completedGateIds?.length || 0;
+          if (completedCount === 1) {
+            return makeStreamResponse(responseByCompletedGateCount[1]);
+          }
+          return makeStreamResponse([
+            { type: 'policy', skill: 'frontend-slides' },
+            presentationContextInterrupt,
+          ]);
+        },
+        resumeAgentResponseStream: async (_persona, _workspaceId, _response, options) => {
+          const completedGates = options?.traceContext?.a2uiGateState?.completedGateIds || [];
+          calls.push({
+            kind: 'respond',
+            traceCompletedGates: completedGates,
+          });
+          return makeStreamResponse(responseByCompletedGateCount[completedGates.length] || [
+            { type: 'policy', skill: 'frontend-slides' },
+            { type: 'done', status: 'completed' },
+          ]);
+        },
+      },
+    });
+
+    const started = await startAgentRun({
+      workspaceId,
+      persona: 'fast',
+      prompt: '/skill frontend-slides @final-research-report.md',
+      history: [{ role: 'user', content: '/skill frontend-slides @final-research-report.md' }],
+      turnId,
+      forceReset: true,
+    });
+    runId = started.runId;
+
+    const presentation = await awaitGate('presentation_context');
+    assert.equal(presentation?.pendingInterrupt?.uiRequest?.component, 'clarification_form');
+    await resumeAgentRunWithResponse(runId, {
+      answersByQuestionId: {
+        purpose: 'Pitch deck',
+      },
+    }, { previousInterrupt: presentation?.pendingInterrupt });
+
+    const outline = await awaitGate('outline_confirmation');
+    assert.equal(calls[1]?.kind, 'run');
+    assert.equal(calls[1]?.forceReset, true);
+    await resumeAgentRunWithResponse(runId, {
+      answersByQuestionId: {
+        outline_confirmation: 'Approved',
+      },
+    }, { previousInterrupt: outline?.pendingInterrupt });
+
+    const stylePath = await awaitGate('style_path_selection');
+    await resumeAgentRunWithResponse(runId, {
+      answersByQuestionId: {
+        style_path: 'Generate previews',
+      },
+    }, { previousInterrupt: stylePath?.pendingInterrupt });
+
+    const mood = await awaitGate('mood_or_preset_selection');
+    await resumeAgentRunWithResponse(runId, {
+      answersByQuestionId: {
+        mood: 'Executive modern',
+      },
+    }, { previousInterrupt: mood?.pendingInterrupt });
+
+    const stylePreview = await awaitGate('style_preview_selection');
+    assert.equal(stylePreview?.pendingInterrupt?.uiRequest?.component, 'style_preview_chooser');
+    await resumeAgentRunWithResponse(runId, {
+      selectedChoiceIds: ['style-b'],
+      selectedValues: ['Style B'],
+      message: 'Use Style B for the final deck.',
+    }, { previousInterrupt: stylePreview?.pendingInterrupt });
+
+    const completed = await waitForRunStatus(runId, (status) => status === 'completed' || status === 'failed');
+    assert.equal(completed?.status, 'completed');
+    assert.deepEqual(completed?.a2uiGateState?.completedGateIds, requiredGates);
+    assert.deepEqual(seenPendingGates, requiredGates);
+    assert.deepEqual(
+      calls
+        .filter((call) => call.kind === 'respond')
+        .map((call) => call.traceCompletedGates),
+      [
+        ['presentation_context', 'outline_confirmation'],
+        ['presentation_context', 'outline_confirmation', 'style_path_selection'],
+        ['presentation_context', 'outline_confirmation', 'style_path_selection', 'mood_or_preset_selection'],
+        requiredGates,
+      ],
+    );
+  } finally {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    if (runId) {
+      await redisClient.del(`agent:run:${runId}`);
+      await redisClient.del(`agent:run:${runId}:meta`);
+    }
+    await redisClient.del(`agent:run:key:${workspaceId}:fast:${turnId}`);
+    configureAgentRunServices({ agentStreamClient: null });
+    if (redisClient.isOpen) {
+      await redisClient.quit();
+    }
+  }
 });

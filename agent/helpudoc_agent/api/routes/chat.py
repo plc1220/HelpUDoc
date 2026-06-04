@@ -26,6 +26,7 @@ from helpudoc_agent.interrupt_payloads import (
     extract_interrupt_payload_from_tool_call,
     extract_interrupt_payload_from_tool_text,
     normalize_interrupt_payload_value,
+    strip_interrupt_payload_marker,
 )
 from helpudoc_agent.langfuse_callbacks import (
     emit_langfuse_trace_payload,
@@ -176,7 +177,7 @@ def register_chat_routes(
         if not tool_names:
             tool_names = list(settings.tools.keys())
         else:
-            for extra in ("list_skills", "load_skill"):
+            for extra in ("list_skills", "load_skill", "request_ui"):
                 if extra in settings.tools and extra not in tool_names:
                     tool_names.append(extra)
         return {
@@ -322,6 +323,21 @@ def register_chat_routes(
     def _extract_request_context(request: Request) -> Dict[str, Any]:
         return extract_agent_request_context(request, agent_jwt_secret=agent_jwt_secret)
 
+    def _merge_trace_gate_context(context: Dict[str, Any], trace_context: Dict[str, Any] | None) -> Dict[str, Any]:
+        merged = dict(context or {})
+        trace = trace_context if isinstance(trace_context, dict) else {}
+        gate_state = trace.get("a2uiGateState")
+        completed_gates = gate_state.get("completedGateIds") if isinstance(gate_state, dict) else None
+        if isinstance(completed_gates, list):
+            normalized_gates = [
+                str(item).strip()
+                for item in completed_gates
+                if str(item).strip()
+            ]
+            if normalized_gates:
+                merged["frontend_slides_completed_a2ui_gates"] = normalized_gates
+        return merged
+
     def _memory_paths_for_turn(runtime: AgentRuntimeState) -> List[str]:
         context = runtime.workspace_state.context or {}
         user_id = context.get("user_id")
@@ -379,7 +395,7 @@ def register_chat_routes(
         return "\n\n".join(section for section in sections if section)
 
     def _seed_initial_skill_context(initial_context: Dict[str, Any], message: ChatRequest) -> Dict[str, Any]:
-        seeded = dict(initial_context or {})
+        seeded = _merge_trace_gate_context(initial_context, message.langfuseTraceContext)
         seeded["internet_search_enabled"] = bool(message.internetSearchEnabled)
         payload = _prepare_payload(message)
         for index in range(len(payload) - 1, -1, -1):
@@ -737,6 +753,9 @@ def register_chat_routes(
         ) -> None:
             if not token:
                 return
+            token = strip_interrupt_payload_marker(token)
+            if not token:
+                return
             self._active_llm_runs.add(str(run_id))
             await self._emit({"type": "token", "content": token, "role": "assistant"})
 
@@ -1046,7 +1065,17 @@ def register_chat_routes(
             return None
         if not isinstance(chunk, dict):
             return None
-        return _build_interrupt_payload(chunk.get("__interrupt__"))
+        payload = _build_interrupt_payload(chunk.get("__interrupt__"))
+        if payload:
+            return payload
+        messages = _extract_messages(chunk)
+        if messages:
+            for msg in reversed(messages):
+                text = _message_to_text(msg)
+                payload = extract_interrupt_payload_from_tool_text(text)
+                if payload:
+                    return payload
+        return None
 
     def _event_record(event: Any) -> Dict[str, Any] | None:
         if isinstance(event, dict):
@@ -1207,6 +1236,12 @@ def register_chat_routes(
                     normalized = normalize_interrupt_payload_value(candidate)
                     if normalized:
                         return normalized
+                messages = _extract_messages(candidate)
+                if messages:
+                    for msg in reversed(messages):
+                        payload = extract_interrupt_payload_from_tool_text(_message_to_text(msg))
+                        if payload:
+                            return payload
         return None
 
     async def _emit_v3_event(
@@ -1242,6 +1277,7 @@ def register_chat_routes(
 
         if method in {"on_chat_model_stream", "on_llm_stream", "messages"}:
             text = _event_chunk_text(data)
+            text = strip_interrupt_payload_marker(text)
             if text and not _is_internal_stream_text(text):
                 await handler._emit({"type": "token", "content": text, "role": "assistant"})
             return False
@@ -1262,6 +1298,7 @@ def register_chat_routes(
                 await handler._emit(interrupt_payload)
                 return True
             text = _content_block_text(event)
+            text = strip_interrupt_payload_marker(text)
             if text and not _is_internal_stream_text(text):
                 await handler._emit({"type": "token", "content": text, "role": "assistant"})
             return False
@@ -1484,6 +1521,7 @@ def register_chat_routes(
         context.pop("loaded_skill_ids_this_turn", None)
         context.pop("skill_load_attempts_this_turn", None)
         context.pop("dashboard_mode", None)
+        context.pop("frontend_slides_completed_a2ui_gates", None)
         context["tagged_files_only"] = False
         context["plan_approved"] = skip_plan_approvals
         context["pre_plan_search_count"] = 0
@@ -1499,6 +1537,9 @@ def register_chat_routes(
         payload = _prepare_payload(message)
         if fresh_turn:
             _reset_turn_context(runtime)
+            runtime.workspace_state.context.update(
+                _merge_trace_gate_context(runtime.workspace_state.context, message.langfuseTraceContext)
+            )
             runtime.workspace_state.context["internet_search_enabled"] = bool(message.internetSearchEnabled)
         payload, latest_user_text = _apply_embedded_directives(runtime, payload)
         if fresh_turn:
@@ -1608,6 +1649,9 @@ def register_chat_routes(
         if not text:
             return []
         if role in _ASSISTANT_ROLES:
+            text = strip_interrupt_payload_marker(text)
+            if not text:
+                return []
             if _is_internal_stream_text(text):
                 return []
             return [
@@ -1726,6 +1770,7 @@ def register_chat_routes(
                         status="pending",
                     )
                     await handler._emit(interrupt_payload)
+                    return
 
                 messages = _extract_messages(final_result)
                 if messages and not handler.has_assistant_text:
@@ -1740,6 +1785,7 @@ def register_chat_routes(
                                 await handler._emit(event_payload)
                 elif final_result is not None and not handler.has_assistant_text:
                     text = _message_to_text(final_result)
+                    text = strip_interrupt_payload_marker(text)
                     if text and not _is_internal_stream_text(text):
                         emitted = True
                         for event_payload in _emit_text("assistant", text):
@@ -1876,7 +1922,10 @@ def register_chat_routes(
         request: Request,
     ):
         try:
-            initial_context = _extract_request_context(request)
+            initial_context = _merge_trace_gate_context(
+                _extract_request_context(request),
+                resume_request.langfuseTraceContext,
+            )
             runtime = await registry.get_or_create(agent_name, workspace_id, initial_context=initial_context)
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -1904,7 +1953,10 @@ def register_chat_routes(
         request: Request,
     ):
         try:
-            initial_context = _extract_request_context(request)
+            initial_context = _merge_trace_gate_context(
+                _extract_request_context(request),
+                response_request.langfuseTraceContext,
+            )
             runtime = await registry.get_or_create(agent_name, workspace_id, initial_context=initial_context)
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -1930,7 +1982,10 @@ def register_chat_routes(
         request: Request,
     ):
         try:
-            initial_context = _extract_request_context(request)
+            initial_context = _merge_trace_gate_context(
+                _extract_request_context(request),
+                action_request.langfuseTraceContext,
+            )
             runtime = await registry.get_or_create(agent_name, workspace_id, initial_context=initial_context)
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc

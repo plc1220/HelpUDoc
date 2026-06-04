@@ -11,6 +11,7 @@ from langgraph.runtime import Runtime
 from langgraph.types import Command
 
 from helpudoc_agent.implicit_input_detection import detect_implicit_input_awaiting
+from helpudoc_agent.interrupt_payloads import extract_interrupt_payload_from_tool_text
 from helpudoc_agent.middleware.implicit_input_guard import (
     ImplicitInputGuardMiddleware,
     build_synthetic_clarification_interrupt,
@@ -319,29 +320,55 @@ def test_guard_emits_deterministic_gate_interrupt_without_regex_signal() -> None
     }
     runtime = Runtime(context={"active_skill": "frontend-slides"})
 
-    resume_payload = {
-        "message": "",
-        "answersByQuestionId": {"purpose": "Pitch deck"},
-    }
-    with patch(
-        "helpudoc_agent.middleware.implicit_input_guard.interrupt",
-        return_value=resume_payload,
-    ) as interrupt_mock:
-        result = middleware.after_model(state, runtime)
-
-    assert interrupt_mock.called
-    interrupt_payload = interrupt_mock.call_args.args[0]
-    assert interrupt_payload["kind"] == "clarification"
-    assert interrupt_payload["display_payload"]["gateId"] == "presentation_context"
-    assert interrupt_payload["display_payload"]["uiContract"] == "a2ui"
-    assert interrupt_payload["response_spec"]["questions"][0]["id"] == "purpose"
-    assert runtime.context["frontend_slides_completed_a2ui_gates"] == ["presentation_context"]
+    result = middleware.after_model(state, runtime)
 
     assert result is not None
-    assert result.get("jump_to") == "model"
+    assert "jump_to" not in result
     messages = result.get("messages") or []
-    assert "presentation_context" in messages[0].content
-    assert "Purpose: Pitch deck" in messages[0].content
+    assert len(messages) == 1
+    assert isinstance(messages[0], AIMessage)
+    interrupt_payload = extract_interrupt_payload_from_tool_text(messages[0].content)
+    assert interrupt_payload is not None
+    assert interrupt_payload["kind"] == "clarification"
+    assert interrupt_payload["displayPayload"]["gateId"] == "presentation_context"
+    assert interrupt_payload["displayPayload"]["uiContract"] == "a2ui"
+    assert interrupt_payload["responseSpec"]["questions"][0]["id"] == "purpose"
+    assert "frontend_slides_completed_a2ui_gates" not in runtime.context
+
+
+def test_guard_emits_next_gate_after_completed_presentation_context_when_prose_asks_ui() -> None:
+    middleware = ImplicitInputGuardMiddleware()
+    state = {
+        "messages": [
+            AIMessage(
+                content=(
+                    "I have called the request_clarification tool to render the Presentation Setup form "
+                    "under our A2UI contract. Please complete the setup in the UI form so we can proceed "
+                    "with organizing your slide outline."
+                )
+            )
+        ]
+    }
+    runtime = Runtime(
+        context={
+            "active_skill": "frontend-slides",
+            "frontend_slides_completed_a2ui_gates": ["presentation_context"],
+        }
+    )
+
+    result = middleware.after_model(state, runtime)
+
+    assert result is not None
+    assert "jump_to" not in result
+    messages = result.get("messages") or []
+    assert len(messages) == 1
+    assert isinstance(messages[0], AIMessage)
+    interrupt_payload = extract_interrupt_payload_from_tool_text(messages[0].content)
+    assert interrupt_payload is not None
+    assert interrupt_payload["kind"] == "clarification"
+    assert interrupt_payload["displayPayload"]["gateId"] == "outline_confirmation"
+    assert interrupt_payload["displayPayload"]["uiContract"] == "a2ui"
+    assert interrupt_payload["responseSpec"]["questions"][0]["id"] == "outline"
 
 
 def test_guard_allows_frontend_slides_after_all_gates_completed() -> None:

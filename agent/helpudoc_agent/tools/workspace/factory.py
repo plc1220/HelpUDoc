@@ -16,6 +16,7 @@ from .builtins.human_interrupts import (
     build_request_human_action_tool,
     build_request_plan_approval_tool,
 )
+from .builtins.a2ui import build_request_ui_tool
 from .builtins.rag import build_rag_query_tool
 from .builtins.skills import (
     build_list_skills_tool,
@@ -64,6 +65,7 @@ class ToolFactory:
             "request_plan_approval": lambda ws: build_request_plan_approval_tool(ws),
             "request_clarification": lambda ws: build_request_clarification_tool(ws),
             "request_human_action": lambda ws: build_request_human_action_tool(ws),
+            "request_ui": lambda ws: build_request_ui_tool(ws),
             "run_skill_python_script": lambda ws: build_run_skill_python_script_tool(self.settings, ws),
         }
 

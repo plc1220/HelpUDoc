@@ -9,11 +9,9 @@ from typing import Any
 from langchain.agents.middleware.types import AgentMiddleware, AgentState, hook_config
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.runtime import Runtime
-from langgraph.types import interrupt
 
-from helpudoc_agent.clarification_responses import normalize_clarification_resume_payload
 from helpudoc_agent.implicit_input_detection import detect_implicit_input_awaiting
-from helpudoc_agent.interrupt_payloads import build_clarification_interrupt_value
+from helpudoc_agent.interrupt_payloads import build_clarification_interrupt_value, encode_interrupt_payload_marker
 
 logger = logging.getLogger(__name__)
 
@@ -404,16 +402,6 @@ def _build_frontend_slides_gate_interrupt(gate_id: str) -> dict[str, Any] | None
     return None
 
 
-def _record_completed_gate(context: Any, gate_id: str | None) -> None:
-    if not isinstance(context, dict) or not gate_id:
-        return
-    existing = context.get("frontend_slides_completed_a2ui_gates")
-    gates = [item for item in existing if isinstance(item, str)] if isinstance(existing, list) else []
-    if gate_id not in gates:
-        gates.append(gate_id)
-    context["frontend_slides_completed_a2ui_gates"] = gates
-
-
 def _is_outline_confirmation_context(text: str) -> bool:
     lowered = text.lower()
     if "outline" in lowered and "approved" in lowered:
@@ -586,22 +574,6 @@ def _build_fallback_style_preview_html(choice: dict[str, str]) -> str:
 </html>"""
 
 
-def _clarification_resume_context(
-    interrupt_payload: dict[str, Any],
-) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
-    response_spec = interrupt_payload.get("response_spec")
-    if not isinstance(response_spec, dict):
-        return [], []
-
-    raw_questions = response_spec.get("questions")
-    questions = [item for item in raw_questions if isinstance(item, dict)] if isinstance(raw_questions, list) else []
-
-    raw_choices = response_spec.get("choices")
-    choices = [item for item in raw_choices if isinstance(item, dict)] if isinstance(raw_choices, list) else []
-
-    return questions, choices
-
-
 def build_synthetic_clarification_interrupt(
     *,
     skill_id: str,
@@ -739,9 +711,17 @@ class ImplicitInputGuardMiddleware(AgentMiddleware):
         runtime_context = getattr(runtime, "context", None)
         assistant_text = _extract_message_text(last_ai_msg)
         detection = detect_implicit_input_awaiting(skill_id=skill_id, assistant_text=assistant_text)
-        missing_gate = (
+        raw_missing_gate = (
             _frontend_slides_required_gate_missing(runtime_context)
             if _is_frontend_slides_skill(skill_id)
+            else None
+        )
+        # Gate 1 is mandatory at the start of a new frontend-slides run. Later gates
+        # should be emitted deterministically when the model asks for UI in prose,
+        # but should not preempt normal outline/style generation text.
+        missing_gate = (
+            raw_missing_gate
+            if raw_missing_gate == "presentation_context" or (raw_missing_gate and detection.awaiting)
             else None
         )
         if not detection.awaiting and not missing_gate:
@@ -762,21 +742,8 @@ class ImplicitInputGuardMiddleware(AgentMiddleware):
                 raise ValueError(f"Contract violation: unsupported frontend-slides A2UI gate '{missing_gate}'.")
 
             logger.info("A2UI input guard: emitting deterministic frontend-slides gate interrupt=%s", missing_gate)
-            response = interrupt(interrupt_payload)
-            _record_completed_gate(runtime_context, missing_gate)
-            questions, choices = _clarification_resume_context(interrupt_payload)
-            normalized = normalize_clarification_resume_payload(
-                response,
-                questions=questions,
-                choices=choices,
-            )
-            human_content = (
-                f"[Clarification response — continue the 'frontend-slides' skill from A2UI gate "
-                f"'{missing_gate}'; do not restart from the beginning.]\n{normalized}"
-            )
             return {
-                "messages": [HumanMessage(content=human_content)],
-                "jump_to": "model",
+                "messages": [AIMessage(content=encode_interrupt_payload_marker(interrupt_payload))],
             }
 
         if state.get("implicit_retry"):

@@ -29,6 +29,9 @@ export type AgentTraceContext = {
   persona?: string;
   conversationId?: string;
   skillId?: string | null;
+  a2uiGateState?: {
+    completedGateIds?: string[];
+  };
 };
 
 export type AgentDecision = {

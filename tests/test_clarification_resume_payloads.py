@@ -69,3 +69,51 @@ def test_normalize_clarification_resume_payload_derives_selected_values_from_cho
     assert payload["selectedChoiceIds"] == ["choice-2"]
     assert payload["selectedValues"] == ["Medium"]
     assert payload["summary"] == "Selected: Medium"
+
+
+def test_normalize_clarification_resume_payload_accepts_a2ui_response_value() -> None:
+    payload = json.loads(
+        normalize_clarification_resume_payload(
+            {
+                "surfaceId": "surface-clarification-1",
+                "actionId": "submit",
+                "decision": "submit",
+                "values": {
+                    "response": "Use a conference talk format.",
+                },
+            }
+        )
+    )
+
+    assert payload["message"] == "Use a conference talk format."
+    assert payload["selectedChoiceIds"] == []
+    assert "Use a conference talk format." in payload["summary"]
+
+
+def test_normalize_clarification_resume_payload_unpacks_a2ui_answers() -> None:
+    payload = json.loads(
+        normalize_clarification_resume_payload(
+            {
+                "surfaceId": "surface-clarification-2",
+                "actionId": "submit",
+                "decision": "submit",
+                "values": {
+                    "answers": {
+                        "purpose": "Conference talk",
+                        "length": "Medium (10-20)",
+                    },
+                    "notes": "Keep it technical.",
+                },
+            },
+            questions=[
+                {"id": "purpose", "header": "Purpose", "question": "What is this presentation for?"},
+                {"id": "length", "header": "Length", "question": "How many slides?"},
+            ],
+        )
+    )
+
+    assert payload["message"] == "Keep it technical."
+    assert payload["answersByQuestionId"] == {
+        "purpose": "Conference talk",
+        "length": "Medium (10-20)",
+    }
