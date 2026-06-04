@@ -336,7 +336,7 @@ def test_guard_emits_deterministic_gate_interrupt_without_regex_signal() -> None
     assert "frontend_slides_completed_a2ui_gates" not in runtime.context
 
 
-def test_guard_emits_next_gate_after_completed_presentation_context_when_prose_asks_ui() -> None:
+def test_guard_does_not_advance_next_gate_for_repeated_setup_form_prose() -> None:
     middleware = ImplicitInputGuardMiddleware()
     state = {
         "messages": [
@@ -345,6 +345,36 @@ def test_guard_emits_next_gate_after_completed_presentation_context_when_prose_a
                     "I have called the request_clarification tool to render the Presentation Setup form "
                     "under our A2UI contract. Please complete the setup in the UI form so we can proceed "
                     "with organizing your slide outline."
+                )
+            )
+        ]
+    }
+    runtime = Runtime(
+        context={
+            "active_skill": "frontend-slides",
+            "frontend_slides_completed_a2ui_gates": ["presentation_context"],
+        }
+    )
+
+    result = middleware.after_model(state, runtime)
+
+    assert result is not None
+    assert result.get("jump_to") == "model"
+    assert result.get("implicit_retry") is True
+    messages = result.get("messages") or []
+    assert len(messages) == 1
+    assert "presentation setup" in messages[0].content.lower()
+
+
+def test_guard_emits_outline_gate_after_completed_presentation_context_when_outline_prose_asks_ui() -> None:
+    middleware = ImplicitInputGuardMiddleware()
+    state = {
+        "messages": [
+            AIMessage(
+                content=(
+                    "Here is the proposed slide outline:\n\n"
+                    "1. Title\n2. State of the art\n3. Architecture\n\n"
+                    "Please confirm the outline above so we can proceed to style selection."
                 )
             )
         ]

@@ -316,6 +316,27 @@ def _frontend_slides_required_gate_missing(context: Any) -> str | None:
     return None
 
 
+def _frontend_slides_gate_matches_context(gate_id: str | None, text: str) -> bool:
+    lowered = (text or "").lower()
+    if gate_id == "presentation_context":
+        return True
+    if gate_id == "outline_confirmation":
+        return _is_outline_confirmation_context(text)
+    if gate_id == "style_path_selection":
+        return bool(
+            re.search(r"\b(?:style|visual|design)\b.{0,160}\b(?:path|method|approach|selection)\b", lowered, re.DOTALL)
+            or re.search(r"\b(?:choose|select|pick)\b.{0,160}\b(?:generate(?:d)? previews?|use presets?|style)\b", lowered, re.DOTALL)
+        )
+    if gate_id == "mood_or_preset_selection":
+        return bool(
+            re.search(r"\b(?:mood|vibe|preset|tone|visual direction)\b", lowered)
+            and re.search(r"\b(?:choose|select|pick|confirm|form|preference)\b", lowered)
+        )
+    if gate_id == "style_preview_selection":
+        return _is_frontend_slides_style_selection_context(text)
+    return False
+
+
 def _frontend_slides_gate_display_payload(gate_id: str) -> dict[str, Any]:
     expected_component = (
         "style_preview_chooser"
@@ -404,9 +425,13 @@ def _build_frontend_slides_gate_interrupt(gate_id: str) -> dict[str, Any] | None
 
 def _is_outline_confirmation_context(text: str) -> bool:
     lowered = text.lower()
+    if "outline" not in lowered:
+        return False
+    if _is_frontend_slides_discovery_context(text):
+        return False
     if "outline" in lowered and "approved" in lowered:
         return False
-    if any(
+    if "outline" not in lowered and any(
         phrase in lowered
         for phrase in (
             "style selection",
@@ -441,6 +466,8 @@ def _is_frontend_slides_discovery_context(text: str) -> bool:
             "fill out the form",
             "complete the form",
             "submit the form",
+            "presentation setup",
+            "setup form",
             "get started",
         )
     ):
@@ -718,10 +745,16 @@ class ImplicitInputGuardMiddleware(AgentMiddleware):
         )
         # Gate 1 is mandatory at the start of a new frontend-slides run. Later gates
         # should be emitted deterministically when the model asks for UI in prose,
-        # but should not preempt normal outline/style generation text.
+        # but only when the prose matches that specific gate. Otherwise a repeated
+        # stale setup-form prompt can incorrectly advance to the next gate.
         missing_gate = (
             raw_missing_gate
-            if raw_missing_gate == "presentation_context" or (raw_missing_gate and detection.awaiting)
+            if raw_missing_gate == "presentation_context"
+            or (
+                raw_missing_gate
+                and detection.awaiting
+                and _frontend_slides_gate_matches_context(raw_missing_gate, assistant_text)
+            )
             else None
         )
         if not detection.awaiting and not missing_gate:
