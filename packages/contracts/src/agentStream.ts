@@ -1,4 +1,4 @@
-import type { DashboardArtifactInfo, UIRequest } from './types';
+import type { A2UIRequest, DashboardArtifactInfo, UIRequest } from './types';
 
 export type AgentStreamChunk =
   | {
@@ -91,6 +91,7 @@ export type AgentStreamChunk =
       };
       displayPayload?: Record<string, unknown>;
       uiRequest?: UIRequest;
+      a2uiRequest?: A2UIRequest;
     }
   | { type: 'keepalive' }
   | { type: 'done'; status?: 'completed' | 'failed' | 'cancelled' | 'interrupted' }
