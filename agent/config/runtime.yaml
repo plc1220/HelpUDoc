@@ -92,6 +92,9 @@ tools:
   - name: request_ui
     kind: builtin
     description: Pause the run and ask the frontend to render a specific native A2UI component
+  - name: workflow_action
+    kind: builtin
+    description: Emit one structured workflow action; use ask_user_a2ui for user-input gates
   - name: run_skill_python_script
     kind: builtin
     description: Run an active skill's declared Python script in a Kubernetes sandbox

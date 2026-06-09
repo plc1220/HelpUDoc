@@ -21,6 +21,11 @@ from langgraph.errors import GraphInterrupt
 from langgraph.types import Command
 
 from helpudoc_agent.configuration import Settings
+from helpudoc_agent.a2ui_contract import (
+    a2ui_interrupt_value_for_gate,
+    next_pending_gate,
+    record_gate_source,
+)
 from helpudoc_agent.interrupt_payloads import (
     extract_interrupt_payload_from_tool_args,
     extract_interrupt_payload_from_tool_call,
@@ -177,7 +182,7 @@ def register_chat_routes(
         if not tool_names:
             tool_names = list(settings.tools.keys())
         else:
-            for extra in ("list_skills", "load_skill", "request_ui"):
+            for extra in ("list_skills", "load_skill", "request_ui", "workflow_action"):
                 if extra in settings.tools and extra not in tool_names:
                     tool_names.append(extra)
         return {
@@ -336,6 +341,34 @@ def register_chat_routes(
             ]
             if normalized_gates:
                 merged["frontend_slides_completed_a2ui_gates"] = normalized_gates
+                ledger = merged.get("a2ui_gate_ledger")
+                ledger_items = [item for item in ledger if isinstance(item, dict)] if isinstance(ledger, list) else []
+                existing = {
+                    (str(item.get("skill_id") or ""), str(item.get("gate_id") or ""))
+                    for item in ledger_items
+                }
+                now = datetime.utcnow().isoformat() + "Z"
+                for gate_id in normalized_gates:
+                    key = ("frontend-slides", gate_id)
+                    if key in existing:
+                        continue
+                    ledger_items.append(
+                        {
+                            "run_id": _clean_langfuse_value(trace.get("runId")) or "",
+                            "thread_id": str(merged.get("thread_id") or ""),
+                            "skill_id": "frontend-slides",
+                            "gate_id": gate_id,
+                            "component": "",
+                            "status": "completed",
+                            "source": "direct",
+                            "answers": None,
+                            "created_at": now,
+                            "updated_at": now,
+                            "completed_at": now,
+                            "violation_count": 0,
+                        }
+                    )
+                merged["a2ui_gate_ledger"] = ledger_items
         return merged
 
     def _memory_paths_for_turn(runtime: AgentRuntimeState) -> List[str]:
@@ -652,6 +685,9 @@ def register_chat_routes(
         if isinstance(workspace_id, str) and workspace_id.strip():
             configurable["workspace_id"] = workspace_id.strip()
         metadata, tags = _build_langfuse_metadata(runtime, message, thread_id)
+        runtime_context["thread_id"] = thread_id
+        if metadata.get("helpudoc_run_id"):
+            runtime_context["run_id"] = metadata["helpudoc_run_id"]
         trace_name = f"helpudoc.{runtime.agent_name}"
         config: Dict[str, Any] = {
             "configurable": configurable,
@@ -684,7 +720,13 @@ def register_chat_routes(
     class _CallbackStreamingHandler(AsyncCallbackHandler):
         """Streams LangChain callback events into JSON payloads for the UI."""
 
-        def __init__(self, text_fn, *, suppress_interrupt_tool_start: bool = False):
+        def __init__(
+            self,
+            text_fn,
+            *,
+            suppress_interrupt_tool_start: bool = False,
+            should_suppress_assistant_text: Callable[[], bool] | None = None,
+        ):
             super().__init__()
             self.queue: asyncio.Queue[Any] = asyncio.Queue()
             self._tool_names: Dict[str, str] = {}
@@ -697,6 +739,7 @@ def register_chat_routes(
             self._interrupt_emitted = False
             self._cancel_run: Optional[Callable[[], None]] = None
             self._suppress_interrupt_tool_start = suppress_interrupt_tool_start
+            self._should_suppress_assistant_text = should_suppress_assistant_text
 
         @property
         def has_events(self) -> bool:
@@ -714,11 +757,13 @@ def register_chat_routes(
             self._cancel_run = cancel_cb
 
         async def _emit(self, payload: Dict[str, Any]) -> None:
-            self._has_events = True
             if payload.get("type") in {"token", "chunk"}:
                 role = payload.get("role")
                 if role is None or str(role).lower() == "assistant":
+                    if self._should_suppress_assistant_text and self._should_suppress_assistant_text():
+                        return
                     self._has_assistant_text = True
+            self._has_events = True
             await self.queue.put(payload)
 
         async def _emit_model_start(self, serialized: Any, run_id: Any) -> None:
@@ -1684,9 +1729,14 @@ def register_chat_routes(
             payload = await _prepare_turn_payload(runtime, message, fresh_turn=True)
         else:
             payload = _prepare_payload(message)
+        def _should_suppress_assistant_text_for_a2ui_gate() -> bool:
+            context = getattr(runtime.workspace_state, "context", None)
+            return next_pending_gate(context) is not None
+
         handler = _CallbackStreamingHandler(
             _message_to_text,
             suppress_interrupt_tool_start=resume_decisions is not None or resume_value is not None,
+            should_suppress_assistant_text=_should_suppress_assistant_text_for_a2ui_gate,
         )
         sentinel = object()
         stream_started = asyncio.get_running_loop().time()
@@ -1701,13 +1751,28 @@ def register_chat_routes(
         async def _agent_runner():
             lf_handlers = langfuse_langchain_callbacks()
             try:
+                nonlocal saw_interrupt
                 await _emit_progress(
                     handler,
                     "preparing_context",
                     "Preparing workspace context",
                     status="running",
                 )
-                nonlocal saw_interrupt
+                synthetic_gate = next_pending_gate(runtime.workspace_state.context)
+                if synthetic_gate is not None and bool(synthetic_gate.get("synthetic_on_pending")):
+                    record_gate_source(runtime.workspace_state.context, synthetic_gate, source="synthetic")
+                    interrupt_payload = normalize_interrupt_payload_value(
+                        a2ui_interrupt_value_for_gate(synthetic_gate)
+                    )
+                    saw_interrupt = True
+                    await _emit_progress(
+                        handler,
+                        "awaiting_input",
+                        "Awaiting your input to proceed",
+                        status="pending",
+                    )
+                    await handler._emit(interrupt_payload)
+                    return
                 stream_config = _build_agent_config(
                     runtime,
                     message,
