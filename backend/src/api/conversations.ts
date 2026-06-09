@@ -2,6 +2,8 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { ConversationService } from '../services/conversationService';
 import { HttpError } from '../errors';
+import { getRunMeta } from '../services/agentRunService';
+import type { ConversationMessageMetadata } from '@helpudoc/contracts/types';
 
 export default function conversationRoutes(conversationService: ConversationService) {
   const router = Router();
@@ -160,6 +162,17 @@ export default function conversationRoutes(conversationService: ConversationServ
     try {
       const user = requireUserContext(req);
       const payload = addMessageSchema.parse(req.body);
+      let metadata = payload.metadata as ConversationMessageMetadata | undefined;
+      if (payload.sender === 'agent' && metadata?.runId) {
+        const runMeta = await getRunMeta(metadata.runId).catch(() => null);
+        if (runMeta?.status === 'awaiting_approval' && runMeta.pendingInterrupt) {
+          metadata = {
+            ...metadata,
+            status: 'awaiting_approval',
+            pendingInterrupt: runMeta.pendingInterrupt as ConversationMessageMetadata['pendingInterrupt'],
+          };
+        }
+      }
       const message = await conversationService.appendMessage(
         user.userId,
         req.params.conversationId,
@@ -168,7 +181,7 @@ export default function conversationRoutes(conversationService: ConversationServ
         {
           turnId: payload.turnId,
           replaceExisting: payload.replaceExisting,
-          metadata: payload.metadata,
+          metadata: metadata as Record<string, unknown> | undefined,
         }
       );
       res.status(201).json(message);

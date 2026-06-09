@@ -175,8 +175,9 @@ export function createAgentPolicyApi(googleOAuthService: GoogleOAuthService, use
     }
 
     if (AUTH_MODE !== 'headers') {
+      let delegatedServerIds: string[] = [];
       try {
-        const delegatedServerIds = await getAllowedDelegatedGoogleServerIds(input.policy);
+        delegatedServerIds = await getAllowedDelegatedGoogleServerIds(input.policy);
         if (!delegatedServerIds.length) {
           return signAgentContextToken(payload);
         }
@@ -211,6 +212,18 @@ export function createAgentPolicyApi(googleOAuthService: GoogleOAuthService, use
             403,
             'Google access for MCP tools is not connected or is missing required permissions. Please sign in with Google again.',
           );
+        }
+        if (
+          error instanceof Error &&
+          /OAUTH_TOKEN_ENCRYPTION_KEY|must decode to 32 bytes/i.test(error.message)
+        ) {
+          console.warn('[mcp-auth] Delegated Google MCP auth disabled because OAuth token encryption is not configured.', {
+            userId: input.userId,
+            workspaceId: input.workspaceId,
+            serverIds: delegatedServerIds,
+            error: error.message,
+          });
+          return signAgentContextToken(payload);
         }
         throw error;
       }
