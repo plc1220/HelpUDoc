@@ -56,7 +56,7 @@ class RagConfig:
         llm_model = env_trim("RAG_LLM_MODEL", env_trim("LLM_MODEL", "gemini-3.5-flash")) or "gemini-3.5-flash"
         embedding_model = env_trim("RAG_EMBEDDING_MODEL", env_trim("EMBEDDING_MODEL", "gemini-embedding-001")) or "gemini-embedding-001"
         embedding_dim = int(env_trim("RAG_EMBEDDING_DIM", env_trim("EMBEDDING_DIM", "3072")) or "3072")
-        api_key = env_trim("GEMINI_API_KEY", env_trim("LLM_BINDING_API_KEY"))
+        api_key = gemini_key_for_embeddings(None)
         base_url = env_trim("LLM_BINDING_HOST")
         max_file_bytes = int(env_trim("RAG_MAX_FILE_BYTES", str(25 * 1024 * 1024)) or str(25 * 1024 * 1024))
         max_text_chars = int(env_trim("RAG_MAX_TEXT_CHARS", "250000") or "250000")

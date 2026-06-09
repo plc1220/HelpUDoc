@@ -248,6 +248,9 @@ def test_presentation_context_gate_produces_clarification_form() -> None:
         }
     }
     normalized = normalize_interrupt_payload_value(payload)
+    assert normalized.get("a2uiRequest") is not None
+    assert normalized["a2uiRequest"]["contract"] == "a2ui"
+    assert normalized["a2uiRequest"]["component"] == "clarification.form"
     assert normalized.get("uiRequest") is not None
     assert normalized["uiRequest"]["component"] == "clarification_form"
     assert normalized["uiRequest"]["props"]["questions"][0]["id"] == "purpose"
@@ -273,6 +276,8 @@ def test_style_preview_gate_produces_style_preview_chooser() -> None:
         }
     }
     normalized = normalize_interrupt_payload_value(payload)
+    assert normalized.get("a2uiRequest") is not None
+    assert normalized["a2uiRequest"]["component"] == "style.previewChooser"
     assert normalized.get("uiRequest") is not None
     assert normalized["uiRequest"]["component"] == "style_preview_chooser"
     assert normalized["uiRequest"]["props"]["choices"][0]["id"] == "style-a"

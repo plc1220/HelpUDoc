@@ -200,6 +200,49 @@ test('returns awaiting=false with only one signal for non-interactive skill', ()
   assert.equal(result.awaiting, false);
 });
 
+test('returns awaiting=true for non-slide skill with format choices', () => {
+  const result = detectImplicitInputAwaiting({
+    status: 'completed',
+    skillId: 'research',
+    hadInterrupt: false,
+    assistantText: [
+      'I can prepare this research brief in a few formats.',
+      'Which format would you prefer?',
+      '1. Executive summary',
+      '2. Full report',
+    ].join('\n'),
+  });
+  assert.equal(result.awaiting, true);
+  assert.equal(result.interruptType, 'generic');
+});
+
+test('returns awaiting=true for non-slide skill with audience choices', () => {
+  const result = detectImplicitInputAwaiting({
+    status: 'completed',
+    skillId: 'research',
+    hadInterrupt: false,
+    assistantText: [
+      'I will use the executive summary format.',
+      'Which audience should I optimize for?',
+      '1. Leadership team',
+      '2. Technical reviewers',
+    ].join('\n'),
+  });
+  assert.equal(result.awaiting, true);
+  assert.equal(result.interruptType, 'generic');
+});
+
+test('returns awaiting=true for non-slide prose pausing after prompting a choice', () => {
+  const result = detectImplicitInputAwaiting({
+    status: 'completed',
+    skillId: 'generic-brief',
+    hadInterrupt: false,
+    assistantText: 'I have initiated Stage 1 of the research brief drafting workflow by prompting you to choose the output format (Executive Summary, Full Report, or Checklist). I am now pausing and waiting for your response.',
+  });
+  assert.equal(result.awaiting, true);
+  assert.equal(result.interruptType, 'generic');
+});
+
 test('returns awaiting=true for outline confirmation gate language', () => {
   const result = detectImplicitInputAwaiting({
     status: 'completed',
@@ -430,6 +473,36 @@ test('validateInterrupt passes with valid parameters', () => {
     displayPayload: {
       gateId: 'presentation_context'
     }
+  };
+  const err = validateInterrupt(parsed, 'frontend-slides');
+  assert.equal(err, null);
+});
+
+test('validateInterrupt projects native A2UI requests without legacy uiRequest', () => {
+  const parsed = {
+    type: 'interrupt',
+    kind: 'clarification',
+    a2uiRequest: {
+      contract: 'a2ui',
+      version: '0.9',
+      surfaceId: 'surface-presentation_context',
+      component: 'clarification.form',
+      gateId: 'presentation_context',
+      skill: 'frontend-slides',
+      props: {
+        questions: [{ id: 'purpose', header: 'Purpose', question: 'What is this presentation for?' }],
+      },
+      resumeAction: {
+        endpoint: 'respond',
+        actionId: 'submit',
+      },
+      metadata: {
+        skill: 'frontend-slides',
+        gateId: 'presentation_context',
+        uiContract: 'a2ui',
+        expectedComponent: 'clarification_form',
+      },
+    },
   };
   const err = validateInterrupt(parsed, 'frontend-slides');
   assert.equal(err, null);

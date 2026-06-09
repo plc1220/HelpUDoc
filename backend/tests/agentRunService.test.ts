@@ -6,9 +6,11 @@ import type { IncomingMessage } from 'node:http';
 import { redisClient } from '../src/services/redisService';
 import {
   buildSyntheticClarificationFollowupPrompt,
+  buildFrontendSlidesWorkflowState,
   configureAgentRunServices,
   getRunMeta,
   isRealRunProgressEvent,
+  normalizeWorkflowActionEvent,
   resolveStreamCloseDisposition,
   shouldFailResumedRunForIdle,
   startAgentRun,
@@ -58,6 +60,37 @@ const presentationContextInterrupt = {
     source: 'implicit_input_guard',
   },
   interruptId: 'interrupt-presentation-context',
+  a2uiRequest: {
+    contract: 'a2ui',
+    version: '0.9',
+    surfaceId: 'surface-presentation_context',
+    component: 'clarification.form',
+    gateId: 'presentation_context',
+    skill: 'frontend-slides',
+    required: true,
+    resumeAction: {
+      endpoint: 'respond',
+      actionId: 'submit',
+    },
+    metadata: {
+      skill: 'frontend-slides',
+      gateId: 'presentation_context',
+      uiContract: 'a2ui',
+      expectedComponent: 'clarification_form',
+      source: 'implicit_input_guard',
+    },
+    props: {
+      questions: [
+        {
+          id: 'purpose',
+          header: 'Purpose',
+          question: 'What is this presentation for?',
+          options: [{ id: 'purpose-pitch-deck', label: 'Pitch deck', value: 'Pitch deck' }],
+        },
+      ],
+      title: 'Presentation Setup',
+    },
+  },
   uiRequest: {
     id: 'interrupt-presentation-context',
     component: 'clarification_form',
@@ -74,6 +107,11 @@ const presentationContextInterrupt = {
     },
   },
 };
+
+const nativeOnlyPresentationContextInterrupt = (() => {
+  const { displayPayload, responseSpec, uiRequest, ...nativeOnly } = presentationContextInterrupt;
+  return nativeOnly;
+})();
 
 const outlineConfirmationInterrupt = {
   type: 'interrupt',
@@ -98,6 +136,36 @@ const outlineConfirmationInterrupt = {
     expectedComponent: 'clarification_form',
   },
   interruptId: 'interrupt-outline-confirmation',
+  a2uiRequest: {
+    contract: 'a2ui',
+    version: '0.9',
+    surfaceId: 'surface-outline_confirmation',
+    component: 'clarification.form',
+    gateId: 'outline_confirmation',
+    skill: 'frontend-slides',
+    required: true,
+    resumeAction: {
+      endpoint: 'respond',
+      actionId: 'submit',
+    },
+    metadata: {
+      skill: 'frontend-slides',
+      gateId: 'outline_confirmation',
+      uiContract: 'a2ui',
+      expectedComponent: 'clarification_form',
+    },
+    props: {
+      questions: [
+        {
+          id: 'outline_confirmation',
+          header: 'Outline',
+          question: 'Does this outline look right?',
+          options: [{ id: 'outline-yes', label: 'Yes', value: 'Yes' }],
+        },
+      ],
+      title: 'Outline Confirmation',
+    },
+  },
   uiRequest: {
     id: 'interrupt-outline-confirmation',
     component: 'clarification_form',
@@ -144,6 +212,36 @@ const makeClarificationGateInterrupt = (
     expectedComponent: 'clarification_form',
   },
   interruptId: `interrupt-${gateId}`,
+  a2uiRequest: {
+    contract: 'a2ui',
+    version: '0.9',
+    surfaceId: `surface-${gateId}`,
+    component: 'clarification.form',
+    gateId,
+    skill: 'frontend-slides',
+    required: true,
+    resumeAction: {
+      endpoint: 'respond',
+      actionId: 'submit',
+    },
+    metadata: {
+      skill: 'frontend-slides',
+      gateId,
+      uiContract: 'a2ui',
+      expectedComponent: 'clarification_form',
+    },
+    props: {
+      questions: [
+        {
+          id: questionId,
+          header: title,
+          question,
+          options: [option],
+        },
+      ],
+      title,
+    },
+  },
   uiRequest: {
     id: `interrupt-${gateId}`,
     component: 'clarification_form',
@@ -196,6 +294,46 @@ const stylePreviewSelectionInterrupt = {
     expectedComponent: 'style_preview_chooser',
   },
   interruptId: 'interrupt-style-preview-selection',
+  a2uiRequest: {
+    contract: 'a2ui',
+    version: '0.9',
+    surfaceId: 'surface-style_preview_selection',
+    component: 'style.previewChooser',
+    gateId: 'style_preview_selection',
+    skill: 'frontend-slides',
+    required: true,
+    resumeAction: {
+      endpoint: 'respond',
+      actionId: 'submit',
+    },
+    metadata: {
+      skill: 'frontend-slides',
+      gateId: 'style_preview_selection',
+      uiContract: 'a2ui',
+      expectedComponent: 'style_preview_chooser',
+    },
+    props: {
+      title: 'Select a Style Template',
+      choices: [
+        { id: 'style-a', label: 'Style A', value: 'Style A' },
+        { id: 'style-b', label: 'Style B', value: 'Style B' },
+      ],
+      previews: [
+        {
+          id: 'style-a',
+          label: 'Style A',
+          description: 'Light technical keynote template.',
+          html: '<!doctype html><html><body><h1>Style A</h1></body></html>',
+        },
+        {
+          id: 'style-b',
+          label: 'Style B',
+          description: 'Dark executive template.',
+          html: '<!doctype html><html><body><h1>Style B</h1></body></html>',
+        },
+      ],
+    },
+  },
   uiRequest: {
     id: 'interrupt-style-preview-selection',
     component: 'style_preview_chooser',
@@ -229,7 +367,54 @@ test('isRealRunProgressEvent ignores transport-only events', () => {
   assert.equal(isRealRunProgressEvent({ type: 'langfuse', traceId: 'trace-1' }), false);
   assert.equal(isRealRunProgressEvent({ type: 'model_start', name: 'gemini' }), true);
   assert.equal(isRealRunProgressEvent({ type: 'tool_end', name: 'request_clarification' }), true);
+  assert.equal(isRealRunProgressEvent({ type: 'workflow_action', action: 'generate_artifact' }), true);
   assert.equal(isRealRunProgressEvent({ type: 'token', content: 'hello' }), true);
+});
+
+test('normalizeWorkflowActionEvent parses structured workflow tool output', () => {
+  const event = normalizeWorkflowActionEvent({
+    ok: true,
+    workflowAction: {
+      action: 'generate_artifact',
+      reason: 'Need a reviewable outline before asking for confirmation.',
+      gateId: null,
+      component: null,
+      artifactRefs: ['outline_v1'],
+      context: {
+        skill: 'frontend-slides',
+        artifactType: 'slide_outline',
+      },
+    },
+  });
+
+  assert.equal(event?.action, 'generate_artifact');
+  assert.equal(event?.reason, 'Need a reviewable outline before asking for confirmation.');
+  assert.deepEqual(event?.artifactRefs, ['outline_v1']);
+  assert.equal(event?.context?.skill, 'frontend-slides');
+  assert.equal(typeof event?.timestamp, 'string');
+});
+
+test('normalizeWorkflowActionEvent rejects unknown workflow actions', () => {
+  const event = normalizeWorkflowActionEvent({
+    workflowAction: {
+      action: 'ask_in_prose',
+      reason: 'This is intentionally invalid.',
+    },
+  });
+
+  assert.equal(event, null);
+});
+
+test('buildFrontendSlidesWorkflowState derives next required gate from completed gates', () => {
+  const state = buildFrontendSlidesWorkflowState({
+    completedGateIds: ['presentation_context'],
+  });
+
+  assert.equal(state.workflowType, 'presentation_generation');
+  assert.equal(state.currentPhase, 'review_outline');
+  assert.equal(state.nextRequiredGateId, 'outline_confirmation');
+  assert.equal(state.nextRequiredAction, 'ask_user_a2ui');
+  assert.equal(state.canComplete, false);
 });
 
 test('shouldFailResumedRunForIdle only fails resumed idle runs with no active tool', () => {
@@ -317,6 +502,9 @@ test('buildSyntheticClarificationFollowupPrompt advances frontend-slides context
 
   assert.match(prompt, /Generate the slide outline next/);
   assert.match(prompt, /outline_confirmation/);
+  assert.match(prompt, /Frontend-slides workflow state/);
+  assert.match(prompt, /workflow_action\(action="generate_artifact"/);
+  assert.match(prompt, /workflow_action\(action="ask_user_a2ui", gate_id="outline_confirmation"/);
   assert.doesNotMatch(prompt, /Generate 2-3 style previews\/templates next/);
   assert.doesNotMatch(prompt, /^\/skill frontend-slides/m);
 });
@@ -371,6 +559,7 @@ test('buildSyntheticClarificationFollowupPrompt advances frontend-slides outline
 
   assert.match(prompt, /confirmed the outline/);
   assert.match(prompt, /style_path_selection/);
+  assert.match(prompt, /workflow_action\(action="ask_user_a2ui", gate_id="style_path_selection"/);
   assert.doesNotMatch(prompt, /completed Presentation Context/);
 });
 
@@ -426,6 +615,35 @@ test('buildSyntheticClarificationFollowupPrompt advances frontend-slides style c
   assert.match(prompt, /Do not ask for Presentation Context again/);
 });
 
+test('buildSyntheticClarificationFollowupPrompt gives generic skills non-slide continuation guidance', () => {
+  const prompt = buildSyntheticClarificationFollowupPrompt(
+    '/skill research write a market brief',
+    {
+      answersByQuestionId: {
+        response: 'Executive summary',
+      },
+    },
+    {
+      kind: 'clarification',
+      title: 'Input Needed',
+      displayPayload: { synthetic: true, skill: 'research', source: 'implicit_completion_guard', uiContract: 'a2ui' },
+      responseSpec: {
+        questions: [
+          { id: 'response', header: 'Input', question: 'Which format would you prefer?' },
+        ],
+      },
+    } as any,
+  );
+
+  assert.match(prompt, /continue the 'research' skill/);
+  assert.match(prompt, /Do not ask for this same input again/);
+  assert.match(prompt, /If another human decision or clarification is required/);
+  assert.match(prompt, /workflow_action\(action="ask_user_a2ui"\)/);
+  assert.doesNotMatch(prompt, /Presentation Context/);
+  assert.doesNotMatch(prompt, /Frontend-slides workflow state/);
+  assert.doesNotMatch(prompt, /^\/skill research/m);
+});
+
 test('frontend-slides A2UI presentation gate resumes through continuation instead of repeating Gate 1', {
   skip: process.env.RUN_A2UI_E2E !== '1' ? 'set RUN_A2UI_E2E=1 with Redis available to run lifecycle flow test' : false,
 }, async () => {
@@ -459,7 +677,7 @@ test('frontend-slides A2UI presentation gate resumes through continuation instea
           if (calls.length === 1) {
             return makeStreamResponse([
               { type: 'policy', skill: 'frontend-slides' },
-              presentationContextInterrupt,
+              nativeOnlyPresentationContextInterrupt,
             ]);
           }
           return makeStreamResponse([
@@ -491,6 +709,9 @@ test('frontend-slides A2UI presentation gate resumes through continuation instea
     assert.equal(awaiting?.status, 'awaiting_approval');
     assert.equal(awaiting?.pendingInterrupt?.displayPayload?.source, 'implicit_input_guard');
     assert.equal(awaiting?.pendingInterrupt?.uiRequest?.component, 'clarification_form');
+    assert.equal(awaiting?.pendingInterrupt?.a2uiRequest?.contract, 'a2ui');
+    assert.equal(awaiting?.pendingInterrupt?.a2uiRequest?.component, 'clarification.form');
+    assert.equal(awaiting?.pendingInterrupt?.a2uiRequest?.gateId, 'presentation_context');
 
     await resumeAgentRunWithResponse(runId, {
       answersByQuestionId: {
@@ -663,6 +884,7 @@ test('frontend-slides A2UI flow reaches final slide generation after all clarifi
 
     const presentation = await awaitGate('presentation_context');
     assert.equal(presentation?.pendingInterrupt?.uiRequest?.component, 'clarification_form');
+    assert.equal(presentation?.pendingInterrupt?.a2uiRequest?.component, 'clarification.form');
     await resumeAgentRunWithResponse(runId, {
       answersByQuestionId: {
         purpose: 'Pitch deck',
@@ -694,6 +916,7 @@ test('frontend-slides A2UI flow reaches final slide generation after all clarifi
 
     const stylePreview = await awaitGate('style_preview_selection');
     assert.equal(stylePreview?.pendingInterrupt?.uiRequest?.component, 'style_preview_chooser');
+    assert.equal(stylePreview?.pendingInterrupt?.a2uiRequest?.component, 'style.previewChooser');
     await resumeAgentRunWithResponse(runId, {
       selectedChoiceIds: ['style-b'],
       selectedValues: ['Style B'],
@@ -715,6 +938,303 @@ test('frontend-slides A2UI flow reaches final slide generation after all clarifi
         requiredGates,
       ],
     );
+  } finally {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    if (runId) {
+      await redisClient.del(`agent:run:${runId}`);
+      await redisClient.del(`agent:run:${runId}:meta`);
+    }
+    await redisClient.del(`agent:run:key:${workspaceId}:fast:${turnId}`);
+    configureAgentRunServices({ agentStreamClient: null });
+    if (redisClient.isOpen) {
+      await redisClient.quit();
+    }
+  }
+});
+
+test('frontend-slides completion with missing outline gate recovers to native outline confirmation', {
+  skip: process.env.RUN_A2UI_E2E !== '1' ? 'set RUN_A2UI_E2E=1 with Redis available to run lifecycle flow test' : false,
+}, async () => {
+  if (!redisClient.isOpen) {
+    await redisClient.connect();
+  }
+
+  let runId = '';
+  const turnId = `a2ui-missing-outline-recovery-${Date.now()}`;
+  const workspaceId = 'workspace-a2ui-missing-outline-recovery';
+  let callCount = 0;
+  try {
+    configureAgentRunServices({
+      telemetryService: null,
+      userMemoryService: null,
+      skillEvolutionService: null,
+      conversationService: null,
+      agentStreamClient: {
+        runAgentStream: async () => {
+          callCount += 1;
+          if (callCount === 1) {
+            return makeStreamResponse([
+              { type: 'policy', skill: 'frontend-slides' },
+              presentationContextInterrupt,
+            ]);
+          }
+          return makeStreamResponse([
+            { type: 'policy', skill: 'frontend-slides' },
+            {
+              type: 'token',
+              content: [
+                'Here is the proposed slide outline:\n',
+                '1. Title\n2. Problem\n3. Solution\n',
+                'Please review this proposed structure. I have triggered the Outline Confirmation gate in the interface.',
+              ].join('\n'),
+            },
+            { type: 'done', status: 'completed' },
+          ]);
+        },
+      },
+    });
+
+    const started = await startAgentRun({
+      workspaceId,
+      persona: 'fast',
+      prompt: '/skill frontend-slides @final-research-report.md',
+      history: [{ role: 'user', content: '/skill frontend-slides @final-research-report.md' }],
+      turnId,
+      forceReset: true,
+    });
+    runId = started.runId;
+
+    const setup = await waitForRunStatus(runId, (status) => status === 'awaiting_approval');
+    assert.equal(setup?.pendingInterrupt?.displayPayload?.gateId, 'presentation_context');
+
+    await resumeAgentRunWithResponse(runId, {
+      answersByQuestionId: {
+        purpose: 'Teaching/Tutorial',
+        length: 'Medium (10-20)',
+      },
+    }, {
+      previousInterrupt: setup?.pendingInterrupt,
+    });
+
+    const recovered = await waitForRunStatus(runId, (status, meta) => (
+      status === 'failed' ||
+      (status === 'awaiting_approval' && meta?.pendingInterrupt?.displayPayload?.gateId === 'outline_confirmation')
+    ));
+
+    assert.equal(recovered?.status, 'awaiting_approval');
+    assert.equal(recovered?.pendingInterrupt?.displayPayload?.gateId, 'outline_confirmation');
+    assert.equal(recovered?.pendingInterrupt?.uiRequest?.component, 'clarification_form');
+    assert.equal(recovered?.pendingInterrupt?.a2uiRequest?.component, 'clarification.form');
+    assert.equal(recovered?.pendingInterrupt?.a2uiRequest?.gateId, 'outline_confirmation');
+    assert.equal(recovered?.pendingInterrupt?.displayPayload?.source, 'implicit_completion_guard');
+    assert.deepEqual(recovered?.a2uiGateState?.completedGateIds, ['presentation_context']);
+  } finally {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    if (runId) {
+      await redisClient.del(`agent:run:${runId}`);
+      await redisClient.del(`agent:run:${runId}:meta`);
+    }
+    await redisClient.del(`agent:run:key:${workspaceId}:fast:${turnId}`);
+    configureAgentRunServices({ agentStreamClient: null });
+    if (redisClient.isOpen) {
+      await redisClient.quit();
+    }
+  }
+});
+
+test('completed non-slide skill with prose-only input request recovers to generic A2UI clarification', {
+  skip: process.env.RUN_A2UI_E2E !== '1' ? 'set RUN_A2UI_E2E=1 with Redis available to run lifecycle flow test' : false,
+}, async () => {
+  if (!redisClient.isOpen) {
+    await redisClient.connect();
+  }
+
+  let runId = '';
+  const turnId = `generic-a2ui-recovery-${Date.now()}`;
+  const workspaceId = 'workspace-generic-a2ui-recovery';
+  try {
+    configureAgentRunServices({
+      telemetryService: null,
+      userMemoryService: null,
+      skillEvolutionService: null,
+      conversationService: null,
+      agentStreamClient: {
+        runAgentStream: async () => makeStreamResponse([
+          { type: 'policy', skill: 'research' },
+          {
+            type: 'token',
+            content: [
+              'I can prepare this research brief in a few formats.',
+              'Which format would you prefer?',
+              '1. Executive summary',
+              '2. Full report',
+            ].join('\n'),
+          },
+          { type: 'done', status: 'completed' },
+        ]),
+      },
+    });
+
+    const started = await startAgentRun({
+      workspaceId,
+      persona: 'fast',
+      prompt: '/skill research write a market brief',
+      history: [{ role: 'user', content: '/skill research write a market brief' }],
+      turnId,
+      forceReset: true,
+    });
+    runId = started.runId;
+
+    const recovered = await waitForRunStatus(runId, (status, meta) => (
+      status === 'failed' ||
+      (status === 'awaiting_approval' && meta?.pendingInterrupt?.displayPayload?.skill === 'research')
+    ));
+
+    assert.equal(recovered?.status, 'awaiting_approval');
+    assert.equal(recovered?.pendingInterrupt?.kind, 'clarification');
+    assert.equal(recovered?.pendingInterrupt?.displayPayload?.source, 'implicit_completion_guard');
+    assert.equal(recovered?.pendingInterrupt?.displayPayload?.skill, 'research');
+    assert.equal(recovered?.pendingInterrupt?.uiRequest?.component, 'clarification_form');
+    assert.equal(recovered?.pendingInterrupt?.a2uiRequest?.contract, 'a2ui');
+    assert.equal(recovered?.pendingInterrupt?.a2uiRequest?.component, 'clarification.form');
+    assert.equal(recovered?.pendingInterrupt?.a2uiRequest?.skill, 'research');
+    assert.equal(recovered?.pendingInterrupt?.uiRequest?.props?.title, 'Input Needed');
+    assert.ok(Array.isArray(recovered?.pendingInterrupt?.uiRequest?.props?.questions));
+  } finally {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    if (runId) {
+      await redisClient.del(`agent:run:${runId}`);
+      await redisClient.del(`agent:run:${runId}:meta`);
+    }
+    await redisClient.del(`agent:run:key:${workspaceId}:fast:${turnId}`);
+    configureAgentRunServices({ agentStreamClient: null });
+    if (redisClient.isOpen) {
+      await redisClient.quit();
+    }
+  }
+});
+
+test('non-slide skill can resume through multiple generic A2UI input gates', {
+  skip: process.env.RUN_A2UI_E2E !== '1' ? 'set RUN_A2UI_E2E=1 with Redis available to run lifecycle flow test' : false,
+}, async () => {
+  if (!redisClient.isOpen) {
+    await redisClient.connect();
+  }
+
+  let runId = '';
+  let runCallCount = 0;
+  const prompts: string[] = [];
+  const turnId = `generic-a2ui-multigate-${Date.now()}`;
+  const workspaceId = 'workspace-generic-a2ui-multigate';
+  try {
+    configureAgentRunServices({
+      telemetryService: null,
+      userMemoryService: null,
+      skillEvolutionService: null,
+      conversationService: null,
+      agentStreamClient: {
+        runAgentStream: async (_persona, _workspaceId, prompt) => {
+          runCallCount += 1;
+          prompts.push(prompt);
+          if (runCallCount === 1) {
+            return makeStreamResponse([
+              { type: 'policy', skill: 'research' },
+              {
+                type: 'token',
+                content: [
+                  'I can prepare this research brief in a few formats.',
+                  'Which format would you prefer?',
+                  '1. Executive summary',
+                  '2. Full report',
+                ].join('\n'),
+              },
+              { type: 'done', status: 'completed' },
+            ]);
+          }
+          if (runCallCount === 2) {
+            return makeStreamResponse([
+              { type: 'policy', skill: 'research' },
+              {
+                type: 'token',
+                content: [
+                  'I will use the executive summary format.',
+                  'Which audience should I optimize for?',
+                  '1. Leadership team',
+                  '2. Technical reviewers',
+                ].join('\n'),
+              },
+              { type: 'done', status: 'completed' },
+            ]);
+          }
+          return makeStreamResponse([
+            { type: 'policy', skill: 'research' },
+            {
+              type: 'token',
+              content: 'Completed the executive summary brief for the leadership team.',
+            },
+            { type: 'done', status: 'completed' },
+          ]);
+        },
+      },
+    });
+
+    const started = await startAgentRun({
+      workspaceId,
+      persona: 'fast',
+      prompt: '/skill research write a market brief',
+      history: [{ role: 'user', content: '/skill research write a market brief' }],
+      turnId,
+      forceReset: true,
+    });
+    runId = started.runId;
+
+    const firstAwaiting = await waitForRunStatus(runId, (status, meta) => (
+      status === 'failed' ||
+      (status === 'awaiting_approval' && meta?.pendingInterrupt?.displayPayload?.skill === 'research')
+    ));
+
+    assert.equal(firstAwaiting?.status, 'awaiting_approval');
+    assert.equal(firstAwaiting?.pendingInterrupt?.uiRequest?.component, 'clarification_form');
+    assert.equal(firstAwaiting?.pendingInterrupt?.a2uiRequest?.component, 'clarification.form');
+    assert.equal(firstAwaiting?.pendingInterrupt?.displayPayload?.source, 'implicit_completion_guard');
+    const firstInterrupt = firstAwaiting?.pendingInterrupt;
+    assert.ok(firstInterrupt);
+
+    await resumeAgentRunWithResponse(
+      runId,
+      { answersByQuestionId: { response: 'Executive summary' } },
+      { previousInterrupt: firstInterrupt },
+    );
+
+    const secondAwaiting = await waitForRunStatus(runId, (status, meta) => (
+      status === 'failed' ||
+      (
+        status === 'awaiting_approval' &&
+        meta?.pendingInterrupt?.displayPayload?.skill === 'research' &&
+        meta.pendingInterrupt.description?.includes('audience')
+      )
+    ));
+
+    assert.equal(secondAwaiting?.status, 'awaiting_approval');
+    assert.equal(secondAwaiting?.pendingInterrupt?.uiRequest?.component, 'clarification_form');
+    assert.equal(secondAwaiting?.pendingInterrupt?.a2uiRequest?.component, 'clarification.form');
+    assert.match(prompts[1], /Do not ask for this same input again/);
+    assert.match(prompts[1], /workflow_action\(action="ask_user_a2ui"\)/);
+    assert.doesNotMatch(prompts[1], /Presentation Context/);
+    const secondInterrupt = secondAwaiting?.pendingInterrupt;
+    assert.ok(secondInterrupt);
+
+    await resumeAgentRunWithResponse(
+      runId,
+      { answersByQuestionId: { response: 'Leadership team' } },
+      { previousInterrupt: secondInterrupt },
+    );
+
+    const completed = await waitForRunStatus(runId, (status) => status === 'completed' || status === 'failed');
+    assert.equal(completed?.status, 'completed');
+    assert.equal(runCallCount, 3);
+    assert.match(prompts[2], /Do not ask for this same input again/);
+    assert.doesNotMatch(prompts[2], /Presentation Context/);
   } finally {
     await new Promise((resolve) => setTimeout(resolve, 100));
     if (runId) {
