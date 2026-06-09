@@ -32,12 +32,21 @@ _STRONG_GATE_PATTERNS: tuple[Pattern[str], ...] = (
     re.compile(r"\b(?:style|theme)\s*[a-c]\s*:", re.IGNORECASE),
     re.compile(r"\boption\s*[1-3]\s*:", re.IGNORECASE),
     re.compile(r"\bnext\s+steps\b.{0,120}\b(?:sidebar|form)", re.IGNORECASE),
+    re.compile(
+        r"\b(?:prompted|prompting|asked|asking)\s+(?:you\s+)?to\s+(?:choose|select|pick|provide|enter)\b.{0,260}\b(?:paus(?:e|ing|ed)|wait(?:ing)?|response|input)\b",
+        re.IGNORECASE | re.DOTALL,
+    ),
+    re.compile(
+        r"\b(?:paus(?:e|ing|ed)|wait(?:ing)?)\b.{0,180}\b(?:your\s+)?(?:response|input|choice|selection|answer)\b",
+        re.IGNORECASE | re.DOTALL,
+    ),
 )
 
 _SELECTION_PROMPT_PATTERNS: tuple[Pattern[str], ...] = (
     re.compile(r"\b(?:please\s+)?select\b", re.IGNORECASE),
     re.compile(r"\b(?:please\s+)?choose\b", re.IGNORECASE),
-    re.compile(r"\bwhich\s+(?:one|option|style|mood|vibe)", re.IGNORECASE),
+    re.compile(r"\bwhich\s+(?:one|option|format|path|audience|tone|depth|scope|style|mood|vibe)", re.IGNORECASE),
+    re.compile(r"\b(?:choose|select|pick)\s+(?:the\s+)?(?:output\s+)?(?:format|audience|tone|depth|scope|option|path)\b", re.IGNORECASE),
     re.compile(r"\bwhat\s+(?:style|mood|vibe)", re.IGNORECASE),
     re.compile(r"\bready to (?:proceed|continue|move)", re.IGNORECASE),
     re.compile(r"\bshall I\b", re.IGNORECASE),
@@ -74,6 +83,14 @@ _UI_FORM_MISREF_PATTERNS: tuple[Pattern[str], ...] = (
     ),
     re.compile(r"\b(?:interactive|thumbnail)\s+(?:selector|chooser|window)\s+(?:above|below)?", re.IGNORECASE),
     re.compile(r"\b(?:select|choose|pick|review).{0,120}\b(?:selector|chooser|preview|style).{0,80}\b(?:above|below|window)\b", re.IGNORECASE),
+    re.compile(
+        r"\b(?:presented|triggered|activated|opened|shown|displayed|rendered|initiated|started|set\s+up)\b.{0,160}\b(?:a2ui|gate|surface|form|prompt|selector|chooser)\b",
+        re.IGNORECASE | re.DOTALL,
+    ),
+    re.compile(
+        r"\b(?:a2ui|gate|surface|form|prompt|selector|chooser)\b.{0,160}\b(?:presented|triggered|activated|opened|shown|displayed|rendered|initiated|started|active)\b",
+        re.IGNORECASE | re.DOTALL,
+    ),
     re.compile(r"\bselect.*(?:above|below)", re.IGNORECASE),
     re.compile(r"\bpick.*(?:above|below)", re.IGNORECASE),
     re.compile(r"\bconfirm.*(?:form|UI)\s+above", re.IGNORECASE),

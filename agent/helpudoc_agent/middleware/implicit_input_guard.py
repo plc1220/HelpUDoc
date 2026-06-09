@@ -10,40 +10,20 @@ from langchain.agents.middleware.types import AgentMiddleware, AgentState, hook_
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.runtime import Runtime
 
+from helpudoc_agent.a2ui_workflows import (
+    DEFAULT_FRONTEND_SLIDES_STYLE_CHOICES,
+    FRONTEND_SLIDES_A2UI_GATE_IDS,
+    FRONTEND_SLIDES_DISCOVERY_QUESTIONS,
+    FRONTEND_SLIDES_EXPECTED_COMPONENTS,
+    FRONTEND_SLIDES_MOOD_QUESTIONS,
+    FRONTEND_SLIDES_OUTLINE_QUESTIONS,
+    FRONTEND_SLIDES_STYLE_PATH_QUESTIONS,
+    frontend_slides_gate_id,
+)
 from helpudoc_agent.implicit_input_detection import detect_implicit_input_awaiting
 from helpudoc_agent.interrupt_payloads import build_clarification_interrupt_value, encode_interrupt_payload_marker
 
 logger = logging.getLogger(__name__)
-
-_OUTLINE_QUESTION_OPTIONS = [
-    {
-        "id": "confirm",
-        "label": "Looks good, proceed",
-        "value": "Looks good, proceed",
-        "description": "Move on to style selection",
-    },
-    {
-        "id": "adjust-images",
-        "label": "Adjust images",
-        "value": "Adjust images",
-        "description": "Change which images go where",
-    },
-    {
-        "id": "adjust-outline",
-        "label": "Adjust outline",
-        "value": "Adjust outline",
-        "description": "Change the slide structure",
-    },
-]
-
-FRONTEND_SLIDES_OUTLINE_QUESTIONS = [
-    {
-        "id": "outline",
-        "header": "Outline",
-        "question": "Does this slide outline and image selection look right?",
-        "options": _OUTLINE_QUESTION_OPTIONS,
-    },
-]
 
 _GENERIC_CONTINUE_CHOICES = [
     {
@@ -51,191 +31,6 @@ _GENERIC_CONTINUE_CHOICES = [
         "label": "Continue",
         "value": "Continue",
         "description": "Proceed with the next step",
-    },
-]
-
-FRONTEND_SLIDES_STYLE_PATH_QUESTIONS = [
-    {
-        "id": "style_path",
-        "header": "Style Selection Method",
-        "question": "How would you like to choose your presentation style?",
-        "options": [
-            {
-                "id": "guided",
-                "label": "Show me options",
-                "value": "Show me options",
-                "description": "Generate 3 previews based on my needs",
-            },
-            {
-                "id": "direct",
-                "label": "I know what I want",
-                "value": "I know what I want",
-                "description": "Pick from the preset list directly",
-            },
-        ],
-    },
-]
-
-FRONTEND_SLIDES_MOOD_QUESTIONS = [
-    {
-        "id": "mood",
-        "header": "Vibe",
-        "question": "What feeling should the audience have when viewing your slides?",
-        "options": [
-            {"id": "impressed", "label": "Impressed/Confident", "value": "Impressed/Confident"},
-            {"id": "excited", "label": "Excited/Energized", "value": "Excited/Energized"},
-            {"id": "calm", "label": "Calm/Focused", "value": "Calm/Focused"},
-            {"id": "inspired", "label": "Inspired/Moved", "value": "Inspired/Moved"},
-        ],
-    },
-]
-
-FRONTEND_SLIDES_DISCOVERY_QUESTIONS = [
-    {
-        "id": "purpose",
-        "header": "Purpose",
-        "question": "What is this presentation for?",
-        "options": [
-            {
-                "id": "purpose-pitch-deck",
-                "label": "Pitch deck",
-                "value": "Pitch deck",
-                "description": "Selling an idea, product, or company to investors/clients",
-            },
-            {
-                "id": "purpose-teaching",
-                "label": "Teaching/Tutorial",
-                "value": "Teaching/Tutorial",
-                "description": "Explaining concepts, how-to guides, educational content",
-            },
-            {
-                "id": "purpose-conference",
-                "label": "Conference talk",
-                "value": "Conference talk",
-                "description": "Speaking at an event, tech talk, keynote",
-            },
-            {
-                "id": "purpose-internal",
-                "label": "Internal presentation",
-                "value": "Internal presentation",
-                "description": "Team updates, strategy meetings, company updates",
-            },
-        ],
-    },
-    {
-        "id": "length",
-        "header": "Length",
-        "question": "Approximately how many slides?",
-        "options": [
-            {
-                "id": "length-short",
-                "label": "Short (5-10)",
-                "value": "Short (5-10)",
-                "description": "Quick pitch, lightning talk",
-            },
-            {
-                "id": "length-medium",
-                "label": "Medium (10-20)",
-                "value": "Medium (10-20)",
-                "description": "Standard presentation",
-            },
-            {
-                "id": "length-long",
-                "label": "Long (20+)",
-                "value": "Long (20+)",
-                "description": "Deep dive, comprehensive talk",
-            },
-        ],
-    },
-    {
-        "id": "content",
-        "header": "Content",
-        "question": "Do you have the content ready, or do you need help structuring it?",
-        "options": [
-            {
-                "id": "content-ready",
-                "label": "I have all content ready",
-                "value": "I have all content ready",
-                "description": "Just need to design the presentation",
-            },
-            {
-                "id": "content-notes",
-                "label": "I have rough notes",
-                "value": "I have rough notes",
-                "description": "Need help organizing into slides",
-            },
-            {
-                "id": "content-topic",
-                "label": "I have a topic only",
-                "value": "I have a topic only",
-                "description": "Need help creating the full outline",
-            },
-        ],
-    },
-    {
-        "id": "images",
-        "header": "Images",
-        "question": "Do you have images to include? Select 'No images' or select Other and type/paste your image folder path.",
-        "options": [
-            {
-                "id": "images-none",
-                "label": "No images",
-                "value": "No images",
-                "description": "Text-only presentation",
-            },
-            {
-                "id": "images-assets",
-                "label": "./assets",
-                "value": "./assets",
-                "description": "Use the assets folder in the current project",
-            },
-        ],
-    },
-    {
-        "id": "editing",
-        "header": "Editing",
-        "question": "Do you need to edit text directly in the browser after generation?",
-        "options": [
-            {
-                "id": "editing-yes",
-                "label": "Yes (Recommended)",
-                "value": "Yes (Recommended)",
-                "description": "Can edit text in-browser, auto-save to localStorage, export file",
-            },
-            {
-                "id": "editing-no",
-                "label": "No",
-                "value": "No",
-                "description": "Presentation only, keeps file smaller",
-            },
-        ],
-    },
-]
-
-DEFAULT_FRONTEND_SLIDES_STYLE_CHOICES = [
-    {
-        "id": "style-a",
-        "label": "Style A",
-        "value": "Style A",
-        "description": "Use the first generated preview direction.",
-    },
-    {
-        "id": "style-b",
-        "label": "Style B",
-        "value": "Style B",
-        "description": "Use the second generated preview direction.",
-    },
-    {
-        "id": "style-c",
-        "label": "Style C",
-        "value": "Style C",
-        "description": "Use the third generated preview direction.",
-    },
-    {
-        "id": "mix-elements",
-        "label": "Mix elements",
-        "value": "Mix elements",
-        "description": "Combine aspects from the generated previews.",
     },
 ]
 
@@ -255,6 +50,24 @@ def _extract_message_text(message: AIMessage) -> str:
     return str(content or "").strip()
 
 
+def _extract_recent_human_text(messages: list[Any]) -> str:
+    for message in reversed(messages):
+        if isinstance(message, HumanMessage):
+            content = message.content
+            if isinstance(content, str):
+                return content.strip()
+            if isinstance(content, list):
+                parts: list[str] = []
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        parts.append(str(block.get("text") or ""))
+                    elif isinstance(block, str):
+                        parts.append(block)
+                return "\n".join(part for part in parts if part).strip()
+            return str(content or "").strip()
+    return ""
+
+
 def _resolve_active_skill_id(context: Any) -> str | None:
     if not isinstance(context, dict):
         return None
@@ -269,15 +82,6 @@ def _resolve_active_skill_id(context: Any) -> str | None:
     return None
 
 
-FRONTEND_SLIDES_A2UI_GATES = (
-    "presentation_context",
-    "outline_confirmation",
-    "style_path_selection",
-    "mood_or_preset_selection",
-    "style_preview_selection",
-)
-
-
 def _is_frontend_slides_skill(skill_id: str | None) -> bool:
     normalized = str(skill_id or "").strip().lower()
     return normalized == "frontend-slides" or normalized.endswith("/frontend-slides")
@@ -289,7 +93,7 @@ def _completed_a2ui_gate_ids(context: Any) -> set[str]:
     raw = context.get("frontend_slides_completed_a2ui_gates")
     if not isinstance(raw, list):
         return set()
-    return {str(item).strip() for item in raw if str(item).strip() in FRONTEND_SLIDES_A2UI_GATES}
+    return {str(item).strip() for item in raw if frontend_slides_gate_id(item)}
 
 
 def _is_edit_existing_frontend_slides_context(context: Any) -> bool:
@@ -310,7 +114,7 @@ def _frontend_slides_required_gate_missing(context: Any) -> str | None:
     if _is_edit_existing_frontend_slides_context(context):
         return None
     completed = _completed_a2ui_gate_ids(context)
-    for gate_id in FRONTEND_SLIDES_A2UI_GATES:
+    for gate_id in FRONTEND_SLIDES_A2UI_GATE_IDS:
         if gate_id not in completed:
             return gate_id
     return None
@@ -338,16 +142,12 @@ def _frontend_slides_gate_matches_context(gate_id: str | None, text: str) -> boo
 
 
 def _frontend_slides_gate_display_payload(gate_id: str) -> dict[str, Any]:
-    expected_component = (
-        "style_preview_chooser"
-        if gate_id == "style_preview_selection"
-        else "clarification_form"
-    )
     return {
+        "synthetic": True,
         "skill": "frontend-slides",
         "gateId": gate_id,
         "uiContract": "a2ui",
-        "expectedComponent": expected_component,
+        "expectedComponent": FRONTEND_SLIDES_EXPECTED_COMPONENTS.get(gate_id, ""),
         "source": "implicit_input_guard",
     }
 
@@ -426,37 +226,48 @@ def _build_frontend_slides_gate_interrupt(gate_id: str) -> dict[str, Any] | None
 def _frontend_slides_gate_loopback_instruction(gate_id: str | None, assistant_text: str) -> str:
     base = (
         f"You requested the user to fill out a form or select choices in your prose: '{assistant_text}'. "
-        "However, you did not emit an actual A2UI interrupt. Under our strict A2UI contract, "
-        "all user inputs must be requested with a structured UI tool call, not prose."
+        "However, you did not emit an actual A2UI workflow action. Under our strict A2UI contract, "
+        "all user inputs must be requested with workflow_action(action='ask_user_a2ui'), not prose."
     )
     if gate_id == "outline_confirmation":
         return (
             f"{base} The Presentation Context gate is already complete. Do not ask for the Presentation Setup "
             "form again. First write a concrete proposed slide outline in your assistant response, then call "
-            "request_ui with component='clarification_form', gate_id='outline_confirmation', and context_json "
+            "workflow_action with action='ask_user_a2ui', component='clarification.form', gate_id='outline_confirmation', and context_json "
             "containing skill='frontend-slides', gateId='outline_confirmation', uiContract='a2ui', and "
             "expectedComponent='clarification_form'. The form must ask the user to approve or revise the "
-            "outline. If you use request_clarification instead, include the same display payload gateId."
+            "outline."
         )
     if gate_id == "style_path_selection":
         return (
             f"{base} The outline is already confirmed. Do not ask for Presentation Setup or Outline "
-            "Confirmation again. Call request_ui with component='clarification_form' and "
+            "Confirmation again. Call workflow_action with action='ask_user_a2ui', component='clarification.form', and "
             "gate_id='style_path_selection' to ask how the user wants to choose the deck style."
         )
     if gate_id == "mood_or_preset_selection":
         return (
-            f"{base} The style path is already selected. Call request_ui with component='clarification_form' "
+            f"{base} The style path is already selected. Call workflow_action with action='ask_user_a2ui', component='clarification.form' "
             "and gate_id='mood_or_preset_selection' to collect the desired visual mood or preset direction."
         )
     if gate_id == "style_preview_selection":
         return (
             f"{base} The mood/preset direction is already selected. Generate the style previews, then call "
-            "request_ui with component='style_preview_chooser' and gate_id='style_preview_selection'."
+            "workflow_action with action='ask_user_a2ui', component='style.previewChooser', and gate_id='style_preview_selection'."
         )
     return (
-        f"{base} Please call request_ui or request_clarification now with the appropriate structured "
+        f"{base} Please call workflow_action(action='ask_user_a2ui') now with the appropriate structured "
         "questions or style choice form."
+    )
+
+
+def _generic_a2ui_loopback_instruction(skill_id: str, assistant_text: str) -> str:
+    return (
+        f"You requested user input in prose while running the '{skill_id}' skill: '{assistant_text}'. "
+        "That creates dead text instead of an interactive surface. Under the A2UI contract, ask for "
+        "human input with workflow_action(action='ask_user_a2ui') and then stop. Use component="
+        "'clarification.form', a short gate_id describing this decision, props_json with a title, "
+        "description, questions/options, and context_json containing skill and uiContract='a2ui'. "
+        "After the user responds, continue from this exact point instead of restarting the skill."
     )
 
 
@@ -593,6 +404,112 @@ def _extract_frontend_slides_style_choices(text: str) -> list[dict[str, str]]:
     return choices
 
 
+def _clean_generic_choice_label(raw: str) -> str:
+    label = re.sub(r"[*_`]+", "", str(raw or "")).strip()
+    label = re.sub(r"^(?:or|and)\s+", "", label, flags=re.IGNORECASE)
+    label = re.sub(r"\s+", " ", label)
+    label = re.sub(r"^[\"'“”]+|[\"'“”.,;:]+$", "", label).strip()
+    return label
+
+
+def _generic_choice_id(label: str, index: int) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", label.lower()).strip("-")
+    return slug[:40] or f"option-{index + 1}"
+
+
+def _extract_generic_choice_options(text: str) -> list[dict[str, str]]:
+    """Best-effort extraction for generic non-slide A2UI recovery choices."""
+    source = (text or "").strip()
+    if not source:
+        return []
+
+    candidates: list[str] = []
+    seen: set[str] = set()
+
+    if len(candidates) < 2:
+        paren_matches = re.findall(r"\(([^()]{8,180})\)", source)
+        for raw_group in paren_matches:
+            if not re.search(r"\b(?:or|and)\b|,", raw_group, re.IGNORECASE):
+                continue
+            parts = re.split(r"\s*,\s*|\s+\bor\b\s+|\s+\band\b\s+", raw_group, flags=re.IGNORECASE)
+            group_labels = [_clean_generic_choice_label(part) for part in parts]
+            group_labels = [label for label in group_labels if 1 < len(label) <= 80]
+            if len(group_labels) >= 2:
+                candidates = []
+                seen = set()
+                for label in group_labels:
+                    key = label.lower()
+                    if key not in seen:
+                        seen.add(key)
+                        candidates.append(label)
+                break
+
+    if len(candidates) < 2:
+        colon_match = re.search(
+            r"\b(?:format|option|choice|selection|path|audience|tone|scope|depth)s?\s*:\s*([^.!?\n]{8,180})",
+            source,
+            re.IGNORECASE | re.DOTALL,
+        )
+        if colon_match:
+            parts = re.split(r"\s*,\s*|\s+\bor\b\s+|\s+\band\b\s+", colon_match.group(1), flags=re.IGNORECASE)
+            candidates = []
+            seen = set()
+            for part in parts:
+                label = _clean_generic_choice_label(part)
+                if 1 < len(label) <= 80:
+                    key = label.lower()
+                    if key not in seen:
+                        seen.add(key)
+                        candidates.append(label)
+
+    if len(candidates) < 2:
+        from_matches = re.finditer(
+            r"\b(?:choose|select|pick)\b.{0,80}\b(?:from|between)\b\s+([^.!?\n]{8,180})",
+            source,
+            re.IGNORECASE | re.DOTALL,
+        )
+        for from_match in from_matches:
+            parts = re.split(
+                r"\s*,\s*|\s+\bor\b\s+|\s+\band\b\s+",
+                from_match.group(1),
+                flags=re.IGNORECASE,
+            )
+            group_candidates: list[str] = []
+            group_seen: set[str] = set()
+            for part in parts:
+                label = _clean_generic_choice_label(part)
+                if 1 < len(label) <= 80:
+                    key = label.lower()
+                    if key not in group_seen:
+                        group_seen.add(key)
+                        group_candidates.append(label)
+            if len(group_candidates) >= 2:
+                candidates = group_candidates
+                break
+
+    if len(candidates) < 2:
+        for match in re.finditer(r"(?:^|\n)\s*(?:[-*•]|\d+[.)])\s+(.+)", source):
+            label = _clean_generic_choice_label(match.group(1).split(" — ", 1)[0].split(" - ", 1)[0])
+            if label and len(label) <= 80:
+                key = label.lower()
+                if key not in seen:
+                    seen.add(key)
+                    candidates.append(label)
+
+    if len(candidates) < 2:
+        return []
+
+    return [
+        {
+            "id": _generic_choice_id(label, index),
+            "label": label,
+            "value": label,
+            "description": f"Use {label} for the next step.",
+        }
+        for index, label in enumerate(candidates[:6])
+    ]
+
+
 def _build_fallback_style_preview_html(choice: dict[str, str]) -> str:
     palette_by_id = {
         "style-a": {"bg": "#f8fafc", "fg": "#0f172a", "accent": "#0ea5e9", "muted": "#475569"},
@@ -656,6 +573,7 @@ def build_synthetic_clarification_interrupt(
         "synthetic": True,
         "source": "implicit_input_guard",
         "skill": skill_id,
+        "uiContract": "a2ui",
     }
 
     if skill_id == "frontend-slides" and _is_frontend_slides_style_selection_context(assistant_text):
@@ -724,10 +642,18 @@ def build_synthetic_clarification_interrupt(
                 response_spec["dismissLabel"] = "Dismiss"
         return payload
 
+    generic_choices = _extract_generic_choice_options(assistant_text)
+    generic_question = {
+        "id": "response",
+        "header": "Input",
+        "question": description,
+        "options": generic_choices,
+    }
     payload = build_clarification_interrupt_value(
-        title="Continue",
+        title="Input Needed",
         description=description,
-        choices=list(_GENERIC_CONTINUE_CHOICES),
+        questions=[generic_question],
+        choices=[],
         allow_freeform=True,
         submit_label="Continue",
         display_payload=display_payload,
@@ -774,6 +700,10 @@ class ImplicitInputGuardMiddleware(AgentMiddleware):
 
         runtime_context = getattr(runtime, "context", None)
         assistant_text = _extract_message_text(last_ai_msg)
+        recent_human_text = _extract_recent_human_text(messages)
+        generic_choice_source_text = "\n".join(
+            part for part in (assistant_text, recent_human_text) if part
+        )
         detection = detect_implicit_input_awaiting(skill_id=skill_id, assistant_text=assistant_text)
         raw_missing_gate = (
             _frontend_slides_required_gate_missing(runtime_context)
@@ -798,13 +728,10 @@ class ImplicitInputGuardMiddleware(AgentMiddleware):
             return None
 
         logger.warning(
-            "A2UI input guard: frontend-slides missing required gate=%s or prose implies a UI form without request_clarification. skill=%s",
+            "A2UI input guard: missing required gate=%s or prose implies a UI form without workflow_action/A2UI. skill=%s",
             missing_gate,
             skill_id,
         )
-
-        if not _is_frontend_slides_skill(skill_id):
-            return None
 
         if missing_gate:
             interrupt_payload = _build_frontend_slides_gate_interrupt(missing_gate)
@@ -817,13 +744,42 @@ class ImplicitInputGuardMiddleware(AgentMiddleware):
             }
 
         if state.get("implicit_retry"):
-            raise ValueError(
-                "Contract violation: Model referenced implicit UI form but failed to emit explicit "
-                "request_clarification/A2UI tool call on loopback retry."
+            if _is_frontend_slides_skill(skill_id):
+                raise ValueError(
+                    "Contract violation: Model referenced implicit UI form but failed to emit explicit "
+                    "workflow_action(action='ask_user_a2ui')/A2UI tool call on loopback retry."
+                )
+            interrupt_payload = build_synthetic_clarification_interrupt(
+                skill_id=skill_id,
+                assistant_text=generic_choice_source_text,
+                prompt_hint=detection.prompt,
             )
+            if interrupt_payload is None:
+                return None
+            logger.info("A2UI input guard: emitting generic synthetic clarification for skill=%s", skill_id)
+            return {
+                "messages": [AIMessage(content=encode_interrupt_payload_marker(interrupt_payload))],
+            }
+
+        if detection.awaiting and not _is_frontend_slides_skill(skill_id):
+            interrupt_payload = build_synthetic_clarification_interrupt(
+                skill_id=skill_id,
+                assistant_text=generic_choice_source_text,
+                prompt_hint=detection.prompt,
+            )
+            if interrupt_payload is None:
+                return None
+            logger.info("A2UI input guard: emitting generic synthetic clarification for skill=%s", skill_id)
+            return {
+                "messages": [AIMessage(content=encode_interrupt_payload_marker(interrupt_payload))],
+            }
 
         if detection.awaiting:
-            loopback_instruction = _frontend_slides_gate_loopback_instruction(raw_missing_gate, assistant_text)
+            loopback_instruction = (
+                _frontend_slides_gate_loopback_instruction(raw_missing_gate, assistant_text)
+                if _is_frontend_slides_skill(skill_id)
+                else _generic_a2ui_loopback_instruction(skill_id, assistant_text)
+            )
         else:
             return None
 
