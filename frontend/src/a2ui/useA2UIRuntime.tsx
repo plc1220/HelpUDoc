@@ -106,6 +106,11 @@ export const useA2UIRuntime = ({
 
   const loadRequest = (request: A2UIRequest) => {
     const surfaceId = request.surfaceId;
+    if (!surfaceId) {
+      setSurfaceModel(null);
+      setError('A2UI request is missing a surface id.');
+      return;
+    }
     const requestSignature = JSON.stringify({
       surfaceId: request.surfaceId,
       component: request.component,
@@ -162,7 +167,13 @@ export const useA2UIRuntime = ({
           },
         },
       ]);
-      setSurfaceModel(processor.model.getSurface(surfaceId));
+      const nextSurface = processor.model.getSurface(surfaceId);
+      if (!nextSurface) {
+        setSurfaceModel(null);
+        setError(`A2UI surface "${surfaceId}" was not created.`);
+        return;
+      }
+      setSurfaceModel(nextSurface);
       lastRequestSignatureRef.current = requestSignature;
     } catch (err: any) {
       console.error('Failed to process request', err);

@@ -463,6 +463,17 @@ const parseClarificationQuestions = (
 
 const isA2UINativeEnabled = import.meta.env.VITE_A2UI_NATIVE_ENABLED !== 'false';
 
+const sanitizeA2UISurfacePart = (value: unknown): string | undefined => {
+  if (typeof value !== 'string' && typeof value !== 'number') {
+    return undefined;
+  }
+  const sanitized = String(value)
+    .trim()
+    .replace(/[^a-zA-Z0-9_-]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return sanitized || undefined;
+};
+
 export default function ChatMessageBubble({
   colorMode,
   message,
@@ -587,13 +598,15 @@ export default function ChatMessageBubble({
       : undefined;
     const stableSurfaceId = [
       'surface',
-      message.id,
-      gateId || pendingInterrupt.interruptId || pendingInterrupt.a2uiRequest?.component || pendingInterrupt.uiRequest?.component || 'interrupt',
-    ].join(':');
+      sanitizeA2UISurfacePart(message.id),
+      sanitizeA2UISurfacePart(
+        gateId || pendingInterrupt.interruptId || pendingInterrupt.a2uiRequest?.component || pendingInterrupt.uiRequest?.component || 'interrupt',
+      ),
+    ].filter(Boolean).join('-');
     if (pendingInterrupt.a2uiRequest) {
       return {
         ...pendingInterrupt.a2uiRequest,
-        surfaceId: stableSurfaceId,
+        surfaceId: pendingInterrupt.a2uiRequest.surfaceId || stableSurfaceId,
       };
     }
     if (pendingInterrupt.uiRequest && isA2UINativeEnabled) {

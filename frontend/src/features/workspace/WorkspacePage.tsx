@@ -512,9 +512,36 @@ const buildClarificationPayloadFromA2UIResponse = (response: A2UIResponse) => {
   const selectedChoiceIds =
     toStringArray(values.selectedChoiceIds)
     || toStringArray(values.selectedChoiceId)
+    || toStringArray(values.choiceIds)
+    || toStringArray(values.choiceId)
     || toStringArray(values.choice);
-  const selectedValues = toStringArray(values.selectedValues);
-  const answersByQuestionId = toInterruptAnswers(values.answersByQuestionId || values.answers);
+  const selectedValues =
+    toStringArray(values.selectedValues)
+    || toStringArray(values.values)
+    || toStringArray(values.value);
+  const reservedValueKeys = new Set([
+    'answersByQuestionId',
+    'answers',
+    'selectedChoiceIds',
+    'selectedChoiceId',
+    'choiceIds',
+    'choiceId',
+    'choice',
+    'selectedValues',
+    'values',
+    'value',
+    'notes',
+    'message',
+    'response',
+  ]);
+  const directAnswers = Object.fromEntries(
+    Object.entries(values).filter(([key]) => !reservedValueKeys.has(key)),
+  );
+  const answersByQuestionId = toInterruptAnswers(
+    values.answersByQuestionId
+      || values.answers
+      || directAnswers,
+  );
   const message =
     response.message
     || (typeof values.notes === 'string' ? values.notes : undefined)
@@ -3994,6 +4021,7 @@ export default function WorkspacePage() {
           responseSpec: chunk.responseSpec,
           displayPayload: chunk.displayPayload,
           uiRequest: chunk.uiRequest,
+          a2uiRequest: chunk.a2uiRequest,
         },
       }));
       setConversationAttention(
@@ -4914,8 +4942,41 @@ export default function WorkspacePage() {
       }
 
       clearPendingInterruptForRun(message.conversationId, runId, message.turnId);
+      const existingRunInfo = activeRunsRef.current[runId];
+      const rebuiltRunInfo = await rebuildRunInfoForMessage(message, runId).catch(() => undefined);
+      const runInfo = {
+        ...(existingRunInfo || rebuiltRunInfo || {
+          runId,
+          conversationId: message.conversationId,
+          workspaceId: selectedWorkspace?.id || '',
+          persona: normalizePersonaName(activeConversationPersona || selectedPersona || DEFAULT_PERSONA_NAME),
+          turnId: message.turnId || generateTurnId(),
+          placeholderId: message.id,
+          status: 'running' as AgentRunStatus,
+        }),
+        status: 'running' as AgentRunStatus,
+      };
+      markRunStreamLaunching(runId);
+      registerActiveRun(runInfo);
+      setConversationAttention(message.conversationId, 'running', 'Resuming the run...');
+      await streamRunForConversation(runInfo, false);
     },
-    [findRunIdForMessage, submitInterruptWithRetry, submitRunDecision, submitRunAction, submitRunResponse, clearPendingInterruptForRun],
+    [
+      activeConversationPersona,
+      findRunIdForMessage,
+      rebuildRunInfoForMessage,
+      selectedPersona,
+      selectedWorkspace?.id,
+      clearPendingInterruptForRun,
+      markRunStreamLaunching,
+      registerActiveRun,
+      setConversationAttention,
+      streamRunForConversation,
+      submitInterruptWithRetry,
+      submitRunDecision,
+      submitRunAction,
+      submitRunResponse,
+    ],
   );
 
   const handleInterruptAction = useCallback(

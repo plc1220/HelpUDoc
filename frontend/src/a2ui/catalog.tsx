@@ -534,8 +534,46 @@ export const ApprovalCard: React.FC<A2UIComponentProps> = ({
 }) => {
   const title = props.title || 'Approval Required';
   const description = props.description || 'Please review and approve before the agent proceeds.';
+  const customActions = Array.isArray(props.actions) ? props.actions : [];
   const [notes, setNotes] = useState('');
   const [mode, setMode] = useState<'view' | 'edit' | 'reject'>('view');
+  const [activeActionId, setActiveActionId] = useState<string | null>(null);
+
+  const activeAction = customActions.find((action: any) => action?.id === activeActionId);
+
+  const submitCustomAction = (action: any, message = '') => {
+    const actionId = String(action?.id || '').trim();
+    if (!actionId) return;
+    onSubmit({
+      actionId,
+      decision: ['approve', 'edit', 'reject', 'submit', 'cancel'].includes(actionId)
+        ? actionId as any
+        : 'submit',
+      message,
+      values: {
+        action: {
+          id: actionId,
+          label: action?.label,
+          value: action?.value,
+          payload: action?.payload,
+        },
+      },
+    });
+  };
+
+  const handleCustomActionClick = (action: any) => {
+    if (action?.inputMode === 'text') {
+      setNotes('');
+      setActiveActionId(String(action.id));
+      return;
+    }
+    submitCustomAction(action);
+  };
+
+  const handleCustomTextSubmit = () => {
+    if (!activeAction || !notes.trim()) return;
+    submitCustomAction(activeAction, notes);
+  };
 
   const handleApprove = () => {
     onSubmit({
@@ -573,6 +611,38 @@ export const ApprovalCard: React.FC<A2UIComponentProps> = ({
           <p className="mt-1 text-xs leading-relaxed text-slate-500">{description}</p>
         </div>
       </div>
+
+      {customActions.length > 0 && activeAction && (
+        <div className="rounded-lg border border-slate-100 bg-slate-50/50 p-3 space-y-2">
+          <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+            {activeAction.submitLabel || activeAction.label || 'Provide details'}
+          </label>
+          <textarea
+            rows={4}
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            placeholder={activeAction.placeholder || 'Type your response...'}
+            className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm leading-relaxed text-slate-800 focus:outline-none focus:border-sky-400 focus:ring-1 focus:ring-sky-400/20"
+          />
+          <div className="flex justify-end gap-2 mt-2">
+            <button
+              type="button"
+              onClick={() => setActiveActionId(null)}
+              className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={!notes.trim() || isSubmitting}
+              onClick={handleCustomTextSubmit}
+              className="rounded-lg bg-sky-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-sky-600 transition shadow"
+            >
+              {activeAction.submitLabel || 'Submit'}
+            </button>
+          </div>
+        </div>
+      )}
 
       {mode === 'edit' && (
         <div className="rounded-lg border border-slate-100 bg-slate-50/50 p-3 space-y-2">
@@ -638,7 +708,32 @@ export const ApprovalCard: React.FC<A2UIComponentProps> = ({
         </div>
       )}
 
-      {mode === 'view' && (
+      {mode === 'view' && !activeAction && customActions.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          {customActions.map((action: any) => {
+            const actionId = String(action?.id || action?.label || '').trim();
+            const style = action?.style === 'danger'
+              ? 'border-red-200 bg-white text-red-700 hover:bg-red-50'
+              : action?.style === 'primary'
+                ? 'bg-slate-900 text-white hover:bg-slate-800'
+                : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50';
+            return (
+              <button
+                key={actionId}
+                type="button"
+                disabled={isSubmitting || !actionId}
+                onClick={() => handleCustomActionClick(action)}
+                className={`rounded-lg px-4 py-2 text-xs font-semibold transition shadow-sm flex items-center gap-1.5 ${style}`}
+              >
+                {isSubmitting ? <Loader2 size={14} className="animate-spin" /> : null}
+                {action?.label || actionId}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {mode === 'view' && !activeAction && customActions.length === 0 && (
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
