@@ -738,6 +738,9 @@ class ImplicitInputGuardMiddleware(AgentMiddleware):
             if interrupt_payload is None:
                 raise ValueError(f"Contract violation: unsupported frontend-slides A2UI gate '{missing_gate}'.")
 
+            if isinstance(runtime_context, dict):
+                runtime_context["a2ui_synthetic_interrupt_pending"] = missing_gate
+                runtime_context["a2ui_synthetic_resume_context"] = assistant_text
             logger.info("A2UI input guard: emitting deterministic frontend-slides gate interrupt=%s", missing_gate)
             return {
                 "messages": [AIMessage(content=encode_interrupt_payload_marker(interrupt_payload))],
@@ -756,6 +759,9 @@ class ImplicitInputGuardMiddleware(AgentMiddleware):
             )
             if interrupt_payload is None:
                 return None
+            if isinstance(runtime_context, dict):
+                runtime_context["a2ui_synthetic_interrupt_pending"] = interrupt_payload.get("a2uiRequest", {}).get("gateId") or "generic_input"
+                runtime_context["a2ui_synthetic_resume_context"] = generic_choice_source_text
             logger.info("A2UI input guard: emitting generic synthetic clarification for skill=%s", skill_id)
             return {
                 "messages": [AIMessage(content=encode_interrupt_payload_marker(interrupt_payload))],
@@ -769,6 +775,9 @@ class ImplicitInputGuardMiddleware(AgentMiddleware):
             )
             if interrupt_payload is None:
                 return None
+            if isinstance(runtime_context, dict):
+                runtime_context["a2ui_synthetic_interrupt_pending"] = interrupt_payload.get("a2uiRequest", {}).get("gateId") or "generic_input"
+                runtime_context["a2ui_synthetic_resume_context"] = generic_choice_source_text
             logger.info("A2UI input guard: emitting generic synthetic clarification for skill=%s", skill_id)
             return {
                 "messages": [AIMessage(content=encode_interrupt_payload_marker(interrupt_payload))],

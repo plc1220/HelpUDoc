@@ -197,12 +197,40 @@ def get_gate_ledger(context: dict[str, Any]) -> list[dict[str, Any]]:
     return raw
 
 
-def find_gate_record(context: dict[str, Any], *, skill_id: str, gate_id: str) -> dict[str, Any] | None:
+def _current_run_id(context: dict[str, Any]) -> str:
+    return str(context.get("run_id") or "").strip()
+
+
+def _current_thread_id(context: dict[str, Any]) -> str:
+    return str(context.get("thread_id") or "").strip()
+
+
+def _record_matches_scope(record: dict[str, Any], *, run_id: str = "", thread_id: str = "") -> bool:
+    record_run_id = str(record.get("run_id") or "").strip()
+    record_thread_id = str(record.get("thread_id") or "").strip()
+    if run_id:
+        return record_run_id == run_id
+    if thread_id:
+        return not record_run_id and record_thread_id == thread_id
+    return not record_run_id and not record_thread_id
+
+
+def find_gate_record(
+    context: dict[str, Any],
+    *,
+    skill_id: str,
+    gate_id: str,
+    run_id: str = "",
+    thread_id: str = "",
+) -> dict[str, Any] | None:
+    scoped_run_id = run_id or _current_run_id(context)
+    scoped_thread_id = thread_id or _current_thread_id(context)
     for record in get_gate_ledger(context):
         if not isinstance(record, dict):
             continue
         if record.get("skill_id") == skill_id and record.get("gate_id") == gate_id:
-            return record
+            if _record_matches_scope(record, run_id=scoped_run_id, thread_id=scoped_thread_id):
+                return record
     return None
 
 
@@ -210,7 +238,12 @@ def gate_is_completed(context: dict[str, Any], *, skill_id: str, gate_id: str) -
     record = find_gate_record(context, skill_id=skill_id, gate_id=gate_id)
     if isinstance(record, dict) and record.get("status") == "completed":
         return True
-    if is_frontend_slides_skill(skill_id) and gate_id in _legacy_frontend_completed(context):
+    if (
+        is_frontend_slides_skill(skill_id)
+        and not _current_run_id(context)
+        and not _current_thread_id(context)
+        and gate_id in _legacy_frontend_completed(context)
+    ):
         return True
     return False
 
@@ -226,7 +259,7 @@ def ensure_gate_record(
     status: str = "pending",
     source: str | None = None,
 ) -> dict[str, Any]:
-    record = find_gate_record(context, skill_id=skill_id, gate_id=gate_id)
+    record = find_gate_record(context, skill_id=skill_id, gate_id=gate_id, run_id=run_id, thread_id=thread_id)
     now = utc_now_iso()
     if record is None:
         record = {
@@ -386,13 +419,63 @@ def next_pending_gate(context: Any) -> dict[str, Any] | None:
                 skill_id=skill_id,
                 gate_id=normalize_gate_id(gate.get("gate_id")),
             ):
+                if _gate_payload_is_deferred(gate):
+                    return None
                 return gate
         return None
     if is_frontend_slides_skill(skill_id):
         for gate_id in FRONTEND_SLIDES_A2UI_GATE_IDS:
             if not gate_is_completed(context, skill_id=skill_id, gate_id=gate_id):
-                return _frontend_slides_gate_contract(skill_id, gate_id)
+                gate = _frontend_slides_gate_contract(skill_id, gate_id)
+                if _gate_payload_is_deferred(gate):
+                    return None
+                return gate
     return None
+
+
+def _gate_payload_is_deferred(gate: dict[str, Any]) -> bool:
+    """Dynamic gates need generated payload before middleware can force them."""
+    gate_id = normalize_gate_id(gate.get("gate_id"))
+    skill_id = normalize_skill_id(gate.get("skill_id"))
+    component = normalize_component(gate.get("component"))
+    props = gate.get("props") if isinstance(gate.get("props"), dict) else {}
+    context = gate.get("context") if isinstance(gate.get("context"), dict) else {}
+
+    if is_frontend_slides_skill(skill_id) and gate_id == "outline_confirmation":
+        outline_values = [
+            props.get("outline"),
+            props.get("slides"),
+            props.get("slideOutline"),
+            props.get("outlineMarkdown"),
+            context.get("outline"),
+            context.get("slides"),
+            context.get("slideOutline"),
+            context.get("outlineMarkdown"),
+        ]
+        return not any(bool(value) for value in outline_values)
+
+    if component not in {"style.previewChooser", "style_preview_chooser"}:
+        return False
+    previews = props.get("previews")
+    choices = props.get("choices")
+    return not (
+        (isinstance(previews, list) and len(previews) > 0)
+        or (isinstance(choices, list) and len(choices) > 0)
+    )
+
+
+def _has_frontend_slides_outline_payload(props: dict[str, Any], context: dict[str, Any]) -> bool:
+    outline_values = [
+        props.get("outline"),
+        props.get("slides"),
+        props.get("slideOutline"),
+        props.get("outlineMarkdown"),
+        context.get("outline"),
+        context.get("slides"),
+        context.get("slideOutline"),
+        context.get("outlineMarkdown"),
+    ]
+    return any(bool(value) for value in outline_values)
 
 
 def _message_tool_calls(message: Any) -> list[dict[str, Any]]:
@@ -476,6 +559,8 @@ def validate_workflow_a2ui_call(call_args: dict[str, Any], gate: dict[str, Any] 
         return False, f"workflow_action gate_id '{gate_id}' does not match pending gate '{expected_gate}'"
     if not _component_matches(component, expected_component, gate.get("component_aliases")):
         return False, f"workflow_action component '{component}' does not match pending component '{expected_component}'"
+    if is_frontend_slides_skill(skill) and gate_id == "outline_confirmation" and not _has_frontend_slides_outline_payload(props, context):
+        return False, "workflow_action outline_confirmation must include outlineMarkdown, slideOutline, slides, or outline in props_json or context_json"
     return True, ""
 
 
@@ -540,6 +625,8 @@ def a2ui_interrupt_value_for_gate(gate: dict[str, Any]) -> dict[str, Any]:
     args = workflow_a2ui_tool_args_for_gate(gate)
     props = parse_json_dict(args.get("props_json"))
     context = parse_json_dict(args.get("context_json"))
+    context.setdefault("synthetic", True)
+    context.setdefault("source", "a2ui_contract_synthetic")
     component = normalize_component(args.get("component"))
     gate_id = normalize_gate_id(args.get("gate_id") or context.get("gateId") or context.get("gate_id"))
     skill_id = normalize_skill_id(context.get("skill") or context.get("skillId") or gate.get("skill_id"))

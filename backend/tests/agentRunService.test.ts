@@ -113,6 +113,21 @@ const nativeOnlyPresentationContextInterrupt = (() => {
   return nativeOnly;
 })();
 
+const nativeOnlyContractSyntheticPresentationContextInterrupt = {
+  ...nativeOnlyPresentationContextInterrupt,
+  a2uiRequest: {
+    ...nativeOnlyPresentationContextInterrupt.a2uiRequest,
+    metadata: {
+      skill: 'frontend-slides',
+      gateId: 'presentation_context',
+      uiContract: 'a2ui',
+      expectedComponent: 'clarification_form',
+      synthetic: true,
+      source: 'a2ui_contract_synthetic',
+    },
+  },
+};
+
 const outlineConfirmationInterrupt = {
   type: 'interrupt',
   kind: 'clarification',
@@ -506,7 +521,7 @@ test('buildSyntheticClarificationFollowupPrompt advances frontend-slides context
   assert.match(prompt, /workflow_action\(action="generate_artifact"/);
   assert.match(prompt, /workflow_action\(action="ask_user_a2ui", gate_id="outline_confirmation"/);
   assert.doesNotMatch(prompt, /Generate 2-3 style previews\/templates next/);
-  assert.doesNotMatch(prompt, /^\/skill frontend-slides/m);
+  assert.match(prompt, /^\/skill frontend-slides\n/);
 });
 
 test('buildSyntheticClarificationFollowupPrompt does not nest prior continuation prompts', () => {
@@ -534,7 +549,7 @@ test('buildSyntheticClarificationFollowupPrompt does not nest prior continuation
   assert.equal((wrappedTwice.match(/\[Clarification response/g) || []).length, 1);
   assert.equal((wrappedTwice.match(/Original request content, with command routing removed:/g) || []).length, 1);
   assert.match(wrappedTwice, /@final-research-report\.md/);
-  assert.doesNotMatch(wrappedTwice, /^\/skill frontend-slides/m);
+  assert.equal((wrappedTwice.match(/^\/skill frontend-slides$/gm) || []).length, 1);
 });
 
 test('buildSyntheticClarificationFollowupPrompt advances frontend-slides outline confirmation to style path selection', () => {
@@ -561,6 +576,7 @@ test('buildSyntheticClarificationFollowupPrompt advances frontend-slides outline
   assert.match(prompt, /style_path_selection/);
   assert.match(prompt, /workflow_action\(action="ask_user_a2ui", gate_id="style_path_selection"/);
   assert.doesNotMatch(prompt, /completed Presentation Context/);
+  assert.match(prompt, /^\/skill frontend-slides\n/);
 });
 
 test('buildSyntheticClarificationFollowupPrompt advances frontend-slides mood selection to style previews', () => {
@@ -611,7 +627,10 @@ test('buildSyntheticClarificationFollowupPrompt advances frontend-slides style c
   );
 
   assert.match(prompt, /selected a visual style/);
-  assert.match(prompt, /Continue directly into building the deck/);
+  assert.match(prompt, /Continue directly into building the final HTML presentation deck/);
+  assert.match(prompt, /filename ends with -deck\.html/);
+  assert.match(prompt, /<section class="slide">/);
+  assert.match(prompt, /not a report or summary page/);
   assert.match(prompt, /Do not ask for Presentation Context again/);
 });
 
@@ -752,6 +771,112 @@ test('frontend-slides A2UI presentation gate resumes through continuation instea
   }
 });
 
+test('frontend-slides A2UI contract synthetic native gate resumes through agent response stream', {
+  skip: process.env.RUN_A2UI_E2E !== '1' ? 'set RUN_A2UI_E2E=1 with Redis available to run lifecycle flow test' : false,
+}, async () => {
+  if (!redisClient.isOpen) {
+    await redisClient.connect();
+  }
+
+  const calls: Array<{
+    kind: 'run' | 'respond';
+    prompt?: string;
+    forceReset?: boolean;
+    traceCompletedGates?: string[];
+  }> = [];
+  let runId = '';
+  const turnId = `a2ui-contract-synthetic-${Date.now()}`;
+  const workspaceId = 'workspace-a2ui-contract-synthetic';
+  try {
+    configureAgentRunServices({
+      telemetryService: null,
+      userMemoryService: null,
+      skillEvolutionService: null,
+      conversationService: null,
+      agentStreamClient: {
+        runAgentStream: async (_persona, _workspaceId, prompt, _history, options) => {
+          calls.push({
+            kind: 'run',
+            prompt,
+            forceReset: options?.forceReset,
+            traceCompletedGates: options?.traceContext?.a2uiGateState?.completedGateIds,
+          });
+          if (calls.length === 1) {
+            return makeStreamResponse([
+              { type: 'policy', skill: 'frontend-slides' },
+              nativeOnlyContractSyntheticPresentationContextInterrupt,
+            ]);
+          }
+          return makeStreamResponse([
+            { type: 'policy', skill: 'frontend-slides' },
+            outlineConfirmationInterrupt,
+          ]);
+        },
+        resumeAgentResponseStream: async (_persona, _workspaceId, _response, options) => {
+          calls.push({
+            kind: 'respond',
+            traceCompletedGates: options?.traceContext?.a2uiGateState?.completedGateIds,
+          });
+          return makeStreamResponse([
+            { type: 'policy', skill: 'frontend-slides' },
+            outlineConfirmationInterrupt,
+          ]);
+        },
+      },
+    });
+
+    const started = await startAgentRun({
+      workspaceId,
+      persona: 'fast',
+      prompt: '/skill frontend-slides @final-research-report.md',
+      history: [{ role: 'user', content: '/skill frontend-slides @final-research-report.md' }],
+      turnId,
+      forceReset: true,
+    });
+    runId = started.runId;
+
+    const awaiting = await waitForRunStatus(runId, (status) => status === 'awaiting_approval');
+    assert.equal(awaiting?.status, 'awaiting_approval');
+    assert.equal(awaiting?.pendingInterrupt?.displayPayload?.synthetic, true);
+    assert.equal(awaiting?.pendingInterrupt?.displayPayload?.source, 'a2ui_contract_synthetic');
+    assert.equal(awaiting?.pendingInterrupt?.a2uiRequest?.contract, 'a2ui');
+    assert.equal(awaiting?.pendingInterrupt?.a2uiRequest?.gateId, 'presentation_context');
+
+    await resumeAgentRunWithResponse(runId, {
+      answersByQuestionId: {
+        purpose: 'Pitch deck',
+      },
+    }, {
+      previousInterrupt: awaiting?.pendingInterrupt,
+    });
+
+    const settled = await waitForRunStatus(runId, (status, meta) => {
+      if (status === 'failed') {
+        return true;
+      }
+      return status === 'awaiting_approval' && meta?.pendingInterrupt?.displayPayload?.gateId === 'outline_confirmation';
+    });
+    assert.equal(settled?.status, 'awaiting_approval');
+    assert.equal(settled?.pendingInterrupt?.displayPayload?.gateId, 'outline_confirmation');
+    assert.deepEqual(settled?.a2uiGateState?.completedGateIds, ['presentation_context']);
+    assert.equal(calls.some((call) => call.kind === 'respond'), true);
+    assert.equal(calls[1]?.kind, 'respond');
+    assert.equal(calls[1]?.forceReset, undefined);
+    assert.deepEqual(calls[1]?.traceCompletedGates, ['presentation_context']);
+  } finally {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    if (runId) {
+      await redisClient.del(`agent:run:${runId}`);
+      await redisClient.del(`agent:run:${runId}:meta`);
+    }
+    await redisClient.del(`agent:run:key:${workspaceId}:fast:${turnId}`);
+    configureAgentRunServices({ agentStreamClient: null });
+    if (redisClient.isOpen) {
+      await redisClient.quit();
+    }
+  }
+});
+
 test('frontend-slides A2UI flow reaches final slide generation after all clarification and template gates', {
   skip: process.env.RUN_A2UI_E2E !== '1' ? 'set RUN_A2UI_E2E=1 with Redis available to run lifecycle flow test' : false,
 }, async () => {
@@ -792,6 +917,7 @@ test('frontend-slides A2UI flow reaches final slide generation after all clarifi
     ],
     4: [
       { type: 'policy', skill: 'frontend-slides' },
+      outlineConfirmationInterrupt,
       stylePreviewSelectionInterrupt,
     ],
     5: [
@@ -1028,6 +1154,107 @@ test('frontend-slides completion with missing outline gate recovers to native ou
     assert.equal(recovered?.pendingInterrupt?.a2uiRequest?.gateId, 'outline_confirmation');
     assert.equal(recovered?.pendingInterrupt?.displayPayload?.source, 'implicit_completion_guard');
     assert.deepEqual(recovered?.a2uiGateState?.completedGateIds, ['presentation_context']);
+  } finally {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    if (runId) {
+      await redisClient.del(`agent:run:${runId}`);
+      await redisClient.del(`agent:run:${runId}:meta`);
+    }
+    await redisClient.del(`agent:run:key:${workspaceId}:fast:${turnId}`);
+    configureAgentRunServices({ agentStreamClient: null });
+    if (redisClient.isOpen) {
+      await redisClient.quit();
+    }
+  }
+});
+
+test('frontend-slides completion with missing style preview gate recovers with fallback previews', {
+  skip: process.env.RUN_A2UI_E2E !== '1' ? 'set RUN_A2UI_E2E=1 with Redis available to run lifecycle flow test' : false,
+}, async () => {
+  if (!redisClient.isOpen) {
+    await redisClient.connect();
+  }
+
+  let runId = '';
+  const turnId = `a2ui-missing-style-preview-recovery-${Date.now()}`;
+  const workspaceId = 'workspace-a2ui-missing-style-preview-recovery';
+  try {
+    configureAgentRunServices({
+      telemetryService: null,
+      userMemoryService: null,
+      skillEvolutionService: null,
+      conversationService: null,
+      agentStreamClient: {
+        runAgentStream: async (_persona, _workspaceId, _prompt, _history, options) => {
+          const completedCount = options?.traceContext?.a2uiGateState?.completedGateIds?.length || 0;
+          if (completedCount === 1) {
+            return makeStreamResponse([{ type: 'policy', skill: 'frontend-slides' }, outlineConfirmationInterrupt]);
+          }
+          return makeStreamResponse([{ type: 'policy', skill: 'frontend-slides' }, presentationContextInterrupt]);
+        },
+        resumeAgentResponseStream: async (_persona, _workspaceId, _response, options) => {
+          const completedCount = options?.traceContext?.a2uiGateState?.completedGateIds?.length || 0;
+          if (completedCount === 2) {
+            return makeStreamResponse([{ type: 'policy', skill: 'frontend-slides' }, stylePathSelectionInterrupt]);
+          }
+          if (completedCount === 3) {
+            return makeStreamResponse([{ type: 'policy', skill: 'frontend-slides' }, moodOrPresetSelectionInterrupt]);
+          }
+          if (completedCount === 4) {
+            return makeStreamResponse([
+              { type: 'policy', skill: 'frontend-slides' },
+              { type: 'done', status: 'completed' },
+            ]);
+          }
+          return makeStreamResponse([{ type: 'policy', skill: 'frontend-slides' }, { type: 'done', status: 'completed' }]);
+        },
+      },
+    });
+
+    const started = await startAgentRun({
+      workspaceId,
+      persona: 'fast',
+      prompt: '/skill frontend-slides @final-research-report.md',
+      history: [{ role: 'user', content: '/skill frontend-slides @final-research-report.md' }],
+      turnId,
+      forceReset: true,
+    });
+    runId = started.runId;
+
+    const awaitGate = async (gateId: string) => {
+      const meta = await waitForRunStatus(runId, (status, latest) => (
+        status === 'failed' ||
+        (status === 'awaiting_approval' && latest?.pendingInterrupt?.displayPayload?.gateId === gateId)
+      ));
+      assert.equal(meta?.status, 'awaiting_approval');
+      assert.equal(meta?.pendingInterrupt?.displayPayload?.gateId, gateId);
+      return meta;
+    };
+
+    const presentation = await awaitGate('presentation_context');
+    await resumeAgentRunWithResponse(runId, { answersByQuestionId: { purpose: 'Pitch deck' } }, { previousInterrupt: presentation?.pendingInterrupt });
+
+    const outline = await awaitGate('outline_confirmation');
+    await resumeAgentRunWithResponse(runId, { answersByQuestionId: { outline_confirmation: 'Approved' } }, { previousInterrupt: outline?.pendingInterrupt });
+
+    const stylePath = await awaitGate('style_path_selection');
+    await resumeAgentRunWithResponse(runId, { answersByQuestionId: { style_path: 'Generate previews' } }, { previousInterrupt: stylePath?.pendingInterrupt });
+
+    const mood = await awaitGate('mood_or_preset_selection');
+    await resumeAgentRunWithResponse(runId, { answersByQuestionId: { mood: 'Executive modern' } }, { previousInterrupt: mood?.pendingInterrupt });
+
+    const recovered = await awaitGate('style_preview_selection');
+    const props = recovered?.pendingInterrupt?.uiRequest?.props || {};
+    assert.equal(recovered?.pendingInterrupt?.uiRequest?.component, 'style_preview_chooser');
+    assert.equal(recovered?.pendingInterrupt?.a2uiRequest?.component, 'style.previewChooser');
+    assert.ok(Array.isArray(props.choices) && props.choices.length >= 3);
+    assert.ok(Array.isArray(props.previews) && props.previews.length >= 3);
+    assert.deepEqual(recovered?.a2uiGateState?.completedGateIds, [
+      'presentation_context',
+      'outline_confirmation',
+      'style_path_selection',
+      'mood_or_preset_selection',
+    ]);
   } finally {
     await new Promise((resolve) => setTimeout(resolve, 100));
     if (runId) {

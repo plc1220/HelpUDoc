@@ -114,6 +114,75 @@ def test_workflow_action_rejects_frontend_slides_component_mismatch(tmp_path):
     assert "requires component" in result
 
 
+def test_workflow_action_rejects_outline_gate_without_embedded_outline(tmp_path):
+    workspace = WorkspaceState(workspace_id="workflow-a2ui", root_path=tmp_path)
+    tool = build_workflow_action_tool(workspace)
+
+    result = tool.invoke(
+        {
+            "action": "ask_user_a2ui",
+            "gate_id": "outline_confirmation",
+            "component": "clarification.form",
+            "props_json": json.dumps(
+                {
+                    "title": "Outline Confirmation",
+                    "description": "Review the proposed slide outline above.",
+                    "questions": [{"id": "outline", "question": "Does this look right?"}],
+                }
+            ),
+            "context_json": json.dumps(
+                {
+                    "skill": "frontend-slides",
+                    "gateId": "outline_confirmation",
+                    "uiContract": "a2ui",
+                    "expectedComponent": "clarification_form",
+                }
+            ),
+        }
+    )
+
+    assert "requires the proposed outline" in result
+
+
+def test_workflow_action_promotes_context_outline_to_a2ui_props(monkeypatch, tmp_path):
+    workspace = WorkspaceState(workspace_id="workflow-a2ui", root_path=tmp_path)
+    captured = {}
+
+    def fake_interrupt(payload):
+        captured["payload"] = payload
+        return {"surfaceId": "surface-outline_confirmation", "actionId": "submit", "values": {"answers": {}}}
+
+    monkeypatch.setattr("helpudoc_agent.tools_and_schemas.interrupt", fake_interrupt)
+
+    tool = build_workflow_action_tool(workspace)
+    result = tool.invoke(
+        {
+            "action": "ask_user_a2ui",
+            "gate_id": "outline_confirmation",
+            "component": "clarification.form",
+            "props_json": json.dumps(
+                {
+                    "title": "Outline Confirmation",
+                    "questions": [{"id": "outline", "question": "Does this look right?"}],
+                }
+            ),
+            "context_json": json.dumps(
+                {
+                    "skill": "frontend-slides",
+                    "gateId": "outline_confirmation",
+                    "uiContract": "a2ui",
+                    "expectedComponent": "clarification_form",
+                    "outlineMarkdown": "## Proposed outline\n\n1. Title\n2. Takeaways",
+                }
+            ),
+        }
+    )
+
+    assert json.loads(result)["actionId"] == "submit"
+    props = captured["payload"]["a2uiRequest"]["props"]
+    assert props["outlineMarkdown"] == "## Proposed outline\n\n1. Title\n2. Takeaways"
+
+
 def test_request_human_action_tool_call_extracts_native_a2ui_payload():
     payload = extract_interrupt_payload_from_tool_call(
         "request_human_action",

@@ -457,9 +457,9 @@ This means curated images are factored in **before** style selection (Phase 2) a
 
 5. **Confirm outline via `workflow_action(action="ask_user_a2ui")`** (MANDATORY — Gate 2 in the interrupt checklist):
 
-**⚠️ THIS IS THE MOST COMMONLY SKIPPED GATE.** After presenting the outline and image evaluation in your assistant text, your VERY NEXT ACTION must be a structured A2UI tool call. Do NOT end the turn with prose like "Please confirm the outline above" — that creates dead text with no interactive form.
+**⚠️ THIS IS THE MOST COMMONLY SKIPPED GATE.** After drafting the outline and image evaluation, your VERY NEXT ACTION must be a structured A2UI tool call. Do NOT end the turn with prose like "Please confirm the outline above" — that creates dead text with no interactive form.
 
-At this point, do not write a normal assistant message that says "Next Steps", "use the forms in the sidebar", "confirm the outline", "confirm using the form above", or "choose your style discovery method". Those words are only valid inside the structured A2UI payload. If you have an outline ready, your next action must be the tool call below, then stop.
+At this point, do not write a normal assistant message that says "Next Steps", "use the forms in the sidebar", "confirm the outline", "confirm using the form above", or "choose your style discovery method". Those words are only valid inside the structured A2UI payload. The outline must travel inside the A2UI payload itself as `props_json.outlineMarkdown` (or `slideOutline`/`slides`/`outline`). A form that asks whether the outline is good but only says "review above" is invalid because the native A2UI may render independently from chat prose.
 
 **Exact tool call parameters (Gate 2):**
 ```python
@@ -470,7 +470,8 @@ workflow_action(
   component="clarification.form",
   props_json='''{
     "title": "Outline Confirmation",
-    "description": "Review the proposed slide outline and image assignments above.",
+    "description": "Review the proposed slide outline and image assignments.",
+    "outlineMarkdown": "## Proposed slide outline\\n\\n1. Title / hook — Hero message and strongest visual\\n2. Problem — What pain the audience feels today\\n3. Solution — Product or idea overview\\n4. Evidence — Key data, screenshots, or proof points\\n5. Next steps — Call to action",
     "questions": [
       {
         "id": "outline",
@@ -488,6 +489,7 @@ workflow_action(
   context_json='''{
     "skill": "frontend-slides",
     "gateId": "outline_confirmation",
+    "outlineMarkdown": "## Proposed slide outline\\n\\n1. Title / hook — Hero message and strongest visual\\n2. Problem — What pain the audience feels today\\n3. Solution — Product or idea overview\\n4. Evidence — Key data, screenshots, or proof points\\n5. Next steps — Call to action",
     "uiContract": "a2ui",
     "expectedComponent": "clarification_form"
   }'''
@@ -1465,11 +1467,20 @@ Proceed to Phase 2 (Style Discovery) with the extracted content in mind.
 
 ### Step 4.4: Generate HTML
 
-Convert the extracted content into the chosen style, preserving:
+Convert the extracted content into the chosen style as a real slide deck, preserving:
 - All text content
 - All images (referenced from assets folder)
 - Slide order
 - Any speaker notes (as HTML comments or separate file)
+
+The final artifact MUST be an HTML presentation deck, not a report, article, or summary page:
+- Filename ends with `-deck.html`
+- Multiple viewport-sized slide sections, using markup such as `<section class="slide">`
+- Keyboard navigation and scroll/swipe navigation
+- Visual styling from the selected direction applied throughout the deck
+- Created with `write_file` so it appears in the workspace file list
+
+Do not call the presentation complete until the final `-deck.html` artifact exists.
 
 ---
 
@@ -1489,12 +1500,12 @@ When the presentation is complete:
 ```
 Your presentation is ready!
 
-📁 File: [filename].html
-🎨 Style: [Style Name]
-📊 Slides: [count]
+File: [filename]-deck.html
+Style: [Style Name]
+Slides: [count]
 
 **Navigation:**
-- Arrow keys (← →) or Space to navigate
+- Arrow keys or Space to navigate
 - Scroll/swipe also works
 - Click the dots on the right to jump to a slide
 

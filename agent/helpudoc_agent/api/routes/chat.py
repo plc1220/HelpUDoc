@@ -289,6 +289,41 @@ def register_chat_routes(
             ]
         )
 
+    def _trace_skill_id(trace_context: Dict[str, Any] | None) -> str:
+        trace = trace_context if isinstance(trace_context, dict) else {}
+        return _clean_langfuse_value(trace.get("skillId")) or ""
+
+    def _activate_skill_from_trace_context(context: Dict[str, Any], trace_context: Dict[str, Any] | None) -> None:
+        skill_id = _trace_skill_id(trace_context)
+        if not skill_id or context.get("active_skill"):
+            return
+        skill = find_skill(settings.backend.skills_root, skill_id)
+        if skill is not None and is_skill_allowed(skill, context):
+            context.pop("preferred_mcp_server", None)
+            activate_skill_context(context, skill)
+
+    def _inject_trace_skill_prompt(
+        runtime: AgentRuntimeState,
+        payload: List[Dict[str, Any]],
+        message: ChatRequest,
+    ) -> tuple[List[Dict[str, Any]], str | None]:
+        skill_id = _trace_skill_id(message.langfuseTraceContext)
+        if not skill_id or runtime.workspace_state.context.get("active_skill"):
+            return payload, None
+        for index in range(len(payload) - 1, -1, -1):
+            item = payload[index]
+            role = str(item.get("role") or "").strip().lower()
+            if role not in {"user", "human"}:
+                continue
+            content = item.get("content")
+            user_text = _extract_text_from_content(content)
+            item["content"] = _replace_content_text(
+                content,
+                _build_preloaded_skill_prompt(runtime, skill_id, user_text),
+            )
+            return payload, user_text
+        return payload, None
+
     def _apply_embedded_directives(
         runtime: AgentRuntimeState,
         payload: List[Dict[str, Any]],
@@ -344,18 +379,25 @@ def register_chat_routes(
                 ledger = merged.get("a2ui_gate_ledger")
                 ledger_items = [item for item in ledger if isinstance(item, dict)] if isinstance(ledger, list) else []
                 existing = {
-                    (str(item.get("skill_id") or ""), str(item.get("gate_id") or ""))
+                    (
+                        str(item.get("run_id") or ""),
+                        str(item.get("thread_id") or ""),
+                        str(item.get("skill_id") or ""),
+                        str(item.get("gate_id") or ""),
+                    )
                     for item in ledger_items
                 }
                 now = datetime.utcnow().isoformat() + "Z"
+                trace_run_id = _clean_langfuse_value(trace.get("runId")) or ""
+                trace_thread_id = str(merged.get("thread_id") or "")
                 for gate_id in normalized_gates:
-                    key = ("frontend-slides", gate_id)
+                    key = (trace_run_id, trace_thread_id, "frontend-slides", gate_id)
                     if key in existing:
                         continue
                     ledger_items.append(
                         {
-                            "run_id": _clean_langfuse_value(trace.get("runId")) or "",
-                            "thread_id": str(merged.get("thread_id") or ""),
+                            "run_id": trace_run_id,
+                            "thread_id": trace_thread_id,
                             "skill_id": "frontend-slides",
                             "gate_id": gate_id,
                             "component": "",
@@ -431,6 +473,7 @@ def register_chat_routes(
         seeded = _merge_trace_gate_context(initial_context, message.langfuseTraceContext)
         seeded["internet_search_enabled"] = bool(message.internetSearchEnabled)
         payload = _prepare_payload(message)
+        saw_directive = False
         for index in range(len(payload) - 1, -1, -1):
             item = payload[index]
             role = str(item.get("role") or "").strip().lower()
@@ -440,6 +483,7 @@ def register_chat_routes(
             directive, _ = _extract_directive_from_text(_extract_text_from_content(content))
             if directive is None:
                 break
+            saw_directive = True
             if directive.kind == "skill" and directive.skillId:
                 skill = find_skill(settings.backend.skills_root, directive.skillId)
                 if skill is not None and is_skill_allowed(skill, seeded):
@@ -448,6 +492,8 @@ def register_chat_routes(
             elif directive.kind == "mcp" and directive.serverId:
                 seeded["preferred_mcp_server"] = directive.serverId
             break
+        if not saw_directive:
+            _activate_skill_from_trace_context(seeded, message.langfuseTraceContext)
         return seeded
 
 
@@ -1567,6 +1613,8 @@ def register_chat_routes(
         context.pop("skill_load_attempts_this_turn", None)
         context.pop("dashboard_mode", None)
         context.pop("frontend_slides_completed_a2ui_gates", None)
+        context.pop("a2ui_gate_ledger", None)
+        context.pop("a2ui_gate_telemetry", None)
         context["tagged_files_only"] = False
         context["plan_approved"] = skip_plan_approvals
         context["pre_plan_search_count"] = 0
@@ -1587,6 +1635,10 @@ def register_chat_routes(
             )
             runtime.workspace_state.context["internet_search_enabled"] = bool(message.internetSearchEnabled)
         payload, latest_user_text = _apply_embedded_directives(runtime, payload)
+        if fresh_turn:
+            payload, trace_skill_user_text = _inject_trace_skill_prompt(runtime, payload, message)
+            if trace_skill_user_text is not None:
+                latest_user_text = trace_skill_user_text
         if fresh_turn:
             memory_guidance = _build_memory_system_message(runtime)
             if memory_guidance:
@@ -1709,6 +1761,17 @@ def register_chat_routes(
             ]
         return []
 
+    def _synthetic_a2ui_resume_text(resume_value: Any, gate_id: str) -> str:
+        try:
+            serialized = json.dumps(resume_value, ensure_ascii=False, sort_keys=True)
+        except Exception:
+            serialized = str(resume_value)
+        return (
+            "The user submitted the A2UI form for gate "
+            f"'{gate_id}'. Continue the active skill workflow using this structured response:\n"
+            f"{serialized}"
+        )
+
     async def _stream_agent_response(
         runtime: AgentRuntimeState,
         message: ChatRequest,
@@ -1729,6 +1792,31 @@ def register_chat_routes(
             payload = await _prepare_turn_payload(runtime, message, fresh_turn=True)
         else:
             payload = _prepare_payload(message)
+            context = runtime.workspace_state.context
+            synthetic_gate_id = ""
+            if isinstance(context, dict) and resume_value is not None:
+                synthetic_gate_id = str(context.pop("a2ui_synthetic_interrupt_pending", "") or "").strip()
+            if synthetic_gate_id:
+                stored_payload = context.pop("a2ui_synthetic_resume_payload", None) if isinstance(context, dict) else None
+                if isinstance(stored_payload, list) and stored_payload:
+                    payload = [dict(item) for item in stored_payload if isinstance(item, dict)]
+                elif isinstance(context, dict):
+                    prior_context = str(context.pop("a2ui_synthetic_resume_context", "") or "").strip()
+                    if prior_context:
+                        payload = [
+                            {
+                                "role": "user",
+                                "content": (
+                                    "Continue the active skill workflow after this synthetic A2UI interruption. "
+                                    "Previous assistant output before the form:\n"
+                                    f"{prior_context}"
+                                ),
+                            }
+                        ]
+                payload.append({"role": "user", "content": _synthetic_a2ui_resume_text(resume_value, synthetic_gate_id)})
+                if isinstance(context, dict):
+                    context["last_a2ui_response"] = resume_value
+                resume_value = None
         def _should_suppress_assistant_text_for_a2ui_gate() -> bool:
             context = getattr(runtime.workspace_state, "context", None)
             return next_pending_gate(context) is not None
@@ -1761,6 +1849,10 @@ def register_chat_routes(
                 synthetic_gate = next_pending_gate(runtime.workspace_state.context)
                 if synthetic_gate is not None and bool(synthetic_gate.get("synthetic_on_pending")):
                     record_gate_source(runtime.workspace_state.context, synthetic_gate, source="synthetic")
+                    runtime.workspace_state.context["a2ui_synthetic_interrupt_pending"] = str(
+                        synthetic_gate.get("gate_id") or ""
+                    )
+                    runtime.workspace_state.context["a2ui_synthetic_resume_payload"] = payload
                     interrupt_payload = normalize_interrupt_payload_value(
                         a2ui_interrupt_value_for_gate(synthetic_gate)
                     )

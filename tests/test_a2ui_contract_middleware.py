@@ -91,6 +91,27 @@ def test_validate_workflow_action_rejects_wrong_gate_and_component():
     assert "component" in reason
 
 
+def test_validate_frontend_slides_outline_gate_requires_embedded_outline():
+    gate = _gate(
+        skill_id="frontend-slides",
+        gate_id="outline_confirmation",
+        component="clarification.form",
+    )
+
+    valid, reason = validate_workflow_a2ui_call(_args(gate), gate)
+
+    assert valid is False
+    assert "outline_confirmation" in reason
+    assert "outlineMarkdown" in reason
+
+    valid, reason = validate_workflow_a2ui_call(
+        _args(gate, props_json=json.dumps({**gate["props"], "outlineMarkdown": "## Slide 1\nIntro"})),
+        gate,
+    )
+    assert valid is True
+    assert reason == ""
+
+
 def test_middleware_blocks_prose_only_phantom_ui_and_retries_once():
     context = {
         "active_skill": "generic-skill",
@@ -172,8 +193,102 @@ def test_frontend_slides_contract_sequence_and_resume_skip_completed_gate():
         answers={"answersByQuestionId": {"purpose": "Pitch deck"}},
     )
 
+    assert next_pending_gate(context) is None
+
+
+def test_frontend_slides_defers_outline_gate_until_outline_payload_exists():
+    skills = {skill.skill_id: skill for skill in load_skills(Path("skills"))}
+    contract = skills["frontend-slides"].interaction_contract
+    context = {
+        "active_skill": "frontend-slides",
+        "active_skill_scope": {"interaction_contract": contract},
+    }
+    mark_gate_completed(
+        context,
+        skill_id="frontend-slides",
+        gate_id="presentation_context",
+        component="clarification.form",
+        answers={"answersByQuestionId": {"purpose": "Pitch deck"}},
+    )
+
+    assert next_pending_gate(context) is None
+
+    contract["gates"][1].setdefault("props", {})["outline"] = [
+        {"title": "Opening", "summary": "Set context"}
+    ]
     second = next_pending_gate(context)
     assert second["gate_id"] == "outline_confirmation"
+
+
+def test_frontend_slides_ledger_is_scoped_to_current_run():
+    skills = {skill.skill_id: skill for skill in load_skills(Path("skills"))}
+    contract = skills["frontend-slides"].interaction_contract
+    context = {
+        "active_skill": "frontend-slides",
+        "run_id": "run-2",
+        "thread_id": "thread-2",
+        "active_skill_scope": {"interaction_contract": contract},
+    }
+    mark_gate_completed(
+        context,
+        run_id="run-1",
+        thread_id="thread-1",
+        skill_id="frontend-slides",
+        gate_id="presentation_context",
+        component="clarification.form",
+        answers={"answersByQuestionId": {"purpose": "Old deck"}},
+    )
+
+    first = next_pending_gate(context)
+
+    assert first["gate_id"] == "presentation_context"
+
+
+def test_frontend_slides_defers_style_preview_gate_until_previews_exist():
+    skills = {skill.skill_id: skill for skill in load_skills(Path("skills"))}
+    contract = skills["frontend-slides"].interaction_contract
+    context = {
+        "active_skill": "frontend-slides",
+        "run_id": "run-1",
+        "thread_id": "thread-1",
+        "active_skill_scope": {"interaction_contract": contract},
+    }
+    for gate_id in [
+        "presentation_context",
+        "outline_confirmation",
+        "style_path_selection",
+        "mood_or_preset_selection",
+    ]:
+        mark_gate_completed(
+            context,
+            run_id="run-1",
+            thread_id="thread-1",
+            skill_id="frontend-slides",
+            gate_id=gate_id,
+            component="clarification.form",
+            answers={"ok": True},
+        )
+
+    assert next_pending_gate(context) is None
+
+
+def test_frontend_slides_default_contract_defers_dynamic_outline_gate_without_payload():
+    context = {
+        "active_skill": "frontend-slides",
+        "run_id": "run-1",
+        "thread_id": "thread-1",
+    }
+    mark_gate_completed(
+        context,
+        run_id="run-1",
+        thread_id="thread-1",
+        skill_id="frontend-slides",
+        gate_id="presentation_context",
+        component="clarification.form",
+        answers={"purpose": "Pitch deck"},
+    )
+
+    assert next_pending_gate(context) is None
 
 
 def test_generic_two_gate_skill_advances_without_repeating_completed_gate():

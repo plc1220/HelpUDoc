@@ -104,6 +104,10 @@ def _build_a2ui_interrupt_payload(
 
     skill = parsed_context.get("skill") or parsed_context.get("skillId") or ""
     gate = (gate_id or parsed_context.get("gateId") or parsed_context.get("gate_id") or "").strip()
+    if str(skill or "").strip().lower() == "frontend-slides" and gate == "outline_confirmation":
+        for key in ("outlineMarkdown", "slideOutline", "slides", "outline"):
+            if key not in parsed_props and parsed_context.get(key):
+                parsed_props[key] = parsed_context[key]
 
     surface_id = f"surface-{uuid.uuid4().hex[:12]}"
     if gate:
@@ -201,6 +205,7 @@ def _validate_workflow_a2ui_gate(
     action: str,
     gate_id: str | None,
     component: str,
+    props: Dict[str, Any],
     context: Dict[str, Any],
 ) -> str | None:
     if action != "ask_user_a2ui":
@@ -227,6 +232,22 @@ def _validate_workflow_a2ui_gate(
             return (
                 "Workflow action blocked: context expectedComponent does not match "
                 f"frontend-slides gate '{gate}'."
+            )
+    if gate == "outline_confirmation":
+        outline_values = [
+            props.get("outline"),
+            props.get("slides"),
+            props.get("slideOutline"),
+            props.get("outlineMarkdown"),
+            context.get("outline"),
+            context.get("slides"),
+            context.get("slideOutline"),
+            context.get("outlineMarkdown"),
+        ]
+        if not any(bool(value) for value in outline_values):
+            return (
+                "Workflow action blocked: gate 'outline_confirmation' requires the proposed "
+                "outline in props_json or context_json as outlineMarkdown, slideOutline, slides, or outline."
             )
     return None
 
@@ -315,10 +336,12 @@ def build_workflow_action_tool(workspace_state: WorkspaceState) -> Tool:
                 return "Workflow action blocked: ask_user_a2ui requires component."
             if not workflow_record["gateId"]:
                 return "Workflow action blocked: ask_user_a2ui requires gate_id."
+            props = parse_json_dict_arg(props_json)
             gate_error = _validate_workflow_a2ui_gate(
                 action=normalized_action,
                 gate_id=str(workflow_record["gateId"]),
                 component=component,
+                props=props,
                 context=context,
             )
             if gate_error:

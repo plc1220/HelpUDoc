@@ -42,6 +42,33 @@ export const ClarificationForm: React.FC<A2UIComponentProps> = ({
     });
   }, [questions, answers]);
 
+  const supportingText = String(
+    props.outlineMarkdown ||
+      props.slideOutline ||
+      props.outline ||
+      props.previewMarkdown ||
+      props.contextMarkdown ||
+      props.markdown ||
+      props.summary ||
+      '',
+  ).trim();
+
+  const supportingLabel = String(props.previewLabel || props.contextLabel || 'Review material');
+
+  const renderSupportingText = () => {
+    if (!supportingText) return null;
+    return (
+      <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+          {supportingLabel}
+        </span>
+        <div className="mt-2 max-h-80 overflow-y-auto rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 text-sm leading-relaxed text-slate-800 whitespace-pre-wrap">
+          {supportingText}
+        </div>
+      </div>
+    );
+  };
+
   const handleNext = () => {
     if (currentQuestion) {
       const currentAns = answers[currentQuestion.id]?.trim();
@@ -138,6 +165,8 @@ export const ClarificationForm: React.FC<A2UIComponentProps> = ({
       const answeredCount = questions.filter((q) => answers[q.id]?.trim()).length;
       return (
         <div className="space-y-4">
+          {renderSupportingText()}
+
           <div className="rounded-xl border border-slate-200 bg-slate-50/50 p-4 shadow-sm">
             <div className="flex items-center justify-between">
               <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Review Answers</span>
@@ -207,6 +236,8 @@ export const ClarificationForm: React.FC<A2UIComponentProps> = ({
 
     return (
       <div className="space-y-4">
+        {renderSupportingText()}
+
         <div className="rounded-xl border border-slate-200 bg-slate-50/50 p-4 shadow-sm">
           <div className="flex items-center justify-between mb-2">
             <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
@@ -251,6 +282,8 @@ export const ClarificationForm: React.FC<A2UIComponentProps> = ({
   const singleQ = questions[0];
   return (
     <div className="space-y-4">
+      {renderSupportingText()}
+
       {renderQuestionEditor(singleQ)}
 
       <div className="rounded-xl border border-slate-200 bg-slate-50/50 p-4 shadow-sm">

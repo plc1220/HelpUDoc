@@ -316,6 +316,18 @@ const isSyntheticClarificationInterrupt = (interrupt?: RunPendingInterrupt): boo
   );
 };
 
+const getSyntheticClarificationSource = (interrupt?: RunPendingInterrupt): string => {
+  const displayPayload = interrupt?.displayPayload || {};
+  const nativeMetadata = interrupt?.a2uiRequest?.metadata || {};
+  const source = displayPayload.source || nativeMetadata.source;
+  return typeof source === 'string' ? source.trim() : '';
+};
+
+const isAgentContractSyntheticInterrupt = (interrupt?: RunPendingInterrupt): boolean => (
+  isSyntheticClarificationInterrupt(interrupt) &&
+  getSyntheticClarificationSource(interrupt) === 'a2ui_contract_synthetic'
+);
+
 const formatClarificationResponseForPrompt = (
   response: AgentInterruptResponse,
   previousInterrupt?: RunPendingInterrupt,
@@ -411,12 +423,12 @@ export const buildSyntheticClarificationFollowupPrompt = (
                 ? 'Next structured workflow actions: first call workflow_action(action="generate_artifact", reason="Draft slide outline for review", artifact_refs_json="[\"slide_outline_v1\"]"), then present the concrete outline and call workflow_action(action="ask_user_a2ui", gate_id="outline_confirmation", component="clarification.form", props_json=..., context_json=...) to pause for review.'
                 : `Next structured workflow action: call workflow_action(action="ask_user_a2ui", gate_id="${workflowState.nextRequiredGateId}", component="${EXPECTED_GATES[workflowState.nextRequiredGateId] === 'style_preview_chooser' ? 'style.previewChooser' : 'clarification.form'}", props_json=..., context_json=...) and then stop.`
             )
-          : 'All required A2UI gates are complete. The next structured workflow action may be workflow_action(action="complete") only after the final deck artifact is generated.',
+          : 'All required A2UI gates are complete. Generate the final HTML presentation deck now. The output must be a slide deck, not a report or summary page: write a .html file whose filename ends with -deck.html, include multiple viewport-sized slide sections such as <section class="slide">, include keyboard/scroll navigation, and use write_file so the file appears in the workspace. The next structured workflow action may be workflow_action(action="complete") only after that final deck artifact is generated.',
       ].join('\n')
     : '';
   const frontendSlidesGate = previousInterrupt?.displayPayload?.skill === 'frontend-slides'
     ? previousInterrupt.displayPayload?.chooser === 'style-previews' || gateId === 'style_preview_selection'
-      ? 'For frontend-slides: the user has selected a visual style. Continue directly into building the deck with that selected style. Do not ask for Presentation Context again and do not show the style chooser again unless the user explicitly requests it.'
+      ? 'For frontend-slides: the user has selected a visual style. Continue directly into building the final HTML presentation deck with that selected style. Do not create a generic report or summary page. Do not ask for Presentation Context again and do not show the style chooser again unless the user explicitly requests it.'
       : gateId === 'presentation_context'
       ? 'For frontend-slides: the user has completed Presentation Context. Generate the slide outline next, then pause with an outline_confirmation structured A2UI workflow action. Do not ask for Presentation Context again and do not generate style previews yet.'
       : gateId === 'outline_confirmation'
@@ -436,7 +448,11 @@ export const buildSyntheticClarificationFollowupPrompt = (
         'Treat these answers as final for the current gate and continue the skill from the point where it paused.',
         'If another human decision or clarification is required before completion, call workflow_action(action="ask_user_a2ui") or another structured A2UI interrupt and then stop; otherwise complete the requested work.',
       ].join(' ');
+  const skillDirective = previousInterrupt?.displayPayload?.skill === 'frontend-slides'
+    ? '/skill frontend-slides'
+    : '';
   return [
+    skillDirective,
     `[Clarification response — continue the '${skill}' skill from where you left off; do not restart from the beginning.]`,
     repeatedGateInstruction,
     nextPhaseInstruction,
@@ -917,6 +933,19 @@ const buildNativeA2UIRequest = (input: {
   metadata: input.metadata || {},
 });
 
+const buildFrontendSlidesOutlinePreviewMarkdown = (assistantText?: string): string => {
+  const text = String(assistantText || '').trim();
+  if (!text) {
+    return [
+      'The slide outline was not included in the agent response.',
+      '',
+      'Choose "Adjust outline" and describe the desired slide structure, or ask the agent to regenerate the outline before continuing.',
+    ].join('\n');
+  }
+  const maxLength = 6000;
+  return text.length > maxLength ? `${text.slice(0, maxLength).trim()}\n\n...` : text;
+};
+
 const buildFrontendSlidesGatePendingInterrupt = (input: {
   runId: string;
   gateId: FrontendSlidesGateId;
@@ -1022,10 +1051,21 @@ const buildFrontendSlidesGatePendingInterrupt = (input: {
     },
   };
   const selected = config[gateId];
-  const displayPayload = buildFrontendSlidesDisplayPayload(gateId);
+  const outlinePreviewMarkdown = gateId === 'outline_confirmation'
+    ? buildFrontendSlidesOutlinePreviewMarkdown(input.assistantText)
+    : '';
+  const displayPayload = buildFrontendSlidesDisplayPayload(gateId, {
+    ...(outlinePreviewMarkdown
+      ? {
+          slideOutline: outlinePreviewMarkdown,
+          markdown: outlinePreviewMarkdown,
+        }
+      : {}),
+  });
   const props = {
     title: selected.title,
     description: selected.description,
+    ...(outlinePreviewMarkdown ? { outlineMarkdown: outlinePreviewMarkdown } : {}),
     questions: selected.questions,
     choices: [],
     inputMode: 'text',
@@ -2226,6 +2266,7 @@ async function runAgentRunWorker(
     status: 'running',
     startedAt,
     error: '',
+    pendingInterrupt: '',
   });
   if (runTelemetryService) {
     await runTelemetryService.markRunStarted(runId, startedAt);
@@ -2745,6 +2786,18 @@ async function runAgentRunWorker(
       if (!skillId && typeof interruptDisplayPayload?.skill === 'string' && interruptDisplayPayload.skill.trim()) {
         skillId = interruptDisplayPayload.skill.trim();
       }
+      const completedGateId = extractA2UIGateId(parsed);
+      if (
+        isFrontendSlidesGateId(completedGateId) &&
+        a2uiGateState.completedGateIds.includes(completedGateId)
+      ) {
+        await appendStreamEvent(runId, JSON.stringify({
+          type: 'a2ui_gate_skipped',
+          gateId: completedGateId,
+          reason: 'completed_gate_interrupt_ignored',
+        }));
+        return 'continue';
+      }
       const err = validateInterrupt(parsed, skillId);
       if (err) {
         contractErrorMessage = err;
@@ -3018,7 +3071,9 @@ export async function resumeAgentRunWithResponse(
     throw new Error('Run context not found. Start a new run.');
   }
   const baseParams = options?.authToken ? { ...context.params, authToken: options.authToken } : context.params;
-  const nextParams = isSyntheticClarificationInterrupt(options?.previousInterrupt)
+  const previousInterruptIsSynthetic = isSyntheticClarificationInterrupt(options?.previousInterrupt);
+  const previousInterruptUsesAgentResume = isAgentContractSyntheticInterrupt(options?.previousInterrupt);
+  const nextParams = previousInterruptIsSynthetic && !previousInterruptUsesAgentResume
     ? {
         ...baseParams,
         prompt: buildSyntheticClarificationFollowupPrompt(
@@ -3053,7 +3108,7 @@ export async function resumeAgentRunWithResponse(
   void runAgentRunWorker(
     runId,
     nextParams,
-    isSyntheticClarificationInterrupt(options?.previousInterrupt) ? undefined : { response },
+    previousInterruptIsSynthetic && !previousInterruptUsesAgentResume ? undefined : { response },
     options?.previousInterrupt,
   );
   return { runId, status: 'queued' };
@@ -3099,9 +3154,14 @@ export async function getRunMeta(runId: string): Promise<RunMeta | null> {
   if (!Object.keys(meta).length) {
     return null;
   }
+  const a2uiGateState = parseA2UIGateState(meta.a2uiGateState);
   if ((meta.status === 'running' || meta.status === 'queued') && !meta.pendingInterrupt?.trim()) {
     const recoveredInterrupt = await findLatestInterruptPayloadInStream(runId);
-    if (recoveredInterrupt) {
+    const recoveredGateId = recoveredInterrupt ? extractA2UIGateId(recoveredInterrupt) : undefined;
+    const recoveredGateIsComplete = Boolean(
+      recoveredGateId && a2uiGateState.completedGateIds.includes(recoveredGateId),
+    );
+    if (recoveredInterrupt && !recoveredGateIsComplete) {
       await markRunAwaitingApproval(runId, JSON.stringify(recoveredInterrupt));
       meta.status = 'awaiting_approval';
       meta.pendingInterrupt = JSON.stringify(recoveredInterrupt);
@@ -3118,7 +3178,7 @@ export async function getRunMeta(runId: string): Promise<RunMeta | null> {
     error: meta.error,
     turnId: meta.turnId,
     pendingInterrupt: parsePendingInterrupt(meta.pendingInterrupt),
-    a2uiGateState: parseA2UIGateState(meta.a2uiGateState),
+    a2uiGateState,
   };
 }
 
