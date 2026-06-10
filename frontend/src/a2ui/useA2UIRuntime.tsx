@@ -1,8 +1,13 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
-import { Catalog, MessageProcessor } from '@a2ui/web_core/v0_9';
-import { basicCatalog, createBinderlessComponentImplementation } from '@a2ui/react/v0_9';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { Catalog, MessageProcessor, type ActionListener, type SurfaceModel } from '@a2ui/web_core/v0_9';
+import {
+  basicCatalog,
+  createBinderlessComponentImplementation,
+  type ReactComponentImplementation,
+} from '@a2ui/react/v0_9';
 import { z } from 'zod';
 import {
+  type A2UIComponentProps,
   ClarificationForm,
   StylePreviewChooser,
   ApprovalCard,
@@ -10,11 +15,17 @@ import {
 } from './catalog';
 import type { A2UIRequest, A2UIResponse } from '@helpudoc/contracts/types';
 
-const createCustomImplementation = (name: string, Component: React.FC<any>) => {
+type A2UIComponentSubmitPayload = Parameters<A2UIComponentProps['onSubmit']>[0];
+
+const getErrorMessage = (error: unknown, fallback: string) => {
+  return error instanceof Error ? error.message : fallback;
+};
+
+const createCustomImplementation = (name: string, Component: React.FC<A2UIComponentProps>) => {
   return createBinderlessComponentImplementation(
     { name, schema: z.object({}).passthrough() },
     ({ context }) => {
-      const normalizeProps = (properties: Record<string, any>) => {
+      const normalizeProps = (properties: Record<string, unknown>) => {
         const nested = properties?.props;
         return nested && typeof nested === 'object' && !Array.isArray(nested)
           ? { ...nested, ...properties }
@@ -29,7 +40,7 @@ const createCustomImplementation = (name: string, Component: React.FC<any>) => {
         return () => unsub.unsubscribe();
       }, [context.componentModel]);
 
-      const onSubmit = (payload: any) => {
+      const onSubmit = (payload: A2UIComponentSubmitPayload) => {
         context.dispatchAction({
           event: {
             name: 'submit',
@@ -42,9 +53,9 @@ const createCustomImplementation = (name: string, Component: React.FC<any>) => {
         <Component
           props={props}
           onSubmit={onSubmit}
-          isSubmitting={props.isSubmitting}
-          error={props.error}
-          workspaceId={props.workspaceId}
+          isSubmitting={Boolean(props.isSubmitting)}
+          error={typeof props.error === 'string' ? props.error : undefined}
+          workspaceId={typeof props.workspaceId === 'string' ? props.workspaceId : undefined}
         />
       );
     }
@@ -77,12 +88,12 @@ export const useA2UIRuntime = ({
   }, []);
 
   const processor = useMemo(() => {
-    const handleAction = async (action: any) => {
+    const handleAction: ActionListener = async (action) => {
       const surfaceId = activeSurfaceIdRef.current;
       if (!surfaceId) return;
       setIsSubmitting(true);
       setError(undefined);
-      const payload = action.context || {};
+      const payload = (action.context || {}) as Partial<A2UIComponentSubmitPayload>;
       try {
         await onSubmit({
           surfaceId,
@@ -92,8 +103,8 @@ export const useA2UIRuntime = ({
           message: payload.message,
           metadata: payload.metadata,
         });
-      } catch (err: any) {
-        setError(err.message || 'Failed to submit response');
+      } catch (err: unknown) {
+        setError(getErrorMessage(err, 'Failed to submit response'));
       } finally {
         setIsSubmitting(false);
       }
@@ -102,9 +113,9 @@ export const useA2UIRuntime = ({
     return new MessageProcessor([customCatalog, basicCatalog], handleAction);
   }, [customCatalog, onSubmit]);
 
-  const [surfaceModel, setSurfaceModel] = useState<any>(null);
+  const [surfaceModel, setSurfaceModel] = useState<SurfaceModel<ReactComponentImplementation> | null>(null);
 
-  const loadRequest = (request: A2UIRequest) => {
+  const loadRequest = useCallback((request: A2UIRequest) => {
     const surfaceId = request.surfaceId;
     if (!surfaceId) {
       setSurfaceModel(null);
@@ -175,11 +186,11 @@ export const useA2UIRuntime = ({
       }
       setSurfaceModel(nextSurface);
       lastRequestSignatureRef.current = requestSignature;
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Failed to process request', err);
-      setError(err.message || 'Error processing UI request');
+      setError(getErrorMessage(err, 'Error processing UI request'));
     }
-  };
+  }, [processor]);
 
   // Sync stateful values down to component props when they change
   useEffect(() => {

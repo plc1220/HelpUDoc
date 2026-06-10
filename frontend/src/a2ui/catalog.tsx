@@ -1,13 +1,67 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Check, CheckCircle2, ImageIcon, Loader2 } from 'lucide-react';
 
+type A2UIDecision = 'approve' | 'edit' | 'reject' | 'submit' | 'cancel';
+
+type A2UIQuestionOption = {
+  value?: string;
+  label?: string;
+  description?: string;
+};
+
+type A2UIQuestion = {
+  id: string;
+  header?: string;
+  title?: string;
+  question?: string;
+  options?: Array<A2UIQuestionOption | string>;
+  placeholder?: string;
+};
+
+type A2UIChoice = {
+  id?: string;
+  choiceId?: string;
+  label?: string;
+  name?: string;
+  title?: string;
+  value?: string;
+  description?: string;
+  summary?: string;
+  path?: string;
+  file?: string;
+  previewPath?: string;
+  html?: string;
+  content?: string;
+};
+
+type A2UIAction = {
+  id?: string;
+  label?: string;
+  value?: string;
+  payload?: Record<string, unknown>;
+  inputMode?: 'none' | 'text' | string;
+  style?: 'primary' | 'danger' | string;
+  placeholder?: string;
+  submitLabel?: string;
+};
+
+type A2UIPlanStep = {
+  state?: string;
+  status?: string;
+  title?: string;
+  label?: string;
+  description?: string;
+  detail?: string;
+};
+
 export interface A2UIComponentProps {
-  props: Record<string, any>;
+  props: Record<string, unknown>;
   onSubmit: (payload: {
     actionId: string;
     values?: Record<string, unknown>;
-    decision?: 'approve' | 'edit' | 'reject' | 'submit' | 'cancel';
+    decision?: A2UIDecision;
     message?: string;
+    metadata?: Record<string, unknown>;
   }) => void;
   isSubmitting?: boolean;
   error?: string;
@@ -22,8 +76,13 @@ export const ClarificationForm: React.FC<A2UIComponentProps> = ({
   isSubmitting = false,
   error,
 }) => {
-  const questions = Array.isArray(props.questions) ? props.questions : [];
-  const submitLabel = props.submitLabel || 'Submit answers';
+  const questions = useMemo<A2UIQuestion[]>(
+    () => (Array.isArray(props.questions)
+      ? props.questions.filter((item): item is A2UIQuestion => Boolean(item && typeof item === 'object' && 'id' in item))
+      : []),
+    [props.questions],
+  );
+  const submitLabel = String(props.submitLabel || 'Submit answers');
 
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [notes, setNotes] = useState('');
@@ -100,7 +159,7 @@ export const ClarificationForm: React.FC<A2UIComponentProps> = ({
     );
   }
 
-  const renderQuestionEditor = (q: any) => {
+  const renderQuestionEditor = (q: A2UIQuestion) => {
     const currentAns = answers[q.id] || '';
     const options = Array.isArray(q.options) ? q.options : [];
 
@@ -114,9 +173,10 @@ export const ClarificationForm: React.FC<A2UIComponentProps> = ({
 
           {options.length > 0 && (
             <div className="mt-3 grid gap-2">
-              {options.map((opt: any) => {
-                const optVal = opt.value || opt;
-                const optLabel = opt.label || optVal;
+              {options.map((opt) => {
+                const optVal = String(typeof opt === 'string' ? opt : opt.value || opt.label || '');
+                const optLabel = String(typeof opt === 'string' ? opt : opt.label || optVal);
+                const optDescription = typeof opt === 'string' ? '' : opt.description;
                 const isSelected = currentAns === optVal;
                 return (
                   <button
@@ -131,9 +191,9 @@ export const ClarificationForm: React.FC<A2UIComponentProps> = ({
                     }`}
                   >
                     <span>{optLabel}</span>
-                    {opt.description && (
+                    {optDescription && (
                       <span className="mt-1 block text-xs font-normal text-slate-500 leading-normal">
-                        {opt.description}
+                        {optDescription}
                       </span>
                     )}
                   </button>
@@ -324,7 +384,14 @@ export const StylePreviewChooser: React.FC<A2UIComponentProps> = ({
   isSubmitting = false,
   workspaceId,
 }) => {
-  const choices = Array.isArray(props.choices) ? props.choices : Array.isArray(props.previews) ? props.previews : [];
+  const choices = useMemo<A2UIChoice[]>(
+    () => (Array.isArray(props.choices)
+      ? props.choices
+      : Array.isArray(props.previews)
+        ? props.previews
+        : []).filter((item): item is A2UIChoice => Boolean(item && typeof item === 'object')),
+    [props.choices, props.previews],
+  );
   const multiple = Boolean(props.multiple);
 
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -332,7 +399,7 @@ export const StylePreviewChooser: React.FC<A2UIComponentProps> = ({
 
   // Parse styles with preview files
   const items = useMemo(() => {
-    return choices.map((c: any, idx: number) => {
+    return choices.map((c, idx: number) => {
       const id = String(c.id || c.choiceId || `choice-${idx + 1}`);
       const label = String(c.label || c.name || c.title || `Option ${idx + 1}`);
       const value = String(c.value || label);
@@ -565,23 +632,29 @@ export const ApprovalCard: React.FC<A2UIComponentProps> = ({
   isSubmitting = false,
   error,
 }) => {
-  const title = props.title || 'Approval Required';
-  const description = props.description || 'Please review and approve before the agent proceeds.';
-  const customActions = Array.isArray(props.actions) ? props.actions : [];
+  const title = String(props.title || 'Approval Required');
+  const description = String(props.description || 'Please review and approve before the agent proceeds.');
+  const customActions = useMemo<A2UIAction[]>(
+    () => (Array.isArray(props.actions)
+      ? props.actions.filter((item): item is A2UIAction => Boolean(item && typeof item === 'object'))
+      : []),
+    [props.actions],
+  );
   const [notes, setNotes] = useState('');
   const [mode, setMode] = useState<'view' | 'edit' | 'reject'>('view');
   const [activeActionId, setActiveActionId] = useState<string | null>(null);
 
-  const activeAction = customActions.find((action: any) => action?.id === activeActionId);
+  const activeAction = customActions.find((action) => action?.id === activeActionId);
 
-  const submitCustomAction = (action: any, message = '') => {
+  const submitCustomAction = (action: A2UIAction, message = '') => {
     const actionId = String(action?.id || '').trim();
     if (!actionId) return;
+    const decision = ['approve', 'edit', 'reject', 'submit', 'cancel'].includes(actionId)
+      ? (actionId as A2UIDecision)
+      : 'submit';
     onSubmit({
       actionId,
-      decision: ['approve', 'edit', 'reject', 'submit', 'cancel'].includes(actionId)
-        ? actionId as any
-        : 'submit',
+      decision,
       message,
       values: {
         action: {
@@ -594,7 +667,7 @@ export const ApprovalCard: React.FC<A2UIComponentProps> = ({
     });
   };
 
-  const handleCustomActionClick = (action: any) => {
+  const handleCustomActionClick = (action: A2UIAction) => {
     if (action?.inputMode === 'text') {
       setNotes('');
       setActiveActionId(String(action.id));
@@ -743,7 +816,7 @@ export const ApprovalCard: React.FC<A2UIComponentProps> = ({
 
       {mode === 'view' && !activeAction && customActions.length > 0 && (
         <div className="flex flex-wrap items-center gap-2">
-          {customActions.map((action: any) => {
+          {customActions.map((action) => {
             const actionId = String(action?.id || action?.label || '').trim();
             const style = action?.style === 'danger'
               ? 'border-red-200 bg-white text-red-700 hover:bg-red-50'
@@ -811,10 +884,15 @@ export const PlanReview: React.FC<A2UIComponentProps> = ({
   const [notes, setNotes] = useState('');
   const [mode, setMode] = useState<'view' | 'edit' | 'reject'>('view');
 
-  const steps = Array.isArray(props.steps) ? props.steps : [];
-  const planFilePath = props.planFilePath || props.filePath || 'proposal-plan.md';
-  const summaryMarkdown = props.summaryMarkdown || props.summary || props.description || '';
-  const riskyActions = props.riskyActions || '';
+  const steps = useMemo<A2UIPlanStep[]>(
+    () => (Array.isArray(props.steps)
+      ? props.steps.filter((item): item is A2UIPlanStep => Boolean(item && typeof item === 'object'))
+      : []),
+    [props.steps],
+  );
+  const planFilePath = String(props.planFilePath || props.filePath || 'proposal-plan.md');
+  const summaryMarkdown = String(props.summaryMarkdown || props.summary || props.description || '');
+  const riskyActions = String(props.riskyActions || '');
 
   const handleApprove = () => {
     onSubmit({
@@ -869,7 +947,7 @@ export const PlanReview: React.FC<A2UIComponentProps> = ({
         <div className="rounded-xl border border-slate-200/80 bg-slate-50/70 p-3">
           <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">Execution Map</p>
           <div className="mt-3 space-y-2 max-h-64 overflow-y-auto pr-1">
-            {steps.map((step: any, idx: number) => {
+            {steps.map((step, idx: number) => {
               const isComp = step.state === 'completed' || step.status === 'completed';
               return (
                 <div key={idx} className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
@@ -967,17 +1045,4 @@ export const PlanReview: React.FC<A2UIComponentProps> = ({
       {error && <div className="text-xs font-semibold text-rose-600 bg-rose-50 border border-rose-100 p-2.5 rounded-lg">{error}</div>}
     </div>
   );
-};
-
-// Component Catalog Registry Mappings
-export const catalog: Record<string, React.FC<A2UIComponentProps>> = {
-  'clarification.form': ClarificationForm,
-  'style.previewChooser': StylePreviewChooser,
-  'approval.card': ApprovalCard,
-  'plan.review': PlanReview,
-
-  // Compatibility aliases
-  'clarification_form': ClarificationForm,
-  'style_preview_chooser': StylePreviewChooser,
-  'approval': ApprovalCard,
 };

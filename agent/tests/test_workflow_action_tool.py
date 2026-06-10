@@ -183,6 +183,59 @@ def test_workflow_action_promotes_context_outline_to_a2ui_props(monkeypatch, tmp
     assert props["outlineMarkdown"] == "## Proposed outline\n\n1. Title\n2. Takeaways"
 
 
+def test_workflow_action_act_mode_preserves_top_level_actions(monkeypatch, tmp_path):
+    workspace = WorkspaceState(workspace_id="workflow-a2ui-actions", root_path=tmp_path)
+    captured = {}
+
+    def fake_interrupt(payload):
+        captured["payload"] = payload
+        return {"surfaceId": "surface-next_step", "actionId": "revise", "values": {"action": {"id": "revise"}}}
+
+    monkeypatch.setattr("helpudoc_agent.tools_and_schemas.interrupt", fake_interrupt)
+
+    tool = build_workflow_action_tool(workspace)
+    result = tool.invoke(
+        {
+            "action": "ask_user_a2ui",
+            "reason": "Need a human action choice.",
+            "gate_id": "next_step",
+            "component": "approval.card",
+            "resume_mode": "action",
+            "props_json": json.dumps(
+                {
+                    "title": "Choose Next Step",
+                    "actions": [
+                        {
+                            "id": "revise",
+                            "label": "Revise",
+                            "inputMode": "text",
+                        },
+                        {
+                            "id": "approve",
+                            "label": "Approve",
+                            "style": "primary",
+                        },
+                    ],
+                }
+            ),
+            "context_json": json.dumps(
+                {
+                    "skill": "research",
+                    "gateId": "next_step",
+                    "uiContract": "a2ui",
+                }
+            ),
+        }
+    )
+
+    assert json.loads(result)["actionId"] == "revise"
+    payload = captured["payload"]
+    assert payload["kind"] == "approval"
+    assert payload["a2uiRequest"]["resumeAction"]["endpoint"] == "act"
+    assert payload["a2uiRequest"]["props"]["actions"][0]["id"] == "revise"
+    assert payload["actions"][0]["id"] == "revise"
+
+
 def test_request_human_action_tool_call_extracts_native_a2ui_payload():
     payload = extract_interrupt_payload_from_tool_call(
         "request_human_action",

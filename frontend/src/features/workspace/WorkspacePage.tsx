@@ -4908,7 +4908,10 @@ export default function WorkspacePage() {
   }, []);
 
   const handleA2UISubmit = useCallback(
-    async (response: A2UIResponse, request: A2UIRequest, message: ConversationMessage) => {
+    async (response: A2UIResponse, request: A2UIRequest, message?: ConversationMessage) => {
+      if (!message) {
+        throw new Error('Missing message context for A2UI submit action.');
+      }
       const runId = findRunIdForMessage(message);
       if (!runId) {
         throw new Error('Missing run id for A2UI submit action.');
@@ -4919,12 +4922,32 @@ export default function WorkspacePage() {
       if (endpoint === 'decision') {
         const decision = response.decision || 'approve';
         if (decision === 'approve' || decision === 'edit' || decision === 'reject') {
-          const options: any = {
+          const options: Parameters<typeof submitRunDecision>[2] = {
             message: response.message,
-            metadata: response.metadata,
           };
           if (decision === 'edit' && response.values) {
-            options.editedAction = response.values.editedAction || response.values;
+            const editedAction = response.values.editedAction;
+            if (
+              editedAction &&
+              typeof editedAction === 'object' &&
+              !Array.isArray(editedAction) &&
+              typeof (editedAction as Record<string, unknown>).name === 'string'
+            ) {
+              const editedActionRecord = editedAction as Record<string, unknown>;
+              options.editedAction = {
+                name: editedActionRecord.name as string,
+                args: editedActionRecord.args &&
+                  typeof editedActionRecord.args === 'object' &&
+                  !Array.isArray(editedActionRecord.args)
+                  ? editedActionRecord.args as Record<string, unknown>
+                  : {},
+              };
+            } else {
+              options.editedAction = {
+                name: 'request_plan_approval',
+                args: response.values,
+              };
+            }
           }
           await submitInterruptWithRetry(runId, 'approval', () => submitRunDecision(runId, decision, options));
         }

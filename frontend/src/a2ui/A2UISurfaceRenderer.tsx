@@ -2,6 +2,7 @@ import React, { useLayoutEffect } from 'react';
 import { A2uiSurface } from '@a2ui/react/v0_9';
 import { useA2UIRuntime } from './useA2UIRuntime';
 import {
+  type A2UIComponentProps,
   ClarificationForm,
   StylePreviewChooser,
   ApprovalCard,
@@ -9,7 +10,9 @@ import {
 } from './catalog';
 import type { A2UIRequest, A2UIResponse } from '@helpudoc/contracts/types';
 
-const DIRECT_COMPONENTS: Record<string, React.FC<any>> = {
+type DirectSubmitPayload = Parameters<A2UIComponentProps['onSubmit']>[0];
+
+const DIRECT_COMPONENTS: Record<string, React.FC<A2UIComponentProps>> = {
   'clarification.form': ClarificationForm,
   clarification_form: ClarificationForm,
   'style.previewChooser': StylePreviewChooser,
@@ -28,7 +31,7 @@ export const A2UISurfaceRenderer: React.FC<{
 
   useLayoutEffect(() => {
     loadRequest(request);
-  }, [request]);
+  }, [loadRequest, request]);
 
   if (!surfaceModel && error) {
     return (
@@ -44,7 +47,7 @@ export const A2UISurfaceRenderer: React.FC<{
       return (
         <DirectComponent
           props={{ ...(request.props || {}), workspaceId }}
-          onSubmit={(payload: any) => onSubmit({
+          onSubmit={(payload: DirectSubmitPayload) => onSubmit({
             surfaceId: request.surfaceId,
             actionId: payload?.actionId || request.resumeAction?.actionId || 'submit',
             values: payload?.values,

@@ -140,13 +140,16 @@ def _build_a2ui_interrupt_payload(
         },
         "metadata": parsed_context
     }
-    return {
+    interrupt_payload = {
         "kind": kind,
         "title": parsed_props.get("title") or f"A2UI: {comp}",
         "description": parsed_props.get("description") or "",
         "a2uiRequest": a2ui_request,
         "display_payload": parsed_context,
-    }, None
+    }
+    if endpoint == "act" and isinstance(parsed_props.get("actions"), list):
+        interrupt_payload["actions"] = parsed_props["actions"]
+    return interrupt_payload, None
 
 
 def _ask_user_a2ui(
