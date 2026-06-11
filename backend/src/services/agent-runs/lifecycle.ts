@@ -316,18 +316,6 @@ const isSyntheticClarificationInterrupt = (interrupt?: RunPendingInterrupt): boo
   );
 };
 
-const getSyntheticClarificationSource = (interrupt?: RunPendingInterrupt): string => {
-  const displayPayload = interrupt?.displayPayload || {};
-  const nativeMetadata = interrupt?.a2uiRequest?.metadata || {};
-  const source = displayPayload.source || nativeMetadata.source;
-  return typeof source === 'string' ? source.trim() : '';
-};
-
-const isAgentContractSyntheticInterrupt = (interrupt?: RunPendingInterrupt): boolean => (
-  isSyntheticClarificationInterrupt(interrupt) &&
-  getSyntheticClarificationSource(interrupt) === 'a2ui_contract_synthetic'
-);
-
 const formatClarificationResponseForPrompt = (
   response: AgentInterruptResponse,
   previousInterrupt?: RunPendingInterrupt,
@@ -3072,8 +3060,7 @@ export async function resumeAgentRunWithResponse(
   }
   const baseParams = options?.authToken ? { ...context.params, authToken: options.authToken } : context.params;
   const previousInterruptIsSynthetic = isSyntheticClarificationInterrupt(options?.previousInterrupt);
-  const previousInterruptUsesAgentResume = isAgentContractSyntheticInterrupt(options?.previousInterrupt);
-  const nextParams = previousInterruptIsSynthetic && !previousInterruptUsesAgentResume
+  const nextParams = previousInterruptIsSynthetic
     ? {
         ...baseParams,
         prompt: buildSyntheticClarificationFollowupPrompt(
@@ -3108,7 +3095,7 @@ export async function resumeAgentRunWithResponse(
   void runAgentRunWorker(
     runId,
     nextParams,
-    previousInterruptIsSynthetic && !previousInterruptUsesAgentResume ? undefined : { response },
+    previousInterruptIsSynthetic ? undefined : { response },
     options?.previousInterrupt,
   );
   return { runId, status: 'queued' };

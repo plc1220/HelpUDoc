@@ -771,7 +771,7 @@ test('frontend-slides A2UI presentation gate resumes through continuation instea
   }
 });
 
-test('frontend-slides A2UI contract synthetic native gate resumes through agent response stream', {
+test('frontend-slides A2UI contract synthetic native gate continues through followup prompt', {
   skip: process.env.RUN_A2UI_E2E !== '1' ? 'set RUN_A2UI_E2E=1 with Redis available to run lifecycle flow test' : false,
 }, async () => {
   if (!redisClient.isOpen) {
@@ -859,9 +859,11 @@ test('frontend-slides A2UI contract synthetic native gate resumes through agent 
     assert.equal(settled?.status, 'awaiting_approval');
     assert.equal(settled?.pendingInterrupt?.displayPayload?.gateId, 'outline_confirmation');
     assert.deepEqual(settled?.a2uiGateState?.completedGateIds, ['presentation_context']);
-    assert.equal(calls.some((call) => call.kind === 'respond'), true);
-    assert.equal(calls[1]?.kind, 'respond');
-    assert.equal(calls[1]?.forceReset, undefined);
+    assert.equal(calls.some((call) => call.kind === 'respond'), false);
+    assert.equal(calls[1]?.kind, 'run');
+    assert.equal(calls[1]?.forceReset, true);
+    assert.match(calls[1]?.prompt || '', /Generate the slide outline next/);
+    assert.match(calls[1]?.prompt || '', /outline_confirmation/);
     assert.deepEqual(calls[1]?.traceCompletedGates, ['presentation_context']);
   } finally {
     await new Promise((resolve) => setTimeout(resolve, 100));
