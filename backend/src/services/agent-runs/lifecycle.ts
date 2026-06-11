@@ -2103,6 +2103,11 @@ const terminalEventFromStreamPayload = (parsed: Record<string, unknown> | null):
   return undefined;
 };
 
+const isLikelyDeckArtifactPath = (path: string): boolean => {
+  const baseName = path.split(/[\\/]/).pop() || path;
+  return /\.html?$/i.test(baseName) && /(?:-deck|deck|slides?|presentation)/i.test(baseName);
+};
+
 const extractDeckArtifactPath = (parsed: Record<string, unknown> | null): string | undefined => {
   if (!parsed) {
     return undefined;
@@ -2119,7 +2124,7 @@ const extractDeckArtifactPath = (parsed: Record<string, unknown> | null): string
       candidates.push(path.trim());
     }
   });
-  return candidates.find((path) => /-deck\.html$/i.test(path));
+  return candidates.find(isLikelyDeckArtifactPath);
 };
 
 const inspectRunStreamForRecovery = async (
@@ -2150,26 +2155,27 @@ const inspectRunStreamForRecovery = async (
         continue;
       }
       const entryAt = parseRedisStreamEntryTimestamp(entry[0]);
-      if (!streamEntryIsRelevantToStartedAt(entryAt, startedAtMs)) {
-        continue;
-      }
-      if (!inspection.latestEntryAt && entryAt) {
-        inspection.latestEntryAt = entryAt;
-      }
+      const isRelevantToCurrentResume = streamEntryIsRelevantToStartedAt(entryAt, startedAtMs);
       const fields = entry[1] as unknown[];
       for (let index = 0; index < fields.length - 1; index += 2) {
         if (fields[index] !== 'data' || typeof fields[index + 1] !== 'string') {
           continue;
         }
         const parsed = parseLine(fields[index + 1] as string);
+        if (!inspection.latestDeckArtifactPath) {
+          inspection.latestDeckArtifactPath = extractDeckArtifactPath(parsed);
+        }
+        if (!isRelevantToCurrentResume) {
+          continue;
+        }
+        if (!inspection.latestEntryAt && entryAt) {
+          inspection.latestEntryAt = entryAt;
+        }
         if (isRealRunProgressEvent(parsed) && !inspection.latestRealActivityAt && entryAt) {
           inspection.latestRealActivityAt = entryAt;
         }
         if (!inspection.latestTerminalEvent) {
           inspection.latestTerminalEvent = terminalEventFromStreamPayload(parsed);
-        }
-        if (!inspection.latestDeckArtifactPath) {
-          inspection.latestDeckArtifactPath = extractDeckArtifactPath(parsed);
         }
         if (!inspection.latestInterruptPayload && parsed?.type === 'interrupt') {
           inspection.latestInterruptPayload = normalizeInterruptPayloadRecord(parsed);

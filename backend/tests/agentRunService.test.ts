@@ -831,6 +831,78 @@ test('getRunMeta completes frontend-slides runs that wrote the final deck before
   }
 });
 
+test('getRunMeta completes frontend-slides runs with earlier presentation HTML artifact', {
+  skip: process.env.RUN_A2UI_E2E !== '1' ? 'set RUN_A2UI_E2E=1 with Redis available to run lifecycle flow test' : false,
+}, async () => {
+  if (!redisClient.isOpen) {
+    await redisClient.connect();
+  }
+
+  const runId = `presentation-html-recovered-frontend-slides-${Date.now()}`;
+  const streamKey = `agent:run:${runId}`;
+  const metaKey = `${streamKey}:meta`;
+  const workspaceId = 'workspace-presentation-html-recovered-frontend-slides';
+  const turnId = `turn-${Date.now()}`;
+  const nowMs = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+  const earlierMs = nowMs - 30_000;
+  const requiredGates = [
+    'presentation_context',
+    'outline_confirmation',
+    'style_path_selection',
+    'mood_or_preset_selection',
+    'style_preview_selection',
+  ];
+
+  try {
+    await redisClient.hSet(metaKey, {
+      workspaceId,
+      persona: 'fast',
+      status: 'running',
+      createdAt: new Date(earlierMs).toISOString(),
+      startedAt: nowIso,
+      turnId,
+      pendingInterrupt: '',
+      error: '',
+      a2uiGateState: JSON.stringify({ completedGateIds: requiredGates }),
+      runContext: JSON.stringify({
+        workspaceId,
+        persona: 'fast',
+        prompt: '/skill frontend-slides @final-research-report.md',
+        history: [{ role: 'user', content: '/skill frontend-slides @final-research-report.md' }],
+        turnId,
+        forceReset: true,
+      }),
+    });
+    await redisClient.sendCommand([
+      'XADD',
+      streamKey,
+      `${earlierMs}-0`,
+      'data',
+      JSON.stringify({
+        type: 'tool_end',
+        name: 'write_file',
+        outputFiles: [
+          { path: 'K-CIP_Presentation.html', mimeType: 'text/html', size: 47_468 },
+        ],
+      }),
+    ]);
+    await redisClient.xAdd(streamKey, '*', {
+      data: JSON.stringify({
+        type: 'token',
+        content: 'I have initialized the structured configuration form again.',
+      }),
+    });
+
+    const meta = await getRunMeta(runId);
+    assert.equal(meta?.status, 'completed');
+    assert.equal(meta?.error || '', '');
+  } finally {
+    await redisClient.del(streamKey);
+    await redisClient.del(metaKey);
+  }
+});
+
 test('getRunMeta recovers missing frontend-slides gates before terminal stream recovery', {
   skip: process.env.RUN_A2UI_E2E !== '1' ? 'set RUN_A2UI_E2E=1 with Redis available to run lifecycle flow test' : false,
 }, async () => {
