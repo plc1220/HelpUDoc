@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Check, CheckCircle2, ImageIcon, Loader2 } from 'lucide-react';
+import { buildApiUrl } from '../services/apiClient';
 
 type A2UIDecision = 'approve' | 'edit' | 'reject' | 'submit' | 'cancel';
 
@@ -29,8 +30,11 @@ type A2UIChoice = {
   summary?: string;
   path?: string;
   file?: string;
+  filePath?: string;
   previewPath?: string;
   html?: string;
+  srcDoc?: string;
+  srcdoc?: string;
   content?: string;
 };
 
@@ -377,6 +381,60 @@ export const ClarificationForm: React.FC<A2UIComponentProps> = ({
   );
 };
 
+const normalizeStylePreviewKey = (value: string): string => (
+  value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+);
+
+const asStylePreviewChoices = (value: unknown): A2UIChoice[] => (
+  Array.isArray(value)
+    ? value.filter((item): item is A2UIChoice => Boolean(item && typeof item === 'object' && !Array.isArray(item)))
+    : []
+);
+
+const getChoiceText = (choice: Partial<A2UIChoice>, keys: Array<keyof A2UIChoice>): string => {
+  for (const key of keys) {
+    const value = choice[key];
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim();
+    }
+  }
+  return '';
+};
+
+const buildStylePreviewMetadata = (sources: unknown[]) => {
+  const metadata = new Map<string, Partial<A2UIChoice>>();
+  sources
+    .flatMap((source) => asStylePreviewChoices(source))
+    .forEach((item, index) => {
+      const id = getChoiceText(item, ['id', 'choiceId']) || `choice-${index + 1}`;
+      const label = getChoiceText(item, ['label', 'name', 'title']);
+      const value = getChoiceText(item, ['value']) || label;
+      [id, label, value].forEach((key) => {
+        const normalizedKey = normalizeStylePreviewKey(key);
+        if (normalizedKey) {
+          metadata.set(normalizedKey, item);
+        }
+      });
+    });
+  return metadata;
+};
+
+const getStylePreviewUrl = (
+  workspaceId: string | undefined,
+  path: string,
+  options?: { inline?: boolean },
+): string | undefined => {
+  if (!workspaceId || !path.trim()) {
+    return undefined;
+  }
+  const url = buildApiUrl(`/workspaces/${workspaceId}/files/preview/raw`);
+  url.searchParams.set('path', path.trim());
+  if (options?.inline) {
+    url.searchParams.set('disposition', 'inline');
+  }
+  return url.toString();
+};
+
 // 2. Style Preview Chooser Component (style.previewChooser)
 export const StylePreviewChooser: React.FC<A2UIComponentProps> = ({
   props,
@@ -384,13 +442,27 @@ export const StylePreviewChooser: React.FC<A2UIComponentProps> = ({
   isSubmitting = false,
   workspaceId,
 }) => {
+  const propsChoices = props.choices;
+  const propsPreviews = props.previews;
+  const propsStylePreviews = props.stylePreviews;
+  const propsPreviewStyles = props.previewStyles;
+  const propsPreviewFiles = props.previewFiles;
+
   const choices = useMemo<A2UIChoice[]>(
-    () => (Array.isArray(props.choices)
-      ? props.choices
-      : Array.isArray(props.previews)
-        ? props.previews
-        : []).filter((item): item is A2UIChoice => Boolean(item && typeof item === 'object')),
-    [props.choices, props.previews],
+    () => {
+      for (const source of [propsChoices, propsPreviews, propsStylePreviews, propsPreviewStyles, propsPreviewFiles]) {
+        const candidates = asStylePreviewChoices(source);
+        if (candidates.length) {
+          return candidates;
+        }
+      }
+      return [];
+    },
+    [propsChoices, propsPreviews, propsStylePreviews, propsPreviewStyles, propsPreviewFiles],
+  );
+  const previewMetadata = useMemo(
+    () => buildStylePreviewMetadata([propsPreviews, propsStylePreviews, propsPreviewStyles, propsPreviewFiles, propsChoices]),
+    [propsChoices, propsPreviews, propsStylePreviews, propsPreviewStyles, propsPreviewFiles],
   );
   const multiple = Boolean(props.multiple);
 
@@ -401,20 +473,26 @@ export const StylePreviewChooser: React.FC<A2UIComponentProps> = ({
   const items = useMemo(() => {
     return choices.map((c, idx: number) => {
       const id = String(c.id || c.choiceId || `choice-${idx + 1}`);
-      const label = String(c.label || c.name || c.title || `Option ${idx + 1}`);
-      const value = String(c.value || label);
-      const description = String(c.description || c.summary || '');
-      const path = String(c.path || c.file || c.previewPath || '');
-      const html = String(c.html || c.content || '');
+      const choiceLabel = getChoiceText(c, ['label', 'name', 'title']);
+      const choiceValue = getChoiceText(c, ['value']) || choiceLabel;
+      const matchingMetadata =
+        previewMetadata.get(normalizeStylePreviewKey(id)) ||
+        previewMetadata.get(normalizeStylePreviewKey(choiceLabel)) ||
+        previewMetadata.get(normalizeStylePreviewKey(choiceValue)) ||
+        {};
+      const label = choiceLabel || getChoiceText(matchingMetadata, ['label', 'name', 'title']) || `Option ${idx + 1}`;
+      const value = choiceValue || getChoiceText(matchingMetadata, ['value']) || label;
+      const description = getChoiceText(c, ['description', 'summary']) || getChoiceText(matchingMetadata, ['description', 'summary']);
+      const path = getChoiceText(c, ['path', 'file', 'filePath', 'previewPath']) || getChoiceText(matchingMetadata, ['path', 'file', 'filePath', 'previewPath']);
+      const html = getChoiceText(c, ['html', 'srcDoc', 'srcdoc', 'content']) || getChoiceText(matchingMetadata, ['html', 'srcDoc', 'srcdoc', 'content']);
 
       let previewUrl: string | undefined = undefined;
       let downloadUrl: string | undefined = undefined;
       const isHtmlPreview = Boolean(path && /\.html?$/i.test(path)) || Boolean(html);
 
       if (path && workspaceId) {
-        const basePreviewUrl = `/api/workspaces/${workspaceId}/files/preview/raw?path=${encodeURIComponent(path)}`;
-        previewUrl = isHtmlPreview ? `${basePreviewUrl}&disposition=inline` : basePreviewUrl;
-        downloadUrl = basePreviewUrl;
+        previewUrl = getStylePreviewUrl(workspaceId, path, { inline: isHtmlPreview });
+        downloadUrl = getStylePreviewUrl(workspaceId, path);
       }
 
       return {
@@ -429,7 +507,7 @@ export const StylePreviewChooser: React.FC<A2UIComponentProps> = ({
         isHtmlPreview,
       };
     });
-  }, [choices, workspaceId]);
+  }, [choices, previewMetadata, workspaceId]);
 
   const activeItem = useMemo(() => {
     if (items.length === 0) return null;
