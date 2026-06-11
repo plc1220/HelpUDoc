@@ -50,6 +50,64 @@ def test_detect_implicit_input_using_form_above() -> None:
     assert result.awaiting is True
 
 
+def test_detect_implicit_input_non_slide_format_and_audience_choices() -> None:
+    format_result = detect_implicit_input_awaiting(
+        skill_id="research",
+        assistant_text=(
+            "I can prepare this research brief in a few formats.\n"
+            "Which format would you prefer?\n"
+            "1. Executive summary\n"
+            "2. Full report"
+        ),
+    )
+    assert format_result.awaiting is True
+
+    audience_result = detect_implicit_input_awaiting(
+        skill_id="research",
+        assistant_text=(
+            "I will use the executive summary format.\n"
+            "Which audience should I optimize for?\n"
+            "1. Leadership team\n"
+            "2. Technical reviewers"
+        ),
+    )
+    assert audience_result.awaiting is True
+
+
+def test_detect_implicit_input_non_slide_pausing_after_prompting_choice() -> None:
+    result = detect_implicit_input_awaiting(
+        skill_id="generic-brief",
+        assistant_text=(
+            "I have initiated Stage 1 of the research brief drafting workflow by prompting "
+            "you to choose the output format (Executive Summary, Full Report, or Checklist). "
+            "I am now pausing and waiting for your response."
+        ),
+    )
+    assert result.awaiting is True
+
+
+def test_detect_implicit_input_non_slide_claimed_a2ui_gate_presented() -> None:
+    result = detect_implicit_input_awaiting(
+        skill_id="research",
+        assistant_text=(
+            "I have successfully presented the output format selection gate using A2UI as requested. "
+            "Please select your preferred format (Executive Summary, Full Report, or Checklist) to proceed!"
+        ),
+    )
+    assert result.awaiting is True
+
+
+def test_detect_implicit_input_non_slide_claimed_a2ui_prompt_initiated() -> None:
+    result = detect_implicit_input_awaiting(
+        skill_id="research",
+        assistant_text=(
+            "I have initiated the A2UI prompt for you to select your preferred output format: "
+            "Executive Summary, Full Report, or Checklist. Please make your selection in the user interface."
+        ),
+    )
+    assert result.awaiting is True
+
+
 def test_detect_implicit_input_fill_out_form_above() -> None:
     result = detect_implicit_input_awaiting(
         skill_id="frontend-slides",
@@ -193,6 +251,38 @@ def test_build_synthetic_interrupt_uses_frontend_slides_discovery_form() -> None
     assert payload["response_spec"]["allowDismiss"] is True
 
 
+def test_frontend_slides_guard_gate_interrupt_is_marked_synthetic() -> None:
+    model = GenericFakeChatModel(
+        messages=iter(
+            [
+                AIMessage(
+                    content=(
+                        "I have initialized the configuration form. Please fill out the form "
+                        "in the interface so we can proceed."
+                    )
+                )
+            ]
+        )
+    )
+    agent = create_agent(
+        model=model,
+        tools=[],
+        middleware=[ImplicitInputGuardMiddleware()],
+        checkpointer=MemorySaver(),
+    )
+    result = agent.invoke(
+        {"messages": [HumanMessage(content="Create slides")]},
+        context={"active_skill": "frontend-slides"},
+        config={"configurable": {"thread_id": "frontend-slides-synthetic-gate"}},
+    )
+
+    marker = result["messages"][-1].content
+    payload = extract_interrupt_payload_from_tool_text(marker)
+    assert payload is not None
+    assert payload["displayPayload"]["source"] == "implicit_input_guard"
+    assert payload["displayPayload"]["synthetic"] is True
+
+
 def test_build_synthetic_interrupt_detects_generic_form_preference_request() -> None:
     payload = build_synthetic_clarification_interrupt(
         skill_id="frontend-slides",
@@ -285,6 +375,27 @@ def test_build_synthetic_interrupt_parses_option_choices_as_style_previews() -> 
     assert payload["response_spec"]["choices"][0]["label"].startswith("Style A: Bold")
 
 
+def test_build_synthetic_interrupt_prefers_inline_generic_choices_over_policy_bullets() -> None:
+    payload = build_synthetic_clarification_interrupt(
+        skill_id="research",
+        assistant_text=(
+            "Please select your preferred output format from the options provided "
+            "(Executive Summary, Full Report, or Checklist) to proceed.\n\n"
+            "- requiresHitlPlan: true\n"
+            "- requiresWorkspaceArtifacts: true\n"
+            "- requestPlanApproval"
+        ),
+        prompt_hint=None,
+    )
+    assert payload is not None
+    options = payload["response_spec"]["questions"][0]["options"]
+    assert [option["label"] for option in options] == [
+        "Executive Summary",
+        "Full Report",
+        "Checklist",
+    ]
+
+
 def test_guard_skips_when_tool_calls_present() -> None:
     middleware = ImplicitInputGuardMiddleware()
     state = {
@@ -336,7 +447,7 @@ def test_guard_emits_deterministic_gate_interrupt_without_regex_signal() -> None
     assert "frontend_slides_completed_a2ui_gates" not in runtime.context
 
 
-def test_guard_emits_next_gate_after_completed_presentation_context_when_prose_asks_ui() -> None:
+def test_guard_does_not_advance_next_gate_for_repeated_setup_form_prose() -> None:
     middleware = ImplicitInputGuardMiddleware()
     state = {
         "messages": [
@@ -345,6 +456,40 @@ def test_guard_emits_next_gate_after_completed_presentation_context_when_prose_a
                     "I have called the request_clarification tool to render the Presentation Setup form "
                     "under our A2UI contract. Please complete the setup in the UI form so we can proceed "
                     "with organizing your slide outline."
+                )
+            )
+        ]
+    }
+    runtime = Runtime(
+        context={
+            "active_skill": "frontend-slides",
+            "frontend_slides_completed_a2ui_gates": ["presentation_context"],
+        }
+    )
+
+    result = middleware.after_model(state, runtime)
+
+    assert result is not None
+    assert result.get("jump_to") == "model"
+    assert result.get("implicit_retry") is True
+    messages = result.get("messages") or []
+    assert len(messages) == 1
+    assert "presentation setup" in messages[0].content.lower()
+    assert "already complete" in messages[0].content.lower()
+    assert "workflow_action" in messages[0].content
+    assert "ask_user_a2ui" in messages[0].content
+    assert "outline_confirmation" in messages[0].content
+
+
+def test_guard_emits_outline_gate_after_completed_presentation_context_when_outline_prose_asks_ui() -> None:
+    middleware = ImplicitInputGuardMiddleware()
+    state = {
+        "messages": [
+            AIMessage(
+                content=(
+                    "Here is the proposed slide outline:\n\n"
+                    "1. Title\n2. State of the art\n3. Architecture\n\n"
+                    "Please confirm the outline above so we can proceed to style selection."
                 )
             )
         ]
@@ -429,7 +574,8 @@ def test_guard_loops_once_and_raises_contract_error_on_retry() -> None:
     messages = result.get("messages") or []
     assert len(messages) == 1
     assert isinstance(messages[0], HumanMessage)
-    assert "request_clarification" in messages[0].content
+    assert "workflow_action" in messages[0].content
+    assert "ask_user_a2ui" in messages[0].content
 
     # Second occurrence (implicit_retry is True): Should raise ValueError immediately
     state_retry = {
@@ -439,3 +585,167 @@ def test_guard_loops_once_and_raises_contract_error_on_retry() -> None:
     import pytest
     with pytest.raises(ValueError, match="Contract violation"):
         middleware.after_model(state_retry, runtime)
+
+
+def test_guard_emits_generic_a2ui_interrupt_immediately() -> None:
+    middleware = ImplicitInputGuardMiddleware()
+    state = {
+        "messages": [
+            AIMessage(
+                content=(
+                    "I can prepare this research brief in a few formats.\n"
+                    "Which format would you prefer?\n"
+                    "1. Executive summary\n"
+                    "2. Full report"
+                )
+            )
+        ]
+    }
+    runtime = Runtime(context={"active_skill": "research"})
+
+    result = middleware.after_model(state, runtime)
+    assert result is not None
+    assert "jump_to" not in result
+    messages = result.get("messages") or []
+    assert len(messages) == 1
+    assert isinstance(messages[0], AIMessage)
+    payload = extract_interrupt_payload_from_tool_text(messages[0].content)
+    assert payload is not None
+    assert payload["kind"] == "clarification"
+    assert payload["displayPayload"]["skill"] == "research"
+    assert payload["displayPayload"]["uiContract"] == "a2ui"
+    assert payload["a2uiRequest"]["contract"] == "a2ui"
+    assert payload["a2uiRequest"]["component"] == "clarification.form"
+    assert payload["a2uiRequest"]["skill"] == "research"
+    assert payload["uiRequest"]["component"] == "clarification_form"
+    assert payload["uiRequest"]["props"]["title"] == "Input Needed"
+    options = payload["uiRequest"]["props"]["questions"][0]["options"]
+    assert [option["label"] for option in options] == ["Executive summary", "Full report"]
+
+
+def test_guard_emits_generic_a2ui_interrupt_on_retry() -> None:
+    middleware = ImplicitInputGuardMiddleware()
+    state = {
+        "messages": [
+            AIMessage(
+                content=(
+                    "I will use the executive summary format.\n"
+                    "Which audience should I optimize for?\n"
+                    "1. Leadership team\n"
+                    "2. Technical reviewers"
+                )
+            )
+        ],
+        "implicit_retry": True,
+    }
+    runtime = Runtime(context={"active_skill": "research"})
+
+    result = middleware.after_model(state, runtime)
+    assert result is not None
+    messages = result.get("messages") or []
+    assert len(messages) == 1
+    assert isinstance(messages[0], AIMessage)
+    payload = extract_interrupt_payload_from_tool_text(messages[0].content)
+    assert payload is not None
+    assert payload["kind"] == "clarification"
+    assert payload["title"] == "Input Needed"
+    assert payload["displayPayload"]["skill"] == "research"
+    assert payload["displayPayload"]["uiContract"] == "a2ui"
+    assert payload["a2uiRequest"]["contract"] == "a2ui"
+    assert payload["a2uiRequest"]["component"] == "clarification.form"
+    assert payload["a2uiRequest"]["skill"] == "research"
+    assert payload["uiRequest"]["component"] == "clarification_form"
+    assert payload["uiRequest"]["props"]["questions"][0]["id"] == "response"
+    options = payload["uiRequest"]["props"]["questions"][0]["options"]
+    assert [option["label"] for option in options] == ["Leadership team", "Technical reviewers"]
+
+
+def test_guard_generic_a2ui_extracts_parenthetical_choice_list() -> None:
+    middleware = ImplicitInputGuardMiddleware()
+    state = {
+        "messages": [
+            AIMessage(
+                content=(
+                    "I have initialized the A2UI smoke test as requested. Please select your "
+                    "preferred output format using the interactive form above (Executive Summary, "
+                    "Full Report, or Checklist)."
+                )
+            )
+        ]
+    }
+    runtime = Runtime(context={"active_skill": "research"})
+
+    result = middleware.after_model(state, runtime)
+    assert result is not None
+    messages = result.get("messages") or []
+    assert len(messages) == 1
+    payload = extract_interrupt_payload_from_tool_text(messages[0].content)
+    assert payload is not None
+    assert payload["a2uiRequest"]["component"] == "clarification.form"
+    options = payload["a2uiRequest"]["props"]["questions"][0]["options"]
+    assert [option["label"] for option in options] == [
+        "Executive Summary",
+        "Full Report",
+        "Checklist",
+    ]
+
+
+def test_guard_generic_a2ui_extracts_colon_choice_list() -> None:
+    middleware = ImplicitInputGuardMiddleware()
+    state = {
+        "messages": [
+            AIMessage(
+                content=(
+                    "I have presented the A2UI prompt for you to select your preferred "
+                    "output format: Executive Summary, Full Report, or Checklist. "
+                    "Please make your selection above to proceed."
+                )
+            )
+        ]
+    }
+    runtime = Runtime(context={"active_skill": "research"})
+
+    result = middleware.after_model(state, runtime)
+    assert result is not None
+    messages = result.get("messages") or []
+    payload = extract_interrupt_payload_from_tool_text(messages[0].content)
+    assert payload is not None
+    options = payload["a2uiRequest"]["props"]["questions"][0]["options"]
+    assert [option["label"] for option in options] == [
+        "Executive Summary",
+        "Full Report",
+        "Checklist",
+    ]
+
+
+def test_guard_generic_a2ui_extracts_choices_from_user_prompt_when_assistant_omits_them() -> None:
+    middleware = ImplicitInputGuardMiddleware()
+    state = {
+        "messages": [
+            HumanMessage(
+                content=(
+                    "/skill research Before doing any research, ask me to choose the output "
+                    "format from Executive Summary, Full Report, or Checklist."
+                )
+            ),
+            AIMessage(
+                content=(
+                    "I have paused at the input gate as requested. Please select your desired "
+                    "output format from the A2UI component above to proceed."
+                )
+            ),
+        ]
+    }
+    runtime = Runtime(context={"active_skill": "research"})
+
+    result = middleware.after_model(state, runtime)
+    assert result is not None
+    messages = result.get("messages") or []
+    payload = extract_interrupt_payload_from_tool_text(messages[0].content)
+    assert payload is not None
+    options = payload["a2uiRequest"]["props"]["questions"][0]["options"]
+    assert [option["label"] for option in options] == [
+        "Executive Summary",
+        "Full Report",
+        "Checklist",
+    ]

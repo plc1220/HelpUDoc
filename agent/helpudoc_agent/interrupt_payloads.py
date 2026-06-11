@@ -5,6 +5,7 @@ import ast
 import hashlib
 import json
 import logging
+import uuid
 from typing import Any, Dict, List
 
 
@@ -45,20 +46,68 @@ def _normalize_interrupt_payload(interrupt_value: Dict[str, Any], interrupt_id: 
     display_payload = interrupt_value.get("display_payload")
     if isinstance(display_payload, dict):
         payload["displayPayload"] = display_payload
+    kind = interrupt_value.get("kind")
     a2ui_request = interrupt_value.get("a2uiRequest") or interrupt_value.get("a2ui_request")
-    if isinstance(a2ui_request, dict):
-        payload["a2uiRequest"] = a2ui_request
     normalized_interrupt_id = (
         interrupt_id.strip()
         if isinstance(interrupt_id, str) and interrupt_id.strip()
         else _build_interrupt_id(interrupt_value)
     )
     payload["interruptId"] = normalized_interrupt_id
+    if not isinstance(a2ui_request, dict) and kind == "clarification":
+        response_spec_for_native = response_spec if isinstance(response_spec, dict) else {}
+        display_payload_for_native = display_payload if isinstance(display_payload, dict) else {}
+        gate_id = str(display_payload_for_native.get("gateId") or display_payload_for_native.get("gate_id") or "").strip()
+        skill = str(display_payload_for_native.get("skill") or display_payload_for_native.get("skillId") or "").strip()
+        is_style_chooser = bool(
+            display_payload_for_native.get("chooser") == "style-previews"
+            or display_payload_for_native.get("stylePreviews")
+        )
+        if is_style_chooser:
+            component = "style.previewChooser"
+            props = {
+                "title": payload.get("title"),
+                "description": payload.get("description"),
+                "choices": response_spec_for_native.get("choices") or [],
+                "previews": display_payload_for_native.get("stylePreviews")
+                or display_payload_for_native.get("previews")
+                or [],
+                "submitLabel": response_spec_for_native.get("submitLabel") or "Continue",
+                "multiple": bool(response_spec_for_native.get("multiple")),
+            }
+        else:
+            component = "clarification.form"
+            props = {
+                "title": payload.get("title"),
+                "description": payload.get("description"),
+                "questions": response_spec_for_native.get("questions") or [],
+                "choices": response_spec_for_native.get("choices") or [],
+                "inputMode": response_spec_for_native.get("inputMode") or "text",
+                "multiple": bool(response_spec_for_native.get("multiple")),
+                "submitLabel": response_spec_for_native.get("submitLabel") or "Continue",
+                "placeholder": response_spec_for_native.get("placeholder") or "",
+            }
+        a2ui_request = {
+            "contract": "a2ui",
+            "version": "0.9",
+            "surfaceId": f"surface-{gate_id}" if gate_id else f"surface-{normalized_interrupt_id}",
+            "component": component,
+            "props": props,
+            "gateId": gate_id or None,
+            "skill": skill or None,
+            "required": True,
+            "resumeAction": {
+                "endpoint": "respond",
+                "actionId": "submit",
+            },
+            "metadata": display_payload_for_native,
+        }
+    if isinstance(a2ui_request, dict):
+        payload["a2uiRequest"] = a2ui_request
 
     # Construct the uiRequest object. Native A2UI requests are the source of
     # truth when present; uiRequest is kept as a compatibility projection for
     # older frontend/status paths and backend gate validation.
-    kind = interrupt_value.get("kind")
     ui_request = None
     if isinstance(a2ui_request, dict):
         component = str(a2ui_request.get("component") or "").strip()
@@ -413,6 +462,50 @@ def _build_clarification_interrupt_value(args: Dict[str, Any]) -> Dict[str, Any]
             input_mode = "choice"
 
     action_choices = [] if parsed_questions else parsed_choices
+    display_payload = _parse_json_dict(args.get("context_json"))
+    gate_id = str(display_payload.get("gateId") or display_payload.get("gate_id") or "").strip()
+    skill = str(display_payload.get("skill") or display_payload.get("skillId") or "").strip()
+    surface_id = f"surface-{gate_id}" if gate_id else f"surface-clarification-{uuid.uuid4().hex[:8]}"
+    is_style_chooser = bool(
+        display_payload.get("chooser") == "style-previews" or display_payload.get("stylePreviews")
+    )
+    if is_style_chooser:
+        component = "style.previewChooser"
+        a2ui_props: Dict[str, Any] = {
+            "title": prompt_title,
+            "description": str(args.get("description") or "").strip(),
+            "choices": parsed_choices,
+            "previews": display_payload.get("stylePreviews") or display_payload.get("previews") or [],
+            "submitLabel": submit_label,
+            "multiple": multi_select,
+        }
+    else:
+        component = "clarification.form"
+        a2ui_props = {
+            "title": prompt_title,
+            "description": str(args.get("description") or "").strip(),
+            "questions": parsed_questions,
+            "choices": parsed_choices,
+            "inputMode": input_mode,
+            "multiple": multi_select,
+            "submitLabel": submit_label,
+            "placeholder": placeholder,
+        }
+    a2ui_request = {
+        "contract": "a2ui",
+        "version": "0.9",
+        "surfaceId": surface_id,
+        "component": component,
+        "props": a2ui_props,
+        "gateId": gate_id or None,
+        "skill": skill or None,
+        "required": True,
+        "resumeAction": {
+            "endpoint": "respond",
+            "actionId": "submit",
+        },
+        "metadata": display_payload,
+    }
     interrupt_value: Dict[str, Any] = {
         "kind": "clarification",
         "title": prompt_title,
@@ -452,7 +545,8 @@ def _build_clarification_interrupt_value(args: Dict[str, Any]) -> Dict[str, Any]
             "choices": parsed_choices,
             **({"questions": parsed_questions} if parsed_questions else {}),
         },
-        "display_payload": _parse_json_dict(args.get("context_json")),
+        "display_payload": display_payload,
+        "a2uiRequest": a2ui_request,
     }
     return interrupt_value
 
@@ -504,6 +598,31 @@ def _build_human_action_payload(args: Dict[str, Any]) -> Dict[str, Any] | None:
     if interrupt_kind not in {"approval", "clarification"}:
         interrupt_kind = "approval"
 
+    display_payload = _parse_json_dict(args.get("context_json"))
+    gate_id = str(display_payload.get("gateId") or display_payload.get("gate_id") or "").strip()
+    skill = str(display_payload.get("skill") or display_payload.get("skillId") or "").strip()
+    surface_id = f"surface-{gate_id}" if gate_id else f"surface-action-{uuid.uuid4().hex[:8]}"
+    a2ui_request = {
+        "contract": "a2ui",
+        "version": "0.9",
+        "surfaceId": surface_id,
+        "component": "approval.card",
+        "props": {
+            "title": prompt_title,
+            "description": str(args.get("description") or "").strip(),
+            "actions": parsed_actions,
+            "kind": interrupt_kind,
+        },
+        "gateId": gate_id or None,
+        "skill": skill or None,
+        "required": True,
+        "resumeAction": {
+            "endpoint": "act",
+            "actionId": "submit",
+        },
+        "metadata": display_payload,
+    }
+
     interrupt_value: Dict[str, Any] = {
         "kind": interrupt_kind,
         "title": prompt_title,
@@ -511,7 +630,8 @@ def _build_human_action_payload(args: Dict[str, Any]) -> Dict[str, Any] | None:
         "step_index": max(0, int(args.get("step_index") or 0)),
         "step_count": max(1, int(args.get("step_count") or 1)),
         "actions": parsed_actions,
-        "display_payload": _parse_json_dict(args.get("context_json")),
+        "display_payload": display_payload,
+        "a2uiRequest": a2ui_request,
     }
     return _normalize_interrupt_payload(interrupt_value)
 

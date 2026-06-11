@@ -22,6 +22,20 @@ const TEXT_FILE_EXTENSIONS = ['.md', '.mermaid', '.txt', '.json', '.html', '.css
 const DIRECT_RAG_INDEXABLE_EXTENSIONS = new Set(['.doc', '.md']);
 const ARTIFACT_MANAGED_RAG_EXTENSIONS = new Set(['.pdf', '.docx', '.pptx', '.xlsx']);
 const INTERNAL_WORKSPACE_DIR_NAMES = new Set(['.system']);
+const TEXT_MIME_TYPES_BY_EXTENSION: Record<string, string> = {
+  '.md': 'text/markdown',
+  '.mermaid': 'text/plain',
+  '.txt': 'text/plain',
+  '.json': 'application/json',
+  '.html': 'text/html',
+  '.css': 'text/css',
+  '.js': 'application/javascript',
+  '.ts': 'text/plain',
+  '.tsx': 'text/plain',
+  '.jsx': 'text/plain',
+  '.svg': 'image/svg+xml',
+  '.csv': 'text/csv',
+};
 const BINARY_MIME_TYPES_BY_EXTENSION: Record<string, string> = {
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
@@ -171,7 +185,7 @@ export class FileService {
       return current;
     }
     const ext = path.extname(fileName).toLowerCase();
-    return BINARY_MIME_TYPES_BY_EXTENSION[ext] || null;
+    return TEXT_MIME_TYPES_BY_EXTENSION[ext] || BINARY_MIME_TYPES_BY_EXTENSION[ext] || null;
   }
 
   private usesArtifactManagedRag(fileName: string): boolean {
@@ -966,6 +980,7 @@ export class FileService {
     const normalizedDiskFiles = new Set(diskFiles.map((filePath) => path.normalize(filePath)));
     const staleLocalFileIds: number[] = [];
     const localPathRepairs: Array<{ id: number; path: string }> = [];
+    const mimeTypeRepairs: Array<{ id: number; mimeType: string }> = [];
 
     for (const file of existing) {
       if (file.storageType !== 'local') {
@@ -991,6 +1006,11 @@ export class FileService {
       if (expectedLocalPath && currentPath !== expectedLocalPath && diskHasExpectedPath) {
         localPathRepairs.push({ id: file.id, path: expectedLocalPath });
       }
+
+      const resolvedMimeType = this.resolveMimeType(file.name, file.mimeType);
+      if (!file.mimeType && resolvedMimeType) {
+        mimeTypeRepairs.push({ id: file.id, mimeType: resolvedMimeType });
+      }
     }
 
     if (staleLocalFileIds.length) {
@@ -1001,6 +1021,14 @@ export class FileService {
       await Promise.all(
         localPathRepairs.map(({ id, path: nextPath }) =>
           this.db('files').where({ id }).update({ path: nextPath }),
+        ),
+      );
+    }
+
+    if (mimeTypeRepairs.length) {
+      await Promise.all(
+        mimeTypeRepairs.map(({ id, mimeType }) =>
+          this.db('files').where({ id }).update({ mimeType }),
         ),
       );
     }
@@ -1037,6 +1065,7 @@ export class FileService {
       workspaceId,
       storageType: 'local' as const,
       path: filePath,
+      mimeType: this.resolveMimeType(filePath, null),
     }));
 
     await this.db('files').insert(newRecords);

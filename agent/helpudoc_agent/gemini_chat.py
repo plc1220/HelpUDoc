@@ -28,7 +28,12 @@ def create_chat_google_generative_ai(
     Prefer ``request_timeout`` (validated alias); ``timeout`` is kept as an ergonomic
     synonym for call sites passing a deadline in seconds.
     """
-    api_key = cfg.api_key or os.getenv("GOOGLE_CLOUD_API_KEY") or os.getenv("GEMINI_API_KEY")
+    api_key = (
+        cfg.api_key
+        or os.getenv("GOOGLE_CLOUD_API_KEY")
+        or os.getenv("GEMINI_API_KEY")
+        or os.getenv("GOOGLE_API_KEY")
+    )
     kwargs: dict = {"model": model_name}
     if thinking_level:
         kwargs["thinking_level"] = thinking_level

@@ -512,9 +512,36 @@ const buildClarificationPayloadFromA2UIResponse = (response: A2UIResponse) => {
   const selectedChoiceIds =
     toStringArray(values.selectedChoiceIds)
     || toStringArray(values.selectedChoiceId)
+    || toStringArray(values.choiceIds)
+    || toStringArray(values.choiceId)
     || toStringArray(values.choice);
-  const selectedValues = toStringArray(values.selectedValues);
-  const answersByQuestionId = toInterruptAnswers(values.answersByQuestionId || values.answers);
+  const selectedValues =
+    toStringArray(values.selectedValues)
+    || toStringArray(values.values)
+    || toStringArray(values.value);
+  const reservedValueKeys = new Set([
+    'answersByQuestionId',
+    'answers',
+    'selectedChoiceIds',
+    'selectedChoiceId',
+    'choiceIds',
+    'choiceId',
+    'choice',
+    'selectedValues',
+    'values',
+    'value',
+    'notes',
+    'message',
+    'response',
+  ]);
+  const directAnswers = Object.fromEntries(
+    Object.entries(values).filter(([key]) => !reservedValueKeys.has(key)),
+  );
+  const answersByQuestionId = toInterruptAnswers(
+    values.answersByQuestionId
+      || values.answers
+      || directAnswers,
+  );
   const message =
     response.message
     || (typeof values.notes === 'string' ? values.notes : undefined)
@@ -3994,6 +4021,7 @@ export default function WorkspacePage() {
           responseSpec: chunk.responseSpec,
           displayPayload: chunk.displayPayload,
           uiRequest: chunk.uiRequest,
+          a2uiRequest: chunk.a2uiRequest,
         },
       }));
       setConversationAttention(
@@ -4206,7 +4234,9 @@ export default function WorkspacePage() {
           console.error('Failed to fetch final run status', statusError);
         }
         const effectivePendingInterrupt = latestRunMeta ? latestRunMeta.pendingInterrupt : latestInterrupt;
-        if (!supersededByNewerStream && effectivePendingInterrupt) {
+        const shouldApplyPendingInterrupt =
+          finalStatus === 'awaiting_approval' && Boolean(effectivePendingInterrupt);
+        if (!supersededByNewerStream && shouldApplyPendingInterrupt) {
             const agentMessageIndex = (() => {
               const resolved = findAgentMessageIndexForRun(conversationId, placeholderId, turnId, runId);
               return resolved >= 0 ? resolved : initialAgentMessageIndex;
@@ -4878,7 +4908,10 @@ export default function WorkspacePage() {
   }, []);
 
   const handleA2UISubmit = useCallback(
-    async (response: A2UIResponse, request: A2UIRequest, message: ConversationMessage) => {
+    async (response: A2UIResponse, request: A2UIRequest, message?: ConversationMessage) => {
+      if (!message) {
+        throw new Error('Missing message context for A2UI submit action.');
+      }
       const runId = findRunIdForMessage(message);
       if (!runId) {
         throw new Error('Missing run id for A2UI submit action.');
@@ -4889,12 +4922,32 @@ export default function WorkspacePage() {
       if (endpoint === 'decision') {
         const decision = response.decision || 'approve';
         if (decision === 'approve' || decision === 'edit' || decision === 'reject') {
-          const options: any = {
+          const options: Parameters<typeof submitRunDecision>[2] = {
             message: response.message,
-            metadata: response.metadata,
           };
           if (decision === 'edit' && response.values) {
-            options.editedAction = response.values.editedAction || response.values;
+            const editedAction = response.values.editedAction;
+            if (
+              editedAction &&
+              typeof editedAction === 'object' &&
+              !Array.isArray(editedAction) &&
+              typeof (editedAction as Record<string, unknown>).name === 'string'
+            ) {
+              const editedActionRecord = editedAction as Record<string, unknown>;
+              options.editedAction = {
+                name: editedActionRecord.name as string,
+                args: editedActionRecord.args &&
+                  typeof editedActionRecord.args === 'object' &&
+                  !Array.isArray(editedActionRecord.args)
+                  ? editedActionRecord.args as Record<string, unknown>
+                  : {},
+              };
+            } else {
+              options.editedAction = {
+                name: 'request_plan_approval',
+                args: response.values,
+              };
+            }
           }
           await submitInterruptWithRetry(runId, 'approval', () => submitRunDecision(runId, decision, options));
         }
@@ -4912,8 +4965,41 @@ export default function WorkspacePage() {
       }
 
       clearPendingInterruptForRun(message.conversationId, runId, message.turnId);
+      const existingRunInfo = activeRunsRef.current[runId];
+      const rebuiltRunInfo = await rebuildRunInfoForMessage(message, runId).catch(() => undefined);
+      const runInfo = {
+        ...(existingRunInfo || rebuiltRunInfo || {
+          runId,
+          conversationId: message.conversationId,
+          workspaceId: selectedWorkspace?.id || '',
+          persona: normalizePersonaName(activeConversationPersona || selectedPersona || DEFAULT_PERSONA_NAME),
+          turnId: message.turnId || generateTurnId(),
+          placeholderId: message.id,
+          status: 'running' as AgentRunStatus,
+        }),
+        status: 'running' as AgentRunStatus,
+      };
+      markRunStreamLaunching(runId);
+      registerActiveRun(runInfo);
+      setConversationAttention(message.conversationId, 'running', 'Resuming the run...');
+      await streamRunForConversation(runInfo, false);
     },
-    [findRunIdForMessage, submitInterruptWithRetry, submitRunDecision, submitRunAction, submitRunResponse, clearPendingInterruptForRun],
+    [
+      activeConversationPersona,
+      findRunIdForMessage,
+      rebuildRunInfoForMessage,
+      selectedPersona,
+      selectedWorkspace?.id,
+      clearPendingInterruptForRun,
+      markRunStreamLaunching,
+      registerActiveRun,
+      setConversationAttention,
+      streamRunForConversation,
+      submitInterruptWithRetry,
+      submitRunDecision,
+      submitRunAction,
+      submitRunResponse,
+    ],
   );
 
   const handleInterruptAction = useCallback(

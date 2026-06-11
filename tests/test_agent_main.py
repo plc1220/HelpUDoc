@@ -840,6 +840,18 @@ def test_skill_directive_survives_tagged_artifact_guidance(client_with_stubs, tm
     payload = {
         "message": "<<<HELPUDOC_DIRECTIVE\n{\"kind\":\"skill\",\"skillId\":\"frontend-slides\"}\n>>>\n@Final_Proposal.md",
         "history": [],
+        "langfuseTraceContext": {
+            "skillId": "frontend-slides",
+            "a2uiGateState": {
+                "completedGateIds": [
+                    "presentation_context",
+                    "outline_confirmation",
+                    "style_path_selection",
+                    "mood_or_preset_selection",
+                    "style_preview_selection",
+                ]
+            },
+        },
         "fileContextRefs": [
             {
                 "sourceFileId": 1,
@@ -872,6 +884,60 @@ def test_skill_directive_survives_tagged_artifact_guidance(client_with_stubs, tm
     assert "Loaded skill: frontend-slides" in user_text
     assert "Use request_clarification before generating slides." in user_text
     assert "Artifact-first guidance:" in user_text
+    assert source_tracker.updated_workspaces == [runtime.workspace_state]
+
+
+def test_trace_skill_context_loads_skill_for_force_reset_continuation(client_with_stubs, tmp_path):
+    client, registry, source_tracker = client_with_stubs
+    previous_skills_root = SettingsStub.backend.skills_root
+    skill_dir = tmp_path / "frontend-slides"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: frontend-slides\ndescription: Slides\n---\n# Frontend Slides\nUse workflow_action for A2UI gates.\n",
+        encoding="utf-8",
+    )
+    SettingsStub.backend.skills_root = tmp_path
+
+    agent = RecordingStreamingAgent(["OK"])
+    runtime = DummyRuntime("workspace-trace-skill", agent)
+    runtime.workspace_state.context["active_skill"] = "stale-skill"
+    registry.set_runtime("research", "workspace-trace-skill", runtime)
+
+    payload = {
+        "message": "[Clarification response — continue the 'frontend-slides' skill from where you left off.]\nPurpose: Pitch deck",
+        "history": [],
+        "forceReset": True,
+        "langfuseTraceContext": {
+            "runId": "run-trace-skill",
+            "skillId": "frontend-slides",
+            "a2uiGateState": {
+                "completedGateIds": [
+                    "presentation_context",
+                    "outline_confirmation",
+                    "style_path_selection",
+                    "mood_or_preset_selection",
+                    "style_preview_selection",
+                ]
+            },
+        },
+    }
+    try:
+        with client.stream("POST", "/agents/research/workspace/workspace-trace-skill/chat/stream", json=payload) as response:
+            assert response.status_code == 200
+            messages = _collect_stream_payloads(response)
+    finally:
+        SettingsStub.backend.skills_root = previous_skills_root
+
+    assert messages[0]["type"] == "policy"
+    assert messages[0]["skill"] == "frontend-slides"
+    assert agent.stream_inputs
+    stream_input = agent.stream_inputs[0][0][0]
+    user_text = stream_input["messages"][-1]["content"]
+    assert "Loaded skill: frontend-slides" in user_text
+    assert "Use workflow_action for A2UI gates." in user_text
+    assert "Purpose: Pitch deck" in user_text
+    assert runtime.workspace_state.context["active_skill"] == "frontend-slides"
+    assert runtime.workspace_state.context["a2ui_gate_ledger"][0]["gate_id"] == "presentation_context"
     assert source_tracker.updated_workspaces == [runtime.workspace_state]
 
 

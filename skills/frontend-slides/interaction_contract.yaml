@@ -1,0 +1,71 @@
+gates:
+  - gate_id: presentation_context
+    component: clarification_form
+    required: true
+    synthetic_on_pending: true
+    props:
+      title: Presentation Context + Images
+      description: Tell me enough to shape the deck before I design it.
+      submitLabel: Continue
+    context:
+      skill: frontend-slides
+      skillId: frontend-slides
+      gateId: presentation_context
+      uiContract: a2ui
+      expectedComponent: clarification_form
+  - gate_id: outline_confirmation
+    component: clarification_form
+    required: true
+    synthetic_on_pending: true
+    props:
+      title: Confirm Outline
+      description: Confirm the slide outline before style discovery.
+      submitLabel: Confirm outline
+    context:
+      skill: frontend-slides
+      skillId: frontend-slides
+      gateId: outline_confirmation
+      uiContract: a2ui
+      expectedComponent: clarification_form
+  - gate_id: style_path_selection
+    component: clarification_form
+    required: true
+    synthetic_on_pending: true
+    props:
+      title: Choose Style Path
+      description: Choose how you want to select the presentation style.
+      submitLabel: Continue
+    context:
+      skill: frontend-slides
+      skillId: frontend-slides
+      gateId: style_path_selection
+      uiContract: a2ui
+      expectedComponent: clarification_form
+  - gate_id: mood_or_preset_selection
+    component: clarification_form
+    required: true
+    synthetic_on_pending: true
+    props:
+      title: Choose Presentation Vibe
+      description: Pick the feeling the visual direction should create.
+      submitLabel: Generate style previews
+    context:
+      skill: frontend-slides
+      skillId: frontend-slides
+      gateId: mood_or_preset_selection
+      uiContract: a2ui
+      expectedComponent: clarification_form
+  - gate_id: style_preview_selection
+    component: style_preview_chooser
+    required: true
+    synthetic_on_pending: true
+    props:
+      title: Choose Presentation Style
+      description: Select a generated style preview.
+      submitLabel: Use selected style
+    context:
+      skill: frontend-slides
+      skillId: frontend-slides
+      gateId: style_preview_selection
+      uiContract: a2ui
+      expectedComponent: style_preview_chooser

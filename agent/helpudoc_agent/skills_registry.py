@@ -27,6 +27,7 @@ class SkillMetadata:
     policy: SkillPolicy
     path: Path
     sandbox_scripts: List["SkillSandboxScript"] = field(default_factory=list)
+    interaction_contract: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -139,6 +140,46 @@ def _normalize_sandbox_scripts(value: object) -> List[SkillSandboxScript]:
     return scripts
 
 
+def _normalize_interaction_contract(value: object) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    raw_gates = value.get("gates")
+    if not isinstance(raw_gates, list):
+        return None
+    gates: list[dict[str, Any]] = []
+    for raw_gate in raw_gates:
+        if not isinstance(raw_gate, dict):
+            continue
+        gate_id = str(raw_gate.get("gate_id") or raw_gate.get("gateId") or raw_gate.get("id") or "").strip()
+        component = str(raw_gate.get("component") or "").strip()
+        if not gate_id or not component:
+            continue
+        gate = dict(raw_gate)
+        gate["gate_id"] = gate_id
+        gate["component"] = component
+        gate["required"] = bool(raw_gate.get("required", True))
+        gates.append(gate)
+    return {"gates": gates} if gates else None
+
+
+def _load_interaction_contract(skill_dir: Path, meta: dict) -> dict[str, Any] | None:
+    inline = _normalize_interaction_contract(meta.get("interaction_contract") or meta.get("a2ui_contract"))
+    if inline is not None:
+        return inline
+    for filename in ("interaction_contract.yaml", "interaction_contract.yml", "a2ui_contract.yaml", "a2ui_contract.yml"):
+        path = skill_dir / filename
+        if not path.exists():
+            continue
+        try:
+            loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        normalized = _normalize_interaction_contract(loaded)
+        if normalized is not None:
+            return normalized
+    return None
+
+
 def _infer_skill_policy(skill_id: str, content: str, meta: dict) -> SkillPolicy:
     tools = _normalize_tools(meta.get("tools"))
     lower = content.lower()
@@ -242,6 +283,7 @@ def load_skills(skills_root: Path) -> List[SkillMetadata]:
         tools = _normalize_tools(meta.get("tools"))
         mcp_servers = _normalize_tools(meta.get("mcp_servers"))
         sandbox_scripts = _normalize_sandbox_scripts(meta.get("sandbox_scripts"))
+        interaction_contract = _load_interaction_contract(skill_dir, meta)
         policy = _infer_skill_policy(skill_id, content, meta)
         skills.append(
             SkillMetadata(
@@ -253,6 +295,7 @@ def load_skills(skills_root: Path) -> List[SkillMetadata]:
                 policy=policy,
                 path=skill_file,
                 sandbox_scripts=sandbox_scripts,
+                interaction_contract=interaction_contract,
             )
         )
     return skills
@@ -335,6 +378,8 @@ def activate_skill_context(context: dict[str, Any], skill: SkillMetadata) -> Non
             for script in skill.sandbox_scripts
         ],
     }
+    if skill.interaction_contract:
+        context["active_skill_scope"]["interaction_contract"] = skill.interaction_contract
     context["active_skill_policy"] = {
         "requires_hitl_plan": skill.policy.requires_hitl_plan,
         "requires_workspace_artifacts": skill.policy.requires_workspace_artifacts,
@@ -429,6 +474,7 @@ ALWAYS_ALLOWED_TOOLS: frozenset[str] = frozenset(
         "request_clarification",
         "request_human_action",
         "request_ui",
+        "workflow_action",
     }
 )
 
@@ -452,6 +498,9 @@ def _coerce_active_skill_scope(active_skill: SkillMetadata | dict[str, Any] | No
             mcp_servers=mcp_servers,
             policy=SkillPolicy(),
             path=Path(str(active_skill.get("path") or ".")),
+            interaction_contract=active_skill.get("interaction_contract")
+            if isinstance(active_skill.get("interaction_contract"), dict)
+            else None,
         )
     return None
 

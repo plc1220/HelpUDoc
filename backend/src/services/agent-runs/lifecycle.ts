@@ -17,7 +17,15 @@ import {
   type AgentInterruptResponse,
   type AgentHistoryEntry,
 } from '../agentService';
-import type { ConversationMessageMetadata, FileContextRef, ToolEvent, ToolOutputFile, UIRequest } from '@helpudoc/contracts/types';
+import type {
+  ConversationMessageMetadata,
+  FileContextRef,
+  ToolEvent,
+  ToolOutputFile,
+  A2UIRequest,
+  UIRequest,
+  WorkflowActionEvent,
+} from '@helpudoc/contracts/types';
 
 export type AgentRunStatus =
   | 'queued'
@@ -79,6 +87,7 @@ type RunPendingInterrupt = {
   };
   displayPayload?: Record<string, unknown>;
   uiRequest?: UIRequest;
+  a2uiRequest?: A2UIRequest;
 };
 
 type RunMeta = {
@@ -121,7 +130,7 @@ type ResumePayload =
   | { response: AgentInterruptResponse; decisions?: never }
   | { action: AgentInterruptActionResponse; decisions?: never; response?: never };
 
-type PersistedRunMeta = Omit<RunMeta, 'pendingInterrupt'> & {
+type PersistedRunMeta = Omit<RunMeta, 'pendingInterrupt' | 'a2uiGateState'> & {
   pendingInterrupt?: string;
   a2uiGateState?: string;
   runContext?: string;
@@ -211,6 +220,45 @@ const buildInterruptId = (payload: Record<string, unknown>): string => {
   return `interrupt-${createHash('sha256').update(JSON.stringify(canonical)).digest('hex').slice(0, 20)}`;
 };
 
+const getPayloadRecord = (value: unknown): Record<string, unknown> | undefined => (
+  value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined
+);
+
+const projectNativeA2UIToLegacyUIRequest = (
+  a2uiRequest: Record<string, unknown> | undefined,
+  interruptId: string,
+): UIRequest | undefined => {
+  if (!a2uiRequest) {
+    return undefined;
+  }
+  const component = typeof a2uiRequest.component === 'string' ? a2uiRequest.component.trim() : '';
+  const componentMap: Record<string, UIRequest['component']> = {
+    'clarification.form': 'clarification_form',
+    clarification_form: 'clarification_form',
+    'style.previewChooser': 'style_preview_chooser',
+    style_preview_chooser: 'style_preview_chooser',
+    'approval.card': 'approval',
+    approval: 'approval',
+  };
+  const legacyComponent = componentMap[component];
+  if (!legacyComponent) {
+    return undefined;
+  }
+  const props = getPayloadRecord(a2uiRequest.props) || {};
+  const resumeAction = getPayloadRecord(a2uiRequest.resumeAction);
+  const action = typeof resumeAction?.actionId === 'string' && resumeAction.actionId.trim()
+    ? resumeAction.actionId.trim()
+    : 'submit';
+  return {
+    id: interruptId,
+    component: legacyComponent,
+    props,
+    resume: { action },
+  };
+};
+
 const normalizeInterruptPayloadRecord = (payload: Record<string, unknown>): Record<string, unknown> => {
   if (payload.type !== 'interrupt') {
     return payload;
@@ -219,12 +267,22 @@ const normalizeInterruptPayloadRecord = (payload: Record<string, unknown>): Reco
     typeof payload.interruptId === 'string' && payload.interruptId.trim()
       ? payload.interruptId.trim()
       : buildInterruptId(payload);
-  if (payload.interruptId === interruptId) {
+  const a2uiRequest = getPayloadRecord(payload.a2uiRequest);
+  const projectedUiRequest = getPayloadRecord(payload.uiRequest)
+    ? undefined
+    : projectNativeA2UIToLegacyUIRequest(a2uiRequest, interruptId);
+  const metadata = getPayloadRecord(a2uiRequest?.metadata);
+  const projectedDisplayPayload = getPayloadRecord(payload.displayPayload) || getPayloadRecord(payload.display_payload)
+    ? undefined
+    : metadata;
+  if (payload.interruptId === interruptId && !projectedUiRequest && !projectedDisplayPayload) {
     return payload;
   }
   return {
     ...payload,
     interruptId,
+    ...(projectedDisplayPayload ? { displayPayload: projectedDisplayPayload } : {}),
+    ...(projectedUiRequest ? { uiRequest: projectedUiRequest } : {}),
   };
 };
 
@@ -249,11 +307,26 @@ const isSyntheticClarificationInterrupt = (interrupt?: RunPendingInterrupt): boo
     return false;
   }
   const displayPayload = interrupt.displayPayload || {};
+  const nativeMetadata = interrupt.a2uiRequest?.metadata || {};
   return Boolean(
     displayPayload.synthetic === true ||
-    (displayPayload.source === 'implicit_input_guard' && displayPayload.uiContract === 'a2ui')
+    nativeMetadata.synthetic === true ||
+    (displayPayload.source === 'implicit_input_guard' && displayPayload.uiContract === 'a2ui') ||
+    (nativeMetadata.source === 'implicit_input_guard' && nativeMetadata.uiContract === 'a2ui')
   );
 };
+
+const getSyntheticClarificationSource = (interrupt?: RunPendingInterrupt): string => {
+  const displayPayload = interrupt?.displayPayload || {};
+  const nativeMetadata = interrupt?.a2uiRequest?.metadata || {};
+  const source = displayPayload.source || nativeMetadata.source;
+  return typeof source === 'string' ? source.trim() : '';
+};
+
+const isAgentContractSyntheticInterrupt = (interrupt?: RunPendingInterrupt): boolean => (
+  isSyntheticClarificationInterrupt(interrupt) &&
+  getSyntheticClarificationSource(interrupt) === 'a2ui_contract_synthetic'
+);
 
 const formatClarificationResponseForPrompt = (
   response: AgentInterruptResponse,
@@ -336,24 +409,55 @@ export const buildSyntheticClarificationFollowupPrompt = (
   const gateId = typeof previousInterrupt?.displayPayload?.gateId === 'string'
     ? previousInterrupt.displayPayload.gateId
     : undefined;
+  const completedGateState = frontendSlidesGateStateThrough(gateId);
+  const workflowState = previousInterrupt?.displayPayload?.skill === 'frontend-slides'
+    ? buildFrontendSlidesWorkflowState(completedGateState)
+    : undefined;
+  const workflowProtocol = workflowState
+    ? [
+        'Frontend-slides workflow state:',
+        JSON.stringify(workflowState),
+        workflowState.nextRequiredGateId
+          ? (
+              gateId === 'presentation_context'
+                ? 'Next structured workflow actions: first call workflow_action(action="generate_artifact", reason="Draft slide outline for review", artifact_refs_json="[\"slide_outline_v1\"]"), then present the concrete outline and call workflow_action(action="ask_user_a2ui", gate_id="outline_confirmation", component="clarification.form", props_json=..., context_json=...) to pause for review.'
+                : `Next structured workflow action: call workflow_action(action="ask_user_a2ui", gate_id="${workflowState.nextRequiredGateId}", component="${EXPECTED_GATES[workflowState.nextRequiredGateId] === 'style_preview_chooser' ? 'style.previewChooser' : 'clarification.form'}", props_json=..., context_json=...) and then stop.`
+            )
+          : 'All required A2UI gates are complete. Generate the final HTML presentation deck now. The output must be a slide deck, not a report or summary page: write a .html file whose filename ends with -deck.html, include multiple viewport-sized slide sections such as <section class="slide">, include keyboard/scroll navigation, and use write_file so the file appears in the workspace. The next structured workflow action may be workflow_action(action="complete") only after that final deck artifact is generated.',
+      ].join('\n')
+    : '';
   const frontendSlidesGate = previousInterrupt?.displayPayload?.skill === 'frontend-slides'
     ? previousInterrupt.displayPayload?.chooser === 'style-previews' || gateId === 'style_preview_selection'
-      ? 'For frontend-slides: the user has selected a visual style. Continue directly into building the deck with that selected style. Do not ask for Presentation Context again and do not show the style chooser again unless the user explicitly requests it.'
+      ? 'For frontend-slides: the user has selected a visual style. Continue directly into building the final HTML presentation deck with that selected style. Do not create a generic report or summary page. Do not ask for Presentation Context again and do not show the style chooser again unless the user explicitly requests it.'
       : gateId === 'presentation_context'
-      ? 'For frontend-slides: the user has completed Presentation Context. Generate the slide outline next, then pause with an outline_confirmation request_clarification interrupt. Do not ask for Presentation Context again and do not generate style previews yet.'
+      ? 'For frontend-slides: the user has completed Presentation Context. Generate the slide outline next, then pause with an outline_confirmation structured A2UI workflow action. Do not ask for Presentation Context again and do not generate style previews yet.'
       : gateId === 'outline_confirmation'
-      ? 'For frontend-slides: the user has confirmed the outline. Continue to style path selection, then pause with a style_path_selection request_clarification interrupt. Do not ask for Presentation Context or Outline Confirmation again.'
+      ? 'For frontend-slides: the user has confirmed the outline. Continue to style path selection, then pause with a style_path_selection structured A2UI workflow action. Do not ask for Presentation Context or Outline Confirmation again.'
       : gateId === 'style_path_selection'
       ? 'For frontend-slides: the user selected the style selection method. Continue to the next style gate. If the user chose generated previews, collect the mood or preset direction next; do not ask for Presentation Context or Outline Confirmation again.'
       : gateId === 'mood_or_preset_selection'
-      ? 'For frontend-slides: the user selected the mood or preset direction. Generate 2-3 style previews/templates next, then pause with a style_preview_selection request_clarification interrupt. Do not ask for earlier frontend-slides gates again.'
+      ? 'For frontend-slides: the user selected the mood or preset direction. Generate 2-3 style previews/templates next, then pause with a style_preview_selection structured A2UI workflow action. Do not ask for earlier frontend-slides gates again.'
       : 'For frontend-slides: continue to the next incomplete A2UI gate. Do not ask for already answered frontend-slides gates again.'
     : '';
+  const repeatedGateInstruction = previousInterrupt?.displayPayload?.skill === 'frontend-slides'
+    ? 'The user has already answered the structured UI gate below. Do not ask for this same Presentation Context / setup form again.'
+    : 'The user has already answered the structured UI gate below. Do not ask for this same input again.';
+  const nextPhaseInstruction = previousInterrupt?.displayPayload?.skill === 'frontend-slides'
+    ? 'Treat these answers as final for the current gate and move to the next required phase of the skill.'
+    : [
+        'Treat these answers as final for the current gate and continue the skill from the point where it paused.',
+        'If another human decision or clarification is required before completion, call workflow_action(action="ask_user_a2ui") or another structured A2UI interrupt and then stop; otherwise complete the requested work.',
+      ].join(' ');
+  const skillDirective = previousInterrupt?.displayPayload?.skill === 'frontend-slides'
+    ? '/skill frontend-slides'
+    : '';
   return [
+    skillDirective,
     `[Clarification response — continue the '${skill}' skill from where you left off; do not restart from the beginning.]`,
-    'The user has already answered the structured UI gate below. Do not ask for this same Presentation Context / setup form again.',
-    'Treat these answers as final for the current gate and move to the next required phase of the skill.',
+    repeatedGateInstruction,
+    nextPhaseInstruction,
     frontendSlidesGate,
+    workflowProtocol,
     answers,
     '',
     ORIGINAL_REQUEST_CONTINUATION_MARKER,
@@ -501,6 +605,7 @@ type ConversationRunSnapshot = {
   error?: string;
   implicitInput?: { awaiting: boolean; prompt?: string };
   progressEvents?: RunProgressEvent[];
+  workflowActions?: WorkflowActionEvent[];
 };
 
 const FRONTEND_SLIDES_DISCOVERY_QUESTIONS = [
@@ -552,6 +657,70 @@ const FRONTEND_SLIDES_DISCOVERY_QUESTIONS = [
       { id: 'use_document', label: 'Use document only', description: 'Use visuals already implied by the source document.', value: 'Use only visuals and content implied by the source document.' },
       { id: 'find_assets', label: 'Find assets', description: 'Use relevant external or generated imagery where helpful.', value: 'Find or generate relevant supporting imagery where helpful.' },
       { id: 'minimal_assets', label: 'Minimal', description: 'Keep the deck mostly typography, charts, and diagrams.', value: 'Keep visuals minimal, focused on typography, charts, and diagrams.' },
+    ],
+  },
+];
+
+const FRONTEND_SLIDES_OUTLINE_QUESTIONS = [
+  {
+    id: 'outline',
+    header: 'Outline',
+    question: 'Does this slide outline and image selection look right?',
+    options: [
+      {
+        id: 'confirm',
+        label: 'Looks good, proceed',
+        value: 'Looks good, proceed',
+        description: 'Move on to style selection.',
+      },
+      {
+        id: 'adjust-images',
+        label: 'Adjust images',
+        value: 'Adjust images',
+        description: 'Change which images go where.',
+      },
+      {
+        id: 'adjust-outline',
+        label: 'Adjust outline',
+        value: 'Adjust outline',
+        description: 'Change the slide structure.',
+      },
+    ],
+  },
+];
+
+const FRONTEND_SLIDES_STYLE_PATH_QUESTIONS = [
+  {
+    id: 'style_path',
+    header: 'Style Selection Method',
+    question: 'How would you like to choose your presentation style?',
+    options: [
+      {
+        id: 'guided',
+        label: 'Show me options',
+        value: 'Show me options',
+        description: 'Generate 3 previews based on my needs.',
+      },
+      {
+        id: 'direct',
+        label: 'I know what I want',
+        value: 'I know what I want',
+        description: 'Pick from the preset list directly.',
+      },
+    ],
+  },
+];
+
+const FRONTEND_SLIDES_MOOD_QUESTIONS = [
+  {
+    id: 'mood',
+    header: 'Vibe',
+    question: 'What feeling should the audience have when viewing your slides?',
+    options: [
+      { id: 'impressed', label: 'Impressed/Confident', value: 'Impressed/Confident' },
+      { id: 'excited', label: 'Excited/Energized', value: 'Excited/Energized' },
+      { id: 'calm', label: 'Calm/Focused', value: 'Calm/Focused' },
+      { id: 'inspired', label: 'Inspired/Moved', value: 'Inspired/Moved' },
     ],
   },
 ];
@@ -616,22 +785,30 @@ const getRecord = (value: unknown): Record<string, unknown> | undefined => (
     : undefined
 );
 
-const extractDisplayPayload = (payload: Record<string, unknown>): Record<string, unknown> | undefined => (
-  getRecord(payload.displayPayload) || getRecord(payload.display_payload)
-);
+const extractDisplayPayload = (payload: Record<string, unknown>): Record<string, unknown> | undefined => {
+  const a2uiRequest = getRecord(payload.a2uiRequest);
+  return (
+    getRecord(payload.displayPayload) ||
+    getRecord(payload.display_payload) ||
+    getRecord(a2uiRequest?.metadata)
+  );
+};
 
 const extractA2UIGateId = (payload: Record<string, unknown>): string | undefined => {
   const displayPayload = extractDisplayPayload(payload);
   const nestedPayload = getRecord(displayPayload?.displayPayload) || getRecord(displayPayload?.display_payload);
-  const rawGateId = displayPayload?.gateId || nestedPayload?.gateId;
+  const a2uiRequest = getRecord(payload.a2uiRequest);
+  const rawGateId = a2uiRequest?.gateId || displayPayload?.gateId || nestedPayload?.gateId;
   return typeof rawGateId === 'string' && rawGateId.trim() ? rawGateId.trim() : undefined;
 };
 
 const isA2UIGatePayload = (payload: Record<string, unknown>): boolean => {
   const displayPayload = extractDisplayPayload(payload);
   const nestedPayload = getRecord(displayPayload?.displayPayload) || getRecord(displayPayload?.display_payload);
+  const a2uiRequest = getRecord(payload.a2uiRequest);
   return Boolean(
     extractA2UIGateId(payload) ||
+    a2uiRequest?.contract === 'a2ui' ||
     displayPayload?.uiContract === 'a2ui' ||
     nestedPayload?.uiContract === 'a2ui'
   );
@@ -663,9 +840,278 @@ const completeA2UIGate = (state: A2UIGateState, gateId: string | undefined): A2U
   };
 };
 
+const frontendSlidesGateStateThrough = (gateId: string | undefined): A2UIGateState => {
+  if (!isFrontendSlidesGateId(gateId)) {
+    return { completedGateIds: [] };
+  }
+  const gateIndex = FRONTEND_SLIDES_REQUIRED_GATES.indexOf(gateId);
+  return {
+    completedGateIds: FRONTEND_SLIDES_REQUIRED_GATES.slice(0, gateIndex + 1),
+  };
+};
+
 const nextMissingFrontendSlidesGate = (state: A2UIGateState): FrontendSlidesGateId | undefined => (
   FRONTEND_SLIDES_REQUIRED_GATES.find((gateId) => !state.completedGateIds.includes(gateId))
 );
+
+const FRONTEND_SLIDES_WORKFLOW_ACTION_BY_GATE: Record<FrontendSlidesGateId, WorkflowActionEvent['action']> = {
+  presentation_context: 'ask_user_a2ui',
+  outline_confirmation: 'ask_user_a2ui',
+  style_path_selection: 'ask_user_a2ui',
+  mood_or_preset_selection: 'ask_user_a2ui',
+  style_preview_selection: 'ask_user_a2ui',
+};
+
+const FRONTEND_SLIDES_GATE_PHASE: Record<FrontendSlidesGateId, string> = {
+  presentation_context: 'collect_context',
+  outline_confirmation: 'review_outline',
+  style_path_selection: 'choose_style_path',
+  mood_or_preset_selection: 'collect_style_direction',
+  style_preview_selection: 'review_style_previews',
+};
+
+export type FrontendSlidesWorkflowState = {
+  workflowType: 'presentation_generation';
+  completedGateIds: FrontendSlidesGateId[];
+  requiredGateIds: FrontendSlidesGateId[];
+  nextRequiredGateId?: FrontendSlidesGateId;
+  nextRequiredAction?: WorkflowActionEvent['action'];
+  currentPhase: string;
+  canComplete: boolean;
+};
+
+export const buildFrontendSlidesWorkflowState = (state: A2UIGateState): FrontendSlidesWorkflowState => {
+  const completedGateIds = Array.from(new Set(state.completedGateIds.filter(isFrontendSlidesGateId)));
+  const nextRequiredGateId = FRONTEND_SLIDES_REQUIRED_GATES.find((gateId) => !completedGateIds.includes(gateId));
+  return {
+    workflowType: 'presentation_generation',
+    completedGateIds,
+    requiredGateIds: [...FRONTEND_SLIDES_REQUIRED_GATES],
+    nextRequiredGateId,
+    nextRequiredAction: nextRequiredGateId ? FRONTEND_SLIDES_WORKFLOW_ACTION_BY_GATE[nextRequiredGateId] : undefined,
+    currentPhase: nextRequiredGateId ? FRONTEND_SLIDES_GATE_PHASE[nextRequiredGateId] : 'generate_deck',
+    canComplete: !nextRequiredGateId,
+  };
+};
+
+const buildFrontendSlidesDisplayPayload = (
+  gateId: FrontendSlidesGateId,
+  extra: Record<string, unknown> = {},
+): Record<string, unknown> => ({
+  skill: 'frontend-slides',
+  gateId,
+  uiContract: 'a2ui',
+  expectedComponent: EXPECTED_GATES[gateId],
+  source: 'implicit_completion_guard',
+  synthetic: true,
+  ...extra,
+});
+
+const buildNativeA2UIRequest = (input: {
+  interruptId: string;
+  component: string;
+  props: Record<string, unknown>;
+  gateId?: string | null;
+  skill?: string | null;
+  required?: boolean;
+  endpoint?: 'respond' | 'decision' | 'act';
+  actionId?: string;
+  metadata?: Record<string, unknown>;
+}): A2UIRequest => ({
+  contract: 'a2ui',
+  version: '0.9',
+  surfaceId: input.gateId ? `surface-${input.gateId}` : `surface-${input.interruptId}`,
+  component: input.component,
+  props: input.props,
+  gateId: input.gateId || undefined,
+  skill: input.skill || undefined,
+  required: input.required ?? true,
+  resumeAction: {
+    endpoint: input.endpoint || 'respond',
+    actionId: input.actionId || 'submit',
+  },
+  metadata: input.metadata || {},
+});
+
+const buildFrontendSlidesOutlinePreviewMarkdown = (assistantText?: string): string => {
+  const text = String(assistantText || '').trim();
+  if (!text) {
+    return [
+      'The slide outline was not included in the agent response.',
+      '',
+      'Choose "Adjust outline" and describe the desired slide structure, or ask the agent to regenerate the outline before continuing.',
+    ].join('\n');
+  }
+  const maxLength = 6000;
+  return text.length > maxLength ? `${text.slice(0, maxLength).trim()}\n\n...` : text;
+};
+
+const buildFrontendSlidesGatePendingInterrupt = (input: {
+  runId: string;
+  gateId: FrontendSlidesGateId;
+  assistantText?: string;
+}): Record<string, unknown> => {
+  const { runId, gateId } = input;
+  const interruptId = `implicit-${createHash('sha256').update(`${runId}:${gateId}`).digest('hex').slice(0, 20)}`;
+  const baseResume = {
+    action: 'submit',
+    schema: {
+      type: 'object',
+      properties: {
+        response: { type: 'string' },
+        selectedChoiceId: { type: 'string' },
+        selectedChoiceIds: { type: 'array', items: { type: 'string' } },
+        answers: { type: 'object' },
+      },
+    },
+  };
+
+  if (gateId === 'style_preview_selection') {
+    const choices = extractFrontendSlidesStyleChoices(input.assistantText || '');
+    const previews = choices
+      .filter((choice) => /^style-[a-c]$/.test(choice.id))
+      .map((choice) => ({
+        id: choice.id,
+        label: choice.label,
+        description: choice.description,
+        path: `.claude-design/slide-previews/${choice.id}.html`,
+        html: buildFallbackStylePreviewHtml(choice),
+      }));
+    const displayPayload = buildFrontendSlidesDisplayPayload(gateId, {
+      chooser: 'style-previews',
+      stylePreviews: previews,
+    });
+    const props = {
+      title: 'Choose Your Presentation Style',
+      description: 'Preview each direction, then choose the one you want to use for the full deck.',
+      choices,
+      previews,
+      submitLabel: 'Use selected style',
+    };
+    const a2uiRequest = buildNativeA2UIRequest({
+      interruptId,
+      component: 'style.previewChooser',
+      props,
+      gateId,
+      skill: 'frontend-slides',
+      metadata: displayPayload,
+    });
+    return {
+      type: 'interrupt',
+      kind: 'clarification',
+      interruptId,
+      title: props.title,
+      description: props.description,
+      actions: [],
+      responseSpec: {
+        inputMode: 'choice',
+        submitLabel: props.submitLabel,
+        choices,
+      },
+      displayPayload,
+      a2uiRequest,
+      uiRequest: {
+        id: interruptId,
+        component: 'style_preview_chooser',
+        props,
+        resume: baseResume,
+      },
+    };
+  }
+
+  const config: Record<Exclude<FrontendSlidesGateId, 'style_preview_selection'>, {
+    title: string;
+    description: string;
+    questions: Array<Record<string, unknown>>;
+    submitLabel: string;
+  }> = {
+    presentation_context: {
+      title: 'Presentation Setup',
+      description: 'Configure the basic settings for your presentation.',
+      questions: FRONTEND_SLIDES_DISCOVERY_QUESTIONS,
+      submitLabel: 'Continue',
+    },
+    outline_confirmation: {
+      title: 'Outline Confirmation',
+      description: 'Review the proposed slide outline and image assignments above.',
+      questions: FRONTEND_SLIDES_OUTLINE_QUESTIONS,
+      submitLabel: 'Continue',
+    },
+    style_path_selection: {
+      title: 'Choose Style Selection Method',
+      description: 'Select how you would like to decide on the presentation design.',
+      questions: FRONTEND_SLIDES_STYLE_PATH_QUESTIONS,
+      submitLabel: 'Continue',
+    },
+    mood_or_preset_selection: {
+      title: 'Vibe & Mood Selection',
+      description: 'Choose the desired vibe for this presentation.',
+      questions: FRONTEND_SLIDES_MOOD_QUESTIONS,
+      submitLabel: 'Generate style previews',
+    },
+  };
+  const selected = config[gateId];
+  const outlinePreviewMarkdown = gateId === 'outline_confirmation'
+    ? buildFrontendSlidesOutlinePreviewMarkdown(input.assistantText)
+    : '';
+  const displayPayload = buildFrontendSlidesDisplayPayload(gateId, {
+    ...(outlinePreviewMarkdown
+      ? {
+          slideOutline: outlinePreviewMarkdown,
+          markdown: outlinePreviewMarkdown,
+        }
+      : {}),
+  });
+  const props = {
+    title: selected.title,
+    description: selected.description,
+    ...(outlinePreviewMarkdown ? { outlineMarkdown: outlinePreviewMarkdown } : {}),
+    questions: selected.questions,
+    choices: [],
+    inputMode: 'text',
+    multiple: gateId === 'mood_or_preset_selection',
+    submitLabel: selected.submitLabel,
+  };
+  const a2uiRequest = buildNativeA2UIRequest({
+    interruptId,
+    component: 'clarification.form',
+    props,
+    gateId,
+    skill: 'frontend-slides',
+    metadata: displayPayload,
+  });
+  return {
+    type: 'interrupt',
+    kind: 'clarification',
+    interruptId,
+    title: selected.title,
+    description: selected.description,
+    actions: [
+      {
+        id: 'clarification-text',
+        label: selected.submitLabel,
+        style: 'primary',
+        inputMode: 'text',
+        submitLabel: selected.submitLabel,
+      },
+    ],
+    responseSpec: {
+      inputMode: 'text',
+      multiple: gateId === 'mood_or_preset_selection',
+      submitLabel: selected.submitLabel,
+      questions: selected.questions,
+      choices: [],
+    },
+    displayPayload,
+    a2uiRequest,
+    uiRequest: {
+      id: interruptId,
+      component: 'clarification_form',
+      props,
+      resume: baseResume,
+    },
+  };
+};
 
 const isFrontendSlidesEditExistingRun = (params: StartRunParams): boolean => {
   const messageText = (params.messageContent || [])
@@ -688,12 +1134,12 @@ const isFrontendSlidesRun = (skillId: string | null | undefined, params: StartRu
   isFrontendSlidesSkill(skillId) || /\bfrontend-slides\b/i.test(params.prompt || '')
 );
 
-export const getFrontendSlidesA2UIGateCompletionError = (input: {
+export const getFrontendSlidesMissingRequiredGate = (input: {
   skillId?: string | null;
   prompt?: string;
   status: AgentRunStatus;
   gateState?: A2UIGateState;
-}): string | null => {
+}): FrontendSlidesGateId | null => {
   const params = { prompt: input.prompt || '' } as StartRunParams;
   if (
     input.status !== 'completed' ||
@@ -702,7 +1148,16 @@ export const getFrontendSlidesA2UIGateCompletionError = (input: {
   ) {
     return null;
   }
-  const missingGate = nextMissingFrontendSlidesGate(input.gateState || { completedGateIds: [] });
+  return nextMissingFrontendSlidesGate(input.gateState || { completedGateIds: [] }) || null;
+};
+
+export const getFrontendSlidesA2UIGateCompletionError = (input: {
+  skillId?: string | null;
+  prompt?: string;
+  status: AgentRunStatus;
+  gateState?: A2UIGateState;
+}): string | null => {
+  const missingGate = getFrontendSlidesMissingRequiredGate(input);
   return missingGate
     ? `Contract violation: frontend-slides completed before required A2UI gate "${missingGate}" was completed with request_clarification.`
     : null;
@@ -927,6 +1382,18 @@ const buildImplicitInputPendingInterrupt = (opts: {
   assistantText?: string;
 }): RunPendingInterrupt => {
   const interruptId = `implicit-${createHash('sha256').update(`${opts.runId}:${opts.prompt || ''}`).digest('hex').slice(0, 20)}`;
+  const baseResume = {
+    action: 'submit',
+    schema: {
+      type: 'object',
+      properties: {
+        response: { type: 'string' },
+        selectedChoiceId: { type: 'string' },
+        selectedChoiceIds: { type: 'array', items: { type: 'string' } },
+        answers: { type: 'object' },
+      },
+    },
+  };
   if (isFrontendSlidesSkill(opts.skillId)) {
     if (opts.interruptType === 'frontend_slides_style') {
       const choices = extractFrontendSlidesStyleChoices(opts.assistantText || opts.prompt || '');
@@ -939,6 +1406,28 @@ const buildImplicitInputPendingInterrupt = (opts: {
           path: `.claude-design/slide-previews/${choice.id}.html`,
           html: buildFallbackStylePreviewHtml(choice),
         }));
+      const displayPayload = {
+        source: 'implicit_completion_guard',
+        synthetic: true,
+        skill: 'frontend-slides',
+        chooser: 'style-previews',
+        stylePreviews,
+        uiContract: 'a2ui',
+      };
+      const props = {
+        title: 'Choose Your Presentation Style',
+        description: opts.prompt || 'Preview each direction, then choose the one to use for the full deck.',
+        choices,
+        previews: stylePreviews,
+        submitLabel: 'Use selected style',
+      };
+      const a2uiRequest = buildNativeA2UIRequest({
+        interruptId,
+        component: 'style.previewChooser',
+        props,
+        skill: 'frontend-slides',
+        metadata: displayPayload,
+      });
       return {
         kind: 'clarification',
         interruptId,
@@ -952,15 +1441,41 @@ const buildImplicitInputPendingInterrupt = (opts: {
           dismissLabel: 'Dismiss',
           choices,
         },
-        displayPayload: {
-          source: 'implicit_completion_guard',
-          synthetic: true,
-          skill: 'frontend-slides',
-          chooser: 'style-previews',
-          stylePreviews,
+        displayPayload,
+        a2uiRequest,
+        uiRequest: {
+          id: interruptId,
+          component: 'style_preview_chooser',
+          props,
+          resume: baseResume,
         },
       };
     }
+    const displayPayload = {
+      source: 'implicit_completion_guard',
+      synthetic: true,
+      skill: 'frontend-slides',
+      gateId: 'presentation_context',
+      uiContract: 'a2ui',
+      expectedComponent: 'clarification_form',
+    };
+    const props = {
+      title: 'Presentation Context',
+      description: opts.prompt || 'The agent needs a few details before continuing.',
+      questions: FRONTEND_SLIDES_DISCOVERY_QUESTIONS,
+      choices: [],
+      inputMode: 'text',
+      multiple: false,
+      submitLabel: 'Continue',
+    };
+    const a2uiRequest = buildNativeA2UIRequest({
+      interruptId,
+      component: 'clarification.form',
+      props,
+      gateId: 'presentation_context',
+      skill: 'frontend-slides',
+      metadata: displayPayload,
+    });
     return {
       kind: 'clarification',
       interruptId,
@@ -982,18 +1497,51 @@ const buildImplicitInputPendingInterrupt = (opts: {
         dismissLabel: 'Dismiss',
         questions: FRONTEND_SLIDES_DISCOVERY_QUESTIONS,
       },
-      displayPayload: {
-        source: 'implicit_completion_guard',
-        synthetic: true,
-        skill: 'frontend-slides',
+      displayPayload,
+      a2uiRequest,
+      uiRequest: {
+        id: interruptId,
+        component: 'clarification_form',
+        props,
+        resume: baseResume,
       },
     };
   }
+  const genericDescription = opts.prompt || 'The agent needs your input to continue.';
+  const genericQuestion = {
+    id: 'response',
+    header: 'Input',
+    question: genericDescription,
+    options: [],
+  };
+  const displayPayload = {
+    source: 'implicit_completion_guard',
+    synthetic: true,
+    uiContract: 'a2ui',
+    ...(opts.skillId ? { skill: opts.skillId } : {}),
+  };
+  const props = {
+    title: 'Input Needed',
+    description: genericDescription,
+    questions: [genericQuestion],
+    choices: [],
+    inputMode: 'text',
+    multiple: false,
+    placeholder: 'Enter your response...',
+    submitLabel: 'Continue',
+  };
+  const a2uiRequest = buildNativeA2UIRequest({
+    interruptId,
+    component: 'clarification.form',
+    props,
+    skill: opts.skillId || undefined,
+    metadata: displayPayload,
+  });
   return {
     kind: 'clarification',
     interruptId,
     title: 'Input Needed',
-    description: opts.prompt || 'The agent needs your input to continue.',
+    description: genericDescription,
     actions: [
       {
         id: 'submit_response',
@@ -1010,11 +1558,15 @@ const buildImplicitInputPendingInterrupt = (opts: {
       submitLabel: 'Continue',
       allowDismiss: true,
       dismissLabel: 'Dismiss',
+      questions: [genericQuestion],
     },
-    displayPayload: {
-      source: 'implicit_completion_guard',
-      synthetic: true,
-      ...(opts.skillId ? { skill: opts.skillId } : {}),
+    displayPayload,
+    a2uiRequest,
+    uiRequest: {
+      id: interruptId,
+      component: 'clarification_form',
+      props,
+      resume: baseResume,
     },
   };
 };
@@ -1054,6 +1606,56 @@ const normalizeToolFiles = (value: unknown): ToolOutputFile[] | undefined => {
     })
     .filter((item): item is ToolOutputFile => item !== null);
   return files.length ? files : undefined;
+};
+
+const WORKFLOW_ACTIONS = new Set([
+  'ask_user_a2ui',
+  'generate_artifact',
+  'revise_artifact',
+  'call_tool',
+  'complete',
+  'fail',
+]);
+
+const parseJsonRecord = (value: unknown): Record<string, unknown> | null => {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  if (typeof value !== 'string' || !value.trim()) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : null;
+  } catch {
+    return null;
+  }
+};
+
+export const normalizeWorkflowActionEvent = (value: unknown): WorkflowActionEvent | null => {
+  const record = parseJsonRecord(value);
+  const candidate = parseJsonRecord(record?.workflowAction) || record;
+  const action = coerceText(candidate?.action).trim();
+  if (!WORKFLOW_ACTIONS.has(action)) {
+    return null;
+  }
+  const artifactRefs = Array.isArray(candidate?.artifactRefs)
+    ? candidate.artifactRefs
+    : Array.isArray(candidate?.artifact_refs)
+      ? candidate.artifact_refs
+      : undefined;
+  const context = parseJsonRecord(candidate?.context) || undefined;
+  return {
+    action: action as WorkflowActionEvent['action'],
+    reason: coerceText(candidate?.reason).trim() || undefined,
+    gateId: coerceText(candidate?.gateId || candidate?.gate_id).trim() || null,
+    component: coerceText(candidate?.component).trim() || null,
+    artifactRefs,
+    context,
+    timestamp: new Date().toISOString(),
+  };
 };
 
 const buildTerminalConversationSummary = (status: AgentRunStatus, error?: string): string => {
@@ -1101,6 +1703,9 @@ const persistRunConversationMessage = async (
   }
   if (snapshot.progressEvents?.length) {
     metadata.progressEvents = snapshot.progressEvents;
+  }
+  if (snapshot.workflowActions?.length) {
+    metadata.workflowActions = snapshot.workflowActions;
   }
   if (snapshot.pendingInterrupt) {
     metadata.pendingInterrupt = snapshot.pendingInterrupt as ConversationMessageMetadata['pendingInterrupt'];
@@ -1164,12 +1769,15 @@ const STRONG_GATE_PATTERNS = [
   /\b(?:once|after)\s+(?:received|submitted|you\s+submit|submitting)\b.{0,260}\b(?:outline|style\s+discovery|visual\s+aesthetic|proposal|review|generate|move|analyze|structure|slides?|gates?)\b/is,
   /\bto\s+ensure\b.{0,260}\b(?:deck|slides?|presentation)\b.{0,260}\b(?:expectations|ideal\s+length|length|structure|technical\s+features|audience|visual\s+style)\b/is,
   /\bnext\s+steps\b.{0,120}\b(?:sidebar|form)/i,
+  /\b(?:prompted|prompting|asked|asking)\s+(?:you\s+)?to\s+(?:choose|select|pick|provide|enter)\b.{0,260}\b(?:paus(?:e|ing|ed)|wait(?:ing)?|response|input)\b/is,
+  /\b(?:paus(?:e|ing|ed)|wait(?:ing)?)\b.{0,180}\b(?:your\s+)?(?:response|input|choice|selection|answer)\b/is,
 ];
 
 const SELECTION_PROMPT_PATTERNS = [
   /\b(?:please\s+)?select\b/i,
   /\b(?:please\s+)?choose\b/i,
-  /\bwhich\s+(?:one|option|style|mood|vibe)/i,
+  /\bwhich\s+(?:one|option|format|path|audience|tone|depth|scope|style|mood|vibe)/i,
+  /\b(?:choose|select|pick)\s+(?:the\s+)?(?:output\s+)?(?:format|audience|tone|depth|scope|option|path)\b/i,
   /\bwhat\s+(?:style|mood|vibe)/i,
   /\bready to (?:proceed|continue|move)/i,
   /\bshall I\b/i,
@@ -1658,6 +2266,7 @@ async function runAgentRunWorker(
     status: 'running',
     startedAt,
     error: '',
+    pendingInterrupt: '',
   });
   if (runTelemetryService) {
     await runTelemetryService.markRunStarted(runId, startedAt);
@@ -1680,6 +2289,7 @@ async function runAgentRunWorker(
   traceContext.a2uiGateState = a2uiGateState;
   const toolEvents: ToolEvent[] = [];
   const progressEvents: RunProgressEvent[] = [];
+  const workflowActions: WorkflowActionEvent[] = [];
 
   const snapshotConversationRun = (overrides: Partial<ConversationRunSnapshot> = {}): ConversationRunSnapshot => ({
     assistantText,
@@ -1687,6 +2297,7 @@ async function runAgentRunWorker(
     toolEvents: toolEvents.length ? [...toolEvents] : undefined,
     runPolicy: conversationRunPolicy,
     progressEvents: progressEvents.length ? [...progressEvents] : undefined,
+    workflowActions: workflowActions.length ? [...workflowActions] : undefined,
     ...overrides,
   });
 
@@ -1828,6 +2439,16 @@ async function runAgentRunWorker(
       return;
     }
     if (parsed.type === 'tool_end') {
+      if (parsed.name === 'workflow_action') {
+        const workflowAction = normalizeWorkflowActionEvent(parsed.content);
+        if (workflowAction) {
+          workflowActions.push(workflowAction);
+          const MAX_WORKFLOW_ACTIONS = 80;
+          if (workflowActions.length > MAX_WORKFLOW_ACTIONS) {
+            workflowActions.splice(0, workflowActions.length - MAX_WORKFLOW_ACTIONS);
+          }
+        }
+      }
       upsertToolEvent(parsed, 'completed');
       return;
     }
@@ -1868,16 +2489,56 @@ async function runAgentRunWorker(
     let effectiveStatus = status;
     let effectiveError = error;
 
-    const missingGateError = getFrontendSlidesA2UIGateCompletionError({
+    const missingGate = getFrontendSlidesMissingRequiredGate({
       skillId,
       prompt: params.prompt,
       status: effectiveStatus,
       gateState: a2uiGateState,
     });
 
-    if (missingGateError) {
-      effectiveStatus = 'failed';
-      effectiveError = missingGateError;
+    if (missingGate) {
+      const recoveredInterrupt = normalizeInterruptPayloadRecord(
+        buildFrontendSlidesGatePendingInterrupt({
+          runId,
+          gateId: missingGate,
+          assistantText,
+        }),
+      );
+      const pendingInterrupt = parsePendingInterrupt(JSON.stringify(recoveredInterrupt));
+      const validationError = validateInterrupt(recoveredInterrupt, skillId);
+      if (validationError) {
+        effectiveStatus = 'failed';
+        effectiveError = validationError;
+      } else {
+        sawInterruptPayload = recoveredInterrupt;
+        hadInterrupt = true;
+        clarificationInterruptCount += 1;
+        await appendStreamEvent(runId, JSON.stringify(recoveredInterrupt));
+        settleRunningToolEvents('awaiting_approval');
+        await markRunAwaitingApproval(runId, JSON.stringify(recoveredInterrupt), params);
+        if (runTelemetryService) {
+          await runTelemetryService.finalizeRun(runId, {
+            status: 'awaiting_approval',
+            startedAt,
+            skillId,
+            hadInterrupt,
+            approvalInterruptCount,
+            clarificationInterruptCount,
+            toolCallCount,
+            toolErrorCount,
+            metadata: {
+              resumed: Boolean(resumePayload),
+              a2uiPendingGateId: missingGate,
+              a2uiGateState,
+              recoveredMissingGate: true,
+              ...langfuseStreamMeta,
+            },
+          });
+        }
+        await updateConversationFromRun('awaiting_approval', { pendingInterrupt });
+        cleanupRun(runId, upstream || undefined);
+        return;
+      }
     }
 
     const implicitInput = detectImplicitInputAwaiting({
@@ -1888,15 +2549,53 @@ async function runAgentRunWorker(
     });
 
     if (implicitInput.awaiting) {
-      if (isFrontendSlidesSkill(skillId)) {
-        if (effectiveStatus === 'completed') {
-          effectiveStatus = 'failed';
-          effectiveError = 'Contract violation: run finished with prose-only input request (implicit input) instead of an explicit request_clarification/A2UI tool call.';
-        }
+      const recoveredInterruptPayload = normalizeInterruptPayloadRecord({
+        type: 'interrupt',
+        ...buildImplicitInputPendingInterrupt({
+          runId,
+          skillId: implicitInput.skillId || skillId,
+          prompt: implicitInput.prompt,
+          interruptType: implicitInput.interruptType,
+          assistantText,
+        }),
+      });
+      const pendingInterrupt = parsePendingInterrupt(JSON.stringify(recoveredInterruptPayload));
+      const validationError = validateInterrupt(recoveredInterruptPayload, implicitInput.skillId || skillId);
+      if (validationError) {
+        effectiveStatus = 'failed';
+        effectiveError = validationError;
       } else {
-        console.warn(
-          `[agent-run-stream] Implicit input guard (Shadow Mode): prose implies a UI form but no explicit request_clarification/A2UI tool call was emitted. skill=${skillId}`
-        );
+        sawInterruptPayload = recoveredInterruptPayload;
+        hadInterrupt = true;
+        clarificationInterruptCount += 1;
+        await appendStreamEvent(runId, JSON.stringify(recoveredInterruptPayload));
+        settleRunningToolEvents('awaiting_approval');
+        await markRunAwaitingApproval(runId, JSON.stringify(recoveredInterruptPayload), params);
+        if (runTelemetryService) {
+          await runTelemetryService.finalizeRun(runId, {
+            status: 'awaiting_approval',
+            startedAt,
+            skillId: implicitInput.skillId || skillId,
+            hadInterrupt,
+            approvalInterruptCount,
+            clarificationInterruptCount,
+            toolCallCount,
+            toolErrorCount,
+            metadata: {
+              resumed: Boolean(resumePayload),
+              implicitInput,
+              recoveredImplicitInput: true,
+              a2uiGateState,
+              ...langfuseStreamMeta,
+            },
+          });
+        }
+        await updateConversationFromRun('awaiting_approval', {
+          pendingInterrupt,
+          implicitInput,
+        });
+        cleanupRun(runId, upstream || undefined);
+        return;
       }
     }
 
@@ -1907,7 +2606,7 @@ async function runAgentRunWorker(
     settleRunningToolEvents(effectiveStatus);
 
     // Shadow Mode: Never emit synthetic implicit interrupts or transition run status to awaiting_approval.
-    const implicitPendingInterrupt = undefined;
+    const implicitPendingInterrupt: Record<string, unknown> | undefined = undefined;
 
     await updateConversationFromRun(
       effectiveStatus === 'queued' ? 'running' : effectiveStatus,
@@ -1917,7 +2616,11 @@ async function runAgentRunWorker(
       },
     );
     if (implicitPendingInterrupt) {
-    await markRunAwaitingApproval(runId, JSON.stringify({ type: 'interrupt', ...implicitPendingInterrupt }), params);
+      const implicitInterruptPayload = {
+        type: 'interrupt',
+        ...(implicitPendingInterrupt as Record<string, unknown>),
+      };
+      await markRunAwaitingApproval(runId, JSON.stringify(implicitInterruptPayload), params);
       if (runTelemetryService) {
         await runTelemetryService.finalizeRun(runId, {
           status: 'awaiting_approval',
@@ -2083,6 +2786,18 @@ async function runAgentRunWorker(
       if (!skillId && typeof interruptDisplayPayload?.skill === 'string' && interruptDisplayPayload.skill.trim()) {
         skillId = interruptDisplayPayload.skill.trim();
       }
+      const completedGateId = extractA2UIGateId(parsed);
+      if (
+        isFrontendSlidesGateId(completedGateId) &&
+        a2uiGateState.completedGateIds.includes(completedGateId)
+      ) {
+        await appendStreamEvent(runId, JSON.stringify({
+          type: 'a2ui_gate_skipped',
+          gateId: completedGateId,
+          reason: 'completed_gate_interrupt_ignored',
+        }));
+        return 'continue';
+      }
       const err = validateInterrupt(parsed, skillId);
       if (err) {
         contractErrorMessage = err;
@@ -2144,6 +2859,12 @@ async function runAgentRunWorker(
         } catch (telemetryError) {
           console.error('Failed to append agent run tool event', { runId, eventIndex, error: telemetryError });
         }
+      }
+    }
+    if (parsed?.type === 'tool_end' && parsed.name === 'workflow_action') {
+      const workflowAction = normalizeWorkflowActionEvent(parsed.content);
+      if (workflowAction) {
+        await appendStreamEvent(runId, JSON.stringify({ type: 'workflow_action', ...workflowAction }));
       }
     }
     if (parsed?.type === 'interrupt' && parsed.a2uiRequest) {
@@ -2269,6 +2990,9 @@ async function runAgentRunWorker(
 
       if (disposition.preserveInterrupt && sawInterruptPayload) {
         await markRunAwaitingApproval(runId, JSON.stringify(sawInterruptPayload), params);
+        await updateConversationFromRun('awaiting_approval', {
+          pendingInterrupt: parsePendingInterrupt(JSON.stringify(sawInterruptPayload)),
+        });
         cleanupRun(runId, upstream || undefined);
         return;
       }
@@ -2285,6 +3009,9 @@ async function runAgentRunWorker(
 
       if (disposition.preserveInterrupt && sawInterruptPayload) {
         await markRunAwaitingApproval(runId, JSON.stringify(sawInterruptPayload), params);
+        await updateConversationFromRun('awaiting_approval', {
+          pendingInterrupt: parsePendingInterrupt(JSON.stringify(sawInterruptPayload)),
+        });
         cleanupRun(runId, upstream || undefined);
         return;
       }
@@ -2344,7 +3071,9 @@ export async function resumeAgentRunWithResponse(
     throw new Error('Run context not found. Start a new run.');
   }
   const baseParams = options?.authToken ? { ...context.params, authToken: options.authToken } : context.params;
-  const nextParams = isSyntheticClarificationInterrupt(options?.previousInterrupt)
+  const previousInterruptIsSynthetic = isSyntheticClarificationInterrupt(options?.previousInterrupt);
+  const previousInterruptUsesAgentResume = isAgentContractSyntheticInterrupt(options?.previousInterrupt);
+  const nextParams = previousInterruptIsSynthetic && !previousInterruptUsesAgentResume
     ? {
         ...baseParams,
         prompt: buildSyntheticClarificationFollowupPrompt(
@@ -2379,7 +3108,7 @@ export async function resumeAgentRunWithResponse(
   void runAgentRunWorker(
     runId,
     nextParams,
-    isSyntheticClarificationInterrupt(options?.previousInterrupt) ? undefined : { response },
+    previousInterruptIsSynthetic && !previousInterruptUsesAgentResume ? undefined : { response },
     options?.previousInterrupt,
   );
   return { runId, status: 'queued' };
@@ -2425,9 +3154,14 @@ export async function getRunMeta(runId: string): Promise<RunMeta | null> {
   if (!Object.keys(meta).length) {
     return null;
   }
+  const a2uiGateState = parseA2UIGateState(meta.a2uiGateState);
   if ((meta.status === 'running' || meta.status === 'queued') && !meta.pendingInterrupt?.trim()) {
     const recoveredInterrupt = await findLatestInterruptPayloadInStream(runId);
-    if (recoveredInterrupt) {
+    const recoveredGateId = recoveredInterrupt ? extractA2UIGateId(recoveredInterrupt) : undefined;
+    const recoveredGateIsComplete = Boolean(
+      recoveredGateId && a2uiGateState.completedGateIds.includes(recoveredGateId),
+    );
+    if (recoveredInterrupt && !recoveredGateIsComplete) {
       await markRunAwaitingApproval(runId, JSON.stringify(recoveredInterrupt));
       meta.status = 'awaiting_approval';
       meta.pendingInterrupt = JSON.stringify(recoveredInterrupt);
@@ -2444,7 +3178,7 @@ export async function getRunMeta(runId: string): Promise<RunMeta | null> {
     error: meta.error,
     turnId: meta.turnId,
     pendingInterrupt: parsePendingInterrupt(meta.pendingInterrupt),
-    a2uiGateState: parseA2UIGateState(meta.a2uiGateState),
+    a2uiGateState,
   };
 }
 

@@ -252,6 +252,9 @@ services:
       REDIS_URL: redis://redis:6379
       RAG_OFFLINE: ${RAG_OFFLINE:-true}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      GOOGLE_CLOUD_API_KEY: ${GOOGLE_CLOUD_API_KEY:-}
+      LLM_BINDING_API_KEY: ${LLM_BINDING_API_KEY:-}
       RAG_LLM_API_KEY: ${RAG_LLM_API_KEY:-}
       # Demo: MCP auth for toolbox-bq-demo.
       BQ_ACCESS_TOKEN: ${BQ_ACCESS_TOKEN:-}

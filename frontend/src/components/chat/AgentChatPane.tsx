@@ -225,7 +225,7 @@ export default function AgentChatPane({
   onRemoveCommandTag: (tagId: string) => void;
   onSelectMention: (file: WorkspaceFile) => void;
   onSelectCommand: (command: CommandSuggestion) => void;
-  onA2UISubmit?: (response: A2UIResponse, request: A2UIRequest, message?: any) => Promise<void>;
+  onA2UISubmit?: (response: A2UIResponse, request: A2UIRequest, message?: ConversationMessage) => Promise<void>;
 }) {
   const isDarkMode = colorMode === 'dark';
 

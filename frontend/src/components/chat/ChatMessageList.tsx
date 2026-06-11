@@ -98,7 +98,7 @@ export default function ChatMessageList({
     pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
   ) => void;
   workspaceId?: string;
-  onA2UISubmit?: (response: A2UIResponse, request: A2UIRequest, message?: any) => Promise<void>;
+  onA2UISubmit?: (response: A2UIResponse, request: A2UIRequest, message?: ConversationMessage) => Promise<void>;
 }) {
   const isDarkMode = colorMode === 'dark';
   const listRef = useRef<HTMLDivElement | null>(null);

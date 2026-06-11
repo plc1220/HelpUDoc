@@ -177,6 +177,24 @@ export type A2UIResponse = {
   metadata?: Record<string, unknown>;
 };
 
+export type WorkflowActionKind =
+  | 'ask_user_a2ui'
+  | 'generate_artifact'
+  | 'revise_artifact'
+  | 'call_tool'
+  | 'complete'
+  | 'fail';
+
+export interface WorkflowActionEvent {
+  action: WorkflowActionKind;
+  reason?: string;
+  gateId?: string | null;
+  component?: string | null;
+  artifactRefs?: unknown[];
+  context?: Record<string, unknown>;
+  timestamp?: string;
+}
+
 export interface UIRequest {
   id: string;
   component: 'clarification_form' | 'style_preview_chooser' | 'approval' | 'artifact_preview';
@@ -225,6 +243,7 @@ export interface ConversationMessageMetadata {
   awaitingImplicitInput?: boolean;
   implicitInputReason?: 'missing_interrupt';
   implicitInputPrompt?: string;
+  workflowActions?: WorkflowActionEvent[];
   progressEvents?: Array<{
     phase: string;
     label: string;

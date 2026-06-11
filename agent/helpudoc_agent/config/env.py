@@ -38,7 +38,12 @@ def load_agent_runtime_env() -> AgentRuntimeEnv:
         node_env=env_trim("NODE_ENV"),
         workspace_root_raw=env_trim("WORKSPACE_ROOT"),
         skills_root_raw=env_trim("SKILLS_ROOT"),
-        gemini_api_key=env_trim("GEMINI_API_KEY"),
+        gemini_api_key=(
+            env_trim("GEMINI_API_KEY")
+            or env_trim("GOOGLE_API_KEY")
+            or env_trim("GOOGLE_CLOUD_API_KEY")
+            or env_trim("LLM_BINDING_API_KEY")
+        ),
     )
 
 
@@ -121,4 +126,10 @@ def load_sandbox_k8s_env() -> SandboxK8sEnv:
 
 def gemini_key_for_embeddings(explicit: str | None) -> str | None:
     """Resolve Gemini API key for embedding calls (explicit arg wins)."""
-    return explicit or env_trim("GEMINI_API_KEY") or env_trim("GOOGLE_API_KEY")
+    return (
+        explicit
+        or env_trim("GEMINI_API_KEY")
+        or env_trim("GOOGLE_API_KEY")
+        or env_trim("GOOGLE_CLOUD_API_KEY")
+        or env_trim("LLM_BINDING_API_KEY")
+    )

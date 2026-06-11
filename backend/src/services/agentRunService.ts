@@ -20,4 +20,6 @@ export {
   getRunMeta,
   detectImplicitInputAwaiting,
   buildSyntheticClarificationFollowupPrompt,
+  buildFrontendSlidesWorkflowState,
+  normalizeWorkflowActionEvent,
 } from './agent-runs/lifecycle';

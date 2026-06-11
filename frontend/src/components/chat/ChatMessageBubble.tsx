@@ -54,6 +54,13 @@ type StylePreviewChoice = {
   isHtmlPreview?: boolean;
 };
 
+type StylePreviewChoicePayload = {
+  id?: string;
+  label?: string;
+  value?: string;
+  description?: string;
+};
+
 type RerunMessageOptions = {
   replacementText?: string;
   skipConfirm?: boolean;
@@ -234,10 +241,14 @@ const buildStylePreviewChoices = (
     }
     const metadata = parseStylePreviewChoiceMetadata(pendingInterrupt.uiRequest.props);
     const previewChoices = choices
-      .map((choice: any): StylePreviewChoice | null => {
-        const choiceId = String(choice.id || '').trim();
-        const choiceLabel = String(choice.label || '').trim();
-        const choiceValue = String(choice.value || choiceLabel).trim();
+      .map((choice): StylePreviewChoice | null => {
+        if (!choice || typeof choice !== 'object' || Array.isArray(choice)) {
+          return null;
+        }
+        const choiceRecord = choice as StylePreviewChoicePayload;
+        const choiceId = String(choiceRecord.id || '').trim();
+        const choiceLabel = String(choiceRecord.label || '').trim();
+        const choiceValue = String(choiceRecord.value || choiceLabel).trim();
         if (!choiceId || !choiceLabel || !choiceValue) {
           return null;
         }
@@ -249,7 +260,7 @@ const buildStylePreviewChoices = (
         const label = matchingMetadata.label || choiceLabel;
         const value = matchingMetadata.value || choiceValue;
         const path = matchingMetadata.path || inferStylePreviewPath(label, value);
-        const description = matchingMetadata.description || choice.description;
+        const description = matchingMetadata.description || choiceRecord.description;
         const html = matchingMetadata.html;
         const isHtmlPreview = Boolean(path && /\.html?$/i.test(path));
         return {
@@ -421,16 +432,17 @@ const parseClarificationQuestions = (
       ? pendingInterrupt.uiRequest.props.questions
       : [];
     if (responseQuestions.length) {
-      return responseQuestions.reduce<ClarificationQuestion[]>((acc, question: any) => {
+      return responseQuestions.reduce<ClarificationQuestion[]>((acc, question) => {
         if (!question || typeof question !== 'object' || !question.question) {
           return acc;
         }
+        const questionRecord = question as Record<string, unknown>;
         acc.push({
-          id: question.id,
-          header: question.header || question.title || '',
-          question: question.question,
-          options: Array.isArray(question.options)
-            ? (question.options as unknown[]).reduce<ClarificationQuestionOption[]>((optionAcc, option) => {
+          id: String(questionRecord.id || ''),
+          header: String(questionRecord.header || questionRecord.title || ''),
+          question: String(questionRecord.question),
+          options: Array.isArray(questionRecord.options)
+            ? questionRecord.options.reduce<ClarificationQuestionOption[]>((optionAcc, option) => {
                 const optionRecord = option && typeof option === 'object'
                   ? option as Record<string, unknown>
                   : {};
@@ -462,6 +474,17 @@ const parseClarificationQuestions = (
 };
 
 const isA2UINativeEnabled = import.meta.env.VITE_A2UI_NATIVE_ENABLED !== 'false';
+
+const sanitizeA2UISurfacePart = (value: unknown): string | undefined => {
+  if (typeof value !== 'string' && typeof value !== 'number') {
+    return undefined;
+  }
+  const sanitized = String(value)
+    .trim()
+    .replace(/[^a-zA-Z0-9_-]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return sanitized || undefined;
+};
 
 export default function ChatMessageBubble({
   colorMode,
@@ -547,7 +570,7 @@ export default function ChatMessageBubble({
   ) => void;
   isStreaming: boolean;
   workspaceId?: string;
-  onA2UISubmit?: (response: A2UIResponse, request: A2UIRequest, message?: any) => Promise<void>;
+  onA2UISubmit?: (response: A2UIResponse, request: A2UIRequest, message?: ConversationMessage) => Promise<void>;
 }) {
   const isDarkMode = colorMode === 'dark';
   const isAgentMessage = message.sender === 'agent';
@@ -587,13 +610,15 @@ export default function ChatMessageBubble({
       : undefined;
     const stableSurfaceId = [
       'surface',
-      message.id,
-      gateId || pendingInterrupt.interruptId || pendingInterrupt.a2uiRequest?.component || pendingInterrupt.uiRequest?.component || 'interrupt',
-    ].join(':');
+      sanitizeA2UISurfacePart(message.id),
+      sanitizeA2UISurfacePart(
+        gateId || pendingInterrupt.interruptId || pendingInterrupt.a2uiRequest?.component || pendingInterrupt.uiRequest?.component || 'interrupt',
+      ),
+    ].filter(Boolean).join('-');
     if (pendingInterrupt.a2uiRequest) {
       return {
         ...pendingInterrupt.a2uiRequest,
-        surfaceId: stableSurfaceId,
+        surfaceId: pendingInterrupt.a2uiRequest.surfaceId || stableSurfaceId,
       };
     }
     if (pendingInterrupt.uiRequest && isA2UINativeEnabled) {
