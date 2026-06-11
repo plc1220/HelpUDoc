@@ -253,6 +253,7 @@ export default function ChatMessageList({
     toggleToolActivityVisibility,
     workspaceId,
     handlePrepareInterruptAction,
+    onA2UISubmit,
     colorMode,
     isDarkMode,
   ]);

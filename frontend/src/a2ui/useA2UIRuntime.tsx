@@ -21,6 +21,22 @@ const getErrorMessage = (error: unknown, fallback: string) => {
   return error instanceof Error ? error.message : fallback;
 };
 
+const getPropsSignature = (properties: Record<string, unknown>) => {
+  try {
+    return JSON.stringify(properties);
+  } catch {
+    return undefined;
+  }
+};
+
+const areNormalizedPropsEqual = (
+  currentProps: Record<string, unknown>,
+  nextProps: Record<string, unknown>,
+) => {
+  const currentSignature = getPropsSignature(currentProps);
+  return currentSignature !== undefined && currentSignature === getPropsSignature(nextProps);
+};
+
 const createCustomImplementation = (name: string, Component: React.FC<A2UIComponentProps>) => {
   return createBinderlessComponentImplementation(
     { name, schema: z.object({}).passthrough() },
@@ -35,7 +51,10 @@ const createCustomImplementation = (name: string, Component: React.FC<A2UICompon
 
       useEffect(() => {
         const unsub = context.componentModel.onUpdated.subscribe((model) => {
-          setProps(normalizeProps({ ...model.properties }));
+          setProps((currentProps) => {
+            const nextProps = normalizeProps({ ...model.properties });
+            return areNormalizedPropsEqual(currentProps, nextProps) ? currentProps : nextProps;
+          });
         });
         return () => unsub.unsubscribe();
       }, [context.componentModel]);
@@ -74,6 +93,7 @@ export const useA2UIRuntime = ({
   const [activeSurfaceId, setActiveSurfaceId] = useState<string | null>(null);
   const activeSurfaceIdRef = useRef<string | null>(null);
   const lastRequestSignatureRef = useRef<string | null>(null);
+  const lastSyncedRuntimePropsRef = useRef<string | null>(null);
 
   const customCatalog = useMemo(() => {
     return new Catalog('custom', [
@@ -118,8 +138,9 @@ export const useA2UIRuntime = ({
   const loadRequest = useCallback((request: A2UIRequest) => {
     const surfaceId = request.surfaceId;
     if (!surfaceId) {
-      setSurfaceModel(null);
+      setSurfaceModel((current) => current === null ? current : null);
       setError('A2UI request is missing a surface id.');
+      lastSyncedRuntimePropsRef.current = null;
       return;
     }
     const requestSignature = JSON.stringify({
@@ -131,14 +152,15 @@ export const useA2UIRuntime = ({
     const existingSurface = processor.model.getSurface(surfaceId);
     if (lastRequestSignatureRef.current === requestSignature && existingSurface) {
       activeSurfaceIdRef.current = surfaceId;
-      setActiveSurfaceId(surfaceId);
-      setSurfaceModel(existingSurface);
+      setActiveSurfaceId((current) => current === surfaceId ? current : surfaceId);
+      setSurfaceModel((current) => current === existingSurface ? current : existingSurface);
       return;
     }
 
     activeSurfaceIdRef.current = surfaceId;
-    setActiveSurfaceId(surfaceId);
+    setActiveSurfaceId((current) => current === surfaceId ? current : surfaceId);
     setError(undefined);
+    lastSyncedRuntimePropsRef.current = null;
 
     // If surface already exists, delete it first to ensure clean state
     if (processor.model.getSurface(surfaceId)) {
@@ -180,15 +202,17 @@ export const useA2UIRuntime = ({
       ]);
       const nextSurface = processor.model.getSurface(surfaceId);
       if (!nextSurface) {
-        setSurfaceModel(null);
+        setSurfaceModel((current) => current === null ? current : null);
         setError(`A2UI surface "${surfaceId}" was not created.`);
+        lastSyncedRuntimePropsRef.current = null;
         return;
       }
-      setSurfaceModel(nextSurface);
+      setSurfaceModel((current) => current === nextSurface ? current : nextSurface);
       lastRequestSignatureRef.current = requestSignature;
     } catch (err: unknown) {
       console.error('Failed to process request', err);
       setError(getErrorMessage(err, 'Error processing UI request'));
+      lastSyncedRuntimePropsRef.current = null;
     }
   }, [processor]);
 
@@ -197,11 +221,21 @@ export const useA2UIRuntime = ({
     if (activeSurfaceId && surfaceModel) {
       const surface = processor.model.getSurface(activeSurfaceId);
       if (!surface) {
-        setSurfaceModel(null);
+        setSurfaceModel((current) => current === null ? current : null);
+        lastSyncedRuntimePropsRef.current = null;
         return;
       }
       const rootComp = surfaceModel.componentsModel.get('root');
       if (rootComp) {
+        const runtimePropsSignature = JSON.stringify({
+          surfaceId: activeSurfaceId,
+          isSubmitting,
+          error: error ?? null,
+          workspaceId: workspaceId ?? null,
+        });
+        if (lastSyncedRuntimePropsRef.current === runtimePropsSignature) {
+          return;
+        }
         processor.processMessages([
           {
             version: 'v0.9',
@@ -224,9 +258,10 @@ export const useA2UIRuntime = ({
             },
           },
         ]);
+        lastSyncedRuntimePropsRef.current = runtimePropsSignature;
       }
     }
-  }, [activeSurfaceId, surfaceModel, isSubmitting, error, workspaceId]);
+  }, [activeSurfaceId, surfaceModel, isSubmitting, error, workspaceId, processor]);
 
   return {
     loadRequest,

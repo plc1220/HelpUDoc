@@ -753,7 +753,10 @@ export default function ChatMessageBubble({
   const interruptError = interruptErrorByMessageId[messageKey] || '';
   const allowDismiss = Boolean(pendingInterrupt?.responseSpec?.allowDismiss);
   const clarificationAllowsMultiple = Boolean(pendingInterrupt?.responseSpec?.multiple);
-  const selectedChoiceIds = interruptSelectedChoicesByMessageId[messageKey] || [];
+  const selectedChoiceIds = useMemo(
+    () => interruptSelectedChoicesByMessageId[messageKey] || [],
+    [interruptSelectedChoicesByMessageId, messageKey],
+  );
   const structuredClarificationQuestions = useMemo(
     () => parseClarificationQuestions(pendingInterrupt),
     [pendingInterrupt],

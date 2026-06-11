@@ -1,4 +1,4 @@
-import React, { useLayoutEffect } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 import { A2uiSurface } from '@a2ui/react/v0_9';
 import { useA2UIRuntime } from './useA2UIRuntime';
 import {
@@ -27,7 +27,17 @@ export const A2UISurfaceRenderer: React.FC<{
   onSubmit: (response: A2UIResponse) => Promise<void>;
   workspaceId?: string;
 }> = ({ request, onSubmit, workspaceId }) => {
-  const { loadRequest, surfaceModel, error } = useA2UIRuntime({ onSubmit, workspaceId });
+  const onSubmitRef = useRef(onSubmit);
+
+  useEffect(() => {
+    onSubmitRef.current = onSubmit;
+  }, [onSubmit]);
+
+  const submitWithLatestHandler = useCallback((response: A2UIResponse) => {
+    return onSubmitRef.current(response);
+  }, []);
+
+  const { loadRequest, surfaceModel, error } = useA2UIRuntime({ onSubmit: submitWithLatestHandler, workspaceId });
 
   useLayoutEffect(() => {
     loadRequest(request);
@@ -47,7 +57,7 @@ export const A2UISurfaceRenderer: React.FC<{
       return (
         <DirectComponent
           props={{ ...(request.props || {}), workspaceId }}
-          onSubmit={(payload: DirectSubmitPayload) => onSubmit({
+          onSubmit={(payload: DirectSubmitPayload) => submitWithLatestHandler({
             surfaceId: request.surfaceId,
             actionId: payload?.actionId || request.resumeAction?.actionId || 'submit',
             values: payload?.values,
