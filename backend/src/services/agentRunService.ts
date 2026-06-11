@@ -22,4 +22,5 @@ export {
   buildSyntheticClarificationFollowupPrompt,
   buildFrontendSlidesWorkflowState,
   normalizeWorkflowActionEvent,
+  shouldFailRunningRunForStaleActivity,
 } from './agent-runs/lifecycle';

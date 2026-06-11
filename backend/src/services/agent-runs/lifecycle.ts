@@ -142,6 +142,11 @@ const RESUMED_RUN_IDLE_TIMEOUT_MS = (() => {
   const raw = Number(process.env.AGENT_RESUME_IDLE_TIMEOUT_MS || '');
   return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_RESUMED_RUN_IDLE_TIMEOUT_MS;
 })();
+const DEFAULT_RUNNING_RUN_STALE_TIMEOUT_MS = 15 * 60 * 1000;
+const RUNNING_RUN_STALE_TIMEOUT_MS = (() => {
+  const raw = Number(process.env.AGENT_RUN_STALE_TIMEOUT_MS || '');
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_RUNNING_RUN_STALE_TIMEOUT_MS;
+})();
 const DEBUG_AGENT_RUN_STREAM =
   process.env.DEBUG_AGENT_RUN_STREAM === '1' || process.env.DEBUG_AGENT_RUN_STREAM === 'true';
 
@@ -388,6 +393,7 @@ export const buildSyntheticClarificationFollowupPrompt = (
   originalPrompt: string,
   response: AgentInterruptResponse,
   previousInterrupt?: RunPendingInterrupt,
+  completedGateStateOverride?: A2UIGateState,
 ): string => {
   const skill = typeof previousInterrupt?.displayPayload?.skill === 'string'
     ? previousInterrupt.displayPayload.skill
@@ -397,7 +403,7 @@ export const buildSyntheticClarificationFollowupPrompt = (
   const gateId = typeof previousInterrupt?.displayPayload?.gateId === 'string'
     ? previousInterrupt.displayPayload.gateId
     : undefined;
-  const completedGateState = frontendSlidesGateStateThrough(gateId);
+  const completedGateState = completedGateStateOverride || frontendSlidesGateStateThrough(gateId);
   const workflowState = previousInterrupt?.displayPayload?.skill === 'frontend-slides'
     ? buildFrontendSlidesWorkflowState(completedGateState)
     : undefined;
@@ -407,23 +413,24 @@ export const buildSyntheticClarificationFollowupPrompt = (
         JSON.stringify(workflowState),
         workflowState.nextRequiredGateId
           ? (
-              gateId === 'presentation_context'
+              workflowState.nextRequiredGateId === 'outline_confirmation'
                 ? 'Next structured workflow actions: first call workflow_action(action="generate_artifact", reason="Draft slide outline for review", artifact_refs_json="[\"slide_outline_v1\"]"), then present the concrete outline and call workflow_action(action="ask_user_a2ui", gate_id="outline_confirmation", component="clarification.form", props_json=..., context_json=...) to pause for review.'
                 : `Next structured workflow action: call workflow_action(action="ask_user_a2ui", gate_id="${workflowState.nextRequiredGateId}", component="${EXPECTED_GATES[workflowState.nextRequiredGateId] === 'style_preview_chooser' ? 'style.previewChooser' : 'clarification.form'}", props_json=..., context_json=...) and then stop.`
             )
           : 'All required A2UI gates are complete. Generate the final HTML presentation deck now. The output must be a slide deck, not a report or summary page: write a .html file whose filename ends with -deck.html, include multiple viewport-sized slide sections such as <section class="slide">, include keyboard/scroll navigation, and use write_file so the file appears in the workspace. The next structured workflow action may be workflow_action(action="complete") only after that final deck artifact is generated.',
       ].join('\n')
     : '';
+  const nextFrontendSlidesGate = workflowState?.nextRequiredGateId;
   const frontendSlidesGate = previousInterrupt?.displayPayload?.skill === 'frontend-slides'
-    ? previousInterrupt.displayPayload?.chooser === 'style-previews' || gateId === 'style_preview_selection'
-      ? 'For frontend-slides: the user has selected a visual style. Continue directly into building the final HTML presentation deck with that selected style. Do not create a generic report or summary page. Do not ask for Presentation Context again and do not show the style chooser again unless the user explicitly requests it.'
-      : gateId === 'presentation_context'
+    ? workflowState?.canComplete
+      ? 'For frontend-slides: all required structured gates are complete and the user has selected a visual style. Continue directly into building the final HTML presentation deck now using the selected style. Do not ask for Presentation Context again or any earlier frontend-slides gate again.'
+      : nextFrontendSlidesGate === 'outline_confirmation'
       ? 'For frontend-slides: the user has completed Presentation Context. Generate the slide outline next, then pause with an outline_confirmation structured A2UI workflow action. Do not ask for Presentation Context again and do not generate style previews yet.'
-      : gateId === 'outline_confirmation'
+      : nextFrontendSlidesGate === 'style_path_selection'
       ? 'For frontend-slides: the user has confirmed the outline. Continue to style path selection, then pause with a style_path_selection structured A2UI workflow action. Do not ask for Presentation Context or Outline Confirmation again.'
-      : gateId === 'style_path_selection'
+      : nextFrontendSlidesGate === 'mood_or_preset_selection'
       ? 'For frontend-slides: the user selected the style selection method. Continue to the next style gate. If the user chose generated previews, collect the mood or preset direction next; do not ask for Presentation Context or Outline Confirmation again.'
-      : gateId === 'mood_or_preset_selection'
+      : nextFrontendSlidesGate === 'style_preview_selection'
       ? 'For frontend-slides: the user selected the mood or preset direction. Generate 2-3 style previews/templates next, then pause with a style_preview_selection structured A2UI workflow action. Do not ask for earlier frontend-slides gates again.'
       : 'For frontend-slides: continue to the next incomplete A2UI gate. Do not ask for already answered frontend-slides gates again.'
     : '';
@@ -840,6 +847,10 @@ const frontendSlidesGateStateThrough = (gateId: string | undefined): A2UIGateSta
 
 const nextMissingFrontendSlidesGate = (state: A2UIGateState): FrontendSlidesGateId | undefined => (
   FRONTEND_SLIDES_REQUIRED_GATES.find((gateId) => !state.completedGateIds.includes(gateId))
+);
+
+const hasCompletedAllFrontendSlidesGates = (state: A2UIGateState): boolean => (
+  !nextMissingFrontendSlidesGate(state)
 );
 
 const FRONTEND_SLIDES_WORKFLOW_ACTION_BY_GATE: Record<FrontendSlidesGateId, WorkflowActionEvent['action']> = {
@@ -2036,8 +2047,92 @@ const parseRunContext = (raw: string | undefined): RunContext | undefined => {
   }
 };
 
-const findLatestInterruptPayloadInStream = async (runId: string): Promise<Record<string, unknown> | null> => {
+type RunStreamRecoveryInspection = {
+  latestInterruptPayload: Record<string, unknown> | null;
+  latestTerminalEvent?: { status: AgentRunStatus; error?: string };
+  latestRealActivityAt?: number;
+  latestEntryAt?: number;
+  latestDeckArtifactPath?: string;
+};
+
+const parseRedisStreamEntryTimestamp = (entryId: unknown): number | undefined => {
+  if (typeof entryId !== 'string') {
+    return undefined;
+  }
+  const timestamp = Number(entryId.split('-')[0]);
+  return Number.isFinite(timestamp) && timestamp > 0 ? timestamp : undefined;
+};
+
+const streamEntryIsRelevantToStartedAt = (entryAt: number | undefined, startedAtMs: number | undefined): boolean => {
+  if (!startedAtMs || !entryAt) {
+    return true;
+  }
+  return entryAt >= startedAtMs - 1000;
+};
+
+const terminalEventFromStreamPayload = (parsed: Record<string, unknown> | null): { status: AgentRunStatus; error?: string } | undefined => {
+  if (!parsed) {
+    return undefined;
+  }
+  const type = coerceText(parsed.type).trim();
+  if (type === 'done') {
+    const status = coerceText(parsed.status).trim();
+    if (status === 'failed' || status === 'error') {
+      return {
+        status: 'failed',
+        error: coerceText(parsed.error || parsed.message).trim() || 'Agent run failed.',
+      };
+    }
+    if (status === 'cancelled' || status === 'canceled') {
+      return { status: 'cancelled' };
+    }
+    return { status: 'completed' };
+  }
+  if (type === 'error' || type === 'contract_error') {
+    return {
+      status: 'failed',
+      error: coerceText(parsed.message || parsed.error).trim() || 'Agent run failed.',
+    };
+  }
+  if (type === 'progress' && coerceText(parsed.status).trim() === 'error') {
+    return {
+      status: 'failed',
+      error: coerceText(parsed.detail || parsed.label).trim() || 'Agent run failed.',
+    };
+  }
+  return undefined;
+};
+
+const extractDeckArtifactPath = (parsed: Record<string, unknown> | null): string | undefined => {
+  if (!parsed) {
+    return undefined;
+  }
+  const candidates: string[] = [];
+  const artifactPath = coerceText(parsed.artifactPath).trim();
+  if (artifactPath) {
+    candidates.push(artifactPath);
+  }
+  const outputFiles = Array.isArray(parsed.outputFiles) ? parsed.outputFiles : [];
+  outputFiles.forEach((file) => {
+    const path = getRecord(file)?.path;
+    if (typeof path === 'string' && path.trim()) {
+      candidates.push(path.trim());
+    }
+  });
+  return candidates.find((path) => /-deck\.html$/i.test(path));
+};
+
+const inspectRunStreamForRecovery = async (
+  runId: string,
+  startedAt?: string,
+): Promise<RunStreamRecoveryInspection> => {
   const streamKey = buildStreamKey(runId);
+  const startedAtMs = Number.isFinite(Date.parse(startedAt || ''))
+    ? Date.parse(startedAt || '')
+    : undefined;
+  const inspection: RunStreamRecoveryInspection = {
+    latestInterruptPayload: null,
+  };
   try {
     const entries = await redisClient.sendCommand([
       'XREVRANGE',
@@ -2045,14 +2140,21 @@ const findLatestInterruptPayloadInStream = async (runId: string): Promise<Record
       '+',
       '-',
       'COUNT',
-      '100',
+      '500',
     ]) as unknown;
     if (!Array.isArray(entries)) {
-      return null;
+      return inspection;
     }
     for (const entry of entries) {
       if (!Array.isArray(entry) || entry.length < 2 || !Array.isArray(entry[1])) {
         continue;
+      }
+      const entryAt = parseRedisStreamEntryTimestamp(entry[0]);
+      if (!streamEntryIsRelevantToStartedAt(entryAt, startedAtMs)) {
+        continue;
+      }
+      if (!inspection.latestEntryAt && entryAt) {
+        inspection.latestEntryAt = entryAt;
       }
       const fields = entry[1] as unknown[];
       for (let index = 0; index < fields.length - 1; index += 2) {
@@ -2060,15 +2162,40 @@ const findLatestInterruptPayloadInStream = async (runId: string): Promise<Record
           continue;
         }
         const parsed = parseLine(fields[index + 1] as string);
-        if (parsed?.type === 'interrupt') {
-          return normalizeInterruptPayloadRecord(parsed);
+        if (isRealRunProgressEvent(parsed) && !inspection.latestRealActivityAt && entryAt) {
+          inspection.latestRealActivityAt = entryAt;
+        }
+        if (!inspection.latestTerminalEvent) {
+          inspection.latestTerminalEvent = terminalEventFromStreamPayload(parsed);
+        }
+        if (!inspection.latestDeckArtifactPath) {
+          inspection.latestDeckArtifactPath = extractDeckArtifactPath(parsed);
+        }
+        if (!inspection.latestInterruptPayload && parsed?.type === 'interrupt') {
+          inspection.latestInterruptPayload = normalizeInterruptPayloadRecord(parsed);
         }
       }
     }
   } catch (error) {
-    console.error('Failed to inspect run stream for stale interrupt recovery', { runId, error });
+    console.error('Failed to inspect run stream for stale run recovery', { runId, error });
   }
-  return null;
+  return inspection;
+};
+
+export const shouldFailRunningRunForStaleActivity = (input: {
+  status?: string;
+  lastActivityAt?: number;
+  now: number;
+  timeoutMs?: number;
+}): boolean => {
+  if (input.status !== 'running' && input.status !== 'queued') {
+    return false;
+  }
+  if (!input.lastActivityAt) {
+    return false;
+  }
+  const timeoutMs = input.timeoutMs ?? RUNNING_RUN_STALE_TIMEOUT_MS;
+  return timeoutMs > 0 && input.now - input.lastActivityAt >= timeoutMs;
 };
 
 const loadRunContext = async (runId: string): Promise<RunContext | undefined> => {
@@ -2095,7 +2222,7 @@ const cleanupRun = (runId: string, upstream?: IncomingMessage) => {
   }
 };
 
-const markRunFinished = async (runId: string, status: AgentRunStatus, error?: string) => {
+const markRunFinished = async (runId: string, status: AgentRunStatus, error?: string): Promise<string> => {
   const completedAt = new Date().toISOString();
   await persistMeta(runId, {
     status,
@@ -2107,6 +2234,7 @@ const markRunFinished = async (runId: string, status: AgentRunStatus, error?: st
   if (status === 'completed' || status === 'failed' || status === 'cancelled') {
     runContexts.delete(runId);
   }
+  return completedAt;
 };
 
 const markRunAwaitingApproval = async (runId: string, interruptPayload: string, params?: StartRunParams) => {
@@ -3060,17 +3188,6 @@ export async function resumeAgentRunWithResponse(
   }
   const baseParams = options?.authToken ? { ...context.params, authToken: options.authToken } : context.params;
   const previousInterruptIsSynthetic = isSyntheticClarificationInterrupt(options?.previousInterrupt);
-  const nextParams = previousInterruptIsSynthetic
-    ? {
-        ...baseParams,
-        prompt: buildSyntheticClarificationFollowupPrompt(
-          context.params.prompt,
-          response,
-          options?.previousInterrupt,
-        ),
-        forceReset: true,
-      }
-    : baseParams;
   const currentMeta = await getRunMeta(runId);
   const previousGateId = options?.previousInterrupt
     ? extractA2UIGateId({
@@ -3083,6 +3200,18 @@ export async function resumeAgentRunWithResponse(
     currentMeta?.a2uiGateState || { completedGateIds: [] },
     previousGateId,
   );
+  const nextParams = previousInterruptIsSynthetic
+    ? {
+        ...baseParams,
+        prompt: buildSyntheticClarificationFollowupPrompt(
+          context.params.prompt,
+          response,
+          options?.previousInterrupt,
+          nextGateState,
+        ),
+        forceReset: true,
+      }
+    : baseParams;
   runContexts.set(runId, { params: nextParams });
   await persistMeta(runId, {
     status: 'queued',
@@ -3135,6 +3264,142 @@ export async function cancelAgentRun(runId: string) {
   await markRunFinished(runId, 'cancelled');
 }
 
+const isFrontendSlidesContextRun = (context: RunContext | undefined): boolean => (
+  Boolean(context?.params && isFrontendSlidesRun(null, context.params))
+);
+
+const buildStaleRunErrorMessage = (
+  context: RunContext | undefined,
+  a2uiGateState: A2UIGateState,
+): string => {
+  if (isFrontendSlidesContextRun(context) && hasCompletedAllFrontendSlidesGates(a2uiGateState)) {
+    return 'Agent stalled after all frontend-slides gates completed before producing the final HTML deck. Please retry the deck generation.';
+  }
+  return 'Agent run stalled without a terminal event. Please retry the run.';
+};
+
+const abortActiveRunWorker = (runId: string) => {
+  const controller = runAbortControllers.get(runId);
+  if (controller && !controller.signal.aborted) {
+    controller.abort();
+  }
+  cleanupRun(runId);
+};
+
+const reconcileActiveRunMetaFromStream = async (
+  runId: string,
+  meta: Record<string, string>,
+  a2uiGateState: A2UIGateState,
+) => {
+  if ((meta.status !== 'running' && meta.status !== 'queued') || meta.pendingInterrupt?.trim()) {
+    return;
+  }
+
+  const inspection = await inspectRunStreamForRecovery(runId, meta.startedAt || meta.createdAt);
+  const context = await loadRunContext(runId);
+  const latestInterrupt = inspection.latestInterruptPayload;
+  const recoveredGateId = latestInterrupt ? extractA2UIGateId(latestInterrupt) : undefined;
+  const recoveredGateIsComplete = Boolean(
+    recoveredGateId && a2uiGateState.completedGateIds.includes(recoveredGateId),
+  );
+
+  if (latestInterrupt && !recoveredGateIsComplete) {
+    await markRunAwaitingApproval(runId, JSON.stringify(latestInterrupt), context?.params);
+    meta.status = 'awaiting_approval';
+    meta.pendingInterrupt = JSON.stringify(latestInterrupt);
+    meta.error = '';
+    return;
+  }
+
+  const canCompleteFromDeckArtifact =
+    isFrontendSlidesContextRun(context) &&
+    hasCompletedAllFrontendSlidesGates(a2uiGateState) &&
+    Boolean(inspection.latestDeckArtifactPath);
+  const terminalEvent = canCompleteFromDeckArtifact
+    ? { status: 'completed' as AgentRunStatus }
+    : inspection.latestTerminalEvent;
+
+  const missingCompletionGate = context?.params
+    ? getFrontendSlidesMissingRequiredGate({
+        skillId: null,
+        prompt: context.params.prompt,
+        status: 'completed',
+        gateState: a2uiGateState,
+      })
+    : null;
+  if (terminalEvent?.status === 'completed' && missingCompletionGate) {
+    const recoveredInterrupt = normalizeInterruptPayloadRecord(
+      buildFrontendSlidesGatePendingInterrupt({
+        runId,
+        gateId: missingCompletionGate,
+      }),
+    );
+    const validationError = validateInterrupt(recoveredInterrupt, 'frontend-slides');
+    if (validationError) {
+      const completedAt = await markRunFinished(runId, 'failed', validationError);
+      meta.status = 'failed';
+      meta.completedAt = completedAt;
+      meta.error = validationError;
+      meta.pendingInterrupt = '';
+      return;
+    }
+    await appendStreamEvent(runId, JSON.stringify(recoveredInterrupt));
+    await markRunAwaitingApproval(runId, JSON.stringify(recoveredInterrupt), context?.params);
+    meta.status = 'awaiting_approval';
+    meta.pendingInterrupt = JSON.stringify(recoveredInterrupt);
+    meta.error = '';
+    return;
+  }
+
+  if (terminalEvent) {
+    const completedAt = await markRunFinished(runId, terminalEvent.status, terminalEvent.error);
+    if (context?.params) {
+      await persistRunConversationMessage(runId, context.params, terminalEvent.status === 'queued' ? 'running' : terminalEvent.status, {
+        error: terminalEvent.error,
+      });
+    }
+    if (canCompleteFromDeckArtifact) {
+      await appendStreamEvent(runId, JSON.stringify({
+        type: 'done',
+        status: 'completed',
+        recovered: true,
+        artifactPath: inspection.latestDeckArtifactPath,
+      }));
+    }
+    abortActiveRunWorker(runId);
+    meta.status = terminalEvent.status;
+    meta.completedAt = completedAt;
+    meta.error = terminalEvent.error || '';
+    meta.pendingInterrupt = '';
+    return;
+  }
+
+  const fallbackStartedAt = Number.isFinite(Date.parse(meta.startedAt || meta.createdAt || ''))
+    ? Date.parse(meta.startedAt || meta.createdAt || '')
+    : undefined;
+  const lastActivityAt = inspection.latestRealActivityAt || inspection.latestEntryAt || fallbackStartedAt;
+  if (!shouldFailRunningRunForStaleActivity({
+    status: meta.status,
+    lastActivityAt,
+    now: Date.now(),
+  })) {
+    return;
+  }
+
+  const error = buildStaleRunErrorMessage(context, a2uiGateState);
+  await appendStreamEvent(runId, JSON.stringify({ type: 'error', message: error, recovered: true }));
+  await appendStreamEvent(runId, JSON.stringify({ type: 'done', status: 'failed', recovered: true }));
+  const completedAt = await markRunFinished(runId, 'failed', error);
+  if (context?.params) {
+    await persistRunConversationMessage(runId, context.params, 'failed', { error });
+  }
+  abortActiveRunWorker(runId);
+  meta.status = 'failed';
+  meta.completedAt = completedAt;
+  meta.error = error;
+  meta.pendingInterrupt = '';
+};
+
 export async function getRunMeta(runId: string): Promise<RunMeta | null> {
   const metaKey = buildMetaKey(runId);
   const meta = await redisClient.hGetAll(metaKey);
@@ -3142,19 +3407,7 @@ export async function getRunMeta(runId: string): Promise<RunMeta | null> {
     return null;
   }
   const a2uiGateState = parseA2UIGateState(meta.a2uiGateState);
-  if ((meta.status === 'running' || meta.status === 'queued') && !meta.pendingInterrupt?.trim()) {
-    const recoveredInterrupt = await findLatestInterruptPayloadInStream(runId);
-    const recoveredGateId = recoveredInterrupt ? extractA2UIGateId(recoveredInterrupt) : undefined;
-    const recoveredGateIsComplete = Boolean(
-      recoveredGateId && a2uiGateState.completedGateIds.includes(recoveredGateId),
-    );
-    if (recoveredInterrupt && !recoveredGateIsComplete) {
-      await markRunAwaitingApproval(runId, JSON.stringify(recoveredInterrupt));
-      meta.status = 'awaiting_approval';
-      meta.pendingInterrupt = JSON.stringify(recoveredInterrupt);
-      meta.error = '';
-    }
-  }
+  await reconcileActiveRunMetaFromStream(runId, meta, a2uiGateState);
   return {
     workspaceId: meta.workspaceId,
     persona: meta.persona,

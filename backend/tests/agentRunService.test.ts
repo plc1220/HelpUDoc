@@ -12,6 +12,7 @@ import {
   isRealRunProgressEvent,
   normalizeWorkflowActionEvent,
   resolveStreamCloseDisposition,
+  shouldFailRunningRunForStaleActivity,
   shouldFailResumedRunForIdle,
   startAgentRun,
   resumeAgentRunWithResponse,
@@ -468,6 +469,47 @@ test('shouldFailResumedRunForIdle only fails resumed idle runs with no active to
   );
 });
 
+test('shouldFailRunningRunForStaleActivity only fails stale active runs', () => {
+  assert.equal(
+    shouldFailRunningRunForStaleActivity({
+      status: 'running',
+      lastActivityAt: 1_000,
+      now: 61_000,
+      timeoutMs: 60_000,
+    }),
+    true,
+  );
+
+  assert.equal(
+    shouldFailRunningRunForStaleActivity({
+      status: 'queued',
+      lastActivityAt: 1_000,
+      now: 60_999,
+      timeoutMs: 60_000,
+    }),
+    false,
+  );
+
+  assert.equal(
+    shouldFailRunningRunForStaleActivity({
+      status: 'completed',
+      lastActivityAt: 1_000,
+      now: 999_000,
+      timeoutMs: 60_000,
+    }),
+    false,
+  );
+
+  assert.equal(
+    shouldFailRunningRunForStaleActivity({
+      status: 'running',
+      now: 999_000,
+      timeoutMs: 60_000,
+    }),
+    false,
+  );
+});
+
 test('resolveStreamCloseDisposition preserves an emitted interrupt ahead of stream errors', () => {
   const interruptPayload = {
     type: 'interrupt',
@@ -632,6 +674,209 @@ test('buildSyntheticClarificationFollowupPrompt advances frontend-slides style c
   assert.match(prompt, /<section class="slide">/);
   assert.match(prompt, /not a report or summary page/);
   assert.match(prompt, /Do not ask for Presentation Context again/);
+});
+
+test('buildSyntheticClarificationFollowupPrompt honors persisted completed frontend-slides gate state', () => {
+  const prompt = buildSyntheticClarificationFollowupPrompt(
+    '/skill frontend-slides @final-research-report.md',
+    {
+      answersByQuestionId: {
+        presentation_goal: 'Explain the solution.',
+      },
+    },
+    {
+      kind: 'clarification',
+      title: 'Presentation Context',
+      displayPayload: { synthetic: true, skill: 'frontend-slides', gateId: 'presentation_context' },
+      responseSpec: {
+        questions: [
+          { id: 'presentation_goal', header: 'Goal', question: 'What is the goal?' },
+        ],
+      },
+    } as any,
+    {
+      completedGateIds: [
+        'presentation_context',
+        'outline_confirmation',
+        'style_path_selection',
+        'mood_or_preset_selection',
+        'style_preview_selection',
+      ],
+    },
+  );
+
+  assert.match(prompt, /all required structured gates are complete/i);
+  assert.match(prompt, /Generate the final HTML presentation deck now/);
+  assert.match(prompt, /filename ends with -deck\.html/);
+  assert.doesNotMatch(prompt, /Generate the slide outline next/);
+  assert.doesNotMatch(prompt, /outline_confirmation structured A2UI workflow action/);
+});
+
+test('getRunMeta reconciles stale completed-gate frontend-slides runs', {
+  skip: process.env.RUN_A2UI_E2E !== '1' ? 'set RUN_A2UI_E2E=1 with Redis available to run lifecycle flow test' : false,
+}, async () => {
+  if (!redisClient.isOpen) {
+    await redisClient.connect();
+  }
+
+  const runId = `stale-frontend-slides-${Date.now()}`;
+  const streamKey = `agent:run:${runId}`;
+  const metaKey = `${streamKey}:meta`;
+  const workspaceId = 'workspace-stale-frontend-slides';
+  const turnId = `turn-${Date.now()}`;
+  const oldMs = Date.now() - 60 * 60 * 1000;
+  const oldIso = new Date(oldMs).toISOString();
+  const requiredGates = [
+    'presentation_context',
+    'outline_confirmation',
+    'style_path_selection',
+    'mood_or_preset_selection',
+    'style_preview_selection',
+  ];
+
+  try {
+    await redisClient.hSet(metaKey, {
+      workspaceId,
+      persona: 'fast',
+      status: 'running',
+      createdAt: oldIso,
+      startedAt: oldIso,
+      turnId,
+      pendingInterrupt: '',
+      error: '',
+      a2uiGateState: JSON.stringify({ completedGateIds: requiredGates }),
+      runContext: JSON.stringify({
+        workspaceId,
+        persona: 'fast',
+        prompt: '/skill frontend-slides @final-research-report.md',
+        history: [{ role: 'user', content: '/skill frontend-slides @final-research-report.md' }],
+        turnId,
+        forceReset: true,
+      }),
+    });
+    await redisClient.sendCommand([
+      'XADD',
+      streamKey,
+      `${oldMs}-0`,
+      'data',
+      JSON.stringify({ type: 'token', content: 'Generating final deck...' }),
+    ]);
+
+    const meta = await getRunMeta(runId);
+    assert.equal(meta?.status, 'failed');
+    assert.match(meta?.error || '', /before producing the final HTML deck/);
+  } finally {
+    await redisClient.del(streamKey);
+    await redisClient.del(metaKey);
+  }
+});
+
+test('getRunMeta completes frontend-slides runs that wrote the final deck before settling', {
+  skip: process.env.RUN_A2UI_E2E !== '1' ? 'set RUN_A2UI_E2E=1 with Redis available to run lifecycle flow test' : false,
+}, async () => {
+  if (!redisClient.isOpen) {
+    await redisClient.connect();
+  }
+
+  const runId = `deck-recovered-frontend-slides-${Date.now()}`;
+  const streamKey = `agent:run:${runId}`;
+  const metaKey = `${streamKey}:meta`;
+  const workspaceId = 'workspace-deck-recovered-frontend-slides';
+  const turnId = `turn-${Date.now()}`;
+  const nowIso = new Date().toISOString();
+  const requiredGates = [
+    'presentation_context',
+    'outline_confirmation',
+    'style_path_selection',
+    'mood_or_preset_selection',
+    'style_preview_selection',
+  ];
+
+  try {
+    await redisClient.hSet(metaKey, {
+      workspaceId,
+      persona: 'fast',
+      status: 'running',
+      createdAt: nowIso,
+      startedAt: nowIso,
+      turnId,
+      pendingInterrupt: '',
+      error: '',
+      a2uiGateState: JSON.stringify({ completedGateIds: requiredGates }),
+      runContext: JSON.stringify({
+        workspaceId,
+        persona: 'fast',
+        prompt: '/skill frontend-slides @final-research-report.md',
+        history: [{ role: 'user', content: '/skill frontend-slides @final-research-report.md' }],
+        turnId,
+        forceReset: true,
+      }),
+    });
+    await redisClient.xAdd(streamKey, '*', {
+      data: JSON.stringify({
+        type: 'tool_end',
+        name: 'write_file',
+        outputFiles: [
+          { path: 'slides/final-research-report-deck.html', mimeType: 'text/html', size: 4096 },
+        ],
+      }),
+    });
+
+    const meta = await getRunMeta(runId);
+    assert.equal(meta?.status, 'completed');
+    assert.equal(meta?.error || '', '');
+  } finally {
+    await redisClient.del(streamKey);
+    await redisClient.del(metaKey);
+  }
+});
+
+test('getRunMeta recovers missing frontend-slides gates before terminal stream recovery', {
+  skip: process.env.RUN_A2UI_E2E !== '1' ? 'set RUN_A2UI_E2E=1 with Redis available to run lifecycle flow test' : false,
+}, async () => {
+  if (!redisClient.isOpen) {
+    await redisClient.connect();
+  }
+
+  const runId = `terminal-missing-gate-frontend-slides-${Date.now()}`;
+  const streamKey = `agent:run:${runId}`;
+  const metaKey = `${streamKey}:meta`;
+  const workspaceId = 'workspace-terminal-missing-gate-frontend-slides';
+  const turnId = `turn-${Date.now()}`;
+  const nowIso = new Date().toISOString();
+
+  try {
+    await redisClient.hSet(metaKey, {
+      workspaceId,
+      persona: 'fast',
+      status: 'running',
+      createdAt: nowIso,
+      startedAt: nowIso,
+      turnId,
+      pendingInterrupt: '',
+      error: '',
+      a2uiGateState: JSON.stringify({ completedGateIds: ['presentation_context'] }),
+      runContext: JSON.stringify({
+        workspaceId,
+        persona: 'fast',
+        prompt: '/skill frontend-slides @final-research-report.md',
+        history: [{ role: 'user', content: '/skill frontend-slides @final-research-report.md' }],
+        turnId,
+        forceReset: true,
+      }),
+    });
+    await redisClient.xAdd(streamKey, '*', {
+      data: JSON.stringify({ type: 'done', status: 'completed' }),
+    });
+
+    const meta = await getRunMeta(runId);
+    assert.equal(meta?.status, 'awaiting_approval');
+    assert.equal(meta?.pendingInterrupt?.displayPayload?.gateId, 'outline_confirmation');
+    assert.deepEqual(meta?.a2uiGateState?.completedGateIds, ['presentation_context']);
+  } finally {
+    await redisClient.del(streamKey);
+    await redisClient.del(metaKey);
+  }
 });
 
 test('buildSyntheticClarificationFollowupPrompt gives generic skills non-slide continuation guidance', () => {
