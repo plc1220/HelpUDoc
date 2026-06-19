@@ -91,7 +91,8 @@ tools:
     description: Pause the run and ask the human to choose from arbitrary actions
   - name: request_ui
     kind: builtin
-    description: Pause the run and ask the frontend to render a specific native A2UI component
+    description: Pause the run and ask the frontend to render a specific native A2UI
+      component
   - name: workflow_action
     kind: builtin
     description: Emit one structured workflow action; use ask_user_a2ui for user-input gates

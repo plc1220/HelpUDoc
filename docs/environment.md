@@ -18,26 +18,50 @@ cd backend && npm run validate:env
 
 ## Local development (run services directly)
 
-1) Copy env templates:
+1) Create local env files:
 
 ```bash
-cp env/local/dev.env.example env/local/dev.env
-cp env/local/stack.env.example env/local/stack.env
+scripts/bootstrap_local_env.sh
 ```
 
-2) Start shared infra (Postgres, Redis, MinIO):
+This creates `env/local/dev.env` and `env/local/stack.env` if they do not
+exist, and fills a generated `OAUTH_TOKEN_ENCRYPTION_KEY` when it is blank.
+Both files are ignored by git and are the canonical place for machine-local
+credentials.
+
+2) Fill local-only credentials:
+
+```bash
+$EDITOR env/local/dev.env
+$EDITOR env/local/stack.env
+```
+
+At minimum, set:
+
+- `GEMINI_API_KEY`
+- `RAG_LLM_API_KEY` (usually the same value as `GEMINI_API_KEY` for local dev)
+
+When using Google login or delegated Google MCP tools, also set:
+
+- `GOOGLE_OAUTH_CLIENT_ID`
+- `GOOGLE_OAUTH_CLIENT_SECRET`
+- `GOOGLE_WORKSPACE_MCP_URL` if pointing to a hosted MCP endpoint
+
+Do not commit real credentials. Keep tracked defaults in `*.env.example` only.
+
+3) Start shared infra (Postgres, Redis, MinIO):
 
 ```bash
 docker compose -f infra/docker-compose.dependencies.yml --env-file env/local/stack.env up -d
 ```
 
-3) Export env vars for dev shells:
+4) Export env vars for dev shells:
 
 ```bash
 set -a; source env/local/dev.env; set +a
 ```
 
-4) Start services in separate terminals:
+5) Start services in separate terminals:
 
 ```bash
 cd backend
@@ -57,6 +81,8 @@ npm run dev
 Notes:
 - The backend and agent read `ENV_FILE` if set; otherwise they fall back to a local `.env` in their folder.
 - Vite reads `VITE_*` values from the shell, so `VITE_GOOGLE_CLIENT_ID` in `env/local/dev.env` is enough.
+- `WORKSPACE_ROOT=backend/workspaces` and `SKILLS_ROOT=skills` are repo-root-relative, even when commands are run from `backend/` or `agent/`.
+- To confirm the local registry is visible, call `GET /api/settings/skills` with a local admin header and check that it returns the bundled skills.
 
 ### Local QA without Google login
 
@@ -83,6 +109,10 @@ For automated tests, preload a local user into `localStorage` with the key
 ```bash
 docker compose -f infra/docker-compose.yml --env-file env/local/stack.env up --build
 ```
+
+The full stack mounts the repo `skills/` directory into the backend and agent
+containers. `SKILLS_ROOT` is set to `/app/skills` inside the containers so the
+settings UI and agent runtime read the same catalog.
 
 ## Production (GKE)
 

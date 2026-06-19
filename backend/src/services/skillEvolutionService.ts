@@ -21,7 +21,14 @@ import type {
 import { ConflictError, NotFoundError } from '../errors';
 
 const repoRoot = path.resolve(__dirname, '../../..');
-const skillsRoot = process.env.SKILLS_ROOT ? path.resolve(process.env.SKILLS_ROOT) : path.join(repoRoot, 'skills');
+const resolveRepoRelativePath = (value?: string | null): string | undefined => {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  return path.isAbsolute(trimmed) ? trimmed : path.resolve(repoRoot, trimmed);
+};
+const skillsRoot = resolveRepoRelativePath(process.env.SKILLS_ROOT) || path.join(repoRoot, 'skills');
 
 const SKILL_ID_PATTERN = /^[a-zA-Z0-9_-]+(?:\/[a-zA-Z0-9_-]+)*$/;
 

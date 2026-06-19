@@ -30,15 +30,17 @@ The repo currently combines:
 
 ### Full stack with Docker Compose
 
-1. Copy the local stack env file:
+1. Create local env files:
    ```bash
-   cp env/local/stack.env.example env/local/stack.env
+   scripts/bootstrap_local_env.sh
    ```
-2. Build and start everything from the repo root:
+2. Edit `env/local/stack.env` with local credentials, especially `GEMINI_API_KEY`.
+   The file is ignored by git and is the right place for machine-local secrets.
+3. Build and start everything from the repo root:
    ```bash
    docker compose -f infra/docker-compose.yml --env-file env/local/stack.env up --build
    ```
-3. Open the local services:
+4. Open the local services:
    - Frontend: `http://localhost:5173`
    - Backend API: `http://localhost:3000/api`
    - Agent service: `http://localhost:8001`
@@ -59,9 +61,12 @@ Add `-v` if you also want to remove the named Docker volumes.
 ### 1. Prepare env files
 
 ```bash
-cp env/local/dev.env.example env/local/dev.env
-cp env/local/stack.env.example env/local/stack.env
+scripts/bootstrap_local_env.sh
 ```
+
+Then edit `env/local/dev.env` and `env/local/stack.env` with local-only
+credentials such as `GEMINI_API_KEY`, optional Google OAuth client credentials,
+and any hosted MCP URLs. Both files are ignored by git.
 
 ### 2. Start shared dependencies only
 
@@ -113,6 +118,10 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ENV_FILE=../env/local/dev.env uvicorn main:app --host 0.0.0.0 --port 8001 --reload
 ```
+
+The backend and agent both resolve `WORKSPACE_ROOT=backend/workspaces` and
+`SKILLS_ROOT=skills` relative to the repo root, so the local app should see the
+bundled skill catalog from `skills/`.
 
 Optional mobile app:
 

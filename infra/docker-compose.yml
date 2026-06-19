@@ -262,6 +262,7 @@ services:
       LLM_MODEL: ${LLM_MODEL:-gemini-3.5-flash}
       AGENT_JWT_SECRET: ${AGENT_JWT_SECRET:-helpudoc-local-dev-agent-jwt-secret}
       WORKSPACE_ROOT: /app/workspaces
+      SKILLS_ROOT: /app/skills
       AGENT_CONFIG_PATH: /agent/config/runtime.yaml
       S3_ENDPOINT: http://minio:9000
       MINIO_ENDPOINT: http://minio:9000
