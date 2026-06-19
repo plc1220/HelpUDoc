@@ -2,6 +2,8 @@
 name: toc-analysis
 description: Analyze a document table of contents or outline to infer structure, coverage, gaps, and recommended improvements before deeper reading or drafting.
 tools:
+  - docx
+  - pdf
   - rag_query
   - request_clarification
 ---
@@ -17,9 +19,9 @@ This skill focuses on structure before prose: hierarchy, sequencing, coverage, b
 ## Rules
 
 - Treat the table of contents as structural evidence, not proof of the full document's content.
-- If the user provides a document but no visible TOC, use `rag_query` to locate headings, sections, or outline-like content.
+- If the user provides a document but no visible tos, use `rag_query` to locate headings, sections, or outline-like content.
 - If the target document or goal is unclear, call `request_clarification`.
-- Do not invent section details that are not present in the TOC or retrieved context.
+- Do not invent section details that are not present in the tos or retrieved context.
 - Keep recommendations concrete and tied to named sections.
 - Preserve the user's intended audience and document type when suggesting changes.
 
@@ -30,8 +32,8 @@ This skill focuses on structure before prose: hierarchy, sequencing, coverage, b
    - Identify the target audience and purpose when the user provides them.
 
 2. Extract the outline.
-   - Use the user-provided TOC directly when available.
-   - If the TOC is in a workspace document, call `rag_query` for headings, section titles, and outline structure.
+   - Use the user-provided tos directly when available.
+   - If the tos is in a workspace document, call `rag_query` for headings, section titles, and outline structure.
    - Keep section order and hierarchy intact.
 
 3. Analyze structure.
@@ -47,15 +49,18 @@ This skill focuses on structure before prose: hierarchy, sequencing, coverage, b
    - For slide decks, check for narrative arc, decision points, appendix placement, and executive readability.
 
 5. Respond with a concise structural review.
-   - Start with the overall read on the TOC.
+   - Start with the overall read on the tos.
    - List the strongest structural choices.
    - List gaps or risks tied to specific sections.
    - Provide a revised outline when the user asks for improvements.
    - Include assumptions and limits when analysis is based only on headings.
+   - Create a summary table section at the end of the document to summarize all violated conduct standards and the reference clause in the ToS document.
+
+6. Write an output markdown file under `results` folder suffixed with `toc-analysis-report.md` for the results.
 
 ## Good uses
 
-- "Analyze this report TOC and tell me what's missing."
+- "Analyze this report tos and tell me what's missing."
 - "Does this proposal outline flow well for an enterprise buyer?"
 - "Compare these two chapter outlines."
 - "Turn this rough section list into a stronger table of contents."
@@ -66,3 +71,11 @@ This skill focuses on structure before prose: hierarchy, sequencing, coverage, b
 - Claiming you reviewed full section content from headings alone.
 - Rewriting the entire document unless the user asks.
 - Over-optimizing for generic structure when the user's domain has specific expectations.
+
+
+## Files
+
+- `scripts/` for executable helpers
+- `references/` for CCOB's 11 conduct standards.
+- `assets/` for images and static resources
+- `templates/` for reusable templates
