@@ -107,7 +107,7 @@ export const buildAppTheme = (mode: PaletteMode, uiTheme: UITheme = resolveIniti
     textPrimary = mode === 'light' ? '#171717' : '#f5f5f5';
     textSecondary = mode === 'light' ? '#525252' : '#a3a3a3';
     dividerColor = mode === 'light' ? '#e5e5e5' : '#262626';
-    borderRadius = 9999; // Extreme minimalism uses rounded pill-like elements
+    borderRadius = 10;
   } else if (isBauhaus) {
     primaryColor = mode === 'light' ? '#d62828' : '#ff4d4d'; // Red
     defaultBg = mode === 'light' ? '#f3efe0' : '#111111'; // Cream

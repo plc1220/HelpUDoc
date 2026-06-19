@@ -231,34 +231,34 @@ const DashboardPage = () => {
             {/* Minimalism Theme Card */}
             <button
               onClick={() => setUiTheme('minimalism')}
-              className={`group relative flex flex-col items-start rounded-[32px] p-5 text-left border transition-all duration-300 ${
+              className={`group relative flex flex-col items-start rounded-xl p-5 text-left border transition-all duration-300 ${
                 uiTheme === 'minimalism'
                   ? 'border-neutral-900 dark:border-neutral-200 bg-neutral-100/40 dark:bg-neutral-900/20'
                   : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-neutral-400 dark:hover:border-neutral-500'
               }`}
             >
               <div className="flex w-full items-center justify-between">
-                <span className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-neutral-100 dark:bg-neutral-800 text-neutral-900 dark:text-neutral-100">
+                <span className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-neutral-100 dark:bg-neutral-800 text-neutral-900 dark:text-neutral-100">
                   <Palette size={18} />
                 </span>
                 {uiTheme === 'minimalism' && (
-                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-neutral-900 dark:bg-neutral-100 text-white dark:text-black">
+                  <span className="flex h-5 w-5 items-center justify-center rounded-md bg-neutral-900 dark:bg-neutral-100 text-white dark:text-black">
                     <Check size={12} strokeWidth={3} />
                   </span>
                 )}
               </div>
               <h3 className="mt-4 text-base font-light tracking-tight text-neutral-900 dark:text-neutral-100 lowercase">minimalism</h3>
               <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed lowercase">
-                ultra-sleek and ultra-clean. rounded capsule lines, breathing whitespace, and pitch-black monochrome accents.
+                quiet monochrome surfaces, compact controls, generous whitespace, and restrained geometric corners.
               </p>
 
               <div className="mt-5 flex items-center gap-3 w-full border-t border-neutral-100 dark:border-neutral-800 pt-4">
                 <div className="flex gap-1">
-                  <span className="h-3 w-6 rounded-full bg-[#171717] dark:bg-white" />
-                  <span className="h-3 w-6 rounded-full bg-[#f5f5f5] dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700" />
+                  <span className="h-3 w-6 rounded-sm bg-[#171717] dark:bg-white" />
+                  <span className="h-3 w-6 rounded-sm bg-[#f5f5f5] dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700" />
                 </div>
-                <div className="ml-auto flex items-center gap-1 bg-neutral-50 dark:bg-neutral-950 px-3 py-1 rounded-full border border-neutral-100 dark:border-neutral-800">
-                  <span className="text-[9px] font-medium tracking-wider text-neutral-500 dark:text-neutral-400 lowercase">pills</span>
+                <div className="ml-auto flex items-center gap-1 bg-neutral-50 dark:bg-neutral-950 px-3 py-1 rounded-md border border-neutral-100 dark:border-neutral-800">
+                  <span className="text-[9px] font-medium tracking-wider text-neutral-500 dark:text-neutral-400 lowercase">quiet</span>
                 </div>
               </div>
             </button>

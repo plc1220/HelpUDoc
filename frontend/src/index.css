@@ -157,14 +157,9 @@
 :root[data-ui-theme='minimalism'] select,
 :root[data-ui-theme='minimalism'] input,
 :root[data-ui-theme='minimalism'] textarea,
-:root[data-ui-theme='minimalism'] .rounded-xl,
-:root[data-ui-theme='minimalism'] .rounded-2xl,
-:root[data-ui-theme='minimalism'] .rounded-3xl,
-:root[data-ui-theme='minimalism'] .rounded-\[28px\],
-:root[data-ui-theme='minimalism'] .settings-portal-card,
-:root[data-ui-theme='minimalism'] .settings-portal-header,
-:root[data-ui-theme='minimalism'] .settings-portal-surface {
-  border-radius: 9999px !important; /* Pills / capsules */
+:root[data-ui-theme='minimalism'] .settings-portal-nav-item,
+:root[data-ui-theme='minimalism'] .settings-portal-chip {
+  border-radius: 10px !important;
   border-width: 1px !important;
   box-shadow: none !important;
   transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
@@ -184,7 +179,28 @@
 :root[data-ui-theme='minimalism'] main,
 :root[data-ui-theme='minimalism'] aside,
 :root[data-ui-theme='minimalism'] .settings-portal-card {
-  border-radius: 20px !important;
+  border-radius: 14px !important;
+  box-shadow: none !important;
+}
+
+:root[data-ui-theme='minimalism'] .rounded-full {
+  border-radius: 10px !important;
+}
+
+:root[data-ui-theme='minimalism'] .rounded-xl,
+:root[data-ui-theme='minimalism'] .rounded-2xl,
+:root[data-ui-theme='minimalism'] .rounded-3xl,
+:root[data-ui-theme='minimalism'] .rounded-\[28px\],
+:root[data-ui-theme='minimalism'] [class*='rounded-['] {
+  border-radius: 12px !important;
+}
+
+:root[data-ui-theme='minimalism'] [class*='shadow-'] {
+  box-shadow: none !important;
+}
+
+:root[data-ui-theme='minimalism'] textarea.bg-transparent {
+  border: 0 !important;
 }
 
 :root[data-ui-theme='minimalism'] h1,
@@ -192,7 +208,7 @@
 :root[data-ui-theme='minimalism'] h3,
 :root[data-ui-theme='minimalism'] h4 {
   font-weight: 300 !important;
-  letter-spacing: -0.03em !important;
+  letter-spacing: 0 !important;
   text-transform: lowercase !important;
 }
 
@@ -271,10 +287,6 @@
 :root[data-ui-theme='bauhaus'] select,
 :root[data-ui-theme='bauhaus'] input,
 :root[data-ui-theme='bauhaus'] textarea,
-:root[data-ui-theme='bauhaus'] .rounded-xl,
-:root[data-ui-theme='bauhaus'] .rounded-2xl,
-:root[data-ui-theme='bauhaus'] .rounded-3xl,
-:root[data-ui-theme='bauhaus'] .rounded-\[28px\],
 :root[data-ui-theme='bauhaus'] .settings-portal-card,
 :root[data-ui-theme='bauhaus'] .settings-portal-header,
 :root[data-ui-theme='bauhaus'] .settings-portal-surface {
@@ -283,6 +295,38 @@
   box-shadow: 4px 4px 0px var(--border-color) !important;
   font-weight: 700 !important;
   transition: transform 0.1s, box-shadow 0.1s !important;
+}
+
+:root[data-ui-theme='bauhaus'] .rounded-full,
+:root[data-ui-theme='bauhaus'] .rounded-lg,
+:root[data-ui-theme='bauhaus'] .rounded-xl,
+:root[data-ui-theme='bauhaus'] .rounded-2xl,
+:root[data-ui-theme='bauhaus'] .rounded-3xl,
+:root[data-ui-theme='bauhaus'] .rounded-\[28px\],
+:root[data-ui-theme='bauhaus'] [class*='rounded-['] {
+  border-radius: 0px !important;
+}
+
+:root[data-ui-theme='bauhaus'] [class*='shadow-'] {
+  box-shadow: 4px 4px 0px var(--border-color) !important;
+}
+
+:root[data-ui-theme='bauhaus'] .border {
+  border-width: 2px !important;
+  border-color: var(--border-color) !important;
+}
+
+:root[data-ui-theme='bauhaus'] textarea.bg-transparent {
+  border: 0 !important;
+  box-shadow: none !important;
+}
+
+:root[data-ui-theme='bauhaus'] .border-slate-100,
+:root[data-ui-theme='bauhaus'] .border-slate-200,
+:root[data-ui-theme='bauhaus'] .border-slate-300,
+:root[data-ui-theme='bauhaus'] .border-neutral-100,
+:root[data-ui-theme='bauhaus'] .border-neutral-200 {
+  border-color: var(--border-color) !important;
 }
 
 :root[data-ui-theme='bauhaus'] button,
