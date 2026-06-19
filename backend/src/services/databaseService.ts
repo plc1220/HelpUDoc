@@ -586,6 +586,16 @@ export class DatabaseService {
       await this.db.raw(
         'CREATE INDEX IF NOT EXISTS agent_run_summaries_status_completed_idx ON agent_run_summaries ("status", "completedAt")',
       );
+      await this.db.raw(`
+        DO $$ BEGIN
+          IF EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'agent_run_summaries' AND column_name = 'workspaceId' AND is_nullable = 'NO'
+          ) THEN
+            ALTER TABLE agent_run_summaries ALTER COLUMN "workspaceId" DROP NOT NULL;
+          END IF;
+        END $$
+      `);
     }
   }
 
@@ -634,6 +644,16 @@ export class DatabaseService {
       await this.db.raw(
         'CREATE INDEX IF NOT EXISTS agent_run_tool_events_tool_event_idx ON agent_run_tool_events ("toolName", "eventAt")',
       );
+      await this.db.raw(`
+        DO $$ BEGIN
+          IF EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'agent_run_tool_events' AND column_name = 'workspaceId' AND is_nullable = 'NO'
+          ) THEN
+            ALTER TABLE agent_run_tool_events ALTER COLUMN "workspaceId" DROP NOT NULL;
+          END IF;
+        END $$
+      `);
     }
   }
 

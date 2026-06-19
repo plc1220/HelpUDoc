@@ -11,7 +11,7 @@ export type AgentRunTelemetryStatus =
 
 export type AgentRunQueuedInput = {
   runId: string;
-  workspaceId: string;
+  workspaceId: string | null;
   userId?: string;
   conversationId?: string;
   turnId?: string;
@@ -22,7 +22,7 @@ export type AgentRunQueuedInput = {
 
 export type AgentRunToolEventInput = {
   runId: string;
-  workspaceId: string;
+  workspaceId: string | null;
   userId?: string;
   conversationId?: string;
   turnId?: string;
