@@ -248,7 +248,15 @@ services:
     depends_on:
       backend:
         condition: service_started
+      postgres:
+        condition: service_healthy
     environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-helpudoc}
+      POSTGRES_USER: ${POSTGRES_USER:-helpudoc}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-helpudoc}
+      DATABASE_URL: postgres://${POSTGRES_USER:-helpudoc}:${POSTGRES_PASSWORD:-helpudoc}@postgres:5432/${POSTGRES_DB:-helpudoc}
       REDIS_URL: redis://redis:6379
       RAG_OFFLINE: ${RAG_OFFLINE:-true}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
