@@ -261,21 +261,15 @@ export function registerSkillBuilderRoutes(router: Router, _workspaceService: Wo
         ? `${payload.prompt}\n\n${contextLines.join('\n')}`
         : payload.prompt;
 
-      let authToken: string | undefined;
-      if (ENABLE_SKILL_SANDBOX_RUNNER) {
-        const token = signAgentContextToken({
-          sub: user.userId,
-          userId: user.userId,
-          workspaceId,
-          isAdmin: true,
-          mcpServerAllowIds: [],
-          mcpServerDenyIds: [],
-          allowSkillSandbox: true,
-        });
-        if (token) {
-          authToken = token;
-        }
-      }
+      const authToken = signAgentContextToken({
+        sub: user.userId,
+        userId: user.userId,
+        workspaceId,
+        isAdmin: true,
+        mcpServerAllowIds: [],
+        mcpServerDenyIds: [],
+        ...(ENABLE_SKILL_SANDBOX_RUNNER ? { allowSkillSandbox: true } : {}),
+      }) ?? undefined;
 
       const { runId, status } = await startAgentRun({
         workspaceId,
