@@ -139,11 +139,13 @@ steps:
       - 'bash'
       - '-c'
       - |
-        # Replace image tags regardless of the current tag (latest or build id) to avoid sticky manifests.
-        sed -i -E "s|image: gcr.io/$PROJECT_ID/helpudoc-backend:[^[:space:]]+|image: gcr.io/$PROJECT_ID/helpudoc-backend:$BUILD_ID|g" infra/gke/k8s/50-app.yaml
-        sed -i -E "s|image: gcr.io/$PROJECT_ID/helpudoc-backend:[^[:space:]]+|image: gcr.io/$PROJECT_ID/helpudoc-backend:$BUILD_ID|g" infra/gke/k8s/52-daily-reflection-cron.yaml
-        sed -i -E "s|image: gcr.io/$PROJECT_ID/helpudoc-agent:[^[:space:]]+|image: gcr.io/$PROJECT_ID/helpudoc-agent:$BUILD_ID|g" infra/gke/k8s/50-app.yaml
-        sed -i -E "s|image: gcr.io/$PROJECT_ID/helpudoc-frontend:[^[:space:]]+|image: gcr.io/$PROJECT_ID/helpudoc-frontend:$BUILD_ID|g" infra/gke/k8s/60-frontend.yaml
+        # Replace image refs regardless of the SOURCE project or tag. The checked-in manifests may
+        # reference a different project (e.g. the demo project); match any "gcr.io/<project>/" so the
+        # rewrite is not a silent no-op when deploying into a fresh project.
+        sed -i -E "s|image: gcr.io/[^/]+/helpudoc-backend:[^[:space:]]+|image: gcr.io/$PROJECT_ID/helpudoc-backend:$BUILD_ID|g" infra/gke/k8s/50-app.yaml
+        sed -i -E "s|image: gcr.io/[^/]+/helpudoc-backend:[^[:space:]]+|image: gcr.io/$PROJECT_ID/helpudoc-backend:$BUILD_ID|g" infra/gke/k8s/52-daily-reflection-cron.yaml
+        sed -i -E "s|image: gcr.io/[^/]+/helpudoc-agent:[^[:space:]]+|image: gcr.io/$PROJECT_ID/helpudoc-agent:$BUILD_ID|g" infra/gke/k8s/50-app.yaml
+        sed -i -E "s|image: gcr.io/[^/]+/helpudoc-frontend:[^[:space:]]+|image: gcr.io/$PROJECT_ID/helpudoc-frontend:$BUILD_ID|g" infra/gke/k8s/60-frontend.yaml
 
   # 5. Deploy to GKE
   - id: deploy
