@@ -60,6 +60,29 @@
   z-index: -1;
 }
 
+:root[data-ui-theme='bauhaus'] .lumo-pet-button {
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  filter: drop-shadow(0 14px 22px rgba(0, 0, 0, 0.16));
+}
+
+:root[data-ui-theme='bauhaus'] .lumo-pet-button:hover {
+  box-shadow: none !important;
+  filter: drop-shadow(0 18px 26px rgba(0, 0, 0, 0.22));
+  transform: translateY(-2px) scale(1.03) !important;
+}
+
+:root[data-ui-theme='bauhaus'] .lumo-pet-button:active {
+  box-shadow: none !important;
+  transform: translateY(0) scale(0.97) !important;
+}
+
+:root[data-ui-theme='bauhaus'] .lumo-sprite {
+  border: 0 !important;
+  box-shadow: none !important;
+}
+
 .lumo-sprite {
   display: block;
   width: 96%;
