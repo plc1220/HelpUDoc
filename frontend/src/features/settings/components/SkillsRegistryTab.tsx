@@ -1,4 +1,6 @@
 import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import {
   Plus,
   RefreshCw,
@@ -169,6 +171,8 @@ const categorizeFile = (file: string) => {
   return 'Supporting Components';
 };
 
+const isMarkdownFile = (file?: string | null) => Boolean(file && (file.endsWith('.md') || file.endsWith('.markdown')));
+
 const actionSummary = (action: SkillBuilderAction) => {
   switch (action.type) {
     case 'create_skill':
@@ -295,6 +299,8 @@ const SkillsRegistryTab: React.FC = () => {
   }, {}), [files]);
 
   const selectedGuidanceFile = selectedFile === 'SKILL.md';
+  const selectedMarkdownFile = isMarkdownFile(selectedFile);
+  const selectedRawFile = Boolean(selectedFile && !selectedMarkdownFile);
 
   const loadSkills = useCallback(async () => {
     try {
@@ -1099,7 +1105,7 @@ const SkillsRegistryTab: React.FC = () => {
               <div className="flex items-center justify-between gap-3 px-4 py-2.5 border-b border-slate-200 bg-slate-50">
                 <div className="flex items-center gap-2 min-w-0">
                   <span className="font-medium text-slate-700 truncate">{selectedSkill.name || selectedSkill.id}</span>
-                  {developerMode && selectedFile && (
+                  {selectedFile && selectedFile !== 'SKILL.md' && (
                     <>
                       <ChevronRight size={14} className="text-slate-400 flex-shrink-0" />
                       <span className="text-sm font-mono text-slate-500 truncate">{selectedFile}</span>
@@ -1195,148 +1201,200 @@ const SkillsRegistryTab: React.FC = () => {
                     <div className="flex h-full items-center justify-center text-slate-400">
                       <Loader2 size={24} className="animate-spin" />
                     </div>
+                  ) : selectedRawFile ? (
+                    <div className="rounded-lg border border-slate-200 bg-white">
+                      <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-3">
+                        <div className="min-w-0">
+                          <h3 className="truncate text-sm font-semibold text-slate-800">{selectedFile}</h3>
+                          <p className="text-xs text-slate-500">Plain source view</p>
+                        </div>
+                        <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs text-slate-500">
+                          {getLanguage(selectedFile || '')}
+                        </span>
+                      </div>
+                      <textarea
+                        value={fileContent}
+                        onChange={(e) => setFileContent(e.target.value)}
+                        spellCheck={false}
+                        className="h-[520px] w-full resize-none border-0 bg-slate-950 px-4 py-3 font-mono text-xs leading-5 text-slate-100 outline-none"
+                      />
+                    </div>
                   ) : (
-                    <div className="grid grid-cols-12 gap-4">
-                      <section className="col-span-12 2xl:col-span-7 space-y-4">
-                        <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-                          <div className="mb-3 flex items-center gap-2">
-                            <FileText size={16} className="text-emerald-700" />
-                            <h3 className="text-sm font-semibold text-slate-800">Intent Profile</h3>
+                    <div className="mx-auto max-w-5xl space-y-4">
+                      {files.length > 1 && (
+                        <div className="rounded-lg border border-slate-200 bg-white p-3">
+                          <div className="mb-2 flex items-center gap-2">
+                            <FolderOpen size={14} className="text-emerald-700" />
+                            <h3 className="text-sm font-semibold text-slate-800">Files</h3>
                           </div>
-                          <div className="grid gap-3 md:grid-cols-2">
-                            <label className="space-y-1">
-                              <span className="text-xs font-medium text-slate-500">Name</span>
-                              <input
-                                value={skillProfile.name}
-                                disabled={!selectedGuidanceFile}
-                                onChange={(e) => updateSkillProfile({ name: e.target.value })}
-                                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-1 focus:ring-emerald-500 disabled:bg-slate-100"
+                          <div className="flex flex-wrap gap-2">
+                            {files.map((file) => (
+                              <button
+                                key={file}
+                                type="button"
+                                onClick={() => setSelectedFile(file)}
+                                className={`rounded-full border px-3 py-1 text-xs transition ${selectedFile === file
+                                  ? 'border-emerald-500 bg-emerald-50 text-emerald-700'
+                                  : 'border-slate-200 bg-white text-slate-600 hover:border-emerald-300'
+                                }`}
+                              >
+                                {file.split('/').pop() || file}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      <section className="space-y-4">
+                        {selectedGuidanceFile ? (
+                          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                            <div className="mb-3 flex items-center gap-2">
+                              <FileText size={16} className="text-emerald-700" />
+                              <h3 className="text-sm font-semibold text-slate-800">Skill Overview</h3>
+                            </div>
+                            <div className="grid gap-3">
+                              <label className="space-y-1">
+                                <span className="text-xs font-medium text-slate-500">Name</span>
+                                <input
+                                  value={skillProfile.name}
+                                  onChange={(e) => updateSkillProfile({ name: e.target.value })}
+                                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                                />
+                              </label>
+                            </div>
+                            <label className="mt-3 block space-y-1">
+                              <span className="text-xs font-medium text-slate-500">Description</span>
+                              <textarea
+                                value={skillProfile.description}
+                                onChange={(e) => updateSkillProfile({ description: e.target.value })}
+                                rows={2}
+                                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                               />
                             </label>
-                            <label className="space-y-1">
+                          </div>
+                        ) : (
+                          <div className="rounded-lg border border-slate-200 bg-white p-4">
+                            <div className="mb-3 flex items-center gap-2">
+                              <FileText size={16} className="text-emerald-700" />
+                              <h3 className="text-sm font-semibold text-slate-800">{selectedFile}</h3>
+                            </div>
+                            <div className="helpudoc-markdown helpudoc-markdown-light max-h-[620px] overflow-y-auto rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm">
+                              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                {fileContent || '_No content yet._'}
+                              </ReactMarkdown>
+                            </div>
+                          </div>
+                        )}
+
+                        {selectedGuidanceFile && (
+                          <div className="rounded-lg border border-slate-200 bg-white p-4">
+                            <div className="mb-3 flex items-center gap-2">
+                              <Settings2 size={16} className="text-emerald-700" />
+                              <h3 className="text-sm font-semibold text-slate-800">Guidance</h3>
+                            </div>
+                            <div className="helpudoc-markdown helpudoc-markdown-light max-h-[620px] overflow-y-auto rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm">
+                              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                {skillProfile.guidance || '_No guidance yet._'}
+                              </ReactMarkdown>
+                            </div>
+                          </div>
+                        )}
+                      </section>
+
+                      {selectedGuidanceFile && (
+                        <details className="rounded-lg border border-slate-200 bg-white">
+                          <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-slate-700">
+                            Advanced details
+                          </summary>
+                          <div className="space-y-4 border-t border-slate-200 p-4">
+                            <label className="block space-y-1">
                               <span className="text-xs font-medium text-slate-500">Tools</span>
                               <input
                                 value={skillProfile.tools.join(', ')}
-                                disabled={!selectedGuidanceFile}
                                 onChange={(e) => updateSkillProfile({ tools: e.target.value.split(',').map((tool) => tool.trim()).filter(Boolean) })}
                                 placeholder="Select or type tool names"
-                                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-1 focus:ring-emerald-500 disabled:bg-slate-100"
+                                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                               />
                             </label>
-                          </div>
-                          <label className="mt-3 block space-y-1">
-                            <span className="text-xs font-medium text-slate-500">Description</span>
-                            <textarea
-                              value={skillProfile.description}
-                              disabled={!selectedGuidanceFile}
-                              onChange={(e) => updateSkillProfile({ description: e.target.value })}
-                              rows={2}
-                              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-1 focus:ring-emerald-500 disabled:bg-slate-100"
-                            />
-                          </label>
-                        </div>
 
-                        <div className="rounded-lg border border-slate-200 bg-white p-4">
-                          <div className="mb-3 flex items-center justify-between gap-2">
-                            <div className="flex items-center gap-2">
-                              <Workflow size={16} className="text-emerald-700" />
-                              <h3 className="text-sm font-semibold text-slate-800">Routing Rules</h3>
-                            </div>
-                            <span className="text-xs text-slate-400">{routingRules.length} rules</span>
-                          </div>
-                          <div className="space-y-2">
-                            {routingRules.map((rule, index) => (
-                              <div key={`${rule.trigger}-${index}`} className="grid grid-cols-1 items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 p-2 text-sm 2xl:grid-cols-[1fr_auto_180px]">
-                                <div className="truncate rounded-md bg-white px-2 py-1.5 text-slate-700" title={rule.trigger}>
-                                  {rule.trigger}
+                            {routingRules.length > 0 && (
+                              <div>
+                                <div className="mb-2 flex items-center gap-2">
+                                  <Workflow size={14} className="text-emerald-700" />
+                                  <h3 className="text-sm font-semibold text-slate-800">Routing Rules</h3>
                                 </div>
-                                <ChevronRight size={14} className="hidden text-slate-400 2xl:block" />
-                                <select value={rule.target} onChange={() => undefined} className="rounded-md border border-slate-200 bg-white px-2 py-1.5 text-sm text-slate-700">
-                                  <option>{rule.target}</option>
-                                </select>
-                              </div>
-                            ))}
-                            {!routingRules.length && (
-                              <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-3 py-5 text-center text-sm text-slate-500">
-                                No visual routing rules detected for this skill.
-                              </div>
-                            )}
-                          </div>
-                        </div>
-
-                        <div className="rounded-lg border border-slate-200 bg-white p-4">
-                          <div className="mb-3 flex items-center gap-2">
-                            <Settings2 size={16} className="text-emerald-700" />
-                            <h3 className="text-sm font-semibold text-slate-800">Guidance</h3>
-                          </div>
-                          <textarea
-                            value={skillProfile.guidance}
-                            disabled={!selectedGuidanceFile}
-                            onChange={(e) => updateSkillProfile({ guidance: e.target.value })}
-                            rows={12}
-                            className="w-full resize-none rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm leading-6 text-slate-700 focus:outline-none focus:ring-1 focus:ring-emerald-500 disabled:bg-slate-100"
-                          />
-                        </div>
-                      </section>
-
-                      <aside className="col-span-12 2xl:col-span-5 space-y-4">
-                        <div className="rounded-lg border border-slate-200 bg-white p-4">
-                          <div className="mb-3 flex items-center gap-2">
-                            <LayoutTemplate size={16} className="text-emerald-700" />
-                            <h3 className="text-sm font-semibold text-slate-800">Capability Library</h3>
-                          </div>
-                          <div className="space-y-3">
-                            {Object.entries(groupedFiles).map(([category, group]) => (
-                              <div key={category} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                                <div className="mb-2 flex items-center justify-between">
-                                  <div className="flex items-center gap-2 text-sm font-semibold text-slate-700">
-                                    {category === 'Data Extractors' ? <Database size={14} /> : category === 'Compliance Checkers' ? <ShieldCheck size={14} /> : <Braces size={14} />}
-                                    {category}
-                                  </div>
-                                  <span className="text-xs text-slate-400">{group.length}</span>
-                                </div>
-                                <div className="grid gap-2">
-                                  {group.map((file) => (
-                                    <button
-                                      key={file}
-                                      type="button"
-                                      onClick={() => {
-                                        setSelectedFile(file);
-                                        if (file !== 'SKILL.md' && !file.endsWith('.md')) setDeveloperMode(true);
-                                      }}
-                                      className="flex items-center justify-between rounded-md border border-slate-200 bg-white px-2.5 py-2 text-left text-xs text-slate-600 hover:border-emerald-300 hover:text-slate-800"
-                                    >
-                                      <span className="truncate">{file.split('/').pop() || file}</span>
-                                      <Eye size={12} className="text-slate-400" />
-                                    </button>
+                                <div className="space-y-2">
+                                  {routingRules.map((rule, index) => (
+                                    <div key={`${rule.trigger}-${index}`} className="grid grid-cols-1 items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 p-2 text-sm lg:grid-cols-[1fr_auto_220px]">
+                                      <div className="truncate rounded-md bg-white px-2 py-1.5 text-slate-700" title={rule.trigger}>
+                                        {rule.trigger}
+                                      </div>
+                                      <ChevronRight size={14} className="hidden text-slate-400 lg:block" />
+                                      <select value={rule.target} onChange={() => undefined} className="rounded-md border border-slate-200 bg-white px-2 py-1.5 text-sm text-slate-700">
+                                        <option>{rule.target}</option>
+                                      </select>
+                                    </div>
                                   ))}
                                 </div>
                               </div>
-                            ))}
-                          </div>
-                        </div>
+                            )}
 
-                        <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-                          <div className="mb-3 flex items-center gap-2">
-                            <Sparkles size={16} className="text-emerald-700" />
-                            <h3 className="text-sm font-semibold text-slate-800">Publish Preview</h3>
-                          </div>
-                          <div className="rounded-lg border border-slate-200 bg-white p-3">
-                            <div className="flex items-center gap-2">
-                              <span className={`h-2.5 w-2.5 rounded-full ${selectedSkill.valid ? 'bg-emerald-500' : 'bg-amber-500'}`} />
-                              <p className="min-w-0 truncate text-sm font-semibold text-slate-800">{skillProfile.name || selectedSkill.id}</p>
+                            <div>
+                              <div className="mb-2 flex items-center gap-2">
+                                <LayoutTemplate size={14} className="text-emerald-700" />
+                                <h3 className="text-sm font-semibold text-slate-800">Capability Files</h3>
+                              </div>
+                              <div className="space-y-3">
+                                {Object.entries(groupedFiles).map(([category, group]) => (
+                                  <div key={category} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                                    <div className="mb-2 flex items-center justify-between">
+                                      <div className="flex items-center gap-2 text-sm font-semibold text-slate-700">
+                                        {category === 'Data Extractors' ? <Database size={14} /> : category === 'Compliance Checkers' ? <ShieldCheck size={14} /> : <Braces size={14} />}
+                                        {category}
+                                      </div>
+                                      <span className="text-xs text-slate-400">{group.length}</span>
+                                    </div>
+                                    <div className="grid gap-2 md:grid-cols-2">
+                                      {group.map((file) => (
+                                        <button
+                                          key={file}
+                                          type="button"
+                                          onClick={() => setSelectedFile(file)}
+                                          className="flex items-center justify-between rounded-md border border-slate-200 bg-white px-2.5 py-2 text-left text-xs text-slate-600 hover:border-emerald-300 hover:text-slate-800"
+                                        >
+                                          <span className="truncate">{file.split('/').pop() || file}</span>
+                                          <Eye size={12} className="text-slate-400" />
+                                        </button>
+                                      ))}
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
                             </div>
-                            <p className="mt-2 line-clamp-3 text-sm text-slate-500">{skillProfile.description || 'No description yet.'}</p>
-                            <div className="mt-3 flex flex-wrap gap-1.5">
-                              {skillProfile.tools.length ? skillProfile.tools.map((tool) => (
-                                <span key={tool} className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs text-slate-600">{tool}</span>
-                              )) : (
-                                <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs text-slate-400">No tools selected</span>
-                              )}
+
+                            <div>
+                              <div className="mb-2 flex items-center gap-2">
+                                <Sparkles size={14} className="text-emerald-700" />
+                                <h3 className="text-sm font-semibold text-slate-800">Publish Preview</h3>
+                              </div>
+                              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                                <div className="flex items-center gap-2">
+                                  <span className={`h-2.5 w-2.5 rounded-full ${selectedSkill.valid ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+                                  <p className="min-w-0 truncate text-sm font-semibold text-slate-800">{skillProfile.name || selectedSkill.id}</p>
+                                </div>
+                                <p className="mt-2 line-clamp-3 text-sm text-slate-500">{skillProfile.description || 'No description yet.'}</p>
+                                <div className="mt-3 flex flex-wrap gap-1.5">
+                                  {skillProfile.tools.length ? skillProfile.tools.map((tool) => (
+                                    <span key={tool} className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-xs text-slate-600">{tool}</span>
+                                  )) : (
+                                    <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-xs text-slate-400">No tools selected</span>
+                                  )}
+                                </div>
+                              </div>
                             </div>
                           </div>
-                        </div>
-                      </aside>
+                        </details>
+                      )}
                     </div>
                   )}
                 </div>
