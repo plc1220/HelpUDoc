@@ -1,5 +1,6 @@
 # Node.js
 node_modules/
+mobile/.expo/
 dist/
 build/
 output/

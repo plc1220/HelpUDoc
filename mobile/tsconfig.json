@@ -3,5 +3,10 @@
   "compilerOptions": {
     "strict": true
   },
-  "include": ["./**/*.ts", "./**/*.tsx", "../packages/shared/src/**/*.ts"]
+  "include": [
+    "./**/*.ts",
+    "./**/*.tsx",
+    "../packages/shared/src/types.ts",
+    "../packages/contracts/src/types.ts"
+  ]
 }
