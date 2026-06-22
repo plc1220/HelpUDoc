@@ -40,6 +40,8 @@ export class DatabaseService {
     await this.createKnowledgeSourcesTable();
     await this.createConversationsTable();
     await this.createConversationMessagesTable();
+    await this.createWorkspaceSchedulesTable();
+    await this.createWorkspaceScheduleRunsTable();
     await this.createAgentRunSummariesTable();
     await this.createAgentRunToolEventsTable();
     await this.createAgentDailyReflectionsTable();
@@ -512,6 +514,157 @@ export class DatabaseService {
     await this.ensureColumn('conversation_messages', 'metadata', (table) => table.jsonb('metadata'));
     await this.db.raw(
       'CREATE INDEX IF NOT EXISTS conversation_messages_turn_idx ON conversation_messages ("conversationId", "turnId")'
+    );
+  }
+
+  private async createWorkspaceSchedulesTable(): Promise<void> {
+    const exists = await this.db.schema.hasTable('workspace_schedules');
+    if (!exists) {
+      await this.db.schema.createTable('workspace_schedules', (table) => {
+        table.uuid('id').primary();
+        table.uuid('workspaceId').notNullable().references('id').inTable('workspaces').onDelete('CASCADE');
+        table.uuid('createdBy').references('id').inTable('users').onDelete('SET NULL');
+        table.uuid('runAsUserId').references('id').inTable('users').onDelete('SET NULL');
+        table.uuid('sourceConversationId').references('id').inTable('conversations').onDelete('SET NULL');
+        table.integer('sourceMessageId').references('id').inTable('conversation_messages').onDelete('SET NULL');
+        table.uuid('targetConversationId').references('id').inTable('conversations').onDelete('SET NULL');
+        table.string('name').notNullable();
+        table.string('status', 32).notNullable().defaultTo('active');
+        table.string('cadence', 32).notNullable().defaultTo('daily');
+        table.string('cronExpression').notNullable();
+        table.string('timezone').notNullable().defaultTo('UTC');
+        table.text('prompt').notNullable();
+        table.string('persona').notNullable().defaultTo('fast');
+        table.jsonb('selectedSkills').notNullable().defaultTo(this.db.raw(`'[]'::jsonb`));
+        table.jsonb('contextRefs').notNullable().defaultTo(this.db.raw(`'[]'::jsonb`));
+        table.jsonb('taggedFiles').notNullable().defaultTo(this.db.raw(`'[]'::jsonb`));
+        table.jsonb('fileContextRefs').notNullable().defaultTo(this.db.raw(`'[]'::jsonb`));
+        table.string('outputMode', 64).notNullable().defaultTo('append_to_conversation');
+        table.string('notificationMode', 32).notNullable().defaultTo('none');
+        table.timestamp('nextRunAt', { useTz: true });
+        table.timestamp('lastRunAt', { useTz: true });
+        table.string('lastRunStatus', 32);
+        table.text('lastError');
+        table.timestamp('lockedAt', { useTz: true });
+        table.string('lockedBy');
+        table.timestamp('createdAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.timestamp('updatedAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.index(['workspaceId', 'status'], 'workspace_schedules_workspace_status_idx');
+        table.index(['status', 'nextRunAt'], 'workspace_schedules_status_next_run_idx');
+      });
+      console.log('Created "workspace_schedules" table.');
+    } else {
+      await this.ensureWorkspaceScheduleColumns();
+    }
+  }
+
+  private async ensureWorkspaceScheduleColumns(): Promise<void> {
+    await this.ensureColumn('workspace_schedules', 'createdBy', (table) =>
+      table.uuid('createdBy').references('id').inTable('users').onDelete('SET NULL'));
+    await this.ensureColumn('workspace_schedules', 'runAsUserId', (table) =>
+      table.uuid('runAsUserId').references('id').inTable('users').onDelete('SET NULL'));
+    await this.ensureColumn('workspace_schedules', 'sourceConversationId', (table) =>
+      table.uuid('sourceConversationId').references('id').inTable('conversations').onDelete('SET NULL'));
+    await this.ensureColumn('workspace_schedules', 'sourceMessageId', (table) =>
+      table.integer('sourceMessageId').references('id').inTable('conversation_messages').onDelete('SET NULL'));
+    await this.ensureColumn('workspace_schedules', 'targetConversationId', (table) =>
+      table.uuid('targetConversationId').references('id').inTable('conversations').onDelete('SET NULL'));
+    await this.ensureColumn('workspace_schedules', 'status', (table) =>
+      table.string('status', 32).notNullable().defaultTo('active'));
+    await this.ensureColumn('workspace_schedules', 'cadence', (table) =>
+      table.string('cadence', 32).notNullable().defaultTo('daily'));
+    await this.ensureColumn('workspace_schedules', 'cronExpression', (table) =>
+      table.string('cronExpression').notNullable().defaultTo('0 9 * * *'));
+    await this.ensureColumn('workspace_schedules', 'timezone', (table) =>
+      table.string('timezone').notNullable().defaultTo('UTC'));
+    await this.ensureColumn('workspace_schedules', 'prompt', (table) =>
+      table.text('prompt').notNullable().defaultTo(''));
+    await this.ensureColumn('workspace_schedules', 'persona', (table) =>
+      table.string('persona').notNullable().defaultTo('fast'));
+    await this.ensureColumn('workspace_schedules', 'selectedSkills', (table) =>
+      table.jsonb('selectedSkills').notNullable().defaultTo(this.db.raw(`'[]'::jsonb`)));
+    await this.ensureColumn('workspace_schedules', 'contextRefs', (table) =>
+      table.jsonb('contextRefs').notNullable().defaultTo(this.db.raw(`'[]'::jsonb`)));
+    await this.ensureColumn('workspace_schedules', 'taggedFiles', (table) =>
+      table.jsonb('taggedFiles').notNullable().defaultTo(this.db.raw(`'[]'::jsonb`)));
+    await this.ensureColumn('workspace_schedules', 'fileContextRefs', (table) =>
+      table.jsonb('fileContextRefs').notNullable().defaultTo(this.db.raw(`'[]'::jsonb`)));
+    await this.ensureColumn('workspace_schedules', 'outputMode', (table) =>
+      table.string('outputMode', 64).notNullable().defaultTo('append_to_conversation'));
+    await this.ensureColumn('workspace_schedules', 'notificationMode', (table) =>
+      table.string('notificationMode', 32).notNullable().defaultTo('none'));
+    await this.ensureColumn('workspace_schedules', 'nextRunAt', (table) =>
+      table.timestamp('nextRunAt', { useTz: true }));
+    await this.ensureColumn('workspace_schedules', 'lastRunAt', (table) =>
+      table.timestamp('lastRunAt', { useTz: true }));
+    await this.ensureColumn('workspace_schedules', 'lastRunStatus', (table) => table.string('lastRunStatus', 32));
+    await this.ensureColumn('workspace_schedules', 'lastError', (table) => table.text('lastError'));
+    await this.ensureColumn('workspace_schedules', 'lockedAt', (table) =>
+      table.timestamp('lockedAt', { useTz: true }));
+    await this.ensureColumn('workspace_schedules', 'lockedBy', (table) => table.string('lockedBy'));
+    await this.ensureColumn('workspace_schedules', 'createdAt', (table) =>
+      table.timestamp('createdAt', { useTz: true }).defaultTo(this.db.fn.now()));
+    await this.ensureColumn('workspace_schedules', 'updatedAt', (table) =>
+      table.timestamp('updatedAt', { useTz: true }).defaultTo(this.db.fn.now()));
+    await this.db.raw(
+      'CREATE INDEX IF NOT EXISTS workspace_schedules_workspace_status_idx ON workspace_schedules ("workspaceId", "status")',
+    );
+    await this.db.raw(
+      'CREATE INDEX IF NOT EXISTS workspace_schedules_status_next_run_idx ON workspace_schedules ("status", "nextRunAt")',
+    );
+  }
+
+  private async createWorkspaceScheduleRunsTable(): Promise<void> {
+    const exists = await this.db.schema.hasTable('workspace_schedule_runs');
+    if (!exists) {
+      await this.db.schema.createTable('workspace_schedule_runs', (table) => {
+        table.uuid('id').primary();
+        table.uuid('scheduleId').notNullable().references('id').inTable('workspace_schedules').onDelete('CASCADE');
+        table.uuid('workspaceId').notNullable().references('id').inTable('workspaces').onDelete('CASCADE');
+        table.uuid('conversationId').references('id').inTable('conversations').onDelete('SET NULL');
+        table.string('agentRunId');
+        table.string('status', 32).notNullable().defaultTo('queued');
+        table.string('triggeredBy', 32).notNullable().defaultTo('scheduler');
+        table.text('error');
+        table.timestamp('startedAt', { useTz: true });
+        table.timestamp('completedAt', { useTz: true });
+        table.timestamp('createdAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.timestamp('updatedAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.index(['scheduleId', 'createdAt'], 'workspace_schedule_runs_schedule_created_idx');
+        table.index(['agentRunId'], 'workspace_schedule_runs_agent_run_idx');
+        table.index(['status', 'updatedAt'], 'workspace_schedule_runs_status_updated_idx');
+      });
+      console.log('Created "workspace_schedule_runs" table.');
+    } else {
+      await this.ensureWorkspaceScheduleRunColumns();
+    }
+  }
+
+  private async ensureWorkspaceScheduleRunColumns(): Promise<void> {
+    await this.ensureColumn('workspace_schedule_runs', 'conversationId', (table) =>
+      table.uuid('conversationId').references('id').inTable('conversations').onDelete('SET NULL'));
+    await this.ensureColumn('workspace_schedule_runs', 'agentRunId', (table) => table.string('agentRunId'));
+    await this.ensureColumn('workspace_schedule_runs', 'status', (table) =>
+      table.string('status', 32).notNullable().defaultTo('queued'));
+    await this.ensureColumn('workspace_schedule_runs', 'triggeredBy', (table) =>
+      table.string('triggeredBy', 32).notNullable().defaultTo('scheduler'));
+    await this.ensureColumn('workspace_schedule_runs', 'error', (table) => table.text('error'));
+    await this.ensureColumn('workspace_schedule_runs', 'startedAt', (table) =>
+      table.timestamp('startedAt', { useTz: true }));
+    await this.ensureColumn('workspace_schedule_runs', 'completedAt', (table) =>
+      table.timestamp('completedAt', { useTz: true }));
+    await this.ensureColumn('workspace_schedule_runs', 'createdAt', (table) =>
+      table.timestamp('createdAt', { useTz: true }).defaultTo(this.db.fn.now()));
+    await this.ensureColumn('workspace_schedule_runs', 'updatedAt', (table) =>
+      table.timestamp('updatedAt', { useTz: true }).defaultTo(this.db.fn.now()));
+    await this.db.raw(
+      'CREATE INDEX IF NOT EXISTS workspace_schedule_runs_schedule_created_idx ON workspace_schedule_runs ("scheduleId", "createdAt")',
+    );
+    await this.db.raw(
+      'CREATE INDEX IF NOT EXISTS workspace_schedule_runs_agent_run_idx ON workspace_schedule_runs ("agentRunId")',
+    );
+    await this.db.raw(
+      'CREATE INDEX IF NOT EXISTS workspace_schedule_runs_status_updated_idx ON workspace_schedule_runs ("status", "updatedAt")',
     );
   }
 

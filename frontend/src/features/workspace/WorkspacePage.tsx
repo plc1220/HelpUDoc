@@ -13,6 +13,13 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { getWorkspaces, createWorkspace, deleteWorkspace, renameWorkspace } from '../../services/workspaceApi';
 import {
+  createWorkspaceSchedule,
+  deleteWorkspaceSchedule,
+  fetchWorkspaceSchedules,
+  runWorkspaceScheduleNow,
+  updateWorkspaceSchedule,
+} from '../../services/scheduleApi';
+import {
   getFiles,
   createFile,
   createFolder,
@@ -71,9 +78,13 @@ import type {
   GoogleDrivePickerItem,
   FileContextRef,
   SkillDefinition,
+  WorkspaceSchedule,
+  WorkspaceScheduleDraft,
 } from '../../types';
 import CollapsibleDrawer from '../../components/CollapsibleDrawer';
 import WorkspaceShareDialog from '../../components/WorkspaceShareDialog';
+import ScheduleDialog from '../../components/schedules/ScheduleDialog';
+import WorkspaceSchedulesPanel from '../../components/schedules/WorkspaceSchedulesPanel';
 import type { UIBlock } from '../../components/UIBlockRenderer';
 import ExpandableSidebar from '../../components/ExpandableSidebar';
 import PaneResizeHandle from '../../components/PaneResizeHandle';
@@ -81,7 +92,10 @@ import { useHorizontalPaneResize } from '../../hooks/useHorizontalPaneResize';
 import WorkspaceFileTree from '../../components/WorkspaceFileTree';
 import DashboardCanvas from '../dashboard/components/DashboardCanvas';
 import AgentChatPane from '../../components/chat/AgentChatPane';
+import ChatInputArea from '../../components/chat/ChatInputArea';
+import ChatMessageList from '../../components/chat/ChatMessageList';
 import LumoPet from '../../components/lumo/LumoPet';
+import lumoSpriteSheet from '../../assets/lumo/lumo-spritesheet.webp';
 import type { A2UIRequest, A2UIResponse } from '@helpudoc/contracts/types';
 import { buildApprovalDraftContent, buildApprovalReview } from '../chat/interrupts/approvalReview';
 import type { RenderableInterruptAction } from '../chat/interrupts/actions';
@@ -139,7 +153,12 @@ const MIN_FILE_PANE_WIDTH = 200;
 const MAX_FILE_PANE_WIDTH = 520;
 const MIN_AGENT_PANE_WIDTH = 280;
 const MAX_AGENT_PANE_WIDTH = 720;
+const MOBILE_WORKSPACE_QUERY = '(max-width: 767px)';
+const LUMO_SPRITE_COLUMNS = 8;
+const LUMO_SPRITE_ROWS = 9;
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+type MobileWorkspaceSurface = 'chat' | 'canvas';
 
 const summarizeComposerAttachments = (attachments: ChatComposerAttachment[]): string => {
   if (!attachments.length) {
@@ -291,6 +310,40 @@ const canvasLoadingFallback = (
   </div>
 );
 
+function MobileLumoAvatar({
+  busy = false,
+  notify = false,
+  size = 40,
+}: {
+  busy?: boolean;
+  notify?: boolean;
+  size?: number;
+}) {
+  const row = busy ? 6 : notify ? 7 : 0;
+  const column = busy || notify ? 1 : 0;
+  const xPct = (column / (LUMO_SPRITE_COLUMNS - 1)) * 100;
+  const yPct = (row / (LUMO_SPRITE_ROWS - 1)) * 100;
+
+  return (
+    <span
+      className="inline-flex shrink-0 items-center justify-center rounded-full border border-sky-100 bg-sky-50 shadow-sm"
+      style={{ width: size, height: size }}
+      aria-hidden="true"
+    >
+      <span
+        className="block bg-no-repeat"
+        style={{
+          width: size * 0.78,
+          height: size * 0.78 * (208 / 192),
+          backgroundImage: `url(${lumoSpriteSheet})`,
+          backgroundPosition: `${xPct}% ${yPct}%`,
+          backgroundSize: `${LUMO_SPRITE_COLUMNS * 100}% ${LUMO_SPRITE_ROWS * 100}%`,
+        }}
+      />
+    </span>
+  );
+}
+
 type CommandSuggestion = {
   id: string;
   command: string;
@@ -328,6 +381,11 @@ type ConversationAttentionState = {
   status: Exclude<AgentRunStatus, 'queued'>;
   label?: string;
   updatedAt: string;
+};
+
+type ScheduleDialogState = {
+  draft: WorkspaceScheduleDraft;
+  schedule?: WorkspaceSchedule | null;
 };
 
 const ACTIVE_RUNS_STORAGE_KEY = 'helpudoc-active-runs';
@@ -652,6 +710,13 @@ export default function WorkspacePage() {
   const [uiTheme] = useUITheme();
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [selectedWorkspace, setSelectedWorkspace] = useState<Workspace | null>(null);
+  const [workspaceSchedules, setWorkspaceSchedules] = useState<WorkspaceSchedule[]>([]);
+  const [schedulesLoading, setSchedulesLoading] = useState(false);
+  const [schedulesError, setSchedulesError] = useState('');
+  const [isSchedulesPanelOpen, setIsSchedulesPanelOpen] = useState(false);
+  const [scheduleDialogState, setScheduleDialogState] = useState<ScheduleDialogState | null>(null);
+  const [scheduleSaving, setScheduleSaving] = useState(false);
+  const [busyScheduleId, setBusyScheduleId] = useState<string | null>(null);
   const [isLandingPageVisible, setIsLandingPageVisible] = useState(true);
   const selectedWorkspaceIdRef = useRef<string | null>(null);
   const [workspaceSearchQuery, setWorkspaceSearchQuery] = useState('');
@@ -692,6 +757,11 @@ export default function WorkspacePage() {
   const [isLandingAttachmentMenuOpen, setIsLandingAttachmentMenuOpen] = useState(false);
   const [isLandingWorkspacePickerOpen, setIsLandingWorkspacePickerOpen] = useState(false);
   const [landingWorkspaceQuery, setLandingWorkspaceQuery] = useState('');
+  const [isMobileViewport, setIsMobileViewport] = useState(() =>
+    typeof window !== 'undefined' ? window.matchMedia(MOBILE_WORKSPACE_QUERY).matches : false,
+  );
+  const [mobileSurface, setMobileSurface] = useState<MobileWorkspaceSurface>('chat');
+  const [isMobileWorkspaceSheetOpen, setIsMobileWorkspaceSheetOpen] = useState(false);
   const streamAbortMapRef = useRef<Map<string, AbortController>>(new Map());
   const conversationMessagesRef = useRef<Record<string, ConversationMessage[]>>({});
   const chatAttachmentsRef = useRef<ChatComposerAttachment[]>([]);
@@ -783,6 +853,17 @@ export default function WorkspacePage() {
   const resumeInFlightRef = useRef<Set<string>>(new Set());
   const resumeAttemptedRef = useRef<Set<string>>(new Set());
   const theme = useMemo(() => buildAppTheme(colorMode, uiTheme), [colorMode, uiTheme]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return undefined;
+    }
+    const media = window.matchMedia(MOBILE_WORKSPACE_QUERY);
+    const syncViewport = () => setIsMobileViewport(media.matches);
+    syncViewport();
+    media.addEventListener('change', syncViewport);
+    return () => media.removeEventListener('change', syncViewport);
+  }, []);
 
   useEffect(() => {
     selectedWorkspaceIdRef.current = selectedWorkspace?.id ?? null;
@@ -1398,7 +1479,7 @@ export default function WorkspacePage() {
       ? 'none'
       : 'flex-basis 0.35s ease, flex-grow 0.35s ease, width 0.35s ease',
   };
-  const messageBubbleMaxWidth = isAgentPaneFullScreen ? '100%' : '720px';
+  const messageBubbleMaxWidth = isAgentPaneFullScreen ? '900px' : '720px';
   const isDarkMode = colorMode === 'dark';
 
   const activeFile = selectedDashboardPath ? null : (selectedFileDetails || selectedFile);
@@ -2455,6 +2536,223 @@ export default function WorkspacePage() {
     updateMessagesForConversation(conversationId, (prev) => [...prev, systemMessage]);
     agentMessageBufferRef.current.set(systemMessage.id, systemMessage.text || '');
   }, [activeConversationId, updateMessagesForConversation]);
+
+  const loadSchedulesForWorkspace = useCallback(async (workspaceId: string | null) => {
+    if (!workspaceId) {
+      setWorkspaceSchedules([]);
+      return;
+    }
+    setSchedulesLoading(true);
+    setSchedulesError('');
+    try {
+      const schedules = await fetchWorkspaceSchedules(workspaceId);
+      setWorkspaceSchedules(schedules);
+    } catch (error) {
+      console.error('Failed to load schedules', error);
+      setSchedulesError(error instanceof Error ? error.message : 'Failed to load schedules');
+      setWorkspaceSchedules([]);
+    } finally {
+      setSchedulesLoading(false);
+    }
+  }, []);
+
+  const buildScheduleDraft = useCallback((sourceMessage?: ConversationMessage): WorkspaceScheduleDraft | null => {
+    if (!selectedWorkspace?.id) {
+      return null;
+    }
+    const conversationId = activeConversationId || null;
+    const currentMessages = conversationId ? getConversationMessagesSnapshot(conversationId) : messages;
+    const sourceIndex = sourceMessage
+      ? currentMessages.findIndex((message) => message.id === sourceMessage.id)
+      : currentMessages.length - 1;
+    const previousUserMessage = sourceIndex >= 0
+      ? [...currentMessages.slice(0, sourceIndex + 1)].reverse().find((message) => message.sender === 'user')
+      : [...currentMessages].reverse().find((message) => message.sender === 'user');
+    const latestUserMessage = [...currentMessages].reverse().find((message) => message.sender === 'user');
+    const promptMessage = sourceMessage?.sender === 'user'
+      ? sourceMessage
+      : previousUserMessage || latestUserMessage;
+    const rawPrompt = String(promptMessage?.text || chatMessage || '')
+      .replace(/\n*\[Attachments:\s*([^\]]+)\]\s*$/i, '')
+      .trim();
+    if (!rawPrompt) {
+      return null;
+    }
+    const directive = parseSlashDirective(rawPrompt);
+    const sourceMetadata = sourceMessage?.metadata as ConversationMessageMetadata | undefined;
+    const promptMetadata = promptMessage?.metadata as ConversationMessageMetadata | undefined;
+    const latestAgentSkill = [...currentMessages]
+      .reverse()
+      .map((message) => (message.metadata as ConversationMessageMetadata | undefined)?.runPolicy?.skill)
+      .find((skill): skill is string => typeof skill === 'string' && skill.trim().length > 0);
+    const selectedSkills = Array.from(new Set([
+      directive.kind === 'skill' ? directive.skillId : '',
+      sourceMetadata?.runPolicy?.skill || '',
+      promptMetadata?.runPolicy?.skill || '',
+      latestAgentSkill || '',
+    ].map((skill) => skill.trim()).filter(Boolean)));
+    const fileContextRefs =
+      promptMetadata?.fileContextRefs?.length
+        ? promptMetadata.fileContextRefs
+        : sourceMetadata?.fileContextRefs?.length
+          ? sourceMetadata.fileContextRefs
+          : findLatestFileContextRefs(currentMessages) || [];
+    const contextRefs = fileContextRefs.map((ref) => ref.sourceName).filter(Boolean);
+    const titleSource = deriveWorkspaceNameFromPrompt(rawPrompt)
+      || conversationHistory.find((conversation) => conversation.id === conversationId)?.title
+      || 'Workspace task';
+    const sourceMessageId = Number(sourceMessage?.id ?? promptMessage?.id);
+    const timezone = (() => {
+      try {
+        return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+      } catch {
+        return 'UTC';
+      }
+    })();
+
+    return {
+      name: titleSource.startsWith('Scheduled') ? titleSource : `Scheduled: ${titleSource}`,
+      cadence: 'daily',
+      cronExpression: '0 9 * * *',
+      timezone,
+      prompt: rawPrompt,
+      persona: normalizePersonaName(activeConversationPersona || selectedPersona || DEFAULT_PERSONA_NAME),
+      selectedSkills,
+      contextRefs,
+      taggedFiles: contextRefs,
+      fileContextRefs,
+      outputMode: 'append_to_conversation',
+      notificationMode: 'failure',
+      sourceConversationId: conversationId,
+      sourceMessageId: Number.isFinite(sourceMessageId) ? sourceMessageId : null,
+      targetConversationId: conversationId,
+    };
+  }, [
+    activeConversationId,
+    activeConversationPersona,
+    chatMessage,
+    conversationHistory,
+    deriveWorkspaceNameFromPrompt,
+    getConversationMessagesSnapshot,
+    messages,
+    parseSlashDirective,
+    selectedPersona,
+    selectedWorkspace?.id,
+  ]);
+
+  const openScheduleDialog = useCallback((message?: ConversationMessage) => {
+    const draft = buildScheduleDraft(message);
+    if (!draft) {
+      addLocalSystemMessage('Send or select a concrete chat request before scheduling it.');
+      return;
+    }
+    setScheduleDialogState({ draft });
+  }, [addLocalSystemMessage, buildScheduleDraft]);
+
+  const openScheduleEditor = useCallback((schedule: WorkspaceSchedule) => {
+    setScheduleDialogState({
+      schedule,
+      draft: {
+        name: schedule.name,
+        cadence: schedule.cadence,
+        cronExpression: schedule.cronExpression,
+        timezone: schedule.timezone,
+        prompt: schedule.prompt,
+        persona: schedule.persona,
+        selectedSkills: schedule.selectedSkills,
+        contextRefs: schedule.contextRefs,
+        taggedFiles: schedule.taggedFiles,
+        fileContextRefs: schedule.fileContextRefs,
+        outputMode: schedule.outputMode,
+        notificationMode: schedule.notificationMode,
+        sourceConversationId: schedule.sourceConversationId || null,
+        sourceMessageId: schedule.sourceMessageId || null,
+        targetConversationId: schedule.targetConversationId || null,
+      },
+    });
+  }, []);
+
+  const handleSaveSchedule = useCallback(async (draft: WorkspaceScheduleDraft) => {
+    if (!selectedWorkspace?.id || !scheduleDialogState) {
+      return;
+    }
+    setScheduleSaving(true);
+    try {
+      const saved = scheduleDialogState.schedule
+        ? await updateWorkspaceSchedule(selectedWorkspace.id, scheduleDialogState.schedule.id, draft)
+        : await createWorkspaceSchedule(selectedWorkspace.id, draft);
+      setWorkspaceSchedules((prev) => {
+        const existingIndex = prev.findIndex((schedule) => schedule.id === saved.id);
+        if (existingIndex === -1) {
+          return [saved, ...prev];
+        }
+        const next = [...prev];
+        next[existingIndex] = saved;
+        return next;
+      });
+      setScheduleDialogState(null);
+      setIsSchedulesPanelOpen(true);
+    } catch (error) {
+      console.error('Failed to save schedule', error);
+      addLocalSystemMessage(error instanceof Error ? error.message : 'Failed to save schedule.');
+    } finally {
+      setScheduleSaving(false);
+    }
+  }, [addLocalSystemMessage, scheduleDialogState, selectedWorkspace?.id]);
+
+  const handleToggleScheduleStatus = useCallback(async (schedule: WorkspaceSchedule) => {
+    if (!selectedWorkspace?.id) return;
+    const nextStatus = schedule.status === 'active' ? 'paused' : 'active';
+    setBusyScheduleId(schedule.id);
+    try {
+      const updated = await updateWorkspaceSchedule(selectedWorkspace.id, schedule.id, { status: nextStatus });
+      setWorkspaceSchedules((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
+    } catch (error) {
+      console.error('Failed to update schedule status', error);
+      setSchedulesError(error instanceof Error ? error.message : 'Failed to update schedule');
+    } finally {
+      setBusyScheduleId(null);
+    }
+  }, [selectedWorkspace?.id]);
+
+  const handleRunScheduleNow = useCallback(async (schedule: WorkspaceSchedule) => {
+    if (!selectedWorkspace?.id) return;
+    setBusyScheduleId(schedule.id);
+    try {
+      const run = await runWorkspaceScheduleNow(selectedWorkspace.id, schedule.id);
+      setWorkspaceSchedules((prev) => prev.map((item) => (
+        item.id === schedule.id
+          ? { ...item, recentRuns: [run, ...(item.recentRuns || [])].slice(0, 5), lastRunAt: run.startedAt || run.createdAt, lastRunStatus: run.status }
+          : item
+      )));
+      await refreshConversationHistory(selectedWorkspace.id);
+    } catch (error) {
+      console.error('Failed to run schedule', error);
+      setSchedulesError(error instanceof Error ? error.message : 'Failed to run schedule');
+    } finally {
+      setBusyScheduleId(null);
+    }
+  }, [refreshConversationHistory, selectedWorkspace?.id]);
+
+  const handleDeleteSchedule = useCallback(async (schedule: WorkspaceSchedule) => {
+    if (!selectedWorkspace?.id) return;
+    const confirmed = window.confirm(`Delete schedule "${schedule.name}"?`);
+    if (!confirmed) return;
+    setBusyScheduleId(schedule.id);
+    try {
+      await deleteWorkspaceSchedule(selectedWorkspace.id, schedule.id);
+      setWorkspaceSchedules((prev) => prev.filter((item) => item.id !== schedule.id));
+    } catch (error) {
+      console.error('Failed to delete schedule', error);
+      setSchedulesError(error instanceof Error ? error.message : 'Failed to delete schedule');
+    } finally {
+      setBusyScheduleId(null);
+    }
+  }, [selectedWorkspace?.id]);
+
+  useEffect(() => {
+    void loadSchedulesForWorkspace(selectedWorkspace?.id || null);
+  }, [loadSchedulesForWorkspace, selectedWorkspace?.id]);
 
   const ensureConversation = useCallback(async (workspaceOverride?: Workspace | null) => {
     const targetWorkspaceId = workspaceOverride?.id || selectedWorkspace?.id || null;
@@ -6529,6 +6827,490 @@ export default function WorkspacePage() {
     });
   }, [closeCommand, closeMention, isAgentPaneVisible, updateCommandState]);
 
+  const handleMobileSelectFile = (file: WorkspaceFile) => {
+    setSelectedDashboardPath(null);
+    setSelectedFile(file);
+    setSelectedFileDetails(null);
+    setFileContent('');
+    setIsEditMode(shouldForceEditMode(file.name));
+    setCanvasZoom(1);
+    setMobileSurface('canvas');
+    setIsMobileWorkspaceSheetOpen(false);
+  };
+
+  const handleMobileSelectDashboard = (dashboardPath: string) => {
+    handleDashboardFolderSelect(dashboardPath);
+    setMobileSurface('canvas');
+    setIsMobileWorkspaceSheetOpen(false);
+  };
+
+  const handleMobileSendMessage = () => {
+    if (isLandingPageVisible) {
+      void handleLandingSendMessage();
+      return;
+    }
+    void handleSendMessage();
+  };
+
+  const mobileCanvasView = (
+    <div className={`flex min-h-0 flex-1 flex-col overflow-hidden ${isDarkMode ? 'bg-[#0e1728]' : 'bg-slate-50'}`}>
+      <div className={`flex shrink-0 items-center justify-between border-b px-4 py-3 ${
+        isDarkMode ? 'border-slate-800 bg-[#08111f]' : 'border-slate-200 bg-white'
+      }`}>
+        <div className="min-w-0">
+          <p className={`text-[10px] font-semibold uppercase tracking-normal ${
+            isDarkMode ? 'text-slate-500' : 'text-slate-500'
+          }`}>
+            Artifact canvas
+          </p>
+          <h2 className={`truncate text-base font-semibold ${isDarkMode ? 'text-slate-100' : 'text-slate-900'}`}>
+            {canvasTitle}
+          </h2>
+        </div>
+        <div className="flex shrink-0 items-center gap-1.5">
+          {!isEditMode ? (
+            <>
+              <button
+                type="button"
+                onClick={handleCanvasZoomOut}
+                disabled={!canZoomOutCanvas}
+                className={`inline-flex h-9 w-9 items-center justify-center rounded-xl disabled:opacity-40 ${
+                  isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-600 hover:bg-slate-100'
+                }`}
+                aria-label="Zoom out canvas"
+              >
+                <Minus size={16} />
+              </button>
+              <button
+                type="button"
+                onClick={handleCanvasZoomReset}
+                className={`inline-flex h-9 min-w-12 items-center justify-center rounded-xl px-2 text-xs font-semibold ${
+                  isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-600 hover:bg-slate-100'
+                }`}
+                aria-label="Reset canvas zoom"
+              >
+                {Math.round(canvasZoom * 100)}%
+              </button>
+              <button
+                type="button"
+                onClick={handleCanvasZoomIn}
+                disabled={!canZoomInCanvas}
+                className={`inline-flex h-9 w-9 items-center justify-center rounded-xl disabled:opacity-40 ${
+                  isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-600 hover:bg-slate-100'
+                }`}
+                aria-label="Zoom in canvas"
+              >
+                <Plus size={16} />
+              </button>
+            </>
+          ) : null}
+        </div>
+      </div>
+      <div className="min-h-0 flex-1 overflow-hidden">
+        {isEditMode && selectedWorkspace ? (
+          <Suspense fallback={editorLoadingFallback}>
+            <FileEditor
+              file={selectedFileDetails || selectedFile}
+              fileContent={fileContent}
+              onContentChange={setFileContent}
+              workspaceId={selectedWorkspace.id}
+              colorMode={colorMode}
+            />
+          </Suspense>
+        ) : isDashboardCanvas ? (
+          selectedWorkspace && resolvedDashboardFolder ? (
+            <DashboardCanvas
+              workspaceId={selectedWorkspace.id}
+              dashboardPath={resolvedDashboardFolder}
+            />
+          ) : (
+            <div className="flex h-full items-center justify-center bg-white text-sm text-slate-500">
+              Opening dashboard...
+            </div>
+          )
+        ) : selectedFile ? (
+          <div className="h-full overflow-y-auto overflow-x-hidden">
+            <div
+              className="min-h-full origin-top-left"
+              style={{
+                transform: `scale(${canvasZoom})`,
+                width: `${100 / canvasZoom}%`,
+                minHeight: `${100 / canvasZoom}%`,
+              }}
+            >
+              <Suspense fallback={canvasLoadingFallback}>
+                <UIBlockRenderer
+                  blocks={canvasBlocks}
+                  workspaceId={selectedWorkspace?.id}
+                  className="min-h-full w-full"
+                  emptyState={
+                    <div className={`text-center ${isDarkMode ? 'text-slate-500' : 'text-gray-400'}`}>
+                      <p>Select a file to view its content</p>
+                    </div>
+                  }
+                />
+              </Suspense>
+            </div>
+          </div>
+        ) : (
+          <div className={`flex h-full flex-col items-center justify-center px-6 text-center ${
+            isDarkMode ? 'bg-[#0e1728] text-slate-400' : 'bg-slate-50 text-slate-500'
+          }`}>
+            <MobileLumoAvatar size={52} notify={hasPendingInterruptMessage} busy={isStreaming} />
+            <p className={`mt-4 text-sm font-semibold ${isDarkMode ? 'text-slate-100' : 'text-slate-900'}`}>
+              No canvas selected
+            </p>
+            <p className="mt-1 max-w-xs text-xs leading-5">
+              Open a generated dashboard or select a workspace file from the mobile sheet.
+            </p>
+          </div>
+        )}
+      </div>
+      <div className={`shrink-0 border-t p-3 ${isDarkMode ? 'border-slate-800 bg-[#0d1524]' : 'border-slate-200 bg-white'}`}>
+        <div className={`flex items-center gap-2 rounded-2xl border px-3 py-2 ${
+          isDarkMode ? 'border-slate-700 bg-slate-900' : 'border-slate-200 bg-slate-50'
+        }`}>
+          <MobileLumoAvatar size={30} busy={isStreaming} notify={hasPendingInterruptMessage} />
+          <button
+            type="button"
+            onClick={() => {
+              setMobileSurface('chat');
+              handleLumoPrompt('Revise this artifact for mobile review.');
+            }}
+            className={`min-w-0 flex-1 text-left text-sm ${isDarkMode ? 'text-slate-300' : 'text-slate-600'}`}
+          >
+            Ask Lumo about this artifact
+          </button>
+          <button
+            type="button"
+            onClick={() => setMobileSurface('chat')}
+            className={`rounded-xl px-3 py-2 text-xs font-semibold ${
+              isDarkMode ? 'bg-slate-100 text-slate-950' : 'bg-slate-900 text-white'
+            }`}
+          >
+            Chat
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
+  const mobileWorkspaceShell = (
+    <div className={`flex h-[100dvh] w-screen flex-col overflow-hidden font-sans ${
+      isDarkMode ? 'bg-[#020817]' : 'bg-slate-100'
+    }`}>
+      <header className={`shrink-0 border-b px-4 py-3 ${
+        isDarkMode ? 'border-slate-800 bg-[#08111f]' : 'border-slate-200 bg-white'
+      }`}>
+        <div className="flex items-center justify-between gap-3">
+          <button
+            type="button"
+            onClick={() => setIsMobileWorkspaceSheetOpen(true)}
+            className="flex min-w-0 items-center gap-3 text-left"
+          >
+            <MobileLumoAvatar size={42} busy={isStreaming} notify={hasPendingInterruptMessage} />
+            <span className="min-w-0">
+              <span className={`block text-sm font-semibold ${isDarkMode ? 'text-slate-100' : 'text-slate-900'}`}>
+                HelpUDoc
+              </span>
+              <span className={`block truncate text-xs font-medium ${isDarkMode ? 'text-slate-500' : 'text-slate-500'}`}>
+                {selectedWorkspace?.name || 'New Workspace'}
+              </span>
+            </span>
+          </button>
+          <div className="flex shrink-0 items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                void handleNewChat();
+                setMobileSurface('chat');
+              }}
+              className={`inline-flex h-10 w-10 items-center justify-center rounded-xl ${
+                isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-600 hover:bg-slate-100'
+              }`}
+              aria-label="Start new chat"
+            >
+              <Plus size={18} />
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsMobileWorkspaceSheetOpen(true)}
+              className={`inline-flex h-10 w-10 items-center justify-center rounded-xl ${
+                isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-600 hover:bg-slate-100'
+              }`}
+              aria-label="Open workspace files"
+            >
+              <FileIcon size={18} />
+            </button>
+          </div>
+        </div>
+        <div className={`mt-3 grid grid-cols-2 rounded-2xl p-1 ${
+          isDarkMode ? 'bg-slate-900' : 'bg-slate-100'
+        }`}>
+          {(['chat', 'canvas'] as const).map((surface) => (
+            <button
+              key={surface}
+              type="button"
+              onClick={() => setMobileSurface(surface)}
+              className={`rounded-xl px-3 py-2 text-sm font-semibold capitalize transition ${
+                mobileSurface === surface
+                  ? isDarkMode
+                    ? 'bg-slate-100 text-slate-950 shadow-sm'
+                    : 'bg-white text-slate-900 shadow-sm'
+                  : isDarkMode
+                    ? 'text-slate-400'
+                    : 'text-slate-500'
+              }`}
+            >
+              {surface}
+            </button>
+          ))}
+        </div>
+      </header>
+
+      {mobileSurface === 'chat' ? (
+        <div className={`flex min-h-0 flex-1 flex-col overflow-hidden ${isDarkMode ? 'bg-[#0d1524]' : 'bg-white'}`}>
+          <ChatMessageList
+            colorMode={colorMode}
+            messages={messages}
+            isStreaming={isStreaming}
+            personaDisplayName={personaDisplayName}
+            emptyStateDescription="Ask Lumo to inspect files, generate artifacts, or revise the canvas."
+            messageBubbleMaxWidth="min(100%, 40rem)"
+            markdownComponents={markdownComponents}
+            expandedToolMessages={expandedToolMessages}
+            expandedThinkingMessages={expandedThinkingMessages}
+            copiedMessageId={copiedMessageId}
+            interruptInputByMessageId={interruptInputByMessageId}
+            interruptStructuredAnswersByMessageId={interruptStructuredAnswersByMessageId}
+            interruptSelectedChoicesByMessageId={interruptSelectedChoicesByMessageId}
+            interruptSubmittingByMessageId={interruptSubmittingByMessageId}
+            interruptErrorByMessageId={interruptErrorByMessageId}
+            interruptFieldKey={interruptFieldKey}
+            interruptActionFieldKey={interruptActionFieldKey}
+            getInterruptKind={getInterruptKind}
+            formatMessageTimestamp={formatMessageTimestamp}
+            getInterruptActions={getInterruptActions}
+            getPrimaryInterruptAction={getPrimaryInterruptAction}
+            isPlanApprovalInterrupt={isPlanApprovalInterrupt}
+            setInterruptInputByMessageId={setInterruptInputByMessageId}
+            setInterruptStructuredAnswersByMessageId={setInterruptStructuredAnswersByMessageId}
+            toggleInterruptSelectedChoice={toggleInterruptSelectedChoice}
+            toggleThinkingVisibility={toggleThinkingVisibility}
+            toggleToolActivityVisibility={toggleToolActivityVisibility}
+            handleCopyMessageText={handleCopyMessageText}
+            handleRerunMessage={handleRerunMessage}
+            handleScheduleMessage={(message) => openScheduleDialog(message)}
+            handlePrepareInterruptAction={prepareInterruptAction}
+            handleInterruptAction={handleInterruptAction}
+            workspaceId={selectedWorkspace?.id}
+            onA2UISubmit={handleA2UISubmit}
+          />
+          <ChatInputArea
+            colorMode={colorMode}
+            chatMessage={chatMessage}
+            chatAttachments={chatAttachments}
+            placeholder="Ask Lumo... (Type / for commands, skills, and MCP servers)"
+            chatInputRef={chatInputRef}
+            attachmentInputRef={attachmentInputRef}
+            isStreaming={isStreaming}
+            isPreparingAttachments={isDriveImporting}
+            internetSearchEnabled={internetSearchEnabled}
+            commandTags={commandTags}
+            isMentionOpen={isMentionOpen}
+            mentionSuggestions={mentionSuggestions}
+            mentionSelectedIndex={mentionSelectedIndex}
+            isCommandOpen={isCommandOpen}
+            commandSuggestions={commandSuggestions}
+            commandSelectedIndex={commandSelectedIndex}
+            onChatInputChange={handleChatInputChange}
+            onChatInputKeyDown={handleChatInputKeyDown}
+            onChatInputKeyUp={handleChatInputKeyUp}
+            onChatInputSelectionChange={handleChatInputSelectionChange}
+            onChatInputPaste={handleChatInputPaste}
+            onOpenLocalAttachmentPicker={handleOpenLocalAttachmentPicker}
+            onToggleInternetSearch={() => setInternetSearchEnabled((prev) => !prev)}
+            onInsertSlashTrigger={handleInsertSlashTrigger}
+            onStopStreaming={handleStopStreaming}
+            onSendMessage={handleMobileSendMessage}
+            onChatAttachmentChange={handleChatAttachmentChange}
+            onRemoveChatAttachment={handleRemoveChatAttachment}
+            onRemoveCommandTag={handleRemoveCommandTag}
+            onSelectMention={handleSelectMention}
+            onSelectCommand={handleSelectCommand}
+          />
+        </div>
+      ) : (
+        mobileCanvasView
+      )}
+
+      {isMobileWorkspaceSheetOpen ? (
+        <div className="fixed inset-0 z-[1500] flex items-end">
+          <button
+            type="button"
+            aria-label="Close mobile workspace sheet"
+            className="absolute inset-0 bg-slate-950/35"
+            onClick={() => setIsMobileWorkspaceSheetOpen(false)}
+          />
+          <div className={`relative z-10 max-h-[82dvh] w-full overflow-hidden rounded-t-[1.5rem] border-t shadow-2xl ${
+            isDarkMode ? 'border-slate-700 bg-slate-950 text-slate-100' : 'border-slate-200 bg-white text-slate-900'
+          }`}>
+            <div className="flex justify-center pt-3">
+              <span className={`h-1.5 w-12 rounded-full ${isDarkMode ? 'bg-slate-700' : 'bg-slate-300'}`} />
+            </div>
+            <div className="flex items-center justify-between px-4 py-3">
+              <h2 className="text-base font-semibold">Workspace</h2>
+              <button
+                type="button"
+                onClick={() => setIsMobileWorkspaceSheetOpen(false)}
+                className={`rounded-xl px-3 py-2 text-xs font-semibold ${
+                  isDarkMode ? 'bg-slate-900 text-slate-300' : 'bg-slate-100 text-slate-600'
+                }`}
+              >
+                Close
+              </button>
+            </div>
+            <div className="max-h-[70dvh] overflow-y-auto px-4 pb-5">
+              <section className="space-y-2">
+                <p className={`text-[10px] font-semibold uppercase tracking-normal ${isDarkMode ? 'text-slate-500' : 'text-slate-500'}`}>
+                  Workspaces
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void handleCreateWorkspace();
+                    setIsMobileWorkspaceSheetOpen(false);
+                    setMobileSurface('chat');
+                  }}
+                  className={`flex w-full items-center gap-2 rounded-xl border px-3 py-2 text-left text-sm font-semibold ${
+                    isDarkMode ? 'border-slate-800 bg-slate-900 text-slate-100' : 'border-slate-200 bg-slate-50 text-slate-800'
+                  }`}
+                >
+                  <Plus size={15} />
+                  New Workspace
+                </button>
+                {filteredWorkspaces.slice(0, 8).map((workspace) => (
+                  <button
+                    key={workspace.id}
+                    type="button"
+                    onClick={() => {
+                      handleSelectWorkspace(workspace);
+                      setIsMobileWorkspaceSheetOpen(false);
+                      setMobileSurface('chat');
+                    }}
+                    className={`flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2 text-left text-sm transition ${
+                      selectedWorkspace?.id === workspace.id
+                        ? isDarkMode ? 'bg-sky-500/15 text-sky-200' : 'bg-blue-50 text-blue-700'
+                        : isDarkMode ? 'text-slate-200 hover:bg-slate-900' : 'text-slate-700 hover:bg-slate-50'
+                    }`}
+                  >
+                    <span className="min-w-0 truncate">{workspace.name}</span>
+                    {selectedWorkspace?.id === workspace.id ? <Check size={15} className="shrink-0" /> : null}
+                  </button>
+                ))}
+              </section>
+
+              <section className="mt-5 space-y-2">
+                <p className={`text-[10px] font-semibold uppercase tracking-normal ${isDarkMode ? 'text-slate-500' : 'text-slate-500'}`}>
+                  Recent
+                </p>
+                {conversationHistory.slice(0, 5).length ? conversationHistory.slice(0, 5).map((conversation) => (
+                  <button
+                    key={conversation.id}
+                    type="button"
+                    onClick={() => {
+                      void handleSelectConversationFromHistory(conversation.id);
+                      setIsLandingPageVisible(false);
+                      setIsMobileWorkspaceSheetOpen(false);
+                      setMobileSurface('chat');
+                    }}
+                    className={`flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2 text-left text-sm ${
+                      activeConversationId === conversation.id
+                        ? isDarkMode ? 'bg-sky-500/15 text-sky-200' : 'bg-blue-50 text-blue-700'
+                        : isDarkMode ? 'text-slate-200 hover:bg-slate-900' : 'text-slate-700 hover:bg-slate-50'
+                    }`}
+                  >
+                    <span className="min-w-0 truncate">{conversation.title || 'Untitled conversation'}</span>
+                    {conversationAttentionById[conversation.id]?.status === 'running' ? (
+                      <Loader2 size={14} className="shrink-0 animate-spin" />
+                    ) : null}
+                  </button>
+                )) : (
+                  <p className={`rounded-xl px-3 py-3 text-sm ${isDarkMode ? 'bg-slate-900 text-slate-500' : 'bg-slate-50 text-slate-500'}`}>
+                    No recent conversations yet.
+                  </p>
+                )}
+              </section>
+
+              <section className="mt-5 space-y-2">
+                <p className={`text-[10px] font-semibold uppercase tracking-normal ${isDarkMode ? 'text-slate-500' : 'text-slate-500'}`}>
+                  Canvas and files
+                </p>
+                {Object.values(dashboardArtifactsByPath).slice(0, 4).map((artifact) => (
+                  <button
+                    key={artifact.dashboardPath}
+                    type="button"
+                    onClick={() => handleMobileSelectDashboard(artifact.dashboardPath)}
+                    className={`flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm ${
+                      isDarkMode ? 'text-slate-200 hover:bg-slate-900' : 'text-slate-700 hover:bg-slate-50'
+                    }`}
+                  >
+                    <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${
+                      isDarkMode ? 'bg-slate-900 text-sky-300' : 'bg-sky-50 text-sky-700'
+                    }`}>
+                      <FileIcon size={15} />
+                    </span>
+                    <span className="min-w-0 flex-1 truncate">{artifact.title || artifact.dashboardPath}</span>
+                    <span className={`shrink-0 text-[10px] font-semibold uppercase ${
+                      artifact.status === 'ready'
+                        ? isDarkMode ? 'text-emerald-300' : 'text-emerald-600'
+                        : isDarkMode ? 'text-amber-300' : 'text-amber-600'
+                    }`}>
+                      {artifact.status}
+                    </span>
+                  </button>
+                ))}
+                {visibleFiles.slice(0, 8).map((file) => (
+                  <button
+                    key={file.id}
+                    type="button"
+                    onClick={() => handleMobileSelectFile(file)}
+                    className={`flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm ${
+                      selectedFile?.id === file.id
+                        ? isDarkMode ? 'bg-sky-500/15 text-sky-200' : 'bg-blue-50 text-blue-700'
+                        : isDarkMode ? 'text-slate-200 hover:bg-slate-900' : 'text-slate-700 hover:bg-slate-50'
+                    }`}
+                  >
+                    <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${
+                      isDarkMode ? 'bg-slate-900 text-slate-400' : 'bg-slate-100 text-slate-500'
+                    }`}>
+                      <FileIcon size={15} />
+                    </span>
+                    <span className="min-w-0 flex-1 truncate">{file.path || file.name}</span>
+                  </button>
+                ))}
+                {!Object.keys(dashboardArtifactsByPath).length && !visibleFiles.length ? (
+                  <p className={`rounded-xl px-3 py-3 text-sm ${isDarkMode ? 'bg-slate-900 text-slate-500' : 'bg-slate-50 text-slate-500'}`}>
+                    No files in this workspace yet.
+                  </p>
+                ) : null}
+              </section>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      <input
+        type="file"
+        ref={attachmentInputRef}
+        className="hidden"
+        multiple
+        accept="image/*,.pdf,.md,.txt,.doc,.docx"
+        onChange={handleChatAttachmentChange}
+      />
+    </div>
+  );
+
   return (
     <ThemeProvider theme={theme}>
       <Box
@@ -6542,6 +7324,10 @@ export default function WorkspacePage() {
         }}
       >
         <CssBaseline />
+        {isMobileViewport ? (
+          mobileWorkspaceShell
+        ) : (
+          <>
         <ExpandableSidebar
           handleDrawerToggle={handleDrawerToggle}
           isDrawerOpen={drawerOpen}
@@ -6560,6 +7346,8 @@ export default function WorkspacePage() {
           onCreateWorkspace={() => {
             void handleCreateWorkspace();
           }}
+          onOpenSchedules={() => setIsSchedulesPanelOpen(true)}
+          scheduleCount={workspaceSchedules.length}
           onOpenSettings={handleOpenAgentSettings}
           colorMode={colorMode}
           onToggleColorMode={toggleColorMode}
@@ -7520,6 +8308,8 @@ export default function WorkspacePage() {
               onModeChange={handleModeChange}
               onToggleHistory={() => setIsHistoryOpen((prev) => !prev)}
               onNewChat={handleNewChat}
+              onScheduleChat={() => openScheduleDialog()}
+              onScheduleMessage={(message) => openScheduleDialog(message)}
               onToggleFullScreen={toggleAgentPaneFullScreen}
               onCloseHistory={() => setIsHistoryOpen(false)}
               onSelectConversation={handleSelectConversationFromHistory}
@@ -7559,7 +8349,35 @@ export default function WorkspacePage() {
             />
           </div>
         </Box>
+          </>
+        )}
       </Box>
+      <WorkspaceSchedulesPanel
+        open={isSchedulesPanelOpen}
+        colorMode={colorMode}
+        workspace={selectedWorkspace}
+        schedules={workspaceSchedules}
+        loading={schedulesLoading}
+        error={schedulesError}
+        busyScheduleId={busyScheduleId}
+        onClose={() => setIsSchedulesPanelOpen(false)}
+        onRefresh={() => void loadSchedulesForWorkspace(selectedWorkspace?.id || null)}
+        onEdit={openScheduleEditor}
+        onDelete={handleDeleteSchedule}
+        onToggleStatus={handleToggleScheduleStatus}
+        onRunNow={handleRunScheduleNow}
+      />
+      <ScheduleDialog
+        open={Boolean(scheduleDialogState)}
+        colorMode={colorMode}
+        workspaceName={selectedWorkspace?.name}
+        initialDraft={scheduleDialogState?.draft || null}
+        existingSchedule={scheduleDialogState?.schedule || null}
+        availableSkills={availableSkills}
+        saving={scheduleSaving}
+        onClose={() => setScheduleDialogState(null)}
+        onSubmit={handleSaveSchedule}
+      />
       {workspaceFileDialog && (
         <div
           className="fixed inset-0 z-[1600] flex items-center justify-center bg-slate-950/50 p-4"

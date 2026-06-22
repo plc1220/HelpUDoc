@@ -5,6 +5,7 @@ import workspaceRoutes from './workspaces';
 import fileRoutes from './files';
 import attachmentRoutes from './attachments';
 import conversationRoutes from './conversations';
+import scheduleRoutes from './schedules';
 import settingsRoutes from './settings';
 import knowledgeRoutes from './knowledge';
 import usersRoutes from './users';
@@ -28,6 +29,7 @@ import { GoogleOAuthService } from '../services/googleOAuthService';
 import { DerivedArtifactService } from '../services/derivedArtifactService';
 import { GoogleDriveService } from '../services/googleDriveService';
 import { AttachmentPrepJobService } from '../services/attachmentPrepJobService';
+import { ScheduleService } from '../services/scheduleService';
 import { configureAgentRunServices } from '../services/agentRunService';
 
 export default function(dbService: DatabaseService, userService: UserService) {
@@ -47,6 +49,13 @@ export default function(dbService: DatabaseService, userService: UserService) {
   const dailyReflectionService = new DailyReflectionService(dbService, skillEvolutionService);
   const userMemoryService = new UserMemoryService(dbService);
   const googleDriveService = new GoogleDriveService(googleOAuthService, fileService);
+  const scheduleService = new ScheduleService(
+    dbService,
+    workspaceService,
+    conversationService,
+    userService,
+    googleOAuthService,
+  );
   const attachmentPrepJobService = new AttachmentPrepJobService(
     workspaceService,
     googleDriveService,
@@ -64,8 +73,11 @@ export default function(dbService: DatabaseService, userService: UserService) {
   router.use('/workspaces/:workspaceId/attachments', attachmentRoutes(workspaceService, attachmentPrepJobService));
   router.use('/workspaces/:workspaceId/files', fileRoutes(fileService, workspaceService, googleOAuthService, derivedArtifactService));
   router.use('/workspaces/:workspaceId/knowledge', knowledgeRoutes(knowledgeService));
+  router.use('/workspaces/:workspaceId/schedules', scheduleRoutes(scheduleService));
   router.use('/me', meMemoryRoutes(workspaceService, userMemoryService));
   router.use('/', conversationRoutes(conversationService));
+
+  scheduleService.startScheduler();
 
   return router;
 }

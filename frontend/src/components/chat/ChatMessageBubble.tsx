@@ -1,4 +1,4 @@
-import { Check, CheckCircle2, ChevronRight, Copy, FilePenLine, ImageIcon, Loader2, RotateCcw } from 'lucide-react';
+import { CalendarClock, Check, CheckCircle2, ChevronRight, Copy, FilePenLine, ImageIcon, Loader2, RotateCcw } from 'lucide-react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useCallback, useEffect, useMemo, useState, type Dispatch, type KeyboardEvent, type ReactNode, type SetStateAction } from 'react';
@@ -515,6 +515,7 @@ export default function ChatMessageBubble({
   toggleToolActivityVisibility,
   handleCopyMessageText,
   handleRerunMessage,
+  handleScheduleMessage,
   handlePrepareInterruptAction,
   handleInterruptAction,
   isStreaming,
@@ -558,6 +559,7 @@ export default function ChatMessageBubble({
   toggleToolActivityVisibility: (messageId: ConversationMessage['id']) => void;
   handleCopyMessageText: (message: ConversationMessage) => void;
   handleRerunMessage: (messageId: ConversationMessage['id'], options?: RerunMessageOptions) => void;
+  handleScheduleMessage?: (message: ConversationMessage) => void;
   handlePrepareInterruptAction: (
     message: ConversationMessage,
     action: RenderableInterruptAction,
@@ -877,7 +879,7 @@ export default function ChatMessageBubble({
       : shouldHideThinkingDuringToolRun && isOperationalThinkingText(agentTextForDisplay)
         ? ''
         : agentTextForDisplay;
-  const inlineStatus = (() => {
+  const liveStatus = (() => {
     if (!isAgentMessage || !isLatestAgentMessage) {
       return null;
     }
@@ -890,9 +892,8 @@ export default function ChatMessageBubble({
         pendingInterrupt?.title || pendingInterrupt?.description || 'The agent needs your input to continue.';
       return {
         status: rawStatus,
-        title: 'Waiting for you',
+        label: 'Waiting for you',
         detail: awaitingDetail as ReactNode,
-        elapsed: formatElapsedTime(message.createdAt, now),
       };
     }
     if (progressEvents.length > 0) {
@@ -904,55 +905,15 @@ export default function ChatMessageBubble({
         'Working through the current request.';
       return {
         status: rawStatus,
-        title: 'Running',
+        label: stageLabel,
         detail: stageLabel as ReactNode,
-        elapsed: formatElapsedTime(runClockAnchor || message.createdAt, now),
       };
     }
     if (hasToolEvents) {
-      const liveStepLabel = toolDigest.stepProgress
-        ? rawStatus === 'running'
-          ? `Step ${toolDigest.stepProgress.current}`
-          : `Step ${toolDigest.stepProgress.current} of ${toolDigest.stepProgress.total}`
-        : null;
-      const timedDetail = (
-        <div className="space-y-1.5">
-          <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-            <p className={`text-[15px] font-semibold leading-snug tracking-tight ${
-              isDarkMode ? 'text-slate-50' : 'text-slate-900'
-            }`}>
-              {toolDigest.headline}
-            </p>
-            {liveStepLabel ? (
-              <p className={`shrink-0 text-xs font-medium tabular-nums ${
-                isDarkMode ? 'text-slate-400' : 'text-slate-500'
-              }`}>
-                {liveStepLabel}
-              </p>
-            ) : null}
-          </div>
-          {toolDigest.activeStepLabel ? (
-            <p className={`inline-flex items-center gap-1.5 text-xs font-medium leading-relaxed ${
-              isDarkMode ? 'text-sky-100' : 'text-sky-900'
-            }`}>
-              <span className={`inline-flex h-1.5 w-1.5 shrink-0 animate-pulse rounded-full ${
-                isDarkMode ? 'bg-sky-300' : 'bg-sky-500'
-              }`} />
-              {toolDigest.activeStepLabel}
-            </p>
-          ) : null}
-          {toolDigest.errorCount > 0 ? (
-            <p className={`text-xs font-medium ${isDarkMode ? 'text-rose-300' : 'text-rose-600'}`}>
-              {`${toolDigest.errorCount} issue${toolDigest.errorCount === 1 ? '' : 's'} may need attention.`}
-            </p>
-          ) : null}
-        </div>
-      );
       return {
         status: rawStatus,
-        title: 'Running',
-        detail: timedDetail,
-        elapsed: formatElapsedTime(runClockAnchor, now),
+        label: toolDigest.activeStepLabel || toolDigest.currentLabel || toolDigest.headline,
+        detail: (toolDigest.statsLabel || toolDigest.headline) as ReactNode,
       };
     }
     const latestToolEvent = [...toolEvents].reverse().find(Boolean);
@@ -964,9 +925,8 @@ export default function ChatMessageBubble({
           : visibleAgentText || displayThinkingText || 'Working through the current request.';
     return {
       status: rawStatus,
-      title: 'Running',
+      label: 'Working',
       detail: fallbackDetail as ReactNode,
-      elapsed: formatElapsedTime(message.createdAt, now),
     };
   })();
   const canCopyMessage =
@@ -1838,9 +1798,44 @@ export default function ChatMessageBubble({
     toolDigest.currentLabel ||
     displayThinkingText
   );
+  const progressElapsedLabel = compactThoughtElapsed || '0s';
+  const progressStateLabel = liveStatus?.status === 'awaiting_approval'
+    ? 'Waiting for you'
+    : liveStatus?.status === 'running'
+      ? 'Working'
+      : toolDigest.errorCount
+        ? 'Needs attention'
+        : 'Completed';
+  const progressTimingLabel = liveStatus
+    ? `${progressStateLabel} · ${progressElapsedLabel}`
+    : hasToolEvents || progressEvents.length
+      ? `${progressStateLabel} in ${progressElapsedLabel}`
+      : progressStateLabel;
+  const progressSecondaryText = liveStatus?.status === 'awaiting_approval'
+    ? liveStatus.detail
+    : liveStatus?.label || toolDigest.statsLabel || toolDigest.currentLabel || displayThinkingText;
+  const progressDotClassName = liveStatus?.status === 'awaiting_approval'
+    ? 'bg-amber-500'
+    : liveStatus?.status === 'running'
+      ? 'bg-sky-500'
+      : toolDigest.errorCount
+        ? 'bg-rose-500'
+        : 'bg-emerald-500';
+  const hasProgressSummary = Boolean(
+    toolDigest.statsLabel ||
+    toolDigest.reviewedFiles.length ||
+    toolDigest.updatedFileBasenames.length ||
+    toolDigest.updatesInProgress.length
+  );
+  const isStreamingAgentText = Boolean(
+    isAgentMessage &&
+    isLatestAgentMessage &&
+    isLiveAgentStatus &&
+    visibleAgentText.trim()
+  );
   const thoughtRowClassName = isDarkMode
-    ? 'mt-1 inline-flex items-center gap-1.5 text-sm font-medium text-slate-400 transition-colors hover:text-slate-200'
-    : 'mt-1 inline-flex items-center gap-1.5 text-sm font-medium text-slate-500 transition-colors hover:text-slate-700';
+    ? 'mt-2 flex w-full items-center gap-2 rounded-lg py-1.5 text-left text-sm font-medium text-slate-400 transition-colors hover:text-slate-200'
+    : 'mt-2 flex w-full items-center gap-2 rounded-lg py-1.5 text-left text-sm font-medium text-slate-500 transition-colors hover:text-slate-700';
   const thoughtPanelClassName = isDarkMode
     ? 'mt-2 rounded-lg border border-[#26354d] bg-[#0d1524] px-3 py-3 text-xs text-slate-200'
     : 'mt-2 rounded-lg border border-slate-200/80 bg-slate-50/90 px-3 py-3 text-xs text-slate-700';
@@ -1855,20 +1850,80 @@ export default function ChatMessageBubble({
     'min-h-24 w-full resize-y rounded-lg border border-white/10 bg-black/15 px-3 py-2.5 text-sm leading-relaxed text-white placeholder:text-white/45 shadow-inner shadow-black/10 outline-none transition-all duration-150 focus:border-white/25 focus:bg-black/20 focus:ring-2 focus:ring-white/15';
   const inlineEditButtonBaseClassName =
     'inline-flex h-8 items-center justify-center rounded-md px-3 text-xs font-semibold transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/25 disabled:cursor-not-allowed disabled:opacity-50';
-  const messageActionBarClassName = isDarkMode
-    ? 'absolute -top-2.5 right-2 inline-flex items-center gap-0.5 rounded-lg border border-slate-600/90 bg-slate-900 p-0.5 text-slate-300 opacity-0 shadow-none transition-opacity duration-150 group-hover:opacity-100 focus-within:opacity-100'
-    : 'absolute -top-2.5 right-2 inline-flex items-center gap-0.5 rounded-lg border border-slate-200 bg-white p-0.5 text-slate-500 opacity-0 shadow-none transition-opacity duration-150 group-hover:opacity-100 focus-within:opacity-100';
+  const messageActionBarClassName = isAgentMessage
+    ? isDarkMode
+      ? 'inline-flex shrink-0 items-center gap-0.5 rounded-lg border border-slate-600/90 bg-slate-900 p-0.5 text-slate-300 shadow-none'
+      : 'inline-flex shrink-0 items-center gap-0.5 rounded-lg border border-slate-200 bg-white p-0.5 text-slate-500 shadow-none'
+    : isDarkMode
+      ? 'absolute -top-2.5 right-2 inline-flex items-center gap-0.5 rounded-lg border border-slate-600/90 bg-slate-900 p-0.5 text-slate-300 opacity-0 shadow-none transition-opacity duration-150 group-hover:opacity-100 focus-within:opacity-100'
+      : 'absolute -top-2.5 right-2 inline-flex items-center gap-0.5 rounded-lg border border-slate-200 bg-white p-0.5 text-slate-500 opacity-0 shadow-none transition-opacity duration-150 group-hover:opacity-100 focus-within:opacity-100';
   const messageActionButtonClassName = isDarkMode
     ? 'inline-flex h-7 w-7 items-center justify-center rounded-md transition-colors duration-150 hover:bg-slate-800 hover:text-white focus-visible:bg-slate-800 focus-visible:text-white focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50'
     : 'inline-flex h-7 w-7 items-center justify-center rounded-md transition-colors duration-150 hover:bg-slate-100 hover:text-slate-900 focus-visible:bg-slate-100 focus-visible:text-slate-900 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50';
+  const hasMessageActions = !isEditing && (canCopyMessage || message.sender === 'user' || handleScheduleMessage);
+  const messageActionButtons = (
+    <>
+      {canCopyMessage ? (
+        <button
+          type="button"
+          onClick={() => handleCopyMessageText(message)}
+          title={copyTitle}
+          aria-label={isCopiedMessage ? 'Copied to clipboard' : 'Copy message text'}
+          className={messageActionButtonClassName}
+        >
+          {isCopiedMessage ? (
+            <Check size={14} className={isDarkMode ? 'text-emerald-400' : 'text-emerald-600'} />
+          ) : (
+            <Copy size={14} />
+          )}
+        </button>
+      ) : null}
+      {handleScheduleMessage ? (
+        <button
+          type="button"
+          onClick={() => handleScheduleMessage(message)}
+          disabled={isStreaming}
+          title="Schedule this"
+          aria-label="Schedule this"
+          className={messageActionButtonClassName}
+        >
+          <CalendarClock size={14} />
+        </button>
+      ) : null}
+      {message.sender === 'user' ? (
+        <>
+          <button
+            type="button"
+            onClick={startInlineEdit}
+            disabled={isStreaming}
+            title="Edit and retry"
+            aria-label="Edit message and retry"
+            className={messageActionButtonClassName}
+          >
+            <FilePenLine size={14} />
+          </button>
+          <button
+            type="button"
+            onClick={() => handleRerunMessage(message.id)}
+            disabled={isStreaming}
+            title="Retry this message"
+            aria-label="Retry this message"
+            className={messageActionButtonClassName}
+          >
+            <RotateCcw size={14} />
+          </button>
+        </>
+      ) : null}
+    </>
+  );
 
   useEffect(() => {
-    if (!inlineStatus) {
+    if (!isLiveAgentStatus) {
       return;
     }
     const interval = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(interval);
-  }, [inlineStatus]);
+  }, [isLiveAgentStatus]);
 
   return (
     <div className={`group flex items-start gap-3 motion-safe:animate-[chat-pane-message-in_220ms_ease-out] ${isAgentMessage ? '' : 'justify-end'}`}>
@@ -1879,13 +1934,20 @@ export default function ChatMessageBubble({
               <div className="flex min-w-0 flex-wrap items-center gap-2">
                 <span className={agentPersonaClassName}>{personaDisplayName}</span>
               </div>
-              {timestampLabel ? (
-                <span className={`text-[10px] font-medium normal-case tracking-normal ${
-                  isDarkMode ? 'text-slate-500' : 'text-slate-400'
-                }`}>
-                  {timestampLabel}
-                </span>
-              ) : null}
+              <div className="flex shrink-0 items-center gap-2">
+                {timestampLabel ? (
+                  <span className={`text-[10px] font-medium normal-case tracking-normal ${
+                    isDarkMode ? 'text-slate-500' : 'text-slate-400'
+                  }`}>
+                    {timestampLabel}
+                  </span>
+                ) : null}
+                {hasMessageActions ? (
+                  <div className={messageActionBarClassName}>
+                    {messageActionButtons}
+                  </div>
+                ) : null}
+              </div>
             </div>
             {shouldShowThoughtRow ? (
               <div>
@@ -1895,13 +1957,37 @@ export default function ChatMessageBubble({
                   className={`${thoughtRowClassName} ${canExpandThought ? '' : 'cursor-default hover:text-inherit'}`}
                   aria-expanded={canExpandThought ? isThinkingExpanded : undefined}
                 >
-                  <span>
-                    {`Thought for ${compactThoughtElapsed || '0s'}`}
+                  <span className="relative flex h-2 w-2 shrink-0" aria-hidden="true">
+                    {liveStatus?.status === 'running' ? (
+                      <span className={`absolute inline-flex h-full w-full animate-ping rounded-full ${progressDotClassName} opacity-70`} />
+                    ) : null}
+                    <span className={`relative inline-flex h-2 w-2 rounded-full ${progressDotClassName}`} />
                   </span>
+                  <span className="min-w-0 flex-1">
+                    <span className={`block truncate text-sm font-semibold leading-snug ${
+                      isDarkMode ? 'text-slate-200' : 'text-slate-700'
+                    }`}>
+                      {progressTimingLabel}
+                    </span>
+                    {progressSecondaryText ? (
+                      <span className={`mt-0.5 block truncate text-xs font-medium leading-snug ${
+                        isDarkMode ? 'text-slate-500' : 'text-slate-500'
+                      }`}>
+                        {progressSecondaryText}
+                      </span>
+                    ) : null}
+                  </span>
+                  {toolDigest.statsLabel && !liveStatus ? (
+                    <span className={`hidden shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold md:inline-flex ${
+                      isDarkMode ? 'bg-slate-900 text-slate-400' : 'bg-slate-100 text-slate-500'
+                    }`}>
+                      {toolDigest.statsLabel}
+                    </span>
+                  ) : null}
                   {canExpandThought ? (
                     <ChevronRight
                       size={15}
-                      className={`transition-transform duration-150 ${isThinkingExpanded ? 'rotate-90' : ''}`}
+                      className={`shrink-0 transition-transform duration-150 ${isThinkingExpanded ? 'rotate-90' : ''}`}
                       aria-hidden="true"
                     />
                   ) : null}
@@ -1911,7 +1997,7 @@ export default function ChatMessageBubble({
                     {progressEvents.length > 0 ? (
                       <div className="space-y-3">
                         <div className={`text-[10px] font-bold uppercase tracking-widest ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>
-                          Process Execution Flow
+                          Progress
                         </div>
                         <ul className="relative ml-1.5 space-y-4 border-l border-slate-200 pl-4 dark:border-slate-800/80">
                           {effectiveProgressEvents.map((event, index) => {
@@ -2008,6 +2094,42 @@ export default function ChatMessageBubble({
                     ) : (
                       <p className="leading-relaxed">{toolDigest.currentLabel || DEFAULT_THINKING_PLACEHOLDER}</p>
                     )}
+                    {hasProgressSummary ? (
+                      <div className={`mt-3 rounded-md border px-3 py-2 ${
+                        isDarkMode ? 'border-slate-800 bg-slate-950/45' : 'border-slate-200 bg-white/70'
+                      }`}>
+                        <div className={`mb-2 text-[10px] font-bold uppercase tracking-widest ${
+                          isDarkMode ? 'text-slate-500' : 'text-slate-400'
+                        }`}>
+                          What changed
+                        </div>
+                        {toolDigest.statsLabel ? (
+                          <p className={`text-[11px] font-medium ${
+                            isDarkMode ? 'text-slate-400' : 'text-slate-500'
+                          }`}>
+                            {toolDigest.statsLabel}
+                          </p>
+                        ) : null}
+                        {toolDigest.reviewedFiles.length ? (
+                          <p className="mt-2 leading-relaxed">
+                            <span className="font-semibold">Reviewed: </span>
+                            {toolDigest.reviewedFiles.join(', ')}
+                          </p>
+                        ) : null}
+                        {toolDigest.updatedFileBasenames.length ? (
+                          <p className="mt-2 leading-relaxed">
+                            <span className="font-semibold">Updated: </span>
+                            {toolDigest.updatedFileBasenames.join(', ')}
+                          </p>
+                        ) : null}
+                        {toolDigest.updatesInProgress.length ? (
+                          <p className="mt-2 leading-relaxed">
+                            <span className="font-semibold">In progress: </span>
+                            {toolDigest.updatesInProgress.join(', ')}
+                          </p>
+                        ) : null}
+                      </div>
+                    ) : null}
                     {toolDigest.errorCount ? (
                       <p className={`mt-2 font-semibold ${isDarkMode ? 'text-rose-300' : 'text-rose-700'}`}>
                         {`${toolDigest.errorCount} tool issue${toolDigest.errorCount === 1 ? '' : 's'} detected.`}
@@ -2017,72 +2139,25 @@ export default function ChatMessageBubble({
                 ) : null}
               </div>
             ) : null}
-            {inlineStatus ? (
-              <div className={`mt-3 rounded-xl border p-3.5 backdrop-blur-md shadow-sm transition-all duration-300 ${
-                isDarkMode 
-                  ? 'border-slate-800/80 bg-slate-900/50 text-slate-100' 
-                  : 'border-slate-200/80 bg-slate-50/80 text-slate-900'
-              }`}>
-                <div className="flex items-center gap-3">
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <span className="relative flex h-2 w-2">
-                      {inlineStatus.status === 'running' ? (
-                        <>
-                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-sky-400 opacity-75"></span>
-                          <span className="relative inline-flex rounded-full h-2 w-2 bg-sky-500"></span>
-                        </>
-                      ) : (
-                        <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
-                      )}
-                    </span>
-                    <div className="min-w-0">
-                      <p className={`text-sm font-semibold leading-snug tracking-tight ${
-                        isDarkMode ? 'text-slate-100' : 'text-slate-900'
-                      }`}>
-                        {inlineStatus.status === 'awaiting_approval' 
-                          ? 'Waiting for approval' 
-                          : (activeProgress?.label || latestProgress?.label || inlineStatus.detail)}
-                      </p>
-                      {activeProgress?.detail ? (
-                        <p className={`mt-0.5 text-xs ${
-                          isDarkMode ? 'text-slate-400' : 'text-slate-500'
-                        }`}>
-                          {activeProgress.detail}
-                        </p>
-                      ) : null}
-                    </div>
-                  </div>
-                </div>
-
-                {activeProgress?.stepIndex && activeProgress?.stepCount ? (
-                  <div className="mt-3">
-                    <div className={`h-1.5 w-full overflow-hidden rounded-full ${
-                      isDarkMode ? 'bg-slate-800' : 'bg-slate-200'
-                    }`}>
-                      <div
-                        className="h-full rounded-full bg-gradient-to-r from-sky-500 to-indigo-500 transition-all duration-500 ease-out"
-                        style={{
-                          width: `${Math.min(100, Math.max(0, Math.round((activeProgress.stepIndex / activeProgress.stepCount) * 100)))}%`,
-                        }}
-                      />
-                    </div>
-                    <p className={`mt-1.5 text-[11px] font-medium leading-none ${
-                      isDarkMode ? 'text-slate-500' : 'text-slate-400'
-                    }`}>
-                      Step {activeProgress.stepIndex} of {activeProgress.stepCount}
-                    </p>
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
-
             {liveAgentPreviewText ? (
-              <div className="agent-markdown mt-3 text-sm">
+              <div
+                className="agent-markdown mt-3 text-sm"
+                aria-live={isStreamingAgentText ? 'polite' : undefined}
+                aria-busy={isStreamingAgentText || undefined}
+              >
                 <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
                   {liveAgentPreviewText}
                 </ReactMarkdown>
+                {isStreamingAgentText ? (
+                  <span
+                    aria-hidden="true"
+                    className={`ml-0.5 inline-block h-4 w-1 translate-y-0.5 animate-pulse rounded-full ${
+                      isDarkMode ? 'bg-slate-300' : 'bg-slate-600'
+                    }`}
+                  />
+                ) : null}
               </div>
-            ) : shouldShowFallbackStatus && !inlineStatus ? (
+            ) : shouldShowFallbackStatus && !liveStatus ? (
               <span className={`mt-3 block text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
                 {displayThinkingText ? 'Finalizing response...' : 'Thinking...'}
               </span>
@@ -2638,47 +2713,9 @@ export default function ChatMessageBubble({
             ) : null}
           </div>
         )}
-        {!isEditing && (canCopyMessage || message.sender === 'user') ? (
+        {hasMessageActions && !isAgentMessage ? (
           <div className={messageActionBarClassName}>
-            {canCopyMessage ? (
-              <button
-                type="button"
-                onClick={() => handleCopyMessageText(message)}
-                title={copyTitle}
-                aria-label={isCopiedMessage ? 'Copied to clipboard' : 'Copy message text'}
-                className={messageActionButtonClassName}
-              >
-                {isCopiedMessage ? (
-                  <Check size={14} className={isDarkMode ? 'text-emerald-400' : 'text-emerald-600'} />
-                ) : (
-                  <Copy size={14} />
-                )}
-              </button>
-            ) : null}
-            {message.sender === 'user' ? (
-              <>
-                <button
-                  type="button"
-                  onClick={startInlineEdit}
-                  disabled={isStreaming}
-                  title="Edit and retry"
-                  aria-label="Edit message and retry"
-                  className={messageActionButtonClassName}
-                >
-                  <FilePenLine size={14} />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleRerunMessage(message.id)}
-                  disabled={isStreaming}
-                  title="Retry this message"
-                  aria-label="Retry this message"
-                  className={messageActionButtonClassName}
-                >
-                  <RotateCcw size={14} />
-                </button>
-              </>
-            ) : null}
+            {messageActionButtons}
           </div>
         ) : null}
       </div>

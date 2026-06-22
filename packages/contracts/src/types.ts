@@ -270,6 +270,81 @@ export interface ConversationMessage {
   metadata?: ConversationMessageMetadata | null;
 }
 
+export type WorkspaceScheduleStatus = 'active' | 'paused' | 'error';
+export type WorkspaceScheduleCadence = 'hourly' | 'daily' | 'weekly' | 'monthly' | 'custom';
+export type WorkspaceScheduleOutputMode = 'append_to_conversation' | 'new_conversation_per_run';
+export type WorkspaceScheduleNotificationMode = 'none' | 'failure' | 'all';
+export type WorkspaceScheduleRunStatus =
+  | 'queued'
+  | 'running'
+  | 'awaiting_approval'
+  | 'completed'
+  | 'failed'
+  | 'cancelled';
+
+export interface WorkspaceScheduleRun {
+  id: string;
+  scheduleId: string;
+  workspaceId: string;
+  conversationId?: string | null;
+  agentRunId?: string | null;
+  status: WorkspaceScheduleRunStatus;
+  triggeredBy: 'scheduler' | 'manual';
+  error?: string | null;
+  startedAt?: string | null;
+  completedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WorkspaceSchedule {
+  id: string;
+  workspaceId: string;
+  name: string;
+  status: WorkspaceScheduleStatus;
+  cadence: WorkspaceScheduleCadence;
+  cronExpression: string;
+  timezone: string;
+  prompt: string;
+  persona: string;
+  selectedSkills: string[];
+  contextRefs: string[];
+  taggedFiles: string[];
+  fileContextRefs: FileContextRef[];
+  outputMode: WorkspaceScheduleOutputMode;
+  notificationMode: WorkspaceScheduleNotificationMode;
+  sourceConversationId?: string | null;
+  sourceMessageId?: number | null;
+  targetConversationId?: string | null;
+  nextRunAt?: string | null;
+  lastRunAt?: string | null;
+  lastRunStatus?: WorkspaceScheduleRunStatus | null;
+  lastError?: string | null;
+  createdBy?: string | null;
+  runAsUserId?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  recentRuns?: WorkspaceScheduleRun[];
+}
+
+export type WorkspaceScheduleDraft = {
+  name: string;
+  cadence: WorkspaceScheduleCadence;
+  cronExpression: string;
+  timezone: string;
+  prompt: string;
+  persona: string;
+  selectedSkills?: string[];
+  contextRefs?: string[];
+  taggedFiles?: string[];
+  fileContextRefs?: FileContextRef[];
+  outputMode: WorkspaceScheduleOutputMode;
+  notificationMode: WorkspaceScheduleNotificationMode;
+  sourceConversationId?: string | null;
+  sourceMessageId?: number | null;
+  targetConversationId?: string | null;
+};
+
 export interface SkillDefinition {
   id: string;
   name: string;

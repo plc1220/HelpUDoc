@@ -21,6 +21,7 @@ export default function ChatMessageList({
   messages,
   isStreaming,
   personaDisplayName,
+  emptyStateDescription = 'Ask the agent to inspect files, generate content, or run a task.',
   messageBubbleMaxWidth,
   markdownComponents,
   expandedToolMessages,
@@ -45,6 +46,7 @@ export default function ChatMessageList({
   toggleToolActivityVisibility,
   handleCopyMessageText,
   handleRerunMessage,
+  handleScheduleMessage,
   handlePrepareInterruptAction,
   handleInterruptAction,
   workspaceId,
@@ -54,6 +56,7 @@ export default function ChatMessageList({
   messages: ConversationMessage[];
   isStreaming: boolean;
   personaDisplayName: string;
+  emptyStateDescription?: string;
   messageBubbleMaxWidth: string;
   markdownComponents: Components;
   expandedToolMessages: Set<ConversationMessage['id']>;
@@ -87,6 +90,7 @@ export default function ChatMessageList({
   toggleToolActivityVisibility: (messageId: ConversationMessage['id']) => void;
   handleCopyMessageText: (message: ConversationMessage) => void;
   handleRerunMessage: (messageId: ConversationMessage['id'], options?: RerunMessageOptions) => void;
+  handleScheduleMessage?: (message: ConversationMessage) => void;
   handlePrepareInterruptAction: (
     message: ConversationMessage,
     action: RenderableInterruptAction,
@@ -211,6 +215,7 @@ export default function ChatMessageList({
           toggleToolActivityVisibility={toggleToolActivityVisibility}
           handleCopyMessageText={handleCopyMessageText}
           handleRerunMessage={handleRerunMessage}
+          handleScheduleMessage={handleScheduleMessage}
           handlePrepareInterruptAction={handlePrepareInterruptAction}
           handleInterruptAction={handleInterruptAction}
           workspaceId={workspaceId}
@@ -240,6 +245,7 @@ export default function ChatMessageList({
     handleCopyMessageText,
     handleInterruptAction,
     handleRerunMessage,
+    handleScheduleMessage,
     isPlanApprovalInterrupt,
     isStreaming,
     markdownComponents,
@@ -263,7 +269,7 @@ export default function ChatMessageList({
       <div
         ref={listRef}
         onScroll={handleScroll}
-        className="h-full overflow-y-auto px-3 py-3 min-h-0"
+        className={`h-full min-h-0 overflow-y-auto px-3 pt-3 ${showJumpToLatest ? 'pb-20' : 'pb-3'}`}
       >
         <div className="mx-auto w-full max-w-[72rem] space-y-3">
           {messages.length === 0 ? (
@@ -283,7 +289,7 @@ export default function ChatMessageList({
                   <MessageSquareText size={18} />
                 </div>
                 <p className={`text-sm font-semibold ${isDarkMode ? 'text-slate-100' : 'text-slate-900'}`}>No messages yet</p>
-                <p className={`mt-1 text-xs ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Ask the agent to inspect files, generate content, or run a task.</p>
+                <p className={`mt-1 text-xs ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>{emptyStateDescription}</p>
               </div>
             </div>
           ) : (

@@ -1,6 +1,6 @@
 import React from 'react';
-import { Drawer, Box, IconButton, TextField } from '@mui/material';
-import { Add, ChevronLeft, Settings, LightMode, DarkMode, Logout } from '@mui/icons-material';
+import { Drawer, Box, Button, IconButton, TextField } from '@mui/material';
+import { Add, CalendarMonth, ChevronLeft, Settings, LightMode, DarkMode, Logout } from '@mui/icons-material';
 import WorkspaceList from './WorkspaceList';
 import type { Workspace } from '../types';
 import type { PaletteMode } from '@mui/material';
@@ -16,6 +16,8 @@ interface CollapsibleDrawerProps {
   onShareWorkspace?: (workspace: Workspace) => void;
   onSelectWorkspace: (workspace: Workspace) => void;
   onCreateWorkspace: () => void | Promise<void>;
+  onOpenSchedules?: () => void;
+  scheduleCount?: number;
   onOpenSettings: () => void;
   colorMode: PaletteMode;
   onToggleColorMode: () => void;
@@ -35,6 +37,8 @@ const CollapsibleDrawer: React.FC<CollapsibleDrawerProps> = ({
   onShareWorkspace,
   onSelectWorkspace,
   onCreateWorkspace,
+  onOpenSchedules,
+  scheduleCount = 0,
   onOpenSettings,
   colorMode,
   onToggleColorMode,
@@ -108,6 +112,24 @@ const CollapsibleDrawer: React.FC<CollapsibleDrawerProps> = ({
               },
             }}
           />
+          {onOpenSchedules ? (
+            <Button
+              type="button"
+              onClick={onOpenSchedules}
+              startIcon={<CalendarMonth fontSize="small" />}
+              variant="outlined"
+              size="small"
+              disabled={!selectedWorkspace}
+              sx={{
+                justifyContent: 'flex-start',
+                borderRadius: 2,
+                textTransform: 'none',
+                fontWeight: 700,
+              }}
+            >
+              Schedules{scheduleCount ? ` (${scheduleCount})` : ''}
+            </Button>
+          ) : null}
         </Box>
 
         <Box

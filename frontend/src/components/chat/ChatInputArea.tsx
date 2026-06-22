@@ -27,6 +27,7 @@ export default function ChatInputArea({
   colorMode,
   chatMessage,
   chatAttachments,
+  placeholder = 'Interact with the agent... (Type / for commands, skills, and MCP servers)',
   chatInputRef,
   attachmentInputRef,
   isStreaming,
@@ -58,6 +59,7 @@ export default function ChatInputArea({
   colorMode: 'light' | 'dark';
   chatMessage: string;
   chatAttachments: ChatComposerAttachment[];
+  placeholder?: string;
   chatInputRef: RefObject<HTMLTextAreaElement | null>;
   attachmentInputRef: RefObject<HTMLInputElement | null>;
   isStreaming: boolean;
@@ -185,7 +187,7 @@ export default function ChatInputArea({
           </div>
         )}
         <textarea
-          placeholder="Interact with the agent... (Type / for commands, skills, and MCP servers)"
+          placeholder={placeholder}
           value={chatMessage}
           ref={chatInputRef}
           onChange={onChatInputChange}

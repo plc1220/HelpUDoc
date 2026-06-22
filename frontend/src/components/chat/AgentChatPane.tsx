@@ -103,6 +103,8 @@ export default function AgentChatPane({
   onModeChange,
   onToggleHistory,
   onNewChat,
+  onScheduleChat,
+  onScheduleMessage,
   onToggleFullScreen,
   onCloseHistory,
   onSelectConversation,
@@ -192,6 +194,8 @@ export default function AgentChatPane({
   onModeChange: (event: ChangeEvent<HTMLSelectElement>) => void;
   onToggleHistory: () => void;
   onNewChat: () => void;
+  onScheduleChat?: () => void;
+  onScheduleMessage?: (message: ConversationMessage) => void;
   onToggleFullScreen: () => void;
   onCloseHistory: () => void;
   onSelectConversation: (conversationId: string) => void;
@@ -249,6 +253,7 @@ export default function AgentChatPane({
         onModeChange={onModeChange}
         onToggleHistory={onToggleHistory}
         onNewChat={onNewChat}
+        onScheduleChat={onScheduleChat}
         onToggleFullScreen={onToggleFullScreen}
       />
       <div
@@ -297,6 +302,7 @@ export default function AgentChatPane({
           toggleToolActivityVisibility={onToggleToolActivityVisibility}
           handleCopyMessageText={onCopyMessageText}
           handleRerunMessage={onRerunMessage}
+          handleScheduleMessage={onScheduleMessage}
           handlePrepareInterruptAction={onPrepareInterruptAction}
           handleInterruptAction={onInterruptAction}
           workspaceId={workspaceId}
