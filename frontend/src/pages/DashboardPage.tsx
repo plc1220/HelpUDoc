@@ -1,8 +1,22 @@
-import { useEffect, useState, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Users2, Hammer, MessageCircle, Activity, Sparkles, ArrowRight, ShieldCheck, BookOpen, ExternalLink, Palette, Check } from 'lucide-react';
+import {
+  Activity,
+  ArrowRight,
+  BookOpen,
+  Check,
+  ExternalLink,
+  Hammer,
+  MessageCircle,
+  Palette,
+  RefreshCw,
+  ShieldCheck,
+  Sparkles,
+  Users2,
+} from 'lucide-react';
 import SettingsShell from '../components/settings/SettingsShell';
 import {
+  SettingsEmptyState,
   SettingsMetricCard,
   SettingsMetricsGrid,
   SettingsSectionHeader,
@@ -33,46 +47,60 @@ const DashboardPage = () => {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
+  const loadOverview = useCallback(async (isCancelled?: () => boolean) => {
+    setLoading(true);
+    setLoadError(null);
+
+    try {
+      const overview = await fetchWorkspaceOverview();
+      if (!isCancelled?.()) {
+        setData(overview);
+      }
+    } catch (e) {
+      if (!isCancelled?.()) {
+        setData(null);
+        setLoadError(e instanceof Error ? e.message : 'Failed to load dashboard');
+      }
+    } finally {
+      if (!isCancelled?.()) {
+        setLoading(false);
+      }
+    }
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
-    (async () => {
-      setLoading(true);
-      setLoadError(null);
-      try {
-        const overview = await fetchWorkspaceOverview();
-        if (!cancelled) {
-          setData(overview);
-        }
-      } catch (e) {
-        if (!cancelled) {
-          setLoadError(e instanceof Error ? e.message : 'Failed to load dashboard');
-        }
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
-      }
-    })();
+    void loadOverview(() => cancelled);
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [loadOverview]);
+
+  const retryLoad = useCallback(() => {
+    void loadOverview();
+  }, [loadOverview]);
 
   const stats = useMemo(() => {
     if (!data) {
+      const unavailable = Boolean(loadError) && !loading;
+      const value = unavailable ? '—' : '…';
+      const hint = unavailable ? 'Unavailable. Retry to refresh.' : 'Loading…';
+
       return [
-        { label: 'Total skills', value: '…', hint: 'Skill registry size', icon: Users2, pulse: true },
-        { label: 'Users with messages (24h)', value: '…', hint: 'Distinct chat authors', icon: MessageCircle, pulse: true },
-        { label: 'Langfuse observations (7d)', value: '…', hint: 'Model and tool steps', icon: Hammer, pulse: true },
+        { label: 'Total skills', value, hint, icon: Users2, pulse: loading },
+        { label: 'Users with messages (24h)', value, hint, icon: MessageCircle, pulse: loading },
+        { label: 'Langfuse observations (7d)', value, hint, icon: Hammer, pulse: loading },
       ];
     }
+
     const { skills, users, langfuse } = data;
     const thirdHint = langfuse.configured
-      ? (langfuse.available ? 'Rolling 7 days · from Langfuse' : 'Could not reach Langfuse API')
+      ? (langfuse.available ? 'Rolling 7 days from Langfuse' : 'Could not reach Langfuse API')
       : 'Set LANGFUSE_* on the server to enable';
     const thirdValue = !langfuse.configured
       ? '—'
       : (!langfuse.available && langfuse.observations7d === 0 ? '—' : String(langfuse.observations7d));
+
     return [
       {
         label: 'Total skills',
@@ -96,7 +124,7 @@ const DashboardPage = () => {
         pulse: false,
       },
     ];
-  }, [data]);
+  }, [data, loadError, loading]);
 
   const activities = data?.activity.items || [];
   const focusAreas = data?.focus || [];
@@ -105,64 +133,64 @@ const DashboardPage = () => {
     <SettingsShell
       eyebrow="Overview"
       title="Workspace Dashboard"
-      description="Shared operational view for registry, people, knowledge, and LLM observability (Langfuse when configured)."
+      description="Shared operational view for registry, people, knowledge, and LLM observability."
     >
       <div className="space-y-6">
         {loadError ? (
-          <div className="rounded-2xl border border-amber-200 bg-amber-50/90 px-4 py-3 text-sm text-amber-950">
-            {loadError}
+          <div className="flex flex-col gap-3 rounded-2xl border border-amber-200 bg-amber-50/90 px-4 py-3 text-sm text-amber-950 sm:flex-row sm:items-center sm:justify-between">
+            <span>Dashboard data could not be loaded. {loadError}</span>
+            <button
+              type="button"
+              onClick={retryLoad}
+              disabled={loading}
+              className="settings-portal-button-secondary inline-flex items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition disabled:opacity-60"
+            >
+              <RefreshCw size={15} className={loading ? 'animate-spin' : undefined} />
+              Retry
+            </button>
           </div>
         ) : null}
 
-        <div className="grid gap-6 xl:grid-cols-[1.45fr_0.95fr]">
-          <SettingsSurface className="space-y-6">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="settings-portal-chip inline-flex rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em]">
-                Live workspace
-              </span>
-              <span className="inline-flex rounded-full border border-slate-200 bg-slate-50/80 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.16em] text-slate-500">
-                Operations focus
-              </span>
-            </div>
-            <SettingsSectionHeader
-              eyebrow="Snapshot"
-              title="Key workspace signals"
-              description="A compact read on adoption, chat activity, and Langfuse-backed run volume."
-            />
-            <SettingsMetricsGrid className="md:grid-cols-3">
-              {stats.map(({ label, value, hint, icon: Icon, pulse }) => (
-                <div key={label} className={pulse ? 'animate-pulse' : undefined}>
-                  <SettingsMetricCard label={label} value={value} hint={hint} icon={Icon} />
-                </div>
-              ))}
-            </SettingsMetricsGrid>
-            {data?.langfuse.configured && data.langfuse.error ? (
-              <p className="text-xs text-slate-500">
-                Langfuse: {data.langfuse.error}
-              </p>
-            ) : null}
-          </SettingsSurface>
+        <SettingsSurface className="space-y-6">
+          <SettingsSectionHeader
+            eyebrow="Snapshot"
+            title="Key workspace signals"
+            description="Adoption, chat activity, and Langfuse-backed run volume at a glance."
+          />
 
-          <SettingsSurface className="space-y-5">
+          <SettingsMetricsGrid className="md:grid-cols-3">
+            {stats.map(({ label, value, hint, icon: Icon, pulse }) => (
+              <div key={label} className={pulse ? 'animate-pulse' : undefined}>
+                <SettingsMetricCard label={label} value={value} hint={hint} icon={Icon} />
+              </div>
+            ))}
+          </SettingsMetricsGrid>
+
+          {data?.langfuse.configured && data.langfuse.error ? (
+            <p className="text-xs text-slate-500">Langfuse: {data.langfuse.error}</p>
+          ) : null}
+
+          <div className="border-t border-slate-200 pt-5">
             <SettingsSectionHeader
               eyebrow="Admin focus"
               title="What needs attention"
-              description="Use the admin portal to tighten setup, access, and content coverage."
+              description="Recommended setup, access, and content coverage actions."
             />
-            <div className="space-y-3">
+
+            <div className="mt-4 grid gap-3 lg:grid-cols-3">
               {loading && !data ? (
                 <p className="text-sm text-slate-500">Loading recommendations…</p>
               ) : null}
               {!loading && focusAreas.length === 0 ? (
-                <p className="text-sm text-slate-500">No automated recommendations right now.</p>
+                <p className="text-sm text-slate-500 lg:col-span-3">No automated recommendations right now.</p>
               ) : null}
               {focusAreas.map(({ title, description, to, action }, i) => {
                 const Icon = FOCUS_ICONS[i % FOCUS_ICONS.length];
                 return (
-                  <div key={title} className="settings-portal-card rounded-[22px] p-4">
-                    <div className="flex items-start gap-4">
-                      <span className="settings-portal-icon-muted inline-flex h-11 w-11 items-center justify-center rounded-2xl ring-1 ring-slate-200">
-                        <Icon size={18} />
+                  <div key={title} className="settings-portal-card rounded-2xl p-4">
+                    <div className="flex items-start gap-3">
+                      <span className="settings-portal-icon-muted inline-flex h-10 w-10 items-center justify-center rounded-xl ring-1 ring-slate-200">
+                        <Icon size={17} />
                       </span>
                       <div className="min-w-0 flex-1">
                         <p className="text-sm font-semibold text-slate-900">{title}</p>
@@ -180,125 +208,6 @@ const DashboardPage = () => {
                 );
               })}
             </div>
-          </SettingsSurface>
-        </div>
-
-        {/* Theme Selection */}
-        <SettingsSurface className="space-y-6">
-          <SettingsSectionHeader
-            eyebrow="Aesthetics"
-            title="Workspace Theme"
-            description="Personalize your workflow and dashboard layout. Switch between three carefully crafted visual designs."
-          />
-          <div className="grid gap-6 md:grid-cols-3">
-            {/* Standard Theme Card */}
-            <button
-              onClick={() => setUiTheme('standard')}
-              className={`group relative flex flex-col items-start rounded-2xl p-5 text-left border-2 transition-all duration-300 ${
-                uiTheme === 'standard'
-                  ? 'border-blue-600 dark:border-blue-500 bg-blue-50/20 dark:bg-blue-950/20 shadow-lg shadow-blue-500/5'
-                  : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-slate-300 dark:hover:border-slate-700 hover:shadow-md'
-              }`}
-            >
-              <div className="flex w-full items-center justify-between">
-                <span className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400">
-                  <Palette size={18} />
-                </span>
-                {uiTheme === 'standard' && (
-                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-blue-600 text-white">
-                    <Check size={12} strokeWidth={3} />
-                  </span>
-                )}
-              </div>
-              <h3 className="mt-4 text-base font-semibold text-slate-900 dark:text-slate-100">Standard</h3>
-              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-                The classic corporate aesthetic. Soft shadows, balanced contours, sleek sapphire accents, and fluid layouts.
-              </p>
-
-              <div className="mt-5 flex items-center gap-3 w-full border-t border-slate-100 dark:border-slate-800 pt-4">
-                <div className="flex gap-1.5">
-                  <span className="h-4 w-4 rounded-full bg-[#2563eb]" />
-                  <span className="h-4 w-4 rounded-full bg-[#f8fafc] border border-slate-200 dark:border-slate-700" />
-                  <span className="h-4 w-4 rounded-full bg-[#0f172a] dark:bg-slate-950" />
-                </div>
-                <div className="ml-auto flex items-center gap-1 bg-slate-50 dark:bg-slate-950 px-2.5 py-1 rounded-lg border border-slate-100 dark:border-slate-800">
-                  <span className="h-2 w-2 rounded-full bg-blue-600" />
-                  <span className="text-[10px] font-medium text-slate-500 dark:text-slate-400">Default MUI</span>
-                </div>
-              </div>
-            </button>
-
-            {/* Minimalism Theme Card */}
-            <button
-              onClick={() => setUiTheme('minimalism')}
-              className={`group relative flex flex-col items-start rounded-xl p-5 text-left border transition-all duration-300 ${
-                uiTheme === 'minimalism'
-                  ? 'border-neutral-900 dark:border-neutral-200 bg-neutral-100/40 dark:bg-neutral-900/20'
-                  : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-neutral-400 dark:hover:border-neutral-500'
-              }`}
-            >
-              <div className="flex w-full items-center justify-between">
-                <span className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-neutral-100 dark:bg-neutral-800 text-neutral-900 dark:text-neutral-100">
-                  <Palette size={18} />
-                </span>
-                {uiTheme === 'minimalism' && (
-                  <span className="flex h-5 w-5 items-center justify-center rounded-md bg-neutral-900 dark:bg-neutral-100 text-white dark:text-black">
-                    <Check size={12} strokeWidth={3} />
-                  </span>
-                )}
-              </div>
-              <h3 className="mt-4 text-base font-light tracking-tight text-neutral-900 dark:text-neutral-100 lowercase">minimalism</h3>
-              <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed lowercase">
-                quiet monochrome surfaces, compact controls, generous whitespace, and restrained geometric corners.
-              </p>
-
-              <div className="mt-5 flex items-center gap-3 w-full border-t border-neutral-100 dark:border-neutral-800 pt-4">
-                <div className="flex gap-1">
-                  <span className="h-3 w-6 rounded-sm bg-[#171717] dark:bg-white" />
-                  <span className="h-3 w-6 rounded-sm bg-[#f5f5f5] dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700" />
-                </div>
-                <div className="ml-auto flex items-center gap-1 bg-neutral-50 dark:bg-neutral-950 px-3 py-1 rounded-md border border-neutral-100 dark:border-neutral-800">
-                  <span className="text-[9px] font-medium tracking-wider text-neutral-500 dark:text-neutral-400 lowercase">quiet</span>
-                </div>
-              </div>
-            </button>
-
-            {/* Bauhaus Theme Card */}
-            <button
-              onClick={() => setUiTheme('bauhaus')}
-              className={`group relative flex flex-col items-start p-5 text-left border-[2.5px] transition-all duration-300 ${
-                uiTheme === 'bauhaus'
-                  ? 'border-black dark:border-white bg-[#f3efe0] dark:bg-neutral-900 shadow-[4px_4px_0px_currentColor]'
-                  : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-black dark:hover:border-white hover:shadow-[3px_3px_0px_currentColor]'
-              }`}
-              style={{ borderRadius: '0px' }}
-            >
-              <div className="flex w-full items-center justify-between">
-                <span className="inline-flex h-9 w-9 items-center justify-center border-2 border-black dark:border-white bg-[#fcbf49] text-black" style={{ borderRadius: '0px' }}>
-                  <Palette size={18} />
-                </span>
-                {uiTheme === 'bauhaus' && (
-                  <span className="flex h-5 w-5 items-center justify-center border-2 border-black dark:border-white bg-[#d62828] text-white" style={{ borderRadius: '0px' }}>
-                    <Check size={10} strokeWidth={4} />
-                  </span>
-                )}
-              </div>
-              <h3 className="mt-4 text-base font-extrabold uppercase tracking-wider text-black dark:text-white">BAUHAUS</h3>
-              <p className="mt-1 text-xs text-black/80 dark:text-white/80 leading-relaxed uppercase font-medium">
-                artistic flat brutalism. sharp geometric corners, heavy gridlines, and bold primary color accents.
-              </p>
-
-              <div className="mt-5 flex items-center gap-2 w-full border-t-2 border-black dark:border-white pt-4">
-                <div className="flex gap-1">
-                  <span className="h-4 w-4 bg-[#d62828] border border-black dark:border-white" style={{ borderRadius: '0px' }} />
-                  <span className="h-4 w-4 bg-[#fcbf49] border border-black dark:border-white" style={{ borderRadius: '0px' }} />
-                  <span className="h-4 w-4 bg-[#003049] border border-black dark:border-white" style={{ borderRadius: '0px' }} />
-                </div>
-                <div className="ml-auto flex items-center border-2 border-black dark:border-white bg-white dark:bg-neutral-950 px-2 py-0.5" style={{ borderRadius: '0px' }}>
-                  <span className="text-[9px] font-black tracking-widest text-black dark:text-white">FLAT</span>
-                </div>
-              </div>
-            </button>
           </div>
         </SettingsSurface>
 
@@ -306,35 +215,37 @@ const DashboardPage = () => {
           <SettingsSectionHeader
             eyebrow="Activity"
             title="Recent activity"
-            description="In-app messages and the latest Langfuse traces when the API is reachable."
-            actions={(
-              <div className="flex flex-wrap items-center gap-2">
-                {data?.langfuse.publicUrl ? (
-                  <a
-                    href={data.langfuse.publicUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="settings-portal-button-secondary inline-flex items-center gap-2 rounded-xl px-3.5 py-2.5 text-sm font-medium transition"
-                  >
-                    Open Langfuse
-                    <ExternalLink size={16} />
-                  </a>
-                ) : null}
-                <Link
-                  to="/settings/agents"
-                  className="settings-portal-button-secondary inline-flex items-center gap-2 rounded-xl px-3.5 py-2.5 text-sm font-medium transition"
-                >
-                  Manage skills
-                </Link>
-              </div>
-            )}
+            description="In-app messages and Langfuse traces when the API is reachable."
+            actions={data?.langfuse.publicUrl ? (
+              <a
+                href={data.langfuse.publicUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="settings-portal-button-secondary inline-flex items-center gap-2 rounded-xl px-3.5 py-2.5 text-sm font-medium transition"
+              >
+                Open Langfuse
+                <ExternalLink size={16} />
+              </a>
+            ) : null}
           />
           <div className="mt-6 space-y-3">
             {loading && activities.length === 0 ? (
               <p className="text-sm text-slate-500">Loading recent activity…</p>
             ) : null}
             {!loading && activities.length === 0 ? (
-              <p className="text-sm text-slate-500">No recent activity yet. Start a chat or run the agent to populate this list.</p>
+              <SettingsEmptyState
+                title="No recent activity yet"
+                description="Start a chat or run the agent to populate this list."
+                icon={Activity}
+                action={(
+                  <Link
+                    to="/settings/agents"
+                    className="settings-portal-button-secondary inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium transition"
+                  >
+                    Manage skills
+                  </Link>
+                )}
+              />
             ) : null}
             {activities.map((a) => {
               const rel = formatRelativeTime(a.at);
@@ -355,6 +266,121 @@ const DashboardPage = () => {
                 </div>
               );
             })}
+          </div>
+        </SettingsSurface>
+
+        <SettingsSurface className="space-y-6">
+          <SettingsSectionHeader
+            eyebrow="Appearance"
+            title="Workspace theme"
+            description="Choose the visual style for this workspace."
+          />
+
+          <div className="grid gap-4 md:grid-cols-3">
+            <button
+              type="button"
+              onClick={() => setUiTheme('standard')}
+              className={`group relative flex flex-col items-start rounded-2xl border-2 p-5 text-left transition-all duration-300 ${
+                uiTheme === 'standard'
+                  ? 'border-blue-600 bg-blue-50/20 shadow-lg shadow-blue-500/5 dark:border-blue-500 dark:bg-blue-950/20'
+                  : 'border-slate-200 bg-white hover:border-slate-300 hover:shadow-md dark:border-slate-800 dark:bg-slate-900 dark:hover:border-slate-700'
+              }`}
+            >
+              <div className="flex w-full items-center justify-between">
+                <span className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400">
+                  <Palette size={18} />
+                </span>
+                {uiTheme === 'standard' ? (
+                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-blue-600 text-white">
+                    <Check size={12} strokeWidth={3} />
+                  </span>
+                ) : null}
+              </div>
+              <h3 className="mt-4 text-base font-semibold text-slate-900 dark:text-slate-100">Standard</h3>
+              <p className="mt-1 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
+                Soft shadows, balanced contours, sapphire accents, and fluid layouts.
+              </p>
+              <div className="mt-5 flex w-full items-center gap-3 border-t border-slate-100 pt-4 dark:border-slate-800">
+                <div className="flex gap-1.5">
+                  <span className="h-4 w-4 rounded-full bg-[#2563eb]" />
+                  <span className="h-4 w-4 rounded-full border border-slate-200 bg-[#f8fafc] dark:border-slate-700" />
+                  <span className="h-4 w-4 rounded-full bg-[#0f172a] dark:bg-slate-950" />
+                </div>
+                <div className="ml-auto flex items-center gap-1 rounded-lg border border-slate-100 bg-slate-50 px-2.5 py-1 dark:border-slate-800 dark:bg-slate-950">
+                  <span className="h-2 w-2 rounded-full bg-blue-600" />
+                  <span className="text-[10px] font-medium text-slate-500 dark:text-slate-400">Default</span>
+                </div>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setUiTheme('minimalism')}
+              className={`group relative flex flex-col items-start rounded-2xl border-2 p-5 text-left transition-all duration-300 ${
+                uiTheme === 'minimalism'
+                  ? 'border-neutral-900 bg-neutral-100/40 dark:border-neutral-200 dark:bg-neutral-900/20'
+                  : 'border-slate-200 bg-white hover:border-neutral-400 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-neutral-500'
+              }`}
+            >
+              <div className="flex w-full items-center justify-between">
+                <span className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-neutral-100 text-neutral-900 dark:bg-neutral-800 dark:text-neutral-100">
+                  <Palette size={18} />
+                </span>
+                {uiTheme === 'minimalism' ? (
+                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-neutral-900 text-white dark:bg-neutral-100 dark:text-black">
+                    <Check size={12} strokeWidth={3} />
+                  </span>
+                ) : null}
+              </div>
+              <h3 className="mt-4 text-base font-semibold text-slate-900 dark:text-slate-100">Minimalism</h3>
+              <p className="mt-1 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
+                Monochrome surfaces, compact controls, generous whitespace, and restrained corners.
+              </p>
+              <div className="mt-5 flex w-full items-center gap-3 border-t border-slate-100 pt-4 dark:border-slate-800">
+                <div className="flex gap-1">
+                  <span className="h-3 w-6 rounded-sm bg-[#171717] dark:bg-white" />
+                  <span className="h-3 w-6 rounded-sm border border-neutral-200 bg-[#f5f5f5] dark:border-neutral-700 dark:bg-neutral-800" />
+                </div>
+                <div className="ml-auto flex items-center gap-1 rounded-lg border border-neutral-100 bg-neutral-50 px-3 py-1 dark:border-neutral-800 dark:bg-neutral-950">
+                  <span className="text-[10px] font-medium text-slate-500 dark:text-slate-400">Quiet</span>
+                </div>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setUiTheme('bauhaus')}
+              className={`group relative flex flex-col items-start rounded-2xl border-2 p-5 text-left transition-all duration-300 ${
+                uiTheme === 'bauhaus'
+                  ? 'border-black bg-[#f3efe0] shadow-[4px_4px_0px_currentColor] dark:border-white dark:bg-neutral-900'
+                  : 'border-slate-200 bg-white hover:border-black hover:shadow-[3px_3px_0px_currentColor] dark:border-slate-800 dark:bg-slate-900 dark:hover:border-white'
+              }`}
+            >
+              <div className="flex w-full items-center justify-between">
+                <span className="inline-flex h-9 w-9 items-center justify-center rounded-xl border-2 border-black bg-[#fcbf49] text-black dark:border-white">
+                  <Palette size={18} />
+                </span>
+                {uiTheme === 'bauhaus' ? (
+                  <span className="flex h-5 w-5 items-center justify-center rounded-full border-2 border-black bg-[#d62828] text-white dark:border-white">
+                    <Check size={10} strokeWidth={4} />
+                  </span>
+                ) : null}
+              </div>
+              <h3 className="mt-4 text-base font-semibold text-slate-900 dark:text-slate-100">Bauhaus</h3>
+              <p className="mt-1 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
+                Flat surfaces, sharp geometry, stronger gridlines, and bold primary color accents.
+              </p>
+              <div className="mt-5 flex w-full items-center gap-2 border-t border-slate-100 pt-4 dark:border-slate-800">
+                <div className="flex gap-1">
+                  <span className="h-4 w-4 border border-black bg-[#d62828] dark:border-white" />
+                  <span className="h-4 w-4 border border-black bg-[#fcbf49] dark:border-white" />
+                  <span className="h-4 w-4 border border-black bg-[#003049] dark:border-white" />
+                </div>
+                <div className="ml-auto flex items-center rounded-lg border border-slate-200 bg-white px-2 py-0.5 dark:border-slate-700 dark:bg-neutral-950">
+                  <span className="text-[10px] font-medium text-slate-500 dark:text-slate-400">Flat</span>
+                </div>
+              </div>
+            </button>
           </div>
         </SettingsSurface>
       </div>
