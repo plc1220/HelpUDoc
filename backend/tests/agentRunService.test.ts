@@ -8,14 +8,20 @@ import {
   buildSyntheticClarificationFollowupPrompt,
   buildFrontendSlidesWorkflowState,
   configureAgentRunServices,
+  extractA2UIGateIdFromPendingInterrupt,
   getRunMeta,
+  inferFrontendSlidesGateIdFromA2UI,
+  isCompletedFrontendSlidesGateInterrupt,
   isRealRunProgressEvent,
   normalizeWorkflowActionEvent,
   resolveStreamCloseDisposition,
   shouldFailRunningRunForStaleActivity,
   shouldFailResumedRunForIdle,
   startAgentRun,
+  terminalEventFromStreamPayload,
+  validateInterrupt,
   resumeAgentRunWithResponse,
+  withFrontendSlidesGateMetadata,
 } from '../src/services/agentRunService';
 
 const makeStreamResponse = (lines: Array<Record<string, unknown>>): Promise<AxiosResponse<IncomingMessage>> =>
@@ -433,6 +439,151 @@ test('buildFrontendSlidesWorkflowState derives next required gate from completed
   assert.equal(state.canComplete, false);
 });
 
+test('completed frontend-slides gate replays are internal no-op interrupts', () => {
+  assert.equal(
+    isCompletedFrontendSlidesGateInterrupt(presentationContextInterrupt, {
+      completedGateIds: ['presentation_context'],
+    }),
+    true,
+  );
+  assert.equal(
+    isCompletedFrontendSlidesGateInterrupt(outlineConfirmationInterrupt, {
+      completedGateIds: ['presentation_context'],
+    }),
+    false,
+  );
+});
+
+test('frontend-slides no-gate A2UI forms are inferred from skill form text', () => {
+  const noGateContextReplay = {
+    type: 'interrupt',
+    kind: 'clarification',
+    title: '1. Presentation Context & Requirements',
+    a2uiRequest: {
+      contract: 'a2ui',
+      component: 'clarification.form',
+      props: {
+        title: '1. Presentation Context & Requirements',
+        questions: [
+          { id: 'purpose', header: 'Purpose', question: 'What is this presentation for?' },
+          { id: 'audience', header: 'Audience', question: 'Who is the audience?' },
+        ],
+      },
+      metadata: {},
+    },
+  };
+  const noGateOutline = {
+    type: 'interrupt',
+    kind: 'clarification',
+    title: 'Outline Confirmation',
+    a2uiRequest: {
+      contract: 'a2ui',
+      component: 'clarification.form',
+      props: {
+        title: 'Outline Confirmation',
+        questions: [
+          { id: 'outline_approval', header: 'Outline', question: 'Do you approve this outline?' },
+        ],
+      },
+      metadata: {},
+    },
+  };
+
+  assert.equal(inferFrontendSlidesGateIdFromA2UI(noGateContextReplay), 'presentation_context');
+  assert.equal(
+    isCompletedFrontendSlidesGateInterrupt(noGateContextReplay, {
+      completedGateIds: ['presentation_context'],
+    }),
+    true,
+  );
+  assert.equal(inferFrontendSlidesGateIdFromA2UI(noGateOutline), 'outline_confirmation');
+  assert.equal(
+    isCompletedFrontendSlidesGateInterrupt(noGateOutline, {
+      completedGateIds: ['presentation_context'],
+    }),
+    false,
+  );
+  assert.equal(
+    extractA2UIGateIdFromPendingInterrupt({
+      kind: 'clarification',
+      title: 'Outline Confirmation',
+      a2uiRequest: {
+        contract: 'a2ui',
+        version: '0.9',
+        surfaceId: 'surface-outline-confirmation',
+        component: 'clarification.form',
+        gateId: 'outline_confirmation',
+        props: { questions: [{ id: 'outline_approval', question: 'Do you approve this outline?' }] },
+        metadata: {},
+      },
+    }),
+    'outline_confirmation',
+  );
+});
+
+test('frontend-slides gate metadata repair fills missing clarification questions', () => {
+  const malformedOutlineInterrupt = {
+    type: 'interrupt',
+    kind: 'clarification',
+    title: 'Outline Confirmation',
+    a2uiRequest: {
+      contract: 'a2ui',
+      version: '0.9',
+      surfaceId: 'surface-outline-confirmation',
+      component: 'clarification.form',
+      gateId: 'outline_confirmation',
+      skill: 'frontend-slides',
+      props: {
+        title: 'Outline Confirmation',
+        outlineMarkdown: '## Slide 1\nStrategic case\n\n## Slide 2\nPartnership strength\n\n## Slide 3\nLong-term value',
+        questions: [],
+      },
+      metadata: {
+        skill: 'frontend-slides',
+        gateId: 'outline_confirmation',
+      },
+    },
+  };
+
+  const repaired = withFrontendSlidesGateMetadata(malformedOutlineInterrupt, 'outline_confirmation');
+  assert.equal(validateInterrupt(repaired, 'frontend-slides'), null);
+  assert.equal(
+    Array.isArray((repaired.uiRequest as any)?.props?.questions) ||
+      Array.isArray((repaired.a2uiRequest as any)?.props?.questions),
+    true,
+  );
+});
+
+test('frontend-slides gate metadata repair fills empty style previews with fallback choices', () => {
+  const emptyStylePreviewInterrupt = {
+    type: 'interrupt',
+    kind: 'clarification',
+    title: 'Choose a Style Preview',
+    a2uiRequest: {
+      contract: 'a2ui',
+      version: '0.9',
+      surfaceId: 'surface-style-preview-selection',
+      component: 'style.previewChooser',
+      gateId: 'style_preview_selection',
+      skill: 'frontend-slides',
+      props: {
+        title: 'Choose a Style Preview',
+        choices: [],
+        previews: [],
+      },
+      metadata: {
+        skill: 'frontend-slides',
+        gateId: 'style_preview_selection',
+      },
+    },
+  };
+
+  const repaired = withFrontendSlidesGateMetadata(emptyStylePreviewInterrupt, 'style_preview_selection');
+  assert.equal(validateInterrupt(repaired, 'frontend-slides'), null);
+  assert.equal(((repaired.a2uiRequest as any)?.props?.choices || []).length > 0, true);
+  assert.equal(((repaired.a2uiRequest as any)?.props?.previews || []).length > 0, true);
+});
+
 test('shouldFailResumedRunForIdle only fails resumed idle runs with no active tool', () => {
   const resumePayload = { response: { message: 'ok' } } as any;
 
@@ -532,6 +683,24 @@ test('resolveStreamCloseDisposition preserves an emitted interrupt ahead of stre
     }),
     { status: 'failed', error: 'Artifact contract validation failed.', preserveInterrupt: false },
   );
+});
+
+test('terminalEventFromStreamPayload ignores recoverable progress tool errors', () => {
+  assert.equal(
+    terminalEventFromStreamPayload({
+      type: 'progress',
+      phase: 'using_tool',
+      status: 'error',
+      label: 'Searching the web hit a timeout',
+      detail: 'The agent will continue without retrying this tool.',
+      toolName: 'google_search',
+    }),
+    undefined,
+  );
+  assert.deepEqual(terminalEventFromStreamPayload({ type: 'done', status: 'failed', error: 'boom' }), {
+    status: 'failed',
+    error: 'boom',
+  });
 });
 
 test('buildSyntheticClarificationFollowupPrompt advances frontend-slides context to outline confirmation', () => {
@@ -789,7 +958,6 @@ test('getRunMeta completes frontend-slides runs that wrote the final deck before
     'outline_confirmation',
     'style_path_selection',
     'mood_or_preset_selection',
-    'style_preview_selection',
   ];
 
   try {
@@ -825,6 +993,7 @@ test('getRunMeta completes frontend-slides runs that wrote the final deck before
     const meta = await getRunMeta(runId);
     assert.equal(meta?.status, 'completed');
     assert.equal(meta?.error || '', '');
+    assert.equal(meta?.pendingInterrupt, undefined);
   } finally {
     await redisClient.del(streamKey);
     await redisClient.del(metaKey);
@@ -942,8 +1111,9 @@ test('getRunMeta recovers missing frontend-slides gates before terminal stream r
     });
 
     const meta = await getRunMeta(runId);
-    assert.equal(meta?.status, 'awaiting_approval');
-    assert.equal(meta?.pendingInterrupt?.displayPayload?.gateId, 'outline_confirmation');
+    assert.equal(meta?.status, 'failed');
+    assert.match(meta?.error || '', /outline_confirmation requires real outline review material/);
+    assert.equal(meta?.pendingInterrupt, undefined);
     assert.deepEqual(meta?.a2uiGateState?.completedGateIds, ['presentation_context']);
   } finally {
     await redisClient.del(streamKey);

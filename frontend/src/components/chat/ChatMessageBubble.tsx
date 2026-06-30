@@ -776,6 +776,7 @@ export default function ChatMessageBubble({
     return (
       stylePreviewChoices.find((choice) => choice.id === activeStylePreviewId)
       || stylePreviewChoices.find((choice) => selectedChoiceIds.includes(choice.id))
+      || stylePreviewChoices.find((choice) => choice.html)
       || stylePreviewChoices.find((choice) => choice.previewUrl)
       || stylePreviewChoices[0]
     );
@@ -823,6 +824,7 @@ export default function ChatMessageBubble({
       }
       return (
         stylePreviewChoices.find((choice) => selectedChoiceIds.includes(choice.id))?.id
+        || stylePreviewChoices.find((choice) => choice.html)?.id
         || stylePreviewChoices.find((choice) => choice.previewUrl)?.id
         || stylePreviewChoices[0]?.id
         || null
@@ -1436,21 +1438,21 @@ export default function ChatMessageBubble({
               ) : null}
             </div>
             <div className="relative aspect-[16/10] min-h-[260px] bg-slate-950 sm:min-h-[360px]">
-              {activeStylePreviewChoice.previewUrl ? (
+              {activeStylePreviewChoice.html ? (
                 <iframe
-                  key={activeStylePreviewChoice.previewUrl}
+                  key={`${activeStylePreviewChoice.id}:inline`}
                   title={`${activeStylePreviewChoice.label} live preview`}
-                  src={activeStylePreviewChoice.previewUrl}
+                  srcDoc={activeStylePreviewChoice.html}
                   loading="lazy"
                   sandbox="allow-scripts"
                   referrerPolicy="no-referrer"
                   className="h-full w-full border-0 bg-white"
                 />
-              ) : activeStylePreviewChoice.html ? (
+              ) : activeStylePreviewChoice.previewUrl ? (
                 <iframe
-                  key={`${activeStylePreviewChoice.id}:inline`}
+                  key={activeStylePreviewChoice.previewUrl}
                   title={`${activeStylePreviewChoice.label} live preview`}
-                  srcDoc={activeStylePreviewChoice.html}
+                  src={activeStylePreviewChoice.previewUrl}
                   loading="lazy"
                   sandbox="allow-scripts"
                   referrerPolicy="no-referrer"
@@ -1507,19 +1509,19 @@ export default function ChatMessageBubble({
                 }`}
               >
                 <div className="relative aspect-[16/10] overflow-hidden bg-slate-950">
-                  {choice.previewUrl ? (
+                  {choice.html ? (
                     <iframe
                       title={`${choice.label} preview`}
-                      src={choice.previewUrl}
+                      srcDoc={choice.html}
                       loading="lazy"
                       sandbox="allow-scripts"
                       referrerPolicy="no-referrer"
                       className="pointer-events-none h-[250%] w-[250%] origin-top-left scale-[0.4] border-0 bg-white"
                     />
-                  ) : choice.html ? (
+                  ) : choice.previewUrl ? (
                     <iframe
                       title={`${choice.label} preview`}
-                      srcDoc={choice.html}
+                      src={choice.previewUrl}
                       loading="lazy"
                       sandbox="allow-scripts"
                       referrerPolicy="no-referrer"

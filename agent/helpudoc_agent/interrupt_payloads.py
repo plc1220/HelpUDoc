@@ -777,6 +777,14 @@ def extract_interrupt_payload_from_tool_text(text: str) -> Dict[str, Any] | None
             return None
         return _normalize_interrupt_payload(interrupt_value)
 
+    interrupt_index = raw.find("Interrupt(value=")
+    if interrupt_index > 0:
+        raw = raw[interrupt_index:].strip()
+        if raw.endswith(",)"):
+            raw = raw[:-2].strip()
+        if raw.endswith(","):
+            raw = raw[:-1].strip()
+
     if not raw.startswith("Interrupt(value="):
         return None
 

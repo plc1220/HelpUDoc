@@ -583,21 +583,21 @@ export const StylePreviewChooser: React.FC<A2UIComponentProps> = ({
             )}
           </div>
           <div className="relative aspect-[16/10] min-h-[280px] bg-slate-950 sm:min-h-[380px]">
-            {activeItem.previewUrl ? (
+            {activeItem.html ? (
               <iframe
-                key={activeItem.previewUrl}
+                key={`${activeItem.id}:inline`}
                 title={`${activeItem.label} live preview`}
-                src={activeItem.previewUrl}
+                srcDoc={activeItem.html}
                 loading="lazy"
                 sandbox="allow-scripts"
                 referrerPolicy="no-referrer"
                 className="h-full w-full border-0 bg-white"
               />
-            ) : activeItem.html ? (
+            ) : activeItem.previewUrl ? (
               <iframe
-                key={`${activeItem.id}:inline`}
+                key={activeItem.previewUrl}
                 title={`${activeItem.label} live preview`}
-                srcDoc={activeItem.html}
+                src={activeItem.previewUrl}
                 loading="lazy"
                 sandbox="allow-scripts"
                 referrerPolicy="no-referrer"
@@ -629,19 +629,19 @@ export const StylePreviewChooser: React.FC<A2UIComponentProps> = ({
               }`}
             >
               <div className="relative aspect-[16/10] overflow-hidden bg-slate-950 border-b border-slate-100">
-                {item.previewUrl ? (
+                {item.html ? (
                   <iframe
                     title={`${item.label} snapshot`}
-                    src={item.previewUrl}
+                    srcDoc={item.html}
                     loading="lazy"
                     sandbox="allow-scripts"
                     referrerPolicy="no-referrer"
                     className="pointer-events-none h-[250%] w-[250%] origin-top-left scale-[0.4] border-0 bg-white"
                   />
-                ) : item.html ? (
+                ) : item.previewUrl ? (
                   <iframe
                     title={`${item.label} snapshot`}
-                    srcDoc={item.html}
+                    src={item.previewUrl}
                     loading="lazy"
                     sandbox="allow-scripts"
                     referrerPolicy="no-referrer"

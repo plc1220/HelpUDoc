@@ -417,6 +417,48 @@ const isTerminalRunStatus = (
   status === 'completed' || status === 'failed' || status === 'cancelled'
 );
 
+const CLARIFICATION_A2UI_COMPONENTS = new Set([
+  'clarification_form',
+  'clarification.form',
+  'style_preview_chooser',
+  'style.previewChooser',
+]);
+
+const isClarificationA2UIRequest = (request?: A2UIRequest | null): boolean => {
+  const component = typeof request?.component === 'string' ? request.component.trim() : '';
+  return CLARIFICATION_A2UI_COMPONENTS.has(component);
+};
+
+const isDeckOutputPath = (path?: string | null): boolean => {
+  const normalized = String(path || '').trim();
+  if (!normalized) {
+    return false;
+  }
+  const baseName = normalized.split(/[\\/]/).pop() || normalized;
+  return /\.html?$/i.test(baseName) && /(?:-deck|deck|slides?|presentation)/i.test(baseName);
+};
+
+const hasDeckOutputEvidence = (events?: ToolEvent[]): boolean => (
+  (events || []).some((event) => (
+    [...(event.outputFiles || []), ...(event.relatedFiles || [])].some((file) => isDeckOutputPath(file.path))
+  ))
+);
+
+const hasCompletedAgentOutputEvidence = (
+  message?: ConversationMessage | null,
+  bufferedText?: string,
+): boolean => {
+  if (hasDeckOutputEvidence(message?.toolEvents)) {
+    return true;
+  }
+  const text = `${message?.text || ''}\n${bufferedText || ''}`.trim();
+  return Boolean(
+    text &&
+    !isSummaryLikeAgentText(text) &&
+    /\b(created|generated|saved|wrote|written|updated)\b[\s\S]{0,120}\b(deck|slides?|presentation|html)\b/i.test(text),
+  );
+};
+
 const trimMilestone = (value?: string): string => {
   const normalized = String(value || '').replace(/\s+/g, ' ').trim();
   if (!normalized) {
@@ -4119,6 +4161,11 @@ export default function WorkspacePage() {
     chunk: AgentStreamChunk,
     runId?: string,
   ) => {
+    const rawChunkType = (chunk as { type?: string }).type;
+    if (rawChunkType === 'a2ui_gate_skipped') {
+      return;
+    }
+
     const markStreamingState = (
       metadata: ConversationMessageMetadata | undefined,
     ): ConversationMessageMetadata => {
@@ -4332,13 +4379,20 @@ export default function WorkspacePage() {
 
     if (chunk.type === 'a2ui') {
       const a2uiRequest = chunk.message as A2UIRequest;
+      const metadataPayload = (
+        a2uiRequest.metadata && typeof a2uiRequest.metadata === 'object'
+          ? a2uiRequest.metadata
+          : undefined
+      ) as Record<string, unknown> | undefined;
+      const interruptKind = isClarificationA2UIRequest(a2uiRequest) ? 'clarification' : 'approval';
       updateMessageMetadataAtIndex(conversationId, agentMessageIndex, (metadata) => ({
         ...metadata,
         ...(runId ? { runId } : {}),
         status: 'awaiting_approval',
         pendingInterrupt: {
           ...(metadata?.pendingInterrupt || {}),
-          kind: 'approval' as const,
+          kind: interruptKind,
+          displayPayload: metadataPayload || metadata?.pendingInterrupt?.displayPayload,
           a2uiRequest,
         },
       }));
@@ -4449,6 +4503,7 @@ export default function WorkspacePage() {
                 responseSpec: chunk.responseSpec,
                 displayPayload: chunk.displayPayload,
                 uiRequest: chunk.uiRequest,
+                a2uiRequest: chunk.a2uiRequest,
               };
             }
             handleStreamChunk(conversationId, agentMessageIndex, chunk, runId);
@@ -4531,16 +4586,32 @@ export default function WorkspacePage() {
         } catch (statusError) {
           console.error('Failed to fetch final run status', statusError);
         }
-        const effectivePendingInterrupt = latestRunMeta ? latestRunMeta.pendingInterrupt : latestInterrupt;
+        let effectivePendingInterrupt = latestRunMeta ? latestRunMeta.pendingInterrupt : latestInterrupt;
+        const agentMessageIndexForFinalStatus = (() => {
+          const resolved = findAgentMessageIndexForRun(conversationId, placeholderId, turnId, runId);
+          return resolved >= 0 ? resolved : initialAgentMessageIndex;
+        })();
+        const finalMessagesSnapshot = getConversationMessagesSnapshot(conversationId);
+        const finalAgentMessage =
+          agentMessageIndexForFinalStatus >= 0 ? finalMessagesSnapshot[agentMessageIndexForFinalStatus] : null;
+        const bufferedFinalText =
+          agentMessageBufferRef.current.get(placeholderId)
+          ?? (finalAgentMessage ? agentMessageBufferRef.current.get(finalAgentMessage.id) : undefined)
+          ?? finalAgentMessage?.text
+          ?? '';
+        const hasCompletionEvidence = hasCompletedAgentOutputEvidence(finalAgentMessage, bufferedFinalText);
+        if (
+          hasCompletionEvidence &&
+          (finalStatus === 'awaiting_approval' || finalStatus === 'cancelled' || finalStatus === 'failed')
+        ) {
+          finalStatus = 'completed';
+          effectivePendingInterrupt = undefined;
+        }
         const shouldApplyPendingInterrupt =
           finalStatus === 'awaiting_approval' && Boolean(effectivePendingInterrupt);
         if (!supersededByNewerStream && shouldApplyPendingInterrupt) {
-            const agentMessageIndex = (() => {
-              const resolved = findAgentMessageIndexForRun(conversationId, placeholderId, turnId, runId);
-              return resolved >= 0 ? resolved : initialAgentMessageIndex;
-            })();
             finalStatus = 'awaiting_approval';
-            updateMessageMetadataAtIndex(conversationId, agentMessageIndex, (metadata) => ({
+            updateMessageMetadataAtIndex(conversationId, agentMessageIndexForFinalStatus, (metadata) => ({
               ...metadata,
               ...(runId ? { runId } : {}),
               status: 'awaiting_approval',
@@ -4644,6 +4715,7 @@ export default function WorkspacePage() {
       handleStreamChunk,
       flushBufferedAgentChunks,
       findAgentMessageIndexForRun,
+      getConversationMessagesSnapshot,
       removeActiveRun,
       removeActiveRunsForTurn,
       selectedWorkspace?.id,
@@ -8360,6 +8432,7 @@ export default function WorkspacePage() {
         loading={schedulesLoading}
         error={schedulesError}
         busyScheduleId={busyScheduleId}
+        leftOffset={isMobileViewport ? 0 : drawerOpen ? drawerWidth : 60}
         onClose={() => setIsSchedulesPanelOpen(false)}
         onRefresh={() => void loadSchedulesForWorkspace(selectedWorkspace?.id || null)}
         onEdit={openScheduleEditor}

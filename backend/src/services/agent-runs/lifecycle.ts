@@ -321,6 +321,26 @@ const isSyntheticClarificationInterrupt = (interrupt?: RunPendingInterrupt): boo
   );
 };
 
+export const extractA2UIGateIdFromPendingInterrupt = (
+  interrupt?: RunPendingInterrupt,
+): string | undefined => {
+  if (!interrupt) {
+    return undefined;
+  }
+  const payload = {
+    type: 'interrupt',
+    kind: interrupt.kind,
+    title: interrupt.title,
+    description: interrupt.description,
+    responseSpec: interrupt.responseSpec,
+    displayPayload: interrupt.displayPayload,
+    display_payload: interrupt.displayPayload,
+    uiRequest: interrupt.uiRequest,
+    a2uiRequest: interrupt.a2uiRequest,
+  };
+  return extractA2UIGateId(payload) || inferFrontendSlidesGateIdFromA2UI(payload);
+};
+
 const formatClarificationResponseForPrompt = (
   response: AgentInterruptResponse,
   previousInterrupt?: RunPendingInterrupt,
@@ -720,6 +740,24 @@ const FRONTEND_SLIDES_MOOD_QUESTIONS = [
   },
 ];
 
+const getFrontendSlidesClarificationQuestions = (
+  gateId: FrontendSlidesGateId,
+): Array<Record<string, unknown>> | undefined => {
+  if (gateId === 'presentation_context') {
+    return FRONTEND_SLIDES_DISCOVERY_QUESTIONS;
+  }
+  if (gateId === 'outline_confirmation') {
+    return FRONTEND_SLIDES_OUTLINE_QUESTIONS;
+  }
+  if (gateId === 'style_path_selection') {
+    return FRONTEND_SLIDES_STYLE_PATH_QUESTIONS;
+  }
+  if (gateId === 'mood_or_preset_selection') {
+    return FRONTEND_SLIDES_MOOD_QUESTIONS;
+  }
+  return undefined;
+};
+
 const DEFAULT_FRONTEND_SLIDES_STYLE_CHOICES = [
   {
     id: 'style-a',
@@ -797,6 +835,220 @@ const extractA2UIGateId = (payload: Record<string, unknown>): string | undefined
   return typeof rawGateId === 'string' && rawGateId.trim() ? rawGateId.trim() : undefined;
 };
 
+const MISSING_OUTLINE_DIAGNOSTIC = 'the slide outline was not included in the agent response';
+
+const hasOutlineReviewValue = (value: unknown): boolean => {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return Boolean(trimmed && !trimmed.toLowerCase().includes(MISSING_OUTLINE_DIAGNOSTIC));
+  }
+  if (Array.isArray(value)) {
+    return value.length > 0;
+  }
+  if (value && typeof value === 'object') {
+    return Object.keys(value as Record<string, unknown>).length > 0;
+  }
+  return false;
+};
+
+const hasFrontendSlidesOutlineReviewMaterial = (
+  ...records: Array<Record<string, unknown> | undefined>
+): boolean => {
+  const outlineKeys = [
+    'outlineMarkdown',
+    'slideOutline',
+    'outline',
+    'markdown',
+    'slides',
+    'outlineItems',
+    'items',
+    'sections',
+  ];
+  return records.some((record) => (
+    Boolean(record && outlineKeys.some((key) => hasOutlineReviewValue(record[key])))
+  ));
+};
+
+const normalizeA2UIComponentName = (value: unknown): string => (
+  typeof value === 'string' ? value.trim() : ''
+);
+
+const collectFrontendSlidesGateInferenceText = (payload: Record<string, unknown>): string => {
+  const fragments: string[] = [];
+  const pushValue = (value: unknown) => {
+    if (typeof value === 'string' && value.trim()) {
+      fragments.push(value.trim());
+    }
+  };
+  const pushQuestions = (value: unknown) => {
+    if (!Array.isArray(value)) {
+      return;
+    }
+    for (const question of value) {
+      const record = getRecord(question);
+      pushValue(record?.id);
+      pushValue(record?.header);
+      pushValue(record?.question);
+      pushValue(record?.label);
+    }
+  };
+  const a2uiRequest = getRecord(payload.a2uiRequest);
+  const uiRequest = getRecord(payload.uiRequest);
+  const a2uiProps = getRecord(a2uiRequest?.props);
+  const uiProps = getRecord(uiRequest?.props);
+  const responseSpec = getRecord(payload.responseSpec);
+
+  pushValue(payload.title);
+  pushValue(payload.description);
+  pushValue(a2uiRequest?.component);
+  pushValue(a2uiProps?.title);
+  pushValue(a2uiProps?.description);
+  pushValue(uiRequest?.component);
+  pushValue(uiProps?.title);
+  pushValue(uiProps?.description);
+  pushQuestions(a2uiProps?.questions);
+  pushQuestions(uiProps?.questions);
+  pushQuestions(responseSpec?.questions);
+
+  return fragments.join('\n').toLowerCase();
+};
+
+export const inferFrontendSlidesGateIdFromA2UI = (
+  payload: Record<string, unknown>,
+): FrontendSlidesGateId | undefined => {
+  if (payload.type !== 'interrupt' || payload.kind !== 'clarification' || extractA2UIGateId(payload)) {
+    return undefined;
+  }
+  const a2uiRequest = getRecord(payload.a2uiRequest);
+  const uiRequest = getRecord(payload.uiRequest);
+  const component = normalizeA2UIComponentName(a2uiRequest?.component || uiRequest?.component);
+  const isClarificationA2UI = ['clarification.form', 'clarification_form', 'style.previewChooser', 'style_preview_chooser']
+    .includes(component);
+  if (!isClarificationA2UI) {
+    return undefined;
+  }
+  if (component === 'style.previewChooser' || component === 'style_preview_chooser') {
+    return 'style_preview_selection';
+  }
+
+  const text = collectFrontendSlidesGateInferenceText(payload);
+  if (/\boutline[_\s-]*(?:approval|confirmation)\b/.test(text) || /\bconfirm\b.{0,80}\boutline\b/.test(text)) {
+    return 'outline_confirmation';
+  }
+  if (/\bstyle[_\s-]*path\b/.test(text) || /\bstyle selection method\b/.test(text) || /\bchoose style selection\b/.test(text)) {
+    return 'style_path_selection';
+  }
+  if (/\b(?:vibe|mood|preset)\b/.test(text) || /\bvisual direction\b/.test(text)) {
+    return 'mood_or_preset_selection';
+  }
+  if (/\bpresentation context\b/.test(text) || /\bpresentation\b.{0,80}\brequirements\b/.test(text)) {
+    return 'presentation_context';
+  }
+  return undefined;
+};
+
+export const withFrontendSlidesGateMetadata = (
+  payload: Record<string, unknown>,
+  gateId: FrontendSlidesGateId,
+): Record<string, unknown> => {
+  const normalized = normalizeInterruptPayloadRecord(payload);
+  const displayPayload = {
+    ...extractDisplayPayload(normalized),
+    skill: 'frontend-slides',
+    gateId,
+    uiContract: 'a2ui',
+    expectedComponent: EXPECTED_GATES[gateId],
+    source: 'frontend_slides_gate_inference',
+  };
+  const a2uiRequest = getRecord(normalized.a2uiRequest);
+  const uiRequest = getRecord(normalized.uiRequest);
+  const component = normalizeA2UIComponentName(a2uiRequest?.component || uiRequest?.component);
+  const legacyComponent = component === 'clarification.form' ? 'clarification_form' : component;
+  const defaultQuestions = legacyComponent === 'clarification_form'
+    ? getFrontendSlidesClarificationQuestions(gateId)
+    : undefined;
+  const defaultStyleChoices = gateId === 'style_preview_selection'
+    ? DEFAULT_FRONTEND_SLIDES_STYLE_CHOICES.slice(0, 3)
+    : undefined;
+  const defaultStylePreviews = defaultStyleChoices?.map((choice) => ({
+    id: choice.id,
+    label: choice.label,
+    description: choice.description,
+    path: `.claude-design/slide-previews/${choice.id}.html`,
+    html: buildFallbackStylePreviewHtml(choice),
+  }));
+  const withQuestionDefaults = (props: unknown): Record<string, unknown> | undefined => {
+    const record = getRecord(props);
+    if (!record) {
+      return defaultQuestions ? { questions: defaultQuestions } : undefined;
+    }
+    if (!defaultQuestions || (Array.isArray(record.questions) && record.questions.length > 0)) {
+      return record;
+    }
+    return { ...record, questions: defaultQuestions };
+  };
+  const withGateDefaults = (props: unknown): Record<string, unknown> | undefined => {
+    const questionDefaults = withQuestionDefaults(props);
+    const record = questionDefaults || getRecord(props);
+    if (!record) {
+      return defaultStyleChoices?.length
+        ? { choices: defaultStyleChoices, previews: defaultStylePreviews, fallback: true }
+        : undefined;
+    }
+    if (!defaultStyleChoices?.length) {
+      return record;
+    }
+    const hasChoices = Array.isArray(record.choices) && record.choices.length > 0;
+    const hasPreviews = Array.isArray(record.previews) && record.previews.length > 0;
+    return hasChoices || hasPreviews
+      ? record
+      : {
+          ...record,
+          choices: defaultStyleChoices,
+          previews: defaultStylePreviews,
+          fallback: true,
+          description: typeof record.description === 'string' && record.description.trim()
+            ? record.description
+            : 'No generated style previews were provided, so choose from fallback executive styles to continue.',
+        };
+  };
+  const a2uiProps = withGateDefaults(a2uiRequest?.props);
+  const uiProps = withGateDefaults(uiRequest?.props);
+  const responseSpec = getRecord(normalized.responseSpec);
+  const responseSpecWithQuestions =
+    defaultQuestions && (!Array.isArray(responseSpec?.questions) || responseSpec.questions.length === 0)
+      ? { ...responseSpec, questions: defaultQuestions }
+      : responseSpec;
+  return {
+    ...normalized,
+    displayPayload,
+    ...(responseSpecWithQuestions ? { responseSpec: responseSpecWithQuestions } : {}),
+    ...(a2uiRequest
+      ? {
+          a2uiRequest: {
+            ...a2uiRequest,
+            ...(a2uiProps ? { props: a2uiProps } : {}),
+            gateId,
+            skill: 'frontend-slides',
+            required: a2uiRequest.required ?? true,
+            metadata: {
+              ...getRecord(a2uiRequest.metadata),
+              ...displayPayload,
+            },
+          },
+        }
+      : {}),
+    ...(uiRequest
+      ? {
+          uiRequest: {
+            ...uiRequest,
+            ...(uiProps ? { props: uiProps } : {}),
+          },
+        }
+      : {}),
+  };
+};
+
 const isA2UIGatePayload = (payload: Record<string, unknown>): boolean => {
   const displayPayload = extractDisplayPayload(payload);
   const nestedPayload = getRecord(displayPayload?.displayPayload) || getRecord(displayPayload?.display_payload);
@@ -833,6 +1085,18 @@ const completeA2UIGate = (state: A2UIGateState, gateId: string | undefined): A2U
   return {
     completedGateIds: Array.from(new Set([...state.completedGateIds, gateId])),
   };
+};
+
+export const isCompletedFrontendSlidesGateInterrupt = (
+  payload: Record<string, unknown>,
+  state: A2UIGateState,
+): boolean => {
+  const completedGateId = extractA2UIGateId(payload) || inferFrontendSlidesGateIdFromA2UI(payload);
+  return Boolean(
+    payload?.type === 'interrupt' &&
+    isFrontendSlidesGateId(completedGateId) &&
+    state.completedGateIds.includes(completedGateId),
+  );
 };
 
 const frontendSlidesGateStateThrough = (gateId: string | undefined): A2UIGateState => {
@@ -935,11 +1199,7 @@ const buildNativeA2UIRequest = (input: {
 const buildFrontendSlidesOutlinePreviewMarkdown = (assistantText?: string): string => {
   const text = String(assistantText || '').trim();
   if (!text) {
-    return [
-      'The slide outline was not included in the agent response.',
-      '',
-      'Choose "Adjust outline" and describe the desired slide structure, or ask the agent to regenerate the outline before continuing.',
-    ].join('\n');
+    return '';
   }
   const maxLength = 6000;
   return text.length > maxLength ? `${text.slice(0, maxLength).trim()}\n\n...` : text;
@@ -1214,11 +1474,20 @@ export const validateInterrupt = (parsed: Record<string, unknown>, skillId: stri
   if (!props) {
     return 'Contract violation: missing "props" in "uiRequest".';
   }
+  const a2uiRequest = normalized.a2uiRequest as Record<string, any> | undefined;
+  const a2uiProps = getRecord(a2uiRequest?.props);
+  const a2uiMetadata = getRecord(a2uiRequest?.metadata);
 
   if (component === 'clarification_form') {
     const questions = props.questions;
     if (!Array.isArray(questions) || questions.length === 0) {
       return 'Contract violation: clarification_form props.questions must be a non-empty array.';
+    }
+    if (
+      gateId === 'outline_confirmation' &&
+      !hasFrontendSlidesOutlineReviewMaterial(props, a2uiProps, displayPayload, nestedPayload, a2uiMetadata)
+    ) {
+      return 'Contract violation: outline_confirmation requires real outline review material before asking the user to approve it.';
     }
   } else if (component === 'style_preview_chooser') {
     const previews = props.previews;
@@ -2070,7 +2339,7 @@ const streamEntryIsRelevantToStartedAt = (entryAt: number | undefined, startedAt
   return entryAt >= startedAtMs - 1000;
 };
 
-const terminalEventFromStreamPayload = (parsed: Record<string, unknown> | null): { status: AgentRunStatus; error?: string } | undefined => {
+export const terminalEventFromStreamPayload = (parsed: Record<string, unknown> | null): { status: AgentRunStatus; error?: string } | undefined => {
   if (!parsed) {
     return undefined;
   }
@@ -2092,12 +2361,6 @@ const terminalEventFromStreamPayload = (parsed: Record<string, unknown> | null):
     return {
       status: 'failed',
       error: coerceText(parsed.message || parsed.error).trim() || 'Agent run failed.',
-    };
-  }
-  if (type === 'progress' && coerceText(parsed.status).trim() === 'error') {
-    return {
-      status: 'failed',
-      error: coerceText(parsed.detail || parsed.label).trim() || 'Agent run failed.',
     };
   }
   return undefined;
@@ -2400,6 +2663,7 @@ async function runAgentRunWorker(
   let contractErrorMessage = '';
   let loopErrorMessage = '';
   let stallErrorMessage = '';
+  let latestDeckArtifactPath: string | undefined;
   let settled = false;
   let processingQueue: Promise<void> = Promise.resolve();
   let activeToolCalls = 0;
@@ -2611,12 +2875,14 @@ async function runAgentRunWorker(
     let effectiveStatus = status;
     let effectiveError = error;
 
-    const missingGate = getFrontendSlidesMissingRequiredGate({
-      skillId,
-      prompt: params.prompt,
-      status: effectiveStatus,
-      gateState: a2uiGateState,
-    });
+    const missingGate = latestDeckArtifactPath
+      ? null
+      : getFrontendSlidesMissingRequiredGate({
+          skillId,
+          prompt: params.prompt,
+          status: effectiveStatus,
+          gateState: a2uiGateState,
+        });
 
     if (missingGate) {
       const recoveredInterrupt = normalizeInterruptPayloadRecord(
@@ -2875,6 +3141,10 @@ async function runAgentRunWorker(
   const processParsedLine = async (line: string): Promise<'continue' | 'stop'> => {
     const parsed = parseLine(line);
     captureConversationEvent(parsed);
+    const deckArtifactPath = extractDeckArtifactPath(parsed);
+    if (deckArtifactPath) {
+      latestDeckArtifactPath = deckArtifactPath;
+    }
     if (isRealRunProgressEvent(parsed)) {
       lastRealActivityAt = Date.now();
     }
@@ -2888,31 +3158,28 @@ async function runAgentRunWorker(
         langfuseStreamMeta.langfuseTraceUrl = traceUrl;
       }
     }
-    if (
-      parsed?.type === 'interrupt' &&
-      isRepeatedClarificationInterrupt(parsed, previousInterrupt, resumePayload)
-    ) {
-      loopErrorMessage = 'Clarification response was not consumed. The same clarification was emitted again.';
-      const errorPayload = JSON.stringify({ type: 'error', message: loopErrorMessage });
-      await appendStreamEvent(runId, errorPayload);
-      if (upstream && !upstream.destroyed) {
-        upstream.destroy();
-      }
-      return 'stop';
-    }
     if (parsed?.type === 'policy' && typeof parsed.skill === 'string' && parsed.skill.trim()) {
       skillId = parsed.skill.trim();
     }
+    let eventToAppend = parsed;
     if (parsed?.type === 'interrupt') {
-      const interruptDisplayPayload = extractDisplayPayload(parsed);
+      const inferredGateId = isFrontendSlidesRun(skillId, params)
+        ? inferFrontendSlidesGateIdFromA2UI(parsed)
+        : undefined;
+      const explicitGateId = extractA2UIGateId(parsed);
+      const frontendSlidesGateId = isFrontendSlidesGateId(explicitGateId)
+        ? explicitGateId
+        : inferredGateId;
+      const interruptPayload = frontendSlidesGateId
+        ? withFrontendSlidesGateMetadata(parsed, frontendSlidesGateId)
+        : parsed;
+      eventToAppend = interruptPayload;
+      const interruptDisplayPayload = extractDisplayPayload(interruptPayload);
       if (!skillId && typeof interruptDisplayPayload?.skill === 'string' && interruptDisplayPayload.skill.trim()) {
         skillId = interruptDisplayPayload.skill.trim();
       }
-      const completedGateId = extractA2UIGateId(parsed);
-      if (
-        isFrontendSlidesGateId(completedGateId) &&
-        a2uiGateState.completedGateIds.includes(completedGateId)
-      ) {
+      const completedGateId = extractA2UIGateId(interruptPayload);
+      if (isCompletedFrontendSlidesGateInterrupt(interruptPayload, a2uiGateState)) {
         await appendStreamEvent(runId, JSON.stringify({
           type: 'a2ui_gate_skipped',
           gateId: completedGateId,
@@ -2920,7 +3187,16 @@ async function runAgentRunWorker(
         }));
         return 'continue';
       }
-      const err = validateInterrupt(parsed, skillId);
+      if (isRepeatedClarificationInterrupt(interruptPayload, previousInterrupt, resumePayload)) {
+        loopErrorMessage = 'Clarification response was not consumed. The same clarification was emitted again.';
+        const errorPayload = JSON.stringify({ type: 'error', message: loopErrorMessage });
+        await appendStreamEvent(runId, errorPayload);
+        if (upstream && !upstream.destroyed) {
+          upstream.destroy();
+        }
+        return 'stop';
+      }
+      const err = validateInterrupt(interruptPayload, skillId);
       if (err) {
         contractErrorMessage = err;
         sawInterruptPayload = null;
@@ -2932,9 +3208,9 @@ async function runAgentRunWorker(
         return 'stop';
       }
       hadInterrupt = true;
-      if (parsed.kind === 'approval') {
+      if (interruptPayload.kind === 'approval') {
         approvalInterruptCount += 1;
-      } else if (parsed.kind === 'clarification') {
+      } else if (interruptPayload.kind === 'clarification') {
         clarificationInterruptCount += 1;
       }
     }
@@ -2989,18 +3265,30 @@ async function runAgentRunWorker(
         await appendStreamEvent(runId, JSON.stringify({ type: 'workflow_action', ...workflowAction }));
       }
     }
-    if (parsed?.type === 'interrupt' && parsed.a2uiRequest) {
+    const terminalEvent = terminalEventFromStreamPayload(parsed);
+    const missingGateBeforeTerminal = terminalEvent?.status === 'completed' && !latestDeckArtifactPath
+      ? getFrontendSlidesMissingRequiredGate({
+          skillId,
+          prompt: params.prompt,
+          status: 'completed',
+          gateState: a2uiGateState,
+        })
+      : null;
+    if (missingGateBeforeTerminal) {
+      return 'continue';
+    }
+    if (eventToAppend?.type === 'interrupt' && eventToAppend.a2uiRequest) {
       const a2uiChunk = {
         type: 'a2ui' as const,
-        message: parsed.a2uiRequest,
-        surfaceId: (parsed.a2uiRequest as any).surfaceId,
+        message: eventToAppend.a2uiRequest,
+        surfaceId: (eventToAppend.a2uiRequest as any).surfaceId,
         runId,
       };
       await appendStreamEvent(runId, JSON.stringify(a2uiChunk));
     }
-    await appendStreamEvent(runId, parsed ? JSON.stringify(normalizeInterruptPayloadRecord(parsed)) : line);
-    if (parsed?.type === 'interrupt') {
-      await stopAtInterrupt(parsed);
+    await appendStreamEvent(runId, eventToAppend ? JSON.stringify(normalizeInterruptPayloadRecord(eventToAppend)) : line);
+    if (eventToAppend?.type === 'interrupt') {
+      await stopAtInterrupt(eventToAppend);
       return 'stop';
     }
     if (parsed?.type === 'contract_error') {
@@ -3195,13 +3483,7 @@ export async function resumeAgentRunWithResponse(
   const baseParams = options?.authToken ? { ...context.params, authToken: options.authToken } : context.params;
   const previousInterruptIsSynthetic = isSyntheticClarificationInterrupt(options?.previousInterrupt);
   const currentMeta = await getRunMeta(runId);
-  const previousGateId = options?.previousInterrupt
-    ? extractA2UIGateId({
-        kind: options.previousInterrupt.kind,
-        displayPayload: options.previousInterrupt.displayPayload,
-        display_payload: options.previousInterrupt.displayPayload,
-      })
-    : undefined;
+  const previousGateId = extractA2UIGateIdFromPendingInterrupt(options?.previousInterrupt);
   const nextGateState = completeA2UIGate(
     currentMeta?.a2uiGateState || { completedGateIds: [] },
     previousGateId,
@@ -3309,7 +3591,10 @@ const reconcileActiveRunMetaFromStream = async (
     recoveredGateId && a2uiGateState.completedGateIds.includes(recoveredGateId),
   );
 
-  if (latestInterrupt && !recoveredGateIsComplete) {
+  const canCompleteFromDeckArtifact =
+    isFrontendSlidesContextRun(context) && Boolean(inspection.latestDeckArtifactPath);
+
+  if (!canCompleteFromDeckArtifact && latestInterrupt && !recoveredGateIsComplete) {
     await markRunAwaitingApproval(runId, JSON.stringify(latestInterrupt), context?.params);
     meta.status = 'awaiting_approval';
     meta.pendingInterrupt = JSON.stringify(latestInterrupt);
@@ -3317,10 +3602,6 @@ const reconcileActiveRunMetaFromStream = async (
     return;
   }
 
-  const canCompleteFromDeckArtifact =
-    isFrontendSlidesContextRun(context) &&
-    hasCompletedAllFrontendSlidesGates(a2uiGateState) &&
-    Boolean(inspection.latestDeckArtifactPath);
   const terminalEvent = canCompleteFromDeckArtifact
     ? { status: 'completed' as AgentRunStatus }
     : inspection.latestTerminalEvent;
@@ -3333,7 +3614,7 @@ const reconcileActiveRunMetaFromStream = async (
         gateState: a2uiGateState,
       })
     : null;
-  if (terminalEvent?.status === 'completed' && missingCompletionGate) {
+  if (terminalEvent?.status === 'completed' && missingCompletionGate && !inspection.latestDeckArtifactPath) {
     const recoveredInterrupt = normalizeInterruptPayloadRecord(
       buildFrontendSlidesGatePendingInterrupt({
         runId,
@@ -3364,7 +3645,7 @@ const reconcileActiveRunMetaFromStream = async (
         error: terminalEvent.error,
       });
     }
-    if (canCompleteFromDeckArtifact) {
+    if (canCompleteFromDeckArtifact && inspection.latestTerminalEvent?.status !== 'completed') {
       await appendStreamEvent(runId, JSON.stringify({
         type: 'done',
         status: 'completed',
@@ -3372,7 +3653,7 @@ const reconcileActiveRunMetaFromStream = async (
         artifactPath: inspection.latestDeckArtifactPath,
       }));
     }
-    abortActiveRunWorker(runId);
+    cleanupRun(runId);
     meta.status = terminalEvent.status;
     meta.completedAt = completedAt;
     meta.error = terminalEvent.error || '';

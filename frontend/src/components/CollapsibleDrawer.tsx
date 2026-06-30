@@ -1,5 +1,5 @@
 import React from 'react';
-import { Drawer, Box, Button, IconButton, TextField } from '@mui/material';
+import { Badge, Drawer, Box, IconButton, TextField } from '@mui/material';
 import { Add, CalendarMonth, ChevronLeft, Settings, LightMode, DarkMode, Logout } from '@mui/icons-material';
 import WorkspaceList from './WorkspaceList';
 import type { Workspace } from '../types';
@@ -77,17 +77,45 @@ const CollapsibleDrawer: React.FC<CollapsibleDrawerProps> = ({
         }}
       >
         <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
-          <IconButton
-            onClick={() => {
-              void onCreateWorkspace();
-            }}
-            size="small"
-            title="New workspace"
-            aria-label="Create workspace"
-            sx={{ border: (theme) => `1px solid ${theme.palette.divider}`, borderRadius: 2 }}
-          >
-            <Add fontSize="small" />
-          </IconButton>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <IconButton
+              onClick={() => {
+                void onCreateWorkspace();
+              }}
+              size="small"
+              title="New workspace"
+              aria-label="Create workspace"
+              sx={{ border: (theme) => `1px solid ${theme.palette.divider}`, borderRadius: 2 }}
+            >
+              <Add fontSize="small" />
+            </IconButton>
+            {onOpenSchedules ? (
+              <IconButton
+                type="button"
+                onClick={onOpenSchedules}
+                size="small"
+                title={scheduleCount ? `Schedules (${scheduleCount})` : 'Schedules'}
+                aria-label={scheduleCount ? `Open schedules, ${scheduleCount} scheduled jobs` : 'Open schedules'}
+                disabled={!selectedWorkspace}
+                sx={{ border: (theme) => `1px solid ${theme.palette.divider}`, borderRadius: 2 }}
+              >
+                <Badge
+                  badgeContent={scheduleCount || undefined}
+                  color="primary"
+                  max={99}
+                  sx={{
+                    '& .MuiBadge-badge': {
+                      minWidth: 16,
+                      height: 16,
+                      fontSize: '0.62rem',
+                    },
+                  }}
+                >
+                  <CalendarMonth fontSize="small" />
+                </Badge>
+              </IconButton>
+            ) : null}
+          </Box>
           <IconButton
             onClick={handleDrawerClose}
             size="small"
@@ -112,24 +140,6 @@ const CollapsibleDrawer: React.FC<CollapsibleDrawerProps> = ({
               },
             }}
           />
-          {onOpenSchedules ? (
-            <Button
-              type="button"
-              onClick={onOpenSchedules}
-              startIcon={<CalendarMonth fontSize="small" />}
-              variant="outlined"
-              size="small"
-              disabled={!selectedWorkspace}
-              sx={{
-                justifyContent: 'flex-start',
-                borderRadius: 2,
-                textTransform: 'none',
-                fontWeight: 700,
-              }}
-            >
-              Schedules{scheduleCount ? ` (${scheduleCount})` : ''}
-            </Button>
-          ) : null}
         </Box>
 
         <Box

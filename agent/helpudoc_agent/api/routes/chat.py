@@ -111,6 +111,7 @@ def _friendly_tool_label(name: str) -> str:
         "edit_file": "Updating a workspace file",
         "request_plan_approval": "Preparing approval request",
         "request_clarification": "Preparing a question for you",
+        "workflow_action": "Preparing the next workflow step",
     }
     return mapping.get(name, f"Using {name.replace('_', ' ')}")
 
@@ -1175,14 +1176,7 @@ def register_chat_routes(
             return event[0]
         return None
 
-    def _event_method(event: Any) -> str:
-        event = _event_record(event)
-        if not isinstance(event, dict):
-            return ""
-        method = event.get("event") or event.get("method") or event.get("type")
-        return str(method or "").strip()
-
-    def _event_data(event: Any) -> Any:
+    def _event_raw_data(event: Any) -> Any:
         event = _event_record(event)
         if not isinstance(event, dict):
             return None
@@ -1193,6 +1187,36 @@ def register_chat_routes(
             return params.get("data")
         return None
 
+    def _unwrap_v3_event_data(data: Any) -> Any:
+        if isinstance(data, (list, tuple)) and data and isinstance(data[0], dict):
+            return data[0]
+        return data
+
+    def _v3_event_metadata(data: Any) -> Dict[str, Any]:
+        if (
+            isinstance(data, (list, tuple))
+            and len(data) >= 2
+            and isinstance(data[1], dict)
+        ):
+            return data[1]
+        return {}
+
+    def _event_method(event: Any) -> str:
+        event = _event_record(event)
+        if not isinstance(event, dict):
+            return ""
+        method = event.get("event") or event.get("method") or event.get("type")
+        raw_data = _event_raw_data(event)
+        inner = _unwrap_v3_event_data(raw_data)
+        if str(method or "").strip() in {"messages", "tools"} and isinstance(inner, dict):
+            inner_method = inner.get("event")
+            if isinstance(inner_method, str) and inner_method.strip():
+                return inner_method.strip()
+        return str(method or "").strip()
+
+    def _event_data(event: Any) -> Any:
+        return _unwrap_v3_event_data(_event_raw_data(event))
+
     def _event_name(event: Any) -> str:
         event = _event_record(event)
         if not isinstance(event, dict):
@@ -1200,13 +1224,18 @@ def register_chat_routes(
         name = event.get("name")
         if isinstance(name, str) and name.strip():
             return name.strip()
-        params = event.get("params")
-        if isinstance(params, dict):
-            data = params.get("data")
-            if isinstance(data, dict):
-                candidate = data.get("name") or data.get("tool_name")
+        data = _event_data(event)
+        if isinstance(data, dict):
+            candidate = data.get("name") or data.get("tool_name")
+            if isinstance(candidate, str) and candidate.strip():
+                return candidate.strip()
+            content = data.get("content")
+            if isinstance(content, dict):
+                candidate = content.get("name")
                 if isinstance(candidate, str) and candidate.strip():
                     return candidate.strip()
+        params = event.get("params")
+        if isinstance(params, dict):
             namespace = params.get("namespace")
             if isinstance(namespace, list) and namespace:
                 tail = str(namespace[-1] or "")
@@ -1220,11 +1249,26 @@ def register_chat_routes(
         run_id = event.get("run_id") or event.get("runId")
         if run_id:
             return str(run_id)
+        raw_data = _event_raw_data(event)
+        metadata = _v3_event_metadata(raw_data)
+        if metadata:
+            candidate = metadata.get("run_id") or metadata.get("runId")
+            if candidate:
+                return str(candidate)
         params = event.get("params")
         if isinstance(params, dict):
-            data = params.get("data")
+            data = _event_data(event)
             if isinstance(data, dict):
-                candidate = data.get("run_id") or data.get("runId") or data.get("id")
+                candidate = (
+                    data.get("run_id")
+                    or data.get("runId")
+                    or data.get("tool_call_id")
+                    or data.get("id")
+                )
+                if not candidate:
+                    content = data.get("content")
+                    if isinstance(content, dict):
+                        candidate = content.get("id")
                 if candidate:
                     return str(candidate)
             namespace = params.get("namespace")
@@ -1268,27 +1312,35 @@ def register_chat_routes(
 
     def _event_input_preview(data: Any) -> str:
         value = _event_payload_value(data, "input", "inputs", "args")
+        if value is None and isinstance(data, dict):
+            content = data.get("content")
+            if isinstance(content, dict):
+                value = content.get("args")
         if value is None:
             value = data
         return _event_text(value, stringify_objects=True).strip()
 
     def _event_output_text(data: Any) -> str:
-        value = _event_payload_value(data, "output", "result", "return_value")
+        value = _event_payload_value(data, "output", "result", "return_value", "message")
         if value is None:
             value = data
         return _event_text(value, stringify_objects=True)
 
     def _event_chunk_text(data: Any) -> str:
-        value = _event_payload_value(data, "chunk", "message", "delta")
+        value = _event_payload_value(data, "chunk", "message", "delta", "content")
         if value is None:
             value = data
         return _event_text(value)
 
     def _content_block_payload(event: Any) -> Dict[str, Any] | None:
         event = _event_record(event)
-        if not isinstance(event, dict):
-            return None
-        content = event.get("content")
+        content = event.get("content") if isinstance(event, dict) else None
+        if not isinstance(content, dict):
+            data = _event_data(event)
+            if isinstance(data, dict):
+                content = data.get("content")
+                if not isinstance(content, dict):
+                    content = data.get("delta")
         return content if isinstance(content, dict) else None
 
     def _content_block_text(event: Any) -> str:
@@ -1349,7 +1401,7 @@ def register_chat_routes(
         data = _event_data(event)
         run_key = _event_run_id(event) or method
 
-        if method in {"on_chat_model_start", "on_llm_start"}:
+        if method in {"on_chat_model_start", "on_llm_start", "message-start"}:
             name = _event_name(event) or "model"
             await _emit_progress(
                 handler,
@@ -1394,11 +1446,11 @@ def register_chat_routes(
                 await handler._emit({"type": "token", "content": text, "role": "assistant"})
             return False
 
-        if method in {"on_chat_model_end", "on_llm_end"}:
+        if method in {"on_chat_model_end", "on_llm_end", "message-finish"}:
             await handler._emit({"type": "model_end", "name": _event_name(event) or "model"})
             return False
 
-        if method in {"on_tool_start", "tools/start", "tool_start"}:
+        if method in {"on_tool_start", "tools/start", "tool_start", "tool-started"}:
             name = _event_name(event) or "tool"
             handler._tool_names[run_key] = name
             preview = _event_input_preview(data)
@@ -1433,7 +1485,7 @@ def register_chat_routes(
             )
             return False
 
-        if method in {"on_tool_end", "tools/end", "tool_end"}:
+        if method in {"on_tool_end", "tools/end", "tool_end", "tool-finished"}:
             name = handler._tool_names.pop(run_key, _event_name(event) or "tool")
             text = _event_output_text(data)
             meta = handler._tool_meta.pop(run_key, None)
@@ -1489,9 +1541,23 @@ def register_chat_routes(
             await handler._emit(payload)
             return False
 
-        if method in {"on_tool_error", "tools/error", "tool_error"}:
+        if method in {"on_tool_error", "tools/error", "tool_error", "tool-error"}:
             name = handler._tool_names.pop(run_key, _event_name(event) or "tool")
             text = _event_output_text(data)
+            if name in _INTERRUPT_TOOL_NAMES:
+                interrupt_payload = extract_interrupt_payload_from_tool_text(text)
+                if interrupt_payload:
+                    handler._interrupt_emitted = True
+                    await _emit_progress(
+                        handler,
+                        "awaiting_input",
+                        "Preparing clarification question",
+                        detail=name,
+                        tool_name=name,
+                        status="pending",
+                    )
+                    await handler._emit(interrupt_payload)
+                    return True
             await _emit_progress(
                 handler,
                 "using_tool",

@@ -10,6 +10,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.runtime import Runtime
 from langgraph.types import Command
 
+from helpudoc_agent.api.constants import _INTERRUPT_TOOL_NAMES
 from helpudoc_agent.implicit_input_detection import detect_implicit_input_awaiting
 from helpudoc_agent.interrupt_payloads import extract_interrupt_payload_from_tool_text
 from helpudoc_agent.middleware.implicit_input_guard import (
@@ -281,6 +282,30 @@ def test_frontend_slides_guard_gate_interrupt_is_marked_synthetic() -> None:
     assert payload is not None
     assert payload["displayPayload"]["source"] == "implicit_input_guard"
     assert payload["displayPayload"]["synthetic"] is True
+
+
+def test_extract_interrupt_payload_from_langgraph_v3_tool_error_wrapper() -> None:
+    raw = (
+        "(Interrupt(value={'kind': 'clarification', 'title': 'Presentation Context + Images', "
+        "'description': 'Tell me enough to shape the deck before I design it.', "
+        "'a2uiRequest': {'contract': 'a2ui', 'version': '0.9', "
+        "'component': 'clarification_form', 'gateId': 'presentation_context', "
+        "'skill': 'frontend-slides', 'props': {}, 'resumeAction': {'endpoint': 'respond', "
+        "'actionId': 'submit'}}, 'display_payload': {'skill': 'frontend-slides', "
+        "'gateId': 'presentation_context'}}, id='abc123'),)"
+    )
+
+    payload = extract_interrupt_payload_from_tool_text(raw)
+
+    assert payload is not None
+    assert payload["kind"] == "clarification"
+    assert payload["interruptId"] == "abc123"
+    assert payload["a2uiRequest"]["gateId"] == "presentation_context"
+    assert payload["displayPayload"]["skill"] == "frontend-slides"
+
+
+def test_workflow_action_is_interrupt_capable_tool() -> None:
+    assert "workflow_action" in _INTERRUPT_TOOL_NAMES
 
 
 def test_build_synthetic_interrupt_detects_generic_form_preference_request() -> None:

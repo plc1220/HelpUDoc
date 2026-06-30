@@ -352,7 +352,11 @@ test('detects initialized form and preferences submission without explicit above
 });
 
 // Import A2UI contract helpers from lifecycle
-import { getFrontendSlidesA2UIGateCompletionError, validateInterrupt } from '../src/services/agent-runs/lifecycle';
+import {
+  getFrontendSlidesA2UIGateCompletionError,
+  isCompletedFrontendSlidesGateInterrupt,
+  validateInterrupt,
+} from '../src/services/agent-runs/lifecycle';
 
 test('validateInterrupt passes for non-frontend-slides skill', () => {
   const parsed = { kind: 'some-other-kind' };
@@ -443,6 +447,23 @@ test('validateInterrupt fails when clarification_form props.questions is empty',
   assert.match(err || '', /clarification_form props.questions must be a non-empty array/);
 });
 
+test('validateInterrupt fails when outline_confirmation has no outline material', () => {
+  const parsed = {
+    kind: 'clarification',
+    uiRequest: {
+      component: 'clarification_form',
+      props: {
+        questions: [{ id: 'outline_decision', question: 'Does this outline look right?' }],
+      },
+    },
+    displayPayload: {
+      gateId: 'outline_confirmation',
+    },
+  };
+  const err = validateInterrupt(parsed, 'frontend-slides');
+  assert.match(err || '', /outline_confirmation requires real outline review material/);
+});
+
 test('validateInterrupt fails when style_preview_chooser props.choices and previews are empty', () => {
   const parsed = {
     kind: 'clarification',
@@ -506,6 +527,42 @@ test('validateInterrupt projects native A2UI requests without legacy uiRequest',
   };
   const err = validateInterrupt(parsed, 'frontend-slides');
   assert.equal(err, null);
+});
+
+test('completed frontend-slides gates are skippable before duplicate clarification guard', () => {
+  const parsed = {
+    type: 'interrupt',
+    kind: 'clarification',
+    title: 'Presentation Context + Images',
+    displayPayload: {
+      skill: 'frontend-slides',
+      gateId: 'presentation_context',
+      uiContract: 'a2ui',
+      expectedComponent: 'clarification_form',
+    },
+    a2uiRequest: {
+      contract: 'a2ui',
+      component: 'clarification_form',
+      gateId: 'presentation_context',
+      skill: 'frontend-slides',
+      props: {
+        questions: [{ id: 'purpose', question: 'What is this presentation for?' }],
+      },
+    },
+  };
+
+  assert.equal(
+    isCompletedFrontendSlidesGateInterrupt(parsed, {
+      completedGateIds: ['presentation_context'],
+    }),
+    true,
+  );
+  assert.equal(
+    isCompletedFrontendSlidesGateInterrupt(parsed, {
+      completedGateIds: [],
+    }),
+    false,
+  );
 });
 
 test('gate completion fails frontend-slides final completion before Gate 1 even without regex prose', () => {

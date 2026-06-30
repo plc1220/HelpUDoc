@@ -9,6 +9,7 @@ _INTERRUPT_TOOL_NAMES: Set[str] = {
     "request_human_action",
     "request_plan_approval",
     "request_ui",
+    "workflow_action",
 }
 _LOADED_SKILL_OUTPUT_ID = re.compile(r"^Loaded skill:\s*(\S+)", re.MULTILINE)
 _LOCAL_DEV_AGENT_JWT_SECRET = "helpudoc-local-dev-agent-jwt-secret"

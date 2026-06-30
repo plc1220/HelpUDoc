@@ -9,6 +9,7 @@ type WorkspaceSchedulesPanelProps = {
   loading?: boolean;
   error?: string;
   busyScheduleId?: string | null;
+  leftOffset?: number;
   onClose: () => void;
   onRefresh: () => void;
   onEdit: (schedule: WorkspaceSchedule) => void;
@@ -47,6 +48,7 @@ export default function WorkspaceSchedulesPanel({
   loading = false,
   error,
   busyScheduleId,
+  leftOffset = 0,
   onClose,
   onRefresh,
   onEdit,
@@ -70,11 +72,16 @@ export default function WorkspaceSchedulesPanel({
   }`;
 
   return (
-    <div className="fixed inset-0 z-[1650] flex justify-end bg-slate-950/35" role="presentation" onMouseDown={(event) => {
-      if (event.target === event.currentTarget) {
-        onClose();
-      }
-    }}>
+    <div
+      className="fixed inset-y-0 right-0 z-[1650] flex justify-end bg-slate-950/20"
+      style={{ left: leftOffset }}
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) {
+          onClose();
+        }
+      }}
+    >
       <aside className={`flex h-full w-full max-w-md flex-col border-l shadow-2xl ${panelClassName}`}>
         <div className={`flex items-center justify-between border-b px-5 py-4 ${
           isDarkMode ? 'border-slate-800' : 'border-slate-200'
