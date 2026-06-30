@@ -7,12 +7,14 @@ import logging
 import os
 from pathlib import Path
 import shutil
+import subprocess
+import sys
 import time
 from typing import Any, Iterable, List
 from uuid import uuid4
 
 from .config.env import load_sandbox_k8s_env
-from .skills_registry import SkillMetadata, SkillSandboxScript, find_skill
+from .skills_registry import SkillMetadata, SkillSandboxScript, find_skill, resolve_skill_scope
 from .state import WorkspaceState
 
 logger = logging.getLogger(__name__)
@@ -121,11 +123,17 @@ def _ignore_script_cache_dirs(_dir: str, names: list[str]) -> set[str]:
     return {name for name in names if name == "__pycache__" or name.endswith(".pyc")}
 
 
-def _resolve_script(skill: SkillMetadata, script_name: str) -> SkillSandboxScript:
+def _resolve_script(
+    skill: SkillMetadata,
+    script_name: str,
+    *,
+    plugins_root: Path | None = None,
+) -> SkillSandboxScript:
     normalized = str(script_name or "").strip()
     if not normalized:
         raise SandboxExecutionError("script_name is required.")
-    for script in skill.sandbox_scripts:
+    scope = resolve_skill_scope(skill, plugins_root=plugins_root)
+    for script in scope.sandbox_scripts:
         if script.name == normalized:
             return script
     raise SandboxExecutionError(
@@ -160,13 +168,13 @@ def _stage_run(
     script: SkillSandboxScript,
     input_paths: Iterable[str],
 ) -> tuple[str, Path, Path]:
-    skill_dir = skill.path.parent.resolve()
+    script_source_dir = (script.source_dir or skill.path.parent).resolve()
     script_rel = str(script.path or "").strip().replace("\\", "/")
     if not _is_relative_safe(script_rel):
-        raise SandboxExecutionError(f"Script path for '{script.name}' must be relative to the skill directory.")
-    script_path = (skill_dir / script_rel).resolve()
-    if script_path != skill_dir and skill_dir not in script_path.parents:
-        raise SandboxExecutionError(f"Script path for '{script.name}' escapes the skill directory.")
+        raise SandboxExecutionError(f"Script path for '{script.name}' must be relative to its source directory.")
+    script_path = (script_source_dir / script_rel).resolve()
+    if script_path != script_source_dir and script_source_dir not in script_path.parents:
+        raise SandboxExecutionError(f"Script path for '{script.name}' escapes its source directory.")
     if not script_path.is_file():
         raise SandboxExecutionError(f"Declared script file does not exist: {script.path}")
     actual_hash = _sha256_file(script_path)
@@ -180,17 +188,19 @@ def _stage_run(
     scripts_dir = run_dir / "scripts"
     scripts_dir.mkdir(parents=True, exist_ok=False)
     (run_dir / "tmp").mkdir(parents=True, exist_ok=True)
+    (run_dir / "workspace-output").mkdir(parents=True, exist_ok=True)
     _chmod_best_effort(run_dir, 0o777)
     _chmod_best_effort(scripts_dir, 0o755)
     _chmod_best_effort(run_dir / "tmp", 0o777)
+    _chmod_best_effort(run_dir / "workspace-output", 0o777)
 
-    skill_scripts_dir = skill_dir / "scripts"
-    if skill_scripts_dir.is_dir() and (
-        script_path == skill_scripts_dir or skill_scripts_dir in script_path.parents
+    source_scripts_dir = script_source_dir / "scripts"
+    if source_scripts_dir.is_dir() and (
+        script_path == source_scripts_dir or source_scripts_dir in script_path.parents
     ):
         shutil.rmtree(scripts_dir)
-        shutil.copytree(skill_scripts_dir, scripts_dir, ignore=_ignore_script_cache_dirs)
-        staged_script = run_dir / script_path.relative_to(skill_dir)
+        shutil.copytree(source_scripts_dir, scripts_dir, ignore=_ignore_script_cache_dirs)
+        staged_script = run_dir / script_path.relative_to(script_source_dir)
     else:
         staged_script = scripts_dir / script_path.name
         shutil.copy2(script_path, staged_script)
@@ -214,6 +224,39 @@ def _stage_run(
         _chmod_best_effort(output_parent, 0o777)
 
     return run_id, run_dir, staged_script
+
+
+def _safe_copy_workspace_outputs(workspace_state: WorkspaceState, run_dir: Path) -> None:
+    source_root = (run_dir / "workspace-output").resolve()
+    if not source_root.is_dir():
+        return
+    workspace_root = workspace_state.root_path.resolve()
+    for source in sorted(source_root.rglob("*")):
+        if not source.is_file():
+            continue
+        relative = source.relative_to(source_root)
+        if not _is_relative_safe(relative.as_posix()):
+            raise SandboxExecutionError(f"Workspace output path is unsafe: {relative.as_posix()}")
+        destination = (workspace_root / relative).resolve()
+        if destination != workspace_root and workspace_root not in destination.parents:
+            raise SandboxExecutionError(f"Workspace output path escapes workspace: {relative.as_posix()}")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, destination)
+
+
+def _collect_declared_outputs(run_dir: Path, script: SkillSandboxScript) -> List[SandboxOutputFile]:
+    outputs: List[SandboxOutputFile] = []
+    for raw_output in script.outputs:
+        output_rel = _safe_declared_output(raw_output)
+        output_path = run_dir / output_rel
+        if output_path.is_file():
+            outputs.append(
+                SandboxOutputFile(
+                    path=f"/sandbox-runs/{run_dir.name}/{output_rel.as_posix()}",
+                    size=output_path.stat().st_size,
+                )
+            )
+    return outputs
 
 
 def _load_kubernetes_clients() -> tuple[Any, Any]:
@@ -300,6 +343,10 @@ def build_sandbox_job_manifest(
                                 {"name": "TMPDIR", "value": "/sandbox/tmp"},
                                 {"name": "HOME", "value": "/sandbox/tmp"},
                                 {"name": "PYTHONPATH", "value": "/sandbox/scripts:/sandbox"},
+                                {"name": "HELPUDOC_WORKSPACE_ID", "value": safe_workspace_id},
+                                {"name": "HELPUDOC_WORKSPACE_ROOT", "value": "/workspace"},
+                                {"name": "HELPUDOC_WORKSPACE_OUTPUT_ROOT", "value": "/sandbox/workspace-output"},
+                                {"name": "HELPUDOC_SANDBOX_RUN_DIR", "value": "/sandbox"},
                             ],
                             "resources": {
                                 "limits": {
@@ -323,6 +370,12 @@ def build_sandbox_job_manifest(
                                     "name": "sandbox-workspace",
                                     "mountPath": "/sandbox",
                                     "subPath": f"{safe_workspace_id}/sandbox-runs/{safe_run_id}",
+                                },
+                                {
+                                    "name": "sandbox-workspace",
+                                    "mountPath": "/workspace",
+                                    "subPath": safe_workspace_id,
+                                    "readOnly": True,
                                 }
                             ],
                         }
@@ -395,6 +448,7 @@ def _wait_for_job(
 def run_skill_python_script_in_kubernetes(
     *,
     skills_root: Path | None,
+    plugins_root: Path | None = None,
     workspace_state: WorkspaceState,
     script_name: str,
     input_paths: Iterable[str] | None = None,
@@ -404,7 +458,7 @@ def run_skill_python_script_in_kubernetes(
     sandbox_config: SandboxConfig | None = None,
 ) -> SandboxRunResult:
     skill = _resolve_skill(skills_root=skills_root, workspace_state=workspace_state)
-    script = _resolve_script(skill, script_name)
+    script = _resolve_script(skill, script_name, plugins_root=plugins_root)
     run_id, run_dir, staged_script = _stage_run(
         workspace_state=workspace_state,
         skill=skill,
@@ -446,21 +500,121 @@ def run_skill_python_script_in_kubernetes(
         except Exception:
             logger.info("Sandbox job cleanup skipped or failed for %s", job_name, exc_info=True)
 
-    outputs: List[SandboxOutputFile] = []
-    for raw_output in script.outputs:
-        output_rel = _safe_declared_output(raw_output)
-        output_path = run_dir / output_rel
-        if output_path.is_file():
-            outputs.append(
-                SandboxOutputFile(
-                    path=f"/sandbox-runs/{run_id}/{output_rel.as_posix()}",
-                    size=output_path.stat().st_size,
-                )
-            )
+    _safe_copy_workspace_outputs(workspace_state, run_dir)
+    outputs = _collect_declared_outputs(run_dir, script)
     return SandboxRunResult(
         run_id=run_id,
         job_name=job_name,
         stdout=stdout,
         stderr=stderr,
         output_files=outputs,
+    )
+
+
+def run_skill_python_script_locally(
+    *,
+    skills_root: Path | None,
+    plugins_root: Path | None = None,
+    workspace_state: WorkspaceState,
+    script_name: str,
+    input_paths: Iterable[str] | None = None,
+    args: Iterable[str] | None = None,
+) -> SandboxRunResult:
+    skill = _resolve_skill(skills_root=skills_root, workspace_state=workspace_state)
+    script = _resolve_script(skill, script_name, plugins_root=plugins_root)
+    run_id, run_dir, staged_script = _stage_run(
+        workspace_state=workspace_state,
+        skill=skill,
+        script=script,
+        input_paths=input_paths or [],
+    )
+    env = os.environ.copy()
+    package_root = Path(__file__).resolve().parent
+    agent_root = package_root.parent
+    repo_root = agent_root.parent
+    existing_pythonpath = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = os.pathsep.join(
+        part
+        for part in [
+            str(repo_root),
+            str(agent_root),
+            str(run_dir / "scripts"),
+            str(run_dir),
+            existing_pythonpath,
+        ]
+        if part
+    )
+    env.update(
+        {
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "TMPDIR": str(run_dir / "tmp"),
+            "HOME": str(run_dir / "tmp"),
+            "HELPUDOC_WORKSPACE_ID": workspace_state.workspace_id,
+            "HELPUDOC_WORKSPACE_ROOT": str(workspace_state.root_path.resolve()),
+            "HELPUDOC_WORKSPACE_OUTPUT_ROOT": str((run_dir / "workspace-output").resolve()),
+            "HELPUDOC_SANDBOX_RUN_DIR": str(run_dir.resolve()),
+        }
+    )
+    safe_args = [str(item) for item in (args or [])]
+    completed = subprocess.run(
+        [sys.executable, str(staged_script), *safe_args],
+        cwd=str(run_dir),
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=max(1, int(script.timeout_seconds)),
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise SandboxExecutionError(
+            (
+                f"Local sandbox script '{script.name}' failed with exit code {completed.returncode}.\n"
+                f"STDOUT:\n{completed.stdout}\nSTDERR:\n{completed.stderr}"
+            ).strip()
+        )
+    _safe_copy_workspace_outputs(workspace_state, run_dir)
+    return SandboxRunResult(
+        run_id=run_id,
+        job_name=f"local-{run_id[:24]}",
+        stdout=(completed.stdout or "").strip(),
+        stderr=(completed.stderr or "").strip(),
+        output_files=_collect_declared_outputs(run_dir, script),
+    )
+
+
+def _resolve_sandbox_backend() -> str:
+    raw = (os.getenv("HELPUDOC_SANDBOX_BACKEND") or "auto").strip().lower()
+    if raw not in {"local", "kubernetes", "auto"}:
+        raise SandboxExecutionError("HELPUDOC_SANDBOX_BACKEND must be local, kubernetes, or auto.")
+    if raw == "auto":
+        return "kubernetes" if os.getenv("KUBERNETES_SERVICE_HOST") else "local"
+    return raw
+
+
+def run_skill_python_script(
+    *,
+    skills_root: Path | None,
+    plugins_root: Path | None = None,
+    workspace_state: WorkspaceState,
+    script_name: str,
+    input_paths: Iterable[str] | None = None,
+    args: Iterable[str] | None = None,
+) -> SandboxRunResult:
+    backend = _resolve_sandbox_backend()
+    if backend == "kubernetes":
+        return run_skill_python_script_in_kubernetes(
+            skills_root=skills_root,
+            plugins_root=plugins_root,
+            workspace_state=workspace_state,
+            script_name=script_name,
+            input_paths=input_paths or [],
+            args=args or [],
+        )
+    return run_skill_python_script_locally(
+        skills_root=skills_root,
+        plugins_root=plugins_root,
+        workspace_state=workspace_state,
+        script_name=script_name,
+        input_paths=input_paths or [],
+        args=args or [],
     )

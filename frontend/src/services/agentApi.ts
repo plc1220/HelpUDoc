@@ -9,7 +9,7 @@ export type { AgentStreamChunk, LangChainStreamProjection };
 export { isInternalStreamContent };
 import { API_URL, apiFetch } from './apiClient';
 import type { ConversationMessageMetadata, FileContextRef, InterruptAnswersByQuestionId } from '../types';
-import type { SkillDefinition } from '../types';
+import type { PluginDefinition, SkillDefinition } from '../types';
 
 import { vitePublicEnv } from '../config/env';
 
@@ -24,6 +24,7 @@ export type AgentRunStatus = 'queued' | 'running' | 'awaiting_approval' | 'compl
 export type SlashMetadataResponse = {
   skills: SkillDefinition[];
   mcpServers: Array<{ name: string; description?: string }>;
+  plugins?: PluginDefinition[];
 };
 
 export type AgentRunStartResponse = {

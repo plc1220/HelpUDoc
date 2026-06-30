@@ -1,4 +1,4 @@
-import type { SkillDefinition, SkillEvolutionSuggestion } from '../types';
+import type { PluginDefinition, SkillDefinition, SkillEvolutionSuggestion } from '../types';
 import type { AgentStreamChunk } from '@helpudoc/contracts/agentStream';
 import { API_URL, apiFetch } from './apiClient';
 
@@ -205,6 +205,23 @@ export const fetchSkills = async (): Promise<SkillDefinition[]> => {
   }
   const data = await response.json();
   return data.skills;
+};
+
+export const fetchPlugins = async (): Promise<PluginDefinition[]> => {
+  const response = await apiFetch(`${API_URL}/settings/plugins`);
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    const apiError = typeof data.error === 'string' ? data.error.trim() : '';
+    if (response.status === 401) {
+      throw new Error(apiError || 'Sign in required to load plugins.');
+    }
+    if (response.status === 403) {
+      throw new Error(apiError || 'System admin access is required to manage plugins.');
+    }
+    throw new Error(apiError || 'Failed to load plugins');
+  }
+  const data = await response.json();
+  return data.plugins || [];
 };
 
 export const createSkill = async (payload: { id: string; name?: string; description?: string }) => {

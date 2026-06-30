@@ -96,7 +96,7 @@ const AgentSettingsTabs = () => {
         <div className="space-y-6">
             <SettingsTabs
                 tabs={[
-                    { id: 'skills', label: 'Skill Registry', icon: Library },
+                    { id: 'skills', label: 'Plugins & Skills', icon: Library },
                     { id: 'evolution', label: 'Skill evolution', icon: Sparkles },
                     { id: 'tools', label: 'Tools & MCP', icon: Wrench },
                 ]}

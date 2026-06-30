@@ -3,15 +3,10 @@ name: data/dashboard
 description: >
   Plan, review, and then assemble a stakeholder-ready dashboard package from the
   current analysis run, with a native interactive canvas experience.
+plugin: data-analytics
+inherits_plugin_defaults: true
 requires_hitl_plan: true
 tools:
-  - data_agent_tools
-  - get_table_schema
-  - run_sql_query
-  - materialize_bigquery_to_parquet
-  - export_sql_query
-  - generate_summary
-  - generate_dashboard
   - request_plan_approval
   - request_clarification
 ---
@@ -23,7 +18,7 @@ This skill is review-first and low-variance. Before any dashboard package is gen
 2. draft a concrete dashboard plan
 3. call `request_plan_approval`
 4. wait for approval or edits
-5. only then call `generate_dashboard`
+5. only then call `run_skill_python_script` with `script_name="build_native_dashboard_package"`
 
 Produce one workspace-native dashboard package that can power:
 - a native interactive dashboard in the canvas
@@ -43,13 +38,13 @@ charts into a single file.
 ## Prerequisites (enforced in code)
 - Native dashboards require `dashboard_dataset_path`, `filter_schema`, and `chart_bindings`.
 - The dashboard package is not complete unless `data/dashboard.rows.json` is written.
-- `generate_dashboard` can only be called **once per run**.
+- `build_native_dashboard_package` should only be called **once per approved dashboard plan**.
 
 ## Connector scope
-The dashboard tool renders from workspace-local data. For BigQuery or other connected
-sources, first materialize a scoped, read-only slice into workspace Parquet with
-`materialize_bigquery_to_parquet`, then continue through DuckDB and `generate_dashboard`.
-The generated dashboard itself does not make live warehouse connections.
+The dashboard script renders from workspace-local data or an inline approved row set.
+For BigQuery or other connected sources, first query a scoped, read-only slice through
+MCP and create or use a canonical workspace dataset. The generated dashboard itself
+does not make live warehouse connections.
 
 ## Workflow
 
@@ -124,15 +119,13 @@ For tagged local parquet/csv dashboards, prefer a deterministic prep path over o
   - produce **3-5 approved chart bindings max**
 
 Do not rediscover upstream tables or rerun exploratory profiling when the tagged local dataset is already sufficient.
-Do not use `generate_chart_config` on the happy path for `data/dashboard`; pass structured chart bindings directly to `generate_dashboard`.
+Pass structured chart bindings directly to `build_native_dashboard_package`.
 
 Source handling:
-- **Local CSV/Parquet**: use `get_table_schema` and `run_sql_query` against the DuckDB
-  registered table names. Do not use `pd.read_parquet`, `pd.read_csv`, or direct file reads in
-  chart code.
+- **Local CSV/Parquet/JSON**: use `data_workspace` for schema inspection and bounded
+  preview queries before package generation.
 - **BigQuery / MCP datasource**: use the MCP tools to inspect/query the warehouse, then
-  materialize the scoped result with `materialize_bigquery_to_parquet`. Treat the resulting
-  Parquet as the dashboard dataset.
+  create or use a scoped workspace dataset. Treat that dataset as the dashboard source of truth.
 
 ### 2. Curate before assembling
 Before generating the dashboard, review the current run and be selective.
@@ -186,7 +179,7 @@ The final dashboard should feel like:
 - Raw SQL and verbose technical detail demoted to an appendix
 
 ### 3.1 Request plan approval (required)
-Before calling `generate_dashboard`, call `request_plan_approval`.
+Before calling `build_native_dashboard_package`, call `request_plan_approval`.
 
 Use:
 - `plan_title`: the proposed dashboard title
@@ -209,7 +202,7 @@ If the reviewer chooses:
 - `edit`: revise the dashboard plan and call `request_plan_approval` again
 - `reject`: stop and do not generate the dashboard
 
-Do not call `generate_dashboard` before approval.
+Do not call `build_native_dashboard_package` before approval.
 
 ### 4. Write titles and copy that explain the insight
 Good section titles:
@@ -223,7 +216,7 @@ Weak section titles to avoid:
 - "Browser/Device Segmentation"
 
 ### 5. Generate the dashboard package
-Call `generate_dashboard` with:
+Call `run_skill_python_script` with `script_name="build_native_dashboard_package"` and a JSON request containing:
 - `title`: the dashboard heading.
 - `description`: the context paragraph.
 - `audience`: the primary audience for the dashboard.
@@ -237,8 +230,8 @@ Call `generate_dashboard` with:
 - `section_titles`: ordered list of polished section headings, one per chart. Do not pass
   raw file names or generic placeholders.
 - `metric_cards` (optional): 2-3 explicit KPI cards for the hero area.
-- `dashboard_dataset_path` (required for native shared data filters): a canonical
-  Parquet/CSV/JSON dataset materialized for this run.
+- `dashboard_dataset_path` or `rows`: a canonical Parquet/CSV/JSON dataset materialized
+  for this run, or an approved inline row set.
 - `filter_schema`: structured filter definitions describing field, label, type,
   options, presets, and applicability.
 - `chart_bindings`: per-chart bindings that map charts to dataset fields and
@@ -248,18 +241,22 @@ Call `generate_dashboard` with:
 - `chart_tags` (optional): tags aligned to chart order so controls can filter charts by theme
   or audience.
 
-The tool will:
+The script will:
 - Build a dashboard package under `dashboards/<slug>/`.
 - Write:
   - `dashboard.meta.json`
   - `dashboard.spec.json`
   - `data/dashboard.rows.json`
+- Set `runtimeKind: "native"` and `version: 2`.
+- Set `dataset.previewPath` to `dashboards/<slug>/data/dashboard.rows.json`.
+- Write rows as `{ "rows": [...] }`.
 - Emit a `dashboard_artifact` event so the frontend can surface the dashboard folder.
 - Emit workspace artifacts so the frontend surfaces the dashboard folder as one object.
 - Only include artifacts from the **current run** — prior-run charts are excluded.
+- Never write `dashboard.snapshot.html`.
 
 ### 6. Report to user
-After `generate_dashboard` returns:
+After the script returns:
 - Tell the user the dashboard folder path so they know what to open.
 - Summarize the story the dashboard tells, not just the file count.
 - Mention what was curated in or left out if that affected quality.
@@ -289,14 +286,14 @@ Filtering is required for dashboards.
   - provide `filter_schema` and `chart_bindings`
   - only charts with valid bindings should claim to be filter-aware
 - If the run only contains finished chart artifacts and no reusable underlying dataset:
-  - do not call `generate_dashboard` yet
+  - do not call `build_native_dashboard_package` yet
   - ask for or create a canonical dataset first, because the native canvas requires
     `data/dashboard.rows.json`
 
 ## Guardrails
 - Do not skip the approval checkpoint for this skill unless the workspace is explicitly in trusted mode.
-- Do not use `write_file` to create canonical dashboard datasets. Always use `export_sql_query` instead to derive verified row data from workspace tables.
-- Do not call `generate_summary` and `generate_dashboard` in the same run — pick one.
+- Do not use `write_file` to create canonical dashboard datasets. Use data scripts or approved exports instead.
+- Do not build a report artifact and a dashboard package in the same run unless the user explicitly asks for both.
 - Do not blindly include every query and chart just because it exists.
 - Do not expose raw SQL as the main content of the page.
 - Do not accept generic section titles if you can rewrite them.

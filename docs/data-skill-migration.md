@@ -4,8 +4,8 @@ This document records the current migration from the legacy `data-analysis` skil
 to the newer `data/*` skill family, along with the remaining work required before
 `data-analysis` can be safely removed.
 
-For the current `data/dashboard` runtime status and the Streamlit-based dashboard
-package work, also see `docs/dashboard-runtime-status.md`.
+For the current `data/dashboard` runtime status and native DashboardCanvas package
+work, also see `docs/dashboard-runtime-status.md`.
 
 ## Summary
 
@@ -19,6 +19,7 @@ multi-skill family:
 - `data/visualize`
 - `data/validate`
 - `data/dashboard`
+- `data/refresh`
 
 The new structure is intended to support a more complete workflow for:
 
@@ -49,16 +50,19 @@ older user habits.
 - Nested skills are identified by relative POSIX path, for example
   `data/analyze`.
 
-### Data tools
+### Data plugin runtime
 
-- `agent/helpudoc_agent/data_agent_tools.py` now tracks run-scoped query and
-  chart history.
-- Added code-enforced budgets for query count and chart count.
-- Added `generate_dashboard` to produce a single HTML dashboard artifact.
-- Added `materialize_bigquery_to_parquet` so warehouse-backed analysis can move
-  into workspace-local Parquet and continue cheaply in DuckDB.
-- Reports and dashboards are now designed to include only artifacts from the
-  current run.
+- `plugins/data-analytics/plugin.yaml` groups the `data/*` skills as a plugin
+  while preserving canonical skill ids.
+- `run_skill_python_script` is the Data plugin's only inherited LangChain tool.
+- Local data work runs through declared plugin scripts such as `data_workspace`
+  and `build_native_dashboard_package`.
+- BigQuery remains MCP-backed through `toolbox-bq-demo`.
+- Chart/table/report payload validation and rendering are additive MCP features
+  exposed by `data-artifacts`.
+- Native dashboards remain DashboardCanvas packages with
+  `dashboard.meta.json`, `dashboard.spec.json`, and
+  `data/dashboard.rows.json`; no `dashboard.snapshot.html` is generated.
 
 ### Tests
 
@@ -80,16 +84,16 @@ The expected user experience is:
 Connector choice is expected to be:
 
 - BigQuery MCP for warehouse datasets
-- DuckDB-backed `data_agent_tools` for local CSV and Parquet files
-- For iterative warehouse analysis: BigQuery first, then
-  `materialize_bigquery_to_parquet`, then DuckDB over the exported Parquet
+- `data_workspace` for local CSV, Parquet, and JSON files
+- For iterative warehouse analysis: BigQuery first, then a scoped workspace
+  snapshot, then DuckDB through `data_workspace`
 
-## BigQuery To DuckDB Materialization Model
+## BigQuery To Local Snapshot Model
 
 The intended serving model is:
 
 - BigQuery remains the warehouse and system of record
-- a scoped warehouse query can be materialized into `data_cache/` as Parquet
+- a scoped warehouse query can be exported into a stable workspace dataset
 - DuckDB then handles iterative slicing, visualization, validation, and
   dashboard/report generation
 
@@ -112,35 +116,21 @@ The metadata is expected to capture:
 
 The migration is not yet complete. The main gaps are:
 
-### Runtime tool enforcement is not wired through yet
+### Dedicated data subagent is not implemented
 
-The repo now contains active-skill scope metadata and guarded invocation wrappers.
-This area should still be treated as newly introduced and verified carefully,
-especially for MCP tools and grouped tool factories.
+The V2 plugin is a scope bundle: skills, scripts, and MCP servers are grouped
+under `data-analytics`, but execution still happens in the main agent runtime.
 
-### Tool names do not yet match enforcement assumptions
+### Legacy data tools still exist as compatibility code
 
-The new skills currently declare `tools: [data_agent_tools]`, but the actual
-callable tools exposed by that factory are:
+The old data tool package remains in the repo for historical tests and
+compatibility imports, but it is no longer exposed by Data plugin defaults or
+runtime configuration.
 
-- `get_table_schema`
-- `run_sql_query`
-- `generate_chart_config`
-- `generate_summary`
-- `generate_dashboard`
+### Further prompt/doc cleanup may remain
 
-If runtime enforcement is enabled without reconciling this mismatch, local data
-skills will deny their own tool calls.
-
-### Summary/dashboard exclusivity is documented but not enforced
-
-The skill docs describe a run as producing one summary or one dashboard. This now
-needs to remain enforced as the feature evolves.
-
-### Verification environment is incomplete
-
-The new test file has been added, but test execution was not verified in the
-current shell environment because `pytest` is not installed there.
+Some historical docs and compatibility tests can still mention the old tool
+package as legacy implementation detail.
 
 ## Why `data-analysis` Should Stay For Now
 
@@ -148,46 +138,21 @@ current shell environment because `pytest` is not installed there.
 
 - older prompts may still refer to `data-analysis` directly
 - the new `data/*` routing is more capable, but also more specific
-- runtime enforcement is not complete yet, so the shim reduces migration risk
+- the shim reduces migration risk while existing prompts and tests finish moving
+  to the plugin-script runtime
 
 In other words, the new family is the preferred interface, but `data-analysis`
 still acts as a safe bridge.
 
 ## Future Work Before Removing `data-analysis`
 
-### 1. Finish runtime enforcement
+### 1. Decide whether Data Analytics should become a dedicated subagent
 
-- persist active skill scope in runtime context, not only policy metadata
-- enforce builtin tool access based on declared skill tool scope
-- enforce MCP access based on declared `mcp_servers`
-- always allow core routing and clarification tools
+- keep `execution.mode: scope_bundle` for now
+- evaluate a future dedicated DeepAgents subagent only after the script/MCP path
+  has stabilized
 
-### 2. Fix the tool-scope model
-
-Choose one consistent model and apply it everywhere:
-
-- either declare concrete callable tool names in skill frontmatter
-- or treat tool factories as logical groups and map them to callable tools before
-  enforcement
-
-This must be reflected in both runtime logic and tests.
-
-### 3. Enforce run-finalization rules
-
-- prevent calling `generate_dashboard` after `generate_summary`
-- prevent calling `generate_summary` after `generate_dashboard`
-- decide whether `data/dashboard` is a separate follow-up run or a mutually
-  exclusive finalization path
-
-### 4. Validate end-to-end behavior
-
-- install test dependencies and run `tests/test_data_skill_family.py`
-- add or update integration coverage for `load_skill`, nested skill ids, and MCP
-  tool access
-- manually validate common prompts against both local DuckDB and BigQuery MCP
-- manually validate BigQuery materialization, TTL reuse, and forced refresh flows
-
-### 5. Update user-facing guidance
+### 2. Complete prompt and doc migration
 
 - prefer `data/analyze` in examples and UI copy
 - prefer `data/query`, `data/explore`, and `data/dashboard` in documentation
@@ -197,10 +162,9 @@ This must be reflected in both runtime logic and tests.
 
 `data-analysis` can be removed only after all of the following are true:
 
-- runtime skill-to-tool enforcement is implemented and verified
-- skill frontmatter and callable tool names are aligned
-- summary/dashboard finalization rules are enforced
-- the new data skill family passes automated tests
+- the new Data plugin scope is verified in automated tests
+- native dashboard package generation is fully script-backed
+- report/chart/table payloads flow through `data-artifacts`
 - common user prompts succeed with `data/*` skills alone
 - no frontend, backend, prompt, or operator workflow still depends on the
   `data-analysis` id

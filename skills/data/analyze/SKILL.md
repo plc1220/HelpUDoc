@@ -5,16 +5,8 @@ description: >
   report. Combines schema discovery, SQL execution, optional visualization, and
   an evidence-based summary. Use for general "analyze / what's happening with…"
   requests.
-tools:
-  - data_agent_tools
-  - get_table_schema
-  - run_sql_query
-  - materialize_bigquery_to_parquet
-  - generate_chart_config
-  - generate_summary
-  - generate_dashboard
-mcp_servers:
-  - toolbox-bq-demo
+plugin: data-analytics
+inherits_plugin_defaults: true
 ---
 
 # data/analyze — Answer Data Questions
@@ -33,21 +25,23 @@ charts and a structured report.
 ## Required completions
 
 - If the user asks for a **shareable report**, **formal report**, **summary report**, or
-  anything that implies a deliverable artifact, you **must** call `generate_summary`
-  exactly once before the final chat response.
-- If the user asks for an **interactive dashboard**, load `data/dashboard` and call
-  `generate_dashboard` exactly once.
+  anything that implies a deliverable artifact, prepare the report payload with
+  `build_report_payload`, validate it with `data-artifacts`, and mention the result
+  before the final chat response.
+- If the user asks for an **interactive dashboard**, load `data/dashboard` and build
+  one native dashboard package after approval.
 - Do **not** use general web-search tools for warehouse questions that can be answered
-  from the declared BigQuery MCP server and local DuckDB tools.
+  from the declared BigQuery MCP server and local data scripts.
 
 ## Connector selection
 
 - **BigQuery (warehouse)**: target = named warehouse tables or large managed datasets.
   Use `bq_list_datasets` → `bq_list_tables` → `bq_get_table_info` → `bq_execute_sql`.
-  If the answer will require iterative follow-up, materialize the scoped result to
-  workspace-local Parquet with `materialize_bigquery_to_parquet` and continue in DuckDB.
-- **Local files (CSV / Parquet in workspace)**: use `get_table_schema` →
-  `run_sql_query` → optional `generate_chart_config` → `generate_summary`.
+  If the answer will require iterative follow-up, create or use a workspace snapshot
+  and continue with the local `data_workspace` script.
+- **Local files (CSV / Parquet / JSON in workspace)**: use `data_workspace` for schema,
+  query, profile, and export actions; use `build_chart_payload` or
+  `build_report_payload` for shareable payloads.
 - **Do not attempt cross-source SQL joins.** Orchestrate at workflow level.
 
 ## Standards
@@ -73,7 +67,7 @@ desired output format (number, table, chart, narrative).
 
 ### 2. Schema / metadata discovery
 - **Warehouse**: navigate metadata tools to find relevant tables and columns.
-- **Local**: call `get_table_schema` (required before any `run_sql_query`).
+- **Local**: call `data_workspace` with `{"action":"schema"}` before local SQL.
 - Note relevant tables, columns, joins, date fields, and metrics.
 
 ### 3. Query
@@ -86,8 +80,8 @@ desired output format (number, table, chart, narrative).
 - Prefer a **segmentation query** + at least one **interaction query** for deeper
   analysis.
 - If the work begins on BigQuery and you expect repeated slicing, comparisons,
-  charts, or validation passes, materialize the scoped warehouse result to Parquet
-  before continuing. Prefer DuckDB for the iterative loop after export.
+  charts, or validation passes, use a workspace snapshot before continuing. Prefer
+  DuckDB through `data_workspace` for the iterative loop after export.
 - After each query: interpret results and decide whether refinement is needed.
 
 ### 4. Validate before presenting
@@ -100,25 +94,26 @@ Before surfacing results, run sanity checks:
 
 ### 5. Visualize (optional)
 When a chart communicates results more effectively than a table:
-- Use `generate_chart_config` with Plotly (preferred for interactivity).
+- Use `build_chart_payload` for chart/table payload preparation, then `render_chart`
+  or `render_table` from `data-artifacts` after validation.
 - Use descriptive `chart_title` names (Title_Case).
 - Do not generate more than **3 charts** in a standard analysis.
-- Plotly specs saved as `.plotly.json` and `.plotly.html` in `charts/`.
+- Keep chart payloads bounded and source-backed.
 
-### 6. Summary
-Call `generate_summary` once after queries (and any chart):
+### 6. Summary / report payload
+For report-style work, call `build_report_payload` after queries and any chart/table payloads:
 - Include tables used, filters, metrics, and artifacts created.
 - Provide at least two concrete insights (or explain if none exist).
 - Structure:
   - `### Summary` — 2–4 bullets
   - `### Key Insights` — 3–6 evidence-backed bullets
 - Mention any charts/files explicitly so the user knows what to open.
-- Note: `generate_summary` saves an HTML report to `reports/` with all queries and charts from this run.
-- For report-style requests, do not stop after analysis notes alone; the run is incomplete
-  until `generate_summary` succeeds and you tell the user where the report was written.
+- Validate report/dashboard artifact payloads with `validate_data_artifact` before
+  `render_artifact`.
+- For report-style requests, do not stop after analysis notes alone; produce the
+  validated payload or explain exactly what blocked it.
 
 ## Guardrails
-- Mandatory order: schema → SQL → chart (optional) → summary.
-- No direct file I/O or raw `pandas` reads of data files.
-- Use only tools from `data_agent_tools` or the declared MCP server.
-- Stop after `generate_summary` succeeds.
+- Mandatory order: schema → SQL/script query → chart/table payload (optional) → summary/report payload.
+- No direct file I/O or raw `pandas` reads by the agent; use declared scripts for local files.
+- Use only inherited plugin scripts, declared tools, or declared MCP servers.

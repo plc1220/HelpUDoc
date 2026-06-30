@@ -226,6 +226,8 @@ services:
       WORKSPACE_ROOT: /app/workspaces
       FILE_UNDERSTANDING_AGENT_READS_WORKSPACE: "true"
       SKILLS_ROOT: /app/skills
+      PLUGINS_ROOT: /app/plugins
+      ENABLE_SKILL_SANDBOX_RUNNER: ${ENABLE_SKILL_SANDBOX_RUNNER:-true}
       AGENT_CONFIG_PATH: /agent/config/runtime.yaml
       ADMIN_EMAILS: ${ADMIN_EMAILS:-admin@local.com}
       GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
@@ -239,6 +241,7 @@ services:
     volumes:
       - workspace_data:/app/workspaces
       - ../skills:/app/skills:ro
+      - ../plugins:/app/plugins:ro
       - ../agent/config:/agent/config
 
   agent:
@@ -263,6 +266,8 @@ services:
       AGENT_JWT_SECRET: ${AGENT_JWT_SECRET:-helpudoc-local-dev-agent-jwt-secret}
       WORKSPACE_ROOT: /app/workspaces
       SKILLS_ROOT: /app/skills
+      PLUGINS_ROOT: /app/plugins
+      HELPUDOC_SANDBOX_BACKEND: ${HELPUDOC_SANDBOX_BACKEND:-local}
       AGENT_CONFIG_PATH: /agent/config/runtime.yaml
       S3_ENDPOINT: http://minio:9000
       MINIO_ENDPOINT: http://minio:9000
@@ -286,6 +291,8 @@ services:
       - workspace_data:/app/workspaces
       - ../skills:/app/skills:ro
       - ../skills:/skills:ro
+      - ../plugins:/app/plugins:ro
+      - ../plugins:/plugins:ro
       - ../agent/config:/agent/config
 
   frontend:

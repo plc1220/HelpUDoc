@@ -18,6 +18,7 @@ RUN apt-get update \
     libglib2.0-0 \
     libsm6 \
     libreoffice-calc \
+    nodejs \
   && rm -rf /var/lib/apt/lists/*
 
 # Install deps before copying the rest so the layer caches across code changes.
@@ -29,6 +30,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 
 COPY agent/ /app/agent/
 COPY skills/ /app/skills/
+COPY plugins/ /app/plugins/
 
 ENV PYTHONPATH=/app
 EXPOSE 8001

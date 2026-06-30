@@ -3,16 +3,8 @@ name: data/explore
 description: >
   Profile and explore a dataset — inspect source options, schema, join keys,
   filters, and connector choice — before writing any SQL or analysis.
-tools:
-  - data_agent_tools
-  - get_table_schema
-  - run_sql_query
-  - materialize_bigquery_to_parquet
-  - generate_chart_config
-  - generate_summary
-  - generate_dashboard
-mcp_servers:
-  - toolbox-bq-demo
+plugin: data-analytics
+inherits_plugin_defaults: true
 ---
 
 # data/explore — Profile and Explore a Dataset
@@ -25,17 +17,18 @@ quality, content, and join potential before diving into analysis.
 - **BigQuery (warehouse)**: use when the user references managed datasets or named
   warehouse tables. Use `bq_list_datasets` → `bq_list_tables` → `bq_get_table_info`
   to navigate metadata, then `bq_execute_sql` for profiling queries. If profiling
-  turns into deeper iterative analysis, export a scoped slice with
-  `materialize_bigquery_to_parquet` and continue locally.
-- **Local files (CSV / Parquet)**: use `get_table_schema` first, then `run_sql_query`
-  for profiling. DuckDB auto-registers files found in the workspace.
+  turns into deeper iterative analysis, create or use a scoped workspace snapshot
+  and continue locally.
+- **Local files (CSV / Parquet / JSON)**: call `run_skill_python_script` with
+  `script_name="data_workspace"` and `{"action":"schema"}` first, then use
+  `{"action":"profile"}` or bounded `{"action":"query"}` requests for profiling.
 
 ## Workflow
 
 ### 1. Identify the source
 - Clarify whether the data is in a warehouse or in local workspace files.
 - For warehouse: list datasets → list tables → get table info.
-- For local files: call `get_table_schema` (marks schema as inspected before SQL is allowed).
+- For local files: call `data_workspace` schema inspection before SQL.
 
 ### 2. Understand structure
 Before any profiling:
@@ -79,4 +72,4 @@ Flag:
 ## Guardrails
 - Order: schema/metadata → profiling queries → quality assessment → recommendations.
 - No speculation — every observation must come from profiling query results.
-- Local SQL: always call `get_table_schema` before `run_sql_query`.
+- Local SQL: always call `data_workspace` schema before `data_workspace` query/profile.

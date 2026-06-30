@@ -230,7 +230,7 @@ class AgentRegistry:
             if self.settings.backend.sync_skills_to_workspace:
                 sync_skills_to_workspace(skills_root, workspace_state.root_path)
         skills = load_skills(skills_root) if skills_root is not None else []
-        tool_names = collect_tool_names(skills)
+        tool_names = collect_tool_names(skills, plugins_root=self.settings.backend.plugins_root)
         if tool_names:
             tool_names = [name for name in tool_names if name in self.settings.tools]
         if not tool_names:

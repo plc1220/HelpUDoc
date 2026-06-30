@@ -77,6 +77,7 @@ import type {
   InterruptQuestion,
   GoogleDrivePickerItem,
   FileContextRef,
+  PluginDefinition,
   SkillDefinition,
   WorkspaceSchedule,
   WorkspaceScheduleDraft,
@@ -348,9 +349,14 @@ type CommandSuggestion = {
   id: string;
   command: string;
   description: string;
+  insertCommand?: string;
+  category?: string;
 };
 
 const getCommandCategory = (command: CommandSuggestion) => {
+  if (command.category) {
+    return command.category;
+  }
   if (command.command.startsWith('/skill')) {
     return 'Skills';
   }
@@ -883,6 +889,7 @@ export default function WorkspacePage() {
   const [copiedMessageId, setCopiedMessageId] = useState<ConversationMessage['id'] | null>(null);
   const [availableSkills, setAvailableSkills] = useState<SkillDefinition[]>([]);
   const [availableMcpServers, setAvailableMcpServers] = useState<Array<{ name: string; description?: string }>>([]);
+  const [availablePlugins, setAvailablePlugins] = useState<PluginDefinition[]>([]);
   const [interruptInputByMessageId, setInterruptInputByMessageId] = useState<Record<string, string>>({});
   const [interruptStructuredAnswersByMessageId, setInterruptStructuredAnswersByMessageId] = useState<
     Record<string, InterruptAnswersByQuestionId>
@@ -1230,7 +1237,7 @@ export default function WorkspacePage() {
     return map;
   }, [availableMcpServers]);
 
-  const commandSuggestions = useMemo(() => {
+  const commandSuggestions = useMemo<CommandSuggestion[]>(() => {
     if (!isCommandOpen) {
       return [] as CommandSuggestion[];
     }
@@ -1238,6 +1245,13 @@ export default function WorkspacePage() {
     const normalized = rawQuery.trim();
     if (!normalized) {
       const rootCommands = SLASH_COMMANDS.map((command) => ({ ...command }));
+      const featuredPlugins = availablePlugins.slice(0, 4).map((plugin) => ({
+        id: `plugin:${plugin.id}`,
+        command: plugin.displayName,
+        insertCommand: `/skill ${plugin.defaultSkillId}`,
+        description: plugin.description || `Use the ${plugin.displayName} plugin`,
+        category: 'Plugins',
+      }));
       const featuredSkills = availableSkills.slice(0, 5).map((skill) => ({
         id: `skill:${skill.id}`,
         command: `/skill ${skill.id}`,
@@ -1248,7 +1262,24 @@ export default function WorkspacePage() {
         command: `/mcp ${server.name}`,
         description: server.description || `Prefer tools from ${server.name}`,
       }));
-      return [...rootCommands, ...featuredSkills, ...featuredMcpServers];
+      return [...rootCommands, ...featuredPlugins, ...featuredSkills, ...featuredMcpServers];
+    }
+    const pluginMatch = rawQuery.match(/^plugin(?:\s+(.*))?$/);
+    if (pluginMatch) {
+      const filter = (pluginMatch[1] || '').trim();
+      return availablePlugins
+        .filter((plugin) => !filter
+          || plugin.id.toLowerCase().includes(filter)
+          || plugin.displayName.toLowerCase().includes(filter)
+          || (plugin.description || '').toLowerCase().includes(filter))
+        .slice(0, 8)
+        .map((plugin) => ({
+          id: `plugin:${plugin.id}`,
+          command: plugin.displayName,
+          insertCommand: `/skill ${plugin.defaultSkillId}`,
+          description: plugin.description || `Use the ${plugin.displayName} plugin`,
+          category: 'Plugins',
+        }));
     }
     const skillMatch = rawQuery.match(/^skill(?:\s+(.*))?$/);
     if (skillMatch) {
@@ -1290,6 +1321,18 @@ export default function WorkspacePage() {
         })),
       ];
     }
+    if (normalized.startsWith('plugin') || normalized.startsWith('data')) {
+      return [
+        ...matches,
+        ...availablePlugins.slice(0, 8).map((plugin) => ({
+          id: `plugin:${plugin.id}`,
+          command: plugin.displayName,
+          insertCommand: `/skill ${plugin.defaultSkillId}`,
+          description: plugin.description || `Use the ${plugin.displayName} plugin`,
+          category: 'Plugins',
+        })),
+      ];
+    }
     if (normalized.startsWith('mcp')) {
       return [
         ...matches,
@@ -1301,10 +1344,10 @@ export default function WorkspacePage() {
       ];
     }
     return matches;
-  }, [availableMcpServers, availableSkills, commandQuery, isCommandOpen]);
+  }, [availableMcpServers, availablePlugins, availableSkills, commandQuery, isCommandOpen]);
 
   const landingCommandGroups = useMemo(() => {
-    const order = ['Creation', 'Skills', 'Data Sources', 'Automation'];
+    const order = ['Creation', 'Plugins', 'Skills', 'Data Sources', 'Automation'];
     return order
       .map((category) => ({
         category,
@@ -2093,12 +2136,13 @@ export default function WorkspacePage() {
 
     const loadSlashMetadata = async () => {
       try {
-        const { skills, mcpServers } = await fetchSlashMetadata();
+        const { skills, mcpServers, plugins } = await fetchSlashMetadata();
         if (cancelled) {
           return;
         }
         setAvailableSkills(skills);
         setAvailableMcpServers(mcpServers);
+        setAvailablePlugins(plugins || []);
       } catch (error) {
         console.error('Failed to load slash metadata', error);
       }
@@ -2290,8 +2334,9 @@ export default function WorkspacePage() {
       }
       const before = chatMessage.slice(0, commandTriggerIndex);
       const after = chatMessage.slice(commandCursorPosition);
-      const shouldKeepCommandMenuOpen = command.command === '/skill' || command.command === '/mcp';
-      const insertedCommand = shouldKeepCommandMenuOpen ? `${command.command} ` : command.command;
+      const executableCommand = command.insertCommand || command.command;
+      const shouldKeepCommandMenuOpen = executableCommand === '/skill' || executableCommand === '/mcp';
+      const insertedCommand = shouldKeepCommandMenuOpen ? `${executableCommand} ` : executableCommand;
       const needsSpace = after.length === 0 || after.startsWith(' ') || shouldKeepCommandMenuOpen ? '' : ' ';
       const nextValue = `${before}${insertedCommand}${needsSpace}${after}`;
       setChatMessage(nextValue);
@@ -7589,9 +7634,12 @@ export default function WorkspacePage() {
                                     {group.commands.map((command) => {
                                       const absoluteIndex = commandSuggestions.findIndex((item) => item.id === command.id);
                                       const isSelectedCommand = absoluteIndex === commandSelectedIndex;
-                                      const Icon = command.command.startsWith('/skill')
+                                      const executableCommand = command.insertCommand || command.command;
+                                      const Icon = command.category === 'Plugins'
+                                        ? Sparkles
+                                        : executableCommand.startsWith('/skill')
                                         ? Wrench
-                                        : command.command.startsWith('/mcp')
+                                        : executableCommand.startsWith('/mcp')
                                           ? Plug
                                           : Sparkles;
                                       return (

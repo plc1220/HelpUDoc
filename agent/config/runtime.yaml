@@ -18,6 +18,7 @@ backend:
   workspace_root: backend/workspaces
   virtual_mode: true
   skills_root: skills
+  plugins_root: plugins
   sync_skills_to_workspace: false
   implicit_input_guard: true
   code_interpreter:
@@ -30,8 +31,7 @@ backend:
     snapshot_between_turns: true
     ptc_tools:
       - rag_query
-      - get_table_schema
-      - run_sql_query
+      - run_skill_python_script
       - google_search
       - url_context
   interrupt_on:
@@ -59,9 +59,6 @@ tools:
   - name: create_pdf_from_images
     kind: builtin
     description: Create a multi-page PDF from workspace image files
-  - name: data_agent_tools
-    entrypoint: helpudoc_agent.data_agent_tools:build_data_agent_tools
-    description: Tools for Data Agent (DuckDB, Charts)
   - name: arxiv_search
     entrypoint: helpudoc_agent.arxiv_tools:build_arxiv_tools
     description: Search arXiv and summarize relevant papers
@@ -106,6 +103,15 @@ mcp_servers:
     delegated_auth_provider: google
     default_access: allow
     description: Toolbox BigQuery demo MCP (Streamable HTTP)
+  - name: data-artifacts
+    transport: stdio
+    command: node
+    args:
+      - plugins/data-analytics/mcp/server.cjs
+      - --stdio
+    cwd: "."
+    default_access: allow
+    description: Local Data Analytics artifact validators and renderers
   - name: google-workspace
     transport: http
     default_access: allow

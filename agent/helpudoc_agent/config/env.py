@@ -27,6 +27,7 @@ class AgentRuntimeEnv:
     node_env: str | None
     workspace_root_raw: str | None
     skills_root_raw: str | None
+    plugins_root_raw: str | None
     gemini_api_key: str | None
 
 
@@ -38,6 +39,7 @@ def load_agent_runtime_env() -> AgentRuntimeEnv:
         node_env=env_trim("NODE_ENV"),
         workspace_root_raw=env_trim("WORKSPACE_ROOT"),
         skills_root_raw=env_trim("SKILLS_ROOT"),
+        plugins_root_raw=env_trim("PLUGINS_ROOT"),
         gemini_api_key=(
             env_trim("GEMINI_API_KEY")
             or env_trim("GOOGLE_API_KEY")

@@ -40,6 +40,27 @@ spec:
           volumeMounts:
             - name: skills-data
               mountPath: /pvc-skills
+        - name: seed-plugins
+          image: gcr.io/my-rd-coe-demo-gen-ai/helpudoc-agent:latest
+          imagePullPolicy: Always
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              if [ -f /pvc-plugins/data-analytics/plugin.yaml ]; then
+                echo "seed-plugins: PVC already has plugins; skipping."
+                exit 0
+              fi
+              echo "seed-plugins: copying from image to PVC..."
+              mkdir -p /pvc-plugins
+              cp -a /app/plugins-source/. /pvc-plugins/
+              if [ -f /app/plugins-source/.HELPUDOC_SOURCE_REVISION ]; then
+                cp /app/plugins-source/.HELPUDOC_SOURCE_REVISION /pvc-plugins/.HELPUDOC_IMAGE_SOURCE_REVISION || true
+              fi
+          volumeMounts:
+            - name: plugins-data
+              mountPath: /pvc-plugins
         - name: seed-agent-config
           image: gcr.io/my-rd-coe-demo-gen-ai/helpudoc-agent:latest
           imagePullPolicy: Always
@@ -178,6 +199,8 @@ spec:
                   key: WORKSPACE_ROOT
             - name: SKILLS_ROOT
               value: /app/skills
+            - name: PLUGINS_ROOT
+              value: /app/plugins
             - name: AGENT_CONFIG_PATH
               value: /agent/config/runtime.yaml
             - name: AGENT_JWT_SECRET
@@ -269,6 +292,8 @@ spec:
               mountPath: /app/workspaces
             - name: skills-data
               mountPath: /app/skills
+            - name: plugins-data
+              mountPath: /app/plugins
             - name: agent-config-data
               mountPath: /agent/config
         - name: agent
@@ -361,6 +386,10 @@ spec:
                 configMapKeyRef:
                   name: helpudoc-config
                   key: WORKSPACE_ROOT
+            - name: SKILLS_ROOT
+              value: /app/skills
+            - name: PLUGINS_ROOT
+              value: /app/plugins
             - name: S3_ENDPOINT
               value: http://minio:9000
             - name: MINIO_ENDPOINT
@@ -503,6 +532,12 @@ spec:
                   name: helpudoc-config
                   key: HELPUDOC_SANDBOX_IMAGE
                   optional: true
+            - name: HELPUDOC_SANDBOX_BACKEND
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: HELPUDOC_SANDBOX_BACKEND
+                  optional: true
           volumeMounts:
             - name: workspace-data
               mountPath: /app/workspaces
@@ -510,6 +545,10 @@ spec:
               mountPath: /app/skills
             - name: skills-data
               mountPath: /skills
+            - name: plugins-data
+              mountPath: /app/plugins
+            - name: plugins-data
+              mountPath: /plugins
             - name: agent-config-data
               mountPath: /agent/config
         - name: google-workspace-mcp
@@ -561,6 +600,9 @@ spec:
         - name: skills-data
           persistentVolumeClaim:
             claimName: skills-pvc
+        - name: plugins-data
+          persistentVolumeClaim:
+            claimName: plugins-pvc
         - name: agent-config-data
           persistentVolumeClaim:
             claimName: agent-config-pvc

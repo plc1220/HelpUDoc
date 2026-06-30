@@ -4,16 +4,8 @@ description: >
   Data analysis skill hub. Routes to the right specialist subskill depending on the
   request — exploration, query writing, end-to-end analysis, visualization, validation,
   dashboard planning plus assembly, or recurring snapshot refresh.
-tools:
-  - data_agent_tools
-  - get_table_schema
-  - run_sql_query
-  - materialize_bigquery_to_parquet
-  - export_sql_query
-  - generate_summary
-  - generate_dashboard
-mcp_servers:
-  - toolbox-bq-demo
+plugin: data-analytics
+inherits_plugin_defaults: true
 ---
 
 # data — Skill Hub
@@ -39,20 +31,20 @@ analysis tasks.
 Choose the right data connector for the source:
 
 - **Warehouse (managed datasets, large tables)** — use the BigQuery MCP server
-  (`toolbox-bq-demo`) for discovery and the initial scoped query. If the task will
-  require iterative follow-up analysis, materialize the scoped result with
-  `materialize_bigquery_to_parquet` and continue in DuckDB. Treat BigQuery as the
-  system of record and DuckDB over workspace snapshots as the local serving layer.
-- **Local files (CSV / Parquet in the workspace)** — use `data_agent_tools`.
-  Available tools: `get_table_schema`, `run_sql_query`,
-  `materialize_bigquery_to_parquet`, `generate_summary`,
-  `generate_dashboard`.
-- **Recurring dashboards / canned reports** — use `data/refresh` to publish a stable
-  snapshot such as `datasets/<slug>/latest.parquet`, optionally mirror it to CSV, and
-  regenerate a stable HTML artifact in `dashboards/` or `reports/`.
+  (`toolbox-bq-demo`) for discovery and scoped SQL. Treat BigQuery as the source of
+  truth. When repeated local slicing is needed, create or use a workspace snapshot
+  first, then continue through plugin scripts.
+- **Local files (CSV / Parquet / JSON in the workspace)** — use
+  `run_skill_python_script` with `data_workspace` for schema inspection, DuckDB
+  queries, profiling, and exports.
+- **Charts / tables / reports** — prepare payloads with plugin scripts, then validate
+  and render bounded payloads through the `data-artifacts` MCP.
+- **Recurring dashboards / canned reports** — use `data/refresh` to publish stable
+  snapshots such as `datasets/<slug>/latest.parquet`, then regenerate stable native
+  dashboard or report artifacts from those snapshots.
 - **Dashboard creation** — `data/dashboard` is review-first. It should inspect the tagged
   dataset/report context, propose a dashboard plan, wait for approval, then generate the
-  dashboard package.
+  native DashboardCanvas package with `build_native_dashboard_package`.
 - **Do not attempt cross-source SQL joins in v1.** Orchestrate at the workflow level
   (query each source separately; combine in Python / summary prose).
 
@@ -60,11 +52,13 @@ Choose the right data connector for the source:
 
 - Inspect schema / metadata before executing SQL.
 - Always cite concrete numbers (counts, averages, %, deltas). No speculation.
-- Maximum **10 SQL queries** per run (enforced in code).
-- Maximum **5 charts** per run (enforced in code).
-- One `generate_summary` OR one `generate_dashboard` per run.
+- Keep query and script runs bounded; prefer 5 focused queries for a normal analysis
+  and stop by 10 unless the user explicitly asks for deeper investigation.
+- Maximum **5 charts** per run.
+- One shareable deliverable path per run: report artifact or native dashboard package.
 - Reports and dashboards only include artifacts from the **current run** — never
   from prior runs.
 - Dashboard requests should prefer a tagged dataset artifact as the source of truth and
   avoid fresh warehouse rediscovery unless the tagged inputs are unusable.
-- In `data/dashboard`, prefer structured chart bindings over `generate_chart_config` on the main path.
+- In `data/dashboard`, pass structured chart bindings to
+  `build_native_dashboard_package`; do not generate `dashboard.snapshot.html`.
