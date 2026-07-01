@@ -27,13 +27,13 @@ default_sandbox_scripts:
       - out/tool_artifacts.json
   - name: build_chart_payload
     path: scripts/build_chart_payload.py
-    sha256: 40d9f98425e589ac23172ba794bd58563c8da656f96d26d487bb4e75202bf1a8
+    sha256: 30eaed5baf822285a220023c55c00537c32d458e9a25f883a7d6da83e62d21d8
     timeout_seconds: 120
     outputs:
       - out/result.json
   - name: build_native_dashboard_package
     path: scripts/build_native_dashboard_package.py
-    sha256: b860017a747b64b0b2faece0e98bf0d35dacab838154442cde0c037e26869f3e
+    sha256: dc72232935f5f392f19169aacae25b361610cd8945b04f0a3c361c6525b31271
     timeout_seconds: 120
     outputs:
       - out/dashboard_artifacts.json
