@@ -30,7 +30,6 @@ required_artifacts:
   - /final_report_audit.md
   - /final_quality_check.md
   - /final-research-report.md
-  - pattern:/0[1-9]_*.md
 pre_plan_search_limit: 3
 source_skills:
   - research-core

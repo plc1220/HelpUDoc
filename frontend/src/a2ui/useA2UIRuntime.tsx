@@ -153,7 +153,7 @@ export const useA2UIRuntime = ({
     if (lastRequestSignatureRef.current === requestSignature && existingSurface) {
       activeSurfaceIdRef.current = surfaceId;
       setActiveSurfaceId((current) => current === surfaceId ? current : surfaceId);
-      setSurfaceModel((current) => current === existingSurface ? current : existingSurface);
+      setSurfaceModel((current) => current ?? existingSurface);
       return;
     }
 

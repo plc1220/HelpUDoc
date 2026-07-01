@@ -1657,6 +1657,136 @@ test('frontend-slides completion with missing outline gate recovers to native ou
   }
 });
 
+test('frontend-slides duplicate setup gate recovers to outline confirmation with fallback outline material', {
+  skip: process.env.RUN_A2UI_E2E !== '1' ? 'set RUN_A2UI_E2E=1 with Redis available to run lifecycle flow test' : false,
+}, async () => {
+  if (!redisClient.isOpen) {
+    await redisClient.connect();
+  }
+
+  let runId = '';
+  const turnId = `a2ui-duplicate-setup-outline-recovery-${Date.now()}`;
+  const workspaceId = 'workspace-a2ui-duplicate-setup-outline-recovery';
+  let callCount = 0;
+  const syntheticPresentationContextInterrupt = {
+    ...presentationContextInterrupt,
+    displayPayload: {
+      ...presentationContextInterrupt.displayPayload,
+      synthetic: true,
+    },
+    a2uiRequest: {
+      ...presentationContextInterrupt.a2uiRequest,
+      metadata: {
+        ...presentationContextInterrupt.a2uiRequest.metadata,
+        synthetic: true,
+      },
+    },
+  };
+  try {
+    configureAgentRunServices({
+      telemetryService: null,
+      userMemoryService: null,
+      skillEvolutionService: null,
+      conversationService: null,
+      agentStreamClient: {
+        runAgentStream: async () => {
+          callCount += 1;
+          if (callCount === 1) {
+            return makeStreamResponse([
+              { type: 'policy', skill: 'frontend-slides' },
+              syntheticPresentationContextInterrupt,
+            ]);
+          }
+          return makeStreamResponse([
+            { type: 'policy', skill: 'frontend-slides' },
+            { type: 'tool_start', name: 'read_file', content: '{"file_path":"/operation-epic-fury-report.md"}' },
+            {
+              type: 'tool_end',
+              name: 'read_file',
+              content: [
+                '1\t# Operation Epic Fury',
+                '2\t',
+                '3\t## TL;DR',
+                '4\t- Major regional conflict scenario',
+                '5\t- Strategic, economic, and geopolitical impacts',
+                '6\t',
+                '7\t## Sections',
+                '8\t1. Background',
+                '9\t2. Military narrative',
+                '10\t3. Economic implications',
+                '11\t4. Regional shifts',
+              ].join('\n'),
+            },
+            syntheticPresentationContextInterrupt,
+          ]);
+        },
+      },
+    });
+
+    const started = await startAgentRun({
+      workspaceId,
+      persona: 'fast',
+      prompt: '/skill frontend-slides @operation-epic-fury-report.md',
+      history: [{ role: 'user', content: '/skill frontend-slides @operation-epic-fury-report.md' }],
+      turnId,
+      forceReset: true,
+      fileContextRefs: [
+        {
+          sourceFileId: 5,
+          sourceName: 'operation-epic-fury-report.md',
+          sourceVersionFingerprint: 'test-fingerprint',
+          artifactId: 'artifact-1',
+          artifactVersion: 1,
+          effectiveMode: 'part',
+          status: 'ready',
+          summary: '# Operation Epic Fury',
+        },
+      ],
+    });
+    runId = started.runId;
+
+    const setup = await waitForRunStatus(runId, (status) => status === 'awaiting_approval');
+    assert.equal(setup?.pendingInterrupt?.displayPayload?.gateId, 'presentation_context');
+
+    await resumeAgentRunWithResponse(runId, {
+      answersByQuestionId: {
+        purpose: 'Pitch deck',
+        length: 'Medium (10-20)',
+        content: 'I have rough notes',
+        images: './assets',
+        editing: 'Yes (Recommended)',
+      },
+    }, {
+      previousInterrupt: setup?.pendingInterrupt,
+    });
+
+    const recovered = await waitForRunStatus(runId, (status, meta) => (
+      status === 'failed' ||
+      (status === 'awaiting_approval' && meta?.pendingInterrupt?.displayPayload?.gateId === 'outline_confirmation')
+    ));
+
+    assert.equal(recovered?.status, 'awaiting_approval');
+    assert.equal(recovered?.pendingInterrupt?.displayPayload?.gateId, 'outline_confirmation');
+    const outlineMarkdown = String(recovered?.pendingInterrupt?.a2uiRequest?.props?.outlineMarkdown || '');
+    assert.match(outlineMarkdown, /Operation Epic Fury/);
+    assert.match(outlineMarkdown, /Background/);
+    assert.match(outlineMarkdown, /Military narrative/);
+    assert.doesNotMatch(outlineMarkdown, /slide outline was not included/i);
+    assert.deepEqual(recovered?.a2uiGateState?.completedGateIds, ['presentation_context']);
+  } finally {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    if (runId) {
+      await redisClient.del(`agent:run:${runId}`);
+      await redisClient.del(`agent:run:${runId}:meta`);
+    }
+    await redisClient.del(`agent:run:key:${workspaceId}:fast:${turnId}`);
+    configureAgentRunServices({ agentStreamClient: null });
+    if (redisClient.isOpen) {
+      await redisClient.quit();
+    }
+  }
+});
+
 test('frontend-slides completion with missing style preview gate recovers with fallback previews', {
   skip: process.env.RUN_A2UI_E2E !== '1' ? 'set RUN_A2UI_E2E=1 with Redis available to run lifecycle flow test' : false,
 }, async () => {

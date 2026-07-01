@@ -1196,19 +1196,176 @@ const buildNativeA2UIRequest = (input: {
   metadata: input.metadata || {},
 });
 
+const cleanOutlineSourceLine = (line: string): string => (
+  line
+    .replace(/^\s*\d+\s*(?:\t| {2,})/, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+);
+
+const uniqueNonEmpty = (values: string[]): string[] => {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  values.forEach((value) => {
+    const cleaned = cleanOutlineSourceLine(value);
+    const key = cleaned.toLowerCase();
+    if (!cleaned || seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    result.push(cleaned);
+  });
+  return result;
+};
+
+const stripMarkdownExtension = (name: string): string => (
+  name.replace(/\.(?:md|markdown|txt|pdf|docx?|pptx?|html?)$/i, '').trim()
+);
+
+const titleCaseFromSlug = (value: string): string => {
+  const cleaned = stripMarkdownExtension(value)
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return cleaned
+    ? cleaned.replace(/\b[a-z]/g, (match) => match.toUpperCase())
+    : 'Presentation';
+};
+
+const isLikelyFrontendSlidesOutlineMarkdown = (text: string): boolean => {
+  const lowered = text.toLowerCase();
+  const listItemCount = (text.match(/^\s*(?:[-*]\s+|\d+[.)]\s+)/gm) || []).length;
+  return Boolean(
+    /\b(?:slide|deck|presentation)\s+outline\b/i.test(text) ||
+    /\bproposed\s+(?:slide\s+)?outline\b/i.test(text) ||
+    (/\b(?:slide|deck|presentation)\b/.test(lowered) && listItemCount >= 2) ||
+    listItemCount >= 4,
+  );
+};
+
 const buildFrontendSlidesOutlinePreviewMarkdown = (assistantText?: string): string => {
   const text = String(assistantText || '').trim();
-  if (!text) {
+  if (!text || !isLikelyFrontendSlidesOutlineMarkdown(text)) {
     return '';
   }
   const maxLength = 6000;
   return text.length > maxLength ? `${text.slice(0, maxLength).trim()}\n\n...` : text;
 };
 
+const collectFrontendSlidesSourceText = (input: {
+  params?: StartRunParams;
+  toolEvents?: ToolEvent[];
+}): string => {
+  const fragments: string[] = [];
+  for (const event of input.toolEvents || []) {
+    if (
+      event.name === 'read_file' &&
+      event.status === 'completed' &&
+      typeof event.summary === 'string' &&
+      event.summary.trim() &&
+      !event.summary.trim().startsWith('Error:')
+    ) {
+      fragments.push(
+        event.summary
+          .split(/\r?\n/)
+          .map(cleanOutlineSourceLine)
+          .filter(Boolean)
+          .join('\n'),
+      );
+    }
+  }
+
+  for (const ref of input.params?.fileContextRefs || []) {
+    const parts = [
+      ref.sourceName,
+      typeof ref.summary === 'string' ? ref.summary : '',
+    ].filter((part) => part && part.trim());
+    if (parts.length) {
+      fragments.push(parts.join('\n'));
+    }
+  }
+
+  if (typeof input.params?.prompt === 'string' && input.params.prompt.trim()) {
+    fragments.push(formatOriginalPromptForContinuation(input.params.prompt));
+  }
+
+  return fragments.join('\n\n').trim();
+};
+
+const extractFrontendSlidesSourceTitle = (sourceText: string, params?: StartRunParams): string => {
+  const heading = sourceText.match(/^\s*#\s+(.+)$/m)?.[1]?.trim();
+  if (heading) {
+    return cleanOutlineSourceLine(heading);
+  }
+  const refName = params?.fileContextRefs?.find((ref) => ref.sourceName?.trim())?.sourceName;
+  if (refName) {
+    return titleCaseFromSlug(refName);
+  }
+  const taggedFile = params?.prompt?.match(/@([^\s]+)/)?.[1];
+  if (taggedFile) {
+    return titleCaseFromSlug(taggedFile);
+  }
+  return 'Presentation';
+};
+
+const extractFrontendSlidesTopics = (sourceText: string, title: string): string[] => {
+  const headings = Array.from(sourceText.matchAll(/^\s*#{2,4}\s+(.+)$/gm))
+    .map((match) => match[1] || '');
+  const listItems = Array.from(sourceText.matchAll(/^\s*(?:[-*]\s+|\d+[.)]\s+)(.+)$/gm))
+    .map((match) => match[1] || '');
+  return uniqueNonEmpty([...headings, ...listItems])
+    .filter((topic) => topic.toLowerCase() !== title.toLowerCase())
+    .slice(0, 8);
+};
+
+const buildFrontendSlidesFallbackOutlineMarkdown = (input: {
+  params?: StartRunParams;
+  toolEvents?: ToolEvent[];
+}): string => {
+  const sourceText = collectFrontendSlidesSourceText(input);
+  const title = extractFrontendSlidesSourceTitle(sourceText, input.params);
+  const topics = extractFrontendSlidesTopics(sourceText, title);
+  const sourceSummary = topics.slice(0, 3).join('; ') || 'the source material';
+  const imagePreference = input.params?.prompt?.match(/(?:Images|Assets|asset_preference):\s*([^\n]+)/i)?.[1]?.trim();
+  const slides = [
+    `1. Title / hook - Introduce ${title} and frame the main audience takeaway.`,
+    `2. Executive TL;DR - Summarize the core message: ${sourceSummary}.`,
+    ...topics.slice(0, 6).map((topic, index) => (
+      `${index + 3}. ${topic} - Turn this source section into one focused slide with the key point, supporting evidence, and a visual treatment.`
+    )),
+  ];
+  slides.push(`${slides.length + 1}. Closing takeaways - Recap the strategic implications and next step for the audience.`);
+
+  const imagePlan = imagePreference && !/^no images$/i.test(imagePreference)
+    ? `Use the requested image/asset direction (${imagePreference}) where it directly supports a slide; otherwise use diagrams, timelines, maps, or typography.`
+    : 'No dedicated image assets were confirmed. Use diagrams, timelines, maps, icon treatments, charts, and strong typography instead of placeholder images.';
+
+  return [
+    `## Proposed slide outline for ${title}`,
+    '',
+    ...slides,
+    '',
+    '### Image and visual assignment plan',
+    '',
+    imagePlan,
+  ].join('\n');
+};
+
+const buildFrontendSlidesOutlineReviewMarkdown = (input: {
+  assistantText?: string;
+  params?: StartRunParams;
+  toolEvents?: ToolEvent[];
+}): string => (
+  buildFrontendSlidesOutlinePreviewMarkdown(input.assistantText) ||
+  buildFrontendSlidesFallbackOutlineMarkdown(input)
+);
+
 const buildFrontendSlidesGatePendingInterrupt = (input: {
   runId: string;
   gateId: FrontendSlidesGateId;
   assistantText?: string;
+  params?: StartRunParams;
+  toolEvents?: ToolEvent[];
 }): Record<string, unknown> => {
   const { runId, gateId } = input;
   const interruptId = `implicit-${createHash('sha256').update(`${runId}:${gateId}`).digest('hex').slice(0, 20)}`;
@@ -1311,7 +1468,7 @@ const buildFrontendSlidesGatePendingInterrupt = (input: {
   };
   const selected = config[gateId];
   const outlinePreviewMarkdown = gateId === 'outline_confirmation'
-    ? buildFrontendSlidesOutlinePreviewMarkdown(input.assistantText)
+    ? buildFrontendSlidesOutlineReviewMarkdown(input)
     : '';
   const displayPayload = buildFrontendSlidesDisplayPayload(gateId, {
     ...(outlinePreviewMarkdown
@@ -2890,6 +3047,8 @@ async function runAgentRunWorker(
           runId,
           gateId: missingGate,
           assistantText,
+          params,
+          toolEvents,
         }),
       );
       const pendingInterrupt = parsePendingInterrupt(JSON.stringify(recoveredInterrupt));
@@ -3619,6 +3778,7 @@ const reconcileActiveRunMetaFromStream = async (
       buildFrontendSlidesGatePendingInterrupt({
         runId,
         gateId: missingCompletionGate,
+        params: context?.params,
       }),
     );
     const validationError = validateInterrupt(recoveredInterrupt, 'frontend-slides');

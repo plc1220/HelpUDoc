@@ -67,6 +67,8 @@ type RerunMessageOptions = {
 };
 
 const IMAGE_EXTENSION_PATTERN = /\.(apng|avif|gif|jpe?g|png|svg|webp)$/i;
+const EMPTY_SELECTED_CHOICE_IDS: string[] = [];
+const EMPTY_STRUCTURED_ANSWERS: InterruptAnswersByQuestionId = {};
 
 const stripAttachmentMarker = (text: string) => text.replace(ATTACHMENT_MARKER_PATTERN, '').trimEnd();
 
@@ -756,7 +758,7 @@ export default function ChatMessageBubble({
   const allowDismiss = Boolean(pendingInterrupt?.responseSpec?.allowDismiss);
   const clarificationAllowsMultiple = Boolean(pendingInterrupt?.responseSpec?.multiple);
   const selectedChoiceIds = useMemo(
-    () => interruptSelectedChoicesByMessageId[messageKey] || [],
+    () => interruptSelectedChoicesByMessageId[messageKey] || EMPTY_SELECTED_CHOICE_IDS,
     [interruptSelectedChoicesByMessageId, messageKey],
   );
   const structuredClarificationQuestions = useMemo(
@@ -785,7 +787,7 @@ export default function ChatMessageBubble({
   const clarificationDraftValue = interruptInputByMessageId[clarificationTextKey] || '';
   const structuredClarificationSubmitActions = interruptActions.filter((action) => action.inputMode === 'text');
   const structuredAnswerMap = useMemo(
-    () => interruptStructuredAnswersByMessageId[messageKey] || {},
+    () => interruptStructuredAnswersByMessageId[messageKey] || EMPTY_STRUCTURED_ANSWERS,
     [interruptStructuredAnswersByMessageId, messageKey],
   );
   const setInterruptValue = useCallback((fieldKey: string, value: string) => {
@@ -998,14 +1000,17 @@ export default function ChatMessageBubble({
         notes?: string;
         stepIndex?: number;
       };
-      if (parsed.answersByQuestionId && Object.keys(structuredAnswerMap).length === 0) {
+      const savedAnswers = parsed.answersByQuestionId && typeof parsed.answersByQuestionId === 'object'
+        ? parsed.answersByQuestionId
+        : undefined;
+      if (savedAnswers && Object.keys(savedAnswers).length > 0 && Object.keys(structuredAnswerMap).length === 0) {
         setInterruptStructuredAnswersByMessageId((prev) => {
           if (prev[messageKey] && Object.keys(prev[messageKey]).length > 0) {
             return prev;
           }
           return {
             ...prev,
-            [messageKey]: parsed.answersByQuestionId || {},
+            [messageKey]: savedAnswers,
           };
         });
       }
