@@ -20,6 +20,7 @@ RUN apt-get update \
     libgl1 \
     libglib2.0-0 \
     libsm6 \
+    nodejs \
   && rm -rf /var/lib/apt/lists/*
 
 # Copy dependency manifests first so `pip install` layer caches across code/skills changes.
@@ -38,14 +39,17 @@ RUN curl -fsSL -o /usr/local/bin/gcp-cost-mcp-server \
 COPY agent/scripts/gcp-cost-mcp-wrapper.sh /usr/local/bin/gcp-cost-mcp-wrapper
 RUN chmod +x /usr/local/bin/gcp-cost-mcp-wrapper
 
-# Copy agent code and skills. Bundled source paths are used by GKE initContainers to seed PVCs.
+# Copy agent code and runtime assets. Bundled source paths are used by GKE initContainers to seed PVCs.
 COPY agent/ /app/agent/
 COPY skills/ /app/skills-source/
+COPY plugins/ /app/plugins-source/
 RUN mkdir -p /app/agent-config-source \
   && cp /app/agent/config/runtime.yaml /app/agent-config-source/runtime.yaml \
   && printf '%s\n' "${GIT_COMMIT}" > /app/skills-source/.HELPUDOC_SOURCE_REVISION \
+  && cp /app/skills-source/.HELPUDOC_SOURCE_REVISION /app/plugins-source/.HELPUDOC_SOURCE_REVISION \
   && cp /app/skills-source/.HELPUDOC_SOURCE_REVISION /app/agent-config-source/.HELPUDOC_SOURCE_REVISION
 COPY skills/ /app/skills/
+COPY plugins/ /app/plugins/
 
 EXPOSE 8001
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001"]

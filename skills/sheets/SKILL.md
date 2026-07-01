@@ -2,7 +2,6 @@
 name: sheets
 description: Handle spreadsheets and tabular files safely; use text reads only for text tables and avoid treating Excel or Parquet binaries as UTF-8 files.
 tools:
-  - data_agent_tools
   - request_clarification
 ---
 
@@ -16,7 +15,8 @@ Use this skill for spreadsheet and tabular file requests, including `.csv`, `.ts
 
 - Do not call `read_file` on `.xlsx`, `.xls`, `.ods`, or `.parquet`.
 - Only treat `.csv` and `.tsv` as text files.
-- Use the data tools for structured analysis when the task is analytical rather than purely editorial.
+- Load `data/explore`, `data/query`, or `data/analyze` for structured analysis when
+  the task is analytical rather than purely editorial.
 - Be explicit when a binary spreadsheet format needs conversion before the agent can inspect it reliably.
 
 ## Workflow
@@ -29,9 +29,9 @@ Use this skill for spreadsheet and tabular file requests, including `.csv`, `.ts
 2. Choose the safest path.
    - For `.csv` and `.tsv`:
      - You may use normal text-file workflows.
-     - If the user wants analysis, prefer the data toolchain.
+     - If the user wants analysis, prefer the Data Analytics plugin skills.
    - For `.parquet`:
-     - Prefer the data toolchain.
+     - Prefer the Data Analytics plugin skills.
      - Do not attempt UTF-8 decoding.
    - For `.xlsx`:
      - If the deliverable is an Excel workbook or the user asks to create/edit/recalculate/validate a workbook, load the `xlsx` skill.
@@ -53,7 +53,7 @@ Use this skill for spreadsheet and tabular file requests, including `.csv`, `.ts
 ## Good uses
 
 - Analyze CSV exports
-- Work with Parquet-backed data through the data toolchain
+- Work with Parquet-backed data through the Data Analytics plugin
 - Help the user decide how to convert a workbook for agent analysis
 
 ## Avoid

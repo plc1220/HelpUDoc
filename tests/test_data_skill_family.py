@@ -3,8 +3,10 @@
 Covers:
 - skills_registry: recursive discovery, nested IDs, mcp_servers parsing,
   is_tool_allowed runtime enforcement
-- data_agent_tools: schema-before-query guard, query/chart budget, run-scoped
-  history, dashboard generation, stale-artifact isolation
+- data plugin runtime: plugin-inherited script runner, MCP scope, and
+  dashboard package compatibility
+- legacy data tool package: schema-before-query guard, query/chart budget,
+  run-scoped history, dashboard generation, stale-artifact isolation
 - compatibility: data-analysis shim routing
 """
 from __future__ import annotations
@@ -28,9 +30,15 @@ def _make_skill_md(
     name: str,
     tools: Optional[list[str]] = None,
     mcp_servers: Optional[list[str]] = None,
+    plugin: Optional[str] = None,
+    inherits_plugin_defaults: bool = False,
     extra: str = "",
 ) -> str:
     frontmatter_lines = [f"name: {name}"]
+    if plugin:
+        frontmatter_lines.append(f"plugin: {plugin}")
+    if inherits_plugin_defaults:
+        frontmatter_lines.append("inherits_plugin_defaults: true")
     if tools:
         frontmatter_lines.append("tools:")
         for t in tools:
@@ -41,6 +49,52 @@ def _make_skill_md(
             frontmatter_lines.append(f"  - {s}")
     frontmatter = "\n".join(frontmatter_lines)
     return f"---\n{frontmatter}\n---\n\n# {name}\n\n{extra}"
+
+
+def _make_plugin_yaml(
+    plugin_id: str = "data-analytics",
+    skills: Optional[list[str]] = None,
+    default_tools: Optional[list[str]] = None,
+    default_mcp_servers: Optional[list[str]] = None,
+    include_scripts: bool = True,
+) -> str:
+    skills = skills or ["data", "data/analyze", "data/refresh"]
+    default_tools = default_tools or ["run_skill_python_script"]
+    default_mcp_servers = default_mcp_servers or ["toolbox-bq-demo", "data-artifacts"]
+    lines = [
+        f"id: {plugin_id}",
+        "display_name: Data Analytics",
+        "description: Source-backed analysis.",
+        "default_skill: data",
+        "skills:",
+        *[f"  - {skill}" for skill in skills],
+        "default_tools:",
+        *[f"  - {tool}" for tool in default_tools],
+        "default_mcp_servers:",
+        *[f"  - {server}" for server in default_mcp_servers],
+    ]
+    if include_scripts:
+        lines.extend(
+            [
+                "default_sandbox_scripts:",
+                "  - name: data_workspace",
+                "    path: scripts/data_workspace.py",
+                "    sha256: " + ("a" * 64),
+                "    timeout_seconds: 120",
+                "    outputs:",
+                "      - out/result.json",
+                "  - name: build_native_dashboard_package",
+                "    path: scripts/build_native_dashboard_package.py",
+                "    sha256: " + ("b" * 64),
+                "    timeout_seconds: 120",
+                "    outputs:",
+                "      - out/dashboard_artifacts.json",
+                "      - out/tool_artifacts.json",
+                "      - out/result.json",
+            ]
+        )
+    lines.extend(["execution:", "  mode: scope_bundle"])
+    return "\n".join(lines) + "\n"
 
 
 def _build_workspace(tmp_path: Path) -> Any:
@@ -172,6 +226,123 @@ class TestMcpServersFrontmatterParsing:
         assert skills[0].mcp_servers == []
 
 
+class TestPluginRegistry:
+    """Plugin manifests provide inherited skill scope defaults."""
+
+    def test_plugin_manifest_loads_and_validates_referenced_skills(self, tmp_path: Path) -> None:
+        from agent.helpudoc_agent.skills_registry import load_plugins, load_skills
+
+        for path, content in [
+            ("data/SKILL.md", _make_skill_md("data", plugin="data-analytics", inherits_plugin_defaults=True)),
+            ("data/analyze/SKILL.md", _make_skill_md("data/analyze", plugin="data-analytics", inherits_plugin_defaults=True)),
+            ("data/refresh/SKILL.md", _make_skill_md("data/refresh", plugin="data-analytics", inherits_plugin_defaults=True)),
+        ]:
+            full = tmp_path / "skills" / path
+            full.parent.mkdir(parents=True, exist_ok=True)
+            full.write_text(content, encoding="utf-8")
+        plugin_dir = tmp_path / "plugins" / "data-analytics"
+        plugin_dir.mkdir(parents=True)
+        (plugin_dir / "plugin.yaml").write_text(_make_plugin_yaml(), encoding="utf-8")
+
+        skills = load_skills(tmp_path / "skills")
+        plugins = load_plugins(tmp_path / "plugins", skills)
+
+        assert len(plugins) == 1
+        assert plugins[0].plugin_id == "data-analytics"
+        assert plugins[0].valid is True
+        assert plugins[0].skills == ["data", "data/analyze", "data/refresh"]
+        assert plugins[0].default_tools == ["run_skill_python_script"]
+        assert plugins[0].default_mcp_servers == ["toolbox-bq-demo", "data-artifacts"]
+        assert [script.name for script in plugins[0].default_sandbox_scripts] == [
+            "data_workspace",
+            "build_native_dashboard_package",
+        ]
+
+    def test_data_analyze_inherits_plugin_script_runner_mcp_servers_and_scripts(self, tmp_path: Path) -> None:
+        from agent.helpudoc_agent.skills_registry import activate_skill_context, load_skills
+
+        skill_dir = tmp_path / "skills" / "data" / "analyze"
+        skill_dir.mkdir(parents=True)
+        (tmp_path / "skills" / "data").mkdir(exist_ok=True)
+        (tmp_path / "skills" / "data" / "SKILL.md").write_text(
+            _make_skill_md("data", plugin="data-analytics", inherits_plugin_defaults=True),
+            encoding="utf-8",
+        )
+        (skill_dir / "SKILL.md").write_text(
+            _make_skill_md("data/analyze", plugin="data-analytics", inherits_plugin_defaults=True),
+            encoding="utf-8",
+        )
+        plugin_dir = tmp_path / "plugins" / "data-analytics"
+        plugin_dir.mkdir(parents=True)
+        (plugin_dir / "plugin.yaml").write_text(
+            _make_plugin_yaml(skills=["data", "data/analyze"]),
+            encoding="utf-8",
+        )
+        skills = {skill.skill_id: skill for skill in load_skills(tmp_path / "skills")}
+        context: Dict[str, Any] = {}
+
+        activate_skill_context(context, skills["data/analyze"], plugins_root=tmp_path / "plugins")
+
+        active_scope = context["active_skill_scope"]
+        assert active_scope["plugin_id"] == "data-analytics"
+        assert active_scope["declared_tools"] == ["run_skill_python_script"]
+        assert active_scope["tools"] == ["run_skill_python_script"]
+        assert "materialize_bigquery_to_parquet" not in active_scope["tools"]
+        assert "generate_summary" not in active_scope["tools"]
+        assert active_scope["mcp_servers"] == ["toolbox-bq-demo", "data-artifacts"]
+        assert [script["name"] for script in active_scope["sandbox_scripts"]] == [
+            "data_workspace",
+            "build_native_dashboard_package",
+        ]
+
+    def test_data_refresh_keeps_extra_export_tool_and_inherits_plugin_scripts(self, tmp_path: Path) -> None:
+        from agent.helpudoc_agent.skills_registry import activate_skill_context, load_skills
+
+        for path, content in [
+            ("data/SKILL.md", _make_skill_md("data", plugin="data-analytics", inherits_plugin_defaults=True)),
+            (
+                "data/refresh/SKILL.md",
+                _make_skill_md(
+                    "data/refresh",
+                    tools=["export_bigquery_query"],
+                    plugin="data-analytics",
+                    inherits_plugin_defaults=True,
+                ),
+            ),
+        ]:
+            full = tmp_path / "skills" / path
+            full.parent.mkdir(parents=True, exist_ok=True)
+            full.write_text(content, encoding="utf-8")
+        plugin_dir = tmp_path / "plugins" / "data-analytics"
+        plugin_dir.mkdir(parents=True)
+        (plugin_dir / "plugin.yaml").write_text(
+            _make_plugin_yaml(skills=["data", "data/refresh"]),
+            encoding="utf-8",
+        )
+        skills = {skill.skill_id: skill for skill in load_skills(tmp_path / "skills")}
+        context: Dict[str, Any] = {}
+
+        activate_skill_context(context, skills["data/refresh"], plugins_root=tmp_path / "plugins")
+
+        active_scope = context["active_skill_scope"]
+        assert active_scope["declared_tools"] == ["run_skill_python_script", "export_bigquery_query"]
+        assert "materialize_bigquery_to_parquet" not in active_scope["tools"]
+        assert "export_bigquery_query" in active_scope["tools"]
+        assert "data_workspace" in [script["name"] for script in active_scope["sandbox_scripts"]]
+
+    def test_candidate_mcp_servers_use_resolved_plugin_scope(self) -> None:
+        from agent.helpudoc_agent.skills_registry import get_candidate_mcp_servers
+
+        assert get_candidate_mcp_servers(
+            {
+                "skill_id": "data/analyze",
+                "plugin_id": "data-analytics",
+                "tools": ["run_skill_python_script"],
+                "mcp_servers": ["toolbox-bq-demo", "data-artifacts"],
+            }
+        ) == ["toolbox-bq-demo", "data-artifacts"]
+
+
 class TestRuntimeEnforcement:
     """is_tool_allowed enforces declared tool/server scope."""
 
@@ -209,17 +380,11 @@ class TestRuntimeEnforcement:
         skill = self._make_skill(tools=["data_agent_tools", "run_sql_query"], mcp_servers=[])
         assert is_tool_allowed("run_sql_query", skill, tool_mcp_server=None) is True
 
-    def test_factory_tool_alias_expands_to_runtime_tool_names(self) -> None:
+    def test_factory_tool_alias_no_longer_expands_to_runtime_tool_names(self) -> None:
         from agent.helpudoc_agent.skills_registry import expand_runtime_tool_names
 
         expanded = expand_runtime_tool_names(["data_agent_tools"])
-        assert "data_agent_tools" in expanded
-        assert "get_table_schema" in expanded
-        assert "run_sql_query" in expanded
-        assert "materialize_bigquery_to_parquet" in expanded
-        assert "generate_chart_config" in expanded
-        assert "generate_summary" in expanded
-        assert "generate_dashboard" in expanded
+        assert expanded == ["data_agent_tools"]
 
     def test_builtin_tool_denied_when_not_declared(self) -> None:
         from agent.helpudoc_agent.skills_registry import is_tool_allowed
@@ -238,7 +403,7 @@ class TestRuntimeEnforcement:
         assert is_tool_allowed("run_sql_query", active_scope, tool_mcp_server=None) is True
         assert is_tool_allowed("generate_dashboard", active_scope, tool_mcp_server=None) is False
 
-    def test_activate_skill_context_uses_expanded_runtime_tools(self, tmp_path: Path) -> None:
+    def test_activate_skill_context_keeps_declared_runtime_tools_without_factory_expansion(self, tmp_path: Path) -> None:
         from agent.helpudoc_agent.skills_registry import activate_skill_context, load_skills
 
         skill_dir = tmp_path / "data" / "analyze"
@@ -256,8 +421,8 @@ class TestRuntimeEnforcement:
         assert context["active_skill"] == "data/analyze"
         active_scope = context["active_skill_scope"]
         assert "data_agent_tools" in active_scope["tools"]
-        assert "run_sql_query" in active_scope["tools"]
-        assert "generate_summary" in active_scope["tools"]
+        assert "run_sql_query" not in active_scope["tools"]
+        assert "generate_summary" not in active_scope["tools"]
         assert active_scope["declared_tools"] == ["data_agent_tools"]
 
     def test_mcp_tool_allowed_when_server_declared(self) -> None:
@@ -1796,10 +1961,11 @@ class TestStableArtifactOutputs:
         assert spec["description"] == "Second description"
         assert not (tmp_path / "dashboards" / "orders" / "dashboard.snapshot.html").exists()
 
-    def test_repo_data_refresh_skill_contract_mentions_materialization_workflow(self) -> None:
+    def test_repo_data_refresh_skill_contract_mentions_script_workflow(self) -> None:
         skill_path = Path(__file__).parent.parent / "skills" / "data" / "refresh" / "SKILL.md"
         content = skill_path.read_text(encoding="utf-8")
-        assert "materialize_bigquery_to_parquet" in content
+        assert "data_workspace" in content
+        assert "build_native_dashboard_package" in content
 
     def test_dashboard_skill_contract_mentions_clarification_for_filterable_dashboards(self) -> None:
         skill_path = Path(__file__).parent.parent / "skills" / "data" / "dashboard" / "SKILL.md"
@@ -1807,7 +1973,7 @@ class TestStableArtifactOutputs:
         assert "request_clarification" in content
         assert "frontend-slides" in content
         assert "data/dashboard.rows.json" in content
-        assert "generate_dashboard" in content
+        assert "build_native_dashboard_package" in content
 
 
 class TestExportSqlQueryAndDashboardProvenance:
@@ -2008,4 +2174,3 @@ class TestExportSqlQueryAndDashboardProvenance:
 
         assert "Dashboard generation rejected" in res
         assert "required threshold of 100 rows" in res
-

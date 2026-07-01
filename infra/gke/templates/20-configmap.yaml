@@ -17,5 +17,6 @@ data:
   LLM_MODEL: gemini-3.5-flash
   AWS_REGION: us-east-1
   AWS_PRICING_MCP_LOG_LEVEL: ERROR
-  ENABLE_SKILL_SANDBOX_RUNNER: "false"
+  ENABLE_SKILL_SANDBOX_RUNNER: "true"
+  HELPUDOC_SANDBOX_BACKEND: kubernetes
   HELPUDOC_SANDBOX_IMAGE: gcr.io/my-rd-coe-demo-gen-ai/helpudoc-agent:latest

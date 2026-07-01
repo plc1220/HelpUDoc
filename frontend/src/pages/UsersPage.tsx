@@ -28,7 +28,7 @@ import {
   type ManagedUser,
   type UserDeletionImpact,
 } from '../services/settingsApi';
-import type { SkillDefinition } from '../types';
+import type { PluginDefinition, SkillDefinition } from '../types';
 
 const cx = (...classes: Array<string | false | null | undefined>) => classes.filter(Boolean).join(' ');
 
@@ -49,6 +49,7 @@ const UsersPage = () => {
   const [savedGroupAccess, setSavedGroupAccess] = useState<GroupPromptAccess>({ skillIds: [], mcpServerIds: [] });
   const [availableSkills, setAvailableSkills] = useState<SkillDefinition[]>([]);
   const [availableMcpServers, setAvailableMcpServers] = useState<Array<{ name: string; description?: string }>>([]);
+  const [availablePlugins, setAvailablePlugins] = useState<PluginDefinition[]>([]);
   const [newGroupName, setNewGroupName] = useState('');
   const [selectedUserId, setSelectedUserId] = useState('');
   const [skillSearch, setSkillSearch] = useState('');
@@ -83,6 +84,8 @@ const UsersPage = () => {
     });
   }, [availableSkills, skillSearch]);
 
+  const visiblePlugins = useMemo(() => availablePlugins.filter((plugin) => plugin.skillIds.length > 0), [availablePlugins]);
+
   const filteredMcpServers = useMemo(() => {
     const query = mcpSearch.trim().toLowerCase();
     return availableMcpServers.filter((server) => {
@@ -96,6 +99,23 @@ const UsersPage = () => {
     JSON.stringify(sortStrings(groupAccess.skillIds)) !== JSON.stringify(sortStrings(savedGroupAccess.skillIds))
       || JSON.stringify(sortStrings(groupAccess.mcpServerIds)) !== JSON.stringify(sortStrings(savedGroupAccess.mcpServerIds))
   ), [groupAccess, savedGroupAccess]);
+
+  const togglePluginBundle = useCallback((plugin: PluginDefinition) => {
+    setGroupAccess((prev) => {
+      const allSelected = plugin.skillIds.every((skillId) => prev.skillIds.includes(skillId))
+        && plugin.mcpServers.every((serverId) => prev.mcpServerIds.includes(serverId));
+      if (allSelected) {
+        return {
+          skillIds: prev.skillIds.filter((skillId) => !plugin.skillIds.includes(skillId)),
+          mcpServerIds: prev.mcpServerIds.filter((serverId) => !plugin.mcpServers.includes(serverId)),
+        };
+      }
+      return {
+        skillIds: sortStrings(Array.from(new Set([...prev.skillIds, ...plugin.skillIds]))),
+        mcpServerIds: sortStrings(Array.from(new Set([...prev.mcpServerIds, ...plugin.mcpServers]))),
+      };
+    });
+  }, []);
 
   const loadBaseData = useCallback(async () => {
     setLoading(true);
@@ -126,9 +146,10 @@ const UsersPage = () => {
   const loadPromptCatalog = useCallback(async () => {
     setCatalogLoading(true);
     try {
-      const { skills, mcpServers } = await fetchSlashMetadata();
+      const { skills, mcpServers, plugins } = await fetchSlashMetadata();
       setAvailableSkills(skills);
       setAvailableMcpServers(mcpServers);
+      setAvailablePlugins(plugins || []);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load prompt access catalog');
     } finally {
@@ -548,6 +569,41 @@ const UsersPage = () => {
                             </button>
                           </div>
                         </div>
+
+                        {visiblePlugins.length > 0 && (
+                          <div className="space-y-3">
+                            <label className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Plugin bundles</label>
+                            <div className="settings-soft-panel grid gap-2 rounded-2xl p-2 md:grid-cols-2">
+                              {visiblePlugins.map((plugin) => {
+                                const selected = plugin.skillIds.every((skillId) => groupAccess.skillIds.includes(skillId))
+                                  && plugin.mcpServers.every((serverId) => groupAccess.mcpServerIds.includes(serverId));
+                                return (
+                                  <button
+                                    key={plugin.id}
+                                    type="button"
+                                    onClick={() => togglePluginBundle(plugin)}
+                                    className={cx(
+                                      'rounded-2xl border px-3 py-3 text-left transition',
+                                      selected
+                                        ? 'settings-selection-card settings-selection-card-active text-slate-900'
+                                        : 'settings-selection-card text-slate-900',
+                                    )}
+                                  >
+                                    <div className="flex items-center justify-between gap-2">
+                                      <p className="text-sm font-semibold">{plugin.displayName}</p>
+                                      <span className="text-xs font-medium text-slate-500">
+                                        {plugin.skillIds.length} skills
+                                      </span>
+                                    </div>
+                                    <p className={cx('mt-1 text-xs leading-5', selected ? 'text-slate-600' : 'text-slate-500')}>
+                                      {plugin.description || plugin.id}
+                                    </p>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
 
                         <div className="grid gap-4 xl:grid-cols-2">
                           <div className="space-y-3">

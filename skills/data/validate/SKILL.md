@@ -3,16 +3,8 @@ name: data/validate
 description: >
   QA an analysis before sharing — check methodology, assumptions, SQL logic,
   calculations, visualizations, narrative, and statistical pitfalls.
-tools:
-  - data_agent_tools
-  - get_table_schema
-  - run_sql_query
-  - materialize_bigquery_to_parquet
-  - generate_chart_config
-  - generate_summary
-  - generate_dashboard
-mcp_servers:
-  - toolbox-bq-demo
+plugin: data-analytics
+inherits_plugin_defaults: true
 ---
 
 # data/validate — Validate Analysis Before Sharing
@@ -74,8 +66,8 @@ Examine:
 - Validate subtotals sum correctly.
 - Confirm filters are applied consistently.
 - For warehouse queries: run a sanity-check `bq_execute_sql`; for local queries:
-  cross-check with `run_sql_query`. When validation will require several follow-up
-  checks against warehouse data, materialize the scoped slice first and validate in DuckDB.
+  cross-check with `data_workspace`. When validation will require several follow-up
+  checks against warehouse data, use a scoped workspace snapshot and validate in DuckDB.
 
 ### 5. Assess visualizations
 - Do axes start at zero for bar charts?

@@ -3,16 +3,8 @@ name: data/visualize
 description: >
   Turn validated SQL query output into publication-quality Plotly charts. Select
   the right chart type, apply design best practices, and produce chart artifacts.
-tools:
-  - data_agent_tools
-  - get_table_schema
-  - run_sql_query
-  - materialize_bigquery_to_parquet
-  - generate_chart_config
-  - generate_summary
-  - generate_dashboard
-mcp_servers:
-  - toolbox-bq-demo
+plugin: data-analytics
+inherits_plugin_defaults: true
 ---
 
 # data/visualize — Create Visualizations
@@ -32,11 +24,12 @@ Determine:
 
 ### 2. Get the data
 - **If data warehouse is connected and data needs querying**: use `bq_execute_sql`.
-  If the charting task will involve multiple refinements, export the scoped result
-  first with `materialize_bigquery_to_parquet` and then chart from DuckDB.
-- **If local workspace files**: call `get_table_schema` then `run_sql_query`.
-- **If data already queried earlier in this run**: `generate_chart_config` uses the
-  last query result automatically — no need to re-query.
+  If the charting task will involve multiple refinements, use a scoped workspace
+  dataset and chart from local rows.
+- **If local workspace files**: call `data_workspace` schema, then a bounded
+  `data_workspace` query.
+- **If data already exists in reviewed rows**: pass those rows into
+  `build_chart_payload` or `render_chart`.
 
 ### 3. Select chart type
 
@@ -53,31 +46,13 @@ Determine:
 
 Explain the recommendation briefly if the user didn't specify.
 
-### 4. Generate the visualization
-Use `generate_chart_config` with Plotly (preferred):
+### 4. Generate the visualization payload
+Use `build_chart_payload` for script-side preparation when you need a durable payload,
+then call `render_chart` from `data-artifacts` for reviewed chart payloads.
 
-```python
-chart_config = {
-    "data": [{
-        "x": df["category"].tolist(),
-        "y": df["value"].tolist(),
-        "type": "bar",
-        "marker": {"color": "#3b82f6"},
-    }],
-    "layout": {
-        "title": {"text": chart_title, "font": {"size": 18}},
-        "xaxis": {"title": "Category"},
-        "yaxis": {"title": "Value"},
-        "plot_bgcolor": "#f8fafc",
-        "paper_bgcolor": "#ffffff",
-        "font": {"family": "Inter, system-ui, sans-serif"},
-    },
-}
-```
-
-- Always assign a serializable `chart_config` — no lambdas or special objects.
+- Prefer tidy long rows and explicit field bindings.
 - Keep logic deterministic; avoid random seeds or shuffling.
-- Do not generate more than **5 charts** per run (enforced in code).
+- Do not generate more than **5 charts** per run.
 
 ### 5. Apply design best practices
 
@@ -99,12 +74,11 @@ chart_config = {
 - Appropriate precision (don't show 10 decimal places).
 
 ### 6. Save and present
-- Plotly specs saved as `.plotly.json` and `.plotly.html` in `charts/`.
 - Use descriptive `chart_title` names (Title_Case_With_Underscores).
-- Provide the code used so the user can modify it.
+- Mention source rows, metric definitions, and caveats.
 - Suggest 1–2 variations (different grouping, zoomed range, different chart type).
 
 ## Guardrails
-- Must query data before charting (enforced in code).
-- Plotly only — do not use matplotlib unless the user explicitly requests it.
+- Must query or provide reviewed rows before charting.
+- Use `data-artifacts` chart/table payloads unless the user explicitly requests a file-based chart.
 - Max **5 charts** per run.

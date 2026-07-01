@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional
 
 from langchain_core.tools import StructuredTool, Tool
 
-from .configuration import MCPServerConfig, Settings
+from .configuration import MCPServerConfig, REPO_ROOT, Settings
 from .state import WorkspaceState
 
 logger = logging.getLogger(__name__)
@@ -549,12 +549,18 @@ class MCPServerManager:
                     continue
                 if key in os.environ and key not in env:
                     env[key] = os.environ[key]
+            cwd = cfg.cwd
+            if cwd:
+                cwd_path = os.path.expandvars(cwd)
+                if not os.path.isabs(cwd_path):
+                    cwd_path = str((REPO_ROOT / cwd_path).resolve())
+                cwd = cwd_path
             return {
                 "transport": "stdio",
                 "command": cfg.command,
                 "args": cfg.args or [],
                 "env": env,
-                "cwd": cfg.cwd,
+                "cwd": cwd,
             }
 
         runtime_auth = self.workspace_state.context.get("mcp_auth", {}) or {}

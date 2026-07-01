@@ -3,16 +3,8 @@ name: data/query
 description: >
   Write and refine optimized, connector-specific SQL — BigQuery or DuckDB —
   following best practices for readability, performance, and correctness.
-tools:
-  - data_agent_tools
-  - get_table_schema
-  - run_sql_query
-  - materialize_bigquery_to_parquet
-  - generate_chart_config
-  - generate_summary
-  - generate_dashboard
-mcp_servers:
-  - toolbox-bq-demo
+plugin: data-analytics
+inherits_plugin_defaults: true
 ---
 
 # data/query — Write Optimized SQL
@@ -24,8 +16,8 @@ discover the schema, write the query, and offer to execute it.
 
 | Condition | Connector |
 |---|---|
-| Request targets warehouse datasets or large managed tables | BigQuery MCP (`bq_execute_sql`) followed by `materialize_bigquery_to_parquet` when iterative follow-up is likely |
-| Request targets local CSV / Parquet files in the workspace | DuckDB (`run_sql_query`) |
+| Request targets warehouse datasets or large managed tables | BigQuery MCP (`toolbox-bq-demo`) |
+| Request targets local CSV / Parquet / JSON files in the workspace | `run_skill_python_script` with `data_workspace` |
 
 Default to DuckDB for workspace files unless the user names a warehouse table.
 
@@ -43,13 +35,14 @@ Identify from the user's description:
 ### 2. Determine dialect
 - **BigQuery (warehouse path)**: standard SQL with backtick identifiers,
   `DATE_TRUNC`, `SAFE_DIVIDE`, partitioned tables.
-- **DuckDB (local path)**: standard SQL; call `get_table_schema` first;
-  use always explicit column names (no `SELECT *`).
+- **DuckDB (local path)**: standard SQL through the `data_workspace` script; use
+  explicit column names for durable queries.
 
 ### 3. Discover schema
 - **BigQuery**: `bq_list_datasets` → `bq_list_tables` → `bq_get_table_info`
   for the relevant tables. Check partition keys, clustering, and views.
-- **DuckDB**: call `get_table_schema` for the tables involved.
+- **DuckDB**: call `run_skill_python_script` with
+  `script_name="data_workspace"` and `{"action":"schema"}` before writing local SQL.
 
 ### 4. Write the query
 Follow these practices:
@@ -73,7 +66,8 @@ Follow these practices:
 
 **DuckDB-specific:**
 - Always include `LIMIT 1000` unless aggregating to a small result.
-- `run_sql_query` will automatically append `LIMIT 1000` if omitted.
+- The `data_workspace` script applies a bounded `row_limit` when executing local
+  query previews.
 
 ### 5. Present the query
 Provide:
@@ -84,9 +78,10 @@ Provide:
 
 ### 6. Offer to execute
 - BigQuery: offer `bq_execute_sql` on the written query.
-- If the user will likely iterate on the result, materialize the scoped result
-  with `materialize_bigquery_to_parquet` so DuckDB can handle follow-up slicing.
-- DuckDB: call `run_sql_query` to execute and return results.
+- If the user will likely iterate on the result, create or use a workspace snapshot
+  before continuing locally.
+- DuckDB/local: call `data_workspace` with `{"action":"query","sql":"...","row_limit":1000}`
+  to execute and return results.
 - If results look unexpected, debug and retry (check column names, types, syntax).
 
 ## Guardrails

@@ -99,8 +99,7 @@ class CodeInterpreterConfig(BaseModel):
     ptc_tools: List[str] = Field(
         default_factory=lambda: [
             "rag_query",
-            "get_table_schema",
-            "run_sql_query",
+            "run_skill_python_script",
             "google_search",
             "url_context",
         ]
@@ -153,6 +152,7 @@ class BackendConfig(BaseModel):
     workspace_root: Path
     virtual_mode: bool = Field(default=True)
     skills_root: Optional[Path] = None
+    plugins_root: Optional[Path] = None
     sync_skills_to_workspace: bool = Field(default=False)
     code_interpreter: CodeInterpreterConfig = Field(default_factory=CodeInterpreterConfig)
     interrupt_on: Dict[str, Any] = Field(
@@ -188,6 +188,18 @@ class BackendConfig(BaseModel):
     def _resolve_skills_root(cls, value: str | Path | None) -> Optional[Path]:
         if value is None:
             return (REPO_ROOT / "skills").resolve()
+        if isinstance(value, Path):
+            return value.resolve()
+        path = Path(value)
+        if not path.is_absolute():
+            path = REPO_ROOT / value
+        return path.resolve()
+
+    @field_validator("plugins_root", mode="before")
+    @classmethod
+    def _resolve_plugins_root(cls, value: str | Path | None) -> Optional[Path]:
+        if value is None:
+            return (REPO_ROOT / "plugins").resolve()
         if isinstance(value, Path):
             return value.resolve()
         path = Path(value)
@@ -404,6 +416,7 @@ def load_settings(config_path: Path | None = None) -> Settings:
     runtime = get_agent_runtime_env()
     workspace_root_override = runtime.workspace_root_raw
     skills_root_override = runtime.skills_root_raw
+    plugins_root_override = runtime.plugins_root_raw
     if workspace_root_override:
         backend_cfg = config_dict.get("backend") or {}
         if isinstance(backend_cfg, dict):
@@ -417,6 +430,14 @@ def load_settings(config_path: Path | None = None) -> Settings:
         if isinstance(backend_cfg, dict):
             backend_cfg["skills_root"] = _resolve_env_override_path(
                 skills_root_override,
+                base_dir=override_base_dir,
+            )
+            config_dict["backend"] = backend_cfg
+    if plugins_root_override:
+        backend_cfg = config_dict.get("backend") or {}
+        if isinstance(backend_cfg, dict):
+            backend_cfg["plugins_root"] = _resolve_env_override_path(
+                plugins_root_override,
                 base_dir=override_base_dir,
             )
             config_dict["backend"] = backend_cfg

@@ -13,3 +13,4 @@ function resolveRepoRelativePath(value?: string | null): string | undefined {
 }
 
 export const skillsRoot = resolveRepoRelativePath(process.env.SKILLS_ROOT) || path.join(repoRoot, 'skills');
+export const pluginsRoot = resolveRepoRelativePath(process.env.PLUGINS_ROOT) || path.join(repoRoot, 'plugins');

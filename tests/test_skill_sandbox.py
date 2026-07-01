@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -12,6 +13,7 @@ from agent.helpudoc_agent.sandbox_runner import (
     SandboxExecutionError,
     build_sandbox_job_manifest,
     run_skill_python_script_in_kubernetes,
+    run_skill_python_script_locally,
 )
 from agent.helpudoc_agent.skills_registry import (
     SkillSandboxScript,
@@ -151,7 +153,7 @@ def test_runner_rejects_script_path_traversal(tmp_path: Path) -> None:
     workspace = WorkspaceState(workspace_id="ws", root_path=tmp_path / "workspaces" / "ws")
     activate_skill_context(workspace.context, load_skills(skills_root)[0])
 
-    with pytest.raises(SandboxExecutionError, match="relative to the skill directory"):
+    with pytest.raises(SandboxExecutionError, match="relative to its source directory"):
         run_skill_python_script_in_kubernetes(
             skills_root=skills_root,
             workspace_state=workspace,
@@ -349,3 +351,107 @@ def test_guarded_tool_blocks_sandbox_tool_for_legacy_empty_tool_allowlist(tmp_pa
     guarded = GuardedTool.from_tool(run_skill_python_script, workspace_state=workspace)
 
     assert "not allowed" in guarded.invoke({"script_name": "run"}).lower()
+
+
+def test_local_runner_builds_native_dashboard_package_from_plugin_script(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    skills_root = repo_root / "skills"
+    plugins_root = repo_root / "plugins"
+    workspace = WorkspaceState(workspace_id="ws-local", root_path=tmp_path / "workspace")
+    workspace.root_path.mkdir(parents=True, exist_ok=True)
+    data_rows = [
+        {"country": "US", "orders": 10, "revenue": 120.5},
+        {"country": "MY", "orders": 7, "revenue": 91.0},
+    ]
+    request = {
+        "title": "Orders Dashboard",
+        "description": "Orders and revenue by country.",
+        "output_path": "dashboards/orders",
+        "rows": data_rows,
+        "filter_schema": [{"field": "country", "label": "Country", "type": "categorical"}],
+        "chart_bindings": [
+            {
+                "chart_id": "orders_by_country",
+                "title": "Orders by Country",
+                "chart_type": "bar",
+                "x_field": "country",
+                "y_field": "orders",
+            }
+        ],
+    }
+    skills = {skill.skill_id: skill for skill in load_skills(skills_root)}
+    activate_skill_context(workspace.context, skills["data/dashboard"], plugins_root=plugins_root)
+
+    result = run_skill_python_script_locally(
+        skills_root=skills_root,
+        plugins_root=plugins_root,
+        workspace_state=workspace,
+        script_name="build_native_dashboard_package",
+        args=["--request-json", json.dumps(request)],
+    )
+
+    assert f"/sandbox-runs/{result.run_id}/out/dashboard_artifacts.json" in {
+        output.path for output in result.output_files
+    }
+    dashboard_dir = workspace.root_path / "dashboards" / "orders"
+    meta_path = dashboard_dir / "dashboard.meta.json"
+    spec_path = dashboard_dir / "dashboard.spec.json"
+    rows_path = dashboard_dir / "data" / "dashboard.rows.json"
+    assert meta_path.is_file()
+    assert spec_path.is_file()
+    assert rows_path.is_file()
+    assert not (dashboard_dir / "dashboard.snapshot.html").exists()
+
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    assert spec["runtimeKind"] == "native"
+    assert spec["version"] == 2
+    assert spec["dataset"]["previewPath"] == "dashboards/orders/data/dashboard.rows.json"
+    assert spec["filters"][0]["field"] == "country"
+    assert spec["chartRuntimeDefs"][0]["chartId"] == "orders_by_country"
+    assert spec["datasetSchema"]
+
+    rows_payload = json.loads(rows_path.read_text(encoding="utf-8"))
+    assert rows_payload == {"rows": data_rows}
+
+
+def test_run_skill_python_script_tool_emits_script_artifact_events(tmp_path: Path) -> None:
+    from agent.helpudoc_agent.tools.workspace.builtins.skills import build_run_skill_python_script_tool
+
+    repo_root = Path(__file__).resolve().parents[1]
+    skills_root = repo_root / "skills"
+    plugins_root = repo_root / "plugins"
+    workspace = WorkspaceState(workspace_id="ws-local", root_path=tmp_path / "workspace")
+    workspace.root_path.mkdir(parents=True, exist_ok=True)
+    skills = {skill.skill_id: skill for skill in load_skills(skills_root)}
+    activate_skill_context(workspace.context, skills["data/dashboard"], plugins_root=plugins_root)
+    settings = SimpleNamespace(backend=SimpleNamespace(skills_root=skills_root, plugins_root=plugins_root))
+    tool_obj = build_run_skill_python_script_tool(settings, workspace)
+    events: list[tuple[str, dict]] = []
+
+    class FakeCallbacks:
+        run_id = "callback-run"
+
+        def on_custom_event(self, name: str, payload: dict, **_kwargs) -> None:
+            events.append((name, payload))
+
+    request = {
+        "title": "Events Dashboard",
+        "output_path": "dashboards/events",
+        "rows": [{"segment": "A", "value": 1}],
+        "filter_schema": [{"field": "segment"}],
+        "chart_bindings": [{"title": "Value", "x_field": "segment", "y_field": "value"}],
+    }
+
+    response = tool_obj.func(
+        script_name="build_native_dashboard_package",
+        args=["--request-json", json.dumps(request)],
+        callbacks=FakeCallbacks(),
+    )
+
+    assert "SKILL_SANDBOX_RUN_COMPLETED" in response
+    event_names = [name for name, _payload in events]
+    assert "tool_artifacts" in event_names
+    assert "dashboard_artifact" in event_names
+    dashboard_event = next(payload for name, payload in events if name == "dashboard_artifact")
+    assert dashboard_event["workspaceId"] == "ws-local"
+    assert dashboard_event["dashboardPath"] == "dashboards/events"

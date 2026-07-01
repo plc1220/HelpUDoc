@@ -5,6 +5,7 @@ import { HttpError } from '../../errors';
 import { skillsRoot } from '../../services/skills/constants';
 import { collectSkillIds } from '../../services/skills/registry';
 import { getSkillMetadata } from '../../services/skills/metadata';
+import { buildPluginBySkillMap, filterPluginsForAccess, listPlugins } from '../../services/plugins/registry';
 import { loadRuntimeMcpServers } from './policy';
 
 type SlashSkillMetadata = {
@@ -14,6 +15,8 @@ type SlashSkillMetadata = {
   valid: boolean;
   error?: string;
   warning?: string;
+  pluginId?: string;
+  pluginName?: string;
 };
 
 const requireUserContext = (req: Request) => {
@@ -35,7 +38,11 @@ export function registerSlashRoutes(
         throw new HttpError(401, 'User not found');
       }
       await fs.mkdir(skillsRoot, { recursive: true });
-      const skillIds = await collectSkillIds(skillsRoot);
+      const [skillIds, plugins] = await Promise.all([
+        collectSkillIds(skillsRoot),
+        listPlugins(),
+      ]);
+      const pluginBySkill = buildPluginBySkillMap(plugins);
       const skills: SlashSkillMetadata[] = [];
       const allowedSkillIds = new Set(promptAccess.skillIds);
       for (const skillId of skillIds) {
@@ -43,7 +50,7 @@ export function registerSlashRoutes(
           continue;
         }
         try {
-          skills.push(await getSkillMetadata(skillId) as SlashSkillMetadata);
+          skills.push(await getSkillMetadata(skillId, pluginBySkill) as SlashSkillMetadata);
         } catch (error) {
           const message = error instanceof Error ? error.message : 'Failed to read skill';
           skills.push({
@@ -61,10 +68,18 @@ export function registerSlashRoutes(
           name: typeof server.name === 'string' ? server.name.trim() : '',
           description: undefined as string | undefined,
         }))
-        .filter((server) => promptAccess.isAdmin || allowedMcpServerIds.has(server.name))
-        .filter((server) => server.name);
+          .filter((server) => promptAccess.isAdmin || allowedMcpServerIds.has(server.name))
+          .filter((server) => server.name);
 
-      res.json({ skills, mcpServers });
+      res.json({
+        skills,
+        mcpServers,
+        plugins: filterPluginsForAccess(plugins, {
+          isAdmin: promptAccess.isAdmin,
+          skillIds: promptAccess.skillIds,
+          mcpServerIds: promptAccess.mcpServerIds,
+        }),
+      });
     } catch (error) {
       if (error instanceof HttpError) {
         return res.status(error.statusCode).json({ error: error.message, details: error.details });

@@ -4,9 +4,9 @@ import SettingsShell from '../components/settings/SettingsShell';
 const AgentSettingsPage = () => {
   return (
     <SettingsShell
-      eyebrow="Skills & Tools"
-      title="Skills Registry & Tooling"
-      description="Manage reusable skills and the tools they can use."
+      eyebrow="Plugins & Skills"
+      title="Plugins, Skills & Tooling"
+      description="Manage plugin bundles, reusable skills, and the tools they can use."
     >
       <AgentSettingsTabs />
     </SettingsShell>

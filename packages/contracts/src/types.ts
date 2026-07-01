@@ -352,6 +352,21 @@ export interface SkillDefinition {
   valid: boolean;
   error?: string;
   warning?: string;
+  pluginId?: string;
+  pluginName?: string;
+}
+
+export interface PluginDefinition {
+  id: string;
+  displayName: string;
+  description?: string;
+  defaultSkillId: string;
+  skillIds: string[];
+  tools: string[];
+  mcpServers: string[];
+  scripts?: string[];
+  valid: boolean;
+  errors?: string[];
 }
 
 export interface ReflectionScorecard {

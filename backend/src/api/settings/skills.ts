@@ -10,6 +10,7 @@ import {
   resolveSkillFile,
 } from '../../services/skills/paths';
 import { getSkillMetadata, type SkillMetadata } from '../../services/skills/metadata';
+import { buildPluginBySkillMap, listPlugins } from '../../services/plugins/registry';
 import { getContextFilesForUser } from './skillBuilder';
 
 const createSkillSchema = z.object({
@@ -118,15 +119,28 @@ function extractActionsFromText(text: string): unknown[] {
 }
 
 export function registerSkillsRoutes(router: Router) {
+  router.get('/plugins', async (_req, res) => {
+    try {
+      res.json({ plugins: await listPlugins() });
+    } catch (error) {
+      console.error('Failed to load plugins', error);
+      res.status(500).json({ error: 'Failed to load plugins' });
+    }
+  });
+
   router.get('/skills', async (_req, res) => {
     try {
       await fs.mkdir(skillsRoot, { recursive: true });
-      const skillIds = await collectSkillIds(skillsRoot);
+      const [skillIds, plugins] = await Promise.all([
+        collectSkillIds(skillsRoot),
+        listPlugins(),
+      ]);
+      const pluginBySkill = buildPluginBySkillMap(plugins);
       const skills: SkillMetadata[] = [];
 
       for (const skillId of skillIds) {
         try {
-          const metadata = await getSkillMetadata(skillId);
+          const metadata = await getSkillMetadata(skillId, pluginBySkill);
           skills.push(metadata);
         } catch (error: unknown) {
           const message = error instanceof Error ? error.message : 'Failed to read skill';

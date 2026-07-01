@@ -305,14 +305,14 @@ The snapshot model keeps those concerns out of the presentation layer.
 
 - dashboard freshness depends on schedule, not page refresh
 - not suited for second-by-second operational monitoring
-- changes in business logic still require prompt or workflow updates
+- changes in business logic still require skill, script, or workflow updates
 
 ## Recommended Product Framing
 
 If this is explained to users, the clean framing is:
 
 > HelpUDoc gives you AI-authored analytics artifacts backed by scheduled warehouse snapshots.
-> BigQuery remains your source of truth, DuckDB gives you fast local analysis, and automations keep your reports and dashboards current.
+> BigQuery remains your source of truth, local scripts give you fast workspace analysis, and automations keep your reports and dashboards current.
 
 ## Recommended Onboarding Sequence
 
@@ -330,7 +330,9 @@ That keeps the first experience simple and only introduces automation once the u
 
 Relevant implementation files:
 
-- `agent/helpudoc_agent/data_agent_tools.py`
+- `plugins/data-analytics/plugin.yaml`
+- `plugins/data-analytics/scripts/`
+- `plugins/data-analytics/mcp/server.cjs`
 - `agent/helpudoc_agent/skills_registry.py`
 - `skills/data-analysis/SKILL.md`
 - `skills/data/refresh/SKILL.md`

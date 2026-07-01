@@ -1,0 +1,49 @@
+id: data-analytics
+display_name: Data Analytics
+description: Source-backed analysis, SQL, dashboards, reports, and refresh workflows.
+default_skill: data
+skills:
+  - data
+  - data/explore
+  - data/query
+  - data/analyze
+  - data/visualize
+  - data/validate
+  - data/dashboard
+  - data/refresh
+default_tools:
+  - run_skill_python_script
+default_mcp_servers:
+  - toolbox-bq-demo
+  - data-artifacts
+default_sandbox_scripts:
+  - name: data_workspace
+    path: scripts/data_workspace.py
+    sha256: b4e2e80dfa05be7e67e9e17a7f97c3ff7daaadde43549f7fafb48906167a2c4e
+    timeout_seconds: 120
+    outputs:
+      - out/result.json
+      - out/result.md
+      - out/tool_artifacts.json
+  - name: build_chart_payload
+    path: scripts/build_chart_payload.py
+    sha256: 30eaed5baf822285a220023c55c00537c32d458e9a25f883a7d6da83e62d21d8
+    timeout_seconds: 120
+    outputs:
+      - out/result.json
+  - name: build_native_dashboard_package
+    path: scripts/build_native_dashboard_package.py
+    sha256: dc72232935f5f392f19169aacae25b361610cd8945b04f0a3c361c6525b31271
+    timeout_seconds: 120
+    outputs:
+      - out/dashboard_artifacts.json
+      - out/tool_artifacts.json
+      - out/result.json
+  - name: build_report_payload
+    path: scripts/build_report_payload.py
+    sha256: 4074f5215b6d8fd74e619f2b539c43ecb4af9a549608bd3461a1df78234165fd
+    timeout_seconds: 120
+    outputs:
+      - out/result.json
+execution:
+  mode: scope_bundle

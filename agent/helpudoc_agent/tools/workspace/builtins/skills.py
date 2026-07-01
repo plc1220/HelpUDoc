@@ -1,8 +1,10 @@
 """Skill listing, loading, and sandbox script execution tools."""
 from __future__ import annotations
 
+import json
 from typing import List, Optional
 
+from langchain_core.callbacks import CallbackManagerForToolRun
 from langchain_core.tools import Tool, tool
 from pydantic import BaseModel, Field
 
@@ -10,7 +12,7 @@ from ....configuration import Settings
 from ....sandbox_runner import (
     SandboxExecutionError,
     SandboxUnavailableError,
-    run_skill_python_script_in_kubernetes,
+    run_skill_python_script as run_declared_skill_python_script,
 )
 from ....skills_registry import (
     activate_skill_context,
@@ -72,6 +74,7 @@ def build_list_skills_tool(settings: Settings, workspace_state: WorkspaceState) 
 
 def build_load_skill_tool(settings: Settings, workspace_state: WorkspaceState) -> Tool:
     skills_root = settings.backend.skills_root
+    plugins_root = getattr(settings.backend, "plugins_root", None)
 
     @tool
     def load_skill(skill_id: str) -> str:
@@ -123,8 +126,8 @@ def build_load_skill_tool(settings: Settings, workspace_state: WorkspaceState) -
                 f"{content.rstrip()}\n\n---\n\n## HelpUDoc approved learnings (docs/HELPUDOC_LEARNINGS.md)\n\n"
                 f"{learnings.strip()}\n"
             )
-        activate_skill_context(workspace_state.context, skill)
-        return build_loaded_skill_text(skill, content)
+        activate_skill_context(workspace_state.context, skill, plugins_root=plugins_root)
+        return build_loaded_skill_text(skill, content, plugins_root=plugins_root)
 
     load_skill.name = "load_skill"
     load_skill.description = "Load the full content of a skill by id or name."
@@ -133,20 +136,75 @@ def build_load_skill_tool(settings: Settings, workspace_state: WorkspaceState) -
 
 def build_run_skill_python_script_tool(settings: Settings, workspace_state: WorkspaceState) -> Tool:
     skills_root = settings.backend.skills_root
+    plugins_root = getattr(settings.backend, "plugins_root", None)
+
+    def _read_output_payload(result_path: str) -> object | None:
+        rel = str(result_path or "").strip().replace("\\", "/").lstrip("/")
+        if not rel:
+            return None
+        candidate = (workspace_state.root_path / rel).resolve()
+        root = workspace_state.root_path.resolve()
+        if candidate != root and root not in candidate.parents:
+            return None
+        if not candidate.is_file():
+            return None
+        try:
+            return json.loads(candidate.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+
+    def _emit_script_events(result, callbacks: Optional[CallbackManagerForToolRun]) -> None:
+        if callbacks is None:
+            return
+        output_paths = {item.path for item in result.output_files}
+        run_prefix = f"/sandbox-runs/{result.run_id}/"
+        tool_payload = None
+        dashboard_payload = None
+        for output_path in output_paths:
+            if output_path == f"{run_prefix}out/tool_artifacts.json":
+                tool_payload = _read_output_payload(output_path)
+            elif output_path == f"{run_prefix}out/dashboard_artifacts.json":
+                dashboard_payload = _read_output_payload(output_path)
+        try:
+            run_id = getattr(callbacks, "run_id", None)
+            if isinstance(tool_payload, dict):
+                if run_id is not None:
+                    callbacks.on_custom_event("tool_artifacts", tool_payload, run_id=run_id)
+                else:
+                    callbacks.on_custom_event("tool_artifacts", tool_payload)
+            dashboard_events = []
+            if isinstance(dashboard_payload, list):
+                dashboard_events = [item for item in dashboard_payload if isinstance(item, dict)]
+            elif isinstance(dashboard_payload, dict):
+                raw_events = dashboard_payload.get("dashboardArtifacts")
+                if isinstance(raw_events, list):
+                    dashboard_events = [item for item in raw_events if isinstance(item, dict)]
+                else:
+                    dashboard_events = [dashboard_payload]
+            for event in dashboard_events:
+                event.setdefault("workspaceId", workspace_state.workspace_id)
+                if run_id is not None:
+                    callbacks.on_custom_event("dashboard_artifact", event, run_id=run_id)
+                else:
+                    callbacks.on_custom_event("dashboard_artifact", event)
+        except Exception:
+            return
 
     @tool(args_schema=RunSkillPythonScriptInput)
     def run_skill_python_script(
         script_name: str,
         input_paths: Optional[List[str]] = None,
         args: Optional[List[str]] = None,
+        callbacks: Optional[CallbackManagerForToolRun] = None,
     ) -> str:
-        """Run a declared Python script from the active skill inside a Kubernetes sandbox."""
+        """Run a declared Python script from the active skill inside the configured sandbox."""
         blocked = tagged_files_mode_guard(workspace_state.context, "run_skill_python_script")
         if blocked:
             return blocked
         try:
-            result = run_skill_python_script_in_kubernetes(
+            result = run_declared_skill_python_script(
                 skills_root=skills_root,
+                plugins_root=plugins_root,
                 workspace_state=workspace_state,
                 script_name=script_name,
                 input_paths=input_paths or [],
@@ -156,6 +214,7 @@ def build_run_skill_python_script_tool(settings: Settings, workspace_state: Work
             return str(exc)
         except SandboxExecutionError as exc:
             return f"Skill sandbox execution blocked: {exc}"
+        _emit_script_events(result, callbacks)
 
         lines = [
             "SKILL_SANDBOX_RUN_COMPLETED",
@@ -178,6 +237,6 @@ def build_run_skill_python_script_tool(settings: Settings, workspace_state: Work
     run_skill_python_script.name = "run_skill_python_script"
     run_skill_python_script.description = (
         "Run a Python script declared in the active skill's sandbox_scripts frontmatter. "
-        "Scripts execute in a Kubernetes Job sandbox; pass input_paths as workspace files and args as argv."
+        "Scripts execute in the configured local or Kubernetes sandbox; pass input_paths as workspace files and args as argv."
     )
     return run_skill_python_script
