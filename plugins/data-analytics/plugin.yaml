@@ -19,7 +19,7 @@ default_mcp_servers:
 default_sandbox_scripts:
   - name: data_workspace
     path: scripts/data_workspace.py
-    sha256: b4e2e80dfa05be7e67e9e17a7f97c3ff7daaadde43549f7fafb48906167a2c4e
+    sha256: 1d15d72eae2c3f6a45262e95fc12bed795c097a670395abebf458f8c52c0c5d3
     timeout_seconds: 120
     outputs:
       - out/result.json

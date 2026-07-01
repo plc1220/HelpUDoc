@@ -59,22 +59,28 @@ def discover_files(root: Path) -> list[Path]:
     return sorted({path.resolve() for path in candidates})
 
 
-def register_tables(con: duckdb.DuckDBPyConnection, root: Path) -> dict[str, str]:
+def register_tables(con: duckdb.DuckDBPyConnection, root: Path) -> tuple[dict[str, str], list[dict[str, str]]]:
     table_paths: dict[str, str] = {}
+    skipped_files: list[dict[str, str]] = []
     used: set[str] = set()
     for path in discover_files(root):
         if "node_modules" in path.parts or "sandbox-runs" in path.parts:
             continue
         table = table_name_for(path.relative_to(root), used)
         quoted = path.as_posix().replace("'", "''")
-        if path.suffix.lower() == ".csv":
-            con.execute(f"CREATE OR REPLACE TABLE {quote_ident(table)} AS SELECT * FROM read_csv_auto('{quoted}')")
-        elif path.suffix.lower() == ".parquet":
-            con.execute(f"CREATE OR REPLACE TABLE {quote_ident(table)} AS SELECT * FROM read_parquet('{quoted}')")
-        elif path.suffix.lower() == ".json":
-            con.execute(f"CREATE OR REPLACE TABLE {quote_ident(table)} AS SELECT * FROM read_json_auto('{quoted}')")
+        try:
+            if path.suffix.lower() == ".csv":
+                con.execute(f"CREATE OR REPLACE TABLE {quote_ident(table)} AS SELECT * FROM read_csv_auto('{quoted}')")
+            elif path.suffix.lower() == ".parquet":
+                con.execute(f"CREATE OR REPLACE TABLE {quote_ident(table)} AS SELECT * FROM read_parquet('{quoted}')")
+            elif path.suffix.lower() == ".json":
+                con.execute(f"CREATE OR REPLACE TABLE {quote_ident(table)} AS SELECT * FROM read_json_auto('{quoted}')")
+        except Exception as exc:
+            used.discard(table)
+            skipped_files.append({"path": path.relative_to(root).as_posix(), "error": str(exc)})
+            continue
         table_paths[table] = path.relative_to(root).as_posix()
-    return table_paths
+    return table_paths, skipped_files
 
 
 def dataframe_rows(df: pd.DataFrame, limit: int = 1000) -> list[dict[str, Any]]:
@@ -99,9 +105,11 @@ def main() -> None:
     request = read_request()
     root = workspace_root()
     con = duckdb.connect(database=":memory:")
-    table_paths = register_tables(con, root)
+    table_paths, skipped_files = register_tables(con, root)
     action = str(request.get("action") or "schema").strip().lower()
     result: dict[str, Any] = {"ok": True, "action": action, "tables": table_paths}
+    if skipped_files:
+        result["skippedFiles"] = skipped_files
 
     if action == "schema":
         tables = [str(item) for item in request.get("tables") or []]
