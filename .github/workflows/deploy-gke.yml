@@ -493,6 +493,22 @@ jobs:
                           ]
                         },
                         {
+                          name: "seed-plugins",
+                          image: $img,
+                          imagePullPolicy: "Always",
+                          command: [
+                            "/bin/sh",
+                            "-c",
+                            "set -eu\nif [ -f /pvc-plugins/data-analytics/plugin.yaml ]; then\n  echo \"seed-plugins: PVC already has plugins; skipping.\"\n  exit 0\nfi\necho \"seed-plugins: copying from image to PVC...\"\nmkdir -p /pvc-plugins\ncp -a /app/plugins-source/. /pvc-plugins/\nif [ -f /app/plugins-source/.HELPUDOC_SOURCE_REVISION ]; then\n  cp /app/plugins-source/.HELPUDOC_SOURCE_REVISION /pvc-plugins/.HELPUDOC_IMAGE_SOURCE_REVISION || true\nfi\n"
+                          ],
+                          volumeMounts: [
+                            {
+                              name: "plugins-data",
+                              mountPath: "/pvc-plugins"
+                            }
+                          ]
+                        },
+                        {
                           name: "seed-agent-config",
                           image: $img,
                           imagePullPolicy: "Always",
@@ -562,6 +578,16 @@ jobs:
           kubectl -n helpudoc exec "${APP_POD}" -c backend -- sh -lc "set -eu; mkdir -p /app/skills; find /app/skills -mindepth 1 -maxdepth 1 -exec rm -rf {} +"
           tar -C skills -cf - . | kubectl -n helpudoc exec -i "${APP_POD}" -c backend -- sh -lc "tar -xf - -C /app/skills"
           kubectl -n helpudoc exec "${APP_POD}" -c backend -- sh -lc "test -f /app/skills/research/SKILL.md"
+
+      - name: Legacy sync Plugins PVC (kubectl exec)
+        if: ${{ inputs.sync_runtime_assets }}
+        run: |
+          set -euo pipefail
+          APP_POD="$(kubectl -n helpudoc get pods -l app=helpudoc-app -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.phase}{"\n"}{end}' | awk '$2 == "Running" {print $1; exit}')"
+          test -n "${APP_POD}"
+          kubectl -n helpudoc exec "${APP_POD}" -c backend -- sh -lc "set -eu; mkdir -p /app/plugins; find /app/plugins -mindepth 1 -maxdepth 1 -exec rm -rf {} +"
+          tar -C plugins -cf - . | kubectl -n helpudoc exec -i "${APP_POD}" -c backend -- sh -lc "tar -xf - -C /app/plugins"
+          kubectl -n helpudoc exec "${APP_POD}" -c backend -- sh -lc "test -f /app/plugins/data-analytics/plugin.yaml"
 
       - name: Legacy sync Agent Config PVC (kubectl exec)
         if: ${{ inputs.sync_runtime_assets }}
