@@ -1620,9 +1620,19 @@ export const getFrontendSlidesA2UIGateCompletionError = (input: {
   gateState?: A2UIGateState;
 }): string | null => {
   const missingGate = getFrontendSlidesMissingRequiredGate(input);
-  return missingGate
-    ? `Contract violation: frontend-slides completed before required A2UI gate "${missingGate}" was completed with request_clarification.`
-    : null;
+  if (missingGate) {
+    return `Contract violation: frontend-slides completed before required A2UI gate "${missingGate}" was completed with request_clarification.`;
+  }
+  const params = { prompt: input.prompt || '' } as StartRunParams;
+  if (
+    input.status === 'completed' &&
+    isFrontendSlidesRun(input.skillId, params) &&
+    !isFrontendSlidesEditExistingRun(params) &&
+    hasCompletedAllFrontendSlidesGates(input.gateState || { completedGateIds: [] })
+  ) {
+    return 'Contract violation: frontend-slides completed after all A2UI gates but before producing the final HTML deck artifact.';
+  }
+  return null;
 };
 
 export const validateInterrupt = (parsed: Record<string, unknown>, skillId: string | null): string | null => {
@@ -3134,6 +3144,19 @@ async function runAgentRunWorker(
       }
     }
 
+    const frontendSlidesCompletionError = latestDeckArtifactPath
+      ? null
+      : getFrontendSlidesA2UIGateCompletionError({
+          skillId,
+          prompt: params.prompt,
+          status: effectiveStatus,
+          gateState: a2uiGateState,
+        });
+    if (frontendSlidesCompletionError) {
+      effectiveStatus = 'failed';
+      effectiveError = frontendSlidesCompletionError;
+    }
+
     const implicitInput = detectImplicitInputAwaiting({
       status: effectiveStatus,
       skillId,
@@ -3480,6 +3503,18 @@ async function runAgentRunWorker(
         })
       : null;
     if (missingGateBeforeTerminal) {
+      return 'continue';
+    }
+    const completionErrorBeforeTerminal = terminalEvent?.status === 'completed' && !latestDeckArtifactPath
+      ? getFrontendSlidesA2UIGateCompletionError({
+          skillId,
+          prompt: params.prompt,
+          status: 'completed',
+          gateState: a2uiGateState,
+        })
+      : null;
+    if (completionErrorBeforeTerminal) {
+      contractErrorMessage = completionErrorBeforeTerminal;
       return 'continue';
     }
     if (eventToAppend?.type === 'interrupt' && eventToAppend.a2uiRequest) {

@@ -591,7 +591,7 @@ test('gate completion fails final completion before all required gates', () => {
   assert.match(err || '', /"mood_or_preset_selection"/);
 });
 
-test('gate completion allows completed frontend-slides run after all gates', () => {
+test('gate completion fails completed frontend-slides run after all gates without a deck', () => {
   const err = getFrontendSlidesA2UIGateCompletionError({
     status: 'completed',
     skillId: 'frontend-slides',
@@ -606,7 +606,7 @@ test('gate completion allows completed frontend-slides run after all gates', () 
       ],
     },
   });
-  assert.equal(err, null);
+  assert.match(err || '', /before producing the final HTML deck artifact/);
 });
 
 test('gate completion allows edit-existing-deck frontend-slides completion', () => {
