@@ -11,6 +11,7 @@ from langgraph.runtime import Runtime
 from langgraph.types import Command
 
 from helpudoc_agent.api.constants import _INTERRUPT_TOOL_NAMES
+from helpudoc_agent.a2ui_contract import next_pending_gate
 from helpudoc_agent.implicit_input_detection import detect_implicit_input_awaiting
 from helpudoc_agent.interrupt_payloads import extract_interrupt_payload_from_tool_text
 from helpudoc_agent.middleware.implicit_input_guard import (
@@ -559,6 +560,23 @@ def test_guard_allows_frontend_slides_after_all_gates_completed() -> None:
     )
 
     assert middleware.after_model(state, runtime) is None
+
+
+def test_a2ui_contract_honors_backend_completed_gates_with_scoped_run_context() -> None:
+    context = {
+        "active_skill": "frontend-slides",
+        "run_id": "run-123",
+        "thread_id": "thread-456",
+        "frontend_slides_completed_a2ui_gates": [
+            "presentation_context",
+            "outline_confirmation",
+            "style_path_selection",
+            "mood_or_preset_selection",
+            "style_preview_selection",
+        ],
+    }
+
+    assert next_pending_gate(context) is None
 
 
 def test_guard_loops_once_and_raises_contract_error_on_retry() -> None:

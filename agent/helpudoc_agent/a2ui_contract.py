@@ -235,15 +235,10 @@ def find_gate_record(
 
 
 def gate_is_completed(context: dict[str, Any], *, skill_id: str, gate_id: str) -> bool:
+    if is_frontend_slides_skill(skill_id) and gate_id in _legacy_frontend_completed(context):
+        return True
     record = find_gate_record(context, skill_id=skill_id, gate_id=gate_id)
     if isinstance(record, dict) and record.get("status") == "completed":
-        return True
-    if (
-        is_frontend_slides_skill(skill_id)
-        and not _current_run_id(context)
-        and not _current_thread_id(context)
-        and gate_id in _legacy_frontend_completed(context)
-    ):
         return True
     return False
 
