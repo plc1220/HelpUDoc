@@ -6763,50 +6763,68 @@ export default function WorkspacePage() {
     }
   };
 
-  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    if (!selectedWorkspace || !event.target.files || event.target.files.length === 0) {
+  const describeUploadFailure = (file: File, path: string | undefined, error: unknown) => {
+    const destination = path?.trim() || file.name || 'Untitled file';
+    const message = error instanceof Error && error.message.trim()
+      ? error.message.trim()
+      : 'Upload failed';
+    return `${destination}: ${message}`;
+  };
+
+  const uploadWorkspaceFiles = async (
+    filesToUpload: File[],
+    getDestinationPath?: (file: File) => string | undefined,
+  ) => {
+    if (!selectedWorkspace || filesToUpload.length === 0) {
       return;
     }
 
-    const filesToUpload = event.target.files;
+    const workspaceId = selectedWorkspace.id;
+    const failures: string[] = [];
+    let uploadedCount = 0;
 
-    try {
-      for (const file of filesToUpload) {
-        const newFileData = (await createFile(selectedWorkspace.id, file)) as WorkspaceFile;
-        setFiles((prevFiles) => [...prevFiles, newFileData]);
+    for (const file of filesToUpload) {
+      const destinationPath = getDestinationPath?.(file);
+      if (getDestinationPath && !destinationPath) {
+        failures.push(describeUploadFailure(file, destinationPath, new Error('Missing destination path')));
+        continue;
       }
-    } catch (error) {
-      console.error('Failed to upload file:', error);
-    } finally {
-      event.target.value = '';
+
+      try {
+        await createFile(workspaceId, file, destinationPath);
+        uploadedCount += 1;
+      } catch (error) {
+        console.error('Failed to upload workspace file:', error);
+        failures.push(describeUploadFailure(file, destinationPath, error));
+      }
+    }
+
+    if (uploadedCount > 0 && selectedWorkspaceIdRef.current === workspaceId) {
+      await loadFilesForWorkspace(workspaceId);
+    }
+
+    if (failures.length > 0) {
+      const shownFailures = failures.slice(0, 3).join('; ');
+      const remainingCount = failures.length - 3;
+      const suffix = remainingCount > 0 ? `; and ${remainingCount} more` : '';
+      addLocalSystemMessage(
+        uploadedCount > 0
+          ? `Uploaded ${uploadedCount} file${uploadedCount === 1 ? '' : 's'}, but ${failures.length} failed: ${shownFailures}${suffix}`
+          : `Upload failed for ${failures.length} file${failures.length === 1 ? '' : 's'}: ${shownFailures}${suffix}`,
+      );
     }
   };
 
+  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const filesToUpload = event.target.files ? Array.from(event.target.files) : [];
+    event.target.value = '';
+    await uploadWorkspaceFiles(filesToUpload);
+  };
+
   const handleFolderUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    if (!selectedWorkspace || !event.target.files || event.target.files.length === 0) {
-      return;
-    }
-
-    const filesToUpload = Array.from(event.target.files);
-
-    try {
-      for (const file of filesToUpload) {
-        const relativePath = getUploadRelativePath(file);
-        if (!relativePath) {
-          continue;
-        }
-        const newFileData = (await createFile(selectedWorkspace.id, file, relativePath)) as WorkspaceFile;
-        setFiles((prevFiles) => [...prevFiles, newFileData]);
-        const folderPath = getWorkspaceParentFolderPath(relativePath);
-        if (folderPath) {
-          setFolderPaths((prev) => addFolderPath(prev, folderPath));
-        }
-      }
-    } catch (error) {
-      console.error('Failed to upload folder:', error);
-    } finally {
-      event.target.value = '';
-    }
+    const filesToUpload = event.target.files ? Array.from(event.target.files) : [];
+    event.target.value = '';
+    await uploadWorkspaceFiles(filesToUpload, getUploadRelativePath);
   };
 
   const handleOpenLocalAttachmentPicker = () => {

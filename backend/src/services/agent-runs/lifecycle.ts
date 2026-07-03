@@ -977,6 +977,44 @@ export const withFrontendSlidesGateMetadata = (
     path: `.claude-design/slide-previews/${choice.id}.html`,
     html: buildFallbackStylePreviewHtml(choice),
   }));
+  const buildStylePreviewsForChoices = (choices: unknown): Array<Record<string, unknown>> | undefined => {
+    if (!Array.isArray(choices) || choices.length === 0) {
+      return defaultStylePreviews;
+    }
+    const previews = choices
+      .map((choice, index) => {
+        const record = getRecord(choice);
+        if (!record) {
+          return null;
+        }
+        const id = typeof record.id === 'string' && record.id.trim()
+          ? record.id.trim()
+          : typeof record.choiceId === 'string' && record.choiceId.trim()
+            ? record.choiceId.trim()
+            : `style-${String.fromCharCode(97 + index)}`;
+        const label = typeof record.label === 'string' && record.label.trim()
+          ? record.label.trim()
+          : typeof record.name === 'string' && record.name.trim()
+            ? record.name.trim()
+            : typeof record.title === 'string' && record.title.trim()
+              ? record.title.trim()
+              : `Style ${String.fromCharCode(65 + index)}`;
+        const description = typeof record.description === 'string' && record.description.trim()
+          ? record.description.trim()
+          : typeof record.summary === 'string' && record.summary.trim()
+            ? record.summary.trim()
+            : undefined;
+        return {
+          id,
+          label,
+          ...(description ? { description } : {}),
+          path: `.claude-design/slide-previews/${id}.html`,
+          html: buildFallbackStylePreviewHtml({ id, label, description }),
+        };
+      })
+      .filter((preview): preview is Record<string, unknown> => Boolean(preview));
+    return previews.length > 0 ? previews : defaultStylePreviews;
+  };
   const withQuestionDefaults = (props: unknown): Record<string, unknown> | undefined => {
     const record = getRecord(props);
     if (!record) {
@@ -1000,17 +1038,25 @@ export const withFrontendSlidesGateMetadata = (
     }
     const hasChoices = Array.isArray(record.choices) && record.choices.length > 0;
     const hasPreviews = Array.isArray(record.previews) && record.previews.length > 0;
-    return hasChoices || hasPreviews
-      ? record
-      : {
-          ...record,
-          choices: defaultStyleChoices,
-          previews: defaultStylePreviews,
-          fallback: true,
-          description: typeof record.description === 'string' && record.description.trim()
-            ? record.description
-            : 'No generated style previews were provided, so choose from fallback executive styles to continue.',
-        };
+    if (hasChoices && !hasPreviews) {
+      return {
+        ...record,
+        previews: buildStylePreviewsForChoices(record.choices),
+        fallback: record.fallback ?? true,
+      };
+    }
+    if (hasChoices || hasPreviews) {
+      return record;
+    }
+    return {
+      ...record,
+      choices: defaultStyleChoices,
+      previews: defaultStylePreviews,
+      fallback: true,
+      description: typeof record.description === 'string' && record.description.trim()
+        ? record.description
+        : 'No generated style previews were provided, so choose from fallback executive styles to continue.',
+    };
   };
   const a2uiProps = withGateDefaults(a2uiRequest?.props);
   const uiProps = withGateDefaults(uiRequest?.props);

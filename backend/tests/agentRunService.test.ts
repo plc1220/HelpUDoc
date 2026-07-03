@@ -584,6 +584,57 @@ test('frontend-slides gate metadata repair fills empty style previews with fallb
   assert.equal(((repaired.a2uiRequest as any)?.props?.previews || []).length > 0, true);
 });
 
+test('frontend-slides gate metadata repair adds fallback previews when choices exist without previews', () => {
+  const choicesOnlyStylePreviewInterrupt = {
+    type: 'interrupt',
+    kind: 'clarification',
+    title: 'Choose a Style Preview',
+    a2uiRequest: {
+      contract: 'a2ui',
+      version: '0.9',
+      surfaceId: 'surface-style-preview-selection',
+      component: 'style.previewChooser',
+      gateId: 'style_preview_selection',
+      skill: 'frontend-slides',
+      props: {
+        title: 'Choose a Style Preview',
+        choices: [
+          {
+            id: 'style-a',
+            label: 'Style A',
+            value: 'Style A',
+            description: 'Use the first generated preview direction.',
+          },
+          {
+            id: 'style-b',
+            label: 'Style B',
+            value: 'Style B',
+            description: 'Use the second generated preview direction.',
+          },
+          {
+            id: 'style-c',
+            label: 'Style C',
+            value: 'Style C',
+            description: 'Use the third generated preview direction.',
+          },
+        ],
+      },
+      metadata: {
+        skill: 'frontend-slides',
+        gateId: 'style_preview_selection',
+      },
+    },
+  };
+
+  const repaired = withFrontendSlidesGateMetadata(choicesOnlyStylePreviewInterrupt, 'style_preview_selection');
+  const previews = ((repaired.a2uiRequest as any)?.props?.previews || []) as Array<Record<string, unknown>>;
+
+  assert.equal(validateInterrupt(repaired, 'frontend-slides'), null);
+  assert.equal(previews.length, 3);
+  assert.equal(previews[0].id, 'style-a');
+  assert.match(String(previews[0].html || ''), /<!doctype html>/i);
+});
+
 test('shouldFailResumedRunForIdle only fails resumed idle runs with no active tool', () => {
   const resumePayload = { response: { message: 'ok' } } as any;
 

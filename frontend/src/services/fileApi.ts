@@ -52,7 +52,16 @@ export const createFile = async (workspaceId: string, file: File, path?: string)
     body: formData,
   });
   if (!response.ok) {
-    throw new Error('Failed to create file');
+    let detail = '';
+    try {
+      const payload = await response.json();
+      if (payload && typeof payload === 'object' && typeof payload.error === 'string' && payload.error.trim()) {
+        detail = payload.error.trim();
+      }
+    } catch {
+      // ignore non-JSON error bodies
+    }
+    throw new Error(detail || `Failed to create file (${response.status})`);
   }
   return response.json();
 };

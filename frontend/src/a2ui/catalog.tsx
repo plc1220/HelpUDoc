@@ -401,6 +401,61 @@ const getChoiceText = (choice: Partial<A2UIChoice>, keys: Array<keyof A2UIChoice
   return '';
 };
 
+const escapeHtmlText = (value: string): string => (
+  value.replace(/[&<>"']/g, (char) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  }[char] || char))
+);
+
+const buildFallbackStylePreviewHtml = (item: {
+  id: string;
+  label: string;
+  description?: string;
+}): string => {
+  const paletteById: Record<string, { bg: string; fg: string; accent: string; panel: string; muted: string }> = {
+    'style-a': { bg: '#f8fafc', fg: '#0f172a', accent: '#0ea5e9', panel: '#ffffff', muted: '#475569' },
+    'style-b': { bg: '#07111f', fg: '#f8fafc', accent: '#22c55e', panel: '#0f172a', muted: '#cbd5e1' },
+    'style-c': { bg: '#fff7ed', fg: '#1f2937', accent: '#f97316', panel: '#ffffff', muted: '#64748b' },
+  };
+  const palette = paletteById[item.id] || paletteById['style-a'];
+  return `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
+    body { font-family: ui-serif, Georgia, Cambria, "Times New Roman", serif; background: ${palette.bg}; color: ${palette.fg}; }
+    .slide { width: 100vw; height: 100vh; display: grid; grid-template-columns: 1.1fr .9fr; gap: 5vw; align-items: center; padding: 9vh 8vw; }
+    .eyebrow { color: ${palette.accent}; font: 800 14px/1.1 ui-sans-serif, system-ui, sans-serif; letter-spacing: .14em; text-transform: uppercase; }
+    h1 { margin: 18px 0 22px; max-width: 920px; font-size: clamp(52px, 8vw, 112px); line-height: .9; letter-spacing: 0; }
+    p { margin: 0; max-width: 680px; color: ${palette.muted}; font: 500 clamp(20px, 2.1vw, 32px)/1.28 ui-sans-serif, system-ui, sans-serif; }
+    .card { min-height: 52vh; border: 2px solid ${palette.accent}; background: ${palette.panel}; display: grid; align-content: end; padding: 5vw; box-shadow: 18px 18px 0 ${palette.accent}; }
+    .number { font: 900 clamp(72px, 10vw, 150px)/.85 ui-sans-serif, system-ui, sans-serif; color: ${palette.accent}; }
+    .label { margin-top: 16px; color: ${palette.muted}; font: 800 16px/1.2 ui-sans-serif, system-ui, sans-serif; text-transform: uppercase; letter-spacing: .12em; }
+  </style>
+</head>
+<body>
+  <main class="slide">
+    <section>
+      <div class="eyebrow">Presentation direction</div>
+      <h1>${escapeHtmlText(item.label)}</h1>
+      <p>${escapeHtmlText(item.description || 'A generated direction for the full presentation design.')}</p>
+    </section>
+    <aside class="card">
+      <div class="number">01</div>
+      <div class="label">Title slide</div>
+    </aside>
+  </main>
+</body>
+</html>`;
+};
+
 const buildStylePreviewMetadata = (sources: unknown[]) => {
   const metadata = new Map<string, Partial<A2UIChoice>>();
   sources
@@ -484,7 +539,8 @@ export const StylePreviewChooser: React.FC<A2UIComponentProps> = ({
       const value = choiceValue || getChoiceText(matchingMetadata, ['value']) || label;
       const description = getChoiceText(c, ['description', 'summary']) || getChoiceText(matchingMetadata, ['description', 'summary']);
       const path = getChoiceText(c, ['path', 'file', 'filePath', 'previewPath']) || getChoiceText(matchingMetadata, ['path', 'file', 'filePath', 'previewPath']);
-      const html = getChoiceText(c, ['html', 'srcDoc', 'srcdoc', 'content']) || getChoiceText(matchingMetadata, ['html', 'srcDoc', 'srcdoc', 'content']);
+      const payloadHtml = getChoiceText(c, ['html', 'srcDoc', 'srcdoc', 'content']) || getChoiceText(matchingMetadata, ['html', 'srcDoc', 'srcdoc', 'content']);
+      const html = payloadHtml || (path ? '' : buildFallbackStylePreviewHtml({ id, label, description }));
 
       let previewUrl: string | undefined = undefined;
       let downloadUrl: string | undefined = undefined;
