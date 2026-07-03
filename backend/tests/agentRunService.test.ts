@@ -889,11 +889,13 @@ test('buildSyntheticClarificationFollowupPrompt advances frontend-slides style c
   );
 
   assert.match(prompt, /selected a visual style/);
-  assert.match(prompt, /Continue directly into building the final HTML presentation deck/);
+  assert.match(prompt, /final generation phase/);
+  assert.match(prompt, /Do not call workflow_action\(action="ask_user_a2ui"\)/);
+  assert.match(prompt, /Generate the final HTML presentation deck now/);
   assert.match(prompt, /filename ends with -deck\.html/);
   assert.match(prompt, /<section class="slide">/);
   assert.match(prompt, /not a report or summary page/);
-  assert.match(prompt, /Do not ask for Presentation Context again/);
+  assert.doesNotMatch(prompt, /Presentation Context again/);
 });
 
 test('buildSyntheticClarificationFollowupPrompt honors persisted completed frontend-slides gate state', () => {
@@ -927,6 +929,7 @@ test('buildSyntheticClarificationFollowupPrompt honors persisted completed front
 
   assert.match(prompt, /all required structured gates are complete/i);
   assert.match(prompt, /Generate the final HTML presentation deck now/);
+  assert.match(prompt, /Do not call workflow_action\(action="ask_user_a2ui"\)/);
   assert.match(prompt, /filename ends with -deck\.html/);
   assert.doesNotMatch(prompt, /Generate the slide outline next/);
   assert.doesNotMatch(prompt, /outline_confirmation structured A2UI workflow action/);

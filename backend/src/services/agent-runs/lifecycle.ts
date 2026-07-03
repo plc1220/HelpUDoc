@@ -466,6 +466,20 @@ export const buildSyntheticClarificationFollowupPrompt = (
   const skillDirective = previousInterrupt?.displayPayload?.skill === 'frontend-slides'
     ? '/skill frontend-slides'
     : '';
+  if (previousInterrupt?.displayPayload?.skill === 'frontend-slides' && workflowState?.canComplete) {
+    return [
+      skillDirective,
+      '[Frontend-slides final generation phase]',
+      'All required structured gates are complete. The user has selected a visual style.',
+      'Do not call workflow_action(action="ask_user_a2ui"), request_clarification, request_ui, or request_human_action for any frontend-slides gate.',
+      'Generate the final HTML presentation deck now. The output must be a slide deck, not a report or summary page: write a .html file whose filename ends with -deck.html, include multiple viewport-sized slide sections such as <section class="slide">, include keyboard/scroll navigation, and use write_file so the file appears in the workspace.',
+      'Only after the deck file exists may you call workflow_action(action="complete") or finish the run.',
+      answers,
+      '',
+      ORIGINAL_REQUEST_CONTINUATION_MARKER,
+      originalRequest,
+    ].filter((line) => line !== '').join('\n');
+  }
   return [
     skillDirective,
     `[Clarification response — continue the '${skill}' skill from where you left off; do not restart from the beginning.]`,
