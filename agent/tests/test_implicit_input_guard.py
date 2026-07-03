@@ -236,7 +236,7 @@ def test_build_synthetic_interrupt_uses_frontend_slides_discovery_form() -> None
     )
     assert payload is not None
     assert payload["kind"] == "clarification"
-    assert payload["title"] == "Presentation Context + Images"
+    assert payload["title"] == "Presentation Context"
     assert payload["display_payload"]["synthetic"] is True
 
     questions = payload["response_spec"]["questions"]
@@ -244,11 +244,10 @@ def test_build_synthetic_interrupt_uses_frontend_slides_discovery_form() -> None
         "purpose",
         "length",
         "content",
-        "images",
-        "editing",
+        "density",
     ]
     assert questions[0]["header"] == "Purpose"
-    assert questions[3]["options"][0]["label"] == "No images"
+    assert questions[3]["options"][0]["label"] == "Low density / speaker-led"
     assert payload["response_spec"]["allowDismiss"] is True
 
 
@@ -286,7 +285,7 @@ def test_frontend_slides_guard_gate_interrupt_is_marked_synthetic() -> None:
 
 def test_extract_interrupt_payload_from_langgraph_v3_tool_error_wrapper() -> None:
     raw = (
-        "(Interrupt(value={'kind': 'clarification', 'title': 'Presentation Context + Images', "
+        "(Interrupt(value={'kind': 'clarification', 'title': 'Presentation Context', "
         "'description': 'Tell me enough to shape the deck before I design it.', "
         "'a2uiRequest': {'contract': 'a2ui', 'version': '0.9', "
         "'component': 'clarification_form', 'gateId': 'presentation_context', "
@@ -320,7 +319,7 @@ def test_build_synthetic_interrupt_detects_generic_form_preference_request() -> 
     )
     assert payload is not None
     assert payload["kind"] == "clarification"
-    assert payload["title"] == "Presentation Context + Images"
+    assert payload["title"] == "Presentation Context"
     assert payload["response_spec"]["questions"]
 
 
@@ -360,7 +359,7 @@ def test_build_synthetic_interrupt_uses_style_preview_chooser() -> None:
         "style-b",
         "style-c",
     ]
-    assert payload["display_payload"]["stylePreviews"][0]["path"] == ".claude-design/slide-previews/style-a.html"
+    assert payload["display_payload"]["stylePreviews"][0]["path"] == ".frontend-slides/slide-previews/style-a.html"
     assert "<!doctype html>" in payload["display_payload"]["stylePreviews"][0]["html"]
 
 
@@ -554,8 +553,6 @@ def test_guard_allows_frontend_slides_after_all_gates_completed() -> None:
             "frontend_slides_completed_a2ui_gates": [
                 "presentation_context",
                 "outline_confirmation",
-                "style_path_selection",
-                "mood_or_preset_selection",
                 "style_preview_selection",
             ],
         }
@@ -580,8 +577,6 @@ def test_guard_loops_once_and_raises_contract_error_on_retry() -> None:
     completed_gates = [
         "presentation_context",
         "outline_confirmation",
-        "style_path_selection",
-        "mood_or_preset_selection",
         "style_preview_selection",
     ]
     runtime = Runtime(

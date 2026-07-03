@@ -184,6 +184,12 @@ def test_frontend_slides_contract_sequence_and_resume_skip_completed_gate():
     first = next_pending_gate(context)
     assert first["gate_id"] == "presentation_context"
     assert first["props"]["questions"][0]["id"] == "purpose"
+    assert [question["id"] for question in first["props"]["questions"]] == [
+        "purpose",
+        "length",
+        "content",
+        "density",
+    ]
 
     mark_gate_completed(
         context,
@@ -256,8 +262,6 @@ def test_frontend_slides_defers_style_preview_gate_until_previews_exist():
     for gate_id in [
         "presentation_context",
         "outline_confirmation",
-        "style_path_selection",
-        "mood_or_preset_selection",
     ]:
         mark_gate_completed(
             context,
@@ -270,6 +274,12 @@ def test_frontend_slides_defers_style_preview_gate_until_previews_exist():
         )
 
     assert next_pending_gate(context) is None
+
+    contract["gates"][2].setdefault("props", {})["choices"] = [
+        {"id": "style-a", "label": "Style A", "value": "Style A"}
+    ]
+    third = next_pending_gate(context)
+    assert third["gate_id"] == "style_preview_selection"
 
 
 def test_frontend_slides_default_contract_defers_dynamic_outline_gate_without_payload():

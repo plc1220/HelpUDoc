@@ -4,7 +4,7 @@ gates:
     required: true
     synthetic_on_pending: true
     props:
-      title: Presentation Context + Images
+      title: Presentation Context
       description: Tell me enough to shape the deck before I design it.
       submitLabel: Continue
     context:
@@ -25,34 +25,6 @@ gates:
       skill: frontend-slides
       skillId: frontend-slides
       gateId: outline_confirmation
-      uiContract: a2ui
-      expectedComponent: clarification_form
-  - gate_id: style_path_selection
-    component: clarification_form
-    required: true
-    synthetic_on_pending: true
-    props:
-      title: Choose Style Path
-      description: Choose how you want to select the presentation style.
-      submitLabel: Continue
-    context:
-      skill: frontend-slides
-      skillId: frontend-slides
-      gateId: style_path_selection
-      uiContract: a2ui
-      expectedComponent: clarification_form
-  - gate_id: mood_or_preset_selection
-    component: clarification_form
-    required: true
-    synthetic_on_pending: true
-    props:
-      title: Choose Presentation Vibe
-      description: Pick the feeling the visual direction should create.
-      submitLabel: Generate style previews
-    context:
-      skill: frontend-slides
-      skillId: frontend-slides
-      gateId: mood_or_preset_selection
       uiContract: a2ui
       expectedComponent: clarification_form
   - gate_id: style_preview_selection

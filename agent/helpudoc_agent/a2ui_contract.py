@@ -74,7 +74,7 @@ def is_frontend_slides_skill(skill_id: str | None) -> bool:
 def _frontend_slides_default_props(gate_id: str) -> dict[str, Any]:
     if gate_id == "presentation_context":
         return {
-            "title": "Presentation Context + Images",
+            "title": "Presentation Context",
             "description": "Tell me enough to shape the deck before I design it.",
             "questions": deepcopy(FRONTEND_SLIDES_DISCOVERY_QUESTIONS),
             "submitLabel": "Continue",

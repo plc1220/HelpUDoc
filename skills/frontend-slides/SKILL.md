@@ -1,1367 +1,265 @@
 ---
 name: frontend-slides
 description: Create stunning, animation-rich HTML presentations from scratch or by converting PowerPoint files. Use when the user wants to build a presentation, convert a PPT/PPTX to web, or create slides for a talk/pitch. Helps non-designers discover their aesthetic through visual exploration rather than abstract choices.
-requires_hitl_plan: false
 ---
 
-# Frontend Slides Skill
+# Frontend Slides
 
-Create zero-dependency, animation-rich HTML presentations that run entirely in the browser. This skill helps non-designers discover their preferred aesthetic through visual exploration ("show, don't tell"), then generates production-quality slide decks.
+Create zero-dependency, animation-rich HTML presentations that run entirely in the browser.
 
-## Core Philosophy
+## Core Principles
 
 1. **Zero Dependencies** — Single HTML files with inline CSS/JS. No npm, no build tools.
-2. **Show, Don't Tell** — People don't know what they want until they see it. Generate visual previews, not abstract choices.
-3. **Distinctive Design** — Avoid generic "AI slop" aesthetics. Every presentation should feel custom-crafted.
-4. **Production Quality** — Code should be well-commented, accessible, and performant.
-5. **Viewport Fitting (CRITICAL)** — Every slide MUST fit exactly within the viewport. No scrolling within slides, ever. This is non-negotiable.
+2. **Show, Don't Tell** — Generate visual previews, not abstract choices. People discover what they want by seeing it.
+3. **Distinctive Design** — No generic "AI slop." Every presentation must feel custom-crafted.
+4. **Progressive Disclosure** — Read lightweight style indexes first. For bold templates, use small preview cards for style previews and load the full `design.md` only after the user picks that template.
+5. **Fixed 16:9 Stage (NON-NEGOTIABLE)** — Every deck uses a 1920×1080 slide canvas scaled as a whole to the viewport. Slides must stay 16:9 on every screen, including phones. Do not reflow slide content to fit the device.
 
----
+## Design Aesthetics
 
-## CRITICAL: Viewport Fitting Requirements
+You tend to converge toward generic, "on distribution" outputs. In frontend design, this creates what users call the "AI slop" aesthetic. Avoid this: make creative, distinctive frontends that surprise and delight.
 
-**This section is mandatory for ALL presentations. Every slide must be fully visible without scrolling on any screen size.**
+Focus on:
 
-### The Golden Rule
+- Typography: Choose fonts that are beautiful, unique, and interesting. Avoid generic fonts like Arial and Inter; opt instead for distinctive choices that elevate the frontend's aesthetics.
+- Color & Theme: Commit to a cohesive aesthetic. Use CSS variables for consistency. Dominant colors with sharp accents outperform timid, evenly-distributed palettes. Draw from IDE themes and cultural aesthetics for inspiration.
+- Motion: Use animations for effects and micro-interactions. Prioritize CSS-only solutions for HTML. Use Motion library for React when available. Focus on high-impact moments: one well-orchestrated page load with staggered reveals (animation-delay) creates more delight than scattered micro-interactions.
+- Backgrounds: Create atmosphere and depth rather than defaulting to solid colors. Layer CSS gradients, use geometric patterns, or add contextual effects that match the overall aesthetic.
 
-```
-Each slide = exactly one viewport height (100vh/100dvh)
-Content overflows? → Split into multiple slides or reduce content
-Never scroll within a slide.
-```
+Avoid generic AI-generated aesthetics:
 
-### Content Density Limits
+- Overused font families (Inter, Roboto, Arial, system fonts)
+- Cliched color schemes (particularly purple gradients on white backgrounds)
+- Predictable layouts and component patterns
+- Cookie-cutter design that lacks context-specific character
 
-To guarantee viewport fitting, enforce these limits per slide:
+Interpret creatively and make unexpected choices that feel genuinely designed for the context. Vary between light and dark themes, different fonts, different aesthetics. You still tend to converge on common choices (Space Grotesk, for example) across generations. Avoid this: it is critical that you think outside the box!
 
-| Slide Type | Maximum Content |
-|------------|-----------------|
-| Title slide | 1 heading + 1 subtitle + optional tagline |
-| Content slide | 1 heading + 4-6 bullet points OR 1 heading + 2 paragraphs |
-| Feature grid | 1 heading + 6 cards maximum (2x3 or 3x2 grid) |
-| Code slide | 1 heading + 8-10 lines of code maximum |
-| Quote slide | 1 quote (max 3 lines) + attribution |
-| Image slide | 1 heading + 1 image (max 60vh height) |
+## Fixed Stage Rules
 
-**If content exceeds these limits → Split into multiple slides**
+These invariants apply to EVERY slide in EVERY presentation:
 
-### Required CSS Architecture
+- Every deck has a viewport wrapper that fills the browser window.
+- Every slide is authored inside a fixed 1920×1080 stage.
+- The stage scales uniformly to fit the viewport. It may letterbox/pillarbox; it must not re-layout content.
+- Do not use responsive breakpoints to rearrange slide content for phones.
+- Use fixed internal slide measurements at the 1920×1080 design size.
+- Slide visibility must be controlled by `.active` / `.visible` using `visibility`, `opacity`, and `pointer-events` from `viewport-base.css`. Do not use `display: none` / `display: block` for slide switching; later layout classes such as `.slide-content { display: flex; }` can override them and make every slide visible at once.
+- Use `clamp()` only for non-slide UI outside the stage, or for small fallback previews where a full stage is impractical.
+- Include `prefers-reduced-motion` support
+- Never negate CSS functions directly (`-clamp()`, `-min()`, `-max()` are silently ignored) — use `calc(-1 * clamp(...))` instead
 
-Every presentation MUST include this base CSS for viewport fitting:
+**When generating, read `viewport-base.css` and include its full contents in every presentation.**
 
-```css
-/* ===========================================
-   VIEWPORT FITTING: MANDATORY BASE STYLES
-   These styles MUST be included in every presentation.
-   They ensure slides fit exactly in the viewport.
-   =========================================== */
+### Content Density Modes
 
-/* 1. Lock html/body to viewport */
-html, body {
-    height: 100%;
-    overflow-x: hidden;
-}
+Ask the user whether this is primarily a reading deck or a speaking deck, then design around that answer:
 
-html {
-    scroll-snap-type: y mandatory;
-    scroll-behavior: smooth;
-}
+| Density mode | Best for | Design behavior |
+| ------------- | -------- | --------------- |
+| **Low density / speaker-led** | Public talks, keynote-style sharing, live explanation | One idea per slide, large type, strong visual hierarchy, generous negative space, 1-3 bullets max, more slides if needed |
+| **High density / reading-first** | Reports, handouts, async review, detailed internal docs | More self-contained slides, structured grids/tables/annotations, 4-8 bullets or 4-6 cards when readable, tighter but still intentional spacing |
 
-/* 2. Each slide = exact viewport height */
-.slide {
-    width: 100vw;
-    height: 100vh;
-    height: 100dvh; /* Dynamic viewport height for mobile browsers */
-    overflow: hidden; /* CRITICAL: Prevent ANY overflow */
-    scroll-snap-align: start;
-    display: flex;
-    flex-direction: column;
-    position: relative;
-}
-
-/* 3. Content container with flex for centering */
-.slide-content {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    max-height: 100%;
-    overflow: hidden; /* Double-protection against overflow */
-    padding: var(--slide-padding);
-}
-
-/* 4. ALL typography uses clamp() for responsive scaling */
-:root {
-    /* Titles scale from mobile to desktop */
-    --title-size: clamp(1.5rem, 5vw, 4rem);
-    --h2-size: clamp(1.25rem, 3.5vw, 2.5rem);
-    --h3-size: clamp(1rem, 2.5vw, 1.75rem);
-
-    /* Body text */
-    --body-size: clamp(0.75rem, 1.5vw, 1.125rem);
-    --small-size: clamp(0.65rem, 1vw, 0.875rem);
-
-    /* Spacing scales with viewport */
-    --slide-padding: clamp(1rem, 4vw, 4rem);
-    --content-gap: clamp(0.5rem, 2vw, 2rem);
-    --element-gap: clamp(0.25rem, 1vw, 1rem);
-}
-
-/* 5. Cards/containers use viewport-relative max sizes */
-.card, .container, .content-box {
-    max-width: min(90vw, 1000px);
-    max-height: min(80vh, 700px);
-}
-
-/* 6. Lists auto-scale with viewport */
-.feature-list, .bullet-list {
-    gap: clamp(0.4rem, 1vh, 1rem);
-}
-
-.feature-list li, .bullet-list li {
-    font-size: var(--body-size);
-    line-height: 1.4;
-}
-
-/* 7. Grids adapt to available space */
-.grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(100%, 250px), 1fr));
-    gap: clamp(0.5rem, 1.5vw, 1rem);
-}
-
-/* 8. Images constrained to viewport */
-img, .image-container {
-    max-width: 100%;
-    max-height: min(50vh, 400px);
-    object-fit: contain;
-}
-
-/* ===========================================
-   RESPONSIVE BREAKPOINTS
-   Aggressive scaling for smaller viewports
-   =========================================== */
-
-/* Short viewports (< 700px height) */
-@media (max-height: 700px) {
-    :root {
-        --slide-padding: clamp(0.75rem, 3vw, 2rem);
-        --content-gap: clamp(0.4rem, 1.5vw, 1rem);
-        --title-size: clamp(1.25rem, 4.5vw, 2.5rem);
-        --h2-size: clamp(1rem, 3vw, 1.75rem);
-    }
-}
-
-/* Very short viewports (< 600px height) */
-@media (max-height: 600px) {
-    :root {
-        --slide-padding: clamp(0.5rem, 2.5vw, 1.5rem);
-        --content-gap: clamp(0.3rem, 1vw, 0.75rem);
-        --title-size: clamp(1.1rem, 4vw, 2rem);
-        --body-size: clamp(0.7rem, 1.2vw, 0.95rem);
-    }
-
-    /* Hide non-essential elements */
-    .nav-dots, .keyboard-hint, .decorative {
-        display: none;
-    }
-}
-
-/* Extremely short (landscape phones, < 500px height) */
-@media (max-height: 500px) {
-    :root {
-        --slide-padding: clamp(0.4rem, 2vw, 1rem);
-        --title-size: clamp(1rem, 3.5vw, 1.5rem);
-        --h2-size: clamp(0.9rem, 2.5vw, 1.25rem);
-        --body-size: clamp(0.65rem, 1vw, 0.85rem);
-    }
-}
-
-/* Narrow viewports (< 600px width) */
-@media (max-width: 600px) {
-    :root {
-        --title-size: clamp(1.25rem, 7vw, 2.5rem);
-    }
-
-    /* Stack grids vertically */
-    .grid {
-        grid-template-columns: 1fr;
-    }
-}
-
-/* ===========================================
-   REDUCED MOTION
-   Respect user preferences
-   =========================================== */
-@media (prefers-reduced-motion: reduce) {
-    *, *::before, *::after {
-        animation-duration: 0.01ms !important;
-        transition-duration: 0.2s !important;
-    }
-
-    html {
-        scroll-behavior: auto;
-    }
-}
-```
-
-### Overflow Prevention Checklist
-
-Before generating any presentation, mentally verify:
-
-1. ✅ Every `.slide` has `height: 100vh; height: 100dvh; overflow: hidden;`
-2. ✅ All font sizes use `clamp(min, preferred, max)`
-3. ✅ All spacing uses `clamp()` or viewport units
-4. ✅ Content containers have `max-height` constraints
-5. ✅ Images have `max-height: min(50vh, 400px)` or similar
-6. ✅ Grids use `auto-fit` with `minmax()` for responsive columns
-7. ✅ Breakpoints exist for heights: 700px, 600px, 500px
-8. ✅ No fixed pixel heights on content elements
-9. ✅ Content per slide respects density limits
-
-### When Content Doesn't Fit
-
-If you find yourself with too much content:
-
-**DO:**
-- Split into multiple slides
-- Reduce bullet points (max 5-6 per slide)
-- Shorten text (aim for 1-2 lines per bullet)
-- Use smaller code snippets
-- Create a "continued" slide
-- **When adding images to existing slides:** Move image to new slide or reduce other content first
-
-**DON'T:**
-- Reduce font size below readable limits
-- Remove padding/spacing entirely
-- Allow any scrolling
-- Cram content to fit
-- Add images without checking if existing content already fills the viewport
-
-### Testing Viewport Fit
-
-After generating, recommend the user test at these sizes:
-- Desktop: 1920×1080, 1440×900, 1280×720
-- Tablet: 1024×768, 768×1024 (portrait)
-- Mobile: 375×667, 414×896
-- Landscape phone: 667×375, 896×414
+Baseline limits still apply: no scrolling, no overflow, no overlapping panels, and no text below comfortable reading size. If content exceeds the selected density mode, split it into more slides instead of shrinking until it becomes cramped.
 
 ---
 
 ## Phase 0: Detect Mode
 
-First, determine what the user wants:
+Determine what the user wants:
 
-**Mode A: New Presentation**
-- User wants to create slides from scratch
-- Proceed to Phase 1 (Content Discovery)
+- **Mode A: New Presentation** — Create from scratch. Go to Phase 1.
+- **Mode B: PPT Conversion** — Convert a .pptx file. Go to Phase 4.
+- **Mode C: Enhancement** — Improve an existing HTML presentation. Read it, understand it, enhance. **Follow Mode C modification rules below.**
 
-**Mode B: PPT Conversion**
-- User has a PowerPoint file (.ppt, .pptx) to convert
-- Proceed to Phase 4 (PPT Extraction)
+## HelpUDoc A2UI Contract
 
-**Mode C: Existing Presentation Enhancement**
-- User has an HTML presentation and wants to improve it
-- Read the existing file, understand the structure, then enhance
-- **CRITICAL: When modifying existing slides, ALWAYS ensure viewport fitting is maintained**
+Use `workflow_action(action="ask_user_a2ui")` for every decision gate in this skill. A UI form only exists when a structured workflow/A2UI tool emits an interrupt; prose like "select from the form above" is not enough.
 
-### Mode C: Critical Modification Rules
+Active HelpUDoc gates:
 
-When enhancing existing presentations, follow these mandatory rules:
+1. `presentation_context` — Ask all initial questions in one `workflow_action(action="ask_user_a2ui")` call: purpose, length, content readiness, and density.
+2. `outline_confirmation` — Use only after a concrete outline or image plan exists. Include `outlineMarkdown`, `outline`, `slides`, or `slideOutline` in the A2UI props/context.
+3. `style_preview_selection` — After generating the three HTML previews in `.frontend-slides/slide-previews/`, use `workflow_action(action="ask_user_a2ui")` with `component="style.previewChooser"` and preview metadata.
 
-**1. Before Adding Any Content:**
-- Read the current slide structure and count existing elements
-- Check against content density limits (see table above)
-- Calculate if the new content will fit within viewport constraints
+Do not ask for `style_path_selection` or `mood_or_preset_selection` in new runs. Those older gate IDs may exist in legacy traces, but the current workflow generates three previews directly.
 
-**2. When Adding Images (MOST COMMON ISSUE):**
-- Images must have `max-height: min(50vh, 400px)` or similar viewport constraint
-- Check if current slide already has maximum content (1 heading + 1 image)
-- If adding an image to a slide with existing content → **Split into two slides**
-- Example: If slide has heading + 4 bullets, and user wants to add an image:
-  - **DON'T:** Cram image onto same slide
-  - **DO:** Create new slide with heading + image, keep bullets on original slide
-  - **OR:** Reduce bullets to 2-3 and add image with proper constraints
+After style preview selection, do not call the presentation complete until the final HTML deck exists. The final deck must use the fixed 1920×1080 stage architecture from `viewport-base.css` and `html-template.md`.
 
-**3. When Adding Text Content:**
-- Max 4-6 bullet points per slide
-- Max 2 paragraphs per slide
-- If adding content exceeds limits → **Split into multiple slides or create a continuation slide**
+PPTX export is a first-class delivery path in HelpUDoc. When the user asks for PowerPoint output, or when offering export options, use `scripts/export-pptx.py`. The v1 PPTX export is screenshot-backed: it preserves visual fidelity by placing one rendered slide image per PowerPoint slide, but the slide contents are not deeply editable PowerPoint shapes.
 
-**4. Required Checks After ANY Modification:**
-```
-✅ Does the slide have `overflow: hidden` on `.slide` class?
-✅ Are all new elements using `clamp()` for font sizes?
-✅ Do new images have viewport-relative max-height?
-✅ Does total content respect density limits?
-✅ Will this fit on a 1280×720 screen? On mobile portrait?
-```
+### Mode C: Modification Rules
 
-**5. Proactive Reorganization (NOT Optional):**
-When you detect that modifications will cause overflow:
-- **Automatically split content across slides** — Don't wait for user to ask
-- Inform user: "I've reorganized the content across 2 slides to ensure proper viewport fitting"
-- Use "continued" pattern for split content (e.g., "Key Features" → "Key Features (Continued)")
+When enhancing existing presentations, fixed-stage fitting is the biggest risk:
 
-**6. Testing After Modifications:**
-Mentally verify the modified slide at these viewport sizes:
-- Desktop: 1280×720 (smallest common)
-- Tablet portrait: 768×1024
-- Mobile: 375×667
+1. **Before adding content:** Count existing elements, check against density limits
+2. **Adding images:** Fit them inside the 1920×1080 slide canvas. If slide already has max content, split into two slides
+3. **Adding text:** Max 4-6 bullets per slide. Exceeds limits? Split into continuation slides
+4. **After ANY modification, verify:** the slide stage remains 16:9, no text overflows its card, no panels overlap, and screenshots look correct at 1280×720 plus one phone viewport
+5. **Proactively reorganize:** If modifications will cause overflow, automatically split content and inform the user. Don't wait to be asked
 
-**If in doubt → Split the content. Never allow scrolling within a slide.**
-
----
-
-## MANDATORY INTERRUPT CHECKLIST & STRICT A2UI CONTRACT
-
-Every new-presentation run MUST emit structured A2UI workflow actions before the final HTML is generated. Under our strict **A2UI (Agent-to-User Interface) contract**, each required user-input gate must call `workflow_action(action="ask_user_a2ui", ...)` with valid, non-empty `props_json` and structured gate metadata in `context_json`. Compatibility tools may exist in older runtime paths, but this skill's canonical protocol is `workflow_action`.
-
-### Strict Contract Rules:
-1. **Structured Action Required**: Each gate MUST call `workflow_action(action="ask_user_a2ui")`. You cannot skip or advance past required human-input gates using assistant text prose alone.
-2. **Include Gate Metadata**: Every call must include `gateId` and expected `expectedComponent` in its `context_json` payload.
-3. **No Prose-Only Forms**: Prose may describe the outline or previews, but it must not be the only request for input. A UI form only exists when the tool call is emitted and the run stops.
-4. **Execution Stops**: The run must stop immediately after the interrupt.
-5. **No Prose Fallback**: If the model turn ends with no structured action while the active gate requires input, the system will loop back with a strict instruction to call `workflow_action(action="ask_user_a2ui")`. If it still fails, the run fails with a clear contract error.
-
-### Gate Definition Table:
-
-| Gate ID | Step | expectedComponent | Description & Purpose |
-|---------|------|-------------------|----------------------|
-| `presentation_context` | Step 1.1 | `clarification_form` | Purpose, length, content, images, editing |
-| `outline_confirmation` | Step 1.2 | `clarification_form` | Slide-by-slide structure & image assignments |
-| `style_path_selection` | Step 2.0 | `clarification_form` | Guided Exploration vs Direct Preset Pick |
-| `mood_or_preset_selection` | Step 2.1 | `clarification_form` | Vibe check / Mood selection or Direct Preset chooser |
-| `style_preview_selection` | Step 2.3 | `style_preview_chooser` | Interactive visual style preview selection |
-
-**You may NOT skip any gate.** Each gate requires an actual structured workflow/A2UI tool call that pauses the run. Writing "please confirm above" or "select from the form" as prose does NOT create a form — it just prints dead text.
+**When adding images to existing slides:** Move image to a new slide or reduce other content first. Never add images without checking if existing content already fills the 1920×1080 slide stage.
 
 ---
 
 ## Phase 1: Content Discovery (New Presentations)
 
-Before designing, understand the content. Use `workflow_action(action="ask_user_a2ui")` for every decision gate in this skill. Do not ask these questions in plain chat prose, and do not continue to later phases after an A2UI tool call until the user has resumed the run.
+**Ask ALL questions together** so the user fills everything out at once. If the current environment provides a native structured-question UI, use it; otherwise ask in one concise message with clearly numbered choices:
 
-**Hard stop for UI forms:** If you are about to write phrases like "select from the form above", "choose from the options above", "please confirm in the UI", "confirm using the form", or "pick a vibe/style" in normal assistant text, STOP IMMEDIATELY and call `workflow_action(action="ask_user_a2ui")` instead. A UI form only exists when a structured workflow/A2UI tool emits an interrupt; prose alone will not create one. This is the single most common failure mode of this skill.
+**Question 1 — Purpose** (header: "Purpose"):
+What is this presentation for? Options: Pitch deck / Teaching-Tutorial / Conference talk / Internal presentation
 
-### Step 1.1: Presentation Context + Images (Single Form)
+**Question 2 — Length** (header: "Length"):
+Approximately how many slides? Options: Short 5-10 / Medium 10-20 / Long 20+
 
-**IMPORTANT:** Ask ALL 5 questions in a single `workflow_action(action="ask_user_a2ui")` call so the user can fill everything out at once before submitting. Put the form fields in `props_json.questions`, not as a prose list in the chat response.
+**Question 3 — Content** (header: "Content"):
+Do you have content ready? Options: All content ready / Rough notes / Topic only
 
-Preferred Gate 1 tool pattern:
-```python
-workflow_action(
-  action="ask_user_a2ui",
-  gate_id="presentation_context",
-  component="clarification.form",
-  reason="Need basic deck context before drafting the slide outline.",
-  props_json='''{
-    "title": "Presentation Setup",
-    "description": "Configure the basic settings for your presentation.",
-    "questions": [
-      {"id": "purpose", "header": "Purpose", "question": "What is this presentation for?", "options": [{"id": "purpose-teaching", "label": "Teaching/Tutorial", "value": "Teaching/Tutorial"}]},
-      {"id": "length", "header": "Length", "question": "Approximately how many slides?", "options": [{"id": "length-medium", "label": "Medium (10-20)", "value": "Medium (10-20)"}]},
-      {"id": "content", "header": "Content", "question": "Do you have the content ready, or do you need help structuring it?", "options": [{"id": "content-ready", "label": "I have all content ready", "value": "I have all content ready"}]},
-      {"id": "images", "header": "Images", "question": "Do you have images to include?", "options": [{"id": "images-none", "label": "No images", "value": "No images"}]},
-      {"id": "editing", "header": "Editing", "question": "Do you need to edit text directly in the browser after generation?", "options": [{"id": "editing-yes", "label": "Yes (Recommended)", "value": "Yes (Recommended)"}]}
-    ],
-    "inputMode": "text",
-    "multiple": false,
-    "submitLabel": "Continue"
-  }''',
-  context_json='''{
-    "skill": "frontend-slides",
-    "gateId": "presentation_context",
-    "uiContract": "a2ui",
-    "expectedComponent": "clarification_form"
-  }'''
-)
-```
+**Question 4 — Density** (header: "Density"):
+How dense should the deck feel? Options:
 
-**Question 1: Purpose**
-- Header: "Purpose"
-- Question: "What is this presentation for?"
-- Options:
-  - "Pitch deck" — Selling an idea, product, or company to investors/clients
-  - "Teaching/Tutorial" — Explaining concepts, how-to guides, educational content
-  - "Conference talk" — Speaking at an event, tech talk, keynote
-  - "Internal presentation" — Team updates, strategy meetings, company updates
+- "Low density / speaker-led" — Big ideas, fewer words, more visual breathing room
+- "High density / reading-first" — More self-contained detail for async reading
 
-**Question 2: Slide Count**
-- Header: "Length"
-- Question: "Approximately how many slides?"
-- Options:
-  - "Short (5-10)" — Quick pitch, lightning talk
-  - "Medium (10-20)" — Standard presentation
-  - "Long (20+)" — Deep dive, comprehensive talk
+**Do not ask about inline editing during Phase 1.** Users should not have to choose editing behavior before seeing a draft. Inline editing is a post-draft affordance: include it by default unless the user explicitly asks for a locked/export-only file.
 
-**Question 3: Content**
-- Header: "Content"
-- Question: "Do you have the content ready, or do you need help structuring it?"
-- Options:
-  - "I have all content ready" — Just need to design the presentation
-  - "I have rough notes" — Need help organizing into slides
-  - "I have a topic only" — Need help creating the full outline
+Remember the user's density choice. It affects slide count, typography scale, amount of text per slide, layout density, and whether to favor cinematic presenter slides or self-contained reading slides.
 
-**Question 4: Images**
-- Header: "Images"
-- Question: "Do you have images to include? Select 'No images' or select Other and type/paste your image folder path."
-- Options:
-  - "No images" — Text-only presentation (use CSS-generated visuals instead)
-  - "./assets" — Use the `assets/` folder in the current project
+If user has content, ask them to share it.
 
-The user can select **"Other"** to type or paste any custom folder path (e.g. `~/Desktop/screenshots`). This way the image folder path is collected in the same form — no extra round-trip.
+### Step 1.2: Image Evaluation (if images provided)
 
-**Question 5: Inline Editing**
-- Header: "Editing"
-- Question: "Do you need to edit text directly in the browser after generation?"
-- Options:
-  - "Yes (Recommended)" — Can edit text in-browser, auto-save to localStorage, export file
-  - "No" — Presentation only, keeps file smaller
+If user selected "No images" → skip to Phase 2.
 
-**Remember the user's choice — it determines whether edit-related HTML/CSS/JS is included in Phase 3.**
+If user provides an image folder:
 
-After the Gate 1 `workflow_action` call, STOP. Do not continue until the user submits the A2UI form. The resume payload is authoritative.
+1. **Scan** — List all image files (.png, .jpg, .svg, .webp, etc.)
+2. **Inspect each image** — Use the agent's available image-understanding capability. If image reading is unavailable, use filenames/metadata and ask the user to clarify only when needed
+3. **Evaluate** — For each: what it shows, USABLE or NOT USABLE (with reason), what concept it represents, dominant colors
+4. **Co-design the outline** — Curated images inform slide structure alongside text. This is NOT "plan slides then add images" — design around both from the start (e.g., 3 screenshots → 3 feature slides, 1 logo → title/closing slide)
+5. **Confirm the outline** using the same structured-question mechanism when available: "Does this slide outline and image selection look right?" Options: Looks good / Adjust images / Adjust outline
 
-If user has content, ask them to share it (text, bullet points, images, etc.).
-
-### Step 1.2: Image Evaluation
-
-**User-provided assets are important visual anchors** — but not every asset is necessarily usable. The first step is always to evaluate. After evaluation, the curated assets become additional context that shapes how the presentation is built. This is a **co-design process**: text content + curated visuals together inform the slide structure from the start, not a post-hoc "fit images in after the fact."
-
-**If user selected "No images"** → Skip the entire image pipeline. Proceed directly to Phase 2 (Style Discovery) and Phase 3 (Generate Presentation) using text content only. The presentation will use CSS-generated visuals (gradients, shapes, patterns, typography) for visual interest — this is the original behavior and produces fully polished results without any images.
-
-**If user provides an image folder:**
-
-1. **Scan the folder** — Use `ls` to list all image files (`.png`, `.jpg`, `.jpeg`, `.gif`, `.svg`, `.webp`)
-2. **View each image** — Use the Read tool to see what each image contains (Claude is multimodal)
-3. **Evaluate each image** — For each image, assess:
-   - Filename and dimensions
-   - What it shows (screenshot, logo, chart, diagram, photo)
-   - **Usability:** Is the image clear, relevant to the presentation topic, and high enough quality? Mark as `USABLE` or `NOT USABLE` (with reason: blurry, irrelevant, broken, etc.)
-   - **Content signal:** What feature or concept does this image represent? (e.g., "chat_ui.png" → "conversational interface feature")
-   - Shape: square, landscape, portrait, circular
-   - Dominant colors (important for style compatibility later)
-4. **Present the evaluation and proposed slide outline to the user** — Show which images are usable and which are not, with reasons. Then show the proposed slide outline with image assignments.
-
-**Co-design: curated assets inform the outline**
-
-After evaluation, the **usable** images become context for planning the slide structure alongside text content. This is not "plan slides then add images" — it's designing the presentation around both text and visuals from the start:
-
-- 3 usable product screenshots → plan 3 feature slides, each anchored by one screenshot
-- 1 usable logo → title slide and/or closing slide
-- 1 usable architecture diagram → dedicated "How It Works" slide
-- 1 blurry/irrelevant image → excluded, with explanation to user
-
-This means curated images are factored in **before** style selection (Phase 2) and **before** HTML generation (Phase 3). They are co-equal context in the design process.
-
-5. **Confirm outline via `workflow_action(action="ask_user_a2ui")`** (MANDATORY — Gate 2 in the interrupt checklist):
-
-**⚠️ THIS IS THE MOST COMMONLY SKIPPED GATE.** After drafting the outline and image evaluation, your VERY NEXT ACTION must be a structured A2UI tool call. Do NOT end the turn with prose like "Please confirm the outline above" — that creates dead text with no interactive form.
-
-At this point, do not write a normal assistant message that says "Next Steps", "use the forms in the sidebar", "confirm the outline", "confirm using the form above", or "choose your style discovery method". Those words are only valid inside the structured A2UI payload. The outline must travel inside the A2UI payload itself as `props_json.outlineMarkdown` (or `slideOutline`/`slides`/`outline`). A form that asks whether the outline is good but only says "review above" is invalid because the native A2UI may render independently from chat prose.
-
-**Exact tool call parameters (Gate 2):**
-```python
-workflow_action(
-  action="ask_user_a2ui",
-  reason="Confirm the proposed slide outline before selecting visual style.",
-  gate_id="outline_confirmation",
-  component="clarification.form",
-  props_json='''{
-    "title": "Outline Confirmation",
-    "description": "Review the proposed slide outline and image assignments.",
-    "outlineMarkdown": "## Proposed slide outline\\n\\n1. Title / hook — Hero message and strongest visual\\n2. Problem — What pain the audience feels today\\n3. Solution — Product or idea overview\\n4. Evidence — Key data, screenshots, or proof points\\n5. Next steps — Call to action",
-    "questions": [
-      {
-        "id": "outline",
-        "header": "Outline",
-        "question": "Does this slide outline and image selection look right?",
-        "options": [
-          {"id": "confirm", "label": "Looks good, proceed", "value": "Looks good, proceed", "description": "Move on to style selection"},
-          {"id": "adjust-images", "label": "Adjust images", "value": "Adjust images", "description": "I want to change which images go where"},
-          {"id": "adjust-outline", "label": "Adjust outline", "value": "Adjust outline", "description": "I want to change the slide structure"}
-        ]
-      }
-    ],
-    "submitLabel": "Continue"
-  }''',
-  context_json='''{
-    "skill": "frontend-slides",
-    "gateId": "outline_confirmation",
-    "outlineMarkdown": "## Proposed slide outline\\n\\n1. Title / hook — Hero message and strongest visual\\n2. Problem — What pain the audience feels today\\n3. Solution — Product or idea overview\\n4. Evidence — Key data, screenshots, or proof points\\n5. Next steps — Call to action",
-    "uiContract": "a2ui",
-    "expectedComponent": "clarification_form"
-  }'''
-)
-```
-
-After this tool call, STOP. Do not move into style selection or preview generation until the user responds. If you find yourself writing "After confirmation, we will move to Style Discovery" — that means you forgot to call `workflow_action(action="ask_user_a2ui")`. Go back and call it.
+**Logo in previews:** If a usable logo was identified, embed it (base64) into each style preview in Phase 2 — the user sees their brand styled three different ways.
 
 ---
 
-## Phase 2: Style Discovery (Visual Exploration)
+## Phase 2: Style Discovery
 
-**CRITICAL: This is the "show, don't tell" phase.**
+**This is the "show, don't tell" phase.** Most people can't articulate design preferences in words.
 
-Most people can't articulate design preferences in words. Instead of asking "do you want minimalist or bold?", we generate mini-previews and let them react.
+### Step 2.0: Generate 3 Style Previews Directly
 
-### How Users Choose Presets
+Based on purpose, audience, mood, and content density, generate 3 distinct single-slide HTML previews showing typography, colors, animation, and overall aesthetic.
 
-Users can select a style in **two ways**:
+Do not ask the user whether they want options or a preset picker. The default discovery experience is always visual comparison.
 
-**Option A: Guided Discovery (Default)**
-- User answers mood questions
-- Skill generates 3 preview files based on their answers
-- User views previews in browser and picks their favorite
-- This is best for users who don't have a specific style in mind
+If the user already gave a vibe, use it. If they did not, infer the likely mood from the occasion, audience, content, and stakes. Keep the options diverse enough that the user can react visually instead of needing to articulate taste up front.
 
-**Option B: Direct Selection**
-- If user already knows what they want, they can request a preset by name
-- Example: "Use the Bold Signal style" or "I want something like Dark Botanical"
-- Skip to Phase 3 immediately
+If the user explicitly names a preset or bold template, honor that as one option and generate the remaining preview slots around it.
 
-**Available Presets:**
-| Preset | Vibe | Best For |
-|--------|------|----------|
-| Bold Signal | Confident, high-impact | Pitch decks, keynotes |
-| Electric Studio | Clean, professional | Agency presentations |
-| Creative Voltage | Energetic, retro-modern | Creative pitches |
-| Dark Botanical | Elegant, sophisticated | Premium brands |
-| Notebook Tabs | Editorial, organized | Reports, reviews |
-| Pastel Geometry | Friendly, approachable | Product overviews |
-| Split Pastel | Playful, modern | Creative agencies |
-| Vintage Editorial | Witty, personality-driven | Personal brands |
-| Neon Cyber | Futuristic, techy | Tech startups |
-| Terminal Green | Developer-focused | Dev tools, APIs |
-| Swiss Modern | Minimal, precise | Corporate, data |
-| Paper & Ink | Literary, thoughtful | Storytelling |
+Read [STYLE_PRESETS.md](STYLE_PRESETS.md) for safe preset candidates. If [bold-template-pack/selection-index.json](bold-template-pack/selection-index.json) exists, read that compact index too, but do not read any `design.md` files yet.
 
-### Step 2.0: Style Path Selection
+| Mood                | Suggested Presets                                  |
+| ------------------- | -------------------------------------------------- |
+| Impressed/Confident | Bold Signal, Electric Studio, Dark Botanical       |
+| Excited/Energized   | Creative Voltage, Neon Cyber, Split Pastel         |
+| Calm/Focused        | Notebook Tabs, Paper & Ink, Swiss Modern           |
+| Inspired/Moved      | Dark Botanical, Vintage Editorial, Pastel Geometry |
 
-First, ask how the user wants to choose their style using `workflow_action(action="ask_user_a2ui")`:
+**Preview mix rules:**
 
-**Question: Style Selection Method**
-- Header: "Style"
-- Question: "How would you like to choose your presentation style?"
-- Options:
-  - "Show me options" — Generate 3 previews based on my needs (recommended for most users)
-  - "I know what I want" — Let me pick from the preset list directly
+- Generate 3 previews by default: 1 safe preset from `STYLE_PRESETS.md`, at least 1 bold template from `bold-template-pack/selection-index.json`, and 1 wildcard.
+- The wildcard may be either a second bold template or a self-generated custom design. Choose whichever creates the strongest, most useful contrast for the user's occasion, audience, mood, and content.
+- Do not force every expressive option to come from the template library. If the brief has a sharper, more specific design opportunity than the available templates, use the wildcard slot to design freely.
+- For conservative or high-stakes decks, make the safe preset especially restrained; choose a calm, higher-formality bold template; make the wildcard either another restrained template or a custom design that feels authoritative rather than decorative.
+- For expressive decks, keep the safe preset as a readable fallback; choose one strong bold template; make the wildcard adventurous, context-specific, and clearly different from both other previews.
+- If bold template matches feel weak, use the wildcard as a custom design or fall back to another safe preset instead of forcing a template.
 
-**Exact tool call parameters (Gate 3):**
-```python
-workflow_action(
-  action="ask_user_a2ui",
-  reason="Choose whether style should be selected from generated previews or direct presets.",
-  gate_id="style_path_selection",
-  component="clarification.form",
-  props_json='''{
-    "title": "Choose Style Selection Method",
-    "description": "Select how you'd like to decide on the presentation's design.",
-    "questions": [
-      {
-        "id": "style_path",
-        "header": "Style Selection Method",
-        "question": "How would you like to choose your presentation style?",
-        "options": [
-          {"id": "guided", "label": "Show me options", "value": "Show me options", "description": "Generate 3 previews based on my needs (recommended)"},
-          {"id": "direct", "label": "I know what I want", "value": "I know what I want", "description": "Let me pick from the preset list directly"}
-        ]
-      }
-    ],
-    "submitLabel": "Continue"
-  }''',
-  context_json='''{
-    "skill": "frontend-slides",
-    "gateId": "style_path_selection",
-    "uiContract": "a2ui",
-    "expectedComponent": "clarification_form"
-  }'''
-)
-```
+**Custom wildcard design rules:**
 
-**If "Show me options"** → Continue to Step 2.1 (Mood Selection)
+- Follow the Design Aesthetics section above: no generic "AI slop", no default font/color/layout choices, no purple-gradient-on-white clichés, no cookie-cutter dashboard/card look.
+- Match the user's stated occasion, audience, mood/vibe, and content density. The custom design should feel authored for this deck, not merely "stylish."
+- Make a deliberate visual thesis: distinctive typography, a committed palette, a recognizable layout system, and one strong atmospheric or graphic device.
+- Keep it feasible for a full deck. The preview must imply a design system that can expand into section, content, quote, comparison, and closing slides.
+- Use fixed 1920×1080 stage rules and pass the same preview authenticity checks as every other option.
+- Never render "custom", "wildcard", "AI-generated", or design-process labels on the slide itself.
 
-**If "I know what I want"** → Show preset picker via a second `workflow_action(action="ask_user_a2ui")` call:
+**Bold template selection rules:**
 
-**Question: Pick a Preset**
-- Header: "Preset"
-- Question: "Which style would you like to use?"
-- Options:
-  - "Bold Signal" — Vibrant card on dark, confident and high-impact
-  - "Dark Botanical" — Elegant dark with soft abstract shapes
-  - "Notebook Tabs" — Editorial paper look with colorful section tabs
-  - "Pastel Geometry" — Friendly pastels with decorative pills
+- Match user purpose and mood against `mood`, `tone`, `best_for`, `avoid_for`, `formality`, `density`, and `scheme`.
+- Treat `best_for` examples as soft signals, not strict industry filters.
+- Keep the three previews genuinely different from each other.
+- After choosing bold template candidate(s), read only those candidate(s)' `preview.md` files from the `preview_md` paths in the selection index.
+- Use `preview.md` only for title-slide previews. Do not read full `design.md` files until the user picks the final template.
+- Do not read or copy `template.html` unless the selected final `design.md` is missing a critical implementation detail.
 
-(If user picks one, skip to Phase 3. If they want to see more options, show additional presets or proceed to guided discovery.)
+**Preview authenticity rules (NON-NEGOTIABLE):**
 
-**Exact tool call parameters if picking preset directly (Gate 4):**
-```python
-workflow_action(
-  action="ask_user_a2ui",
-  reason="Collect the direct preset choice before generating the deck.",
-  gate_id="mood_or_preset_selection",
-  component="clarification.form",
-  props_json='''{
-    "title": "Select Style Preset",
-    "description": "Pick one of our premium presentation styles directly.",
-    "questions": [
-      {
-        "id": "preset",
-        "header": "Preset",
-        "question": "Which style would you like to use?",
-        "options": [
-          {"id": "bold", "label": "Bold Signal", "value": "Bold Signal", "description": "Vibrant card on dark, confident and high-impact"},
-          {"id": "botanical", "label": "Dark Botanical", "value": "Dark Botanical", "description": "Elegant dark with soft abstract shapes"},
-          {"id": "notebook", "label": "Notebook Tabs", "value": "Notebook Tabs", "description": "Editorial paper look with colorful section tabs"},
-          {"id": "pastel", "label": "Pastel Geometry", "value": "Pastel Geometry", "description": "Friendly pastels with decorative pills"}
-        ]
-      }
-    ],
-    "submitLabel": "Use selected style"
-  }''',
-  context_json='''{
-    "skill": "frontend-slides",
-    "gateId": "mood_or_preset_selection",
-    "uiContract": "a2ui",
-    "expectedComponent": "clarification_form"
-  }'''
-)
-```
+- Every style preview must look like a real first slide from the user's deck, not a diagnostic card.
+- Never render internal workflow text on a slide: no `preview`, `generated from`, `preview.md`, `template`, `preset`, `style option`, `Option A/B/C`, file names, paths, or source-doc labels.
+- Never render template names or slug names on the slide itself. Template/style names belong only in the message to the user.
+- Never render user requirement notes as slide content, such as "sharp and provocative", "safe option", "bold option", "for internal sharing", or "audience: ...", unless the user explicitly wants that exact phrase to appear in the deck.
+- If the slide needs chrome, use real deck chrome only: the deck title, section title, date, author, company, page number, or a genuine content phrase from the user's material.
+- Before opening previews, inspect the visible text and revise if any internal metadata appears.
 
-### Step 2.1: Mood Selection (Guided Discovery)
+Save previews to `.frontend-slides/slide-previews/` (style-a.html, style-b.html, style-c.html). Each should be self-contained and compact, showing one animated title slide.
 
-Use `workflow_action(action="ask_user_a2ui")` for this step as well. This is a structured chooser, not a prose question.
+Open each preview automatically for the user.
 
-**Question 1: Feeling**
-- Header: "Vibe"
-- Question: "What feeling should the audience have when viewing your slides?"
-- Options:
-  - "Impressed/Confident" — Professional, trustworthy, this team knows what they're doing
-  - "Excited/Energized" — Innovative, bold, this is the future
-  - "Calm/Focused" — Clear, thoughtful, easy to follow
-  - "Inspired/Moved" — Emotional, storytelling, memorable
-- multiSelect: true (can choose up to 2)
+### Step 2.1: User Picks
 
-Call `workflow_action(action="ask_user_a2ui")` immediately at this step. Put the questions in `props_json.questions`, set `multiple=true`, and use `submitLabel="Generate style previews"`. Do not say "select the feeling from the form above" unless the tool call has actually happened and the run is stopping on the interrupt.
-
-**Exact tool call parameters for Guided Mood Selection (Gate 4):**
-```python
-workflow_action(
-  action="ask_user_a2ui",
-  reason="Collect mood or preset direction before generating style previews.",
-  gate_id="mood_or_preset_selection",
-  component="clarification.form",
-  props_json='''{
-    "title": "Vibe & Mood Selection",
-    "description": "Tell us about the desired vibe for this presentation.",
-    "questions": [
-      {
-        "id": "mood",
-        "header": "Vibe",
-        "question": "What feeling should the audience have when viewing your slides?",
-        "options": [
-          {"id": "impressed", "label": "Impressed/Confident", "value": "Impressed/Confident"},
-          {"id": "excited", "label": "Excited/Energized", "value": "Excited/Energized"},
-          {"id": "calm", "label": "Calm/Focused", "value": "Calm/Focused"},
-          {"id": "inspired", "label": "Inspired/Moved", "value": "Inspired/Moved"}
-        ]
-      }
-    ],
-    "multiple": true,
-    "submitLabel": "Generate style previews"
-  }''',
-  context_json='''{
-    "skill": "frontend-slides",
-    "gateId": "mood_or_preset_selection",
-    "uiContract": "a2ui",
-    "expectedComponent": "clarification_form"
-  }'''
-)
-```
-
-### Step 2.2: Generate Style Previews
-
-Based on their mood selection, generate **3 distinct style previews** as mini HTML files in a temporary directory. Each preview should be a single title slide showing:
-
-- Typography (font choices, heading/body hierarchy)
-- Color palette (background, accent, text colors)
-- Animation style (how elements enter)
-- Overall aesthetic feel
-
-**Preview Styles to Consider (pick 3 based on mood):**
-
-| Mood | Style Options |
-|------|---------------|
-| Impressed/Confident | "Bold Signal", "Electric Studio", "Dark Botanical" |
-| Excited/Energized | "Creative Voltage", "Neon Cyber", "Split Pastel" |
-| Calm/Focused | "Notebook Tabs", "Paper & Ink", "Swiss Modern" |
-| Inspired/Moved | "Dark Botanical", "Vintage Editorial", "Pastel Geometry" |
-
-**IMPORTANT: Never use these generic patterns:**
-- Purple gradients on white backgrounds
-- Inter, Roboto, or system fonts
-- Standard blue primary colors
-- Predictable hero layouts
-
-**Instead, use distinctive choices:**
-- Unique font pairings (Clash Display, Satoshi, Cormorant Garamond, DM Sans, etc.)
-- Cohesive color themes with personality
-- Atmospheric backgrounds (gradients, subtle patterns, depth)
-- Signature animation moments
-
-### Step 2.3: Present Previews
-
-Create the previews in: `.claude-design/slide-previews/`
-
-```
-.claude-design/slide-previews/
-├── style-a.html   # First style option
-├── style-b.html   # Second style option
-├── style-c.html   # Third style option
-└── assets/        # Any shared assets
-```
-
-Each preview file should be:
-- Self-contained (inline CSS/JS)
-- A single "title slide" showing the aesthetic
-- Animated to demonstrate motion style
-- ~50-100 lines, not a full presentation
-
-**Logo in previews (if available):** If the user provided images in Step 1.2 and a logo was identified as `USABLE`, embed it (base64) into each of the 3 style previews. This creates a "wow moment" — the user sees their own brand identity styled three different ways, making the choice feel personal rather than abstract. Apply any necessary processing (e.g., circular crop) per-style so each preview shows the logo as it would actually appear in the final presentation. If no logo was provided, generate previews without one — this is fine.
-
-Present to user:
-```
-I've created 3 style previews for you to compare:
-
-**Style A: [Name]** — [1 sentence description]
-**Style B: [Name]** — [1 sentence description]
-**Style C: [Name]** — [1 sentence description]
-
-Open each file to see them in action:
-- .claude-design/slide-previews/style-a.html
-- .claude-design/slide-previews/style-b.html
-- .claude-design/slide-previews/style-c.html
-
-Take a look at the three files, then pause with `workflow_action(action="ask_user_a2ui")` so the user can choose in the UI instead of replying in free text.
-```
-
-Then use `workflow_action(action="ask_user_a2ui")` with preview metadata so HelpUDoc can render a thumbnail chooser window. Do not only mention a "Choose Your Presentation Style" window in prose; the window exists only when this interrupt is emitted.
-
-Required tool call shape:
-- `action="ask_user_a2ui"`
-- `gate_id="style_preview_selection"`
-- `component="style.previewChooser"`
-- `props_json.title="Choose Your Presentation Style"`
-- `props_json.description="Preview each direction, then choose the one you want me to use for the full deck."`
-- `props_json.choices` with stable ids and values:
-  - `{"id":"style-a","label":"Style A: [Name]","value":"Style A: [Name]","description":"[Brief description]"}`
-  - `{"id":"style-b","label":"Style B: [Name]","value":"Style B: [Name]","description":"[Brief description]"}`
-  - `{"id":"style-c","label":"Style C: [Name]","value":"Style C: [Name]","description":"[Brief description]"}`
-  - `{"id":"mix-elements","label":"Mix elements","value":"Mix elements","description":"Combine aspects from different styles"}`
-- `context_json` must include:
-
-```json
-{
-  "skill": "frontend-slides",
-  "gateId": "style_preview_selection",
-  "chooser": "style-previews",
-  "uiContract": "a2ui",
-  "expectedComponent": "style_preview_chooser",
-  "stylePreviews": [
-    {
-      "id": "style-a",
-      "label": "Style A: [Name]",
-      "description": "[Brief description]",
-      "path": ".claude-design/slide-previews/style-a.html"
-    },
-    {
-      "id": "style-b",
-      "label": "Style B: [Name]",
-      "description": "[Brief description]",
-      "path": ".claude-design/slide-previews/style-b.html"
-    },
-    {
-      "id": "style-c",
-      "label": "Style C: [Name]",
-      "description": "[Brief description]",
-      "path": ".claude-design/slide-previews/style-c.html"
-    }
-  ]
-}
-```
-
-**Exact tool call parameters (Gate 5):**
-```python
-workflow_action(
-  action="ask_user_a2ui",
-  reason="Let the user choose the generated visual style before producing the full deck.",
-  gate_id="style_preview_selection",
-  component="style.previewChooser",
-  props_json='''{
-    "title": "Choose Your Presentation Style",
-    "description": "Preview each direction, then choose the one you want me to use for the full deck.",
-    "choices": [
-      {"id":"style-a","label":"Style A: [Name]","value":"Style A: [Name]","description":"[Brief description]"},
-      {"id":"style-b","label":"Style B: [Name]","value":"Style B: [Name]","description":"[Brief description]"},
-      {"id":"style-c","label":"Style C: [Name]","value":"Style C: [Name]","description":"[Brief description]"},
-      {"id":"mix-elements","label":"Mix elements","value":"Mix elements","description":"Combine aspects from different styles"}
-    ],
-    "previews": [
-      {
-        "id": "style-a",
-        "label": "Style A: [Name]",
-        "description": "[Brief description]",
-        "path": ".claude-design/slide-previews/style-a.html"
-      },
-      {
-        "id": "style-b",
-        "label": "Style B: [Name]",
-        "description": "[Brief description]",
-        "path": ".claude-design/slide-previews/style-b.html"
-      },
-      {
-        "id": "style-c",
-        "label": "Style C: [Name]",
-        "description": "[Brief description]",
-        "path": ".claude-design/slide-previews/style-c.html"
-      }
-    ],
-    "submitLabel": "Use selected style"
-  }''',
-  context_json='''{
-    "skill": "frontend-slides",
-    "gateId": "style_preview_selection",
-    "chooser": "style-previews",
-    "uiContract": "a2ui",
-    "expectedComponent": "style_preview_chooser",
-    "stylePreviews": [
-      {
-        "id": "style-a",
-        "label": "Style A: [Name]",
-        "description": "[Brief description]",
-        "path": ".claude-design/slide-previews/style-a.html"
-      },
-      {
-        "id": "style-b",
-        "label": "Style B: [Name]",
-        "description": "[Brief description]",
-        "path": ".claude-design/slide-previews/style-b.html"
-      },
-      {
-        "id": "style-c",
-        "label": "Style C: [Name]",
-        "description": "[Brief description]",
-        "path": ".claude-design/slide-previews/style-c.html"
-      }
-    ]
-  }'''
-)
-```
+Ask (header: "Style"):
+Which style preview do you prefer? Options: Style A: [Name] / Style B: [Name] / Style C: [Name] / Mix elements
 
 If "Mix elements", ask for specifics.
-
-After this tool call, stop and wait. Do not generate the final presentation until the user has answered the style-selection interrupt.
 
 ---
 
 ## Phase 3: Generate Presentation
 
-Now generate the full presentation based on:
-- Content from Phase 1 (text only, or text + curated images)
-- Style from Phase 2
+Generate the full presentation using content from Phase 1 (text, or text + curated images) and style from Phase 2.
 
-If the user provided images, the slide outline already incorporates them as visual anchors from Step 1.2. If not, proceed with text-only content — CSS-generated visuals (gradients, shapes, patterns) provide visual interest.
+If images were provided, the slide outline already incorporates them from Step 1.2. If not, CSS-generated visuals (gradients, shapes, patterns) provide visual interest — this is a fully supported first-class path.
 
-### Image Pipeline (skip if no images)
+Apply the user's density choice throughout the deck:
 
-If the user chose "No images" in Step 1.2, **skip this entire section** and go straight to generating HTML. The presentation will be text-only with CSS-generated visuals — this is a fully supported, first-class path.
+- **Low density / speaker-led:** Use more slides with fewer ideas per slide. Favor large headings, short phrases, visual metaphors, section beats, quote/statement slides, and presenter-friendly pacing.
+- **High density / reading-first:** Make slides more self-contained. Use structured grids, comparison tables, annotated diagrams, captions, and concise explanatory copy. Keep hierarchy strong so it feels designed, not like a document pasted onto slides.
 
-If the user provided images, execute these steps **before** generating HTML.
+If the user's stated needs are mixed, choose the closer of the two modes instead of inventing a middle option: live audience persuasion defaults low-density; async circulation or detailed review defaults high-density.
 
-**Key principle: Co-design, not post-hoc.** The curated images from Step 1.2 (those marked `USABLE`) are already part of the slide outline. The pipeline's job here is to process images for the chosen style and place them in the HTML.
+Never let high density become visual clutter. If a high-density slide starts to overflow, split it or redesign it into a clearer structure.
 
-#### Step 3.1: Image Processing (Pillow)
+If the user selected a bold template from `bold-template-pack`, read that one template's full `design.md` before generating. Do not read the other bold templates. Treat `design.md` as the design recipe:
 
-For each curated image, determine what processing it needs based on the chosen style (e.g., circular crop for logos, resize for large files) and what CSS framing will bridge any color gaps between the image and the style's palette. Then process accordingly.
+- Preserve its fonts, palette, decorative vocabulary, spacing rhythm, and component grammar.
+- Generate the final deck as a fixed 1920×1080 stage scaled uniformly to the viewport, regardless of whether the source template originally used `deck-stage.js` or viewport-fluid CSS.
+- Treat viewport-fluid values in `design.md` as design proportions to translate into 1920×1080 stage coordinates. Do not keep them as live viewport reflow rules in the final deck.
+- Keep the output as a single self-contained Frontend Slides HTML file.
+- Do not copy demo slide content or mimic the source template too literally.
+- Use `template.html` only as a last-resort implementation reference for the selected template.
+- After generating, verify both content overflow and panel overlap in rendered browser screenshots. `scrollHeight` checks alone are not enough because grid panels can visually cover each other.
 
-**Rules:**
-- **Never repeat** the same image on multiple slides (except logos which may bookend title + closing)
-- **Always add CSS framing** (border, glow, shadow) for images whose colors clash with the style's palette
+If the user selected a self-generated custom wildcard, treat that preview's CSS and layout as the design recipe:
 
-**Dependency:** Python `Pillow` library (the standard image processing library for Python).
+- Preserve its fonts, palette, decorative vocabulary, spacing rhythm, grid logic, and component grammar.
+- Expand the same visual system across the full deck. Do not switch to a preset or bold template after the user has chosen the custom direction.
+- Design any missing slide layouts from that system rather than importing patterns from another style.
+- Keep the output fixed-stage, single-file, and visually verified like every other deck.
 
-```bash
-# Install if not available (portable across macOS/Linux/Windows)
-pip install Pillow
-```
+**Before generating, read these supporting files:**
 
-This is analogous to how `python-pptx` is used in Phase 4 (PPT Conversion) — a standard, well-maintained Python package that any user can install.
+- [html-template.md](html-template.md) — HTML architecture and JS features
+- [viewport-base.css](viewport-base.css) — Mandatory CSS (include in full)
+- [animation-patterns.md](animation-patterns.md) — Animation reference for the chosen feeling
 
-**Common processing operations:**
+**Key requirements:**
 
-```python
-from PIL import Image, ImageDraw
-
-# ─── Circular Crop (for logos on modern/clean styles) ───
-def crop_circle(input_path, output_path):
-    """Crop a square image to a circle with transparent background."""
-    img = Image.open(input_path).convert('RGBA')
-    w, h = img.size
-    # Make square if not already
-    size = min(w, h)
-    left = (w - size) // 2
-    top = (h - size) // 2
-    img = img.crop((left, top, left + size, top + size))
-    # Create circular mask
-    mask = Image.new('L', (size, size), 0)
-    draw = ImageDraw.Draw(mask)
-    draw.ellipse([0, 0, size, size], fill=255)
-    img.putalpha(mask)
-    img.save(output_path, 'PNG')
-
-# ─── Resize (for oversized images that inflate the HTML) ───
-def resize_max(input_path, output_path, max_dim=1200):
-    """Resize image so largest dimension <= max_dim. Preserves aspect ratio."""
-    img = Image.open(input_path)
-    img.thumbnail((max_dim, max_dim), Image.LANCZOS)
-    img.save(output_path, quality=85)
-
-# ─── Add Padding / Background (for images that need breathing room) ───
-def add_padding(input_path, output_path, padding=40, bg_color=(0, 0, 0, 0)):
-    """Add transparent padding around an image."""
-    img = Image.open(input_path).convert('RGBA')
-    w, h = img.size
-    new = Image.new('RGBA', (w + 2*padding, h + 2*padding), bg_color)
-    new.paste(img, (padding, padding), img)
-    new.save(output_path, 'PNG')
-```
-
-**When to apply each operation:**
-
-| Situation | Operation |
-|-----------|-----------|
-| Square logo on a style with rounded aesthetics | `crop_circle()` |
-| Image > 1MB (slow to load) | `resize_max(max_dim=1200)` |
-| Screenshot needs breathing room in layout | `add_padding()` |
-| Image has wrong aspect ratio for its slide slot | Manual crop with `img.crop((left, top, right, bottom))` |
-
-**Save processed images** alongside originals with a `_processed` suffix (e.g., `logo_round.png`). Never overwrite the user's original files.
-
-#### Step 3.2: Place Images
-
-**Use direct file paths** — do NOT convert images to base64 data URIs. Since presentations are viewed locally, reference images with relative paths from the HTML file:
-
-```html
-<img src="assets/logo_round.png" alt="Logo" class="slide-image logo">
-<img src="assets/screenshot.png" alt="Screenshot" class="slide-image screenshot">
-```
-
-This keeps the HTML file small and images easy to swap. Only use base64 encoding if the user explicitly requests a fully self-contained single-file presentation.
-
-**Image CSS classes (adapt border/glow colors to match the chosen style):**
-```css
-/* Base image constraint — CRITICAL for viewport fitting */
-.slide-image {
-    max-width: 100%;
-    max-height: min(50vh, 400px);
-    object-fit: contain;
-    border-radius: 8px;
-}
-
-/* Screenshots: add framing to bridge color gaps with the style */
-.slide-image.screenshot {
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 12px;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
-}
-
-/* Logos: smaller, no frame */
-.slide-image.logo {
-    max-height: min(30vh, 200px);
-}
-```
-
-**IMPORTANT:** Adapt the `.screenshot` border and shadow colors to match the chosen style's accent color. For example:
-- Dark Botanical (gold accent): `border: 1px solid rgba(197, 160, 89, 0.2); box-shadow: 0 0 20px rgba(197, 160, 89, 0.08);`
-- Creative Voltage (neon yellow): `border: 2px solid rgba(212, 255, 0, 0.25); box-shadow: 0 0 20px rgba(212, 255, 0, 0.08);`
-
-**Placement patterns:**
-- **Title slide:** Logo centered above or beside the title
-- **Feature slides:** Screenshot on one side, text on the other (two-column layout)
-- **Full-bleed:** Image as slide background with text overlay (use with caution)
-- **Inline:** Image within content flow, centered, with caption below
-
-**Note:** Processed images (e.g. `logo_round.png`) are saved alongside originals in the assets folder. Reference them with relative paths in the HTML.
-
-### File Structure
-
-For single presentations:
-```
-presentation.html    # Self-contained presentation
-assets/              # Images, if any
-```
-
-For projects with multiple presentations:
-```
-[presentation-name].html
-[presentation-name]-assets/
-```
-
-### HTML Architecture
-
-Follow this structure for all presentations:
-
-```html
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Presentation Title</title>
-
-    <!-- Fonts (use Fontshare or Google Fonts) -->
-    <link rel="stylesheet" href="https://api.fontshare.com/v2/css?f[]=...">
-
-    <style>
-        /* ===========================================
-           CSS CUSTOM PROPERTIES (THEME)
-           Easy to modify: change these to change the whole look
-           =========================================== */
-        :root {
-            /* Colors */
-            --bg-primary: #0a0f1c;
-            --bg-secondary: #111827;
-            --text-primary: #ffffff;
-            --text-secondary: #9ca3af;
-            --accent: #00ffcc;
-            --accent-glow: rgba(0, 255, 204, 0.3);
-
-            /* Typography - MUST use clamp() for responsive scaling */
-            --font-display: 'Clash Display', sans-serif;
-            --font-body: 'Satoshi', sans-serif;
-            --title-size: clamp(2rem, 6vw, 5rem);
-            --subtitle-size: clamp(0.875rem, 2vw, 1.25rem);
-            --body-size: clamp(0.75rem, 1.2vw, 1rem);
-
-            /* Spacing - MUST use clamp() for responsive scaling */
-            --slide-padding: clamp(1.5rem, 4vw, 4rem);
-            --content-gap: clamp(1rem, 2vw, 2rem);
-
-            /* Animation */
-            --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
-            --duration-normal: 0.6s;
-        }
-
-        /* ===========================================
-           BASE STYLES
-           =========================================== */
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
-        html {
-            scroll-behavior: smooth;
-            scroll-snap-type: y mandatory;
-            height: 100%;
-        }
-
-        body {
-            font-family: var(--font-body);
-            background: var(--bg-primary);
-            color: var(--text-primary);
-            overflow-x: hidden;
-            height: 100%;
-        }
-
-        /* ===========================================
-           SLIDE CONTAINER
-           CRITICAL: Each slide MUST fit exactly in viewport
-           - Use height: 100vh (NOT min-height)
-           - Use overflow: hidden to prevent scroll
-           - Content must scale with clamp() values
-           =========================================== */
-        .slide {
-            width: 100vw;
-            height: 100vh; /* EXACT viewport height - no scrolling */
-            height: 100dvh; /* Dynamic viewport height for mobile */
-            padding: var(--slide-padding);
-            scroll-snap-align: start;
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            position: relative;
-            overflow: hidden; /* Prevent any content overflow */
-        }
-
-        /* Content wrapper that prevents overflow */
-        .slide-content {
-            flex: 1;
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            max-height: 100%;
-            overflow: hidden;
-        }
-
-        /* ===========================================
-           RESPONSIVE BREAKPOINTS
-           Adjust content for different screen sizes
-           =========================================== */
-        @media (max-height: 600px) {
-            :root {
-                --slide-padding: clamp(1rem, 3vw, 2rem);
-                --content-gap: clamp(0.5rem, 1.5vw, 1rem);
-            }
-        }
-
-        @media (max-width: 768px) {
-            :root {
-                --title-size: clamp(1.5rem, 8vw, 3rem);
-            }
-        }
-
-        @media (max-height: 500px) and (orientation: landscape) {
-            /* Extra compact for landscape phones */
-            :root {
-                --title-size: clamp(1.25rem, 5vw, 2rem);
-                --slide-padding: clamp(0.75rem, 2vw, 1.5rem);
-            }
-        }
-
-        /* ===========================================
-           ANIMATIONS
-           Trigger via .visible class (added by JS on scroll)
-           =========================================== */
-        .reveal {
-            opacity: 0;
-            transform: translateY(30px);
-            transition: opacity var(--duration-normal) var(--ease-out-expo),
-                        transform var(--duration-normal) var(--ease-out-expo);
-        }
-
-        .slide.visible .reveal {
-            opacity: 1;
-            transform: translateY(0);
-        }
-
-        /* Stagger children */
-        .reveal:nth-child(1) { transition-delay: 0.1s; }
-        .reveal:nth-child(2) { transition-delay: 0.2s; }
-        .reveal:nth-child(3) { transition-delay: 0.3s; }
-        .reveal:nth-child(4) { transition-delay: 0.4s; }
-
-        /* ... more styles ... */
-    </style>
-</head>
-<body>
-    <!-- Progress bar (optional) -->
-    <div class="progress-bar"></div>
-
-    <!-- Navigation dots (optional) -->
-    <nav class="nav-dots">
-        <!-- Generated by JS -->
-    </nav>
-
-    <!-- Slides -->
-    <section class="slide title-slide">
-        <h1 class="reveal">Presentation Title</h1>
-        <p class="reveal">Subtitle or author</p>
-    </section>
-
-    <section class="slide">
-        <h2 class="reveal">Slide Title</h2>
-        <p class="reveal">Content...</p>
-    </section>
-
-    <!-- More slides... -->
-
-    <script>
-        /* ===========================================
-           SLIDE PRESENTATION CONTROLLER
-           Handles navigation, animations, and interactions
-           =========================================== */
-
-        class SlidePresentation {
-            constructor() {
-                // ... initialization
-            }
-
-            // ... methods
-        }
-
-        // Initialize
-        new SlidePresentation();
-    </script>
-</body>
-</html>
-```
-
-### Required JavaScript Features
-
-Every presentation should include:
-
-1. **SlidePresentation Class** — Main controller
-   - Keyboard navigation (arrows, space)
-   - Touch/swipe support
-   - Mouse wheel navigation
-   - Progress bar updates
-   - Navigation dots
-
-2. **Intersection Observer** — For scroll-triggered animations
-   - Add `.visible` class when slides enter viewport
-   - Trigger CSS animations efficiently
-
-3. **Optional Enhancements** (based on style):
-   - Custom cursor with trail
-   - Particle system background (canvas)
-   - Parallax effects
-   - 3D tilt on hover
-   - Magnetic buttons
-   - Counter animations
-   - **Inline editing** (only if user opted in during content discovery):
-     - Edit toggle button (hidden by default, revealed via hover hotzone or `E` key)
-     - Auto-save to localStorage
-     - Export/save file functionality
-     - See "Edit Button Implementation" section below for required code patterns
-
-### Edit Button Implementation (When User Opts In)
-
-**If the user chose "No" for inline editing in Phase 1, skip this entirely — do not generate any edit-related HTML, CSS, or JS.**
-
-**⚠️ Critical: Do NOT use CSS `~` sibling selector for hover-based show/hide.**
-
-The CSS-only approach (`edit-hotzone:hover ~ .edit-toggle`) fails because `pointer-events: none` on the toggle button causes the hover chain to break: user hovers hotzone → button becomes visible → mouse moves toward button → leaves hotzone → button disappears before click reaches it.
-
-**Required approach: JS-based hover with delay timeout.**
-
-HTML structure:
-```html
-<div class="edit-hotzone"></div>
-<button class="edit-toggle" id="editToggle" title="编辑模式 (E)">✏️</button>
-```
-
-CSS (visibility controlled by JS classes only):
-```css
-/* ⚠️ Do NOT use CSS ~ sibling selector for this!
-   pointer-events: none breaks the hover chain.
-   Must use JS with delay timeout. */
-.edit-hotzone {
-    position: fixed; top: 0; left: 0;
-    width: 80px; height: 80px;
-    z-index: 10000;
-    cursor: pointer;
-}
-.edit-toggle {
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 0.3s ease;
-    z-index: 10001;
-}
-/* Only JS-added classes control visibility */
-.edit-toggle.show,
-.edit-toggle.active {
-    opacity: 1;
-    pointer-events: auto;
-}
-```
-
-JS (all three interaction methods):
-```javascript
-// 1. Click handler on the toggle button
-document.getElementById('editToggle').addEventListener('click', () => {
-    editor.toggleEditMode();
-});
-
-// 2. Hotzone hover with 400ms grace period
-const hotzone = document.querySelector('.edit-hotzone');
-const editToggle = document.getElementById('editToggle');
-let hideTimeout = null;
-
-hotzone.addEventListener('mouseenter', () => {
-    clearTimeout(hideTimeout);
-    editToggle.classList.add('show');
-});
-hotzone.addEventListener('mouseleave', () => {
-    hideTimeout = setTimeout(() => {
-        if (!editor.isActive) editToggle.classList.remove('show');
-    }, 400);
-});
-editToggle.addEventListener('mouseenter', () => {
-    clearTimeout(hideTimeout);
-});
-editToggle.addEventListener('mouseleave', () => {
-    hideTimeout = setTimeout(() => {
-        if (!editor.isActive) editToggle.classList.remove('show');
-    }, 400);
-});
-
-// 3. Hotzone direct click
-hotzone.addEventListener('click', () => {
-    editor.toggleEditMode();
-});
-
-// 4. Keyboard shortcut (E key, skip when editing text)
-document.addEventListener('keydown', (e) => {
-    if ((e.key === 'e' || e.key === 'E') && !e.target.getAttribute('contenteditable')) {
-        editor.toggleEditMode();
-    }
-});
-```
-
-### Code Quality Requirements
-
-**Comments:**
-Every section should have clear comments explaining:
-- What it does
-- Why it exists
-- How to modify it
-
-```javascript
-/* ===========================================
-   CUSTOM CURSOR
-   Creates a stylized cursor that follows mouse with a trail effect.
-   - Uses lerp (linear interpolation) for smooth movement
-   - Grows larger when hovering over interactive elements
-   =========================================== */
-class CustomCursor {
-    constructor() {
-        // ...
-    }
-}
-```
-
-**Accessibility:**
-- Semantic HTML (`<section>`, `<nav>`, `<main>`)
-- Keyboard navigation works
-- ARIA labels where needed
-- Reduced motion support
-
-```css
-@media (prefers-reduced-motion: reduce) {
-    .reveal {
-        transition: opacity 0.3s ease;
-        transform: none;
-    }
-}
-```
-
-**CSS Function Negation:**
-- Never negate CSS functions directly — `-clamp()`, `-min()`, `-max()` are silently ignored by browsers with no console error
-- Always use `calc(-1 * clamp(...))` instead. See STYLE_PRESETS.md → "CSS Gotchas" for details.
-
-**Responsive & Viewport Fitting (CRITICAL):**
-
-**See the "CRITICAL: Viewport Fitting Requirements" section above for complete CSS and guidelines.**
-
-Quick reference:
-- Every `.slide` must have `height: 100vh; height: 100dvh; overflow: hidden;`
-- All typography and spacing must use `clamp()`
-- Respect content density limits (max 4-6 bullets, max 6 cards, etc.)
-- Include breakpoints for heights: 700px, 600px, 500px
-- When content doesn't fit → split into multiple slides, never scroll
+- Single self-contained HTML file, all CSS/JS inline
+- Include the FULL contents of viewport-base.css in the `<style>` block
+- Use fonts from Fontshare or Google Fonts — never system fonts
+- Add detailed comments explaining each section
+- Every section needs a clear `/* === SECTION NAME === */` comment block
 
 ---
 
@@ -1369,379 +267,161 @@ Quick reference:
 
 When converting PowerPoint files:
 
-### Step 4.1: Extract Content
-
-Use Python with `python-pptx` to extract:
-
-```python
-from pptx import Presentation
-from pptx.util import Inches, Pt
-import json
-import os
-import base64
-
-def extract_pptx(file_path, output_dir):
-    """
-    Extract all content from a PowerPoint file.
-    Returns a JSON structure with slides, text, and images.
-    """
-    prs = Presentation(file_path)
-    slides_data = []
-
-    # Create assets directory
-    assets_dir = os.path.join(output_dir, 'assets')
-    os.makedirs(assets_dir, exist_ok=True)
-
-    for slide_num, slide in enumerate(prs.slides):
-        slide_data = {
-            'number': slide_num + 1,
-            'title': '',
-            'content': [],
-            'images': [],
-            'notes': ''
-        }
-
-        for shape in slide.shapes:
-            # Extract title
-            if shape.has_text_frame:
-                if shape == slide.shapes.title:
-                    slide_data['title'] = shape.text
-                else:
-                    slide_data['content'].append({
-                        'type': 'text',
-                        'content': shape.text
-                    })
-
-            # Extract images
-            if shape.shape_type == 13:  # Picture
-                image = shape.image
-                image_bytes = image.blob
-                image_ext = image.ext
-                image_name = f"slide{slide_num + 1}_img{len(slide_data['images']) + 1}.{image_ext}"
-                image_path = os.path.join(assets_dir, image_name)
-
-                with open(image_path, 'wb') as f:
-                    f.write(image_bytes)
-
-                slide_data['images'].append({
-                    'path': f"assets/{image_name}",
-                    'width': shape.width,
-                    'height': shape.height
-                })
-
-        # Extract notes
-        if slide.has_notes_slide:
-            notes_frame = slide.notes_slide.notes_text_frame
-            slide_data['notes'] = notes_frame.text
-
-        slides_data.append(slide_data)
-
-    return slides_data
-```
-
-### Step 4.2: Confirm Content Structure
-
-Present the extracted content to the user:
-
-```
-I've extracted the following from your PowerPoint:
-
-**Slide 1: [Title]**
-- [Content summary]
-- Images: [count]
-
-**Slide 2: [Title]**
-- [Content summary]
-- Images: [count]
-
-...
-
-All images have been saved to the assets folder.
-
-Does this look correct? Should I proceed with style selection?
-```
-
-### Step 4.3: Style Selection
-
-Proceed to Phase 2 (Style Discovery) with the extracted content in mind.
-
-### Step 4.4: Generate HTML
-
-Convert the extracted content into the chosen style as a real slide deck, preserving:
-- All text content
-- All images (referenced from assets folder)
-- Slide order
-- Any speaker notes (as HTML comments or separate file)
-
-The final artifact MUST be an HTML presentation deck, not a report, article, or summary page:
-- Filename ends with `-deck.html`
-- Multiple viewport-sized slide sections, using markup such as `<section class="slide">`
-- Keyboard navigation and scroll/swipe navigation
-- Visual styling from the selected direction applied throughout the deck
-- Created with `write_file` so it appears in the workspace file list
-
-Do not call the presentation complete until the final `-deck.html` artifact exists.
+1. **Extract content** — Run `python scripts/extract-pptx.py <input.pptx> <output_dir>` (install python-pptx if needed: `pip install python-pptx`)
+2. **Confirm with user** — Present extracted slide titles, content summaries, and image counts
+3. **Style selection** — Proceed to Phase 2 for style discovery
+4. **Generate HTML** — Convert to chosen style, preserving all text, images (from assets/), slide order, and speaker notes (as HTML comments)
 
 ---
 
 ## Phase 5: Delivery
 
-### Final Output
-
-When the presentation is complete:
-
-1. **Clean up temporary files**
-   - Delete `.claude-design/slide-previews/` if it exists
-
-2. **Open the presentation**
-   - Use `open [filename].html` to launch in browser
-
-3. **Provide summary**
-```
-Your presentation is ready!
-
-File: [filename]-deck.html
-Style: [Style Name]
-Slides: [count]
-
-**Navigation:**
-- Arrow keys or Space to navigate
-- Scroll/swipe also works
-- Click the dots on the right to jump to a slide
-
-**To customize:**
-- Colors: Look for `:root` CSS variables at the top
-- Fonts: Change the Fontshare/Google Fonts link
-- Animations: Modify `.reveal` class timings
-
-Would you like me to make any adjustments?
-```
-
-If the user opted in to inline editing, also include:
-```
-**Editing:**
-- Hover over top-left corner or press E to enter edit mode
-- Click any text to edit directly
-- Ctrl+S or click "Save file" to save changes
-```
+1. **Clean up** — Delete `.frontend-slides/slide-previews/` if it exists
+2. **Open** — Use `open [filename].html` to launch in browser
+3. **Summarize** — Tell the user:
+   - File location, style name, slide count
+   - Navigation: Arrow keys, Space, swipe/tap if enabled
+   - How to customize: `:root` CSS variables for colors, font link for typography, `.reveal` class for animations
+   - Inline text editing is available: Hover top-left corner or press E to enter edit mode, click any text to edit, Ctrl+S to save
+   - Offer the natural post-draft actions: ask for revisions, edit text directly in the browser, or export/share
 
 ---
 
-## Style Reference: Effect → Feeling Mapping
+## Phase 6: Share & Export (Optional)
 
-Use this guide to match animations to intended feelings:
+After delivery, **ask the user:** _"Would you like to export or share this presentation? I can export it as PowerPoint, export it as PDF, or deploy it to a live URL."_
 
-### Dramatic / Cinematic
-- Slow fade-ins (1-1.5s)
-- Large scale transitions (0.9 → 1)
-- Dark backgrounds with spotlight effects
-- Parallax scrolling
-- Full-bleed images
+Options:
 
-### Techy / Futuristic
-- Neon glow effects (box-shadow with accent color)
-- Particle systems (canvas background)
-- Grid patterns
-- Monospace fonts for accents
-- Glitch or scramble text effects
-- Cyan, magenta, electric blue palette
+- **Export to PPTX** — Office-compatible PowerPoint file. Best default when the user needs to share or present in PowerPoint.
+- **Export to PDF** — Universal file for email, Slack, print
+- **Deploy to URL** — Shareable link that works on any device
+- **PPTX + PDF**
+- **No thanks**
 
-### Playful / Friendly
-- Bouncy easing (spring physics)
-- Rounded corners (large radius)
-- Pastel or bright colors
-- Floating/bobbing animations
-- Hand-drawn or illustrated elements
+If the user declines, stop here. If they choose one or both, proceed below.
 
-### Professional / Corporate
-- Subtle, fast animations (200-300ms)
-- Clean sans-serif fonts
-- Navy, slate, or charcoal backgrounds
-- Precise spacing and alignment
-- Minimal decorative elements
-- Data visualization focus
+### 6A: Export to PPTX
 
-### Calm / Minimal
-- Very slow, subtle motion
-- High whitespace
-- Muted color palette
-- Serif typography
-- Generous padding
-- Content-focused, no distractions
+This captures each slide as a 1920×1080 screenshot and places each screenshot full-bleed into a widescreen PowerPoint slide. The result is visually faithful and opens in PowerPoint, Keynote, and Google Slides, but individual text boxes and shapes are not deeply editable.
 
-### Editorial / Magazine
-- Strong typography hierarchy
-- Pull quotes and callouts
-- Image-text interplay
-- Grid-breaking layouts
-- Serif headlines, sans-serif body
-- Black and white with one accent
+1. **Run the export script:**
 
----
+   ```bash
+   python scripts/export-pptx.py <path-to-html> [output.pptx]
+   ```
 
-## Animation Patterns Reference
+   If no output path is given, the PPTX is saved next to the HTML file.
 
-### Entrance Animations
+2. **What happens behind the scenes**:
+   - A headless browser opens the presentation at 1920×1080.
+   - It screenshots each `.slide`.
+   - `python-pptx` creates a widescreen deck with one full-slide image per slide.
 
-```css
-/* Fade + Slide Up (most common) */
-.reveal {
-    opacity: 0;
-    transform: translateY(30px);
-    transition: opacity 0.6s var(--ease-out-expo),
-                transform 0.6s var(--ease-out-expo);
-}
+3. **Deliver the PPTX** — Tell the user:
+   - The file location and slide count
+   - That the deck is visually faithful but image-backed
+   - That PowerPoint editing should happen in the HTML source for best results, then re-export
 
-.visible .reveal {
-    opacity: 1;
-    transform: translateY(0);
-}
+**⚠ PPTX export gotchas:**
 
-/* Scale In */
-.reveal-scale {
-    opacity: 0;
-    transform: scale(0.9);
-    transition: opacity 0.6s, transform 0.6s var(--ease-out-expo);
-}
+- **Slides must use `class="slide"`.** The exporter counts `.slide` elements.
+- **First browser capture can be slow.** Playwright/Chromium may install on first use.
+- **Fonts and local assets must load through the local server.** Use relative asset paths next to the HTML when possible.
+- **Editable PPTX is a separate quality tier.** This exporter prioritizes fidelity, not converting CSS into editable Office shapes.
 
-/* Slide from Left */
-.reveal-left {
-    opacity: 0;
-    transform: translateX(-50px);
-    transition: opacity 0.6s, transform 0.6s var(--ease-out-expo);
-}
+### 6B: Deploy to a Live URL (Vercel)
 
-/* Blur In */
-.reveal-blur {
-    opacity: 0;
-    filter: blur(10px);
-    transition: opacity 0.8s, filter 0.8s var(--ease-out-expo);
-}
-```
+This deploys the presentation to Vercel — a free hosting platform. The link works on any device (phones, tablets, laptops) and stays live until the user takes it down.
 
-### Background Effects
+**If the user has never deployed before, guide them step by step:**
 
-```css
-/* Gradient Mesh */
-.gradient-bg {
-    background:
-        radial-gradient(ellipse at 20% 80%, rgba(120, 0, 255, 0.3) 0%, transparent 50%),
-        radial-gradient(ellipse at 80% 20%, rgba(0, 255, 200, 0.2) 0%, transparent 50%),
-        var(--bg-primary);
-}
+1. **Check if Vercel CLI is installed** — Run `npx vercel --version`. If not found, install Node.js first (`brew install node` on macOS, or download from https://nodejs.org).
 
-/* Noise Texture */
-.noise-bg {
-    background-image: url("data:image/svg+xml,..."); /* Inline SVG noise */
-}
+2. **Check if user is logged in** — Run `npx vercel whoami`.
+   - If NOT logged in, explain: _"Vercel is a free hosting service. You need an account to deploy. Let me walk you through it:"_
+     - Step 1: Ask user to go to https://vercel.com/signup in their browser
+     - Step 2: They can sign up with GitHub, Google, email — whatever is easiest
+     - Step 3: Once signed up, run `vercel login` and follow the prompts (it opens a browser window to authorize)
+     - Step 4: Confirm login with `vercel whoami`
+   - Wait for the user to confirm they're logged in before proceeding.
 
-/* Grid Pattern */
-.grid-bg {
-    background-image:
-        linear-gradient(rgba(255,255,255,0.03) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px);
-    background-size: 50px 50px;
-}
-```
+3. **Deploy** — Run the deploy script:
 
-### Interactive Effects
+   ```bash
+   bash scripts/deploy.sh <path-to-presentation>
+   ```
 
-```javascript
-/* 3D Tilt on Hover */
-class TiltEffect {
-    constructor(element) {
-        this.element = element;
-        this.element.style.transformStyle = 'preserve-3d';
-        this.element.style.perspective = '1000px';
-        this.bindEvents();
-    }
+   The script accepts either a folder (with index.html) or a single HTML file.
 
-    bindEvents() {
-        this.element.addEventListener('mousemove', (e) => {
-            const rect = this.element.getBoundingClientRect();
-            const x = (e.clientX - rect.left) / rect.width - 0.5;
-            const y = (e.clientY - rect.top) / rect.height - 0.5;
+4. **Share the URL** — Tell the user:
+   - The live URL (from the script output)
+   - That it works on any device — they can text it, Slack it, email it
+   - To take it down later: visit https://vercel.com/dashboard and delete the project
+   - The Vercel free tier is generous — they won't be charged
 
-            this.element.style.transform = `
-                rotateY(${x * 10}deg)
-                rotateX(${-y * 10}deg)
-            `;
-        });
+**⚠ Deployment gotchas:**
 
-        this.element.addEventListener('mouseleave', () => {
-            this.element.style.transform = 'rotateY(0) rotateX(0)';
-        });
-    }
-}
-```
+- **Local images/videos must travel with the HTML.** The deploy script auto-detects files referenced via `src="..."` in the HTML and bundles them. But if the presentation references files via CSS `background-image` or unusual paths, those may be missed. **Before deploying, verify:** open the deployed URL and check that all images load. If any are broken, the safest fix is to put the HTML and all its assets into a single folder and deploy the folder instead of a standalone HTML file.
+- **Prefer folder deployments when the presentation has many assets.** If the presentation lives in a folder with images alongside it (e.g., `my-deck/index.html` + `my-deck/logo.png`), deploy the folder directly: `bash scripts/deploy.sh ./my-deck/`. This is more reliable than deploying a single HTML file because the entire folder contents are uploaded as-is.
+- **Filenames with spaces work but can cause issues.** The script handles spaces in filenames, but Vercel URLs encode spaces as `%20`. If possible, avoid spaces in image filenames. If the user's images have spaces, the script handles it — but if images still break, renaming files to use hyphens instead of spaces is the fix.
+- **Redeploying updates the same URL.** Running the deploy script again on the same presentation overwrites the previous deployment. The URL stays the same — no need to share a new link.
+
+### 6C: Export to PDF
+
+This captures each slide as a screenshot and combines them into a PDF. Perfect for email attachments, embedding in documents, or printing.
+
+**Note:** Animations and interactivity are not preserved — the PDF is a static snapshot. This is normal and expected; mention it to the user so they're not surprised.
+
+1. **Run the export script:**
+
+   ```bash
+   bash scripts/export-pdf.sh <path-to-html> [output.pdf]
+   ```
+
+   If no output path is given, the PDF is saved next to the HTML file.
+
+2. **What happens behind the scenes** (explain briefly to the user):
+   - A headless browser opens the presentation at 1920×1080 (standard widescreen)
+   - It screenshots each slide one by one
+   - All screenshots are combined into a single PDF
+   - The script needs Playwright (a browser automation tool) — it will install automatically if missing
+
+3. **If Playwright installation fails:**
+   - The most common issue is Chromium not downloading. Run: `npx playwright install chromium`
+   - If that fails too, it may be a network/firewall issue. Ask the user to try on a different network.
+
+4. **Deliver the PDF** — The script auto-opens it. Tell the user:
+   - The file location and size
+   - That it works everywhere — email, Slack, Notion, Google Docs, print
+   - Animations are replaced by their final visual state (still looks great, just static)
+
+**⚠ PDF export gotchas:**
+
+- **First run is slow.** The script installs Playwright and downloads a Chromium browser (~150MB) into a temp directory. This happens once per run. Warn the user it may take 30-60 seconds the first time — subsequent exports within the same session are faster.
+- **Slides must use `class="slide"`.** The export script finds slides by querying `.slide` elements. If the presentation uses a different class name, the script will report "0 slides found" and fail. All presentations generated by this skill use `.slide`, so this only matters for externally-created HTML.
+- **Local images must be loadable via HTTP.** The script starts a local server and loads the HTML through it (so Google Fonts and relative image paths work). If images use absolute filesystem paths (e.g., `src="/Users/name/photo.png"`) instead of relative paths (e.g., `src="photo.png"`), they won't load. Generated presentations always use relative paths, but converted or user-provided decks might not — check and fix if needed.
+- **Local images appear in the PDF** as long as they are in the same directory as (or relative to) the HTML file. The export script serves the HTML's parent directory over HTTP, so relative paths like `src="photo.png"` resolve correctly — including filenames with spaces. If images still don't appear, check: (1) the image files actually exist at the referenced path, (2) the paths are relative, not absolute filesystem paths like `/Users/name/photo.png`.
+- **Large presentations produce large PDFs.** Each slide is captured as a full 1920×1080 PNG screenshot. An 18-slide deck can produce a ~20MB PDF. If the PDF exceeds 10MB, ask the user: _"The PDF is [size]. Would you like me to compress it? It'll look slightly less sharp but the file will be much smaller."_ If yes, re-run the export with the `--compact` flag:
+  ```bash
+  bash scripts/export-pdf.sh <path-to-html> [output.pdf] --compact
+  ```
+  This renders at 1280×720 instead of 1920×1080, typically cutting file size by 50-70% with minimal visual difference.
 
 ---
 
-## Troubleshooting
+## Supporting Files
 
-### Common Issues
-
-**Fonts not loading:**
-- Check Fontshare/Google Fonts URL
-- Ensure font names match in CSS
-
-**Animations not triggering:**
-- Verify Intersection Observer is running
-- Check that `.visible` class is being added
-
-**Scroll snap not working:**
-- Ensure `scroll-snap-type` on html/body
-- Each slide needs `scroll-snap-align: start`
-
-**Mobile issues:**
-- Disable heavy effects at 768px breakpoint
-- Test touch events
-- Reduce particle count or disable canvas
-
-**Performance issues:**
-- Use `will-change` sparingly
-- Prefer `transform` and `opacity` animations
-- Throttle scroll/mousemove handlers
-
----
-
-## Related Skills
-
-- **learn** — Generate FORZARA.md documentation for the presentation
-- **frontend-design** — For more complex interactive pages beyond slides
-- **design-and-refine:design-lab** — For iterating on component designs
-
----
-
-## Example Session Flow
-
-1. User: "I want to create a pitch deck for my AI startup"
-2. Skill uses `workflow_action(action="ask_user_a2ui")` to ask about purpose, length, content, images, and editing (single form)
-3. User shares bullet points, selects `./assets` folder
-4. **Evaluate:** Skill views each image (multimodal), builds slide outline with image assignments:
-   - `logo.png` → USABLE → title/closing slide
-   - `chat_ui.png` → USABLE → feature slide
-   - `dashboard.png` → USABLE → feature slide
-   - `launch_card.png` → USABLE → feature slide
-   - `blurry_team.jpg` → NOT USABLE (too low resolution)
-5. User confirms outline via `workflow_action(action="ask_user_a2ui")`
-6. Skill asks about desired feeling via `workflow_action(action="ask_user_a2ui")` (Impressed + Excited)
-7. Skill generates 3 style previews
-8. User picks Style B (Neon Cyber) via `workflow_action(action="ask_user_a2ui")`
-9. **Process + Generate:** Skill runs Pillow operations (circular crop, resize), generates full presentation with direct image paths
-10. Skill opens the presentation in browser
-11. User requests tweaks to specific slides
-12. Final presentation delivered
-
----
-
-## Conversion Session Flow
-
-1. User: "Convert my slides.pptx to a web presentation"
-2. Skill extracts content and images from PPT
-3. Skill confirms extracted content with user
-4. Skill asks about desired feeling/style via `workflow_action(action="ask_user_a2ui")`
-5. Skill generates style previews
-6. User picks a style
-7. Skill generates HTML presentation with preserved assets
-8. Final presentation delivered
+| File                                               | Purpose                                                              | When to Read              |
+| -------------------------------------------------- | -------------------------------------------------------------------- | ------------------------- |
+| [STYLE_PRESETS.md](STYLE_PRESETS.md)               | 12 curated visual presets with colors, fonts, and signature elements | Phase 2 (style selection) |
+| [bold-template-pack/selection-index.json](bold-template-pack/selection-index.json) | Compact bold template metadata for candidate selection | Phase 2 (style selection) |
+| [bold-template-pack/templates/*/preview.md](bold-template-pack/templates/) | Lightweight style cards for shortlisted bold title previews | Phase 2 after shortlisting |
+| [bold-template-pack/templates/*/design.md](bold-template-pack/templates/) | Detailed design-system docs for the selected bold template only | Phase 3 after user selection |
+| [viewport-base.css](viewport-base.css)             | Mandatory fixed-stage CSS — copy into every presentation             | Phase 3 (generation)      |
+| [html-template.md](html-template.md)               | HTML structure, JS features, code quality standards                  | Phase 3 (generation)      |
+| [animation-patterns.md](animation-patterns.md)     | CSS/JS animation snippets and effect-to-feeling guide                | Phase 3 (generation)      |
+| [scripts/extract-pptx.py](scripts/extract-pptx.py) | Python script for PPT content extraction                             | Phase 4 (conversion)      |
+| [scripts/deploy.sh](scripts/deploy.sh)             | Deploy slides to Vercel for instant sharing                          | Phase 6 (sharing)         |
+| [scripts/export-pdf.sh](scripts/export-pdf.sh)     | Export slides to PDF                                                 | Phase 6 (sharing)         |
+| [scripts/export-pptx.py](scripts/export-pptx.py)   | Export HTML slides to screenshot-backed PPTX                         | Phase 6 (sharing)         |

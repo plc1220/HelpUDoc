@@ -11,7 +11,16 @@ FRONTEND_SLIDES_GATE_COMPONENTS: dict[str, set[str]] = {
     "style_preview_selection": {"style.previewChooser", "style_preview_chooser"},
 }
 
-FRONTEND_SLIDES_A2UI_GATE_IDS: tuple[str, ...] = tuple(FRONTEND_SLIDES_GATE_COMPONENTS.keys())
+FRONTEND_SLIDES_A2UI_GATE_IDS: tuple[str, ...] = (
+    "presentation_context",
+    "outline_confirmation",
+    "style_preview_selection",
+)
+
+FRONTEND_SLIDES_LEGACY_GATE_IDS: tuple[str, ...] = (
+    "style_path_selection",
+    "mood_or_preset_selection",
+)
 
 FRONTEND_SLIDES_EXPECTED_COMPONENTS: dict[str, str] = {
     "presentation_context": "clarification_form",
@@ -145,63 +154,44 @@ FRONTEND_SLIDES_DISCOVERY_QUESTIONS: list[dict[str, Any]] = [
     {
         "id": "content",
         "header": "Content",
-        "question": "Do you have the content ready, or do you need help structuring it?",
+        "question": "Do you have content ready?",
         "options": [
             {
                 "id": "content-ready",
-                "label": "I have all content ready",
-                "value": "I have all content ready",
-                "description": "Just need to design the presentation",
+                "label": "All content ready",
+                "value": "All content ready",
+                "description": "Design the deck from complete source material",
             },
             {
                 "id": "content-notes",
-                "label": "I have rough notes",
-                "value": "I have rough notes",
-                "description": "Need help organizing into slides",
+                "label": "Rough notes",
+                "value": "Rough notes",
+                "description": "Organize notes into a slide narrative",
             },
             {
                 "id": "content-topic",
-                "label": "I have a topic only",
-                "value": "I have a topic only",
-                "description": "Need help creating the full outline",
+                "label": "Topic only",
+                "value": "Topic only",
+                "description": "Create the outline and content structure",
             },
         ],
     },
     {
-        "id": "images",
-        "header": "Images",
-        "question": "Do you have images to include? Select 'No images' or select Other and type/paste your image folder path.",
+        "id": "density",
+        "header": "Density",
+        "question": "How dense should the deck feel?",
         "options": [
             {
-                "id": "images-none",
-                "label": "No images",
-                "value": "No images",
-                "description": "Text-only presentation",
+                "id": "density-low",
+                "label": "Low density / speaker-led",
+                "value": "Low density / speaker-led",
+                "description": "Big ideas, fewer words, more visual breathing room",
             },
             {
-                "id": "images-assets",
-                "label": "./assets",
-                "value": "./assets",
-                "description": "Use the assets folder in the current project",
-            },
-        ],
-    },
-    {
-        "id": "editing",
-        "header": "Editing",
-        "question": "Do you need to edit text directly in the browser after generation?",
-        "options": [
-            {
-                "id": "editing-yes",
-                "label": "Yes (Recommended)",
-                "value": "Yes (Recommended)",
-                "description": "Can edit text in-browser, auto-save to localStorage, export file",
-            },
-            {
-                "id": "editing-no",
-                "label": "No",
-                "value": "No",
-                "description": "Presentation only, keeps file smaller",
+                "id": "density-high",
+                "label": "High density / reading-first",
+                "value": "High density / reading-first",
+                "description": "More self-contained detail for async reading",
             },
         ],
     },

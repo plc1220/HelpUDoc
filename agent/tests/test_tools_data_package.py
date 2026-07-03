@@ -19,6 +19,7 @@ def test_factory_matches_shim_tool_order(tmp_path: Path) -> None:
         "get_table_schema",
         "run_sql_query",
         "materialize_bigquery_to_parquet",
+        "export_sql_query",
         "generate_chart_config",
         "generate_summary",
         "generate_dashboard",

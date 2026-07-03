@@ -17,7 +17,7 @@ from helpudoc_agent.interrupt_payloads import (  # noqa: E402
 
 def test_extract_interrupt_payload_from_tool_text_parses_clarification_payload() -> None:
     payload = (
-        "Interrupt(value={'kind': 'clarification', 'title': 'Presentation Context + Images', "
+        "Interrupt(value={'kind': 'clarification', 'title': 'Presentation Context', "
         "'description': 'Pick the setup details.', 'step_index': 0, 'step_count': 1, 'actions': [], "
         "'response_spec': {'inputMode': 'choice', 'choices': [{'id': 'purpose-pitch', 'label': 'Pitch deck', "
         "'value': 'Pitch deck'}], 'questions': [{'header': 'Purpose', 'question': 'What is this presentation for?', "

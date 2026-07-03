@@ -1,63 +1,58 @@
 # Frontend Slides
 
-`frontend-slides` is a bundled HelpUDoc skill for creating browser-native slide decks as single self-contained HTML files.
+`frontend-slides` is HelpUDoc's bundled skill for creating browser-native slide decks and exporting them to Office-compatible formats.
 
-It supports both new presentations and PowerPoint-to-web conversion workflows.
+This bundle is vendored from the upstream Claude Code plugin payload at `plugins/frontend-slides/skills/frontend-slides/`, then adapted for HelpUDoc's A2UI workflow.
 
-## What makes this skill different
+## Core Capabilities
 
-- Zero-dependency output: one HTML file with inline CSS and JavaScript
-- Visual style discovery: the workflow favors examples and previews over abstract aesthetic questions
-- Distinctive design direction: the presets are intentionally less generic than stock AI slide themes
-- Strict viewport fitting: every slide must fit in the viewport with no in-slide scrolling
+- Generate fixed-stage HTML decks at a 1920x1080 slide canvas.
+- Convert `.pptx` source decks into redesigned HTML slides.
+- Generate three visual style previews under `.frontend-slides/slide-previews/`.
+- Use safe presets plus the `bold-template-pack/` design systems with progressive disclosure.
+- Export final HTML decks to `.pptx` with `scripts/export-pptx.py`.
+- Export final HTML decks to `.pdf` with `scripts/export-pdf.sh`.
+- Optionally deploy final decks with `scripts/deploy.sh`.
 
-## Common use cases
+## HelpUDoc Gate Flow
 
-- founder or product pitch decks
-- technical talks and demos
-- converting existing `.ppt` or `.pptx` files to web slides
-- polishing an existing HTML deck without introducing a framework build step
+New runs use these active A2UI gates:
 
-## Invocation examples
+1. `presentation_context`
+2. `outline_confirmation` when a proposed outline exists
+3. `style_preview_selection` after previews have been generated
 
-```text
-/frontend-slides
+Legacy gate IDs `style_path_selection` and `mood_or_preset_selection` remain recognized by runtime compatibility code, but new runs should generate three previews directly.
+
+## PPTX Export
+
+PowerPoint export is fidelity-first:
+
+```bash
+python scripts/export-pptx.py deck.html deck.pptx
 ```
 
-```text
-Create a pitch deck for our AI product launch.
+The exporter renders each `.slide` at 1920x1080 and places the screenshot full-bleed on a widescreen PowerPoint slide. This preserves visual fidelity, CSS styling, fonts as rendered, and local images. It does not convert HTML into editable PowerPoint text boxes or shapes.
+
+For deterministic tests or custom capture workflows, pass pre-rendered screenshots:
+
+```bash
+python scripts/export-pptx.py deck.html deck.pptx --screenshots-dir screenshots/
 ```
 
-```text
-Convert presentation.pptx into a web slideshow.
-```
-
-## Core workflow
-
-1. Detect whether the request is a new deck, a PPT conversion, or an edit to an existing deck
-2. Gather content and narrative goals
-3. Narrow the visual direction using style references instead of vague adjectives
-4. Generate a production-ready HTML presentation
-5. Keep every slide viewport-safe on desktop and mobile sizes
-
-## Non-negotiable presentation rule
-
-Every slide must fit within one viewport height.
-If content does not fit, the deck should split content into additional slides instead of shrinking everything or allowing scrolling.
-
-## Included files
+## Included Files
 
 | File | Purpose |
 | ---- | ------- |
-| `SKILL.md` | Full skill workflow and guardrails |
-| `STYLE_PRESETS.md` | Curated visual style reference library |
+| `SKILL.md` | Main workflow and guardrails |
+| `interaction_contract.yaml` | HelpUDoc A2UI gate contract |
+| `STYLE_PRESETS.md` | Safe visual preset reference |
+| `viewport-base.css` | Mandatory fixed-stage CSS |
+| `html-template.md` | Fixed-stage HTML/JS architecture |
+| `animation-patterns.md` | Animation reference |
+| `bold-template-pack/` | 34 progressively loaded design systems |
+| `scripts/export-pptx.py` | HTML-to-PPTX export |
+| `scripts/export-pdf.sh` | HTML-to-PDF export |
+| `scripts/extract-pptx.py` | PPTX content extraction |
+| `scripts/deploy.sh` | Vercel deployment helper |
 
-## Output features
-
-Typical generated decks include:
-
-- keyboard, swipe, or scroll navigation
-- responsive typography and spacing
-- reduced-motion support
-- inline comments and readable structure for future edits
-- no external npm or framework dependency requirement for playback

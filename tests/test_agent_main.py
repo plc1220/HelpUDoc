@@ -240,7 +240,7 @@ class V3ContentBlockInterruptStreamingAgent:
                     "id": "clarify-1",
                     "name": "request_clarification",
                     "args": {
-                        "title": "Presentation Context + Images",
+                        "title": "Presentation Context",
                         "questions_json": [
                             {
                                 "header": "Purpose",
@@ -846,8 +846,6 @@ def test_skill_directive_survives_tagged_artifact_guidance(client_with_stubs, tm
                 "completedGateIds": [
                     "presentation_context",
                     "outline_confirmation",
-                    "style_path_selection",
-                    "mood_or_preset_selection",
                     "style_preview_selection",
                 ]
             },
@@ -914,8 +912,6 @@ def test_trace_skill_context_loads_skill_for_force_reset_continuation(client_wit
                 "completedGateIds": [
                     "presentation_context",
                     "outline_confirmation",
-                    "style_path_selection",
-                    "mood_or_preset_selection",
                     "style_preview_selection",
                 ]
             },
@@ -1018,7 +1014,7 @@ def test_chat_stream_reads_v3_content_block_tool_call_interrupt(client_with_stub
     interrupt = next(item for item in messages if item.get("type") == "interrupt")
     token_text = "".join(item.get("content", "") for item in messages if item.get("type") == "token")
     assert interrupt["kind"] == "clarification"
-    assert interrupt["title"] == "Presentation Context + Images"
+    assert interrupt["title"] == "Presentation Context"
     assert interrupt["responseSpec"]["questions"][0]["header"] == "Purpose"
     assert interrupt["displayPayload"]["skill"] == "frontend-slides"
     assert token_text == ""

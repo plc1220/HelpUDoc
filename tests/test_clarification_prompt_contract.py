@@ -22,30 +22,24 @@ def test_general_prompt_requires_structured_interrupts_for_skill_questions() -> 
 def test_frontend_slides_skill_requires_workflow_action_at_gating_steps() -> None:
     content = FRONTEND_SLIDES_SKILL.read_text(encoding="utf-8")
     assert "Use `workflow_action(action=\"ask_user_a2ui\")` for every decision gate in this skill." in content
-    assert 'If you are about to write phrases like "select from the form above"' in content
     assert "A UI form only exists when a structured workflow/A2UI tool emits an interrupt" in content
-    assert "single `workflow_action(action=\"ask_user_a2ui\")` call" in content
-    assert "Show preset picker via a second `workflow_action(action=\"ask_user_a2ui\")` call" in content
-    assert "Call `workflow_action(action=\"ask_user_a2ui\")` immediately at this step." in content
-    assert '"submitLabel": "Generate style previews"' in content
-    assert "Then use `workflow_action(action=\"ask_user_a2ui\")` with preview metadata" in content
-    assert "thumbnail chooser window" in content
-    assert '"chooser": "style-previews"' in content
-    assert '"path": ".claude-design/slide-previews/style-a.html"' in content
-    assert "Do not generate the final presentation until the user has answered the style-selection interrupt." in content
+    assert "presentation_context" in content
+    assert "outline_confirmation" in content
+    assert "style_preview_selection" in content
+    assert "Do not ask for `style_path_selection` or `mood_or_preset_selection` in new runs." in content
+    assert ".frontend-slides/slide-previews/" in content
+    assert "component=\"style.previewChooser\"" in content
+    assert "final HTML deck exists" in content
 
 
-def test_frontend_slides_skill_has_mandatory_interrupt_checklist() -> None:
+def test_frontend_slides_skill_has_fixed_stage_and_pptx_export_contract() -> None:
     content = FRONTEND_SLIDES_SKILL.read_text(encoding="utf-8")
-    assert "## MANDATORY INTERRUPT CHECKLIST" in content
-    assert "Outline Confirmation" in content
-    assert "You may NOT skip any gate" in content
-    assert "THIS IS THE MOST COMMONLY SKIPPED GATE" in content
-    assert "your VERY NEXT ACTION must be a structured A2UI tool call" in content
-    assert "props_json=" in content
-    assert '"id": "outline"' in content
-    assert "If you find yourself writing" in content
-    assert "that means you forgot to call `workflow_action(action=\"ask_user_a2ui\")`" in content
+    assert "fixed 1920×1080 stage architecture" in content
+    assert "viewport-base.css" in content
+    assert "html-template.md" in content
+    assert "scripts/export-pptx.py" in content
+    assert "screenshot-backed" in content
+    assert "not deeply editable PowerPoint shapes" in content
 
 
 def test_a2ui_tools_record_generic_gate_completion_after_resume() -> None:

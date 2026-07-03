@@ -202,7 +202,7 @@ def _build_frontend_slides_gate_interrupt(gate_id: str) -> dict[str, Any] | None
                 "id": choice["id"],
                 "label": choice["label"],
                 "description": choice.get("description", ""),
-                "path": f".claude-design/slide-previews/{choice['id']}.html",
+                "path": f".frontend-slides/slide-previews/{choice['id']}.html",
                 "html": _build_fallback_style_preview_html(choice),
             }
             for choice in choices
@@ -251,7 +251,7 @@ def _frontend_slides_gate_loopback_instruction(gate_id: str | None, assistant_te
         )
     if gate_id == "style_preview_selection":
         return (
-            f"{base} The mood/preset direction is already selected. Generate the style previews, then call "
+            f"{base} Generate the three style previews, then call "
             "workflow_action with action='ask_user_a2ui', component='style.previewChooser', and gate_id='style_preview_selection'."
         )
     return (
@@ -526,13 +526,14 @@ def _build_fallback_style_preview_html(choice: dict[str, str]) -> str:
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
     * {{ box-sizing: border-box; }}
-    body {{ margin: 0; min-height: 100vh; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: {palette["bg"]}; color: {palette["fg"]}; }}
-    .slide {{ min-height: 100vh; padding: 9vh 8vw; display: grid; grid-template-rows: auto 1fr auto; gap: 5vh; }}
+    html, body {{ margin: 0; width: 100%; height: 100%; overflow: hidden; background: {palette["bg"]}; color: {palette["fg"]}; }}
+    body {{ font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; display: grid; place-items: center; }}
+    .slide {{ width: min(100vw, calc(100dvh * 16 / 9)); aspect-ratio: 16 / 9; padding: 5%; display: grid; grid-template-rows: auto 1fr auto; gap: 6%; }}
     .eyebrow {{ color: {palette["accent"]}; font-size: 13px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }}
-    h1 {{ margin: 0; max-width: 980px; font-size: clamp(42px, 7vw, 88px); line-height: .95; letter-spacing: 0; }}
-    p {{ margin: 0; max-width: 740px; color: {palette["muted"]}; font-size: clamp(18px, 2vw, 28px); line-height: 1.35; }}
-    .grid {{ display: grid; grid-template-columns: 1.2fr .8fr; align-items: end; gap: 5vw; }}
-    .metric {{ border-top: 4px solid {palette["accent"]}; padding-top: 18px; font-size: clamp(38px, 6vw, 72px); font-weight: 900; }}
+    h1 {{ margin: 0; max-width: 980px; font-size: 88px; line-height: .95; letter-spacing: 0; }}
+    p {{ margin: 0; max-width: 740px; color: {palette["muted"]}; font-size: 28px; line-height: 1.35; }}
+    .grid {{ display: grid; grid-template-columns: 1.2fr .8fr; align-items: end; gap: 96px; }}
+    .metric {{ border-top: 4px solid {palette["accent"]}; padding-top: 18px; font-size: 72px; font-weight: 900; }}
     .label {{ margin-top: 8px; color: {palette["muted"]}; font-size: 15px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; }}
   </style>
 </head>
@@ -583,7 +584,7 @@ def build_synthetic_clarification_interrupt(
                 "id": choice["id"],
                 "label": choice["label"],
                 "description": choice.get("description", ""),
-                "path": f".claude-design/slide-previews/{choice['id']}.html",
+                "path": f".frontend-slides/slide-previews/{choice['id']}.html",
                 "html": _build_fallback_style_preview_html(choice),
             }
             for choice in choices
@@ -627,7 +628,7 @@ def build_synthetic_clarification_interrupt(
 
     if skill_id == "frontend-slides" and _is_frontend_slides_discovery_context(assistant_text):
         payload = build_clarification_interrupt_value(
-            title="Presentation Context + Images",
+            title="Presentation Context",
             description="Share the setup details so the presentation workflow can continue.",
             questions=FRONTEND_SLIDES_DISCOVERY_QUESTIONS,
             choices=[],
