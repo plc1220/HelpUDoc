@@ -2974,6 +2974,23 @@ async function runAgentRunWorker(
     });
   };
 
+  const completeLatestRunningWorkflowAction = (summary: string) => {
+    const targetIndex = [...toolEvents]
+      .reverse()
+      .findIndex((event) => event.name === 'workflow_action' && event.status === 'running');
+    if (targetIndex < 0) {
+      return;
+    }
+    const index = toolEvents.length - 1 - targetIndex;
+    toolEvents[index] = {
+      ...toolEvents[index],
+      status: 'completed',
+      summary,
+      finishedAt: new Date().toISOString(),
+    };
+    activeToolCalls = Math.max(0, activeToolCalls - 1);
+  };
+
   const captureConversationEvent = (parsed: Record<string, unknown> | null) => {
     if (!parsed) {
       return;
@@ -3422,6 +3439,7 @@ async function runAgentRunWorker(
       }
       const completedGateId = extractA2UIGateId(interruptPayload);
       if (isCompletedFrontendSlidesGateInterrupt(interruptPayload, a2uiGateState)) {
+        completeLatestRunningWorkflowAction(`Skipped completed frontend-slides gate replay: ${completedGateId || 'unknown gate'}.`);
         await appendStreamEvent(runId, JSON.stringify({
           type: 'a2ui_gate_skipped',
           gateId: completedGateId,
