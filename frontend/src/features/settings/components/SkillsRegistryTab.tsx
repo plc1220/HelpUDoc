@@ -39,7 +39,6 @@ import {
   createSkill,
   createSkillBuilderSession,
   deleteSkillBuilderContextFile,
-  fetchPlugins,
   fetchSkillContent,
   fetchSkillFiles,
   fetchSkills,
@@ -55,7 +54,7 @@ import {
   type SkillBuilderAction,
   type SkillBuilderContextFile,
 } from '../../../services/settingsApi';
-import type { PluginDefinition, SkillDefinition } from '../../../types';
+import type { SkillDefinition } from '../../../types';
 import EditorLoadingState from '../../../components/EditorLoadingState';
 
 const MonacoEditor = lazy(() => import('@monaco-editor/react'));
@@ -211,7 +210,6 @@ const actionSummary = (action: SkillBuilderAction) => {
 
 const SkillsRegistryTab: React.FC = () => {
   const [skills, setSkills] = useState<SkillDefinition[]>([]);
-  const [plugins, setPlugins] = useState<PluginDefinition[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -283,8 +281,6 @@ const SkillsRegistryTab: React.FC = () => {
     );
   }, [skills, searchTerm]);
 
-  const dataPlugins = useMemo(() => plugins.filter((plugin) => plugin.skillIds.length > 0), [plugins]);
-
   const skillProfile = useMemo(
     () => parseSkillProfile(selectedFile === 'SKILL.md' ? fileContent : '', selectedSkill),
     [fileContent, selectedFile, selectedSkill],
@@ -309,9 +305,8 @@ const SkillsRegistryTab: React.FC = () => {
   const loadSkills = useCallback(async () => {
     try {
       setLoading(true);
-      const [data, pluginData] = await Promise.all([fetchSkills(), fetchPlugins()]);
+      const data = await fetchSkills();
       setSkills(data);
-      setPlugins(pluginData);
       setError(null);
     } catch (err) {
       console.error('Failed to load skills', err);
@@ -1032,65 +1027,6 @@ const SkillsRegistryTab: React.FC = () => {
               Add Skill
             </button>
           </div>
-
-          {dataPlugins.length > 0 && (
-            <div className="border-b border-slate-200 bg-white p-3">
-              <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-slate-500">
-                <Database size={13} />
-                Plugins
-              </div>
-              <div className="space-y-2">
-                {dataPlugins.map((plugin) => (
-                  <div key={plugin.id} className="rounded-lg border border-slate-200 bg-slate-50 p-2">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-semibold text-slate-800">{plugin.displayName}</p>
-                        {plugin.description && (
-                          <p className="mt-0.5 line-clamp-2 text-xs text-slate-500">{plugin.description}</p>
-                        )}
-                      </div>
-                      <span className={`mt-0.5 h-2 w-2 shrink-0 rounded-full ${plugin.valid ? 'bg-emerald-500' : 'bg-amber-500'}`} />
-                    </div>
-                    <div className="mt-2 flex flex-wrap gap-1">
-                      {plugin.skillIds.slice(0, 6).map((skillId) => (
-                        <button
-                          key={skillId}
-                          type="button"
-                          onClick={() => setSelectedSkillId(skillId)}
-                          className="rounded-md border border-slate-200 bg-white px-1.5 py-0.5 text-[11px] font-mono text-slate-600 hover:border-slate-300 hover:text-slate-900"
-                        >
-                          {skillId}
-                        </button>
-                      ))}
-                      {plugin.skillIds.length > 6 && (
-                        <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-500">
-                          +{plugin.skillIds.length - 6}
-                        </span>
-                      )}
-                    </div>
-                    <div className="mt-2 flex flex-wrap gap-1">
-                      {[...plugin.tools, ...plugin.mcpServers, ...(plugin.scripts || [])].slice(0, 8).map((item) => (
-                        <span
-                          key={item}
-                          className="rounded-md border border-slate-200 bg-white px-1.5 py-0.5 text-[11px] text-slate-500"
-                        >
-                          {item}
-                        </span>
-                      ))}
-                      {[...plugin.tools, ...plugin.mcpServers, ...(plugin.scripts || [])].length > 8 && (
-                        <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-500">
-                          +{[...plugin.tools, ...plugin.mcpServers, ...(plugin.scripts || [])].length - 8}
-                        </span>
-                      )}
-                    </div>
-                    {!plugin.valid && plugin.errors?.length ? (
-                      <p className="mt-2 line-clamp-2 text-xs text-amber-700">{plugin.errors.join(' ')}</p>
-                    ) : null}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
 
           {isAdding && (
             <div className="p-3 border-b border-slate-200 bg-amber-50">
