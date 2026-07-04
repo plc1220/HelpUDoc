@@ -1,6 +1,15 @@
 ---
 name: frontend-slides
 description: Create stunning, animation-rich HTML presentations from scratch or by converting PowerPoint files. Use when the user wants to build a presentation, convert a PPT/PPTX to web, or create slides for a talk/pitch. Helps non-designers discover their aesthetic through visual exploration rather than abstract choices.
+tools:
+  - run_skill_python_script
+sandbox_scripts:
+  - name: export-pptx
+    path: scripts/export-pptx.py
+    sha256: "b1a6f118a98bab919e130277ab39a6785af5ad1e4a3d5846dfbe4108f909c655"
+    timeout_seconds: 300
+    outputs:
+      - out/tool_artifacts.json
 ---
 
 # Frontend Slides

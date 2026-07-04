@@ -149,7 +149,12 @@ def normalize_interaction_contract(raw: Any) -> dict[str, Any]:
             gates.append(normalized)
     if not gates:
         return {}
-    return {"gates": gates}
+    contract: dict[str, Any] = {"gates": gates}
+    if isinstance(raw.get("artifacts"), list):
+        contract["artifacts"] = deepcopy(raw["artifacts"])
+    if isinstance(raw.get("completion"), dict):
+        contract["completion"] = deepcopy(raw["completion"])
+    return contract
 
 
 def _declared_gate_contracts(context: dict[str, Any], skill_id: str) -> list[dict[str, Any]]:
@@ -183,6 +188,8 @@ def _declared_gate_contracts(context: dict[str, Any], skill_id: str) -> list[dic
 
 
 def _legacy_frontend_completed(context: dict[str, Any]) -> set[str]:
+    if _current_run_id(context) or _current_thread_id(context):
+        return set()
     raw = context.get("frontend_slides_completed_a2ui_gates")
     if not isinstance(raw, list):
         return set()

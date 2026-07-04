@@ -10,6 +10,8 @@ into images rather than converted into editable Office shapes.
 from __future__ import annotations
 
 import argparse
+import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -23,6 +25,7 @@ from pptx.util import Inches
 
 DEFAULT_WIDTH = 1920
 DEFAULT_HEIGHT = 1080
+PPTX_MIME_TYPE = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
 
 
 def parse_args() -> argparse.Namespace:
@@ -77,6 +80,74 @@ def run(command: list[str], *, cwd: Path | None = None) -> None:
         raise SystemExit(f"Missing executable: {command[0]}") from exc
     except subprocess.CalledProcessError as exc:
         raise SystemExit(f"Command failed ({exc.returncode}): {' '.join(command)}") from exc
+
+
+def _path_under(path: Path, root: Path) -> Path | None:
+    try:
+        return path.resolve().relative_to(root.resolve())
+    except ValueError:
+        return None
+
+
+def resolve_html_path(raw_path: str) -> Path:
+    path = Path(raw_path).expanduser()
+    if path.is_absolute():
+        return path.resolve()
+
+    workspace_root = os.environ.get("HELPUDOC_WORKSPACE_ROOT")
+    if workspace_root:
+        candidate = (Path(workspace_root) / path).resolve()
+        if candidate.exists():
+            return candidate
+
+    return path.resolve()
+
+
+def resolve_output_path(raw_output: str | None, html_path: Path) -> tuple[Path, str | None]:
+    workspace_root_raw = os.environ.get("HELPUDOC_WORKSPACE_ROOT")
+    workspace_output_raw = os.environ.get("HELPUDOC_WORKSPACE_OUTPUT_ROOT")
+    workspace_root = Path(workspace_root_raw).resolve() if workspace_root_raw else None
+    workspace_output_root = Path(workspace_output_raw).resolve() if workspace_output_raw else None
+
+    if raw_output:
+        requested = Path(raw_output).expanduser()
+        if requested.is_absolute():
+            requested_abs = requested.resolve()
+            rel_output = _path_under(requested_abs, workspace_root) if workspace_root else None
+            if workspace_output_root and rel_output is not None:
+                return (workspace_output_root / rel_output).resolve(), rel_output.as_posix()
+            return requested_abs, rel_output.as_posix() if rel_output is not None else None
+        rel_output = requested
+    else:
+        html_rel = _path_under(html_path, workspace_root) if workspace_root else None
+        rel_output = html_rel.with_suffix(".pptx") if html_rel is not None else Path(html_path.with_suffix(".pptx").name)
+
+    if workspace_output_root:
+        return (workspace_output_root / rel_output).resolve(), rel_output.as_posix()
+    output_path = (Path.cwd() / rel_output).resolve() if not rel_output.is_absolute() else rel_output.resolve()
+    return output_path, rel_output.as_posix() if not rel_output.is_absolute() else None
+
+
+def emit_tool_artifact(output_path: Path, workspace_rel_path: str | None, slide_count: int) -> None:
+    sandbox_run_dir_raw = os.environ.get("HELPUDOC_SANDBOX_RUN_DIR")
+    if not sandbox_run_dir_raw or not workspace_rel_path:
+        return
+    payload_path = Path(sandbox_run_dir_raw) / "out" / "tool_artifacts.json"
+    payload_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "files": [
+            {
+                "path": workspace_rel_path,
+                "mimeType": PPTX_MIME_TYPE,
+                "size": output_path.stat().st_size if output_path.exists() else 0,
+                "metadata": {
+                    "kind": "frontend-slides-pptx",
+                    "slideCount": slide_count,
+                },
+            }
+        ]
+    }
+    payload_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
 def node_capture_script() -> str:
@@ -243,16 +314,12 @@ def build_pptx(screenshots: list[Path], output_path: Path) -> None:
 
 def main() -> int:
     args = parse_args()
-    html_path = Path(args.html).expanduser().resolve()
+    html_path = resolve_html_path(args.html)
     if not html_path.exists():
         print(f"HTML file not found: {html_path}", file=sys.stderr)
         return 1
 
-    output_path = (
-        Path(args.output).expanduser().resolve()
-        if args.output
-        else html_path.with_suffix(".pptx")
-    )
+    output_path, workspace_rel_output = resolve_output_path(args.output, html_path)
 
     if args.screenshots_dir:
         screenshots_dir = Path(args.screenshots_dir).expanduser().resolve()
@@ -261,6 +328,7 @@ def main() -> int:
             print(f"No PNG screenshots found in {screenshots_dir}", file=sys.stderr)
             return 1
         build_pptx(screenshots, output_path)
+        emit_tool_artifact(output_path, workspace_rel_output, len(screenshots))
         print(f"Exported {len(screenshots)} slides to {output_path}")
         return 0
 
@@ -278,6 +346,7 @@ def main() -> int:
             shutil.copytree(screenshots_dir, kept_dir)
             print(f"Saved screenshots to {kept_dir}")
 
+    emit_tool_artifact(output_path, workspace_rel_output, len(screenshots))
     print(f"Exported {len(screenshots)} slides to {output_path}")
     return 0
 

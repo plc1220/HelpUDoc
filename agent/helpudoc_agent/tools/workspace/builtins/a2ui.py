@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 import uuid
 
@@ -10,12 +11,62 @@ from langchain_core.tools import Tool, tool
 from pydantic import BaseModel, Field, field_validator
 
 from ....a2ui_workflows import FRONTEND_SLIDES_GATE_COMPONENTS
-from ....a2ui_contract import mark_gate_completed, mark_gate_pending
+from ....a2ui_contract import gate_is_completed, mark_gate_completed, mark_gate_pending
 from ....state import WorkspaceState
 from ..interrupt_helpers import interrupt_with_retry
 from ..json_args import parse_json_dict_arg
 
 logger = logging.getLogger(__name__)
+
+
+def _has_outline_review_material(props: Dict[str, Any], context: Dict[str, Any]) -> bool:
+    outline_values = [
+        props.get("outline"),
+        props.get("slides"),
+        props.get("slideOutline"),
+        props.get("outlineMarkdown"),
+        context.get("outline"),
+        context.get("slides"),
+        context.get("slideOutline"),
+        context.get("outlineMarkdown"),
+    ]
+    return any(bool(value) for value in outline_values)
+
+
+def _candidate_artifact_paths(workspace_state: WorkspaceState, artifact_refs: List[Any]) -> List[Path]:
+    root = Path(workspace_state.root_path)
+    candidates: List[Path] = []
+    for raw_ref in artifact_refs:
+        ref = str(raw_ref or "").strip().lstrip("/")
+        if not ref:
+            continue
+        path = root / ref
+        candidates.append(path)
+        if not Path(ref).suffix:
+            candidates.append(root / f"{ref}.md")
+    if not candidates:
+        for pattern in ("slide_outline*.md", "*outline*.md"):
+            candidates.extend(sorted(root.glob(pattern), key=lambda path: path.stat().st_mtime, reverse=True))
+    return candidates
+
+
+def _read_first_text_artifact(workspace_state: WorkspaceState, artifact_refs: List[Any]) -> str:
+    for path in _candidate_artifact_paths(workspace_state, artifact_refs):
+        try:
+            resolved = path.resolve()
+            root = Path(workspace_state.root_path).resolve()
+            if root not in resolved.parents and resolved != root:
+                continue
+            if resolved.is_file() and resolved.suffix.lower() in {"", ".md", ".txt"}:
+                return resolved.read_text(encoding="utf-8")[:20000].strip()
+        except Exception:
+            continue
+    return ""
+
+
+def _recent_generated_artifact_refs(workspace_state: WorkspaceState) -> List[Any]:
+    raw = workspace_state.context.get("last_generated_artifact_refs")
+    return raw if isinstance(raw, list) else []
 
 
 class RequestUiInput(BaseModel):
@@ -178,6 +229,13 @@ def _ask_user_a2ui(
     if isinstance(a2ui_request, dict):
         skill = str(a2ui_request.get("skill") or "").strip()
         gate = str(a2ui_request.get("gateId") or "").strip()
+        component_name = str(a2ui_request.get("component") or "").strip()
+        if skill and gate and gate_is_completed(workspace_state.context, skill_id=skill, gate_id=gate):
+            return (
+                "Workflow action blocked: A2UI gate "
+                f"'{gate}' for skill '{skill}' is already completed in this run. "
+                "Continue to the next incomplete gate, or generate the required final artifact if no gates remain."
+            )
         if skill and gate:
             mark_gate_pending(
                 workspace_state.context,
@@ -185,7 +243,7 @@ def _ask_user_a2ui(
                 thread_id=str(workspace_state.context.get("thread_id") or ""),
                 skill_id=skill,
                 gate_id=gate,
-                component=str(a2ui_request.get("component") or ""),
+                component=component_name,
             )
 
     response = interrupt_with_retry(
@@ -333,6 +391,8 @@ def build_workflow_action_tool(workspace_state: WorkspaceState) -> Tool:
             "context": context,
         }
         workspace_state.context["last_workflow_action"] = workflow_record
+        if normalized_action == "generate_artifact":
+            workspace_state.context["last_generated_artifact_refs"] = artifact_refs
 
         if normalized_action == "ask_user_a2ui":
             if not component.strip():
@@ -340,6 +400,28 @@ def build_workflow_action_tool(workspace_state: WorkspaceState) -> Tool:
             if not workflow_record["gateId"]:
                 return "Workflow action blocked: ask_user_a2ui requires gate_id."
             props = parse_json_dict_arg(props_json)
+            gate_name = str(workflow_record["gateId"])
+            if gate_name in FRONTEND_SLIDES_GATE_COMPONENTS:
+                context.setdefault("skill", "frontend-slides")
+                context.setdefault("skillId", "frontend-slides")
+                context.setdefault("gateId", gate_name)
+                context.setdefault("uiContract", "a2ui")
+                context.setdefault(
+                    "expectedComponent",
+                    "style_preview_chooser" if gate_name == "style_preview_selection" else "clarification_form",
+                )
+                context_json = json.dumps(context, ensure_ascii=False)
+            if (
+                gate_name == "outline_confirmation"
+                and not _has_outline_review_material(props, context)
+            ):
+                outline_markdown = _read_first_text_artifact(
+                    workspace_state,
+                    artifact_refs or _recent_generated_artifact_refs(workspace_state),
+                )
+                if outline_markdown:
+                    props["outlineMarkdown"] = outline_markdown
+                    props_json = json.dumps(props, ensure_ascii=False)
             gate_error = _validate_workflow_a2ui_gate(
                 action=normalized_action,
                 gate_id=str(workflow_record["gateId"]),

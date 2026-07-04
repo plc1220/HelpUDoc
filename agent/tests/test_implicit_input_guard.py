@@ -563,16 +563,28 @@ def test_guard_allows_frontend_slides_after_all_gates_completed() -> None:
 
 
 def test_a2ui_contract_honors_backend_completed_gates_with_scoped_run_context() -> None:
+    completed_gates = [
+        "presentation_context",
+        "outline_confirmation",
+        "style_path_selection",
+        "mood_or_preset_selection",
+        "style_preview_selection",
+    ]
     context = {
         "active_skill": "frontend-slides",
         "run_id": "run-123",
         "thread_id": "thread-456",
-        "frontend_slides_completed_a2ui_gates": [
-            "presentation_context",
-            "outline_confirmation",
-            "style_path_selection",
-            "mood_or_preset_selection",
-            "style_preview_selection",
+        "frontend_slides_completed_a2ui_gates": completed_gates,
+        "a2ui_gate_ledger": [
+            {
+                "run_id": "run-123",
+                "thread_id": "thread-456",
+                "skill_id": "frontend-slides",
+                "gate_id": gate_id,
+                "component": "",
+                "status": "completed",
+            }
+            for gate_id in completed_gates
         ],
     }
 

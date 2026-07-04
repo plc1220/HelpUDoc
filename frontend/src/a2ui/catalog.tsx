@@ -546,7 +546,7 @@ export const StylePreviewChooser: React.FC<A2UIComponentProps> = ({
       let downloadUrl: string | undefined = undefined;
       const isHtmlPreview = Boolean(path && /\.html?$/i.test(path)) || Boolean(html);
 
-      if (path && workspaceId) {
+      if (!html && path && workspaceId) {
         previewUrl = getStylePreviewUrl(workspaceId, path, { inline: isHtmlPreview });
         downloadUrl = getStylePreviewUrl(workspaceId, path);
       }

@@ -822,6 +822,7 @@ export default function WorkspacePage() {
   const lastPersistedStatusRef = useRef<Record<string, AgentRunStatus | undefined>>({});
   const lastPersistedMetadataRef = useRef<Record<string, string | undefined>>({});
   const lastPersistAttemptRef = useRef<Record<string, number>>({});
+  const lastReconciledRunStatusRef = useRef<Record<string, string>>({});
   const persistInFlightRef = useRef<Set<string>>(new Set());
   const pendingPersistRef = useRef<Record<string, PersistProgressRequest>>({});
   const stopRequestedRef = useRef(false);
@@ -1382,6 +1383,16 @@ export default function WorkspacePage() {
     setSelectedWorkspace(workspace);
     setLandingWorkspaceQuery('');
     setIsLandingWorkspacePickerOpen(false);
+    void fetchRecentConversations(workspace.id, 1)
+      .then((conversations) => {
+        if (conversations.length) {
+          setIsLandingPageVisible(false);
+          setIsAgentPaneVisible(true);
+        }
+      })
+      .catch((error) => {
+        console.error('Failed to check selected workspace conversations', error);
+      });
   }, []);
 
   const handleOpenLandingPage = useCallback(() => {
@@ -3871,6 +3882,60 @@ export default function WorkspacePage() {
     [findAgentMessageIndexForRun, persistAgentProgress, updateMessageMetadataAtIndex, updateToolEvents],
   );
 
+  const applyRunStatusToConversation = useCallback((
+    runInfo: ActiveRunInfo,
+    status: Awaited<ReturnType<typeof getRunStatus>>,
+  ) => {
+    const normalizedStatus = normalizeRunStatus(status.status);
+    const pendingInterrupt = status.status === 'awaiting_approval'
+      ? status.pendingInterrupt
+      : undefined;
+    let targetIndex = findAgentMessageIndexForRun(
+      runInfo.conversationId,
+      runInfo.placeholderId,
+      runInfo.turnId,
+      runInfo.runId,
+    );
+    if (targetIndex < 0 && pendingInterrupt) {
+      ensureAgentPlaceholder(runInfo.conversationId, runInfo.placeholderId, runInfo.turnId, false);
+      targetIndex = findAgentMessageIndexForRun(
+        runInfo.conversationId,
+        runInfo.placeholderId,
+        runInfo.turnId,
+        runInfo.runId,
+      );
+    }
+    if (targetIndex < 0) {
+      return;
+    }
+    updateMessageMetadataAtIndex(runInfo.conversationId, targetIndex, (metadata) => ({
+      ...metadata,
+      runId: runInfo.runId,
+      status: normalizedStatus,
+      pendingInterrupt,
+    }));
+    if (status.status === 'awaiting_approval') {
+      registerActiveRun({
+        ...runInfo,
+        status: 'awaiting_approval',
+      });
+      setConversationAttention(
+        runInfo.conversationId,
+        'awaiting_approval',
+        pendingInterrupt?.title || pendingInterrupt?.description || 'Waiting for your input.',
+      );
+    } else if (isTerminalRunStatus(status.status)) {
+      removeActiveRun(runInfo.runId);
+    }
+  }, [
+    ensureAgentPlaceholder,
+    findAgentMessageIndexForRun,
+    registerActiveRun,
+    removeActiveRun,
+    setConversationAttention,
+    updateMessageMetadataAtIndex,
+  ]);
+
   const bufferAgentChunk = useCallback((conversationId: string, index: number, chunk: string) => {
     if (!conversationId || !chunk || index < 0) {
       return;
@@ -4646,6 +4711,7 @@ export default function WorkspacePage() {
           ?? '';
         const hasCompletionEvidence = hasCompletedAgentOutputEvidence(finalAgentMessage, bufferedFinalText);
         if (
+          !effectivePendingInterrupt &&
           hasCompletionEvidence &&
           (finalStatus === 'awaiting_approval' || finalStatus === 'cancelled' || finalStatus === 'failed')
         ) {
@@ -5665,42 +5731,7 @@ export default function WorkspacePage() {
                 resumeInFlightRef.current.delete(activeRun.runId);
               });
           } else if (status.status === 'awaiting_approval') {
-            const targetMessage = findAgentMessageForRun(
-              activeRun.conversationId,
-              activeRun.placeholderId,
-              activeRun.turnId
-            );
-            if (!targetMessage && status.pendingInterrupt) {
-              ensureAgentPlaceholder(
-                activeRun.conversationId,
-                activeRun.placeholderId,
-                activeRun.turnId,
-                true,
-              );
-            }
-            const resolvedTargetMessage = findAgentMessageForRun(
-              activeRun.conversationId,
-              activeRun.placeholderId,
-              activeRun.turnId
-            );
-            if (resolvedTargetMessage?.metadata?.runId || status.pendingInterrupt) {
-              updateMessagesForConversation(activeRun.conversationId, (prev) => {
-                const updated = [...prev];
-                const idx = updated.findIndex((message) => message.id === resolvedTargetMessage?.id);
-                if (idx === -1) {
-                  return updated;
-                }
-                const current = updated[idx];
-                const metadata = { ...((current.metadata as ConversationMessageMetadata | undefined) || {}) };
-                metadata.runId = metadata.runId || activeRun.runId;
-                metadata.status = 'awaiting_approval';
-                if (status.pendingInterrupt) {
-                  metadata.pendingInterrupt = status.pendingInterrupt;
-                }
-                updated[idx] = { ...current, metadata };
-                return updated;
-              });
-            }
+            applyRunStatusToConversation(activeRun, status);
             void syncRunStateToConversation(
               { ...activeRun, status: 'awaiting_approval' },
               'awaiting_approval',
@@ -5805,6 +5836,7 @@ export default function WorkspacePage() {
     }
   }, [
     activeConversationId,
+    applyRunStatusToConversation,
     conversationStreaming,
     ensureAgentPlaceholder,
     findAgentMessageForRun,
@@ -5815,7 +5847,83 @@ export default function WorkspacePage() {
     setConversationAttention,
     syncRunStateToConversation,
     streamRunForConversation,
-    updateMessagesForConversation,
+  ]);
+
+  useEffect(() => {
+    if (!activeConversationId) {
+      return;
+    }
+    const currentMessages = conversationMessages[activeConversationId] || [];
+    const candidates = currentMessages
+      .filter((message) => (
+        message.sender === 'agent' &&
+        message.metadata?.runId &&
+        (message.metadata.status === 'running' || message.metadata.status === 'awaiting_approval')
+      ))
+      .map((message) => {
+        const metadata = message.metadata as ConversationMessageMetadata;
+        return {
+          message,
+          runId: metadata.runId as string,
+          signature: JSON.stringify({
+            status: metadata.status,
+            gateId:
+              metadata.pendingInterrupt?.a2uiRequest?.gateId ||
+              metadata.pendingInterrupt?.displayPayload?.gateId ||
+              null,
+            interruptId: metadata.pendingInterrupt?.interruptId || null,
+          }),
+        };
+      });
+    if (!candidates.length) {
+      return;
+    }
+    let cancelled = false;
+    candidates.forEach(({ message, runId, signature }) => {
+      if (lastReconciledRunStatusRef.current[runId] === signature) {
+        return;
+      }
+      lastReconciledRunStatusRef.current[runId] = signature;
+      void getRunStatus(runId)
+        .then((status) => {
+          if (cancelled) {
+            return;
+          }
+          const nextSignature = JSON.stringify({
+            status: status.status,
+            gateId:
+              status.pendingInterrupt?.a2uiRequest?.gateId ||
+              status.pendingInterrupt?.displayPayload?.gateId ||
+              null,
+            interruptId: status.pendingInterrupt?.interruptId || null,
+          });
+          lastReconciledRunStatusRef.current[runId] = nextSignature;
+          const runInfo: ActiveRunInfo = activeRunsRef.current[runId] || {
+            runId,
+            conversationId: message.conversationId,
+            workspaceId: selectedWorkspace?.id || '',
+            persona: normalizePersonaName(activeConversationPersona || selectedPersona || DEFAULT_PERSONA_NAME),
+            turnId: message.turnId || generateTurnId(),
+            placeholderId: message.id,
+            status: status.status,
+          };
+          applyRunStatusToConversation(runInfo, status);
+        })
+        .catch((error) => {
+          console.error('Failed to reconcile run status', { runId, error });
+          delete lastReconciledRunStatusRef.current[runId];
+        });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    activeConversationId,
+    activeConversationPersona,
+    applyRunStatusToConversation,
+    conversationMessages,
+    selectedPersona,
+    selectedWorkspace?.id,
   ]);
 
   const handleRerunMessage = async (

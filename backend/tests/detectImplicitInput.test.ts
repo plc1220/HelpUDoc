@@ -584,11 +584,10 @@ test('gate completion fails final completion before all required gates', () => {
       completedGateIds: [
         'presentation_context',
         'outline_confirmation',
-        'style_path_selection',
       ],
     },
   });
-  assert.match(err || '', /"mood_or_preset_selection"/);
+  assert.match(err || '', /"style_preview_selection"/);
 });
 
 test('gate completion fails completed frontend-slides run after all gates without a deck', () => {
@@ -600,13 +599,12 @@ test('gate completion fails completed frontend-slides run after all gates withou
       completedGateIds: [
         'presentation_context',
         'outline_confirmation',
-        'style_path_selection',
-        'mood_or_preset_selection',
         'style_preview_selection',
       ],
     },
   });
-  assert.match(err || '', /before producing the final HTML deck artifact/);
+  assert.match(err || '', /before producing the required artifact/);
+  assert.match(err || '', /filename ends with -deck\.html/);
 });
 
 test('gate completion allows edit-existing-deck frontend-slides completion', () => {

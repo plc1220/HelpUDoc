@@ -41,3 +41,21 @@ gates:
       gateId: style_preview_selection
       uiContract: a2ui
       expectedComponent: style_preview_chooser
+artifacts:
+  - artifact_id: final_deck
+    type: html_deck
+    required: true
+    patterns:
+      - "**/*-deck.html"
+    path_regex: "(^|/)[^/]+-deck\\.html$"
+    description: Final HTML presentation deck generated after all required A2UI gates are complete.
+    instructions: Write a .html slide deck whose filename ends with -deck.html, with multiple viewport-sized slide sections such as <section class="slide"> and keyboard/scroll navigation.
+  - artifact_id: final_pptx
+    type: pptx_deck
+    required: true
+    patterns:
+      - "**/*-deck.pptx"
+      - "**/*-presentation.pptx"
+    path_regex: "(^|/)[^/]+-(deck|presentation)\\.pptx$"
+    description: Final PowerPoint export generated from the HTML deck.
+    instructions: After writing the final HTML deck, call run_skill_python_script with script_name="export-pptx", input_paths including the HTML deck, and args containing the HTML deck path and desired .pptx output path. The output filename should end with -deck.pptx or -presentation.pptx.

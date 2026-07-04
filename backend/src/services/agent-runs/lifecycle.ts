@@ -26,6 +26,11 @@ import type {
   UIRequest,
   WorkflowActionEvent,
 } from '@helpudoc/contracts/types';
+import {
+  artifactPathMatchesRequirement,
+  requiredArtifactsForSkill,
+  requiredGateIdsForSkill,
+} from './workflowContracts';
 
 export type AgentRunStatus =
   | 'queued'
@@ -427,6 +432,9 @@ export const buildSyntheticClarificationFollowupPrompt = (
   const workflowState = previousInterrupt?.displayPayload?.skill === 'frontend-slides'
     ? buildFrontendSlidesWorkflowState(completedGateState)
     : undefined;
+  const frontendSlidesArtifactInstruction = previousInterrupt?.displayPayload?.skill === 'frontend-slides'
+    ? requiredArtifactDescriptionForSkill('frontend-slides')
+    : '';
   const workflowProtocol = workflowState
     ? [
         'Frontend-slides workflow state:',
@@ -437,7 +445,7 @@ export const buildSyntheticClarificationFollowupPrompt = (
                 ? 'Next structured workflow actions: first call workflow_action(action="generate_artifact", reason="Draft slide outline for review", artifact_refs_json="[\"slide_outline_v1\"]"), then present the concrete outline and call workflow_action(action="ask_user_a2ui", gate_id="outline_confirmation", component="clarification.form", props_json=..., context_json=...) to pause for review.'
                 : `Next structured workflow action: call workflow_action(action="ask_user_a2ui", gate_id="${workflowState.nextRequiredGateId}", component="${EXPECTED_GATES[workflowState.nextRequiredGateId] === 'style_preview_chooser' ? 'style.previewChooser' : 'clarification.form'}", props_json=..., context_json=...) and then stop.`
             )
-          : 'All required A2UI gates are complete. Generate the final HTML presentation deck now. The output must be a slide deck, not a report or summary page: write a .html file whose filename ends with -deck.html, include multiple viewport-sized slide sections such as <section class="slide">, include keyboard/scroll navigation, and use write_file so the file appears in the workspace. The next structured workflow action may be workflow_action(action="complete") only after that final deck artifact is generated.',
+          : `All required A2UI gates are complete. Generate the final required artifact now: ${frontendSlidesArtifactInstruction}. The output must be a slide deck, not a report or summary page. Use write_file so the file appears in the workspace. The next structured workflow action may be workflow_action(action="complete") only after that final artifact is generated.`,
       ].join('\n')
     : '';
   const nextFrontendSlidesGate = workflowState?.nextRequiredGateId;
@@ -451,7 +459,9 @@ export const buildSyntheticClarificationFollowupPrompt = (
       : nextFrontendSlidesGate === 'mood_or_preset_selection'
       ? 'For frontend-slides: the user selected the style selection method. Continue to the next style gate. If the user chose generated previews, collect the mood or preset direction next; do not ask for Presentation Context or Outline Confirmation again.'
       : nextFrontendSlidesGate === 'style_preview_selection'
-      ? 'For frontend-slides: the user selected the mood or preset direction. Generate 2-3 style previews/templates next, then pause with a style_preview_selection structured A2UI workflow action. Do not ask for earlier frontend-slides gates again.'
+      ? gateId === 'outline_confirmation'
+        ? 'For frontend-slides: the user confirmed the outline. Generate 2-3 style previews/templates next, then pause with a style_preview_selection structured A2UI workflow action. Do not ask for Presentation Context or Outline Confirmation again.'
+        : 'For frontend-slides: the user selected the mood or preset direction. Generate 2-3 style previews/templates next, then pause with a style_preview_selection structured A2UI workflow action. Do not ask for earlier frontend-slides gates again.'
       : 'For frontend-slides: continue to the next incomplete A2UI gate. Do not ask for already answered frontend-slides gates again.'
     : '';
   const repeatedGateInstruction = previousInterrupt?.displayPayload?.skill === 'frontend-slides'
@@ -472,7 +482,7 @@ export const buildSyntheticClarificationFollowupPrompt = (
       '[Frontend-slides final generation phase]',
       'All required structured gates are complete. The user has selected a visual style.',
       'Do not call workflow_action(action="ask_user_a2ui"), request_clarification, request_ui, or request_human_action for any frontend-slides gate.',
-      'Generate the final HTML presentation deck now. The output must be a slide deck, not a report or summary page: write a .html file whose filename ends with -deck.html, include multiple viewport-sized slide sections such as <section class="slide">, include keyboard/scroll navigation, and use write_file so the file appears in the workspace.',
+      `Generate the final required artifact now: ${frontendSlidesArtifactInstruction}. The output must be a slide deck, not a report or summary page. Use write_file so the file appears in the workspace.`,
       'Only after the deck file exists may you call workflow_action(action="complete") or finish the run.',
       answers,
       '',
@@ -804,7 +814,7 @@ export const isFrontendSlidesSkill = (skillId: string | null | undefined): boole
   return normalized === 'frontend-slides' || normalized.endsWith('/frontend-slides');
 };
 
-const FRONTEND_SLIDES_REQUIRED_GATES = [
+const FRONTEND_SLIDES_KNOWN_GATES = [
   'presentation_context',
   'outline_confirmation',
   'style_path_selection',
@@ -812,7 +822,13 @@ const FRONTEND_SLIDES_REQUIRED_GATES = [
   'style_preview_selection',
 ] as const;
 
-type FrontendSlidesGateId = typeof FRONTEND_SLIDES_REQUIRED_GATES[number];
+const FRONTEND_SLIDES_FALLBACK_REQUIRED_GATES = [
+  'presentation_context',
+  'outline_confirmation',
+  'style_preview_selection',
+] as const;
+
+type FrontendSlidesGateId = typeof FRONTEND_SLIDES_KNOWN_GATES[number];
 
 const EXPECTED_GATES: Record<FrontendSlidesGateId, UIRequest['component']> = {
   presentation_context: 'clarification_form',
@@ -823,8 +839,13 @@ const EXPECTED_GATES: Record<FrontendSlidesGateId, UIRequest['component']> = {
 };
 
 const isFrontendSlidesGateId = (value: unknown): value is FrontendSlidesGateId => (
-  typeof value === 'string' && FRONTEND_SLIDES_REQUIRED_GATES.includes(value as FrontendSlidesGateId)
+  typeof value === 'string' && FRONTEND_SLIDES_KNOWN_GATES.includes(value as FrontendSlidesGateId)
 );
+
+const getFrontendSlidesRequiredGates = (): FrontendSlidesGateId[] => {
+  const declared = requiredGateIdsForSkill('frontend-slides').filter(isFrontendSlidesGateId);
+  return declared.length > 0 ? declared : [...FRONTEND_SLIDES_FALLBACK_REQUIRED_GATES];
+};
 
 const getRecord = (value: unknown): Record<string, unknown> | undefined => (
   value && typeof value === 'object' && !Array.isArray(value)
@@ -1026,8 +1047,56 @@ export const withFrontendSlidesGateMetadata = (
           html: buildFallbackStylePreviewHtml({ id, label, description }),
         };
       })
-      .filter((preview): preview is Record<string, unknown> => Boolean(preview));
+      .filter((preview): preview is NonNullable<typeof preview> => preview !== null);
     return previews.length > 0 ? previews : defaultStylePreviews;
+  };
+  const enrichStylePreviews = (previews: unknown): Array<Record<string, unknown>> | undefined => {
+    if (!Array.isArray(previews) || previews.length === 0) {
+      return undefined;
+    }
+    const enriched = previews
+      .map((preview, index) => {
+        const record = getRecord(preview);
+        if (!record) {
+          return null;
+        }
+        const id = typeof record.id === 'string' && record.id.trim()
+          ? record.id.trim()
+          : typeof record.choiceId === 'string' && record.choiceId.trim()
+            ? record.choiceId.trim()
+            : `style-${String.fromCharCode(97 + index)}`;
+        const label = typeof record.label === 'string' && record.label.trim()
+          ? record.label.trim()
+          : typeof record.name === 'string' && record.name.trim()
+            ? record.name.trim()
+            : typeof record.title === 'string' && record.title.trim()
+              ? record.title.trim()
+              : `Style ${String.fromCharCode(65 + index)}`;
+        const description = typeof record.description === 'string' && record.description.trim()
+          ? record.description.trim()
+          : typeof record.summary === 'string' && record.summary.trim()
+            ? record.summary.trim()
+            : undefined;
+        const existingHtml =
+          typeof record.html === 'string' && record.html.trim()
+            ? record.html
+            : typeof record.srcDoc === 'string' && record.srcDoc.trim()
+              ? record.srcDoc
+              : typeof record.srcdoc === 'string' && record.srcdoc.trim()
+                ? record.srcdoc
+                : typeof record.content === 'string' && record.content.trim()
+                  ? record.content
+                  : undefined;
+        return {
+          ...record,
+          id,
+          label,
+          ...(description ? { description } : {}),
+          html: existingHtml || buildFallbackStylePreviewHtml({ id, label, description }),
+        };
+      })
+      .filter((preview): preview is NonNullable<typeof preview> => preview !== null);
+    return enriched.length > 0 ? enriched : undefined;
   };
   const withQuestionDefaults = (props: unknown): Record<string, unknown> | undefined => {
     const record = getRecord(props);
@@ -1057,6 +1126,12 @@ export const withFrontendSlidesGateMetadata = (
         ...record,
         previews: buildStylePreviewsForChoices(record.choices),
         fallback: record.fallback ?? true,
+      };
+    }
+    if (hasPreviews) {
+      return {
+        ...record,
+        previews: enrichStylePreviews(record.previews),
       };
     }
     if (hasChoices || hasPreviews) {
@@ -1163,14 +1238,18 @@ const frontendSlidesGateStateThrough = (gateId: string | undefined): A2UIGateSta
   if (!isFrontendSlidesGateId(gateId)) {
     return { completedGateIds: [] };
   }
-  const gateIndex = FRONTEND_SLIDES_REQUIRED_GATES.indexOf(gateId);
+  const requiredGates = getFrontendSlidesRequiredGates();
+  const gateIndex = requiredGates.indexOf(gateId);
+  if (gateIndex < 0) {
+    return { completedGateIds: [gateId] };
+  }
   return {
-    completedGateIds: FRONTEND_SLIDES_REQUIRED_GATES.slice(0, gateIndex + 1),
+    completedGateIds: requiredGates.slice(0, gateIndex + 1),
   };
 };
 
 const nextMissingFrontendSlidesGate = (state: A2UIGateState): FrontendSlidesGateId | undefined => (
-  FRONTEND_SLIDES_REQUIRED_GATES.find((gateId) => !state.completedGateIds.includes(gateId))
+  getFrontendSlidesRequiredGates().find((gateId) => !state.completedGateIds.includes(gateId))
 );
 
 const hasCompletedAllFrontendSlidesGates = (state: A2UIGateState): boolean => (
@@ -1205,11 +1284,12 @@ export type FrontendSlidesWorkflowState = {
 
 export const buildFrontendSlidesWorkflowState = (state: A2UIGateState): FrontendSlidesWorkflowState => {
   const completedGateIds = Array.from(new Set(state.completedGateIds.filter(isFrontendSlidesGateId)));
-  const nextRequiredGateId = FRONTEND_SLIDES_REQUIRED_GATES.find((gateId) => !completedGateIds.includes(gateId));
+  const requiredGateIds = getFrontendSlidesRequiredGates();
+  const nextRequiredGateId = requiredGateIds.find((gateId) => !completedGateIds.includes(gateId));
   return {
     workflowType: 'presentation_generation',
     completedGateIds,
-    requiredGateIds: [...FRONTEND_SLIDES_REQUIRED_GATES],
+    requiredGateIds,
     nextRequiredGateId,
     nextRequiredAction: nextRequiredGateId ? FRONTEND_SLIDES_WORKFLOW_ACTION_BY_GATE[nextRequiredGateId] : undefined,
     currentPhase: nextRequiredGateId ? FRONTEND_SLIDES_GATE_PHASE[nextRequiredGateId] : 'generate_deck',
@@ -1644,7 +1724,7 @@ export const getFrontendSlidesA2UIGateCompletionError = (input: {
     !isFrontendSlidesEditExistingRun(params) &&
     hasCompletedAllFrontendSlidesGates(input.gateState || { completedGateIds: [] })
   ) {
-    return 'Contract violation: frontend-slides completed after all A2UI gates but before producing the final HTML deck artifact.';
+    return `Contract violation: frontend-slides completed after all A2UI gates but before producing the required artifact: ${requiredArtifactDescriptionForSkill('frontend-slides')}.`;
   }
   return null;
 };
@@ -2548,7 +2628,7 @@ type RunStreamRecoveryInspection = {
   latestTerminalEvent?: { status: AgentRunStatus; error?: string };
   latestRealActivityAt?: number;
   latestEntryAt?: number;
-  latestDeckArtifactPath?: string;
+  latestFrontendSlidesArtifactPaths?: Record<string, string>;
 };
 
 const parseRedisStreamEntryTimestamp = (entryId: unknown): number | undefined => {
@@ -2593,14 +2673,37 @@ export const terminalEventFromStreamPayload = (parsed: Record<string, unknown> |
   return undefined;
 };
 
-const isLikelyDeckArtifactPath = (path: string): boolean => {
-  const baseName = path.split(/[\\/]/).pop() || path;
-  return /\.html?$/i.test(baseName) && /(?:-deck|deck|slides?|presentation)/i.test(baseName);
+const matchingRequiredFrontendSlidesArtifacts = (path: string): string[] => {
+  const declaredRequirements = requiredArtifactsForSkill('frontend-slides');
+  if (!declaredRequirements.length) {
+    const baseName = path.split(/[\\/]/).pop() || path;
+    return /\.html?$/i.test(baseName) && /(?:-deck|deck|slides?|presentation)/i.test(baseName)
+      ? ['final_deck']
+      : [];
+  }
+  return declaredRequirements
+    .filter((requirement) => artifactPathMatchesRequirement(path, requirement))
+    .map((requirement) => requirement.artifactId);
 };
 
-const extractDeckArtifactPath = (parsed: Record<string, unknown> | null): string | undefined => {
+const requiredArtifactDescriptionForSkill = (skillId: string | null | undefined): string => {
+  const requirements = requiredArtifactsForSkill(skillId);
+  if (!requirements.length) {
+    return 'required workspace artifact';
+  }
+  return requirements
+    .map((requirement) => (
+      requirement.instructions ||
+      requirement.description ||
+      requirement.patterns.join(', ') ||
+      requirement.artifactId
+    ))
+    .join('; ');
+};
+
+const extractFrontendSlidesArtifactPaths = (parsed: Record<string, unknown> | null): Record<string, string> => {
   if (!parsed) {
-    return undefined;
+    return {};
   }
   const candidates: string[] = [];
   const artifactPath = coerceText(parsed.artifactPath).trim();
@@ -2614,7 +2717,64 @@ const extractDeckArtifactPath = (parsed: Record<string, unknown> | null): string
       candidates.push(path.trim());
     }
   });
-  return candidates.find(isLikelyDeckArtifactPath);
+  const artifacts: Record<string, string> = {};
+  candidates.forEach((candidate) => {
+    matchingRequiredFrontendSlidesArtifacts(candidate).forEach((artifactId) => {
+      artifacts[artifactId] = candidate;
+    });
+  });
+  return artifacts;
+};
+
+const mergeFrontendSlidesArtifactPaths = (
+  current: Record<string, string>,
+  next: Record<string, string>,
+): Record<string, string> => ({ ...current, ...next });
+
+const missingRequiredFrontendSlidesArtifactIds = (paths: Record<string, string>): string[] => {
+  const required = requiredArtifactsForSkill('frontend-slides');
+  if (!required.length) {
+    return paths.final_deck ? [] : ['final_deck'];
+  }
+  return required
+    .filter((requirement) => !paths[requirement.artifactId])
+    .map((requirement) => requirement.artifactId);
+};
+
+const hasAllRequiredFrontendSlidesArtifacts = (paths: Record<string, string>): boolean => (
+  missingRequiredFrontendSlidesArtifactIds(paths).length === 0
+);
+
+const firstFrontendSlidesArtifactPath = (paths: Record<string, string>): string | undefined => (
+  paths.final_deck || Object.values(paths)[0]
+);
+
+const frontendSlidesArtifactCompletionError = (
+  input: {
+    skillId?: string | null;
+    prompt?: string;
+    status: AgentRunStatus;
+    gateState?: A2UIGateState;
+  },
+  paths: Record<string, string>,
+): string | null => {
+  const missingGate = getFrontendSlidesMissingRequiredGate(input);
+  if (missingGate) {
+    return `Contract violation: frontend-slides completed before required A2UI gate "${missingGate}" was completed with request_clarification.`;
+  }
+  const params = { prompt: input.prompt || '' } as StartRunParams;
+  if (
+    input.status === 'completed' &&
+    isFrontendSlidesRun(input.skillId, params) &&
+    !isFrontendSlidesEditExistingRun(params) &&
+    hasCompletedAllFrontendSlidesGates(input.gateState || { completedGateIds: [] })
+  ) {
+    const missing = missingRequiredFrontendSlidesArtifactIds(paths);
+    if (missing.length) {
+      return `Contract violation: frontend-slides completed after all A2UI gates but before producing required artifact(s): ${missing.join(', ')}. Required: ${requiredArtifactDescriptionForSkill('frontend-slides')}.`;
+    }
+  }
+  return null;
 };
 
 const inspectRunStreamForRecovery = async (
@@ -2652,9 +2812,10 @@ const inspectRunStreamForRecovery = async (
           continue;
         }
         const parsed = parseLine(fields[index + 1] as string);
-        if (!inspection.latestDeckArtifactPath) {
-          inspection.latestDeckArtifactPath = extractDeckArtifactPath(parsed);
-        }
+        inspection.latestFrontendSlidesArtifactPaths = mergeFrontendSlidesArtifactPaths(
+          inspection.latestFrontendSlidesArtifactPaths || {},
+          extractFrontendSlidesArtifactPaths(parsed),
+        );
         if (!isRelevantToCurrentResume) {
           continue;
         }
@@ -2890,7 +3051,7 @@ async function runAgentRunWorker(
   let contractErrorMessage = '';
   let loopErrorMessage = '';
   let stallErrorMessage = '';
-  let latestDeckArtifactPath: string | undefined;
+  let latestFrontendSlidesArtifactPaths: Record<string, string> = {};
   let settled = false;
   let processingQueue: Promise<void> = Promise.resolve();
   let activeToolCalls = 0;
@@ -3119,14 +3280,12 @@ async function runAgentRunWorker(
     let effectiveStatus = status;
     let effectiveError = error;
 
-    const missingGate = latestDeckArtifactPath
-      ? null
-      : getFrontendSlidesMissingRequiredGate({
-          skillId,
-          prompt: params.prompt,
-          status: effectiveStatus,
-          gateState: a2uiGateState,
-        });
+    const missingGate = getFrontendSlidesMissingRequiredGate({
+      skillId,
+      prompt: params.prompt,
+      status: effectiveStatus,
+      gateState: a2uiGateState,
+    });
 
     if (missingGate) {
       const recoveredInterrupt = normalizeInterruptPayloadRecord(
@@ -3175,14 +3334,12 @@ async function runAgentRunWorker(
       }
     }
 
-    const frontendSlidesCompletionError = latestDeckArtifactPath
-      ? null
-      : getFrontendSlidesA2UIGateCompletionError({
-          skillId,
-          prompt: params.prompt,
-          status: effectiveStatus,
-          gateState: a2uiGateState,
-        });
+    const frontendSlidesCompletionError = frontendSlidesArtifactCompletionError({
+      skillId,
+      prompt: params.prompt,
+      status: effectiveStatus,
+      gateState: a2uiGateState,
+    }, latestFrontendSlidesArtifactPaths);
     if (frontendSlidesCompletionError) {
       effectiveStatus = 'failed';
       effectiveError = frontendSlidesCompletionError;
@@ -3400,10 +3557,10 @@ async function runAgentRunWorker(
   const processParsedLine = async (line: string): Promise<'continue' | 'stop'> => {
     const parsed = parseLine(line);
     captureConversationEvent(parsed);
-    const deckArtifactPath = extractDeckArtifactPath(parsed);
-    if (deckArtifactPath) {
-      latestDeckArtifactPath = deckArtifactPath;
-    }
+    latestFrontendSlidesArtifactPaths = mergeFrontendSlidesArtifactPaths(
+      latestFrontendSlidesArtifactPaths,
+      extractFrontendSlidesArtifactPaths(parsed),
+    );
     if (isRealRunProgressEvent(parsed)) {
       lastRealActivityAt = Date.now();
     }
@@ -3429,7 +3586,7 @@ async function runAgentRunWorker(
       const frontendSlidesGateId = isFrontendSlidesGateId(explicitGateId)
         ? explicitGateId
         : inferredGateId;
-      const interruptPayload = frontendSlidesGateId
+      let interruptPayload = frontendSlidesGateId
         ? withFrontendSlidesGateMetadata(parsed, frontendSlidesGateId)
         : parsed;
       eventToAppend = interruptPayload;
@@ -3446,6 +3603,31 @@ async function runAgentRunWorker(
           reason: 'completed_gate_interrupt_ignored',
         }));
         return 'continue';
+      }
+      if (isFrontendSlidesRun(skillId, params) && !isFrontendSlidesEditExistingRun(params)) {
+        const nextRequiredGateId = nextMissingFrontendSlidesGate(a2uiGateState);
+        if (nextRequiredGateId && frontendSlidesGateId !== nextRequiredGateId) {
+          completeLatestRunningWorkflowAction(
+            `Recovered frontend-slides gate order: expected ${nextRequiredGateId}, got ${frontendSlidesGateId || interruptPayload.kind || 'interrupt'}.`,
+          );
+          await appendStreamEvent(runId, JSON.stringify({
+            type: 'a2ui_gate_recovered',
+            expectedGateId: nextRequiredGateId,
+            receivedGateId: frontendSlidesGateId || null,
+            receivedInterruptKind: typeof interruptPayload.kind === 'string' ? interruptPayload.kind : null,
+            reason: frontendSlidesGateId ? 'out_of_order_gate_interrupt' : 'missing_required_gate_before_interrupt',
+          }));
+          interruptPayload = normalizeInterruptPayloadRecord(
+            buildFrontendSlidesGatePendingInterrupt({
+              runId,
+              gateId: nextRequiredGateId,
+              assistantText,
+              params,
+              toolEvents,
+            }),
+          );
+          eventToAppend = interruptPayload;
+        }
       }
       if (isRepeatedClarificationInterrupt(interruptPayload, previousInterrupt, resumePayload)) {
         loopErrorMessage = 'Clarification response was not consumed. The same clarification was emitted again.';
@@ -3526,7 +3708,7 @@ async function runAgentRunWorker(
       }
     }
     const terminalEvent = terminalEventFromStreamPayload(parsed);
-    const missingGateBeforeTerminal = terminalEvent?.status === 'completed' && !latestDeckArtifactPath
+    const missingGateBeforeTerminal = terminalEvent?.status === 'completed'
       ? getFrontendSlidesMissingRequiredGate({
           skillId,
           prompt: params.prompt,
@@ -3537,13 +3719,13 @@ async function runAgentRunWorker(
     if (missingGateBeforeTerminal) {
       return 'continue';
     }
-    const completionErrorBeforeTerminal = terminalEvent?.status === 'completed' && !latestDeckArtifactPath
-      ? getFrontendSlidesA2UIGateCompletionError({
+    const completionErrorBeforeTerminal = terminalEvent?.status === 'completed'
+      ? frontendSlidesArtifactCompletionError({
           skillId,
           prompt: params.prompt,
           status: 'completed',
           gateState: a2uiGateState,
-        })
+        }, latestFrontendSlidesArtifactPaths)
       : null;
     if (completionErrorBeforeTerminal) {
       contractErrorMessage = completionErrorBeforeTerminal;
@@ -3863,8 +4045,9 @@ const reconcileActiveRunMetaFromStream = async (
     recoveredGateId && a2uiGateState.completedGateIds.includes(recoveredGateId),
   );
 
+  const recoveredFrontendSlidesArtifactPaths = inspection.latestFrontendSlidesArtifactPaths || {};
   const canCompleteFromDeckArtifact =
-    isFrontendSlidesContextRun(context) && Boolean(inspection.latestDeckArtifactPath);
+    isFrontendSlidesContextRun(context) && hasAllRequiredFrontendSlidesArtifacts(recoveredFrontendSlidesArtifactPaths);
 
   if (!canCompleteFromDeckArtifact && latestInterrupt && !recoveredGateIsComplete) {
     await markRunAwaitingApproval(runId, JSON.stringify(latestInterrupt), context?.params);
@@ -3886,7 +4069,7 @@ const reconcileActiveRunMetaFromStream = async (
         gateState: a2uiGateState,
       })
     : null;
-  if (terminalEvent?.status === 'completed' && missingCompletionGate && !inspection.latestDeckArtifactPath) {
+  if (terminalEvent?.status === 'completed' && missingCompletionGate) {
     const recoveredInterrupt = normalizeInterruptPayloadRecord(
       buildFrontendSlidesGatePendingInterrupt({
         runId,
@@ -3923,7 +4106,11 @@ const reconcileActiveRunMetaFromStream = async (
         type: 'done',
         status: 'completed',
         recovered: true,
-        artifactPath: inspection.latestDeckArtifactPath,
+        artifactPath: firstFrontendSlidesArtifactPath(recoveredFrontendSlidesArtifactPaths),
+        outputFiles: Object.entries(recoveredFrontendSlidesArtifactPaths).map(([artifactId, artifactPath]) => ({
+          artifactId,
+          path: artifactPath,
+        })),
       }));
     }
     cleanupRun(runId);

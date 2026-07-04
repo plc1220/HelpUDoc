@@ -301,17 +301,23 @@ class AgentRegistry:
         )
         tools = builtin_tools + mcp_tools
         def make_backend(runtime) -> CompositeBackend:
+            routes = {
+                "/memories/": UserScopedStoreBackend(
+                    runtime,
+                    store=self._memory_store.store if self._memory_store is not None else None,
+                ),
+            }
+            if skills_root is not None:
+                routes["/skills/"] = FilesystemBackend(
+                    root_dir=str(skills_root),
+                    virtual_mode=True,
+                )
             return CompositeBackend(
                 default=FilesystemBackend(
                     root_dir=str(workspace_state.root_path),
                     virtual_mode=self.settings.backend.virtual_mode,
                 ),
-                routes={
-                    "/memories/": UserScopedStoreBackend(
-                        runtime,
-                        store=self._memory_store.store if self._memory_store is not None else None,
-                    ),
-                },
+                routes=routes,
             )
 
         model = self._get_model(

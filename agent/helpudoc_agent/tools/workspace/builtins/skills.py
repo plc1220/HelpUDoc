@@ -28,6 +28,50 @@ from ....state import WorkspaceState
 from ....tagged_file_policy import tagged_files_mode_guard
 from ..constants import MAX_DISTINCT_SKILLS_PER_TURN, MAX_SKILL_LOAD_ATTEMPTS_PER_TURN
 
+MAX_SKILL_ASSET_MANIFEST_ITEMS = 40
+
+
+def _skill_asset_backend_paths(skill) -> list[str]:
+    skill_dir = skill.path.parent.resolve()
+    paths: list[str] = []
+    for path in sorted(skill_dir.rglob("*")):
+        if (
+            not path.is_file()
+            or path.name == "SKILL.md"
+            or "__pycache__" in path.parts
+            or ".git" in path.parts
+            or path.name == ".DS_Store"
+        ):
+            continue
+        try:
+            rel = path.resolve().relative_to(skill_dir).as_posix()
+        except ValueError:
+            continue
+        paths.append(f"/skills/{skill.skill_id}/{rel}")
+    return paths
+
+
+def _format_skill_asset_manifest(skill_id: str, asset_paths: list[str]) -> str:
+    if not asset_paths:
+        return ""
+    shown = asset_paths[:MAX_SKILL_ASSET_MANIFEST_ITEMS]
+    lines = [
+        "---",
+        "",
+        "## Local Skill Asset Files",
+        "",
+        (
+            "Bundled asset files for this skill are available through the skill backend. "
+            "When the skill instructions reference a relative support file, read the corresponding "
+            "path below with read_file. Do not use web search to fetch these bundled assets."
+        ),
+        "",
+    ]
+    lines.extend(f"- {path}" for path in shown)
+    if len(asset_paths) > len(shown):
+        lines.append(f"- ... {len(asset_paths) - len(shown)} more files under /skills/{skill_id}/")
+    return "\n".join(lines)
+
 
 class RunSkillPythonScriptInput(BaseModel):
     script_name: str = Field(description="Declared sandbox script name from the active skill.")
@@ -127,6 +171,10 @@ def build_load_skill_tool(settings: Settings, workspace_state: WorkspaceState) -
                 f"{learnings.strip()}\n"
             )
         activate_skill_context(workspace_state.context, skill, plugins_root=plugins_root)
+        asset_paths = _skill_asset_backend_paths(skill)
+        asset_manifest = _format_skill_asset_manifest(skill.skill_id, asset_paths)
+        if asset_manifest:
+            content = f"{content.rstrip()}\n\n{asset_manifest}\n"
         return build_loaded_skill_text(skill, content, plugins_root=plugins_root)
 
     load_skill.name = "load_skill"

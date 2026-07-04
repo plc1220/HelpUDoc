@@ -23,6 +23,11 @@ import {
   resumeAgentRunWithResponse,
   withFrontendSlidesGateMetadata,
 } from '../src/services/agentRunService';
+import {
+  artifactPathMatchesRequirement,
+  requiredArtifactsForSkill,
+  requiredGateIdsForSkill,
+} from '../src/services/agent-runs/workflowContracts';
 
 const makeStreamResponse = (lines: Array<Record<string, unknown>>): Promise<AxiosResponse<IncomingMessage>> =>
   Promise.resolve({
@@ -439,6 +444,24 @@ test('buildFrontendSlidesWorkflowState derives next required gate from completed
   assert.equal(state.canComplete, false);
 });
 
+test('frontend-slides workflow contract declares required gates and final artifacts', () => {
+  assert.deepEqual(requiredGateIdsForSkill('frontend-slides'), [
+    'presentation_context',
+    'outline_confirmation',
+    'style_preview_selection',
+  ]);
+  const artifacts = requiredArtifactsForSkill('frontend-slides');
+  assert.equal(artifacts.length, 2);
+  const finalDeck = artifacts.find((artifact) => artifact.artifactId === 'final_deck');
+  const finalPptx = artifacts.find((artifact) => artifact.artifactId === 'final_pptx');
+  assert.ok(finalDeck);
+  assert.ok(finalPptx);
+  assert.equal(artifactPathMatchesRequirement('slides/operation-epic-fury-deck.html', finalDeck), true);
+  assert.equal(artifactPathMatchesRequirement('operation-epic-fury-report.md', finalDeck), false);
+  assert.equal(artifactPathMatchesRequirement('slides/operation-epic-fury-deck.pptx', finalPptx), true);
+  assert.equal(artifactPathMatchesRequirement('slides/operation-epic-fury-deck.html', finalPptx), false);
+});
+
 test('completed frontend-slides gate replays are internal no-op interrupts', () => {
   assert.equal(
     isCompletedFrontendSlidesGateInterrupt(presentationContextInterrupt, {
@@ -814,7 +837,7 @@ test('buildSyntheticClarificationFollowupPrompt does not nest prior continuation
   assert.equal((wrappedTwice.match(/^\/skill frontend-slides$/gm) || []).length, 1);
 });
 
-test('buildSyntheticClarificationFollowupPrompt advances frontend-slides outline confirmation to style path selection', () => {
+test('buildSyntheticClarificationFollowupPrompt advances frontend-slides outline confirmation to style previews', () => {
   const prompt = buildSyntheticClarificationFollowupPrompt(
     'Create a deck',
     {
@@ -835,13 +858,13 @@ test('buildSyntheticClarificationFollowupPrompt advances frontend-slides outline
   );
 
   assert.match(prompt, /confirmed the outline/);
-  assert.match(prompt, /style_path_selection/);
-  assert.match(prompt, /workflow_action\(action="ask_user_a2ui", gate_id="style_path_selection"/);
+  assert.match(prompt, /style_preview_selection/);
+  assert.match(prompt, /workflow_action\(action="ask_user_a2ui", gate_id="style_preview_selection"/);
   assert.doesNotMatch(prompt, /completed Presentation Context/);
   assert.match(prompt, /^\/skill frontend-slides\n/);
 });
 
-test('buildSyntheticClarificationFollowupPrompt advances frontend-slides mood selection to style previews', () => {
+test('buildSyntheticClarificationFollowupPrompt can recover legacy mood selection to style previews', () => {
   const prompt = buildSyntheticClarificationFollowupPrompt(
     'Create a deck',
     {
@@ -859,6 +882,9 @@ test('buildSyntheticClarificationFollowupPrompt advances frontend-slides mood se
         ],
       },
     } as any,
+    {
+      completedGateIds: ['presentation_context', 'outline_confirmation'],
+    },
   );
 
   assert.match(prompt, /selected the mood or preset direction/);
@@ -891,7 +917,7 @@ test('buildSyntheticClarificationFollowupPrompt advances frontend-slides style c
   assert.match(prompt, /selected a visual style/);
   assert.match(prompt, /final generation phase/);
   assert.match(prompt, /Do not call workflow_action\(action="ask_user_a2ui"\)/);
-  assert.match(prompt, /Generate the final HTML presentation deck now/);
+  assert.match(prompt, /Generate the final required artifact now/);
   assert.match(prompt, /filename ends with -deck\.html/);
   assert.match(prompt, /<section class="slide">/);
   assert.match(prompt, /not a report or summary page/);
@@ -920,15 +946,13 @@ test('buildSyntheticClarificationFollowupPrompt honors persisted completed front
       completedGateIds: [
         'presentation_context',
         'outline_confirmation',
-        'style_path_selection',
-        'mood_or_preset_selection',
         'style_preview_selection',
       ],
     },
   );
 
   assert.match(prompt, /all required structured gates are complete/i);
-  assert.match(prompt, /Generate the final HTML presentation deck now/);
+  assert.match(prompt, /Generate the final required artifact now/);
   assert.match(prompt, /Do not call workflow_action\(action="ask_user_a2ui"\)/);
   assert.match(prompt, /filename ends with -deck\.html/);
   assert.doesNotMatch(prompt, /Generate the slide outline next/);
@@ -1927,6 +1951,98 @@ test('frontend-slides completion with missing style preview gate recovers with f
       'outline_confirmation',
       'style_path_selection',
       'mood_or_preset_selection',
+    ]);
+  } finally {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    if (runId) {
+      await redisClient.del(`agent:run:${runId}`);
+      await redisClient.del(`agent:run:${runId}:meta`);
+    }
+    await redisClient.del(`agent:run:key:${workspaceId}:fast:${turnId}`);
+    configureAgentRunServices({ agentStreamClient: null });
+    if (redisClient.isOpen) {
+      await redisClient.quit();
+    }
+  }
+});
+
+test('frontend-slides export approval before style gate recovers to style preview selection', {
+  skip: process.env.RUN_A2UI_E2E !== '1' ? 'set RUN_A2UI_E2E=1 with Redis available to run lifecycle flow test' : false,
+}, async () => {
+  if (!redisClient.isOpen) {
+    await redisClient.connect();
+  }
+
+  let runId = '';
+  const turnId = `a2ui-export-approval-before-style-${Date.now()}`;
+  const workspaceId = 'workspace-a2ui-export-approval-before-style';
+  const exportApprovalInterrupt = {
+    type: 'interrupt',
+    kind: 'approval',
+    title: 'Run PPTX Export Script',
+    description: 'Export the generated deck to PowerPoint.',
+    displayPayload: {
+      skill: 'frontend-slides',
+      html_path: '/demo-deck.html',
+      pptx_path: '/demo-deck.pptx',
+    },
+    interruptId: 'interrupt-run-pptx-export',
+  };
+
+  try {
+    configureAgentRunServices({
+      telemetryService: null,
+      userMemoryService: null,
+      skillEvolutionService: null,
+      conversationService: null,
+      agentStreamClient: {
+        runAgentStream: async () => makeStreamResponse([
+          { type: 'policy', skill: 'frontend-slides' },
+          presentationContextInterrupt,
+        ]),
+        resumeAgentResponseStream: async (_persona, _workspaceId, _response, options) => {
+          const completedCount = options?.traceContext?.a2uiGateState?.completedGateIds?.length || 0;
+          if (completedCount === 1) {
+            return makeStreamResponse([{ type: 'policy', skill: 'frontend-slides' }, outlineConfirmationInterrupt]);
+          }
+          return makeStreamResponse([{ type: 'policy', skill: 'frontend-slides' }, exportApprovalInterrupt]);
+        },
+      },
+    });
+
+    const started = await startAgentRun({
+      workspaceId,
+      persona: 'fast',
+      prompt: '/skill frontend-slides create a pitch deck and export pptx',
+      history: [{ role: 'user', content: '/skill frontend-slides create a pitch deck and export pptx' }],
+      turnId,
+      forceReset: true,
+    });
+    runId = started.runId;
+
+    const awaitGate = async (gateId: string) => {
+      const meta = await waitForRunStatus(runId, (status, latest) => (
+        status === 'failed' ||
+        (status === 'awaiting_approval' && latest?.pendingInterrupt?.displayPayload?.gateId === gateId)
+      ));
+      assert.equal(meta?.status, 'awaiting_approval');
+      assert.equal(meta?.pendingInterrupt?.displayPayload?.gateId, gateId);
+      return meta;
+    };
+
+    const presentation = await awaitGate('presentation_context');
+    await resumeAgentRunWithResponse(runId, { answersByQuestionId: { purpose: 'Pitch deck' } }, { previousInterrupt: presentation?.pendingInterrupt });
+
+    const outline = await awaitGate('outline_confirmation');
+    await resumeAgentRunWithResponse(runId, { answersByQuestionId: { outline_confirmation: 'Approved' } }, { previousInterrupt: outline?.pendingInterrupt });
+
+    const recovered = await awaitGate('style_preview_selection');
+    assert.equal(recovered?.pendingInterrupt?.kind, 'clarification');
+    assert.equal(recovered?.pendingInterrupt?.uiRequest?.component, 'style_preview_chooser');
+    assert.equal(recovered?.pendingInterrupt?.a2uiRequest?.component, 'style.previewChooser');
+    assert.deepEqual(recovered?.a2uiGateState?.completedGateIds, [
+      'presentation_context',
+      'outline_confirmation',
     ]);
   } finally {
     await new Promise((resolve) => setTimeout(resolve, 100));
