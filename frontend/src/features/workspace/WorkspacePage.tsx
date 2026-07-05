@@ -489,6 +489,22 @@ const isSummaryLikeAgentText = (value?: string): boolean => {
   );
 };
 
+const isTransientToolActivitySummary = (value?: string): boolean => {
+  const normalized = String(value || '')
+    .trim()
+    .replace(/\u2026/g, '...')
+    .replace(/\s+/g, ' ')
+    .toLowerCase();
+  if (!normalized) {
+    return true;
+  }
+  return (
+    /^(reading|checking|searching|listing|loading|preparing|running|working|updating|editing|creating|drafting)\b.*\.{0,3}$/i.test(normalized) ||
+    /^working through (your|the current) request\.?$/i.test(normalized) ||
+    /^working on your request\.?$/i.test(normalized)
+  );
+};
+
 const summarizeMessageFromToolEvents = (
   message?: ConversationMessage | null,
   status?: AgentRunStatus,
@@ -502,6 +518,9 @@ const summarizeMessageFromToolEvents = (
       }
       const summary = String(event.summary || '').trim();
       if (!summary || isSummaryLikeAgentText(summary)) {
+        return false;
+      }
+      if (isTransientToolActivitySummary(summary)) {
         return false;
       }
       if (isBenignToolNoise(event)) {

@@ -179,7 +179,7 @@ const inferStylePreviewPath = (label: string, value: string): string | undefined
   if (!styleMatch?.[1]) {
     return undefined;
   }
-  return `.claude-design/slide-previews/style-${styleMatch[1].toLowerCase()}.html`;
+  return `.frontend-slides/slide-previews/style-${styleMatch[1].toLowerCase()}.html`;
 };
 
 const parseStylePreviewChoiceMetadata = (

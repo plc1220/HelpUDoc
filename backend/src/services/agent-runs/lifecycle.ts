@@ -1530,7 +1530,7 @@ const buildFrontendSlidesGatePendingInterrupt = (input: {
         id: choice.id,
         label: choice.label,
         description: choice.description,
-        path: `.claude-design/slide-previews/${choice.id}.html`,
+        path: `.frontend-slides/slide-previews/${choice.id}.html`,
         html: buildFallbackStylePreviewHtml(choice),
       }));
     const displayPayload = buildFrontendSlidesDisplayPayload(gateId, {
@@ -1989,7 +1989,7 @@ const buildImplicitInputPendingInterrupt = (opts: {
           id: choice.id,
           label: choice.label,
           description: choice.description,
-          path: `.claude-design/slide-previews/${choice.id}.html`,
+          path: `.frontend-slides/slide-previews/${choice.id}.html`,
           html: buildFallbackStylePreviewHtml(choice),
         }));
       const displayPayload = {
