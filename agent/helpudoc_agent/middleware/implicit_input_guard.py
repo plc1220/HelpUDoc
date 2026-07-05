@@ -511,12 +511,23 @@ def _extract_generic_choice_options(text: str) -> list[dict[str, str]]:
 
 
 def _build_fallback_style_preview_html(choice: dict[str, str]) -> str:
-    palette_by_id = {
+    palette_by_key = {
+        "swiss": {"bg": "#ffffff", "fg": "#050505", "accent": "#ff3300", "muted": "#3f3f46"},
+        "bold": {"bg": "#1a1a1a", "fg": "#ffffff", "accent": "#ff5722", "muted": "#d4d4d8"},
+        "botanical": {"bg": "#0f0f0f", "fg": "#e8e4df", "accent": "#d4a574", "muted": "#9a9590"},
         "style-a": {"bg": "#f8fafc", "fg": "#0f172a", "accent": "#0ea5e9", "muted": "#475569"},
         "style-b": {"bg": "#111827", "fg": "#f9fafb", "accent": "#22c55e", "muted": "#cbd5e1"},
         "style-c": {"bg": "#fff7ed", "fg": "#1f2937", "accent": "#f97316", "muted": "#64748b"},
     }
-    palette = palette_by_id.get(choice.get("id", ""), palette_by_id["style-a"])
+    semantic_key = f"{choice.get('label', '')} {choice.get('description', '')}".lower()
+    if "botanical" in semantic_key or "dark botanical" in semantic_key:
+        palette = palette_by_key["botanical"]
+    elif "bold signal" in semantic_key or "bold" in semantic_key:
+        palette = palette_by_key["bold"]
+    elif "swiss" in semantic_key or "modern" in semantic_key:
+        palette = palette_by_key["swiss"]
+    else:
+        palette = palette_by_key.get(choice.get("id", ""), palette_by_key["style-a"])
     label = escape(choice.get("label") or "Style preview")
     description = escape(choice.get("description") or "Presentation style preview.")
     return f"""<!doctype html>

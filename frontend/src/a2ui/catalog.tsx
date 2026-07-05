@@ -416,12 +416,23 @@ const buildFallbackStylePreviewHtml = (item: {
   label: string;
   description?: string;
 }): string => {
-  const paletteById: Record<string, { bg: string; fg: string; accent: string; panel: string; muted: string }> = {
+  const paletteByKey: Record<string, { bg: string; fg: string; accent: string; panel: string; muted: string }> = {
+    swiss: { bg: '#ffffff', fg: '#050505', accent: '#ff3300', panel: '#ffffff', muted: '#3f3f46' },
+    bold: { bg: '#1a1a1a', fg: '#ffffff', accent: '#ff5722', panel: '#ff5722', muted: '#d4d4d8' },
+    botanical: { bg: '#0f0f0f', fg: '#e8e4df', accent: '#d4a574', panel: '#161412', muted: '#9a9590' },
     'style-a': { bg: '#f8fafc', fg: '#0f172a', accent: '#0ea5e9', panel: '#ffffff', muted: '#475569' },
     'style-b': { bg: '#07111f', fg: '#f8fafc', accent: '#22c55e', panel: '#0f172a', muted: '#cbd5e1' },
     'style-c': { bg: '#fff7ed', fg: '#1f2937', accent: '#f97316', panel: '#ffffff', muted: '#64748b' },
   };
-  const palette = paletteById[item.id] || paletteById['style-a'];
+  const semanticKey = `${item.label} ${item.description || ''}`.toLowerCase();
+  const palette =
+    semanticKey.includes('botanical') || semanticKey.includes('dark botanical')
+      ? paletteByKey.botanical
+      : semanticKey.includes('bold signal') || semanticKey.includes('bold')
+        ? paletteByKey.bold
+        : semanticKey.includes('swiss') || semanticKey.includes('modern')
+          ? paletteByKey.swiss
+          : paletteByKey[item.id] || paletteByKey['style-a'];
   return `<!doctype html>
 <html>
 <head>

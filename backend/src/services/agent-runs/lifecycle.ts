@@ -1009,7 +1009,7 @@ export const withFrontendSlidesGateMetadata = (
     id: choice.id,
     label: choice.label,
     description: choice.description,
-    path: `.claude-design/slide-previews/${choice.id}.html`,
+    path: `.frontend-slides/slide-previews/${choice.id}.html`,
     html: buildFallbackStylePreviewHtml(choice),
   }));
   const buildStylePreviewsForChoices = (choices: unknown): Array<Record<string, unknown>> | undefined => {
@@ -1043,7 +1043,7 @@ export const withFrontendSlidesGateMetadata = (
           id,
           label,
           ...(description ? { description } : {}),
-          path: `.claude-design/slide-previews/${id}.html`,
+          path: `.frontend-slides/slide-previews/${id}.html`,
           html: buildFallbackStylePreviewHtml({ id, label, description }),
         };
       })
@@ -1907,12 +1907,23 @@ const buildFallbackStylePreviewHtml = (choice: {
   label: string;
   description?: string;
 }): string => {
-  const paletteById: Record<string, { bg: string; fg: string; accent: string; muted: string }> = {
+  const paletteByKey: Record<string, { bg: string; fg: string; accent: string; muted: string }> = {
+    swiss: { bg: '#ffffff', fg: '#050505', accent: '#ff3300', muted: '#3f3f46' },
+    bold: { bg: '#1a1a1a', fg: '#ffffff', accent: '#ff5722', muted: '#d4d4d8' },
+    botanical: { bg: '#0f0f0f', fg: '#e8e4df', accent: '#d4a574', muted: '#9a9590' },
     'style-a': { bg: '#f8fafc', fg: '#0f172a', accent: '#0ea5e9', muted: '#475569' },
     'style-b': { bg: '#111827', fg: '#f9fafb', accent: '#22c55e', muted: '#cbd5e1' },
     'style-c': { bg: '#fff7ed', fg: '#1f2937', accent: '#f97316', muted: '#64748b' },
   };
-  const palette = paletteById[choice.id] || paletteById['style-a'];
+  const semanticKey = `${choice.label} ${choice.description || ''}`.toLowerCase();
+  const palette =
+    semanticKey.includes('botanical') || semanticKey.includes('dark botanical')
+      ? paletteByKey.botanical
+      : semanticKey.includes('bold signal') || semanticKey.includes('bold')
+        ? paletteByKey.bold
+        : semanticKey.includes('swiss') || semanticKey.includes('modern')
+          ? paletteByKey.swiss
+          : paletteByKey[choice.id] || paletteByKey['style-a'];
   return `<!doctype html>
 <html>
 <head>
