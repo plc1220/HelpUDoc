@@ -30,6 +30,7 @@ import xml from 'react-syntax-highlighter/dist/esm/languages/hljs/xml';
 import yaml from 'react-syntax-highlighter/dist/esm/languages/hljs/yaml';
 import atomOneDark from 'react-syntax-highlighter/dist/esm/styles/hljs/atom-one-dark';
 import github from 'react-syntax-highlighter/dist/esm/styles/hljs/github';
+import type JSZipType from 'jszip';
 import type { File } from '../types';
 import { parsePlotlySpec } from '../utils/plotlySpec';
 import {
@@ -63,10 +64,17 @@ type TabularPreview = {
   truncatedColumns: boolean;
 };
 
+type PptxSlidePreview = {
+  slideNumber: number;
+  title: string;
+  lines: string[];
+};
+
 const PARQUET_PREVIEW_MAX_ROWS = 100;
 const PARQUET_PREVIEW_MAX_COLUMNS = 20;
 const SPREADSHEET_PREVIEW_MAX_ROWS = 100;
 const SPREADSHEET_PREVIEW_MAX_COLUMNS = 20;
+const PPTX_PREVIEW_MAX_SLIDES = 80;
 SyntaxHighlighter.registerLanguage('bash', bash);
 SyntaxHighlighter.registerLanguage('c', cpp);
 SyntaxHighlighter.registerLanguage('cpp', cpp);
@@ -149,6 +157,7 @@ let parquetRuntimePromise: Promise<{
 }> | null = null;
 
 let spreadsheetRuntimePromise: Promise<typeof import('xlsx')> | null = null;
+let pptxZipRuntimePromise: Promise<typeof JSZipType> | null = null;
 
 const loadParquetRuntime = async () => {
   if (!parquetRuntimePromise) {
@@ -176,6 +185,14 @@ const loadSpreadsheetRuntime = async () => {
   }
 
   return spreadsheetRuntimePromise;
+};
+
+const loadPptxZipRuntime = async () => {
+  if (!pptxZipRuntimePromise) {
+    pptxZipRuntimePromise = import('jszip').then((module) => module.default || module);
+  }
+
+  return pptxZipRuntimePromise;
 };
 
 const getFileExtension = (fileName: string): string => {
@@ -243,6 +260,97 @@ const isDocxHtmlEffectivelyEmpty = (html: string): boolean => {
   } catch {
     return false;
   }
+};
+
+const parseXmlDocument = (xml: string): Document => {
+  const doc = new DOMParser().parseFromString(xml, 'application/xml');
+  const parseError = doc.getElementsByTagName('parsererror')[0];
+  if (parseError) {
+    throw new Error(parseError.textContent || 'Invalid XML in PowerPoint file.');
+  }
+  return doc;
+};
+
+const getXmlAttr = (element: Element, name: string): string => {
+  return element.getAttribute(name) || element.getAttribute(name.split(':').pop() || name) || '';
+};
+
+const normalizePptxText = (value: string): string => {
+  return value.replace(/\s+/g, ' ').trim();
+};
+
+const extractPptxParagraphs = (slideXml: string): string[] => {
+  const doc = parseXmlDocument(slideXml);
+  const paragraphNodes = Array.from(doc.getElementsByTagName('a:p'));
+  const paragraphs = paragraphNodes
+    .map((paragraph) => {
+      const pieces = Array.from(paragraph.getElementsByTagName('a:t')).map(
+        (node) => node.textContent || '',
+      );
+      return normalizePptxText(pieces.join(''));
+    })
+    .filter(Boolean);
+
+  const deduped: string[] = [];
+  for (const paragraph of paragraphs) {
+    if (deduped[deduped.length - 1] !== paragraph) {
+      deduped.push(paragraph);
+    }
+  }
+  return deduped;
+};
+
+const resolvePptxSlidePaths = async (
+  zip: JSZipType,
+): Promise<string[]> => {
+  const presentationXml = await zip.file('ppt/presentation.xml')?.async('string');
+  const relsXml = await zip.file('ppt/_rels/presentation.xml.rels')?.async('string');
+  if (!presentationXml || !relsXml) {
+    return Object.keys(zip.files)
+      .filter((name) => /^ppt\/slides\/slide\d+\.xml$/i.test(name))
+      .sort((left, right) => {
+        const leftIndex = Number(left.match(/slide(\d+)\.xml$/i)?.[1] || 0);
+        const rightIndex = Number(right.match(/slide(\d+)\.xml$/i)?.[1] || 0);
+        return leftIndex - rightIndex;
+      });
+  }
+
+  const presentationDoc = parseXmlDocument(presentationXml);
+  const relsDoc = parseXmlDocument(relsXml);
+  const relTargetById = new Map(
+    Array.from(relsDoc.getElementsByTagName('Relationship')).map((relationship) => [
+      getXmlAttr(relationship, 'Id'),
+      getXmlAttr(relationship, 'Target'),
+    ]),
+  );
+
+  return Array.from(presentationDoc.getElementsByTagName('p:sldId'))
+    .map((slideId) => relTargetById.get(getXmlAttr(slideId, 'r:id')) || '')
+    .filter(Boolean)
+    .map((target) => {
+      const normalized = target.replace(/\\/g, '/').replace(/^\/+/, '');
+      return normalized.startsWith('ppt/') ? normalized : `ppt/${normalized}`;
+    });
+};
+
+const extractPptxPreview = async (fileContent: string): Promise<PptxSlidePreview[]> => {
+  const JSZip = await loadPptxZipRuntime();
+  const zip = await JSZip.loadAsync(decodeBase64ToArrayBuffer(fileContent));
+  const slidePaths = (await resolvePptxSlidePaths(zip)).slice(0, PPTX_PREVIEW_MAX_SLIDES);
+  const slides: PptxSlidePreview[] = [];
+
+  for (const [index, slidePath] of slidePaths.entries()) {
+    const slideXml = await zip.file(slidePath)?.async('string');
+    if (!slideXml) continue;
+    const lines = extractPptxParagraphs(slideXml);
+    slides.push({
+      slideNumber: index + 1,
+      title: lines[0] || `Slide ${index + 1}`,
+      lines,
+    });
+  }
+
+  return slides;
 };
 
 const formatPreviewCell = (value: unknown): string => {
@@ -382,6 +490,10 @@ const FileRenderer: React.FC<FileRendererProps> = ({
   const [docxHtmlSource, setDocxHtmlSource] = useState<string | null>(null);
   const [docxError, setDocxError] = useState<string | null>(null);
   const [isDocxLoading, setIsDocxLoading] = useState(false);
+  const [pptxPreview, setPptxPreview] = useState<PptxSlidePreview[] | null>(null);
+  const [pptxPreviewSource, setPptxPreviewSource] = useState<string | null>(null);
+  const [pptxError, setPptxError] = useState<string | null>(null);
+  const [isPptxLoading, setIsPptxLoading] = useState(false);
 
   const parsedCsv = useMemo(() => {
     if (!isCsvFile || !fileContent.trim()) return null;
@@ -657,6 +769,60 @@ const FileRenderer: React.FC<FileRendererProps> = ({
       cancelled = true;
     };
   }, [fileContent, isDocxFile]);
+
+  useEffect(() => {
+    if (!isPptxFile) {
+      setPptxPreview(null);
+      setPptxPreviewSource(null);
+      setPptxError(null);
+      setIsPptxLoading(false);
+      return;
+    }
+
+    if (!fileContent.trim()) {
+      setPptxPreview(null);
+      setPptxPreviewSource(null);
+      setPptxError(null);
+      setIsPptxLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+
+    const run = async () => {
+      setIsPptxLoading(true);
+      setPptxPreview(null);
+      setPptxPreviewSource(null);
+      setPptxError(null);
+      try {
+        const slides = await extractPptxPreview(fileContent);
+        if (!cancelled) {
+          setPptxPreview(slides);
+          setPptxPreviewSource(fileContent);
+        }
+      } catch (error) {
+        console.error('PPTX preview error', error);
+        if (!cancelled) {
+          setPptxPreview(null);
+          setPptxPreviewSource(null);
+          setPptxError(
+            error instanceof Error
+              ? error.message
+              : 'Could not read this PowerPoint file.',
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setIsPptxLoading(false);
+        }
+      }
+    };
+
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [fileContent, isPptxFile]);
 
   const markdownComponents = useMemo(
     () => createMarkdownComponents({
@@ -1131,6 +1297,139 @@ const FileRenderer: React.FC<FileRendererProps> = ({
         spreadsheetPreview,
         SPREADSHEET_PREVIEW_MAX_ROWS,
         SPREADSHEET_PREVIEW_MAX_COLUMNS,
+      );
+    }
+    if (isPptxFile) {
+      const banner = (
+        <div
+          className={`shrink-0 border-b px-4 py-2 text-xs ${
+            colorMode === 'dark'
+              ? 'border-slate-700 text-slate-400'
+              : 'border-gray-200 text-gray-500'
+          }`}
+        >
+          <span className={`font-medium ${colorMode === 'dark' ? 'text-slate-200' : 'text-gray-700'}`}>
+            PowerPoint preview
+          </span>
+          {' · '}
+          Text extraction
+        </div>
+      );
+      const awaitingPreview =
+        isPptxLoading
+        || (fileContent.trim().length > 0 && (pptxPreview === null || pptxPreviewSource !== fileContent) && !pptxError);
+
+      if (awaitingPreview) {
+        return (
+          <div className="flex h-full min-h-0 flex-col">
+            {banner}
+            <div className="flex min-h-0 flex-1 items-center justify-center text-sm text-gray-500">
+              Loading preview...
+            </div>
+          </div>
+        );
+      }
+
+      if (pptxError) {
+        return (
+          <div className="flex h-full min-h-0 flex-col">
+            {banner}
+            <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-4 px-6 text-center text-sm text-red-600">
+              <p>Preview failed: {pptxError}</p>
+              {fileContent.trim() ? (
+                <button
+                  type="button"
+                  onClick={() => downloadBinaryFile(
+                    'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+                    file?.name || 'presentation.pptx',
+                  )}
+                  className={`rounded-lg px-4 py-2 text-sm font-medium text-white ${
+                    colorMode === 'dark'
+                      ? 'bg-slate-600 hover:bg-slate-500'
+                      : 'bg-slate-800 hover:bg-slate-700'
+                  }`}
+                >
+                  Download file
+                </button>
+              ) : null}
+            </div>
+          </div>
+        );
+      }
+
+      if (!pptxPreview || pptxPreview.length === 0) {
+        return (
+          <div className="flex h-full min-h-0 flex-col">
+            {banner}
+            <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-4 px-6 text-center text-sm text-gray-500">
+              <p>No previewable slide text found.</p>
+              {fileContent.trim() ? (
+                <button
+                  type="button"
+                  onClick={() => downloadBinaryFile(
+                    'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+                    file?.name || 'presentation.pptx',
+                  )}
+                  className={`rounded-lg px-4 py-2 text-sm font-medium text-white ${
+                    colorMode === 'dark'
+                      ? 'bg-slate-600 hover:bg-slate-500'
+                      : 'bg-slate-800 hover:bg-slate-700'
+                  }`}
+                >
+                  Download file
+                </button>
+              ) : null}
+            </div>
+          </div>
+        );
+      }
+
+      return (
+        <div className="flex h-full min-h-0 flex-col">
+          {banner}
+          <div
+            className={`min-h-0 flex-1 overflow-y-auto px-5 py-4 ${
+              colorMode === 'dark' ? 'bg-slate-950 text-slate-100' : 'bg-gray-50 text-gray-900'
+            }`}
+          >
+            <div className="mx-auto flex max-w-4xl flex-col gap-4">
+              <div className={`text-xs ${colorMode === 'dark' ? 'text-slate-400' : 'text-gray-500'}`}>
+                {pptxPreview.length} slide{pptxPreview.length === 1 ? '' : 's'}
+                {pptxPreview.length === PPTX_PREVIEW_MAX_SLIDES ? ` shown, capped at ${PPTX_PREVIEW_MAX_SLIDES}` : ''}
+              </div>
+              {pptxPreview.map((slide) => (
+                <section
+                  key={slide.slideNumber}
+                  className={`rounded-lg border p-4 shadow-sm ${
+                    colorMode === 'dark'
+                      ? 'border-slate-800 bg-slate-900'
+                      : 'border-gray-200 bg-white'
+                  }`}
+                >
+                  <div className={`mb-3 text-xs font-medium ${colorMode === 'dark' ? 'text-slate-400' : 'text-gray-500'}`}>
+                    Slide {slide.slideNumber}
+                  </div>
+                  <h3 className={`mb-3 text-base font-semibold ${colorMode === 'dark' ? 'text-slate-100' : 'text-gray-900'}`}>
+                    {slide.title}
+                  </h3>
+                  {slide.lines.length > 0 ? (
+                    <div className={`space-y-2 text-sm leading-6 ${colorMode === 'dark' ? 'text-slate-200' : 'text-gray-700'}`}>
+                      {slide.lines.map((line, index) => (
+                        <p key={`${slide.slideNumber}-${index}`} className="whitespace-pre-wrap break-words">
+                          {line}
+                        </p>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className={`text-sm ${colorMode === 'dark' ? 'text-slate-400' : 'text-gray-500'}`}>
+                      No text on this slide.
+                    </p>
+                  )}
+                </section>
+              ))}
+            </div>
+          </div>
+        </div>
       );
     }
     if (isOfficeFile) {
