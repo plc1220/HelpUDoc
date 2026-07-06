@@ -1,6 +1,6 @@
 ---
 name: frontend-slides
-description: Create stunning, animation-rich HTML presentations from scratch or by converting PowerPoint files. Use when the user wants to build a presentation, convert a PPT/PPTX to web, or create slides for a talk/pitch. Helps non-designers discover their aesthetic through visual exploration rather than abstract choices.
+description: Create stunning, animation-rich browser-native HTML presentations. Use only when the user explicitly wants an HTML/web presentation or animated interactive browser deck. Do not use for `.ppt`, `.pptx`, PowerPoint, Google Slides, native deck creation, native deck editing, deck templates, or PPTX conversion/export requests; use the `pptx` skill for those.
 tools:
   - run_skill_python_script
 sandbox_scripts:
@@ -77,9 +77,9 @@ Baseline limits still apply: no scrolling, no overflow, no overlapping panels, a
 
 Determine what the user wants:
 
-- **Mode A: New Presentation** — Create from scratch. Go to Phase 1.
-- **Mode B: PPT Conversion** — Convert a .pptx file. Go to Phase 4.
-- **Mode C: Enhancement** — Improve an existing HTML presentation. Read it, understand it, enhance. **Follow Mode C modification rules below.**
+- **Mode A: New HTML Presentation** — Create a browser-native HTML presentation from scratch. Go to Phase 1.
+- **Mode B: PowerPoint/PPTX/Google Slides/native deck request** — Stop and route to the `pptx` skill. Do not use `frontend-slides` for `.ppt`, `.pptx`, PowerPoint, Google Slides, native deck creation, native deck editing, templates, or conversion requests.
+- **Mode C: HTML Enhancement** — Improve an existing HTML presentation. Read it, understand it, enhance. **Follow Mode C modification rules below.**
 
 ## HelpUDoc A2UI Contract
 
@@ -95,7 +95,7 @@ Do not ask for `style_path_selection` or `mood_or_preset_selection` in new runs.
 
 After style preview selection, do not call the presentation complete until the final HTML deck exists. The final deck must use the fixed 1920×1080 stage architecture from `viewport-base.css` and `html-template.md`.
 
-PPTX export is a first-class delivery path in HelpUDoc. When the user asks for PowerPoint output, or when offering export options, use `scripts/export-pptx.py`. The v1 PPTX export is screenshot-backed: it preserves visual fidelity by placing one rendered slide image per PowerPoint slide, but the slide contents are not deeply editable PowerPoint shapes.
+PowerPoint/PPTX/native deck work belongs to the `pptx` skill. Do not select or load `frontend-slides` because the user asks for `.pptx`, PowerPoint, Google Slides, native deck output, native deck editing, a deck template, or PPT conversion. The legacy `scripts/export-pptx.py` helper is only for finalizing an already-created HTML deck while this skill is already active; it is not a routing reason for new PPTX-related requests.
 
 ### Mode C: Modification Rules
 
@@ -272,14 +272,11 @@ If the user selected a self-generated custom wildcard, treat that preview's CSS 
 
 ---
 
-## Phase 4: PPT Conversion
+## Phase 4: Native Deck Requests
 
-When converting PowerPoint files:
+When a request involves `.ppt`, `.pptx`, PowerPoint, Google Slides, native deck output, native deck editing, templates, or PPT conversion, stop using this skill and route to `pptx`.
 
-1. **Extract content** — Run `python scripts/extract-pptx.py <input.pptx> <output_dir>` (install python-pptx if needed: `pip install python-pptx`)
-2. **Confirm with user** — Present extracted slide titles, content summaries, and image counts
-3. **Style selection** — Proceed to Phase 2 for style discovery
-4. **Generate HTML** — Convert to chosen style, preserving all text, images (from assets/), slide order, and speaker notes (as HTML comments)
+The old PPT extraction helper may remain in the folder for compatibility with existing HTML-deck workflows, but it must not be used as the primary path for PPTX-related user requests.
 
 ---
 
@@ -298,21 +295,21 @@ When converting PowerPoint files:
 
 ## Phase 6: Share & Export (Optional)
 
-After delivery, **ask the user:** _"Would you like to export or share this presentation? I can export it as PowerPoint, export it as PDF, or deploy it to a live URL."_
+After delivery, **ask the user:** _"Would you like to export or share this HTML presentation? I can export it as PDF or deploy it to a live URL."_
 
 Options:
 
-- **Export to PPTX** — Office-compatible PowerPoint file. Best default when the user needs to share or present in PowerPoint.
 - **Export to PDF** — Universal file for email, Slack, print
 - **Deploy to URL** — Shareable link that works on any device
-- **PPTX + PDF**
 - **No thanks**
 
 If the user declines, stop here. If they choose one or both, proceed below.
 
-### 6A: Export to PPTX
+### 6A: Legacy HTML-to-PPTX Export
 
-This captures each slide as a 1920×1080 screenshot and places each screenshot full-bleed into a widescreen PowerPoint slide. The result is visually faithful and opens in PowerPoint, Keynote, and Google Slides, but individual text boxes and shapes are not deeply editable.
+Use this only when `frontend-slides` is already active for an existing HTML deck and the user explicitly asks to export that current HTML deck to PPTX. For all other `.pptx`, PowerPoint, Google Slides, native deck, template, editing, or conversion requests, route to the `pptx` skill instead. This legacy exporter is screenshot-backed.
+
+This captures each slide as a 1920×1080 screenshot and places each screenshot full-bleed into a widescreen PowerPoint slide. The result is visually faithful and opens in PowerPoint, Keynote, and Google Slides, but it produces image-backed slides, not deeply editable PowerPoint shapes.
 
 1. **Run the export script:**
 
@@ -430,7 +427,7 @@ This captures each slide as a screenshot and combines them into a PDF. Perfect f
 | [viewport-base.css](viewport-base.css)             | Mandatory fixed-stage CSS — copy into every presentation             | Phase 3 (generation)      |
 | [html-template.md](html-template.md)               | HTML structure, JS features, code quality standards                  | Phase 3 (generation)      |
 | [animation-patterns.md](animation-patterns.md)     | CSS/JS animation snippets and effect-to-feeling guide                | Phase 3 (generation)      |
-| [scripts/extract-pptx.py](scripts/extract-pptx.py) | Python script for PPT content extraction                             | Phase 4 (conversion)      |
+| [scripts/extract-pptx.py](scripts/extract-pptx.py) | Legacy PPT content extraction helper; route new native deck work to `pptx` | Compatibility only |
 | [scripts/deploy.sh](scripts/deploy.sh)             | Deploy slides to Vercel for instant sharing                          | Phase 6 (sharing)         |
 | [scripts/export-pdf.sh](scripts/export-pdf.sh)     | Export slides to PDF                                                 | Phase 6 (sharing)         |
-| [scripts/export-pptx.py](scripts/export-pptx.py)   | Export HTML slides to screenshot-backed PPTX                         | Phase 6 (sharing)         |
+| [scripts/export-pptx.py](scripts/export-pptx.py)   | Legacy export for an already-active HTML deck; route new PPTX work to `pptx` | Compatibility only |

@@ -224,7 +224,8 @@ This skill should stay brief-first by default.
 Hand off only when the user clearly wants a bigger artifact:
 
 - use `research` for a deeper account, industry, or market deep dive
-- use `frontend-slides` when the user wants a call deck, QBR deck, or presentation
+- use `pptx` when the user wants a PowerPoint, Google Slides, native call deck, QBR deck, or editable presentation deliverable
+- use `frontend-slides` only when the user explicitly wants a browser-native HTML/web presentation
 
 The handoff package should include:
 
@@ -240,7 +241,7 @@ If the user says, "Prep me for tomorrow's Acme meeting and also give me a deeper
 
 ### Example handoff: meeting deck
 
-If the user says, "Prep me for the QBR and make a deck for it," first gather the Calendar, Gmail, Drive, and account context here, then pass the summary and audience goal into `frontend-slides`.
+If the user says, "Prep me for the QBR and make a PowerPoint deck for it," first gather the Calendar, Gmail, Drive, and account context here, then pass the summary and audience goal into `pptx`.
 
 ## Tips for Better Prep
 

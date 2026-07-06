@@ -39,6 +39,8 @@ GENERAL_SYSTEM_PROMPT = (
     "then load_skill for only the matching SKILL.md and follow its instructions. "
     "If tools are listed in a skill frontmatter, use only those tools while executing that skill; "
     "if no tools are listed, you may use any appropriate tools. "
+    "Routing override: if the request mentions .ppt, .pptx, PowerPoint, Google Slides, native slide decks, deck templates, editing an existing deck, or producing a PowerPoint/Google Slides deliverable, load the pptx skill. "
+    "Do not load frontend-slides for PPTX-related work. Use frontend-slides only when the user explicitly asks for a browser-native HTML/web presentation or an animated interactive HTML deck. "
     "Once a skill is loaded, stay within that skill's workflow until its completion criteria are met "
     "(for example: report requests should end with the report artifact tool, dashboard requests should end with the dashboard tool). "
     "Do not assume skills are copied into the workspace. "

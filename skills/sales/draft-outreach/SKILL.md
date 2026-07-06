@@ -233,7 +233,8 @@ Stay outreach-first by default.
 Escalate only when the ask clearly becomes a larger asset:
 
 - hand off to `proposal-writing` if the outreach is really a proposal or commercial follow-up
-- hand off to `frontend-slides` if the user needs a pitch deck, visual narrative, or presentation asset
+- hand off to `pptx` if the user needs a PowerPoint, Google Slides, native pitch deck, or editable presentation asset
+- hand off to `frontend-slides` only for explicit browser-native HTML/web presentations
 
 When handing off, include:
 
@@ -248,7 +249,7 @@ If the seller says, "Write the follow-up and include a proposal next step," draf
 
 ### Example handoff: pitch narrative
 
-If the seller says, "Draft outreach and make me a deck for the meeting," draft the message here, then pass the story, audience, and hook into `frontend-slides`.
+If the seller says, "Draft outreach and make me a PowerPoint deck for the meeting," draft the message here, then pass the story, audience, and hook into `pptx`.
 
 ## Notes
 

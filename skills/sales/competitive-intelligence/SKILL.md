@@ -98,10 +98,11 @@ If the user explicitly wants a battlecard, preserve the richer structure from th
 
 When the ask turns into a customer-facing or exec-facing artifact:
 
-- hand off to `frontend-slides` for a competitor deck or presentation
+- hand off to `pptx` for PowerPoint, Google Slides, native competitor decks, or editable presentation deliverables
+- hand off to `frontend-slides` only for explicit browser-native HTML/web presentations
 - hand off to `create-an-asset` for a customer-facing comparison asset
 - hand off to `research` if the user wants a deeper market landscape analysis
 
 ### Example handoff
 
-If the seller asks for "a battlecard deck for our exec review," first build the competitive brief here, then pass the comparison structure and storyline into `frontend-slides`.
+If the seller asks for "a PowerPoint battlecard deck for our exec review," first build the competitive brief here, then pass the comparison structure and storyline into `pptx`.

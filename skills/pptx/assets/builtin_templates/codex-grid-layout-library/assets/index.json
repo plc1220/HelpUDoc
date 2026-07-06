@@ -1,0 +1,1139 @@
+{
+  "assetsVersion": "alpha",
+  "items": [
+    {
+      "id": "layout-preview-01",
+      "path": "./previews/slide-01.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 1.",
+      "usage": "presentation.layout.01.preview",
+      "altText": "Monochrome presentation layout 1",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-02",
+      "path": "./previews/slide-02.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 2.",
+      "usage": "presentation.layout.02.preview",
+      "altText": "Monochrome presentation layout 2",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-03",
+      "path": "./previews/slide-03.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 3.",
+      "usage": "presentation.layout.03.preview",
+      "altText": "Monochrome presentation layout 3",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-04",
+      "path": "./previews/slide-04.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 4.",
+      "usage": "presentation.layout.04.preview",
+      "altText": "Monochrome presentation layout 4",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-05",
+      "path": "./previews/slide-05.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 5.",
+      "usage": "presentation.layout.05.preview",
+      "altText": "Monochrome presentation layout 5",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-06",
+      "path": "./previews/slide-06.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 6.",
+      "usage": "presentation.layout.06.preview",
+      "altText": "Monochrome presentation layout 6",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-07",
+      "path": "./previews/slide-07.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 7.",
+      "usage": "presentation.layout.07.preview",
+      "altText": "Monochrome presentation layout 7",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-08",
+      "path": "./previews/slide-08.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 8.",
+      "usage": "presentation.layout.08.preview",
+      "altText": "Monochrome presentation layout 8",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-09",
+      "path": "./previews/slide-09.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 9.",
+      "usage": "presentation.layout.09.preview",
+      "altText": "Monochrome presentation layout 9",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-10",
+      "path": "./previews/slide-10.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 10.",
+      "usage": "presentation.layout.10.preview",
+      "altText": "Monochrome presentation layout 10",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-11",
+      "path": "./previews/slide-11.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 11.",
+      "usage": "presentation.layout.11.preview",
+      "altText": "Monochrome presentation layout 11",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-12",
+      "path": "./previews/slide-12.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 12.",
+      "usage": "presentation.layout.12.preview",
+      "altText": "Monochrome presentation layout 12",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-13",
+      "path": "./previews/slide-13.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 13.",
+      "usage": "presentation.layout.13.preview",
+      "altText": "Monochrome presentation layout 13",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-14",
+      "path": "./previews/slide-14.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 14.",
+      "usage": "presentation.layout.14.preview",
+      "altText": "Monochrome presentation layout 14",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-15",
+      "path": "./previews/slide-15.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 15.",
+      "usage": "presentation.layout.15.preview",
+      "altText": "Monochrome presentation layout 15",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-16",
+      "path": "./previews/slide-16.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 16.",
+      "usage": "presentation.layout.16.preview",
+      "altText": "Monochrome presentation layout 16",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-17",
+      "path": "./previews/slide-17.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 17.",
+      "usage": "presentation.layout.17.preview",
+      "altText": "Monochrome presentation layout 17",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-18",
+      "path": "./previews/slide-18.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 18.",
+      "usage": "presentation.layout.18.preview",
+      "altText": "Monochrome presentation layout 18",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-19",
+      "path": "./previews/slide-19.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 19.",
+      "usage": "presentation.layout.19.preview",
+      "altText": "Monochrome presentation layout 19",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-20",
+      "path": "./previews/slide-20.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 20.",
+      "usage": "presentation.layout.20.preview",
+      "altText": "Monochrome presentation layout 20",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-21",
+      "path": "./previews/slide-21.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 21.",
+      "usage": "presentation.layout.21.preview",
+      "altText": "Monochrome presentation layout 21",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-22",
+      "path": "./previews/slide-22.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 22.",
+      "usage": "presentation.layout.22.preview",
+      "altText": "Monochrome presentation layout 22",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-23",
+      "path": "./previews/slide-23.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 23.",
+      "usage": "presentation.layout.23.preview",
+      "altText": "Monochrome presentation layout 23",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-24",
+      "path": "./previews/slide-24.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 24.",
+      "usage": "presentation.layout.24.preview",
+      "altText": "Monochrome presentation layout 24",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-25",
+      "path": "./previews/slide-25.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 25.",
+      "usage": "presentation.layout.25.preview",
+      "altText": "Monochrome presentation layout 25",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-26",
+      "path": "./previews/slide-26.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 26.",
+      "usage": "presentation.layout.26.preview",
+      "altText": "Monochrome presentation layout 26",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-27",
+      "path": "./previews/slide-27.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 27.",
+      "usage": "presentation.layout.27.preview",
+      "altText": "Monochrome presentation layout 27",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-28",
+      "path": "./previews/slide-28.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 28.",
+      "usage": "presentation.layout.28.preview",
+      "altText": "Monochrome presentation layout 28",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-29",
+      "path": "./previews/slide-29.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 29.",
+      "usage": "presentation.layout.29.preview",
+      "altText": "Monochrome presentation layout 29",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-30",
+      "path": "./previews/slide-30.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 30.",
+      "usage": "presentation.layout.30.preview",
+      "altText": "Monochrome presentation layout 30",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-31",
+      "path": "./previews/slide-31.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 31.",
+      "usage": "presentation.layout.31.preview",
+      "altText": "Monochrome presentation layout 31",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-32",
+      "path": "./previews/slide-32.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 32.",
+      "usage": "presentation.layout.32.preview",
+      "altText": "Monochrome presentation layout 32",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-33",
+      "path": "./previews/slide-33.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 33.",
+      "usage": "presentation.layout.33.preview",
+      "altText": "Monochrome presentation layout 33",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-34",
+      "path": "./previews/slide-34.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 34.",
+      "usage": "presentation.layout.34.preview",
+      "altText": "Monochrome presentation layout 34",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-35",
+      "path": "./previews/slide-35.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 35.",
+      "usage": "presentation.layout.35.preview",
+      "altText": "Monochrome presentation layout 35",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-36",
+      "path": "./previews/slide-36.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 36.",
+      "usage": "presentation.layout.36.preview",
+      "altText": "Monochrome presentation layout 36",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-37",
+      "path": "./previews/slide-37.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 37.",
+      "usage": "presentation.layout.37.preview",
+      "altText": "Monochrome presentation layout 37",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-38",
+      "path": "./previews/slide-38.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 38.",
+      "usage": "presentation.layout.38.preview",
+      "altText": "Monochrome presentation layout 38",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-39",
+      "path": "./previews/slide-39.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 39.",
+      "usage": "presentation.layout.39.preview",
+      "altText": "Monochrome presentation layout 39",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-40",
+      "path": "./previews/slide-40.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 40.",
+      "usage": "presentation.layout.40.preview",
+      "altText": "Monochrome presentation layout 40",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-41",
+      "path": "./previews/slide-41.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 41.",
+      "usage": "presentation.layout.41.preview",
+      "altText": "Monochrome presentation layout 41",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-42",
+      "path": "./previews/slide-42.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 42.",
+      "usage": "presentation.layout.42.preview",
+      "altText": "Monochrome presentation layout 42",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-43",
+      "path": "./previews/slide-43.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 43.",
+      "usage": "presentation.layout.43.preview",
+      "altText": "Monochrome presentation layout 43",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-44",
+      "path": "./previews/slide-44.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 44.",
+      "usage": "presentation.layout.44.preview",
+      "altText": "Monochrome presentation layout 44",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-45",
+      "path": "./previews/slide-45.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 45.",
+      "usage": "presentation.layout.45.preview",
+      "altText": "Monochrome presentation layout 45",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-46",
+      "path": "./previews/slide-46.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 46.",
+      "usage": "presentation.layout.46.preview",
+      "altText": "Monochrome presentation layout 46",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-47",
+      "path": "./previews/slide-47.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 47.",
+      "usage": "presentation.layout.47.preview",
+      "altText": "Monochrome presentation layout 47",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-48",
+      "path": "./previews/slide-48.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 48.",
+      "usage": "presentation.layout.48.preview",
+      "altText": "Monochrome presentation layout 48",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-49",
+      "path": "./previews/slide-49.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 49.",
+      "usage": "presentation.layout.49.preview",
+      "altText": "Monochrome presentation layout 49",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-50",
+      "path": "./previews/slide-50.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 50.",
+      "usage": "presentation.layout.50.preview",
+      "altText": "Monochrome presentation layout 50",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-51",
+      "path": "./previews/slide-51.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 51.",
+      "usage": "presentation.layout.51.preview",
+      "altText": "Monochrome presentation layout 51",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-52",
+      "path": "./previews/slide-52.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 52.",
+      "usage": "presentation.layout.52.preview",
+      "altText": "Monochrome presentation layout 52",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-53",
+      "path": "./previews/slide-53.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 53.",
+      "usage": "presentation.layout.53.preview",
+      "altText": "Monochrome presentation layout 53",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-54",
+      "path": "./previews/slide-54.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 54.",
+      "usage": "presentation.layout.54.preview",
+      "altText": "Monochrome presentation layout 54",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-55",
+      "path": "./previews/slide-55.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 55.",
+      "usage": "presentation.layout.55.preview",
+      "altText": "Monochrome presentation layout 55",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-56",
+      "path": "./previews/slide-56.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 56.",
+      "usage": "presentation.layout.56.preview",
+      "altText": "Monochrome presentation layout 56",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-57",
+      "path": "./previews/slide-57.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 57.",
+      "usage": "presentation.layout.57.preview",
+      "altText": "Monochrome presentation layout 57",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-58",
+      "path": "./previews/slide-58.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 58.",
+      "usage": "presentation.layout.58.preview",
+      "altText": "Monochrome presentation layout 58",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-59",
+      "path": "./previews/slide-59.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 59.",
+      "usage": "presentation.layout.59.preview",
+      "altText": "Monochrome presentation layout 59",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-60",
+      "path": "./previews/slide-60.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 60.",
+      "usage": "presentation.layout.60.preview",
+      "altText": "Monochrome presentation layout 60",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-61",
+      "path": "./previews/slide-61.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 61.",
+      "usage": "presentation.layout.61.preview",
+      "altText": "Monochrome presentation layout 61",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-62",
+      "path": "./previews/slide-62.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 62.",
+      "usage": "presentation.layout.62.preview",
+      "altText": "Monochrome presentation layout 62",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-63",
+      "path": "./previews/slide-63.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 63.",
+      "usage": "presentation.layout.63.preview",
+      "altText": "Monochrome presentation layout 63",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-64",
+      "path": "./previews/slide-64.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 64.",
+      "usage": "presentation.layout.64.preview",
+      "altText": "Monochrome presentation layout 64",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-65",
+      "path": "./previews/slide-65.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 65.",
+      "usage": "presentation.layout.65.preview",
+      "altText": "Monochrome presentation layout 65",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-66",
+      "path": "./previews/slide-66.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 66.",
+      "usage": "presentation.layout.66.preview",
+      "altText": "Monochrome presentation layout 66",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-67",
+      "path": "./previews/slide-67.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 67.",
+      "usage": "presentation.layout.67.preview",
+      "altText": "Monochrome presentation layout 67",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-68",
+      "path": "./previews/slide-68.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 68.",
+      "usage": "presentation.layout.68.preview",
+      "altText": "Monochrome presentation layout 68",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-69",
+      "path": "./previews/slide-69.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 69.",
+      "usage": "presentation.layout.69.preview",
+      "altText": "Monochrome presentation layout 69",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-70",
+      "path": "./previews/slide-70.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 70.",
+      "usage": "presentation.layout.70.preview",
+      "altText": "Monochrome presentation layout 70",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-71",
+      "path": "./previews/slide-71.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 71.",
+      "usage": "presentation.layout.71.preview",
+      "altText": "Monochrome presentation layout 71",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-72",
+      "path": "./previews/slide-72.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 72.",
+      "usage": "presentation.layout.72.preview",
+      "altText": "Monochrome presentation layout 72",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-73",
+      "path": "./previews/slide-73.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 73.",
+      "usage": "presentation.layout.73.preview",
+      "altText": "Monochrome presentation layout 73",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-74",
+      "path": "./previews/slide-74.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 74.",
+      "usage": "presentation.layout.74.preview",
+      "altText": "Monochrome presentation layout 74",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-75",
+      "path": "./previews/slide-75.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 75.",
+      "usage": "presentation.layout.75.preview",
+      "altText": "Monochrome presentation layout 75",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-76",
+      "path": "./previews/slide-76.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 76.",
+      "usage": "presentation.layout.76.preview",
+      "altText": "Monochrome presentation layout 76",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-77",
+      "path": "./previews/slide-77.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 77.",
+      "usage": "presentation.layout.77.preview",
+      "altText": "Monochrome presentation layout 77",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-78",
+      "path": "./previews/slide-78.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 78.",
+      "usage": "presentation.layout.78.preview",
+      "altText": "Monochrome presentation layout 78",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-79",
+      "path": "./previews/slide-79.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 79.",
+      "usage": "presentation.layout.79.preview",
+      "altText": "Monochrome presentation layout 79",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-preview-80",
+      "path": "./previews/slide-80.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated preview of layout 80.",
+      "usage": "presentation.layout.80.preview",
+      "altText": "Monochrome presentation layout 80",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    },
+    {
+      "id": "layout-library-montage",
+      "path": "./previews/layout-library.png",
+      "kind": "image",
+      "category": "layout-preview",
+      "mediaType": "image/png",
+      "description": "Generated contact sheet of all 80 layouts.",
+      "usage": "presentation.layout-library.overview",
+      "altText": "Contact sheet showing 80 monochrome presentation layouts",
+      "source": {
+        "type": "generated",
+        "script": "../../../../builtin_templates_support/scripts/create-presentation.mjs"
+      }
+    }
+  ]
+}

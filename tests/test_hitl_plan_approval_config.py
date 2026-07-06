@@ -40,13 +40,20 @@ def test_research_skill_declares_its_own_artifact_contract() -> None:
     assert research.policy.pre_plan_search_limit == 3
     assert research.policy.required_artifacts == [
         "/question.txt",
+        "/research_mode.md",
+        "/entity_disambiguation.md",
         "/preliminary_search_notes.md",
         "/research_plan.md",
+        "/source_register.md",
         "/research_notes.md",
+        "/claim_evidence_matrix.md",
+        "/contradictions_and_uncertainties.md",
+        "/red_flags_and_exclusions.md",
         "/knowledge_graph.md",
         "/synthesis.md",
+        "/final_report_audit.md",
+        "/final_quality_check.md",
         "/final-research-report.md",
-        "pattern:/0[1-9]_*.md",
     ]
 
 

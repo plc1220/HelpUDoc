@@ -182,7 +182,8 @@ Stay recap-first by default.
 If the meeting clearly creates a larger downstream task:
 
 - hand off to `proposal-writing` for proposals, SOWs, scopes, or commercials
-- hand off to `frontend-slides` for recap decks, exec summaries, or customer-facing presentation material
+- hand off to `pptx` for PowerPoint, Google Slides, native recap decks, exec summary decks, or editable customer-facing presentation material
+- hand off to `frontend-slides` only for explicit browser-native HTML/web presentations
 
 The handoff brief should include:
 
@@ -197,7 +198,7 @@ If the meeting ends with "please send a proposal," first produce the recap and c
 
 ### Example handoff: executive recap deck
 
-If the user asks for a call summary plus an executive readout deck, first create the recap and action table here, then hand off the story, audience, and key outcomes to `frontend-slides`.
+If the user asks for a call summary plus an executive PowerPoint readout deck, first create the recap and action table here, then hand off the story, audience, and key outcomes to `pptx`.
 
 ## Tips
 

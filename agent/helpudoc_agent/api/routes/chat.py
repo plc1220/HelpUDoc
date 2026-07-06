@@ -265,7 +265,11 @@ def register_chat_routes(
                 f"{learnings.strip()}\n"
             )
 
-        activate_skill_context(runtime.workspace_state.context, skill, plugins_root=settings.backend.plugins_root)
+        activate_skill_context(
+            runtime.workspace_state.context,
+            skill,
+            plugins_root=getattr(settings.backend, "plugins_root", None),
+        )
         dashboard_guidance = ""
         if skill.skill_id == "data/dashboard":
             dashboard_guidance = _build_dashboard_runtime_guidance(user_request)
@@ -301,7 +305,7 @@ def register_chat_routes(
         skill = find_skill(settings.backend.skills_root, skill_id)
         if skill is not None and is_skill_allowed(skill, context):
             context.pop("preferred_mcp_server", None)
-            activate_skill_context(context, skill, plugins_root=settings.backend.plugins_root)
+            activate_skill_context(context, skill, plugins_root=getattr(settings.backend, "plugins_root", None))
 
     def _inject_trace_skill_prompt(
         runtime: AgentRuntimeState,
@@ -390,6 +394,8 @@ def register_chat_routes(
                 }
                 now = datetime.utcnow().isoformat() + "Z"
                 trace_run_id = _clean_langfuse_value(trace.get("runId")) or ""
+                if trace_run_id:
+                    merged.setdefault("run_id", trace_run_id)
                 trace_thread_id = str(merged.get("thread_id") or "")
                 for gate_id in normalized_gates:
                     key = (trace_run_id, trace_thread_id, "frontend-slides", gate_id)
@@ -489,7 +495,7 @@ def register_chat_routes(
                 skill = find_skill(settings.backend.skills_root, directive.skillId)
                 if skill is not None and is_skill_allowed(skill, seeded):
                     seeded.pop("preferred_mcp_server", None)
-                    activate_skill_context(seeded, skill, plugins_root=settings.backend.plugins_root)
+                    activate_skill_context(seeded, skill, plugins_root=getattr(settings.backend, "plugins_root", None))
             elif directive.kind == "mcp" and directive.serverId:
                 seeded["preferred_mcp_server"] = directive.serverId
             break

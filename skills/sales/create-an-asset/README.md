@@ -61,7 +61,8 @@ Typical outputs are:
 
 Use nearby skills when the job is narrower:
 
-- `frontend-slides` for presentation-first workflows
+- `pptx` for PowerPoint, Google Slides, native decks, templates, and editable presentation workflows
+- `frontend-slides` only for explicit browser-native HTML/web presentation workflows
 - `proposal-writing` for proposals, SOWs, or commercial docs
 - `call-prep`, `call-summary`, or `account-research` to gather better input context before asset creation
 

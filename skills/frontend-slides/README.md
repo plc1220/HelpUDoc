@@ -1,16 +1,16 @@
 # Frontend Slides
 
-`frontend-slides` is HelpUDoc's bundled skill for creating browser-native slide decks and exporting them to Office-compatible formats.
+`frontend-slides` is HelpUDoc's bundled skill for creating browser-native HTML slide decks.
+
+PowerPoint, `.pptx`, Google Slides, native deck creation/editing, templates, and PPT conversion requests route to the `pptx` skill instead. Do not select `frontend-slides` for PPTX-related work.
 
 This bundle is vendored from the upstream Claude Code plugin payload at `plugins/frontend-slides/skills/frontend-slides/`, then adapted for HelpUDoc's A2UI workflow.
 
 ## Core Capabilities
 
 - Generate fixed-stage HTML decks at a 1920x1080 slide canvas.
-- Convert `.pptx` source decks into redesigned HTML slides.
 - Generate three visual style previews under `.frontend-slides/slide-previews/`.
 - Use safe presets plus the `bold-template-pack/` design systems with progressive disclosure.
-- Export final HTML decks to `.pptx` with `scripts/export-pptx.py`.
 - Export final HTML decks to `.pdf` with `scripts/export-pdf.sh`.
 - Optionally deploy final decks with `scripts/deploy.sh`.
 
@@ -24,7 +24,9 @@ New runs use these active A2UI gates:
 
 Legacy gate IDs `style_path_selection` and `mood_or_preset_selection` remain recognized by runtime compatibility code, but new runs should generate three previews directly.
 
-## PPTX Export
+## Legacy HTML-to-PPTX Export
+
+Use the PPTX exporter only when `frontend-slides` is already active for an HTML deck and the user explicitly asks to export that current HTML deck to PPTX. For all new PPTX-related work, use the `pptx` skill. This legacy exporter is screenshot-backed.
 
 PowerPoint export is fidelity-first:
 
@@ -51,8 +53,7 @@ python scripts/export-pptx.py deck.html deck.pptx --screenshots-dir screenshots/
 | `html-template.md` | Fixed-stage HTML/JS architecture |
 | `animation-patterns.md` | Animation reference |
 | `bold-template-pack/` | 34 progressively loaded design systems |
-| `scripts/export-pptx.py` | HTML-to-PPTX export |
+| `scripts/export-pptx.py` | Legacy HTML-to-PPTX export for already-active HTML decks |
 | `scripts/export-pdf.sh` | HTML-to-PDF export |
-| `scripts/extract-pptx.py` | PPTX content extraction |
+| `scripts/extract-pptx.py` | Legacy helper; route new PPTX/native deck work to `pptx` |
 | `scripts/deploy.sh` | Vercel deployment helper |
-

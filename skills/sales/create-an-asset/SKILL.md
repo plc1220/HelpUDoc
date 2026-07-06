@@ -10,7 +10,8 @@ Generate custom sales assets tailored to your prospect, audience, and goals. Use
 This skill should complement, not replace, the broader workflow:
 
 - use `call-prep`, `call-summary`, `draft-outreach`, or `account-research` to gather seller context first
-- use `frontend-slides` when the ask is specifically a presentation or slide deck workflow
+- use `pptx` when the ask is specifically a PowerPoint, Google Slides, native presentation, or slide deck workflow
+- use `frontend-slides` only when the ask is explicitly for a browser-native HTML/web presentation
 - use `proposal-writing` when the ask is specifically a proposal, SOW, or commercial document
 - use `create-an-asset` when the deliverable is a more custom customer-facing asset such as a one-pager, landing page, or interactive demo
 

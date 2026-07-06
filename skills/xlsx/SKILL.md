@@ -79,6 +79,19 @@ Unless otherwise stated by the user or existing template
 
 A user may ask you to create, edit, or analyze the contents of an .xlsx file. You have different tools and workflows available for different tasks.
 
+## Routing and safety
+
+- Use this skill when the deliverable is an Excel workbook or tabular file:
+  `.xlsx`, `.xlsm`, `.csv`, `.tsv`, or a converted spreadsheet.
+- Use `data/explore`, `data/query`, or `data/analyze` when the primary task is
+  analytical rather than workbook editing or workbook creation.
+- Do not call plain text readers on binary spreadsheet formats such as `.xlsx`,
+  `.xls`, `.ods`, or `.parquet`.
+- For `.xls` and `.ods`, ask for a `.xlsx` or CSV export when exact cell
+  inspection is required and no converter is available.
+- If the user asks about Google Sheets specifically, prefer Google Workspace or
+  Google Drive/Sheets connector tools rather than this local file skill.
+
 ## Important Requirements
 
 **LibreOffice Required for Formula Recalculation**: You can assume LibreOffice is installed for recalculating formula values using the `scripts/recalc.py` script. The script automatically configures LibreOffice on first run, including in sandboxed environments where Unix sockets are restricted (handled by `scripts/office/soffice.py`)

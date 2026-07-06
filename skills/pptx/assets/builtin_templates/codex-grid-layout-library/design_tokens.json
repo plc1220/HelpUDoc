@@ -1,0 +1,383 @@
+{
+  "artifactSpecVersion": {
+    "$type": "string",
+    "$value": "alpha"
+  },
+  "kind": {
+    "$type": "string",
+    "$value": "presentation"
+  },
+  "name": {
+    "$type": "string",
+    "$value": "Codex Grid Layout Library"
+  },
+  "description": {
+    "$type": "string",
+    "$value": "Design presentation-native decks with a monochrome 80-layout system spanning covers, agendas, image splits, evidence tables, process sequences, charts, and metric grids."
+  },
+  "tone": {
+    "$type": "object",
+    "$value": {
+      "voice": "direct, editorial, and evidence-led",
+      "density": "sparse to dense depending on the selected layout",
+      "visualKeywords": [
+        "monochrome",
+        "grid-led",
+        "presentation-native"
+      ]
+    }
+  },
+  "theme": {
+    "$type": "theme",
+    "$value": {
+      "colorSchemeName": "Codex Grid Monochrome"
+    }
+  },
+  "themeColors": {
+    "$type": "object",
+    "$value": {
+      "canvas": {
+        "name": "Canvas",
+        "color": "#FFFFFF",
+        "type": "boxBackground"
+      },
+      "ink": {
+        "name": "Primary ink",
+        "color": "#000000",
+        "type": "textColor"
+      },
+      "panel": {
+        "name": "Panel fill",
+        "color": "#EDEDED",
+        "type": "boxBackground"
+      },
+      "quietRule": {
+        "name": "Quiet rule",
+        "color": "#B8BCC4",
+        "type": "ruleColor"
+      },
+      "mutedText": {
+        "name": "Muted text",
+        "color": "#555555",
+        "type": "textColor"
+      },
+      "highlight": {
+        "name": "Highlight",
+        "color": "#FF6B35",
+        "type": "highlightColor"
+      }
+    }
+  },
+  "colors": {
+    "$type": "object",
+    "$value": {
+      "ink": "#000000",
+      "canvas": "#FFFFFF",
+      "panel": "#EDEDED",
+      "muted": "#555555",
+      "rule": "#B8BCC4"
+    }
+  },
+  "fills": {
+    "$type": "object",
+    "$value": {
+      "canvas": "#FFFFFF",
+      "panel": "#EDEDED",
+      "emptyMedia": "#EDEDED"
+    }
+  },
+  "lines": {
+    "$type": "object",
+    "$value": {
+      "rule": {
+        "style": "solid",
+        "width": 1,
+        "color": "#B8BCC4"
+      }
+    }
+  },
+  "shadows": {
+    "$type": "object",
+    "$value": {
+      "none": null
+    }
+  },
+  "fontFamilies": {
+    "$type": "object",
+    "$value": {
+      "headline": "Helvetica Neue",
+      "body": "Helvetica Neue",
+      "label": "Helvetica Neue"
+    }
+  },
+  "typography": {
+    "$type": "object",
+    "$value": {
+      "display": {
+        "typeface": "Helvetica Neue",
+        "fontSize": 80,
+        "color": "#000000"
+      },
+      "title": {
+        "typeface": "Helvetica Neue",
+        "fontSize": 56,
+        "color": "#000000"
+      },
+      "body": {
+        "typeface": "Helvetica Neue",
+        "fontSize": 22,
+        "color": "#222222",
+        "lineSpacing": 1.25
+      },
+      "label": {
+        "typeface": "Helvetica Neue",
+        "fontSize": 16,
+        "color": "#555555",
+        "bold": true
+      },
+      "metric": {
+        "typeface": "Helvetica Neue",
+        "fontSize": 54,
+        "color": "#000000"
+      }
+    }
+  },
+  "layout": {
+    "$type": "layout",
+    "$value": {
+      "unit": "px",
+      "baseSpacing": 8,
+      "slideSize": {
+        "width": 1280,
+        "height": 720
+      },
+      "outerMargin": {
+        "top": 40,
+        "right": 42,
+        "bottom": 50,
+        "left": 42
+      },
+      "columns": 12,
+      "gutter": 18
+    }
+  },
+  "charts": {
+    "$type": "object",
+    "$value": {
+      "frame": "dominant left evidence region",
+      "seriesColors": [
+        "#000000",
+        "#FF6B35",
+        "#B8BCC4"
+      ],
+      "gridlines": "minimal"
+    }
+  },
+  "shapes": {
+    "$type": "object",
+    "$value": {
+      "panelFill": "#EDEDED",
+      "cornerRadius": 0,
+      "border": "none"
+    }
+  },
+  "tables": {
+    "$type": "object",
+    "$value": {
+      "headerFill": "#EDEDED",
+      "bodyFill": "#FFFFFF",
+      "rowRule": "#B8BCC4",
+      "cellPadding": 12
+    }
+  },
+  "assets": {
+    "$type": "object",
+    "$value": {
+      "imageSlots": "Use exact user-provided evidence or prompt-backed images; gray panels indicate adaptable media regions."
+    }
+  },
+  "validation": {
+    "$type": "object",
+    "$value": {
+      "slideCount": 80,
+      "exactReconstructionModules": 80,
+      "representativeSlides": [
+        1,
+        8,
+        21,
+        40,
+        62,
+        64,
+        76,
+        80
+      ],
+      "finalRender": "all-slide montage"
+    }
+  },
+  "presentation": {
+    "$type": "presentation.spec",
+    "$value": {
+      "slideSize": {
+        "width": 1280,
+        "height": 720
+      },
+      "grid": {
+        "columns": 12,
+        "outerMargin": {
+          "top": 40,
+          "right": 42,
+          "bottom": 50,
+          "left": 42
+        },
+        "gutter": 18,
+        "baseUnit": 8
+      },
+      "typographyBudget": {
+        "titleMin": 39,
+        "bodyMin": 18,
+        "tableBodyMin": 15,
+        "footnoteMin": 11,
+        "preferredTableBody": 18
+      },
+      "slideArchetypes": {
+        "agenda": {
+          "componentExport": "buildAgendaTemplate",
+          "composition": "agenda",
+          "jsxFoundation": {
+            "primitives": [
+              "grid",
+              "row",
+              "column",
+              "panel"
+            ]
+          }
+        },
+        "chart": {
+          "componentExport": "buildChartTemplate",
+          "composition": "chart",
+          "jsxFoundation": {
+            "primitives": [
+              "grid",
+              "row",
+              "column",
+              "panel"
+            ]
+          }
+        },
+        "cover": {
+          "componentExport": "buildCoverTemplate",
+          "composition": "cover",
+          "jsxFoundation": {
+            "primitives": [
+              "grid",
+              "row",
+              "column",
+              "panel"
+            ]
+          }
+        },
+        "data-table": {
+          "componentExport": "buildTableTemplate",
+          "composition": "data-table",
+          "jsxFoundation": {
+            "primitives": [
+              "grid",
+              "row",
+              "column",
+              "panel"
+            ]
+          }
+        },
+        "image-hero": {
+          "componentExport": "buildImageSplitTemplate",
+          "composition": "image-hero",
+          "jsxFoundation": {
+            "primitives": [
+              "grid",
+              "row",
+              "column",
+              "panel"
+            ]
+          }
+        },
+        "metrics": {
+          "componentExport": "buildMetricsTemplate",
+          "composition": "metrics",
+          "jsxFoundation": {
+            "primitives": [
+              "grid",
+              "row",
+              "column",
+              "panel"
+            ]
+          }
+        },
+        "process": {
+          "componentExport": "buildProcessTemplate",
+          "composition": "process",
+          "jsxFoundation": {
+            "primitives": [
+              "grid",
+              "row",
+              "column",
+              "panel"
+            ]
+          }
+        },
+        "two-column": {
+          "componentExport": "buildTwoColumnTemplate",
+          "composition": "two-column",
+          "jsxFoundation": {
+            "primitives": [
+              "grid",
+              "row",
+              "column",
+              "panel"
+            ]
+          }
+        },
+        "content": {
+          "componentExport": "buildContentTemplate",
+          "composition": "content",
+          "jsxFoundation": {
+            "primitives": [
+              "grid",
+              "row",
+              "column",
+              "panel"
+            ]
+          }
+        }
+      },
+      "silhouetteRules": {
+        "maxRepeatedSilhouette": 4,
+        "maxRailSlides": 3,
+        "noSameSilhouetteAdjacent": true,
+        "requiredNonPanelSlides": 2,
+        "requiredNonRailSlides": 2
+      },
+      "validation": {
+        "representativeSlides": [
+          1,
+          8,
+          21,
+          40,
+          62,
+          64,
+          76,
+          80
+        ],
+        "finalRender": "montage",
+        "inspectTargets": [
+          "deck",
+          "slide",
+          "layout",
+          "shape",
+          "table",
+          "chart",
+          "image"
+        ]
+      }
+    }
+  }
+}

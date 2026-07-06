@@ -26,6 +26,15 @@ analysis tasks.
 | "Build me a dashboard" | `data/dashboard` |
 | "Refresh this every day / keep this report in sync" | `data/refresh` |
 
+Spreadsheet routing:
+
+- Load `xlsx` when the user wants an Excel/CSV/TSV workbook file created, edited,
+  cleaned, formatted, recalculated, charted, or converted.
+- Load a `data/*` skill when the spreadsheet or tabular file is the input to an
+  analysis, SQL query, chart, dashboard, validation, or recurring data snapshot.
+- Do not treat `.xlsx`, `.xls`, `.ods`, or `.parquet` files as UTF-8 text. Use
+  structured parsers, derived artifacts, or data plugin scripts.
+
 ## Connector selection (apply in every subskill)
 
 Choose the right data connector for the source:

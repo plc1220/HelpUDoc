@@ -1,0 +1,71 @@
+{
+  "summary": "Design presentation-native decks with a monochrome 80-layout system spanning covers, agendas, image splits, evidence tables, process sequences, charts, and metric grids.",
+  "sections": [
+    "Covers and section openers",
+    "Agendas and navigation",
+    "Narrative content",
+    "Evidence tables and charts",
+    "Metric and comparison grids"
+  ],
+  "components": {
+    "layoutCount": 80,
+    "archetypeCounts": {
+      "agenda": 5,
+      "chart": 2,
+      "cover": 2,
+      "data-table": 5,
+      "image-hero": 7,
+      "metrics": 8,
+      "process": 36,
+      "two-column": 14,
+      "content": 1
+    },
+    "semanticFamilies": [
+      "buildAgendaTemplate",
+      "buildChartTemplate",
+      "buildCoverTemplate",
+      "buildTableTemplate",
+      "buildImageSplitTemplate",
+      "buildMetricsTemplate",
+      "buildProcessTemplate",
+      "buildTwoColumnTemplate",
+      "buildContentTemplate"
+    ]
+  },
+  "sourcePolicy": {
+    "uploadedFileStored": false,
+    "originalFilenameStored": false
+  },
+  "distillation": {
+    "method": "granola_walnut",
+    "sourceAnalyzed": true,
+    "signals": [
+      "walnut.pptx",
+      "granola.presentation.load",
+      "granola.presentation-jsx",
+      "all-slide-render-qa"
+    ]
+  },
+  "presentation": {
+    "title": "Codex Grid Layout Library",
+    "audience": [
+      "presentation authors",
+      "artifact-generation agents"
+    ],
+    "objective": "Select a presentation-native layout that matches the requested content shape before writing slide copy.",
+    "slideCount": 80,
+    "archetypes": {
+      "agenda": 5,
+      "chart": 2,
+      "cover": 2,
+      "data-table": 5,
+      "image-hero": 7,
+      "metrics": 8,
+      "process": 36,
+      "two-column": 14,
+      "content": 1
+    },
+    "silhouettePolicy": "Choose by templateUse, layoutFamily, slots, and density budget. Vary silhouettes across adjacent slides.",
+    "speakerNotePolicy": "Add concise presenter intent and evidence caveats when the generated deck requires them."
+  }
+}
