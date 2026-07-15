@@ -19,7 +19,7 @@ data:
         @s3 path /helpudoc*
         reverse_proxy @s3 minio:9000
         @apex host lc-demo.com
-        redir @apex https://www.lc-demo.com{uri} permanent
+        redir @apex https://www.aiengine-dev.skp.gov.my{uri} permanent
         reverse_proxy helpudoc-frontend:80
       }
     }

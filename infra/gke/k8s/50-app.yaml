@@ -20,7 +20,7 @@ spec:
         # Copy image-bundled skills/config into PVCs only when the mount is empty,
         # so admin edits on the PVC are preserved across restarts.
         - name: seed-skills
-          image: gcr.io/my-rd-coe-demo-gen-ai/helpudoc-agent:latest
+          image: gcr.io/ccob-my-ai-engine-dev/helpudoc-agent:latest
           imagePullPolicy: Always
           command:
             - /bin/sh
@@ -41,7 +41,7 @@ spec:
             - name: skills-data
               mountPath: /pvc-skills
         - name: seed-agent-config
-          image: gcr.io/my-rd-coe-demo-gen-ai/helpudoc-agent:latest
+          image: gcr.io/ccob-my-ai-engine-dev/helpudoc-agent:latest
           imagePullPolicy: Always
           command:
             - /bin/sh
@@ -63,7 +63,7 @@ spec:
               mountPath: /pvc-agent-config
       containers:
         - name: backend
-          image: gcr.io/my-rd-coe-demo-gen-ai/helpudoc-backend:latest
+          image: gcr.io/ccob-my-ai-engine-dev/helpudoc-backend:latest
           ports:
             - containerPort: 3000
           startupProbe:
@@ -238,6 +238,12 @@ spec:
                   name: helpudoc-config
                   key: GOOGLE_DEVELOPER_KNOWLEDGE_PROJECT_ID
                   optional: true
+            - name: ADMIN_EMAILS
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: ADMIN_EMAILS
+                  optional: true
             - name: GCP_COST_SERVICE_ACCOUNT_JSON
               valueFrom:
                 secretKeyRef:
@@ -272,7 +278,7 @@ spec:
             - name: agent-config-data
               mountPath: /agent/config
         - name: agent
-          image: gcr.io/my-rd-coe-demo-gen-ai/helpudoc-agent:latest
+          image: gcr.io/ccob-my-ai-engine-dev/helpudoc-agent:latest
           ports:
             - containerPort: 8001
           startupProbe:

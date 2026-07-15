@@ -25,7 +25,7 @@ from .tagged_file_policy import tagged_files_mode_guard
 logger = logging.getLogger(__name__)
 
 _DEFAULT_SERVER_NAME = "toolbox-bq-demo"
-_DEFAULT_PROJECT = "my-rd-coe-demo-gen-ai"
+_DEFAULT_PROJECT = "ccob-my-ai-engine-dev"
 _DEFAULT_LOCATION = "us"
 _DEFAULT_ROW_LIMIT = 10000
 _PAGE_SIZE = 1000

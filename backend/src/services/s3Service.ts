@@ -152,6 +152,26 @@ export class S3Service {
     } while (continuationToken);
   }
 
+  async getPrefixStats(prefix: string): Promise<{ objectCount: number; totalBytes: number }> {
+    let continuationToken: string | undefined;
+    let objectCount = 0;
+    let totalBytes = 0;
+    do {
+      const listCommand = new ListObjectsV2Command({
+        Bucket: this.bucketName,
+        Prefix: prefix,
+        ContinuationToken: continuationToken,
+      });
+      const listResponse = await this.client.send(listCommand);
+      for (const item of listResponse.Contents || []) {
+        objectCount += 1;
+        totalBytes += item.Size || 0;
+      }
+      continuationToken = listResponse.IsTruncated ? listResponse.NextContinuationToken : undefined;
+    } while (continuationToken);
+    return { objectCount, totalBytes };
+  }
+
   getPublicUrl(key: string): string {
     if (this.publicBaseUrl) {
       return `${this.publicBaseUrl.replace(/\/$/, '')}/${key}`;

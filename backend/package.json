@@ -9,6 +9,7 @@
     "dev": "nodemon --watch 'src/**/*.ts' --exec 'ts-node -r tsconfig-paths/register' src/index.ts",
     "test": "node -r ts-node/register/transpile-only -r tsconfig-paths/register --test tests/*.test.ts",
     "generate:daily-reflection": "ts-node --transpile-only -r tsconfig-paths/register src/jobs/generateDailyReflection.ts",
+    "report:workspace-state": "ts-node --transpile-only -r tsconfig-paths/register scripts/workspace-state-report.ts",
     "validate:env": "ts-node -r tsconfig-paths/register scripts/validate-env.ts"
   },
   "keywords": [],

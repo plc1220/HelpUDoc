@@ -40,4 +40,4 @@ data:
   AWS_REGION: us-east-1
   AWS_PRICING_MCP_LOG_LEVEL: ERROR
   ENABLE_SKILL_SANDBOX_RUNNER: "false"
-  HELPUDOC_SANDBOX_IMAGE: gcr.io/my-rd-coe-demo-gen-ai/helpudoc-agent:latest
+  HELPUDOC_SANDBOX_IMAGE: gcr.io/ccob-my-ai-engine-dev/helpudoc-agent:latest

@@ -10,7 +10,7 @@ model:
   max_output_tokens: 16384
   pro_max_output_tokens: 32768
   image_name: gemini-3.1-flash-image-preview
-  project: my-rd-coe-demo-gen-ai
+  project: ccob-my-ai-engine-dev
   location: us-central1
   api_key: ${GEMINI_API_KEY}
   use_vertex_ai: false

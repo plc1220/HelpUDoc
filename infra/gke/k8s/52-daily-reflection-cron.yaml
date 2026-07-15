@@ -15,7 +15,7 @@ spec:
           restartPolicy: Never
           containers:
             - name: reflection-job
-              image: gcr.io/my-rd-coe-demo-gen-ai/helpudoc-backend:latest
+              image: gcr.io/ccob-my-ai-engine-dev/helpudoc-backend:latest
               command:
                 - /bin/sh
                 - -lc
