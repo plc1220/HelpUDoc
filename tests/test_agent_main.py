@@ -173,6 +173,7 @@ class V3ProtocolMarkdownStreamingAgent:
             "| March | $574,874 |\n\n"
             "- **Peak month:** March\n"
         )
+        streamed_markdown = markdown[: markdown.index("month:**")]
         metadata = {"langgraph_node": "agent", "run_id": "model-run"}
         protocol_events = [
             {"event": "message-start", "role": "ai", "id": "message-1"},
@@ -184,12 +185,12 @@ class V3ProtocolMarkdownStreamingAgent:
             {
                 "event": "content-block-delta",
                 "index": 0,
-                "delta": {"type": "text-delta", "text": markdown[:45]},
+                "delta": {"type": "text-delta", "text": streamed_markdown[:45]},
             },
             {
                 "event": "content-block-delta",
                 "index": 0,
-                "delta": {"type": "text-delta", "text": markdown[45:]},
+                "delta": {"type": "text-delta", "text": streamed_markdown[45:]},
             },
             {
                 "event": "content-block-finish",

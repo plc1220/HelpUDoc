@@ -812,6 +812,7 @@ def register_chat_routes(
             self._has_events = False
             self._has_assistant_text = False
             self._interrupt_emitted = False
+            self._v3_text_blocks: Dict[Tuple[str, str], str] = {}
             self._cancel_run: Optional[Callable[[], None]] = None
             self._suppress_interrupt_tool_start = suppress_interrupt_tool_start
             self._should_suppress_assistant_text = should_suppress_assistant_text
@@ -1377,6 +1378,12 @@ def register_chat_routes(
             return ""
         return _event_text(content.get("delta") or content.get("text") or content.get("content"))
 
+    def _content_block_index(event: Any) -> str:
+        data = _event_data(event)
+        if isinstance(data, dict) and data.get("index") is not None:
+            return str(data.get("index"))
+        return "0"
+
     def _extract_content_block_interrupt_payload(event: Any) -> Dict[str, Any] | None:
         content = _content_block_payload(event)
         if not content or content.get("type") != "tool_call":
@@ -1468,15 +1475,42 @@ def register_chat_routes(
                 )
                 await handler._emit(interrupt_payload)
                 return True
-            # LangGraph v3 emits text in content-block-delta and repeats the
-            # completed block in content-block-finish. Appending the finish
-            # snapshot would duplicate the Markdown and unbalance code fences.
-            if method != "content-block-delta":
+            block_key = (run_key, _content_block_index(event))
+            if method == "content-block-start":
+                handler._v3_text_blocks[block_key] = ""
                 return False
             text = _content_block_text(event)
             text = strip_interrupt_payload_marker(text)
-            if text and not _is_internal_stream_text(text):
-                await handler._emit({"type": "token", "content": text, "role": "assistant"})
+            if method == "content-block-delta":
+                if text and not _is_internal_stream_text(text):
+                    handler._v3_text_blocks[block_key] = handler._v3_text_blocks.get(block_key, "") + text
+                    await handler._emit({"type": "token", "content": text, "role": "assistant"})
+                return False
+
+            # LangGraph v3 treats content-block-finish as authoritative. It is
+            # often identical to the accumulated deltas, but middleware may
+            # withhold a trailing look-behind window and only release it here.
+            # Emit only that missing suffix so the final answer is complete
+            # without appending the full Markdown document a second time.
+            streamed_text = handler._v3_text_blocks.get(block_key, "")
+            if not text or _is_internal_stream_text(text) or text == streamed_text:
+                return False
+            if text.startswith(streamed_text):
+                missing_suffix = text[len(streamed_text):]
+                handler._v3_text_blocks[block_key] = text
+                if missing_suffix:
+                    await handler._emit(
+                        {"type": "token", "content": missing_suffix, "role": "assistant"}
+                    )
+                return False
+            logger.warning(
+                "LangGraph v3 content block finish diverged from streamed deltas "
+                "(run=%s block=%s streamed_chars=%s final_chars=%s)",
+                run_key,
+                block_key[1],
+                len(streamed_text),
+                len(text),
+            )
             return False
 
         if method in {"on_chat_model_end", "on_llm_end", "message-finish"}:
