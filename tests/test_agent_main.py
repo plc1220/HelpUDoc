@@ -164,6 +164,47 @@ class V3MessageStreamingAgent:
         }
 
 
+class V3MixedAssistantFormatsAgent:
+    async def astream_events(self, *_args, **_kwargs):
+        markdown = (
+            "## Monthly Sales\n\n"
+            "| Month | Sales |\n"
+            "| :---- | ----: |\n"
+            "| March | $574,874 |\n\n"
+            "- **Peak month:** March\n"
+        )
+        for chunk in (markdown[:31], markdown[31:67], markdown[67:]):
+            yield {
+                "event": "on_chat_model_stream",
+                "name": "test-model",
+                "run_id": "model-run",
+                "data": {"chunk": {"role": "assistant", "content": chunk}},
+            }
+        yield {
+            "event": "messages",
+            "name": "agent-snapshot",
+            "run_id": "message-snapshot",
+            "data": (
+                SimpleNamespace(type="ai", content=markdown),
+                {"langgraph_node": "agent"},
+            ),
+        }
+        yield (
+            {
+                "event": "content-block-finish",
+                "index": 0,
+                "content": {"type": "text", "text": markdown},
+            },
+            {"ls_provider": "google_genai"},
+        )
+        yield {
+            "event": "on_chain_end",
+            "name": "agent",
+            "run_id": "agent-run",
+            "data": {"output": {"messages": [{"role": "assistant", "content": markdown}]}},
+        }
+
+
 class V3HumanMessageTupleStreamingAgent:
     async def astream_events(self, *_args, **_kwargs):
         yield {
@@ -490,9 +531,14 @@ def _install_dependency_stubs():
         class _HumanMessage(_BaseMessage):
             pass
 
+        class _AIMessage(_BaseMessage):
+            pass
+
         class _SystemMessage(_BaseMessage):
             pass
 
+        messages_module.AIMessage = _AIMessage
+        messages_module.BaseMessage = _BaseMessage
         messages_module.HumanMessage = _HumanMessage
         messages_module.SystemMessage = _SystemMessage
         sys.modules["langchain_core.messages"] = messages_module
@@ -1041,6 +1087,40 @@ def test_chat_stream_reads_v3_message_chunks(client_with_stubs):
 
     token_text = "".join(item.get("content", "") for item in messages if item.get("type") == "token")
     assert token_text == "Hello"
+    assert messages[-1]["type"] == "done"
+    assert source_tracker.updated_workspaces == [runtime.workspace_state]
+
+
+def test_chat_stream_emits_one_markdown_document_for_mixed_assistant_event_formats(client_with_stubs):
+    client, registry, source_tracker = client_with_stubs
+    runtime = DummyRuntime("workspace-v3-mixed-markdown", V3MixedAssistantFormatsAgent())
+    registry.set_runtime("research", "workspace-v3-mixed-markdown", runtime)
+
+    with client.stream(
+        "POST",
+        "/agents/research/workspace/workspace-v3-mixed-markdown/chat/stream",
+        json={
+            "message": "Summarize sales",
+            "history": [],
+            "langfuseTraceContext": {
+                "runId": "run-v3-mixed-markdown",
+                "threadId": "thread-v3-mixed-markdown",
+            },
+        },
+    ) as response:
+        assert response.status_code == 200
+        messages = _collect_stream_payloads(response)
+
+    expected = (
+        "## Monthly Sales\n\n"
+        "| Month | Sales |\n"
+        "| :---- | ----: |\n"
+        "| March | $574,874 |\n\n"
+        "- **Peak month:** March\n"
+    )
+    token_text = "".join(item.get("content", "") for item in messages if item.get("type") == "token")
+    assert token_text == expected
+    assert token_text.count("## Monthly Sales") == 1
     assert messages[-1]["type"] == "done"
     assert source_tracker.updated_workspaces == [runtime.workspace_state]
 

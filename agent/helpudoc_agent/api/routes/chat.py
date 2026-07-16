@@ -652,11 +652,13 @@ def register_chat_routes(
         trace_thread_id: str = "",
     ) -> str:
         context = runtime.workspace_state.context
+        run_id = str(run_id or "").strip()
+        trace_thread_id = str(trace_thread_id or "").strip()
         # The backend-provided thread ID is authoritative. It is derived from
         # the durable run ID and must override any stale in-memory context
         # when a runtime is reused or recreated for a resume.
-        if trace_thread_id.strip():
-            thread_id = trace_thread_id.strip()
+        if trace_thread_id:
+            thread_id = trace_thread_id
         else:
             suffix = ""
             if isinstance(context, dict):
@@ -666,11 +668,11 @@ def register_chat_routes(
             base = f"{runtime.agent_name}:{runtime.workspace_state.workspace_id}{suffix}"
             if force_reset:
                 thread_id = f"{base}:{uuid4()}"
-            elif run_id.strip():
+            elif run_id:
                 # Resume requests may rebuild the runtime when MCP policy or
                 # delegated auth changes. Bind the checkpoint to the durable
                 # backend run id so the LangGraph interrupt can still resume.
-                thread_id = f"{base}:run:{run_id.strip()}"
+                thread_id = f"{base}:run:{run_id}"
             elif context.get("thread_id"):
                 thread_id = context["thread_id"]
             else:
@@ -1444,11 +1446,18 @@ def register_chat_routes(
             await handler._emit({"type": "model_start", "name": name})
             return False
 
-        if method in {"on_chat_model_stream", "on_llm_stream", "messages"}:
+        if method in {"on_chat_model_stream", "on_llm_stream"}:
             text = _event_chunk_text(data)
             text = strip_interrupt_payload_marker(text)
             if text and not _is_internal_stream_text(text):
                 await handler._emit({"type": "token", "content": text, "role": "assistant"})
+            return False
+
+        if method == "messages":
+            # LangGraph v3 can emit message-state snapshots alongside the
+            # model's incremental stream events. The final-result fallback
+            # below handles snapshot-only runtimes; forwarding both formats
+            # here would join the same Markdown document to itself.
             return False
 
         if method in {"content-block-start", "content-block-delta", "content-block-finish"}:
@@ -1466,10 +1475,9 @@ def register_chat_routes(
                 )
                 await handler._emit(interrupt_payload)
                 return True
-            text = _content_block_text(event)
-            text = strip_interrupt_payload_marker(text)
-            if text and not _is_internal_stream_text(text):
-                await handler._emit({"type": "token", "content": text, "role": "assistant"})
+            # Content-block events are a second, provider-specific view of the
+            # same model output. They are consumed above for structured tool
+            # calls, but visible text comes from on_*_model_stream only.
             return False
 
         if method in {"on_chat_model_end", "on_llm_end", "message-finish"}:
