@@ -183,26 +183,20 @@ def test_frontend_slides_contract_sequence_and_resume_skip_completed_gate():
 
     first = next_pending_gate(context)
     assert first["gate_id"] == "presentation_context"
-    assert first["props"]["questions"][0]["id"] == "purpose"
-    assert [question["id"] for question in first["props"]["questions"]] == [
-        "purpose",
-        "length",
-        "content",
-        "density",
-    ]
+    assert [question["id"] for question in first["props"]["questions"]] == ["density"]
 
     mark_gate_completed(
         context,
         skill_id="frontend-slides",
         gate_id="presentation_context",
         component="clarification.form",
-        answers={"answersByQuestionId": {"purpose": "Pitch deck"}},
+        answers={"answersByQuestionId": {"density": "Low density / speaker-led"}},
     )
 
     assert next_pending_gate(context) is None
 
 
-def test_frontend_slides_defers_outline_gate_until_outline_payload_exists():
+def test_frontend_slides_does_not_require_outline_approval():
     skills = {skill.skill_id: skill for skill in load_skills(Path("skills"))}
     contract = skills["frontend-slides"].interaction_contract
     context = {
@@ -214,16 +208,15 @@ def test_frontend_slides_defers_outline_gate_until_outline_payload_exists():
         skill_id="frontend-slides",
         gate_id="presentation_context",
         component="clarification.form",
-        answers={"answersByQuestionId": {"purpose": "Pitch deck"}},
+        answers={"answersByQuestionId": {"density": "High density / reading-first"}},
     )
 
     assert next_pending_gate(context) is None
 
-    contract["gates"][1].setdefault("props", {})["outline"] = [
-        {"title": "Opening", "summary": "Set context"}
+    assert [gate["gate_id"] for gate in contract["gates"]] == [
+        "presentation_context",
+        "style_preview_selection",
     ]
-    second = next_pending_gate(context)
-    assert second["gate_id"] == "outline_confirmation"
 
 
 def test_frontend_slides_ledger_is_scoped_to_current_run():
@@ -259,10 +252,7 @@ def test_frontend_slides_defers_style_preview_gate_until_previews_exist():
         "thread_id": "thread-1",
         "active_skill_scope": {"interaction_contract": contract},
     }
-    for gate_id in [
-        "presentation_context",
-        "outline_confirmation",
-    ]:
+    for gate_id in ["presentation_context"]:
         mark_gate_completed(
             context,
             run_id="run-1",
@@ -275,7 +265,7 @@ def test_frontend_slides_defers_style_preview_gate_until_previews_exist():
 
     assert next_pending_gate(context) is None
 
-    contract["gates"][2].setdefault("props", {})["choices"] = [
+    contract["gates"][1].setdefault("props", {})["choices"] = [
         {"id": "style-a", "label": "Style A", "value": "Style A"}
     ]
     third = next_pending_gate(context)

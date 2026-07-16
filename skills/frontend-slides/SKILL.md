@@ -87,11 +87,12 @@ Use `workflow_action(action="ask_user_a2ui")` for every decision gate in this sk
 
 Active HelpUDoc gates:
 
-1. `presentation_context` — Ask all initial questions in one `workflow_action(action="ask_user_a2ui")` call: purpose, length, content readiness, and density.
-2. `outline_confirmation` — Use only after a concrete outline or image plan exists. Include `outlineMarkdown`, `outline`, `slides`, or `slideOutline` in the A2UI props/context.
-3. `style_preview_selection` — After generating the three HTML previews in `.frontend-slides/slide-previews/`, use `workflow_action(action="ask_user_a2ui")` with `component="style.previewChooser"` and preview metadata.
+1. `presentation_context` — Ask exactly one initial question in `workflow_action(action="ask_user_a2ui")`: `Low density / speaker-led` or `High density / reading-first`.
+2. `style_preview_selection` — After generating the three HTML previews in `.frontend-slides/slide-previews/`, ask the user to choose a style with `workflow_action(action="ask_user_a2ui")` and `component="style.previewChooser"`.
 
-Do not ask for `style_path_selection` or `mood_or_preset_selection` in new runs. Those older gate IDs may exist in legacy traces, but the current workflow generates three previews directly.
+Infer purpose, audience, length, content readiness, asset treatment, and slide outline from the user's request and supplied material. Do not pause for outline approval. Show the inferred outline only when it helps explain the draft or when the user asks to review it. If the request contains no usable topic or source material, ask one concise blocking content question; otherwise proceed.
+
+Do not ask for `outline_confirmation`, `style_path_selection`, or `mood_or_preset_selection` in new runs. Those older gate IDs may exist in legacy traces, but the current workflow has only the two active decisions above.
 
 After style preview selection, do not call the presentation complete until the final HTML deck exists. The final deck must use the fixed 1920×1080 stage architecture from `viewport-base.css` and `html-template.md`.
 
@@ -111,21 +112,11 @@ When enhancing existing presentations, fixed-stage fitting is the biggest risk:
 
 ---
 
-## Phase 1: Content Discovery (New Presentations)
+## Phase 1: Infer Context and Ask Deck Mode (New Presentations)
 
-**Ask ALL questions together** so the user fills everything out at once. If the current environment provides a native structured-question UI, use it; otherwise ask in one concise message with clearly numbered choices:
+Infer the purpose, audience, narrative, slide count, content readiness, and asset plan from the user's request and any supplied files. Use sensible defaults instead of asking the user to configure the workflow.
 
-**Question 1 — Purpose** (header: "Purpose"):
-What is this presentation for? Options: Pitch deck / Teaching-Tutorial / Conference talk / Internal presentation
-
-**Question 2 — Length** (header: "Length"):
-Approximately how many slides? Options: Short 5-10 / Medium 10-20 / Long 20+
-
-**Question 3 — Content** (header: "Content"):
-Do you have content ready? Options: All content ready / Rough notes / Topic only
-
-**Question 4 — Density** (header: "Density"):
-How dense should the deck feel? Options:
+Ask exactly one structured question:
 
 - "Low density / speaker-led" — Big ideas, fewer words, more visual breathing room
 - "High density / reading-first" — More self-contained detail for async reading
@@ -134,7 +125,7 @@ How dense should the deck feel? Options:
 
 Remember the user's density choice. It affects slide count, typography scale, amount of text per slide, layout density, and whether to favor cinematic presenter slides or self-contained reading slides.
 
-If user has content, ask them to share it.
+If the user already stated the mode, do not ask again. If the request contains no usable topic, brief, notes, or source file, ask for the missing content because generation is otherwise impossible.
 
 ### Step 1.2: Image Evaluation (if images provided)
 
@@ -146,7 +137,7 @@ If user provides an image folder:
 2. **Inspect each image** — Use the agent's available image-understanding capability. If image reading is unavailable, use filenames/metadata and ask the user to clarify only when needed
 3. **Evaluate** — For each: what it shows, USABLE or NOT USABLE (with reason), what concept it represents, dominant colors
 4. **Co-design the outline** — Curated images inform slide structure alongside text. This is NOT "plan slides then add images" — design around both from the start (e.g., 3 screenshots → 3 feature slides, 1 logo → title/closing slide)
-5. **Confirm the outline** using the same structured-question mechanism when available: "Does this slide outline and image selection look right?" Options: Looks good / Adjust images / Adjust outline
+5. **Draft the outline** — Build the slide structure from the text and curated images without a mandatory approval stop. Revise it later if the user requests changes.
 
 **Logo in previews:** If a usable logo was identified, embed it (base64) into each style preview in Phase 2 — the user sees their brand styled three different ways.
 

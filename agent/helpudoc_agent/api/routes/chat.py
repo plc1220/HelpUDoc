@@ -645,9 +645,19 @@ def register_chat_routes(
             logger.exception("Failed to prefetch RAG context for tagged files.")
             return None
 
-    def _get_thread_id(runtime: AgentRuntimeState, force_reset: bool) -> str:
+    def _get_thread_id(
+        runtime: AgentRuntimeState,
+        force_reset: bool,
+        run_id: str = "",
+        trace_thread_id: str = "",
+    ) -> str:
         context = runtime.workspace_state.context
-        if force_reset or not context.get("thread_id"):
+        # The backend-provided thread ID is authoritative. It is derived from
+        # the durable run ID and must override any stale in-memory context
+        # when a runtime is reused or recreated for a resume.
+        if trace_thread_id.strip():
+            thread_id = trace_thread_id.strip()
+        else:
             suffix = ""
             if isinstance(context, dict):
                 user_id = context.get("user_id")
@@ -656,9 +666,16 @@ def register_chat_routes(
             base = f"{runtime.agent_name}:{runtime.workspace_state.workspace_id}{suffix}"
             if force_reset:
                 thread_id = f"{base}:{uuid4()}"
+            elif run_id.strip():
+                # Resume requests may rebuild the runtime when MCP policy or
+                # delegated auth changes. Bind the checkpoint to the durable
+                # backend run id so the LangGraph interrupt can still resume.
+                thread_id = f"{base}:run:{run_id.strip()}"
+            elif context.get("thread_id"):
+                thread_id = context["thread_id"]
             else:
                 thread_id = base
-            context["thread_id"] = thread_id
+        context["thread_id"] = thread_id
         return context["thread_id"]
 
 
@@ -728,7 +745,10 @@ def register_chat_routes(
         return metadata, [tag for tag in tags if tag]
 
     def _build_agent_config(runtime: AgentRuntimeState, message: ChatRequest, callbacks=None) -> Dict[str, Any]:
-        thread_id = _get_thread_id(runtime, message.forceReset)
+        trace_context = message.langfuseTraceContext if isinstance(message.langfuseTraceContext, dict) else {}
+        run_id = _clean_langfuse_value(trace_context.get("runId"))
+        trace_thread_id = _clean_langfuse_value(trace_context.get("threadId"))
+        thread_id = _get_thread_id(runtime, message.forceReset, run_id, trace_thread_id)
         runtime_context = runtime.workspace_state.context or {}
         configurable: Dict[str, Any] = {"thread_id": thread_id}
         user_id = runtime_context.get("user_id")

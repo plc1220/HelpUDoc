@@ -24,9 +24,9 @@ def test_frontend_slides_skill_requires_workflow_action_at_gating_steps() -> Non
     assert "Use `workflow_action(action=\"ask_user_a2ui\")` for every decision gate in this skill." in content
     assert "A UI form only exists when a structured workflow/A2UI tool emits an interrupt" in content
     assert "presentation_context" in content
-    assert "outline_confirmation" in content
     assert "style_preview_selection" in content
-    assert "Do not ask for `style_path_selection` or `mood_or_preset_selection` in new runs." in content
+    assert "Do not ask for `outline_confirmation`, `style_path_selection`, or `mood_or_preset_selection` in new runs." in content
+    assert "Ask exactly one initial question" in content
     assert ".frontend-slides/slide-previews/" in content
     assert "component=\"style.previewChooser\"" in content
     assert "final HTML deck exists" in content

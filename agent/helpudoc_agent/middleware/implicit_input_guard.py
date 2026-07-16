@@ -156,8 +156,8 @@ def _build_frontend_slides_gate_interrupt(gate_id: str) -> dict[str, Any] | None
     display_payload = _frontend_slides_gate_display_payload(gate_id)
     if gate_id == "presentation_context":
         return build_clarification_interrupt_value(
-            title="Presentation Setup",
-            description="Configure the basic settings for your presentation.",
+            title="Choose Deck Mode",
+            description="Choose whether the deck will be presented live or read on its own.",
             questions=FRONTEND_SLIDES_DISCOVERY_QUESTIONS,
             choices=[],
             allow_freeform=True,
@@ -251,7 +251,7 @@ def _frontend_slides_gate_loopback_instruction(gate_id: str | None, assistant_te
         )
     if gate_id == "style_preview_selection":
         return (
-            f"{base} Generate the three style previews, then call "
+            f"{base} The deck mode is already selected. Generate the three style previews, then call "
             "workflow_action with action='ask_user_a2ui', component='style.previewChooser', and gate_id='style_preview_selection'."
         )
     return (
@@ -639,8 +639,8 @@ def build_synthetic_clarification_interrupt(
 
     if skill_id == "frontend-slides" and _is_frontend_slides_discovery_context(assistant_text):
         payload = build_clarification_interrupt_value(
-            title="Presentation Context",
-            description="Share the setup details so the presentation workflow can continue.",
+            title="Choose Deck Mode",
+            description="Choose whether the deck will be presented live or read on its own.",
             questions=FRONTEND_SLIDES_DISCOVERY_QUESTIONS,
             choices=[],
             allow_freeform=True,
@@ -722,7 +722,7 @@ class ImplicitInputGuardMiddleware(AgentMiddleware):
             if _is_frontend_slides_skill(skill_id)
             else None
         )
-        # Gate 1 is mandatory at the start of a new frontend-slides run. Later gates
+        # The deck-mode gate is mandatory at the start of a new frontend-slides run. Later gates
         # should be emitted deterministically when the model asks for UI in prose,
         # but only when the prose matches that specific gate. Otherwise a repeated
         # stale setup-form prompt can incorrectly advance to the next gate.

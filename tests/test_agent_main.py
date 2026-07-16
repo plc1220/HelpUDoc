@@ -729,6 +729,95 @@ def test_chat_stream_force_reset_uses_fresh_thread_id(client_with_stubs):
     assert source_tracker.updated_workspaces == [runtime.workspace_state]
 
 
+def test_chat_stream_resume_with_run_id_uses_stable_thread_id(client_with_stubs):
+    client, registry, source_tracker = client_with_stubs
+    agent = RecordingStreamingAgent(["Resumed ok"])
+    runtime = DummyRuntime("workspace-resume", agent)
+    registry.set_runtime("research", "workspace-resume", runtime)
+
+    payload = {
+        "message": "",
+        "history": [],
+        "langfuseTraceContext": {"runId": "run-resume-123"},
+    }
+    with client.stream("POST", "/agents/research/workspace/workspace-resume/chat/stream", json=payload) as response:
+        assert response.status_code == 200
+        messages = _collect_stream_payloads(response)
+
+    assert messages[-1]["type"] == "done"
+    _args, kwargs = agent.stream_inputs[0]
+    assert kwargs["config"]["configurable"]["thread_id"].endswith(":run:run-resume-123")
+    assert runtime.workspace_state.context["thread_id"].endswith(":run:run-resume-123")
+    assert source_tracker.updated_workspaces == [runtime.workspace_state]
+
+
+def test_chat_stream_resume_reuses_run_thread_after_runtime_recreation(client_with_stubs):
+    client, registry, source_tracker = client_with_stubs
+    first_agent = RecordingStreamingAgent(["Paused"])
+    first_runtime = DummyRuntime("workspace-recreated", first_agent)
+    registry.set_runtime("research", "workspace-recreated", first_runtime)
+    trace_context = {"runId": "run-recreated-123"}
+
+    with client.stream(
+        "POST",
+        "/agents/research/workspace/workspace-recreated/chat/stream",
+        json={"message": "Need clarification", "history": [], "langfuseTraceContext": trace_context},
+    ) as response:
+        assert response.status_code == 200
+        _collect_stream_payloads(response)
+
+    first_thread_id = first_agent.stream_inputs[0][1]["config"]["configurable"]["thread_id"]
+
+    # Simulate MCP/auth-driven runtime recreation: the new runtime has no
+    # in-memory thread context, but the durable run ID remains available.
+    second_agent = RecordingStreamingAgent(["Continued"])
+    second_runtime = DummyRuntime("workspace-recreated", second_agent)
+    registry.set_runtime("research", "workspace-recreated", second_runtime)
+    with client.stream(
+        "POST",
+        "/agents/research/workspace/workspace-recreated/chat/stream/respond",
+        json={
+            "message": "Clarification answer",
+            "answersByQuestionId": {"response": "Use the executive view"},
+            "langfuseTraceContext": trace_context,
+        },
+    ) as response:
+        assert response.status_code == 200
+        messages = _collect_stream_payloads(response)
+
+    second_thread_id = second_agent.stream_inputs[0][1]["config"]["configurable"]["thread_id"]
+    assert messages[-1]["type"] == "done"
+    assert second_thread_id == first_thread_id
+    assert second_runtime.workspace_state.context["thread_id"] == first_thread_id
+    assert source_tracker.updated_workspaces == [first_runtime.workspace_state, second_runtime.workspace_state]
+
+
+def test_chat_stream_run_id_replaces_stale_runtime_thread(client_with_stubs):
+    client, registry, source_tracker = client_with_stubs
+    agent = RecordingStreamingAgent(["Continued"])
+    runtime = DummyRuntime("workspace-stale-thread", agent)
+    runtime.workspace_state.context["thread_id"] = "old-task-thread"
+    registry.set_runtime("research", "workspace-stale-thread", runtime)
+
+    with client.stream(
+        "POST",
+        "/agents/research/workspace/workspace-stale-thread/chat/stream",
+        json={
+            "message": "New task",
+            "history": [],
+            "langfuseTraceContext": {"runId": "run-new-task"},
+        },
+    ) as response:
+        assert response.status_code == 200
+        _collect_stream_payloads(response)
+
+    thread_id = agent.stream_inputs[0][1]["config"]["configurable"]["thread_id"]
+    assert thread_id.endswith(":run:run-new-task")
+    assert thread_id != "old-task-thread"
+    assert runtime.workspace_state.context["thread_id"] == thread_id
+    assert source_tracker.updated_workspaces == [runtime.workspace_state]
+
+
 def test_chat_stream_returns_error_when_agent_missing(client_with_stubs):
     client, registry, source_tracker = client_with_stubs
     runtime = DummyRuntime("workspace-abc", agent=None)

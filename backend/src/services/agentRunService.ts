@@ -29,4 +29,5 @@ export {
   terminalEventFromStreamPayload,
   validateInterrupt,
   withFrontendSlidesGateMetadata,
+  mergeAssistantTextChunk,
 } from './agent-runs/lifecycle';

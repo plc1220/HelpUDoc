@@ -3442,6 +3442,17 @@ export default function WorkspacePage() {
           sanitizedChunk = remainder;
         }
       }
+      if (!existingText) {
+        return sanitizedChunk;
+      }
+      // The agent can emit deltas followed by a cumulative final snapshot.
+      // Merge that snapshot instead of displaying/persisting the answer twice.
+      if (sanitizedChunk === existingText) {
+        return existingText;
+      }
+      if (sanitizedChunk.startsWith(existingText)) {
+        return sanitizedChunk;
+      }
       return `${existingText}${sanitizedChunk}`;
     },
     [],
@@ -3960,7 +3971,8 @@ export default function WorkspacePage() {
       return;
     }
     const conversationBuffer = agentChunkBufferRef.current.get(conversationId) ?? new Map();
-    conversationBuffer.set(index, `${conversationBuffer.get(index) || ''}${chunk}`);
+    const bufferedText = conversationBuffer.get(index) || '';
+    conversationBuffer.set(index, combineBufferedAgentText(conversationId, bufferedText, chunk));
     agentChunkBufferRef.current.set(conversationId, conversationBuffer);
     if (agentChunkFlushTimerRef.current === null) {
       agentChunkFlushTimerRef.current = window.requestAnimationFrame(() => {
@@ -3968,7 +3980,7 @@ export default function WorkspacePage() {
         flushBufferedAgentChunks();
       });
     }
-  }, [flushBufferedAgentChunks]);
+  }, [combineBufferedAgentText, flushBufferedAgentChunks]);
 
   useEffect(() => {
     return () => {

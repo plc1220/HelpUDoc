@@ -4,27 +4,13 @@ gates:
     required: true
     synthetic_on_pending: true
     props:
-      title: Presentation Context
-      description: Tell me enough to shape the deck before I design it.
+      title: Choose Deck Mode
+      description: Choose how the presentation will be consumed. Everything else is inferred from your request and source material.
       submitLabel: Continue
     context:
       skill: frontend-slides
       skillId: frontend-slides
       gateId: presentation_context
-      uiContract: a2ui
-      expectedComponent: clarification_form
-  - gate_id: outline_confirmation
-    component: clarification_form
-    required: true
-    synthetic_on_pending: true
-    props:
-      title: Confirm Outline
-      description: Confirm the slide outline before style discovery.
-      submitLabel: Confirm outline
-    context:
-      skill: frontend-slides
-      skillId: frontend-slides
-      gateId: outline_confirmation
       uiContract: a2ui
       expectedComponent: clarification_form
   - gate_id: style_preview_selection

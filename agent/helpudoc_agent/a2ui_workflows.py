@@ -13,11 +13,11 @@ FRONTEND_SLIDES_GATE_COMPONENTS: dict[str, set[str]] = {
 
 FRONTEND_SLIDES_A2UI_GATE_IDS: tuple[str, ...] = (
     "presentation_context",
-    "outline_confirmation",
     "style_preview_selection",
 )
 
 FRONTEND_SLIDES_LEGACY_GATE_IDS: tuple[str, ...] = (
+    "outline_confirmation",
     "style_path_selection",
     "mood_or_preset_selection",
 )
@@ -96,90 +96,9 @@ FRONTEND_SLIDES_MOOD_QUESTIONS: list[dict[str, Any]] = [
 
 FRONTEND_SLIDES_DISCOVERY_QUESTIONS: list[dict[str, Any]] = [
     {
-        "id": "purpose",
-        "header": "Purpose",
-        "question": "What is this presentation for?",
-        "options": [
-            {
-                "id": "purpose-pitch-deck",
-                "label": "Pitch deck",
-                "value": "Pitch deck",
-                "description": "Selling an idea, product, or company to investors/clients",
-            },
-            {
-                "id": "purpose-teaching",
-                "label": "Teaching/Tutorial",
-                "value": "Teaching/Tutorial",
-                "description": "Explaining concepts, how-to guides, educational content",
-            },
-            {
-                "id": "purpose-conference",
-                "label": "Conference talk",
-                "value": "Conference talk",
-                "description": "Speaking at an event, tech talk, keynote",
-            },
-            {
-                "id": "purpose-internal",
-                "label": "Internal presentation",
-                "value": "Internal presentation",
-                "description": "Team updates, strategy meetings, company updates",
-            },
-        ],
-    },
-    {
-        "id": "length",
-        "header": "Length",
-        "question": "Approximately how many slides?",
-        "options": [
-            {
-                "id": "length-short",
-                "label": "Short (5-10)",
-                "value": "Short (5-10)",
-                "description": "Quick pitch, lightning talk",
-            },
-            {
-                "id": "length-medium",
-                "label": "Medium (10-20)",
-                "value": "Medium (10-20)",
-                "description": "Standard presentation",
-            },
-            {
-                "id": "length-long",
-                "label": "Long (20+)",
-                "value": "Long (20+)",
-                "description": "Deep dive, comprehensive talk",
-            },
-        ],
-    },
-    {
-        "id": "content",
-        "header": "Content",
-        "question": "Do you have content ready?",
-        "options": [
-            {
-                "id": "content-ready",
-                "label": "All content ready",
-                "value": "All content ready",
-                "description": "Design the deck from complete source material",
-            },
-            {
-                "id": "content-notes",
-                "label": "Rough notes",
-                "value": "Rough notes",
-                "description": "Organize notes into a slide narrative",
-            },
-            {
-                "id": "content-topic",
-                "label": "Topic only",
-                "value": "Topic only",
-                "description": "Create the outline and content structure",
-            },
-        ],
-    },
-    {
         "id": "density",
-        "header": "Density",
-        "question": "How dense should the deck feel?",
+        "header": "Deck mode",
+        "question": "Will this deck be presented live or read on its own?",
         "options": [
             {
                 "id": "density-low",

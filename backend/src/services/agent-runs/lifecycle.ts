@@ -218,6 +218,25 @@ const stableNormalize = (value: unknown): unknown => {
   return value;
 };
 
+export const mergeAssistantTextChunk = (existing: string, incoming: string): string => {
+  if (!incoming) {
+    return existing;
+  }
+  if (!existing) {
+    return incoming;
+  }
+  // Some agent stream versions emit deltas and then repeat the complete
+  // assistant message during finalization. Treat that exact snapshot as a
+  // duplicate and a longer cumulative snapshot as a replacement.
+  if (incoming === existing) {
+    return existing;
+  }
+  if (incoming.startsWith(existing)) {
+    return incoming;
+  }
+  return `${existing}${incoming}`;
+};
+
 const buildInterruptId = (payload: Record<string, unknown>): string => {
   const canonical = stableNormalize(
     Object.entries(payload).reduce<Record<string, unknown>>((acc, [key, value]) => {
@@ -451,7 +470,7 @@ export const buildSyntheticClarificationFollowupPrompt = (
   const nextFrontendSlidesGate = workflowState?.nextRequiredGateId;
   const frontendSlidesGate = previousInterrupt?.displayPayload?.skill === 'frontend-slides'
     ? workflowState?.canComplete
-      ? 'For frontend-slides: all required structured gates are complete and the user has selected a visual style. Continue directly into building the final HTML presentation deck now using the selected style. Do not ask for Presentation Context again or any earlier frontend-slides gate again.'
+      ? 'For frontend-slides: both required decisions are complete and the user has selected a visual style. Continue directly into building the final HTML presentation deck now. Do not ask for deck setup, outline approval, or any earlier frontend-slides gate again.'
       : nextFrontendSlidesGate === 'outline_confirmation'
       ? 'For frontend-slides: the user has completed Presentation Context. Generate the slide outline next, then pause with an outline_confirmation structured A2UI workflow action. Do not ask for Presentation Context again and do not generate style previews yet.'
       : nextFrontendSlidesGate === 'style_path_selection'
@@ -461,11 +480,13 @@ export const buildSyntheticClarificationFollowupPrompt = (
       : nextFrontendSlidesGate === 'style_preview_selection'
       ? gateId === 'outline_confirmation'
         ? 'For frontend-slides: the user confirmed the outline. Generate 2-3 style previews/templates next, then pause with a style_preview_selection structured A2UI workflow action. Do not ask for Presentation Context or Outline Confirmation again.'
-        : 'For frontend-slides: the user selected the mood or preset direction. Generate 2-3 style previews/templates next, then pause with a style_preview_selection structured A2UI workflow action. Do not ask for earlier frontend-slides gates again.'
+        : gateId === 'mood_or_preset_selection'
+          ? 'For frontend-slides: the user selected a legacy mood or preset direction. Generate 2-3 style previews/templates next, then pause with a style_preview_selection structured A2UI workflow action. Do not repeat earlier gates.'
+          : 'For frontend-slides: the user selected the deck mode. Infer the remaining context and outline from the request and source material, generate 2-3 style previews/templates, then pause with a style_preview_selection structured A2UI workflow action. Do not ask for purpose, audience, length, assets, or outline approval.'
       : 'For frontend-slides: continue to the next incomplete A2UI gate. Do not ask for already answered frontend-slides gates again.'
     : '';
   const repeatedGateInstruction = previousInterrupt?.displayPayload?.skill === 'frontend-slides'
-    ? 'The user has already answered the structured UI gate below. Do not ask for this same Presentation Context / setup form again.'
+    ? 'The user has already answered the structured UI gate below. Do not ask for this same deck-mode choice again.'
     : 'The user has already answered the structured UI gate below. Do not ask for this same input again.';
   const nextPhaseInstruction = previousInterrupt?.displayPayload?.skill === 'frontend-slides'
     ? 'Treat these answers as final for the current gate and move to the next required phase of the skill.'
@@ -480,7 +501,7 @@ export const buildSyntheticClarificationFollowupPrompt = (
     return [
       skillDirective,
       '[Frontend-slides final generation phase]',
-      'All required structured gates are complete. The user has selected a visual style.',
+      'Both required decisions are complete: deck mode and visual style.',
       'Do not call workflow_action(action="ask_user_a2ui"), request_clarification, request_ui, or request_human_action for any frontend-slides gate.',
       `Generate the final required artifact now: ${frontendSlidesArtifactInstruction}. The output must be a slide deck, not a report or summary page. Use write_file so the file appears in the workspace.`,
       'Only after the deck file exists may you call workflow_action(action="complete") or finish the run.',
@@ -649,53 +670,12 @@ type ConversationRunSnapshot = {
 
 const FRONTEND_SLIDES_DISCOVERY_QUESTIONS = [
   {
-    id: 'presentation_goal',
-    header: 'Goal',
-    question: 'What should this presentation accomplish?',
+    id: 'density',
+    header: 'Deck mode',
+    question: 'Will this deck be presented live or read on its own?',
     options: [
-      { id: 'win_approval', label: 'Win approval', description: 'Persuade decision makers to approve the proposal.', value: 'Win stakeholder approval for the proposal.' },
-      { id: 'explain_solution', label: 'Explain solution', description: 'Make the solution and implementation path easy to understand.', value: 'Clearly explain the solution and implementation path.' },
-      { id: 'sales_pitch', label: 'Sales pitch', description: 'Create a polished commercial pitch for buyers.', value: 'Create a polished sales pitch for buyers.' },
-    ],
-  },
-  {
-    id: 'audience',
-    header: 'Audience',
-    question: 'Who is the primary audience?',
-    options: [
-      { id: 'executives', label: 'Executives', description: 'Focus on business value, risk, and outcomes.', value: 'Executives and senior decision makers.' },
-      { id: 'technical', label: 'Technical team', description: 'Include architecture, workflow, and implementation detail.', value: 'Technical evaluators and implementation teams.' },
-      { id: 'mixed', label: 'Mixed audience', description: 'Balance business outcomes with technical confidence.', value: 'A mixed business and technical audience.' },
-    ],
-  },
-  {
-    id: 'deck_length',
-    header: 'Length',
-    question: 'How long should the deck be?',
-    options: [
-      { id: 'concise', label: 'Concise', description: 'About 6 to 8 slides.', value: 'Concise deck, about 6 to 8 slides.' },
-      { id: 'standard', label: 'Standard', description: 'About 10 to 14 slides.', value: 'Standard deck, about 10 to 14 slides.' },
-      { id: 'detailed', label: 'Detailed', description: 'About 15 to 20 slides with more supporting detail.', value: 'Detailed deck, about 15 to 20 slides.' },
-    ],
-  },
-  {
-    id: 'visual_style',
-    header: 'Style',
-    question: 'What visual direction should the first draft use?',
-    options: [
-      { id: 'consulting', label: 'Consulting', description: 'Clean enterprise slides with strong executive hierarchy.', value: 'Clean enterprise consulting style.' },
-      { id: 'modern', label: 'Modern product', description: 'Sharper product storytelling with richer visual contrast.', value: 'Modern product storytelling style.' },
-      { id: 'generate_previews', label: 'Show previews', description: 'Generate a few HTML style previews before choosing.', value: 'Generate several HTML style previews before finalizing the deck direction.' },
-    ],
-  },
-  {
-    id: 'asset_preference',
-    header: 'Assets',
-    question: 'How should images and brand assets be handled?',
-    options: [
-      { id: 'use_document', label: 'Use document only', description: 'Use visuals already implied by the source document.', value: 'Use only visuals and content implied by the source document.' },
-      { id: 'find_assets', label: 'Find assets', description: 'Use relevant external or generated imagery where helpful.', value: 'Find or generate relevant supporting imagery where helpful.' },
-      { id: 'minimal_assets', label: 'Minimal', description: 'Keep the deck mostly typography, charts, and diagrams.', value: 'Keep visuals minimal, focused on typography, charts, and diagrams.' },
+      { id: 'density-low', label: 'Speaker-led', description: 'Big ideas, fewer words, and more visual breathing room.', value: 'Low density / speaker-led' },
+      { id: 'density-high', label: 'Reading-first', description: 'More self-contained detail for async reading.', value: 'High density / reading-first' },
     ],
   },
 ];
@@ -824,7 +804,6 @@ const FRONTEND_SLIDES_KNOWN_GATES = [
 
 const FRONTEND_SLIDES_FALLBACK_REQUIRED_GATES = [
   'presentation_context',
-  'outline_confirmation',
   'style_preview_selection',
 ] as const;
 
@@ -1265,7 +1244,7 @@ const FRONTEND_SLIDES_WORKFLOW_ACTION_BY_GATE: Record<FrontendSlidesGateId, Work
 };
 
 const FRONTEND_SLIDES_GATE_PHASE: Record<FrontendSlidesGateId, string> = {
-  presentation_context: 'collect_context',
+  presentation_context: 'choose_deck_mode',
   outline_confirmation: 'review_outline',
   style_path_selection: 'choose_style_path',
   mood_or_preset_selection: 'collect_style_direction',
@@ -1582,8 +1561,8 @@ const buildFrontendSlidesGatePendingInterrupt = (input: {
     submitLabel: string;
   }> = {
     presentation_context: {
-      title: 'Presentation Setup',
-      description: 'Configure the basic settings for your presentation.',
+      title: 'Choose Deck Mode',
+      description: 'Choose whether the deck will be presented live or read on its own.',
       questions: FRONTEND_SLIDES_DISCOVERY_QUESTIONS,
       submitLabel: 'Continue',
     },
@@ -2046,8 +2025,8 @@ const buildImplicitInputPendingInterrupt = (opts: {
       expectedComponent: 'clarification_form',
     };
     const props = {
-      title: 'Presentation Context',
-      description: opts.prompt || 'The agent needs a few details before continuing.',
+      title: 'Choose Deck Mode',
+      description: opts.prompt || 'Choose whether the deck will be presented live or read on its own.',
       questions: FRONTEND_SLIDES_DISCOVERY_QUESTIONS,
       choices: [],
       inputMode: 'text',
@@ -2065,8 +2044,8 @@ const buildImplicitInputPendingInterrupt = (opts: {
     return {
       kind: 'clarification',
       interruptId,
-      title: 'Presentation Context',
-      description: opts.prompt || 'The agent needs a few details before continuing.',
+      title: 'Choose Deck Mode',
+      description: opts.prompt || 'Choose whether the deck will be presented live or read on its own.',
       actions: [
         {
           id: 'submit_context',
@@ -3024,6 +3003,12 @@ async function runAgentRunWorker(
   let toolErrorCount = runProgress?.toolErrorCount ?? 0;
   const traceContext: AgentTraceContext = {
     runId,
+    // Keep the LangGraph checkpoint stable for a run even if the agent
+    // runtime is rebuilt between the initial request and a clarification
+    // response. Synthetic resets get a fresh checkpoint intentionally.
+    threadId: params.forceReset && previousInterrupt
+      ? `${runId}:reset:${randomUUID()}`
+      : runId,
     turnId: params.turnId,
     userId: params.userId,
     workspaceId: params.workspaceId,
@@ -3168,7 +3153,7 @@ async function runAgentRunWorker(
       return;
     }
     if ((parsed.type === 'token' || parsed.type === 'chunk') && (!parsed.role || parsed.role === 'assistant')) {
-      assistantText += coerceText(parsed.content);
+      assistantText = mergeAssistantTextChunk(assistantText, coerceText(parsed.content));
       return;
     }
     if (parsed.type === 'thought') {

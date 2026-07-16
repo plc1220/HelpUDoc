@@ -23,6 +23,7 @@ export type AgentMessageContentBlock = {
 
 export type AgentTraceContext = {
   runId?: string;
+  threadId?: string;
   turnId?: string;
   userId?: string;
   workspaceId?: string;

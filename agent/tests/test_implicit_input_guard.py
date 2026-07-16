@@ -237,18 +237,13 @@ def test_build_synthetic_interrupt_uses_frontend_slides_discovery_form() -> None
     )
     assert payload is not None
     assert payload["kind"] == "clarification"
-    assert payload["title"] == "Presentation Context"
+    assert payload["title"] == "Choose Deck Mode"
     assert payload["display_payload"]["synthetic"] is True
 
     questions = payload["response_spec"]["questions"]
-    assert [question["id"] for question in questions] == [
-        "purpose",
-        "length",
-        "content",
-        "density",
-    ]
-    assert questions[0]["header"] == "Purpose"
-    assert questions[3]["options"][0]["label"] == "Low density / speaker-led"
+    assert [question["id"] for question in questions] == ["density"]
+    assert questions[0]["header"] == "Deck mode"
+    assert questions[0]["options"][0]["label"] == "Low density / speaker-led"
     assert payload["response_spec"]["allowDismiss"] is True
 
 
@@ -320,7 +315,7 @@ def test_build_synthetic_interrupt_detects_generic_form_preference_request() -> 
     )
     assert payload is not None
     assert payload["kind"] == "clarification"
-    assert payload["title"] == "Presentation Context"
+    assert payload["title"] == "Choose Deck Mode"
     assert payload["response_spec"]["questions"]
 
 
@@ -468,7 +463,7 @@ def test_guard_emits_deterministic_gate_interrupt_without_regex_signal() -> None
     assert interrupt_payload["kind"] == "clarification"
     assert interrupt_payload["displayPayload"]["gateId"] == "presentation_context"
     assert interrupt_payload["displayPayload"]["uiContract"] == "a2ui"
-    assert interrupt_payload["responseSpec"]["questions"][0]["id"] == "purpose"
+    assert interrupt_payload["responseSpec"]["questions"][0]["id"] == "density"
     assert "frontend_slides_completed_a2ui_gates" not in runtime.context
 
 
@@ -500,13 +495,13 @@ def test_guard_does_not_advance_next_gate_for_repeated_setup_form_prose() -> Non
     messages = result.get("messages") or []
     assert len(messages) == 1
     assert "presentation setup" in messages[0].content.lower()
-    assert "already complete" in messages[0].content.lower()
+    assert "deck mode is already selected" in messages[0].content.lower()
     assert "workflow_action" in messages[0].content
     assert "ask_user_a2ui" in messages[0].content
-    assert "outline_confirmation" in messages[0].content
+    assert "style_preview_selection" in messages[0].content
 
 
-def test_guard_emits_outline_gate_after_completed_presentation_context_when_outline_prose_asks_ui() -> None:
+def test_guard_skips_outline_gate_after_deck_mode_selection() -> None:
     middleware = ImplicitInputGuardMiddleware()
     state = {
         "messages": [
@@ -529,16 +524,11 @@ def test_guard_emits_outline_gate_after_completed_presentation_context_when_outl
     result = middleware.after_model(state, runtime)
 
     assert result is not None
-    assert "jump_to" not in result
+    assert result.get("jump_to") == "model"
     messages = result.get("messages") or []
     assert len(messages) == 1
-    assert isinstance(messages[0], AIMessage)
-    interrupt_payload = extract_interrupt_payload_from_tool_text(messages[0].content)
-    assert interrupt_payload is not None
-    assert interrupt_payload["kind"] == "clarification"
-    assert interrupt_payload["displayPayload"]["gateId"] == "outline_confirmation"
-    assert interrupt_payload["displayPayload"]["uiContract"] == "a2ui"
-    assert interrupt_payload["responseSpec"]["questions"][0]["id"] == "outline"
+    assert "style_preview_selection" in messages[0].content
+    assert "outline_confirmation" not in messages[0].content
 
 
 def test_guard_allows_frontend_slides_after_all_gates_completed() -> None:

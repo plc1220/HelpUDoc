@@ -18,11 +18,10 @@ This bundle is vendored from the upstream Claude Code plugin payload at `plugins
 
 New runs use these active A2UI gates:
 
-1. `presentation_context`
-2. `outline_confirmation` when a proposed outline exists
-3. `style_preview_selection` after previews have been generated
+1. `presentation_context` asks only whether the deck is speaker-led or reading-first.
+2. `style_preview_selection` asks the user to choose from generated visual previews.
 
-Legacy gate IDs `style_path_selection` and `mood_or_preset_selection` remain recognized by runtime compatibility code, but new runs should generate three previews directly.
+Purpose, audience, length, content readiness, assets, and outline are inferred from the request and source material. The agent may show or revise its inferred outline, but outline approval is not a required stop. Legacy gate IDs `outline_confirmation`, `style_path_selection`, and `mood_or_preset_selection` remain recognized by runtime compatibility code.
 
 ## Legacy HTML-to-PPTX Export
 

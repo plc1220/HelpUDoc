@@ -22,6 +22,7 @@ import {
   validateInterrupt,
   resumeAgentRunWithResponse,
   withFrontendSlidesGateMetadata,
+  mergeAssistantTextChunk,
 } from '../src/services/agentRunService';
 import {
   artifactPathMatchesRequirement,
@@ -47,6 +48,15 @@ const waitForRunStatus = async (
   }
   return latest;
 };
+
+test('mergeAssistantTextChunk collapses cumulative final stream snapshots', () => {
+  const partial = 'Based on the data...\n\n### KPI\n\n| Metric | Value |';
+  const final = `${partial}\n\n### Insights\n\n- Revenue increased.`;
+
+  assert.equal(mergeAssistantTextChunk(partial, final), final);
+  assert.equal(mergeAssistantTextChunk(final, final), final);
+  assert.equal(mergeAssistantTextChunk(final, '- trailing delta'), `${final}- trailing delta`);
+});
 
 const presentationContextInterrupt = {
   type: 'interrupt',
@@ -438,8 +448,8 @@ test('buildFrontendSlidesWorkflowState derives next required gate from completed
   });
 
   assert.equal(state.workflowType, 'presentation_generation');
-  assert.equal(state.currentPhase, 'review_outline');
-  assert.equal(state.nextRequiredGateId, 'outline_confirmation');
+  assert.equal(state.currentPhase, 'review_style_previews');
+  assert.equal(state.nextRequiredGateId, 'style_preview_selection');
   assert.equal(state.nextRequiredAction, 'ask_user_a2ui');
   assert.equal(state.canComplete, false);
 });
@@ -447,7 +457,6 @@ test('buildFrontendSlidesWorkflowState derives next required gate from completed
 test('frontend-slides workflow contract declares required gates and final artifacts', () => {
   assert.deepEqual(requiredGateIdsForSkill('frontend-slides'), [
     'presentation_context',
-    'outline_confirmation',
     'style_preview_selection',
   ]);
   const artifacts = requiredArtifactsForSkill('frontend-slides');
@@ -777,7 +786,7 @@ test('terminalEventFromStreamPayload ignores recoverable progress tool errors', 
   });
 });
 
-test('buildSyntheticClarificationFollowupPrompt advances frontend-slides context to outline confirmation', () => {
+test('buildSyntheticClarificationFollowupPrompt advances deck mode to style previews', () => {
   const prompt = buildSyntheticClarificationFollowupPrompt(
     '/skill frontend-slides Create a deck\nOriginal request:\n/skill frontend-slides Create a deck',
     {
@@ -800,12 +809,12 @@ test('buildSyntheticClarificationFollowupPrompt advances frontend-slides context
     } as any,
   );
 
-  assert.match(prompt, /Generate the slide outline next/);
-  assert.match(prompt, /outline_confirmation/);
+  assert.match(prompt, /user selected the deck mode/);
+  assert.match(prompt, /style_preview_selection/);
   assert.match(prompt, /Frontend-slides workflow state/);
-  assert.match(prompt, /workflow_action\(action="generate_artifact"/);
-  assert.match(prompt, /workflow_action\(action="ask_user_a2ui", gate_id="outline_confirmation"/);
-  assert.doesNotMatch(prompt, /Generate 2-3 style previews\/templates next/);
+  assert.match(prompt, /workflow_action\(action="ask_user_a2ui", gate_id="style_preview_selection"/);
+  assert.match(prompt, /generate 2-3 style previews\/templates/i);
+  assert.doesNotMatch(prompt, /outline_confirmation structured A2UI workflow action/);
   assert.match(prompt, /^\/skill frontend-slides\n/);
 });
 
@@ -837,7 +846,7 @@ test('buildSyntheticClarificationFollowupPrompt does not nest prior continuation
   assert.equal((wrappedTwice.match(/^\/skill frontend-slides$/gm) || []).length, 1);
 });
 
-test('buildSyntheticClarificationFollowupPrompt advances frontend-slides outline confirmation to style previews', () => {
+test('buildSyntheticClarificationFollowupPrompt does not let a legacy outline gate bypass deck mode', () => {
   const prompt = buildSyntheticClarificationFollowupPrompt(
     'Create a deck',
     {
@@ -857,10 +866,10 @@ test('buildSyntheticClarificationFollowupPrompt advances frontend-slides outline
     } as any,
   );
 
-  assert.match(prompt, /confirmed the outline/);
-  assert.match(prompt, /style_preview_selection/);
-  assert.match(prompt, /workflow_action\(action="ask_user_a2ui", gate_id="style_preview_selection"/);
-  assert.doesNotMatch(prompt, /completed Presentation Context/);
+  assert.match(prompt, /presentation_context/);
+  assert.match(prompt, /choose_deck_mode/);
+  assert.match(prompt, /workflow_action\(action="ask_user_a2ui", gate_id="presentation_context"/);
+  assert.doesNotMatch(prompt, /style_preview_selection structured A2UI workflow action/);
   assert.match(prompt, /^\/skill frontend-slides\n/);
 });
 
@@ -887,7 +896,7 @@ test('buildSyntheticClarificationFollowupPrompt can recover legacy mood selectio
     },
   );
 
-  assert.match(prompt, /selected the mood or preset direction/);
+  assert.match(prompt, /selected a legacy mood or preset direction/);
   assert.match(prompt, /Generate 2-3 style previews\/templates next/);
   assert.match(prompt, /style_preview_selection/);
   assert.doesNotMatch(prompt, /completed Presentation Context/);
@@ -914,7 +923,7 @@ test('buildSyntheticClarificationFollowupPrompt advances frontend-slides style c
     } as any,
   );
 
-  assert.match(prompt, /selected a visual style/);
+  assert.match(prompt, /Both required decisions are complete: deck mode and visual style/);
   assert.match(prompt, /final generation phase/);
   assert.match(prompt, /Do not call workflow_action\(action="ask_user_a2ui"\)/);
   assert.match(prompt, /Generate the final required artifact now/);
@@ -951,7 +960,7 @@ test('buildSyntheticClarificationFollowupPrompt honors persisted completed front
     },
   );
 
-  assert.match(prompt, /all required structured gates are complete/i);
+  assert.match(prompt, /Both required decisions are complete/i);
   assert.match(prompt, /Generate the final required artifact now/);
   assert.match(prompt, /Do not call workflow_action\(action="ask_user_a2ui"\)/);
   assert.match(prompt, /filename ends with -deck\.html/);

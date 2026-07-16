@@ -206,27 +206,25 @@ test("frontend-slides uses a paginated clarification wizard and submits structur
     await expect
       .poll(
         async () => {
-          const purposeQuestionCount = await page
-            .getByText(/What is this presentation for\?/i)
+          const deckModeQuestionCount = await page
+            .getByText(/presented live or read on its own|speaker-led or reading-first/i)
             .count();
-          const pitchDeckOptionCount = await page
-            .getByRole("button", { name: /Pitch deck/i })
+          const speakerLedOptionCount = await page
+            .getByRole("button", { name: /speaker-led/i })
             .count();
           const discoveryTitleCount = await page
-            .getByText(
-              /Presentation Discovery|Presentation Context|File Not Found/i,
-            )
+            .getByText(/Choose Deck Mode|File Not Found/i)
             .count();
           const questionStepCount = await page
-            .getByText(/Question 1 of 5/i)
+            .getByText(/Question 1 of 1/i)
             .count();
           return (
             (questionStepCount > 0 &&
               discoveryTitleCount > 0 &&
-              pitchDeckOptionCount > 0) ||
+              speakerLedOptionCount > 0) ||
             (questionStepCount > 0 &&
-              purposeQuestionCount > 0 &&
-              pitchDeckOptionCount > 0)
+              deckModeQuestionCount > 0 &&
+              speakerLedOptionCount > 0)
           );
         },
         { timeout: 120_000, message: "expected clarification UI to appear" },
@@ -240,23 +238,7 @@ test("frontend-slides uses a paginated clarification wizard and submits structur
       timeout: 30_000,
     });
 
-    await page.getByText("Pitch deck", { exact: true }).click();
-    await page.getByRole("button", { name: /Next/i }).click();
-    await expect(page.getByText(/Question 2 of 5/i)).toBeVisible();
-
-    await page.getByText("Medium (10-20)", { exact: true }).click();
-    await page.getByRole("button", { name: /Next/i }).click();
-    await expect(page.getByText(/Question 3 of 5/i)).toBeVisible();
-
-    await page.getByText("I have rough notes", { exact: true }).click();
-    await page.getByRole("button", { name: /Next/i }).click();
-    await expect(page.getByText(/Question 4 of 5/i)).toBeVisible();
-
-    await page.getByText("./assets", { exact: true }).click();
-    await page.getByRole("button", { name: /Next/i }).click();
-    await expect(page.getByText(/Question 5 of 5/i)).toBeVisible();
-
-    await page.getByText("Yes (Recommended)", { exact: true }).click();
+    await page.getByRole("button", { name: /speaker-led/i }).click();
 
     const respondRequestPromise = page.waitForRequest(
       (request) =>
@@ -264,7 +246,7 @@ test("frontend-slides uses a paginated clarification wizard and submits structur
         /\/api\/agent\/runs\/[^/]+\/respond(?:\?|$)/.test(request.url()),
       { timeout: 30_000 },
     );
-    await page.getByRole("button", { name: /Review answers/i }).click();
+    await page.getByRole("button", { name: /Review answers|Continue/i }).click();
     await expect(page.getByText(/Review/i)).toBeVisible();
     await page
       .locator("textarea")
@@ -281,14 +263,10 @@ test("frontend-slides uses a paginated clarification wizard and submits structur
     };
 
     expect(respondPayload.answersByQuestionId).toMatchObject({
-      purpose: "Pitch deck",
-      length: "Medium (10-20)",
-      content: "I have rough notes",
-      images: "./assets",
-      editing: "Yes (Recommended)",
+      density: expect.stringMatching(/speaker-led/i),
     });
     await expect(
-      page.getByText(/What is this presentation for\?/i),
+      page.getByText(/presented live or read on its own|speaker-led or reading-first/i),
     ).toHaveCount(0, { timeout: 15_000 });
 
     await expect
@@ -324,20 +302,15 @@ test("frontend-slides uses a paginated clarification wizard and submits structur
         },
         {
           timeout: 240_000,
-          message: "expected the same run to advance to outline_confirmation",
+          message: "expected the same run to advance to style_preview_selection",
         },
       )
-      .toBe("outline_confirmation");
+      .toBe("style_preview_selection");
 
     await expect(
-      page.getByText(
-        /Does this slide outline and image selection look right\?/i,
-      ),
+      page.getByText(/Choose Your Presentation Style|Choose Presentation Style/i),
     ).toBeVisible();
-    await expect(page.getByText(/Review material/i)).toBeVisible();
-    await expect(
-      page.getByText(/The slide outline was not included in the agent response/i),
-    ).toHaveCount(0);
+    await expect(page.getByText(/Does this slide outline/i)).toHaveCount(0);
     await expect(
       page.getByText(/The run failed before it could finish/i),
     ).toHaveCount(0);
