@@ -1446,18 +1446,11 @@ def register_chat_routes(
             await handler._emit({"type": "model_start", "name": name})
             return False
 
-        if method in {"on_chat_model_stream", "on_llm_stream"}:
+        if method in {"on_chat_model_stream", "on_llm_stream", "messages"}:
             text = _event_chunk_text(data)
             text = strip_interrupt_payload_marker(text)
             if text and not _is_internal_stream_text(text):
                 await handler._emit({"type": "token", "content": text, "role": "assistant"})
-            return False
-
-        if method == "messages":
-            # LangGraph v3 can emit message-state snapshots alongside the
-            # model's incremental stream events. The final-result fallback
-            # below handles snapshot-only runtimes; forwarding both formats
-            # here would join the same Markdown document to itself.
             return False
 
         if method in {"content-block-start", "content-block-delta", "content-block-finish"}:
@@ -1475,9 +1468,15 @@ def register_chat_routes(
                 )
                 await handler._emit(interrupt_payload)
                 return True
-            # Content-block events are a second, provider-specific view of the
-            # same model output. They are consumed above for structured tool
-            # calls, but visible text comes from on_*_model_stream only.
+            # LangGraph v3 emits text in content-block-delta and repeats the
+            # completed block in content-block-finish. Appending the finish
+            # snapshot would duplicate the Markdown and unbalance code fences.
+            if method != "content-block-delta":
+                return False
+            text = _content_block_text(event)
+            text = strip_interrupt_payload_marker(text)
+            if text and not _is_internal_stream_text(text):
+                await handler._emit({"type": "token", "content": text, "role": "assistant"})
             return False
 
         if method in {"on_chat_model_end", "on_llm_end", "message-finish"}:

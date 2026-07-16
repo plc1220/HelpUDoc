@@ -164,7 +164,7 @@ class V3MessageStreamingAgent:
         }
 
 
-class V3MixedAssistantFormatsAgent:
+class V3ProtocolMarkdownStreamingAgent:
     async def astream_events(self, *_args, **_kwargs):
         markdown = (
             "## Monthly Sales\n\n"
@@ -173,36 +173,42 @@ class V3MixedAssistantFormatsAgent:
             "| March | $574,874 |\n\n"
             "- **Peak month:** March\n"
         )
-        for chunk in (markdown[:31], markdown[31:67], markdown[67:]):
-            yield {
-                "event": "on_chat_model_stream",
-                "name": "test-model",
-                "run_id": "model-run",
-                "data": {"chunk": {"role": "assistant", "content": chunk}},
-            }
-        yield {
-            "event": "messages",
-            "name": "agent-snapshot",
-            "run_id": "message-snapshot",
-            "data": (
-                SimpleNamespace(type="ai", content=markdown),
-                {"langgraph_node": "agent"},
-            ),
-        }
-        yield (
+        metadata = {"langgraph_node": "agent", "run_id": "model-run"}
+        protocol_events = [
+            {"event": "message-start", "role": "ai", "id": "message-1"},
+            {
+                "event": "content-block-start",
+                "index": 0,
+                "content": {"type": "text", "text": ""},
+            },
+            {
+                "event": "content-block-delta",
+                "index": 0,
+                "delta": {"type": "text-delta", "text": markdown[:45]},
+            },
+            {
+                "event": "content-block-delta",
+                "index": 0,
+                "delta": {"type": "text-delta", "text": markdown[45:]},
+            },
             {
                 "event": "content-block-finish",
                 "index": 0,
                 "content": {"type": "text", "text": markdown},
             },
-            {"ls_provider": "google_genai"},
-        )
-        yield {
-            "event": "on_chain_end",
-            "name": "agent",
-            "run_id": "agent-run",
-            "data": {"output": {"messages": [{"role": "assistant", "content": markdown}]}},
-        }
+            {"event": "message-finish"},
+        ]
+        for seq, payload in enumerate(protocol_events, start=1):
+            yield {
+                "type": "event",
+                "seq": seq,
+                "method": "messages",
+                "params": {
+                    "namespace": [],
+                    "timestamp": seq,
+                    "data": (payload, metadata),
+                },
+            }
 
 
 class V3HumanMessageTupleStreamingAgent:
@@ -1091,9 +1097,9 @@ def test_chat_stream_reads_v3_message_chunks(client_with_stubs):
     assert source_tracker.updated_workspaces == [runtime.workspace_state]
 
 
-def test_chat_stream_emits_one_markdown_document_for_mixed_assistant_event_formats(client_with_stubs):
+def test_chat_stream_emits_one_markdown_document_for_v3_content_block_lifecycle(client_with_stubs):
     client, registry, source_tracker = client_with_stubs
-    runtime = DummyRuntime("workspace-v3-mixed-markdown", V3MixedAssistantFormatsAgent())
+    runtime = DummyRuntime("workspace-v3-mixed-markdown", V3ProtocolMarkdownStreamingAgent())
     registry.set_runtime("research", "workspace-v3-mixed-markdown", runtime)
 
     with client.stream(
