@@ -35,6 +35,7 @@ import { parsePlotlySpec } from '../utils/plotlySpec';
 import {
   configureMermaid,
   createMarkdownComponents,
+  markdownRehypePlugins,
   useMermaidColorMode,
 } from './markdown/MarkdownShared';
 import {
@@ -754,7 +755,11 @@ const FileRenderer: React.FC<FileRendererProps> = ({
 
       return (
         <div className={`${markdownContainerClassName} helpudoc-markdown`}>
-          <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm]}
+            rehypePlugins={markdownRehypePlugins}
+            components={markdownComponents}
+          >
             {fileContent}
           </ReactMarkdown>
         </div>

@@ -1,8 +1,34 @@
 /* eslint-disable react-refresh/only-export-components */
 import { Children, Suspense, isValidElement, lazy, useEffect, useRef, useState, type ReactNode } from 'react';
 import type { Components } from 'react-markdown';
+import rehypeRaw from 'rehype-raw';
+import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
+import type { PluggableList } from 'unified';
 import { getWorkspaceFilePreview } from '../../services/fileApi';
 import { parsePlotlySpec } from '../../utils/plotlySpec';
+
+// Sanitization schema for raw HTML embedded in markdown. Extends the
+// rehype-sanitize default (which strips scripts, event handlers, javascript:
+// URLs, etc.) to additionally permit the presentational markup that appears in
+// generated reports — inline `style`/`class`, and tags like `span`/`font`.
+export const markdownSanitizeSchema = {
+  ...defaultSchema,
+  tagNames: [...(defaultSchema.tagNames ?? []), 'span', 'div', 'u', 'mark', 'font', 'small'],
+  attributes: {
+    ...defaultSchema.attributes,
+    '*': [...(defaultSchema.attributes?.['*'] ?? []), 'style', 'className', 'class'],
+    font: [...(defaultSchema.attributes?.font ?? []), 'color', 'size', 'face'],
+  },
+};
+
+// Shared rehype pipeline: parse raw HTML into real elements (rehype-raw), then
+// sanitize the result. Order matters — raw must run before sanitize. Use this
+// for every read-only `react-markdown` surface so raw HTML renders consistently
+// (viewer, print/export, chat previews) instead of showing as literal text.
+export const markdownRehypePlugins: PluggableList = [
+  rehypeRaw,
+  [rehypeSanitize, markdownSanitizeSchema],
+];
 
 const PlotlyChart = lazy(() => import('../PlotlyChart'));
 

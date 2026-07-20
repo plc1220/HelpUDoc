@@ -1,6 +1,7 @@
 import { Check, CheckCircle2, ChevronRight, Copy, FilePenLine, ImageIcon, Loader2, RotateCcw } from 'lucide-react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { markdownRehypePlugins } from '../markdown/MarkdownShared';
 import { useCallback, useEffect, useMemo, useState, type Dispatch, type KeyboardEvent, type ReactNode, type SetStateAction } from 'react';
 
 import type {
@@ -2141,7 +2142,7 @@ export default function ChatMessageBubble({
 
             {liveAgentPreviewText ? (
               <div className="agent-markdown mt-3 text-sm">
-                <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+                <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={markdownRehypePlugins} components={markdownComponents}>
                   {liveAgentPreviewText}
                 </ReactMarkdown>
               </div>
@@ -2186,7 +2187,7 @@ export default function ChatMessageBubble({
                         </div>
                         {approvalReview.summaryMarkdown ? (
                           <div className="agent-markdown mt-3 text-sm leading-relaxed text-slate-700">
-                            <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+                            <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={markdownRehypePlugins} components={markdownComponents}>
                               {approvalReview.summaryMarkdown}
                             </ReactMarkdown>
                           </div>

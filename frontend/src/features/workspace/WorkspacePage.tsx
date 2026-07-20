@@ -121,7 +121,7 @@ import {
 } from '../../utils/workspaceFileTree';
 import { buildMessageMetadata, mapMessagesToAgentHistory, mergeMessageMetadata, sanitizeRunPolicy } from '../../utils/messages';
 import { getImplicitContinuationContext, buildContinuationPrompt } from '../../utils/implicitSkillContinuation';
-import { createMarkdownComponents } from '../../components/markdown/MarkdownShared';
+import { createMarkdownComponents, markdownRehypePlugins } from '../../components/markdown/MarkdownShared';
 import { applyColorModeToDocument, buildAppTheme, resolveInitialColorMode, useUITheme } from '../../theme';
 
 const FileEditor = lazy(() => import('../../components/FileEditor'));
@@ -1394,7 +1394,7 @@ export default function WorkspacePage() {
         : wrapInDocument(fileContent)
       : wrapInDocument(
         renderToStaticMarkup(
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{fileContent}</ReactMarkdown>
+          <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={markdownRehypePlugins}>{fileContent}</ReactMarkdown>
         )
       );
 

@@ -3,6 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import type { Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
+import { markdownRehypePlugins } from '../markdown/MarkdownShared';
 import { getFiles, getFileContent, getWorkspaceFilePreview } from '../../services/fileApi';
 import type { File as WorkspaceFile, ToolOutputFile } from '../../types';
 import { inferPreviewEncoding } from '../../utils/files';
@@ -148,7 +149,7 @@ export default function ToolOutputFilePreview({
   if (normalizedMime.includes('markdown')) {
     return (
       <div className="prose prose-sm mt-2 max-w-none">
-        <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+        <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={markdownRehypePlugins} components={markdownComponents}>
           {content}
         </ReactMarkdown>
       </div>
