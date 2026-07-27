@@ -60,7 +60,7 @@ def test_extract_interrupt_payload_from_internal_marker() -> None:
             "display_payload": {
                 "skill": "frontend-slides",
                 "gateId": "presentation_context",
-                "uiContract": "a2ui",
+                "interactionContract": "helpudoc.interaction",
             },
         }
     )
@@ -71,7 +71,7 @@ def test_extract_interrupt_payload_from_internal_marker() -> None:
     assert parsed["type"] == "interrupt"
     assert parsed["kind"] == "clarification"
     assert parsed["displayPayload"]["gateId"] == "presentation_context"
-    assert parsed["uiRequest"]["component"] == "clarification_form"
+    assert parsed["interactionRequest"]["presentation"] == "questionnaire"
 
 
 def test_extract_interrupt_payload_from_embedded_internal_marker_and_strip_visible_text() -> None:
@@ -226,7 +226,7 @@ def test_normalize_interrupt_payload_value_synthesizes_stable_interrupt_id() -> 
     assert normalized_first["interruptId"] == normalized_second["interruptId"]
 
 
-def test_presentation_context_gate_produces_clarification_form() -> None:
+def test_presentation_context_gate_produces_questionnaire() -> None:
     payload = {
         "kind": "clarification",
         "title": "Presentation Discovery",
@@ -243,20 +243,18 @@ def test_presentation_context_gate_produces_clarification_form() -> None:
         "display_payload": {
             "skill": "frontend-slides",
             "gateId": "presentation_context",
-            "uiContract": "a2ui",
-            "expectedComponent": "clarification_form"
+            "interactionContract": "helpudoc.interaction",
+            "expectedPresentation": "questionnaire"
         }
     }
     normalized = normalize_interrupt_payload_value(payload)
-    assert normalized.get("a2uiRequest") is not None
-    assert normalized["a2uiRequest"]["contract"] == "a2ui"
-    assert normalized["a2uiRequest"]["component"] == "clarification.form"
-    assert normalized.get("uiRequest") is not None
-    assert normalized["uiRequest"]["component"] == "clarification_form"
-    assert normalized["uiRequest"]["props"]["questions"][0]["id"] == "purpose"
+    assert normalized.get("interactionRequest") is not None
+    assert normalized["interactionRequest"]["contract"] == "helpudoc.interaction"
+    assert normalized["interactionRequest"]["presentation"] == "questionnaire"
+    assert normalized["interactionRequest"]["props"]["questions"][0]["id"] == "purpose"
 
 
-def test_style_preview_gate_produces_style_preview_chooser() -> None:
+def test_style_preview_gate_produces_style_preview() -> None:
     payload = {
         "kind": "clarification",
         "title": "Choose Style",
@@ -276,24 +274,22 @@ def test_style_preview_gate_produces_style_preview_chooser() -> None:
         }
     }
     normalized = normalize_interrupt_payload_value(payload)
-    assert normalized.get("a2uiRequest") is not None
-    assert normalized["a2uiRequest"]["component"] == "style.previewChooser"
-    assert normalized.get("uiRequest") is not None
-    assert normalized["uiRequest"]["component"] == "style_preview_chooser"
-    assert normalized["uiRequest"]["props"]["choices"][0]["id"] == "style-a"
-    assert normalized["uiRequest"]["props"]["previews"][0]["id"] == "style-a"
+    assert normalized.get("interactionRequest") is not None
+    assert normalized["interactionRequest"]["presentation"] == "style_preview"
+    assert normalized["interactionRequest"]["props"]["choices"][0]["id"] == "style-a"
+    assert normalized["interactionRequest"]["props"]["previews"][0]["id"] == "style-a"
 
 
-def test_native_a2ui_style_preview_request_projects_to_style_preview_chooser() -> None:
+def test_native_interaction_style_preview_request_projects_to_style_preview() -> None:
     payload = {
         "kind": "clarification",
         "title": "Select a Style Template",
         "description": "Pick a generated template.",
-        "a2uiRequest": {
-            "contract": "a2ui",
-            "version": "0.9",
-            "surfaceId": "surface-style-preview-selection",
-            "component": "style.previewChooser",
+        "interactionRequest": {
+            "contract": "helpudoc.interaction",
+            "version": "1",
+            "interactionId": "interaction-style-preview-selection",
+            "presentation": "style_preview",
             "props": {
                 "title": "Select a Style Template",
                 "choices": [
@@ -311,14 +307,13 @@ def test_native_a2ui_style_preview_request_projects_to_style_preview_chooser() -
         "display_payload": {
             "skill": "frontend-slides",
             "gateId": "style_preview_selection",
-            "uiContract": "a2ui",
-            "expectedComponent": "style_preview_chooser",
+            "interactionContract": "helpudoc.interaction",
+            "expectedPresentation": "style_preview",
         },
     }
 
     normalized = normalize_interrupt_payload_value(payload)
 
-    assert normalized["a2uiRequest"]["component"] == "style.previewChooser"
-    assert normalized["uiRequest"]["component"] == "style_preview_chooser"
-    assert normalized["uiRequest"]["props"]["choices"][0]["id"] == "style-a"
-    assert normalized["uiRequest"]["props"]["previews"][0]["id"] == "style-a"
+    assert normalized["interactionRequest"]["presentation"] == "style_preview"
+    assert normalized["interactionRequest"]["props"]["choices"][0]["id"] == "style-a"
+    assert normalized["interactionRequest"]["props"]["previews"][0]["id"] == "style-a"

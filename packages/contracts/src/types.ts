@@ -152,11 +152,17 @@ export interface InterruptResponseSpec {
   questions?: InterruptQuestion[];
 }
 
-export type A2UIRequest = {
-  contract: 'a2ui';
-  version: '0.9';
-  surfaceId: string;
-  component: string;
+export type InteractionPresentation =
+  | 'questionnaire'
+  | 'style_preview'
+  | 'action_review'
+  | 'plan_review';
+
+export type InteractionRequest = {
+  contract: 'helpudoc.interaction';
+  version: '1';
+  interactionId: string;
+  presentation: InteractionPresentation;
   props: Record<string, unknown>;
   gateId?: string;
   skill?: string;
@@ -168,8 +174,8 @@ export type A2UIRequest = {
   metadata?: Record<string, unknown>;
 };
 
-export type A2UIResponse = {
-  surfaceId: string;
+export type InteractionResponse = {
+  interactionId: string;
   actionId: string;
   values?: Record<string, unknown>;
   decision?: 'approve' | 'edit' | 'reject' | 'submit' | 'cancel';
@@ -178,7 +184,7 @@ export type A2UIResponse = {
 };
 
 export type WorkflowActionKind =
-  | 'ask_user_a2ui'
+  | 'request_user_interaction'
   | 'generate_artifact'
   | 'revise_artifact'
   | 'call_tool'
@@ -189,20 +195,10 @@ export interface WorkflowActionEvent {
   action: WorkflowActionKind;
   reason?: string;
   gateId?: string | null;
-  component?: string | null;
+  presentation?: InteractionPresentation | null;
   artifactRefs?: unknown[];
   context?: Record<string, unknown>;
   timestamp?: string;
-}
-
-export interface UIRequest {
-  id: string;
-  component: 'clarification_form' | 'style_preview_chooser' | 'approval' | 'artifact_preview';
-  props: Record<string, unknown>;
-  resume: {
-    action: string;
-    schema?: Record<string, unknown>; // JSON Schema
-  };
 }
 
 export interface PendingInterrupt {
@@ -217,8 +213,7 @@ export interface PendingInterrupt {
   reviewConfigs?: Array<{ action_name?: string; allowed_decisions?: string[] }>;
   responseSpec?: InterruptResponseSpec;
   displayPayload?: Record<string, unknown>;
-  uiRequest?: UIRequest;
-  a2uiRequest?: A2UIRequest;
+  interactionRequest?: InteractionRequest;
 }
 
 export interface ConversationMessageMetadata {

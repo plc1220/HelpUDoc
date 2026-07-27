@@ -10,11 +10,11 @@ from langchain.agents.middleware.types import AgentMiddleware, AgentState, hook_
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.runtime import Runtime
 
-from helpudoc_agent.a2ui_workflows import (
+from helpudoc_agent.interaction_workflows import (
     DEFAULT_FRONTEND_SLIDES_STYLE_CHOICES,
-    FRONTEND_SLIDES_A2UI_GATE_IDS,
+    FRONTEND_SLIDES_INTERACTION_GATE_IDS,
     FRONTEND_SLIDES_DISCOVERY_QUESTIONS,
-    FRONTEND_SLIDES_EXPECTED_COMPONENTS,
+    FRONTEND_SLIDES_EXPECTED_PRESENTATIONS,
     FRONTEND_SLIDES_MOOD_QUESTIONS,
     FRONTEND_SLIDES_OUTLINE_QUESTIONS,
     FRONTEND_SLIDES_STYLE_PATH_QUESTIONS,
@@ -87,10 +87,10 @@ def _is_frontend_slides_skill(skill_id: str | None) -> bool:
     return normalized == "frontend-slides" or normalized.endswith("/frontend-slides")
 
 
-def _completed_a2ui_gate_ids(context: Any) -> set[str]:
+def _completed_interaction_gate_ids(context: Any) -> set[str]:
     if not isinstance(context, dict):
         return set()
-    raw = context.get("frontend_slides_completed_a2ui_gates")
+    raw = context.get("frontend_slides_completed_interaction_gates")
     if not isinstance(raw, list):
         return set()
     return {str(item).strip() for item in raw if frontend_slides_gate_id(item)}
@@ -113,8 +113,8 @@ def _is_edit_existing_frontend_slides_context(context: Any) -> bool:
 def _frontend_slides_required_gate_missing(context: Any) -> str | None:
     if _is_edit_existing_frontend_slides_context(context):
         return None
-    completed = _completed_a2ui_gate_ids(context)
-    for gate_id in FRONTEND_SLIDES_A2UI_GATE_IDS:
+    completed = _completed_interaction_gate_ids(context)
+    for gate_id in FRONTEND_SLIDES_INTERACTION_GATE_IDS:
         if gate_id not in completed:
             return gate_id
     return None
@@ -146,8 +146,8 @@ def _frontend_slides_gate_display_payload(gate_id: str) -> dict[str, Any]:
         "synthetic": True,
         "skill": "frontend-slides",
         "gateId": gate_id,
-        "uiContract": "a2ui",
-        "expectedComponent": FRONTEND_SLIDES_EXPECTED_COMPONENTS.get(gate_id, ""),
+        "interactionContract": "helpudoc.interaction",
+        "expectedPresentation": FRONTEND_SLIDES_EXPECTED_PRESENTATIONS.get(gate_id, ""),
         "source": "implicit_input_guard",
     }
 
@@ -226,47 +226,47 @@ def _build_frontend_slides_gate_interrupt(gate_id: str) -> dict[str, Any] | None
 def _frontend_slides_gate_loopback_instruction(gate_id: str | None, assistant_text: str) -> str:
     base = (
         f"You requested the user to fill out a form or select choices in your prose: '{assistant_text}'. "
-        "However, you did not emit an actual A2UI workflow action. Under our strict A2UI contract, "
-        "all user inputs must be requested with workflow_action(action='ask_user_a2ui'), not prose."
+        "However, you did not emit an actual Interaction workflow action. Under our strict Interaction contract, "
+        "all user inputs must be requested with workflow_action(action='request_user_interaction'), not prose."
     )
     if gate_id == "outline_confirmation":
         return (
             f"{base} The Presentation Context gate is already complete. Do not ask for the Presentation Setup "
             "form again. First write a concrete proposed slide outline in your assistant response, then call "
-            "workflow_action with action='ask_user_a2ui', component='clarification.form', gate_id='outline_confirmation', and context_json "
-            "containing skill='frontend-slides', gateId='outline_confirmation', uiContract='a2ui', and "
-            "expectedComponent='clarification_form'. The form must ask the user to approve or revise the "
+            "workflow_action with action='request_user_interaction', presentation='questionnaire', gate_id='outline_confirmation', and context_json "
+            "containing skill='frontend-slides', gateId='outline_confirmation', interactionContract='helpudoc.interaction', and "
+            "expectedPresentation='questionnaire'. The form must ask the user to approve or revise the "
             "outline."
         )
     if gate_id == "style_path_selection":
         return (
             f"{base} The outline is already confirmed. Do not ask for Presentation Setup or Outline "
-            "Confirmation again. Call workflow_action with action='ask_user_a2ui', component='clarification.form', and "
+            "Confirmation again. Call workflow_action with action='request_user_interaction', presentation='questionnaire', and "
             "gate_id='style_path_selection' to ask how the user wants to choose the deck style."
         )
     if gate_id == "mood_or_preset_selection":
         return (
-            f"{base} The style path is already selected. Call workflow_action with action='ask_user_a2ui', component='clarification.form' "
+            f"{base} The style path is already selected. Call workflow_action with action='request_user_interaction', presentation='questionnaire' "
             "and gate_id='mood_or_preset_selection' to collect the desired visual mood or preset direction."
         )
     if gate_id == "style_preview_selection":
         return (
             f"{base} The deck mode is already selected. Generate the three style previews, then call "
-            "workflow_action with action='ask_user_a2ui', component='style.previewChooser', and gate_id='style_preview_selection'."
+            "workflow_action with action='request_user_interaction', presentation='style_preview', and gate_id='style_preview_selection'."
         )
     return (
-        f"{base} Please call workflow_action(action='ask_user_a2ui') now with the appropriate structured "
+        f"{base} Please call workflow_action(action='request_user_interaction') now with the appropriate structured "
         "questions or style choice form."
     )
 
 
-def _generic_a2ui_loopback_instruction(skill_id: str, assistant_text: str) -> str:
+def _generic_interaction_loopback_instruction(skill_id: str, assistant_text: str) -> str:
     return (
         f"You requested user input in prose while running the '{skill_id}' skill: '{assistant_text}'. "
-        "That creates dead text instead of an interactive surface. Under the A2UI contract, ask for "
-        "human input with workflow_action(action='ask_user_a2ui') and then stop. Use component="
-        "'clarification.form', a short gate_id describing this decision, props_json with a title, "
-        "description, questions/options, and context_json containing skill and uiContract='a2ui'. "
+        "That creates dead text instead of an interactive surface. Under the Interaction contract, ask for "
+        "human input with workflow_action(action='request_user_interaction') and then stop. Use presentation="
+        "'questionnaire', a short gate_id describing this decision, props_json with a title, "
+        "description, questions/options, and context_json containing skill and interactionContract='helpudoc.interaction'. "
         "After the user responds, continue from this exact point instead of restarting the skill."
     )
 
@@ -418,7 +418,7 @@ def _generic_choice_id(label: str, index: int) -> str:
 
 
 def _extract_generic_choice_options(text: str) -> list[dict[str, str]]:
-    """Best-effort extraction for generic non-slide A2UI recovery choices."""
+    """Best-effort extraction for generic non-slide Interaction recovery choices."""
     source = (text or "").strip()
     if not source:
         return []
@@ -585,7 +585,7 @@ def build_synthetic_clarification_interrupt(
         "synthetic": True,
         "source": "implicit_input_guard",
         "skill": skill_id,
-        "uiContract": "a2ui",
+        "interactionContract": "helpudoc.interaction",
     }
 
     if skill_id == "frontend-slides" and _is_frontend_slides_style_selection_context(assistant_text):
@@ -740,7 +740,7 @@ class ImplicitInputGuardMiddleware(AgentMiddleware):
             return None
 
         logger.warning(
-            "A2UI input guard: missing required gate=%s or prose implies a UI form without workflow_action/A2UI. skill=%s",
+            "Interaction input guard: missing required gate=%s or prose implies a UI form without workflow_action/Interaction. skill=%s",
             missing_gate,
             skill_id,
         )
@@ -748,12 +748,12 @@ class ImplicitInputGuardMiddleware(AgentMiddleware):
         if missing_gate:
             interrupt_payload = _build_frontend_slides_gate_interrupt(missing_gate)
             if interrupt_payload is None:
-                raise ValueError(f"Contract violation: unsupported frontend-slides A2UI gate '{missing_gate}'.")
+                raise ValueError(f"Contract violation: unsupported frontend-slides Interaction gate '{missing_gate}'.")
 
             if isinstance(runtime_context, dict):
-                runtime_context["a2ui_synthetic_interrupt_pending"] = missing_gate
-                runtime_context["a2ui_synthetic_resume_context"] = assistant_text
-            logger.info("A2UI input guard: emitting deterministic frontend-slides gate interrupt=%s", missing_gate)
+                runtime_context["interaction_synthetic_interrupt_pending"] = missing_gate
+                runtime_context["interaction_synthetic_resume_context"] = assistant_text
+            logger.info("Interaction input guard: emitting deterministic frontend-slides gate interrupt=%s", missing_gate)
             return {
                 "messages": [AIMessage(content=encode_interrupt_payload_marker(interrupt_payload))],
             }
@@ -762,7 +762,7 @@ class ImplicitInputGuardMiddleware(AgentMiddleware):
             if _is_frontend_slides_skill(skill_id):
                 raise ValueError(
                     "Contract violation: Model referenced implicit UI form but failed to emit explicit "
-                    "workflow_action(action='ask_user_a2ui')/A2UI tool call on loopback retry."
+                    "workflow_action(action='request_user_interaction')/Interaction tool call on loopback retry."
                 )
             interrupt_payload = build_synthetic_clarification_interrupt(
                 skill_id=skill_id,
@@ -772,9 +772,9 @@ class ImplicitInputGuardMiddleware(AgentMiddleware):
             if interrupt_payload is None:
                 return None
             if isinstance(runtime_context, dict):
-                runtime_context["a2ui_synthetic_interrupt_pending"] = interrupt_payload.get("a2uiRequest", {}).get("gateId") or "generic_input"
-                runtime_context["a2ui_synthetic_resume_context"] = generic_choice_source_text
-            logger.info("A2UI input guard: emitting generic synthetic clarification for skill=%s", skill_id)
+                runtime_context["interaction_synthetic_interrupt_pending"] = interrupt_payload.get("interactionRequest", {}).get("gateId") or "generic_input"
+                runtime_context["interaction_synthetic_resume_context"] = generic_choice_source_text
+            logger.info("Interaction input guard: emitting generic synthetic clarification for skill=%s", skill_id)
             return {
                 "messages": [AIMessage(content=encode_interrupt_payload_marker(interrupt_payload))],
             }
@@ -788,9 +788,9 @@ class ImplicitInputGuardMiddleware(AgentMiddleware):
             if interrupt_payload is None:
                 return None
             if isinstance(runtime_context, dict):
-                runtime_context["a2ui_synthetic_interrupt_pending"] = interrupt_payload.get("a2uiRequest", {}).get("gateId") or "generic_input"
-                runtime_context["a2ui_synthetic_resume_context"] = generic_choice_source_text
-            logger.info("A2UI input guard: emitting generic synthetic clarification for skill=%s", skill_id)
+                runtime_context["interaction_synthetic_interrupt_pending"] = interrupt_payload.get("interactionRequest", {}).get("gateId") or "generic_input"
+                runtime_context["interaction_synthetic_resume_context"] = generic_choice_source_text
+            logger.info("Interaction input guard: emitting generic synthetic clarification for skill=%s", skill_id)
             return {
                 "messages": [AIMessage(content=encode_interrupt_payload_marker(interrupt_payload))],
             }
@@ -799,7 +799,7 @@ class ImplicitInputGuardMiddleware(AgentMiddleware):
             loopback_instruction = (
                 _frontend_slides_gate_loopback_instruction(raw_missing_gate, assistant_text)
                 if _is_frontend_slides_skill(skill_id)
-                else _generic_a2ui_loopback_instruction(skill_id, assistant_text)
+                else _generic_interaction_loopback_instruction(skill_id, assistant_text)
             )
         else:
             return None

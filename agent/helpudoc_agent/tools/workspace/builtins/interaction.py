@@ -1,4 +1,4 @@
-"""Agent-to-User Interface (A2UI) native tool definitions and helpers."""
+"""Agent-to-User Interface (Interaction) native tool definitions and helpers."""
 from __future__ import annotations
 
 import json
@@ -10,8 +10,8 @@ import uuid
 from langchain_core.tools import Tool, tool
 from pydantic import BaseModel, Field, field_validator
 
-from ....a2ui_workflows import FRONTEND_SLIDES_GATE_COMPONENTS
-from ....a2ui_contract import gate_is_completed, mark_gate_completed, mark_gate_pending
+from ....interaction_workflows import FRONTEND_SLIDES_GATE_PRESENTATIONS
+from ....interaction_contract import gate_is_completed, mark_gate_completed, mark_gate_pending
 from ....state import WorkspaceState
 from ..interrupt_helpers import interrupt_with_retry
 from ..json_args import parse_json_dict_arg
@@ -69,10 +69,10 @@ def _recent_generated_artifact_refs(workspace_state: WorkspaceState) -> List[Any
     return raw if isinstance(raw, list) else []
 
 
-class RequestUiInput(BaseModel):
-    component: str = Field(description="The catalog identifier of the frontend component to render (e.g., 'clarification.form', 'style.previewChooser')")
-    props_json: str = Field(default="{}", description="JSON string containing props to pass to the component")
-    context_json: str = Field(default="{}", description="JSON string containing contextual metadata to pass down")
+class RequestInteractionInput(BaseModel):
+    presentation: str = Field(description="Semantic interaction presentation (questionnaire, style_preview, action_review, or plan_review)")
+    props_json: str = Field(default="{}", description="JSON string containing the structured interaction content")
+    context_json: str = Field(default="{}", description="JSON string containing workflow and gate metadata")
     gate_id: str = Field(default="", description="Optional unique identifier for skill-execution gate tracking")
     required: bool = Field(default=True, description="Whether this UI response is mandatory to resume the agent run")
     resume_mode: str = Field(default="submit", description="The resume protocol mode: 'submit' (for standard form respond), 'approve_reject' (for decisions), 'action' (for arbitrary acts)")
@@ -92,17 +92,17 @@ class RequestUiInput(BaseModel):
 class WorkflowActionInput(BaseModel):
     action: str = Field(
         description=(
-            "Structured workflow action to take. Use 'ask_user_a2ui' when user input is needed; "
+            "Structured workflow action to take. Use 'request_user_interaction' when user input is needed; "
             "other allowed values are 'generate_artifact', 'revise_artifact', 'call_tool', 'complete', and 'fail'."
         )
     )
     reason: str = Field(default="", description="Short reason for this workflow action")
-    gate_id: str = Field(default="", description="Gate id when action is ask_user_a2ui")
-    component: str = Field(default="", description="A2UI component when action is ask_user_a2ui")
-    props_json: str = Field(default="{}", description="A2UI props JSON when action is ask_user_a2ui")
-    context_json: str = Field(default="{}", description="Workflow/A2UI context JSON")
-    required: bool = Field(default=True, description="Whether the A2UI response is required")
-    resume_mode: str = Field(default="submit", description="A2UI resume mode")
+    gate_id: str = Field(default="", description="Gate id when action is request_user_interaction")
+    presentation: str = Field(default="", description="Interaction presentation when action is request_user_interaction")
+    props_json: str = Field(default="{}", description="Interaction props JSON when action is request_user_interaction")
+    context_json: str = Field(default="{}", description="Workflow/Interaction context JSON")
+    required: bool = Field(default=True, description="Whether the Interaction response is required")
+    resume_mode: str = Field(default="submit", description="Interaction resume mode")
     artifact_refs_json: str = Field(default="[]", description="Optional JSON array of artifact ids/paths this action references")
 
     @field_validator("props_json", "context_json", "artifact_refs_json", mode="before")
@@ -117,38 +117,38 @@ class WorkflowActionInput(BaseModel):
         return str(value)
 
 
-def _record_completed_a2ui_gate(workspace_state: WorkspaceState, a2ui_request: Dict[str, Any]) -> None:
-    skill_id = str(a2ui_request.get("skill") or "").strip()
-    metadata = a2ui_request.get("metadata") if isinstance(a2ui_request.get("metadata"), dict) else {}
+def _record_completed_interaction_gate(workspace_state: WorkspaceState, interaction_request: Dict[str, Any]) -> None:
+    skill_id = str(interaction_request.get("skill") or "").strip()
+    metadata = interaction_request.get("metadata") if isinstance(interaction_request.get("metadata"), dict) else {}
     if not skill_id:
         skill_id = str(metadata.get("skill") or metadata.get("skillId") or "").strip()
-    gate_id = str(a2ui_request.get("gateId") or metadata.get("gateId") or metadata.get("gate_id") or "").strip()
+    gate_id = str(interaction_request.get("gateId") or metadata.get("gateId") or metadata.get("gate_id") or "").strip()
     if not gate_id:
         return
-    component = str(a2ui_request.get("component") or "").strip()
+    presentation = str(interaction_request.get("presentation") or "").strip()
     mark_gate_completed(
         workspace_state.context,
         run_id=str(workspace_state.context.get("run_id") or ""),
         thread_id=str(workspace_state.context.get("thread_id") or ""),
         skill_id=skill_id,
         gate_id=gate_id,
-        component=component,
-        answers=workspace_state.context.get("last_a2ui_response"),
+        presentation=presentation,
+        answers=workspace_state.context.get("last_interaction_response"),
     )
 
 
-def _build_a2ui_interrupt_payload(
+def _build_interaction_interrupt_payload(
     *,
-    component: str,
+    presentation: str,
     props_json: str = "{}",
     context_json: str = "{}",
     gate_id: str = "",
     required: bool = True,
     resume_mode: str = "submit",
 ) -> tuple[Dict[str, Any] | None, str | None]:
-    comp = (component or "").strip()
-    if not comp:
-        return None, "UI request blocked: component is required."
+    presentation_kind = (presentation or "").strip()
+    if not presentation_kind:
+        return None, "Interaction request blocked: presentation is required."
 
     parsed_props = parse_json_dict_arg(props_json)
     parsed_context = parse_json_dict_arg(context_json)
@@ -160,9 +160,9 @@ def _build_a2ui_interrupt_payload(
             if key not in parsed_props and parsed_context.get(key):
                 parsed_props[key] = parsed_context[key]
 
-    surface_id = f"surface-{uuid.uuid4().hex[:12]}"
+    interaction_id = f"interaction-{uuid.uuid4().hex[:12]}"
     if gate:
-        surface_id = f"surface-{gate}"
+        interaction_id = f"interaction-{gate}"
 
     endpoint = "respond"
     mode = str(resume_mode or "submit").strip().lower()
@@ -176,11 +176,11 @@ def _build_a2ui_interrupt_payload(
         endpoint = "respond"
         kind = "clarification"
 
-    a2ui_request = {
-        "contract": "a2ui",
-        "version": "0.9",
-        "surfaceId": surface_id,
-        "component": comp,
+    interaction_request = {
+        "contract": "helpudoc.interaction",
+        "version": "1",
+        "interactionId": interaction_id,
+        "presentation": presentation_kind,
         "props": parsed_props,
         "gateId": gate or None,
         "skill": skill or None,
@@ -193,9 +193,9 @@ def _build_a2ui_interrupt_payload(
     }
     interrupt_payload = {
         "kind": kind,
-        "title": parsed_props.get("title") or f"A2UI: {comp}",
+        "title": parsed_props.get("title") or f"Interaction: {presentation_kind}",
         "description": parsed_props.get("description") or "",
-        "a2uiRequest": a2ui_request,
+        "interactionRequest": interaction_request,
         "display_payload": parsed_context,
     }
     if endpoint == "act" and isinstance(parsed_props.get("actions"), list):
@@ -203,10 +203,10 @@ def _build_a2ui_interrupt_payload(
     return interrupt_payload, None
 
 
-def _ask_user_a2ui(
+def _request_user_interaction(
     workspace_state: WorkspaceState,
     *,
-    component: str,
+    presentation: str,
     props_json: str = "{}",
     context_json: str = "{}",
     gate_id: str = "",
@@ -214,8 +214,8 @@ def _ask_user_a2ui(
     resume_mode: str = "submit",
     label: str,
 ) -> str:
-    interrupt_payload, error = _build_a2ui_interrupt_payload(
-        component=component,
+    interrupt_payload, error = _build_interaction_interrupt_payload(
+        presentation=presentation,
         props_json=props_json,
         context_json=context_json,
         gate_id=gate_id,
@@ -225,14 +225,14 @@ def _ask_user_a2ui(
     if error:
         return error
     assert interrupt_payload is not None
-    a2ui_request = interrupt_payload.get("a2uiRequest")
-    if isinstance(a2ui_request, dict):
-        skill = str(a2ui_request.get("skill") or "").strip()
-        gate = str(a2ui_request.get("gateId") or "").strip()
-        component_name = str(a2ui_request.get("component") or "").strip()
+    interaction_request = interrupt_payload.get("interactionRequest")
+    if isinstance(interaction_request, dict):
+        skill = str(interaction_request.get("skill") or "").strip()
+        gate = str(interaction_request.get("gateId") or "").strip()
+        presentation_name = str(interaction_request.get("presentation") or "").strip()
         if skill and gate and gate_is_completed(workspace_state.context, skill_id=skill, gate_id=gate):
             return (
-                "Workflow action blocked: A2UI gate "
+                "Workflow action blocked: Interaction gate "
                 f"'{gate}' for skill '{skill}' is already completed in this run. "
                 "Continue to the next incomplete gate, or generate the required final artifact if no gates remain."
             )
@@ -243,55 +243,55 @@ def _ask_user_a2ui(
                 thread_id=str(workspace_state.context.get("thread_id") or ""),
                 skill_id=skill,
                 gate_id=gate,
-                component=component_name,
+                presentation=presentation_name,
             )
 
     response = interrupt_with_retry(
         interrupt_payload,
-        valid_keys={"actionId", "surfaceId", "decision", "values", "answersByQuestionId"},
+        valid_keys={"actionId", "interactionId", "decision", "values", "answersByQuestionId"},
         stale_keys={"message", "selectedChoiceIds", "selectedValues", "answersByQuestionId", "action", "decisions"},
         label=label,
     )
 
     if isinstance(response, dict):
-        workspace_state.context["last_a2ui_response"] = response
-        if isinstance(a2ui_request, dict):
-            _record_completed_a2ui_gate(workspace_state, a2ui_request)
+        workspace_state.context["last_interaction_response"] = response
+        if isinstance(interaction_request, dict):
+            _record_completed_interaction_gate(workspace_state, interaction_request)
         return json.dumps(response, ensure_ascii=False)
     return str(response)
 
 
-def _validate_workflow_a2ui_gate(
+def _validate_workflow_interaction_gate(
     *,
     action: str,
     gate_id: str | None,
-    component: str,
+    presentation: str,
     props: Dict[str, Any],
     context: Dict[str, Any],
 ) -> str | None:
-    if action != "ask_user_a2ui":
+    if action != "request_user_interaction":
         return None
     skill = str(context.get("skill") or context.get("skillId") or "").strip().lower()
     if skill != "frontend-slides":
         return None
     gate = (gate_id or "").strip()
-    if gate not in FRONTEND_SLIDES_GATE_COMPONENTS:
-        return f"Workflow action blocked: unknown frontend-slides A2UI gate '{gate}'."
-    comp = (component or "").strip()
-    if comp not in FRONTEND_SLIDES_GATE_COMPONENTS[gate]:
-        expected = " or ".join(sorted(FRONTEND_SLIDES_GATE_COMPONENTS[gate]))
-        return f"Workflow action blocked: gate '{gate}' requires component {expected}, got '{comp}'."
-    expected_component = str(context.get("expectedComponent") or context.get("expected_component") or "").strip()
-    if expected_component:
-        normalized_expected = expected_component.replace(".", "_")
-        normalized_component = comp.replace(".", "_")
+    if gate not in FRONTEND_SLIDES_GATE_PRESENTATIONS:
+        return f"Workflow action blocked: unknown frontend-slides Interaction gate '{gate}'."
+    presentation_kind = (presentation or "").strip()
+    if presentation_kind not in FRONTEND_SLIDES_GATE_PRESENTATIONS[gate]:
+        expected = " or ".join(sorted(FRONTEND_SLIDES_GATE_PRESENTATIONS[gate]))
+        return f"Workflow action blocked: gate '{gate}' requires presentation {expected}, got '{presentation_kind}'."
+    expected_presentation = str(context.get("expectedPresentation") or context.get("expected_presentation") or "").strip()
+    if expected_presentation:
+        normalized_expected = expected_presentation.replace(".", "_")
+        normalized_presentation = presentation_kind.replace(".", "_")
         if gate == "style_preview_selection":
-            valid_expected = {"style_preview_chooser", "style_previewChooser"}
+            valid_expected = {"style_preview", "style_previewChooser"}
         else:
-            valid_expected = {"clarification_form"}
-        if normalized_expected not in valid_expected and normalized_expected != normalized_component:
+            valid_expected = {"questionnaire"}
+        if normalized_expected not in valid_expected and normalized_expected != normalized_presentation:
             return (
-                "Workflow action blocked: context expectedComponent does not match "
+                "Workflow action blocked: context expectedPresentation does not match "
                 f"frontend-slides gate '{gate}'."
             )
     if gate == "outline_confirmation":
@@ -313,37 +313,34 @@ def _validate_workflow_a2ui_gate(
     return None
 
 
-def build_request_ui_tool(workspace_state: WorkspaceState) -> Tool:
-    @tool(args_schema=RequestUiInput)
-    def request_ui(
-        component: str,
+def build_request_interaction_tool(workspace_state: WorkspaceState) -> Tool:
+    @tool(args_schema=RequestInteractionInput)
+    def request_interaction(
+        presentation: str,
         props_json: str = "{}",
         context_json: str = "{}",
         gate_id: str = "",
         required: bool = True,
         resume_mode: str = "submit",
     ) -> str:
-        """Pause execution to request a custom user interface render.
-        
-        The frontend will render the requested component using the provided properties and context.
-        """
-        return _ask_user_a2ui(
+        """Pause execution and request a structured user interaction."""
+        return _request_user_interaction(
             workspace_state,
-            component=component,
+            presentation=presentation,
             props_json=props_json,
             context_json=context_json,
             gate_id=gate_id,
             required=required,
             resume_mode=resume_mode,
-            label="request_ui",
+            label="request_interaction",
         )
 
-    request_ui.name = "request_ui"
-    request_ui.description = (
-        "Pause the run and ask the frontend to render a specific native A2UI component. "
+    request_interaction.name = "request_interaction"
+    request_interaction.description = (
+        "Pause the run and request a semantic Interaction presentation. "
         "Use this for rich interactive inputs, plans review, approvals, style selection, and structured forms."
     )
-    return request_ui
+    return request_interaction
 
 
 def build_workflow_action_tool(workspace_state: WorkspaceState) -> Tool:
@@ -352,7 +349,7 @@ def build_workflow_action_tool(workspace_state: WorkspaceState) -> Tool:
         action: str,
         reason: str = "",
         gate_id: str = "",
-        component: str = "",
+        presentation: str = "",
         props_json: str = "{}",
         context_json: str = "{}",
         required: bool = True,
@@ -362,7 +359,7 @@ def build_workflow_action_tool(workspace_state: WorkspaceState) -> Tool:
         """Emit one structured workflow action instead of encoding workflow control in prose."""
         normalized_action = (action or "").strip().lower()
         allowed_actions = {
-            "ask_user_a2ui",
+            "request_user_interaction",
             "generate_artifact",
             "revise_artifact",
             "call_tool",
@@ -386,7 +383,7 @@ def build_workflow_action_tool(workspace_state: WorkspaceState) -> Tool:
             "action": normalized_action,
             "reason": (reason or "").strip(),
             "gateId": (gate_id or context.get("gateId") or context.get("gate_id") or "").strip() or None,
-            "component": (component or "").strip() or None,
+            "presentation": (presentation or "").strip() or None,
             "artifactRefs": artifact_refs,
             "context": context,
         }
@@ -394,21 +391,21 @@ def build_workflow_action_tool(workspace_state: WorkspaceState) -> Tool:
         if normalized_action == "generate_artifact":
             workspace_state.context["last_generated_artifact_refs"] = artifact_refs
 
-        if normalized_action == "ask_user_a2ui":
-            if not component.strip():
-                return "Workflow action blocked: ask_user_a2ui requires component."
+        if normalized_action == "request_user_interaction":
+            if not presentation.strip():
+                return "Workflow action blocked: request_user_interaction requires presentation."
             if not workflow_record["gateId"]:
-                return "Workflow action blocked: ask_user_a2ui requires gate_id."
+                return "Workflow action blocked: request_user_interaction requires gate_id."
             props = parse_json_dict_arg(props_json)
             gate_name = str(workflow_record["gateId"])
-            if gate_name in FRONTEND_SLIDES_GATE_COMPONENTS:
+            if gate_name in FRONTEND_SLIDES_GATE_PRESENTATIONS:
                 context.setdefault("skill", "frontend-slides")
                 context.setdefault("skillId", "frontend-slides")
                 context.setdefault("gateId", gate_name)
-                context.setdefault("uiContract", "a2ui")
+                context.setdefault("interactionContract", "helpudoc.interaction")
                 context.setdefault(
-                    "expectedComponent",
-                    "style_preview_chooser" if gate_name == "style_preview_selection" else "clarification_form",
+                    "expectedPresentation",
+                    "style_preview" if gate_name == "style_preview_selection" else "questionnaire",
                 )
                 context_json = json.dumps(context, ensure_ascii=False)
             if (
@@ -422,24 +419,24 @@ def build_workflow_action_tool(workspace_state: WorkspaceState) -> Tool:
                 if outline_markdown:
                     props["outlineMarkdown"] = outline_markdown
                     props_json = json.dumps(props, ensure_ascii=False)
-            gate_error = _validate_workflow_a2ui_gate(
+            gate_error = _validate_workflow_interaction_gate(
                 action=normalized_action,
                 gate_id=str(workflow_record["gateId"]),
-                component=component,
+                presentation=presentation,
                 props=props,
                 context=context,
             )
             if gate_error:
                 return gate_error
-            return _ask_user_a2ui(
+            return _request_user_interaction(
                 workspace_state,
-                component=component,
+                presentation=presentation,
                 props_json=props_json,
                 context_json=context_json,
                 gate_id=str(workflow_record["gateId"]),
                 required=required,
                 resume_mode=resume_mode,
-                label="workflow_action.ask_user_a2ui",
+                label="workflow_action.request_user_interaction",
             )
 
         return json.dumps(
@@ -458,7 +455,7 @@ def build_workflow_action_tool(workspace_state: WorkspaceState) -> Tool:
     workflow_action.name = "workflow_action"
     workflow_action.description = (
         "Planner-level workflow protocol tool. Emit exactly one structured action when deciding the next step. "
-        "Use action='ask_user_a2ui' for any user input gate; provide gate_id, component, props_json, and context_json. "
+        "Use action='request_user_interaction' for any user input gate; provide gate_id, presentation, props_json, and context_json. "
         "Use other actions to record generate/revise/call/complete/fail decisions before executing the corresponding tools."
     )
     return workflow_action
@@ -474,14 +471,14 @@ def request_approval(
     context: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Helper to request a structured action approval card."""
-    ui_tool = build_request_ui_tool(workspace_state)
+    ui_tool = build_request_interaction_tool(workspace_state)
     props = {
         "title": title,
         "description": description,
         "actions": actions,
     }
     response_str = ui_tool.invoke({
-        "component": "approval.card",
+        "presentation": "action_review",
         "props_json": json.dumps(props, ensure_ascii=False),
         "context_json": json.dumps(context or {}, ensure_ascii=False),
         "resume_mode": "action",
@@ -501,7 +498,7 @@ def request_plan_review(
     context: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Helper to request a structured plan review form."""
-    ui_tool = build_request_ui_tool(workspace_state)
+    ui_tool = build_request_interaction_tool(workspace_state)
     props = {
         "title": plan_title,
         "summary": plan_summary_markdown,
@@ -509,7 +506,7 @@ def request_plan_review(
         "filePath": plan_file_path,
     }
     response_str = ui_tool.invoke({
-        "component": "plan.review",
+        "presentation": "plan_review",
         "props_json": json.dumps(props, ensure_ascii=False),
         "context_json": json.dumps(context or {}, ensure_ascii=False),
         "resume_mode": "approve_reject",
@@ -529,7 +526,7 @@ def request_style_preview_selection(
     context: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Helper to request a visual template/style preview chooser."""
-    ui_tool = build_request_ui_tool(workspace_state)
+    ui_tool = build_request_interaction_tool(workspace_state)
     props = {
         "title": title,
         "description": description,
@@ -537,7 +534,7 @@ def request_style_preview_selection(
         "choices": choices,
     }
     response_str = ui_tool.invoke({
-        "component": "style.previewChooser",
+        "presentation": "style_preview",
         "props_json": json.dumps(props, ensure_ascii=False),
         "context_json": json.dumps(context or {}, ensure_ascii=False),
         "resume_mode": "submit",

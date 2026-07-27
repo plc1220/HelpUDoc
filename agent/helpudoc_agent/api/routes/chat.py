@@ -21,8 +21,8 @@ from langgraph.errors import GraphInterrupt
 from langgraph.types import Command
 
 from helpudoc_agent.configuration import Settings
-from helpudoc_agent.a2ui_contract import (
-    a2ui_interrupt_value_for_gate,
+from helpudoc_agent.interaction_contract import (
+    interaction_interrupt_value_for_gate,
     next_pending_gate,
     record_gate_source,
 )
@@ -183,7 +183,7 @@ def register_chat_routes(
         if not tool_names:
             tool_names = list(settings.tools.keys())
         else:
-            for extra in ("list_skills", "load_skill", "request_ui", "workflow_action"):
+            for extra in ("list_skills", "load_skill", "request_interaction", "workflow_action"):
                 if extra in settings.tools and extra not in tool_names:
                     tool_names.append(extra)
         return {
@@ -371,7 +371,7 @@ def register_chat_routes(
     def _merge_trace_gate_context(context: Dict[str, Any], trace_context: Dict[str, Any] | None) -> Dict[str, Any]:
         merged = dict(context or {})
         trace = trace_context if isinstance(trace_context, dict) else {}
-        gate_state = trace.get("a2uiGateState")
+        gate_state = trace.get("interactionGateState")
         completed_gates = gate_state.get("completedGateIds") if isinstance(gate_state, dict) else None
         if isinstance(completed_gates, list):
             normalized_gates = [
@@ -380,8 +380,8 @@ def register_chat_routes(
                 if str(item).strip()
             ]
             if normalized_gates:
-                merged["frontend_slides_completed_a2ui_gates"] = normalized_gates
-                ledger = merged.get("a2ui_gate_ledger")
+                merged["frontend_slides_completed_interaction_gates"] = normalized_gates
+                ledger = merged.get("interaction_gate_ledger")
                 ledger_items = [item for item in ledger if isinstance(item, dict)] if isinstance(ledger, list) else []
                 existing = {
                     (
@@ -407,7 +407,7 @@ def register_chat_routes(
                             "thread_id": trace_thread_id,
                             "skill_id": "frontend-slides",
                             "gate_id": gate_id,
-                            "component": "",
+                            "presentation": "",
                             "status": "completed",
                             "source": "direct",
                             "answers": None,
@@ -417,7 +417,7 @@ def register_chat_routes(
                             "violation_count": 0,
                         }
                     )
-                merged["a2ui_gate_ledger"] = ledger_items
+                merged["interaction_gate_ledger"] = ledger_items
         return merged
 
     def _memory_paths_for_turn(runtime: AgentRuntimeState) -> List[str]:
@@ -1745,9 +1745,9 @@ def register_chat_routes(
         context.pop("loaded_skill_ids_this_turn", None)
         context.pop("skill_load_attempts_this_turn", None)
         context.pop("dashboard_mode", None)
-        context.pop("frontend_slides_completed_a2ui_gates", None)
-        context.pop("a2ui_gate_ledger", None)
-        context.pop("a2ui_gate_telemetry", None)
+        context.pop("frontend_slides_completed_interaction_gates", None)
+        context.pop("interaction_gate_ledger", None)
+        context.pop("interaction_gate_telemetry", None)
         context["tagged_files_only"] = False
         context["plan_approved"] = skip_plan_approvals
         context["pre_plan_search_count"] = 0
@@ -1894,13 +1894,13 @@ def register_chat_routes(
             ]
         return []
 
-    def _synthetic_a2ui_resume_text(resume_value: Any, gate_id: str) -> str:
+    def _synthetic_interaction_resume_text(resume_value: Any, gate_id: str) -> str:
         try:
             serialized = json.dumps(resume_value, ensure_ascii=False, sort_keys=True)
         except Exception:
             serialized = str(resume_value)
         return (
-            "The user submitted the A2UI form for gate "
+            "The user submitted the Interaction form for gate "
             f"'{gate_id}'. Continue the active skill workflow using this structured response:\n"
             f"{serialized}"
         )
@@ -1928,36 +1928,36 @@ def register_chat_routes(
             context = runtime.workspace_state.context
             synthetic_gate_id = ""
             if isinstance(context, dict) and resume_value is not None:
-                synthetic_gate_id = str(context.pop("a2ui_synthetic_interrupt_pending", "") or "").strip()
+                synthetic_gate_id = str(context.pop("interaction_synthetic_interrupt_pending", "") or "").strip()
             if synthetic_gate_id:
-                stored_payload = context.pop("a2ui_synthetic_resume_payload", None) if isinstance(context, dict) else None
+                stored_payload = context.pop("interaction_synthetic_resume_payload", None) if isinstance(context, dict) else None
                 if isinstance(stored_payload, list) and stored_payload:
                     payload = [dict(item) for item in stored_payload if isinstance(item, dict)]
                 elif isinstance(context, dict):
-                    prior_context = str(context.pop("a2ui_synthetic_resume_context", "") or "").strip()
+                    prior_context = str(context.pop("interaction_synthetic_resume_context", "") or "").strip()
                     if prior_context:
                         payload = [
                             {
                                 "role": "user",
                                 "content": (
-                                    "Continue the active skill workflow after this synthetic A2UI interruption. "
+                                    "Continue the active skill workflow after this synthetic Interaction interruption. "
                                     "Previous assistant output before the form:\n"
                                     f"{prior_context}"
                                 ),
                             }
                         ]
-                payload.append({"role": "user", "content": _synthetic_a2ui_resume_text(resume_value, synthetic_gate_id)})
+                payload.append({"role": "user", "content": _synthetic_interaction_resume_text(resume_value, synthetic_gate_id)})
                 if isinstance(context, dict):
-                    context["last_a2ui_response"] = resume_value
+                    context["last_interaction_response"] = resume_value
                 resume_value = None
-        def _should_suppress_assistant_text_for_a2ui_gate() -> bool:
+        def _should_suppress_assistant_text_for_interaction_gate() -> bool:
             context = getattr(runtime.workspace_state, "context", None)
             return next_pending_gate(context) is not None
 
         handler = _CallbackStreamingHandler(
             _message_to_text,
             suppress_interrupt_tool_start=resume_decisions is not None or resume_value is not None,
-            should_suppress_assistant_text=_should_suppress_assistant_text_for_a2ui_gate,
+            should_suppress_assistant_text=_should_suppress_assistant_text_for_interaction_gate,
         )
         sentinel = object()
         stream_started = asyncio.get_running_loop().time()
@@ -1982,12 +1982,12 @@ def register_chat_routes(
                 synthetic_gate = next_pending_gate(runtime.workspace_state.context)
                 if synthetic_gate is not None and bool(synthetic_gate.get("synthetic_on_pending")):
                     record_gate_source(runtime.workspace_state.context, synthetic_gate, source="synthetic")
-                    runtime.workspace_state.context["a2ui_synthetic_interrupt_pending"] = str(
+                    runtime.workspace_state.context["interaction_synthetic_interrupt_pending"] = str(
                         synthetic_gate.get("gate_id") or ""
                     )
-                    runtime.workspace_state.context["a2ui_synthetic_resume_payload"] = payload
+                    runtime.workspace_state.context["interaction_synthetic_resume_payload"] = payload
                     interrupt_payload = normalize_interrupt_payload_value(
-                        a2ui_interrupt_value_for_gate(synthetic_gate)
+                        interaction_interrupt_value_for_gate(synthetic_gate)
                     )
                     saw_interrupt = True
                     await _emit_progress(

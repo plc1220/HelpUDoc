@@ -1,10 +1,10 @@
-import type { A2UIRequest, DashboardArtifactInfo, UIRequest } from './types';
+import type { InteractionRequest, DashboardArtifactInfo } from './types';
 
 export type AgentStreamChunk =
   | {
-      type: 'a2ui';
+      type: 'interaction';
       message: unknown;
-      surfaceId?: string;
+      interactionId?: string;
       runId?: string;
     }
   | { type: 'token' | 'chunk'; content?: string; role?: string }
@@ -90,8 +90,7 @@ export type AgentStreamChunk =
         }>;
       };
       displayPayload?: Record<string, unknown>;
-      uiRequest?: UIRequest;
-      a2uiRequest?: A2UIRequest;
+      interactionRequest?: InteractionRequest;
     }
   | { type: 'keepalive' }
   | { type: 'done'; status?: 'completed' | 'failed' | 'cancelled' | 'interrupted' }
@@ -261,7 +260,7 @@ export const toLangChainStreamProjection = (
     };
   }
 
-  if (chunk.type === 'progress' || chunk.type === 'policy' || chunk.type === 'dashboard_artifact' || chunk.type === 'a2ui') {
+  if (chunk.type === 'progress' || chunk.type === 'policy' || chunk.type === 'dashboard_artifact' || chunk.type === 'interaction') {
     return { custom: [{ name: chunk.type, data: chunk }] };
   }
 

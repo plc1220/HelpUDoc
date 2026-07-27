@@ -39,7 +39,7 @@ Avoid generic AI-generated aesthetics:
 
 - Overused font families (Inter, Roboto, Arial, system fonts)
 - Cliched color schemes (particularly purple gradients on white backgrounds)
-- Predictable layouts and component patterns
+- Predictable layouts and presentation patterns
 - Cookie-cutter design that lacks context-specific character
 
 Interpret creatively and make unexpected choices that feel genuinely designed for the context. Vary between light and dark themes, different fonts, different aesthetics. You still tend to converge on common choices (Space Grotesk, for example) across generations. Avoid this: it is critical that you think outside the box!
@@ -81,14 +81,14 @@ Determine what the user wants:
 - **Mode B: PowerPoint/PPTX/Google Slides/native deck request** — Stop and route to the `pptx` skill. Do not use `frontend-slides` for `.ppt`, `.pptx`, PowerPoint, Google Slides, native deck creation, native deck editing, templates, or conversion requests.
 - **Mode C: HTML Enhancement** — Improve an existing HTML presentation. Read it, understand it, enhance. **Follow Mode C modification rules below.**
 
-## HelpUDoc A2UI Contract
+## HelpUDoc Interaction Contract
 
-Use `workflow_action(action="ask_user_a2ui")` for every decision gate in this skill. A UI form only exists when a structured workflow/A2UI tool emits an interrupt; prose like "select from the form above" is not enough.
+Use `workflow_action(action="request_user_interaction")` for every decision gate in this skill. A UI form only exists when a structured workflow/Interaction tool emits an interrupt; prose like "select from the form above" is not enough.
 
 Active HelpUDoc gates:
 
-1. `presentation_context` — Ask exactly one initial question in `workflow_action(action="ask_user_a2ui")`: `Low density / speaker-led` or `High density / reading-first`.
-2. `style_preview_selection` — After generating the three HTML previews in `.frontend-slides/slide-previews/`, ask the user to choose a style with `workflow_action(action="ask_user_a2ui")` and `component="style.previewChooser"`.
+1. `presentation_context` — Ask exactly one initial question in `workflow_action(action="request_user_interaction")`: `Low density / speaker-led` or `High density / reading-first`.
+2. `style_preview_selection` — After generating the three HTML previews in `.frontend-slides/slide-previews/`, ask the user to choose a style with `workflow_action(action="request_user_interaction")` and `presentation="style_preview"`.
 
 Infer purpose, audience, length, content readiness, asset treatment, and slide outline from the user's request and supplied material. Do not pause for outline approval. Show the inferred outline only when it helps explain the draft or when the user asks to review it. If the request contains no usable topic or source material, ask one concise blocking content question; otherwise proceed.
 
@@ -232,7 +232,7 @@ Never let high density become visual clutter. If a high-density slide starts to 
 
 If the user selected a bold template from `bold-template-pack`, read that one template's full `design.md` before generating. Do not read the other bold templates. Treat `design.md` as the design recipe:
 
-- Preserve its fonts, palette, decorative vocabulary, spacing rhythm, and component grammar.
+- Preserve its fonts, palette, decorative vocabulary, spacing rhythm, and presentation grammar.
 - Generate the final deck as a fixed 1920×1080 stage scaled uniformly to the viewport, regardless of whether the source template originally used `deck-stage.js` or viewport-fluid CSS.
 - Treat viewport-fluid values in `design.md` as design proportions to translate into 1920×1080 stage coordinates. Do not keep them as live viewport reflow rules in the final deck.
 - Keep the output as a single self-contained Frontend Slides HTML file.
@@ -242,7 +242,7 @@ If the user selected a bold template from `bold-template-pack`, read that one te
 
 If the user selected a self-generated custom wildcard, treat that preview's CSS and layout as the design recipe:
 
-- Preserve its fonts, palette, decorative vocabulary, spacing rhythm, grid logic, and component grammar.
+- Preserve its fonts, palette, decorative vocabulary, spacing rhythm, grid logic, and presentation grammar.
 - Expand the same visual system across the full deck. Do not switch to a preset or bold template after the user has chosen the custom direction.
 - Design any missing slide layouts from that system rather than importing patterns from another style.
 - Keep the output fixed-stage, single-file, and visually verified like every other deck.

@@ -7,8 +7,8 @@ from typing import Any, Dict, List, Optional
 
 from langchain_core.tools import Tool, tool
 
-from ....a2ui_contract import mark_gate_completed, mark_gate_pending
-from ....a2ui_workflows import frontend_slides_gate_id
+from ....interaction_contract import mark_gate_completed, mark_gate_pending
+from ....interaction_workflows import frontend_slides_gate_id
 from ....clarification_responses import normalize_clarification_resume_payload
 from ....interrupt_payloads import build_plan_approval_interrupt_value
 from ....state import WorkspaceState
@@ -26,7 +26,7 @@ from ..human_action_parse import parse_human_actions
 from ..json_args import parse_json_dict_arg
 from ..schemas import RequestClarificationInput
 
-def _extract_a2ui_gate_id(display_payload: Dict[str, Any]) -> str:
+def _extract_interaction_gate_id(display_payload: Dict[str, Any]) -> str:
     gate_id = display_payload.get("gateId")
     if not isinstance(gate_id, str) or not gate_id.strip():
         nested_payload = display_payload.get("display_payload") or display_payload.get("displayPayload")
@@ -36,9 +36,9 @@ def _extract_a2ui_gate_id(display_payload: Dict[str, Any]) -> str:
     return frontend_slides_gate_id(normalized) or normalized
 
 
-def _record_completed_a2ui_gate(workspace_state: WorkspaceState, display_payload: Dict[str, Any]) -> None:
+def _record_completed_interaction_gate(workspace_state: WorkspaceState, display_payload: Dict[str, Any]) -> None:
     skill_id = str(display_payload.get("skill") or display_payload.get("skillId") or "").strip()
-    gate_id = _extract_a2ui_gate_id(display_payload)
+    gate_id = _extract_interaction_gate_id(display_payload)
     if not gate_id:
         return
     mark_gate_completed(
@@ -47,8 +47,8 @@ def _record_completed_a2ui_gate(workspace_state: WorkspaceState, display_payload
         thread_id=str(workspace_state.context.get("thread_id") or ""),
         skill_id=skill_id or "frontend-slides",
         gate_id=gate_id,
-        component=str(display_payload.get("expectedComponent") or ""),
-        answers=workspace_state.context.get("last_a2ui_response"),
+        presentation=str(display_payload.get("expectedPresentation") or ""),
+        answers=workspace_state.context.get("last_interaction_response"),
     )
 
 
@@ -237,27 +237,27 @@ def build_request_clarification_tool(workspace_state: WorkspaceState) -> Tool:
         submit = (submit_label or "Continue").strip() or "Continue"
         action_choices = [] if parsed_questions else parsed_choices
 
-        # Build A2UI request payload for modern frontend
+        # Build Interaction request payload for modern frontend
         import uuid
         is_style_chooser = False
         if isinstance(display_payload, dict):
             if display_payload.get("chooser") == "style-previews" or "stylePreviews" in display_payload:
                 is_style_chooser = True
 
-        comp = "style.previewChooser" if is_style_chooser else "clarification.form"
+        comp = "style_preview" if is_style_chooser else "questionnaire"
 
         if is_style_chooser:
             previews = []
             if isinstance(display_payload, dict):
                 previews = display_payload.get("stylePreviews") or display_payload.get("previews") or []
-            a2ui_props = {
+            interaction_props = {
                 "title": prompt_title,
                 "description": prompt_description,
                 "previews": previews,
                 "choices": parsed_choices,
             }
         else:
-            a2ui_props = {
+            interaction_props = {
                 "title": prompt_title,
                 "description": prompt_description,
                 "questions": parsed_questions,
@@ -271,14 +271,14 @@ def build_request_clarification_tool(workspace_state: WorkspaceState) -> Tool:
         gate_id = display_payload.get("gateId") or display_payload.get("gate_id") or ""
         skill = display_payload.get("skill") or display_payload.get("skillId") or ""
 
-        surface_id = f"surface-{uuid.uuid4().hex[:12]}" if not gate_id else f"surface-{gate_id}"
+        interaction_id = f"interaction-{uuid.uuid4().hex[:12]}" if not gate_id else f"interaction-{gate_id}"
 
-        a2ui_request = {
-            "contract": "a2ui",
-            "version": "0.9",
-            "surfaceId": surface_id,
-            "component": comp,
-            "props": a2ui_props,
+        interaction_request = {
+            "contract": "helpudoc.interaction",
+            "version": "1",
+            "interactionId": interaction_id,
+            "presentation": comp,
+            "props": interaction_props,
             "gateId": gate_id or None,
             "skill": skill or None,
             "required": True,
@@ -293,7 +293,7 @@ def build_request_clarification_tool(workspace_state: WorkspaceState) -> Tool:
             "kind": "clarification",
             "title": prompt_title,
             "description": prompt_description,
-            "a2uiRequest": a2ui_request,
+            "interactionRequest": interaction_request,
             "step_index": max(0, int(step_index or 0)),
             "step_count": max(1, int(step_count or 1)),
             "actions": [
@@ -338,7 +338,7 @@ def build_request_clarification_tool(workspace_state: WorkspaceState) -> Tool:
                 thread_id=str(workspace_state.context.get("thread_id") or ""),
                 skill_id=str(skill),
                 gate_id=str(gate_id),
-                component=comp,
+                presentation=comp,
             )
 
         response = interrupt_with_retry(
@@ -348,8 +348,8 @@ def build_request_clarification_tool(workspace_state: WorkspaceState) -> Tool:
             label="request_clarification",
         )
         if isinstance(response, dict):
-            workspace_state.context["last_a2ui_response"] = response
-            _record_completed_a2ui_gate(workspace_state, display_payload)
+            workspace_state.context["last_interaction_response"] = response
+            _record_completed_interaction_gate(workspace_state, display_payload)
             return normalize_clarification_resume_payload(
                 response,
                 questions=parsed_questions,
@@ -396,12 +396,12 @@ def build_request_human_action_tool(workspace_state: WorkspaceState) -> Tool:
         display_payload = parse_json_dict_arg(context_json)
         gate_id = str(display_payload.get("gateId") or display_payload.get("gate_id") or "").strip()
         skill = str(display_payload.get("skill") or display_payload.get("skillId") or "").strip()
-        surface_id = f"surface-{gate_id}" if gate_id else f"surface-action-{uuid.uuid4().hex[:8]}"
-        a2ui_request = {
-            "contract": "a2ui",
-            "version": "0.9",
-            "surfaceId": surface_id,
-            "component": "approval.card",
+        interaction_id = f"interaction-{gate_id}" if gate_id else f"interaction-action-{uuid.uuid4().hex[:8]}"
+        interaction_request = {
+            "contract": "helpudoc.interaction",
+            "version": "1",
+            "interactionId": interaction_id,
+            "presentation": "action_review",
             "props": {
                 "title": prompt_title,
                 "description": prompt_description,
@@ -426,7 +426,7 @@ def build_request_human_action_tool(workspace_state: WorkspaceState) -> Tool:
             "step_count": max(1, int(step_count or 1)),
             "actions": parsed_actions,
             "display_payload": display_payload,
-            "a2uiRequest": a2ui_request,
+            "interactionRequest": interaction_request,
         }
         if gate_id and skill:
             mark_gate_pending(
@@ -435,7 +435,7 @@ def build_request_human_action_tool(workspace_state: WorkspaceState) -> Tool:
                 thread_id=str(workspace_state.context.get("thread_id") or ""),
                 skill_id=str(skill),
                 gate_id=str(gate_id),
-                component="approval.card",
+                presentation="action_review",
             )
 
         response = interrupt_with_retry(
@@ -445,7 +445,7 @@ def build_request_human_action_tool(workspace_state: WorkspaceState) -> Tool:
             label="request_human_action",
         )
         if isinstance(response, dict):
-            workspace_state.context["last_a2ui_response"] = response
+            workspace_state.context["last_interaction_response"] = response
             if gate_id and skill:
                 mark_gate_completed(
                     workspace_state.context,
@@ -453,7 +453,7 @@ def build_request_human_action_tool(workspace_state: WorkspaceState) -> Tool:
                     thread_id=str(workspace_state.context.get("thread_id") or ""),
                     skill_id=str(skill),
                     gate_id=str(gate_id),
-                    component="approval.card",
+                    presentation="action_review",
                     answers=response,
                 )
             return json.dumps(response, ensure_ascii=False)

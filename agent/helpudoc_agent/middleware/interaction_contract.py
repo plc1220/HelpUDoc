@@ -1,4 +1,4 @@
-"""Middleware that enforces structured A2UI gate tool calls at runtime."""
+"""Middleware that enforces structured Interaction gate tool calls at runtime."""
 from __future__ import annotations
 
 import logging
@@ -8,7 +8,7 @@ from langchain.agents.middleware.types import AgentMiddleware, AgentState, Model
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langgraph.runtime import Runtime
 
-from helpudoc_agent.a2ui_contract import (
+from helpudoc_agent.interaction_contract import (
     find_gate_record,
     gate_instruction,
     next_pending_gate,
@@ -16,7 +16,7 @@ from helpudoc_agent.a2ui_contract import (
     normalize_skill_id,
     record_gate_source,
     record_gate_violation,
-    response_has_valid_a2ui_call,
+    response_has_valid_interaction_call,
 )
 
 logger = logging.getLogger(__name__)
@@ -30,14 +30,14 @@ def _runtime_context(runtime: Any) -> dict[str, Any] | None:
 def _failed_contract_message(reason: str) -> AIMessage:
     return AIMessage(
         content=(
-            "A2UI contract enforcement failed after one correction attempt. "
+            "Interaction contract enforcement failed after one correction attempt. "
             f"{reason} The fallback input guard may synthesize an emergency interrupt."
         )
     )
 
 
-class A2UIContractMiddleware(AgentMiddleware):
-    """Require `workflow_action(action='ask_user_a2ui')` for pending gates."""
+class InteractionContractMiddleware(AgentMiddleware):
+    """Require `workflow_action(action='request_user_interaction')` for pending gates."""
 
     def __init__(self, *, enabled: bool = True) -> None:
         super().__init__()
@@ -65,7 +65,7 @@ class A2UIContractMiddleware(AgentMiddleware):
             return handler(request)
 
         first_response = handler(request)
-        valid, reason = response_has_valid_a2ui_call(first_response, gate)
+        valid, reason = response_has_valid_interaction_call(first_response, gate)
         if valid:
             if context is not None:
                 record_gate_source(context, gate, source="direct")
@@ -75,7 +75,7 @@ class A2UIContractMiddleware(AgentMiddleware):
         retry_messages.append(_failed_contract_message(reason))
         retry_messages.append(HumanMessage(content=gate_instruction(gate, correction=reason)))
         retry_response = handler(request.override(messages=retry_messages))
-        valid, retry_reason = response_has_valid_a2ui_call(retry_response, gate)
+        valid, retry_reason = response_has_valid_interaction_call(retry_response, gate)
         if valid:
             if context is not None:
                 record_gate_source(context, gate, source="corrected")
@@ -84,7 +84,7 @@ class A2UIContractMiddleware(AgentMiddleware):
         if context is not None:
             record_gate_violation(context, gate, source="failed")
         logger.warning(
-            "A2UI contract violation after retry: skill=%s gate=%s reason=%s",
+            "Interaction contract violation after retry: skill=%s gate=%s reason=%s",
             gate.get("skill_id"),
             gate.get("gate_id"),
             retry_reason or reason,
@@ -104,7 +104,7 @@ class A2UIContractMiddleware(AgentMiddleware):
             return await handler(request)
 
         first_response = await handler(request)
-        valid, reason = response_has_valid_a2ui_call(first_response, gate)
+        valid, reason = response_has_valid_interaction_call(first_response, gate)
         if valid:
             if context is not None:
                 record_gate_source(context, gate, source="direct")
@@ -114,7 +114,7 @@ class A2UIContractMiddleware(AgentMiddleware):
         retry_messages.append(_failed_contract_message(reason))
         retry_messages.append(HumanMessage(content=gate_instruction(gate, correction=reason)))
         retry_response = await handler(request.override(messages=retry_messages))
-        valid, retry_reason = response_has_valid_a2ui_call(retry_response, gate)
+        valid, retry_reason = response_has_valid_interaction_call(retry_response, gate)
         if valid:
             if context is not None:
                 record_gate_source(context, gate, source="corrected")
@@ -123,7 +123,7 @@ class A2UIContractMiddleware(AgentMiddleware):
         if context is not None:
             record_gate_violation(context, gate, source="failed")
         logger.warning(
-            "A2UI contract violation after retry: skill=%s gate=%s reason=%s",
+            "Interaction contract violation after retry: skill=%s gate=%s reason=%s",
             gate.get("skill_id"),
             gate.get("gate_id"),
             retry_reason or reason,
@@ -142,7 +142,7 @@ class A2UIContractMiddleware(AgentMiddleware):
         last_ai = next((message for message in reversed(messages) if isinstance(message, AIMessage)), None)
         if last_ai is None:
             return None
-        valid, reason = response_has_valid_a2ui_call(last_ai, gate)
+        valid, reason = response_has_valid_interaction_call(last_ai, gate)
         if valid:
             return None
         # Do not let prose-only phantom UI be treated as progress. One model-level

@@ -56,7 +56,7 @@ Status: completed. The original review notes are retained below for audit.
 
 4. `518cebe7-0f47-4702-8c61-b1bde9328901`
    - Target: `frontend-slides`
-   - Reason: Useful learning about not retrying completed A2UI gates, but the proposal mentions old gates (`style_path_selection`, `mood_or_preset_selection`).
+   - Reason: Useful learning about not retrying completed Interaction gates, but the proposal mentions old gates (`style_path_selection`, `mood_or_preset_selection`).
    - Cleanup: Accept only after editing to: if `workflow_action` reports a gate is already completed, continue from the next incomplete gate or final deck generation instead of retrying. Avoid reintroducing deprecated gates in new runs.
 
 5. `820d524a-d0a3-424b-9963-80b24e2336b8`

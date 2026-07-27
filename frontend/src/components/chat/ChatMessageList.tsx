@@ -1,7 +1,7 @@
 import { ArrowDown, MessageSquareText } from 'lucide-react';
 import { type Dispatch, type SetStateAction, useEffect, useMemo, useRef, useState } from 'react';
 import type { Components } from 'react-markdown';
-import type { A2UIRequest, A2UIResponse } from '@helpudoc/contracts/types';
+import type { InteractionRequest, InteractionResponse } from '@helpudoc/contracts/types';
 
 import type {
   ConversationMessage,
@@ -50,7 +50,7 @@ export default function ChatMessageList({
   handlePrepareInterruptAction,
   handleInterruptAction,
   workspaceId,
-  onA2UISubmit,
+  onInteractionSubmit,
 }: {
   colorMode: 'light' | 'dark';
   messages: ConversationMessage[];
@@ -102,7 +102,7 @@ export default function ChatMessageList({
     pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
   ) => void;
   workspaceId?: string;
-  onA2UISubmit?: (response: A2UIResponse, request: A2UIRequest, message?: ConversationMessage) => Promise<void>;
+  onInteractionSubmit?: (response: InteractionResponse, request: InteractionRequest, message?: ConversationMessage) => Promise<void>;
 }) {
   const isDarkMode = colorMode === 'dark';
   const listRef = useRef<HTMLDivElement | null>(null);
@@ -221,7 +221,7 @@ export default function ChatMessageList({
           workspaceId={workspaceId}
           colorMode={colorMode}
           isStreaming={isStreaming}
-          onA2UISubmit={onA2UISubmit}
+          onInteractionSubmit={onInteractionSubmit}
           />
         ))}
       </section>
@@ -259,7 +259,7 @@ export default function ChatMessageList({
     toggleToolActivityVisibility,
     workspaceId,
     handlePrepareInterruptAction,
-    onA2UISubmit,
+    onInteractionSubmit,
     colorMode,
     isDarkMode,
   ]);

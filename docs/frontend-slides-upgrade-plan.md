@@ -5,7 +5,7 @@ Compared upstream: `zarazhangrui/frontend-slides` `main` at `9906a34d640d2111f72
 
 ## Local Context
 
-HelpUDoc currently bundles `frontend-slides` under `skills/frontend-slides/` with a local A2UI interaction contract:
+HelpUDoc currently bundles `frontend-slides` under `skills/frontend-slides/` with a local Interaction interaction contract:
 
 - `presentation_context`
 - `outline_confirmation`
@@ -15,8 +15,8 @@ HelpUDoc currently bundles `frontend-slides` under `skills/frontend-slides/` wit
 
 Runtime code also has frontend-slides-specific validation and synthetic fallback behavior in:
 
-- `agent/helpudoc_agent/a2ui_contract.py`
-- `agent/helpudoc_agent/a2ui_workflows.py`
+- `agent/helpudoc_agent/interaction_contract.py`
+- `agent/helpudoc_agent/interaction_workflows.py`
 - `agent/helpudoc_agent/middleware/implicit_input_guard.py`
 - related tests in `tests/` and `agent/tests/`
 
@@ -99,7 +99,7 @@ Keep or adapt local-only files:
 
    Adopt upstream `viewport-base.css` and `html-template.md`. Update local docs/tests from `100vh` viewport fitting to `1920x1080` stage scaling. The result should still have no scrolling, but via uniform stage scale rather than responsive reflow.
 
-2. Preserve HelpUDoc A2UI, but simplify the gate sequence.
+2. Preserve HelpUDoc Interaction, but simplify the gate sequence.
 
    Upstream now asks all initial presentation questions together and generates 3 previews directly. It explicitly says not to ask about inline editing or style path before showing a draft/previews.
 
@@ -114,7 +114,7 @@ Keep or adapt local-only files:
    - `style_path_selection`
    - `mood_or_preset_selection`
 
-   If backward compatibility is risky, keep those gate IDs recognized by `a2ui_workflows.py` for old resumptions, but do not include them in the active contract for new runs.
+   If backward compatibility is risky, keep those gate IDs recognized by `interaction_workflows.py` for old resumptions, but do not include them in the active contract for new runs.
 
 3. Add the density question to the local contract.
 
@@ -190,28 +190,28 @@ Validation:
 - Assert the resulting file exists, opens as a ZIP, contains expected `ppt/slides/slide*.xml`, and has the expected slide count.
 - Optionally unpack and validate with `skills/xlsx/scripts/office/validate.py`.
 
-### Phase 3: Update HelpUDoc A2UI Contract
+### Phase 3: Update HelpUDoc Interaction Contract
 
 - Update `skills/frontend-slides/interaction_contract.yaml`:
   - add `density` to `presentation_context`
   - remove active `style_path_selection`
   - remove active `mood_or_preset_selection`
   - keep `style_preview_selection`
-- Update `agent/helpudoc_agent/a2ui_workflows.py`:
+- Update `agent/helpudoc_agent/interaction_workflows.py`:
   - active gate order becomes `presentation_context`, `outline_confirmation`, `style_preview_selection`
   - optionally preserve old gate IDs as legacy aliases, not required gates
-- Update `agent/helpudoc_agent/a2ui_contract.py` default props and validation rules.
+- Update `agent/helpudoc_agent/interaction_contract.py` default props and validation rules.
 - Update `agent/helpudoc_agent/middleware/implicit_input_guard.py` so synthetic recovery follows the new sequence and fallback preview paths.
 
 Validation:
 
-- `pytest tests/test_a2ui_contract_middleware.py`
+- `pytest tests/test_interaction_contract_middleware.py`
 - `pytest tests/test_interrupt_payload_parsing.py`
 - `pytest agent/tests/test_implicit_input_guard.py agent/tests/test_workflow_action_tool.py`
 
 ### Phase 4: Update Skill Prompt And Local README
 
-- Replace local `SKILL.md` with upstream content plus HelpUDoc-specific A2UI notes.
+- Replace local `SKILL.md` with upstream content plus HelpUDoc-specific Interaction notes.
 - Keep upstream fixed-stage rules intact.
 - Add export options that include:
   - Export to PPTX
@@ -273,7 +273,7 @@ This is required by the project instructions after modifying code files.
 ## Main Risks
 
 - A screenshot-backed PPTX is not fully editable. It is the right v1 for fidelity, but users expecting editable PowerPoint shapes need a separate v2 exporter.
-- Existing A2UI tests assume five gates; upstream flow wants three active gates.
+- Existing Interaction tests assume five gates; upstream flow wants three active gates.
 - Synthetic fallback logic may keep re-inserting removed gates unless updated with the active gate sequence.
 - The fixed-stage model may expose old generated decks that still use scroll-snap `100vh`; handle edits to existing decks leniently.
 - `deploy.sh` and `export-pdf.sh` introduce external tooling expectations (`npx`, Vercel, Playwright). Keep them optional and explicit.
@@ -286,7 +286,7 @@ Make the first PR a focused compatibility upgrade:
 
 1. Vendor upstream assets.
 2. Add screenshot-backed HTML-to-PPTX export and tests.
-3. Switch the active A2UI contract to the three-gate flow.
+3. Switch the active Interaction contract to the three-gate flow.
 4. Update tests for the new gate sequence and fixed-stage prompt requirements.
 5. Do not wire Vercel deployment into product UI beyond making the script available to the skill.
-6. Run the targeted A2UI/PPTX tests, then `graphify update .`.
+6. Run the targeted Interaction/PPTX tests, then `graphify update .`.

@@ -984,7 +984,7 @@ def test_skill_directive_survives_tagged_artifact_guidance(client_with_stubs, tm
         "history": [],
         "langfuseTraceContext": {
             "skillId": "frontend-slides",
-            "a2uiGateState": {
+            "interactionGateState": {
                 "completedGateIds": [
                     "presentation_context",
                     "outline_confirmation",
@@ -1033,7 +1033,7 @@ def test_trace_skill_context_loads_skill_for_force_reset_continuation(client_wit
     skill_dir = tmp_path / "frontend-slides"
     skill_dir.mkdir()
     (skill_dir / "SKILL.md").write_text(
-        "---\nname: frontend-slides\ndescription: Slides\n---\n# Frontend Slides\nUse workflow_action for A2UI gates.\n",
+        "---\nname: frontend-slides\ndescription: Slides\n---\n# Frontend Slides\nUse workflow_action for Interaction gates.\n",
         encoding="utf-8",
     )
     SettingsStub.backend.skills_root = tmp_path
@@ -1050,7 +1050,7 @@ def test_trace_skill_context_loads_skill_for_force_reset_continuation(client_wit
         "langfuseTraceContext": {
             "runId": "run-trace-skill",
             "skillId": "frontend-slides",
-            "a2uiGateState": {
+            "interactionGateState": {
                 "completedGateIds": [
                     "presentation_context",
                     "outline_confirmation",
@@ -1072,10 +1072,10 @@ def test_trace_skill_context_loads_skill_for_force_reset_continuation(client_wit
     stream_input = agent.stream_inputs[0][0][0]
     user_text = stream_input["messages"][-1]["content"]
     assert "Loaded skill: frontend-slides" in user_text
-    assert "Use workflow_action for A2UI gates." in user_text
+    assert "Use workflow_action for Interaction gates." in user_text
     assert "Purpose: Pitch deck" in user_text
     assert runtime.workspace_state.context["active_skill"] == "frontend-slides"
-    assert runtime.workspace_state.context["a2ui_gate_ledger"][0]["gate_id"] == "presentation_context"
+    assert runtime.workspace_state.context["interaction_gate_ledger"][0]["gate_id"] == "presentation_context"
     assert source_tracker.updated_workspaces == [runtime.workspace_state]
 
 

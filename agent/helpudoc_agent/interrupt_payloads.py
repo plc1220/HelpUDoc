@@ -47,14 +47,14 @@ def _normalize_interrupt_payload(interrupt_value: Dict[str, Any], interrupt_id: 
     if isinstance(display_payload, dict):
         payload["displayPayload"] = display_payload
     kind = interrupt_value.get("kind")
-    a2ui_request = interrupt_value.get("a2uiRequest") or interrupt_value.get("a2ui_request")
+    interaction_request = interrupt_value.get("interactionRequest") or interrupt_value.get("interaction_request")
     normalized_interrupt_id = (
         interrupt_id.strip()
         if isinstance(interrupt_id, str) and interrupt_id.strip()
         else _build_interrupt_id(interrupt_value)
     )
     payload["interruptId"] = normalized_interrupt_id
-    if not isinstance(a2ui_request, dict) and kind == "clarification":
+    if not isinstance(interaction_request, dict):
         response_spec_for_native = response_spec if isinstance(response_spec, dict) else {}
         display_payload_for_native = display_payload if isinstance(display_payload, dict) else {}
         gate_id = str(display_payload_for_native.get("gateId") or display_payload_for_native.get("gate_id") or "").strip()
@@ -64,7 +64,7 @@ def _normalize_interrupt_payload(interrupt_value: Dict[str, Any], interrupt_id: 
             or display_payload_for_native.get("stylePreviews")
         )
         if is_style_chooser:
-            component = "style.previewChooser"
+            presentation = "style_preview"
             props = {
                 "title": payload.get("title"),
                 "description": payload.get("description"),
@@ -75,8 +75,8 @@ def _normalize_interrupt_payload(interrupt_value: Dict[str, Any], interrupt_id: 
                 "submitLabel": response_spec_for_native.get("submitLabel") or "Continue",
                 "multiple": bool(response_spec_for_native.get("multiple")),
             }
-        else:
-            component = "clarification.form"
+        elif kind == "clarification":
+            presentation = "questionnaire"
             props = {
                 "title": payload.get("title"),
                 "description": payload.get("description"),
@@ -87,11 +87,21 @@ def _normalize_interrupt_payload(interrupt_value: Dict[str, Any], interrupt_id: 
                 "submitLabel": response_spec_for_native.get("submitLabel") or "Continue",
                 "placeholder": response_spec_for_native.get("placeholder") or "",
             }
-        a2ui_request = {
-            "contract": "a2ui",
-            "version": "0.9",
-            "surfaceId": f"surface-{gate_id}" if gate_id else f"surface-{normalized_interrupt_id}",
-            "component": component,
+        else:
+            presentation = "plan_review" if display_payload_for_native.get("planTitle") else "action_review"
+            props = {
+                "title": payload.get("title"),
+                "description": payload.get("description"),
+                "actions": payload.get("actions") or [],
+                "actionRequests": payload.get("actionRequests") or [],
+                "reviewConfigs": payload.get("reviewConfigs") or [],
+                "displayPayload": display_payload_for_native,
+            }
+        interaction_request = {
+            "contract": "helpudoc.interaction",
+            "version": "1",
+            "interactionId": f"interaction-{gate_id}" if gate_id else normalized_interrupt_id,
+            "presentation": presentation,
             "props": props,
             "gateId": gate_id or None,
             "skill": skill or None,
@@ -102,136 +112,8 @@ def _normalize_interrupt_payload(interrupt_value: Dict[str, Any], interrupt_id: 
             },
             "metadata": display_payload_for_native,
         }
-    if isinstance(a2ui_request, dict):
-        payload["a2uiRequest"] = a2ui_request
-
-    # Construct the uiRequest object. Native A2UI requests are the source of
-    # truth when present; uiRequest is kept as a compatibility projection for
-    # older frontend/status paths and backend gate validation.
-    ui_request = None
-    if isinstance(a2ui_request, dict):
-        component = str(a2ui_request.get("component") or "").strip()
-        props = a2ui_request.get("props") if isinstance(a2ui_request.get("props"), dict) else {}
-        resume_action = a2ui_request.get("resumeAction") if isinstance(a2ui_request.get("resumeAction"), dict) else {}
-        action_id = str(resume_action.get("actionId") or "submit").strip() or "submit"
-        component_map = {
-            "clarification.form": "clarification_form",
-            "clarification_form": "clarification_form",
-            "style.previewChooser": "style_preview_chooser",
-            "style_preview_chooser": "style_preview_chooser",
-            "approval.card": "approval",
-            "approval": "approval",
-        }
-        legacy_component = component_map.get(component)
-        if legacy_component:
-            ui_request = {
-                "id": normalized_interrupt_id,
-                "component": legacy_component,
-                "props": props,
-                "resume": {
-                    "action": action_id,
-                },
-            }
-
-    if ui_request is None and kind == "clarification":
-        # Check if it's slide style selection chooser
-        is_style_chooser = False
-        if isinstance(display_payload, dict):
-            if display_payload.get("chooser") == "style-previews" or "stylePreviews" in display_payload:
-                is_style_chooser = True
-
-        if is_style_chooser:
-            previews = []
-            if isinstance(display_payload, dict):
-                previews = display_payload.get("stylePreviews") or display_payload.get("previews") or []
-
-            choices = []
-            if isinstance(response_spec, dict):
-                choices = response_spec.get("choices") or []
-
-            ui_request = {
-                "id": normalized_interrupt_id,
-                "component": "style_preview_chooser",
-                "props": {
-                    "previews": previews,
-                    "choices": choices,
-                    "title": payload.get("title"),
-                    "description": payload.get("description")
-                },
-                "resume": {
-                    "action": "style_choice",
-                    "schema": {
-                        "type": "object",
-                        "properties": {
-                            "selectedChoiceId": {"type": "string"},
-                            "styleSelection": {"type": "string"}
-                        },
-                        "required": ["selectedChoiceId"]
-                    }
-                }
-            }
-        else:
-            # Multi-question or single text clarification form
-            questions = []
-            if isinstance(response_spec, dict):
-                questions = response_spec.get("questions") or []
-
-            choices = []
-            if isinstance(response_spec, dict):
-                choices = response_spec.get("choices") or []
-
-            ui_request = {
-                "id": normalized_interrupt_id,
-                "component": "clarification_form",
-                "props": {
-                    "questions": questions,
-                    "choices": choices,
-                    "title": payload.get("title"),
-                    "description": payload.get("description"),
-                    "inputMode": response_spec.get("inputMode") if isinstance(response_spec, dict) else "text",
-                    "multiple": response_spec.get("multiple") if isinstance(response_spec, dict) else False,
-                    "submitLabel": response_spec.get("submitLabel") if isinstance(response_spec, dict) else "Continue"
-                },
-                "resume": {
-                    "action": "submit",
-                    "schema": {
-                        "type": "object",
-                        "properties": {
-                            "response": {"type": "string"},
-                            "selectedChoiceId": {"type": "string"},
-                            "selectedChoiceIds": {"type": "array", "items": {"type": "string"}},
-                            "answers": {"type": "object"}
-                        }
-                    }
-                }
-            }
-    elif kind == "approval":
-        ui_request = {
-            "id": normalized_interrupt_id,
-            "component": "approval",
-            "props": {
-                "title": payload.get("title"),
-                "description": payload.get("description"),
-                "displayPayload": display_payload,
-                "actions": payload.get("actions", []),
-                "actionRequests": payload.get("actionRequests", []),
-                "reviewConfigs": payload.get("reviewConfigs", [])
-            },
-            "resume": {
-                "action": "approve_reject",
-                "schema": {
-                    "type": "object",
-                    "properties": {
-                        "decision": {"type": "string"},
-                        "feedback": {"type": "string"}
-                    },
-                    "required": ["decision"]
-                }
-            }
-        }
-
-    if ui_request is not None:
-        payload["uiRequest"] = ui_request
+    if isinstance(interaction_request, dict):
+        payload["interactionRequest"] = interaction_request
 
     return payload
 
@@ -465,13 +347,13 @@ def _build_clarification_interrupt_value(args: Dict[str, Any]) -> Dict[str, Any]
     display_payload = _parse_json_dict(args.get("context_json"))
     gate_id = str(display_payload.get("gateId") or display_payload.get("gate_id") or "").strip()
     skill = str(display_payload.get("skill") or display_payload.get("skillId") or "").strip()
-    surface_id = f"surface-{gate_id}" if gate_id else f"surface-clarification-{uuid.uuid4().hex[:8]}"
+    interaction_id = f"interaction-{gate_id}" if gate_id else f"interaction-clarification-{uuid.uuid4().hex[:8]}"
     is_style_chooser = bool(
         display_payload.get("chooser") == "style-previews" or display_payload.get("stylePreviews")
     )
     if is_style_chooser:
-        component = "style.previewChooser"
-        a2ui_props: Dict[str, Any] = {
+        presentation = "style_preview"
+        interaction_props: Dict[str, Any] = {
             "title": prompt_title,
             "description": str(args.get("description") or "").strip(),
             "choices": parsed_choices,
@@ -480,8 +362,8 @@ def _build_clarification_interrupt_value(args: Dict[str, Any]) -> Dict[str, Any]
             "multiple": multi_select,
         }
     else:
-        component = "clarification.form"
-        a2ui_props = {
+        presentation = "questionnaire"
+        interaction_props = {
             "title": prompt_title,
             "description": str(args.get("description") or "").strip(),
             "questions": parsed_questions,
@@ -491,12 +373,12 @@ def _build_clarification_interrupt_value(args: Dict[str, Any]) -> Dict[str, Any]
             "submitLabel": submit_label,
             "placeholder": placeholder,
         }
-    a2ui_request = {
-        "contract": "a2ui",
-        "version": "0.9",
-        "surfaceId": surface_id,
-        "component": component,
-        "props": a2ui_props,
+    interaction_request = {
+        "contract": "helpudoc.interaction",
+        "version": "1",
+        "interactionId": interaction_id,
+        "presentation": presentation,
+        "props": interaction_props,
         "gateId": gate_id or None,
         "skill": skill or None,
         "required": True,
@@ -546,7 +428,7 @@ def _build_clarification_interrupt_value(args: Dict[str, Any]) -> Dict[str, Any]
             **({"questions": parsed_questions} if parsed_questions else {}),
         },
         "display_payload": display_payload,
-        "a2uiRequest": a2ui_request,
+        "interactionRequest": interaction_request,
     }
     return interrupt_value
 
@@ -601,12 +483,12 @@ def _build_human_action_payload(args: Dict[str, Any]) -> Dict[str, Any] | None:
     display_payload = _parse_json_dict(args.get("context_json"))
     gate_id = str(display_payload.get("gateId") or display_payload.get("gate_id") or "").strip()
     skill = str(display_payload.get("skill") or display_payload.get("skillId") or "").strip()
-    surface_id = f"surface-{gate_id}" if gate_id else f"surface-action-{uuid.uuid4().hex[:8]}"
-    a2ui_request = {
-        "contract": "a2ui",
-        "version": "0.9",
-        "surfaceId": surface_id,
-        "component": "approval.card",
+    interaction_id = f"interaction-{gate_id}" if gate_id else f"interaction-action-{uuid.uuid4().hex[:8]}"
+    interaction_request = {
+        "contract": "helpudoc.interaction",
+        "version": "1",
+        "interactionId": interaction_id,
+        "presentation": "action_review",
         "props": {
             "title": prompt_title,
             "description": str(args.get("description") or "").strip(),
@@ -631,7 +513,7 @@ def _build_human_action_payload(args: Dict[str, Any]) -> Dict[str, Any] | None:
         "step_count": max(1, int(args.get("step_count") or 1)),
         "actions": parsed_actions,
         "display_payload": display_payload,
-        "a2uiRequest": a2ui_request,
+        "interactionRequest": interaction_request,
     }
     return _normalize_interrupt_payload(interrupt_value)
 
@@ -664,12 +546,12 @@ def build_plan_approval_interrupt_value(args: Dict[str, Any]) -> Dict[str, Any] 
     }
 
     import uuid
-    surface_id = f"surface-plan-review-{uuid.uuid4().hex[:8]}"
-    a2ui_request = {
-        "contract": "a2ui",
-        "version": "0.9",
-        "surfaceId": surface_id,
-        "component": "plan.review",
+    interaction_id = f"interaction-plan-review-{uuid.uuid4().hex[:8]}"
+    interaction_request = {
+        "contract": "helpudoc.interaction",
+        "version": "1",
+        "interactionId": interaction_id,
+        "presentation": "plan_review",
         "props": {
             "title": prompt_title,
             "summary": summary_markdown or summary,
@@ -724,7 +606,7 @@ def build_plan_approval_interrupt_value(args: Dict[str, Any]) -> Dict[str, Any] 
             "statusLabel": status_label,
             "riskyActions": risky_actions,
         },
-        "a2uiRequest": a2ui_request,
+        "interactionRequest": interaction_request,
     }
 
 

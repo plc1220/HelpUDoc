@@ -71,11 +71,11 @@ def test_normalize_clarification_resume_payload_derives_selected_values_from_cho
     assert payload["summary"] == "Selected: Medium"
 
 
-def test_normalize_clarification_resume_payload_accepts_a2ui_response_value() -> None:
+def test_normalize_clarification_resume_payload_accepts_interaction_response_value() -> None:
     payload = json.loads(
         normalize_clarification_resume_payload(
             {
-                "surfaceId": "surface-clarification-1",
+                "interactionId": "interaction-clarification-1",
                 "actionId": "submit",
                 "decision": "submit",
                 "values": {
@@ -90,11 +90,11 @@ def test_normalize_clarification_resume_payload_accepts_a2ui_response_value() ->
     assert "Use a conference talk format." in payload["summary"]
 
 
-def test_normalize_clarification_resume_payload_unpacks_a2ui_answers() -> None:
+def test_normalize_clarification_resume_payload_unpacks_interaction_answers() -> None:
     payload = json.loads(
         normalize_clarification_resume_payload(
             {
-                "surfaceId": "surface-clarification-2",
+                "interactionId": "interaction-clarification-2",
                 "actionId": "submit",
                 "decision": "submit",
                 "values": {

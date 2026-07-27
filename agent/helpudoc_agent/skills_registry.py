@@ -195,22 +195,22 @@ def _normalize_interaction_contract(value: object) -> dict[str, Any] | None:
         if not isinstance(raw_gate, dict):
             continue
         gate_id = str(raw_gate.get("gate_id") or raw_gate.get("gateId") or raw_gate.get("id") or "").strip()
-        component = str(raw_gate.get("component") or "").strip()
-        if not gate_id or not component:
+        presentation = str(raw_gate.get("presentation") or "").strip()
+        if not gate_id or not presentation:
             continue
         gate = dict(raw_gate)
         gate["gate_id"] = gate_id
-        gate["component"] = component
+        gate["presentation"] = presentation
         gate["required"] = bool(raw_gate.get("required", True))
         gates.append(gate)
     return {"gates": gates} if gates else None
 
 
 def _load_interaction_contract(skill_dir: Path, meta: dict) -> dict[str, Any] | None:
-    inline = _normalize_interaction_contract(meta.get("interaction_contract") or meta.get("a2ui_contract"))
+    inline = _normalize_interaction_contract(meta.get("interaction_contract") or meta.get("interaction_contract"))
     if inline is not None:
         return inline
-    for filename in ("interaction_contract.yaml", "interaction_contract.yml", "a2ui_contract.yaml", "a2ui_contract.yml"):
+    for filename in ("interaction_contract.yaml", "interaction_contract.yml", "interaction_contract.yaml", "interaction_contract.yml"):
         path = skill_dir / filename
         if not path.exists():
             continue
@@ -701,7 +701,7 @@ ALWAYS_ALLOWED_TOOLS: frozenset[str] = frozenset(
         "request_plan_approval",
         "request_clarification",
         "request_human_action",
-        "request_ui",
+        "request_interaction",
         "workflow_action",
     }
 )

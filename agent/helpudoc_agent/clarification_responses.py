@@ -128,8 +128,8 @@ def normalize_clarification_resume_payload(
     resolved_questions = [question for question in (questions or []) if isinstance(question, dict)]
     resolved_choices = [choice for choice in (choices or []) if isinstance(choice, dict)]
 
-    # Translate A2UIResponse to legacy format if detected
-    if "surfaceId" in response or "actionId" in response:
+    # Translate InteractionResponse to legacy format if detected
+    if "interactionId" in response or "actionId" in response:
         raw_values = response.get("values") or {}
         values = raw_values if isinstance(raw_values, dict) else {}
         choice_ids = []

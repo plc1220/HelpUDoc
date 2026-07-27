@@ -86,13 +86,12 @@ tools:
   - name: request_human_action
     kind: builtin
     description: Pause the run and ask the human to choose from arbitrary actions
-  - name: request_ui
+  - name: request_interaction
     kind: builtin
-    description: Pause the run and ask the frontend to render a specific native A2UI
-      component
+    description: Pause the run and request a semantic Interaction presentation
   - name: workflow_action
     kind: builtin
-    description: Emit one structured workflow action; use ask_user_a2ui for user-input gates
+    description: Emit one structured workflow action; use request_user_interaction for user-input gates
   - name: run_skill_python_script
     kind: builtin
     description: Run an active skill's declared Python script in a Kubernetes sandbox

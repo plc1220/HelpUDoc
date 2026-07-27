@@ -1,5 +1,6 @@
 import { FileIcon, Globe2, Paperclip, Plus, Send, StopCircle, X } from 'lucide-react';
 import { type ChangeEvent, type ClipboardEvent, type KeyboardEvent, type RefObject, type SyntheticEvent, useEffect, useRef, useState } from 'react';
+import { ChatComposer } from '@astryxdesign/core/Chat';
 
 import VerticalResizeHandle from '../VerticalResizeHandle';
 import { useVerticalPaneResize } from '../../hooks/useVerticalPaneResize';
@@ -118,11 +119,15 @@ export default function ChatInputArea({
     <div className={`sticky bottom-0 border-t p-3 backdrop-blur-md ${
       isDarkMode ? 'border-[#223047]/70 bg-[#0d1524]/95' : 'border-slate-200/80 bg-white/90'
     }`}>
-      <div className={`relative rounded-xl border transition-all duration-200 ${
-        isDarkMode
-          ? 'border-[#2b3a55] bg-[#111b2e] shadow-[0_20px_44px_-34px_rgba(2,6,23,0.95)] focus-within:border-sky-400/70 focus-within:ring-2 focus-within:ring-sky-400/15'
-          : 'border-slate-300/90 bg-white shadow-[0_20px_44px_-34px_rgba(15,23,42,0.16)] focus-within:border-sky-400/70 focus-within:ring-2 focus-within:ring-sky-200/50'
-      } ${isResizing ? 'select-none' : ''}`}>
+      <ChatComposer
+        onSubmit={() => onSendMessage()}
+        onStop={onStopStreaming}
+        isStopShown={isStreaming}
+        isDisabled={isPreparingAttachments}
+        density="compact"
+        sendButton={<span aria-hidden="true" />}
+        input={(
+          <div className={`relative ${isResizing ? 'select-none' : ''}`}>
         <VerticalResizeHandle
           isDarkMode={isDarkMode}
           isResizing={isResizing}
@@ -381,7 +386,9 @@ export default function ChatInputArea({
             )}
           </div>
         )}
-      </div>
+          </div>
+        )}
+      />
     </div>
   );
 }

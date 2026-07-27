@@ -52,7 +52,7 @@ test("frontend-slides uses a paginated clarification wizard and submits structur
     email: `slides-e2e-${testRunId}@local.test`,
     provider: "local",
   };
-  const workspaceName = `a2ui-slides-${testRunId}`;
+  const workspaceName = `interaction-slides-${testRunId}`;
   let adminApi: APIRequestContext | undefined;
   let userApi: APIRequestContext | undefined;
   let groupId: string | undefined;
@@ -190,12 +190,12 @@ test("frontend-slides uses a paginated clarification wizard and submits structur
       return response.json() as Promise<{
         status?: string;
         error?: string;
-        a2uiGateState?: { completedGateIds?: string[] };
+        interactionGateState?: { completedGateIds?: string[] };
         pendingInterrupt?: {
           displayPayload?: { gateId?: string };
-          a2uiRequest?: {
+          interactionRequest?: {
             gateId?: string;
-            component?: string;
+            presentation?: string;
             metadata?: Record<string, unknown>;
           };
         };
@@ -274,7 +274,7 @@ test("frontend-slides uses a paginated clarification wizard and submits structur
         async () => {
           const meta = await getRunMeta();
           return Boolean(
-            meta.a2uiGateState?.completedGateIds?.includes(
+            meta.interactionGateState?.completedGateIds?.includes(
               "presentation_context",
             ),
           );
@@ -292,7 +292,7 @@ test("frontend-slides uses a paginated clarification wizard and submits structur
         async () => {
           const meta = await getRunMeta();
           const gateId =
-            meta.pendingInterrupt?.a2uiRequest?.gateId ||
+            meta.pendingInterrupt?.interactionRequest?.gateId ||
             meta.pendingInterrupt?.displayPayload?.gateId ||
             "";
           if (meta.status === "failed") {

@@ -84,11 +84,11 @@ _UI_FORM_MISREF_PATTERNS: tuple[Pattern[str], ...] = (
     re.compile(r"\b(?:interactive|thumbnail)\s+(?:selector|chooser|window)\s+(?:above|below)?", re.IGNORECASE),
     re.compile(r"\b(?:select|choose|pick|review).{0,120}\b(?:selector|chooser|preview|style).{0,80}\b(?:above|below|window)\b", re.IGNORECASE),
     re.compile(
-        r"\b(?:presented|triggered|activated|opened|shown|displayed|rendered|initiated|started|set\s+up)\b.{0,160}\b(?:a2ui|gate|surface|form|prompt|selector|chooser)\b",
+        r"\b(?:presented|triggered|activated|opened|shown|displayed|rendered|initiated|started|set\s+up)\b.{0,160}\b(?:interaction|gate|surface|form|prompt|selector|chooser)\b",
         re.IGNORECASE | re.DOTALL,
     ),
     re.compile(
-        r"\b(?:a2ui|gate|surface|form|prompt|selector|chooser)\b.{0,160}\b(?:presented|triggered|activated|opened|shown|displayed|rendered|initiated|started|active)\b",
+        r"\b(?:interaction|gate|surface|form|prompt|selector|chooser)\b.{0,160}\b(?:presented|triggered|activated|opened|shown|displayed|rendered|initiated|started|active)\b",
         re.IGNORECASE | re.DOTALL,
     ),
     re.compile(r"\bselect.*(?:above|below)", re.IGNORECASE),

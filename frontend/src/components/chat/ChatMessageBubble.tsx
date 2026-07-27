@@ -2,8 +2,8 @@ import { CalendarClock, Check, CheckCircle2, ChevronRight, Copy, FilePenLine, Im
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useCallback, useEffect, useMemo, useState, type Dispatch, type KeyboardEvent, type ReactNode, type SetStateAction } from 'react';
-import { A2UISurfaceRenderer } from '../../a2ui/A2UISurfaceRenderer';
-import type { A2UIRequest, A2UIResponse } from '@helpudoc/contracts/types';
+import { InteractionSurfaceRenderer } from '../../interactions/InteractionSurfaceRenderer';
+import type { InteractionRequest, InteractionResponse } from '@helpudoc/contracts/types';
 
 import type {
   ConversationMessage,
@@ -231,17 +231,18 @@ const buildStylePreviewChoices = (
   pendingInterrupt: ConversationMessageMetadata['pendingInterrupt'] | undefined,
   workspaceId: string | undefined,
 ): StylePreviewChoice[] => {
-  if (pendingInterrupt?.uiRequest) {
-    if (pendingInterrupt.uiRequest.component !== 'style_preview_chooser') {
+  const request = pendingInterrupt?.interactionRequest;
+  if (request) {
+    if (request.presentation !== 'style_preview') {
       return [];
     }
-    const choices = Array.isArray(pendingInterrupt.uiRequest.props.choices)
-      ? pendingInterrupt.uiRequest.props.choices
+    const choices = Array.isArray(request.props.choices)
+      ? request.props.choices
       : [];
     if (!choices.length) {
       return [];
     }
-    const metadata = parseStylePreviewChoiceMetadata(pendingInterrupt.uiRequest.props);
+    const metadata = parseStylePreviewChoiceMetadata(request.props);
     const previewChoices = choices
       .map((choice): StylePreviewChoice | null => {
         if (!choice || typeof choice !== 'object' || Array.isArray(choice)) {
@@ -426,12 +427,13 @@ const renderDisplayPayload = (
 const parseClarificationQuestions = (
   pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
 ): ClarificationQuestion[] => {
-  if (pendingInterrupt?.uiRequest) {
-    if (pendingInterrupt.uiRequest.component !== 'clarification_form') {
+  const request = pendingInterrupt?.interactionRequest;
+  if (request) {
+    if (request.presentation !== 'questionnaire') {
       return [];
     }
-    const responseQuestions = Array.isArray(pendingInterrupt.uiRequest.props.questions)
-      ? pendingInterrupt.uiRequest.props.questions
+    const responseQuestions = Array.isArray(request.props.questions)
+      ? request.props.questions
       : [];
     if (responseQuestions.length) {
       return responseQuestions.reduce<ClarificationQuestion[]>((acc, question) => {
@@ -475,9 +477,7 @@ const parseClarificationQuestions = (
   return [];
 };
 
-const isA2UINativeEnabled = import.meta.env.VITE_A2UI_NATIVE_ENABLED !== 'false';
-
-const sanitizeA2UISurfacePart = (value: unknown): string | undefined => {
+const sanitizeInteractionSurfacePart = (value: unknown): string | undefined => {
   if (typeof value !== 'string' && typeof value !== 'number') {
     return undefined;
   }
@@ -522,7 +522,7 @@ export default function ChatMessageBubble({
   handleInterruptAction,
   isStreaming,
   workspaceId,
-  onA2UISubmit,
+  onInteractionSubmit,
 }: {
   colorMode: 'light' | 'dark';
   message: ConversationMessage;
@@ -574,7 +574,7 @@ export default function ChatMessageBubble({
   ) => void;
   isStreaming: boolean;
   workspaceId?: string;
-  onA2UISubmit?: (response: A2UIResponse, request: A2UIRequest, message?: ConversationMessage) => Promise<void>;
+  onInteractionSubmit?: (response: InteractionResponse, request: InteractionRequest, message?: ConversationMessage) => Promise<void>;
 }) {
   const isDarkMode = colorMode === 'dark';
   const isAgentMessage = message.sender === 'agent';
@@ -606,52 +606,33 @@ export default function ChatMessageBubble({
     [formatMessageTimestamp, toolEvents],
   );
   const pendingInterrupt = messageMetadata?.pendingInterrupt;
-  const a2uiRequest = useMemo(() => {
+  const interactionRequest = useMemo(() => {
     if (!pendingInterrupt) return undefined;
     const displayPayload = pendingInterrupt.displayPayload || {};
     const gateId = typeof displayPayload.gateId === 'string' && displayPayload.gateId.trim()
       ? displayPayload.gateId.trim()
       : undefined;
-    const stableSurfaceId = [
-      'surface',
-      sanitizeA2UISurfacePart(message.id),
-      sanitizeA2UISurfacePart(
-        gateId || pendingInterrupt.interruptId || pendingInterrupt.a2uiRequest?.component || pendingInterrupt.uiRequest?.component || 'interrupt',
+    const stableInteractionId = [
+      'interaction',
+      sanitizeInteractionSurfacePart(message.id),
+      sanitizeInteractionSurfacePart(
+        gateId || pendingInterrupt.interruptId || pendingInterrupt.interactionRequest?.presentation || 'interrupt',
       ),
     ].filter(Boolean).join('-');
-    if (pendingInterrupt.a2uiRequest) {
+    if (pendingInterrupt.interactionRequest) {
       return {
-        ...pendingInterrupt.a2uiRequest,
-        surfaceId: pendingInterrupt.a2uiRequest.surfaceId || stableSurfaceId,
+        ...pendingInterrupt.interactionRequest,
+        interactionId: pendingInterrupt.interactionRequest.interactionId || stableInteractionId,
       };
-    }
-    if (pendingInterrupt.uiRequest && isA2UINativeEnabled) {
-      const legacy = pendingInterrupt.uiRequest;
-      return {
-        contract: 'a2ui' as const,
-        version: '0.9' as const,
-        surfaceId: stableSurfaceId,
-        component: legacy.component,
-        props: legacy.props,
-        resumeAction: {
-          endpoint: legacy.component === 'approval' ? ('decision' as const) : ('respond' as const),
-          actionId: legacy.resume?.action,
-        },
-      } as A2UIRequest;
     }
     return undefined;
   }, [message.id, pendingInterrupt]);
 
   const interruptKind = getInterruptKind(pendingInterrupt);
   const isClarificationInterrupt = Boolean(
-    (pendingInterrupt?.uiRequest &&
-      (pendingInterrupt.uiRequest.component === 'clarification_form' ||
-        pendingInterrupt.uiRequest.component === 'style_preview_chooser')) ||
-    (a2uiRequest &&
-      (a2uiRequest.component === 'clarification.form' ||
-        a2uiRequest.component === 'style.previewChooser' ||
-        a2uiRequest.component === 'clarification_form' ||
-        a2uiRequest.component === 'style_preview_chooser'))
+    (interactionRequest &&
+      (interactionRequest.presentation === 'questionnaire' ||
+        interactionRequest.presentation === 'style_preview'))
   );
   const interruptActions = getInterruptActions(pendingInterrupt);
   const primaryInterruptAction = getPrimaryInterruptAction(pendingInterrupt);
@@ -2169,21 +2150,21 @@ export default function ChatMessageBubble({
                 {displayThinkingText ? 'Finalizing response...' : 'Thinking...'}
               </span>
             ) : null}
-            {a2uiRequest && isA2UINativeEnabled ? (
+            {interactionRequest ? (
               <div className="mt-3">
-                <A2UISurfaceRenderer
-                  request={a2uiRequest}
+                <InteractionSurfaceRenderer
+                  request={interactionRequest}
                   onSubmit={(response) => {
-                    if (onA2UISubmit) {
-                      return onA2UISubmit(response, a2uiRequest, message);
+                    if (onInteractionSubmit) {
+                      return onInteractionSubmit(response, interactionRequest, message);
                     }
-                    return Promise.reject(new Error('onA2UISubmit handler not provided'));
+                    return Promise.reject(new Error('onInteractionSubmit handler not provided'));
                   }}
                   workspaceId={workspaceId}
                 />
               </div>
             ) : null}
-            {pendingInterrupt && !isClarificationInterrupt && !(a2uiRequest && isA2UINativeEnabled) ? (
+            {pendingInterrupt && !isClarificationInterrupt && !(interactionRequest) ? (
               <div className="mt-3">
                 <div className="rounded-xl border border-slate-200/90 bg-white px-4 py-4 text-slate-900 shadow-[0_16px_40px_-32px_rgba(15,23,42,0.16)]">
                   <div className="flex flex-wrap items-start justify-between gap-2">
@@ -2335,7 +2316,7 @@ export default function ChatMessageBubble({
                 </div>
               </div>
             ) : null}
-            {pendingInterrupt && isClarificationInterrupt && !clarificationDismissed && !(a2uiRequest && isA2UINativeEnabled) ? (
+            {pendingInterrupt && isClarificationInterrupt && !clarificationDismissed && !(interactionRequest) ? (
               <div className="mt-3 rounded-xl border border-slate-200/90 bg-white px-4 py-4 text-slate-900 shadow-[0_16px_40px_-32px_rgba(15,23,42,0.16)]">
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div className="min-w-0">
@@ -2387,7 +2368,7 @@ export default function ChatMessageBubble({
                 </div>
               </div>
             ) : null}
-            {pendingInterrupt && isClarificationInterrupt && clarificationDismissed && !(a2uiRequest && isA2UINativeEnabled) ? (
+            {pendingInterrupt && isClarificationInterrupt && clarificationDismissed && !(interactionRequest) ? (
               <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200/80 bg-amber-50/70 px-4 py-3 text-slate-900">
                 <div className="min-w-0">
                   <p className="text-sm font-semibold leading-snug text-slate-900">
