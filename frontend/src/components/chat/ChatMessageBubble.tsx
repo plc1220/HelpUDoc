@@ -153,6 +153,53 @@ const isSummaryLikeAgentText = (value?: string): boolean => {
   );
 };
 
+const isTerminalAgentStatus = (status?: ConversationMessageMetadata['status']): boolean => (
+  status === 'completed' || status === 'failed' || status === 'cancelled'
+);
+
+const isTransientToolSummary = (value?: string): boolean => {
+  const text = String(value || '').trim();
+  return !text || /^(Reading|Checking|Preparing|Searching|Thinking|Analyzing|Inspecting|Reviewing)\b/i.test(text);
+};
+
+const buildTerminalMessageFallback = (
+  status: ConversationMessageMetadata['status'] | undefined,
+  toolEvents: ConversationMessage['toolEvents'] = [],
+): string => {
+  if (!isTerminalAgentStatus(status)) {
+    return '';
+  }
+  const meaningfulEvent = [...(toolEvents || [])]
+    .reverse()
+    .find((event) => (
+      event.status !== 'running' &&
+      typeof event.summary === 'string' &&
+      event.summary.trim().length > 0 &&
+      !isTransientToolSummary(event.summary) &&
+      !isBenignToolNoise(event)
+    ));
+  if (meaningfulEvent?.summary?.trim()) {
+    return meaningfulEvent.summary.trim();
+  }
+  const outputFile = [...(toolEvents || [])]
+    .reverse()
+    .flatMap((event) => event.outputFiles || [])
+    .find((file) => typeof file.path === 'string' && file.path.trim());
+  if (outputFile?.path) {
+    return `Updated file ${outputFile.path}`;
+  }
+  if (status === 'completed') {
+    return 'Completed successfully.';
+  }
+  if (status === 'failed') {
+    return 'The run failed before it could finish.';
+  }
+  if (status === 'cancelled') {
+    return 'The run was stopped before completion.';
+  }
+  return '';
+};
+
 type ClarificationQuestionOption = {
   id: string;
   label: string;
@@ -852,8 +899,9 @@ export default function ChatMessageBubble({
       || Array.isArray(pendingInterrupt.displayPayload?.questions)
     ),
   );
+  const terminalMessageFallback = buildTerminalMessageFallback(effectiveStatus, toolEvents);
   const agentTextForDisplay = stripDeadFrontendSlidesUiReferences(
-    stripOperationalThinkingBlocks(sanitizedAgentText),
+    stripOperationalThinkingBlocks(sanitizedAgentText || terminalMessageFallback),
   );
   const visibleAgentText = shouldHideAgentBodyForApproval
     ? ''
