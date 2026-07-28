@@ -103,7 +103,20 @@ export class KnowledgeService {
     if (this.fileService) {
       for (const row of rows) {
         const status = this.getIngestionMetadata(row.metadata)?.status;
-        if (row.fileId && (status === 'queued' || status === 'processing')) {
+        if (!row.fileId) {
+          continue;
+        }
+        if (!status) {
+          const ingestion: KnowledgeIngestionMetadata = {
+            status: 'queued',
+            queuedAt: new Date().toISOString(),
+            error: null,
+            okfVersion: OKF_VERSION,
+          };
+          await this.updateIngestionMetadata(workspaceId, Number(row.id), ingestion);
+          row.metadata = this.withIngestionMetadata(row.metadata, ingestion);
+        }
+        if (!status || status === 'queued' || status === 'processing') {
           this.scheduleIngestion(workspaceId, Number(row.id), userId);
         }
       }

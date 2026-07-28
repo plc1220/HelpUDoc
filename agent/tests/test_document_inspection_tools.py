@@ -59,6 +59,15 @@ def test_document_tools_search_and_inspect_original_workbook(tmp_path) -> None:
     )
     assert single_cell["cells"][0][0]["value"] == 125000
 
+    oversized = tools["inspect_document"].invoke(
+        {
+            "file_path": "forecast.xlsx",
+            "sheet_name": "Forecast",
+            "cell_range": "A1:XFD1048576",
+        },
+    )
+    assert oversized.startswith("Document inspection failed: Spreadsheet inspection range is too large")
+
 
 def test_document_tools_keep_docx_search_locations_addressable(tmp_path) -> None:
     document_path = tmp_path / "policy.docx"

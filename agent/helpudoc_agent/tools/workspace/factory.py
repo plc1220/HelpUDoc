@@ -18,7 +18,10 @@ from .builtins.human_interrupts import (
 )
 from .builtins.document_inspection import build_document_inspection_tools
 from .builtins.interaction import build_request_interaction_tool, build_workflow_action_tool
-from .builtins.knowledge_navigation import build_knowledge_navigation_tools
+from .builtins.knowledge_navigation import (
+    build_knowledge_navigation_tools,
+    build_legacy_rag_query_tool,
+)
 from .builtins.skills import (
     build_list_skills_tool,
     build_load_skill_tool,
@@ -62,6 +65,7 @@ class ToolFactory:
             "get_image_url": lambda ws: build_get_image_url_tool(ws),
             "document_inspection": lambda ws: build_document_inspection_tools(ws),
             "knowledge_navigation": lambda ws: build_knowledge_navigation_tools(ws),
+            "rag_query": lambda ws: build_legacy_rag_query_tool(ws),
             "list_skills": lambda ws: build_list_skills_tool(self.settings, ws),
             "load_skill": lambda ws: build_load_skill_tool(self.settings, ws),
             "request_plan_approval": lambda ws: build_request_plan_approval_tool(ws),

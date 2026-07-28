@@ -76,6 +76,13 @@ GENERAL_SYSTEM_PROMPT = (
 )
 
 BASE_AGENT_PROMPT = "In order to complete the objective that the user asks of you, you have access to a number of standard tools."
+ALWAYS_AVAILABLE_TOOL_GROUPS = (
+    "load_skill",
+    "list_skills",
+    "knowledge_navigation",
+    "request_interaction",
+    "workflow_action",
+)
 
 
 def _normalize_mcp_candidate_servers(server_names: Any) -> list[str]:
@@ -88,6 +95,17 @@ def _normalize_mcp_candidate_servers(server_names: Any) -> list[str]:
         seen.add(name)
         normalized.append(name)
     return normalized
+
+
+def _include_always_available_tool_groups(
+    tool_names: list[str],
+    configured_tools: Dict[str, Any],
+) -> list[str]:
+    resolved = list(tool_names)
+    for name in ALWAYS_AVAILABLE_TOOL_GROUPS:
+        if name in configured_tools and name not in resolved:
+            resolved.append(name)
+    return resolved
 
 
 def _clone_preservable_context(context: Dict[str, Any] | None) -> Dict[str, Any]:
@@ -257,9 +275,7 @@ class AgentRegistry:
         if not tool_names:
             tool_names = list(self.settings.tools.keys())
         else:
-            for extra in ("load_skill", "list_skills", "request_interaction", "workflow_action"):
-                if extra in self.settings.tools and extra not in tool_names:
-                    tool_names.append(extra)
+            tool_names = _include_always_available_tool_groups(tool_names, self.settings.tools)
         if not allow_skill_sandbox:
             tool_names = [name for name in tool_names if name != "run_skill_python_script"]
         if allow_skill_sandbox and "run_skill_python_script" in self.settings.tools and "run_skill_python_script" not in tool_names:

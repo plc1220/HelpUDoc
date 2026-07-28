@@ -34,6 +34,7 @@ _TEXT_SUFFIXES = {
 }
 _MAX_OUTPUT_CHARS = int(os.getenv("DOCUMENT_INSPECTION_MAX_OUTPUT_CHARS", "30000"))
 _MAX_SEARCH_RESULTS = int(os.getenv("DOCUMENT_INSPECTION_MAX_SEARCH_RESULTS", "40"))
+_MAX_SPREADSHEET_INSPECT_CELLS = int(os.getenv("DOCUMENT_INSPECTION_MAX_RANGE_CELLS", "10000"))
 _MAX_SPREADSHEET_SCAN_CELLS = int(os.getenv("DOCUMENT_INSPECTION_MAX_SPREADSHEET_CELLS", "250000"))
 
 
@@ -185,6 +186,7 @@ def _inspect_docx(path: Path, item_start: int, item_end: int) -> dict[str, Any]:
 
 def _inspect_xlsx(path: Path, sheet_name: Optional[str], cell_range: Optional[str]) -> dict[str, Any]:
     from openpyxl import load_workbook  # type: ignore
+    from openpyxl.utils.cell import range_boundaries  # type: ignore
 
     workbook = load_workbook(str(path), read_only=True, data_only=False)
     try:
@@ -203,6 +205,18 @@ def _inspect_xlsx(path: Path, sheet_name: Optional[str], cell_range: Optional[st
             raise ValueError(f"Unknown sheet {sheet_name!r}. Available: {', '.join(workbook.sheetnames)}")
         sheet = workbook[sheet_name]
         requested_range = str(cell_range or "").strip() or "A1:J25"
+        try:
+            min_column, min_row, max_column, max_row = range_boundaries(requested_range)
+        except ValueError as exc:
+            raise ValueError(f"Invalid spreadsheet cell range: {requested_range}") from exc
+        if any(value is None for value in (min_column, min_row, max_column, max_row)):
+            raise ValueError("Spreadsheet inspection ranges must include bounded rows and columns")
+        cell_count = (max_column - min_column + 1) * (max_row - min_row + 1)
+        if cell_count > _MAX_SPREADSHEET_INSPECT_CELLS:
+            raise ValueError(
+                f"Spreadsheet inspection range is too large ({cell_count} cells); "
+                f"request at most {_MAX_SPREADSHEET_INSPECT_CELLS} cells"
+            )
         rows = []
         selected = sheet[requested_range]
         if hasattr(selected, "coordinate"):

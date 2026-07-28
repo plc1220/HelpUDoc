@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 from langchain_core.tools import Tool, tool
 
@@ -186,3 +186,56 @@ def build_knowledge_navigation_tools(workspace_state: WorkspaceState) -> List[To
         build_knowledge_search_tool(workspace_state),
         build_knowledge_read_tool(workspace_state),
     ]
+
+
+def build_legacy_rag_query_tool(workspace_state: WorkspaceState) -> Tool:
+    """Keep persisted pre-OKF tool configurations operational during upgrades."""
+    from .document_inspection import build_search_document_tool
+
+    knowledge_search = build_knowledge_search_tool(workspace_state)
+    document_search = build_search_document_tool(workspace_state)
+
+    @tool
+    def rag_query(
+        query: str,
+        file_paths: Optional[List[str]] = None,
+        mode: str = "naive",
+        include_references: bool = False,
+    ) -> str:
+        """Compatibility search over original files or published OKF knowledge."""
+        del mode, include_references
+        phrase = str(query or "").strip()
+        if not phrase:
+            return "Query is required"
+        paths = [str(item).strip() for item in (file_paths or []) if str(item).strip()]
+        if not paths:
+            return str(knowledge_search.invoke({"query": phrase, "max_results": 20}))
+        results = [
+            {
+                "file": file_path,
+                "result": document_search.invoke(
+                    {
+                        "file_path": file_path,
+                        "query": phrase,
+                        "max_results": 20,
+                    }
+                ),
+            }
+            for file_path in paths[:20]
+        ]
+        return json.dumps(
+            {
+                "compatibilityTool": "rag_query",
+                "query": phrase,
+                "files": results,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+
+    rag_query.name = "rag_query"
+    rag_query.description = (
+        "Compatibility alias for persisted pre-OKF configurations. Search named original "
+        "workspace files on demand, or search published OKF knowledge when no files are supplied."
+    )
+    return rag_query

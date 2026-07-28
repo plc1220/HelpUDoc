@@ -69,6 +69,29 @@ def test_create_pdf_from_images_builds_one_page_per_image(tmp_path):
     assert len(PdfReader(tmp_path / "stitched.pdf").pages) == 3
 
 
+def test_legacy_rag_query_configuration_uses_document_search(tmp_path):
+    (tmp_path / "notes.md").write_text("Renewals require 30 days notice.", encoding="utf-8")
+    factory = ToolFactory(
+        SettingsStub(
+            {
+                "rag_query": ToolConfig(
+                    name="rag_query",
+                    kind="builtin",
+                )
+            }
+        ),
+        source_tracker=SimpleNamespace(),
+        gemini_manager=SimpleNamespace(),
+    )
+    workspace = SimpleNamespace(root_path=tmp_path, workspace_id="ws-1", context={})
+
+    tool = factory.build_tools(["rag_query"], workspace_state=workspace)[0]
+    result = tool.invoke({"query": "30 days", "file_paths": ["notes.md"]})
+
+    assert tool.name == "rag_query"
+    assert "Renewals require 30 days notice." in result
+
+
 def test_load_skill_limits_runaway_skill_switches(tmp_path):
     for name in ("pdf", "data", "general", "image"):
         skill_dir = tmp_path / name
