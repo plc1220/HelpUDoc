@@ -18,10 +18,6 @@ export interface File {
   mimeType?: string | null;
   publicUrl?: string | null;
   content?: string;
-  understandingStatus?: DerivedArtifactStatus | null;
-  understandingMode?: DerivedArtifactMode | null;
-  understandingError?: string | null;
-  derivedArtifactFileId?: number | null;
 }
 
 export type GoogleDrivePickerScope = 'recent' | 'my-drive' | 'shared';
@@ -43,25 +39,6 @@ export interface GoogleDrivePickerItem {
 export interface GoogleDriveSearchResult {
   files: GoogleDrivePickerItem[];
   nextPageToken?: string | null;
-}
-
-export type DerivedArtifactStatus = 'pending' | 'partial' | 'ready' | 'failed' | 'superseded';
-export type DerivedArtifactMode = 'part' | 'parser' | 'hybrid';
-export type AttachmentPrepStatus = 'pending' | 'running' | 'ready' | 'failed';
-
-export interface FileContextRef {
-  sourceFileId: number;
-  sourceName: string;
-  sourceMimeType?: string | null;
-  sourceVersionFingerprint: string;
-  artifactId: string;
-  artifactVersion: number;
-  derivedArtifactFileId?: number | null;
-  derivedArtifactPath?: string | null;
-  effectiveMode: DerivedArtifactMode;
-  status: DerivedArtifactStatus;
-  summary?: string | null;
-  lastError?: string | null;
 }
 
 export interface AgentPersona {
@@ -222,9 +199,6 @@ export interface ConversationMessageMetadata {
   bodySource?: 'assistant' | 'summary';
   runId?: string;
   status?: 'queued' | 'running' | 'awaiting_approval' | 'completed' | 'failed' | 'cancelled';
-  attachmentJobId?: string;
-  attachmentPrepStatus?: AttachmentPrepStatus;
-  attachmentPrepError?: string;
   pendingInterrupt?: PendingInterrupt;
   runPolicy?: {
     skill?: string;
@@ -234,7 +208,12 @@ export interface ConversationMessageMetadata {
     prePlanSearchLimit?: number;
     prePlanSearchUsed?: number;
   };
-  fileContextRefs?: FileContextRef[];
+  taggedFiles?: string[];
+  knowledgeRefs?: Array<{
+    id: number;
+    title: string;
+    bundlePath: string;
+  }>;
   awaitingImplicitInput?: boolean;
   implicitInputReason?: 'missing_interrupt';
   implicitInputPrompt?: string;
@@ -305,7 +284,6 @@ export interface WorkspaceSchedule {
   selectedSkills: string[];
   contextRefs: string[];
   taggedFiles: string[];
-  fileContextRefs: FileContextRef[];
   outputMode: WorkspaceScheduleOutputMode;
   notificationMode: WorkspaceScheduleNotificationMode;
   sourceConversationId?: string | null;
@@ -332,7 +310,6 @@ export type WorkspaceScheduleDraft = {
   selectedSkills?: string[];
   contextRefs?: string[];
   taggedFiles?: string[];
-  fileContextRefs?: FileContextRef[];
   outputMode: WorkspaceScheduleOutputMode;
   notificationMode: WorkspaceScheduleNotificationMode;
   sourceConversationId?: string | null;

@@ -13,10 +13,8 @@ _INTERRUPT_TOOL_NAMES: Set[str] = {
 }
 _LOADED_SKILL_OUTPUT_ID = re.compile(r"^Loaded skill:\s*(\S+)", re.MULTILINE)
 _LOCAL_DEV_AGENT_JWT_SECRET = "helpudoc-local-dev-agent-jwt-secret"
-_RAG_PREFETCHABLE_EXTENSIONS: Set[str] = {".pdf", ".doc", ".docx", ".md", ".html", ".htm"}
 _TAGGED_HTML_EXTENSIONS: Set[str] = {".html", ".htm"}
 _TAGGED_DATASET_EXTENSIONS: Set[str] = {".parquet", ".csv"}
-_TAGGED_RAG_CONTEXT_CHAR_BUDGET = 6000
 _STRICT_DASHBOARD_QUERY_BUDGET = 5
 _STRICT_DASHBOARD_PREVIEW_BUDGET = 1
 _STRICT_DASHBOARD_SCHEMA_BUDGET = 1

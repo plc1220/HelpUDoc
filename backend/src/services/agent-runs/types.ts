@@ -5,7 +5,7 @@ import type {
   AgentInterruptResponse,
   AgentMessageContentBlock,
 } from '../agentService';
-import type { FileContextRef, InteractionRequest } from '@helpudoc/contracts/types';
+import type { InteractionRequest } from '@helpudoc/contracts/types';
 
 export type AgentRunStatus =
   | 'queued'
@@ -25,13 +25,13 @@ export type StartRunParams = {
   forceReset?: boolean;
   turnId?: string;
   authToken?: string;
-  fileContextRefs?: FileContextRef[];
   messageContent?: AgentMessageContentBlock[];
   internetSearchEnabled?: boolean;
 };
 
 export type RunPendingInterrupt = {
   kind?: 'approval' | 'clarification';
+  resumeStrategy?: 'fresh_prompt' | 'checkpoint';
   interruptId?: string;
   title?: string;
   description?: string;
@@ -94,7 +94,6 @@ export type PersistedRunContext = {
   history?: AgentHistoryEntry[];
   forceReset?: boolean;
   turnId?: string;
-  fileContextRefs?: FileContextRef[];
   messageContent?: AgentMessageContentBlock[];
   internetSearchEnabled?: boolean;
 };

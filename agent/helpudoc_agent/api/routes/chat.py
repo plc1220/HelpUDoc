@@ -40,7 +40,6 @@ from helpudoc_agent.langfuse_callbacks import (
 )
 from helpudoc_agent.memory_store import MemoryStoreManager
 from helpudoc_agent.mcp_manager import describe_mcp_servers
-from helpudoc_agent.rag_worker import RagIndexWorker
 from helpudoc_agent.runtime.agent_registry import AgentRegistry
 from helpudoc_agent.skills_registry import (
     activate_skill_context,
@@ -56,7 +55,6 @@ from helpudoc_agent.state import AgentRuntimeState
 from helpudoc_agent.tools_and_schemas import GeminiClientManager
 from helpudoc_agent.utils import SourceTracker
 
-from ..attachment_processing import _lc_ai_message_text
 from ..auth_context import extract_agent_request_context
 from ..constants import (
     _ASSISTANT_ROLES,
@@ -81,16 +79,11 @@ from ..schemas import (
     ResumeChatRequest,
 )
 from ..tagged_context import (
-    _append_artifact_first_guidance,
     _append_tagged_file_guidance,
     _build_dashboard_mode_context,
     _build_dashboard_runtime_guidance,
-    _build_tagged_rag_keywords,
-    _compress_tagged_context_lines,
     _extract_html_outline_from_path,
     _extract_tagged_files_from_text,
-    _filter_rag_chunks_to_tagged_paths,
-    _filter_rag_prefetchable_tagged_files,
 )
 from ..text_utils import (
     _format_exception,
@@ -163,13 +156,53 @@ async def _emit_progress(
 logger = logging.getLogger(__name__)
 
 
+def _has_usable_model_message(message: Any) -> bool:
+    if not isinstance(message, dict):
+        return False
+    role = str(message.get("role") or "").strip()
+    if not role:
+        return False
+    content = message.get("content")
+    if isinstance(content, str):
+        if content.strip():
+            return True
+    elif isinstance(content, list):
+        if any(
+            (isinstance(item, str) and item.strip())
+            or (isinstance(item, dict) and bool(item))
+            for item in content
+        ):
+            return True
+    elif content is not None and str(content).strip():
+        return True
+    return bool(message.get("tool_calls") or message.get("function_call"))
+
+
+def _validated_fresh_stream_input(
+    payload: List[Dict[str, Any]],
+    fallback_message: str = "",
+) -> Dict[str, List[Dict[str, Any]]]:
+    messages = [dict(item) for item in payload if _has_usable_model_message(item)]
+    has_user_message = any(
+        str(item.get("role") or "").strip().lower() in {"user", "human"}
+        for item in messages
+    )
+    if not has_user_message and fallback_message.strip():
+        messages.append({"role": "user", "content": fallback_message.strip()})
+    if not messages:
+        raise ValueError(
+            "Agent request contains no usable message contents. "
+            "Synthetic interactions must resume with a fresh continuation prompt."
+        )
+    return {"messages": messages}
+
+
 def register_chat_routes(
     app: FastAPI,
     *,
     settings: Settings,
     memory_store_manager: MemoryStoreManager,
     registry: AgentRegistry,
-    rag_worker: RagIndexWorker,
     gemini_manager: GeminiClientManager,
     source_tracker: SourceTracker,
     agent_jwt_secret: str,
@@ -507,36 +540,6 @@ def register_chat_routes(
     def _extract_tagged_files(content: str) -> List[str]:
         return _extract_tagged_files_from_text(content)
 
-    def _normalize_file_context_refs(raw_refs: Any) -> List[Dict[str, Any]]:
-        normalized: List[Dict[str, Any]] = []
-        if not isinstance(raw_refs, list):
-            return normalized
-        for item in raw_refs:
-            if not isinstance(item, dict):
-                continue
-            source_name = str(item.get("sourceName") or "").strip()
-            fingerprint = str(item.get("sourceVersionFingerprint") or "").strip()
-            artifact_id = str(item.get("artifactId") or "").strip()
-            if not source_name or not fingerprint or not artifact_id:
-                continue
-            normalized.append(
-                {
-                    "sourceFileId": item.get("sourceFileId"),
-                    "sourceName": source_name,
-                    "sourceMimeType": str(item.get("sourceMimeType") or "").strip() or None,
-                    "sourceVersionFingerprint": fingerprint,
-                    "artifactId": artifact_id,
-                    "artifactVersion": item.get("artifactVersion"),
-                    "derivedArtifactFileId": item.get("derivedArtifactFileId"),
-                    "derivedArtifactPath": str(item.get("derivedArtifactPath") or "").strip() or None,
-                    "effectiveMode": str(item.get("effectiveMode") or "part").strip() or "part",
-                    "status": str(item.get("status") or "failed").strip() or "failed",
-                    "summary": str(item.get("summary") or "").strip() or None,
-                    "lastError": str(item.get("lastError") or "").strip() or None,
-                }
-            )
-        return normalized
-
     def _load_tagged_html_outline(workspace_id: str, tagged_paths: List[str]) -> str | None:
         workspace_root = Path(settings.backend.workspace_root).resolve() / workspace_id
         for raw in tagged_paths:
@@ -554,96 +557,6 @@ def register_chat_routes(
             if outline:
                 return outline
         return None
-
-    async def _prefetch_rag_context(
-        workspace_id: str,
-        prompt: str,
-        tagged_paths_override: Sequence[str] | None = None,
-    ) -> str | None:
-        # Use extraction rather than relying on an exact marker string so backend text can evolve.
-        if not prompt and not tagged_paths_override:
-            return None
-        tagged_paths = list(tagged_paths_override or _extract_tagged_files(prompt))
-        rag_tagged_paths = _filter_rag_prefetchable_tagged_files(tagged_paths)
-        if not rag_tagged_paths:
-            return None
-        keywords = _build_tagged_rag_keywords(prompt, rag_tagged_paths)
-        rag_prompt = prompt
-        if len(rag_tagged_paths) != len(tagged_paths):
-            filtered_lines = ["Tagged files:"] + [f"- {path}" for path in rag_tagged_paths]
-            rag_prompt = re.sub(
-                r"(^|\n)Tagged files:\n(?:- .*(?:\n|$))+",
-                ("\n" if "\nTagged files:" in prompt else "") + "\n".join(filtered_lines) + "\n",
-                prompt,
-                count=1,
-            )
-        try:
-            response = await rag_worker.store.query_data(
-                workspace_id,
-                rag_prompt,
-                mode="naive",
-                include_references=False,
-                hl_keywords=keywords,
-                ll_keywords=keywords,
-            )
-            data = response.get("data") if isinstance(response, dict) else None
-            chunks = data.get("chunks", []) if isinstance(data, dict) else []
-            chunks = _filter_rag_chunks_to_tagged_paths(chunks, rag_tagged_paths)
-            lines: List[str] = []
-            for chunk in chunks:
-                content = chunk.get("content") or ""
-                if content and content.lstrip().startswith("SOURCE:"):
-                    lines.append(content)
-            if not lines:
-                for chunk in chunks:
-                    content = (chunk.get("content") or "").strip()
-                    if not content:
-                        continue
-                    lines.append(content)
-            if lines:
-                non_textual = 0
-                for content in lines:
-                    lowered = content.lower()
-                    if lowered.startswith("table analysis:") or lowered.startswith("discarded content analysis:"):
-                        non_textual += 1
-                if non_textual < len(lines):
-                    compressed = _compress_tagged_context_lines(lines)
-                    if compressed:
-                        return compressed
-            response = await rag_worker.store.query_data(
-                workspace_id,
-                rag_prompt,
-                mode="hybrid",
-                include_references=False,
-                hl_keywords=keywords,
-                ll_keywords=keywords,
-            )
-            data = response.get("data") if isinstance(response, dict) else None
-            chunks = data.get("chunks", []) if isinstance(data, dict) else []
-            chunks = _filter_rag_chunks_to_tagged_paths(chunks, rag_tagged_paths)
-            lines = []
-            for chunk in chunks:
-                content = (chunk.get("content") or "").strip()
-                if not content:
-                    continue
-                lines.append(content)
-            if lines:
-                non_textual = 0
-                for content in lines:
-                    lowered = content.lower()
-                    if lowered.startswith("table analysis:") or lowered.startswith("discarded content analysis:"):
-                        non_textual += 1
-                if non_textual < len(lines):
-                    compressed = _compress_tagged_context_lines(lines)
-                    if compressed:
-                        return compressed
-            html_outline = _load_tagged_html_outline(workspace_id, rag_tagged_paths)
-            if html_outline:
-                return html_outline
-            return None
-        except Exception:
-            logger.exception("Failed to prefetch RAG context for tagged files.")
-            return None
 
     def _get_thread_id(
         runtime: AgentRuntimeState,
@@ -1327,7 +1240,7 @@ def register_chat_routes(
                     if text:
                         return text
             return json.dumps(value, ensure_ascii=False) if stringify_objects else ""
-        text = _lc_ai_message_text(value) or _message_to_text(value)
+        text = _message_to_text(value)
         if text and not re.match(r"^[A-Za-z]+Message", text):
             return text
         return json.dumps(value, ensure_ascii=False, default=str) if stringify_objects else text
@@ -1741,14 +1654,12 @@ def register_chat_routes(
         context.pop("last_plan_file_path", None)
         context.pop("preferred_mcp_server", None)
         context.pop("tagged_files", None)
-        context.pop("tagged_rag_context", None)
         context.pop("loaded_skill_ids_this_turn", None)
         context.pop("skill_load_attempts_this_turn", None)
         context.pop("dashboard_mode", None)
         context.pop("frontend_slides_completed_interaction_gates", None)
         context.pop("interaction_gate_ledger", None)
         context.pop("interaction_gate_telemetry", None)
-        context["tagged_files_only"] = False
         context["plan_approved"] = skip_plan_approvals
         context["pre_plan_search_count"] = 0
         context["google_search_count"] = 0
@@ -1801,36 +1712,8 @@ def register_chat_routes(
                     )
                     prompt_for_tagged_files = _extract_text_from_content(payload[index].get("content"))
                     break
-        message_file_context_refs = _normalize_file_context_refs(message.fileContextRefs)
-        if message_file_context_refs:
-            runtime.workspace_state.context["file_context_refs"] = message_file_context_refs
-        active_file_context_refs = _normalize_file_context_refs(runtime.workspace_state.context.get("file_context_refs"))
-        explicit_artifact_paths = [
-            str(item.get("derivedArtifactPath") or "").strip()
-            for item in active_file_context_refs
-            if str(item.get("status") or "").strip().lower() in {"ready", "partial"}
-            and str(item.get("derivedArtifactPath") or "").strip()
-        ]
-        pending_files = [
-            str(item.get("sourceName") or "").strip()
-            for item in active_file_context_refs
-            if str(item.get("status") or "").strip().lower() == "pending"
-        ]
-        tagged_files = explicit_artifact_paths or _extract_tagged_files(prompt_for_tagged_files)
+        tagged_files = _extract_tagged_files(prompt_for_tagged_files)
         guided_prompt = _append_tagged_file_guidance(prompt_for_tagged_files, tagged_files)
-        guided_prompt = _append_artifact_first_guidance(
-            guided_prompt,
-            active_file_context_refs,
-            tagged_files,
-            multimodal_active=bool(message.messageContent),
-        )
-        if pending_files:
-            pending_note = (
-                "Attached files still being processed: "
-                + ", ".join(pending_files)
-                + ". Be explicit that understanding is still in progress."
-            )
-            guided_prompt = f"{guided_prompt.rstrip()}\n\n{pending_note}".strip()
         if guided_prompt != prompt_for_tagged_files:
             guidance_suffix = ""
             prompt_prefix = prompt_for_tagged_files.rstrip()
@@ -1854,22 +1737,6 @@ def register_chat_routes(
             runtime.workspace_state.context["dashboard_mode"] = dashboard_mode
         else:
             runtime.workspace_state.context.pop("dashboard_mode", None)
-        tagged_files_rag_only = (os.getenv("TAGGED_FILES_RAG_ONLY", "false") or "false").strip().lower() in {
-            "1",
-            "true",
-            "yes",
-            "y",
-            "on",
-        }
-        runtime.workspace_state.context["tagged_files_only"] = bool(tagged_files) and tagged_files_rag_only
-        if tagged_files:
-            rag_context = await _prefetch_rag_context(
-                runtime.workspace_state.workspace_id,
-                prompt_for_tagged_files,
-                tagged_paths_override=tagged_files,
-            )
-            if rag_context:
-                runtime.workspace_state.context["tagged_rag_context"] = rag_context
         _inject_host_datetime_context(payload)
         return payload
 
@@ -2003,11 +1870,12 @@ def register_chat_routes(
                     message,
                     callbacks=lf_handlers or None,
                 )
-                stream_input: Any = {"messages": payload}
                 if resume_decisions is not None:
-                    stream_input = Command(resume={"decisions": resume_decisions})
+                    stream_input: Any = Command(resume={"decisions": resume_decisions})
                 elif resume_value is not None:
                     stream_input = Command(resume=resume_value)
+                else:
+                    stream_input = _validated_fresh_stream_input(payload, message.message)
                 final_result = None
                 event_stream = agent.astream_events(
                     stream_input,

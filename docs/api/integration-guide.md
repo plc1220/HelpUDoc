@@ -121,7 +121,6 @@ Body (minimal):
   "turnId": "uuid-for-this-turn",
   "history": [{ "role": "user", "content": "..." }],
   "taggedFiles": ["notes.md"],
-  "fileContextRefs": [],
   "currentTurnFileIds": [],
   "internetSearchEnabled": false
 }
@@ -201,7 +200,6 @@ See **[Admin guide](admin-guide.md)**.
 | HTTP wrapper | `frontend/src/services/apiClient.ts` |
 | Agent runs | `frontend/src/services/agentApi.ts` |
 | Files | `frontend/src/services/fileApi.ts` |
-| Attachment prep | `frontend/src/services/attachmentPrepApi.ts` |
 | Workspaces / conversations | `frontend/src/services/workspaceApi.ts`, conversation helpers in workspace feature |
 | Shared stream client | `packages/contracts/src/agentStream.ts` |
 

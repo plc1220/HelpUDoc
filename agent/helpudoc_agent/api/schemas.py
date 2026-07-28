@@ -3,14 +3,13 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field
 
 
 class ChatRequest(BaseModel):
     message: str
     history: List[Dict[str, Any]] | None = None
     forceReset: bool = False
-    fileContextRefs: List[Dict[str, Any]] | None = None
     messageContent: List[Dict[str, Any]] | None = None
     internetSearchEnabled: bool = False
     langfuseTraceContext: Dict[str, Any] | None = None
@@ -69,64 +68,15 @@ class InterruptActionRequest(BaseModel):
     langfuseTraceContext: Dict[str, Any] | None = None
 
 
-class AttachmentUnderstandingRequest(BaseModel):
-    fileName: str
-    mimeType: str
-    contentB64: str = ""
-    workspaceId: Optional[str] = None
-    relativePath: Optional[str] = None
-
-    @model_validator(mode="after")
-    def validate_attachment_source(self) -> "AttachmentUnderstandingRequest":
-        has_b64 = bool((self.contentB64 or "").strip())
-        has_path = bool((self.workspaceId or "").strip() and (self.relativePath or "").strip())
-        if not has_b64 and not has_path:
-            raise ValueError("Either contentB64 or workspaceId+relativePath is required")
-        return self
+class DocumentExtractionRequest(BaseModel):
+    workspaceId: str
+    relativePath: str
 
 
-class AttachmentUnderstandingSection(BaseModel):
-    heading: str
-    body: str
-
-
-class AttachmentUnderstandingAsset(BaseModel):
-    name: str
-    mimeType: str
-    contentB64: str
-    sourcePath: Optional[str] = None
-    caption: Optional[str] = None
-    footnote: Optional[str] = None
-
-
-class AttachmentUnderstandingResponse(BaseModel):
+class DocumentExtractionResponse(BaseModel):
     title: str
     summary: str
-    outline: List[str] = Field(default_factory=list)
     markdown: str
-    sections: List[AttachmentUnderstandingSection] = Field(default_factory=list)
-    extractedAssets: List[AttachmentUnderstandingAsset] = Field(default_factory=list)
-    effectiveMode: str = "part"
-    status: str = "ready"
-
-
-class RagQueryRequest(BaseModel):
-    query: str
-    mode: str = "local"
-    onlyNeedContext: bool = True
-    includeReferences: bool = False
-
-
-class RagQueryResponse(BaseModel):
-    response: str
-
-
-class RagStatusRequest(BaseModel):
-    files: List[str]
-
-
-class RagStatusResponse(BaseModel):
-    statuses: Dict[str, Any]
 
 
 class EmbeddedDirective(BaseModel):

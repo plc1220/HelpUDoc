@@ -201,9 +201,7 @@ def build_run_skill_python_script_tool(settings: Settings, workspace_state: Work
         except Exception:
             return None
 
-    def _emit_script_events(result, callbacks: Optional[CallbackManagerForToolRun]) -> None:
-        if callbacks is None:
-            return
+    def _emit_script_events(result, callbacks: Optional[CallbackManagerForToolRun]) -> object | None:
         output_paths = {item.path for item in result.output_files}
         run_prefix = f"/sandbox-runs/{result.run_id}/"
         tool_payload = None
@@ -213,6 +211,8 @@ def build_run_skill_python_script_tool(settings: Settings, workspace_state: Work
                 tool_payload = _read_output_payload(output_path)
             elif output_path == f"{run_prefix}out/dashboard_artifacts.json":
                 dashboard_payload = _read_output_payload(output_path)
+        if callbacks is None:
+            return tool_payload
         try:
             run_id = getattr(callbacks, "run_id", None)
             if isinstance(tool_payload, dict):
@@ -236,7 +236,8 @@ def build_run_skill_python_script_tool(settings: Settings, workspace_state: Work
                 else:
                     callbacks.on_custom_event("dashboard_artifact", event)
         except Exception:
-            return
+            pass
+        return tool_payload
 
     @tool(args_schema=RunSkillPythonScriptInput)
     def run_skill_python_script(
@@ -262,7 +263,7 @@ def build_run_skill_python_script_tool(settings: Settings, workspace_state: Work
             return str(exc)
         except SandboxExecutionError as exc:
             return f"Skill sandbox execution blocked: {exc}"
-        _emit_script_events(result, callbacks)
+        tool_payload = _emit_script_events(result, callbacks)
 
         lines = [
             "SKILL_SANDBOX_RUN_COMPLETED",
@@ -274,6 +275,10 @@ def build_run_skill_python_script_tool(settings: Settings, workspace_state: Work
             lines.extend(f"- {item.path} ({item.size} bytes)" for item in result.output_files)
         else:
             lines.append("Output files: (none declared or produced)")
+        if isinstance(tool_payload, dict) and isinstance(tool_payload.get("files"), list):
+            for item in tool_payload["files"]:
+                if isinstance(item, dict) and isinstance(item.get("path"), str) and item["path"].strip():
+                    lines.append(f"Workspace output file: {item['path'].strip()}")
         if result.stdout:
             lines.append("STDOUT:")
             lines.append(result.stdout[:8000])

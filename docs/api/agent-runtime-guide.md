@@ -212,9 +212,8 @@ Important fields for chat:
 | `conversationId` | Ties run to persisted thread (durable runs) |
 | `turnId` | Correlates user + agent messages for one turn |
 | `history` | Prior turns for the agent |
-| `fileContextRefs` | Derived-artifact refs from `/files/context` |
 | `currentTurnFileIds` | Inline multimodal attachments for this turn |
-| `taggedFiles` | Explicit `@path` hints |
+| `taggedFiles` | Original workspace files to inspect on demand |
 | `internetSearchEnabled` | Toggle web search tools |
 
 ---
@@ -243,5 +242,5 @@ Skill Builder admin UI uses the same durable pattern under `/api/settings/skill-
 ## Related
 
 - [Integration guide](integration-guide.md) — end-to-end client flow  
-- [File & attachment flow](file-attachment-flow.md) — `fileContextRefs` and uploads  
+- [File & attachment flow](file-attachment-flow.md) — uploads, tagged files, and OKF knowledge
 - [API reference](reference.md) — exact paths and schemas  

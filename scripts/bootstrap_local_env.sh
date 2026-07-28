@@ -64,7 +64,6 @@ Local env is ready.
 Next:
   1. Edit env/local/dev.env and env/local/stack.env with real values for:
      - GEMINI_API_KEY
-     - RAG_LLM_API_KEY, usually the same value for local dev
      - GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET, if using Google login
      - GOOGLE_WORKSPACE_MCP_URL, if using the Google Workspace MCP sidecar
   2. Start dependencies:

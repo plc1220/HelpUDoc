@@ -180,7 +180,7 @@ Requires workspace membership; mutating routes require edit access where enforce
 
 #### `GET .../files`
 
-List files. May include `understandingStatus`, `understandingMode`, `understandingError`, `derivedArtifactFileId`.
+List original workspace files.
 
 **Response `200`:** `File[]`
 
@@ -209,7 +209,7 @@ Multipart upload.
 | `file` | Binary (required) |
 | `path` | Optional relative path / name |
 
-**Response `201`:** created `File` (may include understanding fields if auto-processing started).
+**Response `201`:** created `File`. Uploads return immediately and do not start background parsing.
 
 #### `POST .../files/text`
 
@@ -243,22 +243,6 @@ Rename/move.
 
 **Response `204`**
 
-#### `POST .../files/context`
-
-Build derived-artifact context refs for agent turns.
-
-**Body:** `{ "fileIds": [1, 2, ...] }` (1–20 positive integers)
-
-**Response `201`:** `{ "fileContextRefs": FileContextRef[] }`
-
-#### `POST .../files/rag-status`
-
-Proxy to agent RAG status.
-
-**Body:** `{ "files": ["path/one.md", "/path/two.pdf"] }`
-
-**Response `200`:** `{ "statuses": { "<path>": { "status", "updatedAt?", "error?" } } }`
-
 #### `GET .../files/drive/search`
 
 Google Drive picker search (requires linked Google OAuth for user).
@@ -272,31 +256,6 @@ Google Drive picker search (requires linked Google OAuth for user).
 **Body:** `{ "fileIds": ["driveFileId", ...] }` (1–20)
 
 **Response `201`:** `{ "files": File[] }`
-
----
-
-### Attachments — `/api/workspaces/:workspaceId/attachments`
-
-#### `POST .../attachments/jobs`
-
-Prepare Drive/workspace attachments for a chat turn.
-
-**Body**
-
-```json
-{
-  "conversationId": "string",
-  "turnId": "string",
-  "driveFileIds": ["optional"],
-  "sourceFileIds": [1, 2]
-}
-```
-
-**Response `201`:** job object with `id`, `status` (`pending` \| `running` \| `ready` \| `failed`), etc.
-
-#### `GET .../attachments/jobs/:jobId`
-
-**Response `200`:** job status and results.
 
 ---
 
@@ -511,23 +470,7 @@ Used by `POST /api/agent/run`, `/run-stream`, and `/runs`.
   "turnId": "optional",
   "taggedFiles": ["relative/path.md"],
   "currentTurnFileIds": [1, 2],
-  "internetSearchEnabled": false,
-  "fileContextRefs": [
-    {
-      "sourceFileId": 1,
-      "sourceName": "doc.pdf",
-      "sourceMimeType": "application/pdf",
-      "sourceVersionFingerprint": "hash",
-      "artifactId": "id",
-      "artifactVersion": 1,
-      "derivedArtifactFileId": 2,
-      "derivedArtifactPath": "derived/...",
-      "effectiveMode": "part" | "parser" | "hybrid",
-      "status": "pending" | "partial" | "ready" | "failed" | "superseded",
-      "summary": null,
-      "lastError": null
-    }
-  ]
+  "internetSearchEnabled": false
 }
 ```
 
@@ -680,7 +623,6 @@ Synchronous chat.
   "message": "string",
   "history": [{ "role": "user", "content": "..." }],
   "forceReset": false,
-  "fileContextRefs": [],
   "messageContent": [{ "type": "text", "text": "..." }],
   "internetSearchEnabled": false,
   "langfuseTraceContext": {}
@@ -741,50 +683,22 @@ Structured interrupt button action.
 }
 ```
 
-### RAG
+### Document extraction
 
-#### `POST /rag/workspaces/{workspace_id}/query`
+#### `POST /documents/extract`
 
-**Body**
-
-```json
-{
-  "query": "string",
-  "mode": "local",
-  "onlyNeedContext": true,
-  "includeReferences": false
-}
-```
-
-**Response `200`:** `{ "response": "context string" }`
-
-#### `POST /rag/workspaces/{workspace_id}/status`
-
-**Body:** `{ "files": ["relative/path1", "path2"] }`
-
-**Response `200`:** `{ "statuses": { "<path>": { "status", "updatedAt", "error" } } }`
-
-### Attachments
-
-#### `POST /attachments/understand`
-
-Derive markdown summary / outline from an attachment.
+Deterministically extract Markdown from a supported workspace document for OKF publishing.
 
 **Body**
 
 ```json
 {
-  "fileName": "doc.pdf",
-  "mimeType": "application/pdf",
-  "contentB64": "optional base64",
-  "workspaceId": "optional with relativePath",
-  "relativePath": "optional workspace-relative path"
+  "workspaceId": "workspace-id",
+  "relativePath": "path/to/document.pdf"
 }
 ```
 
-Either `contentB64` or `workspaceId` + `relativePath` is required.
-
-**Response `200`:** `AttachmentUnderstandingResponse` — `title`, `summary`, `outline`, `markdown`, `sections`, `extractedAssets`, `effectiveMode`, `status`.
+**Response `200`:** `DocumentExtractionResponse` — `title`, `summary`, and `markdown`.
 
 ### Skills
 

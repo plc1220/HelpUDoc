@@ -92,7 +92,15 @@ def _path_under(path: Path, root: Path) -> Path | None:
 def resolve_html_path(raw_path: str) -> Path:
     path = Path(raw_path).expanduser()
     if path.is_absolute():
-        return path.resolve()
+        resolved = path.resolve()
+        if resolved.exists():
+            return resolved
+        workspace_root = os.environ.get("HELPUDOC_WORKSPACE_ROOT")
+        if workspace_root:
+            workspace_candidate = (Path(workspace_root) / str(path).lstrip("/")).resolve()
+            if workspace_candidate.exists():
+                return workspace_candidate
+        return resolved
 
     workspace_root = os.environ.get("HELPUDOC_WORKSPACE_ROOT")
     if workspace_root:
@@ -114,6 +122,10 @@ def resolve_output_path(raw_output: str | None, html_path: Path) -> tuple[Path, 
         if requested.is_absolute():
             requested_abs = requested.resolve()
             rel_output = _path_under(requested_abs, workspace_root) if workspace_root else None
+            if workspace_output_root and rel_output is None:
+                # Agent workspace paths use a leading slash (for example
+                # /deck.pptx) but are not host filesystem roots.
+                rel_output = Path(str(requested).lstrip("/"))
             if workspace_output_root and rel_output is not None:
                 return (workspace_output_root / rel_output).resolve(), rel_output.as_posix()
             return requested_abs, rel_output.as_posix() if rel_output is not None else None

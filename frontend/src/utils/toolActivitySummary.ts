@@ -26,7 +26,6 @@ export type ToolActivityDigest = {
   reviewedFiles: string[];
   updatesInProgress: string[];
   updatedFileBasenames: string[];
-  ragQueryCount: number;
   errorCount: number;
   digestEvents: ToolActivityDigestEvent[];
   rawEventCount: number;
@@ -44,7 +43,6 @@ const TOOL_LABELS: Record<string, string> = {
   list_directory: 'Listing workspace files',
   ls: 'Listing workspace files',
   dir: 'Listing workspace files',
-  rag_query: 'Searching your workspace knowledge',
   google_search: 'Checking web sources',
   url_context: 'Reading linked pages',
   web_search: 'Checking web sources',
@@ -357,7 +355,6 @@ export function headlineForDigest(events: ToolEvent[]): string {
     case 'patch_file':
     case 'write_file':
       return 'Updating your documents';
-    case 'rag_query':
     case 'codebase_search':
       return 'Searching your workspace knowledge';
     case 'google_search':
@@ -437,16 +434,6 @@ export function reassuranceFromEvents(events: ToolEvent[]): string[] {
     notes.push('Some files already existed, so the agent is editing them instead of recreating them.');
   }
   return notes;
-}
-
-function countRagQueries(events: ToolEvent[]): number {
-  let n = 0;
-  for (const event of events) {
-    if (normalizeToolKey(event.name) === 'rag_query') {
-      n++;
-    }
-  }
-  return n;
 }
 
 export function summarizeToolActivity(
@@ -539,11 +526,6 @@ export function summarizeToolActivity(
   } else if (editLikeCount) {
     parts.push(`${editLikeCount} ${editLikeCount === 1 ? 'section' : 'sections'} updated`);
   }
-  const ragCount = countRagQueries(normalized);
-  if (ragCount) {
-    parts.push(`${ragCount} knowledge ${ragCount === 1 ? 'search' : 'searches'}`);
-  }
-
   const statsLabel = parts.join(' · ');
 
   return {
@@ -558,7 +540,6 @@ export function summarizeToolActivity(
     reviewedFiles,
     updatesInProgress,
     updatedFileBasenames: updatedBasenames,
-    ragQueryCount: ragCount,
     errorCount,
     digestEvents: digestEventsUncapped.slice(-48),
     rawEventCount: events.length,

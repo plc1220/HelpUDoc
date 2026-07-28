@@ -4,10 +4,10 @@ This repo separates local development env vars from production deployment secret
 
 ## Canonical inventory
 
-The machine-readable catalog of variables (owner service, secrecy, local/prod expectations, defaults, and deprecated aliases such as `PARSER` vs `RAGANYTHING_PARSER`) lives in `infra/env/helpudoc.env.schema.yaml`.
+The machine-readable catalog of variables (owner service, secrecy, local/prod expectations, and defaults) lives in `infra/env/helpudoc.env.schema.yaml`.
 
 - **Backend** reads typed values via `backend/src/config/env.ts` (`getBackendEnv()`), after `dotenv` runs in `backend/src/index.ts`.
-- **Agent** uses `agent/helpudoc_agent/config/env.py` (`env_trim`, `get_agent_runtime_env`, `ensure_lightrag_postgres_env_defaults`, `load_sandbox_k8s_env`, etc.).
+- **Agent** uses `agent/helpudoc_agent/config/env.py` (`env_trim`, `get_agent_runtime_env`, `load_sandbox_k8s_env`, etc.).
 - **Frontend** uses `frontend/src/config/env.ts` (`vitePublicEnv`) for `VITE_*` build-time variables.
 
 To verify that committed `*.env.example` files only reference cataloged names:
@@ -39,7 +39,6 @@ $EDITOR env/local/stack.env
 At minimum, set:
 
 - `GEMINI_API_KEY`
-- `RAG_LLM_API_KEY` (usually the same value as `GEMINI_API_KEY` for local dev)
 
 When using Google login or delegated Google MCP tools, also set:
 

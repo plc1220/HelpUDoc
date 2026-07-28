@@ -47,3 +47,32 @@ def test_frontend_slides_pptx_export_copies_workspace_output_and_declares_artifa
     assert payload["files"][0]["path"] == "demo-deck.pptx"
     assert payload["files"][0]["mimeType"] == "application/vnd.openxmlformats-officedocument.presentationml.presentation"
     assert payload["files"][0]["metadata"]["slideCount"] == 1
+
+
+def test_frontend_slides_pptx_export_accepts_virtual_absolute_workspace_paths(tmp_path):
+    repo_root = Path(__file__).resolve().parents[2]
+    workspace = WorkspaceState(workspace_id="pptx-export-absolute-test", root_path=tmp_path)
+    workspace.context["active_skill"] = "frontend-slides"
+
+    (tmp_path / "demo-deck.html").write_text(
+        '<!doctype html><html><body><section class="slide active">Demo</section></body></html>',
+        encoding="utf-8",
+    )
+    screenshots_dir = tmp_path / "screenshots"
+    screenshots_dir.mkdir()
+    (screenshots_dir / "slide-001.png").write_bytes(base64.b64decode(ONE_PIXEL_PNG))
+
+    run_skill_python_script_locally(
+        skills_root=repo_root / "skills",
+        workspace_state=workspace,
+        script_name="export-pptx",
+        input_paths=["/demo-deck.html"],
+        args=[
+            "/demo-deck.html",
+            "/demo-deck.pptx",
+            "--screenshots-dir",
+            str(screenshots_dir),
+        ],
+    )
+
+    assert (tmp_path / "demo-deck.pptx").exists()

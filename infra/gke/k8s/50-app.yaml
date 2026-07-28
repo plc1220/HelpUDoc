@@ -279,8 +279,6 @@ spec:
                   name: helpudoc-secrets
                   key: OAUTH_TOKEN_ENCRYPTION_KEY
                   optional: true
-            - name: FILE_UNDERSTANDING_AGENT_READS_WORKSPACE
-              value: "true"
             - name: ENABLE_SKILL_SANDBOX_RUNNER
               valueFrom:
                 configMapKeyRef:
@@ -332,12 +330,6 @@ spec:
               value: redis://redis:6379
             - name: AGENT_CONFIG_PATH
               value: /agent/config/runtime.yaml
-            - name: RAG_PARSER_PIPELINE
-              value: docling
-            - name: RAGANYTHING_PARSER
-              value: docling
-            - name: PARSER_ENRICHMENT_MODE
-              value: docling
             - name: POSTGRES_HOST
               value: postgres
             - name: POSTGRES_PORT
@@ -366,21 +358,6 @@ spec:
               value: "postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@postgres:5432/$(POSTGRES_DB)"
             - name: AGENT_STORE_DATABASE_URL
               value: "postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@postgres:5432/$(POSTGRES_DB)"
-            - name: RAG_LLM_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: helpudoc-secrets
-                  key: RAG_LLM_API_KEY
-            - name: RAG_OFFLINE
-              valueFrom:
-                configMapKeyRef:
-                  name: helpudoc-config
-                  key: RAG_OFFLINE
-            - name: LLM_MODEL
-              valueFrom:
-                configMapKeyRef:
-                  name: helpudoc-config
-                  key: LLM_MODEL
             - name: WORKSPACE_ROOT
               valueFrom:
                 configMapKeyRef:

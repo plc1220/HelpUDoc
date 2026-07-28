@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { CalendarClock, Check, Clock3, X } from 'lucide-react';
 import type {
-  FileContextRef,
   SkillDefinition,
   WorkspaceSchedule,
   WorkspaceScheduleCadence,
@@ -106,7 +105,6 @@ export default function ScheduleDialog({
   const [selectedSkills, setSelectedSkills] = useState<string[]>([]);
   const [contextRefs, setContextRefs] = useState<string[]>([]);
   const [taggedFiles, setTaggedFiles] = useState<string[]>([]);
-  const [fileContextRefs, setFileContextRefs] = useState<FileContextRef[]>([]);
   const [outputMode, setOutputMode] = useState<WorkspaceScheduleOutputMode>('append_to_conversation');
   const [notificationMode, setNotificationMode] = useState<WorkspaceScheduleNotificationMode>('failure');
   const [error, setError] = useState('');
@@ -128,7 +126,6 @@ export default function ScheduleDialog({
     setSelectedSkills(initialDraft.selectedSkills || []);
     setContextRefs(initialDraft.contextRefs || []);
     setTaggedFiles(initialDraft.taggedFiles || []);
-    setFileContextRefs(initialDraft.fileContextRefs || []);
     setOutputMode(initialDraft.outputMode || 'append_to_conversation');
     setNotificationMode(initialDraft.notificationMode || 'failure');
     setError('');
@@ -185,7 +182,6 @@ export default function ScheduleDialog({
       selectedSkills,
       contextRefs,
       taggedFiles,
-      fileContextRefs,
       outputMode,
       notificationMode,
     });
@@ -401,8 +397,8 @@ export default function ScheduleDialog({
                     <span>{cronExpression}</span>
                   </div>
                   <div className="line-clamp-3">
-                    {contextRefs.length || taggedFiles.length || fileContextRefs.length
-                      ? [...contextRefs, ...taggedFiles, ...fileContextRefs.map((ref) => ref.sourceName)].join(', ')
+                    {contextRefs.length || taggedFiles.length
+                      ? [...contextRefs, ...taggedFiles].join(', ')
                       : 'No extra workspace context selected'}
                   </div>
                 </div>

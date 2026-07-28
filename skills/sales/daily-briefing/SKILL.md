@@ -23,7 +23,7 @@ Get a clear view of what matters most today. This skill should work with whateve
 │  + Gmail: urgent replies, no-reply threads, recap emails       │
 │  + Drive: prep docs, decks, notes, proposals                   │
 │  + Sheets: trackers and account plans                          │
-│  + Tagged files: workspace context via rag_query               │
+│  + Tagged files: inspect original workspace documents on demand│
 │  + CRM: optional pipeline alerts and task context              │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -46,7 +46,7 @@ Pull the context automatically and produce the briefing.
 1. Google Calendar for today's meetings
 2. Gmail for urgent inbound and no-reply follow-ups
 3. Google Drive for prep docs, decks, and recap materials
-4. Tagged workspace files via `rag_query`
+4. Tagged workspace files via `search_document` and bounded `inspect_document` reads
 5. Google Sheets for trackers or account plans
 6. CRM if connected
 7. Google Search only when a priority account needs same-day external context

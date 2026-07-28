@@ -12,7 +12,7 @@ def test_image_to_pdf_workflow_is_owned_by_pdf_skill() -> None:
     assert "image-to-pdf" not in skills
     pdf = skills["pdf"]
     assert "create_pdf_from_images" in pdf.tools
-    assert "rag_query" in pdf.tools
+    assert "document_inspection" in pdf.tools
     assert "stitch" in (pdf.description or "") or "image" in pdf.path.read_text(encoding="utf-8").lower()
 
 
@@ -21,4 +21,4 @@ def test_pdf_skill_can_create_image_based_pdfs() -> None:
 
     pdf = skills["pdf"]
     assert "create_pdf_from_images" in pdf.tools
-    assert "rag_query" in pdf.tools
+    assert "document_inspection" in pdf.tools

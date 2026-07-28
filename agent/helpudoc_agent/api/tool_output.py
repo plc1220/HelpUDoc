@@ -41,4 +41,10 @@ def _extract_output_files_from_tool_result(name: str, text: str) -> List[Dict[st
             path = match.group("path")
             outputs.append({"path": path.lstrip("/"), "mimeType": _infer_mime_type(path)})
         return outputs
+    if name == "run_skill_python_script":
+        for match in re.finditer(r"(?m)^Workspace output file:\s*(?P<path>.+?)\s*$", text):
+            path = match.group("path").strip()
+            if path:
+                outputs.append({"path": path.lstrip("/"), "mimeType": _infer_mime_type(path)})
+        return outputs
     return outputs

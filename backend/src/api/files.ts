@@ -6,18 +6,15 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import multer from 'multer';
 import { FileService } from '../services/fileService';
-import { fetchRagStatuses } from '../services/agentService';
 import { HttpError } from '../errors';
 import { WorkspaceService } from '../services/workspaceService';
 import { GoogleOAuthService, GoogleOAuthTokenMissingError } from '../services/googleOAuthService';
 import { GoogleDriveService } from '../services/googleDriveService';
-import { DerivedArtifactService } from '../services/derivedArtifactService';
 
 export default function(
   fileService: FileService,
   workspaceService: WorkspaceService,
   googleOAuthService: GoogleOAuthService,
-  derivedArtifactService: DerivedArtifactService,
 ) {
   const router = Router({ mergeParams: true });
   const upload = multer({
@@ -52,10 +49,6 @@ export default function(
     message: 'Missing destination name',
   });
 
-  const ragStatusSchema = z.object({
-    files: z.array(z.string().min(1)),
-  });
-
   const deleteFolderSchema = z.object({
     path: z.string().min(1),
   });
@@ -83,10 +76,6 @@ export default function(
     fileIds: z.array(z.string().min(1)).min(1).max(20),
   });
 
-  const fileContextSchema = z.object({
-    fileIds: z.array(z.number().int().positive()).min(1).max(20),
-  });
-
   const requireUserContext = (req: Request) => {
     if (!req.userContext) {
       throw new HttpError(401, 'Missing user context');
@@ -103,30 +92,6 @@ export default function(
     }
     console.error(fallbackMessage, error);
     return res.status(500).json({ error: fallbackMessage });
-  };
-
-  const decorateFilesWithUnderstanding = async (
-    workspaceId: string,
-    userId: string,
-    files: Array<Record<string, any>>,
-  ) => {
-    const fileIds = files
-      .map((file) => Number(file.id))
-      .filter((value) => Number.isFinite(value) && value > 0);
-    const states = await derivedArtifactService.listFileUnderstandingStates(workspaceId, userId, fileIds);
-    return files.map((file) => {
-      const state = states.get(Number(file.id));
-      if (!state) {
-        return file;
-      }
-      return {
-        ...file,
-        understandingStatus: state.status,
-        understandingMode: state.mode,
-        understandingError: state.error,
-        derivedArtifactFileId: state.derivedArtifactFileId,
-      };
-    });
   };
 
   router.get('/drive/search', async (req: Request<{ workspaceId: string }>, res: Response) => {
@@ -170,7 +135,7 @@ export default function(
       const { workspaceId } = req.params;
       const user = requireUserContext(req);
       const files = await fileService.getFiles(workspaceId, user.userId);
-      res.json(await decorateFilesWithUnderstanding(workspaceId, user.userId, files));
+      res.json(files);
     } catch (error) {
       handleError(res, error, 'Failed to list files');
     }
@@ -240,41 +205,6 @@ export default function(
     }
   });
 
-  router.post('/context', async (req: Request<{ workspaceId: string }>, res: Response) => {
-    try {
-      const { workspaceId } = req.params;
-      const user = requireUserContext(req);
-      const payload = fileContextSchema.parse(req.body);
-      const fileContextRefs = await derivedArtifactService.ensureFileContextRefs(
-        workspaceId,
-        user.userId,
-        payload.fileIds,
-      );
-      res.status(201).json({ fileContextRefs });
-    } catch (error) {
-      if (error instanceof z.ZodError) {
-        return res.status(400).json({ error: 'Invalid file context payload' });
-      }
-      handleError(res, error, 'Failed to build file context');
-    }
-  });
-
-  router.post('/rag-status', async (req: Request<{ workspaceId: string }>, res: Response) => {
-    try {
-      const { workspaceId } = req.params;
-      const user = requireUserContext(req);
-      await fileService.getFiles(workspaceId, user.userId);
-      const payload = ragStatusSchema.parse(req.body);
-      const statuses = await fetchRagStatuses(workspaceId, payload.files);
-      res.json({ statuses });
-    } catch (error) {
-      if (error instanceof z.ZodError) {
-        return res.status(400).json({ error: 'Invalid input' });
-      }
-      handleError(res, error, 'Failed to fetch RAG status');
-    }
-  });
-
   router.post(
     '/',
     upload.single('file'),
@@ -305,27 +235,7 @@ export default function(
           req.file.mimetype,
           user.userId,
         );
-        let understandingState = null;
-        if (derivedArtifactService.isAutoProcessEligibleFile(newFile.name, newFile.mimeType)) {
-          const refs = await derivedArtifactService.enqueueFileUnderstanding(
-            workspaceId,
-            user.userId,
-            [Number(newFile.id)],
-          );
-          const ref = refs[0];
-          if (ref) {
-            understandingState = {
-              understandingStatus: ref.status,
-              understandingMode: ref.effectiveMode,
-              understandingError: ref.lastError ?? null,
-              derivedArtifactFileId: ref.derivedArtifactFileId ?? null,
-            };
-          }
-        }
-        res.status(201).json({
-          ...newFile,
-          ...(understandingState || {}),
-        });
+        res.status(201).json(newFile);
       } catch (error) {
         if (error instanceof z.ZodError) {
           return res.status(400).json({ error: 'Invalid file upload payload' });

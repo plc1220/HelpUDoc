@@ -27,7 +27,7 @@ Get a complete picture of a company or person before outreach or a meeting, but 
 
 ## Retrieval Order
 
-1. Tagged workspace files via `rag_query`
+1. Tagged workspace files via `search_document` and bounded `inspect_document` reads
 2. Google Drive for notes, decks, proposals, or prior account plans
 3. Gmail for prior conversations or recap emails
 4. Google Sheets for trackers or territory notes

@@ -5,7 +5,7 @@ It is responsible for:
 
 - general assistant chat and streaming responses
 - skill-aware execution using the repo's bundled `skills/` catalog
-- RAG status and query endpoints for workspace files
+- on-demand inspection and search tools for workspace documents
 - interrupt handling for human approvals, clarifications, and follow-up actions
 
 ## Layout
@@ -17,7 +17,6 @@ It is responsible for:
 | `prompts/` | Prompt catalog for the general assistant and specialized prompt families. |
 | `config/runtime.yaml` | Runtime configuration for models, tools, MCP servers, and agent behavior. |
 | `docs/` | Supporting notes for image tools and internal agent workflows. |
-| `lightrag_server/` | Optional local LightRAG helper config. |
 
 The shared skill catalog lives at the repo root in `skills/`. In Docker and production it is mounted into the agent runtime so the backend settings UI can edit it.
 
@@ -51,12 +50,10 @@ Service URL: `http://localhost:8001`
 | Variable | What it controls |
 | -------- | ---------------- |
 | `GEMINI_API_KEY` / `GOOGLE_CLOUD_API_KEY` | Primary model credentials. |
-| `RAG_LLM_API_KEY` | Optional RAG-specific LLM credential. |
-| `LLM_MODEL` | Default model identifier used by the runtime. |
 | `AGENT_CONFIG_PATH` | Runtime config file path, usually `agent/config/runtime.yaml`. |
 | `AGENT_JWT_SECRET` | Shared secret used to validate backend-issued agent requests. |
 | `WORKSPACE_ROOT` | Workspace file root shared with the backend. |
-| `REDIS_URL` | Redis connection used by RAG worker flows. |
+| `REDIS_URL` | Redis connection used by agent run flows. |
 | `S3_ENDPOINT`, `S3_BUCKET_NAME`, `S3_PUBLIC_BASE_URL` | Shared object storage settings for generated artifacts. |
 | `GOOGLE_WORKSPACE_MCP_URL` | Hosted Google Workspace MCP endpoint when delegated tools are enabled. |
 | `GOOGLE_DEVELOPER_KNOWLEDGE_PROJECT_ID` | Quota/billing project header used by the Google Developer Knowledge MCP endpoint. |
@@ -73,10 +70,9 @@ Service URL: `http://localhost:8001`
 - `POST /agents/{agent_name}/workspace/{workspace_id}/chat/stream/respond`
 - `POST /agents/{agent_name}/workspace/{workspace_id}/chat/stream/act`
 
-### RAG helpers
+### Document extraction
 
-- `POST /rag/workspaces/{workspace_id}/query`
-- `POST /rag/workspaces/{workspace_id}/status`
+- `POST /documents/extract`
 
 ## Running with Docker Compose
 
@@ -95,4 +91,3 @@ docker compose -f infra/docker-compose.yml --env-file env/local/stack.env up --b
 - [../README.md](../README.md)
 - [../docs/api/README.md](../docs/api/README.md)
 - [../docs/environment.md](../docs/environment.md)
-- [lightrag_server/README.md](lightrag_server/README.md)

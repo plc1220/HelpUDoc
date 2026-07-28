@@ -8,21 +8,6 @@ const outputModeSchema = z.enum(['append_to_conversation', 'new_conversation_per
 const notificationModeSchema = z.enum(['none', 'failure', 'all']);
 const statusSchema = z.enum(['active', 'paused', 'error']);
 
-const fileContextRefSchema = z.object({
-  sourceFileId: z.number().int().positive(),
-  sourceName: z.string().min(1),
-  sourceMimeType: z.string().nullable().optional(),
-  sourceVersionFingerprint: z.string().min(1),
-  artifactId: z.string().min(1),
-  artifactVersion: z.number().int().positive(),
-  derivedArtifactFileId: z.number().int().positive().nullable().optional(),
-  derivedArtifactPath: z.string().nullable().optional(),
-  effectiveMode: z.enum(['part', 'parser', 'hybrid']),
-  status: z.enum(['pending', 'partial', 'ready', 'failed', 'superseded']),
-  summary: z.string().nullable().optional(),
-  lastError: z.string().nullable().optional(),
-}).strict();
-
 const createScheduleSchema = z.object({
   name: z.string().trim().min(1).max(255),
   cadence: cadenceSchema,
@@ -33,7 +18,6 @@ const createScheduleSchema = z.object({
   selectedSkills: z.array(z.string().trim().min(1)).optional(),
   contextRefs: z.array(z.string().trim().min(1)).optional(),
   taggedFiles: z.array(z.string().trim().min(1)).optional(),
-  fileContextRefs: z.array(fileContextRefSchema).optional(),
   outputMode: outputModeSchema,
   notificationMode: notificationModeSchema,
   sourceConversationId: z.string().uuid().nullable().optional(),

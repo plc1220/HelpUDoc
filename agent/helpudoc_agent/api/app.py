@@ -10,23 +10,20 @@ from fastapi import FastAPI
 
 from helpudoc_agent.configuration import describe_workspace_root, load_settings
 from helpudoc_agent.memory_store import MemoryStoreManager
-from helpudoc_agent.rag_worker import RagIndexWorker
 from helpudoc_agent.runtime.agent_registry import AgentRegistry
 from helpudoc_agent.tools_and_schemas import GeminiClientManager, ToolFactory
 from helpudoc_agent.utils import SourceTracker
 
 from .lifecycle import (
     build_dependency_diagnostic,
-    enforce_parser_dependency_policy,
     load_process_env_files,
     register_app_lifecycle,
 )
 from .paths import HELPUDOC_AGENT_DIR
-from .routes.attachments import register_attachments_routes
 from .routes.chat import register_chat_routes
+from .routes.documents import register_document_routes
 from .routes.health import register_health_routes
 from .routes.internal import register_internal_routes
-from .routes.rag import register_rag_routes
 from .routes.skills import register_skills_routes
 from .text_utils import _get_agent_jwt_secret
 
@@ -59,20 +56,7 @@ def create_app() -> FastAPI:
     )
     print(workspace_root_message)
     logger.info(workspace_root_message)
-    file_understanding_mode = (os.getenv("FILE_UNDERSTANDING_MODE", "part-first") or "part-first").strip()
-    rag_parser_pipeline = (os.getenv("RAG_PARSER_PIPELINE", "docling") or "docling").strip().lower()
-    raganything_parser = (os.getenv("RAGANYTHING_PARSER", "docling") or "docling").strip().lower()
-    parser_enrichment_mode = (
-        os.getenv("PARSER_ENRICHMENT_MODE") or os.getenv("PARSER") or raganything_parser
-    ).strip() or raganything_parser
     dependency_diag = build_dependency_diagnostic()
-    enforce_parser_dependency_policy(
-        file_understanding_mode=file_understanding_mode,
-        rag_parser_pipeline=rag_parser_pipeline,
-        raganything_parser=raganything_parser,
-        parser_enrichment_mode=parser_enrichment_mode,
-        dependency_diag=dependency_diag,
-    )
     source_tracker = SourceTracker()
     gemini_manager = GeminiClientManager(settings)
     tool_factory = ToolFactory(settings, source_tracker, gemini_manager)
@@ -80,10 +64,8 @@ def create_app() -> FastAPI:
     agent_jwt_secret = _get_agent_jwt_secret()
 
     app = FastAPI(title="DeepAgents Service", version="0.2.0")
-    rag_worker = RagIndexWorker(settings.backend.workspace_root)
-
     register_health_routes(app, dependency_diag)
-    register_app_lifecycle(app, memory_store_manager, rag_worker)
+    register_app_lifecycle(app, memory_store_manager)
     register_internal_routes(
         app,
         settings=settings,
@@ -91,14 +73,12 @@ def create_app() -> FastAPI:
         memory_store_manager=memory_store_manager,
         agent_jwt_secret=agent_jwt_secret,
     )
-    register_rag_routes(app, rag_worker)
-    register_attachments_routes(app, settings=settings, gemini_manager=gemini_manager)
+    register_document_routes(app, settings=settings)
     register_chat_routes(
         app,
         settings=settings,
         memory_store_manager=memory_store_manager,
         registry=registry,
-        rag_worker=rag_worker,
         gemini_manager=gemini_manager,
         source_tracker=source_tracker,
         agent_jwt_secret=agent_jwt_secret,

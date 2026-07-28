@@ -30,7 +30,10 @@ backend:
     max_result_chars: 4000
     snapshot_between_turns: true
     ptc_tools:
-      - rag_query
+      - inspect_document
+      - search_document
+      - knowledge_search
+      - knowledge_read
       - run_skill_python_script
       - google_search
       - url_context
@@ -65,9 +68,12 @@ tools:
   - name: get_image_url
     kind: builtin
     description: Get public URLs for images stored in MinIO/S3
-  - name: rag_query
+  - name: document_inspection
     kind: builtin
-    description: Query LightRAG for workspace context
+    description: Inspect and search original PDF, DOCX, XLSX, and text workspace files on demand
+  - name: knowledge_navigation
+    kind: builtin
+    description: Search and progressively read published OKF workspace knowledge
   - name: append_to_report
     kind: builtin
     description: Stitch generated proposal sections into a final document

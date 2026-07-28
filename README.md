@@ -5,7 +5,7 @@ The repo currently combines:
 
 - a React + Vite frontend for the workspace UI, file editing, agent chat, and settings
 - an Express + TypeScript backend for auth, workspaces, files, knowledge, conversations, and admin APIs
-- a FastAPI-based Python agent service for Gemini-powered runs, skills, and RAG
+- a FastAPI-based Python agent service for Gemini-powered runs, skills, and on-demand document inspection
 - shared infrastructure manifests for local Docker Compose and GKE deployment
 
 ## Repository layout
@@ -14,7 +14,7 @@ The repo currently combines:
 | ---- | --------------- |
 | `frontend/` | Main web app, including workspace, chat, file rendering, and settings pages. |
 | `backend/` | API server, persistence layer, auth/session handling, collaboration server, and admin endpoints. |
-| `agent/` | FastAPI agent runtime, prompt catalog, and RAG worker. |
+| `agent/` | FastAPI agent runtime, prompt catalog, and on-demand document tools. |
 | `mobile/` | Expo-based mobile spike that currently proves shared-type reuse. |
 | `packages/contracts/` | Shared API and stream TypeScript types (`@helpudoc/contracts`). |
 | `packages/dashboard-runtime/` | Browser dashboard filters, aggregates, and Plotly payload helpers. |
@@ -160,7 +160,6 @@ Targeted scripts:
 
 - `backend/scripts/test_frontend_prompt_stream.mjs`
 - `backend/scripts/test_rag_hybrid_flow.mjs`
-- `backend/scripts/test_tagged_rag_query.mjs`
 - `backend/scripts/test_upload_rag_flow.mjs`
 
 ## Key workflows in this repo

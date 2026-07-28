@@ -76,7 +76,10 @@ class ResolvedSkillScope:
     interaction_contract: dict[str, Any] | None
 
 
-TOOL_FACTORY_EXPANSIONS: dict[str, tuple[str, ...]] = {}
+TOOL_FACTORY_EXPANSIONS: dict[str, tuple[str, ...]] = {
+    "document_inspection": ("inspect_document", "search_document"),
+    "knowledge_navigation": ("knowledge_search", "knowledge_read"),
+}
 
 
 SKILL_MCP_SERVER_ELIGIBILITY: dict[str, tuple[str, ...]] = {
