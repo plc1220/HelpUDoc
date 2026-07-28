@@ -20,6 +20,49 @@
   cursor: grabbing;
 }
 
+.lumo-close-button {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 3;
+  width: 1.75rem;
+  height: 1.75rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.18);
+  color: var(--text-secondary);
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transform: scale(0.88);
+  transition:
+    background-color 140ms ease,
+    color 140ms ease,
+    opacity 140ms ease,
+    transform 140ms ease;
+}
+
+.lumo-root:hover .lumo-close-button,
+.lumo-close-button:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+  transform: scale(1);
+}
+
+.lumo-close-button:hover {
+  background: var(--surface);
+  color: var(--text-primary);
+}
+
+.lumo-close-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .lumo-pet-button {
   position: relative;
   width: clamp(76px, 7.5vw, 100px);
@@ -346,5 +389,13 @@
 
   .lumo-bubble {
     display: none;
+  }
+}
+
+@media (hover: none) {
+  .lumo-close-button {
+    opacity: 1;
+    pointer-events: auto;
+    transform: scale(1);
   }
 }

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, useCallback, type PointerEvent } from 'react';
+import { X } from 'lucide-react';
 import lumoSpriteSheet from '../../assets/lumo/lumo-spritesheet.webp';
 import './LumoPet.css';
 
@@ -93,11 +94,12 @@ function clampPosition(x: number, y: number, width: number, height: number): Lum
   };
 }
 
-export default function LumoPet({
+function LumoPetContent({
   colorMode = 'light',
   aiBusy = false,
   hasSuggestion = false,
-}: LumoPetProps) {
+  onClose,
+}: LumoPetProps & { onClose: () => void }) {
   const [state, setState] = useState<PetState>('idle');
   const [frame, setFrame] = useState(0);
   const [facing, setFacing] = useState<'left' | 'right'>('right');
@@ -168,6 +170,15 @@ export default function LumoPet({
       if (typingTimer.current) clearTimeout(typingTimer.current);
     };
   }, [resetSleepTimer]);
+
+  useEffect(
+    () => () => {
+      if (blinkTimer.current) clearTimeout(blinkTimer.current);
+      if (typingTimer.current) clearTimeout(typingTimer.current);
+      if (sleepTimer.current) clearTimeout(sleepTimer.current);
+    },
+    [],
+  );
 
   useEffect(() => {
     if (state !== 'idle') return;
@@ -338,6 +349,15 @@ export default function LumoPet({
     >
       <button
         type="button"
+        className="lumo-close-button"
+        onClick={onClose}
+        aria-label="Close Lumo pet"
+        title="Close Lumo"
+      >
+        <X size={15} strokeWidth={2.25} aria-hidden />
+      </button>
+      <button
+        type="button"
         className="lumo-pet-button"
         onPointerDown={handlePetPointerDown}
         onPointerMove={handlePetPointerMove}
@@ -357,4 +377,12 @@ export default function LumoPet({
       </button>
     </div>
   );
+}
+
+export default function LumoPet(props: LumoPetProps) {
+  const [isVisible, setIsVisible] = useState(true);
+
+  if (!isVisible) return null;
+
+  return <LumoPetContent {...props} onClose={() => setIsVisible(false)} />;
 }
