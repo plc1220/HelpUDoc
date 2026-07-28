@@ -64,7 +64,7 @@ Primary app features and file references:
 - Workspaces, files, and collaboration metadata
   - Backend routes: `backend/src/api/workspaces.ts`, `backend/src/api/files.ts`.
   - Frontend views: `frontend/src/pages/WorkspacePage.tsx`.
-- Knowledge/RAG ingestion and query
+- OKF knowledge publishing and agentic navigation
   - Backend routes: `backend/src/api/knowledge.ts`.
   - Agent endpoints: `agent/helpudoc_agent/app.py`.
 - Agent chat runs and streaming

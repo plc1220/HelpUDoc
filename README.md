@@ -5,7 +5,7 @@ The repo currently combines:
 
 - a React + Vite frontend for the workspace UI, file editing, agent chat, and settings
 - an Express + TypeScript backend for auth, workspaces, files, knowledge, conversations, and admin APIs
-- a FastAPI-based Python agent service for Gemini-powered runs, skills, and RAG
+- a FastAPI-based Python agent service for Gemini-powered runs, skills, and on-demand document inspection
 - shared infrastructure manifests for local Docker Compose and GKE deployment
 
 ## Repository layout

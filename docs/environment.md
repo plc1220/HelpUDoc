@@ -39,7 +39,6 @@ $EDITOR env/local/stack.env
 At minimum, set:
 
 - `GEMINI_API_KEY`
-- `RAG_LLM_API_KEY` (usually the same value as `GEMINI_API_KEY` for local dev)
 
 When using Google login or delegated Google MCP tools, also set:
 

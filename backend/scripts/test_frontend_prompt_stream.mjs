@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Replicates the frontend flow for sending a prompt:
- * - POST /agent/runs (no RAG status polling)
+ * - POST /agent/runs (no preprocessing status polling)
  * - GET /agent/runs/:runId/stream (JSONL stream)
  */
 

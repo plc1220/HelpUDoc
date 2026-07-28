@@ -1,9 +1,11 @@
 from pathlib import Path
 
+import pytest
 from docx import Document
 from pypdf import PdfWriter
 
 from helpudoc_agent.api.lightweight_extract import extract_workspace_document
+from helpudoc_agent.api.routes.documents import _resolve_workspace_document
 
 
 def test_extract_docx_preserves_headings_paragraphs_and_tables(tmp_path: Path) -> None:
@@ -50,3 +52,27 @@ def test_extract_csv_renders_markdown_table(tmp_path: Path) -> None:
 
     assert "| account | risk |" in result["markdown"]
     assert "| Acme | high |" in result["markdown"]
+
+
+def test_resolve_workspace_document_stays_inside_storage_root(tmp_path: Path) -> None:
+    workspace_root = tmp_path / "workspaces"
+    document = workspace_root / "workspace-1" / "notes.md"
+    document.parent.mkdir(parents=True)
+    document.write_text("# Notes", encoding="utf-8")
+
+    assert _resolve_workspace_document(
+        workspace_root,
+        "workspace-1",
+        "notes.md",
+    ) == document.resolve()
+
+    with pytest.raises(ValueError, match="workspaceId must remain inside"):
+        _resolve_workspace_document(workspace_root, "../outside", "secret.txt")
+
+
+def test_resolve_workspace_document_rejects_relative_path_traversal(tmp_path: Path) -> None:
+    workspace_root = tmp_path / "workspaces"
+    (workspace_root / "workspace-1").mkdir(parents=True)
+
+    with pytest.raises(ValueError, match="Path must remain inside"):
+        _resolve_workspace_document(workspace_root, "workspace-1", "../workspace-2/secret.txt")

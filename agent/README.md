@@ -5,7 +5,7 @@ It is responsible for:
 
 - general assistant chat and streaming responses
 - skill-aware execution using the repo's bundled `skills/` catalog
-- RAG status and query endpoints for workspace files
+- on-demand inspection and search tools for workspace documents
 - interrupt handling for human approvals, clarifications, and follow-up actions
 
 ## Layout
@@ -50,8 +50,6 @@ Service URL: `http://localhost:8001`
 | Variable | What it controls |
 | -------- | ---------------- |
 | `GEMINI_API_KEY` / `GOOGLE_CLOUD_API_KEY` | Primary model credentials. |
-| `RAG_LLM_API_KEY` | Optional RAG-specific LLM credential. |
-| `LLM_MODEL` | Default model identifier used by the runtime. |
 | `AGENT_CONFIG_PATH` | Runtime config file path, usually `agent/config/runtime.yaml`. |
 | `AGENT_JWT_SECRET` | Shared secret used to validate backend-issued agent requests. |
 | `WORKSPACE_ROOT` | Workspace file root shared with the backend. |
@@ -72,10 +70,9 @@ Service URL: `http://localhost:8001`
 - `POST /agents/{agent_name}/workspace/{workspace_id}/chat/stream/respond`
 - `POST /agents/{agent_name}/workspace/{workspace_id}/chat/stream/act`
 
-### RAG helpers
+### Document extraction
 
-- `POST /rag/workspaces/{workspace_id}/query`
-- `POST /rag/workspaces/{workspace_id}/status`
+- `POST /documents/extract`
 
 ## Running with Docker Compose
 

@@ -167,7 +167,7 @@ cp env/prod/config.env.example env/prod/config.env
 # Update these before applying:
 # - SESSION_SECRET
 # - POSTGRES_PASSWORD
-# - GEMINI_API_KEY / RAG_LLM_API_KEY
+# - GEMINI_API_KEY
 # - S3_PUBLIC_BASE_URL (use /helpudoc when behind HTTPS)
 # - AUTH_MODE=hybrid
 # - SESSION_COOKIE_DOMAIN=.lc-demo.com
