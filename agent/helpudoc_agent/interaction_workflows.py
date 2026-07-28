@@ -1,17 +1,17 @@
-"""Shared A2UI workflow contracts used by agent-side tools and guards."""
+"""Shared Interaction workflow contracts used by agent-side tools and guards."""
 from __future__ import annotations
 
 from typing import Any
 
-FRONTEND_SLIDES_GATE_COMPONENTS: dict[str, set[str]] = {
-    "presentation_context": {"clarification.form", "clarification_form"},
-    "outline_confirmation": {"clarification.form", "clarification_form"},
-    "style_path_selection": {"clarification.form", "clarification_form"},
-    "mood_or_preset_selection": {"clarification.form", "clarification_form"},
-    "style_preview_selection": {"style.previewChooser", "style_preview_chooser"},
+FRONTEND_SLIDES_GATE_PRESENTATIONS: dict[str, set[str]] = {
+    "presentation_context": {"questionnaire", "questionnaire"},
+    "outline_confirmation": {"questionnaire", "questionnaire"},
+    "style_path_selection": {"questionnaire", "questionnaire"},
+    "mood_or_preset_selection": {"questionnaire", "questionnaire"},
+    "style_preview_selection": {"style_preview", "style_preview"},
 }
 
-FRONTEND_SLIDES_A2UI_GATE_IDS: tuple[str, ...] = (
+FRONTEND_SLIDES_INTERACTION_GATE_IDS: tuple[str, ...] = (
     "presentation_context",
     "style_preview_selection",
 )
@@ -22,12 +22,12 @@ FRONTEND_SLIDES_LEGACY_GATE_IDS: tuple[str, ...] = (
     "mood_or_preset_selection",
 )
 
-FRONTEND_SLIDES_EXPECTED_COMPONENTS: dict[str, str] = {
-    "presentation_context": "clarification_form",
-    "outline_confirmation": "clarification_form",
-    "style_path_selection": "clarification_form",
-    "mood_or_preset_selection": "clarification_form",
-    "style_preview_selection": "style_preview_chooser",
+FRONTEND_SLIDES_EXPECTED_PRESENTATIONS: dict[str, str] = {
+    "presentation_context": "questionnaire",
+    "outline_confirmation": "questionnaire",
+    "style_path_selection": "questionnaire",
+    "mood_or_preset_selection": "questionnaire",
+    "style_preview_selection": "style_preview",
 }
 
 FRONTEND_SLIDES_OUTLINE_QUESTIONS: list[dict[str, Any]] = [
@@ -146,8 +146,8 @@ DEFAULT_FRONTEND_SLIDES_STYLE_CHOICES: list[dict[str, str]] = [
 
 def frontend_slides_gate_id(value: Any) -> str:
     normalized = str(value or "").strip()
-    return normalized if normalized in FRONTEND_SLIDES_GATE_COMPONENTS else ""
+    return normalized if normalized in FRONTEND_SLIDES_GATE_PRESENTATIONS else ""
 
 
-def frontend_slides_expected_component(gate_id: str) -> str:
-    return FRONTEND_SLIDES_EXPECTED_COMPONENTS.get(gate_id, "")
+def frontend_slides_expected_presentation(gate_id: str) -> str:
+    return FRONTEND_SLIDES_EXPECTED_PRESENTATIONS.get(gate_id, "")

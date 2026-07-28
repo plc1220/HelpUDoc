@@ -97,7 +97,7 @@ import ChatInputArea from '../../components/chat/ChatInputArea';
 import ChatMessageList from '../../components/chat/ChatMessageList';
 import LumoPet from '../../components/lumo/LumoPet';
 import lumoSpriteSheet from '../../assets/lumo/lumo-spritesheet.webp';
-import type { A2UIRequest, A2UIResponse } from '@helpudoc/contracts/types';
+import type { InteractionRequest, InteractionResponse } from '@helpudoc/contracts/types';
 import { buildApprovalDraftContent, buildApprovalReview } from '../chat/interrupts/approvalReview';
 import type { RenderableInterruptAction } from '../chat/interrupts/actions';
 import DrivePickerModal from '../../components/chat/DrivePickerModal';
@@ -138,7 +138,7 @@ import {
 import { buildMessageMetadata, mapMessagesToAgentHistory, mergeMessageMetadata, sanitizeRunPolicy } from '../../utils/messages';
 import { getImplicitContinuationContext, buildContinuationPrompt } from '../../utils/implicitSkillContinuation';
 import { createMarkdownComponents } from '../../components/markdown/MarkdownShared';
-import { applyColorModeToDocument, buildAppTheme, resolveInitialColorMode, useUITheme } from '../../theme';
+import { applyColorModeToDocument, buildAppTheme, resolveInitialColorMode } from '../../theme';
 
 const FileEditor = lazy(() => import('../../components/FileEditor'));
 const UIBlockRenderer = lazy(() => import('../../components/UIBlockRenderer'));
@@ -423,16 +423,14 @@ const isTerminalRunStatus = (
   status === 'completed' || status === 'failed' || status === 'cancelled'
 );
 
-const CLARIFICATION_A2UI_COMPONENTS = new Set([
-  'clarification_form',
-  'clarification.form',
-  'style_preview_chooser',
-  'style.previewChooser',
+const CLARIFICATION_INTERACTION_PRESENTATIONS = new Set([
+  'questionnaire',
+  'style_preview',
 ]);
 
-const isClarificationA2UIRequest = (request?: A2UIRequest | null): boolean => {
-  const component = typeof request?.component === 'string' ? request.component.trim() : '';
-  return CLARIFICATION_A2UI_COMPONENTS.has(component);
+const isClarificationInteractionRequest = (request?: InteractionRequest | null): boolean => {
+  const presentation = typeof request?.presentation === 'string' ? request.presentation.trim() : '';
+  return CLARIFICATION_INTERACTION_PRESENTATIONS.has(presentation);
 };
 
 const isDeckOutputPath = (path?: string | null): boolean => {
@@ -632,7 +630,7 @@ const toInterruptAnswers = (value: unknown): InterruptAnswersByQuestionId | unde
   return Object.keys(answers).length ? answers : undefined;
 };
 
-const buildClarificationPayloadFromA2UIResponse = (response: A2UIResponse) => {
+const buildClarificationPayloadFromInteractionResponse = (response: InteractionResponse) => {
   const values = response.values || {};
   const selectedChoiceIds =
     toStringArray(values.selectedChoiceIds)
@@ -774,7 +772,6 @@ export default function WorkspacePage() {
   const navigate = useNavigate();
   const { signOut, user: authUser } = useAuth();
   const [colorMode, setColorMode] = useState<PaletteMode>(resolveInitialColorMode);
-  const [uiTheme] = useUITheme();
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [selectedWorkspace, setSelectedWorkspace] = useState<Workspace | null>(null);
   const [workspaceSchedules, setWorkspaceSchedules] = useState<WorkspaceSchedule[]>([]);
@@ -921,7 +918,7 @@ export default function WorkspacePage() {
   const ragStatusFetchedRef = useRef<Record<string, boolean>>({});
   const resumeInFlightRef = useRef<Set<string>>(new Set());
   const resumeAttemptedRef = useRef<Set<string>>(new Set());
-  const theme = useMemo(() => buildAppTheme(colorMode, uiTheme), [colorMode, uiTheme]);
+  const theme = useMemo(() => buildAppTheme(colorMode), [colorMode]);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -4303,7 +4300,7 @@ export default function WorkspacePage() {
     runId?: string,
   ) => {
     const rawChunkType = (chunk as { type?: string }).type;
-    if (rawChunkType === 'a2ui_gate_skipped') {
+    if (rawChunkType === 'interaction_gate_skipped') {
       return;
     }
 
@@ -4506,8 +4503,7 @@ export default function WorkspacePage() {
           reviewConfigs: chunk.reviewConfigs,
           responseSpec: chunk.responseSpec,
           displayPayload: chunk.displayPayload,
-          uiRequest: chunk.uiRequest,
-          a2uiRequest: chunk.a2uiRequest,
+          interactionRequest: chunk.interactionRequest,
         },
       }));
       setConversationAttention(
@@ -4518,14 +4514,14 @@ export default function WorkspacePage() {
       return;
     }
 
-    if (chunk.type === 'a2ui') {
-      const a2uiRequest = chunk.message as A2UIRequest;
+    if (chunk.type === 'interaction') {
+      const interactionRequest = chunk.message as InteractionRequest;
       const metadataPayload = (
-        a2uiRequest.metadata && typeof a2uiRequest.metadata === 'object'
-          ? a2uiRequest.metadata
+        interactionRequest.metadata && typeof interactionRequest.metadata === 'object'
+          ? interactionRequest.metadata
           : undefined
       ) as Record<string, unknown> | undefined;
-      const interruptKind = isClarificationA2UIRequest(a2uiRequest) ? 'clarification' : 'approval';
+      const interruptKind = isClarificationInteractionRequest(interactionRequest) ? 'clarification' : 'approval';
       updateMessageMetadataAtIndex(conversationId, agentMessageIndex, (metadata) => ({
         ...metadata,
         ...(runId ? { runId } : {}),
@@ -4534,7 +4530,7 @@ export default function WorkspacePage() {
           ...(metadata?.pendingInterrupt || {}),
           kind: interruptKind,
           displayPayload: metadataPayload || metadata?.pendingInterrupt?.displayPayload,
-          a2uiRequest,
+          interactionRequest,
         },
       }));
       setConversationAttention(
@@ -4643,8 +4639,7 @@ export default function WorkspacePage() {
                 reviewConfigs: chunk.reviewConfigs,
                 responseSpec: chunk.responseSpec,
                 displayPayload: chunk.displayPayload,
-                uiRequest: chunk.uiRequest,
-                a2uiRequest: chunk.a2uiRequest,
+                interactionRequest: chunk.interactionRequest,
               };
             }
             handleStreamChunk(conversationId, agentMessageIndex, chunk, runId);
@@ -5419,14 +5414,14 @@ export default function WorkspacePage() {
     });
   }, []);
 
-  const handleA2UISubmit = useCallback(
-    async (response: A2UIResponse, request: A2UIRequest, message?: ConversationMessage) => {
+  const handleInteractionSubmit = useCallback(
+    async (response: InteractionResponse, request: InteractionRequest, message?: ConversationMessage) => {
       if (!message) {
-        throw new Error('Missing message context for A2UI submit action.');
+        throw new Error('Missing message context for Interaction submit action.');
       }
       const runId = findRunIdForMessage(message);
       if (!runId) {
-        throw new Error('Missing run id for A2UI submit action.');
+        throw new Error('Missing run id for Interaction submit action.');
       }
 
       const endpoint = request.resumeAction?.endpoint || 'respond';
@@ -5472,7 +5467,7 @@ export default function WorkspacePage() {
         await submitInterruptWithRetry(
           runId,
           'clarification',
-          () => submitRunResponse(runId, buildClarificationPayloadFromA2UIResponse(response)),
+          () => submitRunResponse(runId, buildClarificationPayloadFromInteractionResponse(response)),
         );
       }
 
@@ -5899,7 +5894,7 @@ export default function WorkspacePage() {
           signature: JSON.stringify({
             status: metadata.status,
             gateId:
-              metadata.pendingInterrupt?.a2uiRequest?.gateId ||
+              metadata.pendingInterrupt?.interactionRequest?.gateId ||
               metadata.pendingInterrupt?.displayPayload?.gateId ||
               null,
             interruptId: metadata.pendingInterrupt?.interruptId || null,
@@ -5923,7 +5918,7 @@ export default function WorkspacePage() {
           const nextSignature = JSON.stringify({
             status: status.status,
             gateId:
-              status.pendingInterrupt?.a2uiRequest?.gateId ||
+              status.pendingInterrupt?.interactionRequest?.gateId ||
               status.pendingInterrupt?.displayPayload?.gateId ||
               null,
             interruptId: status.pendingInterrupt?.interruptId || null,
@@ -7378,7 +7373,7 @@ export default function WorkspacePage() {
             handlePrepareInterruptAction={prepareInterruptAction}
             handleInterruptAction={handleInterruptAction}
             workspaceId={selectedWorkspace?.id}
-            onA2UISubmit={handleA2UISubmit}
+            onInteractionSubmit={handleInteractionSubmit}
           />
           <ChatInputArea
             colorMode={colorMode}
@@ -8612,7 +8607,7 @@ export default function WorkspacePage() {
               onRemoveCommandTag={handleRemoveCommandTag}
               onSelectMention={handleSelectMention}
               onSelectCommand={handleSelectCommand}
-              onA2UISubmit={handleA2UISubmit}
+              onInteractionSubmit={handleInteractionSubmit}
             />
               </>
             )}

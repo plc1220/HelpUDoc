@@ -13,7 +13,7 @@ from langchain.agents import create_agent
 from langchain.agents.middleware import HumanInTheLoopMiddleware, TodoListMiddleware
 from langchain_quickjs.middleware import CodeInterpreterMiddleware
 
-from helpudoc_agent.middleware.a2ui_contract import A2UIContractMiddleware
+from helpudoc_agent.middleware.interaction_contract import InteractionContractMiddleware
 from helpudoc_agent.middleware.implicit_input_guard import ImplicitInputGuardMiddleware
 from langchain.agents.middleware.summarization import SummarizationMiddleware
 from langgraph.checkpoint.memory import MemorySaver
@@ -48,14 +48,14 @@ GENERAL_SYSTEM_PROMPT = (
     "the proposal to workspace markdown files using write_file (and append_to_report if needed). "
     "Only call request_plan_approval when the loaded skill explicitly requires a plan review checkpoint or the active skill policy says requires_hitl_plan=true. "
     "Use workflow_action to express workflow control as structured data instead of chat prose. "
-    "When user input is needed, call workflow_action with action='ask_user_a2ui' and include gate_id, component, props_json, and context_json; "
-    "request_ui and request_clarification are lower-level compatibility tools for the same kind of user-input pause. "
+    "When user input is needed, call workflow_action with action='request_user_interaction' and include gate_id, presentation, props_json, and context_json; "
+    "request_interaction and request_clarification are lower-level compatibility tools for the same kind of user-input pause. "
     "If execution is blocked on missing user intent or an unresolved choice, emit a structured user-input action instead of guessing. "
     "When a loaded skill says AskUserQuestion, asks for approval, or asks the human to pick among named options, "
-    "you must use workflow_action(action='ask_user_a2ui'), request_clarification, request_ui, or request_human_action with structured payloads instead of plain chat prose. "
+    "you must use workflow_action(action='request_user_interaction'), request_clarification, request_interaction, or request_human_action with structured payloads instead of plain chat prose. "
     "For multi-question forms, populate questions_json. For chooser steps, populate options_json or actions_json with explicit labels, values, and descriptions. "
     "If you need the human to choose from arbitrary next-step actions, call request_human_action. "
-    "After calling workflow_action(action='ask_user_a2ui'), request_ui, request_clarification, or request_human_action, stop and wait for the resume payload. "
+    "After calling workflow_action(action='request_user_interaction'), request_interaction, request_clarification, or request_human_action, stop and wait for the resume payload. "
     "Do not continue to later phases, generate previews, or write additional artifacts until the interrupt has been answered. "
     "Only proceed with side-effecting tools after approval (or after applying user edits). "
     "Reply in chat with brief status updates, not full sections. "
@@ -238,7 +238,7 @@ class AgentRegistry:
         if not tool_names:
             tool_names = list(self.settings.tools.keys())
         else:
-            for extra in ("load_skill", "list_skills", "request_ui", "workflow_action"):
+            for extra in ("load_skill", "list_skills", "request_interaction", "workflow_action"):
                 if extra in self.settings.tools and extra not in tool_names:
                     tool_names.append(extra)
         if not allow_skill_sandbox:
@@ -364,7 +364,7 @@ class AgentRegistry:
             )
         if interrupt_on:
             middleware.append(HumanInTheLoopMiddleware(interrupt_on=interrupt_on))
-        middleware.append(A2UIContractMiddleware(enabled=True))
+        middleware.append(InteractionContractMiddleware(enabled=True))
         if self.settings.backend.implicit_input_guard:
             middleware.append(ImplicitInputGuardMiddleware(enabled=True))
 

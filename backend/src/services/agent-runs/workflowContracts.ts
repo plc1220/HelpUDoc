@@ -15,7 +15,7 @@ export type WorkflowArtifactRequirement = {
 
 export type WorkflowGateContract = {
   gateId: string;
-  component: string;
+  presentation: string;
   required: boolean;
 };
 
@@ -49,7 +49,7 @@ const stringArray = (value: unknown): string[] => {
 
 const workflowContractPath = (skillId: string): string | undefined => {
   const skillDir = resolveSkillDir(skillId);
-  for (const filename of ['interaction_contract.yaml', 'interaction_contract.yml', 'a2ui_contract.yaml', 'a2ui_contract.yml']) {
+  for (const filename of ['interaction_contract.yaml', 'interaction_contract.yml', 'interaction_contract.yaml', 'interaction_contract.yml']) {
     const candidate = path.join(skillDir, filename);
     if (existsSync(candidate)) {
       return candidate;
@@ -70,13 +70,13 @@ const normalizeWorkflowContract = (skillId: string, raw: unknown): SkillWorkflow
         .map((gate) => {
           const gateRecord = getRecord(gate);
           const gateId = String(gateRecord?.gate_id || gateRecord?.gateId || gateRecord?.id || '').trim();
-          const component = String(gateRecord?.component || '').trim();
-          if (!gateId || !component) {
+          const presentation = String(gateRecord?.presentation || '').trim();
+          if (!gateId || !presentation) {
             return null;
           }
           return {
             gateId,
-            component,
+            presentation,
             required: gateRecord?.required !== false,
           };
         })

@@ -1,4 +1,4 @@
-"""Runtime A2UI gate contracts and ledger helpers."""
+"""Runtime Interaction gate contracts and ledger helpers."""
 from __future__ import annotations
 
 from copy import deepcopy
@@ -8,19 +8,19 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, BaseMessage
 
-from .a2ui_workflows import (
-    FRONTEND_SLIDES_A2UI_GATE_IDS,
+from .interaction_workflows import (
+    FRONTEND_SLIDES_INTERACTION_GATE_IDS,
     FRONTEND_SLIDES_DISCOVERY_QUESTIONS,
-    FRONTEND_SLIDES_EXPECTED_COMPONENTS,
-    FRONTEND_SLIDES_GATE_COMPONENTS,
+    FRONTEND_SLIDES_EXPECTED_PRESENTATIONS,
+    FRONTEND_SLIDES_GATE_PRESENTATIONS,
     FRONTEND_SLIDES_MOOD_QUESTIONS,
     FRONTEND_SLIDES_OUTLINE_QUESTIONS,
     FRONTEND_SLIDES_STYLE_PATH_QUESTIONS,
     frontend_slides_gate_id,
 )
 
-A2UI_LEDGER_KEY = "a2ui_gate_ledger"
-A2UI_TELEMETRY_KEY = "a2ui_gate_telemetry"
+INTERACTION_LEDGER_KEY = "interaction_gate_ledger"
+INTERACTION_TELEMETRY_KEY = "interaction_gate_telemetry"
 
 GATE_STATUSES = {"pending", "completed", "cancelled", "failed"}
 GATE_SOURCES = {"direct", "corrected", "synthetic", "failed"}
@@ -42,7 +42,7 @@ def parse_json_dict(value: Any) -> dict[str, Any]:
     return {}
 
 
-def normalize_component(value: Any) -> str:
+def normalize_presentation(value: Any) -> str:
     return str(value or "").strip()
 
 
@@ -114,8 +114,8 @@ def _frontend_slides_gate_contract(skill_id: str, gate_id: str) -> dict[str, Any
     return {
         "skill_id": skill_id,
         "gate_id": gate_id,
-        "component": FRONTEND_SLIDES_EXPECTED_COMPONENTS.get(gate_id, "clarification_form"),
-        "component_aliases": sorted(FRONTEND_SLIDES_GATE_COMPONENTS.get(gate_id, set())),
+        "presentation": FRONTEND_SLIDES_EXPECTED_PRESENTATIONS.get(gate_id, "questionnaire"),
+        "presentation_aliases": sorted(FRONTEND_SLIDES_GATE_PRESENTATIONS.get(gate_id, set())),
         "required": True,
         "synthetic_on_pending": True,
         "props": _frontend_slides_default_props(gate_id),
@@ -123,8 +123,8 @@ def _frontend_slides_gate_contract(skill_id: str, gate_id: str) -> dict[str, Any
             "skill": "frontend-slides",
             "skillId": "frontend-slides",
             "gateId": gate_id,
-            "uiContract": "a2ui",
-            "expectedComponent": FRONTEND_SLIDES_EXPECTED_COMPONENTS.get(gate_id, ""),
+            "interactionContract": "helpudoc.interaction",
+            "expectedPresentation": FRONTEND_SLIDES_EXPECTED_PRESENTATIONS.get(gate_id, ""),
         },
     }
 
@@ -139,12 +139,12 @@ def normalize_interaction_contract(raw: Any) -> dict[str, Any]:
             if not isinstance(item, dict):
                 continue
             gate_id = normalize_gate_id(item.get("gate_id") or item.get("gateId") or item.get("id"))
-            component = normalize_component(item.get("component"))
-            if not gate_id or not component:
+            presentation = normalize_presentation(item.get("presentation"))
+            if not gate_id or not presentation:
                 continue
             normalized = dict(item)
             normalized["gate_id"] = gate_id
-            normalized["component"] = component
+            normalized["presentation"] = presentation
             normalized["required"] = bool(item.get("required", True))
             gates.append(normalized)
     if not gates:
@@ -182,7 +182,7 @@ def _declared_gate_contracts(context: dict[str, Any], skill_id: str) -> list[dic
             next_gate["context"].setdefault("skill", skill_id)
             next_gate["context"].setdefault("skillId", skill_id)
             next_gate["context"].setdefault("gateId", next_gate["gate_id"])
-            next_gate["context"].setdefault("uiContract", "a2ui")
+            next_gate["context"].setdefault("interactionContract", "helpudoc.interaction")
         gates.append(next_gate)
     return gates
 
@@ -190,17 +190,17 @@ def _declared_gate_contracts(context: dict[str, Any], skill_id: str) -> list[dic
 def _legacy_frontend_completed(context: dict[str, Any]) -> set[str]:
     if _current_run_id(context) or _current_thread_id(context):
         return set()
-    raw = context.get("frontend_slides_completed_a2ui_gates")
+    raw = context.get("frontend_slides_completed_interaction_gates")
     if not isinstance(raw, list):
         return set()
     return {str(item).strip() for item in raw if frontend_slides_gate_id(item)}
 
 
 def get_gate_ledger(context: dict[str, Any]) -> list[dict[str, Any]]:
-    raw = context.get(A2UI_LEDGER_KEY)
+    raw = context.get(INTERACTION_LEDGER_KEY)
     if not isinstance(raw, list):
         raw = []
-        context[A2UI_LEDGER_KEY] = raw
+        context[INTERACTION_LEDGER_KEY] = raw
     return raw
 
 
@@ -263,7 +263,7 @@ def ensure_gate_record(
     thread_id: str = "",
     skill_id: str,
     gate_id: str,
-    component: str,
+    presentation: str,
     status: str = "pending",
     source: str | None = None,
 ) -> dict[str, Any]:
@@ -275,7 +275,7 @@ def ensure_gate_record(
             "thread_id": thread_id,
             "skill_id": skill_id,
             "gate_id": gate_id,
-            "component": component,
+            "presentation": presentation,
             "status": status if status in GATE_STATUSES else "pending",
             "source": source if source in GATE_SOURCES else None,
             "answers": None,
@@ -292,7 +292,7 @@ def ensure_gate_record(
         record["run_id"] = run_id
     if thread_id:
         record["thread_id"] = thread_id
-    record["component"] = component or record.get("component") or ""
+    record["presentation"] = presentation or record.get("presentation") or ""
     if status in GATE_STATUSES:
         record["status"] = status
     if source in GATE_SOURCES:
@@ -308,7 +308,7 @@ def mark_gate_pending(
     thread_id: str = "",
     skill_id: str,
     gate_id: str,
-    component: str,
+    presentation: str,
     source: str | None = None,
 ) -> dict[str, Any]:
     return ensure_gate_record(
@@ -317,7 +317,7 @@ def mark_gate_pending(
         thread_id=thread_id,
         skill_id=skill_id,
         gate_id=gate_id,
-        component=component,
+        presentation=presentation,
         status="pending",
         source=source,
     )
@@ -330,7 +330,7 @@ def mark_gate_completed(
     thread_id: str = "",
     skill_id: str,
     gate_id: str,
-    component: str,
+    presentation: str,
     answers: Any,
     source: str | None = None,
 ) -> dict[str, Any]:
@@ -340,7 +340,7 @@ def mark_gate_completed(
         thread_id=thread_id,
         skill_id=skill_id,
         gate_id=gate_id,
-        component=component,
+        presentation=presentation,
         status="completed",
         source=source,
     )
@@ -348,38 +348,38 @@ def mark_gate_completed(
     record["completed_at"] = utc_now_iso()
     record["updated_at"] = record["completed_at"]
     if is_frontend_slides_skill(skill_id):
-        existing = context.get("frontend_slides_completed_a2ui_gates")
+        existing = context.get("frontend_slides_completed_interaction_gates")
         gates = [item for item in existing if isinstance(item, str)] if isinstance(existing, list) else []
         if gate_id not in gates:
             gates.append(gate_id)
-        context["frontend_slides_completed_a2ui_gates"] = gates
+        context["frontend_slides_completed_interaction_gates"] = gates
     return record
 
 
 def record_gate_violation(context: dict[str, Any], gate: dict[str, Any], *, source: str = "failed") -> dict[str, Any]:
     skill_id = normalize_skill_id(gate.get("skill_id"))
     gate_id = normalize_gate_id(gate.get("gate_id"))
-    component = normalize_component(gate.get("component"))
+    presentation = normalize_presentation(gate.get("presentation"))
     record = ensure_gate_record(
         context,
         skill_id=skill_id,
         gate_id=gate_id,
-        component=component,
+        presentation=presentation,
         status="pending",
         source=source,
     )
     record["violation_count"] = int(record.get("violation_count") or 0) + 1
     record["updated_at"] = utc_now_iso()
-    telemetry = context.get(A2UI_TELEMETRY_KEY)
+    telemetry = context.get(INTERACTION_TELEMETRY_KEY)
     if not isinstance(telemetry, list):
         telemetry = []
-        context[A2UI_TELEMETRY_KEY] = telemetry
+        context[INTERACTION_TELEMETRY_KEY] = telemetry
     telemetry.append(
         {
             "timestamp": record["updated_at"],
             "skill_id": skill_id,
             "gate_id": gate_id,
-            "component": component,
+            "presentation": presentation,
             "source": source,
             "violation_count": record["violation_count"],
         }
@@ -394,19 +394,19 @@ def record_gate_source(context: dict[str, Any], gate: dict[str, Any], *, source:
         context,
         skill_id=normalize_skill_id(gate.get("skill_id")),
         gate_id=normalize_gate_id(gate.get("gate_id")),
-        component=normalize_component(gate.get("component")),
+        presentation=normalize_presentation(gate.get("presentation")),
         source=source,
     )
-    telemetry = context.get(A2UI_TELEMETRY_KEY)
+    telemetry = context.get(INTERACTION_TELEMETRY_KEY)
     if not isinstance(telemetry, list):
         telemetry = []
-        context[A2UI_TELEMETRY_KEY] = telemetry
+        context[INTERACTION_TELEMETRY_KEY] = telemetry
     telemetry.append(
         {
             "timestamp": record["updated_at"],
             "skill_id": record["skill_id"],
             "gate_id": record["gate_id"],
-            "component": record["component"],
+            "presentation": record["presentation"],
             "source": source,
             "violation_count": int(record.get("violation_count") or 0),
         }
@@ -432,7 +432,7 @@ def next_pending_gate(context: Any) -> dict[str, Any] | None:
                 return gate
         return None
     if is_frontend_slides_skill(skill_id):
-        for gate_id in FRONTEND_SLIDES_A2UI_GATE_IDS:
+        for gate_id in FRONTEND_SLIDES_INTERACTION_GATE_IDS:
             if not gate_is_completed(context, skill_id=skill_id, gate_id=gate_id):
                 gate = _frontend_slides_gate_contract(skill_id, gate_id)
                 if _gate_payload_is_deferred(gate):
@@ -445,7 +445,7 @@ def _gate_payload_is_deferred(gate: dict[str, Any]) -> bool:
     """Dynamic gates need generated payload before middleware can force them."""
     gate_id = normalize_gate_id(gate.get("gate_id"))
     skill_id = normalize_skill_id(gate.get("skill_id"))
-    component = normalize_component(gate.get("component"))
+    presentation = normalize_presentation(gate.get("presentation"))
     props = gate.get("props") if isinstance(gate.get("props"), dict) else {}
     context = gate.get("context") if isinstance(gate.get("context"), dict) else {}
 
@@ -462,7 +462,7 @@ def _gate_payload_is_deferred(gate: dict[str, Any]) -> bool:
         ]
         return not any(bool(value) for value in outline_values)
 
-    if component not in {"style.previewChooser", "style_preview_chooser"}:
+    if presentation not in {"style_preview", "style_preview"}:
         return False
     previews = props.get("previews")
     choices = props.get("choices")
@@ -513,7 +513,7 @@ def _response_messages(response: Any) -> list[Any]:
     return []
 
 
-def workflow_a2ui_calls_from_response(response: Any) -> list[dict[str, Any]]:
+def workflow_interaction_calls_from_response(response: Any) -> list[dict[str, Any]]:
     calls: list[dict[str, Any]] = []
     for message in _response_messages(response):
         if not isinstance(message, AIMessage):
@@ -523,22 +523,22 @@ def workflow_a2ui_calls_from_response(response: Any) -> list[dict[str, Any]]:
             args = call.get("args")
             if not isinstance(args, dict):
                 args = parse_json_dict(args)
-            if name == "workflow_action" and str(args.get("action") or "").strip().lower() == "ask_user_a2ui":
+            if name == "workflow_action" and str(args.get("action") or "").strip().lower() == "request_user_interaction":
                 calls.append({"name": name, "args": args, "id": call.get("id")})
     return calls
 
 
-def _component_matches(actual: str, expected: str, aliases: Any) -> bool:
+def _presentation_matches(actual: str, expected: str, aliases: Any) -> bool:
     values = {expected, expected.replace("_", "."), expected.replace(".", "_")}
     if isinstance(aliases, list):
         values.update(str(item).strip() for item in aliases if str(item).strip())
     return actual in values
 
 
-def validate_workflow_a2ui_call(call_args: dict[str, Any], gate: dict[str, Any] | None = None) -> tuple[bool, str]:
+def validate_workflow_interaction_call(call_args: dict[str, Any], gate: dict[str, Any] | None = None) -> tuple[bool, str]:
     action = str(call_args.get("action") or "").strip().lower()
-    if action != "ask_user_a2ui":
-        return False, "workflow_action.action must be ask_user_a2ui"
+    if action != "request_user_interaction":
+        return False, "workflow_action.action must be request_user_interaction"
     context = parse_json_dict(call_args.get("context_json"))
     props = parse_json_dict(call_args.get("props_json"))
     if not props:
@@ -551,34 +551,34 @@ def validate_workflow_a2ui_call(call_args: dict[str, Any], gate: dict[str, Any] 
     gate_id = normalize_gate_id(call_args.get("gate_id") or context.get("gateId") or context.get("gate_id"))
     if not gate_id:
         return False, "workflow_action must include gate_id or context_json.gateId"
-    component = normalize_component(call_args.get("component"))
-    if not component:
-        return False, "workflow_action.component is required"
+    presentation = normalize_presentation(call_args.get("presentation"))
+    if not presentation:
+        return False, "workflow_action.presentation is required"
     if gate is None:
         return True, ""
     expected_skill = normalize_skill_id(gate.get("skill_id"))
     expected_gate = normalize_gate_id(gate.get("gate_id"))
-    expected_component = normalize_component(gate.get("component"))
+    expected_presentation = normalize_presentation(gate.get("presentation"))
     if expected_skill and skill != expected_skill and not (
         is_frontend_slides_skill(expected_skill) and is_frontend_slides_skill(skill)
     ):
         return False, f"workflow_action skill '{skill}' does not match pending skill '{expected_skill}'"
     if gate_id != expected_gate:
         return False, f"workflow_action gate_id '{gate_id}' does not match pending gate '{expected_gate}'"
-    if not _component_matches(component, expected_component, gate.get("component_aliases")):
-        return False, f"workflow_action component '{component}' does not match pending component '{expected_component}'"
+    if not _presentation_matches(presentation, expected_presentation, gate.get("presentation_aliases")):
+        return False, f"workflow_action presentation '{presentation}' does not match pending presentation '{expected_presentation}'"
     if is_frontend_slides_skill(skill) and gate_id == "outline_confirmation" and not _has_frontend_slides_outline_payload(props, context):
         return False, "workflow_action outline_confirmation must include outlineMarkdown, slideOutline, slides, or outline in props_json or context_json"
     return True, ""
 
 
-def response_has_valid_a2ui_call(response: Any, gate: dict[str, Any]) -> tuple[bool, str]:
-    calls = workflow_a2ui_calls_from_response(response)
+def response_has_valid_interaction_call(response: Any, gate: dict[str, Any]) -> tuple[bool, str]:
+    calls = workflow_interaction_calls_from_response(response)
     if not calls:
-        return False, "model response did not include workflow_action(action='ask_user_a2ui')"
+        return False, "model response did not include workflow_action(action='request_user_interaction')"
     errors: list[str] = []
     for call in calls:
-        valid, reason = validate_workflow_a2ui_call(call.get("args") or {}, gate)
+        valid, reason = validate_workflow_interaction_call(call.get("args") or {}, gate)
         if valid:
             return True, ""
         errors.append(reason)
@@ -592,36 +592,36 @@ def gate_instruction(gate: dict[str, Any], *, correction: str | None = None) -> 
     payload_context.setdefault("skill", gate.get("skill_id"))
     payload_context.setdefault("skillId", gate.get("skill_id"))
     payload_context.setdefault("gateId", gate.get("gate_id"))
-    payload_context.setdefault("uiContract", "a2ui")
+    payload_context.setdefault("interactionContract", "helpudoc.interaction")
     intro = (
-        "A required A2UI user-input gate is pending. The only valid next assistant action is a "
-        "structured tool call: workflow_action(action='ask_user_a2ui'). Do not answer in prose, "
+        "A required Interaction user-input gate is pending. The only valid next assistant action is a "
+        "structured tool call: workflow_action(action='request_user_interaction'). Do not answer in prose, "
         "do not say a form was opened, and do not continue the workflow."
     )
     if correction:
-        intro = f"A2UI contract violation: {correction}\n\n{intro}"
+        intro = f"Interaction contract violation: {correction}\n\n{intro}"
     return (
         f"{intro}\n\n"
         f"Required tool arguments:\n"
         f"- gate_id: {gate.get('gate_id')}\n"
-        f"- component: {gate.get('component')}\n"
+        f"- presentation: {gate.get('presentation')}\n"
         f"- props_json: {json.dumps(props, ensure_ascii=False)}\n"
         f"- context_json: {json.dumps(payload_context, ensure_ascii=False)}"
     )
 
 
-def workflow_a2ui_tool_args_for_gate(gate: dict[str, Any]) -> dict[str, Any]:
+def workflow_interaction_tool_args_for_gate(gate: dict[str, Any]) -> dict[str, Any]:
     props = gate.get("props") if isinstance(gate.get("props"), dict) else {}
     context = gate.get("context") if isinstance(gate.get("context"), dict) else {}
     payload_context = deepcopy(context)
     payload_context.setdefault("skill", gate.get("skill_id"))
     payload_context.setdefault("skillId", gate.get("skill_id"))
     payload_context.setdefault("gateId", gate.get("gate_id"))
-    payload_context.setdefault("uiContract", "a2ui")
+    payload_context.setdefault("interactionContract", "helpudoc.interaction")
     return {
-        "action": "ask_user_a2ui",
+        "action": "request_user_interaction",
         "gate_id": normalize_gate_id(gate.get("gate_id")),
-        "component": normalize_component(gate.get("component")),
+        "presentation": normalize_presentation(gate.get("presentation")),
         "props_json": json.dumps(props, ensure_ascii=False),
         "context_json": json.dumps(payload_context, ensure_ascii=False),
         "required": bool(gate.get("required", True)),
@@ -629,13 +629,13 @@ def workflow_a2ui_tool_args_for_gate(gate: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def a2ui_interrupt_value_for_gate(gate: dict[str, Any]) -> dict[str, Any]:
-    args = workflow_a2ui_tool_args_for_gate(gate)
+def interaction_interrupt_value_for_gate(gate: dict[str, Any]) -> dict[str, Any]:
+    args = workflow_interaction_tool_args_for_gate(gate)
     props = parse_json_dict(args.get("props_json"))
     context = parse_json_dict(args.get("context_json"))
     context.setdefault("synthetic", True)
-    context.setdefault("source", "a2ui_contract_synthetic")
-    component = normalize_component(args.get("component"))
+    context.setdefault("source", "interaction_contract_synthetic")
+    presentation = normalize_presentation(args.get("presentation"))
     gate_id = normalize_gate_id(args.get("gate_id") or context.get("gateId") or context.get("gate_id"))
     skill_id = normalize_skill_id(context.get("skill") or context.get("skillId") or gate.get("skill_id"))
     mode = str(args.get("resume_mode") or "submit").strip().lower()
@@ -648,11 +648,11 @@ def a2ui_interrupt_value_for_gate(gate: dict[str, Any]) -> dict[str, Any]:
     else:
         endpoint = "respond"
         kind = "clarification"
-    a2ui_request = {
-        "contract": "a2ui",
-        "version": "0.9",
-        "surfaceId": f"surface-{gate_id}" if gate_id else "surface-a2ui-gate",
-        "component": component,
+    interaction_request = {
+        "contract": "helpudoc.interaction",
+        "version": "1",
+        "interactionId": f"interaction-{gate_id}" if gate_id else "interaction-interaction-gate",
+        "presentation": presentation,
         "props": props,
         "gateId": gate_id or None,
         "skill": skill_id or None,
@@ -665,8 +665,8 @@ def a2ui_interrupt_value_for_gate(gate: dict[str, Any]) -> dict[str, Any]:
     }
     return {
         "kind": kind,
-        "title": props.get("title") or f"A2UI: {component}",
+        "title": props.get("title") or f"Interaction: {presentation}",
         "description": props.get("description") or "",
-        "a2uiRequest": a2ui_request,
+        "interactionRequest": interaction_request,
         "display_payload": context,
     }

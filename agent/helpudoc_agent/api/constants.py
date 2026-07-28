@@ -8,7 +8,7 @@ _INTERRUPT_TOOL_NAMES: Set[str] = {
     "request_clarification",
     "request_human_action",
     "request_plan_approval",
-    "request_ui",
+    "request_interaction",
     "workflow_action",
 }
 _LOADED_SKILL_OUTPUT_ID = re.compile(r"^Loaded skill:\s*(\S+)", re.MULTILINE)

@@ -4,7 +4,7 @@
 
 PowerPoint, `.pptx`, Google Slides, native deck creation/editing, templates, and PPT conversion requests route to the `pptx` skill instead. Do not select `frontend-slides` for PPTX-related work.
 
-This bundle is vendored from the upstream Claude Code plugin payload at `plugins/frontend-slides/skills/frontend-slides/`, then adapted for HelpUDoc's A2UI workflow.
+This bundle is vendored from the upstream Claude Code plugin payload at `plugins/frontend-slides/skills/frontend-slides/`, then adapted for HelpUDoc's Interaction workflow.
 
 ## Core Capabilities
 
@@ -16,7 +16,7 @@ This bundle is vendored from the upstream Claude Code plugin payload at `plugins
 
 ## HelpUDoc Gate Flow
 
-New runs use these active A2UI gates:
+New runs use these active Interaction gates:
 
 1. `presentation_context` asks only whether the deck is speaker-led or reading-first.
 2. `style_preview_selection` asks the user to choose from generated visual previews.
@@ -46,7 +46,7 @@ python scripts/export-pptx.py deck.html deck.pptx --screenshots-dir screenshots/
 | File | Purpose |
 | ---- | ------- |
 | `SKILL.md` | Main workflow and guardrails |
-| `interaction_contract.yaml` | HelpUDoc A2UI gate contract |
+| `interaction_contract.yaml` | HelpUDoc Interaction gate contract |
 | `STYLE_PRESETS.md` | Safe visual preset reference |
 | `viewport-base.css` | Mandatory fixed-stage CSS |
 | `html-template.md` | Fixed-stage HTML/JS architecture |

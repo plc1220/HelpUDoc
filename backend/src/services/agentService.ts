@@ -30,7 +30,7 @@ export type AgentTraceContext = {
   persona?: string;
   conversationId?: string;
   skillId?: string | null;
-  a2uiGateState?: {
+  interactionGateState?: {
     completedGateIds?: string[];
   };
 };

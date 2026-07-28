@@ -23,7 +23,6 @@ import {
   SettingsSurface,
 } from '../components/settings/SettingsScaffold';
 import { fetchWorkspaceOverview, type WorkspaceOverview } from '../services/settingsApi';
-import { useUITheme } from '../colorMode';
 
 const FOCUS_ICONS = [Sparkles, ShieldCheck, BookOpen] as const;
 
@@ -42,7 +41,6 @@ function formatRelativeTime(iso: string): string {
 }
 
 const DashboardPage = () => {
-  const [uiTheme, setUiTheme] = useUITheme();
   const [data, setData] = useState<WorkspaceOverview | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -273,114 +271,24 @@ const DashboardPage = () => {
           <SettingsSectionHeader
             eyebrow="Appearance"
             title="Workspace theme"
-            description="Choose the visual style for this workspace."
+            description="HelpUDoc now uses the Astryx neutral design language throughout the app."
           />
 
-          <div className="grid gap-4 md:grid-cols-3">
-            <button
-              type="button"
-              onClick={() => setUiTheme('standard')}
-              className={`group relative flex flex-col items-start rounded-2xl border-2 p-5 text-left transition-all duration-300 ${
-                uiTheme === 'standard'
-                  ? 'border-blue-600 bg-blue-50/20 shadow-lg shadow-blue-500/5 dark:border-blue-500 dark:bg-blue-950/20'
-                  : 'border-slate-200 bg-white hover:border-slate-300 hover:shadow-md dark:border-slate-800 dark:bg-slate-900 dark:hover:border-slate-700'
-              }`}
-            >
-              <div className="flex w-full items-center justify-between">
-                <span className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400">
-                  <Palette size={18} />
+          <div className="flex items-start gap-4 rounded-2xl border border-slate-200 bg-white p-5">
+            <span className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-slate-900">
+              <Palette size={18} />
+            </span>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <h3 className="text-base font-semibold text-slate-900">Astryx Neutral</h3>
+                <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-slate-900 text-white">
+                  <Check size={12} strokeWidth={3} />
                 </span>
-                {uiTheme === 'standard' ? (
-                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-blue-600 text-white">
-                    <Check size={12} strokeWidth={3} />
-                  </span>
-                ) : null}
               </div>
-              <h3 className="mt-4 text-base font-semibold text-slate-900 dark:text-slate-100">Standard</h3>
-              <p className="mt-1 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
-                Soft shadows, balanced contours, sapphire accents, and fluid layouts.
+              <p className="mt-1 text-xs leading-relaxed text-slate-500">
+                Restrained neutral surfaces, semantic design tokens, and consistent light and dark modes.
               </p>
-              <div className="mt-5 flex w-full items-center gap-3 border-t border-slate-100 pt-4 dark:border-slate-800">
-                <div className="flex gap-1.5">
-                  <span className="h-4 w-4 rounded-full bg-[#2563eb]" />
-                  <span className="h-4 w-4 rounded-full border border-slate-200 bg-[#f8fafc] dark:border-slate-700" />
-                  <span className="h-4 w-4 rounded-full bg-[#0f172a] dark:bg-slate-950" />
-                </div>
-                <div className="ml-auto flex items-center gap-1 rounded-lg border border-slate-100 bg-slate-50 px-2.5 py-1 dark:border-slate-800 dark:bg-slate-950">
-                  <span className="h-2 w-2 rounded-full bg-blue-600" />
-                  <span className="text-[10px] font-medium text-slate-500 dark:text-slate-400">Default</span>
-                </div>
-              </div>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setUiTheme('minimalism')}
-              className={`group relative flex flex-col items-start rounded-2xl border-2 p-5 text-left transition-all duration-300 ${
-                uiTheme === 'minimalism'
-                  ? 'border-neutral-900 bg-neutral-100/40 dark:border-neutral-200 dark:bg-neutral-900/20'
-                  : 'border-slate-200 bg-white hover:border-neutral-400 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-neutral-500'
-              }`}
-            >
-              <div className="flex w-full items-center justify-between">
-                <span className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-neutral-100 text-neutral-900 dark:bg-neutral-800 dark:text-neutral-100">
-                  <Palette size={18} />
-                </span>
-                {uiTheme === 'minimalism' ? (
-                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-neutral-900 text-white dark:bg-neutral-100 dark:text-black">
-                    <Check size={12} strokeWidth={3} />
-                  </span>
-                ) : null}
-              </div>
-              <h3 className="mt-4 text-base font-semibold text-slate-900 dark:text-slate-100">Minimalism</h3>
-              <p className="mt-1 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
-                Monochrome surfaces, compact controls, generous whitespace, and restrained corners.
-              </p>
-              <div className="mt-5 flex w-full items-center gap-3 border-t border-slate-100 pt-4 dark:border-slate-800">
-                <div className="flex gap-1">
-                  <span className="h-3 w-6 rounded-sm bg-[#171717] dark:bg-white" />
-                  <span className="h-3 w-6 rounded-sm border border-neutral-200 bg-[#f5f5f5] dark:border-neutral-700 dark:bg-neutral-800" />
-                </div>
-                <div className="ml-auto flex items-center gap-1 rounded-lg border border-neutral-100 bg-neutral-50 px-3 py-1 dark:border-neutral-800 dark:bg-neutral-950">
-                  <span className="text-[10px] font-medium text-slate-500 dark:text-slate-400">Quiet</span>
-                </div>
-              </div>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setUiTheme('bauhaus')}
-              className={`group relative flex flex-col items-start rounded-2xl border-2 p-5 text-left transition-all duration-300 ${
-                uiTheme === 'bauhaus'
-                  ? 'border-black bg-[#f3efe0] shadow-[4px_4px_0px_currentColor] dark:border-white dark:bg-neutral-900'
-                  : 'border-slate-200 bg-white hover:border-black hover:shadow-[3px_3px_0px_currentColor] dark:border-slate-800 dark:bg-slate-900 dark:hover:border-white'
-              }`}
-            >
-              <div className="flex w-full items-center justify-between">
-                <span className="inline-flex h-9 w-9 items-center justify-center rounded-xl border-2 border-black bg-[#fcbf49] text-black dark:border-white">
-                  <Palette size={18} />
-                </span>
-                {uiTheme === 'bauhaus' ? (
-                  <span className="flex h-5 w-5 items-center justify-center rounded-full border-2 border-black bg-[#d62828] text-white dark:border-white">
-                    <Check size={10} strokeWidth={4} />
-                  </span>
-                ) : null}
-              </div>
-              <h3 className="mt-4 text-base font-semibold text-slate-900 dark:text-slate-100">Bauhaus</h3>
-              <p className="mt-1 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
-                Flat surfaces, sharp geometry, stronger gridlines, and bold primary color accents.
-              </p>
-              <div className="mt-5 flex w-full items-center gap-2 border-t border-slate-100 pt-4 dark:border-slate-800">
-                <div className="flex gap-1">
-                  <span className="h-4 w-4 border border-black bg-[#d62828] dark:border-white" />
-                  <span className="h-4 w-4 border border-black bg-[#fcbf49] dark:border-white" />
-                  <span className="h-4 w-4 border border-black bg-[#003049] dark:border-white" />
-                </div>
-                <div className="ml-auto flex items-center rounded-lg border border-slate-200 bg-white px-2 py-0.5 dark:border-slate-700 dark:bg-neutral-950">
-                  <span className="text-[10px] font-medium text-slate-500 dark:text-slate-400">Flat</span>
-                </div>
-              </div>
-            </button>
+            </div>
           </div>
         </SettingsSurface>
       </div>

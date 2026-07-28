@@ -11,7 +11,7 @@ from langgraph.runtime import Runtime
 from langgraph.types import Command
 
 from helpudoc_agent.api.constants import _INTERRUPT_TOOL_NAMES
-from helpudoc_agent.a2ui_contract import next_pending_gate
+from helpudoc_agent.interaction_contract import next_pending_gate
 from helpudoc_agent.implicit_input_detection import detect_implicit_input_awaiting
 from helpudoc_agent.interrupt_payloads import extract_interrupt_payload_from_tool_text
 from helpudoc_agent.middleware.implicit_input_guard import (
@@ -88,22 +88,22 @@ def test_detect_implicit_input_non_slide_pausing_after_prompting_choice() -> Non
     assert result.awaiting is True
 
 
-def test_detect_implicit_input_non_slide_claimed_a2ui_gate_presented() -> None:
+def test_detect_implicit_input_non_slide_claimed_interaction_gate_presented() -> None:
     result = detect_implicit_input_awaiting(
         skill_id="research",
         assistant_text=(
-            "I have successfully presented the output format selection gate using A2UI as requested. "
+            "I have successfully presented the output format selection gate using Interaction as requested. "
             "Please select your preferred format (Executive Summary, Full Report, or Checklist) to proceed!"
         ),
     )
     assert result.awaiting is True
 
 
-def test_detect_implicit_input_non_slide_claimed_a2ui_prompt_initiated() -> None:
+def test_detect_implicit_input_non_slide_claimed_interaction_prompt_initiated() -> None:
     result = detect_implicit_input_awaiting(
         skill_id="research",
         assistant_text=(
-            "I have initiated the A2UI prompt for you to select your preferred output format: "
+            "I have initiated the Interaction prompt for you to select your preferred output format: "
             "Executive Summary, Full Report, or Checklist. Please make your selection in the user interface."
         ),
     )
@@ -283,8 +283,9 @@ def test_extract_interrupt_payload_from_langgraph_v3_tool_error_wrapper() -> Non
     raw = (
         "(Interrupt(value={'kind': 'clarification', 'title': 'Presentation Context', "
         "'description': 'Tell me enough to shape the deck before I design it.', "
-        "'a2uiRequest': {'contract': 'a2ui', 'version': '0.9', "
-        "'component': 'clarification_form', 'gateId': 'presentation_context', "
+        "'interactionRequest': {'contract': 'helpudoc.interaction', 'version': '1', "
+        "'interactionId': 'interaction-presentation_context', "
+        "'presentation': 'questionnaire', 'gateId': 'presentation_context', "
         "'skill': 'frontend-slides', 'props': {}, 'resumeAction': {'endpoint': 'respond', "
         "'actionId': 'submit'}}, 'display_payload': {'skill': 'frontend-slides', "
         "'gateId': 'presentation_context'}}, id='abc123'),)"
@@ -295,7 +296,7 @@ def test_extract_interrupt_payload_from_langgraph_v3_tool_error_wrapper() -> Non
     assert payload is not None
     assert payload["kind"] == "clarification"
     assert payload["interruptId"] == "abc123"
-    assert payload["a2uiRequest"]["gateId"] == "presentation_context"
+    assert payload["interactionRequest"]["gateId"] == "presentation_context"
     assert payload["displayPayload"]["skill"] == "frontend-slides"
 
 
@@ -333,7 +334,7 @@ def test_build_synthetic_interrupt_does_not_regress_style_selection_to_outline_c
     assert payload["response_spec"].get("questions", []) == []
 
 
-def test_build_synthetic_interrupt_uses_style_preview_chooser() -> None:
+def test_build_synthetic_interrupt_uses_style_preview() -> None:
     payload = build_synthetic_clarification_interrupt(
         skill_id="frontend-slides",
         assistant_text=(
@@ -462,9 +463,9 @@ def test_guard_emits_deterministic_gate_interrupt_without_regex_signal() -> None
     assert interrupt_payload is not None
     assert interrupt_payload["kind"] == "clarification"
     assert interrupt_payload["displayPayload"]["gateId"] == "presentation_context"
-    assert interrupt_payload["displayPayload"]["uiContract"] == "a2ui"
+    assert interrupt_payload["displayPayload"]["interactionContract"] == "helpudoc.interaction"
     assert interrupt_payload["responseSpec"]["questions"][0]["id"] == "density"
-    assert "frontend_slides_completed_a2ui_gates" not in runtime.context
+    assert "frontend_slides_completed_interaction_gates" not in runtime.context
 
 
 def test_guard_does_not_advance_next_gate_for_repeated_setup_form_prose() -> None:
@@ -474,7 +475,7 @@ def test_guard_does_not_advance_next_gate_for_repeated_setup_form_prose() -> Non
             AIMessage(
                 content=(
                     "I have called the request_clarification tool to render the Presentation Setup form "
-                    "under our A2UI contract. Please complete the setup in the UI form so we can proceed "
+                    "under our Interaction contract. Please complete the setup in the UI form so we can proceed "
                     "with organizing your slide outline."
                 )
             )
@@ -483,7 +484,7 @@ def test_guard_does_not_advance_next_gate_for_repeated_setup_form_prose() -> Non
     runtime = Runtime(
         context={
             "active_skill": "frontend-slides",
-            "frontend_slides_completed_a2ui_gates": ["presentation_context"],
+            "frontend_slides_completed_interaction_gates": ["presentation_context"],
         }
     )
 
@@ -497,7 +498,7 @@ def test_guard_does_not_advance_next_gate_for_repeated_setup_form_prose() -> Non
     assert "presentation setup" in messages[0].content.lower()
     assert "deck mode is already selected" in messages[0].content.lower()
     assert "workflow_action" in messages[0].content
-    assert "ask_user_a2ui" in messages[0].content
+    assert "request_user_interaction" in messages[0].content
     assert "style_preview_selection" in messages[0].content
 
 
@@ -517,7 +518,7 @@ def test_guard_skips_outline_gate_after_deck_mode_selection() -> None:
     runtime = Runtime(
         context={
             "active_skill": "frontend-slides",
-            "frontend_slides_completed_a2ui_gates": ["presentation_context"],
+            "frontend_slides_completed_interaction_gates": ["presentation_context"],
         }
     )
 
@@ -541,7 +542,7 @@ def test_guard_allows_frontend_slides_after_all_gates_completed() -> None:
     runtime = Runtime(
         context={
             "active_skill": "frontend-slides",
-            "frontend_slides_completed_a2ui_gates": [
+            "frontend_slides_completed_interaction_gates": [
                 "presentation_context",
                 "outline_confirmation",
                 "style_preview_selection",
@@ -552,7 +553,7 @@ def test_guard_allows_frontend_slides_after_all_gates_completed() -> None:
     assert middleware.after_model(state, runtime) is None
 
 
-def test_a2ui_contract_honors_backend_completed_gates_with_scoped_run_context() -> None:
+def test_interaction_contract_honors_backend_completed_gates_with_scoped_run_context() -> None:
     completed_gates = [
         "presentation_context",
         "outline_confirmation",
@@ -564,14 +565,14 @@ def test_a2ui_contract_honors_backend_completed_gates_with_scoped_run_context() 
         "active_skill": "frontend-slides",
         "run_id": "run-123",
         "thread_id": "thread-456",
-        "frontend_slides_completed_a2ui_gates": completed_gates,
-        "a2ui_gate_ledger": [
+        "frontend_slides_completed_interaction_gates": completed_gates,
+        "interaction_gate_ledger": [
             {
                 "run_id": "run-123",
                 "thread_id": "thread-456",
                 "skill_id": "frontend-slides",
                 "gate_id": gate_id,
-                "component": "",
+                "presentation": "",
                 "status": "completed",
             }
             for gate_id in completed_gates
@@ -602,7 +603,7 @@ def test_guard_loops_once_and_raises_contract_error_on_retry() -> None:
     runtime = Runtime(
         context={
             "active_skill": "frontend-slides",
-            "frontend_slides_completed_a2ui_gates": completed_gates,
+            "frontend_slides_completed_interaction_gates": completed_gates,
         }
     )
 
@@ -615,7 +616,7 @@ def test_guard_loops_once_and_raises_contract_error_on_retry() -> None:
     assert len(messages) == 1
     assert isinstance(messages[0], HumanMessage)
     assert "workflow_action" in messages[0].content
-    assert "ask_user_a2ui" in messages[0].content
+    assert "request_user_interaction" in messages[0].content
 
     # Second occurrence (implicit_retry is True): Should raise ValueError immediately
     state_retry = {
@@ -627,7 +628,7 @@ def test_guard_loops_once_and_raises_contract_error_on_retry() -> None:
         middleware.after_model(state_retry, runtime)
 
 
-def test_guard_emits_generic_a2ui_interrupt_immediately() -> None:
+def test_guard_emits_generic_interaction_interrupt_immediately() -> None:
     middleware = ImplicitInputGuardMiddleware()
     state = {
         "messages": [
@@ -653,17 +654,16 @@ def test_guard_emits_generic_a2ui_interrupt_immediately() -> None:
     assert payload is not None
     assert payload["kind"] == "clarification"
     assert payload["displayPayload"]["skill"] == "research"
-    assert payload["displayPayload"]["uiContract"] == "a2ui"
-    assert payload["a2uiRequest"]["contract"] == "a2ui"
-    assert payload["a2uiRequest"]["component"] == "clarification.form"
-    assert payload["a2uiRequest"]["skill"] == "research"
-    assert payload["uiRequest"]["component"] == "clarification_form"
-    assert payload["uiRequest"]["props"]["title"] == "Input Needed"
-    options = payload["uiRequest"]["props"]["questions"][0]["options"]
+    assert payload["displayPayload"]["interactionContract"] == "helpudoc.interaction"
+    assert payload["interactionRequest"]["contract"] == "helpudoc.interaction"
+    assert payload["interactionRequest"]["presentation"] == "questionnaire"
+    assert payload["interactionRequest"]["skill"] == "research"
+    assert payload["interactionRequest"]["props"]["title"] == "Input Needed"
+    options = payload["interactionRequest"]["props"]["questions"][0]["options"]
     assert [option["label"] for option in options] == ["Executive summary", "Full report"]
 
 
-def test_guard_emits_generic_a2ui_interrupt_on_retry() -> None:
+def test_guard_emits_generic_interaction_interrupt_on_retry() -> None:
     middleware = ImplicitInputGuardMiddleware()
     state = {
         "messages": [
@@ -690,23 +690,22 @@ def test_guard_emits_generic_a2ui_interrupt_on_retry() -> None:
     assert payload["kind"] == "clarification"
     assert payload["title"] == "Input Needed"
     assert payload["displayPayload"]["skill"] == "research"
-    assert payload["displayPayload"]["uiContract"] == "a2ui"
-    assert payload["a2uiRequest"]["contract"] == "a2ui"
-    assert payload["a2uiRequest"]["component"] == "clarification.form"
-    assert payload["a2uiRequest"]["skill"] == "research"
-    assert payload["uiRequest"]["component"] == "clarification_form"
-    assert payload["uiRequest"]["props"]["questions"][0]["id"] == "response"
-    options = payload["uiRequest"]["props"]["questions"][0]["options"]
+    assert payload["displayPayload"]["interactionContract"] == "helpudoc.interaction"
+    assert payload["interactionRequest"]["contract"] == "helpudoc.interaction"
+    assert payload["interactionRequest"]["presentation"] == "questionnaire"
+    assert payload["interactionRequest"]["skill"] == "research"
+    assert payload["interactionRequest"]["props"]["questions"][0]["id"] == "response"
+    options = payload["interactionRequest"]["props"]["questions"][0]["options"]
     assert [option["label"] for option in options] == ["Leadership team", "Technical reviewers"]
 
 
-def test_guard_generic_a2ui_extracts_parenthetical_choice_list() -> None:
+def test_guard_generic_interaction_extracts_parenthetical_choice_list() -> None:
     middleware = ImplicitInputGuardMiddleware()
     state = {
         "messages": [
             AIMessage(
                 content=(
-                    "I have initialized the A2UI smoke test as requested. Please select your "
+                    "I have initialized the Interaction smoke test as requested. Please select your "
                     "preferred output format using the interactive form above (Executive Summary, "
                     "Full Report, or Checklist)."
                 )
@@ -721,8 +720,8 @@ def test_guard_generic_a2ui_extracts_parenthetical_choice_list() -> None:
     assert len(messages) == 1
     payload = extract_interrupt_payload_from_tool_text(messages[0].content)
     assert payload is not None
-    assert payload["a2uiRequest"]["component"] == "clarification.form"
-    options = payload["a2uiRequest"]["props"]["questions"][0]["options"]
+    assert payload["interactionRequest"]["presentation"] == "questionnaire"
+    options = payload["interactionRequest"]["props"]["questions"][0]["options"]
     assert [option["label"] for option in options] == [
         "Executive Summary",
         "Full Report",
@@ -730,13 +729,13 @@ def test_guard_generic_a2ui_extracts_parenthetical_choice_list() -> None:
     ]
 
 
-def test_guard_generic_a2ui_extracts_colon_choice_list() -> None:
+def test_guard_generic_interaction_extracts_colon_choice_list() -> None:
     middleware = ImplicitInputGuardMiddleware()
     state = {
         "messages": [
             AIMessage(
                 content=(
-                    "I have presented the A2UI prompt for you to select your preferred "
+                    "I have presented the Interaction prompt for you to select your preferred "
                     "output format: Executive Summary, Full Report, or Checklist. "
                     "Please make your selection above to proceed."
                 )
@@ -750,7 +749,7 @@ def test_guard_generic_a2ui_extracts_colon_choice_list() -> None:
     messages = result.get("messages") or []
     payload = extract_interrupt_payload_from_tool_text(messages[0].content)
     assert payload is not None
-    options = payload["a2uiRequest"]["props"]["questions"][0]["options"]
+    options = payload["interactionRequest"]["props"]["questions"][0]["options"]
     assert [option["label"] for option in options] == [
         "Executive Summary",
         "Full Report",
@@ -758,7 +757,7 @@ def test_guard_generic_a2ui_extracts_colon_choice_list() -> None:
     ]
 
 
-def test_guard_generic_a2ui_extracts_choices_from_user_prompt_when_assistant_omits_them() -> None:
+def test_guard_generic_interaction_extracts_choices_from_user_prompt_when_assistant_omits_them() -> None:
     middleware = ImplicitInputGuardMiddleware()
     state = {
         "messages": [
@@ -771,7 +770,7 @@ def test_guard_generic_a2ui_extracts_choices_from_user_prompt_when_assistant_omi
             AIMessage(
                 content=(
                     "I have paused at the input gate as requested. Please select your desired "
-                    "output format from the A2UI component above to proceed."
+                    "output format from the Interaction presentation above to proceed."
                 )
             ),
         ]
@@ -783,7 +782,7 @@ def test_guard_generic_a2ui_extracts_choices_from_user_prompt_when_assistant_omi
     messages = result.get("messages") or []
     payload = extract_interrupt_payload_from_tool_text(messages[0].content)
     assert payload is not None
-    options = payload["a2uiRequest"]["props"]["questions"][0]["options"]
+    options = payload["interactionRequest"]["props"]["questions"][0]["options"]
     assert [option["label"] for option in options] == [
         "Executive Summary",
         "Full Report",

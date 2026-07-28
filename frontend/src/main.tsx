@@ -3,20 +3,21 @@ import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import './index.css';
 import App from './App.tsx';
+import { AppThemeRoot } from './AppThemeRoot';
 import { AuthProvider } from './auth/AuthProvider';
-import { applyColorModeToDocument, resolveInitialColorMode, applyUIThemeToDocument, resolveInitialUITheme } from './colorMode';
+import { applyColorModeToDocument, resolveInitialColorMode } from './colorMode';
 
-// Apply the persisted color mode and UI theme before React renders so direct-route loads
-// (for example /settings) honor the user's theme immediately.
+// Apply the persisted color mode before React renders so direct-route loads do not flash.
 applyColorModeToDocument(resolveInitialColorMode());
-applyUIThemeToDocument(resolveInitialUITheme());
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <AuthProvider>
-      <BrowserRouter>
-        <App />
-      </BrowserRouter>
-    </AuthProvider>
+    <AppThemeRoot>
+      <AuthProvider>
+        <BrowserRouter>
+          <App />
+        </BrowserRouter>
+      </AuthProvider>
+    </AppThemeRoot>
   </StrictMode>,
 );

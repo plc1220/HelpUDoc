@@ -8,26 +8,26 @@ from langchain.agents.middleware.types import ModelRequest, ModelResponse
 from langchain_core.messages import AIMessage
 
 import helpudoc_agent.tools_and_schemas as tools_and_schemas
-from helpudoc_agent.a2ui_contract import (
-    A2UI_LEDGER_KEY,
-    a2ui_interrupt_value_for_gate,
+from helpudoc_agent.interaction_contract import (
+    INTERACTION_LEDGER_KEY,
+    interaction_interrupt_value_for_gate,
     mark_gate_completed,
     next_pending_gate,
-    validate_workflow_a2ui_call,
+    validate_workflow_interaction_call,
 )
-from helpudoc_agent.middleware.a2ui_contract import A2UIContractMiddleware
+from helpudoc_agent.middleware.interaction_contract import InteractionContractMiddleware
 from helpudoc_agent.skills_registry import load_skills
-from helpudoc_agent.tools.workspace.builtins.a2ui import build_workflow_action_tool
+from helpudoc_agent.tools.workspace.builtins.interaction import build_workflow_action_tool
 
 
-def _gate(skill_id: str = "generic-skill", gate_id: str = "confirm", component: str = "clarification.form"):
+def _gate(skill_id: str = "generic-skill", gate_id: str = "confirm", presentation: str = "questionnaire"):
     return {
         "skill_id": skill_id,
         "gate_id": gate_id,
-        "component": component,
+        "presentation": presentation,
         "required": True,
         "props": {"title": "Confirm", "questions": [{"id": "ok", "question": "Continue?"}]},
-        "context": {"skill": skill_id, "skillId": skill_id, "gateId": gate_id, "uiContract": "a2ui"},
+        "context": {"skill": skill_id, "skillId": skill_id, "gateId": gate_id, "interactionContract": "helpudoc.interaction"},
     }
 
 
@@ -36,9 +36,9 @@ def _args(gate=None, **overrides):
     context = dict(gate["context"])
     props = dict(gate["props"])
     payload = {
-        "action": "ask_user_a2ui",
+        "action": "request_user_interaction",
         "gate_id": gate["gate_id"],
-        "component": gate["component"],
+        "presentation": gate["presentation"],
         "props_json": json.dumps(props),
         "context_json": json.dumps(context),
     }
@@ -60,51 +60,55 @@ def _response(args):
 def _request(context):
     return ModelRequest(
         model=object(),
+        system_prompt=None,
         messages=[],
+        tool_choice=None,
+        tools=[],
+        response_format=None,
         runtime=SimpleNamespace(context=context),
         state={"messages": []},
     )
 
 
-def test_validate_workflow_action_accepts_valid_a2ui_call():
+def test_validate_workflow_action_accepts_valid_interaction_call():
     gate = _gate()
-    valid, reason = validate_workflow_a2ui_call(_args(gate), gate)
+    valid, reason = validate_workflow_interaction_call(_args(gate), gate)
     assert valid is True
     assert reason == ""
 
 
 def test_validate_workflow_action_rejects_missing_structured_payload():
     gate = _gate()
-    valid, reason = validate_workflow_a2ui_call(_args(gate, props_json="{}"), gate)
+    valid, reason = validate_workflow_interaction_call(_args(gate, props_json="{}"), gate)
     assert valid is False
     assert "props_json" in reason
 
 
 def test_validate_workflow_action_rejects_wrong_gate_and_component():
     gate = _gate()
-    valid, reason = validate_workflow_a2ui_call(_args(gate, gate_id="other"), gate)
+    valid, reason = validate_workflow_interaction_call(_args(gate, gate_id="other"), gate)
     assert valid is False
     assert "gate_id" in reason
 
-    valid, reason = validate_workflow_a2ui_call(_args(gate, component="style.previewChooser"), gate)
+    valid, reason = validate_workflow_interaction_call(_args(gate, presentation="style_preview"), gate)
     assert valid is False
-    assert "component" in reason
+    assert "presentation" in reason
 
 
 def test_validate_frontend_slides_outline_gate_requires_embedded_outline():
     gate = _gate(
         skill_id="frontend-slides",
         gate_id="outline_confirmation",
-        component="clarification.form",
+        presentation="questionnaire",
     )
 
-    valid, reason = validate_workflow_a2ui_call(_args(gate), gate)
+    valid, reason = validate_workflow_interaction_call(_args(gate), gate)
 
     assert valid is False
     assert "outline_confirmation" in reason
     assert "outlineMarkdown" in reason
 
-    valid, reason = validate_workflow_a2ui_call(
+    valid, reason = validate_workflow_interaction_call(
         _args(gate, props_json=json.dumps({**gate["props"], "outlineMarkdown": "## Slide 1\nIntro"})),
         gate,
     )
@@ -117,7 +121,7 @@ def test_middleware_blocks_prose_only_phantom_ui_and_retries_once():
         "active_skill": "generic-skill",
         "active_skill_scope": {"interaction_contract": {"gates": [_gate()]}},
     }
-    middleware = A2UIContractMiddleware()
+    middleware = InteractionContractMiddleware()
     calls = []
 
     def handler(request):
@@ -130,7 +134,7 @@ def test_middleware_blocks_prose_only_phantom_ui_and_retries_once():
 
     assert len(calls) == 2
     assert response_has_tool_call(response)
-    assert context[A2UI_LEDGER_KEY][0]["source"] == "corrected"
+    assert context[INTERACTION_LEDGER_KEY][0]["source"] == "corrected"
 
 
 def test_middleware_records_direct_source_for_valid_first_response():
@@ -138,12 +142,12 @@ def test_middleware_records_direct_source_for_valid_first_response():
         "active_skill": "generic-skill",
         "active_skill_scope": {"interaction_contract": {"gates": [_gate()]}},
     }
-    middleware = A2UIContractMiddleware()
+    middleware = InteractionContractMiddleware()
 
     response = middleware.wrap_model_call(_request(context), lambda _request: _response(_args()))
 
     assert response_has_tool_call(response)
-    assert context[A2UI_LEDGER_KEY][0]["source"] == "direct"
+    assert context[INTERACTION_LEDGER_KEY][0]["source"] == "direct"
 
 
 def test_middleware_failed_retry_records_violation_for_fallback_path():
@@ -151,7 +155,7 @@ def test_middleware_failed_retry_records_violation_for_fallback_path():
         "active_skill": "generic-skill",
         "active_skill_scope": {"interaction_contract": {"gates": [_gate()]}},
     }
-    middleware = A2UIContractMiddleware()
+    middleware = InteractionContractMiddleware()
 
     response = middleware.wrap_model_call(
         _request(context),
@@ -159,18 +163,18 @@ def test_middleware_failed_retry_records_violation_for_fallback_path():
     )
 
     assert response.result[0].content == "The form is open."
-    assert context[A2UI_LEDGER_KEY][0]["source"] == "failed"
-    assert context[A2UI_LEDGER_KEY][0]["violation_count"] == 1
+    assert context[INTERACTION_LEDGER_KEY][0]["source"] == "failed"
+    assert context[INTERACTION_LEDGER_KEY][0]["violation_count"] == 1
 
 
 def test_contract_can_build_synthetic_interrupt_for_declared_gate():
     gate = _gate()
     gate["synthetic_on_pending"] = True
-    payload = a2ui_interrupt_value_for_gate(gate)
+    payload = interaction_interrupt_value_for_gate(gate)
 
-    assert payload["a2uiRequest"]["contract"] == "a2ui"
-    assert payload["a2uiRequest"]["gateId"] == "confirm"
-    assert payload["a2uiRequest"]["component"] == "clarification.form"
+    assert payload["interactionRequest"]["contract"] == "helpudoc.interaction"
+    assert payload["interactionRequest"]["gateId"] == "confirm"
+    assert payload["interactionRequest"]["presentation"] == "questionnaire"
 
 
 def test_frontend_slides_contract_sequence_and_resume_skip_completed_gate():
@@ -189,7 +193,7 @@ def test_frontend_slides_contract_sequence_and_resume_skip_completed_gate():
         context,
         skill_id="frontend-slides",
         gate_id="presentation_context",
-        component="clarification.form",
+        presentation="questionnaire",
         answers={"answersByQuestionId": {"density": "Low density / speaker-led"}},
     )
 
@@ -207,7 +211,7 @@ def test_frontend_slides_does_not_require_outline_approval():
         context,
         skill_id="frontend-slides",
         gate_id="presentation_context",
-        component="clarification.form",
+        presentation="questionnaire",
         answers={"answersByQuestionId": {"density": "High density / reading-first"}},
     )
 
@@ -234,7 +238,7 @@ def test_frontend_slides_ledger_is_scoped_to_current_run():
         thread_id="thread-1",
         skill_id="frontend-slides",
         gate_id="presentation_context",
-        component="clarification.form",
+        presentation="questionnaire",
         answers={"answersByQuestionId": {"purpose": "Old deck"}},
     )
 
@@ -259,7 +263,7 @@ def test_frontend_slides_defers_style_preview_gate_until_previews_exist():
             thread_id="thread-1",
             skill_id="frontend-slides",
             gate_id=gate_id,
-            component="clarification.form",
+            presentation="questionnaire",
             answers={"ok": True},
         )
 
@@ -284,7 +288,7 @@ def test_frontend_slides_default_contract_defers_dynamic_outline_gate_without_pa
         thread_id="thread-1",
         skill_id="frontend-slides",
         gate_id="presentation_context",
-        component="clarification.form",
+        presentation="questionnaire",
         answers={"purpose": "Pitch deck"},
     )
 
@@ -303,7 +307,7 @@ def test_generic_two_gate_skill_advances_without_repeating_completed_gate():
         context,
         skill_id="generic-skill",
         gate_id="one",
-        component="clarification.form",
+        presentation="questionnaire",
         answers={"ok": True},
     )
     assert next_pending_gate(context)["gate_id"] == "two"
@@ -311,13 +315,13 @@ def test_generic_two_gate_skill_advances_without_repeating_completed_gate():
         context,
         skill_id="generic-skill",
         gate_id="two",
-        component="clarification.form",
+        presentation="questionnaire",
         answers={"ok": True},
     )
     assert next_pending_gate(context) is None
 
 
-def test_workflow_action_emits_native_a2ui_and_marks_completed_on_resume(monkeypatch):
+def test_workflow_action_emits_native_interaction_and_marks_completed_on_resume(monkeypatch):
     seen_payload = {}
 
     def fake_interrupt(payload):
@@ -330,10 +334,10 @@ def test_workflow_action_emits_native_a2ui_and_marks_completed_on_resume(monkeyp
 
     result = tool.invoke(_args(_gate()))
 
-    assert seen_payload["a2uiRequest"]["contract"] == "a2ui"
-    assert seen_payload["a2uiRequest"]["gateId"] == "confirm"
+    assert seen_payload["interactionRequest"]["contract"] == "helpudoc.interaction"
+    assert seen_payload["interactionRequest"]["gateId"] == "confirm"
     assert json.loads(result)["answersByQuestionId"]["ok"] == "yes"
-    ledger = workspace.context[A2UI_LEDGER_KEY]
+    ledger = workspace.context[INTERACTION_LEDGER_KEY]
     assert ledger[0]["status"] == "completed"
     assert ledger[0]["thread_id"] == "thread-1"
     assert ledger[0]["answers"]["answersByQuestionId"]["ok"] == "yes"

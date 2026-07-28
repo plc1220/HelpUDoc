@@ -36,11 +36,11 @@ Risk: medium. Some users may still say "sheets" when they mean Google Sheets. If
 
 Status: keep for now.
 
-Why: it still owns browser-native HTML/animated web presentations and has A2UI gate tests. It should not handle PPTX/PowerPoint/native deck work now that `pptx` exists.
+Why: it still owns browser-native HTML/animated web presentations and has Interaction gate tests. It should not handle PPTX/PowerPoint/native deck work now that `pptx` exists.
 
 Suggested path:
 
-- Keep `frontend-slides` until A2UI gates are generalized and a replacement HTML deck path exists.
+- Keep `frontend-slides` until Interaction gates are generalized and a replacement HTML deck path exists.
 - Continue removing stale PPTX conversion language from docs as touched.
 
 Risk: high if removed now. Runtime and frontend tests still exercise frontend-slides-specific gates.

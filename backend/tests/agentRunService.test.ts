@@ -8,9 +8,9 @@ import {
   buildSyntheticClarificationFollowupPrompt,
   buildFrontendSlidesWorkflowState,
   configureAgentRunServices,
-  extractA2UIGateIdFromPendingInterrupt,
+  extractInteractionGateIdFromPendingInterrupt,
   getRunMeta,
-  inferFrontendSlidesGateIdFromA2UI,
+  inferFrontendSlidesGateIdFromInteraction,
   isCompletedFrontendSlidesGateInterrupt,
   isRealRunProgressEvent,
   normalizeWorkflowActionEvent,
@@ -77,16 +77,16 @@ const presentationContextInterrupt = {
   displayPayload: {
     skill: 'frontend-slides',
     gateId: 'presentation_context',
-    uiContract: 'a2ui',
-    expectedComponent: 'clarification_form',
+    interactionContract: 'helpudoc.interaction',
+    expectedPresentation: 'questionnaire',
     source: 'implicit_input_guard',
   },
   interruptId: 'interrupt-presentation-context',
-  a2uiRequest: {
-    contract: 'a2ui',
+  interactionRequest: {
+    contract: 'helpudoc.interaction',
     version: '0.9',
-    surfaceId: 'surface-presentation_context',
-    component: 'clarification.form',
+    interactionId: 'interaction-presentation_context',
+    presentation: 'questionnaire',
     gateId: 'presentation_context',
     skill: 'frontend-slides',
     required: true,
@@ -97,8 +97,8 @@ const presentationContextInterrupt = {
     metadata: {
       skill: 'frontend-slides',
       gateId: 'presentation_context',
-      uiContract: 'a2ui',
-      expectedComponent: 'clarification_form',
+      interactionContract: 'helpudoc.interaction',
+      expectedPresentation: 'questionnaire',
       source: 'implicit_input_guard',
     },
     props: {
@@ -113,9 +113,9 @@ const presentationContextInterrupt = {
       title: 'Presentation Setup',
     },
   },
-  uiRequest: {
+  interactionRequest: {
     id: 'interrupt-presentation-context',
-    component: 'clarification_form',
+    presentation: 'questionnaire',
     props: {
       questions: [
         {
@@ -131,21 +131,21 @@ const presentationContextInterrupt = {
 };
 
 const nativeOnlyPresentationContextInterrupt = (() => {
-  const { displayPayload, responseSpec, uiRequest, ...nativeOnly } = presentationContextInterrupt;
+  const { displayPayload, responseSpec, interactionRequest, ...nativeOnly } = presentationContextInterrupt;
   return nativeOnly;
 })();
 
 const nativeOnlyContractSyntheticPresentationContextInterrupt = {
   ...nativeOnlyPresentationContextInterrupt,
-  a2uiRequest: {
-    ...nativeOnlyPresentationContextInterrupt.a2uiRequest,
+  interactionRequest: {
+    ...nativeOnlyPresentationContextInterrupt.interactionRequest,
     metadata: {
       skill: 'frontend-slides',
       gateId: 'presentation_context',
-      uiContract: 'a2ui',
-      expectedComponent: 'clarification_form',
+      interactionContract: 'helpudoc.interaction',
+      expectedPresentation: 'questionnaire',
       synthetic: true,
-      source: 'a2ui_contract_synthetic',
+      source: 'interaction_contract_synthetic',
     },
   },
 };
@@ -169,15 +169,15 @@ const outlineConfirmationInterrupt = {
   displayPayload: {
     skill: 'frontend-slides',
     gateId: 'outline_confirmation',
-    uiContract: 'a2ui',
-    expectedComponent: 'clarification_form',
+    interactionContract: 'helpudoc.interaction',
+    expectedPresentation: 'questionnaire',
   },
   interruptId: 'interrupt-outline-confirmation',
-  a2uiRequest: {
-    contract: 'a2ui',
+  interactionRequest: {
+    contract: 'helpudoc.interaction',
     version: '0.9',
-    surfaceId: 'surface-outline_confirmation',
-    component: 'clarification.form',
+    interactionId: 'interaction-outline_confirmation',
+    presentation: 'questionnaire',
     gateId: 'outline_confirmation',
     skill: 'frontend-slides',
     required: true,
@@ -188,8 +188,8 @@ const outlineConfirmationInterrupt = {
     metadata: {
       skill: 'frontend-slides',
       gateId: 'outline_confirmation',
-      uiContract: 'a2ui',
-      expectedComponent: 'clarification_form',
+      interactionContract: 'helpudoc.interaction',
+      expectedPresentation: 'questionnaire',
     },
     props: {
       questions: [
@@ -203,9 +203,9 @@ const outlineConfirmationInterrupt = {
       title: 'Outline Confirmation',
     },
   },
-  uiRequest: {
+  interactionRequest: {
     id: 'interrupt-outline-confirmation',
-    component: 'clarification_form',
+    presentation: 'questionnaire',
     props: {
       questions: [
         {
@@ -245,15 +245,15 @@ const makeClarificationGateInterrupt = (
   displayPayload: {
     skill: 'frontend-slides',
     gateId,
-    uiContract: 'a2ui',
-    expectedComponent: 'clarification_form',
+    interactionContract: 'helpudoc.interaction',
+    expectedPresentation: 'questionnaire',
   },
   interruptId: `interrupt-${gateId}`,
-  a2uiRequest: {
-    contract: 'a2ui',
+  interactionRequest: {
+    contract: 'helpudoc.interaction',
     version: '0.9',
-    surfaceId: `surface-${gateId}`,
-    component: 'clarification.form',
+    interactionId: `interaction-${gateId}`,
+    presentation: 'questionnaire',
     gateId,
     skill: 'frontend-slides',
     required: true,
@@ -264,8 +264,8 @@ const makeClarificationGateInterrupt = (
     metadata: {
       skill: 'frontend-slides',
       gateId,
-      uiContract: 'a2ui',
-      expectedComponent: 'clarification_form',
+      interactionContract: 'helpudoc.interaction',
+      expectedPresentation: 'questionnaire',
     },
     props: {
       questions: [
@@ -279,9 +279,9 @@ const makeClarificationGateInterrupt = (
       title,
     },
   },
-  uiRequest: {
+  interactionRequest: {
     id: `interrupt-${gateId}`,
-    component: 'clarification_form',
+    presentation: 'questionnaire',
     props: {
       questions: [
         {
@@ -327,15 +327,15 @@ const stylePreviewSelectionInterrupt = {
   displayPayload: {
     skill: 'frontend-slides',
     gateId: 'style_preview_selection',
-    uiContract: 'a2ui',
-    expectedComponent: 'style_preview_chooser',
+    interactionContract: 'helpudoc.interaction',
+    expectedPresentation: 'style_preview',
   },
   interruptId: 'interrupt-style-preview-selection',
-  a2uiRequest: {
-    contract: 'a2ui',
+  interactionRequest: {
+    contract: 'helpudoc.interaction',
     version: '0.9',
-    surfaceId: 'surface-style_preview_selection',
-    component: 'style.previewChooser',
+    interactionId: 'interaction-style_preview_selection',
+    presentation: 'style_preview',
     gateId: 'style_preview_selection',
     skill: 'frontend-slides',
     required: true,
@@ -346,8 +346,8 @@ const stylePreviewSelectionInterrupt = {
     metadata: {
       skill: 'frontend-slides',
       gateId: 'style_preview_selection',
-      uiContract: 'a2ui',
-      expectedComponent: 'style_preview_chooser',
+      interactionContract: 'helpudoc.interaction',
+      expectedPresentation: 'style_preview',
     },
     props: {
       title: 'Select a Style Template',
@@ -371,9 +371,9 @@ const stylePreviewSelectionInterrupt = {
       ],
     },
   },
-  uiRequest: {
+  interactionRequest: {
     id: 'interrupt-style-preview-selection',
-    component: 'style_preview_chooser',
+    presentation: 'style_preview',
     props: {
       title: 'Select a Style Template',
       choices: [
@@ -415,7 +415,7 @@ test('normalizeWorkflowActionEvent parses structured workflow tool output', () =
       action: 'generate_artifact',
       reason: 'Need a reviewable outline before asking for confirmation.',
       gateId: null,
-      component: null,
+      presentation: null,
       artifactRefs: ['outline_v1'],
       context: {
         skill: 'frontend-slides',
@@ -450,7 +450,7 @@ test('buildFrontendSlidesWorkflowState derives next required gate from completed
   assert.equal(state.workflowType, 'presentation_generation');
   assert.equal(state.currentPhase, 'review_style_previews');
   assert.equal(state.nextRequiredGateId, 'style_preview_selection');
-  assert.equal(state.nextRequiredAction, 'ask_user_a2ui');
+  assert.equal(state.nextRequiredAction, 'request_user_interaction');
   assert.equal(state.canComplete, false);
 });
 
@@ -486,14 +486,14 @@ test('completed frontend-slides gate replays are internal no-op interrupts', () 
   );
 });
 
-test('frontend-slides no-gate A2UI forms are inferred from skill form text', () => {
+test('frontend-slides no-gate Interaction forms are inferred from skill form text', () => {
   const noGateContextReplay = {
     type: 'interrupt',
     kind: 'clarification',
     title: '1. Presentation Context & Requirements',
-    a2uiRequest: {
-      contract: 'a2ui',
-      component: 'clarification.form',
+    interactionRequest: {
+      contract: 'helpudoc.interaction',
+      presentation: 'questionnaire',
       props: {
         title: '1. Presentation Context & Requirements',
         questions: [
@@ -508,9 +508,9 @@ test('frontend-slides no-gate A2UI forms are inferred from skill form text', () 
     type: 'interrupt',
     kind: 'clarification',
     title: 'Outline Confirmation',
-    a2uiRequest: {
-      contract: 'a2ui',
-      component: 'clarification.form',
+    interactionRequest: {
+      contract: 'helpudoc.interaction',
+      presentation: 'questionnaire',
       props: {
         title: 'Outline Confirmation',
         questions: [
@@ -521,14 +521,14 @@ test('frontend-slides no-gate A2UI forms are inferred from skill form text', () 
     },
   };
 
-  assert.equal(inferFrontendSlidesGateIdFromA2UI(noGateContextReplay), 'presentation_context');
+  assert.equal(inferFrontendSlidesGateIdFromInteraction(noGateContextReplay), 'presentation_context');
   assert.equal(
     isCompletedFrontendSlidesGateInterrupt(noGateContextReplay, {
       completedGateIds: ['presentation_context'],
     }),
     true,
   );
-  assert.equal(inferFrontendSlidesGateIdFromA2UI(noGateOutline), 'outline_confirmation');
+  assert.equal(inferFrontendSlidesGateIdFromInteraction(noGateOutline), 'outline_confirmation');
   assert.equal(
     isCompletedFrontendSlidesGateInterrupt(noGateOutline, {
       completedGateIds: ['presentation_context'],
@@ -536,14 +536,14 @@ test('frontend-slides no-gate A2UI forms are inferred from skill form text', () 
     false,
   );
   assert.equal(
-    extractA2UIGateIdFromPendingInterrupt({
+    extractInteractionGateIdFromPendingInterrupt({
       kind: 'clarification',
       title: 'Outline Confirmation',
-      a2uiRequest: {
-        contract: 'a2ui',
+      interactionRequest: {
+        contract: 'helpudoc.interaction',
         version: '0.9',
-        surfaceId: 'surface-outline-confirmation',
-        component: 'clarification.form',
+        interactionId: 'interaction-outline-confirmation',
+        presentation: 'questionnaire',
         gateId: 'outline_confirmation',
         props: { questions: [{ id: 'outline_approval', question: 'Do you approve this outline?' }] },
         metadata: {},
@@ -558,11 +558,11 @@ test('frontend-slides gate metadata repair fills missing clarification questions
     type: 'interrupt',
     kind: 'clarification',
     title: 'Outline Confirmation',
-    a2uiRequest: {
-      contract: 'a2ui',
+    interactionRequest: {
+      contract: 'helpudoc.interaction',
       version: '0.9',
-      surfaceId: 'surface-outline-confirmation',
-      component: 'clarification.form',
+      interactionId: 'interaction-outline-confirmation',
+      presentation: 'questionnaire',
       gateId: 'outline_confirmation',
       skill: 'frontend-slides',
       props: {
@@ -580,8 +580,8 @@ test('frontend-slides gate metadata repair fills missing clarification questions
   const repaired = withFrontendSlidesGateMetadata(malformedOutlineInterrupt, 'outline_confirmation');
   assert.equal(validateInterrupt(repaired, 'frontend-slides'), null);
   assert.equal(
-    Array.isArray((repaired.uiRequest as any)?.props?.questions) ||
-      Array.isArray((repaired.a2uiRequest as any)?.props?.questions),
+    Array.isArray((repaired.interactionRequest as any)?.props?.questions) ||
+      Array.isArray((repaired.interactionRequest as any)?.props?.questions),
     true,
   );
 });
@@ -591,11 +591,11 @@ test('frontend-slides gate metadata repair fills empty style previews with fallb
     type: 'interrupt',
     kind: 'clarification',
     title: 'Choose a Style Preview',
-    a2uiRequest: {
-      contract: 'a2ui',
+    interactionRequest: {
+      contract: 'helpudoc.interaction',
       version: '0.9',
-      surfaceId: 'surface-style-preview-selection',
-      component: 'style.previewChooser',
+      interactionId: 'interaction-style-preview-selection',
+      presentation: 'style_preview',
       gateId: 'style_preview_selection',
       skill: 'frontend-slides',
       props: {
@@ -612,8 +612,8 @@ test('frontend-slides gate metadata repair fills empty style previews with fallb
 
   const repaired = withFrontendSlidesGateMetadata(emptyStylePreviewInterrupt, 'style_preview_selection');
   assert.equal(validateInterrupt(repaired, 'frontend-slides'), null);
-  assert.equal(((repaired.a2uiRequest as any)?.props?.choices || []).length > 0, true);
-  assert.equal(((repaired.a2uiRequest as any)?.props?.previews || []).length > 0, true);
+  assert.equal(((repaired.interactionRequest as any)?.props?.choices || []).length > 0, true);
+  assert.equal(((repaired.interactionRequest as any)?.props?.previews || []).length > 0, true);
 });
 
 test('frontend-slides gate metadata repair adds fallback previews when choices exist without previews', () => {
@@ -621,11 +621,11 @@ test('frontend-slides gate metadata repair adds fallback previews when choices e
     type: 'interrupt',
     kind: 'clarification',
     title: 'Choose a Style Preview',
-    a2uiRequest: {
-      contract: 'a2ui',
+    interactionRequest: {
+      contract: 'helpudoc.interaction',
       version: '0.9',
-      surfaceId: 'surface-style-preview-selection',
-      component: 'style.previewChooser',
+      interactionId: 'interaction-style-preview-selection',
+      presentation: 'style_preview',
       gateId: 'style_preview_selection',
       skill: 'frontend-slides',
       props: {
@@ -659,7 +659,7 @@ test('frontend-slides gate metadata repair adds fallback previews when choices e
   };
 
   const repaired = withFrontendSlidesGateMetadata(choicesOnlyStylePreviewInterrupt, 'style_preview_selection');
-  const previews = ((repaired.a2uiRequest as any)?.props?.previews || []) as Array<Record<string, unknown>>;
+  const previews = ((repaired.interactionRequest as any)?.props?.previews || []) as Array<Record<string, unknown>>;
 
   assert.equal(validateInterrupt(repaired, 'frontend-slides'), null);
   assert.equal(previews.length, 3);
@@ -812,9 +812,9 @@ test('buildSyntheticClarificationFollowupPrompt advances deck mode to style prev
   assert.match(prompt, /user selected the deck mode/);
   assert.match(prompt, /style_preview_selection/);
   assert.match(prompt, /Frontend-slides workflow state/);
-  assert.match(prompt, /workflow_action\(action="ask_user_a2ui", gate_id="style_preview_selection"/);
+  assert.match(prompt, /workflow_action\(action="request_user_interaction", gate_id="style_preview_selection"/);
   assert.match(prompt, /generate 2-3 style previews\/templates/i);
-  assert.doesNotMatch(prompt, /outline_confirmation structured A2UI workflow action/);
+  assert.doesNotMatch(prompt, /outline_confirmation structured Interaction workflow action/);
   assert.match(prompt, /^\/skill frontend-slides\n/);
 });
 
@@ -868,8 +868,8 @@ test('buildSyntheticClarificationFollowupPrompt does not let a legacy outline ga
 
   assert.match(prompt, /presentation_context/);
   assert.match(prompt, /choose_deck_mode/);
-  assert.match(prompt, /workflow_action\(action="ask_user_a2ui", gate_id="presentation_context"/);
-  assert.doesNotMatch(prompt, /style_preview_selection structured A2UI workflow action/);
+  assert.match(prompt, /workflow_action\(action="request_user_interaction", gate_id="presentation_context"/);
+  assert.doesNotMatch(prompt, /style_preview_selection structured Interaction workflow action/);
   assert.match(prompt, /^\/skill frontend-slides\n/);
 });
 
@@ -925,7 +925,7 @@ test('buildSyntheticClarificationFollowupPrompt advances frontend-slides style c
 
   assert.match(prompt, /Both required decisions are complete: deck mode and visual style/);
   assert.match(prompt, /final generation phase/);
-  assert.match(prompt, /Do not call workflow_action\(action="ask_user_a2ui"\)/);
+  assert.match(prompt, /Do not call workflow_action\(action="request_user_interaction"\)/);
   assert.match(prompt, /Generate the final required artifact now/);
   assert.match(prompt, /filename ends with -deck\.html/);
   assert.match(prompt, /<section class="slide">/);
@@ -962,14 +962,14 @@ test('buildSyntheticClarificationFollowupPrompt honors persisted completed front
 
   assert.match(prompt, /Both required decisions are complete/i);
   assert.match(prompt, /Generate the final required artifact now/);
-  assert.match(prompt, /Do not call workflow_action\(action="ask_user_a2ui"\)/);
+  assert.match(prompt, /Do not call workflow_action\(action="request_user_interaction"\)/);
   assert.match(prompt, /filename ends with -deck\.html/);
   assert.doesNotMatch(prompt, /Generate the slide outline next/);
-  assert.doesNotMatch(prompt, /outline_confirmation structured A2UI workflow action/);
+  assert.doesNotMatch(prompt, /outline_confirmation structured Interaction workflow action/);
 });
 
 test('getRunMeta reconciles stale completed-gate frontend-slides runs', {
-  skip: process.env.RUN_A2UI_E2E !== '1' ? 'set RUN_A2UI_E2E=1 with Redis available to run lifecycle flow test' : false,
+  skip: process.env.RUN_INTERACTION_E2E !== '1' ? 'set RUN_INTERACTION_E2E=1 with Redis available to run lifecycle flow test' : false,
 }, async () => {
   if (!redisClient.isOpen) {
     await redisClient.connect();
@@ -1000,7 +1000,7 @@ test('getRunMeta reconciles stale completed-gate frontend-slides runs', {
       turnId,
       pendingInterrupt: '',
       error: '',
-      a2uiGateState: JSON.stringify({ completedGateIds: requiredGates }),
+      interactionGateState: JSON.stringify({ completedGateIds: requiredGates }),
       runContext: JSON.stringify({
         workspaceId,
         persona: 'fast',
@@ -1028,7 +1028,7 @@ test('getRunMeta reconciles stale completed-gate frontend-slides runs', {
 });
 
 test('getRunMeta completes frontend-slides runs that wrote the final deck before settling', {
-  skip: process.env.RUN_A2UI_E2E !== '1' ? 'set RUN_A2UI_E2E=1 with Redis available to run lifecycle flow test' : false,
+  skip: process.env.RUN_INTERACTION_E2E !== '1' ? 'set RUN_INTERACTION_E2E=1 with Redis available to run lifecycle flow test' : false,
 }, async () => {
   if (!redisClient.isOpen) {
     await redisClient.connect();
@@ -1057,7 +1057,7 @@ test('getRunMeta completes frontend-slides runs that wrote the final deck before
       turnId,
       pendingInterrupt: '',
       error: '',
-      a2uiGateState: JSON.stringify({ completedGateIds: requiredGates }),
+      interactionGateState: JSON.stringify({ completedGateIds: requiredGates }),
       runContext: JSON.stringify({
         workspaceId,
         persona: 'fast',
@@ -1088,7 +1088,7 @@ test('getRunMeta completes frontend-slides runs that wrote the final deck before
 });
 
 test('getRunMeta completes frontend-slides runs with earlier presentation HTML artifact', {
-  skip: process.env.RUN_A2UI_E2E !== '1' ? 'set RUN_A2UI_E2E=1 with Redis available to run lifecycle flow test' : false,
+  skip: process.env.RUN_INTERACTION_E2E !== '1' ? 'set RUN_INTERACTION_E2E=1 with Redis available to run lifecycle flow test' : false,
 }, async () => {
   if (!redisClient.isOpen) {
     await redisClient.connect();
@@ -1120,7 +1120,7 @@ test('getRunMeta completes frontend-slides runs with earlier presentation HTML a
       turnId,
       pendingInterrupt: '',
       error: '',
-      a2uiGateState: JSON.stringify({ completedGateIds: requiredGates }),
+      interactionGateState: JSON.stringify({ completedGateIds: requiredGates }),
       runContext: JSON.stringify({
         workspaceId,
         persona: 'fast',
@@ -1160,7 +1160,7 @@ test('getRunMeta completes frontend-slides runs with earlier presentation HTML a
 });
 
 test('getRunMeta recovers missing frontend-slides gates before terminal stream recovery', {
-  skip: process.env.RUN_A2UI_E2E !== '1' ? 'set RUN_A2UI_E2E=1 with Redis available to run lifecycle flow test' : false,
+  skip: process.env.RUN_INTERACTION_E2E !== '1' ? 'set RUN_INTERACTION_E2E=1 with Redis available to run lifecycle flow test' : false,
 }, async () => {
   if (!redisClient.isOpen) {
     await redisClient.connect();
@@ -1183,7 +1183,7 @@ test('getRunMeta recovers missing frontend-slides gates before terminal stream r
       turnId,
       pendingInterrupt: '',
       error: '',
-      a2uiGateState: JSON.stringify({ completedGateIds: ['presentation_context'] }),
+      interactionGateState: JSON.stringify({ completedGateIds: ['presentation_context'] }),
       runContext: JSON.stringify({
         workspaceId,
         persona: 'fast',
@@ -1201,7 +1201,7 @@ test('getRunMeta recovers missing frontend-slides gates before terminal stream r
     assert.equal(meta?.status, 'failed');
     assert.match(meta?.error || '', /outline_confirmation requires real outline review material/);
     assert.equal(meta?.pendingInterrupt, undefined);
-    assert.deepEqual(meta?.a2uiGateState?.completedGateIds, ['presentation_context']);
+    assert.deepEqual(meta?.interactionGateState?.completedGateIds, ['presentation_context']);
   } finally {
     await redisClient.del(streamKey);
     await redisClient.del(metaKey);
@@ -1219,7 +1219,7 @@ test('buildSyntheticClarificationFollowupPrompt gives generic skills non-slide c
     {
       kind: 'clarification',
       title: 'Input Needed',
-      displayPayload: { synthetic: true, skill: 'research', source: 'implicit_completion_guard', uiContract: 'a2ui' },
+      displayPayload: { synthetic: true, skill: 'research', source: 'implicit_completion_guard', interactionContract: 'helpudoc.interaction' },
       responseSpec: {
         questions: [
           { id: 'response', header: 'Input', question: 'Which format would you prefer?' },
@@ -1231,14 +1231,14 @@ test('buildSyntheticClarificationFollowupPrompt gives generic skills non-slide c
   assert.match(prompt, /continue the 'research' skill/);
   assert.match(prompt, /Do not ask for this same input again/);
   assert.match(prompt, /If another human decision or clarification is required/);
-  assert.match(prompt, /workflow_action\(action="ask_user_a2ui"\)/);
+  assert.match(prompt, /workflow_action\(action="request_user_interaction"\)/);
   assert.doesNotMatch(prompt, /Presentation Context/);
   assert.doesNotMatch(prompt, /Frontend-slides workflow state/);
   assert.doesNotMatch(prompt, /^\/skill research/m);
 });
 
-test('frontend-slides A2UI presentation gate resumes through continuation instead of repeating Gate 1', {
-  skip: process.env.RUN_A2UI_E2E !== '1' ? 'set RUN_A2UI_E2E=1 with Redis available to run lifecycle flow test' : false,
+test('frontend-slides Interaction presentation gate resumes through continuation instead of repeating Gate 1', {
+  skip: process.env.RUN_INTERACTION_E2E !== '1' ? 'set RUN_INTERACTION_E2E=1 with Redis available to run lifecycle flow test' : false,
 }, async () => {
   if (!redisClient.isOpen) {
     await redisClient.connect();
@@ -1251,8 +1251,8 @@ test('frontend-slides A2UI presentation gate resumes through continuation instea
     traceCompletedGates?: string[];
   }> = [];
   let runId = '';
-  const turnId = `a2ui-e2e-${Date.now()}`;
-  const workspaceId = 'workspace-a2ui-e2e';
+  const turnId = `interaction-e2e-${Date.now()}`;
+  const workspaceId = 'workspace-interaction-e2e';
   try {
     configureAgentRunServices({
       telemetryService: null,
@@ -1265,7 +1265,7 @@ test('frontend-slides A2UI presentation gate resumes through continuation instea
             kind: 'run',
             prompt,
             forceReset: options?.forceReset,
-            traceCompletedGates: options?.traceContext?.a2uiGateState?.completedGateIds,
+            traceCompletedGates: options?.traceContext?.interactionGateState?.completedGateIds,
           });
           if (calls.length === 1) {
             return makeStreamResponse([
@@ -1301,10 +1301,10 @@ test('frontend-slides A2UI presentation gate resumes through continuation instea
     const awaiting = await waitForRunStatus(runId, (status) => status === 'awaiting_approval');
     assert.equal(awaiting?.status, 'awaiting_approval');
     assert.equal(awaiting?.pendingInterrupt?.displayPayload?.source, 'implicit_input_guard');
-    assert.equal(awaiting?.pendingInterrupt?.uiRequest?.component, 'clarification_form');
-    assert.equal(awaiting?.pendingInterrupt?.a2uiRequest?.contract, 'a2ui');
-    assert.equal(awaiting?.pendingInterrupt?.a2uiRequest?.component, 'clarification.form');
-    assert.equal(awaiting?.pendingInterrupt?.a2uiRequest?.gateId, 'presentation_context');
+    assert.equal(awaiting?.pendingInterrupt?.interactionRequest?.presentation, 'questionnaire');
+    assert.equal(awaiting?.pendingInterrupt?.interactionRequest?.contract, 'interaction');
+    assert.equal(awaiting?.pendingInterrupt?.interactionRequest?.presentation, 'questionnaire');
+    assert.equal(awaiting?.pendingInterrupt?.interactionRequest?.gateId, 'presentation_context');
 
     await resumeAgentRunWithResponse(runId, {
       answersByQuestionId: {
@@ -1325,7 +1325,7 @@ test('frontend-slides A2UI presentation gate resumes through continuation instea
     });
     assert.equal(settled?.status, 'awaiting_approval');
     assert.equal(settled?.pendingInterrupt?.displayPayload?.gateId, 'outline_confirmation');
-    assert.deepEqual(settled?.a2uiGateState?.completedGateIds, ['presentation_context']);
+    assert.deepEqual(settled?.interactionGateState?.completedGateIds, ['presentation_context']);
     assert.equal(calls.some((call) => call.kind === 'respond'), false);
     assert.equal(calls[1]?.kind, 'run');
     assert.equal(calls[1]?.forceReset, true);
@@ -1345,8 +1345,8 @@ test('frontend-slides A2UI presentation gate resumes through continuation instea
   }
 });
 
-test('frontend-slides A2UI contract synthetic native gate continues through followup prompt', {
-  skip: process.env.RUN_A2UI_E2E !== '1' ? 'set RUN_A2UI_E2E=1 with Redis available to run lifecycle flow test' : false,
+test('frontend-slides Interaction contract synthetic native gate continues through followup prompt', {
+  skip: process.env.RUN_INTERACTION_E2E !== '1' ? 'set RUN_INTERACTION_E2E=1 with Redis available to run lifecycle flow test' : false,
 }, async () => {
   if (!redisClient.isOpen) {
     await redisClient.connect();
@@ -1359,8 +1359,8 @@ test('frontend-slides A2UI contract synthetic native gate continues through foll
     traceCompletedGates?: string[];
   }> = [];
   let runId = '';
-  const turnId = `a2ui-contract-synthetic-${Date.now()}`;
-  const workspaceId = 'workspace-a2ui-contract-synthetic';
+  const turnId = `interaction-contract-synthetic-${Date.now()}`;
+  const workspaceId = 'workspace-interaction-contract-synthetic';
   try {
     configureAgentRunServices({
       telemetryService: null,
@@ -1373,7 +1373,7 @@ test('frontend-slides A2UI contract synthetic native gate continues through foll
             kind: 'run',
             prompt,
             forceReset: options?.forceReset,
-            traceCompletedGates: options?.traceContext?.a2uiGateState?.completedGateIds,
+            traceCompletedGates: options?.traceContext?.interactionGateState?.completedGateIds,
           });
           if (calls.length === 1) {
             return makeStreamResponse([
@@ -1389,7 +1389,7 @@ test('frontend-slides A2UI contract synthetic native gate continues through foll
         resumeAgentResponseStream: async (_persona, _workspaceId, _response, options) => {
           calls.push({
             kind: 'respond',
-            traceCompletedGates: options?.traceContext?.a2uiGateState?.completedGateIds,
+            traceCompletedGates: options?.traceContext?.interactionGateState?.completedGateIds,
           });
           return makeStreamResponse([
             { type: 'policy', skill: 'frontend-slides' },
@@ -1412,9 +1412,9 @@ test('frontend-slides A2UI contract synthetic native gate continues through foll
     const awaiting = await waitForRunStatus(runId, (status) => status === 'awaiting_approval');
     assert.equal(awaiting?.status, 'awaiting_approval');
     assert.equal(awaiting?.pendingInterrupt?.displayPayload?.synthetic, true);
-    assert.equal(awaiting?.pendingInterrupt?.displayPayload?.source, 'a2ui_contract_synthetic');
-    assert.equal(awaiting?.pendingInterrupt?.a2uiRequest?.contract, 'a2ui');
-    assert.equal(awaiting?.pendingInterrupt?.a2uiRequest?.gateId, 'presentation_context');
+    assert.equal(awaiting?.pendingInterrupt?.displayPayload?.source, 'interaction_contract_synthetic');
+    assert.equal(awaiting?.pendingInterrupt?.interactionRequest?.contract, 'interaction');
+    assert.equal(awaiting?.pendingInterrupt?.interactionRequest?.gateId, 'presentation_context');
 
     await resumeAgentRunWithResponse(runId, {
       answersByQuestionId: {
@@ -1432,7 +1432,7 @@ test('frontend-slides A2UI contract synthetic native gate continues through foll
     });
     assert.equal(settled?.status, 'awaiting_approval');
     assert.equal(settled?.pendingInterrupt?.displayPayload?.gateId, 'outline_confirmation');
-    assert.deepEqual(settled?.a2uiGateState?.completedGateIds, ['presentation_context']);
+    assert.deepEqual(settled?.interactionGateState?.completedGateIds, ['presentation_context']);
     assert.equal(calls.some((call) => call.kind === 'respond'), false);
     assert.equal(calls[1]?.kind, 'run');
     assert.equal(calls[1]?.forceReset, true);
@@ -1453,8 +1453,8 @@ test('frontend-slides A2UI contract synthetic native gate continues through foll
   }
 });
 
-test('frontend-slides A2UI flow reaches final slide generation after all clarification and template gates', {
-  skip: process.env.RUN_A2UI_E2E !== '1' ? 'set RUN_A2UI_E2E=1 with Redis available to run lifecycle flow test' : false,
+test('frontend-slides Interaction flow reaches final slide generation after all clarification and template gates', {
+  skip: process.env.RUN_INTERACTION_E2E !== '1' ? 'set RUN_INTERACTION_E2E=1 with Redis available to run lifecycle flow test' : false,
 }, async () => {
   if (!redisClient.isOpen) {
     await redisClient.connect();
@@ -1475,8 +1475,8 @@ test('frontend-slides A2UI flow reaches final slide generation after all clarifi
   }> = [];
   const seenPendingGates: string[] = [];
   let runId = '';
-  const turnId = `a2ui-full-flow-${Date.now()}`;
-  const workspaceId = 'workspace-a2ui-full-flow';
+  const turnId = `interaction-full-flow-${Date.now()}`;
+  const workspaceId = 'workspace-interaction-full-flow';
 
   const responseByCompletedGateCount: Record<number, Array<Record<string, unknown>>> = {
     1: [
@@ -1549,9 +1549,9 @@ test('frontend-slides A2UI flow reaches final slide generation after all clarifi
             kind: 'run',
             prompt,
             forceReset: options?.forceReset,
-            traceCompletedGates: options?.traceContext?.a2uiGateState?.completedGateIds,
+            traceCompletedGates: options?.traceContext?.interactionGateState?.completedGateIds,
           });
-          const completedCount = options?.traceContext?.a2uiGateState?.completedGateIds?.length || 0;
+          const completedCount = options?.traceContext?.interactionGateState?.completedGateIds?.length || 0;
           if (completedCount === 1) {
             return makeStreamResponse(responseByCompletedGateCount[1]);
           }
@@ -1561,7 +1561,7 @@ test('frontend-slides A2UI flow reaches final slide generation after all clarifi
           ]);
         },
         resumeAgentResponseStream: async (_persona, _workspaceId, _response, options) => {
-          const completedGates = options?.traceContext?.a2uiGateState?.completedGateIds || [];
+          const completedGates = options?.traceContext?.interactionGateState?.completedGateIds || [];
           calls.push({
             kind: 'respond',
             traceCompletedGates: completedGates,
@@ -1585,8 +1585,8 @@ test('frontend-slides A2UI flow reaches final slide generation after all clarifi
     runId = started.runId;
 
     const presentation = await awaitGate('presentation_context');
-    assert.equal(presentation?.pendingInterrupt?.uiRequest?.component, 'clarification_form');
-    assert.equal(presentation?.pendingInterrupt?.a2uiRequest?.component, 'clarification.form');
+    assert.equal(presentation?.pendingInterrupt?.interactionRequest?.presentation, 'questionnaire');
+    assert.equal(presentation?.pendingInterrupt?.interactionRequest?.presentation, 'questionnaire');
     await resumeAgentRunWithResponse(runId, {
       answersByQuestionId: {
         purpose: 'Pitch deck',
@@ -1617,8 +1617,8 @@ test('frontend-slides A2UI flow reaches final slide generation after all clarifi
     }, { previousInterrupt: mood?.pendingInterrupt });
 
     const stylePreview = await awaitGate('style_preview_selection');
-    assert.equal(stylePreview?.pendingInterrupt?.uiRequest?.component, 'style_preview_chooser');
-    assert.equal(stylePreview?.pendingInterrupt?.a2uiRequest?.component, 'style.previewChooser');
+    assert.equal(stylePreview?.pendingInterrupt?.interactionRequest?.presentation, 'style_preview');
+    assert.equal(stylePreview?.pendingInterrupt?.interactionRequest?.presentation, 'style_preview');
     await resumeAgentRunWithResponse(runId, {
       selectedChoiceIds: ['style-b'],
       selectedValues: ['Style B'],
@@ -1627,7 +1627,7 @@ test('frontend-slides A2UI flow reaches final slide generation after all clarifi
 
     const completed = await waitForRunStatus(runId, (status) => status === 'completed' || status === 'failed');
     assert.equal(completed?.status, 'completed');
-    assert.deepEqual(completed?.a2uiGateState?.completedGateIds, requiredGates);
+    assert.deepEqual(completed?.interactionGateState?.completedGateIds, requiredGates);
     assert.deepEqual(seenPendingGates, requiredGates);
     assert.deepEqual(
       calls
@@ -1655,15 +1655,15 @@ test('frontend-slides A2UI flow reaches final slide generation after all clarifi
 });
 
 test('frontend-slides completion with missing outline gate recovers to native outline confirmation', {
-  skip: process.env.RUN_A2UI_E2E !== '1' ? 'set RUN_A2UI_E2E=1 with Redis available to run lifecycle flow test' : false,
+  skip: process.env.RUN_INTERACTION_E2E !== '1' ? 'set RUN_INTERACTION_E2E=1 with Redis available to run lifecycle flow test' : false,
 }, async () => {
   if (!redisClient.isOpen) {
     await redisClient.connect();
   }
 
   let runId = '';
-  const turnId = `a2ui-missing-outline-recovery-${Date.now()}`;
-  const workspaceId = 'workspace-a2ui-missing-outline-recovery';
+  const turnId = `interaction-missing-outline-recovery-${Date.now()}`;
+  const workspaceId = 'workspace-interaction-missing-outline-recovery';
   let callCount = 0;
   try {
     configureAgentRunServices({
@@ -1725,11 +1725,11 @@ test('frontend-slides completion with missing outline gate recovers to native ou
 
     assert.equal(recovered?.status, 'awaiting_approval');
     assert.equal(recovered?.pendingInterrupt?.displayPayload?.gateId, 'outline_confirmation');
-    assert.equal(recovered?.pendingInterrupt?.uiRequest?.component, 'clarification_form');
-    assert.equal(recovered?.pendingInterrupt?.a2uiRequest?.component, 'clarification.form');
-    assert.equal(recovered?.pendingInterrupt?.a2uiRequest?.gateId, 'outline_confirmation');
+    assert.equal(recovered?.pendingInterrupt?.interactionRequest?.presentation, 'questionnaire');
+    assert.equal(recovered?.pendingInterrupt?.interactionRequest?.presentation, 'questionnaire');
+    assert.equal(recovered?.pendingInterrupt?.interactionRequest?.gateId, 'outline_confirmation');
     assert.equal(recovered?.pendingInterrupt?.displayPayload?.source, 'implicit_completion_guard');
-    assert.deepEqual(recovered?.a2uiGateState?.completedGateIds, ['presentation_context']);
+    assert.deepEqual(recovered?.interactionGateState?.completedGateIds, ['presentation_context']);
   } finally {
     await new Promise((resolve) => setTimeout(resolve, 100));
     if (runId) {
@@ -1745,15 +1745,15 @@ test('frontend-slides completion with missing outline gate recovers to native ou
 });
 
 test('frontend-slides duplicate setup gate recovers to outline confirmation with fallback outline material', {
-  skip: process.env.RUN_A2UI_E2E !== '1' ? 'set RUN_A2UI_E2E=1 with Redis available to run lifecycle flow test' : false,
+  skip: process.env.RUN_INTERACTION_E2E !== '1' ? 'set RUN_INTERACTION_E2E=1 with Redis available to run lifecycle flow test' : false,
 }, async () => {
   if (!redisClient.isOpen) {
     await redisClient.connect();
   }
 
   let runId = '';
-  const turnId = `a2ui-duplicate-setup-outline-recovery-${Date.now()}`;
-  const workspaceId = 'workspace-a2ui-duplicate-setup-outline-recovery';
+  const turnId = `interaction-duplicate-setup-outline-recovery-${Date.now()}`;
+  const workspaceId = 'workspace-interaction-duplicate-setup-outline-recovery';
   let callCount = 0;
   const syntheticPresentationContextInterrupt = {
     ...presentationContextInterrupt,
@@ -1761,10 +1761,10 @@ test('frontend-slides duplicate setup gate recovers to outline confirmation with
       ...presentationContextInterrupt.displayPayload,
       synthetic: true,
     },
-    a2uiRequest: {
-      ...presentationContextInterrupt.a2uiRequest,
+    interactionRequest: {
+      ...presentationContextInterrupt.interactionRequest,
       metadata: {
-        ...presentationContextInterrupt.a2uiRequest.metadata,
+        ...presentationContextInterrupt.interactionRequest.metadata,
         synthetic: true,
       },
     },
@@ -1854,12 +1854,12 @@ test('frontend-slides duplicate setup gate recovers to outline confirmation with
 
     assert.equal(recovered?.status, 'awaiting_approval');
     assert.equal(recovered?.pendingInterrupt?.displayPayload?.gateId, 'outline_confirmation');
-    const outlineMarkdown = String(recovered?.pendingInterrupt?.a2uiRequest?.props?.outlineMarkdown || '');
+    const outlineMarkdown = String(recovered?.pendingInterrupt?.interactionRequest?.props?.outlineMarkdown || '');
     assert.match(outlineMarkdown, /Operation Epic Fury/);
     assert.match(outlineMarkdown, /Background/);
     assert.match(outlineMarkdown, /Military narrative/);
     assert.doesNotMatch(outlineMarkdown, /slide outline was not included/i);
-    assert.deepEqual(recovered?.a2uiGateState?.completedGateIds, ['presentation_context']);
+    assert.deepEqual(recovered?.interactionGateState?.completedGateIds, ['presentation_context']);
   } finally {
     await new Promise((resolve) => setTimeout(resolve, 100));
     if (runId) {
@@ -1875,15 +1875,15 @@ test('frontend-slides duplicate setup gate recovers to outline confirmation with
 });
 
 test('frontend-slides completion with missing style preview gate recovers with fallback previews', {
-  skip: process.env.RUN_A2UI_E2E !== '1' ? 'set RUN_A2UI_E2E=1 with Redis available to run lifecycle flow test' : false,
+  skip: process.env.RUN_INTERACTION_E2E !== '1' ? 'set RUN_INTERACTION_E2E=1 with Redis available to run lifecycle flow test' : false,
 }, async () => {
   if (!redisClient.isOpen) {
     await redisClient.connect();
   }
 
   let runId = '';
-  const turnId = `a2ui-missing-style-preview-recovery-${Date.now()}`;
-  const workspaceId = 'workspace-a2ui-missing-style-preview-recovery';
+  const turnId = `interaction-missing-style-preview-recovery-${Date.now()}`;
+  const workspaceId = 'workspace-interaction-missing-style-preview-recovery';
   try {
     configureAgentRunServices({
       telemetryService: null,
@@ -1892,14 +1892,14 @@ test('frontend-slides completion with missing style preview gate recovers with f
       conversationService: null,
       agentStreamClient: {
         runAgentStream: async (_persona, _workspaceId, _prompt, _history, options) => {
-          const completedCount = options?.traceContext?.a2uiGateState?.completedGateIds?.length || 0;
+          const completedCount = options?.traceContext?.interactionGateState?.completedGateIds?.length || 0;
           if (completedCount === 1) {
             return makeStreamResponse([{ type: 'policy', skill: 'frontend-slides' }, outlineConfirmationInterrupt]);
           }
           return makeStreamResponse([{ type: 'policy', skill: 'frontend-slides' }, presentationContextInterrupt]);
         },
         resumeAgentResponseStream: async (_persona, _workspaceId, _response, options) => {
-          const completedCount = options?.traceContext?.a2uiGateState?.completedGateIds?.length || 0;
+          const completedCount = options?.traceContext?.interactionGateState?.completedGateIds?.length || 0;
           if (completedCount === 2) {
             return makeStreamResponse([{ type: 'policy', skill: 'frontend-slides' }, stylePathSelectionInterrupt]);
           }
@@ -1950,12 +1950,12 @@ test('frontend-slides completion with missing style preview gate recovers with f
     await resumeAgentRunWithResponse(runId, { answersByQuestionId: { mood: 'Executive modern' } }, { previousInterrupt: mood?.pendingInterrupt });
 
     const recovered = await awaitGate('style_preview_selection');
-    const props = recovered?.pendingInterrupt?.uiRequest?.props || {};
-    assert.equal(recovered?.pendingInterrupt?.uiRequest?.component, 'style_preview_chooser');
-    assert.equal(recovered?.pendingInterrupt?.a2uiRequest?.component, 'style.previewChooser');
+    const props = recovered?.pendingInterrupt?.interactionRequest?.props || {};
+    assert.equal(recovered?.pendingInterrupt?.interactionRequest?.presentation, 'style_preview');
+    assert.equal(recovered?.pendingInterrupt?.interactionRequest?.presentation, 'style_preview');
     assert.ok(Array.isArray(props.choices) && props.choices.length >= 3);
     assert.ok(Array.isArray(props.previews) && props.previews.length >= 3);
-    assert.deepEqual(recovered?.a2uiGateState?.completedGateIds, [
+    assert.deepEqual(recovered?.interactionGateState?.completedGateIds, [
       'presentation_context',
       'outline_confirmation',
       'style_path_selection',
@@ -1976,15 +1976,15 @@ test('frontend-slides completion with missing style preview gate recovers with f
 });
 
 test('frontend-slides export approval before style gate recovers to style preview selection', {
-  skip: process.env.RUN_A2UI_E2E !== '1' ? 'set RUN_A2UI_E2E=1 with Redis available to run lifecycle flow test' : false,
+  skip: process.env.RUN_INTERACTION_E2E !== '1' ? 'set RUN_INTERACTION_E2E=1 with Redis available to run lifecycle flow test' : false,
 }, async () => {
   if (!redisClient.isOpen) {
     await redisClient.connect();
   }
 
   let runId = '';
-  const turnId = `a2ui-export-approval-before-style-${Date.now()}`;
-  const workspaceId = 'workspace-a2ui-export-approval-before-style';
+  const turnId = `interaction-export-approval-before-style-${Date.now()}`;
+  const workspaceId = 'workspace-interaction-export-approval-before-style';
   const exportApprovalInterrupt = {
     type: 'interrupt',
     kind: 'approval',
@@ -2010,7 +2010,7 @@ test('frontend-slides export approval before style gate recovers to style previe
           presentationContextInterrupt,
         ]),
         resumeAgentResponseStream: async (_persona, _workspaceId, _response, options) => {
-          const completedCount = options?.traceContext?.a2uiGateState?.completedGateIds?.length || 0;
+          const completedCount = options?.traceContext?.interactionGateState?.completedGateIds?.length || 0;
           if (completedCount === 1) {
             return makeStreamResponse([{ type: 'policy', skill: 'frontend-slides' }, outlineConfirmationInterrupt]);
           }
@@ -2047,9 +2047,9 @@ test('frontend-slides export approval before style gate recovers to style previe
 
     const recovered = await awaitGate('style_preview_selection');
     assert.equal(recovered?.pendingInterrupt?.kind, 'clarification');
-    assert.equal(recovered?.pendingInterrupt?.uiRequest?.component, 'style_preview_chooser');
-    assert.equal(recovered?.pendingInterrupt?.a2uiRequest?.component, 'style.previewChooser');
-    assert.deepEqual(recovered?.a2uiGateState?.completedGateIds, [
+    assert.equal(recovered?.pendingInterrupt?.interactionRequest?.presentation, 'style_preview');
+    assert.equal(recovered?.pendingInterrupt?.interactionRequest?.presentation, 'style_preview');
+    assert.deepEqual(recovered?.interactionGateState?.completedGateIds, [
       'presentation_context',
       'outline_confirmation',
     ]);
@@ -2067,16 +2067,16 @@ test('frontend-slides export approval before style gate recovers to style previe
   }
 });
 
-test('completed non-slide skill with prose-only input request recovers to generic A2UI clarification', {
-  skip: process.env.RUN_A2UI_E2E !== '1' ? 'set RUN_A2UI_E2E=1 with Redis available to run lifecycle flow test' : false,
+test('completed non-slide skill with prose-only input request recovers to generic Interaction clarification', {
+  skip: process.env.RUN_INTERACTION_E2E !== '1' ? 'set RUN_INTERACTION_E2E=1 with Redis available to run lifecycle flow test' : false,
 }, async () => {
   if (!redisClient.isOpen) {
     await redisClient.connect();
   }
 
   let runId = '';
-  const turnId = `generic-a2ui-recovery-${Date.now()}`;
-  const workspaceId = 'workspace-generic-a2ui-recovery';
+  const turnId = `generic-interaction-recovery-${Date.now()}`;
+  const workspaceId = 'workspace-generic-interaction-recovery';
   try {
     configureAgentRunServices({
       telemetryService: null,
@@ -2119,12 +2119,12 @@ test('completed non-slide skill with prose-only input request recovers to generi
     assert.equal(recovered?.pendingInterrupt?.kind, 'clarification');
     assert.equal(recovered?.pendingInterrupt?.displayPayload?.source, 'implicit_completion_guard');
     assert.equal(recovered?.pendingInterrupt?.displayPayload?.skill, 'research');
-    assert.equal(recovered?.pendingInterrupt?.uiRequest?.component, 'clarification_form');
-    assert.equal(recovered?.pendingInterrupt?.a2uiRequest?.contract, 'a2ui');
-    assert.equal(recovered?.pendingInterrupt?.a2uiRequest?.component, 'clarification.form');
-    assert.equal(recovered?.pendingInterrupt?.a2uiRequest?.skill, 'research');
-    assert.equal(recovered?.pendingInterrupt?.uiRequest?.props?.title, 'Input Needed');
-    assert.ok(Array.isArray(recovered?.pendingInterrupt?.uiRequest?.props?.questions));
+    assert.equal(recovered?.pendingInterrupt?.interactionRequest?.presentation, 'questionnaire');
+    assert.equal(recovered?.pendingInterrupt?.interactionRequest?.contract, 'interaction');
+    assert.equal(recovered?.pendingInterrupt?.interactionRequest?.presentation, 'questionnaire');
+    assert.equal(recovered?.pendingInterrupt?.interactionRequest?.skill, 'research');
+    assert.equal(recovered?.pendingInterrupt?.interactionRequest?.props?.title, 'Input Needed');
+    assert.ok(Array.isArray(recovered?.pendingInterrupt?.interactionRequest?.props?.questions));
   } finally {
     await new Promise((resolve) => setTimeout(resolve, 100));
     if (runId) {
@@ -2139,8 +2139,8 @@ test('completed non-slide skill with prose-only input request recovers to generi
   }
 });
 
-test('non-slide skill can resume through multiple generic A2UI input gates', {
-  skip: process.env.RUN_A2UI_E2E !== '1' ? 'set RUN_A2UI_E2E=1 with Redis available to run lifecycle flow test' : false,
+test('non-slide skill can resume through multiple generic Interaction input gates', {
+  skip: process.env.RUN_INTERACTION_E2E !== '1' ? 'set RUN_INTERACTION_E2E=1 with Redis available to run lifecycle flow test' : false,
 }, async () => {
   if (!redisClient.isOpen) {
     await redisClient.connect();
@@ -2149,8 +2149,8 @@ test('non-slide skill can resume through multiple generic A2UI input gates', {
   let runId = '';
   let runCallCount = 0;
   const prompts: string[] = [];
-  const turnId = `generic-a2ui-multigate-${Date.now()}`;
-  const workspaceId = 'workspace-generic-a2ui-multigate';
+  const turnId = `generic-interaction-multigate-${Date.now()}`;
+  const workspaceId = 'workspace-generic-interaction-multigate';
   try {
     configureAgentRunServices({
       telemetryService: null,
@@ -2219,8 +2219,8 @@ test('non-slide skill can resume through multiple generic A2UI input gates', {
     ));
 
     assert.equal(firstAwaiting?.status, 'awaiting_approval');
-    assert.equal(firstAwaiting?.pendingInterrupt?.uiRequest?.component, 'clarification_form');
-    assert.equal(firstAwaiting?.pendingInterrupt?.a2uiRequest?.component, 'clarification.form');
+    assert.equal(firstAwaiting?.pendingInterrupt?.interactionRequest?.presentation, 'questionnaire');
+    assert.equal(firstAwaiting?.pendingInterrupt?.interactionRequest?.presentation, 'questionnaire');
     assert.equal(firstAwaiting?.pendingInterrupt?.displayPayload?.source, 'implicit_completion_guard');
     const firstInterrupt = firstAwaiting?.pendingInterrupt;
     assert.ok(firstInterrupt);
@@ -2241,10 +2241,10 @@ test('non-slide skill can resume through multiple generic A2UI input gates', {
     ));
 
     assert.equal(secondAwaiting?.status, 'awaiting_approval');
-    assert.equal(secondAwaiting?.pendingInterrupt?.uiRequest?.component, 'clarification_form');
-    assert.equal(secondAwaiting?.pendingInterrupt?.a2uiRequest?.component, 'clarification.form');
+    assert.equal(secondAwaiting?.pendingInterrupt?.interactionRequest?.presentation, 'questionnaire');
+    assert.equal(secondAwaiting?.pendingInterrupt?.interactionRequest?.presentation, 'questionnaire');
     assert.match(prompts[1], /Do not ask for this same input again/);
-    assert.match(prompts[1], /workflow_action\(action="ask_user_a2ui"\)/);
+    assert.match(prompts[1], /workflow_action\(action="request_user_interaction"\)/);
     assert.doesNotMatch(prompts[1], /Presentation Context/);
     const secondInterrupt = secondAwaiting?.pendingInterrupt;
     assert.ok(secondInterrupt);

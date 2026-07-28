@@ -1,6 +1,6 @@
 gates:
   - gate_id: presentation_context
-    component: clarification_form
+    presentation: questionnaire
     required: true
     synthetic_on_pending: true
     props:
@@ -11,10 +11,10 @@ gates:
       skill: frontend-slides
       skillId: frontend-slides
       gateId: presentation_context
-      uiContract: a2ui
-      expectedComponent: clarification_form
+      interactionContract: helpudoc.interaction
+      expectedPresentation: questionnaire
   - gate_id: style_preview_selection
-    component: style_preview_chooser
+    presentation: style_preview
     required: true
     synthetic_on_pending: true
     props:
@@ -25,8 +25,8 @@ gates:
       skill: frontend-slides
       skillId: frontend-slides
       gateId: style_preview_selection
-      uiContract: a2ui
-      expectedComponent: style_preview_chooser
+      interactionContract: helpudoc.interaction
+      expectedPresentation: style_preview
 artifacts:
   - artifact_id: final_deck
     type: html_deck
@@ -34,7 +34,7 @@ artifacts:
     patterns:
       - "**/*-deck.html"
     path_regex: "(^|/)[^/]+-deck\\.html$"
-    description: Final HTML presentation deck generated after all required A2UI gates are complete.
+    description: Final HTML presentation deck generated after all required Interaction gates are complete.
     instructions: Write a .html slide deck whose filename ends with -deck.html, with multiple viewport-sized slide sections such as <section class="slide"> and keyboard/scroll navigation.
   - artifact_id: final_pptx
     type: pptx_deck

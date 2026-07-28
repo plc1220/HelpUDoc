@@ -22,8 +22,8 @@ import type {
   FileContextRef,
   ToolEvent,
   ToolOutputFile,
-  A2UIRequest,
-  UIRequest,
+  InteractionPresentation,
+  InteractionRequest,
   WorkflowActionEvent,
 } from '@helpudoc/contracts/types';
 import {
@@ -91,8 +91,7 @@ type RunPendingInterrupt = {
     }>;
   };
   displayPayload?: Record<string, unknown>;
-  uiRequest?: UIRequest;
-  a2uiRequest?: A2UIRequest;
+  interactionRequest?: InteractionRequest;
 };
 
 type RunMeta = {
@@ -105,10 +104,10 @@ type RunMeta = {
   error?: string;
   turnId?: string;
   pendingInterrupt?: RunPendingInterrupt;
-  a2uiGateState?: A2UIGateState;
+  interactionGateState?: InteractionGateState;
 };
 
-export type A2UIGateState = {
+export type InteractionGateState = {
   completedGateIds: string[];
 };
 
@@ -135,9 +134,9 @@ type ResumePayload =
   | { response: AgentInterruptResponse; decisions?: never }
   | { action: AgentInterruptActionResponse; decisions?: never; response?: never };
 
-type PersistedRunMeta = Omit<RunMeta, 'pendingInterrupt' | 'a2uiGateState'> & {
+type PersistedRunMeta = Omit<RunMeta, 'pendingInterrupt' | 'interactionGateState'> & {
   pendingInterrupt?: string;
-  a2uiGateState?: string;
+  interactionGateState?: string;
   runContext?: string;
 };
 
@@ -255,39 +254,6 @@ const getPayloadRecord = (value: unknown): Record<string, unknown> | undefined =
     : undefined
 );
 
-const projectNativeA2UIToLegacyUIRequest = (
-  a2uiRequest: Record<string, unknown> | undefined,
-  interruptId: string,
-): UIRequest | undefined => {
-  if (!a2uiRequest) {
-    return undefined;
-  }
-  const component = typeof a2uiRequest.component === 'string' ? a2uiRequest.component.trim() : '';
-  const componentMap: Record<string, UIRequest['component']> = {
-    'clarification.form': 'clarification_form',
-    clarification_form: 'clarification_form',
-    'style.previewChooser': 'style_preview_chooser',
-    style_preview_chooser: 'style_preview_chooser',
-    'approval.card': 'approval',
-    approval: 'approval',
-  };
-  const legacyComponent = componentMap[component];
-  if (!legacyComponent) {
-    return undefined;
-  }
-  const props = getPayloadRecord(a2uiRequest.props) || {};
-  const resumeAction = getPayloadRecord(a2uiRequest.resumeAction);
-  const action = typeof resumeAction?.actionId === 'string' && resumeAction.actionId.trim()
-    ? resumeAction.actionId.trim()
-    : 'submit';
-  return {
-    id: interruptId,
-    component: legacyComponent,
-    props,
-    resume: { action },
-  };
-};
-
 const normalizeInterruptPayloadRecord = (payload: Record<string, unknown>): Record<string, unknown> => {
   if (payload.type !== 'interrupt') {
     return payload;
@@ -296,22 +262,18 @@ const normalizeInterruptPayloadRecord = (payload: Record<string, unknown>): Reco
     typeof payload.interruptId === 'string' && payload.interruptId.trim()
       ? payload.interruptId.trim()
       : buildInterruptId(payload);
-  const a2uiRequest = getPayloadRecord(payload.a2uiRequest);
-  const projectedUiRequest = getPayloadRecord(payload.uiRequest)
-    ? undefined
-    : projectNativeA2UIToLegacyUIRequest(a2uiRequest, interruptId);
-  const metadata = getPayloadRecord(a2uiRequest?.metadata);
+  const interactionRequest = getPayloadRecord(payload.interactionRequest);
+  const metadata = getPayloadRecord(interactionRequest?.metadata);
   const projectedDisplayPayload = getPayloadRecord(payload.displayPayload) || getPayloadRecord(payload.display_payload)
     ? undefined
     : metadata;
-  if (payload.interruptId === interruptId && !projectedUiRequest && !projectedDisplayPayload) {
+  if (payload.interruptId === interruptId && !projectedDisplayPayload) {
     return payload;
   }
   return {
     ...payload,
     interruptId,
     ...(projectedDisplayPayload ? { displayPayload: projectedDisplayPayload } : {}),
-    ...(projectedUiRequest ? { uiRequest: projectedUiRequest } : {}),
   };
 };
 
@@ -336,16 +298,16 @@ const isSyntheticClarificationInterrupt = (interrupt?: RunPendingInterrupt): boo
     return false;
   }
   const displayPayload = interrupt.displayPayload || {};
-  const nativeMetadata = interrupt.a2uiRequest?.metadata || {};
+  const nativeMetadata = interrupt.interactionRequest?.metadata || {};
   return Boolean(
     displayPayload.synthetic === true ||
     nativeMetadata.synthetic === true ||
-    (displayPayload.source === 'implicit_input_guard' && displayPayload.uiContract === 'a2ui') ||
-    (nativeMetadata.source === 'implicit_input_guard' && nativeMetadata.uiContract === 'a2ui')
+    (displayPayload.source === 'implicit_input_guard' && displayPayload.interactionContract === 'helpudoc.interaction') ||
+    (nativeMetadata.source === 'implicit_input_guard' && nativeMetadata.interactionContract === 'helpudoc.interaction')
   );
 };
 
-export const extractA2UIGateIdFromPendingInterrupt = (
+export const extractInteractionGateIdFromPendingInterrupt = (
   interrupt?: RunPendingInterrupt,
 ): string | undefined => {
   if (!interrupt) {
@@ -359,10 +321,9 @@ export const extractA2UIGateIdFromPendingInterrupt = (
     responseSpec: interrupt.responseSpec,
     displayPayload: interrupt.displayPayload,
     display_payload: interrupt.displayPayload,
-    uiRequest: interrupt.uiRequest,
-    a2uiRequest: interrupt.a2uiRequest,
+    interactionRequest: interrupt.interactionRequest,
   };
-  return extractA2UIGateId(payload) || inferFrontendSlidesGateIdFromA2UI(payload);
+  return extractInteractionGateId(payload) || inferFrontendSlidesGateIdFromInteraction(payload);
 };
 
 const formatClarificationResponseForPrompt = (
@@ -437,7 +398,7 @@ export const buildSyntheticClarificationFollowupPrompt = (
   originalPrompt: string,
   response: AgentInterruptResponse,
   previousInterrupt?: RunPendingInterrupt,
-  completedGateStateOverride?: A2UIGateState,
+  completedGateStateOverride?: InteractionGateState,
 ): string => {
   const skill = typeof previousInterrupt?.displayPayload?.skill === 'string'
     ? previousInterrupt.displayPayload.skill
@@ -461,10 +422,10 @@ export const buildSyntheticClarificationFollowupPrompt = (
         workflowState.nextRequiredGateId
           ? (
               workflowState.nextRequiredGateId === 'outline_confirmation'
-                ? 'Next structured workflow actions: first call workflow_action(action="generate_artifact", reason="Draft slide outline for review", artifact_refs_json="[\"slide_outline_v1\"]"), then present the concrete outline and call workflow_action(action="ask_user_a2ui", gate_id="outline_confirmation", component="clarification.form", props_json=..., context_json=...) to pause for review.'
-                : `Next structured workflow action: call workflow_action(action="ask_user_a2ui", gate_id="${workflowState.nextRequiredGateId}", component="${EXPECTED_GATES[workflowState.nextRequiredGateId] === 'style_preview_chooser' ? 'style.previewChooser' : 'clarification.form'}", props_json=..., context_json=...) and then stop.`
+                ? 'Next structured workflow actions: first call workflow_action(action="generate_artifact", reason="Draft slide outline for review", artifact_refs_json="[\"slide_outline_v1\"]"), then present the concrete outline and call workflow_action(action="request_user_interaction", gate_id="outline_confirmation", presentation="questionnaire", props_json=..., context_json=...) to pause for review.'
+                : `Next structured workflow action: call workflow_action(action="request_user_interaction", gate_id="${workflowState.nextRequiredGateId}", presentation="${EXPECTED_GATES[workflowState.nextRequiredGateId] === 'style_preview' ? 'style_preview' : 'questionnaire'}", props_json=..., context_json=...) and then stop.`
             )
-          : `All required A2UI gates are complete. Generate the final required artifact now: ${frontendSlidesArtifactInstruction}. The output must be a slide deck, not a report or summary page. Use write_file so the file appears in the workspace. The next structured workflow action may be workflow_action(action="complete") only after that final artifact is generated.`,
+          : `All required Interaction gates are complete. Generate the final required artifact now: ${frontendSlidesArtifactInstruction}. The output must be a slide deck, not a report or summary page. Use write_file so the file appears in the workspace. The next structured workflow action may be workflow_action(action="complete") only after that final artifact is generated.`,
       ].join('\n')
     : '';
   const nextFrontendSlidesGate = workflowState?.nextRequiredGateId;
@@ -472,18 +433,18 @@ export const buildSyntheticClarificationFollowupPrompt = (
     ? workflowState?.canComplete
       ? 'For frontend-slides: both required decisions are complete and the user has selected a visual style. Continue directly into building the final HTML presentation deck now. Do not ask for deck setup, outline approval, or any earlier frontend-slides gate again.'
       : nextFrontendSlidesGate === 'outline_confirmation'
-      ? 'For frontend-slides: the user has completed Presentation Context. Generate the slide outline next, then pause with an outline_confirmation structured A2UI workflow action. Do not ask for Presentation Context again and do not generate style previews yet.'
+      ? 'For frontend-slides: the user has completed Presentation Context. Generate the slide outline next, then pause with an outline_confirmation structured Interaction workflow action. Do not ask for Presentation Context again and do not generate style previews yet.'
       : nextFrontendSlidesGate === 'style_path_selection'
-      ? 'For frontend-slides: the user has confirmed the outline. Continue to style path selection, then pause with a style_path_selection structured A2UI workflow action. Do not ask for Presentation Context or Outline Confirmation again.'
+      ? 'For frontend-slides: the user has confirmed the outline. Continue to style path selection, then pause with a style_path_selection structured Interaction workflow action. Do not ask for Presentation Context or Outline Confirmation again.'
       : nextFrontendSlidesGate === 'mood_or_preset_selection'
       ? 'For frontend-slides: the user selected the style selection method. Continue to the next style gate. If the user chose generated previews, collect the mood or preset direction next; do not ask for Presentation Context or Outline Confirmation again.'
       : nextFrontendSlidesGate === 'style_preview_selection'
       ? gateId === 'outline_confirmation'
-        ? 'For frontend-slides: the user confirmed the outline. Generate 2-3 style previews/templates next, then pause with a style_preview_selection structured A2UI workflow action. Do not ask for Presentation Context or Outline Confirmation again.'
+        ? 'For frontend-slides: the user confirmed the outline. Generate 2-3 style previews/templates next, then pause with a style_preview_selection structured Interaction workflow action. Do not ask for Presentation Context or Outline Confirmation again.'
         : gateId === 'mood_or_preset_selection'
-          ? 'For frontend-slides: the user selected a legacy mood or preset direction. Generate 2-3 style previews/templates next, then pause with a style_preview_selection structured A2UI workflow action. Do not repeat earlier gates.'
-          : 'For frontend-slides: the user selected the deck mode. Infer the remaining context and outline from the request and source material, generate 2-3 style previews/templates, then pause with a style_preview_selection structured A2UI workflow action. Do not ask for purpose, audience, length, assets, or outline approval.'
-      : 'For frontend-slides: continue to the next incomplete A2UI gate. Do not ask for already answered frontend-slides gates again.'
+          ? 'For frontend-slides: the user selected a legacy mood or preset direction. Generate 2-3 style previews/templates next, then pause with a style_preview_selection structured Interaction workflow action. Do not repeat earlier gates.'
+          : 'For frontend-slides: the user selected the deck mode. Infer the remaining context and outline from the request and source material, generate 2-3 style previews/templates, then pause with a style_preview_selection structured Interaction workflow action. Do not ask for purpose, audience, length, assets, or outline approval.'
+      : 'For frontend-slides: continue to the next incomplete Interaction gate. Do not ask for already answered frontend-slides gates again.'
     : '';
   const repeatedGateInstruction = previousInterrupt?.displayPayload?.skill === 'frontend-slides'
     ? 'The user has already answered the structured UI gate below. Do not ask for this same deck-mode choice again.'
@@ -492,7 +453,7 @@ export const buildSyntheticClarificationFollowupPrompt = (
     ? 'Treat these answers as final for the current gate and move to the next required phase of the skill.'
     : [
         'Treat these answers as final for the current gate and continue the skill from the point where it paused.',
-        'If another human decision or clarification is required before completion, call workflow_action(action="ask_user_a2ui") or another structured A2UI interrupt and then stop; otherwise complete the requested work.',
+        'If another human decision or clarification is required before completion, call workflow_action(action="request_user_interaction") or another structured Interaction interrupt and then stop; otherwise complete the requested work.',
       ].join(' ');
   const skillDirective = previousInterrupt?.displayPayload?.skill === 'frontend-slides'
     ? '/skill frontend-slides'
@@ -502,7 +463,7 @@ export const buildSyntheticClarificationFollowupPrompt = (
       skillDirective,
       '[Frontend-slides final generation phase]',
       'Both required decisions are complete: deck mode and visual style.',
-      'Do not call workflow_action(action="ask_user_a2ui"), request_clarification, request_ui, or request_human_action for any frontend-slides gate.',
+      'Do not call workflow_action(action="request_user_interaction"), request_clarification, request_interaction, or request_human_action for any frontend-slides gate.',
       `Generate the final required artifact now: ${frontendSlidesArtifactInstruction}. The output must be a slide deck, not a report or summary page. Use write_file so the file appears in the workspace.`,
       'Only after the deck file exists may you call workflow_action(action="complete") or finish the run.',
       answers,
@@ -809,12 +770,12 @@ const FRONTEND_SLIDES_FALLBACK_REQUIRED_GATES = [
 
 type FrontendSlidesGateId = typeof FRONTEND_SLIDES_KNOWN_GATES[number];
 
-const EXPECTED_GATES: Record<FrontendSlidesGateId, UIRequest['component']> = {
-  presentation_context: 'clarification_form',
-  outline_confirmation: 'clarification_form',
-  style_path_selection: 'clarification_form',
-  mood_or_preset_selection: 'clarification_form',
-  style_preview_selection: 'style_preview_chooser',
+const EXPECTED_GATES: Record<FrontendSlidesGateId, InteractionPresentation> = {
+  presentation_context: 'questionnaire',
+  outline_confirmation: 'questionnaire',
+  style_path_selection: 'questionnaire',
+  mood_or_preset_selection: 'questionnaire',
+  style_preview_selection: 'style_preview',
 };
 
 const isFrontendSlidesGateId = (value: unknown): value is FrontendSlidesGateId => (
@@ -833,19 +794,19 @@ const getRecord = (value: unknown): Record<string, unknown> | undefined => (
 );
 
 const extractDisplayPayload = (payload: Record<string, unknown>): Record<string, unknown> | undefined => {
-  const a2uiRequest = getRecord(payload.a2uiRequest);
+  const interactionRequest = getRecord(payload.interactionRequest);
   return (
     getRecord(payload.displayPayload) ||
     getRecord(payload.display_payload) ||
-    getRecord(a2uiRequest?.metadata)
+    getRecord(interactionRequest?.metadata)
   );
 };
 
-const extractA2UIGateId = (payload: Record<string, unknown>): string | undefined => {
+const extractInteractionGateId = (payload: Record<string, unknown>): string | undefined => {
   const displayPayload = extractDisplayPayload(payload);
   const nestedPayload = getRecord(displayPayload?.displayPayload) || getRecord(displayPayload?.display_payload);
-  const a2uiRequest = getRecord(payload.a2uiRequest);
-  const rawGateId = a2uiRequest?.gateId || displayPayload?.gateId || nestedPayload?.gateId;
+  const interactionRequest = getRecord(payload.interactionRequest);
+  const rawGateId = interactionRequest?.gateId || displayPayload?.gateId || nestedPayload?.gateId;
   return typeof rawGateId === 'string' && rawGateId.trim() ? rawGateId.trim() : undefined;
 };
 
@@ -883,7 +844,7 @@ const hasFrontendSlidesOutlineReviewMaterial = (
   ));
 };
 
-const normalizeA2UIComponentName = (value: unknown): string => (
+const normalizeInteractionPresentationName = (value: unknown): string => (
   typeof value === 'string' ? value.trim() : ''
 );
 
@@ -906,42 +867,35 @@ const collectFrontendSlidesGateInferenceText = (payload: Record<string, unknown>
       pushValue(record?.label);
     }
   };
-  const a2uiRequest = getRecord(payload.a2uiRequest);
-  const uiRequest = getRecord(payload.uiRequest);
-  const a2uiProps = getRecord(a2uiRequest?.props);
-  const uiProps = getRecord(uiRequest?.props);
+  const interactionRequest = getRecord(payload.interactionRequest);
+  const interactionProps = getRecord(interactionRequest?.props);
   const responseSpec = getRecord(payload.responseSpec);
 
   pushValue(payload.title);
   pushValue(payload.description);
-  pushValue(a2uiRequest?.component);
-  pushValue(a2uiProps?.title);
-  pushValue(a2uiProps?.description);
-  pushValue(uiRequest?.component);
-  pushValue(uiProps?.title);
-  pushValue(uiProps?.description);
-  pushQuestions(a2uiProps?.questions);
-  pushQuestions(uiProps?.questions);
+  pushValue(interactionRequest?.presentation);
+  pushValue(interactionProps?.title);
+  pushValue(interactionProps?.description);
+  pushQuestions(interactionProps?.questions);
   pushQuestions(responseSpec?.questions);
 
   return fragments.join('\n').toLowerCase();
 };
 
-export const inferFrontendSlidesGateIdFromA2UI = (
+export const inferFrontendSlidesGateIdFromInteraction = (
   payload: Record<string, unknown>,
 ): FrontendSlidesGateId | undefined => {
-  if (payload.type !== 'interrupt' || payload.kind !== 'clarification' || extractA2UIGateId(payload)) {
+  if (payload.type !== 'interrupt' || payload.kind !== 'clarification' || extractInteractionGateId(payload)) {
     return undefined;
   }
-  const a2uiRequest = getRecord(payload.a2uiRequest);
-  const uiRequest = getRecord(payload.uiRequest);
-  const component = normalizeA2UIComponentName(a2uiRequest?.component || uiRequest?.component);
-  const isClarificationA2UI = ['clarification.form', 'clarification_form', 'style.previewChooser', 'style_preview_chooser']
-    .includes(component);
-  if (!isClarificationA2UI) {
+  const interactionRequest = getRecord(payload.interactionRequest);
+  const presentation = normalizeInteractionPresentationName(interactionRequest?.presentation);
+  const isClarificationInteraction = ['questionnaire', 'style_preview']
+    .includes(presentation);
+  if (!isClarificationInteraction) {
     return undefined;
   }
-  if (component === 'style.previewChooser' || component === 'style_preview_chooser') {
+  if (presentation === 'style_preview') {
     return 'style_preview_selection';
   }
 
@@ -970,15 +924,13 @@ export const withFrontendSlidesGateMetadata = (
     ...extractDisplayPayload(normalized),
     skill: 'frontend-slides',
     gateId,
-    uiContract: 'a2ui',
-    expectedComponent: EXPECTED_GATES[gateId],
+    interactionContract: 'helpudoc.interaction',
+    expectedPresentation: EXPECTED_GATES[gateId],
     source: 'frontend_slides_gate_inference',
   };
-  const a2uiRequest = getRecord(normalized.a2uiRequest);
-  const uiRequest = getRecord(normalized.uiRequest);
-  const component = normalizeA2UIComponentName(a2uiRequest?.component || uiRequest?.component);
-  const legacyComponent = component === 'clarification.form' ? 'clarification_form' : component;
-  const defaultQuestions = legacyComponent === 'clarification_form'
+  const interactionRequest = getRecord(normalized.interactionRequest);
+  const presentation = normalizeInteractionPresentationName(interactionRequest?.presentation);
+  const defaultQuestions = presentation === 'questionnaire'
     ? getFrontendSlidesClarificationQuestions(gateId)
     : undefined;
   const defaultStyleChoices = gateId === 'style_preview_selection'
@@ -1126,8 +1078,7 @@ export const withFrontendSlidesGateMetadata = (
         : 'No generated style previews were provided, so choose from fallback executive styles to continue.',
     };
   };
-  const a2uiProps = withGateDefaults(a2uiRequest?.props);
-  const uiProps = withGateDefaults(uiRequest?.props);
+  const interactionProps = withGateDefaults(interactionRequest?.props);
   const responseSpec = getRecord(normalized.responseSpec);
   const responseSpecWithQuestions =
     defaultQuestions && (!Array.isArray(responseSpec?.questions) || responseSpec.questions.length === 0)
@@ -1137,45 +1088,37 @@ export const withFrontendSlidesGateMetadata = (
     ...normalized,
     displayPayload,
     ...(responseSpecWithQuestions ? { responseSpec: responseSpecWithQuestions } : {}),
-    ...(a2uiRequest
+    ...(interactionRequest
       ? {
-          a2uiRequest: {
-            ...a2uiRequest,
-            ...(a2uiProps ? { props: a2uiProps } : {}),
+          interactionRequest: {
+            ...interactionRequest,
+            ...(interactionProps ? { props: interactionProps } : {}),
             gateId,
             skill: 'frontend-slides',
-            required: a2uiRequest.required ?? true,
+            required: interactionRequest.required ?? true,
             metadata: {
-              ...getRecord(a2uiRequest.metadata),
+              ...getRecord(interactionRequest.metadata),
               ...displayPayload,
             },
-          },
-        }
-      : {}),
-    ...(uiRequest
-      ? {
-          uiRequest: {
-            ...uiRequest,
-            ...(uiProps ? { props: uiProps } : {}),
           },
         }
       : {}),
   };
 };
 
-const isA2UIGatePayload = (payload: Record<string, unknown>): boolean => {
+const isInteractionGatePayload = (payload: Record<string, unknown>): boolean => {
   const displayPayload = extractDisplayPayload(payload);
   const nestedPayload = getRecord(displayPayload?.displayPayload) || getRecord(displayPayload?.display_payload);
-  const a2uiRequest = getRecord(payload.a2uiRequest);
+  const interactionRequest = getRecord(payload.interactionRequest);
   return Boolean(
-    extractA2UIGateId(payload) ||
-    a2uiRequest?.contract === 'a2ui' ||
-    displayPayload?.uiContract === 'a2ui' ||
-    nestedPayload?.uiContract === 'a2ui'
+    extractInteractionGateId(payload) ||
+    interactionRequest?.contract === 'helpudoc.interaction' ||
+    displayPayload?.interactionContract === 'helpudoc.interaction' ||
+    nestedPayload?.interactionContract === 'helpudoc.interaction'
   );
 };
 
-const parseA2UIGateState = (raw: unknown): A2UIGateState => {
+const parseInteractionGateState = (raw: unknown): InteractionGateState => {
   const parsed = typeof raw === 'string'
     ? (() => {
         try {
@@ -1192,7 +1135,7 @@ const parseA2UIGateState = (raw: unknown): A2UIGateState => {
   return { completedGateIds: Array.from(new Set(completedGateIds)) };
 };
 
-const completeA2UIGate = (state: A2UIGateState, gateId: string | undefined): A2UIGateState => {
+const completeInteractionGate = (state: InteractionGateState, gateId: string | undefined): InteractionGateState => {
   if (!isFrontendSlidesGateId(gateId)) {
     return state;
   }
@@ -1203,9 +1146,9 @@ const completeA2UIGate = (state: A2UIGateState, gateId: string | undefined): A2U
 
 export const isCompletedFrontendSlidesGateInterrupt = (
   payload: Record<string, unknown>,
-  state: A2UIGateState,
+  state: InteractionGateState,
 ): boolean => {
-  const completedGateId = extractA2UIGateId(payload) || inferFrontendSlidesGateIdFromA2UI(payload);
+  const completedGateId = extractInteractionGateId(payload) || inferFrontendSlidesGateIdFromInteraction(payload);
   return Boolean(
     payload?.type === 'interrupt' &&
     isFrontendSlidesGateId(completedGateId) &&
@@ -1213,7 +1156,7 @@ export const isCompletedFrontendSlidesGateInterrupt = (
   );
 };
 
-const frontendSlidesGateStateThrough = (gateId: string | undefined): A2UIGateState => {
+const frontendSlidesGateStateThrough = (gateId: string | undefined): InteractionGateState => {
   if (!isFrontendSlidesGateId(gateId)) {
     return { completedGateIds: [] };
   }
@@ -1227,20 +1170,20 @@ const frontendSlidesGateStateThrough = (gateId: string | undefined): A2UIGateSta
   };
 };
 
-const nextMissingFrontendSlidesGate = (state: A2UIGateState): FrontendSlidesGateId | undefined => (
+const nextMissingFrontendSlidesGate = (state: InteractionGateState): FrontendSlidesGateId | undefined => (
   getFrontendSlidesRequiredGates().find((gateId) => !state.completedGateIds.includes(gateId))
 );
 
-const hasCompletedAllFrontendSlidesGates = (state: A2UIGateState): boolean => (
+const hasCompletedAllFrontendSlidesGates = (state: InteractionGateState): boolean => (
   !nextMissingFrontendSlidesGate(state)
 );
 
 const FRONTEND_SLIDES_WORKFLOW_ACTION_BY_GATE: Record<FrontendSlidesGateId, WorkflowActionEvent['action']> = {
-  presentation_context: 'ask_user_a2ui',
-  outline_confirmation: 'ask_user_a2ui',
-  style_path_selection: 'ask_user_a2ui',
-  mood_or_preset_selection: 'ask_user_a2ui',
-  style_preview_selection: 'ask_user_a2ui',
+  presentation_context: 'request_user_interaction',
+  outline_confirmation: 'request_user_interaction',
+  style_path_selection: 'request_user_interaction',
+  mood_or_preset_selection: 'request_user_interaction',
+  style_preview_selection: 'request_user_interaction',
 };
 
 const FRONTEND_SLIDES_GATE_PHASE: Record<FrontendSlidesGateId, string> = {
@@ -1261,7 +1204,7 @@ export type FrontendSlidesWorkflowState = {
   canComplete: boolean;
 };
 
-export const buildFrontendSlidesWorkflowState = (state: A2UIGateState): FrontendSlidesWorkflowState => {
+export const buildFrontendSlidesWorkflowState = (state: InteractionGateState): FrontendSlidesWorkflowState => {
   const completedGateIds = Array.from(new Set(state.completedGateIds.filter(isFrontendSlidesGateId)));
   const requiredGateIds = getFrontendSlidesRequiredGates();
   const nextRequiredGateId = requiredGateIds.find((gateId) => !completedGateIds.includes(gateId));
@@ -1282,16 +1225,16 @@ const buildFrontendSlidesDisplayPayload = (
 ): Record<string, unknown> => ({
   skill: 'frontend-slides',
   gateId,
-  uiContract: 'a2ui',
-  expectedComponent: EXPECTED_GATES[gateId],
+  interactionContract: 'helpudoc.interaction',
+  expectedPresentation: EXPECTED_GATES[gateId],
   source: 'implicit_completion_guard',
   synthetic: true,
   ...extra,
 });
 
-const buildNativeA2UIRequest = (input: {
+const buildNativeInteractionRequest = (input: {
   interruptId: string;
-  component: string;
+  presentation: InteractionPresentation;
   props: Record<string, unknown>;
   gateId?: string | null;
   skill?: string | null;
@@ -1299,11 +1242,11 @@ const buildNativeA2UIRequest = (input: {
   endpoint?: 'respond' | 'decision' | 'act';
   actionId?: string;
   metadata?: Record<string, unknown>;
-}): A2UIRequest => ({
-  contract: 'a2ui',
-  version: '0.9',
-  surfaceId: input.gateId ? `surface-${input.gateId}` : `surface-${input.interruptId}`,
-  component: input.component,
+}): InteractionRequest => ({
+  contract: 'helpudoc.interaction',
+  version: '1',
+  interactionId: input.gateId ? `interaction-${input.gateId}` : input.interruptId,
+  presentation: input.presentation,
   props: input.props,
   gateId: input.gateId || undefined,
   skill: input.skill || undefined,
@@ -1488,18 +1431,6 @@ const buildFrontendSlidesGatePendingInterrupt = (input: {
 }): Record<string, unknown> => {
   const { runId, gateId } = input;
   const interruptId = `implicit-${createHash('sha256').update(`${runId}:${gateId}`).digest('hex').slice(0, 20)}`;
-  const baseResume = {
-    action: 'submit',
-    schema: {
-      type: 'object',
-      properties: {
-        response: { type: 'string' },
-        selectedChoiceId: { type: 'string' },
-        selectedChoiceIds: { type: 'array', items: { type: 'string' } },
-        answers: { type: 'object' },
-      },
-    },
-  };
 
   if (gateId === 'style_preview_selection') {
     const choices = extractFrontendSlidesStyleChoices(input.assistantText || '');
@@ -1523,9 +1454,9 @@ const buildFrontendSlidesGatePendingInterrupt = (input: {
       previews,
       submitLabel: 'Use selected style',
     };
-    const a2uiRequest = buildNativeA2UIRequest({
+    const interactionRequest = buildNativeInteractionRequest({
       interruptId,
-      component: 'style.previewChooser',
+      presentation: 'style_preview',
       props,
       gateId,
       skill: 'frontend-slides',
@@ -1544,13 +1475,7 @@ const buildFrontendSlidesGatePendingInterrupt = (input: {
         choices,
       },
       displayPayload,
-      a2uiRequest,
-      uiRequest: {
-        id: interruptId,
-        component: 'style_preview_chooser',
-        props,
-        resume: baseResume,
-      },
+      interactionRequest,
     };
   }
 
@@ -1607,9 +1532,9 @@ const buildFrontendSlidesGatePendingInterrupt = (input: {
     multiple: gateId === 'mood_or_preset_selection',
     submitLabel: selected.submitLabel,
   };
-  const a2uiRequest = buildNativeA2UIRequest({
+  const interactionRequest = buildNativeInteractionRequest({
     interruptId,
-    component: 'clarification.form',
+    presentation: 'questionnaire',
     props,
     gateId,
     skill: 'frontend-slides',
@@ -1638,13 +1563,7 @@ const buildFrontendSlidesGatePendingInterrupt = (input: {
       choices: [],
     },
     displayPayload,
-    a2uiRequest,
-    uiRequest: {
-      id: interruptId,
-      component: 'clarification_form',
-      props,
-      resume: baseResume,
-    },
+    interactionRequest,
   };
 };
 
@@ -1673,7 +1592,7 @@ export const getFrontendSlidesMissingRequiredGate = (input: {
   skillId?: string | null;
   prompt?: string;
   status: AgentRunStatus;
-  gateState?: A2UIGateState;
+  gateState?: InteractionGateState;
 }): FrontendSlidesGateId | null => {
   const params = { prompt: input.prompt || '' } as StartRunParams;
   if (
@@ -1686,15 +1605,15 @@ export const getFrontendSlidesMissingRequiredGate = (input: {
   return nextMissingFrontendSlidesGate(input.gateState || { completedGateIds: [] }) || null;
 };
 
-export const getFrontendSlidesA2UIGateCompletionError = (input: {
+export const getFrontendSlidesInteractionGateCompletionError = (input: {
   skillId?: string | null;
   prompt?: string;
   status: AgentRunStatus;
-  gateState?: A2UIGateState;
+  gateState?: InteractionGateState;
 }): string | null => {
   const missingGate = getFrontendSlidesMissingRequiredGate(input);
   if (missingGate) {
-    return `Contract violation: frontend-slides completed before required A2UI gate "${missingGate}" was completed with request_clarification.`;
+    return `Contract violation: frontend-slides completed before required Interaction gate "${missingGate}" was completed with request_clarification.`;
   }
   const params = { prompt: input.prompt || '' } as StartRunParams;
   if (
@@ -1703,7 +1622,7 @@ export const getFrontendSlidesA2UIGateCompletionError = (input: {
     !isFrontendSlidesEditExistingRun(params) &&
     hasCompletedAllFrontendSlidesGates(input.gateState || { completedGateIds: [] })
   ) {
-    return `Contract violation: frontend-slides completed after all A2UI gates but before producing the required artifact: ${requiredArtifactDescriptionForSkill('frontend-slides')}.`;
+    return `Contract violation: frontend-slides completed after all Interaction gates but before producing the required artifact: ${requiredArtifactDescriptionForSkill('frontend-slides')}.`;
   }
   return null;
 };
@@ -1717,71 +1636,70 @@ export const validateInterrupt = (parsed: Record<string, unknown>, skillId: stri
     return null;
   }
 
-  const gateId = extractA2UIGateId(normalized);
-  const isA2UI = isA2UIGatePayload(normalized);
+  const gateId = extractInteractionGateId(normalized);
+  const isInteraction = isInteractionGatePayload(normalized);
 
   if (gateId && !isFrontendSlidesGateId(gateId)) {
-    return `Contract violation: unknown frontend-slides A2UI gate "${gateId}".`;
+    return `Contract violation: unknown frontend-slides Interaction gate "${gateId}".`;
   }
 
   if (normalized.kind !== 'clarification') {
-    return isA2UI
-      ? `Contract violation: A2UI gate interrupts must use kind "clarification", but got "${normalized.kind}".`
+    return isInteraction
+      ? `Contract violation: Interaction gate interrupts must use kind "clarification", but got "${normalized.kind}".`
       : null;
   }
 
-  const uiRequest = normalized.uiRequest as Record<string, any> | undefined;
-  if (!uiRequest) {
-    return 'Contract violation: missing "uiRequest" in clarification interrupt payload.';
+  const interactionRequest = normalized.interactionRequest as Record<string, any> | undefined;
+  if (!interactionRequest) {
+    return 'Contract violation: missing "interactionRequest" in clarification interrupt payload.';
   }
 
   const displayPayload = extractDisplayPayload(normalized);
   const nestedPayload = getRecord(displayPayload?.displayPayload) || getRecord(displayPayload?.display_payload);
-  const expectedComponent = (
-    typeof displayPayload?.expectedComponent === 'string'
-      ? displayPayload.expectedComponent
-      : typeof nestedPayload?.expectedComponent === 'string'
-        ? nestedPayload.expectedComponent
+  const expectedPresentation = (
+    typeof displayPayload?.expectedPresentation === 'string'
+      ? displayPayload.expectedPresentation
+      : typeof nestedPayload?.expectedPresentation === 'string'
+        ? nestedPayload.expectedPresentation
       : gateId && isFrontendSlidesGateId(gateId)
         ? EXPECTED_GATES[gateId]
         : undefined
   );
 
-  const component = uiRequest.component;
-  if (!component) {
-    return 'Contract violation: missing "component" in "uiRequest".';
+  const presentation = interactionRequest.presentation;
+  if (!presentation) {
+    return 'Contract violation: missing "presentation" in "interactionRequest".';
   }
 
-  if (expectedComponent && component !== expectedComponent) {
-    return `Contract violation: expected component "${expectedComponent}" for gate "${gateId}", but got "${component}".`;
+  if (expectedPresentation && presentation !== expectedPresentation) {
+    return `Contract violation: expected presentation "${expectedPresentation}" for gate "${gateId}", but got "${presentation}".`;
   }
 
-  const props = uiRequest.props as Record<string, any> | undefined;
+  const props = interactionRequest.props as Record<string, any> | undefined;
   if (!props) {
-    return 'Contract violation: missing "props" in "uiRequest".';
+    return 'Contract violation: missing "props" in "interactionRequest".';
   }
-  const a2uiRequest = normalized.a2uiRequest as Record<string, any> | undefined;
-  const a2uiProps = getRecord(a2uiRequest?.props);
-  const a2uiMetadata = getRecord(a2uiRequest?.metadata);
+  const interactionProps = getRecord(interactionRequest?.props);
+  const interactionMetadata = getRecord(interactionRequest?.metadata);
 
-  if (component === 'clarification_form') {
+  if (presentation === 'questionnaire') {
     const questions = props.questions;
     if (!Array.isArray(questions) || questions.length === 0) {
-      return 'Contract violation: clarification_form props.questions must be a non-empty array.';
+      return 'Contract violation: questionnaire props.questions must be a non-empty array.';
     }
     if (
       gateId === 'outline_confirmation' &&
-      !hasFrontendSlidesOutlineReviewMaterial(props, a2uiProps, displayPayload, nestedPayload, a2uiMetadata)
+      !hasFrontendSlidesOutlineReviewMaterial(props, interactionProps, displayPayload, nestedPayload, interactionMetadata)
     ) {
       return 'Contract violation: outline_confirmation requires real outline review material before asking the user to approve it.';
     }
-  } else if (component === 'style_preview_chooser') {
+  } else if (presentation === 'style_preview') {
     const previews = props.previews;
     const choices = props.choices;
     const hasPreviews = Array.isArray(previews) && previews.length > 0;
     const hasChoices = Array.isArray(choices) && choices.length > 0;
     if (!hasPreviews && !hasChoices) {
-      return 'Contract violation: style_preview_chooser props.previews or props.choices must be a non-empty array.';
+      return 'Contract violation: style_preview props.previews or props.choices must be a non-empty array.';
     }
   }
 
@@ -1947,18 +1865,6 @@ const buildImplicitInputPendingInterrupt = (opts: {
   assistantText?: string;
 }): RunPendingInterrupt => {
   const interruptId = `implicit-${createHash('sha256').update(`${opts.runId}:${opts.prompt || ''}`).digest('hex').slice(0, 20)}`;
-  const baseResume = {
-    action: 'submit',
-    schema: {
-      type: 'object',
-      properties: {
-        response: { type: 'string' },
-        selectedChoiceId: { type: 'string' },
-        selectedChoiceIds: { type: 'array', items: { type: 'string' } },
-        answers: { type: 'object' },
-      },
-    },
-  };
   if (isFrontendSlidesSkill(opts.skillId)) {
     if (opts.interruptType === 'frontend_slides_style') {
       const choices = extractFrontendSlidesStyleChoices(opts.assistantText || opts.prompt || '');
@@ -1977,7 +1883,7 @@ const buildImplicitInputPendingInterrupt = (opts: {
         skill: 'frontend-slides',
         chooser: 'style-previews',
         stylePreviews,
-        uiContract: 'a2ui',
+        interactionContract: 'helpudoc.interaction',
       };
       const props = {
         title: 'Choose Your Presentation Style',
@@ -1986,9 +1892,9 @@ const buildImplicitInputPendingInterrupt = (opts: {
         previews: stylePreviews,
         submitLabel: 'Use selected style',
       };
-      const a2uiRequest = buildNativeA2UIRequest({
+      const interactionRequest = buildNativeInteractionRequest({
         interruptId,
-        component: 'style.previewChooser',
+        presentation: 'style_preview',
         props,
         skill: 'frontend-slides',
         metadata: displayPayload,
@@ -2007,13 +1913,7 @@ const buildImplicitInputPendingInterrupt = (opts: {
           choices,
         },
         displayPayload,
-        a2uiRequest,
-        uiRequest: {
-          id: interruptId,
-          component: 'style_preview_chooser',
-          props,
-          resume: baseResume,
-        },
+        interactionRequest,
       };
     }
     const displayPayload = {
@@ -2021,8 +1921,8 @@ const buildImplicitInputPendingInterrupt = (opts: {
       synthetic: true,
       skill: 'frontend-slides',
       gateId: 'presentation_context',
-      uiContract: 'a2ui',
-      expectedComponent: 'clarification_form',
+      interactionContract: 'helpudoc.interaction',
+      expectedPresentation: 'questionnaire',
     };
     const props = {
       title: 'Choose Deck Mode',
@@ -2033,9 +1933,9 @@ const buildImplicitInputPendingInterrupt = (opts: {
       multiple: false,
       submitLabel: 'Continue',
     };
-    const a2uiRequest = buildNativeA2UIRequest({
+    const interactionRequest = buildNativeInteractionRequest({
       interruptId,
-      component: 'clarification.form',
+      presentation: 'questionnaire',
       props,
       gateId: 'presentation_context',
       skill: 'frontend-slides',
@@ -2063,13 +1963,7 @@ const buildImplicitInputPendingInterrupt = (opts: {
         questions: FRONTEND_SLIDES_DISCOVERY_QUESTIONS,
       },
       displayPayload,
-      a2uiRequest,
-      uiRequest: {
-        id: interruptId,
-        component: 'clarification_form',
-        props,
-        resume: baseResume,
-      },
+      interactionRequest,
     };
   }
   const genericDescription = opts.prompt || 'The agent needs your input to continue.';
@@ -2082,7 +1976,7 @@ const buildImplicitInputPendingInterrupt = (opts: {
   const displayPayload = {
     source: 'implicit_completion_guard',
     synthetic: true,
-    uiContract: 'a2ui',
+    interactionContract: 'helpudoc.interaction',
     ...(opts.skillId ? { skill: opts.skillId } : {}),
   };
   const props = {
@@ -2095,9 +1989,9 @@ const buildImplicitInputPendingInterrupt = (opts: {
     placeholder: 'Enter your response...',
     submitLabel: 'Continue',
   };
-  const a2uiRequest = buildNativeA2UIRequest({
+  const interactionRequest = buildNativeInteractionRequest({
     interruptId,
-    component: 'clarification.form',
+    presentation: 'questionnaire',
     props,
     skill: opts.skillId || undefined,
     metadata: displayPayload,
@@ -2126,13 +2020,7 @@ const buildImplicitInputPendingInterrupt = (opts: {
       questions: [genericQuestion],
     },
     displayPayload,
-    a2uiRequest,
-    uiRequest: {
-      id: interruptId,
-      component: 'clarification_form',
-      props,
-      resume: baseResume,
-    },
+    interactionRequest,
   };
 };
 
@@ -2174,7 +2062,7 @@ const normalizeToolFiles = (value: unknown): ToolOutputFile[] | undefined => {
 };
 
 const WORKFLOW_ACTIONS = new Set([
-  'ask_user_a2ui',
+  'request_user_interaction',
   'generate_artifact',
   'revise_artifact',
   'call_tool',
@@ -2216,7 +2104,7 @@ export const normalizeWorkflowActionEvent = (value: unknown): WorkflowActionEven
     action: action as WorkflowActionEvent['action'],
     reason: coerceText(candidate?.reason).trim() || undefined,
     gateId: coerceText(candidate?.gateId || candidate?.gate_id).trim() || null,
-    component: coerceText(candidate?.component).trim() || null,
+    presentation: (coerceText(candidate?.presentation).trim() || null) as WorkflowActionEvent['presentation'],
     artifactRefs,
     context,
     timestamp: new Date().toISOString(),
@@ -2548,13 +2436,9 @@ const parsePendingInterrupt = (raw: string | undefined): RunPendingInterrupt | u
         payload.displayPayload && typeof payload.displayPayload === 'object' && !Array.isArray(payload.displayPayload)
           ? (payload.displayPayload as Record<string, unknown>)
           : undefined,
-      uiRequest:
-        payload.uiRequest && typeof payload.uiRequest === 'object' && !Array.isArray(payload.uiRequest)
-          ? (payload.uiRequest as RunPendingInterrupt['uiRequest'])
-          : undefined,
-      a2uiRequest:
-        payload.a2uiRequest && typeof payload.a2uiRequest === 'object' && !Array.isArray(payload.a2uiRequest)
-          ? (payload.a2uiRequest as RunPendingInterrupt['a2uiRequest'])
+      interactionRequest:
+        payload.interactionRequest && typeof payload.interactionRequest === 'object' && !Array.isArray(payload.interactionRequest)
+          ? (payload.interactionRequest as RunPendingInterrupt['interactionRequest'])
           : undefined,
     };
   } catch {
@@ -2744,13 +2628,13 @@ const frontendSlidesArtifactCompletionError = (
     skillId?: string | null;
     prompt?: string;
     status: AgentRunStatus;
-    gateState?: A2UIGateState;
+    gateState?: InteractionGateState;
   },
   paths: Record<string, string>,
 ): string | null => {
   const missingGate = getFrontendSlidesMissingRequiredGate(input);
   if (missingGate) {
-    return `Contract violation: frontend-slides completed before required A2UI gate "${missingGate}" was completed with request_clarification.`;
+    return `Contract violation: frontend-slides completed before required Interaction gate "${missingGate}" was completed with request_clarification.`;
   }
   const params = { prompt: input.prompt || '' } as StartRunParams;
   if (
@@ -2761,7 +2645,7 @@ const frontendSlidesArtifactCompletionError = (
   ) {
     const missing = missingRequiredFrontendSlidesArtifactIds(paths);
     if (missing.length) {
-      return `Contract violation: frontend-slides completed after all A2UI gates but before producing required artifact(s): ${missing.join(', ')}. Required: ${requiredArtifactDescriptionForSkill('frontend-slides')}.`;
+      return `Contract violation: frontend-slides completed after all Interaction gates but before producing required artifact(s): ${missing.join(', ')}. Required: ${requiredArtifactDescriptionForSkill('frontend-slides')}.`;
     }
   }
   return null;
@@ -2917,7 +2801,7 @@ export async function startAgentRun(params: StartRunParams): Promise<{ runId: st
     createdAt: queuedAt,
     turnId: params.turnId,
     pendingInterrupt: '',
-    a2uiGateState: JSON.stringify({ completedGateIds: [] }),
+    interactionGateState: JSON.stringify({ completedGateIds: [] }),
     runContext: serializeRunContext(params),
   });
   if (params.turnId?.trim()) {
@@ -3055,8 +2939,8 @@ async function runAgentRunWorker(
   let assistantText = '';
   let thinkingText = '';
   let conversationRunPolicy: ConversationRunPolicy | undefined;
-  let a2uiGateState = runMetaAtStart?.a2uiGateState || { completedGateIds: [] };
-  traceContext.a2uiGateState = a2uiGateState;
+  let interactionGateState = runMetaAtStart?.interactionGateState || { completedGateIds: [] };
+  traceContext.interactionGateState = interactionGateState;
   const toolEvents: ToolEvent[] = [];
   const progressEvents: RunProgressEvent[] = [];
   const workflowActions: WorkflowActionEvent[] = [];
@@ -3280,7 +3164,7 @@ async function runAgentRunWorker(
       skillId,
       prompt: params.prompt,
       status: effectiveStatus,
-      gateState: a2uiGateState,
+      gateState: interactionGateState,
     });
 
     if (missingGate) {
@@ -3317,8 +3201,8 @@ async function runAgentRunWorker(
             toolErrorCount,
             metadata: {
               resumed: Boolean(resumePayload),
-              a2uiPendingGateId: missingGate,
-              a2uiGateState,
+              interactionPendingGateId: missingGate,
+              interactionGateState,
               recoveredMissingGate: true,
               ...langfuseStreamMeta,
             },
@@ -3334,7 +3218,7 @@ async function runAgentRunWorker(
       skillId,
       prompt: params.prompt,
       status: effectiveStatus,
-      gateState: a2uiGateState,
+      gateState: interactionGateState,
     }, latestFrontendSlidesArtifactPaths);
     if (frontendSlidesCompletionError) {
       effectiveStatus = 'failed';
@@ -3385,7 +3269,7 @@ async function runAgentRunWorker(
               resumed: Boolean(resumePayload),
               implicitInput,
               recoveredImplicitInput: true,
-              a2uiGateState,
+              interactionGateState,
               ...langfuseStreamMeta,
             },
           });
@@ -3436,7 +3320,7 @@ async function runAgentRunWorker(
           metadata: {
             resumed: Boolean(resumePayload),
             implicitInputReason: 'missing_interrupt',
-            a2uiGateState,
+            interactionGateState,
             ...langfuseStreamMeta,
           },
         });
@@ -3459,7 +3343,7 @@ async function runAgentRunWorker(
         toolErrorCount,
         metadata: {
           resumed: Boolean(resumePayload),
-          a2uiGateState,
+          interactionGateState,
           ...langfuseStreamMeta,
         },
       });
@@ -3500,7 +3384,7 @@ async function runAgentRunWorker(
 
   const stopAtInterrupt = async (parsed: Record<string, unknown>) => {
     const normalizedInterrupt = normalizeInterruptPayloadRecord(parsed);
-    const pendingGateId = extractA2UIGateId(normalizedInterrupt);
+    const pendingGateId = extractInteractionGateId(normalizedInterrupt);
     const pendingInterrupt = parsePendingInterrupt(JSON.stringify(normalizedInterrupt));
     await persistInterruptAndStopRun(
       runId,
@@ -3539,8 +3423,8 @@ async function runAgentRunWorker(
         toolErrorCount,
         metadata: {
           resumed: Boolean(resumePayload),
-          a2uiPendingGateId: pendingGateId,
-          a2uiGateState,
+          interactionPendingGateId: pendingGateId,
+          interactionGateState,
           ...langfuseStreamMeta,
         },
       }).catch((telemetryError) => {
@@ -3576,9 +3460,9 @@ async function runAgentRunWorker(
     let eventToAppend = parsed;
     if (parsed?.type === 'interrupt') {
       const inferredGateId = isFrontendSlidesRun(skillId, params)
-        ? inferFrontendSlidesGateIdFromA2UI(parsed)
+        ? inferFrontendSlidesGateIdFromInteraction(parsed)
         : undefined;
-      const explicitGateId = extractA2UIGateId(parsed);
+      const explicitGateId = extractInteractionGateId(parsed);
       const frontendSlidesGateId = isFrontendSlidesGateId(explicitGateId)
         ? explicitGateId
         : inferredGateId;
@@ -3590,24 +3474,24 @@ async function runAgentRunWorker(
       if (!skillId && typeof interruptDisplayPayload?.skill === 'string' && interruptDisplayPayload.skill.trim()) {
         skillId = interruptDisplayPayload.skill.trim();
       }
-      const completedGateId = extractA2UIGateId(interruptPayload);
-      if (isCompletedFrontendSlidesGateInterrupt(interruptPayload, a2uiGateState)) {
+      const completedGateId = extractInteractionGateId(interruptPayload);
+      if (isCompletedFrontendSlidesGateInterrupt(interruptPayload, interactionGateState)) {
         completeLatestRunningWorkflowAction(`Skipped completed frontend-slides gate replay: ${completedGateId || 'unknown gate'}.`);
         await appendStreamEvent(runId, JSON.stringify({
-          type: 'a2ui_gate_skipped',
+          type: 'interaction_gate_skipped',
           gateId: completedGateId,
           reason: 'completed_gate_interrupt_ignored',
         }));
         return 'continue';
       }
       if (isFrontendSlidesRun(skillId, params) && !isFrontendSlidesEditExistingRun(params)) {
-        const nextRequiredGateId = nextMissingFrontendSlidesGate(a2uiGateState);
+        const nextRequiredGateId = nextMissingFrontendSlidesGate(interactionGateState);
         if (nextRequiredGateId && frontendSlidesGateId !== nextRequiredGateId) {
           completeLatestRunningWorkflowAction(
             `Recovered frontend-slides gate order: expected ${nextRequiredGateId}, got ${frontendSlidesGateId || interruptPayload.kind || 'interrupt'}.`,
           );
           await appendStreamEvent(runId, JSON.stringify({
-            type: 'a2ui_gate_recovered',
+            type: 'interaction_gate_recovered',
             expectedGateId: nextRequiredGateId,
             receivedGateId: frontendSlidesGateId || null,
             receivedInterruptKind: typeof interruptPayload.kind === 'string' ? interruptPayload.kind : null,
@@ -3709,7 +3593,7 @@ async function runAgentRunWorker(
           skillId,
           prompt: params.prompt,
           status: 'completed',
-          gateState: a2uiGateState,
+          gateState: interactionGateState,
         })
       : null;
     if (missingGateBeforeTerminal) {
@@ -3720,21 +3604,21 @@ async function runAgentRunWorker(
           skillId,
           prompt: params.prompt,
           status: 'completed',
-          gateState: a2uiGateState,
+          gateState: interactionGateState,
         }, latestFrontendSlidesArtifactPaths)
       : null;
     if (completionErrorBeforeTerminal) {
       contractErrorMessage = completionErrorBeforeTerminal;
       return 'continue';
     }
-    if (eventToAppend?.type === 'interrupt' && eventToAppend.a2uiRequest) {
-      const a2uiChunk = {
-        type: 'a2ui' as const,
-        message: eventToAppend.a2uiRequest,
-        surfaceId: (eventToAppend.a2uiRequest as any).surfaceId,
+    if (eventToAppend?.type === 'interrupt' && eventToAppend.interactionRequest) {
+      const interactionChunk = {
+        type: 'interaction' as const,
+        message: eventToAppend.interactionRequest,
+        interactionId: (eventToAppend.interactionRequest as any).interactionId,
         runId,
       };
-      await appendStreamEvent(runId, JSON.stringify(a2uiChunk));
+      await appendStreamEvent(runId, JSON.stringify(interactionChunk));
     }
     await appendStreamEvent(runId, eventToAppend ? JSON.stringify(normalizeInterruptPayloadRecord(eventToAppend)) : line);
     if (eventToAppend?.type === 'interrupt') {
@@ -3933,9 +3817,9 @@ export async function resumeAgentRunWithResponse(
   const baseParams = options?.authToken ? { ...context.params, authToken: options.authToken } : context.params;
   const previousInterruptIsSynthetic = isSyntheticClarificationInterrupt(options?.previousInterrupt);
   const currentMeta = await getRunMeta(runId);
-  const previousGateId = extractA2UIGateIdFromPendingInterrupt(options?.previousInterrupt);
-  const nextGateState = completeA2UIGate(
-    currentMeta?.a2uiGateState || { completedGateIds: [] },
+  const previousGateId = extractInteractionGateIdFromPendingInterrupt(options?.previousInterrupt);
+  const nextGateState = completeInteractionGate(
+    currentMeta?.interactionGateState || { completedGateIds: [] },
     previousGateId,
   );
   const nextParams = previousInterruptIsSynthetic
@@ -3956,7 +3840,7 @@ export async function resumeAgentRunWithResponse(
     startedAt: new Date().toISOString(),
     error: '',
     pendingInterrupt: '',
-    a2uiGateState: JSON.stringify(nextGateState),
+    interactionGateState: JSON.stringify(nextGateState),
     runContext: serializeRunContext(nextParams),
   });
   void runAgentRunWorker(
@@ -4008,9 +3892,9 @@ const isFrontendSlidesContextRun = (context: RunContext | undefined): boolean =>
 
 const buildStaleRunErrorMessage = (
   context: RunContext | undefined,
-  a2uiGateState: A2UIGateState,
+  interactionGateState: InteractionGateState,
 ): string => {
-  if (isFrontendSlidesContextRun(context) && hasCompletedAllFrontendSlidesGates(a2uiGateState)) {
+  if (isFrontendSlidesContextRun(context) && hasCompletedAllFrontendSlidesGates(interactionGateState)) {
     return 'Agent stalled after all frontend-slides gates completed before producing the final HTML deck. Please retry the deck generation.';
   }
   return 'Agent run stalled without a terminal event. Please retry the run.';
@@ -4027,7 +3911,7 @@ const abortActiveRunWorker = (runId: string) => {
 const reconcileActiveRunMetaFromStream = async (
   runId: string,
   meta: Record<string, string>,
-  a2uiGateState: A2UIGateState,
+  interactionGateState: InteractionGateState,
 ) => {
   if ((meta.status !== 'running' && meta.status !== 'queued') || meta.pendingInterrupt?.trim()) {
     return;
@@ -4036,9 +3920,9 @@ const reconcileActiveRunMetaFromStream = async (
   const inspection = await inspectRunStreamForRecovery(runId, meta.startedAt || meta.createdAt);
   const context = await loadRunContext(runId);
   const latestInterrupt = inspection.latestInterruptPayload;
-  const recoveredGateId = latestInterrupt ? extractA2UIGateId(latestInterrupt) : undefined;
+  const recoveredGateId = latestInterrupt ? extractInteractionGateId(latestInterrupt) : undefined;
   const recoveredGateIsComplete = Boolean(
-    recoveredGateId && a2uiGateState.completedGateIds.includes(recoveredGateId),
+    recoveredGateId && interactionGateState.completedGateIds.includes(recoveredGateId),
   );
 
   const recoveredFrontendSlidesArtifactPaths = inspection.latestFrontendSlidesArtifactPaths || {};
@@ -4062,7 +3946,7 @@ const reconcileActiveRunMetaFromStream = async (
         skillId: null,
         prompt: context.params.prompt,
         status: 'completed',
-        gateState: a2uiGateState,
+        gateState: interactionGateState,
       })
     : null;
   if (terminalEvent?.status === 'completed' && missingCompletionGate) {
@@ -4129,7 +4013,7 @@ const reconcileActiveRunMetaFromStream = async (
     return;
   }
 
-  const error = buildStaleRunErrorMessage(context, a2uiGateState);
+  const error = buildStaleRunErrorMessage(context, interactionGateState);
   await appendStreamEvent(runId, JSON.stringify({ type: 'error', message: error, recovered: true }));
   await appendStreamEvent(runId, JSON.stringify({ type: 'done', status: 'failed', recovered: true }));
   const completedAt = await markRunFinished(runId, 'failed', error);
@@ -4149,8 +4033,8 @@ export async function getRunMeta(runId: string): Promise<RunMeta | null> {
   if (!Object.keys(meta).length) {
     return null;
   }
-  const a2uiGateState = parseA2UIGateState(meta.a2uiGateState);
-  await reconcileActiveRunMetaFromStream(runId, meta, a2uiGateState);
+  const interactionGateState = parseInteractionGateState(meta.interactionGateState);
+  await reconcileActiveRunMetaFromStream(runId, meta, interactionGateState);
   return {
     workspaceId: meta.workspaceId,
     persona: meta.persona,
@@ -4161,7 +4045,7 @@ export async function getRunMeta(runId: string): Promise<RunMeta | null> {
     error: meta.error,
     turnId: meta.turnId,
     pendingInterrupt: parsePendingInterrupt(meta.pendingInterrupt),
-    a2uiGateState,
+    interactionGateState,
   };
 }
 
