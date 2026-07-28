@@ -11,6 +11,7 @@ import type {
   InteractionResponse,
   InterruptAction,
 } from '@helpudoc/contracts/types';
+import { buildApiUrl } from '../services/apiClient';
 
 type Choice = {
   id?: string;
@@ -25,6 +26,19 @@ type Question = {
   question?: string;
   options?: Choice[];
   placeholder?: string;
+};
+
+type StylePreview = Choice & {
+  choiceId?: string;
+  name?: string;
+  title?: string;
+  path?: string;
+  file?: string;
+  filePath?: string;
+  previewPath?: string;
+  html?: string;
+  srcDoc?: string;
+  content?: string;
 };
 
 const asRecord = (value: unknown): Record<string, unknown> => (
@@ -47,6 +61,18 @@ const choiceLabel = (choice: Choice, index: number) => (
   String(choice.label || choice.value || choice.id || `Option ${index + 1}`)
 );
 
+const normalizeKey = (value: unknown) => (
+  String(value || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+);
+
+const workspacePreviewUrl = (workspaceId: string | undefined, sourcePath: string) => {
+  if (!workspaceId || !sourcePath.trim()) return undefined;
+  const url = buildApiUrl(`/workspaces/${workspaceId}/files/preview/raw`);
+  url.searchParams.set('path', sourcePath.trim());
+  url.searchParams.set('disposition', 'inline');
+  return url.toString();
+};
+
 const decisionForAction = (actionId: string): InteractionResponse['decision'] => {
   const normalized = actionId.toLowerCase();
   if (normalized.includes('approve')) return 'approve';
@@ -59,6 +85,7 @@ const decisionForAction = (actionId: string): InteractionResponse['decision'] =>
 export function InteractionSurfaceRenderer({
   request,
   onSubmit,
+  workspaceId,
 }: {
   request: InteractionRequest;
   onSubmit: (response: InteractionResponse) => Promise<void>;
@@ -77,6 +104,23 @@ export function InteractionSurfaceRenderer({
     () => asChoices(props.choices),
     [props.choices],
   );
+  const previews = useMemo<StylePreview[]>(
+    () => Array.isArray(props.previews)
+      ? props.previews.filter((item): item is StylePreview => Boolean(item && typeof item === 'object'))
+      : [],
+    [props.previews],
+  );
+  const styleChoices = useMemo<Choice[]>(
+    () => choices.length
+      ? choices
+      : previews.map((preview, index) => ({
+          id: String(preview.id || preview.choiceId || preview.value || `style-${index + 1}`),
+          label: String(preview.label || preview.name || preview.title || `Style ${index + 1}`),
+          value: String(preview.value || preview.id || preview.choiceId || `style-${index + 1}`),
+          description: preview.description,
+        })),
+    [choices, previews],
+  );
   const actions = useMemo<InterruptAction[]>(
     () => Array.isArray(props.actions)
       ? props.actions.filter((item): item is InterruptAction => Boolean(
@@ -90,6 +134,14 @@ export function InteractionSurfaceRenderer({
   const [message, setMessage] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string>();
+  const inputMode = String(props.inputMode || '').toLowerCase();
+  const hasStructuredQuestions = questions.length > 0;
+  const showFallbackChoices = request.presentation === 'questionnaire'
+    && !hasStructuredQuestions
+    && choices.length > 0;
+  const showFallbackText = request.presentation === 'questionnaire'
+    && !hasStructuredQuestions
+    && (inputMode !== 'choice' || choices.length === 0);
 
   const submit = async (response: Omit<InteractionResponse, 'interactionId'>) => {
     setIsSubmitting(true);
@@ -146,6 +198,65 @@ export function InteractionSurfaceRenderer({
       ]
     : [];
   const reviewActions = actions.length ? actions : defaultActions;
+  const planSummary = String(props.summaryMarkdown || props.summary || '').trim();
+  const planChecklist = String(props.checklist || '').trim();
+  const planFilePath = String(props.planFilePath || props.filePath || '').trim();
+  const riskyActions = String(props.riskyActions || '').trim();
+  const planSteps = Array.isArray(props.steps) ? props.steps : [];
+  const hasRisk = Boolean(riskyActions && riskyActions.toLowerCase() !== 'none');
+
+  const renderStylePreviews = () => (
+    <Stack direction="vertical" gap={3} width="100%">
+      {styleChoices.map((choice, index) => {
+        const id = choiceId(choice, index);
+        const keys = [
+          normalizeKey(id),
+          normalizeKey(choice.value),
+          normalizeKey(choice.label),
+        ].filter(Boolean);
+        const preview = previews.find((item) => {
+          const previewKeys = [
+            item.id,
+            item.choiceId,
+            item.value,
+            item.label,
+            item.name,
+            item.title,
+          ].map(normalizeKey).filter(Boolean);
+          return keys.some((key) => previewKeys.includes(key));
+        }) || previews[index];
+        const html = String(preview?.html || preview?.srcDoc || preview?.content || '').trim();
+        const sourcePath = String(
+          preview?.path || preview?.file || preview?.filePath || preview?.previewPath || '',
+        ).trim();
+        const previewUrl = sourcePath ? workspacePreviewUrl(workspaceId, sourcePath) : undefined;
+        const isSelected = selectedChoiceId === id;
+        return (
+          <Stack key={id} direction="vertical" gap={2} width="100%">
+            {html || previewUrl ? (
+              <div
+                style={{
+                  overflow: 'hidden',
+                  border: `2px solid ${isSelected ? 'var(--color-border-blue)' : 'var(--color-border)'}`,
+                  borderRadius: 12,
+                  background: 'white',
+                }}
+              >
+                <iframe
+                  title={`${choiceLabel(choice, index)} preview`}
+                  src={html ? undefined : previewUrl}
+                  srcDoc={html || undefined}
+                  sandbox=""
+                  style={{ display: 'block', width: '100%', height: 240, border: 0 }}
+                />
+              </div>
+            ) : null}
+            {renderChoiceList([choice])}
+          </Stack>
+        );
+      })}
+    </Stack>
+  );
 
   return (
     <Card width="100%" padding={4}>
@@ -180,7 +291,74 @@ export function InteractionSurfaceRenderer({
             })
           : null}
 
-        {request.presentation === 'style_preview' ? renderChoiceList(choices) : null}
+        {showFallbackChoices ? renderChoiceList(choices) : null}
+
+        {showFallbackText ? (
+          <TextArea
+            label={String(props.label || 'Response')}
+            isLabelHidden
+            value={message}
+            placeholder={String(props.placeholder || 'Type your response…')}
+            isDisabled={isSubmitting}
+            onChange={setMessage}
+            width="100%"
+          />
+        ) : null}
+
+        {request.presentation === 'style_preview' ? renderStylePreviews() : null}
+
+        {request.presentation === 'plan_review' ? (
+          <Stack direction="vertical" gap={2} width="100%">
+            {planFilePath ? (
+              <Text type="supporting" color="secondary">Plan file: {planFilePath}</Text>
+            ) : null}
+            {planSummary ? (
+              <div style={{ whiteSpace: 'pre-wrap' }}>
+                <Text>{planSummary}</Text>
+              </div>
+            ) : null}
+            {planChecklist ? (
+              <Stack direction="vertical" gap={1}>
+                <Text weight="bold">Checklist</Text>
+                <div style={{ whiteSpace: 'pre-wrap' }}>
+                  <Text type="supporting">{planChecklist}</Text>
+                </div>
+              </Stack>
+            ) : null}
+            {planSteps.length ? (
+              <Stack direction="vertical" gap={1}>
+                <Text weight="bold">Steps</Text>
+                <List>
+                  {planSteps.map((step, index) => {
+                    const record = asRecord(step);
+                    const label = typeof step === 'string'
+                      ? step
+                      : String(record.title || record.label || record.description || `Step ${index + 1}`);
+                    const detail = typeof step === 'string'
+                      ? undefined
+                      : String(record.detail || record.description || '');
+                    return (
+                      <ListItem
+                        key={`${label}-${index}`}
+                        label={label}
+                        description={detail || undefined}
+                        startContent={<Badge variant="neutral" label={String(index + 1)} />}
+                      />
+                    );
+                  })}
+                </List>
+              </Stack>
+            ) : null}
+            {hasRisk ? (
+              <Stack direction="vertical" gap={1}>
+                <Text weight="bold" style={{ color: 'var(--color-text-error)' }}>Risk notes</Text>
+                <div style={{ whiteSpace: 'pre-wrap' }}>
+                  <Text type="supporting">{riskyActions}</Text>
+                </div>
+              </Stack>
+            ) : null}
+          </Stack>
+        ) : null}
 
         {(request.presentation === 'action_review' || request.presentation === 'plan_review') && message !== undefined
           ? (
@@ -204,13 +382,27 @@ export function InteractionSurfaceRenderer({
               label={String(props.submitLabel || 'Continue')}
               variant="primary"
               isLoading={isSubmitting}
-              isDisabled={isSubmitting || questions.some((question, index) => {
-                const id = String(question.id || `question-${index}`);
-                return !String(answers[id] || '').trim();
-              })}
+              isDisabled={isSubmitting || (
+                hasStructuredQuestions
+                  ? questions.some((question, index) => {
+                      const id = String(question.id || `question-${index}`);
+                      return !String(answers[id] || '').trim();
+                    })
+                  : inputMode === 'choice'
+                    ? !selectedChoiceId
+                    : inputMode === 'text_or_choice'
+                      ? !selectedChoiceId && !message.trim()
+                      : choices.length
+                        ? !selectedChoiceId && !message.trim()
+                        : !message.trim()
+              )}
               clickAction={() => submit({
                 actionId: request.resumeAction?.actionId || 'submit',
-                values: { answers },
+                values: {
+                  answers,
+                  ...(selectedChoiceId ? { selectedChoiceId } : {}),
+                  ...(message.trim() ? { response: message.trim() } : {}),
+                },
                 decision: 'submit',
               })}
             />
