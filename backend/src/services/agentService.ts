@@ -1,7 +1,6 @@
 import axios from "axios";
 import type { AxiosResponse } from "axios";
 import type { IncomingMessage } from "http";
-import type { FileContextRef } from '@helpudoc/contracts/types';
 
 const AGENT_URL = process.env.AGENT_URL || "http://localhost:8001";
 
@@ -9,7 +8,7 @@ const client = axios.create({
   baseURL: AGENT_URL,
 });
 
-const ATTACHMENT_UNDERSTANDING_TIMEOUT_MS = 30 * 60 * 1000;
+const DOCUMENT_EXTRACTION_TIMEOUT_MS = 5 * 60 * 1000;
 
 export type AgentHistoryEntry = {
   role: string;
@@ -63,37 +62,15 @@ type RunAgentOptions = {
   forceReset?: boolean;
   signal?: AbortSignal;
   authToken?: string;
-  fileContextRefs?: FileContextRef[];
   messageContent?: AgentMessageContentBlock[];
   internetSearchEnabled?: boolean;
   traceContext?: AgentTraceContext;
 };
 
-export type AttachmentUnderstandingPayload = {
-  fileName: string;
-  mimeType: string;
-  contentB64?: string;
-  /** When set with relativePath, the agent reads bytes from the shared workspace volume instead of contentB64. */
-  workspaceId?: string;
-  relativePath?: string;
-};
-
-export type AttachmentUnderstandingResponse = {
-  title?: string;
-  summary?: string;
-  outline?: string[];
+export type DocumentExtractionResponse = {
+  title: string;
+  summary: string;
   markdown: string;
-  sections?: Array<{ heading: string; body: string }>;
-  extractedAssets?: Array<{
-    name: string;
-    mimeType: string;
-    contentB64: string;
-    sourcePath?: string | null;
-    caption?: string | null;
-    footnote?: string | null;
-  }>;
-  effectiveMode?: 'part' | 'parser' | 'hybrid';
-  status?: 'ready' | 'partial';
 };
 
 type InternalAgentOptions = {
@@ -114,9 +91,6 @@ export async function runAgent(
 
   if (options?.forceReset) {
     payload.forceReset = true;
-  }
-  if (options?.fileContextRefs?.length) {
-    payload.fileContextRefs = options.fileContextRefs;
   }
   if (options?.messageContent?.length) {
     payload.messageContent = options.messageContent;
@@ -152,9 +126,6 @@ export async function runAgentStream(
 
   if (options?.forceReset) {
     payload.forceReset = true;
-  }
-  if (options?.fileContextRefs?.length) {
-    payload.fileContextRefs = options.fileContextRefs;
   }
   if (options?.messageContent?.length) {
     payload.messageContent = options.messageContent;
@@ -252,14 +223,6 @@ export async function resumeAgentActionStream(
   );
 }
 
-export async function fetchRagStatuses(
-  workspaceId: string,
-  files: string[],
-): Promise<Record<string, { status: string; updatedAt?: string; error?: string }>> {
-  const res = await client.post(`/rag/workspaces/${workspaceId}/status`, { files });
-  return res.data?.statuses || {};
-}
-
 export type InternalAnalyzeResponse = {
   text: string;
 };
@@ -330,13 +293,15 @@ export async function deleteInternalMemoryFile(
   return res.data;
 }
 
-export async function understandAttachment(
-  payload: AttachmentUnderstandingPayload,
-): Promise<AttachmentUnderstandingResponse> {
-  const res = await client.post('/attachments/understand', payload, {
-    maxContentLength: Infinity,
-    maxBodyLength: Infinity,
-    timeout: ATTACHMENT_UNDERSTANDING_TIMEOUT_MS,
+export async function extractWorkspaceDocument(
+  workspaceId: string,
+  relativePath: string,
+): Promise<DocumentExtractionResponse> {
+  const res = await client.post('/documents/extract', {
+    workspaceId,
+    relativePath,
+  }, {
+    timeout: DOCUMENT_EXTRACTION_TIMEOUT_MS,
   });
   return res.data;
 }

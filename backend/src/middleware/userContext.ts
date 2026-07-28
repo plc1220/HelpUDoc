@@ -2,8 +2,6 @@ import { Request, Response, NextFunction } from 'express';
 import { UserService } from '../services/userService';
 import { UserContext } from '../types/user';
 
-const DEFAULT_USER_NAME = process.env.DEFAULT_USER_NAME || 'Local User';
-const DEFAULT_USER_EMAIL = process.env.DEFAULT_USER_EMAIL || undefined;
 type AuthMode = 'headers' | 'oidc' | 'hybrid';
 
 function resolveAuthMode(raw?: string): AuthMode {
@@ -14,19 +12,24 @@ function resolveAuthMode(raw?: string): AuthMode {
   return 'hybrid';
 }
 
-const AUTH_MODE = resolveAuthMode(process.env.AUTH_MODE);
-
 export function userContextMiddleware(userService: UserService) {
+  // This factory runs after the entrypoint loads ENV_FILE. Reading these values
+  // at module evaluation time observes the pre-dotenv environment because ESM/
+  // TypeScript imports are evaluated before the entrypoint body.
+  const authMode = resolveAuthMode(process.env.AUTH_MODE);
+  const defaultUserName = process.env.DEFAULT_USER_NAME || 'Local User';
+  const defaultUserEmail = process.env.DEFAULT_USER_EMAIL || undefined;
+
   return async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const useSessionAuth = AUTH_MODE === 'oidc' || AUTH_MODE === 'hybrid';
+      const useSessionAuth = authMode === 'oidc' || authMode === 'hybrid';
       if (useSessionAuth && req.session?.userContext) {
         req.userContext = req.session.userContext;
         res.locals.userContext = req.session.userContext;
         return next();
       }
 
-      if (AUTH_MODE === 'oidc') {
+      if (authMode === 'oidc') {
         req.userContext = undefined;
         res.locals.userContext = undefined;
         return next();
@@ -46,8 +49,8 @@ export function userContextMiddleware(userService: UserService) {
         return next();
       }
 
-      const displayName = req.header('x-user-name') || DEFAULT_USER_NAME;
-      const email = req.header('x-user-email') || DEFAULT_USER_EMAIL;
+      const displayName = req.header('x-user-name') || defaultUserName;
+      const email = req.header('x-user-email') || defaultUserEmail;
 
       const userRecord = await userService.ensureUser({
         externalId,

@@ -23,7 +23,7 @@ const workspaceRoot = resolveWorkspaceRoot();
 const skillBuilderStorageRoot = path.join(repoRoot, '.local-run', 'skill-builder');
 const contextFilesRoot = path.join(skillBuilderStorageRoot, 'context-files');
 const ENABLE_SKILL_BUILDER_ASSISTANT = String(process.env.ENABLE_SKILL_BUILDER_ASSISTANT ?? 'true').toLowerCase() !== 'false';
-const ENABLE_SKILL_SANDBOX_RUNNER =
+const isSkillSandboxRunnerEnabled = () =>
   String(process.env.ENABLE_SKILL_SANDBOX_RUNNER ?? process.env.ENABLE_SKILL_SCRIPT_RUNNER ?? 'false').toLowerCase() === 'true';
 const CONTEXT_ALLOWED_EXTENSIONS = [
   '.py', '.md', '.txt', '.pdf', '.csv', '.json', '.yaml', '.yml', '.png', '.jpg', '.jpeg', '.webp', '.gif', '.svg',
@@ -262,7 +262,7 @@ export function registerSkillBuilderRoutes(router: Router, _workspaceService: Wo
         : payload.prompt;
 
       let authToken: string | undefined;
-      if (ENABLE_SKILL_SANDBOX_RUNNER) {
+      if (isSkillSandboxRunnerEnabled()) {
         const token = signAgentContextToken({
           sub: user.userId,
           userId: user.userId,

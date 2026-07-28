@@ -1,9 +1,8 @@
-import { FileIcon, Globe2, Paperclip, Plus, Send, StopCircle, X } from 'lucide-react';
+import { BookOpen, FileIcon, Globe2, Paperclip, Plus, Send, StopCircle, X } from 'lucide-react';
 import { type ChangeEvent, type ClipboardEvent, type KeyboardEvent, type RefObject, type SyntheticEvent, useEffect, useRef, useState } from 'react';
 
 import VerticalResizeHandle from '../VerticalResizeHandle';
 import { useVerticalPaneResize } from '../../hooks/useVerticalPaneResize';
-import type { File as WorkspaceFile } from '../../types';
 import type { ChatComposerAttachment } from './chatTypes';
 import GoogleDriveIcon from './GoogleDriveIcon';
 
@@ -21,6 +20,14 @@ type CommandSuggestion = {
 type CommandTag = {
   id: string;
   label: string;
+};
+
+export type ChatMentionSuggestion = {
+  id: string;
+  kind: 'file' | 'knowledge';
+  name: string;
+  mention: string;
+  detail?: string;
 };
 
 export default function ChatInputArea({
@@ -46,6 +53,7 @@ export default function ChatInputArea({
   onChatInputSelectionChange,
   onChatInputPaste,
   onOpenLocalAttachmentPicker,
+  onInsertKnowledgeTrigger,
   onToggleInternetSearch,
   onInsertSlashTrigger,
   onStopStreaming,
@@ -67,7 +75,7 @@ export default function ChatInputArea({
   internetSearchEnabled: boolean;
   commandTags: CommandTag[];
   isMentionOpen: boolean;
-  mentionSuggestions: WorkspaceFile[];
+  mentionSuggestions: ChatMentionSuggestion[];
   mentionSelectedIndex: number;
   isCommandOpen: boolean;
   commandSuggestions: CommandSuggestion[];
@@ -78,6 +86,7 @@ export default function ChatInputArea({
   onChatInputSelectionChange: (event: SyntheticEvent<HTMLTextAreaElement>) => void;
   onChatInputPaste: (event: ClipboardEvent<HTMLTextAreaElement>) => void;
   onOpenLocalAttachmentPicker: () => void;
+  onInsertKnowledgeTrigger: () => void;
   onToggleInternetSearch: () => void;
   onInsertSlashTrigger: () => void;
   onStopStreaming: () => void;
@@ -85,7 +94,7 @@ export default function ChatInputArea({
   onChatAttachmentChange: (event: ChangeEvent<HTMLInputElement>) => void;
   onRemoveChatAttachment: (index: number) => void;
   onRemoveCommandTag: (tagId: string) => void;
-  onSelectMention: (file: WorkspaceFile) => void;
+  onSelectMention: (suggestion: ChatMentionSuggestion) => void;
   onSelectCommand: (command: CommandSuggestion) => void;
 }) {
   const isDarkMode = colorMode === 'dark';
@@ -240,6 +249,24 @@ export default function ChatInputArea({
                       </span>
                     </div>
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsAttachmentMenuOpen(false);
+                      onInsertKnowledgeTrigger();
+                    }}
+                    className={`flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm font-medium transition ${
+                      isDarkMode ? 'text-slate-100 hover:bg-slate-800' : 'text-slate-800 hover:bg-slate-50'
+                    }`}
+                  >
+                    <BookOpen size={18} />
+                    <div className="flex flex-col">
+                      <span>Add knowledge</span>
+                      <span className={`text-[11px] font-normal ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                        Select a published OKF source
+                      </span>
+                    </div>
+                  </button>
                 </div>
               )}
             </div>
@@ -312,7 +339,7 @@ export default function ChatInputArea({
           ref={attachmentInputRef}
           className="hidden"
           multiple
-          accept="image/*,.pdf,.md,.txt,.doc,.docx"
+          accept="image/*,.pdf,.md,.txt,.csv,.tsv,.docx,.xlsx,.xlsm"
           onChange={onChatAttachmentChange}
         />
         {isMentionOpen && (
@@ -320,13 +347,13 @@ export default function ChatInputArea({
             isDarkMode ? 'border-slate-700/80 bg-slate-900/95' : 'border-slate-200 bg-white/95'
           }`}>
             {mentionSuggestions.length ? (
-              mentionSuggestions.map((file, index) => (
+              mentionSuggestions.map((suggestion, index) => (
                 <button
-                  key={file.id}
+                  key={suggestion.id}
                   type="button"
                   onMouseDown={(event) => {
                     event.preventDefault();
-                    onSelectMention(file);
+                    onSelectMention(suggestion);
                   }}
                   className={`flex w-full items-center px-3 py-2 text-left text-xs transition-all duration-200 ${
                     index === mentionSelectedIndex
@@ -338,12 +365,21 @@ export default function ChatInputArea({
                         : 'text-slate-700 hover:bg-slate-50'
                   }`}
                 >
-                  <FileIcon size={16} className={`mr-2 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`} />
-                  <span className="truncate">{file.name}</span>
+                  {suggestion.kind === 'knowledge' ? (
+                    <BookOpen size={16} className={`mr-2 ${isDarkMode ? 'text-emerald-400' : 'text-emerald-600'}`} />
+                  ) : (
+                    <FileIcon size={16} className={`mr-2 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`} />
+                  )}
+                  <span className="min-w-0 flex-1 truncate">{suggestion.name}</span>
+                  {suggestion.detail ? (
+                    <span className={`ml-2 shrink-0 text-[10px] uppercase ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>
+                      {suggestion.detail}
+                    </span>
+                  ) : null}
                 </button>
               ))
             ) : (
-              <div className={`px-3 py-2 text-xs ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>No matching files</div>
+              <div className={`px-3 py-2 text-xs ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>No matching files or knowledge</div>
             )}
           </div>
         )}

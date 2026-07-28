@@ -10,8 +10,8 @@ import {
   SettingsSurface,
 } from '../components/settings/SettingsScaffold';
 import { getWorkspaces } from '../services/workspaceApi';
-import { createKnowledge, deleteKnowledge, listKnowledge } from '../services/knowledgeApi';
-import { createFile, getRagStatuses } from '../services/fileApi';
+import { createKnowledge, deleteKnowledge, listKnowledge, rebuildKnowledge } from '../services/knowledgeApi';
+import { createFile } from '../services/fileApi';
 import type { Workspace } from '../types';
 
 type KnowledgeType = 'text' | 'table' | 'image' | 'presentation' | 'infographic';
@@ -40,28 +40,24 @@ type KnowledgeSource = {
 };
 
 const statusStyles: Record<string, { label: string; className: string }> = {
-  processed: {
-    label: 'Indexed',
+  published: {
+    label: 'Published',
     className: 'bg-emerald-50 text-emerald-700 border border-emerald-100',
   },
   processing: {
-    label: 'Processing',
+    label: 'Building OKF',
     className: 'bg-amber-50 text-amber-700 border border-amber-100',
   },
-  pending: {
+  queued: {
     label: 'Queued',
     className: 'bg-amber-50 text-amber-700 border border-amber-100',
   },
-  preprocessed: {
-    label: 'Preprocessing',
-    className: 'bg-amber-50 text-amber-700 border border-amber-100',
-  },
-  error: {
-    label: 'Error',
+  failed: {
+    label: 'Failed',
     className: 'bg-rose-50 text-rose-700 border border-rose-100',
   },
-  not_indexed: {
-    label: 'Not indexed',
+  not_started: {
+    label: 'Not published',
     className: 'bg-slate-100 text-slate-600 border border-slate-200',
   },
 };
@@ -86,15 +82,9 @@ const guessKnowledgeType = (file: File): KnowledgeType => {
     return 'image';
   }
   if (
-    mime.includes('presentation') ||
-    ['ppt', 'pptx', 'key'].includes(extension)
-  ) {
-    return 'presentation';
-  }
-  if (
     mime.includes('spreadsheet') ||
     mime.includes('csv') ||
-    ['csv', 'tsv', 'xls', 'xlsx'].includes(extension)
+    ['csv', 'tsv', 'xls', 'xlsx', 'xlsm'].includes(extension)
   ) {
     return 'table';
   }
@@ -105,10 +95,8 @@ const KnowledgePage = () => {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState('');
   const [knowledgeSources, setKnowledgeSources] = useState<KnowledgeSource[]>([]);
-  const [ragStatuses, setRagStatuses] = useState<Record<string, { status?: string; updatedAt?: string; error?: string }>>({});
   const [loadingWorkspaces, setLoadingWorkspaces] = useState(false);
   const [loadingKnowledge, setLoadingKnowledge] = useState(false);
-  const [loadingStatuses, setLoadingStatuses] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -117,14 +105,6 @@ const KnowledgePage = () => {
   const selectedWorkspace = useMemo(
     () => workspaces.find((workspace) => workspace.id === selectedWorkspaceId) || null,
     [workspaces, selectedWorkspaceId],
-  );
-
-  const knowledgeFileNames = useMemo(
-    () =>
-      knowledgeSources
-        .map((item) => item.file?.name)
-        .filter((name): name is string => typeof name === 'string' && name.trim().length > 0),
-    [knowledgeSources],
   );
 
   const loadWorkspaces = useCallback(async () => {
@@ -164,26 +144,6 @@ const KnowledgePage = () => {
     [],
   );
 
-  const refreshRagStatuses = useCallback(async () => {
-    if (!selectedWorkspaceId) {
-      setRagStatuses({});
-      return;
-    }
-    if (!knowledgeFileNames.length) {
-      setRagStatuses({});
-      return;
-    }
-    setLoadingStatuses(true);
-    try {
-      const response = await getRagStatuses(selectedWorkspaceId, knowledgeFileNames);
-      setRagStatuses(response?.statuses || {});
-    } catch (error) {
-      console.error('Failed to fetch RAG status', error);
-    } finally {
-      setLoadingStatuses(false);
-    }
-  }, [knowledgeFileNames, selectedWorkspaceId]);
-
   const handleUploadClick = () => {
     uploadInputRef.current?.click();
   };
@@ -216,12 +176,22 @@ const KnowledgePage = () => {
         });
       }
       await loadKnowledgeSources(selectedWorkspaceId);
-      await refreshRagStatuses();
     } catch (error) {
       console.error('Failed to upload knowledge files', error);
       setUploadError(error instanceof Error ? error.message : 'Failed to upload files.');
     } finally {
       setUploading(false);
+    }
+  };
+
+  const handleRebuildKnowledge = async (item: KnowledgeSource) => {
+    if (!selectedWorkspaceId) return;
+    try {
+      await rebuildKnowledge(selectedWorkspaceId, item.id);
+      await loadKnowledgeSources(selectedWorkspaceId);
+    } catch (error) {
+      console.error('Failed to rebuild knowledge source', error);
+      setErrorMessage(error instanceof Error ? error.message : 'Failed to rebuild knowledge source.');
     }
   };
 
@@ -241,7 +211,6 @@ const KnowledgePage = () => {
   const handleRefresh = async () => {
     if (!selectedWorkspaceId) return;
     await loadKnowledgeSources(selectedWorkspaceId);
-    await refreshRagStatuses();
   };
 
   useEffect(() => {
@@ -264,7 +233,6 @@ const KnowledgePage = () => {
   useEffect(() => {
     if (!selectedWorkspaceId) {
       setKnowledgeSources([]);
-      setRagStatuses({});
       return;
     }
     void loadKnowledgeSources(selectedWorkspaceId);
@@ -272,21 +240,18 @@ const KnowledgePage = () => {
 
   useEffect(() => {
     if (!selectedWorkspaceId) return;
-    void refreshRagStatuses();
-  }, [refreshRagStatuses, selectedWorkspaceId]);
-
-  useEffect(() => {
-    if (!selectedWorkspaceId) return;
-    const hasPending = Object.values(ragStatuses).some((status) => {
-      const normalized = normalizeStatus(status?.status);
-      return ['pending', 'processing', 'preprocessed'].includes(normalized);
+    const hasPending = knowledgeSources.some((item) => {
+      const ingestion = item.metadata?.ingestion;
+      if (!ingestion || typeof ingestion !== 'object') return false;
+      const status = normalizeStatus((ingestion as { status?: string }).status);
+      return status === 'queued' || status === 'processing';
     });
     if (!hasPending) return;
     const interval = window.setInterval(() => {
-      void refreshRagStatuses();
+      void loadKnowledgeSources(selectedWorkspaceId);
     }, 5000);
     return () => window.clearInterval(interval);
-  }, [ragStatuses, refreshRagStatuses, selectedWorkspaceId]);
+  }, [knowledgeSources, loadKnowledgeSources, selectedWorkspaceId]);
 
   const actions = (
     <div className="flex flex-wrap items-center gap-3">
@@ -310,26 +275,31 @@ const KnowledgePage = () => {
       <button
         type="button"
         onClick={handleRefresh}
-        disabled={!selectedWorkspaceId || loadingKnowledge || loadingStatuses}
+        disabled={!selectedWorkspaceId || loadingKnowledge}
         className="settings-portal-button-secondary inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium transition disabled:opacity-60"
       >
-        {loadingKnowledge || loadingStatuses ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw size={16} />}
+        {loadingKnowledge ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw size={16} />}
         Refresh
       </button>
     </div>
   );
 
-  const renderStatusBadge = (fileName?: string | null) => {
-    if (!fileName) {
-      return (
-        <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs text-slate-500">
-          Manual
-        </span>
-      );
-    }
-    const statusInfo = ragStatuses[fileName];
-    const normalized = normalizeStatus(statusInfo?.status);
-    const style = statusStyles[normalized] || statusStyles.not_indexed;
+  const getIngestion = (item: KnowledgeSource) => (
+    item.metadata?.ingestion && typeof item.metadata.ingestion === 'object'
+      ? item.metadata.ingestion as {
+          status?: string;
+          error?: string | null;
+          publishedAt?: string;
+          bundlePath?: string;
+          conceptCount?: number;
+          okfVersion?: string;
+        }
+      : null
+  );
+
+  const renderStatusBadge = (item: KnowledgeSource) => {
+    const normalized = normalizeStatus(getIngestion(item)?.status) || 'not_started';
+    const style = statusStyles[normalized] || statusStyles.not_started;
     return (
       <span className={`rounded-full px-2.5 py-1 text-xs ${style.className}`}>
         {style.label}
@@ -337,23 +307,26 @@ const KnowledgePage = () => {
     );
   };
 
-  const renderRagDetail = (fileName?: string | null) => {
-    if (!fileName) return null;
-    const statusInfo = ragStatuses[fileName];
-    if (!statusInfo?.status) {
-      return <p className="text-xs text-slate-500">RAG status pending.</p>;
+  const renderIngestionDetail = (item: KnowledgeSource) => {
+    const ingestion = getIngestion(item);
+    if (!ingestion) {
+      return <p className="text-xs text-slate-500">This source has not been published to OKF.</p>;
     }
-    const updatedAt = statusInfo.updatedAt ? new Date(statusInfo.updatedAt).toLocaleString() : null;
-    if (statusInfo.error) {
+    if (ingestion.error) {
       return (
         <p className="text-xs text-rose-600">
-          {statusInfo.error}
+          {ingestion.error}
         </p>
       );
     }
+    const publishedAt = ingestion.publishedAt
+      ? new Date(ingestion.publishedAt).toLocaleString()
+      : null;
     return (
       <p className="text-xs text-slate-500">
-        {updatedAt ? `Last updated ${updatedAt}` : 'RAG status updated recently.'}
+        {publishedAt
+          ? `OKF ${ingestion.okfVersion || '0.2'} • ${ingestion.conceptCount || 0} concepts • published ${publishedAt}`
+          : 'Preparing a versioned OKF knowledge bundle in the background.'}
       </p>
     );
   };
@@ -379,7 +352,7 @@ const KnowledgePage = () => {
             <SettingsSectionHeader
               eyebrow="Ingest"
               title="Add knowledge"
-              description="Upload files and we’ll index supported documents automatically."
+              description="Upload curated sources to publish as versioned OKF knowledge."
             />
 
             <div className="settings-soft-panel mt-6 rounded-2xl border border-dashed p-6 text-center">
@@ -387,6 +360,7 @@ const KnowledgePage = () => {
                 ref={uploadInputRef}
                 type="file"
                 multiple
+                accept=".pdf,.docx,.xlsx,.xlsm,.csv,.tsv,.txt,.md"
                 className="hidden"
                 onChange={handleFileUpload}
               />
@@ -400,7 +374,7 @@ const KnowledgePage = () => {
                 Upload files
               </button>
               <p className="mt-3 text-xs text-slate-500">
-                PDF, DOC/DOCX, and Markdown files are indexed for RAG as soon as they land in your workspace.
+                Knowledge ingestion is separate from workspace upload and runs asynchronously.
               </p>
               {uploadError ? (
                 <p className="mt-3 text-xs text-rose-600">{uploadError}</p>
@@ -410,9 +384,9 @@ const KnowledgePage = () => {
             <div className="settings-portal-card mt-6 rounded-[24px] p-5">
               <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Tips</p>
               <ul className="mt-2 space-y-2 text-sm text-slate-600">
-                <li>RAG indexing runs for PDF, DOC/DOCX, and Markdown files.</li>
-                <li>CSVs and slides are stored but not indexed.</li>
-                <li>Large documents may take a few minutes to finish indexing.</li>
+                <li>Sources are converted into human-readable OKF v0.2 Markdown concepts.</li>
+                <li>No embeddings or vector index are created.</li>
+                <li>Large documents may take a few minutes to publish.</li>
                 <li>Use the workspace selector above to target a different knowledge base.</li>
               </ul>
             </div>
@@ -461,7 +435,17 @@ const KnowledgePage = () => {
                           </p>
                         </div>
                         <div className="flex items-center gap-2">
-                          {renderStatusBadge(item.file?.name)}
+                          {renderStatusBadge(item)}
+                          {normalizeStatus(getIngestion(item)?.status) === 'failed' ? (
+                            <button
+                              type="button"
+                              className="settings-portal-button-secondary inline-flex items-center gap-1 rounded-xl px-2.5 py-1.5 text-xs transition"
+                              onClick={() => handleRebuildKnowledge(item)}
+                            >
+                              <RotateCcw size={12} />
+                              Retry
+                            </button>
+                          ) : null}
                           <button
                             type="button"
                             className="settings-portal-button-secondary inline-flex items-center gap-1 rounded-xl px-2.5 py-1.5 text-xs transition"
@@ -473,7 +457,7 @@ const KnowledgePage = () => {
                         </div>
                       </div>
                       {item.description ? <p className="text-sm text-slate-600">{item.description}</p> : null}
-                      {renderRagDetail(item.file?.name)}
+                      {renderIngestionDetail(item)}
                     </div>
                   </div>
                 </div>

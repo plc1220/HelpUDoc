@@ -43,12 +43,54 @@ export const normalizeInterruptPayloadRecord = (payload: Record<string, unknown>
     typeof payload.interruptId === 'string' && payload.interruptId.trim()
       ? payload.interruptId.trim()
       : buildInterruptId(payload);
-  if (payload.interruptId === interruptId) {
+  const interactionRequest =
+    payload.interactionRequest &&
+    typeof payload.interactionRequest === 'object' &&
+    !Array.isArray(payload.interactionRequest)
+      ? payload.interactionRequest as Record<string, unknown>
+      : undefined;
+  const metadata =
+    interactionRequest?.metadata &&
+    typeof interactionRequest.metadata === 'object' &&
+    !Array.isArray(interactionRequest.metadata)
+      ? interactionRequest.metadata as Record<string, unknown>
+      : undefined;
+  const displayPayloadValue = payload.displayPayload || payload.display_payload || metadata;
+  const displayPayload =
+    displayPayloadValue &&
+    typeof displayPayloadValue === 'object' &&
+    !Array.isArray(displayPayloadValue)
+      ? displayPayloadValue as Record<string, unknown>
+      : undefined;
+  const synthetic = Boolean(
+    displayPayload?.synthetic === true ||
+    metadata?.synthetic === true ||
+    (displayPayload?.source === 'implicit_input_guard' &&
+      displayPayload?.interactionContract === 'helpudoc.interaction') ||
+    (metadata?.source === 'implicit_input_guard' &&
+      metadata?.interactionContract === 'helpudoc.interaction'),
+  );
+  const resumeStrategy =
+    payload.resumeStrategy === 'fresh_prompt' || payload.resumeStrategy === 'checkpoint'
+      ? payload.resumeStrategy
+      : synthetic
+        ? 'fresh_prompt'
+        : undefined;
+  const needsDisplayPayloadProjection =
+    (!payload.displayPayload || typeof payload.displayPayload !== 'object' || Array.isArray(payload.displayPayload)) &&
+    Boolean(displayPayload);
+  if (
+    payload.interruptId === interruptId &&
+    !needsDisplayPayloadProjection &&
+    payload.resumeStrategy === resumeStrategy
+  ) {
     return payload;
   }
   return {
     ...payload,
     interruptId,
+    ...(needsDisplayPayloadProjection ? { displayPayload } : {}),
+    ...(resumeStrategy ? { resumeStrategy } : {}),
   };
 };
 
@@ -139,6 +181,10 @@ export const parsePendingInterrupt = (raw: string | undefined): RunPendingInterr
       kind:
         payload.kind === 'clarification' || payload.kind === 'approval'
           ? payload.kind
+          : undefined,
+      resumeStrategy:
+        payload.resumeStrategy === 'fresh_prompt' || payload.resumeStrategy === 'checkpoint'
+          ? payload.resumeStrategy
           : undefined,
       interruptId: typeof payload.interruptId === 'string' ? payload.interruptId : undefined,
       title: typeof payload.title === 'string' ? payload.title : undefined,

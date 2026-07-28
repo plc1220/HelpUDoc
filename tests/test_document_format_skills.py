@@ -7,7 +7,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "agent"))
 
-from helpudoc_agent.skills_registry import load_skills  # noqa: E402
+from helpudoc_agent.skills_registry import load_skills, resolve_skill_scope  # noqa: E402
 
 
 def test_document_format_skills_are_discoverable() -> None:
@@ -21,6 +21,35 @@ def test_document_format_skills_are_discoverable() -> None:
     assert "image" in ids
     assert "pptx" in ids
     assert "general" not in ids
+
+
+def test_document_skills_use_on_demand_inspection() -> None:
+    skills = {skill.skill_id: skill for skill in load_skills(REPO_ROOT / "skills")}
+    pdf_content = (REPO_ROOT / "skills" / "pdf" / "SKILL.md").read_text(encoding="utf-8")
+    docx_content = (REPO_ROOT / "skills" / "docx" / "SKILL.md").read_text(encoding="utf-8")
+    xlsx_content = (REPO_ROOT / "skills" / "xlsx" / "SKILL.md").read_text(encoding="utf-8")
+    general_prompt = (REPO_ROOT / "agent" / "prompts" / "general" / "core.md").read_text(encoding="utf-8")
+    runtime_prompt = (REPO_ROOT / "agent" / "helpudoc_agent" / "runtime" / "agent_registry.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert skills["pdf"].tools == [
+        "document_inspection",
+        "create_pdf_from_images",
+        "request_clarification",
+    ]
+    assert "search_document" in pdf_content
+    assert "inspect_document" in pdf_content
+    assert "search_document" in docx_content
+    assert "inspect_document" in docx_content
+    assert "document_inspection" in skills["xlsx"].tools
+    assert "search_document" in xlsx_content
+    assert "inspect_document" in xlsx_content
+    assert "For a tagged or named `.pdf`, load the `pdf` skill." in general_prompt
+    assert "for DOCX or Word documents load the docx skill" in runtime_prompt
+    assert "For `@knowledge` context" in general_prompt
+    assert "search_document" in resolve_skill_scope(skills["pdf"]).runtime_tools
+    assert "inspect_document" in resolve_skill_scope(skills["xlsx"]).runtime_tools
 
 
 def test_pptx_requests_route_to_pptx_not_frontend_slides() -> None:

@@ -44,7 +44,6 @@ def load_agent_runtime_env() -> AgentRuntimeEnv:
             env_trim("GEMINI_API_KEY")
             or env_trim("GOOGLE_API_KEY")
             or env_trim("GOOGLE_CLOUD_API_KEY")
-            or env_trim("LLM_BINDING_API_KEY")
         ),
     )
 
@@ -60,23 +59,6 @@ def reset_agent_env_caches_for_tests() -> None:
     """Clear cached env reads (for tests that mutate os.environ)."""
     global _runtime_cache
     _runtime_cache = None
-
-
-def ensure_lightrag_postgres_env_defaults() -> None:
-    """Set LightRAG + Postgres defaults expected by the HKU LightRAG stack."""
-    os.environ.setdefault("LIGHTRAG_KV_STORAGE", "PGKVStorage")
-    os.environ.setdefault("LIGHTRAG_DOC_STATUS_STORAGE", "PGDocStatusStorage")
-    os.environ.setdefault("LIGHTRAG_GRAPH_STORAGE", "PGGraphStorage")
-    os.environ.setdefault("LIGHTRAG_VECTOR_STORAGE", "PGVectorStorage")
-
-    if "POSTGRES_DATABASE" not in os.environ and "POSTGRES_DB" in os.environ:
-        os.environ["POSTGRES_DATABASE"] = os.environ["POSTGRES_DB"]
-
-    os.environ.setdefault("POSTGRES_HOST", "localhost")
-    os.environ.setdefault("POSTGRES_PORT", "5432")
-    os.environ.setdefault("POSTGRES_USER", "helpudoc")
-    os.environ.setdefault("POSTGRES_PASSWORD", "helpudoc")
-    os.environ.setdefault("POSTGRES_DATABASE", "helpudoc")
 
 
 def _read_service_account_namespace() -> str | None:
@@ -123,15 +105,4 @@ def load_sandbox_k8s_env() -> SandboxK8sEnv:
             float(env_trim("HELPUDOC_SANDBOX_POLL_INTERVAL_SECONDS") or "1"),
         ),
         allow_kubeconfig=allow_raw in {"1", "true", "yes"},
-    )
-
-
-def gemini_key_for_embeddings(explicit: str | None) -> str | None:
-    """Resolve Gemini API key for embedding calls (explicit arg wins)."""
-    return (
-        explicit
-        or env_trim("GEMINI_API_KEY")
-        or env_trim("GOOGLE_API_KEY")
-        or env_trim("GOOGLE_CLOUD_API_KEY")
-        or env_trim("LLM_BINDING_API_KEY")
     )

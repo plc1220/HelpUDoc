@@ -9,7 +9,7 @@ import { GoogleOAuthService, GoogleOAuthTokenMissingError } from '../../services
 import type { UserService } from '../../services/userService';
 
 const AUTH_MODE = (process.env.AUTH_MODE || 'headers').trim().toLowerCase();
-const ENABLE_SKILL_SANDBOX_RUNNER =
+const isSkillSandboxRunnerEnabled = () =>
   String(process.env.ENABLE_SKILL_SANDBOX_RUNNER ?? 'false').toLowerCase() === 'true';
 const BQ_DELEGATED_MCP_SERVER_ID = 'toolbox-bq-demo';
 
@@ -170,7 +170,7 @@ export function createAgentPolicyApi(googleOAuthService: GoogleOAuthService, use
       skipPlanApprovals: true,
       ...input.policy,
     };
-    if (ENABLE_SKILL_SANDBOX_RUNNER) {
+    if (isSkillSandboxRunnerEnabled()) {
       payload.allowSkillSandbox = true;
     }
 

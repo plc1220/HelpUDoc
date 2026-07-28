@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 
-import fitz
 from PIL import Image
+from pypdf import PdfReader
 
 from helpudoc_agent.configuration import ToolConfig
 from helpudoc_agent.tools_and_schemas import ToolFactory
@@ -66,11 +66,7 @@ def test_create_pdf_from_images_builds_one_page_per_image(tmp_path):
     )
 
     assert "Created PDF /stitched.pdf with 3 pages" in result
-    pdf = fitz.open(tmp_path / "stitched.pdf")
-    try:
-        assert pdf.page_count == 3
-    finally:
-        pdf.close()
+    assert len(PdfReader(tmp_path / "stitched.pdf").pages) == 3
 
 
 def test_load_skill_limits_runaway_skill_switches(tmp_path):

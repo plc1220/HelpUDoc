@@ -98,6 +98,21 @@ export default function(knowledgeService: KnowledgeService) {
     }
   });
 
+  router.post('/:knowledgeId/ingest', async (req: Request<{ workspaceId: string; knowledgeId: string }>, res: Response) => {
+    try {
+      const { workspaceId, knowledgeId } = req.params;
+      const user = requireUserContext(req);
+      const id = parseInt(knowledgeId, 10);
+      if (Number.isNaN(id)) {
+        return res.status(400).json({ error: 'Invalid knowledge id' });
+      }
+      const item = await knowledgeService.rebuild(workspaceId, id, user.userId);
+      res.status(202).json(item);
+    } catch (error) {
+      handleError(res, error, 'Failed to start knowledge ingestion');
+    }
+  });
+
   router.delete('/:knowledgeId', async (req: Request<{ workspaceId: string; knowledgeId: string }>, res: Response) => {
     try {
       const { workspaceId, knowledgeId } = req.params;

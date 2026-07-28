@@ -153,31 +153,35 @@ def build_create_pdf_from_images_tool(workspace_state: WorkspaceState) -> Tool:
             if normalized_fit not in {"contain", "cover", "stretch"}:
                 return "fit_mode must be one of: contain, cover, stretch"
 
-            import fitz  # PyMuPDF
-
-            doc = fitz.open()
+            pages: List[Image.Image] = []
             for image_path in resolved_images:
                 with Image.open(image_path) as img:
-                    width, height = img.size
-                page_width, page_height = _page_size_points(page_size, width, height)
-                page = doc.new_page(width=page_width, height=page_height)
+                    source = img.convert("RGB")
+                    width, height = source.size
+                    page_width, page_height = _page_size_points(page_size, width, height)
+                    target_size = (max(1, round(page_width)), max(1, round(page_height)))
+                    if normalized_fit == "stretch":
+                        rendered = source.resize(target_size)
+                    elif normalized_fit == "cover":
+                        from PIL import ImageOps
 
-                if normalized_fit == "stretch":
-                    rect = fitz.Rect(0, 0, page_width, page_height)
-                else:
-                    scale = min(page_width / width, page_height / height)
-                    if normalized_fit == "cover":
-                        scale = max(page_width / width, page_height / height)
-                    draw_width = width * scale
-                    draw_height = height * scale
-                    left = (page_width - draw_width) / 2
-                    top = (page_height - draw_height) / 2
-                    rect = fitz.Rect(left, top, left + draw_width, top + draw_height)
-                page.insert_image(rect, filename=str(image_path), keep_proportion=normalized_fit != "stretch")
+                        rendered = ImageOps.fit(source, target_size)
+                    else:
+                        from PIL import ImageOps
+
+                        rendered = Image.new("RGB", target_size, "white")
+                        contained = ImageOps.contain(source, target_size)
+                        offset = (
+                            (target_size[0] - contained.width) // 2,
+                            (target_size[1] - contained.height) // 2,
+                        )
+                        rendered.paste(contained, offset)
+                    pages.append(rendered)
 
             output.parent.mkdir(parents=True, exist_ok=True)
-            doc.save(output)
-            doc.close()
+            pages[0].save(output, "PDF", save_all=True, append_images=pages[1:])
+            for page in pages:
+                page.close()
         except Exception as exc:
             return f"Error creating PDF: {exc}"
 

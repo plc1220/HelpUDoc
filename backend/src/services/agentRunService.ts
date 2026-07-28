@@ -21,6 +21,7 @@ export {
   detectImplicitInputAwaiting,
   extractInteractionGateIdFromPendingInterrupt,
   buildSyntheticClarificationFollowupPrompt,
+  buildSyntheticResumeParams,
   buildFrontendSlidesWorkflowState,
   inferFrontendSlidesGateIdFromInteraction,
   isCompletedFrontendSlidesGateInterrupt,

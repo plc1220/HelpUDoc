@@ -33,7 +33,7 @@ Spreadsheet routing:
 - Load a `data/*` skill when the spreadsheet or tabular file is the input to an
   analysis, SQL query, chart, dashboard, validation, or recurring data snapshot.
 - Do not treat `.xlsx`, `.xls`, `.ods`, or `.parquet` files as UTF-8 text. Use
-  structured parsers, derived artifacts, or data plugin scripts.
+  the document inspection tools or data plugin scripts.
 
 ## Connector selection (apply in every subskill)
 

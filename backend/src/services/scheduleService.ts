@@ -9,7 +9,6 @@ import { getRunMeta, startAgentRun, type AgentRunStatus } from './agentRunServic
 import { createAgentPolicyApi } from '../api/agent/policy';
 import { NotFoundError } from '../errors';
 import type {
-  FileContextRef,
   WorkspaceSchedule,
   WorkspaceScheduleCadence,
   WorkspaceScheduleDraft,
@@ -26,7 +25,6 @@ type WorkspaceScheduleRow = Omit<
   | 'selectedSkills'
   | 'contextRefs'
   | 'taggedFiles'
-  | 'fileContextRefs'
   | 'nextRunAt'
   | 'lastRunAt'
   | 'createdAt'
@@ -35,7 +33,6 @@ type WorkspaceScheduleRow = Omit<
   selectedSkills: unknown;
   contextRefs: unknown;
   taggedFiles: unknown;
-  fileContextRefs: unknown;
   nextRunAt?: string | Date | null;
   lastRunAt?: string | Date | null;
   createdAt: string | Date;
@@ -368,7 +365,6 @@ export class ScheduleService {
         selectedSkills: JSON.stringify(normalizeStringArray(payload.selectedSkills)),
         contextRefs: JSON.stringify(normalizeStringArray(payload.contextRefs)),
         taggedFiles: JSON.stringify(normalizeStringArray(payload.taggedFiles)),
-        fileContextRefs: JSON.stringify(toJsonArray<FileContextRef>(payload.fileContextRefs)),
         outputMode: payload.outputMode || 'append_to_conversation',
         notificationMode: payload.notificationMode || 'none',
         nextRunAt: nextRunAt.toISOString(),
@@ -414,7 +410,6 @@ export class ScheduleService {
     if (payload.selectedSkills !== undefined) update.selectedSkills = JSON.stringify(normalizeStringArray(payload.selectedSkills));
     if (payload.contextRefs !== undefined) update.contextRefs = JSON.stringify(normalizeStringArray(payload.contextRefs));
     if (payload.taggedFiles !== undefined) update.taggedFiles = JSON.stringify(normalizeStringArray(payload.taggedFiles));
-    if (payload.fileContextRefs !== undefined) update.fileContextRefs = JSON.stringify(toJsonArray<FileContextRef>(payload.fileContextRefs));
     if (payload.outputMode !== undefined) update.outputMode = payload.outputMode;
     if (payload.notificationMode !== undefined) update.notificationMode = payload.notificationMode;
     if (payload.sourceConversationId !== undefined) update.sourceConversationId = payload.sourceConversationId || null;
@@ -587,7 +582,6 @@ export class ScheduleService {
         forceReset: true,
         turnId,
         authToken: authToken || undefined,
-        fileContextRefs: toJsonArray<FileContextRef>(schedule.fileContextRefs),
       });
 
       const nextRunAt = options.updateNextRunAt
@@ -773,7 +767,6 @@ export class ScheduleService {
       selectedSkills: toJsonArray<string>(row.selectedSkills),
       contextRefs: toJsonArray<string>(row.contextRefs),
       taggedFiles: toJsonArray<string>(row.taggedFiles),
-      fileContextRefs: toJsonArray<FileContextRef>(row.fileContextRefs),
       outputMode: row.outputMode as WorkspaceScheduleOutputMode,
       notificationMode: row.notificationMode as WorkspaceScheduleNotificationMode,
       sourceConversationId: row.sourceConversationId || null,

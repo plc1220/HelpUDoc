@@ -23,7 +23,7 @@ Get fully prepared for a sales call without rebuilding the whole account story f
 │  + Gmail: recent threads, commitments, unanswered questions    │
 │  + Drive: decks, notes, proposals, transcript artifacts        │
 │  + Sheets: account plans and trackers when relevant            │
-│  + Tagged files: workspace-specific context via rag_query      │
+│  + Tagged files: inspect original workspace documents on demand│
 │  + CRM: optional history and deal context                      │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -50,7 +50,7 @@ Follow this order every time:
 1. Google Calendar for the meeting shell
 2. Gmail for recent threads and unanswered questions
 3. Google Drive for notes, decks, proposals, and transcript artifacts
-4. Tagged workspace files via `rag_query`
+4. Tagged workspace files via `search_document` and bounded `inspect_document` reads
 5. Google Sheets for account plans or trackers when relevant
 6. Google Search for current company, market, or attendee context
 7. CRM only if connected or clearly requested
@@ -166,7 +166,7 @@ Use Drive next:
 - search for notes, decks, proposals, recap docs, and transcript files
 - extract the latest relevant context instead of listing every file
 
-Use `rag_query` for any tagged files:
+Use `search_document` and `inspect_document` for any tagged files:
 
 - prefer tagged files before broad search
 - treat them as high-trust context for this ask

@@ -5,7 +5,6 @@ import { DatabaseService } from './databaseService';
 import { Knex } from 'knex';
 import { WorkspaceService } from './workspaceService';
 import { ConflictError, NotFoundError } from '../errors';
-import { RagQueueService } from './ragQueueService';
 import { resolveWorkspaceRoot } from '../config/workspaceRoot';
 
 const WORKSPACE_DIR = resolveWorkspaceRoot();
@@ -19,8 +18,6 @@ const TEXT_MIME_TYPES = [
 ];
 
 const TEXT_FILE_EXTENSIONS = ['.md', '.mermaid', '.txt', '.json', '.html', '.css', '.js', '.ts', '.tsx', '.jsx', '.svg', '.csv'];
-const DIRECT_RAG_INDEXABLE_EXTENSIONS = new Set(['.doc', '.md']);
-const ARTIFACT_MANAGED_RAG_EXTENSIONS = new Set(['.pdf', '.docx', '.pptx', '.xlsx']);
 const INTERNAL_WORKSPACE_DIR_NAMES = new Set(['.system']);
 const TEXT_MIME_TYPES_BY_EXTENSION: Record<string, string> = {
   '.md': 'text/markdown',
@@ -61,24 +58,11 @@ export class FileService {
   private s3Service: S3Service;
   private db: Knex;
   private workspaceService: WorkspaceService;
-  private ragQueueService?: RagQueueService;
-  private derivedArtifactCleanup?: {
-    purgeSourceArtifacts: (workspaceId: string, sourceFileId: number, userId: string) => Promise<void>;
-  };
 
-  constructor(databaseService: DatabaseService, workspaceService: WorkspaceService, ragQueueService?: RagQueueService) {
+  constructor(databaseService: DatabaseService, workspaceService: WorkspaceService) {
     this.s3Service = new S3Service();
     this.db = databaseService.getDb();
     this.workspaceService = workspaceService;
-    this.ragQueueService = ragQueueService;
-  }
-
-  setDerivedArtifactCleanup(
-    derivedArtifactCleanup: {
-      purgeSourceArtifacts: (workspaceId: string, sourceFileId: number, userId: string) => Promise<void>;
-    },
-  ) {
-    this.derivedArtifactCleanup = derivedArtifactCleanup;
   }
 
   private isInternalWorkspacePath(fileName: string): boolean {
@@ -186,20 +170,6 @@ export class FileService {
     }
     const ext = path.extname(fileName).toLowerCase();
     return TEXT_MIME_TYPES_BY_EXTENSION[ext] || BINARY_MIME_TYPES_BY_EXTENSION[ext] || null;
-  }
-
-  private usesArtifactManagedRag(fileName: string): boolean {
-    const ext = path.extname(fileName).toLowerCase();
-    return ARTIFACT_MANAGED_RAG_EXTENSIONS.has(ext);
-  }
-
-  private isDirectRagIndexable(fileName: string): boolean {
-    const ext = path.extname(fileName).toLowerCase();
-    return DIRECT_RAG_INDEXABLE_EXTENSIONS.has(ext);
-  }
-
-  private shouldEnqueueDirectRagIndex(fileName: string): boolean {
-    return !this.usesArtifactManagedRag(fileName) && this.isDirectRagIndexable(fileName);
   }
 
   private normalizeRelativePath(fileName: string): string {
@@ -373,22 +343,6 @@ export class FileService {
 
     await this.workspaceService.touchWorkspace(workspaceId, userId);
 
-    if (this.shouldEnqueueDirectRagIndex(relativePath)) {
-      // Enqueue direct file indexing only for files whose source content remains the canonical RAG input.
-      try {
-        await this.ragQueueService?.enqueueFileUpsert({
-          workspaceId,
-          fileId: newFile.id,
-          relativePath,
-          mimeType: newFile.mimeType ?? mimeType ?? null,
-          storageType,
-          publicUrl,
-        });
-      } catch (error) {
-        console.error('Failed to enqueue RAG index job', error);
-      }
-    }
-
     return newFile;
   }
 
@@ -407,6 +361,32 @@ export class FileService {
       mimeType,
       userId,
       { forceLocal: true, internal: options?.internal },
+    );
+  }
+
+  async upsertInternalTextFile(
+    workspaceId: string,
+    fileName: string,
+    content: string,
+    userId: string,
+    mimeType = 'text/markdown',
+  ) {
+    await this.workspaceService.ensureMembership(workspaceId, userId, { requireEdit: true });
+    const relativePath = this.normalizeRelativePath(fileName);
+    if (!this.isInternalWorkspacePath(relativePath)) {
+      throw new ConflictError('Internal text files must use a reserved system workspace path');
+    }
+    const existing = await this.db('files').where({ workspaceId, name: relativePath }).first();
+    if (existing) {
+      return this.updateFile(Number(existing.id), content, userId);
+    }
+    return this.createTextFile(
+      workspaceId,
+      relativePath,
+      content,
+      userId,
+      mimeType,
+      { internal: true },
     );
   }
 
@@ -506,22 +486,6 @@ export class FileService {
 
     await this.workspaceService.touchWorkspace(file.workspaceId, userId);
 
-    if (this.shouldEnqueueDirectRagIndex(file.name)) {
-      // Re-enqueue direct file indexing only when the source file itself is the canonical RAG document.
-      try {
-        await this.ragQueueService?.enqueueFileUpsert({
-          workspaceId: file.workspaceId,
-          fileId,
-          relativePath: file.name,
-          mimeType: file.mimeType ?? null,
-          storageType: file.storageType,
-          publicUrl: file.publicUrl ?? null,
-        });
-      } catch (error) {
-        console.error('Failed to enqueue RAG index job', error);
-      }
-    }
-
     return updated;
   }
 
@@ -565,10 +529,6 @@ export class FileService {
 
     await this.workspaceService.ensureMembership(file.workspaceId, userId, { requireEdit: true });
 
-    if (this.derivedArtifactCleanup) {
-      await this.derivedArtifactCleanup.purgeSourceArtifacts(file.workspaceId, fileId, userId);
-    }
-
     const localPath = this.getLocalPath(file.workspaceId, file.name);
     if (file.storageType === 'local') {
       try {
@@ -594,17 +554,6 @@ export class FileService {
     await this.db('files').where({ id: fileId }).del();
     await this.workspaceService.touchWorkspace(file.workspaceId, userId);
 
-    if (this.shouldEnqueueDirectRagIndex(file.name)) {
-      // Best-effort: remove direct-indexed source files from the RAG index.
-      try {
-        await this.ragQueueService?.enqueueFileDelete({
-          workspaceId: file.workspaceId,
-          relativePath: file.name,
-        });
-      } catch (error) {
-        console.error('Failed to enqueue RAG delete job', error);
-      }
-    }
   }
 
   async deleteFolder(workspaceId: string, folderPath: string, userId: string) {
@@ -627,12 +576,6 @@ export class FileService {
       .andWhere((query) => {
         query.where('name', normalizedFolder).orWhere('name', 'like', `${prefix}%`);
       });
-
-    if (this.derivedArtifactCleanup) {
-      for (const file of filesInFolder) {
-        await this.derivedArtifactCleanup.purgeSourceArtifacts(workspaceId, Number(file.id), userId);
-      }
-    }
 
     for (const file of filesInFolder) {
       const localPath = this.getLocalPath(workspaceId, file.name);
@@ -672,19 +615,6 @@ export class FileService {
 
     await this.workspaceService.touchWorkspace(workspaceId, userId);
 
-    for (const file of filesInFolder) {
-      if (!this.shouldEnqueueDirectRagIndex(file.name)) {
-        continue;
-      }
-      try {
-        await this.ragQueueService?.enqueueFileDelete({
-          workspaceId,
-          relativePath: file.name,
-        });
-      } catch (error) {
-        console.error('Failed to enqueue RAG delete job for folder delete', error);
-      }
-    }
   }
 
   async renameFolder(workspaceId: string, folderPath: string, nextFolderName: string, userId: string) {
@@ -775,8 +705,6 @@ export class FileService {
       const destinationRelativePath = currentRelativePath === normalizedFolder
         ? destinationFolder
         : `${destinationPrefix}${currentRelativePath.slice(sourcePrefix.length)}`;
-      const wasDirectRagIndexable = this.shouldEnqueueDirectRagIndex(currentRelativePath);
-      const isDestinationDirectRagIndexable = this.shouldEnqueueDirectRagIndex(destinationRelativePath);
 
       if (file.storageType === 'local') {
         const newPath = this.getLocalPath(workspaceId, destinationRelativePath);
@@ -818,32 +746,6 @@ export class FileService {
       }
 
       renamedIds.push(file.id);
-
-      if (wasDirectRagIndexable) {
-        try {
-          await this.ragQueueService?.enqueueFileDelete({
-            workspaceId,
-            relativePath: currentRelativePath,
-          });
-        } catch (error) {
-          console.error('Failed to enqueue RAG delete job after folder rename', error);
-        }
-      }
-
-      if (isDestinationDirectRagIndexable) {
-        try {
-          await this.ragQueueService?.enqueueFileUpsert({
-            workspaceId,
-            fileId: file.id,
-            relativePath: destinationRelativePath,
-            mimeType: file.mimeType ?? null,
-            storageType: file.storageType,
-            publicUrl: file.storageType === 's3' ? this.s3Service.getPublicUrl(normalizeS3Key(workspaceId, destinationRelativePath)) : null,
-          });
-        } catch (error) {
-          console.error('Failed to enqueue RAG upsert job after folder rename', error);
-        }
-      }
     }
 
     await this.workspaceService.touchWorkspace(workspaceId, userId);
@@ -869,7 +771,6 @@ export class FileService {
     const currentVersion = this.assertVersion(file.version, expectedVersion);
     const nextVersion = currentVersion + 1;
     const currentRelativePath = this.normalizeRelativePath(file.name);
-    const wasDirectRagIndexable = this.shouldEnqueueDirectRagIndex(currentRelativePath);
     const destinationRelativePath = target.path !== undefined
       ? (() => {
           const destinationFolder = this.normalizeRelativeFolderPath(target.path || '');
@@ -886,7 +787,6 @@ export class FileService {
             ? normalizedNewName
             : path.posix.join(currentDir, normalizedNewName);
         })();
-    const isDestinationDirectRagIndexable = this.shouldEnqueueDirectRagIndex(destinationRelativePath);
 
     if (destinationRelativePath === currentRelativePath) {
       return file;
@@ -937,32 +837,6 @@ export class FileService {
     }
 
     await this.workspaceService.touchWorkspace(file.workspaceId, userId);
-
-    if (wasDirectRagIndexable) {
-      try {
-        await this.ragQueueService?.enqueueFileDelete({
-          workspaceId: file.workspaceId,
-          relativePath: currentRelativePath,
-        });
-      } catch (error) {
-        console.error('Failed to enqueue RAG delete job after file move/rename', error);
-      }
-    }
-
-    if (isDestinationDirectRagIndexable) {
-      try {
-        await this.ragQueueService?.enqueueFileUpsert({
-          workspaceId: file.workspaceId,
-          fileId: file.id,
-          relativePath: destinationRelativePath,
-          mimeType: file.mimeType ?? null,
-          storageType: file.storageType,
-          publicUrl: file.storageType === 's3' ? this.s3Service.getPublicUrl(normalizeS3Key(file.workspaceId, destinationRelativePath)) : null,
-        });
-      } catch (error) {
-        console.error('Failed to enqueue RAG upsert job after file move/rename', error);
-      }
-    }
 
     return this.db('files').where({ id: fileId }).first();
   }

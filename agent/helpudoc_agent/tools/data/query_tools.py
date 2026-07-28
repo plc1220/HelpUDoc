@@ -226,8 +226,6 @@ def create_query_tools(db_manager: DuckDBManager, workspace_state: WorkspaceStat
         blocked = tagged_files_mode_guard(workspace_state.context, "cache_bigquery_query")
         if blocked:
             return blocked
-        if workspace_state.context.get("tagged_files_only"):
-            return "Tool disabled: tagged files were provided, use rag_query only."
         if _is_strict_dashboard_mode(workspace_state):
             return (
                 "Dashboard planning mode is bound to tagged local datasets. "

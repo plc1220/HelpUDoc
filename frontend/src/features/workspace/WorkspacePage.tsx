@@ -8,7 +8,7 @@ import {
   ThemeProvider,
   type PaletteMode,
 } from '@mui/material';
-import { Check, CheckSquare, Copy, Edit, Trash, Plus, Minus, X, ChevronLeft, ChevronDown, RotateCcw, Printer, Download, Link as LinkIcon, Loader2, FolderPlus, FolderUp, Upload, Home, ArrowUp, Search, File as FileIcon, Wrench, Plug, Sparkles, Info } from 'lucide-react';
+import { BookOpen, Check, CheckSquare, Copy, Edit, Trash, Plus, Minus, X, ChevronLeft, ChevronDown, RotateCcw, Printer, Download, Link as LinkIcon, Loader2, FolderPlus, FolderUp, Upload, Home, ArrowUp, Search, File as FileIcon, Wrench, Plug, Sparkles, Info } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { getWorkspaces, createWorkspace, deleteWorkspace, renameWorkspace } from '../../services/workspaceApi';
@@ -32,14 +32,7 @@ import {
   getFileContent,
   renameFolder,
   renameFile,
-  getRagStatuses,
-  resolveFileContextRefs,
 } from '../../services/fileApi';
-import {
-  createAttachmentPrepJob,
-  getAttachmentPrepJob,
-  type AttachmentPrepJob,
-} from '../../services/attachmentPrepApi';
 import {
   cancelRun,
   fetchSlashMetadata,
@@ -62,6 +55,7 @@ import {
   deleteConversation as deleteConversationApi,
   truncateConversationMessages,
 } from '../../services/conversationApi';
+import { listKnowledge } from '../../services/knowledgeApi';
 import type {
   Workspace,
   File as WorkspaceFile,
@@ -76,7 +70,6 @@ import type {
   InterruptAnswersByQuestionId,
   InterruptQuestion,
   GoogleDrivePickerItem,
-  FileContextRef,
   PluginDefinition,
   SkillDefinition,
   WorkspaceSchedule,
@@ -93,7 +86,7 @@ import { useHorizontalPaneResize } from '../../hooks/useHorizontalPaneResize';
 import WorkspaceFileTree from '../../components/WorkspaceFileTree';
 import DashboardCanvas from '../dashboard/components/DashboardCanvas';
 import AgentChatPane from '../../components/chat/AgentChatPane';
-import ChatInputArea from '../../components/chat/ChatInputArea';
+import ChatInputArea, { type ChatMentionSuggestion } from '../../components/chat/ChatInputArea';
 import ChatMessageList from '../../components/chat/ChatMessageList';
 import LumoPet from '../../components/lumo/LumoPet';
 import lumoSpriteSheet from '../../assets/lumo/lumo-spritesheet.webp';
@@ -192,41 +185,6 @@ const revokeLocalAttachmentPreview = (attachment: ChatComposerAttachment) => {
     URL.revokeObjectURL(attachment.previewUrl);
   }
 };
-
-const findLatestFileContextRefs = (messages: ConversationMessage[]): FileContextRef[] | undefined => {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const metadata = messages[index]?.metadata as ConversationMessageMetadata | undefined;
-    if (metadata?.fileContextRefs?.length) {
-      return metadata.fileContextRefs;
-    }
-  }
-  return undefined;
-};
-
-const mergeFileContextRefs = (
-  ...groups: Array<FileContextRef[] | undefined>
-): FileContextRef[] | undefined => {
-  const merged: FileContextRef[] = [];
-  const seen = new Set<string>();
-
-  groups.forEach((group) => {
-    group?.forEach((ref) => {
-      const sourceFileId = String(ref.sourceFileId || '').trim();
-      const artifactId = typeof ref.artifactId === 'string' ? ref.artifactId.trim() : '';
-      const derivedArtifactFileId = String(ref.derivedArtifactFileId || '').trim();
-      const dedupeKey = sourceFileId || artifactId || derivedArtifactFileId;
-      if (!dedupeKey || seen.has(dedupeKey)) {
-        return;
-      }
-      seen.add(dedupeKey);
-      merged.push(ref);
-    });
-  });
-
-  return merged.length ? merged : undefined;
-};
-
-const delay = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
 
 const addFolderPath = (paths: string[], folderPath: string) => {
   const normalized = normalizeWorkspaceFolderPath(folderPath);
@@ -370,6 +328,17 @@ type ParsedSlashDirective =
   | { kind: 'skill'; skillId: string; prompt: string; raw: string }
   | { kind: 'mcp'; serverId: string; prompt: string; raw: string }
   | { kind: 'none'; prompt: string; raw: string };
+
+type WorkspaceKnowledgeSource = {
+  id: number;
+  title: string;
+  metadata?: {
+    ingestion?: {
+      status?: string;
+      bundlePath?: string | null;
+    };
+  } | null;
+};
 
 type ActiveRunInfo = {
   runId: string;
@@ -788,6 +757,7 @@ export default function WorkspacePage() {
   const [workspaceNameDraft, setWorkspaceNameDraft] = useState('');
   const [workspaceRenameBusy, setWorkspaceRenameBusy] = useState(false);
   const [files, setFiles] = useState<WorkspaceFile[]>([]);
+  const [workspaceKnowledge, setWorkspaceKnowledge] = useState<WorkspaceKnowledgeSource[]>([]);
   const [folderPaths, setFolderPaths] = useState<string[]>([]);
   const [selectedFile, setSelectedFile] = useState<WorkspaceFile | null>(null);
   const [selectedFileDetails, setSelectedFileDetails] = useState<WorkspaceFile | null>(null);
@@ -843,8 +813,6 @@ export default function WorkspacePage() {
   const pendingPersistRef = useRef<Record<string, PersistProgressRequest>>({});
   const stopRequestedRef = useRef(false);
   const sendLockRef = useRef(false);
-  const attachmentPrepPromiseRef = useRef<Map<string, Promise<AttachmentPrepJob>>>(new Map());
-  const attachmentPrepResumeRef = useRef<Set<string>>(new Set());
   const chatInputRef = useRef<HTMLTextAreaElement | null>(null);
   const attachmentInputRef = useRef<HTMLInputElement | null>(null);
   const fileUploadInputRef = useRef<HTMLInputElement | null>(null);
@@ -900,7 +868,6 @@ export default function WorkspacePage() {
     [personas],
   );
   const [copiedImageUrl, setCopiedImageUrl] = useState(false);
-  const [ragStatuses, setRagStatuses] = useState<Record<string, { status?: string; updatedAt?: string; error?: string }>>({});
   const [copiedWorkspaceContent, setCopiedWorkspaceContent] = useState(false);
   const [copiedPublicUrlFileId, setCopiedPublicUrlFileId] = useState<string | null>(null);
   const [copiedMessageId, setCopiedMessageId] = useState<ConversationMessage['id'] | null>(null);
@@ -915,7 +882,6 @@ export default function WorkspacePage() {
   const [interruptSubmittingByMessageId, setInterruptSubmittingByMessageId] = useState<Record<string, boolean>>({});
   const [interruptErrorByMessageId, setInterruptErrorByMessageId] = useState<Record<string, string>>({});
   const [conversationAttentionById, setConversationAttentionById] = useState<Record<string, ConversationAttentionState>>({});
-  const ragStatusFetchedRef = useRef<Record<string, boolean>>({});
   const resumeInFlightRef = useRef<Set<string>>(new Set());
   const resumeAttemptedRef = useRef<Set<string>>(new Set());
   const theme = useMemo(() => buildAppTheme(colorMode), [colorMode]);
@@ -1214,16 +1180,36 @@ export default function WorkspacePage() {
     () => setColorMode((prev) => (prev === 'light' ? 'dark' : 'light')),
     []
   );
-  const mentionSuggestions = useMemo(() => {
+  const mentionSuggestions = useMemo<ChatMentionSuggestion[]>(() => {
     if (!isMentionOpen) {
-      return [] as WorkspaceFile[];
+      return [];
     }
     const normalized = mentionQuery.trim().toLowerCase();
-    const filtered = visibleFiles.filter((file) =>
-      !normalized || file.name.toLowerCase().includes(normalized)
-    );
-    return filtered.slice(0, 8);
-  }, [visibleFiles, isMentionOpen, mentionQuery]);
+    const knowledgeOnly = normalized.startsWith('knowledge:');
+    const searchTerm = knowledgeOnly ? normalized.slice('knowledge:'.length) : normalized;
+    const fileSuggestions = knowledgeOnly
+      ? []
+      : visibleFiles
+          .filter((file) => !searchTerm || file.name.toLowerCase().includes(searchTerm))
+          .map((file) => ({
+            id: `file:${file.id}`,
+            kind: 'file' as const,
+            name: file.name,
+            mention: `@${file.name}`,
+            detail: file.mimeType?.split('/').pop() || file.name.split('.').pop() || 'file',
+          }));
+    const knowledgeSuggestions = workspaceKnowledge
+      .filter((item) => item.metadata?.ingestion?.status === 'published' && item.metadata.ingestion.bundlePath)
+      .filter((item) => !searchTerm || item.title.toLowerCase().includes(searchTerm))
+      .map((item) => ({
+        id: `knowledge:${item.id}`,
+        kind: 'knowledge' as const,
+        name: item.title,
+        mention: `@knowledge:${item.id}`,
+        detail: 'knowledge',
+      }));
+    return [...knowledgeSuggestions, ...fileSuggestions].slice(0, 8);
+  }, [visibleFiles, workspaceKnowledge, isMentionOpen, mentionQuery]);
 
   const availableSkillMap = useMemo(() => {
     const map = new Map<string, SkillDefinition>();
@@ -1732,7 +1718,7 @@ export default function WorkspacePage() {
     }
   }, []);
 
-  const applyWorkspaceFileUpdate = useCallback((previousName: string, updated: WorkspaceFile) => {
+  const applyWorkspaceFileUpdate = useCallback((_previousName: string, updated: WorkspaceFile) => {
     const mergeFile = (current: WorkspaceFile) => ({
       ...current,
       ...updated,
@@ -1743,18 +1729,6 @@ export default function WorkspacePage() {
     setSelectedFile((prev) => (prev?.id === updated.id ? mergeFile(prev) : prev));
     setSelectedFileDetails((prev) => (prev?.id === updated.id ? mergeFile(prev) : prev));
 
-    if (previousName !== updated.name) {
-      setRagStatuses((prev) => {
-        const existing = prev[previousName];
-        if (!existing) {
-          return prev;
-        }
-        const next = { ...prev };
-        next[updated.name] = existing;
-        delete next[previousName];
-        return next;
-      });
-    }
   }, []);
 
   const handleRenameFile = async (file: WorkspaceFile) => {
@@ -1802,14 +1776,6 @@ export default function WorkspacePage() {
       setSelectedFiles((prev) => {
         const next = new Set(prev);
         next.delete(file.id);
-        return next;
-      });
-      setRagStatuses((prev) => {
-        if (!prev[file.name]) {
-          return prev;
-        }
-        const next = { ...prev };
-        delete next[file.name];
         return next;
       });
       if (selectedFile?.id === file.id) {
@@ -1948,12 +1914,17 @@ export default function WorkspacePage() {
   const loadFilesForWorkspace = useCallback(async (workspaceId: string | null) => {
     if (!workspaceId) return;
     try {
-      const [files, folders] = await Promise.all([
+      const [files, folders, knowledge] = await Promise.all([
         getFiles(workspaceId),
         getFolders(workspaceId),
+        listKnowledge(workspaceId).catch((error) => {
+          console.error('Failed to load knowledge for workspace', error);
+          return [];
+        }),
       ]);
       setFolderPaths(folders);
       setFiles(files);
+      setWorkspaceKnowledge(Array.isArray(knowledge) ? knowledge : []);
     } catch (error) {
       console.error('Failed to load files for workspace', error);
     }
@@ -2027,28 +1998,6 @@ export default function WorkspacePage() {
     setCanvasZoom(1);
   }, [files]);
 
-  const fetchRagStatusForFiles = useCallback(async () => {
-    if (!selectedWorkspace) {
-      setRagStatuses((prev) => (Object.keys(prev).length ? {} : prev));
-      return;
-    }
-    const names = files
-      .filter((file) => !isSystemFile(file))
-      .map((file) => file.name)
-      .filter((name) => typeof name === 'string' && name.trim().length > 0);
-    if (!names.length) {
-      setRagStatuses((prev) => (Object.keys(prev).length ? {} : prev));
-      return;
-    }
-    try {
-      const response = await getRagStatuses(selectedWorkspace.id, names);
-      setRagStatuses(response?.statuses || {});
-      ragStatusFetchedRef.current[selectedWorkspace.id] = true;
-    } catch (error) {
-      console.error('Failed to load RAG status', error);
-    }
-  }, [files, selectedWorkspace]);
-
   useEffect(() => {
     return () => cancelAllStreams();
   }, [cancelAllStreams]);
@@ -2083,60 +2032,6 @@ export default function WorkspacePage() {
     }, 12000);
     return () => clearInterval(interval);
   }, [isStreaming, selectedWorkspace, loadFilesForWorkspace]);
-
-  useEffect(() => {
-    if (!selectedWorkspace) {
-      return;
-    }
-    const hasPendingUnderstanding = files.some((file) =>
-      String(file.understandingStatus || '').toLowerCase() === 'pending',
-    );
-    if (!hasPendingUnderstanding) {
-      return;
-    }
-    const interval = window.setInterval(() => {
-      void loadFilesForWorkspace(selectedWorkspace.id);
-    }, 5000);
-    return () => window.clearInterval(interval);
-  }, [files, loadFilesForWorkspace, selectedWorkspace]);
-
-  useEffect(() => {
-    if (!selectedWorkspace) {
-      return;
-    }
-    const workspaceId = selectedWorkspace.id;
-    const hasPendingStatus = Object.values(ragStatuses).some((status) => {
-      const normalized = String(status?.status || '').toLowerCase();
-      return ['pending', 'processing', 'preprocessed'].includes(normalized);
-    });
-    if (!ragStatusFetchedRef.current[workspaceId] || hasPendingStatus) {
-      void fetchRagStatusForFiles();
-    }
-
-    if (!hasPendingStatus) {
-      return;
-    }
-    const shouldPoll = files.some((file) => {
-      if (!file?.name || typeof file.name !== 'string') {
-        return false;
-      }
-      const status = ragStatuses[file.name]?.status;
-      if (!status) {
-        return false;
-      }
-      const normalized = String(status).toLowerCase();
-      return ['pending', 'processing', 'preprocessed'].includes(normalized);
-    });
-
-    if (!shouldPoll) {
-      return;
-    }
-
-    const interval = window.setInterval(() => {
-      void fetchRagStatusForFiles();
-    }, 5000);
-    return () => window.clearInterval(interval);
-  }, [fetchRagStatusForFiles, files, ragStatuses, selectedWorkspace]);
 
   useEffect(() => {
     if (!mentionSuggestions.length) {
@@ -2330,12 +2225,12 @@ export default function WorkspacePage() {
   );
 
   const handleSelectMention = useCallback(
-    (file: WorkspaceFile) => {
+    (suggestion: ChatMentionSuggestion) => {
       if (mentionTriggerIndex === null || mentionCursorPosition === null) {
         closeMention();
         return;
       }
-      const mentionText = `@${file.name}`;
+      const mentionText = suggestion.mention;
       const before = chatMessage.slice(0, mentionTriggerIndex);
       const after = chatMessage.slice(mentionCursorPosition);
       const needsSpace = after.length === 0 || after.startsWith(' ') ? '' : ' ';
@@ -2473,6 +2368,25 @@ export default function WorkspacePage() {
     [visibleFiles],
   );
 
+  const findMentionedKnowledge = useCallback(
+    (value: string): Array<{ id: number; title: string; bundlePath: string }> => {
+      if (!value) {
+        return [];
+      }
+      return workspaceKnowledge.flatMap((item) => {
+        const bundlePath = item.metadata?.ingestion?.bundlePath;
+        if (item.metadata?.ingestion?.status !== 'published' || !bundlePath) {
+          return [];
+        }
+        const mentionPattern = new RegExp(`(^|[\\s([{])@knowledge:${item.id}(?=$|[\\s)\\]}])`, 'i');
+        return mentionPattern.test(value)
+          ? [{ id: item.id, title: item.title, bundlePath }]
+          : [];
+      });
+    },
+    [workspaceKnowledge],
+  );
+
   const stripMentionedFilesFromPrompt = useCallback(
     (value: string): string => {
       if (!value) {
@@ -2485,9 +2399,13 @@ export default function WorkspacePage() {
         const mentionPattern = new RegExp(`(^|[\\s([{])@${escapedName}(?=$|[\\s)\\]}])`, 'gi');
         nextValue = nextValue.replace(mentionPattern, (_match, prefix: string) => prefix);
       });
+      workspaceKnowledge.forEach((item) => {
+        const mentionPattern = new RegExp(`(^|[\\s([{])@knowledge:${item.id}(?=$|[\\s)\\]}])`, 'gi');
+        nextValue = nextValue.replace(mentionPattern, (_match, prefix: string) => prefix);
+      });
       return nextValue.replace(/\s{2,}/g, ' ').trim();
     },
-    [visibleFiles],
+    [visibleFiles, workspaceKnowledge],
   );
 
   const deriveWorkspaceNameFromPrompt = useCallback((rawMessage = chatMessage): string | undefined => {
@@ -2705,13 +2623,10 @@ export default function WorkspacePage() {
       promptMetadata?.runPolicy?.skill || '',
       latestAgentSkill || '',
     ].map((skill) => skill.trim()).filter(Boolean)));
-    const fileContextRefs =
-      promptMetadata?.fileContextRefs?.length
-        ? promptMetadata.fileContextRefs
-        : sourceMetadata?.fileContextRefs?.length
-          ? sourceMetadata.fileContextRefs
-          : findLatestFileContextRefs(currentMessages) || [];
-    const contextRefs = fileContextRefs.map((ref) => ref.sourceName).filter(Boolean);
+    const contextRefs = Array.from(new Set([
+      ...(promptMetadata?.taggedFiles || []),
+      ...(sourceMetadata?.taggedFiles || []),
+    ]));
     const titleSource = deriveWorkspaceNameFromPrompt(rawPrompt)
       || conversationHistory.find((conversation) => conversation.id === conversationId)?.title
       || 'Workspace task';
@@ -2734,7 +2649,6 @@ export default function WorkspacePage() {
       selectedSkills,
       contextRefs,
       taggedFiles: contextRefs,
-      fileContextRefs,
       outputMode: 'append_to_conversation',
       notificationMode: 'failure',
       sourceConversationId: conversationId,
@@ -2776,7 +2690,6 @@ export default function WorkspacePage() {
         selectedSkills: schedule.selectedSkills,
         contextRefs: schedule.contextRefs,
         taggedFiles: schedule.taggedFiles,
-        fileContextRefs: schedule.fileContextRefs,
         outputMode: schedule.outputMode,
         notificationMode: schedule.notificationMode,
         sourceConversationId: schedule.sourceConversationId || null,
@@ -2928,29 +2841,6 @@ export default function WorkspacePage() {
       return normalized;
     },
     [upsertConversationMessage],
-  );
-
-  const waitForAttachmentPrepJob = useCallback(
-    (workspaceId: string, jobId: string): Promise<AttachmentPrepJob> => {
-      const existing = attachmentPrepPromiseRef.current.get(jobId);
-      if (existing) {
-        return existing;
-      }
-      const promise = (async () => {
-        while (true) {
-          const job = await getAttachmentPrepJob(workspaceId, jobId);
-          if (job.status === 'ready' || job.status === 'failed') {
-            return job;
-          }
-          await delay(1500);
-        }
-      })().finally(() => {
-        attachmentPrepPromiseRef.current.delete(jobId);
-      });
-      attachmentPrepPromiseRef.current.set(jobId, promise);
-      return promise;
-    },
-    [],
   );
 
   useEffect(() => {
@@ -4871,7 +4761,6 @@ export default function WorkspacePage() {
     turnId: string;
     prompt: string;
     historyPayload: Array<{ role: string; content: string }>;
-    fileContextRefs?: FileContextRef[];
     currentTurnFileIds?: number[];
     taggedFiles?: string[];
     internetSearchEnabled?: boolean;
@@ -4883,7 +4772,6 @@ export default function WorkspacePage() {
       turnId,
       prompt,
       historyPayload,
-      fileContextRefs,
       currentTurnFileIds,
       taggedFiles,
       internetSearchEnabled,
@@ -4901,7 +4789,6 @@ export default function WorkspacePage() {
       {
         forceReset: true,
         taggedFiles,
-        fileContextRefs,
         currentTurnFileIds,
         internetSearchEnabled,
       },
@@ -4966,105 +4853,6 @@ export default function WorkspacePage() {
     setConversationAttention,
     streamRunForConversation,
     upsertPersistedAgentMessage,
-  ]);
-
-  useEffect(() => {
-    if (!selectedWorkspace?.id || !activeConversationId) {
-      return;
-    }
-    const workspaceId = selectedWorkspace.id;
-    const conversationId = activeConversationId;
-    const messagesForConversation = conversationMessages[conversationId] || [];
-    const pendingMessages = messagesForConversation.filter((message) => {
-      if (message.sender !== 'user' || !message.turnId) {
-        return false;
-      }
-      const metadata = message.metadata as ConversationMessageMetadata | undefined;
-      return Boolean(
-        metadata?.attachmentJobId
-        && (metadata.attachmentPrepStatus === 'pending' || metadata.attachmentPrepStatus === 'running'),
-      );
-    });
-    pendingMessages.forEach((message) => {
-      const metadata = message.metadata as ConversationMessageMetadata | undefined;
-      const jobId = metadata?.attachmentJobId;
-      if (!jobId || attachmentPrepResumeRef.current.has(jobId)) {
-        return;
-      }
-      attachmentPrepResumeRef.current.add(jobId);
-      void (async () => {
-        try {
-          const turnId = message.turnId;
-          if (!turnId) {
-            return;
-          }
-          setIsDriveImporting(true);
-          const settledJob = await waitForAttachmentPrepJob(workspaceId, jobId);
-          if (settledJob.status === 'failed') {
-            await persistUserMessageMetadata(conversationId, message, {
-              ...(metadata || {}),
-              attachmentJobId: jobId,
-              attachmentPrepStatus: 'failed',
-              attachmentPrepError: settledJob.error || 'Failed to prepare attachments.',
-            });
-            return;
-          }
-          const readyRefs = settledJob.result?.fileContextRefs?.length
-            ? settledJob.result.fileContextRefs
-            : undefined;
-          await persistUserMessageMetadata(conversationId, message, {
-            ...(metadata || {}),
-            attachmentJobId: jobId,
-            attachmentPrepStatus: 'ready',
-            attachmentPrepError: undefined,
-            fileContextRefs: readyRefs,
-          });
-          const agentExistsForTurn = getConversationMessagesSnapshot(conversationId).some(
-            (candidate) => candidate.sender === 'agent' && candidate.turnId === message.turnId,
-          );
-          if (agentExistsForTurn) {
-            return;
-          }
-          const updatedMessages = getConversationMessagesSnapshot(conversationId);
-          const historyPayload = mapMessagesToAgentHistory(updatedMessages);
-          const directive = parseSlashDirective(message.text.trim());
-          const agentPromptBase = buildAgentPromptFromDirective(directive) || message.text;
-          const attachmentPrompt = readyRefs?.length
-            ? `Use these attached files as primary context: ${readyRefs.map((ref) => ref.sourceName).join(', ')}`
-            : '';
-          await launchPreparedAgentRun({
-            workspaceId,
-            persona: normalizePersonaName(activeConversationPersona || selectedPersona || DEFAULT_PERSONA_NAME),
-            conversationId,
-            turnId,
-            prompt: attachmentPrompt
-              ? `${agentPromptBase}${agentPromptBase ? '\n\n' : ''}${attachmentPrompt}`
-              : agentPromptBase,
-            historyPayload,
-            fileContextRefs: readyRefs,
-            currentTurnFileIds: settledJob.result?.multimodalFileIds,
-            taggedFiles: readyRefs?.map((ref) => ref.sourceName).filter(Boolean),
-          });
-        } catch (error) {
-          console.error('Failed to resume attachment prep job', error);
-        } finally {
-          attachmentPrepResumeRef.current.delete(jobId);
-          setIsDriveImporting(false);
-        }
-      })();
-    });
-  }, [
-    activeConversationId,
-    activeConversationPersona,
-    buildAgentPromptFromDirective,
-    conversationMessages,
-    getConversationMessagesSnapshot,
-    launchPreparedAgentRun,
-    parseSlashDirective,
-    persistUserMessageMetadata,
-    selectedPersona,
-    selectedWorkspace?.id,
-    waitForAttachmentPrepJob,
   ]);
 
   const handleInterruptDecision = useCallback(
@@ -6164,13 +5952,7 @@ export default function WorkspacePage() {
       stopRequestedRef.current = false;
       const directive = parseSlashDirective(trimmed);
       const mentionedFiles = findMentionedFiles(trimmed);
-      const mentionedFileIds = Array.from(
-        new Set(
-          mentionedFiles
-            .map((file) => toNumericFileId(file.id))
-            .filter((id): id is number => typeof id === 'number' && Number.isFinite(id)),
-        ),
-      );
+      const mentionedKnowledge = findMentionedKnowledge(trimmed);
 
       if (directive.kind === 'skill') {
         if (hasLocalAttachments) {
@@ -6237,12 +6019,9 @@ export default function WorkspacePage() {
       const pendingTurnId = generateTurnId();
       let resolvedTurnId = pendingTurnId;
       let userMessageRecord: ConversationMessage | null = null;
-      const existingMessages = getConversationMessagesSnapshot(conversationId);
-
       try {
         const createdMessage = await appendConversationMessage(conversationId, 'user', messageContent, {
           turnId: pendingTurnId,
-          metadata: hasAttachments ? { attachmentPrepStatus: 'pending' } : undefined,
         });
         const normalizedMessage = mergeMessageMetadata(createdMessage);
         userMessageRecord = normalizedMessage;
@@ -6259,133 +6038,84 @@ export default function WorkspacePage() {
         return;
       }
 
-      let resolvedFileContextRefs: FileContextRef[] | undefined;
       let currentTurnFileIds: number[] | undefined;
       let taggedFiles: string[] | undefined;
 
       if (hasAttachments) {
         setIsDriveImporting(true);
         try {
-          const sourceFileIds: number[] = [];
+          const uploadedFiles: WorkspaceFile[] = [];
           for (const attachment of localAttachments) {
-            const uploaded = await createFile(workspaceId, attachment.file);
-            const uploadedId = toNumericFileId(uploaded.id);
-            if (uploadedId) {
-              sourceFileIds.push(uploadedId);
+            uploadedFiles.push(await createFile(workspaceId, attachment.file));
+          }
+          if (driveAttachments.length) {
+            const imported = await importGoogleDriveFiles(
+              workspaceId,
+              driveAttachments.map((attachment) => attachment.driveItem.id),
+            );
+            if (Array.isArray(imported?.files)) {
+              uploadedFiles.push(...imported.files);
             }
           }
-          if (sourceFileIds.length && selectedWorkspaceIdRef.current === workspaceId) {
+          if (uploadedFiles.length && selectedWorkspaceIdRef.current === workspaceId) {
             await loadFilesForWorkspace(workspaceId);
           }
-          const prepJob = await createAttachmentPrepJob(workspaceId, {
-            conversationId,
-            turnId: resolvedTurnId,
-            driveFileIds: driveAttachments.map((attachment) => attachment.driveItem.id),
-            sourceFileIds,
-          });
-          attachmentPrepResumeRef.current.add(prepJob.id);
+          taggedFiles = uploadedFiles
+            .map((file) => String(file.name || '').trim())
+            .filter(Boolean);
+          currentTurnFileIds = uploadedFiles
+            .filter((file) => {
+              const mimeType = String(file.mimeType || '').toLowerCase();
+              return mimeType.startsWith('image/');
+            })
+            .map((file) => toNumericFileId(file.id))
+            .filter((value): value is number => value !== null);
           userMessageRecord = await persistUserMessageMetadata(conversationId, userMessageRecord, {
             ...((userMessageRecord.metadata as ConversationMessageMetadata | undefined) || {}),
-            attachmentJobId: prepJob.id,
-            attachmentPrepStatus: prepJob.status,
-            attachmentPrepError: undefined,
-          });
-          const settledJob = prepJob.status === 'ready' || prepJob.status === 'failed'
-            ? prepJob
-            : await waitForAttachmentPrepJob(workspaceId, prepJob.id);
-          if (settledJob.status === 'failed') {
-            await persistUserMessageMetadata(conversationId, userMessageRecord, {
-              ...((userMessageRecord.metadata as ConversationMessageMetadata | undefined) || {}),
-              attachmentJobId: settledJob.id,
-              attachmentPrepStatus: 'failed',
-              attachmentPrepError: settledJob.error || 'Failed to prepare attachments.',
-            });
-            addLocalSystemMessage(settledJob.error || 'Failed to prepare attachments.');
-            return;
-          }
-          const preparedFiles = Array.isArray(settledJob.result?.files) ? settledJob.result?.files : [];
-          if (preparedFiles?.length && selectedWorkspaceIdRef.current === workspaceId) {
-            await loadFilesForWorkspace(workspaceId);
-          }
-          resolvedFileContextRefs = settledJob.result?.fileContextRefs?.length
-            ? settledJob.result.fileContextRefs
-            : undefined;
-          currentTurnFileIds = settledJob.result?.multimodalFileIds?.length
-            ? settledJob.result.multimodalFileIds
-            : undefined;
-          taggedFiles = resolvedFileContextRefs?.map((ref) => ref.sourceName).filter(Boolean);
-          userMessageRecord = await persistUserMessageMetadata(conversationId, userMessageRecord, {
-            ...((userMessageRecord.metadata as ConversationMessageMetadata | undefined) || {}),
-            attachmentJobId: settledJob.id,
-            attachmentPrepStatus: 'ready',
-            attachmentPrepError: undefined,
-            fileContextRefs: resolvedFileContextRefs,
+            taggedFiles,
           });
         } catch (error) {
-          console.error('Failed to prepare attachments', error);
-          const message = error instanceof Error ? error.message : 'Failed to prepare attachments.';
+          console.error('Failed to upload attachments', error);
+          const message = error instanceof Error ? error.message : 'Failed to upload attachments.';
           await persistUserMessageMetadata(conversationId, userMessageRecord, {
             ...((userMessageRecord.metadata as ConversationMessageMetadata | undefined) || {}),
-            attachmentPrepStatus: 'failed',
-            attachmentPrepError: message,
           }).catch((persistError) => {
-            console.error('Failed to persist attachment prep failure', persistError);
+            console.error('Failed to persist attachment upload failure', persistError);
           });
           addLocalSystemMessage(message);
           return;
         } finally {
-          const jobId = (userMessageRecord?.metadata as ConversationMessageMetadata | undefined)?.attachmentJobId;
-          if (jobId) {
-            attachmentPrepResumeRef.current.delete(jobId);
-          }
           setIsDriveImporting(false);
         }
-      } else {
-        const previousFileContextRefs = findLatestFileContextRefs(existingMessages);
-        if (previousFileContextRefs?.length) {
-          try {
-            const refreshed = await resolveFileContextRefs(
-              workspaceId,
-              previousFileContextRefs
-                .map((ref) => Number(ref.sourceFileId))
-                .filter((value) => Number.isFinite(value) && value > 0),
-            );
-            resolvedFileContextRefs = Array.isArray(refreshed.fileContextRefs) && refreshed.fileContextRefs.length
-              ? refreshed.fileContextRefs
-              : previousFileContextRefs;
-          } catch (error) {
-            console.error('Failed to refresh file context refs', error);
-            resolvedFileContextRefs = previousFileContextRefs;
-          }
-        }
       }
 
-      if (mentionedFileIds.length) {
-        try {
-          const resolvedMentions = await resolveFileContextRefs(workspaceId, mentionedFileIds);
-          resolvedFileContextRefs = hasAttachments
-            ? mergeFileContextRefs(resolvedFileContextRefs, resolvedMentions.fileContextRefs)
-            : mergeFileContextRefs(resolvedMentions.fileContextRefs, resolvedFileContextRefs);
-        } catch (error) {
-          console.error('Failed to resolve mentioned file context refs', error);
-          resolvedFileContextRefs = mergeFileContextRefs(resolvedFileContextRefs);
-        }
+      if (mentionedFiles.length) {
+        taggedFiles = Array.from(new Set([
+          ...(taggedFiles || []),
+          ...mentionedFiles.map((file) => file.name).filter(Boolean),
+        ]));
+        const mentionedMultimodalIds = mentionedFiles
+          .filter((file) => {
+          const mimeType = String(file.mimeType || '').toLowerCase();
+            return mimeType.startsWith('image/');
+          })
+          .map((file) => toNumericFileId(file.id))
+          .filter((value): value is number => value !== null);
+        currentTurnFileIds = Array.from(new Set([
+          ...(currentTurnFileIds || []),
+          ...mentionedMultimodalIds,
+        ]));
       }
 
-      if (resolvedFileContextRefs?.length) {
-        taggedFiles = resolvedFileContextRefs.map((ref) => ref.sourceName).filter(Boolean);
-      } else if (mentionedFiles.length) {
-        taggedFiles = mentionedFiles.map((file) => file.name).filter(Boolean);
-      }
-
-      if (mentionedFileIds.length && resolvedFileContextRefs?.length) {
+      if (mentionedFiles.length || mentionedKnowledge.length) {
         try {
           userMessageRecord = await persistUserMessageMetadata(conversationId, userMessageRecord, {
             ...((userMessageRecord.metadata as ConversationMessageMetadata | undefined) || {}),
-            fileContextRefs: resolvedFileContextRefs,
+            taggedFiles,
+            knowledgeRefs: mentionedKnowledge,
           });
         } catch (error) {
-          console.error('Failed to persist mentioned file context refs', error);
+          console.error('Failed to persist mentioned context', error);
         }
       }
 
@@ -6408,11 +6138,19 @@ export default function WorkspacePage() {
         }
       }
 
-      const attachmentPrompt = resolvedFileContextRefs?.length
-        ? `Use these attached files as primary context: ${resolvedFileContextRefs.map((ref) => ref.sourceName).join(', ')}`
+      const attachmentPrompt = taggedFiles?.length
+        ? `Inspect these original workspace files as primary context: ${taggedFiles.join(', ')}`
         : '';
-      const agentPrompt = attachmentPrompt
-        ? `${agentPromptBase2}${agentPromptBase2 ? '\n\n' : ''}${attachmentPrompt}`
+      const knowledgePrompt = mentionedKnowledge.length
+        ? [
+            'Use these published OKF knowledge bundles as context:',
+            ...mentionedKnowledge.map((item) => `- ${item.title}: ${item.bundlePath}/index.md`),
+            'Navigate them with knowledge_read and knowledge_search. Read index.md first, then only the relevant concept files.',
+          ].join('\n')
+        : '';
+      const contextPrompt = [attachmentPrompt, knowledgePrompt].filter(Boolean).join('\n\n');
+      const agentPrompt = contextPrompt
+        ? `${agentPromptBase2}${agentPromptBase2 ? '\n\n' : ''}${contextPrompt}`
         : agentPromptBase2;
       const useInternetSearch = internetSearchEnabled;
 
@@ -6424,7 +6162,6 @@ export default function WorkspacePage() {
           turnId: resolvedTurnId,
           prompt: agentPrompt,
           historyPayload,
-          fileContextRefs: resolvedFileContextRefs,
           currentTurnFileIds,
           taggedFiles,
           internetSearchEnabled: useInternetSearch,
@@ -6761,13 +6498,6 @@ export default function WorkspacePage() {
         setFolderPaths((prev) => Array.from(new Set(
           prev.map((path) => replaceFolderPathPrefix(path, sourceFolder, destinationFolder)),
         )).sort((left, right) => left.localeCompare(right, undefined, { numeric: true, sensitivity: 'base' })));
-        setRagStatuses((prev) => {
-          const next: typeof prev = {};
-          Object.entries(prev).forEach(([fileName, status]) => {
-            next[replaceFolderPathPrefix(fileName, sourceFolder, destinationFolder)] = status;
-          });
-          return next;
-        });
         setSelectedDashboardPath((prev) => (prev ? replaceFolderPathPrefix(prev, sourceFolder, destinationFolder) : prev));
         setWorkspaceFileDialog(null);
         return;
@@ -6799,14 +6529,6 @@ export default function WorkspacePage() {
           next.delete(file.id);
           return next;
         });
-        setRagStatuses((prev) => {
-          if (!prev[file.name]) {
-            return prev;
-          }
-          const next = { ...prev };
-          delete next[file.name];
-          return next;
-        });
         if (selectedFile?.id === file.id) {
           setSelectedFile(null);
           setSelectedFileDetails(null);
@@ -6828,8 +6550,6 @@ export default function WorkspacePage() {
         await deleteFolder(selectedWorkspace.id, folder.path);
 
         const deletedIds = new Set(filesInFolder.map((file) => file.id));
-        const deletedNames = new Set(filesInFolder.map((file) => file.name));
-
         setFiles((prev) =>
           prev.filter((file) => {
             const name = file.name || '';
@@ -6841,13 +6561,6 @@ export default function WorkspacePage() {
           const next = new Set(prev);
           for (const fileId of deletedIds) {
             next.delete(fileId);
-          }
-          return next;
-        });
-        setRagStatuses((prev) => {
-          const next = { ...prev };
-          for (const fileName of deletedNames) {
-            delete next[fileName];
           }
           return next;
         });
@@ -6871,15 +6584,6 @@ export default function WorkspacePage() {
         await deleteFile(selectedWorkspace.id, fileId);
       }
       setFiles((prevFiles) => prevFiles.filter((file) => !fileIdsToDelete.has(file.id)));
-      setRagStatuses((prev) => {
-        const next = { ...prev };
-        for (const file of files) {
-          if (fileIdsToDelete.has(file.id)) {
-            delete next[file.name];
-          }
-        }
-        return next;
-      });
       setSelectedFiles(new Set());
       if (selectedFile && fileIdsToDelete.has(selectedFile.id)) {
         setSelectedFile(null);
@@ -7079,6 +6783,27 @@ export default function WorkspacePage() {
         input.setSelectionRange(cursorPosition, cursorPosition);
       }
       updateCommandState(nextValue, cursorPosition);
+    });
+  };
+
+  const handleInsertKnowledgeTrigger = () => {
+    const input = chatInputRef.current;
+    const cursorStart = input?.selectionStart ?? chatMessage.length;
+    const cursorEnd = input?.selectionEnd ?? cursorStart;
+    const before = chatMessage.slice(0, cursorStart);
+    const after = chatMessage.slice(cursorEnd);
+    const prefix = before.length > 0 && !/\s$/.test(before) ? ' ' : '';
+    const trigger = `${prefix}@knowledge:`;
+    const nextValue = `${before}${trigger}${after}`;
+    setChatMessage(nextValue);
+    closeCommand();
+    requestAnimationFrame(() => {
+      const cursorPosition = before.length + trigger.length;
+      if (input) {
+        input.focus();
+        input.setSelectionRange(cursorPosition, cursorPosition);
+      }
+      updateMentionState(nextValue, cursorPosition);
     });
   };
 
@@ -7398,6 +7123,7 @@ export default function WorkspacePage() {
             onChatInputSelectionChange={handleChatInputSelectionChange}
             onChatInputPaste={handleChatInputPaste}
             onOpenLocalAttachmentPicker={handleOpenLocalAttachmentPicker}
+            onInsertKnowledgeTrigger={handleInsertKnowledgeTrigger}
             onToggleInternetSearch={() => setInternetSearchEnabled((prev) => !prev)}
             onInsertSlashTrigger={handleInsertSlashTrigger}
             onStopStreaming={handleStopStreaming}
@@ -7739,13 +7465,13 @@ export default function WorkspacePage() {
                               isDarkMode ? 'border-slate-700/80 bg-slate-900/95' : 'border-slate-200 bg-white/95'
                             }`}>
                               {mentionSuggestions.length ? (
-                                mentionSuggestions.map((file, index) => (
+                                mentionSuggestions.map((suggestion, index) => (
                                   <button
-                                    key={file.id}
+                                    key={suggestion.id}
                                     type="button"
                                     onMouseDown={(event) => {
                                       event.preventDefault();
-                                      handleSelectMention(file);
+                                      handleSelectMention(suggestion);
                                     }}
                                     className={`flex w-full items-center rounded-xl px-3 py-2 text-left transition ${
                                       index === mentionSelectedIndex
@@ -7757,16 +7483,20 @@ export default function WorkspacePage() {
                                           : 'text-slate-700 hover:bg-slate-50'
                                     }`}
                                   >
-                                    <FileIcon size={16} className={`mr-2 shrink-0 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`} />
-                                    <span className="min-w-0 flex-1 truncate">{file.name}</span>
+                                    {suggestion.kind === 'knowledge' ? (
+                                      <BookOpen size={16} className={`mr-2 shrink-0 ${isDarkMode ? 'text-emerald-400' : 'text-emerald-600'}`} />
+                                    ) : (
+                                      <FileIcon size={16} className={`mr-2 shrink-0 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`} />
+                                    )}
+                                    <span className="min-w-0 flex-1 truncate">{suggestion.name}</span>
                                     <span className={`ml-3 shrink-0 text-[10px] uppercase ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>
-                                      {file.mimeType?.split('/').pop() || file.name.split('.').pop() || 'file'}
+                                      {suggestion.detail || suggestion.kind}
                                     </span>
                                   </button>
                                 ))
                               ) : (
                                 <div className={`px-3 py-2 text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
-                                  No matching files
+                                  No matching files or knowledge
                                 </div>
                               )}
                             </div>
@@ -8306,7 +8036,6 @@ export default function WorkspacePage() {
                         selectedFiles={selectedFiles}
                         copiedPublicUrlFileId={copiedPublicUrlFileId}
                         dashboardArtifactsByPath={dashboardArtifactsByPath}
-                        ragStatuses={ragStatuses}
                         isDraftWorkspaceFile={isDraftWorkspaceFile}
                         onSelectFile={(file) => {
                           setSelectedFile(file);
@@ -8598,6 +8327,7 @@ export default function WorkspacePage() {
               onChatInputSelectionChange={handleChatInputSelectionChange}
               onChatInputPaste={handleChatInputPaste}
               onOpenLocalAttachmentPicker={handleOpenLocalAttachmentPicker}
+              onInsertKnowledgeTrigger={handleInsertKnowledgeTrigger}
               onToggleInternetSearch={() => setInternetSearchEnabled((prev) => !prev)}
               onInsertSlashTrigger={handleInsertSlashTrigger}
               onStopStreaming={handleStopStreaming}

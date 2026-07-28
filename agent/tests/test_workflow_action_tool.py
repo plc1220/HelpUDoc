@@ -167,6 +167,49 @@ def test_workflow_action_rejects_frontend_slides_component_mismatch(tmp_path):
     assert "requires presentation" in result
 
 
+def test_workflow_action_frontend_slides_gate_forces_clarification_resume(monkeypatch, tmp_path):
+    workspace = WorkspaceState(workspace_id="workflow-interaction", root_path=tmp_path)
+    captured = {}
+
+    def fake_interrupt(payload):
+        captured["payload"] = payload
+        return {
+            "interactionId": "interaction-style_preview_selection",
+            "actionId": "submit",
+            "values": {"selectedChoiceId": "style-a"},
+        }
+
+    monkeypatch.setattr("helpudoc_agent.tools_and_schemas.interrupt", fake_interrupt)
+
+    tool = build_workflow_action_tool(workspace)
+    result = tool.invoke(
+        {
+            "action": "request_user_interaction",
+            "gate_id": "style_preview_selection",
+            "presentation": "style_preview",
+            "resume_mode": "approval",
+            "props_json": json.dumps(
+                {
+                    "title": "Choose Presentation Style",
+                    "choices": [{"id": "style-a", "label": "Style A"}],
+                }
+            ),
+            "context_json": json.dumps(
+                {
+                    "skill": "frontend-slides",
+                    "gateId": "style_preview_selection",
+                    "interactionContract": "helpudoc.interaction",
+                }
+            ),
+        }
+    )
+
+    assert json.loads(result)["actionId"] == "submit"
+    payload = captured["payload"]
+    assert payload["kind"] == "clarification"
+    assert payload["interactionRequest"]["resumeAction"]["endpoint"] == "respond"
+
+
 def test_workflow_action_rejects_outline_gate_without_embedded_outline(tmp_path):
     workspace = WorkspaceState(workspace_id="workflow-interaction", root_path=tmp_path)
     tool = build_workflow_action_tool(workspace)

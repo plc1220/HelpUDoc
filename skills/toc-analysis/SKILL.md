@@ -2,7 +2,8 @@
 name: toc-analysis
 description: Analyze a document table of contents or outline to infer structure, coverage, gaps, and recommended improvements before deeper reading or drafting.
 tools:
-  - rag_query
+  - inspect_document
+  - search_document
   - request_clarification
 ---
 
@@ -17,7 +18,7 @@ This skill focuses on structure before prose: hierarchy, sequencing, coverage, b
 ## Rules
 
 - Treat the table of contents as structural evidence, not proof of the full document's content.
-- If the user provides a document but no visible TOC, use `rag_query` to locate headings, sections, or outline-like content.
+- If the user provides a document but no visible TOC, use `search_document` to locate headings and `inspect_document` for bounded structural reads.
 - If the target document or goal is unclear, call `request_clarification`.
 - Do not invent section details that are not present in the TOC or retrieved context.
 - Keep recommendations concrete and tied to named sections.
@@ -31,7 +32,7 @@ This skill focuses on structure before prose: hierarchy, sequencing, coverage, b
 
 2. Extract the outline.
    - Use the user-provided TOC directly when available.
-   - If the TOC is in a workspace document, call `rag_query` for headings, section titles, and outline structure.
+   - If the TOC is in a workspace document, search its structure first, then inspect only the relevant heading ranges.
    - Keep section order and hierarchy intact.
 
 3. Analyze structure.

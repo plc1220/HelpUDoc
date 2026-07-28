@@ -738,33 +738,19 @@ export default function ChatMessageBubble({
       return [];
     }
     const parsedAttachments = parseAttachmentNames(message.text || '');
-    const refs = messageMetadata?.fileContextRefs || [];
-    if (!parsedAttachments.length && !refs.length) {
+    if (!parsedAttachments.length) {
       return [];
     }
-    const attachments = parsedAttachments.length
-      ? parsedAttachments
-      : refs.map((ref) => ({
-          name: ref.sourceName,
-          isDrive: false,
-        }));
-
-    return attachments.map((attachment) => {
-      const ref = refs.find((candidate) => {
-        const sourceName = candidate.sourceName || '';
-        return sourceName === attachment.name || sourceName.endsWith(`/${attachment.name}`);
-      });
-      const sourceName = ref?.sourceName || attachment.name;
-      const mimeType = ref?.sourceMimeType || '';
-      const isImage = mimeType.startsWith('image/') || IMAGE_EXTENSION_PATTERN.test(sourceName);
+    return parsedAttachments.map((attachment) => {
+      const isImage = IMAGE_EXTENSION_PATTERN.test(attachment.name);
       return {
         name: attachment.name,
         isDrive: attachment.isDrive,
         isImage,
-        previewUrl: isImage ? getAttachmentPreviewUrl(workspaceId, sourceName) : undefined,
+        previewUrl: isImage ? getAttachmentPreviewUrl(workspaceId, attachment.name) : undefined,
       };
     });
-  }, [isAgentMessage, message.text, messageMetadata?.fileContextRefs, workspaceId]);
+  }, [isAgentMessage, message.text, workspaceId]);
   const effectiveStatus = pendingInterrupt ? 'awaiting_approval' : messageMetadata?.status;
   const isLiveAgentStatus = effectiveStatus === 'running' || effectiveStatus === 'awaiting_approval';
   const shouldHideThinkingDuringToolRun = Boolean(

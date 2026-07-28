@@ -224,7 +224,6 @@ services:
       S3_PUBLIC_BASE_URL: ${S3_PUBLIC_BASE_URL:-http://localhost:9000/helpudoc}
       S3_FORCE_PATH_STYLE: "true"
       WORKSPACE_ROOT: /app/workspaces
-      FILE_UNDERSTANDING_AGENT_READS_WORKSPACE: "true"
       SKILLS_ROOT: /app/skills
       PLUGINS_ROOT: /app/plugins
       ENABLE_SKILL_SANDBOX_RUNNER: ${ENABLE_SKILL_SANDBOX_RUNNER:-true}
@@ -253,16 +252,12 @@ services:
         condition: service_started
     environment:
       REDIS_URL: redis://redis:6379
-      RAG_OFFLINE: ${RAG_OFFLINE:-true}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
       GOOGLE_CLOUD_API_KEY: ${GOOGLE_CLOUD_API_KEY:-}
-      LLM_BINDING_API_KEY: ${LLM_BINDING_API_KEY:-}
-      RAG_LLM_API_KEY: ${RAG_LLM_API_KEY:-}
       # Demo: MCP auth for toolbox-bq-demo.
       BQ_ACCESS_TOKEN: ${BQ_ACCESS_TOKEN:-}
       GOOGLE_WORKSPACE_MCP_URL: ${GOOGLE_WORKSPACE_MCP_URL:-http://google-workspace-mcp:8000/mcp}
-      LLM_MODEL: ${LLM_MODEL:-gemini-3.5-flash}
       AGENT_JWT_SECRET: ${AGENT_JWT_SECRET:-helpudoc-local-dev-agent-jwt-secret}
       WORKSPACE_ROOT: /app/workspaces
       SKILLS_ROOT: /app/skills

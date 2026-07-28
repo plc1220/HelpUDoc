@@ -3,9 +3,7 @@
 from .env import (
     AgentRuntimeEnv,
     SandboxK8sEnv,
-    ensure_lightrag_postgres_env_defaults,
     env_trim,
-    gemini_key_for_embeddings,
     get_agent_runtime_env,
     is_local_dev_node_env,
     load_agent_runtime_env,
@@ -16,9 +14,7 @@ from .env import (
 __all__ = [
     "AgentRuntimeEnv",
     "SandboxK8sEnv",
-    "ensure_lightrag_postgres_env_defaults",
     "env_trim",
-    "gemini_key_for_embeddings",
     "get_agent_runtime_env",
     "is_local_dev_node_env",
     "load_agent_runtime_env",

@@ -17,7 +17,6 @@ It is responsible for:
 | `prompts/` | Prompt catalog for the general assistant and specialized prompt families. |
 | `config/runtime.yaml` | Runtime configuration for models, tools, MCP servers, and agent behavior. |
 | `docs/` | Supporting notes for image tools and internal agent workflows. |
-| `lightrag_server/` | Optional local LightRAG helper config. |
 
 The shared skill catalog lives at the repo root in `skills/`. In Docker and production it is mounted into the agent runtime so the backend settings UI can edit it.
 
@@ -56,7 +55,7 @@ Service URL: `http://localhost:8001`
 | `AGENT_CONFIG_PATH` | Runtime config file path, usually `agent/config/runtime.yaml`. |
 | `AGENT_JWT_SECRET` | Shared secret used to validate backend-issued agent requests. |
 | `WORKSPACE_ROOT` | Workspace file root shared with the backend. |
-| `REDIS_URL` | Redis connection used by RAG worker flows. |
+| `REDIS_URL` | Redis connection used by agent run flows. |
 | `S3_ENDPOINT`, `S3_BUCKET_NAME`, `S3_PUBLIC_BASE_URL` | Shared object storage settings for generated artifacts. |
 | `GOOGLE_WORKSPACE_MCP_URL` | Hosted Google Workspace MCP endpoint when delegated tools are enabled. |
 | `GOOGLE_DEVELOPER_KNOWLEDGE_PROJECT_ID` | Quota/billing project header used by the Google Developer Knowledge MCP endpoint. |
@@ -95,4 +94,3 @@ docker compose -f infra/docker-compose.yml --env-file env/local/stack.env up --b
 - [../README.md](../README.md)
 - [../docs/api/README.md](../docs/api/README.md)
 - [../docs/environment.md](../docs/environment.md)
-- [lightrag_server/README.md](lightrag_server/README.md)

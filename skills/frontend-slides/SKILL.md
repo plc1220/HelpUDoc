@@ -6,7 +6,7 @@ tools:
 sandbox_scripts:
   - name: export-pptx
     path: scripts/export-pptx.py
-    sha256: "b1a6f118a98bab919e130277ab39a6785af5ad1e4a3d5846dfbe4108f909c655"
+    sha256: "31f678d80b6e0d8472490709cbc75b5f98b7dacfb37037a02ed57e915e2ff7e8"
     timeout_seconds: 300
     outputs:
       - out/tool_artifacts.json

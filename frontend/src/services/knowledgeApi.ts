@@ -68,3 +68,11 @@ export const deleteKnowledge = async (workspaceId: string, knowledgeId: number) 
   });
   return handleResponse(response);
 };
+
+export const rebuildKnowledge = async (workspaceId: string, knowledgeId: number) => {
+  const response = await apiFetch(
+    `${API_URL}/workspaces/${workspaceId}/knowledge/${knowledgeId}/ingest`,
+    { method: 'POST' },
+  );
+  return handleResponse(response);
+};

@@ -166,6 +166,11 @@ def _build_interaction_interrupt_payload(
 
     endpoint = "respond"
     mode = str(resume_mode or "submit").strip().lower()
+    if str(skill or "").strip().lower() == "frontend-slides" and gate in FRONTEND_SLIDES_GATE_PRESENTATIONS:
+        # Frontend-slides gates collect structured answers and must always resume
+        # through the clarification/respond path. Model-supplied approval modes
+        # otherwise produce a payload the backend correctly rejects.
+        mode = "submit"
     if mode in {"approve_reject", "decision", "approval"}:
         endpoint = "decision"
         kind = "approval"

@@ -1,0 +1,3 @@
+# Small, deterministic readers for on-demand document inspection and OKF publishing.
+pypdf
+python-docx

@@ -15,12 +15,11 @@ import type {
   ConversationMessage,
   ConversationMessageMetadata,
   ConversationSummary,
-  File as WorkspaceFile,
   InterruptAnswersByQuestionId,
 } from '../../types';
 import ChatHeader from './ChatHeader';
 import ChatHistoryPanel from './ChatHistoryPanel';
-import ChatInputArea from './ChatInputArea';
+import ChatInputArea, { type ChatMentionSuggestion } from './ChatInputArea';
 import ChatMessageList from './ChatMessageList';
 import type { RenderableInterruptAction } from './interruptActions';
 import type { ChatComposerAttachment } from './chatTypes';
@@ -121,6 +120,7 @@ export default function AgentChatPane({
   onChatInputSelectionChange,
   onChatInputPaste,
   onOpenLocalAttachmentPicker,
+  onInsertKnowledgeTrigger,
   onToggleInternetSearch,
   onInsertSlashTrigger,
   onStopStreaming,
@@ -161,7 +161,7 @@ export default function AgentChatPane({
   chatAttachments: ChatComposerAttachment[];
   commandTags: CommandTag[];
   isMentionOpen: boolean;
-  mentionSuggestions: WorkspaceFile[];
+  mentionSuggestions: ChatMentionSuggestion[];
   mentionSelectedIndex: number;
   isCommandOpen: boolean;
   commandSuggestions: CommandSuggestion[];
@@ -220,6 +220,7 @@ export default function AgentChatPane({
   onChatInputSelectionChange: (event: SyntheticEvent<HTMLTextAreaElement>) => void;
   onChatInputPaste: (event: ClipboardEvent<HTMLTextAreaElement>) => void;
   onOpenLocalAttachmentPicker: () => void;
+  onInsertKnowledgeTrigger: () => void;
   onToggleInternetSearch: () => void;
   onInsertSlashTrigger: () => void;
   onStopStreaming: () => void;
@@ -227,7 +228,7 @@ export default function AgentChatPane({
   onChatAttachmentChange: (event: ChangeEvent<HTMLInputElement>) => void;
   onRemoveChatAttachment: (index: number) => void;
   onRemoveCommandTag: (tagId: string) => void;
-  onSelectMention: (file: WorkspaceFile) => void;
+  onSelectMention: (suggestion: ChatMentionSuggestion) => void;
   onSelectCommand: (command: CommandSuggestion) => void;
   onInteractionSubmit?: (response: InteractionResponse, request: InteractionRequest, message?: ConversationMessage) => Promise<void>;
 }) {
@@ -330,6 +331,7 @@ export default function AgentChatPane({
           onChatInputSelectionChange={onChatInputSelectionChange}
           onChatInputPaste={onChatInputPaste}
           onOpenLocalAttachmentPicker={onOpenLocalAttachmentPicker}
+          onInsertKnowledgeTrigger={onInsertKnowledgeTrigger}
           onToggleInternetSearch={onToggleInternetSearch}
           onInsertSlashTrigger={onInsertSlashTrigger}
           onStopStreaming={onStopStreaming}

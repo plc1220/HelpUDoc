@@ -78,7 +78,6 @@ interface WorkspaceFileTreeProps {
   selectedFiles: Set<string>;
   copiedPublicUrlFileId: string | null;
   dashboardArtifactsByPath?: Record<string, DashboardArtifactInfo>;
-  ragStatuses: Record<string, { status?: string; updatedAt?: string; error?: string }>;
   isDraftWorkspaceFile: (file?: WorkspaceFile | null) => boolean;
   onSelectFile: (file: WorkspaceFile) => void;
   onSelectFolder?: (folderPath: string) => void;
@@ -97,12 +96,6 @@ const getFolderLabel = (node: WorkspaceFileTreeFolderNode) => {
   }
   if (node.path === '.system') {
     return 'System';
-  }
-  if (node.path === '.system/extracted-assets') {
-    return 'Extracted assets';
-  }
-  if (node.path === '.system/derived-artifacts') {
-    return 'Derived artifacts';
   }
   return node.name;
 };
@@ -129,13 +122,6 @@ const getDashboardArtifactForFolderPath = (
     .filter(([path]) => path.startsWith(`${normalized}/`))
     .map(([, artifact]) => artifact);
   return descendantArtifacts.length === 1 ? descendantArtifacts[0] : undefined;
-};
-
-const getRagStatus = (
-  ragStatuses: Record<string, { status?: string; updatedAt?: string; error?: string }>,
-  file: WorkspaceFile,
-) => {
-  return typeof file.name === 'string' ? ragStatuses[file.name] : undefined;
 };
 
 const SlidingFileName: React.FC<{ name: string; colorMode: 'light' | 'dark' }> = ({ name, colorMode }) => {
@@ -184,7 +170,6 @@ const TreeFileRow: React.FC<{
   selected: boolean;
   selectedFiles: Set<string>;
   dashboardArtifactsByPath?: Record<string, DashboardArtifactInfo>;
-  ragStatuses: Record<string, { status?: string; updatedAt?: string; error?: string }>;
   isDraftWorkspaceFile: (file?: WorkspaceFile | null) => boolean;
   onSelectFile: (file: WorkspaceFile) => void;
   onToggleFileSelection: (fileId: string) => void;
@@ -203,7 +188,6 @@ const TreeFileRow: React.FC<{
   selected,
   selectedFiles,
   dashboardArtifactsByPath,
-  ragStatuses,
   isDraftWorkspaceFile,
   onSelectFile,
   onToggleFileSelection,
@@ -219,13 +203,6 @@ const TreeFileRow: React.FC<{
   colorMode,
 }) => {
   const { file } = node;
-  const ragStatus = getRagStatus(ragStatuses, file);
-  const ragState = ragStatus?.status ? String(ragStatus.status).toLowerCase() : '';
-  const understandingState = file.understandingStatus ? String(file.understandingStatus).toLowerCase() : '';
-  const isIndexing = ['pending', 'processing', 'preprocessed'].includes(ragState);
-  const isUnderstandingPending = understandingState === 'pending';
-  const understandingFailed = understandingState === 'failed';
-  const understandingPartial = understandingState === 'partial';
   const displayName = getFileDisplayName(file.name || '');
   const fileIcon = getFileTypeIcon(file.name || '');
   const isDraft = isDraftWorkspaceFile(file);
@@ -307,21 +284,6 @@ const TreeFileRow: React.FC<{
       >
         <div className="flex min-w-0 flex-col gap-1">
           <div className="flex min-w-0 items-center gap-2">
-            {(isIndexing || isUnderstandingPending) && (
-              <span className="inline-flex h-4 w-4 items-center justify-center text-blue-500">
-                <span className="h-2 w-2 animate-pulse rounded-full bg-current" />
-              </span>
-            )}
-            {understandingFailed && (
-              <span className="inline-flex h-4 w-4 items-center justify-center text-rose-500">
-                <span className="h-2 w-2 rounded-full bg-current" />
-              </span>
-            )}
-            {understandingPartial && (
-              <span className="inline-flex h-4 w-4 items-center justify-center text-amber-500">
-                <span className="h-2 w-2 rounded-full bg-current" />
-              </span>
-            )}
             <span className="shrink-0" aria-hidden="true">
               {fileIcon}
             </span>
@@ -342,21 +304,6 @@ const TreeFileRow: React.FC<{
               </span>
             )}
           </div>
-          {(isUnderstandingPending || understandingFailed || understandingPartial) && (
-            <span className={`pl-6 text-[11px] leading-none ${
-              understandingFailed
-                ? isDarkMode ? 'text-rose-400' : 'text-rose-600'
-                : understandingPartial
-                  ? isDarkMode ? 'text-amber-400' : 'text-amber-600'
-                  : isDarkMode ? 'text-sky-400' : 'text-sky-600'
-            }`}>
-              {understandingFailed
-                ? (file.understandingError?.trim() || 'Artifact processing failed')
-                : understandingPartial
-                  ? 'Artifact ready with partial extraction'
-                  : 'Processing document artifacts...'}
-            </span>
-          )}
         </div>
       </div>
       <div className={`pointer-events-none absolute right-2 top-1/2 z-10 flex -translate-y-1/2 items-center gap-1 rounded-lg border pl-2 opacity-0 backdrop-blur-sm transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 ${actionsClassName}`}>
@@ -583,7 +530,6 @@ const renderTreeNodes = (
     selectedDashboardPath?: string | null;
     selectedFiles: Set<string>;
     dashboardArtifactsByPath?: Record<string, DashboardArtifactInfo>;
-    ragStatuses: Record<string, { status?: string; updatedAt?: string; error?: string }>;
     isDraftWorkspaceFile: (file?: WorkspaceFile | null) => boolean;
     onSelectFile: (file: WorkspaceFile) => void;
     onSelectFolder?: (folderPath: string) => void;
@@ -635,7 +581,6 @@ const renderTreeNodes = (
         selected={String(options.selectedFileId) === String(node.file.id)}
         selectedFiles={options.selectedFiles}
         dashboardArtifactsByPath={options.dashboardArtifactsByPath}
-        ragStatuses={options.ragStatuses}
         isDraftWorkspaceFile={options.isDraftWorkspaceFile}
         onSelectFile={options.onSelectFile}
         onToggleFileSelection={options.onToggleFileSelection}
@@ -662,7 +607,6 @@ export default function WorkspaceFileTree({
   selectedDashboardPath,
   selectedFiles,
   dashboardArtifactsByPath,
-  ragStatuses,
   isDraftWorkspaceFile,
   onSelectFile,
   onSelectFolder,
@@ -803,7 +747,6 @@ export default function WorkspaceFileTree({
               selectedDashboardPath,
               selectedFiles,
               dashboardArtifactsByPath,
-              ragStatuses,
               isDraftWorkspaceFile,
               onSelectFile,
               onSelectFolder,

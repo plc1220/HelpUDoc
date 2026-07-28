@@ -8,7 +8,7 @@ import {
 export type { AgentStreamChunk, LangChainStreamProjection };
 export { isInternalStreamContent };
 import { API_URL, apiFetch } from './apiClient';
-import type { ConversationMessageMetadata, FileContextRef, InterruptAnswersByQuestionId } from '../types';
+import type { ConversationMessageMetadata, InterruptAnswersByQuestionId } from '../types';
 import type { PluginDefinition, SkillDefinition } from '../types';
 
 import { vitePublicEnv } from '../config/env';
@@ -53,7 +53,6 @@ export const startAgentRun = async (
   turnId?: string,
   options?: AgentStreamOptions & {
     taggedFiles?: string[];
-    fileContextRefs?: FileContextRef[];
     currentTurnFileIds?: number[];
     internetSearchEnabled?: boolean;
   },
@@ -72,7 +71,6 @@ export const startAgentRun = async (
       forceReset: options?.forceReset,
       turnId,
       taggedFiles: options?.taggedFiles,
-      fileContextRefs: options?.fileContextRefs,
       currentTurnFileIds: options?.currentTurnFileIds,
       internetSearchEnabled: options?.internetSearchEnabled,
     }),

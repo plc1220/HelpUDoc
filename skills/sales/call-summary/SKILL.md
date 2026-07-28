@@ -58,7 +58,7 @@ If likely transcript artifacts already exist in Gmail or Drive, use those before
 2. Google Calendar to identify the meeting shell
 3. Gmail for recap emails, follow-up threads, and transcript emails
 4. Google Drive for transcript docs, notes, decks, and proposal files
-5. Tagged workspace files via `rag_query`
+5. Tagged workspace files via `search_document` and bounded `inspect_document` reads
 6. CRM only if connected or explicitly requested
 
 ## Output

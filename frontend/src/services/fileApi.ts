@@ -1,6 +1,5 @@
 import { API_URL, apiFetch, buildApiUrl } from './apiClient';
 import type {
-  FileContextRef,
   GoogleDrivePickerScope,
   GoogleDriveSearchResult,
 } from '../types';
@@ -185,20 +184,6 @@ export const renameFile = async (
   return response.json();
 };
 
-export const getRagStatuses = async (workspaceId: string, files: string[]) => {
-  const response = await apiFetch(`${API_URL}/workspaces/${workspaceId}/files/rag-status`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ files }),
-  });
-  if (!response.ok) {
-    throw new Error('Failed to fetch RAG status');
-  }
-  return response.json();
-};
-
 export const searchGoogleDriveFiles = async (
   workspaceId: string,
   params: { query?: string; scope?: GoogleDrivePickerScope; pageToken?: string },
@@ -242,28 +227,6 @@ export const importGoogleDriveFiles = async (
       payload && typeof payload === 'object' && typeof payload.error === 'string'
         ? payload.error
         : 'Failed to import Google Drive files',
-    );
-  }
-  return response.json();
-};
-
-export const resolveFileContextRefs = async (
-  workspaceId: string,
-  fileIds: number[],
-): Promise<{ fileContextRefs: FileContextRef[] }> => {
-  const response = await apiFetch(`${API_URL}/workspaces/${workspaceId}/files/context`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ fileIds }),
-  });
-  if (!response.ok) {
-    const payload = await response.json().catch(() => null);
-    throw new Error(
-      payload && typeof payload === 'object' && typeof payload.error === 'string'
-        ? payload.error
-        : 'Failed to prepare attached files',
     );
   }
   return response.json();

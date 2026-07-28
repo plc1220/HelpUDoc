@@ -19,7 +19,6 @@ import {
 } from '../agentService';
 import type {
   ConversationMessageMetadata,
-  FileContextRef,
   ToolEvent,
   ToolOutputFile,
   InteractionPresentation,
@@ -50,13 +49,13 @@ type StartRunParams = {
   forceReset?: boolean;
   turnId?: string;
   authToken?: string;
-  fileContextRefs?: FileContextRef[];
   messageContent?: AgentMessageContentBlock[];
   internetSearchEnabled?: boolean;
 };
 
 type RunPendingInterrupt = {
   kind?: 'approval' | 'clarification';
+  resumeStrategy?: 'fresh_prompt' | 'checkpoint';
   interruptId?: string;
   title?: string;
   description?: string;
@@ -124,7 +123,6 @@ type PersistedRunContext = {
   history?: AgentHistoryEntry[];
   forceReset?: boolean;
   turnId?: string;
-  fileContextRefs?: FileContextRef[];
   messageContent?: AgentMessageContentBlock[];
   internetSearchEnabled?: boolean;
 };
@@ -264,16 +262,38 @@ const normalizeInterruptPayloadRecord = (payload: Record<string, unknown>): Reco
       : buildInterruptId(payload);
   const interactionRequest = getPayloadRecord(payload.interactionRequest);
   const metadata = getPayloadRecord(interactionRequest?.metadata);
-  const projectedDisplayPayload = getPayloadRecord(payload.displayPayload) || getPayloadRecord(payload.display_payload)
-    ? undefined
-    : metadata;
-  if (payload.interruptId === interruptId && !projectedDisplayPayload) {
+  const displayPayload =
+    getPayloadRecord(payload.displayPayload) ||
+    getPayloadRecord(payload.display_payload) ||
+    metadata;
+  const synthetic = Boolean(
+    displayPayload?.synthetic === true ||
+    metadata?.synthetic === true ||
+    (displayPayload?.source === 'implicit_input_guard' &&
+      displayPayload?.interactionContract === 'helpudoc.interaction') ||
+    (metadata?.source === 'implicit_input_guard' &&
+      metadata?.interactionContract === 'helpudoc.interaction'),
+  );
+  const resumeStrategy =
+    payload.resumeStrategy === 'fresh_prompt' || payload.resumeStrategy === 'checkpoint'
+      ? payload.resumeStrategy
+      : synthetic
+        ? 'fresh_prompt'
+        : undefined;
+  const needsDisplayPayloadProjection = !getPayloadRecord(payload.displayPayload) && Boolean(displayPayload);
+  const needsResumeStrategyProjection = payload.resumeStrategy !== resumeStrategy && Boolean(resumeStrategy);
+  if (
+    payload.interruptId === interruptId &&
+    !needsDisplayPayloadProjection &&
+    !needsResumeStrategyProjection
+  ) {
     return payload;
   }
   return {
     ...payload,
     interruptId,
-    ...(projectedDisplayPayload ? { displayPayload: projectedDisplayPayload } : {}),
+    ...(needsDisplayPayloadProjection ? { displayPayload } : {}),
+    ...(resumeStrategy ? { resumeStrategy } : {}),
   };
 };
 
@@ -296,6 +316,9 @@ const hasClarificationResumeInput = (payload?: AgentInterruptResponse): boolean 
 const isSyntheticClarificationInterrupt = (interrupt?: RunPendingInterrupt): boolean => {
   if (interrupt?.kind !== 'clarification') {
     return false;
+  }
+  if (interrupt.resumeStrategy === 'fresh_prompt') {
+    return true;
   }
   const displayPayload = interrupt.displayPayload || {};
   const nativeMetadata = interrupt.interactionRequest?.metadata || {};
@@ -485,6 +508,26 @@ export const buildSyntheticClarificationFollowupPrompt = (
     originalRequest,
   ].filter((line) => line !== '').join('\n');
 };
+
+export const buildSyntheticResumeParams = (
+  baseParams: StartRunParams,
+  response: AgentInterruptResponse,
+  previousInterrupt: RunPendingInterrupt | undefined,
+  nextGateState: InteractionGateState,
+): StartRunParams => ({
+  ...baseParams,
+  prompt: buildSyntheticClarificationFollowupPrompt(
+    baseParams.prompt,
+    response,
+    previousInterrupt,
+    nextGateState,
+  ),
+  // Synthetic gates do not have LangGraph checkpoints. The continuation
+  // prompt must be the sole conversational input for the fresh stream.
+  history: undefined,
+  messageContent: undefined,
+  forceReset: true,
+});
 
 const clarificationSignature = (value: Record<string, unknown> | RunPendingInterrupt | undefined): string => {
   if (!value) {
@@ -920,13 +963,17 @@ export const withFrontendSlidesGateMetadata = (
   gateId: FrontendSlidesGateId,
 ): Record<string, unknown> => {
   const normalized = normalizeInterruptPayloadRecord(payload);
+  const existingDisplayPayload = extractDisplayPayload(normalized);
   const displayPayload = {
-    ...extractDisplayPayload(normalized),
+    ...existingDisplayPayload,
     skill: 'frontend-slides',
     gateId,
     interactionContract: 'helpudoc.interaction',
     expectedPresentation: EXPECTED_GATES[gateId],
-    source: 'frontend_slides_gate_inference',
+    source:
+      typeof existingDisplayPayload?.source === 'string' && existingDisplayPayload.source.trim()
+        ? existingDisplayPayload.source.trim()
+        : 'frontend_slides_gate_inference',
   };
   const interactionRequest = getRecord(normalized.interactionRequest);
   const presentation = normalizeInteractionPresentationName(interactionRequest?.presentation);
@@ -1337,16 +1384,6 @@ const collectFrontendSlidesSourceText = (input: {
     }
   }
 
-  for (const ref of input.params?.fileContextRefs || []) {
-    const parts = [
-      ref.sourceName,
-      typeof ref.summary === 'string' ? ref.summary : '',
-    ].filter((part) => part && part.trim());
-    if (parts.length) {
-      fragments.push(parts.join('\n'));
-    }
-  }
-
   if (typeof input.params?.prompt === 'string' && input.params.prompt.trim()) {
     fragments.push(formatOriginalPromptForContinuation(input.params.prompt));
   }
@@ -1358,10 +1395,6 @@ const extractFrontendSlidesSourceTitle = (sourceText: string, params?: StartRunP
   const heading = sourceText.match(/^\s*#\s+(.+)$/m)?.[1]?.trim();
   if (heading) {
     return cleanOutlineSourceLine(heading);
-  }
-  const refName = params?.fileContextRefs?.find((ref) => ref.sourceName?.trim())?.sourceName;
-  if (refName) {
-    return titleCaseFromSlug(refName);
   }
   const taggedFile = params?.prompt?.match(/@([^\s]+)/)?.[1];
   if (taggedFile) {
@@ -2399,6 +2432,10 @@ const parsePendingInterrupt = (raw: string | undefined): RunPendingInterrupt | u
         payload.kind === 'clarification' || payload.kind === 'approval'
           ? payload.kind
           : undefined,
+      resumeStrategy:
+        payload.resumeStrategy === 'fresh_prompt' || payload.resumeStrategy === 'checkpoint'
+          ? payload.resumeStrategy
+          : undefined,
       interruptId: typeof payload.interruptId === 'string' ? payload.interruptId : undefined,
       title: typeof payload.title === 'string' ? payload.title : undefined,
       description: typeof payload.description === 'string' ? payload.description : undefined,
@@ -2456,7 +2493,6 @@ const serializeRunContext = (params: StartRunParams): string =>
     history: params.history,
     forceReset: params.forceReset,
     turnId: params.turnId,
-    fileContextRefs: params.fileContextRefs,
     messageContent: params.messageContent,
     internetSearchEnabled: params.internetSearchEnabled,
   } satisfies PersistedRunContext);
@@ -2487,7 +2523,6 @@ const parseRunContext = (raw: string | undefined): RunContext | undefined => {
         history: Array.isArray(parsed.history) ? parsed.history : undefined,
         forceReset: typeof parsed.forceReset === 'boolean' ? parsed.forceReset : undefined,
         turnId: typeof parsed.turnId === 'string' ? parsed.turnId : undefined,
-        fileContextRefs: Array.isArray(parsed.fileContextRefs) ? parsed.fileContextRefs as FileContextRef[] : undefined,
         messageContent: Array.isArray(parsed.messageContent) ? parsed.messageContent as AgentMessageContentBlock[] : undefined,
         internetSearchEnabled: typeof parsed.internetSearchEnabled === 'boolean' ? parsed.internetSearchEnabled : undefined,
       },
@@ -2885,12 +2920,16 @@ async function runAgentRunWorker(
   let clarificationInterruptCount = runProgress?.clarificationInterruptCount ?? 0;
   let toolCallCount = runProgress?.toolCallCount ?? 0;
   let toolErrorCount = runProgress?.toolErrorCount ?? 0;
+  const usesFreshResumeThread = Boolean(
+    params.forceReset && isSyntheticClarificationInterrupt(previousInterrupt),
+  );
   const traceContext: AgentTraceContext = {
     runId,
     // Keep the LangGraph checkpoint stable for a run even if the agent
-    // runtime is rebuilt between the initial request and a clarification
-    // response. Synthetic resets get a fresh checkpoint intentionally.
-    threadId: params.forceReset && previousInterrupt
+    // runtime is rebuilt between the initial request and a real interrupt
+    // response. Only synthetic fresh-prompt resumes intentionally start a
+    // new checkpoint thread.
+    threadId: usesFreshResumeThread
       ? `${runId}:reset:${randomUUID()}`
       : runId,
     turnId: params.turnId,
@@ -3702,7 +3741,6 @@ async function runAgentRunWorker(
           forceReset: params.forceReset,
           signal: controller.signal,
           authToken: params.authToken,
-          fileContextRefs: params.fileContextRefs,
           messageContent: params.messageContent,
           internetSearchEnabled: params.internetSearchEnabled,
           traceContext,
@@ -3823,16 +3861,12 @@ export async function resumeAgentRunWithResponse(
     previousGateId,
   );
   const nextParams = previousInterruptIsSynthetic
-    ? {
-        ...baseParams,
-        prompt: buildSyntheticClarificationFollowupPrompt(
-          context.params.prompt,
-          response,
-          options?.previousInterrupt,
-          nextGateState,
-        ),
-        forceReset: true,
-      }
+    ? buildSyntheticResumeParams(
+        baseParams,
+        response,
+        options?.previousInterrupt,
+        nextGateState,
+      )
     : baseParams;
   runContexts.set(runId, { params: nextParams });
   await persistMeta(runId, {

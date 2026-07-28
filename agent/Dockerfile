@@ -2,21 +2,9 @@
 FROM python:3.12-slim
 WORKDIR /app
 
-ARG PYTORCH_CPU_INDEX_URL=https://download.pytorch.org/whl/cpu
-ARG PYPI_INDEX_URL=https://pypi.org/simple
-
-# System libs used by Docling/PyMuPDF and image-capable document parsing.
+# Keep only runtime tools required by skills and plugins.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
-    libxcb1 \
-    libx11-6 \
-    libxext6 \
-    libxrender1 \
-    libxfixes3 \
-    libxi6 \
-    libgl1 \
-    libglib2.0-0 \
-    libsm6 \
     libreoffice-calc \
     nodejs \
   && rm -rf /var/lib/apt/lists/*
@@ -24,8 +12,6 @@ RUN apt-get update \
 # Install deps before copying the rest so the layer caches across code changes.
 COPY agent/requirements*.txt /app/agent/
 RUN --mount=type=cache,target=/root/.cache/pip \
-  PIP_INDEX_URL="${PYTORCH_CPU_INDEX_URL}" \
-  PIP_EXTRA_INDEX_URL="${PYPI_INDEX_URL}" \
   pip install -r /app/agent/requirements-runtime.txt
 
 COPY agent/ /app/agent/

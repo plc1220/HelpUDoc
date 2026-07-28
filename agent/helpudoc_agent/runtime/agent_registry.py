@@ -41,6 +41,11 @@ GENERAL_SYSTEM_PROMPT = (
     "if no tools are listed, you may use any appropriate tools. "
     "Routing override: if the request mentions .ppt, .pptx, PowerPoint, Google Slides, native slide decks, deck templates, editing an existing deck, or producing a PowerPoint/Google Slides deliverable, load the pptx skill. "
     "Do not load frontend-slides for PPTX-related work. Use frontend-slides only when the user explicitly asks for a browser-native HTML/web presentation or an animated interactive HTML deck. "
+    "For tagged or named PDFs load the pdf skill; for DOCX or Word documents load the docx skill; "
+    "for XLSX, XLSM, CSV, or TSV files load the xlsx skill. Search the original document on demand "
+    "with search_document and use bounded inspect_document calls; do not require a derived copy or vector index. "
+    "For supplied @knowledge context, read the OKF index with knowledge_read and follow only relevant concepts, "
+    "using knowledge_search when discovery is needed. "
     "Once a skill is loaded, stay within that skill's workflow until its completion criteria are met "
     "(for example: report requests should end with the report artifact tool, dashboard requests should end with the dashboard tool). "
     "Do not assume skills are copied into the workspace. "
@@ -60,7 +65,7 @@ GENERAL_SYSTEM_PROMPT = (
     "Only proceed with side-effecting tools after approval (or after applying user edits). "
     "Reply in chat with brief status updates, not full sections. "
     "If no skill applies, proceed with best-effort behavior. "
-    "Treat attached files, derived artifacts, and prior workspace documents as grounded project context, "
+    "Treat tagged files, published knowledge, and prior workspace documents as grounded project context, "
     "but not as authoritative sources for facts that may have changed recently. "
     "When the user asks for the latest/current model version, pricing, dates, schedules, or other time-sensitive facts, "
     "verify them with allowed fresh sources such as the requested MCP server, official documentation, google_search, "
@@ -170,9 +175,23 @@ class AgentRegistry:
         policy_key = json.dumps(context_payload.get("mcp_policy", {}) or {}, sort_keys=True, default=str)
         mcp_auth_fingerprint = str(context_payload.get("mcp_auth_fingerprint") or "")
         internet_search_key = "search:on" if context_payload.get("internet_search_enabled") else "search:off"
+        skill_sandbox_key = (
+            "sandbox:on"
+            if (
+                context_payload.get("allow_skill_sandbox")
+                or context_payload.get("allowSkillSandbox")
+                or context_payload.get("allow_script_runner")
+                or context_payload.get("allowScriptRunner")
+            )
+            else "sandbox:off"
+        )
         user_key = str(context_payload.get("user_id") or "")
         cache_scope_prefix = f"{user_key}:{policy_key}:"
-        key = (resolved_name, workspace_id, f"{user_key}:{policy_key}:{mcp_auth_fingerprint}:{internet_search_key}")
+        key = (
+            resolved_name,
+            workspace_id,
+            f"{user_key}:{policy_key}:{mcp_auth_fingerprint}:{internet_search_key}:{skill_sandbox_key}",
+        )
         preserved_context: Dict[str, Any] = {}
         if key in self._cache:
             runtime = self._cache[key]

@@ -3,7 +3,6 @@ import * as path from 'path';
 import { Knex } from 'knex';
 import { v4 as uuidv4 } from 'uuid';
 import { DatabaseService } from './databaseService';
-import { RagQueueService } from './ragQueueService';
 import { S3Service } from './s3Service';
 import { UserContext } from '../types/user';
 import { AccessDeniedError, NotFoundError } from '../errors';
@@ -44,12 +43,10 @@ export type McpServerPolicy = {
 
 export class WorkspaceService {
   private db: Knex;
-  private ragQueueService?: RagQueueService;
   private s3Service: S3Service;
 
-  constructor(databaseService: DatabaseService, ragQueueService?: RagQueueService) {
+  constructor(databaseService: DatabaseService) {
     this.db = databaseService.getDb();
-    this.ragQueueService = ragQueueService;
     this.s3Service = new S3Service();
     this.ensureWorkspaceDir();
   }
@@ -330,11 +327,6 @@ export class WorkspaceService {
       await this.s3Service.deletePrefix(`${workspaceId}/`);
     } catch (error) {
       console.error(`Failed to delete S3 objects for workspace: ${workspaceId}`, error);
-    }
-    try {
-      await this.ragQueueService?.enqueueWorkspaceDelete({ workspaceId });
-    } catch (error) {
-      console.error(`Failed to enqueue RAG workspace delete job: ${workspaceId}`, error);
     }
   }
 

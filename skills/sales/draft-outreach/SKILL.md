@@ -46,7 +46,7 @@ Research first, then draft. This skill should never send generic outreach. Start
 
 1. Gmail for prior threads and open loops
 2. Google Drive for notes, decks, proposals, and account plans
-3. Tagged workspace files via `rag_query`
+3. Tagged workspace files via `search_document` and bounded `inspect_document` reads
 4. Google Sheets for territory or account-tracker context
 5. Google Search for current company, role, or market updates
 6. CRM or enrichment only if available

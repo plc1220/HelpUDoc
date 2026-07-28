@@ -46,20 +46,6 @@ const runAgentSchema = z.object({
   taggedFiles: z.array(z.string().min(1)).optional(),
   currentTurnFileIds: z.array(z.number().int().positive()).optional(),
   internetSearchEnabled: z.boolean().optional(),
-  fileContextRefs: z.array(z.object({
-    sourceFileId: z.number().int().positive(),
-    sourceName: z.string().min(1),
-    sourceMimeType: z.string().nullable().optional(),
-    sourceVersionFingerprint: z.string().min(1),
-    artifactId: z.string().min(1),
-    artifactVersion: z.number().int().positive(),
-    derivedArtifactFileId: z.number().int().positive().nullable().optional(),
-    derivedArtifactPath: z.string().nullable().optional(),
-    effectiveMode: z.enum(['part', 'parser', 'hybrid']),
-    status: z.enum(['pending', 'partial', 'ready', 'failed', 'superseded']),
-    summary: z.string().nullable().optional(),
-    lastError: z.string().nullable().optional(),
-  }).strict()).optional(),
 });
 
 const runDecisionSchema = z.object({
@@ -241,7 +227,7 @@ export function registerRunRoutes(
   router.post('/run', async (req, res) => {
     try {
       const user = requireUserContext(req);
-      const { persona, prompt, workspaceId, history, forceReset, taggedFiles, currentTurnFileIds, internetSearchEnabled, fileContextRefs } = runAgentSchema.parse(req.body);
+      const { persona, prompt, workspaceId, history, forceReset, taggedFiles, currentTurnFileIds, internetSearchEnabled } = runAgentSchema.parse(req.body);
       const workspacePolicy = await workspaceService.getMcpServerPolicy(workspaceId, user.userId, { requireEdit: true });
       const policy = await policyApi.resolveEffectiveAgentPolicy(user.userId, workspacePolicy);
       const enrichedPrompt = await injectTaggedFileUrls(prompt, workspaceId, user.userId, taggedFiles);
@@ -254,7 +240,6 @@ export function registerRunRoutes(
       const response = await runAgent(persona, workspaceId, enrichedPrompt, history, {
         forceReset,
         authToken: authToken || undefined,
-        fileContextRefs,
         messageContent,
         internetSearchEnabled,
         traceContext: {
@@ -297,7 +282,7 @@ export function registerRunRoutes(
 
     try {
       const user = requireUserContext(req);
-      const { persona, prompt, workspaceId, history, forceReset, taggedFiles, currentTurnFileIds, internetSearchEnabled, fileContextRefs } = runAgentSchema.parse(req.body);
+      const { persona, prompt, workspaceId, history, forceReset, taggedFiles, currentTurnFileIds, internetSearchEnabled } = runAgentSchema.parse(req.body);
       const workspacePolicy = await workspaceService.getMcpServerPolicy(workspaceId, user.userId, { requireEdit: true });
       const policy = await policyApi.resolveEffectiveAgentPolicy(user.userId, workspacePolicy);
       const enrichedPrompt = await injectTaggedFileUrls(prompt, workspaceId, user.userId, taggedFiles);
@@ -311,7 +296,6 @@ export function registerRunRoutes(
         forceReset,
         signal: upstreamAbort.signal,
         authToken: authToken || undefined,
-        fileContextRefs,
         messageContent,
         internetSearchEnabled,
         traceContext: {
@@ -359,7 +343,7 @@ export function registerRunRoutes(
   router.post('/runs', async (req, res) => {
     try {
       const user = requireUserContext(req);
-      const { persona, prompt, workspaceId, conversationId, history, forceReset, turnId, taggedFiles, currentTurnFileIds, internetSearchEnabled, fileContextRefs } = runAgentSchema.parse(req.body);
+      const { persona, prompt, workspaceId, conversationId, history, forceReset, turnId, taggedFiles, currentTurnFileIds, internetSearchEnabled } = runAgentSchema.parse(req.body);
       await workspaceService.ensureMembership(workspaceId, user.userId, { requireEdit: true });
       if (conversationId) {
         await conversationService.ensureConversationAccess(user.userId, workspaceId, conversationId, { requireEdit: true });
@@ -383,7 +367,6 @@ export function registerRunRoutes(
         forceReset,
         turnId,
         authToken: authToken || undefined,
-        fileContextRefs,
         messageContent,
         internetSearchEnabled,
       });

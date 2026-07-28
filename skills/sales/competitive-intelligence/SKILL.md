@@ -28,7 +28,7 @@ Help sellers position with evidence, not folklore. This skill should default to 
 
 ## Retrieval Order
 
-1. Tagged workspace files via `rag_query`
+1. Tagged workspace files via `search_document` and bounded `inspect_document` reads
 2. Google Drive for battlecards, comparison docs, enablement notes, and proposal material
 3. Gmail or recap notes only when they contain direct competitor mentions
 4. Google Search for current pricing, releases, reviews, and positioning

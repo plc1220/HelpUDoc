@@ -59,31 +59,6 @@ class ToolFactoryStub:  # pragma: no cover - placeholder for dependency
         pass
 
 
-class RagWorkerStoreStub:
-    next_response = {"data": {"chunks": []}}
-
-    def __init__(self):
-        self.query_data_calls = []
-
-    async def query_data(self, *args, **kwargs):
-        self.query_data_calls.append((args, kwargs))
-        return RagWorkerStoreStub.next_response
-
-
-class RagIndexWorkerStub:
-    last_instance = None
-
-    def __init__(self, *_args, **_kwargs):
-        self.store = RagWorkerStoreStub()
-        RagIndexWorkerStub.last_instance = self
-
-    async def start(self):
-        return None
-
-    async def stop(self):
-        return None
-
-
 class RegistryStub:
     instance = None
 
@@ -682,9 +657,6 @@ def client_with_stubs(monkeypatch):
     client = None
     try:
         _install_dependency_stubs()
-        monkeypatch.setenv("RAG_PARSER_PIPELINE", "stub")
-        monkeypatch.setenv("PARSER_ENRICHMENT_MODE", "stub")
-
         runtime_pkg = ModuleType("helpudoc_agent.runtime")
         runtime_pkg.__path__ = []
         sys.modules["helpudoc_agent.runtime"] = runtime_pkg
@@ -709,7 +681,6 @@ def client_with_stubs(monkeypatch):
         monkeypatch.setattr(api_app_module, "GeminiClientManager", GeminiClientManagerStub)
         monkeypatch.setattr(api_app_module, "ToolFactory", ToolFactoryStub)
         monkeypatch.setattr(api_app_module, "AgentRegistry", RegistryStub)
-        monkeypatch.setattr(api_app_module, "RagIndexWorker", RagIndexWorkerStub)
 
         import helpudoc_agent.app as _app_shim  # noqa: F401 — ensure shim loads after api stubs
 
@@ -757,6 +728,36 @@ def test_chat_stream_emits_tokens_and_done(client_with_stubs):
 
     assert messages[-1]["type"] == "done"
     assert "".join(m["content"] for m in messages if m["type"] == "token") == "Hello world!"
+    assert source_tracker.updated_workspaces == [runtime.workspace_state]
+
+
+def test_chat_stream_restores_nonempty_user_contents_before_model_call(client_with_stubs):
+    client, registry, source_tracker = client_with_stubs
+    agent = RecordingStreamingAgent(["Continued"])
+    runtime = DummyRuntime("workspace-synthetic-resume", agent)
+    registry.set_runtime("research", "workspace-synthetic-resume", runtime)
+
+    payload = {
+        "message": "Continue after presentation_context with density: Low density / speaker-led",
+        "history": [{"role": "assistant", "content": ""}],
+        "forceReset": True,
+    }
+    with client.stream(
+        "POST",
+        "/agents/research/workspace/workspace-synthetic-resume/chat/stream",
+        json=payload,
+    ) as response:
+        assert response.status_code == 200
+        messages = _collect_stream_payloads(response)
+
+    assert messages[-1]["type"] == "done"
+    stream_input = agent.stream_inputs[0][0][0]
+    model_messages = stream_input["messages"]
+    assert all(item.get("content") for item in model_messages)
+    assert any(
+        item.get("role") == "user" and "Low density / speaker-led" in item.get("content", "")
+        for item in model_messages
+    )
     assert source_tracker.updated_workspaces == [runtime.workspace_state]
 
 
@@ -964,7 +965,7 @@ def test_find_skill_accepts_singular_slide_alias(client_with_stubs, tmp_path):
     assert skill.skill_id == "frontend-slides"
 
 
-def test_skill_directive_survives_tagged_artifact_guidance(client_with_stubs, tmp_path):
+def test_skill_directive_survives_tagged_file_guidance(client_with_stubs, tmp_path):
     client, registry, source_tracker = client_with_stubs
     previous_skills_root = SettingsStub.backend.skills_root
     skill_dir = tmp_path / "frontend-slides"
@@ -980,7 +981,12 @@ def test_skill_directive_survives_tagged_artifact_guidance(client_with_stubs, tm
     registry.set_runtime("research", "workspace-skill-tagged", runtime)
 
     payload = {
-        "message": "<<<HELPUDOC_DIRECTIVE\n{\"kind\":\"skill\",\"skillId\":\"frontend-slides\"}\n>>>\n@Final_Proposal.md",
+        "message": (
+            "<<<HELPUDOC_DIRECTIVE\n"
+            "{\"kind\":\"skill\",\"skillId\":\"frontend-slides\"}\n"
+            ">>>\n"
+            "@Final_Proposal.md\n\nTagged files:\n- Final_Proposal.md\n"
+        ),
         "history": [],
         "langfuseTraceContext": {
             "skillId": "frontend-slides",
@@ -992,20 +998,6 @@ def test_skill_directive_survives_tagged_artifact_guidance(client_with_stubs, tm
                 ]
             },
         },
-        "fileContextRefs": [
-            {
-                "sourceFileId": 1,
-                "sourceName": "Final_Proposal.md",
-                "sourceMimeType": "application/pdf",
-                "sourceVersionFingerprint": "abc",
-                "artifactId": "artifact-1",
-                "artifactVersion": 1,
-                "derivedArtifactFileId": 2,
-                "derivedArtifactPath": ".system/derived-artifacts/artifact-1/v1.md",
-                "effectiveMode": "part",
-                "status": "ready",
-            }
-        ],
     }
     try:
         with client.stream("POST", "/agents/research/workspace/workspace-skill-tagged/chat/stream", json=payload) as response:
@@ -1023,7 +1015,7 @@ def test_skill_directive_survives_tagged_artifact_guidance(client_with_stubs, tm
     user_text = stream_input["messages"][-1]["content"]
     assert "Loaded skill: frontend-slides" in user_text
     assert "Use request_clarification before generating slides." in user_text
-    assert "Artifact-first guidance:" in user_text
+    assert "Tagged file guidance:" in user_text
     assert source_tracker.updated_workspaces == [runtime.workspace_state]
 
 
@@ -1254,6 +1246,22 @@ def test_append_tagged_file_guidance_warns_for_html(client_with_stubs):
     assert "Do not read an entire report HTML" in guided
 
 
+def test_append_tagged_file_guidance_uses_agentic_document_inspection(client_with_stubs):
+    client_with_stubs
+
+    import helpudoc_agent.app as app_module
+
+    guided = app_module._append_tagged_file_guidance(
+        "Compare the tagged files.",
+        ["reports/policy.pdf", "models/forecast.xlsx"],
+    )
+
+    assert "Work from the original tagged file on demand" in guided
+    assert "Use search_document" in guided
+    assert "Use inspect_document for bounded follow-up reads" in guided
+    assert "there is no background processing step to wait for" in guided
+
+
 def test_build_dashboard_runtime_guidance_prefers_tagged_local_dataset(client_with_stubs):
     client_with_stubs
 
@@ -1266,19 +1274,6 @@ def test_build_dashboard_runtime_guidance_prefers_tagged_local_dataset(client_wi
     assert "Tagged local dataset(s): datasets/cancellations_6m_v2.parquet" in guidance
     assert "Before request_plan_approval" in guidance
     assert "Generate 3 to 5 approved charts only" in guidance
-
-
-def test_filter_rag_prefetchable_tagged_files_includes_html(client_with_stubs):
-    client_with_stubs
-
-    import helpudoc_agent.app as app_module
-
-    filtered = app_module._filter_rag_prefetchable_tagged_files(
-        ["reports/story.html", "reports/notes.md", "datasets/orders.parquet"]
-    )
-    assert "reports/story.html" in filtered
-    assert "reports/notes.md" in filtered
-    assert "datasets/orders.parquet" not in filtered
 
 
 def test_extract_html_outline_from_path_strips_markup(client_with_stubs, tmp_path):
@@ -1316,59 +1311,6 @@ def test_extract_html_outline_from_path_strips_markup(client_with_stubs, tmp_pat
     assert ".hidden" not in outline
 
 
-def test_chat_stream_skips_rag_prefetch_for_tagged_parquet(client_with_stubs):
-    client, registry, source_tracker = client_with_stubs
-    runtime = DummyRuntime("workspace-parquet", StreamingAgent(["Clarify please"]))
-    registry.set_runtime("research", "workspace-parquet", runtime)
-
-    payload = {
-        "message": "Use /skill data/dashboard to generate a dashboard\n\nTagged files:\n- datasets/order_cancellations_6m.parquet\n",
-        "history": [],
-    }
-    with client.stream("POST", "/agents/research/workspace/workspace-parquet/chat/stream", json=payload) as response:
-        assert response.status_code == 200
-        messages = _collect_stream_payloads(response)
-
-    rag_worker = RagIndexWorkerStub.last_instance
-    assert rag_worker is not None
-    assert rag_worker.store.query_data_calls == []
-    assert messages[0]["type"] == "policy"
-    assert messages[-1]["type"] == "done"
-    assert source_tracker.updated_workspaces == [runtime.workspace_state]
-
-
-def test_chat_stream_prefetches_tagged_html_with_scoped_keywords(client_with_stubs):
-    client, registry, source_tracker = client_with_stubs
-    RagWorkerStoreStub.next_response = {
-        "data": {
-            "chunks": [
-                {"file_path": "/reports/order_cancellations_analysis.html", "content": "Story chunk"},
-                {"file_path": "/reports/other.html", "content": "Ignore chunk"},
-            ]
-        }
-    }
-    runtime = DummyRuntime("workspace-html", StreamingAgent(["OK"]))
-    registry.set_runtime("research", "workspace-html", runtime)
-
-    payload = {
-        "message": "Use /skill data/dashboard\n\nTagged files:\n- reports/order_cancellations_analysis.html\n",
-        "history": [],
-    }
-    with client.stream("POST", "/agents/research/workspace/workspace-html/chat/stream", json=payload) as response:
-        assert response.status_code == 200
-        messages = _collect_stream_payloads(response)
-
-    rag_worker = RagIndexWorkerStub.last_instance
-    assert rag_worker is not None
-    assert len(rag_worker.store.query_data_calls) >= 1
-    _args, kwargs = rag_worker.store.query_data_calls[0]
-    assert "/reports/order_cancellations_analysis.html" in kwargs["hl_keywords"]
-    assert "order_cancellations_analysis.html" in kwargs["ll_keywords"]
-    assert runtime.workspace_state.context["tagged_rag_context"] == "Story chunk"
-    assert messages[-1]["type"] == "done"
-    assert source_tracker.updated_workspaces == [runtime.workspace_state]
-
-
 def test_skill_contract_endpoint_reports_loaded_dashboard_policy(monkeypatch, tmp_path):
     module_names = [
         "agent.main",
@@ -1383,9 +1325,6 @@ def test_skill_contract_endpoint_reports_loaded_dashboard_policy(monkeypatch, tm
     client = None
     try:
         _install_dependency_stubs()
-        monkeypatch.setenv("RAG_PARSER_PIPELINE", "stub")
-        monkeypatch.setenv("PARSER_ENRICHMENT_MODE", "stub")
-
         runtime_pkg = ModuleType("helpudoc_agent.runtime")
         runtime_pkg.__path__ = []
         sys.modules["helpudoc_agent.runtime"] = runtime_pkg
@@ -1417,7 +1356,6 @@ def test_skill_contract_endpoint_reports_loaded_dashboard_policy(monkeypatch, tm
         monkeypatch.setattr(api_app_module, "GeminiClientManager", GeminiClientManagerStub)
         monkeypatch.setattr(api_app_module, "ToolFactory", ToolFactoryStub)
         monkeypatch.setattr(api_app_module, "AgentRegistry", RegistryStub)
-        monkeypatch.setattr(api_app_module, "RagIndexWorker", RagIndexWorkerStub)
 
         import helpudoc_agent.app as _app_shim  # noqa: F401
 

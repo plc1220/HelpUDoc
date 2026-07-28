@@ -1,19 +1,14 @@
 """Process env loading and FastAPI startup/shutdown hooks."""
 from __future__ import annotations
 
-import importlib
 import logging
 import os
-import sys
 from typing import Any, Dict
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
 
 from helpudoc_agent.memory_store import MemoryStoreManager
-from helpudoc_agent.rag_worker import RagIndexWorker
-
-from .attachment_processing import _docling_available
 from .paths import AGENT_PROJECT_ROOT
 
 logger = logging.getLogger(__name__)
@@ -33,43 +28,13 @@ def load_process_env_files() -> None:
 
 
 def build_dependency_diagnostic() -> Dict[str, Any]:
-    dependency_diag: Dict[str, Any] = {
-        "lightrag": True,
-        "docling": _docling_available(),
+    return {
+        "document_inspection": True,
+        "knowledge_navigation": True,
     }
-    try:
-        importlib.import_module("lightrag")
-    except Exception:
-        dependency_diag["lightrag"] = False
-    return dependency_diag
 
 
-def enforce_parser_dependency_policy(
-    *,
-    file_understanding_mode: str,
-    rag_parser_pipeline: str,
-    raganything_parser: str,
-    parser_enrichment_mode: str,
-    dependency_diag: Dict[str, Any],
-) -> None:
-    logger.info(
-        "[agent] File understanding: mode=%s parserPipeline=%s parser=%s parserEnrichment=%s deps=%s python=%s",
-        file_understanding_mode,
-        rag_parser_pipeline,
-        raganything_parser,
-        parser_enrichment_mode,
-        dependency_diag,
-        sys.executable,
-    )
-    if rag_parser_pipeline in {"docling", "raganything", "rag_anything", "rag-everything", "rageverything"} and raganything_parser == "docling":
-        if not dependency_diag["docling"]:
-            raise RuntimeError(
-                "Docling is configured as the document parser, but the docling package is unavailable. "
-                "Install docling in the agent/parser runtime."
-            )
-
-
-def register_app_lifecycle(app: FastAPI, memory_store_manager: MemoryStoreManager, rag_worker: RagIndexWorker) -> None:
+def register_app_lifecycle(app: FastAPI, memory_store_manager: MemoryStoreManager) -> None:
     @app.on_event("startup")
     async def _startup() -> None:
         try:
@@ -77,17 +42,8 @@ def register_app_lifecycle(app: FastAPI, memory_store_manager: MemoryStoreManage
         except Exception:
             logger.exception("Failed to start persistent memory store")
             raise
-        try:
-            await rag_worker.start()
-        except Exception:
-            logger.exception("Failed to start RAG index worker (continuing without it)")
-
     @app.on_event("shutdown")
     async def _shutdown() -> None:
-        try:
-            await rag_worker.stop()
-        except Exception:
-            logger.exception("Failed to stop RAG index worker cleanly")
         try:
             memory_store_manager.stop()
         except Exception:
