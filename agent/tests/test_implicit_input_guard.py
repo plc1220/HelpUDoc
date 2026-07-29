@@ -137,6 +137,17 @@ def test_detect_implicit_input_fill_out_form_above() -> None:
     assert result.awaiting is True
 
 
+def test_detect_implicit_input_fill_out_clarification_questionnaire() -> None:
+    result = detect_implicit_input_awaiting(
+        skill_id="data/dashboard",
+        assistant_text=(
+            "Please fill out the clarification questionnaire so that I can proceed "
+            "with the optimal data structure and filter definitions for your dashboard!"
+        ),
+    )
+    assert result.awaiting is True
+
+
 def test_detect_implicit_input_context_form_below_fill_this_out() -> None:
     result = detect_implicit_input_awaiting(
         skill_id="frontend-slides",

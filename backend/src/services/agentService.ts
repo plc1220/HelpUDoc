@@ -192,6 +192,9 @@ export async function resumeAgentResponseStream(
     headers.Authorization = `Bearer ${options.authToken}`;
   }
   const payload: Record<string, unknown> = { ...response };
+  if (options?.interruptId) {
+    payload.interruptId = options.interruptId;
+  }
   if (options?.traceContext) {
     payload.langfuseTraceContext = options.traceContext;
   }

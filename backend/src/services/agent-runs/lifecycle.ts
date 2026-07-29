@@ -105,6 +105,9 @@ type RunMeta = {
   turnId?: string;
   pendingInterrupt?: RunPendingInterrupt;
   interactionGateState?: InteractionGateState;
+  interactionResponseInterruptId?: string;
+  interactionResponseAcceptedAt?: string;
+  interactionResponseConsumedAt?: string;
 };
 
 export type InteractionGateState = {
@@ -130,13 +133,15 @@ type PersistedRunContext = {
 
 type ResumePayload =
   | { decisions: AgentDecision[]; interruptId?: string; response?: never }
-  | { response: AgentInterruptResponse; decisions?: never }
+  | { response: AgentInterruptResponse; interruptId?: string; decisions?: never }
   | { action: AgentInterruptActionResponse; decisions?: never; response?: never };
 
 type PersistedRunMeta = Omit<RunMeta, 'pendingInterrupt' | 'interactionGateState'> & {
   pendingInterrupt?: string;
   interactionGateState?: string;
   runContext?: string;
+  interactionResponse?: string;
+  interactionResponseHash?: string;
 };
 
 const STREAM_TTL_SECONDS = 60 * 60 * 24; // 24h
@@ -2283,13 +2288,13 @@ const WEAK_COURTESY_PATTERNS = [
 ];
 
 const UI_FORM_MISREF_PATTERNS = [
-  /\b(?:initialized|prepared|loaded|created|opened)\s+the\s+[\w\s&+-]{1,120}?\s*(?:form|questions?|UI)\b/i,
+  /\b(?:initialized|prepared|loaded|created|opened)\s+the\s+[\w\s&+-]{1,120}?\s*(?:form|questions?|questionnaires?|UI)\b/i,
   /\b(?:submit|provide|enter|fill)\s+(?:your\s+)?preferences\b/i,
   /\b(?:from|in|using|via)\s+the\s+(?:form|options?|UI)\s+(?:above|below)/i,
-  /\b(?:fill\s+out|complete|submit)\s+the\s+(?:form|questions?)\s+(?:above|below)/i,
-  /\b(?:fill\s+out|complete|submit)\s+the\s+(?:form|questions?)\b.{0,180}\b(?:preferences?|goals?|details?|context|requirements?|purpose|audience|style|assets?|continue|proceed)\b/is,
-  /\b(?:fill\s+out|complete|submit)\s+the\s+[\w\s&-]{1,120}?\s+(?:form|questions?)\s+(?:above|below)/i,
-  /\b(?:fill\s+out|complete|submit)\s+the\s+[\w\s&-]{1,120}?\s+(?:form|questions?)\b.{0,180}\b(?:preferences?|goals?|details?|context|requirements?|purpose|audience|style|assets?|continue|proceed)\b/is,
+  /\b(?:fill\s+out|complete|submit)\s+the\s+(?:form|questions?|questionnaires?)\s+(?:above|below)/i,
+  /\b(?:fill\s+out|complete|submit)\s+the\s+(?:form|questions?|questionnaires?)\b.{0,180}\b(?:preferences?|goals?|details?|context|requirements?|purpose|audience|style|assets?|continue|proceed)\b/is,
+  /\b(?:fill\s+out|complete|submit)\s+the\s+[\w\s&-]{1,120}?\s+(?:form|questions?|questionnaires?)\s+(?:above|below)/i,
+  /\b(?:fill\s+out|complete|submit)\s+the\s+[\w\s&-]{1,120}?\s+(?:form|questions?|questionnaires?)\b.{0,180}\b(?:preferences?|goals?|details?|context|requirements?|purpose|audience|style|assets?|continue|proceed)\b/is,
   /\b(?:prepared|created|generated|provided)\s+(?:a\s+)?(?:context\s+)?form\s+(?:above|below)/i,
   /\bfill\s+(?:this|it)\s+out\b.{0,180}\b(?:submit|proceed|continue|outline|review)\b/is,
   /\b(?:forms?|options?|choices?|selectors?|choosers?)\s+in\s+the\s+sidebar/i,
@@ -3516,6 +3521,11 @@ async function runAgentRunWorker(
     if (parsed?.type === 'policy' && typeof parsed.skill === 'string' && parsed.skill.trim()) {
       skillId = parsed.skill.trim();
     }
+    if (parsed?.type === 'interaction_consumed' && resumePayload && 'response' in resumePayload) {
+      await persistMeta(runId, {
+        interactionResponseConsumedAt: new Date().toISOString(),
+      });
+    }
     let eventToAppend = parsed;
     if (parsed?.type === 'interrupt') {
       const inferredGateId = isFrontendSlidesRun(skillId, params)
@@ -3756,6 +3766,7 @@ async function runAgentRunWorker(
           signal: controller.signal,
           authToken: params.authToken,
           traceContext,
+          interruptId: resumePayload.interruptId,
         })
       : resumePayload && 'action' in resumePayload && resumePayload.action
       ? await agentStreamClient.resumeAgentActionStream(params.persona, params.workspaceId, resumePayload.action, {
@@ -3897,19 +3908,34 @@ export async function resumeAgentRunWithResponse(
         nextGateState,
       )
     : baseParams;
+  const interruptId = options?.previousInterrupt?.interruptId?.trim() || '';
+  const serializedResponse = JSON.stringify(response);
+  const responseHash = createHash('sha256').update(serializedResponse).digest('hex');
+  const acceptedAt = new Date().toISOString();
   runContexts.set(runId, { params: nextParams });
+  await appendStreamEvent(runId, JSON.stringify({
+    type: 'interaction_response_accepted',
+    interruptId: interruptId || undefined,
+    responseHash,
+    acceptedAt,
+  }));
   await persistMeta(runId, {
     status: 'queued',
-    startedAt: new Date().toISOString(),
+    startedAt: acceptedAt,
     error: '',
     pendingInterrupt: '',
     interactionGateState: JSON.stringify(nextGateState),
     runContext: serializeRunContext(nextParams),
+    interactionResponse: serializedResponse,
+    interactionResponseHash: responseHash,
+    interactionResponseInterruptId: interruptId,
+    interactionResponseAcceptedAt: acceptedAt,
+    interactionResponseConsumedAt: '',
   });
   void runAgentRunWorker(
     runId,
     nextParams,
-    previousInterruptIsSynthetic ? undefined : { response },
+    previousInterruptIsSynthetic ? undefined : { response, interruptId: interruptId || undefined },
     options?.previousInterrupt,
   );
   return { runId, status: 'queued' };
@@ -4109,6 +4135,9 @@ export async function getRunMeta(runId: string): Promise<RunMeta | null> {
     turnId: meta.turnId,
     pendingInterrupt: parsePendingInterrupt(meta.pendingInterrupt),
     interactionGateState,
+    interactionResponseInterruptId: meta.interactionResponseInterruptId,
+    interactionResponseAcceptedAt: meta.interactionResponseAcceptedAt,
+    interactionResponseConsumedAt: meta.interactionResponseConsumedAt,
   };
 }
 

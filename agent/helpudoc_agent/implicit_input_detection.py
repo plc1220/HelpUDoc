@@ -65,17 +65,17 @@ _WEAK_COURTESY_PATTERNS: tuple[Pattern[str], ...] = (
 )
 
 _UI_FORM_MISREF_PATTERNS: tuple[Pattern[str], ...] = (
-    re.compile(r"\b(?:initialized|prepared|loaded|created|opened)\s+the\s+[\w\s&+-]{1,120}?\s*(?:form|questions?|UI)\b", re.IGNORECASE),
+    re.compile(r"\b(?:initialized|prepared|loaded|created|opened)\s+the\s+[\w\s&+-]{1,120}?\s*(?:form|questions?|questionnaires?|UI)\b", re.IGNORECASE),
     re.compile(r"\b(?:submit|provide|enter|fill)\s+(?:your\s+)?preferences\b", re.IGNORECASE),
     re.compile(r"\b(?:from|in|using|via)\s+the\s+(?:form|options?|UI)\s+(?:above|below)", re.IGNORECASE),
-    re.compile(r"\b(?:fill\s+out|complete|submit)\s+the\s+(?:form|questions?)\s+(?:above|below)", re.IGNORECASE),
+    re.compile(r"\b(?:fill\s+out|complete|submit)\s+the\s+(?:form|questions?|questionnaires?)\s+(?:above|below)", re.IGNORECASE),
     re.compile(
-        r"\b(?:fill\s+out|complete|submit)\s+the\s+(?:form|questions?)\b.{0,180}\b(?:preferences?|goals?|details?|context|requirements?|purpose|audience|style|assets?|continue|proceed)\b",
+        r"\b(?:fill\s+out|complete|submit)\s+the\s+(?:form|questions?|questionnaires?)\b.{0,180}\b(?:preferences?|goals?|details?|context|requirements?|purpose|audience|style|assets?|continue|proceed)\b",
         re.IGNORECASE | re.DOTALL,
     ),
-    re.compile(r"\b(?:fill\s+out|complete|submit)\s+the\s+[\w\s&-]{1,120}?\s+(?:form|questions?)\s+(?:above|below)", re.IGNORECASE),
+    re.compile(r"\b(?:fill\s+out|complete|submit)\s+the\s+[\w\s&-]{1,120}?\s+(?:form|questions?|questionnaires?)\s+(?:above|below)", re.IGNORECASE),
     re.compile(
-        r"\b(?:fill\s+out|complete|submit)\s+the\s+[\w\s&-]{1,120}?\s+(?:form|questions?)\b.{0,180}\b(?:preferences?|goals?|details?|context|requirements?|purpose|audience|style|assets?|continue|proceed)\b",
+        r"\b(?:fill\s+out|complete|submit)\s+the\s+[\w\s&-]{1,120}?\s+(?:form|questions?|questionnaires?)\b.{0,180}\b(?:preferences?|goals?|details?|context|requirements?|purpose|audience|style|assets?|continue|proceed)\b",
         re.IGNORECASE | re.DOTALL,
     ),
     re.compile(r"\b(?:prepared|created|generated|provided)\s+(?:a\s+)?(?:context\s+)?form\s+(?:above|below)", re.IGNORECASE),

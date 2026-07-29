@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from langgraph.types import Command
 
 # Ensure the repository root (which contains the `agent` package) is importable.
 CURRENT_DIR = Path(__file__).resolve().parent.parent
@@ -833,6 +834,7 @@ def test_chat_stream_resume_reuses_run_thread_after_runtime_recreation(client_wi
         json={
             "message": "Clarification answer",
             "answersByQuestionId": {"response": "Use the executive view"},
+            "interruptId": "interrupt-clarification-123",
             "langfuseTraceContext": trace_context,
         },
     ) as response:
@@ -840,6 +842,16 @@ def test_chat_stream_resume_reuses_run_thread_after_runtime_recreation(client_wi
         messages = _collect_stream_payloads(response)
 
     second_thread_id = second_agent.stream_inputs[0][1]["config"]["configurable"]["thread_id"]
+    resume_command = second_agent.stream_inputs[0][0][0]
+    assert isinstance(resume_command, Command)
+    assert resume_command.resume == {
+        "interrupt-clarification-123": {
+            "message": "Clarification answer",
+            "selectedChoiceIds": [],
+            "selectedValues": [],
+            "answersByQuestionId": {"response": "Use the executive view"},
+        }
+    }
     assert messages[-1]["type"] == "done"
     assert second_thread_id == first_thread_id
     assert second_runtime.workspace_state.context["thread_id"] == first_thread_id

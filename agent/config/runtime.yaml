@@ -70,7 +70,8 @@ tools:
     description: Get public URLs for images stored in MinIO/S3
   - name: document_inspection
     kind: builtin
-    description: Inspect and search original PDF, DOCX, XLSX, and text workspace files on demand
+    description: Inspect and search original PDF, DOCX, XLSX, and text workspace
+      files on demand
   - name: knowledge_navigation
     kind: builtin
     description: Search and progressively read published OKF workspace knowledge
@@ -97,7 +98,8 @@ tools:
     description: Pause the run and request a semantic Interaction presentation
   - name: workflow_action
     kind: builtin
-    description: Emit one structured workflow action; use request_user_interaction for user-input gates
+    description: Emit one structured workflow action; use request_user_interaction
+      for user-input gates
   - name: run_skill_python_script
     kind: builtin
     description: Run an active skill's declared Python script in a Kubernetes sandbox
@@ -114,7 +116,7 @@ mcp_servers:
     args:
       - plugins/data-analytics/mcp/server.cjs
       - --stdio
-    cwd: "."
+    cwd: .
     default_access: allow
     description: Local Data Analytics artifact validators and renderers
   - name: google-workspace

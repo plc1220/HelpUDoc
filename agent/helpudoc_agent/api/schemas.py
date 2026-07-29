@@ -55,6 +55,7 @@ class InterruptResponseRequest(BaseModel):
     selectedChoiceIds: List[str] = Field(default_factory=list)
     selectedValues: List[str] = Field(default_factory=list)
     answersByQuestionId: Dict[str, str | List[str]] = Field(default_factory=dict)
+    interruptId: Optional[str] = None
     langfuseTraceContext: Dict[str, Any] | None = None
 
 

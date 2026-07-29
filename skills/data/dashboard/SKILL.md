@@ -6,6 +6,12 @@ description: >
 plugin: data-analytics
 inherits_plugin_defaults: true
 requires_hitl_plan: true
+requires_workspace_artifacts: true
+required_artifacts_mode: strict
+required_artifacts:
+  - pattern:dashboards/*/dashboard.meta.json
+  - pattern:dashboards/*/dashboard.spec.json
+  - pattern:dashboards/*/data/dashboard.rows.json
 tools:
   - request_plan_approval
   - request_clarification

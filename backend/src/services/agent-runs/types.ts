@@ -79,6 +79,9 @@ export type RunMeta = {
   error?: string;
   turnId?: string;
   pendingInterrupt?: RunPendingInterrupt;
+  interactionResponseInterruptId?: string;
+  interactionResponseAcceptedAt?: string;
+  interactionResponseConsumedAt?: string;
 };
 
 export type RunContext = {
@@ -100,10 +103,15 @@ export type PersistedRunContext = {
 
 export type ResumePayload =
   | { decisions: AgentDecision[]; response?: never }
-  | { response: AgentInterruptResponse; decisions?: never }
+  | { response: AgentInterruptResponse; interruptId?: string; decisions?: never }
   | { action: AgentInterruptActionResponse; decisions?: never; response?: never };
 
 export type PersistedRunMeta = Omit<RunMeta, 'pendingInterrupt'> & {
   pendingInterrupt?: string;
   runContext?: string;
+  interactionResponse?: string;
+  interactionResponseHash?: string;
+  interactionResponseInterruptId?: string;
+  interactionResponseAcceptedAt?: string;
+  interactionResponseConsumedAt?: string;
 };

@@ -1656,6 +1656,19 @@ def register_chat_routes(
                 missing.append(item)
         return missing
 
+    def _completion_plan_contract_error(runtime: AgentRuntimeState) -> str:
+        context = runtime.workspace_state.context or {}
+        if str(context.get("active_skill") or "").strip() != "data/dashboard":
+            return ""
+        policy = context.get("active_skill_policy") or {}
+        if not isinstance(policy, dict) or not bool(policy.get("requires_hitl_plan", False)):
+            return ""
+        if bool(context.get("skip_plan_approvals")):
+            return ""
+        if bool(context.get("plan_approved") or context.get("host_plan_approved")):
+            return ""
+        return "The run cannot complete before its required plan has been reviewed and approved."
+
     def _reset_turn_context(runtime: AgentRuntimeState) -> None:
         context = runtime.workspace_state.context or {}
         skip_plan_approvals = bool(context.get("skip_plan_approvals"))
@@ -1911,6 +1924,10 @@ def register_chat_routes(
         dashboard_packages_before = (
             _dashboard_package_snapshot() if dashboard_approval_resume else {}
         )
+        suppress_dashboard_clarification_text = (
+            resume_value is not None
+            and str(runtime.workspace_state.context.get("active_skill") or "") == "data/dashboard"
+        )
 
         def _should_suppress_assistant_text_for_interaction_gate() -> bool:
             context = getattr(runtime.workspace_state, "context", None)
@@ -1918,6 +1935,7 @@ def register_chat_routes(
                 (reject_plan_resume and not allow_rejection_summary)
                 or (dashboard_approval_resume and not allow_approval_summary)
                 or edit_plan_resume
+                or suppress_dashboard_clarification_text
                 or next_pending_gate(context) is not None
             )
 
@@ -2076,7 +2094,14 @@ def register_chat_routes(
                             )
                         )
                 elif resume_value is not None:
-                    stream_input = Command(resume=resume_value)
+                    normalized_interrupt_id = str(resume_interrupt_id or "").strip()
+                    stream_input = Command(
+                        resume=(
+                            {normalized_interrupt_id: resume_value}
+                            if normalized_interrupt_id
+                            else resume_value
+                        )
+                    )
                 else:
                     stream_input = _validated_fresh_stream_input(payload, message.message)
 
@@ -2179,6 +2204,54 @@ def register_chat_routes(
                 )
                 if interrupted:
                     return
+
+                if resume_value is not None:
+                    if not handler.resume_interrupt_consumed:
+                        approval_resume_contract_error = (
+                            "The clarification response was accepted but not consumed by the pending interaction."
+                        )
+                        return
+                    await handler._emit(
+                        {
+                            "type": "interaction_consumed",
+                            "interruptId": str(resume_interrupt_id or "").strip() or None,
+                        }
+                    )
+                    context = runtime.workspace_state.context
+                    policy = context.get("active_skill_policy") or {}
+                    needs_dashboard_plan = (
+                        str(context.get("active_skill") or "") == "data/dashboard"
+                        and isinstance(policy, dict)
+                        and bool(policy.get("requires_hitl_plan", False))
+                        and not bool(context.get("skip_plan_approvals"))
+                        and not bool(context.get("plan_approved") or context.get("host_plan_approved"))
+                    )
+                    if needs_dashboard_plan:
+                        await _emit_progress(
+                            handler,
+                            "planning",
+                            "Preparing the dashboard plan for review",
+                            status="running",
+                        )
+                        defer_checkpoint_interrupt = False
+                        final_result, interrupted = await _consume_event_stream(
+                            {
+                                "messages": [
+                                    {
+                                        "role": "user",
+                                        "content": (
+                                            "The dashboard clarification answers were consumed. Continue the original "
+                                            "dashboard workflow now: draft the concrete dashboard plan and call "
+                                            "request_plan_approval. Do not ask for the clarification questionnaire "
+                                            "again, do not build dashboard files yet, and do not stop with prose."
+                                        ),
+                                    }
+                                ]
+                            },
+                            include_message_fallback=False,
+                        )
+                        if interrupted:
+                            return
 
                 if edit_plan_resume:
                     context = runtime.workspace_state.context
@@ -2428,8 +2501,29 @@ def register_chat_routes(
                 )
                 yield _json_line({"type": "done", "status": "failed"})
             else:
+                plan_contract_error = (
+                    ""
+                    if reject_plan_resume
+                    else _completion_plan_contract_error(runtime)
+                )
                 missing = _missing_required_artifacts(runtime)
-                if missing:
+                if plan_contract_error:
+                    yield _json_line({
+                        "type": "progress",
+                        "phase": "failed",
+                        "label": "Plan approval contract not satisfied",
+                        "detail": plan_contract_error,
+                        "status": "error",
+                        "timestamp": datetime.utcnow().isoformat() + "Z",
+                    })
+                    yield _json_line(
+                        {
+                            "type": "contract_error",
+                            "message": plan_contract_error,
+                        }
+                    )
+                    yield _json_line({"type": "done", "status": "failed"})
+                elif missing:
                     runtime.workspace_state.context["artifact_contract_failed"] = True
                     yield _json_line({
                         "type": "progress",
@@ -2534,16 +2628,27 @@ def register_chat_routes(
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
         if hasattr(response_request, "model_dump"):
-            response_payload = response_request.model_dump(exclude_none=True, exclude={"langfuseTraceContext"})  # type: ignore[attr-defined]
+            response_payload = response_request.model_dump(
+                exclude_none=True,
+                exclude={"langfuseTraceContext", "interruptId"},
+            )  # type: ignore[attr-defined]
         else:
-            response_payload = response_request.dict(exclude_none=True, exclude={"langfuseTraceContext"})  # type: ignore[attr-defined]
+            response_payload = response_request.dict(
+                exclude_none=True,
+                exclude={"langfuseTraceContext", "interruptId"},
+            )  # type: ignore[attr-defined]
         placeholder = ChatRequest(
             message="",
             history=None,
             forceReset=False,
             langfuseTraceContext=response_request.langfuseTraceContext,
         )
-        stream = _stream_agent_response(runtime, placeholder, resume_value=response_payload)
+        stream = _stream_agent_response(
+            runtime,
+            placeholder,
+            resume_value=response_payload,
+            resume_interrupt_id=response_request.interruptId or "",
+        )
         return StreamingResponse(stream, media_type="application/jsonl")
 
     @app.post("/agents/{agent_name}/workspace/{workspace_id}/chat/stream/act")

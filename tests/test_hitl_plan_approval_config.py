@@ -62,4 +62,11 @@ def test_dashboard_skill_requires_hitl_plan() -> None:
     dashboard = skills["data/dashboard"]
 
     assert dashboard.policy.requires_hitl_plan is True
+    assert dashboard.policy.requires_workspace_artifacts is True
+    assert dashboard.policy.required_artifacts_mode == "strict"
+    assert dashboard.policy.required_artifacts == [
+        "pattern:dashboards/*/dashboard.meta.json",
+        "pattern:dashboards/*/dashboard.spec.json",
+        "pattern:dashboards/*/data/dashboard.rows.json",
+    ]
     assert "request_plan_approval" in dashboard.tools
