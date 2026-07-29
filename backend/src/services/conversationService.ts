@@ -36,6 +36,34 @@ interface EnsureConversationAccessOptions {
   requireEdit?: boolean;
 }
 
+const metadataString = (metadata: unknown, key: string): string => {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
+    return '';
+  }
+  const value = (metadata as Record<string, unknown>)[key];
+  return typeof value === 'string' ? value : '';
+};
+
+export const mergeRunOwnedAgentText = (
+  existingText: string,
+  incomingText: string,
+  existingMetadata?: Record<string, unknown> | null,
+  incomingMetadata?: Record<string, unknown> | null,
+): string => {
+  const existingRunId = metadataString(existingMetadata, 'runId');
+  const incomingRunId = metadataString(incomingMetadata, 'runId');
+  if (!existingRunId || existingRunId !== incomingRunId || !existingText || !incomingText) {
+    return incomingText;
+  }
+  if (incomingText.startsWith(existingText)) {
+    return incomingText;
+  }
+  if (existingText.startsWith(incomingText) || existingText.endsWith(incomingText)) {
+    return existingText;
+  }
+  return incomingText;
+};
+
 export class ConversationService {
   private db: Knex;
   private workspaceService: WorkspaceService;
@@ -131,8 +159,11 @@ export class ConversationService {
         .where({ conversationId, sender, turnId })
         .first();
       if (existing) {
+        const nextText = sender === 'agent'
+          ? mergeRunOwnedAgentText(existing.text || '', text, existing.metadata, options.metadata)
+          : text;
         const updatePayload: Record<string, unknown> = {
-          text,
+          text: nextText,
           updatedAt: timestamp,
           authorId: sender === 'user' ? userId : existing.authorId,
         };
@@ -143,7 +174,7 @@ export class ConversationService {
           .where({ id: existing.id })
           .update(updatePayload)
           .returning('*');
-        await this.updateConversationMetadata(conversation, sender, text, userId);
+        await this.updateConversationMetadata(conversation, sender, nextText, userId);
         return updated as ConversationMessageRecord;
       }
     }

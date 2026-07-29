@@ -140,7 +140,12 @@ import {
   getWorkspaceParentFolderPath,
   normalizeWorkspaceFolderPath,
 } from '../../utils/workspaceFileTree';
-import { buildMessageMetadata, mapMessagesToAgentHistory, mergeMessageMetadata, sanitizeRunPolicy } from '../../utils/messages';
+import {
+  mapMessagesToAgentHistory,
+  mergeMessageMetadata,
+  mergeMonotonicAssistantText,
+  sanitizeRunPolicy,
+} from '../../utils/messages';
 import { getImplicitContinuationContext, buildContinuationPrompt } from '../../utils/implicitSkillContinuation';
 import { createMarkdownComponents } from '../../components/markdown/MarkdownShared';
 import { applyColorModeToDocument, buildAppTheme, resolveInitialColorMode } from '../../theme';
@@ -339,6 +344,7 @@ const getCommandCategory = (command: CommandSuggestion) => {
 type ParsedSlashDirective =
   | { kind: 'skill'; skillId: string; prompt: string; raw: string }
   | { kind: 'mcp'; serverId: string; prompt: string; raw: string }
+  | { kind: 'pet'; action: 'on' | 'off'; prompt: string; raw: string }
   | { kind: 'none'; prompt: string; raw: string };
 
 type WorkspaceKnowledgeSource = {
@@ -376,6 +382,7 @@ type ScheduleDialogState = {
 };
 
 const ACTIVE_RUNS_STORAGE_KEY = 'helpudoc-active-runs';
+const LUMO_VISIBILITY_STORAGE_KEY = 'helpudoc-lumo-visible';
 const MARKDOWN_FILE_EXTENSIONS = ['.md'];
 const HTML_FILE_EXTENSIONS = ['.html', '.htm'];
 const IMAGE_FILE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp'];
@@ -388,6 +395,17 @@ const generateTurnId = () => {
 };
 
 const DEFAULT_PLAN_FILE_PATH = 'research_plan.md';
+
+const loadLumoVisibility = (): boolean => {
+  if (typeof window === 'undefined') {
+    return true;
+  }
+  try {
+    return window.localStorage.getItem(LUMO_VISIBILITY_STORAGE_KEY) !== 'off';
+  } catch {
+    return true;
+  }
+};
 
 const normalizeRunStatus = (
   status?: ConversationMessageMetadata['status'] | AgentRunStatus,
@@ -699,6 +717,16 @@ const mergePersistedAgentMessage = (
   if (!persistedText.trim().length && existingText.trim().length) {
     mergedText = existingText;
     mergedBodySource = existingBodySource;
+  } else if (
+    persistedBodySource === 'assistant'
+    && existingBodySource === 'assistant'
+    && existingText.trim().length
+    && persistedText.trim().length
+  ) {
+    // Stream projection is monotonic. A delayed canonical snapshot must never
+    // replace a longer in-memory prefix with an older prefix or suffix.
+    mergedText = mergeMonotonicAssistantText(existingText, persistedText);
+    mergedBodySource = mergedText === existingText ? existingBodySource : persistedBodySource;
   } else if (persistedBodySource !== 'assistant' && existingBodySource === 'assistant' && existingText.trim().length) {
     mergedText = existingText;
     mergedBodySource = existingBodySource;
@@ -734,14 +762,6 @@ const loadActiveRunsFromStorage = (): Record<string, ActiveRunInfo> => {
     console.error('Failed to load active runs from storage', error);
   }
   return {};
-};
-
-type PersistProgressRequest = {
-  runInfo: ActiveRunInfo;
-  statusOverride?: AgentRunStatus;
-  options?: {
-    metadataOverride?: Partial<ConversationMessageMetadata>;
-  };
 };
 
 const isUsableWorkspaceId = (value: string | null | undefined): value is string => {
@@ -793,6 +813,7 @@ export default function WorkspacePage() {
   const [selectedPersona, setSelectedPersona] = useState(DEFAULT_PERSONA_NAME);
   const [isEditMode, setIsEditMode] = useState(false);
   const [canvasZoom, setCanvasZoom] = useState(1);
+  const [isLumoVisible, setIsLumoVisible] = useState(loadLumoVisibility);
   const [isAgentPaneVisible, setIsAgentPaneVisible] = useState(true);
   const [isFilePaneVisible, setIsFilePaneVisible] = useState(true);
   const [isFileActionMenuOpen, setIsFileActionMenuOpen] = useState(false);
@@ -822,13 +843,10 @@ export default function WorkspacePage() {
   const agentChunkFlushTimerRef = useRef<number | null>(null);
   const lastUserMessageMapRef = useRef<Record<string, string>>({});
   const activeRunsRef = useRef<Record<string, ActiveRunInfo>>({});
-  const lastPersistedAgentTextRef = useRef<Record<string, string>>({});
-  const lastPersistedStatusRef = useRef<Record<string, AgentRunStatus | undefined>>({});
-  const lastPersistedMetadataRef = useRef<Record<string, string | undefined>>({});
   const lastPersistAttemptRef = useRef<Record<string, number>>({});
   const lastReconciledRunStatusRef = useRef<Record<string, string>>({});
   const persistInFlightRef = useRef<Set<string>>(new Set());
-  const pendingPersistRef = useRef<Record<string, PersistProgressRequest>>({});
+  const pendingReconcileRef = useRef<Record<string, ActiveRunInfo>>({});
   const stopRequestedRef = useRef(false);
   const sendLockRef = useRef(false);
   const chatInputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -1066,10 +1084,8 @@ export default function WorkspacePage() {
       }
       if (candidate.conversationId === runInfo.conversationId && candidate.turnId === runInfo.turnId) {
         delete next[candidateRunId];
-        delete lastPersistedAgentTextRef.current[candidateRunId];
-        delete lastPersistedStatusRef.current[candidateRunId];
-        delete lastPersistedMetadataRef.current[candidateRunId];
         delete lastPersistAttemptRef.current[candidateRunId];
+        delete pendingReconcileRef.current[candidateRunId];
         resumeInFlightRef.current.delete(candidateRunId);
         resumeAttemptedRef.current.delete(candidateRunId);
       }
@@ -1090,9 +1106,6 @@ export default function WorkspacePage() {
     const next = { ...activeRunsRef.current };
     delete next[runId];
     persistActiveRuns(next);
-    delete lastPersistedAgentTextRef.current[runId];
-    delete lastPersistedStatusRef.current[runId];
-    delete lastPersistedMetadataRef.current[runId];
     delete lastPersistAttemptRef.current[runId];
     resumeInFlightRef.current.delete(runId);
     resumeAttemptedRef.current.delete(runId);
@@ -1110,9 +1123,7 @@ export default function WorkspacePage() {
       }
       if (candidate.conversationId === conversationId && candidate.turnId === turnId) {
         delete next[candidateRunId];
-        delete lastPersistedAgentTextRef.current[candidateRunId];
-        delete lastPersistedStatusRef.current[candidateRunId];
-        delete lastPersistedMetadataRef.current[candidateRunId];
+        delete pendingReconcileRef.current[candidateRunId];
         resumeInFlightRef.current.delete(candidateRunId);
         resumeAttemptedRef.current.delete(candidateRunId);
         changed = true;
@@ -1867,12 +1878,17 @@ export default function WorkspacePage() {
       if (!conversationId) {
         return;
       }
-      setConversationMessages((prev) => {
-        const next = { ...prev };
-        const current = next[conversationId] || [];
-        next[conversationId] = updater(current);
-        return next;
-      });
+      const current = conversationMessagesRef.current[conversationId] || [];
+      const updated = updater(current);
+      const next = {
+        ...conversationMessagesRef.current,
+        [conversationId]: updated,
+      };
+      conversationMessagesRef.current = next;
+      setConversationMessages((prev) => ({
+        ...prev,
+        [conversationId]: updated,
+      }));
     },
     [],
   );
@@ -1934,7 +1950,7 @@ export default function WorkspacePage() {
           };
         }),
       );
-      await persistAgentProgress(
+      await reconcileAgentProgress(
         { ...activeRun, status: 'cancelled' },
         'cancelled',
         {
@@ -2229,6 +2245,11 @@ export default function WorkspacePage() {
         return false;
       }
       const textBeforeCursor = value.slice(0, cursor);
+      const resolvedPetMatch = textBeforeCursor.match(/^\s*\/pet\s+(on|off)$/i);
+      if (resolvedPetMatch) {
+        closeCommand();
+        return false;
+      }
       const resolvedDirectiveMatch = textBeforeCursor.match(/^\s*\/(skill|mcp)\s+([^\s]+)(?:\s+([\s\S]*))?$/i);
       if (resolvedDirectiveMatch) {
         const kind = resolvedDirectiveMatch[1]?.toLowerCase();
@@ -2329,6 +2350,16 @@ export default function WorkspacePage() {
 
   const parseSlashDirective = useCallback((rawMessage: string): ParsedSlashDirective => {
     const trimmed = rawMessage.trim();
+    const petMatch = trimmed.match(/^\/pet\s+(on|off)$/i);
+    if (petMatch) {
+      const action = petMatch[1].toLowerCase() as 'on' | 'off';
+      return {
+        kind: 'pet',
+        action,
+        prompt: '',
+        raw: trimmed,
+      };
+    }
     const skillMatch = trimmed.match(/^\/skill\s+([^\s]+)(?:\s+([\s\S]*))?$/i);
     if (skillMatch) {
       const requestedSkillId = (skillMatch[1] || '').trim();
@@ -2617,6 +2648,23 @@ export default function WorkspacePage() {
     updateMessagesForConversation(conversationId, (prev) => [...prev, systemMessage]);
     agentMessageBufferRef.current.set(systemMessage.id, systemMessage.text || '');
   }, [activeConversationId, updateMessagesForConversation]);
+
+  const setLumoVisibility = useCallback((visible: boolean) => {
+    setIsLumoVisible(visible);
+    if (typeof window !== 'undefined') {
+      try {
+        window.localStorage.setItem(LUMO_VISIBILITY_STORAGE_KEY, visible ? 'on' : 'off');
+      } catch {
+        // The UI state still works when browser storage is unavailable.
+      }
+    }
+  }, []);
+
+  const handlePetDirective = useCallback((directive: Extract<ParsedSlashDirective, { kind: 'pet' }>) => {
+    const nextVisible = directive.action === 'on';
+    setLumoVisibility(nextVisible);
+    addLocalSystemMessage(nextVisible ? 'Lumo is back.' : 'Lumo is hidden until you use /pet on.');
+  }, [addLocalSystemMessage, setLumoVisibility]);
 
   const loadSchedulesForWorkspace = useCallback(async (workspaceId: string | null) => {
     if (!workspaceId) {
@@ -3554,33 +3602,6 @@ export default function WorkspacePage() {
     [],
   );
 
-  const getBufferedAgentState = useCallback(
-    (runInfo: ActiveRunInfo) => {
-      const { placeholderId, conversationId, turnId, runId } = runInfo;
-      const message = findAgentMessageForRun(conversationId, placeholderId, turnId);
-      const messageIndex = findAgentMessageIndexForRun(conversationId, placeholderId, turnId, runId);
-      const baseText =
-        agentMessageBufferRef.current.get(placeholderId) ??
-        (message ? agentMessageBufferRef.current.get(message.id) : undefined) ??
-        message?.text ??
-        '';
-      if (messageIndex < 0) {
-        return {
-          text: baseText,
-          messageIndex,
-          pendingChunk: '',
-        };
-      }
-      const pendingChunk = agentChunkBufferRef.current.get(conversationId)?.get(messageIndex) || '';
-      return {
-        text: combineBufferedAgentText(conversationId, baseText, pendingChunk),
-        messageIndex,
-        pendingChunk,
-      };
-    },
-    [combineBufferedAgentText, findAgentMessageForRun, findAgentMessageIndexForRun],
-  );
-
   const isAgentMessageEmpty = useCallback((message?: ConversationMessage | null) => {
     if (!message || message.sender !== 'agent') {
       return true;
@@ -3716,110 +3737,66 @@ export default function WorkspacePage() {
     [updateMessagesForConversation],
   );
 
-  const persistAgentProgress = useCallback(
+  const reconcileAgentProgress = useCallback(
     async (
       runInfo: ActiveRunInfo,
-      statusOverride?: AgentRunStatus,
-      options?: {
+      _statusOverride?: AgentRunStatus,
+      _options?: {
         metadataOverride?: Partial<ConversationMessageMetadata>;
       },
     ) => {
       const { runId, conversationId, turnId, placeholderId } = runInfo;
       if (persistInFlightRef.current.has(runId)) {
-        pendingPersistRef.current[runId] = { runInfo, statusOverride, options };
+        pendingReconcileRef.current[runId] = runInfo;
         return;
       }
       const now = Date.now();
-      const forcedStatus = Boolean(statusOverride || options?.metadataOverride);
-      if (!forcedStatus && runInfo.status !== 'running') {
-        return;
-      }
       const lastAttempt = lastPersistAttemptRef.current[runId] || 0;
-      if (!forcedStatus && now - lastAttempt < 2000) {
+      if (runInfo.status === 'running' && now - lastAttempt < 2000) {
         return;
       }
       lastPersistAttemptRef.current[runId] = now;
-      const message = findAgentMessageForRun(conversationId, placeholderId, turnId);
-      const bufferedState = getBufferedAgentState(runInfo);
-      const nextStatus = statusOverride || message?.metadata?.status || runInfo.status || 'running';
-      const assistantText = bufferedState.text;
-      const summaryText =
-        !assistantText.trim() && isTerminalRunStatus(nextStatus)
-          ? summarizeMessageFromToolEvents(message, nextStatus)
-          : '';
-      const text = assistantText || summaryText;
-      const bodySource = assistantText.trim()
-        ? 'assistant'
-        : summaryText.trim()
-          ? 'summary'
-          : undefined;
-      const lastText = lastPersistedAgentTextRef.current[runId];
-      const lastStatus = lastPersistedStatusRef.current[runId];
-      const metadata = {
-        ...(buildMessageMetadata(message) || {}),
-        ...(options?.metadataOverride || {}),
-        runId,
-        status: nextStatus,
-        bodySource,
-      } satisfies ConversationMessageMetadata;
-      if (!bodySource) {
-        delete metadata.bodySource;
-      }
-      const metadataSignature = JSON.stringify(metadata);
-      const lastMetadataSignature = lastPersistedMetadataRef.current[runId];
-      if (text === lastText && nextStatus === lastStatus && metadataSignature === lastMetadataSignature) {
-        return;
-      }
-      if (
-        !text &&
-        !message?.thinkingText &&
-        !message?.toolEvents?.length &&
-        !message?.metadata?.pendingInterrupt &&
-        nextStatus !== 'running'
-      ) {
-        return;
-      }
       persistInFlightRef.current.add(runId);
       try {
-        const persisted = await appendConversationMessage(conversationId, 'agent', text, {
-          turnId,
-          replaceExisting: true,
-          metadata,
-        });
+        // Move every chunk already received into the React message before the
+        // async canonical read. Chunks arriving during the read remain in the
+        // local projection and are considered by the monotonic merge below.
+        flushBufferedAgentChunks();
+        // The backend run worker is the sole writer for assistant messages.
+        // The client only projects the canonical conversation snapshot.
+        const detail = await fetchConversationDetail(conversationId);
+        const persisted = detail.messages.find((candidate) => (
+          candidate.sender === 'agent'
+          && (
+            candidate.metadata?.runId === runId
+            || Boolean(turnId && candidate.turnId === turnId)
+          )
+        ));
+        if (!persisted) {
+          return;
+        }
+        const message = findAgentMessageForRun(conversationId, placeholderId, turnId);
         upsertPersistedAgentMessage(conversationId, persisted, {
           placeholderId,
           existing: message,
         });
-        if (bufferedState.pendingChunk && bufferedState.messageIndex >= 0) {
-          const conversationBuffer = agentChunkBufferRef.current.get(conversationId);
-          if (conversationBuffer?.has(bufferedState.messageIndex)) {
-            conversationBuffer.delete(bufferedState.messageIndex);
-            if (conversationBuffer.size) {
-              agentChunkBufferRef.current.set(conversationId, conversationBuffer);
-            } else {
-              agentChunkBufferRef.current.delete(conversationId);
-            }
-          }
-        }
-        lastPersistedAgentTextRef.current[runId] = text;
-        lastPersistedStatusRef.current[runId] = nextStatus;
-        lastPersistedMetadataRef.current[runId] = metadataSignature;
-        agentMessageBufferRef.current.set(persisted.id, persisted.text || '');
+        const projectedText = mergePersistedAgentMessage(persisted, message).text || '';
+        agentMessageBufferRef.current.set(persisted.id, projectedText);
         if (placeholderId !== persisted.id) {
           agentMessageBufferRef.current.delete(placeholderId);
         }
       } catch (error) {
-        console.error('Failed to persist agent progress', error);
+        console.error('Failed to reconcile canonical agent progress', error);
       } finally {
         persistInFlightRef.current.delete(runId);
-        const pending = pendingPersistRef.current[runId];
+        const pending = pendingReconcileRef.current[runId];
         if (pending) {
-          delete pendingPersistRef.current[runId];
-          void persistAgentProgress(pending.runInfo, pending.statusOverride, pending.options);
+          delete pendingReconcileRef.current[runId];
+          void reconcileAgentProgress(pending);
         }
       }
     },
-    [findAgentMessageForRun, getBufferedAgentState, upsertPersistedAgentMessage],
+    [findAgentMessageForRun, flushBufferedAgentChunks, upsertPersistedAgentMessage],
   );
 
   const syncRunStateToConversation = useCallback(
@@ -3847,7 +3824,7 @@ export default function WorkspacePage() {
           pendingInterrupt: status === 'awaiting_approval' ? pendingInterrupt : undefined,
         }));
       }
-      await persistAgentProgress(
+      await reconcileAgentProgress(
         { ...runInfo, status },
         status,
         pendingInterrupt
@@ -3863,7 +3840,7 @@ export default function WorkspacePage() {
             },
       );
     },
-    [findAgentMessageIndexForRun, persistAgentProgress, updateMessageMetadataAtIndex, updateToolEvents],
+    [findAgentMessageIndexForRun, reconcileAgentProgress, updateMessageMetadataAtIndex, updateToolEvents],
   );
 
   const applyRunStatusToConversation = useCallback((
@@ -3950,12 +3927,12 @@ export default function WorkspacePage() {
       const runs = Object.values(activeRunsRef.current);
       runs.forEach((run) => {
         if (run.status === 'running') {
-          void persistAgentProgress(run);
+          void reconcileAgentProgress(run);
         }
       });
     }, 2000);
     return () => window.clearInterval(interval);
-  }, [persistAgentProgress]);
+  }, [reconcileAgentProgress]);
 
   const getPrimaryInterruptAction = useCallback((
     pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
@@ -4879,47 +4856,16 @@ export default function WorkspacePage() {
     registerActiveRun(runInfo);
     setConversationAttention(conversationId, 'running', 'Queued the latest run...');
     await streamRunForConversation(runInfo, true);
-
-    const messagesSnapshot = getConversationMessagesSnapshot(conversationId);
-    const targetIndex = messagesSnapshot.findIndex((message) => message.id === placeholderId);
-    const agentMessage = targetIndex >= 0 ? messagesSnapshot[targetIndex] : null;
-    const metadata = buildMessageMetadata(agentMessage) || {};
-    const bufferedText =
-      placeholderId !== null && placeholderId !== undefined
-        ? agentMessageBufferRef.current.get(placeholderId) ?? agentMessage?.text
-        : agentMessage?.text;
-    const placeholderTurnId = agentMessage?.turnId || turnId;
-    if (bufferedText) {
-      try {
-        const persisted = await appendConversationMessage(conversationId, 'agent', bufferedText, {
-          turnId: placeholderTurnId,
-          metadata: { ...metadata, runId },
-          replaceExisting: true,
-        });
-        upsertPersistedAgentMessage(conversationId, persisted, {
-          placeholderId,
-          existing: agentMessage,
-        });
-        if (placeholderId !== null && placeholderId !== undefined) {
-          agentMessageBufferRef.current.delete(placeholderId);
-        }
-        agentMessageBufferRef.current.set(persisted.id, persisted.text || '');
-        await refreshConversationHistory(workspaceId);
-      } catch (error) {
-        console.error('Failed to store agent message', error);
-      }
-    } else if (placeholderId !== null && placeholderId !== undefined) {
-      agentMessageBufferRef.current.delete(placeholderId);
-    }
+    await reconcileAgentProgress(runInfo);
+    await refreshConversationHistory(workspaceId);
   }, [
     ensureAgentPlaceholder,
-    getConversationMessagesSnapshot,
     markRunStreamLaunching,
+    reconcileAgentProgress,
     refreshConversationHistory,
     registerActiveRun,
     setConversationAttention,
     streamRunForConversation,
-    upsertPersistedAgentMessage,
   ]);
 
   const handleInterruptDecision = useCallback(
@@ -5634,7 +5580,7 @@ export default function WorkspacePage() {
                 resumeInFlightRef.current.delete(activeRun.runId);
               });
           } else {
-            void persistAgentProgress(
+            void reconcileAgentProgress(
               { ...activeRun, status: status.status },
               status.status,
               {
@@ -5684,7 +5630,7 @@ export default function WorkspacePage() {
         .catch((error) => {
           console.error('Failed to resume run status', error);
           resumeInFlightRef.current.delete(activeRun.runId);
-          void persistAgentProgress(
+          void reconcileAgentProgress(
             { ...activeRun, status: 'failed' },
             'failed',
             {
@@ -5723,7 +5669,7 @@ export default function WorkspacePage() {
     findAgentMessageForRun,
     getActiveRunForConversation,
     isAgentMessageEmpty,
-    persistAgentProgress,
+    reconcileAgentProgress,
     removeActiveRun,
     setConversationAttention,
     syncRunStateToConversation,
@@ -5836,6 +5782,10 @@ export default function WorkspacePage() {
       return;
     }
     const directive = parseSlashDirective(trimmed);
+    if (directive.kind === 'pet') {
+      handlePetDirective(directive);
+      return;
+    }
     if (directive.kind === 'skill') {
       if (!directive.skillId) {
         addLocalSystemMessage('Use /skill <skill-id>. Example: /skill sales prep me for tomorrow\'s call.');
@@ -5961,38 +5911,8 @@ export default function WorkspacePage() {
       registerActiveRun(runInfo);
       setConversationAttention(conversationId, 'running', 'Queued the latest run...');
       await streamRunForConversation(runInfo, true);
-
-      const messagesSnapshot = getConversationMessagesSnapshot(conversationId);
-      const targetIndex = messagesSnapshot.findIndex((message) => message.id === placeholderId);
-      const agentMessage = targetIndex >= 0 ? messagesSnapshot[targetIndex] : null;
-      const metadata = buildMessageMetadata(agentMessage) || {};
-      const bufferedText =
-        placeholderId !== null && placeholderId !== undefined
-          ? agentMessageBufferRef.current.get(placeholderId) ?? agentMessage?.text
-          : agentMessage?.text;
-      const placeholderTurnId = agentMessage?.turnId || targetTurnId;
-      if (bufferedText) {
-        try {
-          const persisted = await appendConversationMessage(conversationId, 'agent', bufferedText, {
-            turnId: placeholderTurnId,
-            replaceExisting: true,
-            metadata: { ...metadata, runId },
-          });
-          upsertPersistedAgentMessage(conversationId, persisted, {
-            placeholderId,
-            existing: agentMessage,
-          });
-          if (placeholderId !== null && placeholderId !== undefined) {
-            agentMessageBufferRef.current.delete(placeholderId);
-          }
-          agentMessageBufferRef.current.set(persisted.id, persisted.text || '');
-          await refreshConversationHistory(workspaceId);
-        } catch (error) {
-          console.error('Failed to store rerun agent message', error);
-        }
-      } else if (placeholderId !== null && placeholderId !== undefined) {
-        agentMessageBufferRef.current.delete(placeholderId);
-      }
+      await reconcileAgentProgress(runInfo);
+      await refreshConversationHistory(workspaceId);
     } catch (error) {
       console.error('Failed to rerun agent response', error);
       addLocalSystemMessage('Rerun failed. Please try again.');
@@ -6020,6 +5940,18 @@ export default function WorkspacePage() {
       const directive = parseSlashDirective(trimmed);
       const mentionedFiles = findMentionedFiles(trimmed);
       const mentionedKnowledge = findMentionedKnowledge(trimmed);
+
+      if (directive.kind === 'pet') {
+        if (hasAttachments) {
+          addLocalSystemMessage('Remove attachments before using /pet on or /pet off.');
+          return;
+        }
+        setChatMessage('');
+        closeMention();
+        closeCommand();
+        handlePetDirective(directive);
+        return;
+      }
 
       if (directive.kind === 'skill') {
         if (hasLocalAttachments) {
@@ -8639,6 +8571,8 @@ export default function WorkspacePage() {
               </>
             )}
             <LumoPet
+              visible={isLumoVisible}
+              onClose={() => setLumoVisibility(false)}
               colorMode={colorMode}
               workspaceName={selectedWorkspace?.name}
               activeFileName={selectedFile?.name || selectedDashboardPath}

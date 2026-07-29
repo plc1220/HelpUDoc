@@ -14,6 +14,8 @@ type PetState =
   | 'sleep';
 
 type LumoPetProps = {
+  visible?: boolean;
+  onClose?: () => void;
   colorMode?: 'light' | 'dark';
   workspaceName?: string | null;
   activeFileName?: string | null;
@@ -380,9 +382,10 @@ function LumoPetContent({
 }
 
 export default function LumoPet(props: LumoPetProps) {
-  const [isVisible, setIsVisible] = useState(true);
+  const [internalVisible, setInternalVisible] = useState(true);
+  const isVisible = props.visible ?? internalVisible;
 
   if (!isVisible) return null;
 
-  return <LumoPetContent {...props} onClose={() => setIsVisible(false)} />;
+  return <LumoPetContent {...props} onClose={props.onClose ?? (() => setInternalVisible(false))} />;
 }

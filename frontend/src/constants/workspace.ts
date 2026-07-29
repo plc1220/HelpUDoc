@@ -9,6 +9,16 @@ export const SLASH_COMMANDS = [
     command: '/mcp',
     description: 'Prefer tools from a specific MCP server, e.g. /mcp google-workspace',
   },
+  {
+    id: 'pet-on',
+    command: '/pet on',
+    description: 'Show Lumo again',
+  },
+  {
+      id: 'pet-off',
+      command: '/pet off',
+      description: 'Hide Lumo until /pet on',
+  },
 ] as const;
 
 export const SYSTEM_DIR_NAMES = new Set(['__macosx', 'skills', 'charts', 'data_cache']);

@@ -62,6 +62,22 @@ export const mergeMessageMetadata = (message: ConversationMessage): Conversation
   };
 };
 
+export const mergeMonotonicAssistantText = (
+  existingText: string,
+  persistedText: string,
+): string => {
+  if (!persistedText) {
+    return existingText;
+  }
+  if (!existingText || persistedText.startsWith(existingText)) {
+    return persistedText;
+  }
+  if (existingText.startsWith(persistedText) || existingText.endsWith(persistedText)) {
+    return existingText;
+  }
+  return persistedText;
+};
+
 export const buildMessageMetadata = (
   message?: ConversationMessage | null,
 ): ConversationMessageMetadata | undefined => {
