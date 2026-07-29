@@ -22,6 +22,7 @@ test('list queues legacy file-backed knowledge without ingestion metadata', asyn
     ensureMembership: async () => undefined,
   };
   service.fileService = {};
+  service.resolveGlobalKnowledgeAccess = async () => null;
   service.baseQuery = () => ({
     where: () => ({
       orderBy: async () => rows,

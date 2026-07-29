@@ -289,9 +289,13 @@ export class FileService {
       sourceVersionFingerprint?: string | null;
       sourceUrl?: string | null;
       internal?: boolean;
+      allowSystemAdmin?: boolean;
     },
   ) {
-    await this.workspaceService.ensureMembership(workspaceId, userId, { requireEdit: true });
+    await this.workspaceService.ensureMembership(workspaceId, userId, {
+      requireEdit: true,
+      allowSystemAdmin: options?.allowSystemAdmin,
+    });
     const relativePath = this.normalizeRelativePath(fileName);
     if (this.isInternalWorkspacePath(relativePath) && !options?.internal) {
       throw new ConflictError('System workspace paths are reserved');
@@ -352,7 +356,7 @@ export class FileService {
     content: string,
     userId: string,
     mimeType = 'text/markdown',
-    options?: { internal?: boolean },
+    options?: { internal?: boolean; allowSystemAdmin?: boolean },
   ) {
     return this.createFile(
       workspaceId,
@@ -360,7 +364,7 @@ export class FileService {
       Buffer.from(content, 'utf-8'),
       mimeType,
       userId,
-      { forceLocal: true, internal: options?.internal },
+      { forceLocal: true, internal: options?.internal, allowSystemAdmin: options?.allowSystemAdmin },
     );
   }
 
@@ -370,15 +374,19 @@ export class FileService {
     content: string,
     userId: string,
     mimeType = 'text/markdown',
+    options?: { allowSystemAdmin?: boolean },
   ) {
-    await this.workspaceService.ensureMembership(workspaceId, userId, { requireEdit: true });
+    await this.workspaceService.ensureMembership(workspaceId, userId, {
+      requireEdit: true,
+      allowSystemAdmin: options?.allowSystemAdmin,
+    });
     const relativePath = this.normalizeRelativePath(fileName);
     if (!this.isInternalWorkspacePath(relativePath)) {
       throw new ConflictError('Internal text files must use a reserved system workspace path');
     }
     const existing = await this.db('files').where({ workspaceId, name: relativePath }).first();
     if (existing) {
-      return this.updateFile(Number(existing.id), content, userId);
+      return this.updateFile(Number(existing.id), content, userId, undefined, options);
     }
     return this.createTextFile(
       workspaceId,
@@ -386,7 +394,7 @@ export class FileService {
       content,
       userId,
       mimeType,
-      { internal: true },
+      { internal: true, allowSystemAdmin: options?.allowSystemAdmin },
     );
   }
 
@@ -413,7 +421,7 @@ export class FileService {
     }
   }
 
-  async getFileRecord(fileId: number, userId: string, options?: { requireEdit?: boolean }) {
+  async getFileRecord(fileId: number, userId: string, options?: { requireEdit?: boolean; allowSystemAdmin?: boolean }) {
     const file = await this.db('files').where({ id: fileId }).first();
     if (!file) {
       throw new NotFoundError('File not found');
@@ -455,13 +463,22 @@ export class FileService {
     return this.s3Service.getFile(file.path);
   }
 
-  async updateFile(fileId: number, content: string, userId: string, expectedVersion?: number) {
+  async updateFile(
+    fileId: number,
+    content: string,
+    userId: string,
+    expectedVersion?: number,
+    options?: { allowSystemAdmin?: boolean },
+  ) {
     const file = await this.db('files').where({ id: fileId }).first();
     if (!file) {
       throw new NotFoundError('File not found');
     }
 
-    await this.workspaceService.ensureMembership(file.workspaceId, userId, { requireEdit: true });
+    await this.workspaceService.ensureMembership(file.workspaceId, userId, {
+      requireEdit: true,
+      allowSystemAdmin: options?.allowSystemAdmin,
+    });
     const currentVersion = this.assertVersion(file.version, expectedVersion);
     const nextVersion = currentVersion + 1;
 
@@ -521,13 +538,16 @@ export class FileService {
     };
   }
 
-  async deleteFile(fileId: number, userId: string) {
+  async deleteFile(fileId: number, userId: string, options?: { allowSystemAdmin?: boolean }) {
     const file = await this.db('files').where({ id: fileId }).first();
     if (!file) {
       return;
     }
 
-    await this.workspaceService.ensureMembership(file.workspaceId, userId, { requireEdit: true });
+    await this.workspaceService.ensureMembership(file.workspaceId, userId, {
+      requireEdit: true,
+      allowSystemAdmin: options?.allowSystemAdmin,
+    });
 
     const localPath = this.getLocalPath(file.workspaceId, file.name);
     if (file.storageType === 'local') {

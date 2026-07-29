@@ -8,6 +8,8 @@ export type ManagedUser = {
   displayName: string;
   email?: string | null;
   isAdmin: boolean;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type ManagedGroup = {
@@ -30,6 +32,18 @@ export type UserDeletionImpact = {
 export type GroupPromptAccess = {
   skillIds: string[];
   mcpServerIds: string[];
+  knowledgeSourceIds: number[];
+};
+
+export type UserSortField = 'displayName' | 'email' | 'role' | 'createdAt';
+export type UserSortOrder = 'asc' | 'desc';
+
+export type UsersPageResult = {
+  users: ManagedUser[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
 };
 
 export type SkillBuilderAction =
@@ -490,11 +504,32 @@ export const applyGithubSkillImport = async (payload: {
   return response.json();
 };
 
-export const fetchUsers = async (): Promise<ManagedUser[]> => {
-  const response = await apiFetch(`${API_URL}/users`);
+export const fetchUsers = async (options: {
+  page?: number;
+  pageSize?: number;
+  sortBy?: UserSortField;
+  sortOrder?: UserSortOrder;
+  search?: string;
+} = {}): Promise<UsersPageResult> => {
+  const url = new URL(`${API_URL}/users`, window.location.origin);
+  if (options.page) url.searchParams.set('page', String(options.page));
+  if (options.pageSize) url.searchParams.set('pageSize', String(options.pageSize));
+  if (options.sortBy) url.searchParams.set('sortBy', options.sortBy);
+  if (options.sortOrder) url.searchParams.set('sortOrder', options.sortOrder);
+  if (options.search?.trim()) url.searchParams.set('search', options.search.trim());
+  const response = await apiFetch(url.toString());
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));
     throw new Error(data.error || 'Failed to load users');
+  }
+  return response.json();
+};
+
+export const fetchUserDirectory = async (): Promise<ManagedUser[]> => {
+  const response = await apiFetch(`${API_URL}/users/directory/list`);
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || 'Failed to load user directory');
   }
   const data = await response.json();
   return data.users;

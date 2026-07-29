@@ -1,12 +1,15 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
+import multer from 'multer';
 import { KnowledgeService } from '../services/knowledgeService';
 import { HttpError } from '../errors';
 
 const knowledgeTypes = ['text', 'table', 'image', 'presentation', 'infographic'] as const;
 
-export default function(knowledgeService: KnowledgeService) {
+export default function(knowledgeService: KnowledgeService, options: { global?: boolean } = {}) {
   const router = Router({ mergeParams: true });
+  const global = Boolean(options.global);
+  const upload = multer({ storage: multer.memoryStorage() });
 
   const createSchema = z.object({
     title: z.string().min(1),
@@ -36,18 +39,20 @@ export default function(knowledgeService: KnowledgeService) {
     return res.status(500).json({ error: fallbackMessage });
   };
 
-  router.get('/', async (req: Request<{ workspaceId: string }>, res: Response) => {
+  router.get('/', async (req: Request<{ workspaceId?: string }>, res: Response) => {
     try {
       const { workspaceId } = req.params;
       const user = requireUserContext(req);
-      const items = await knowledgeService.list(workspaceId, user.userId);
+      const items = global
+        ? await knowledgeService.listGlobal()
+        : await knowledgeService.list(workspaceId as string, user.userId);
       res.json(items);
     } catch (error) {
       handleError(res, error, 'Failed to list knowledge sources');
     }
   });
 
-  router.get('/:knowledgeId', async (req: Request<{ workspaceId: string; knowledgeId: string }>, res: Response) => {
+  router.get('/:knowledgeId', async (req: Request<{ workspaceId?: string; knowledgeId: string }>, res: Response) => {
     try {
       const { workspaceId, knowledgeId } = req.params;
       const user = requireUserContext(req);
@@ -55,26 +60,30 @@ export default function(knowledgeService: KnowledgeService) {
       if (Number.isNaN(id)) {
         return res.status(400).json({ error: 'Invalid knowledge id' });
       }
-      const item = await knowledgeService.getById(workspaceId, id, user.userId);
+      const item = global
+        ? await knowledgeService.getGlobalById(id)
+        : await knowledgeService.getById(workspaceId as string, id, user.userId);
       res.json(item);
     } catch (error) {
       handleError(res, error, 'Failed to retrieve knowledge source');
     }
   });
 
-  router.post('/', async (req: Request<{ workspaceId: string }>, res: Response) => {
+  router.post('/', async (req: Request<{ workspaceId?: string }>, res: Response) => {
     try {
       const { workspaceId } = req.params;
       const user = requireUserContext(req);
       const payload = createSchema.parse(req.body);
-      const item = await knowledgeService.create(workspaceId, user.userId, payload);
+      const item = global
+        ? await knowledgeService.createGlobal(user.userId, payload)
+        : await knowledgeService.create(workspaceId as string, user.userId, payload);
       res.status(201).json(item);
     } catch (error) {
       handleError(res, error, 'Failed to create knowledge source');
     }
   });
 
-  router.put('/:knowledgeId', async (req: Request<{ workspaceId: string; knowledgeId: string }>, res: Response) => {
+  router.put('/:knowledgeId', async (req: Request<{ workspaceId?: string; knowledgeId: string }>, res: Response) => {
     try {
       const { workspaceId, knowledgeId } = req.params;
       const user = requireUserContext(req);
@@ -86,19 +95,16 @@ export default function(knowledgeService: KnowledgeService) {
       if (Number.isNaN(id)) {
         return res.status(400).json({ error: 'Invalid knowledge id' });
       }
-      const item = await knowledgeService.update(
-        workspaceId,
-        id,
-        user.userId,
-        payload,
-      );
+      const item = global
+        ? await knowledgeService.updateGlobal(id, user.userId, payload)
+        : await knowledgeService.update(workspaceId as string, id, user.userId, payload);
       res.json(item);
     } catch (error) {
       handleError(res, error, 'Failed to update knowledge source');
     }
   });
 
-  router.post('/:knowledgeId/ingest', async (req: Request<{ workspaceId: string; knowledgeId: string }>, res: Response) => {
+  router.post('/:knowledgeId/ingest', async (req: Request<{ workspaceId?: string; knowledgeId: string }>, res: Response) => {
     try {
       const { workspaceId, knowledgeId } = req.params;
       const user = requireUserContext(req);
@@ -106,14 +112,16 @@ export default function(knowledgeService: KnowledgeService) {
       if (Number.isNaN(id)) {
         return res.status(400).json({ error: 'Invalid knowledge id' });
       }
-      const item = await knowledgeService.rebuild(workspaceId, id, user.userId);
+      const item = global
+        ? await knowledgeService.rebuildGlobal(id, user.userId)
+        : await knowledgeService.rebuild(workspaceId as string, id, user.userId);
       res.status(202).json(item);
     } catch (error) {
       handleError(res, error, 'Failed to start knowledge ingestion');
     }
   });
 
-  router.delete('/:knowledgeId', async (req: Request<{ workspaceId: string; knowledgeId: string }>, res: Response) => {
+  router.delete('/:knowledgeId', async (req: Request<{ workspaceId?: string; knowledgeId: string }>, res: Response) => {
     try {
       const { workspaceId, knowledgeId } = req.params;
       const user = requireUserContext(req);
@@ -121,12 +129,40 @@ export default function(knowledgeService: KnowledgeService) {
       if (Number.isNaN(id)) {
         return res.status(400).json({ error: 'Invalid knowledge id' });
       }
-      await knowledgeService.delete(workspaceId, id, user.userId);
+      if (global) {
+        await knowledgeService.deleteGlobal(id, user.userId);
+      } else {
+        await knowledgeService.delete(workspaceId as string, id, user.userId);
+      }
       res.status(204).send();
     } catch (error) {
       handleError(res, error, 'Failed to delete knowledge source');
     }
   });
+
+  if (global) {
+    router.post('/upload', upload.single('file'), async (req: Request, res: Response) => {
+      try {
+        const user = requireUserContext(req);
+        if (!req.file) {
+          return res.status(400).json({ error: 'No file uploaded' });
+        }
+        const payload = createSchema.parse({
+          title: req.body.title || req.file.originalname,
+          type: req.body.type,
+          description: req.body.description,
+          metadata: req.body.metadata ? JSON.parse(req.body.metadata) : undefined,
+        });
+        const item = await knowledgeService.createGlobalUpload(user.userId, req.file, payload);
+        return res.status(201).json(item);
+      } catch (error) {
+        if (error instanceof z.ZodError) {
+          return res.status(400).json({ error: 'Invalid knowledge upload payload' });
+        }
+        handleError(res, error, 'Failed to upload knowledge source');
+      }
+    });
+  }
 
   return router;
 }

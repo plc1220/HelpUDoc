@@ -22,6 +22,7 @@ export interface GroupRecord {
 export interface GroupPromptAccess {
   skillIds: string[];
   mcpServerIds: string[];
+  knowledgeSourceIds: number[];
 }
 
 export interface EffectivePromptAccess extends GroupPromptAccess {
@@ -54,6 +55,20 @@ interface UserProfileInput {
 
 const normalizeEmail = (email?: string | null) => email?.trim().toLowerCase() || null;
 const normalizeUniqueStrings = (values: string[]) => Array.from(new Set(values.map((value) => value.trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+const normalizeUniqueNumbers = (values: number[]) => Array.from(new Set(
+  values.map((value) => Number(value)).filter((value) => Number.isInteger(value) && value > 0),
+)).sort((a, b) => a - b);
+
+export type UserSortField = 'displayName' | 'email' | 'role' | 'createdAt';
+export type UserSortOrder = 'asc' | 'desc';
+
+export interface UserPage {
+  users: UserRecord[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+}
 
 const parseAdminEmails = () => new Set(
   (process.env.ADMIN_EMAILS || '')
@@ -120,6 +135,52 @@ export class UserService {
     return this.db<UserRecord>('users')
       .select('*')
       .orderBy('createdAt', 'asc');
+  }
+
+  async listUsersPage(options: {
+    page: number;
+    pageSize: number;
+    sortBy: UserSortField;
+    sortOrder: UserSortOrder;
+    search?: string;
+  }): Promise<UserPage> {
+    const pageSize = Math.min(Math.max(Math.trunc(options.pageSize), 5), 100);
+    const requestedPage = Math.max(Math.trunc(options.page), 1);
+    const search = String(options.search || '').trim();
+    const sortColumns: Record<UserSortField, string> = {
+      displayName: 'displayName',
+      email: 'email',
+      role: 'isAdmin',
+      createdAt: 'createdAt',
+    };
+
+    const applySearch = <T extends Knex.QueryBuilder>(query: T): T => {
+      if (!search) return query;
+      const escaped = search.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
+      const pattern = `%${escaped}%`;
+      return query.where((builder) => {
+        builder
+          .where('displayName', 'ilike', pattern)
+          .orWhere('email', 'ilike', pattern)
+          .orWhere('externalId', 'ilike', pattern);
+      }) as T;
+    };
+
+    const countRow = await applySearch(this.db('users'))
+      .count<{ count: string }>('id as count')
+      .first();
+    const total = Number(countRow?.count || 0);
+    const totalPages = Math.max(1, Math.ceil(total / pageSize));
+    const page = Math.min(requestedPage, totalPages);
+    const sortColumn = sortColumns[options.sortBy];
+
+    const users = await applySearch(this.db<UserRecord>('users').select('*'))
+      .orderBy(sortColumn, options.sortOrder, options.sortBy === 'email' ? 'last' : undefined)
+      .orderBy('id', 'asc')
+      .limit(pageSize)
+      .offset((page - 1) * pageSize);
+
+    return { users, total, page, pageSize, totalPages };
   }
 
   async getUserById(userId: string): Promise<UserRecord | null> {
@@ -198,6 +259,7 @@ export class UserService {
     return this.db.transaction(async (tx) => {
       await tx('skill_grants').where({ principalType: 'group', principalId: groupId }).del();
       await tx('mcp_server_group_grants').where({ groupId }).del();
+      await tx('knowledge_source_group_grants').where({ groupId }).del();
       const deleted = await tx<GroupRecord>('groups').where({ id: groupId }).del();
       return Number(deleted || 0);
     });
@@ -230,24 +292,31 @@ export class UserService {
     if (!group) {
       return null;
     }
-    const [skillRows, mcpRows] = await Promise.all([
+    const [skillRows, mcpRows, knowledgeRows] = await Promise.all([
       this.db('skill_grants')
         .select('skillId')
         .where({ principalType: 'group', principalId: groupId, effect: 'allow' }),
       this.db('mcp_server_group_grants')
         .select('serverId')
         .where({ groupId }),
+      this.db('knowledge_source_group_grants')
+        .select('knowledgeSourceId')
+        .where({ groupId }),
     ]);
 
     return {
       skillIds: normalizeUniqueStrings((skillRows as Array<{ skillId?: string }>).map((row) => String(row.skillId || ''))),
       mcpServerIds: normalizeUniqueStrings((mcpRows as Array<{ serverId?: string }>).map((row) => String(row.serverId || ''))),
+      knowledgeSourceIds: normalizeUniqueNumbers(
+        (knowledgeRows as Array<{ knowledgeSourceId?: number }>).map((row) => Number(row.knowledgeSourceId)),
+      ),
     };
   }
 
   async replaceGroupPromptAccess(groupId: string, access: GroupPromptAccess): Promise<GroupPromptAccess | null> {
     const skillIds = normalizeUniqueStrings(access.skillIds || []);
     const mcpServerIds = normalizeUniqueStrings(access.mcpServerIds || []);
+    const knowledgeSourceIds = normalizeUniqueNumbers(access.knowledgeSourceIds || []);
 
     return this.db.transaction(async (tx) => {
       const group = await tx<GroupRecord>('groups').where({ id: groupId }).first();
@@ -277,9 +346,20 @@ export class UserService {
         );
       }
 
+      await tx('knowledge_source_group_grants').where({ groupId }).del();
+      if (knowledgeSourceIds.length) {
+        await tx('knowledge_source_group_grants').insert(
+          knowledgeSourceIds.map((knowledgeSourceId) => ({
+            groupId,
+            knowledgeSourceId,
+          })),
+        );
+      }
+
       return {
         skillIds,
         mcpServerIds,
+        knowledgeSourceIds,
       };
     });
   }
@@ -294,6 +374,7 @@ export class UserService {
         isAdmin: true,
         skillIds: [],
         mcpServerIds: [],
+        knowledgeSourceIds: [],
       };
     }
 
@@ -304,10 +385,11 @@ export class UserService {
         isAdmin: false,
         skillIds: [],
         mcpServerIds: [],
+        knowledgeSourceIds: [],
       };
     }
 
-    const [skillRows, mcpRows] = await Promise.all([
+    const [skillRows, mcpRows, knowledgeRows] = await Promise.all([
       this.db('skill_grants')
         .select('skillId')
         .where({ principalType: 'group', effect: 'allow' })
@@ -315,12 +397,18 @@ export class UserService {
       this.db('mcp_server_group_grants')
         .select('serverId')
         .whereIn('groupId', groupIds),
+      this.db('knowledge_source_group_grants')
+        .select('knowledgeSourceId')
+        .whereIn('groupId', groupIds),
     ]);
 
     return {
       isAdmin: false,
       skillIds: normalizeUniqueStrings((skillRows as Array<{ skillId?: string }>).map((row) => String(row.skillId || ''))),
       mcpServerIds: normalizeUniqueStrings((mcpRows as Array<{ serverId?: string }>).map((row) => String(row.serverId || ''))),
+      knowledgeSourceIds: normalizeUniqueNumbers(
+        (knowledgeRows as Array<{ knowledgeSourceId?: number }>).map((row) => Number(row.knowledgeSourceId)),
+      ),
     };
   }
 

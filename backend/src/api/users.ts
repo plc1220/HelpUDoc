@@ -18,18 +18,41 @@ const groupMemberSchema = z.object({
 const groupPromptAccessSchema = z.object({
   skillIds: z.array(z.string().min(1)).default([]),
   mcpServerIds: z.array(z.string().min(1)).default([]),
+  knowledgeSourceIds: z.array(z.number().int().positive()).default([]),
+});
+
+const listUsersSchema = z.object({
+  page: z.coerce.number().int().positive().default(1),
+  pageSize: z.coerce.number().int().min(5).max(100).default(10),
+  sortBy: z.enum(['displayName', 'email', 'role', 'createdAt']).default('displayName'),
+  sortOrder: z.enum(['asc', 'desc']).default('asc'),
+  search: z.string().max(200).optional(),
 });
 
 export default function usersRoutes(userService: UserService, workspaceService: WorkspaceService) {
   const router = Router();
 
-  router.get('/', async (_req, res) => {
+  router.get('/', async (req, res) => {
+    try {
+      const options = listUsersSchema.parse(req.query);
+      const result = await userService.listUsersPage(options);
+      res.json(result);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: error.issues[0]?.message || 'Invalid user list query' });
+      }
+      console.error('Failed to list users', error);
+      res.status(500).json({ error: 'Failed to list users' });
+    }
+  });
+
+  router.get('/directory/list', async (_req, res) => {
     try {
       const users = await userService.listUsers();
       res.json({ users });
     } catch (error) {
-      console.error('Failed to list users', error);
-      res.status(500).json({ error: 'Failed to list users' });
+      console.error('Failed to list user directory', error);
+      res.status(500).json({ error: 'Failed to list user directory' });
     }
   });
 

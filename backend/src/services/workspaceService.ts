@@ -37,6 +37,7 @@ export interface WorkspaceMembershipRecord {
 
 interface MembershipCheckOptions {
   requireEdit?: boolean;
+  allowSystemAdmin?: boolean;
 }
 
 export type McpServerPolicy = {
@@ -306,12 +307,28 @@ export class WorkspaceService {
     };
     const normalizedWorkspace: WorkspaceRecord = workspaceRest;
 
-    const directMembership = await this.db<WorkspaceMembershipRecord>('workspace_members')
-      .where({ workspaceId, userId })
-      .first();
+    const isSystemAdmin = Boolean(
+      options.allowSystemAdmin
+      && await this.db('users').where({ id: userId, isAdmin: true }).first(),
+    );
+
+    const directMembership = isSystemAdmin
+      ? null
+      : await this.db<WorkspaceMembershipRecord>('workspace_members')
+        .where({ workspaceId, userId })
+        .first();
 
     let membership = directMembership;
-    if (normalizedWorkspace.visibility === 'private') {
+    if (isSystemAdmin) {
+      membership = {
+        workspaceId,
+        userId,
+        role: 'owner',
+        canEdit: true,
+        createdAt: normalizedWorkspace.createdAt,
+        updatedAt: normalizedWorkspace.updatedAt,
+      };
+    } else if (normalizedWorkspace.visibility === 'private') {
       if (normalizedWorkspace.ownerId !== userId) {
         throw new AccessDeniedError('Private workspace access denied');
       }
@@ -347,10 +364,10 @@ export class WorkspaceService {
     const normalizedMembership: WorkspaceMembershipRecord = {
       ...membership,
       role: membership.role as WorkspaceRole,
-      canEdit: normalizedWorkspace.visibility === 'private' && Boolean(membership.canEdit),
+      canEdit: isSystemAdmin || (normalizedWorkspace.visibility === 'private' && Boolean(membership.canEdit)),
     };
 
-    if (options.requireEdit && normalizedWorkspace.visibility === 'team') {
+    if (options.requireEdit && normalizedWorkspace.visibility === 'team' && !isSystemAdmin) {
       throw new AccessDeniedError('Team workspaces are read-only. Work privately to make changes.');
     }
     if (options.requireEdit && !normalizedMembership.canEdit) {

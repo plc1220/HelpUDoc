@@ -1,5 +1,16 @@
 import { API_URL, apiFetch } from './apiClient';
 
+type KnowledgePayload = {
+  title: string;
+  type: 'text' | 'table' | 'image' | 'presentation' | 'infographic';
+  description?: string;
+  content?: string;
+  fileId?: number;
+  sourceUrl?: string;
+  tags?: unknown;
+  metadata?: Record<string, unknown>;
+};
+
 const handleResponse = async (response: Response) => {
   if (!response.ok) {
     const data = await response.json().catch(() => undefined);
@@ -74,5 +85,37 @@ export const rebuildKnowledge = async (workspaceId: string, knowledgeId: number)
     `${API_URL}/workspaces/${workspaceId}/knowledge/${knowledgeId}/ingest`,
     { method: 'POST' },
   );
+  return handleResponse(response);
+};
+
+export const listGlobalKnowledge = async () => {
+  const response = await apiFetch(`${API_URL}/knowledge`);
+  return handleResponse(response);
+};
+
+export const uploadGlobalKnowledge = async (
+  file: File,
+  payload: Pick<KnowledgePayload, 'title' | 'type' | 'description' | 'metadata'>,
+) => {
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('title', payload.title);
+  formData.append('type', payload.type);
+  if (payload.description) formData.append('description', payload.description);
+  if (payload.metadata) formData.append('metadata', JSON.stringify(payload.metadata));
+  const response = await apiFetch(`${API_URL}/knowledge/upload`, {
+    method: 'POST',
+    body: formData,
+  });
+  return handleResponse(response);
+};
+
+export const rebuildGlobalKnowledge = async (knowledgeId: number) => {
+  const response = await apiFetch(`${API_URL}/knowledge/${knowledgeId}/ingest`, { method: 'POST' });
+  return handleResponse(response);
+};
+
+export const deleteGlobalKnowledge = async (knowledgeId: number) => {
+  const response = await apiFetch(`${API_URL}/knowledge/${knowledgeId}`, { method: 'DELETE' });
   return handleResponse(response);
 };

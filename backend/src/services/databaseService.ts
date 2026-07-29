@@ -40,6 +40,7 @@ export class DatabaseService {
     await this.createWorkspacePublicationLinksTable();
     await this.createCollabDocumentsTable();
     await this.createKnowledgeSourcesTable();
+    await this.createKnowledgeSourceGroupGrantsTable();
     await this.createConversationsTable();
     await this.createConversationMessagesTable();
     await this.createWorkspaceSchedulesTable();
@@ -456,6 +457,7 @@ export class DatabaseService {
       await this.db.schema.createTable('knowledge_sources', (table) => {
         table.increments('id').primary();
         table.uuid('workspaceId').notNullable().references('id').inTable('workspaces').onDelete('CASCADE');
+        table.boolean('isGlobal').notNullable().defaultTo(false);
         table.string('title').notNullable();
         table.string('type', 32).notNullable();
         table.text('description');
@@ -474,6 +476,7 @@ export class DatabaseService {
       console.log('Created \"knowledge_sources\" table.');
     } else {
       await this.ensureColumn('knowledge_sources', 'description', (table) => table.text('description'));
+      await this.ensureColumn('knowledge_sources', 'isGlobal', (table) => table.boolean('isGlobal').notNullable().defaultTo(false));
       await this.ensureColumn('knowledge_sources', 'content', (table) => table.text('content'));
       await this.ensureColumn('knowledge_sources', 'fileId', (table) => table.integer('fileId').references('id').inTable('files').onDelete('SET NULL'));
       await this.ensureColumn('knowledge_sources', 'sourceUrl', (table) => table.string('sourceUrl'));
@@ -489,6 +492,21 @@ export class DatabaseService {
       await this.db.raw(
         'CREATE INDEX IF NOT EXISTS knowledge_workspace_updated_idx ON knowledge_sources ("workspaceId", "updatedAt")',
       );
+    }
+  }
+
+  private async createKnowledgeSourceGroupGrantsTable(): Promise<void> {
+    const exists = await this.db.schema.hasTable('knowledge_source_group_grants');
+    if (!exists) {
+      await this.db.schema.createTable('knowledge_source_group_grants', (table) => {
+        table.uuid('groupId').notNullable().references('id').inTable('groups').onDelete('CASCADE');
+        table.integer('knowledgeSourceId').notNullable().references('id').inTable('knowledge_sources').onDelete('CASCADE');
+        table.timestamp('createdAt').notNullable().defaultTo(this.db.fn.now());
+        table.timestamp('updatedAt').notNullable().defaultTo(this.db.fn.now());
+        table.primary(['groupId', 'knowledgeSourceId']);
+        table.index(['knowledgeSourceId', 'groupId'], 'knowledge_source_group_grants_source_group_idx');
+      });
+      console.log('Created "knowledge_source_group_grants" table.');
     }
   }
 

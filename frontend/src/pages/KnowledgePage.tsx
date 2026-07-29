@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { FileIcon, Loader2, NotebookPen, Plus, RotateCcw, Trash } from 'lucide-react';
 import SettingsShell from '../components/settings/SettingsShell';
@@ -9,16 +9,17 @@ import {
   SettingsSectionHeader,
   SettingsSurface,
 } from '../components/settings/SettingsScaffold';
-import { getWorkspaces } from '../services/workspaceApi';
-import { createKnowledge, deleteKnowledge, listKnowledge, rebuildKnowledge } from '../services/knowledgeApi';
-import { createFile } from '../services/fileApi';
-import type { Workspace } from '../types';
+import {
+  deleteGlobalKnowledge,
+  listGlobalKnowledge,
+  rebuildGlobalKnowledge,
+  uploadGlobalKnowledge,
+} from '../services/knowledgeApi';
 
 type KnowledgeType = 'text' | 'table' | 'image' | 'presentation' | 'infographic';
 
 type KnowledgeSource = {
   id: number;
-  workspaceId: string;
   title: string;
   type: KnowledgeType;
   description?: string | null;
@@ -64,17 +65,6 @@ const statusStyles: Record<string, { label: string; className: string }> = {
 
 const normalizeStatus = (value?: string | null) => (value ? value.toLowerCase() : '');
 
-const toNumericId = (value: number | string | null | undefined): number | null => {
-  if (typeof value === 'number') {
-    return Number.isFinite(value) ? value : null;
-  }
-  if (typeof value === 'string') {
-    const parsed = parseInt(value, 10);
-    return Number.isNaN(parsed) ? null : parsed;
-  }
-  return null;
-};
-
 const guessKnowledgeType = (file: File): KnowledgeType => {
   const extension = file.name.split('.').pop()?.toLowerCase() || '';
   const mime = file.type.toLowerCase();
@@ -92,46 +82,19 @@ const guessKnowledgeType = (file: File): KnowledgeType => {
 };
 
 const KnowledgePage = () => {
-  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
-  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState('');
   const [knowledgeSources, setKnowledgeSources] = useState<KnowledgeSource[]>([]);
-  const [loadingWorkspaces, setLoadingWorkspaces] = useState(false);
   const [loadingKnowledge, setLoadingKnowledge] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
 
-  const selectedWorkspace = useMemo(
-    () => workspaces.find((workspace) => workspace.id === selectedWorkspaceId) || null,
-    [workspaces, selectedWorkspaceId],
-  );
-
-  const loadWorkspaces = useCallback(async () => {
-    setLoadingWorkspaces(true);
-    setErrorMessage(null);
-    try {
-      const response = await getWorkspaces();
-      const mapped = (response || []).map((workspace: Omit<Workspace, 'lastUsed'>) => ({
-        ...workspace,
-        lastUsed: 'Recently',
-      }));
-      setWorkspaces(mapped);
-    } catch (error) {
-      console.error('Failed to load workspaces', error);
-      setErrorMessage('Failed to load workspaces.');
-      setWorkspaces([]);
-    } finally {
-      setLoadingWorkspaces(false);
-    }
-  }, []);
-
   const loadKnowledgeSources = useCallback(
-    async (workspaceId: string) => {
+    async () => {
       setLoadingKnowledge(true);
       setErrorMessage(null);
       try {
-        const items = await listKnowledge(workspaceId);
+        const items = await listGlobalKnowledge();
         setKnowledgeSources(items || []);
       } catch (error) {
         console.error('Failed to load knowledge sources', error);
@@ -149,10 +112,6 @@ const KnowledgePage = () => {
   };
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    if (!selectedWorkspaceId) {
-      setUploadError('Select a workspace before uploading files.');
-      return;
-    }
     const files = event.target.files ? Array.from(event.target.files) : [];
     event.target.value = '';
     if (!files.length) return;
@@ -160,22 +119,14 @@ const KnowledgePage = () => {
     setUploadError(null);
     try {
       for (const file of files) {
-        const createdFile = await createFile(selectedWorkspaceId, file);
-        const fileId = toNumericId(createdFile?.id);
-        if (!fileId) {
-          throw new Error('Unable to resolve file id for knowledge entry.');
-        }
-        await createKnowledge(selectedWorkspaceId, {
+        await uploadGlobalKnowledge(file, {
           title: file.name,
           type: guessKnowledgeType(file),
-          fileId,
           description: `Uploaded file ${file.name}`,
-          metadata: {
-            source: 'upload',
-          },
+          metadata: { source: 'upload' },
         });
       }
-      await loadKnowledgeSources(selectedWorkspaceId);
+      await loadKnowledgeSources();
     } catch (error) {
       console.error('Failed to upload knowledge files', error);
       setUploadError(error instanceof Error ? error.message : 'Failed to upload files.');
@@ -185,10 +136,9 @@ const KnowledgePage = () => {
   };
 
   const handleRebuildKnowledge = async (item: KnowledgeSource) => {
-    if (!selectedWorkspaceId) return;
     try {
-      await rebuildKnowledge(selectedWorkspaceId, item.id);
-      await loadKnowledgeSources(selectedWorkspaceId);
+      await rebuildGlobalKnowledge(item.id);
+      await loadKnowledgeSources();
     } catch (error) {
       console.error('Failed to rebuild knowledge source', error);
       setErrorMessage(error instanceof Error ? error.message : 'Failed to rebuild knowledge source.');
@@ -196,12 +146,11 @@ const KnowledgePage = () => {
   };
 
   const handleDeleteKnowledge = async (item: KnowledgeSource) => {
-    if (!selectedWorkspaceId) return;
     const confirmed = window.confirm(`Delete knowledge source "${item.title}"?`);
     if (!confirmed) return;
     try {
-      await deleteKnowledge(selectedWorkspaceId, item.id);
-      await loadKnowledgeSources(selectedWorkspaceId);
+      await deleteGlobalKnowledge(item.id);
+      await loadKnowledgeSources();
     } catch (error) {
       console.error('Failed to delete knowledge source', error);
       setErrorMessage('Failed to delete knowledge source.');
@@ -209,37 +158,14 @@ const KnowledgePage = () => {
   };
 
   const handleRefresh = async () => {
-    if (!selectedWorkspaceId) return;
-    await loadKnowledgeSources(selectedWorkspaceId);
+    await loadKnowledgeSources();
   };
 
   useEffect(() => {
-    void loadWorkspaces();
-  }, [loadWorkspaces]);
+    void loadKnowledgeSources();
+  }, [loadKnowledgeSources]);
 
   useEffect(() => {
-    if (!workspaces.length) {
-      if (selectedWorkspaceId) {
-        setSelectedWorkspaceId('');
-      }
-      return;
-    }
-    const exists = workspaces.some((workspace) => workspace.id === selectedWorkspaceId);
-    if (!selectedWorkspaceId || !exists) {
-      setSelectedWorkspaceId(workspaces[0].id);
-    }
-  }, [selectedWorkspaceId, workspaces]);
-
-  useEffect(() => {
-    if (!selectedWorkspaceId) {
-      setKnowledgeSources([]);
-      return;
-    }
-    void loadKnowledgeSources(selectedWorkspaceId);
-  }, [loadKnowledgeSources, selectedWorkspaceId]);
-
-  useEffect(() => {
-    if (!selectedWorkspaceId) return;
     const hasPending = knowledgeSources.some((item) => {
       const ingestion = item.metadata?.ingestion;
       if (!ingestion || typeof ingestion !== 'object') return false;
@@ -248,34 +174,17 @@ const KnowledgePage = () => {
     });
     if (!hasPending) return;
     const interval = window.setInterval(() => {
-      void loadKnowledgeSources(selectedWorkspaceId);
+      void loadKnowledgeSources();
     }, 5000);
     return () => window.clearInterval(interval);
-  }, [knowledgeSources, loadKnowledgeSources, selectedWorkspaceId]);
+  }, [knowledgeSources, loadKnowledgeSources]);
 
   const actions = (
     <div className="flex flex-wrap items-center gap-3">
-      <div className="relative">
-        <select
-          className="settings-control rounded-xl px-3 py-2 text-sm"
-          value={selectedWorkspaceId}
-          onChange={(event) => setSelectedWorkspaceId(event.target.value)}
-          disabled={loadingWorkspaces}
-        >
-          <option value="" disabled>
-            {loadingWorkspaces ? 'Loading workspaces...' : 'Select workspace'}
-          </option>
-          {workspaces.map((workspace) => (
-            <option key={workspace.id} value={workspace.id}>
-              {workspace.name}
-            </option>
-          ))}
-        </select>
-      </div>
       <button
         type="button"
         onClick={handleRefresh}
-        disabled={!selectedWorkspaceId || loadingKnowledge}
+        disabled={loadingKnowledge}
         className="settings-portal-button-secondary inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium transition disabled:opacity-60"
       >
         {loadingKnowledge ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw size={16} />}
@@ -339,10 +248,6 @@ const KnowledgePage = () => {
       actions={actions}
     >
       <div className="space-y-6">
-        {!selectedWorkspace && !loadingWorkspaces ? (
-          <SettingsNotice variant="warning">Create or select a workspace to manage knowledge sources.</SettingsNotice>
-        ) : null}
-
         {errorMessage ? (
           <SettingsNotice variant="error">{errorMessage}</SettingsNotice>
         ) : null}
@@ -367,14 +272,14 @@ const KnowledgePage = () => {
               <button
                 type="button"
                 onClick={handleUploadClick}
-                disabled={!selectedWorkspaceId || uploading}
+                disabled={uploading}
                 className="settings-button-primary inline-flex items-center gap-2 rounded-2xl px-4 py-2.5 text-sm font-medium transition disabled:opacity-60"
               >
                 {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus size={16} />}
                 Upload files
               </button>
               <p className="mt-3 text-xs text-slate-500">
-                Knowledge ingestion is separate from workspace upload and runs asynchronously.
+                Knowledge is shared across the account and runs asynchronously after upload.
               </p>
               {uploadError ? (
                 <p className="mt-3 text-xs text-rose-600">{uploadError}</p>
@@ -387,7 +292,7 @@ const KnowledgePage = () => {
                 <li>Sources are converted into human-readable OKF v0.2 Markdown concepts.</li>
                 <li>No embeddings or vector index are created.</li>
                 <li>Large documents may take a few minutes to publish.</li>
-                <li>Use the workspace selector above to target a different knowledge base.</li>
+                <li>These sources are managed from one shared admin catalog.</li>
               </ul>
             </div>
           </SettingsSurface>
@@ -395,7 +300,7 @@ const KnowledgePage = () => {
           <SettingsSurface>
             <SettingsSectionHeader
               title="Knowledge sources"
-              description={selectedWorkspace ? `Workspace: ${selectedWorkspace.name}` : 'No workspace selected'}
+              description="Shared across all workspaces"
               actions={(
                 <div className="flex items-center gap-2 text-xs text-slate-500">
                   {loadingKnowledge ? 'Loading sources...' : `${knowledgeSources.length} sources`}
@@ -411,7 +316,7 @@ const KnowledgePage = () => {
               {!loadingKnowledge && knowledgeSources.length === 0 ? (
                 <SettingsEmptyState
                   title="No knowledge sources yet"
-                  description="Upload files to start building your workspace knowledge library."
+                  description="Upload files to start building the shared knowledge library."
                   icon={NotebookPen}
                 />
               ) : null}

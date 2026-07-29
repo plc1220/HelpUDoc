@@ -20,6 +20,11 @@ export interface KnowledgeInput {
   metadata?: Record<string, any> | null;
 }
 
+type KnowledgeOperationOptions = {
+  isGlobal?: boolean;
+  allowSystemAdmin?: boolean;
+};
+
 const SUPPORTED_TYPES: KnowledgeType[] = ['text', 'table', 'image', 'presentation', 'infographic'];
 const OKF_VERSION = '0.2';
 const OKF_GENERATOR = 'helpudoc-okf/1';
@@ -94,14 +99,80 @@ export class KnowledgeService {
     this.fileService = fileService;
   }
 
+  async listGlobal() {
+    const rows = await this.baseQuery()
+      .orderBy('knowledge_sources.updatedAt', 'desc');
+    return rows.map((row) => this.mapRow(row));
+  }
+
+  async getGlobalById(id: number) {
+    const row = await this.baseQuery()
+      .where('knowledge_sources.id', id)
+      .first();
+    if (!row) {
+      throw new NotFoundError('Knowledge source not found');
+    }
+    return this.mapRow(row);
+  }
+
+  async createGlobal(userId: string, payload: KnowledgeInput) {
+    const workspaceId = await this.resolveStorageWorkspace(userId);
+    return this.create(workspaceId, userId, payload, { isGlobal: true });
+  }
+
+  async createGlobalUpload(
+    userId: string,
+    file: { originalname: string; mimetype: string; buffer: Buffer },
+    payload: Pick<KnowledgeInput, 'title' | 'type' | 'description' | 'metadata'>,
+  ) {
+    if (!this.fileService) {
+      throw new ConflictError('Knowledge file storage is not configured');
+    }
+    const workspaceId = await this.resolveStorageWorkspace(userId);
+    const fileName = await this.fileService.resolveUniqueRelativePath(
+      workspaceId,
+      file.originalname,
+      userId,
+    );
+    const storedFile = await this.fileService.createFile(
+      workspaceId,
+      fileName,
+      file.buffer,
+      file.mimetype || 'application/octet-stream',
+      userId,
+    );
+    return this.create(workspaceId, userId, {
+      ...payload,
+      fileId: Number(storedFile.id),
+    }, { isGlobal: true });
+  }
+
+  async updateGlobal(id: number, userId: string, payload: Partial<KnowledgeInput>) {
+    const row = await this.getKnowledgeRow(id);
+    return this.update(String(row.workspaceId), id, userId, payload, { allowSystemAdmin: true });
+  }
+
+  async rebuildGlobal(id: number, userId: string) {
+    const row = await this.getKnowledgeRow(id);
+    return this.rebuild(String(row.workspaceId), id, userId, { allowSystemAdmin: true });
+  }
+
+  async deleteGlobal(id: number, userId: string) {
+    const row = await this.getKnowledgeRow(id);
+    return this.delete(String(row.workspaceId), id, userId, { allowSystemAdmin: true });
+  }
+
   async list(workspaceId: string, userId: string) {
     await this.workspaceService.ensureMembership(workspaceId, userId, { requireEdit: true });
-    const rows = await this.baseQuery()
-      .where('knowledge_sources.workspaceId', workspaceId)
+    const globalKnowledgeIds = await this.resolveGlobalKnowledgeAccess(userId);
+    const rows = await this.applyKnowledgeAccess(this.baseQuery(), workspaceId, globalKnowledgeIds)
       .orderBy('knowledge_sources.updatedAt', 'desc');
 
     if (this.fileService) {
       for (const row of rows) {
+        if (row.isGlobal && row.workspaceId !== workspaceId) {
+          continue;
+        }
         const status = this.getIngestionMetadata(row.metadata)?.status;
         if (!row.fileId) {
           continue;
@@ -124,10 +195,13 @@ export class KnowledgeService {
     return rows.map((row) => this.mapRow(row));
   }
 
-  async getById(workspaceId: string, id: number, userId: string) {
-    await this.workspaceService.ensureMembership(workspaceId, userId, { requireEdit: true });
-    const row = await this.baseQuery()
-      .where('knowledge_sources.workspaceId', workspaceId)
+  async getById(workspaceId: string, id: number, userId: string, options: KnowledgeOperationOptions = {}) {
+    await this.workspaceService.ensureMembership(workspaceId, userId, {
+      requireEdit: true,
+      allowSystemAdmin: options.allowSystemAdmin,
+    });
+    const globalKnowledgeIds = await this.resolveGlobalKnowledgeAccess(userId);
+    const row = await this.applyKnowledgeAccess(this.baseQuery(), workspaceId, globalKnowledgeIds)
       .andWhere('knowledge_sources.id', id)
       .first();
     if (!row) {
@@ -136,9 +210,12 @@ export class KnowledgeService {
     return this.mapRow(row);
   }
 
-  async create(workspaceId: string, userId: string, payload: KnowledgeInput) {
+  async create(workspaceId: string, userId: string, payload: KnowledgeInput, options: KnowledgeOperationOptions = {}) {
     this.assertType(payload.type);
-    await this.workspaceService.ensureMembership(workspaceId, userId, { requireEdit: true });
+    await this.workspaceService.ensureMembership(workspaceId, userId, {
+      requireEdit: true,
+      allowSystemAdmin: options.allowSystemAdmin,
+    });
 
     if (payload.fileId) {
       await this.assertFileInWorkspace(payload.fileId, workspaceId);
@@ -156,6 +233,7 @@ export class KnowledgeService {
     const [record] = await this.db('knowledge_sources')
       .insert({
         workspaceId,
+        isGlobal: Boolean(options.isGlobal),
         title: payload.title,
         type: payload.type,
         description: payload.description,
@@ -171,13 +249,16 @@ export class KnowledgeService {
 
     await this.workspaceService.touchWorkspace(workspaceId, userId);
     if (payload.fileId && this.fileService) {
-      this.scheduleIngestion(workspaceId, Number(record.id), userId);
+      this.scheduleIngestion(workspaceId, Number(record.id), userId, options.allowSystemAdmin);
     }
-    return this.getById(workspaceId, record.id, userId);
+    return this.getById(workspaceId, record.id, userId, options);
   }
 
-  async update(workspaceId: string, id: number, userId: string, payload: Partial<KnowledgeInput>) {
-    await this.workspaceService.ensureMembership(workspaceId, userId, { requireEdit: true });
+  async update(workspaceId: string, id: number, userId: string, payload: Partial<KnowledgeInput>, options: KnowledgeOperationOptions = {}) {
+    await this.workspaceService.ensureMembership(workspaceId, userId, {
+      requireEdit: true,
+      allowSystemAdmin: options.allowSystemAdmin,
+    });
     const existing = await this.db('knowledge_sources').where({ id, workspaceId }).first();
     if (!existing) {
       throw new NotFoundError('Knowledge source not found');
@@ -217,14 +298,17 @@ export class KnowledgeService {
         error: null,
         okfVersion: OKF_VERSION,
       });
-      this.scheduleIngestion(workspaceId, id, userId);
+      this.scheduleIngestion(workspaceId, id, userId, options.allowSystemAdmin);
     }
 
-    return this.getById(workspaceId, id, userId);
+    return this.getById(workspaceId, id, userId, options);
   }
 
-  async rebuild(workspaceId: string, id: number, userId: string) {
-    await this.workspaceService.ensureMembership(workspaceId, userId, { requireEdit: true });
+  async rebuild(workspaceId: string, id: number, userId: string, options: KnowledgeOperationOptions = {}) {
+    await this.workspaceService.ensureMembership(workspaceId, userId, {
+      requireEdit: true,
+      allowSystemAdmin: options.allowSystemAdmin,
+    });
     const existing = await this.db('knowledge_sources').where({ id, workspaceId }).first();
     if (!existing) {
       throw new NotFoundError('Knowledge source not found');
@@ -241,12 +325,15 @@ export class KnowledgeService {
       error: null,
       okfVersion: OKF_VERSION,
     });
-    this.scheduleIngestion(workspaceId, id, userId);
-    return this.getById(workspaceId, id, userId);
+    this.scheduleIngestion(workspaceId, id, userId, options.allowSystemAdmin);
+    return this.getById(workspaceId, id, userId, options);
   }
 
-  async delete(workspaceId: string, id: number, userId: string) {
-    await this.workspaceService.ensureMembership(workspaceId, userId, { requireEdit: true });
+  async delete(workspaceId: string, id: number, userId: string, options: KnowledgeOperationOptions = {}) {
+    await this.workspaceService.ensureMembership(workspaceId, userId, {
+      requireEdit: true,
+      allowSystemAdmin: options.allowSystemAdmin,
+    });
     const existing = await this.db('knowledge_sources').where({ id, workspaceId }).first();
     if (!existing) {
       throw new NotFoundError('Knowledge source not found');
@@ -258,7 +345,7 @@ export class KnowledgeService {
     if (this.fileService) {
       const bundlePath = this.getIngestionMetadata(existing.metadata)?.bundlePath
         || path.posix.join(OKF_SYSTEM_ROOT, String(id));
-      await this.removeStaleBundleFiles(workspaceId, userId, bundlePath, new Set());
+      await this.removeStaleBundleFiles(workspaceId, userId, bundlePath, new Set(), options.allowSystemAdmin);
     }
     await this.workspaceService.touchWorkspace(workspaceId, userId);
   }
@@ -322,11 +409,11 @@ export class KnowledgeService {
       });
   }
 
-  private scheduleIngestion(workspaceId: string, id: number, userId: string): void {
+  private scheduleIngestion(workspaceId: string, id: number, userId: string, allowSystemAdmin = false): void {
     if (!this.fileService || this.inFlightIngestions.has(id)) {
       return;
     }
-    const promise = this.runIngestion(workspaceId, id, userId)
+    const promise = this.runIngestion(workspaceId, id, userId, allowSystemAdmin)
       .catch((error) => {
         console.error('OKF knowledge ingestion failed', { workspaceId, knowledgeId: id, error });
       })
@@ -336,7 +423,7 @@ export class KnowledgeService {
     this.inFlightIngestions.set(id, promise);
   }
 
-  private async runIngestion(workspaceId: string, id: number, userId: string): Promise<void> {
+  private async runIngestion(workspaceId: string, id: number, userId: string, allowSystemAdmin = false): Promise<void> {
     if (!this.fileService) {
       return;
     }
@@ -354,7 +441,7 @@ export class KnowledgeService {
       if (!knowledge.fileId) {
         throw new ConflictError('Knowledge source is not backed by a file');
       }
-      const sourceFile = await this.fileService.getFileRecord(Number(knowledge.fileId), userId);
+      const sourceFile = await this.fileService.getFileRecord(Number(knowledge.fileId), userId, { allowSystemAdmin });
       const buffer = await this.fileService.readFileBuffer(sourceFile);
       const sourceFingerprint = createHash('sha256').update(buffer).digest('hex');
       const extracted = await this.extractKnowledgeSource(
@@ -451,9 +538,16 @@ export class KnowledgeService {
           content,
           userId,
           'text/markdown',
+          { allowSystemAdmin },
         );
       }
-      await this.removeStaleBundleFiles(workspaceId, userId, bundlePath, new Set(documents.keys()));
+      await this.removeStaleBundleFiles(
+        workspaceId,
+        userId,
+        bundlePath,
+        new Set(documents.keys()),
+        allowSystemAdmin,
+      );
       await this.updateIngestionMetadata(workspaceId, id, {
         status: 'published',
         publishedAt: new Date().toISOString(),
@@ -540,6 +634,7 @@ export class KnowledgeService {
     userId: string,
     bundlePath: string,
     retainedPaths: Set<string>,
+    allowSystemAdmin = false,
   ): Promise<void> {
     if (!this.fileService) {
       return;
@@ -549,7 +644,7 @@ export class KnowledgeService {
       .whereLike('name', `${bundlePath}/%`);
     for (const row of rows) {
       if (!retainedPaths.has(String(row.name))) {
-        await this.fileService.deleteFile(Number(row.id), userId);
+        await this.fileService.deleteFile(Number(row.id), userId, { allowSystemAdmin });
       }
     }
   }
@@ -606,6 +701,7 @@ export class KnowledgeService {
     return {
       id: row.id as number,
       workspaceId: row.workspaceId as string,
+      isGlobal: Boolean(row.isGlobal),
       title: row.title as string,
       type: row.type as KnowledgeType,
       description: row.description ?? null,
@@ -627,5 +723,61 @@ export class KnowledgeService {
     if (!file) {
       throw new ConflictError('File does not belong to this workspace');
     }
+  }
+
+  private async getKnowledgeRow(id: number) {
+    const row = await this.db('knowledge_sources').where({ id }).first();
+    if (!row) {
+      throw new NotFoundError('Knowledge source not found');
+    }
+    return row;
+  }
+
+  private async resolveStorageWorkspace(userId: string): Promise<string> {
+    const workspaces = await this.workspaceService.listWorkspacesForUser(userId);
+    const writable = workspaces.find((workspace) => workspace.canEdit);
+    if (!writable) {
+      throw new ConflictError('Create a writable workspace before adding knowledge');
+    }
+    return writable.id;
+  }
+
+  private async resolveGlobalKnowledgeAccess(userId: string): Promise<number[] | null> {
+    const user = await this.db('users').select('isAdmin').where({ id: userId }).first();
+    if (user?.isAdmin) {
+      return null;
+    }
+    const rows = await this.db('knowledge_source_group_grants as kg')
+      .join('group_members as gm', 'kg.groupId', 'gm.groupId')
+      .where('gm.userId', userId)
+      .distinct('kg.knowledgeSourceId');
+    return Array.from(new Set(
+      rows
+        .map((row: { knowledgeSourceId?: number }) => Number(row.knowledgeSourceId))
+        .filter((id: number) => Number.isInteger(id) && id > 0),
+    ));
+  }
+
+  private applyKnowledgeAccess<T extends Knex.QueryBuilder>(
+    query: T,
+    workspaceId: string,
+    globalKnowledgeIds: number[] | null,
+  ): T {
+    return query.where((builder) => {
+      builder.where((workspaceQuery) => {
+        workspaceQuery
+          .where('knowledge_sources.workspaceId', workspaceId)
+          .andWhere('knowledge_sources.isGlobal', false);
+      });
+      if (globalKnowledgeIds === null) {
+        builder.orWhere('knowledge_sources.isGlobal', true);
+      } else if (globalKnowledgeIds.length) {
+        builder.orWhere((globalQuery) => {
+          globalQuery
+            .where('knowledge_sources.isGlobal', true)
+            .whereIn('knowledge_sources.id', globalKnowledgeIds);
+        });
+      }
+    }) as T;
   }
 }

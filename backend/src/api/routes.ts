@@ -53,6 +53,7 @@ export default function(dbService: DatabaseService, userService: UserService) {
   router.use('/settings/reflections', requireSystemAdmin(userService), settingsReflectionRoutes(dailyReflectionService));
   router.use('/settings/skill-evolution', requireSystemAdmin(userService), settingsSkillEvolutionRoutes(skillEvolutionService));
   router.use('/users', requireSystemAdmin(userService), usersRoutes(userService, workspaceService));
+  router.use('/knowledge', requireSystemAdmin(userService), knowledgeRoutes(knowledgeService, { global: true }));
   router.use('/workspaces', workspaceRoutes(workspaceService, workspacePublicationService, userService));
   router.use('/workspaces/:workspaceId/files', fileRoutes(fileService, workspaceService, googleOAuthService));
   router.use('/workspaces/:workspaceId/knowledge', knowledgeRoutes(knowledgeService));
