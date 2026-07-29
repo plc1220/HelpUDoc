@@ -148,7 +148,7 @@ export class FileService {
     }
 
     await fs.mkdir(absoluteFolderPath, { recursive: true });
-    await this.workspaceService.touchWorkspace(workspaceId, userId);
+    await this.workspaceService.touchWorkspace(workspaceId, userId, { contentChanged: true });
 
     return { path: normalizedFolder };
   }
@@ -341,7 +341,7 @@ export class FileService {
       updatedBy: userId,
     }).returning('*');
 
-    await this.workspaceService.touchWorkspace(workspaceId, userId);
+    await this.workspaceService.touchWorkspace(workspaceId, userId, { contentChanged: true });
 
     return newFile;
   }
@@ -484,7 +484,7 @@ export class FileService {
       })
       .returning('*');
 
-    await this.workspaceService.touchWorkspace(file.workspaceId, userId);
+    await this.workspaceService.touchWorkspace(file.workspaceId, userId, { contentChanged: true });
 
     return updated;
   }
@@ -552,7 +552,7 @@ export class FileService {
     }
 
     await this.db('files').where({ id: fileId }).del();
-    await this.workspaceService.touchWorkspace(file.workspaceId, userId);
+    await this.workspaceService.touchWorkspace(file.workspaceId, userId, { contentChanged: true });
 
   }
 
@@ -613,7 +613,7 @@ export class FileService {
       console.error(`Failed to delete folder from filesystem: ${absoluteFolderPath}`, error);
     }
 
-    await this.workspaceService.touchWorkspace(workspaceId, userId);
+    await this.workspaceService.touchWorkspace(workspaceId, userId, { contentChanged: true });
 
   }
 
@@ -748,7 +748,7 @@ export class FileService {
       renamedIds.push(file.id);
     }
 
-    await this.workspaceService.touchWorkspace(workspaceId, userId);
+    await this.workspaceService.touchWorkspace(workspaceId, userId, { contentChanged: true });
 
     const files = renamedIds.length
       ? await this.db('files').whereIn('id', renamedIds)
@@ -836,7 +836,7 @@ export class FileService {
       });
     }
 
-    await this.workspaceService.touchWorkspace(file.workspaceId, userId);
+    await this.workspaceService.touchWorkspace(file.workspaceId, userId, { contentChanged: true });
 
     return this.db('files').where({ id: fileId }).first();
   }

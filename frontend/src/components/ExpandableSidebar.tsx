@@ -32,7 +32,11 @@ const ExpandableSidebar: React.FC<SidebarProps> = ({ handleDrawerToggle, isDrawe
     >
       {!isDrawerOpen && (
         <>
-          <IconButton onClick={handleDrawerToggle}>
+          <IconButton
+            onClick={handleDrawerToggle}
+            title="Open workspace menu"
+            aria-label="Open workspace menu"
+          >
             <MenuIcon />
           </IconButton>
           <IconButton onClick={onOpenSettings} title="Settings">

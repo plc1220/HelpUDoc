@@ -46,7 +46,7 @@ export class ConversationService {
   }
 
   async createConversation(userId: string, workspaceId: string, persona: string): Promise<ConversationRecord> {
-    await this.workspaceService.ensureMembership(workspaceId, userId);
+    await this.workspaceService.ensureMembership(workspaceId, userId, { requireEdit: true });
     const [conversation] = await this.db('conversations')
       .insert({
         id: uuidv4(),
@@ -64,7 +64,7 @@ export class ConversationService {
   }
 
   async listRecentConversations(userId: string, workspaceId: string, limit = 5): Promise<ConversationRecord[]> {
-    await this.workspaceService.ensureMembership(workspaceId, userId);
+    await this.workspaceService.ensureMembership(workspaceId, userId, { requireEdit: true });
     const conversations = await this.db('conversations')
       .where({ workspaceId })
       .orderBy('updatedAt', 'desc')
@@ -82,7 +82,7 @@ export class ConversationService {
       return null;
     }
 
-    await this.workspaceService.ensureMembership(conversation.workspaceId, userId);
+    await this.workspaceService.ensureMembership(conversation.workspaceId, userId, { requireEdit: true });
 
     const messages = await this.db('conversation_messages')
       .where({ conversationId })
@@ -105,7 +105,7 @@ export class ConversationService {
       throw new NotFoundError('Conversation not found');
     }
 
-    await this.workspaceService.ensureMembership(workspaceId, userId, { requireEdit: options.requireEdit });
+    await this.workspaceService.ensureMembership(workspaceId, userId, { requireEdit: true });
     return conversation as ConversationRecord;
   }
 

@@ -31,10 +31,13 @@ export class DatabaseService {
     await this.createMcpServerGroupGrantsTable();
     await this.createWorkspacesTable();
     await this.createWorkspaceMembersTable();
+    await this.migrateWorkspaceVisibility();
     await this.createMcpServerGrantsTable();
     await this.createMcpConnectionsTable();
     await this.createMcpConnectionGrantsTable();
     await this.createFilesTable();
+    await this.createWorkspacePublishedVersionsTable();
+    await this.createWorkspacePublicationLinksTable();
     await this.createCollabDocumentsTable();
     await this.createKnowledgeSourcesTable();
     await this.createConversationsTable();
@@ -190,6 +193,10 @@ export class DatabaseService {
         table.string('slug').notNullable().unique();
         table.uuid('ownerId').notNullable().references('id').inTable('users').onDelete('CASCADE');
         table.uuid('lastModifiedBy').references('id').inTable('users');
+        table.string('visibility', 16).notNullable().defaultTo('private');
+        table.uuid('teamId').references('id').inTable('groups').onDelete('SET NULL');
+        table.uuid('currentPublishedVersionId');
+        table.integer('contentRevision').notNullable().defaultTo(0);
         table.boolean('skipPlanApprovals').notNullable().defaultTo(false);
         table.timestamp('createdAt').notNullable().defaultTo(this.db.fn.now());
         table.timestamp('updatedAt').notNullable().defaultTo(this.db.fn.now());
@@ -199,8 +206,25 @@ export class DatabaseService {
       await this.ensureColumn('workspaces', 'slug', (table) => table.string('slug').notNullable().defaultTo(this.db.raw('md5(random()::text)')));
       await this.ensureColumn('workspaces', 'ownerId', (table) => table.uuid('ownerId'));
       await this.ensureColumn('workspaces', 'lastModifiedBy', (table) => table.uuid('lastModifiedBy'));
+      await this.ensureColumn('workspaces', 'visibility', (table) => table.string('visibility', 16).notNullable().defaultTo('private'));
+      await this.ensureColumn('workspaces', 'teamId', (table) => table.uuid('teamId').references('id').inTable('groups').onDelete('SET NULL'));
+      await this.ensureColumn('workspaces', 'currentPublishedVersionId', (table) => table.uuid('currentPublishedVersionId'));
+      await this.ensureColumn('workspaces', 'contentRevision', (table) => table.integer('contentRevision').notNullable().defaultTo(0));
       await this.ensureColumn('workspaces', 'skipPlanApprovals', (table) => table.boolean('skipPlanApprovals').notNullable().defaultTo(false));
     }
+  }
+
+  private async migrateWorkspaceVisibility(): Promise<void> {
+    await this.db.raw(`
+      UPDATE workspaces
+      SET visibility = 'team'
+      WHERE visibility = 'private'
+        AND (
+          SELECT COUNT(*)
+          FROM workspace_members
+          WHERE workspace_members."workspaceId" = workspaces.id
+        ) > 1
+    `);
   }
 
   private async createMcpServerGroupGrantsTable(): Promise<void> {
@@ -329,6 +353,80 @@ export class DatabaseService {
       console.log('Created "files" table.');
     } else {
       await this.ensureFilesTableColumns();
+    }
+  }
+
+  private async createWorkspacePublishedVersionsTable(): Promise<void> {
+    const exists = await this.db.schema.hasTable('workspace_published_versions');
+    if (!exists) {
+      await this.db.schema.createTable('workspace_published_versions', (table) => {
+        table.uuid('id').primary();
+        table.uuid('teamWorkspaceId').notNullable().references('id').inTable('workspaces').onDelete('CASCADE');
+        table.integer('versionNumber').notNullable();
+        table.uuid('sourcePrivateWorkspaceId').references('id').inTable('workspaces').onDelete('SET NULL');
+        table.uuid('publisherUserId').references('id').inTable('users').onDelete('SET NULL');
+        table.text('note');
+        table.jsonb('manifest').notNullable().defaultTo('[]');
+        table.timestamp('createdAt').notNullable().defaultTo(this.db.fn.now());
+        table.unique(['teamWorkspaceId', 'versionNumber']);
+        table.index(['teamWorkspaceId', 'createdAt'], 'workspace_published_versions_team_created_idx');
+      });
+      console.log('Created "workspace_published_versions" table.');
+    } else {
+      const foreignKeys = await this.db.raw<{
+        rows: Array<{ constraint_name: string; delete_rule: string }>;
+      }>(`
+        SELECT tc.constraint_name, rc.delete_rule
+        FROM information_schema.table_constraints AS tc
+        JOIN information_schema.key_column_usage AS kcu
+          ON tc.constraint_name = kcu.constraint_name
+          AND tc.constraint_schema = kcu.constraint_schema
+        JOIN information_schema.referential_constraints AS rc
+          ON tc.constraint_name = rc.constraint_name
+          AND tc.constraint_schema = rc.constraint_schema
+        WHERE tc.table_schema = current_schema()
+          AND tc.table_name = 'workspace_published_versions'
+          AND tc.constraint_type = 'FOREIGN KEY'
+          AND kcu.column_name = 'publisherUserId'
+      `);
+      const publisherForeignKey = foreignKeys.rows[0];
+      if (publisherForeignKey?.delete_rule !== 'SET NULL') {
+        if (publisherForeignKey) {
+          await this.db.raw(
+            'ALTER TABLE ?? DROP CONSTRAINT ??',
+            ['workspace_published_versions', publisherForeignKey.constraint_name],
+          );
+        }
+        await this.db.schema.alterTable('workspace_published_versions', (table) => {
+          table.uuid('publisherUserId').nullable().alter();
+          table.foreign('publisherUserId').references('id').inTable('users').onDelete('SET NULL');
+        });
+      }
+    }
+  }
+
+  private async createWorkspacePublicationLinksTable(): Promise<void> {
+    const exists = await this.db.schema.hasTable('workspace_publication_links');
+    if (!exists) {
+      await this.db.schema.createTable('workspace_publication_links', (table) => {
+        table.uuid('privateWorkspaceId').primary().references('id').inTable('workspaces').onDelete('CASCADE');
+        table.uuid('teamWorkspaceId').notNullable().references('id').inTable('workspaces').onDelete('CASCADE');
+        table.uuid('userId').notNullable().references('id').inTable('users').onDelete('CASCADE');
+        table.uuid('basePublishedVersionId').references('id').inTable('workspace_published_versions').onDelete('SET NULL');
+        table.integer('basePrivateContentRevision').notNullable().defaultTo(0);
+        table.boolean('hasUnpublishedChanges').notNullable().defaultTo(false);
+        table.timestamp('createdAt').notNullable().defaultTo(this.db.fn.now());
+        table.timestamp('updatedAt').notNullable().defaultTo(this.db.fn.now());
+        table.unique(['teamWorkspaceId', 'userId']);
+        table.index(['userId', 'teamWorkspaceId'], 'workspace_publication_links_user_team_idx');
+      });
+      console.log('Created "workspace_publication_links" table.');
+    } else {
+      await this.ensureColumn(
+        'workspace_publication_links',
+        'hasUnpublishedChanges',
+        (table) => table.boolean('hasUnpublishedChanges').notNullable().defaultTo(false),
+      );
     }
   }
 

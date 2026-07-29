@@ -13,7 +13,11 @@ interface CollapsibleDrawerProps {
   workspaceSearchQuery: string;
   setWorkspaceSearchQuery: (name: string) => void;
   handleDeleteWorkspace: (id: string) => void;
-  onShareWorkspace?: (workspace: Workspace) => void;
+  onPublishWorkspace?: (workspace: Workspace) => void;
+  onSyncWorkspace?: (workspace: Workspace) => void;
+  onWorkPrivately?: (workspace: Workspace) => void;
+  onHistoryWorkspace?: (workspace: Workspace) => void;
+  onManageTeamAccess?: (workspace: Workspace) => void;
   onSelectWorkspace: (workspace: Workspace) => void;
   onCreateWorkspace: () => void | Promise<void>;
   onOpenSchedules?: () => void;
@@ -34,7 +38,11 @@ const CollapsibleDrawer: React.FC<CollapsibleDrawerProps> = ({
   workspaceSearchQuery,
   setWorkspaceSearchQuery,
   handleDeleteWorkspace,
-  onShareWorkspace,
+  onPublishWorkspace,
+  onSyncWorkspace,
+  onWorkPrivately,
+  onHistoryWorkspace,
+  onManageTeamAccess,
   onSelectWorkspace,
   onCreateWorkspace,
   onOpenSchedules,
@@ -96,7 +104,7 @@ const CollapsibleDrawer: React.FC<CollapsibleDrawerProps> = ({
                 size="small"
                 title={scheduleCount ? `Schedules (${scheduleCount})` : 'Schedules'}
                 aria-label={scheduleCount ? `Open schedules, ${scheduleCount} scheduled jobs` : 'Open schedules'}
-                disabled={!selectedWorkspace}
+                disabled={!selectedWorkspace || selectedWorkspace.visibility === 'team'}
                 sx={{ border: (theme) => `1px solid ${theme.palette.divider}`, borderRadius: 2 }}
               >
                 <Badge
@@ -119,6 +127,8 @@ const CollapsibleDrawer: React.FC<CollapsibleDrawerProps> = ({
           <IconButton
             onClick={handleDrawerClose}
             size="small"
+            title="Close workspace menu"
+            aria-label="Close workspace menu"
             sx={{ border: (theme) => `1px solid ${theme.palette.divider}`, borderRadius: 2 }}
           >
             <ChevronLeft fontSize="small" />
@@ -165,7 +175,11 @@ const CollapsibleDrawer: React.FC<CollapsibleDrawerProps> = ({
               selectedWorkspace={selectedWorkspace}
               onSelectWorkspace={onSelectWorkspace}
               onDeleteWorkspace={handleDeleteWorkspace}
-              onShareWorkspace={onShareWorkspace}
+              onPublishWorkspace={onPublishWorkspace}
+              onSyncWorkspace={onSyncWorkspace}
+              onWorkPrivately={onWorkPrivately}
+              onHistoryWorkspace={onHistoryWorkspace}
+              onManageTeamAccess={onManageTeamAccess}
             />
           </Box>
           <Box

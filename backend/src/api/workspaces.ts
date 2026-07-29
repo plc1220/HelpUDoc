@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { WorkspaceService } from '../services/workspaceService';
+import { WorkspacePublicationService } from '../services/workspacePublicationService';
 import { UserService } from '../services/userService';
 import { HttpError } from '../errors';
 
@@ -10,6 +11,16 @@ const createWorkspaceSchema = z.object({
 
 const renameWorkspaceSchema = z.object({
   name: z.string().trim().min(1).max(255),
+});
+
+const publishWorkspaceSchema = z.object({
+  teamId: z.string().uuid().optional(),
+  name: z.string().trim().min(1).max(255).optional(),
+  note: z.string().trim().max(1000).optional(),
+});
+
+const syncWorkspaceSchema = z.object({
+  resolutions: z.record(z.string(), z.enum(['private', 'team'])).optional(),
 });
 
 const collaboratorSchema = z
@@ -28,7 +39,11 @@ const collaboratorSchema = z
     }
   });
 
-export default function workspaceRoutes(workspaceService: WorkspaceService, userService: UserService) {
+export default function workspaceRoutes(
+  workspaceService: WorkspaceService,
+  publicationService: WorkspacePublicationService,
+  userService: UserService,
+) {
   const router = Router();
 
   const requireUserContext = (req: Request) => {
@@ -85,6 +100,82 @@ export default function workspaceRoutes(workspaceService: WorkspaceService, user
       res.json({ users });
     } catch (error) {
       handleError(res, error, 'Failed to search users');
+    }
+  });
+
+  router.get('/teams', async (req, res) => {
+    try {
+      const user = requireUserContext(req);
+      const teams = await workspaceService.listEligibleTeams(user.userId);
+      res.json({ teams });
+    } catch (error) {
+      handleError(res, error, 'Failed to list teams');
+    }
+  });
+
+  router.post('/:workspaceId/publish', async (req, res) => {
+    try {
+      const user = requireUserContext(req);
+      const payload = publishWorkspaceSchema.parse(req.body || {});
+      const publication = await publicationService.publish(req.params.workspaceId, user.userId, payload);
+      res.status(201).json(publication);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: 'Invalid publish payload' });
+      }
+      handleError(res, error, 'Failed to publish workspace');
+    }
+  });
+
+  router.post('/:workspaceId/private-copy', async (req, res) => {
+    try {
+      const user = requireUserContext(req);
+      const workspace = await publicationService.createPrivateCopy(req.params.workspaceId, user.userId);
+      res.status(201).json(workspace);
+    } catch (error) {
+      handleError(res, error, 'Failed to create private working copy');
+    }
+  });
+
+  router.post('/:workspaceId/sync', async (req, res) => {
+    try {
+      const user = requireUserContext(req);
+      const payload = syncWorkspaceSchema.parse(req.body || {});
+      const result = await publicationService.sync(
+        req.params.workspaceId,
+        user.userId,
+        payload.resolutions || {},
+      );
+      res.json(result);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: 'Invalid sync payload' });
+      }
+      handleError(res, error, 'Failed to sync team updates');
+    }
+  });
+
+  router.get('/:workspaceId/history', async (req, res) => {
+    try {
+      const user = requireUserContext(req);
+      const versions = await publicationService.listHistory(req.params.workspaceId, user.userId);
+      res.json({ versions });
+    } catch (error) {
+      handleError(res, error, 'Failed to load publication history');
+    }
+  });
+
+  router.post('/:workspaceId/versions/:versionId/restore', async (req, res) => {
+    try {
+      const user = requireUserContext(req);
+      const version = await publicationService.restore(
+        req.params.workspaceId,
+        req.params.versionId,
+        user.userId,
+      );
+      res.status(201).json(version);
+    } catch (error) {
+      handleError(res, error, 'Failed to restore published version');
     }
   });
 

@@ -95,7 +95,7 @@ export class KnowledgeService {
   }
 
   async list(workspaceId: string, userId: string) {
-    await this.workspaceService.ensureMembership(workspaceId, userId);
+    await this.workspaceService.ensureMembership(workspaceId, userId, { requireEdit: true });
     const rows = await this.baseQuery()
       .where('knowledge_sources.workspaceId', workspaceId)
       .orderBy('knowledge_sources.updatedAt', 'desc');
@@ -125,7 +125,7 @@ export class KnowledgeService {
   }
 
   async getById(workspaceId: string, id: number, userId: string) {
-    await this.workspaceService.ensureMembership(workspaceId, userId);
+    await this.workspaceService.ensureMembership(workspaceId, userId, { requireEdit: true });
     const row = await this.baseQuery()
       .where('knowledge_sources.workspaceId', workspaceId)
       .andWhere('knowledge_sources.id', id)

@@ -145,7 +145,7 @@ const WorkspaceShareDialog: React.FC<WorkspaceShareDialogProps> = ({ open, works
       setSelected([]);
       await loadCollaborators();
     } catch (e) {
-      setInviteError(e instanceof Error ? e.message : 'Failed to share workspace');
+      setInviteError(e instanceof Error ? e.message : 'Failed to update publishing access');
     } finally {
       setInviteBusy(false);
     }
@@ -167,7 +167,7 @@ const WorkspaceShareDialog: React.FC<WorkspaceShareDialogProps> = ({ open, works
   return (
     <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm">
       <DialogTitle sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', pr: 1 }}>
-        <span>Share workspace</span>
+        <span>Manage publishing access</span>
         <IconButton aria-label="close" onClick={onClose} size="small">
           <CloseIcon />
         </IconButton>
@@ -180,7 +180,7 @@ const WorkspaceShareDialog: React.FC<WorkspaceShareDialogProps> = ({ open, works
         ) : null}
 
         <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600 }}>
-          People with access
+          Team publishing roles
         </Typography>
         {collaboratorsLoading ? (
           <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
@@ -208,7 +208,7 @@ const WorkspaceShareDialog: React.FC<WorkspaceShareDialogProps> = ({ open, works
                     {c.displayName}
                   </Typography>
                   <Typography variant="caption" color="text.secondary">
-                    {c.role}
+                    {c.role === 'editor' ? 'Publisher' : c.role === 'owner' ? 'Team owner' : 'Viewer'}
                   </Typography>
                 </Box>
                 {c.role !== 'owner' ? (
@@ -277,7 +277,7 @@ const WorkspaceShareDialog: React.FC<WorkspaceShareDialogProps> = ({ open, works
               if (v) setInviteRole(v);
             }}
           >
-            <ToggleButton value="editor">Editor</ToggleButton>
+            <ToggleButton value="editor">Publisher</ToggleButton>
             <ToggleButton value="viewer">Viewer</ToggleButton>
           </ToggleButtonGroup>
         </Box>
@@ -297,7 +297,7 @@ const WorkspaceShareDialog: React.FC<WorkspaceShareDialogProps> = ({ open, works
           disabled={!workspaceId || selected.length === 0 || inviteBusy}
           onClick={() => void handleInvite()}
         >
-          {inviteBusy ? <CircularProgress size={22} color="inherit" /> : 'Share'}
+          {inviteBusy ? <CircularProgress size={22} color="inherit" /> : 'Update access'}
         </Button>
       </DialogActions>
     </Dialog>

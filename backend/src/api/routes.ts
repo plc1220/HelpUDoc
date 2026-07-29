@@ -14,6 +14,7 @@ import meMemoryRoutes from './meMemory';
 import { requireSystemAdmin } from '../middleware/adminOnly';
 import { DatabaseService } from '../services/databaseService';
 import { WorkspaceService } from '../services/workspaceService';
+import { WorkspacePublicationService } from '../services/workspacePublicationService';
 import { FileService } from '../services/fileService';
 import { ConversationService } from '../services/conversationService';
 import { UserService } from '../services/userService';
@@ -29,6 +30,7 @@ import { configureAgentRunServices } from '../services/agentRunService';
 export default function(dbService: DatabaseService, userService: UserService) {
   const router = Router();
   const workspaceService = new WorkspaceService(dbService);
+  const workspacePublicationService = new WorkspacePublicationService(dbService, workspaceService);
   const fileService = new FileService(dbService, workspaceService);
   const conversationService = new ConversationService(dbService, workspaceService);
   configureAgentRunServices({ conversationService });
@@ -51,7 +53,7 @@ export default function(dbService: DatabaseService, userService: UserService) {
   router.use('/settings/reflections', requireSystemAdmin(userService), settingsReflectionRoutes(dailyReflectionService));
   router.use('/settings/skill-evolution', requireSystemAdmin(userService), settingsSkillEvolutionRoutes(skillEvolutionService));
   router.use('/users', requireSystemAdmin(userService), usersRoutes(userService, workspaceService));
-  router.use('/workspaces', workspaceRoutes(workspaceService, userService));
+  router.use('/workspaces', workspaceRoutes(workspaceService, workspacePublicationService, userService));
   router.use('/workspaces/:workspaceId/files', fileRoutes(fileService, workspaceService, googleOAuthService));
   router.use('/workspaces/:workspaceId/knowledge', knowledgeRoutes(knowledgeService));
   router.use('/workspaces/:workspaceId/schedules', scheduleRoutes(scheduleService));
