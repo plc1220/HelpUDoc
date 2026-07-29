@@ -9,6 +9,7 @@ import { resolveWorkspaceRoot } from '../config/workspaceRoot';
 import { DatabaseService } from './databaseService';
 import { S3Service } from './s3Service';
 import { WorkspaceRecord, WorkspaceRole, WorkspaceService } from './workspaceService';
+import { getWorkspaceRoleCapabilities } from './workspaceCollaborationPolicy';
 import {
   findPublicationConflicts,
   hasFileChanged,
@@ -140,9 +141,15 @@ export class WorkspacePublicationService {
   }
 
   async createPrivateCopy(teamWorkspaceId: string, userId: string) {
-    const { workspace: teamWorkspace } = await this.workspaceService.ensureMembership(teamWorkspaceId, userId);
+    const { workspace: teamWorkspace, membership } = await this.workspaceService.ensureMembership(
+      teamWorkspaceId,
+      userId,
+    );
     if (teamWorkspace.visibility !== 'team') {
       throw new ConflictError('A private copy can only be created from a team workspace');
+    }
+    if (!getWorkspaceRoleCapabilities(membership.role).canPropose) {
+      throw new AccessDeniedError('Contributor access is required to create a private working copy');
     }
 
     const existing = await this.db<PublicationLinkRecord>('workspace_publication_links')
@@ -337,15 +344,6 @@ export class WorkspacePublicationService {
         if (currentOwnerMembership?.role !== 'owner') {
           throw new AccessDeniedError('Only the Team owner can restore a published version');
         }
-        if (lockedTeam.teamId) {
-          const currentGroupMembership = await tx('group_members')
-            .where({ groupId: lockedTeam.teamId, userId })
-            .forShare()
-            .first();
-          if (!currentGroupMembership) {
-            throw new AccessDeniedError('Team membership is required to restore a published version');
-          }
-        }
         const previousVersion = lockedTeam.currentPublishedVersionId
           ? await tx<PublishedVersionRecord>('workspace_published_versions')
             .where({ id: lockedTeam.currentPublishedVersionId, teamWorkspaceId })
@@ -498,15 +496,6 @@ export class WorkspacePublicationService {
           .where({ workspaceId: lockedTeam.id, userId: input.userId })
           .forShare()
           .first() as { role?: WorkspaceRole } | undefined;
-        if (lockedTeam.teamId) {
-          const currentGroupMembership = await tx('group_members')
-            .where({ groupId: lockedTeam.teamId, userId: input.userId })
-            .forShare()
-            .first();
-          if (!currentGroupMembership) {
-            throw new AccessDeniedError('Team membership is required to publish changes');
-          }
-        }
         if (input.existingLink) {
           this.ensurePublisher(publisherMembership?.role || 'viewer');
         }

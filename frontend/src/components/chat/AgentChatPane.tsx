@@ -86,6 +86,7 @@ export default function AgentChatPane({
   chatInputRef,
   attachmentInputRef,
   workspaceId,
+  isPublishedWorkspace,
   internetSearchEnabled,
   formatMessageTimestamp,
   interruptFieldKey,
@@ -169,6 +170,7 @@ export default function AgentChatPane({
   chatInputRef: RefObject<HTMLTextAreaElement | null>;
   attachmentInputRef: RefObject<HTMLInputElement | null>;
   workspaceId?: string;
+  isPublishedWorkspace?: boolean;
   internetSearchEnabled: boolean;
   formatMessageTimestamp: (value?: string) => string;
   interruptFieldKey: (
@@ -254,7 +256,7 @@ export default function AgentChatPane({
         onModeChange={onModeChange}
         onToggleHistory={onToggleHistory}
         onNewChat={onNewChat}
-        onScheduleChat={onScheduleChat}
+        onScheduleChat={isPublishedWorkspace ? undefined : onScheduleChat}
         onToggleFullScreen={onToggleFullScreen}
       />
       <div
@@ -274,6 +276,16 @@ export default function AgentChatPane({
           onSelectConversation={onSelectConversation}
           onDeleteConversation={onDeleteConversation}
         />
+        {isPublishedWorkspace ? (
+          <div className={`border-b px-4 py-2 text-xs ${
+            isDarkMode
+              ? 'border-sky-900/60 bg-sky-950/40 text-sky-200'
+              : 'border-blue-100 bg-blue-50 text-blue-700'
+          }`}>
+            Published files are read-only. Chat can analyze them, but changes must go through a private copy and
+            proposal.
+          </div>
+        ) : null}
         <ChatMessageList
           colorMode={colorMode}
           messages={messages}

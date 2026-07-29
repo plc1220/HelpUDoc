@@ -8,7 +8,15 @@ from pathlib import PurePosixPath
 from typing import Any, Dict, Tuple
 
 from deepagents.backends import CompositeBackend, FilesystemBackend
-from deepagents.backends.protocol import GlobResult, GrepResult, LsResult, ReadResult
+from deepagents.backends.protocol import (
+    EditResult,
+    FileUploadResponse,
+    GlobResult,
+    GrepResult,
+    LsResult,
+    ReadResult,
+    WriteResult,
+)
 from deepagents.middleware.filesystem import FilesystemMiddleware
 from deepagents.middleware.patch_tool_calls import PatchToolCallsMiddleware
 from langchain.agents import create_agent
@@ -101,6 +109,48 @@ class SkillScopedFilesystemBackend(FilesystemBackend):
         context = self.workspace_state.context if isinstance(self.workspace_state.context, dict) else {}
         skill_id = str(context.get("active_skill") or "").strip()
         return skill_id == "data" or skill_id.startswith("data/"), context
+
+    def _workspace_write_error(self, operation: str, file_path: str) -> str | None:
+        context = self.workspace_state.context if isinstance(self.workspace_state.context, dict) else {}
+        is_published = context.get("workspace_mode") == "published_read_only"
+        write_denied = context.get("can_write_workspace") is False
+        if not (is_published or write_denied):
+            return None
+        return (
+            f"Cannot {operation} '{file_path}' in a published workspace. "
+            "Published content is read-only; use a governed private working copy for changes."
+        )
+
+    def write(self, file_path: str, content: str) -> WriteResult:
+        error = self._workspace_write_error("write", file_path)
+        if error:
+            return WriteResult(error=error)
+        return super().write(file_path, content)
+
+    def edit(
+        self,
+        file_path: str,
+        old_string: str,
+        new_string: str,
+        replace_all: bool = False,
+    ) -> EditResult:
+        error = self._workspace_write_error("edit", file_path)
+        if error:
+            return EditResult(error=error)
+        return super().edit(file_path, old_string, new_string, replace_all)
+
+    def upload_files(self, files: list[tuple[str, bytes]]) -> list[FileUploadResponse]:
+        responses: list[FileUploadResponse] = []
+        allowed_files: list[tuple[str, bytes]] = []
+        for file_path, content in files:
+            error = self._workspace_write_error("upload", file_path)
+            if error:
+                responses.append(FileUploadResponse(path=file_path, error=error))
+            else:
+                allowed_files.append((file_path, content))
+        if allowed_files:
+            responses.extend(super().upload_files(allowed_files))
+        return responses
 
     @staticmethod
     def _virtual_path(file_path: str) -> PurePosixPath:
@@ -419,6 +469,16 @@ class AgentRegistry:
             or context_payload.get("allowScriptRunner")
         )
         system_prompt = GENERAL_SYSTEM_PROMPT
+        if (
+            workspace_state.context.get("workspace_mode") == "published_read_only"
+            or workspace_state.context.get("can_write_workspace") is False
+        ):
+            system_prompt += (
+                "\n\nThis is a published, read-only workspace. You may inspect and analyze its content, "
+                "but you must not create, edit, upload, or generate workspace files. If the user wants "
+                "content changes or generated artifacts, explain that they must use a governed private "
+                "working copy and change proposal."
+            )
         skills_root = self.settings.backend.skills_root
         if skills_root is not None:
             skills_root.mkdir(parents=True, exist_ok=True)

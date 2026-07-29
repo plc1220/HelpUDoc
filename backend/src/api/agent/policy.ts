@@ -47,6 +47,9 @@ export type EffectiveAgentPolicy = {
   skillAllowIds: string[];
   mcpServerAllowIds: string[];
   mcpServerDenyIds: string[];
+  workspaceMode: 'private' | 'published_read_only';
+  workspaceRole: string;
+  canWriteWorkspace: boolean;
 };
 
 const normalizeUniqueIds = (values: string[]) =>
@@ -238,6 +241,9 @@ export function createAgentPolicyApi(googleOAuthService: GoogleOAuthService, use
     workspacePolicy: {
       mcpServerAllowIds: string[];
       mcpServerDenyIds: string[];
+      workspaceMode: 'private' | 'published_read_only';
+      workspaceRole: string;
+      canWriteWorkspace: boolean;
     },
   ): Promise<EffectiveAgentPolicy> => {
     const promptAccess = await userService.getEffectivePromptAccess(userId);
@@ -250,6 +256,9 @@ export function createAgentPolicyApi(googleOAuthService: GoogleOAuthService, use
         skillAllowIds: [],
         mcpServerAllowIds: [],
         mcpServerDenyIds: [],
+        workspaceMode: workspacePolicy.workspaceMode,
+        workspaceRole: workspacePolicy.workspaceRole,
+        canWriteWorkspace: workspacePolicy.canWriteWorkspace,
       };
     }
 
@@ -285,6 +294,9 @@ export function createAgentPolicyApi(googleOAuthService: GoogleOAuthService, use
       skillAllowIds: normalizeUniqueIds(promptAccess.skillIds),
       mcpServerAllowIds: Array.from(finalAllowIds).sort((a, b) => a.localeCompare(b)),
       mcpServerDenyIds: Array.from(finalDenyIds).sort((a, b) => a.localeCompare(b)),
+      workspaceMode: workspacePolicy.workspaceMode,
+      workspaceRole: workspacePolicy.workspaceRole,
+      canWriteWorkspace: workspacePolicy.canWriteWorkspace,
     };
   };
 

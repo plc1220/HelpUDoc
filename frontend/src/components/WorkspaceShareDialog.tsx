@@ -56,7 +56,7 @@ const WorkspaceShareDialog: React.FC<WorkspaceShareDialogProps> = ({ open, works
   const [optionsLoading, setOptionsLoading] = useState(false);
 
   const [selected, setSelected] = useState<DirectoryUser[]>([]);
-  const [inviteRole, setInviteRole] = useState<'editor' | 'viewer'>('editor');
+  const [inviteRole, setInviteRole] = useState<'editor' | 'contributor' | 'commenter' | 'viewer'>('commenter');
   const [inviteBusy, setInviteBusy] = useState(false);
   const [inviteError, setInviteError] = useState<string | null>(null);
   const [removeBusyId, setRemoveBusyId] = useState<string | null>(null);
@@ -89,7 +89,7 @@ const WorkspaceShareDialog: React.FC<WorkspaceShareDialogProps> = ({ open, works
       setSearchInput('');
       setOptions([]);
       setSelected([]);
-      setInviteRole('editor');
+      setInviteRole('commenter');
       setInviteError(null);
     }
   }, [open]);
@@ -145,7 +145,7 @@ const WorkspaceShareDialog: React.FC<WorkspaceShareDialogProps> = ({ open, works
       setSelected([]);
       await loadCollaborators();
     } catch (e) {
-      setInviteError(e instanceof Error ? e.message : 'Failed to update publishing access');
+      setInviteError(e instanceof Error ? e.message : 'Failed to update workspace access');
     } finally {
       setInviteBusy(false);
     }
@@ -167,7 +167,7 @@ const WorkspaceShareDialog: React.FC<WorkspaceShareDialogProps> = ({ open, works
   return (
     <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm">
       <DialogTitle sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', pr: 1 }}>
-        <span>Manage publishing access</span>
+        <span>Manage workspace access</span>
         <IconButton aria-label="close" onClick={onClose} size="small">
           <CloseIcon />
         </IconButton>
@@ -180,7 +180,7 @@ const WorkspaceShareDialog: React.FC<WorkspaceShareDialogProps> = ({ open, works
         ) : null}
 
         <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600 }}>
-          Team publishing roles
+          People with direct access
         </Typography>
         {collaboratorsLoading ? (
           <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
@@ -208,7 +208,15 @@ const WorkspaceShareDialog: React.FC<WorkspaceShareDialogProps> = ({ open, works
                     {c.displayName}
                   </Typography>
                   <Typography variant="caption" color="text.secondary">
-                    {c.role === 'editor' ? 'Publisher' : c.role === 'owner' ? 'Team owner' : 'Viewer'}
+                    {c.role === 'editor'
+                      ? 'Publisher'
+                      : c.role === 'contributor'
+                        ? 'Contributor'
+                        : c.role === 'commenter'
+                          ? 'Commenter'
+                          : c.role === 'owner'
+                            ? 'Workspace owner'
+                            : 'Viewer'}
                   </Typography>
                 </Box>
                 {c.role !== 'owner' ? (
@@ -278,9 +286,15 @@ const WorkspaceShareDialog: React.FC<WorkspaceShareDialogProps> = ({ open, works
             }}
           >
             <ToggleButton value="editor">Publisher</ToggleButton>
+            <ToggleButton value="contributor">Contributor</ToggleButton>
+            <ToggleButton value="commenter">Commenter</ToggleButton>
             <ToggleButton value="viewer">Viewer</ToggleButton>
           </ToggleButtonGroup>
         </Box>
+        <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+          Commenters discuss and assign tasks. Contributors can also create private copies and submit change
+          proposals. Publishers review and publish new immutable versions.
+        </Typography>
 
         {inviteError ? (
           <Typography color="error" variant="body2" sx={{ mt: 1 }}>

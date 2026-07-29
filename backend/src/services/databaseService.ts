@@ -38,6 +38,9 @@ export class DatabaseService {
     await this.createFilesTable();
     await this.createWorkspacePublishedVersionsTable();
     await this.createWorkspacePublicationLinksTable();
+    await this.createWorkspaceCollaborationObjectsTable();
+    await this.createWorkspaceCollaborationMessagesTable();
+    await this.createWorkspaceCollaborationMentionsTable();
     await this.createCollabDocumentsTable();
     await this.createKnowledgeSourcesTable();
     await this.createKnowledgeSourceGroupGrantsTable();
@@ -550,6 +553,87 @@ export class DatabaseService {
       console.log('Created "conversation_messages" table.');
     } else {
       await this.ensureConversationMessagesColumns();
+    }
+  }
+
+  private async createWorkspaceCollaborationObjectsTable(): Promise<void> {
+    const exists = await this.db.schema.hasTable('workspace_collaboration_objects');
+    if (!exists) {
+      await this.db.schema.createTable('workspace_collaboration_objects', (table) => {
+        table.uuid('id').primary();
+        table.uuid('workspaceId').notNullable().references('id').inTable('workspaces').onDelete('CASCADE');
+        table.uuid('originVersionId').references('id').inTable('workspace_published_versions').onDelete('SET NULL');
+        table.string('type', 32).notNullable();
+        table.string('visibility', 32).notNullable().defaultTo('workspace_audience');
+        table.string('status', 32).notNullable().defaultTo('open');
+        table.integer('fileId').references('id').inTable('files').onDelete('SET NULL');
+        table.string('filePath');
+        table.string('blockId');
+        table.text('anchorText');
+        table.integer('anchorStart');
+        table.integer('anchorEnd');
+        table.string('anchorFingerprint');
+        table.string('title');
+        table.text('body').notNullable();
+        table.uuid('authorId').references('id').inTable('users').onDelete('SET NULL');
+        table.uuid('assigneeId').references('id').inTable('users').onDelete('SET NULL');
+        table.uuid('linkedPrivateWorkspaceId').references('id').inTable('workspaces').onDelete('SET NULL');
+        table.uuid('resolvedByVersionId').references('id').inTable('workspace_published_versions').onDelete('SET NULL');
+        table.timestamp('dueAt', { useTz: true });
+        table.timestamp('resolvedAt', { useTz: true });
+        table.timestamp('createdAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.timestamp('updatedAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.index(
+          ['workspaceId', 'status', 'updatedAt'],
+          'workspace_collaboration_objects_workspace_status_idx',
+        );
+        table.index(
+          ['workspaceId', 'filePath', 'updatedAt'],
+          'workspace_collaboration_objects_anchor_idx',
+        );
+      });
+      console.log('Created "workspace_collaboration_objects" table.');
+    }
+  }
+
+  private async createWorkspaceCollaborationMessagesTable(): Promise<void> {
+    const exists = await this.db.schema.hasTable('workspace_collaboration_messages');
+    if (!exists) {
+      await this.db.schema.createTable('workspace_collaboration_messages', (table) => {
+        table.uuid('id').primary();
+        table.uuid('objectId')
+          .notNullable()
+          .references('id')
+          .inTable('workspace_collaboration_objects')
+          .onDelete('CASCADE');
+        table.uuid('authorId').references('id').inTable('users').onDelete('SET NULL');
+        table.text('body').notNullable();
+        table.timestamp('createdAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.timestamp('updatedAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.index(
+          ['objectId', 'createdAt'],
+          'workspace_collaboration_messages_object_created_idx',
+        );
+      });
+      console.log('Created "workspace_collaboration_messages" table.');
+    }
+  }
+
+  private async createWorkspaceCollaborationMentionsTable(): Promise<void> {
+    const exists = await this.db.schema.hasTable('workspace_collaboration_mentions');
+    if (!exists) {
+      await this.db.schema.createTable('workspace_collaboration_mentions', (table) => {
+        table.uuid('objectId')
+          .notNullable()
+          .references('id')
+          .inTable('workspace_collaboration_objects')
+          .onDelete('CASCADE');
+        table.uuid('userId').notNullable().references('id').inTable('users').onDelete('CASCADE');
+        table.timestamp('createdAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.primary(['objectId', 'userId']);
+        table.index(['userId', 'createdAt'], 'workspace_collaboration_mentions_user_created_idx');
+      });
+      console.log('Created "workspace_collaboration_mentions" table.');
     }
   }
 

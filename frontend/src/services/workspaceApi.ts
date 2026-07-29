@@ -82,7 +82,7 @@ export type DirectoryUser = {
 export type WorkspaceCollaborator = {
   userId: string;
   displayName: string;
-  role: 'owner' | 'editor' | 'viewer';
+  role: 'owner' | 'editor' | 'contributor' | 'commenter' | 'viewer';
   canEdit: boolean;
 };
 
@@ -111,7 +111,7 @@ export const listWorkspaceCollaborators = async (workspaceId: string) => {
 
 export const addWorkspaceCollaborator = async (
   workspaceId: string,
-  payload: { userId: string; role: 'editor' | 'viewer' },
+  payload: { userId: string; role: 'editor' | 'contributor' | 'commenter' | 'viewer' },
 ) => {
   const response = await apiFetch(`${API_URL}/workspaces/${workspaceId}/collaborators`, {
     method: 'POST',

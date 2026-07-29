@@ -2,6 +2,7 @@ import { Router } from 'express';
 import agentRoutes from './agent';
 import authRoutes from './auth';
 import workspaceRoutes from './workspaces';
+import workspaceCollaborationRoutes from './workspaceCollaboration';
 import fileRoutes from './files';
 import conversationRoutes from './conversations';
 import scheduleRoutes from './schedules';
@@ -15,6 +16,7 @@ import { requireSystemAdmin } from '../middleware/adminOnly';
 import { DatabaseService } from '../services/databaseService';
 import { WorkspaceService } from '../services/workspaceService';
 import { WorkspacePublicationService } from '../services/workspacePublicationService';
+import { WorkspaceCollaborationService } from '../services/workspaceCollaborationService';
 import { FileService } from '../services/fileService';
 import { ConversationService } from '../services/conversationService';
 import { UserService } from '../services/userService';
@@ -31,6 +33,11 @@ export default function(dbService: DatabaseService, userService: UserService) {
   const router = Router();
   const workspaceService = new WorkspaceService(dbService);
   const workspacePublicationService = new WorkspacePublicationService(dbService, workspaceService);
+  const workspaceCollaborationService = new WorkspaceCollaborationService(
+    dbService,
+    workspaceService,
+    workspacePublicationService,
+  );
   const fileService = new FileService(dbService, workspaceService);
   const conversationService = new ConversationService(dbService, workspaceService);
   configureAgentRunServices({ conversationService });
@@ -55,6 +62,10 @@ export default function(dbService: DatabaseService, userService: UserService) {
   router.use('/users', requireSystemAdmin(userService), usersRoutes(userService, workspaceService));
   router.use('/knowledge', requireSystemAdmin(userService), knowledgeRoutes(knowledgeService, { global: true }));
   router.use('/workspaces', workspaceRoutes(workspaceService, workspacePublicationService, userService));
+  router.use(
+    '/workspaces/:workspaceId/collaboration',
+    workspaceCollaborationRoutes(workspaceCollaborationService),
+  );
   router.use('/workspaces/:workspaceId/files', fileRoutes(fileService, workspaceService, googleOAuthService));
   router.use('/workspaces/:workspaceId/knowledge', knowledgeRoutes(knowledgeService));
   router.use('/workspaces/:workspaceId/schedules', scheduleRoutes(scheduleService));

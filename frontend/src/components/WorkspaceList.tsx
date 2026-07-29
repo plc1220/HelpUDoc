@@ -80,7 +80,9 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
         icon: <Sync fontSize="small" />,
         onClick: () => onSyncWorkspace(workspace),
       } : null,
-      !isPrivate && onWorkPrivately ? {
+      !isPrivate
+      && onWorkPrivately
+      && (workspace.role === 'owner' || workspace.role === 'editor' || workspace.role === 'contributor') ? {
         label: workspace.privateCopyWorkspaceId
           ? `Open private copy of ${workspace.name}`
           : `Work privately on ${workspace.name}`,

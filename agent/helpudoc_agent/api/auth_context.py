@@ -28,6 +28,14 @@ def extract_agent_request_context(request: Request, *, agent_jwt_secret: str) ->
     workspace_id = payload.get("workspaceId")
     if isinstance(workspace_id, str) and workspace_id.strip():
         context["workspace_id"] = workspace_id.strip()
+    workspace_mode = payload.get("workspaceMode")
+    if isinstance(workspace_mode, str) and workspace_mode.strip():
+        context["workspace_mode"] = workspace_mode.strip()
+    workspace_role = payload.get("workspaceRole")
+    if isinstance(workspace_role, str) and workspace_role.strip():
+        context["workspace_role"] = workspace_role.strip()
+    if isinstance(payload.get("canWriteWorkspace"), bool):
+        context["can_write_workspace"] = payload["canWriteWorkspace"]
     skill_allow_ids = payload.get("skillAllowIds") or []
     if isinstance(skill_allow_ids, list):
         context["skill_allow_ids"] = [str(x).strip() for x in skill_allow_ids if str(x).strip()]

@@ -10,7 +10,7 @@ import { resolveWorkspaceRoot } from '../config/workspaceRoot';
 
 const WORKSPACE_DIR = resolveWorkspaceRoot();
 
-export type WorkspaceRole = 'owner' | 'editor' | 'viewer';
+export type WorkspaceRole = 'owner' | 'editor' | 'contributor' | 'commenter' | 'viewer';
 
 export interface WorkspaceRecord {
   id: string;
@@ -45,6 +45,9 @@ export type McpServerPolicy = {
   mcpServerDenyIds: string[];
   isAdmin: boolean;
   skipPlanApprovals: boolean;
+  workspaceMode: 'private' | 'published_read_only';
+  workspaceRole: WorkspaceRole;
+  canWriteWorkspace: boolean;
 };
 
 export class WorkspaceService {
@@ -142,11 +145,9 @@ export class WorkspaceService {
               .where('w.visibility', 'team')
               .andWhere((accessQuery) => {
                 accessQuery
-                  .where((groupBackedQuery) => {
+                  .whereNotNull('wm.userId')
+                  .orWhere((groupBackedQuery) => {
                     groupBackedQuery.whereNotNull('w.teamId').whereNotNull('gm.userId');
-                  })
-                  .orWhere((legacyQuery) => {
-                    legacyQuery.whereNull('w.teamId').whereNotNull('wm.userId');
                   });
               });
           });
@@ -163,11 +164,7 @@ export class WorkspaceService {
         );
       const linkedTeamAccessible = visibility === 'private'
         && row.linkedTeamWorkspaceId
-        && (
-          row.linkedTeamId
-            ? Boolean(row.linkedTeamGroupMemberUserId)
-            : Boolean(row.linkedTeamRole)
-        );
+        && (Boolean(row.linkedTeamRole) || Boolean(row.linkedTeamGroupMemberUserId));
       const teamChanged = visibility === 'private'
         && row.linkedTeamWorkspaceId
         && linkedTeamAccessible
@@ -340,14 +337,14 @@ export class WorkspaceService {
         createdAt: normalizedWorkspace.createdAt,
         updatedAt: normalizedWorkspace.updatedAt,
       };
-    } else if (normalizedWorkspace.teamId) {
+    } else if (normalizedWorkspace.teamId && !membership) {
       const groupMembership = await this.db('group_members')
         .where({ groupId: normalizedWorkspace.teamId, userId })
         .first();
       if (!groupMembership) {
         throw new AccessDeniedError('Team membership is required to access this workspace');
       }
-      membership = membership || {
+      membership = {
         workspaceId,
         userId,
         role: 'viewer',
@@ -384,7 +381,7 @@ export class WorkspaceService {
   ): Promise<McpServerPolicy> {
     const { membership } = await this.ensureMembership(workspaceId, userId, options);
     const workspacePolicy = await this.db('workspaces')
-      .select('skipPlanApprovals')
+      .select('skipPlanApprovals', 'visibility')
       .where({ id: workspaceId })
       .first();
     const isAdmin = membership.role === 'owner';
@@ -412,6 +409,9 @@ export class WorkspaceService {
       mcpServerDenyIds: Array.from(new Set(deny)).sort(),
       isAdmin,
       skipPlanApprovals: Boolean(workspacePolicy?.skipPlanApprovals),
+      workspaceMode: workspacePolicy?.visibility === 'team' ? 'published_read_only' : 'private',
+      workspaceRole: membership.role,
+      canWriteWorkspace: workspacePolicy?.visibility !== 'team' && membership.canEdit,
     };
   }
 
@@ -447,16 +447,11 @@ export class WorkspaceService {
     if (membership.role !== 'owner') {
       throw new AccessDeniedError('Only Team owners can manage publishing access');
     }
-    if (workspace.teamId) {
-      const teamMember = await this.db('group_members')
-        .where({ groupId: workspace.teamId, userId: targetUserId })
-        .first();
-      if (!teamMember) {
-        throw new AccessDeniedError('Publishing access can only be granted to a member of this team');
-      }
+    if (role === 'owner') {
+      throw new AccessDeniedError('Workspace ownership cannot be assigned through an invitation');
     }
 
-    const canEdit = role !== 'viewer';
+    const canEdit = false;
     const existing = await this.db('workspace_members').where({ workspaceId, userId: targetUserId }).first();
     if (existing) {
       await this.db('workspace_members')

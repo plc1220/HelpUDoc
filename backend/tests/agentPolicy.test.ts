@@ -7,6 +7,9 @@ const policy: EffectiveAgentPolicy = {
   skillAllowIds: ['data/dashboard'],
   mcpServerAllowIds: [],
   mcpServerDenyIds: [],
+  workspaceMode: 'private',
+  workspaceRole: 'owner',
+  canWriteWorkspace: true,
 };
 
 const decodePayload = (token: string): Record<string, unknown> =>
@@ -36,4 +39,25 @@ test('buildAgentAuthToken enables trusted mode only when explicitly configured',
 
   assert.ok(token);
   assert.equal(decodePayload(token).skipPlanApprovals, true);
+});
+
+test('buildAgentAuthToken carries the published workspace write boundary to the agent sandbox', async () => {
+  const api = createAgentPolicyApi({} as any, {} as any);
+  const token = await api.buildAgentAuthToken({
+    userId: 'user-1',
+    workspaceId: 'workspace-1',
+    policy: {
+      ...policy,
+      workspaceMode: 'published_read_only',
+      workspaceRole: 'commenter',
+      canWriteWorkspace: false,
+    },
+    skipPlanApprovals: false,
+  });
+
+  assert.ok(token);
+  const payload = decodePayload(token);
+  assert.equal(payload.workspaceMode, 'published_read_only');
+  assert.equal(payload.workspaceRole, 'commenter');
+  assert.equal(payload.canWriteWorkspace, false);
 });

@@ -8,7 +8,7 @@ import {
   ThemeProvider,
   type PaletteMode,
 } from '@mui/material';
-import { BookOpen, Check, CheckSquare, Copy, Edit, Trash, Plus, Minus, X, ChevronLeft, ChevronDown, RotateCcw, Printer, Download, Link as LinkIcon, Loader2, FolderPlus, FolderUp, Upload, Home, ArrowUp, Search, File as FileIcon, Wrench, Plug, Sparkles, Info } from 'lucide-react';
+import { BookOpen, Check, CheckSquare, Copy, Edit, Trash, Plus, Minus, X, ChevronLeft, ChevronDown, RotateCcw, Printer, Download, Link as LinkIcon, Loader2, FolderPlus, FolderUp, Upload, Home, ArrowUp, Search, File as FileIcon, MessageSquare, Wrench, Plug, Sparkles, Info } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
@@ -89,6 +89,7 @@ import WorkspaceShareDialog from '../../components/WorkspaceShareDialog';
 import WorkspacePublishDialog from '../../components/WorkspacePublishDialog';
 import WorkspaceConflictDialog from '../../components/WorkspaceConflictDialog';
 import WorkspaceHistoryDialog from '../../components/WorkspaceHistoryDialog';
+import WorkspaceCollaborationDialog from '../../components/WorkspaceCollaborationDialog';
 import ScheduleDialog from '../../components/schedules/ScheduleDialog';
 import WorkspaceSchedulesPanel from '../../components/schedules/WorkspaceSchedulesPanel';
 import type { UIBlock } from '../../components/UIBlockRenderer';
@@ -769,6 +770,9 @@ const isUsableWorkspaceId = (value: string | null | undefined): value is string 
   return Boolean(normalized && normalized !== 'undefined' && normalized !== 'null');
 };
 
+const canProposeWorkspaceChanges = (workspace: Workspace | null | undefined): boolean =>
+  workspace?.role === 'owner' || workspace?.role === 'editor' || workspace?.role === 'contributor';
+
 export default function WorkspacePage() {
   const navigate = useNavigate();
   const { signOut, user: authUser } = useAuth();
@@ -803,6 +807,7 @@ export default function WorkspacePage() {
   const [internetSearchEnabled, setInternetSearchEnabled] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [shareWorkspace, setShareWorkspace] = useState<Workspace | null>(null);
+  const [collaborationWorkspace, setCollaborationWorkspace] = useState<Workspace | null>(null);
   const [publishWorkspaceTarget, setPublishWorkspaceTarget] = useState<Workspace | null>(null);
   const [historyWorkspaceTarget, setHistoryWorkspaceTarget] = useState<Workspace | null>(null);
   const [syncWorkspaceTarget, setSyncWorkspaceTarget] = useState<Workspace | null>(null);
@@ -2944,7 +2949,7 @@ export default function WorkspacePage() {
 
   useEffect(() => {
     const loadConversations = async () => {
-      if (!selectedWorkspace || selectedWorkspace.visibility === 'team') {
+      if (!selectedWorkspace) {
         setConversationHistory([]);
         setActiveConversationId(null);
         agentMessageBufferRef.current.clear();
@@ -3045,7 +3050,7 @@ export default function WorkspacePage() {
     setSelectedWorkspace(workspace);
     setIsLandingPageVisible(false);
     if (workspace.visibility === 'team') {
-      setIsAgentPaneVisible(false);
+      setIsAgentPaneVisible(true);
       setMobileSurface('canvas');
     }
   }, []);
@@ -3745,6 +3750,8 @@ export default function WorkspacePage() {
         metadataOverride?: Partial<ConversationMessageMetadata>;
       },
     ) => {
+      void _statusOverride;
+      void _options;
       const { runId, conversationId, turnId, placeholderId } = runInfo;
       if (persistInFlightRef.current.has(runId)) {
         pendingReconcileRef.current[runId] = runInfo;
@@ -7127,19 +7134,29 @@ export default function WorkspacePage() {
             </span>
           </button>
           <div className="flex shrink-0 items-center gap-2">
-            {selectedWorkspace?.visibility !== 'team' ? (
+            <button
+              type="button"
+              onClick={() => {
+                void handleNewChat();
+                setMobileSurface('chat');
+              }}
+              className={`inline-flex h-10 w-10 items-center justify-center rounded-xl ${
+                isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-600 hover:bg-slate-100'
+              }`}
+              aria-label="Start new chat"
+            >
+              <Plus size={18} />
+            </button>
+            {selectedWorkspace?.visibility === 'team' ? (
               <button
                 type="button"
-                onClick={() => {
-                  void handleNewChat();
-                  setMobileSurface('chat');
-                }}
+                onClick={() => setCollaborationWorkspace(selectedWorkspace)}
                 className={`inline-flex h-10 w-10 items-center justify-center rounded-xl ${
                   isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-600 hover:bg-slate-100'
                 }`}
-                aria-label="Start new chat"
+                aria-label="Open notes and annotations"
               >
-                <Plus size={18} />
+                <MessageSquare size={18} />
               </button>
             ) : null}
             <button
@@ -7154,15 +7171,10 @@ export default function WorkspacePage() {
             </button>
           </div>
         </div>
-        <div className={`mt-3 grid ${
-          selectedWorkspace?.visibility === 'team' ? 'grid-cols-1' : 'grid-cols-2'
-        } rounded-2xl p-1 ${
+        <div className={`mt-3 grid grid-cols-2 rounded-2xl p-1 ${
           isDarkMode ? 'bg-slate-900' : 'bg-slate-100'
         }`}>
-          {(selectedWorkspace?.visibility === 'team'
-            ? (['canvas'] as MobileWorkspaceSurface[])
-            : (['chat', 'canvas'] as MobileWorkspaceSurface[])
-          ).map((surface) => (
+          {(['chat', 'canvas'] as MobileWorkspaceSurface[]).map((surface) => (
             <button
               key={surface}
               type="button"
@@ -7181,7 +7193,7 @@ export default function WorkspacePage() {
             </button>
           ))}
         </div>
-        {selectedWorkspace?.visibility === 'team' ? (
+        {selectedWorkspace?.visibility === 'team' && canProposeWorkspaceChanges(selectedWorkspace) ? (
           <button
             type="button"
             onClick={() => void handleWorkPrivately(selectedWorkspace)}
@@ -7225,8 +7237,17 @@ export default function WorkspacePage() {
             ) : null}
       </header>
 
-      {mobileSurface === 'chat' && selectedWorkspace?.visibility !== 'team' ? (
+      {mobileSurface === 'chat' ? (
         <div className={`flex min-h-0 flex-1 flex-col overflow-hidden ${isDarkMode ? 'bg-[#0d1524]' : 'bg-white'}`}>
+          {selectedWorkspace?.visibility === 'team' ? (
+            <div className={`border-b px-4 py-2 text-xs ${
+              isDarkMode
+                ? 'border-sky-900/60 bg-sky-950/40 text-sky-200'
+                : 'border-blue-100 bg-blue-50 text-blue-700'
+            }`}>
+              Published files are read-only. Chat can analyze them; propose changes from a private copy.
+            </div>
+          ) : null}
           <ChatMessageList
             colorMode={colorMode}
             messages={messages}
@@ -8044,17 +8065,33 @@ export default function WorkspacePage() {
                 )}
                 </div>
                 {selectedWorkspace?.visibility === 'team' ? (
-                  <button
-                    type="button"
-                    onClick={() => void handleWorkPrivately(selectedWorkspace)}
-                    className={`inline-flex h-9 shrink-0 items-center justify-center rounded-lg px-3 text-sm font-medium ${
-                      isDarkMode
-                        ? 'bg-sky-500/15 text-sky-200 hover:bg-sky-500/25'
-                        : 'bg-blue-50 text-blue-700 hover:bg-blue-100'
-                    }`}
-                  >
-                    {selectedWorkspace.privateCopyWorkspaceId ? 'Open private copy' : 'Work privately'}
-                  </button>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setCollaborationWorkspace(selectedWorkspace)}
+                      className={`inline-flex h-9 items-center justify-center gap-2 rounded-lg px-3 text-sm font-medium ${
+                        isDarkMode
+                          ? 'bg-slate-800 text-slate-200 hover:bg-slate-700'
+                          : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                      }`}
+                    >
+                      <MessageSquare size={15} />
+                      Discuss
+                    </button>
+                    {canProposeWorkspaceChanges(selectedWorkspace) ? (
+                      <button
+                        type="button"
+                        onClick={() => void handleWorkPrivately(selectedWorkspace)}
+                        className={`inline-flex h-9 items-center justify-center rounded-lg px-3 text-sm font-medium ${
+                          isDarkMode
+                            ? 'bg-sky-500/15 text-sky-200 hover:bg-sky-500/25'
+                            : 'bg-blue-50 text-blue-700 hover:bg-blue-100'
+                        }`}
+                      >
+                        {selectedWorkspace.privateCopyWorkspaceId ? 'Open private copy' : 'Work privately'}
+                      </button>
+                    ) : null}
+                  </div>
                 ) : null}
               </div>
               <div className="flex-1 flex min-h-0">
@@ -8522,6 +8559,7 @@ export default function WorkspacePage() {
               chatInputRef={chatInputRef}
               attachmentInputRef={attachmentInputRef}
               workspaceId={selectedWorkspace?.id}
+              isPublishedWorkspace={selectedWorkspace?.visibility === 'team'}
               internetSearchEnabled={internetSearchEnabled}
               formatMessageTimestamp={formatMessageTimestamp}
               interruptFieldKey={interruptFieldKey}
@@ -8740,6 +8778,13 @@ export default function WorkspacePage() {
         open={shareWorkspace !== null}
         workspace={shareWorkspace}
         onClose={() => setShareWorkspace(null)}
+      />
+      <WorkspaceCollaborationDialog
+        open={collaborationWorkspace !== null}
+        workspace={collaborationWorkspace}
+        filePath={selectedFile?.name || selectedDashboardPath}
+        onClose={() => setCollaborationWorkspace(null)}
+        onWorkspaceListChanged={refreshWorkspaceList}
       />
       <WorkspacePublishDialog
         open={publishWorkspaceTarget !== null}

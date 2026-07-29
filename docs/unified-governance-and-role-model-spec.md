@@ -1,6 +1,6 @@
 # Unified Governance and Role Model
 
-Status: Proposed
+Status: Approved for staged implementation
 
 Last updated: 2026-07-31
 
@@ -2019,3 +2019,32 @@ The governed-skill delivery is done when:
 - A replacement `Skill Insights` or automated evolution feature.
 - A redesign of plugin governance beyond validating and preserving existing plugin relationships.
 - A new runtime tool, MCP, credential, network, or sandbox entitlement model.
+## 25. Published-Workspace Collaboration Implementation Checkpoint
+
+The first implementation slice covers the published-workspace collaboration path:
+
+- Workspace Viewer, Commenter, Contributor, Publisher, and Owner are enforced as distinct roles.
+- Owners can grant direct access to registered users outside the owning team.
+- Published content remains read-only for every role.
+- Viewers can keep private notes.
+- Commenters and above can create shared annotations, sticky notes, tasks, discussions, and replies.
+- Contributors and above can convert a shared item into a proposal linked to their private working copy.
+- Publishers and Owners remain the only roles that can publish a new immutable version.
+- Collaboration items store the originating published-version identifier and optional file/content anchor metadata.
+- Published-workspace chat is enabled, with conversations scoped to the individual user.
+- Agent authorization carries `published_read_only`, workspace role, and `canWriteWorkspace = false` claims into
+  governed runtime and sandbox execution.
+- The agent runtime enforces that claim at both its filesystem backend and workspace-mutating built-in tools, while
+  run status, stream, approval, and cancellation endpoints remain scoped to the user who created the run.
+- Skill and MCP discovery continue to use independent platform, group, and workspace grants.
+
+The following parts of the MVP remain subsequent implementation slices:
+
+- mention and assignment pickers, notifications, and inbox views;
+- automatic anchor fingerprinting and re-anchoring after publication;
+- proposal review, acceptance, and publication-request workflow screens;
+- collaboration audit-event and moderation-history views;
+- governed private skill drafting, submission, review, approval, activation, and assignment;
+- governed platform-knowledge authoring, curation, versioning, and assignment;
+- dedicated tool, MCP-server, delegated-connection, and Code Interpreter policy administration screens;
+- the effective-access explanation view across all scopes.
