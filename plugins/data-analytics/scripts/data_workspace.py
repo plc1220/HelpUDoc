@@ -14,6 +14,7 @@ from _data_common import (
     json_dump,
     normalize_rel_path,
     read_request,
+    resolve_read_path,
     resolve_output_path,
     safe_slug,
     workspace_root,
@@ -48,7 +49,18 @@ def quote_ident(name: str) -> str:
     return '"' + str(name).replace('"', '""') + '"'
 
 
-def discover_files(root: Path) -> list[Path]:
+def discover_files(root: Path, requested_paths: list[str] | None = None) -> list[Path]:
+    if requested_paths:
+        candidates: list[Path] = []
+        for raw_path in requested_paths:
+            path = resolve_read_path(raw_path)
+            if not path.is_file():
+                raise SystemExit(f"source path is not a file: {raw_path}")
+            if path.suffix.lower() not in DATA_EXTENSIONS:
+                raise SystemExit(f"unsupported structured data source: {raw_path}")
+            candidates.append(path)
+        return sorted({path.resolve() for path in candidates})
+
     candidates: list[Path] = []
     for dirname in DISCOVERY_DIRS:
         directory = root / dirname
@@ -59,11 +71,15 @@ def discover_files(root: Path) -> list[Path]:
     return sorted({path.resolve() for path in candidates})
 
 
-def register_tables(con: duckdb.DuckDBPyConnection, root: Path) -> tuple[dict[str, str], list[dict[str, str]]]:
+def register_tables(
+    con: duckdb.DuckDBPyConnection,
+    root: Path,
+    requested_paths: list[str] | None = None,
+) -> tuple[dict[str, str], list[dict[str, str]]]:
     table_paths: dict[str, str] = {}
     skipped_files: list[dict[str, str]] = []
     used: set[str] = set()
-    for path in discover_files(root):
+    for path in discover_files(root, requested_paths=requested_paths):
         if "node_modules" in path.parts or "sandbox-runs" in path.parts:
             continue
         table = table_name_for(path.relative_to(root), used)
@@ -87,6 +103,16 @@ def dataframe_rows(df: pd.DataFrame, limit: int = 1000) -> list[dict[str, Any]]:
     return json.loads(df.head(limit).to_json(orient="records", date_format="iso"))
 
 
+def dataframe_markdown(df: pd.DataFrame, limit: int = 50) -> str:
+    """Render enough significant digits to avoid inventing aggregate variances.
+
+    Pandas/tabulate defaults can round large floating-point aggregates to whole
+    units in Markdown even though the JSON result retains the cents. The agent
+    reads the Markdown preview, so preserve up to 15 significant digits there.
+    """
+    return df.head(limit).to_markdown(index=False, floatfmt=".15g")
+
+
 def schema_markdown(con: duckdb.DuckDBPyConnection, tables: list[str]) -> str:
     lines: list[str] = []
     available = [row[0] for row in con.execute("SHOW TABLES").fetchall()]
@@ -104,10 +130,19 @@ def schema_markdown(con: duckdb.DuckDBPyConnection, tables: list[str]) -> str:
 def main() -> None:
     request = read_request()
     root = workspace_root()
+    raw_paths = request.get("paths") or request.get("input_paths") or []
+    if not isinstance(raw_paths, list):
+        raise SystemExit("paths must be a list of workspace-relative source paths")
+    requested_paths = [str(item) for item in raw_paths if str(item).strip()]
     con = duckdb.connect(database=":memory:")
-    table_paths, skipped_files = register_tables(con, root)
+    table_paths, skipped_files = register_tables(con, root, requested_paths=requested_paths)
     action = str(request.get("action") or "schema").strip().lower()
-    result: dict[str, Any] = {"ok": True, "action": action, "tables": table_paths}
+    result: dict[str, Any] = {
+        "ok": True,
+        "action": action,
+        "sourcePaths": requested_paths,
+        "tables": table_paths,
+    }
     if skipped_files:
         result["skippedFiles"] = skipped_files
 
@@ -117,7 +152,12 @@ def main() -> None:
         result["schema"] = markdown
         write_out_text("result.md", markdown)
     elif action in {"query", "export"}:
-        sql = str(request.get("sql") or request.get("sql_query") or "").strip().rstrip(";")
+        sql = str(
+            request.get("sql")
+            or request.get("sql_query")
+            or request.get("query")
+            or ""
+        ).strip().rstrip(";")
         if not sql:
             raise SystemExit("sql is required for query/export")
         row_limit = int(request.get("row_limit") or 1000)
@@ -140,7 +180,7 @@ def main() -> None:
                 "rowCount": len(df),
             }
             write_out_json("tool_artifacts.json", {"files": [result["export"]]})
-        write_out_text("result.md", df.head(50).to_markdown(index=False))
+        write_out_text("result.md", dataframe_markdown(df))
     elif action == "profile":
         profiles: dict[str, Any] = {}
         for table in table_paths:

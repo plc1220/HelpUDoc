@@ -414,6 +414,64 @@ def test_local_runner_builds_native_dashboard_package_from_plugin_script(tmp_pat
     assert rows_payload == {"rows": data_rows}
 
 
+def test_native_dashboard_builder_preserves_explicit_csv_sentinels_and_anomalies(
+    tmp_path: Path,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    skills_root = repo_root / "skills"
+    plugins_root = repo_root / "plugins"
+    workspace = WorkspaceState(workspace_id="ws-fidelity", root_path=tmp_path / "workspace")
+    workspace.root_path.mkdir(parents=True, exist_ok=True)
+    source = repo_root / "tests" / "fixtures" / "data-analytics-qc" / "orders_dirty.csv"
+    dataset = workspace.root_path / "orders_dirty.csv"
+    dataset.write_bytes(source.read_bytes())
+    request = {
+        "title": "Dirty Source Fidelity",
+        "description": "Preserve source anomalies for explicit review.",
+        "output_path": "dashboards/dirty-source-fidelity",
+        "dashboard_dataset_path": "orders_dirty.csv",
+        "filter_schema": [
+            {"field": "order_date", "label": "Order date", "type": "date"},
+            {"field": "country", "label": "Country", "type": "categorical"},
+        ],
+        "chart_bindings": [
+            {
+                "chart_id": "revenue_by_date",
+                "title": "Revenue by order date",
+                "chart_type": "line",
+                "x_field": "order_date",
+                "y_field": "revenue",
+            }
+        ],
+        "data_quality_notes": ["No source values were transformed or excluded."],
+    }
+    skills = {skill.skill_id: skill for skill in load_skills(skills_root)}
+    activate_skill_context(workspace.context, skills["data/dashboard"], plugins_root=plugins_root)
+
+    run_skill_python_script_locally(
+        skills_root=skills_root,
+        plugins_root=plugins_root,
+        workspace_state=workspace,
+        script_name="build_native_dashboard_package",
+        args=["--request-json", json.dumps(request)],
+    )
+
+    rows_path = (
+        workspace.root_path
+        / "dashboards"
+        / "dirty-source-fidelity"
+        / "data"
+        / "dashboard.rows.json"
+    )
+    rows = json.loads(rows_path.read_text(encoding="utf-8"))["rows"]
+
+    assert len(rows) == 25
+    assert next(row for row in rows if row["order_id"] == "ORD-009")["country"] == "N/A"
+    assert next(row for row in rows if row["order_id"] == "ORD-011")["revenue"] == 99999.0
+    assert next(row for row in rows if row["order_id"] == "ORD-012")["revenue"] is None
+    assert next(row for row in rows if row["order_id"] == "ORD-024")["order_date"] == "2030-01-01"
+
+
 def test_run_skill_python_script_tool_emits_script_artifact_events(tmp_path: Path) -> None:
     from agent.helpudoc_agent.tools.workspace.builtins.skills import build_run_skill_python_script_tool
 

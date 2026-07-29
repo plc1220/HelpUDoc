@@ -42,6 +42,9 @@ charts and a structured report.
 - **Local files (CSV / Parquet / JSON in workspace)**: use `data_workspace` for schema,
   query, profile, and export actions; use `build_chart_payload` or
   `build_report_payload` for shareable payloads.
+- Invoke inherited scripts by their declared names with one JSON request. Do not
+  call them with `--help`, inspect their sandbox copies, or substitute another
+  script merely to discover an argument shape.
 - **Do not attempt cross-source SQL joins.** Orchestrate at workflow level.
 
 ## Standards
@@ -50,6 +53,20 @@ charts and a structured report.
   correlations). No speculation.
 - **Name charts and artifacts clearly** (Title_Case_With_Underscores).
 - **State limitations** if data is incomplete or a question cannot be answered.
+- For financial aggregates, preserve currency precision in the query (for
+  example, cast terms to `DECIMAL(18,2)` before `SUM`) and in the answer. Never
+  infer a variance from a rounded display value.
+- For one-to-many join QC, use one focused CTE query where practical to return
+  base grain, joined grain, unmatched keys, duplicated measures, and reconciled
+  measures together. Do not repeat equivalent aggregate queries.
+- Do not page CSV, TSV, Parquet, or JSON source rows into context with
+  `read_file`. Inspect and query structured sources through the declared
+  `data_workspace` sandbox script.
+- When the user names or tags local sources, pass those exact workspace-relative
+  paths in the `paths` array on every `data_workspace` schema, query, profile,
+  or export request. Do not register unrelated workspace data or old artifacts.
+- `data_workspace` is only for source schema, query, profile, and export actions.
+  Never pass a report/chart payload or a sandbox artifact to `data_workspace`.
 
 ## Default analysis pack (use for full analyses unless user asks for a quick answer)
 
@@ -104,12 +121,20 @@ When a chart communicates results more effectively than a table:
 For report-style work, call `build_report_payload` after queries and any chart/table payloads:
 - Include tables used, filters, metrics, and artifacts created.
 - Provide at least two concrete insights (or explain if none exist).
-- Structure:
-  - `### Summary` — 2–4 bullets
-  - `### Key Insights` — 3–6 evidence-backed bullets
+- Use the canonical artifact shape: reader-facing `manifest.title`, top-level
+  `manifest.blocks`, and `snapshot.datasets` as an object whose values are plain
+  row arrays.
+- The first markdown block body must begin with `# <manifest.title>` and contain
+  a visible `## Executive Summary`. Give each major report section its own block.
+- A report must include at least one chart asset plus a chart visualization
+  block with canonical `encodings.x.field` and `encodings.y.field` (or
+  `encodings.y.fields`).
 - Mention any charts/files explicitly so the user knows what to open.
-- Validate report/dashboard artifact payloads with `validate_data_artifact` before
-  `render_artifact`.
+- Treat the `build_report_payload` `result.json` as the canonical handoff. Pass
+  its complete `manifest` and `snapshot` to `validate_data_artifact` once. After
+  validation returns `valid: true`, call `render_artifact` once with those exact
+  same objects. Never reconstruct the snapshot, replace row objects with row
+  limits/counts such as `[2000]`, or use `render_artifact` as a validator.
 - For report-style requests, do not stop after analysis notes alone; produce the
   validated payload or explain exactly what blocked it.
 

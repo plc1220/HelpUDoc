@@ -40,6 +40,16 @@ from helpudoc_agent.langfuse_callbacks import (
 )
 from helpudoc_agent.memory_store import MemoryStoreManager
 from helpudoc_agent.mcp_manager import describe_mcp_servers
+from helpudoc_agent.plan_gates import (
+    has_approved_plan_decision,
+    has_edited_plan_decision,
+    has_rejected_plan_decision,
+    prepare_plan_context_for_explicit_resume,
+    requested_dashboard_filters,
+    requested_dashboard_output_path,
+    requested_dashboard_time_field,
+    requested_dashboard_title,
+)
 from helpudoc_agent.runtime.agent_registry import AgentRegistry
 from helpudoc_agent.skills_registry import (
     activate_skill_context,
@@ -725,6 +735,9 @@ def register_chat_routes(
             self._has_events = False
             self._has_assistant_text = False
             self._interrupt_emitted = False
+            self._resume_interrupt_consumed = False
+            self._native_dashboard_builder_calls = 0
+            self._native_dashboard_builder_run_keys: Set[str] = set()
             self._v3_text_blocks: Dict[Tuple[str, str], str] = {}
             self._cancel_run: Optional[Callable[[], None]] = None
             self._suppress_interrupt_tool_start = suppress_interrupt_tool_start
@@ -741,6 +754,26 @@ def register_chat_routes(
         @property
         def interrupt_emitted(self) -> bool:
             return self._interrupt_emitted
+
+        @property
+        def resume_interrupt_consumed(self) -> bool:
+            return self._resume_interrupt_consumed
+
+        @property
+        def native_dashboard_builder_calls(self) -> int:
+            return self._native_dashboard_builder_calls
+
+        def record_tool_start(self, name: str, preview: str, run_key: str = "") -> None:
+            if (
+                name == "run_skill_python_script"
+                and "build_native_dashboard_package" in preview
+            ):
+                normalized_key = str(run_key or "").strip()
+                if normalized_key and normalized_key in self._native_dashboard_builder_run_keys:
+                    return
+                if normalized_key:
+                    self._native_dashboard_builder_run_keys.add(normalized_key)
+                self._native_dashboard_builder_calls += 1
 
         def attach_cancel(self, cancel_cb: Callable[[], None]) -> None:
             self._cancel_run = cancel_cb
@@ -846,28 +879,13 @@ def register_chat_routes(
         ) -> None:
             name = (serialized or {}).get("name") or (metadata or {}).get("name") or "tool"
             self._tool_names[str(run_id)] = name
-            if name in _INTERRUPT_TOOL_NAMES:
-                # On resumed human-interrupt flows, let the tool consume the
-                # resume payload first. Eagerly re-emitting the interrupt here can
-                # cancel the resumed run before the answer is applied.
-                if self._suppress_interrupt_tool_start:
-                    return
-                interrupt_payload = extract_interrupt_payload_from_tool_call(name, input_str)
-                if interrupt_payload:
-                    self._interrupt_emitted = True
-                    await _emit_progress(
-                        self,
-                        "awaiting_input",
-                        "Preparing clarification question",
-                        detail=name,
-                        tool_name=name,
-                        status="pending",
-                    )
-                    await self._emit(interrupt_payload)
-                    if self._cancel_run:
-                        self._cancel_run()
-                    return
             preview = input_str.strip()
+            self.record_tool_start(name, preview, str(run_id))
+            if name in _INTERRUPT_TOOL_NAMES:
+                # Do not expose the form from tool-call arguments. The tool must
+                # reach LangGraph's interrupt() first so a resumable checkpoint
+                # exists before the UI accepts a human response.
+                return
             await _emit_progress(
                 self,
                 "using_tool",
@@ -901,6 +919,10 @@ def register_chat_routes(
                     )
                     await self._emit(interrupt_payload)
                     return
+                # The interrupted tool returned a normal value, which proves the
+                # resume payload was applied. Stale checkpoint interrupt events
+                # may precede this callback and must not end the resumed stream.
+                self._resume_interrupt_consumed = True
             tool_failed = _is_terminal_tool_failure(name, text)
             await _emit_progress(
                 self,
@@ -1311,8 +1333,17 @@ def register_chat_routes(
             return extract_interrupt_payload_from_tool_call(name, args)
         return None
 
-    def _extract_v3_interrupt_payload(event: Any) -> Dict[str, Any] | None:
+    def _extract_v3_interrupt_payload(
+        event: Any,
+        *,
+        include_message_fallback: bool = True,
+    ) -> Dict[str, Any] | None:
         event = _event_record(event)
+        params = event.get("params") if isinstance(event, dict) else None
+        if isinstance(params, dict):
+            payload = _build_interrupt_payload(params.get("interrupts"))
+            if payload:
+                return payload
         data = _event_data(event)
         for candidate in (event, data):
             if isinstance(candidate, dict):
@@ -1328,7 +1359,7 @@ def register_chat_routes(
                     if normalized:
                         return normalized
                 messages = _extract_messages(candidate)
-                if messages:
+                if include_message_fallback and messages:
                     for msg in reversed(messages):
                         payload = extract_interrupt_payload_from_tool_text(_message_to_text(msg))
                         if payload:
@@ -1375,19 +1406,10 @@ def register_chat_routes(
 
         if method in {"content-block-start", "content-block-delta", "content-block-finish"}:
             interrupt_payload = _extract_content_block_interrupt_payload(event)
-            if interrupt_payload and not suppress_interrupt_tool_start:
-                content = _content_block_payload(event) or {}
-                handler._interrupt_emitted = True
-                await _emit_progress(
-                    handler,
-                    "awaiting_input",
-                    "Preparing clarification question",
-                    detail=str(content.get("name") or ""),
-                    tool_name=str(content.get("name") or ""),
-                    status="pending",
-                )
-                await handler._emit(interrupt_payload)
-                return True
+            if interrupt_payload:
+                # Tool-call streaming is not a durable human interrupt. Wait for
+                # the actual graph interrupt after checkpoint persistence.
+                return False
             block_key = (run_key, _content_block_index(event))
             if method == "content-block-start":
                 handler._v3_text_blocks[block_key] = ""
@@ -1434,20 +1456,11 @@ def register_chat_routes(
             name = _event_name(event) or "tool"
             handler._tool_names[run_key] = name
             preview = _event_input_preview(data)
-            if name in _INTERRUPT_TOOL_NAMES and not suppress_interrupt_tool_start:
-                interrupt_payload = extract_interrupt_payload_from_tool_call(name, preview)
-                if interrupt_payload:
-                    handler._interrupt_emitted = True
-                    await _emit_progress(
-                        handler,
-                        "awaiting_input",
-                        "Preparing clarification question",
-                        detail=name,
-                        tool_name=name,
-                        status="pending",
-                    )
-                    await handler._emit(interrupt_payload)
-                    return True
+            handler.record_tool_start(name, preview, run_key)
+            if name in _INTERRUPT_TOOL_NAMES:
+                # As above, let the tool establish its checkpoint before
+                # presenting the corresponding form.
+                return False
             await _emit_progress(
                 handler,
                 "using_tool",
@@ -1482,6 +1495,7 @@ def register_chat_routes(
                     )
                     await handler._emit(interrupt_payload)
                     return True
+                handler._resume_interrupt_consumed = True
             tool_failed = _is_terminal_tool_failure(name, text)
             await _emit_progress(
                 handler,
@@ -1660,6 +1674,13 @@ def register_chat_routes(
         context.pop("frontend_slides_completed_interaction_gates", None)
         context.pop("interaction_gate_ledger", None)
         context.pop("interaction_gate_telemetry", None)
+        context.pop("host_plan_approved", None)
+        context.pop("host_dashboard_output_path", None)
+        context.pop("host_dashboard_filters", None)
+        context.pop("host_dashboard_time_field", None)
+        context.pop("_native_dashboard_builder_executions", None)
+        context.pop("_data_workspace_query_executions", None)
+        context.pop("_current_sandbox_run_ids", None)
         context["plan_approved"] = skip_plan_approvals
         context["pre_plan_search_count"] = 0
         context["google_search_count"] = 0
@@ -1777,12 +1798,14 @@ def register_chat_routes(
         message: ChatRequest,
         *,
         resume_decisions: Optional[List[Dict[str, Any]]] = None,
+        resume_interrupt_id: str = "",
         resume_value: Any = None,
     ) -> AsyncGenerator[bytes, None]:
         agent = getattr(runtime, "agent", None)
         if agent is None:
             yield _json_line({"type": "error", "message": "Agent not initialized"})
             return
+        prepare_plan_context_for_explicit_resume(runtime.workspace_state, resume_decisions)
         context = getattr(runtime.workspace_state, "context", None)
         manager = context.get("data_agent_manager") if isinstance(context, dict) else None
         if manager and hasattr(manager, "reset_session"):
@@ -1817,9 +1840,86 @@ def register_chat_routes(
                 if isinstance(context, dict):
                     context["last_interaction_response"] = resume_value
                 resume_value = None
+        is_resume_stream = resume_decisions is not None or resume_value is not None
+        approve_plan_resume = has_approved_plan_decision(resume_decisions)
+        edit_plan_resume = has_edited_plan_decision(resume_decisions)
+        reject_plan_resume = has_rejected_plan_decision(resume_decisions)
+        dashboard_approval_resume = (
+            approve_plan_resume
+            and str(runtime.workspace_state.context.get("active_skill") or "") == "data/dashboard"
+        )
+        dashboard_edit_resume = (
+            edit_plan_resume
+            and str(runtime.workspace_state.context.get("active_skill") or "") == "data/dashboard"
+        )
+        allow_rejection_summary = False
+        allow_approval_summary = False
+        approval_resume_contract_error = ""
+        expected_dashboard_title = (
+            requested_dashboard_title(message.message)
+            if str(runtime.workspace_state.context.get("active_skill") or "") == "data/dashboard"
+            else ""
+        )
+
+        def _interrupt_plan_title(payload: Dict[str, Any]) -> str:
+            display = payload.get("display_payload")
+            if isinstance(display, dict):
+                title = str(display.get("planTitle") or "").strip()
+                if title:
+                    return title
+            interaction = payload.get("interactionRequest")
+            if isinstance(interaction, dict):
+                metadata = interaction.get("metadata")
+                if isinstance(metadata, dict):
+                    title = str(metadata.get("planTitle") or "").strip()
+                    if title:
+                        return title
+                props = interaction.get("props")
+                if isinstance(props, dict):
+                    title = str(props.get("title") or "").strip()
+                    if title:
+                        return title
+            return ""
+
+        def _edit_resume_feedback() -> str:
+            if not isinstance(resume_decisions, list):
+                return ""
+            for decision in resume_decisions:
+                if not isinstance(decision, dict):
+                    continue
+                if str(decision.get("type") or "").strip().lower() != "edit":
+                    continue
+                edited_action = decision.get("edited_action") or decision.get("editedAction")
+                args = edited_action.get("args") if isinstance(edited_action, dict) else {}
+                if isinstance(args, dict):
+                    feedback = str(args.get("reviewer_feedback") or "").strip()
+                    if feedback:
+                        return feedback
+                return str(decision.get("message") or "").strip()
+            return ""
+
+        def _dashboard_package_snapshot() -> Dict[str, int]:
+            root = runtime.workspace_state.root_path
+            snapshot: Dict[str, int] = {}
+            for path in root.glob("dashboards/*/dashboard.meta.json"):
+                try:
+                    snapshot[path.relative_to(root).as_posix()] = path.stat().st_mtime_ns
+                except OSError:
+                    continue
+            return snapshot
+
+        dashboard_packages_before = (
+            _dashboard_package_snapshot() if dashboard_approval_resume else {}
+        )
+
         def _should_suppress_assistant_text_for_interaction_gate() -> bool:
             context = getattr(runtime.workspace_state, "context", None)
-            return next_pending_gate(context) is not None
+            return (
+                (reject_plan_resume and not allow_rejection_summary)
+                or (dashboard_approval_resume and not allow_approval_summary)
+                or edit_plan_resume
+                or next_pending_gate(context) is not None
+            )
 
         handler = _CallbackStreamingHandler(
             _message_to_text,
@@ -1829,6 +1929,7 @@ def register_chat_routes(
         sentinel = object()
         stream_started = asyncio.get_running_loop().time()
         saw_interrupt = False
+        defer_checkpoint_interrupt = is_resume_stream
         yield _json_line({"type": "policy", **_active_skill_policy(runtime)})
         logger.info(
             "Agent stream start: agent=%s workspace=%s",
@@ -1839,7 +1940,9 @@ def register_chat_routes(
         async def _agent_runner():
             lf_handlers = langfuse_langchain_callbacks()
             try:
-                nonlocal saw_interrupt
+                nonlocal saw_interrupt, defer_checkpoint_interrupt
+                nonlocal allow_rejection_summary, allow_approval_summary
+                nonlocal approval_resume_contract_error
                 await _emit_progress(
                     handler,
                     "preparing_context",
@@ -1871,27 +1974,193 @@ def register_chat_routes(
                     callbacks=lf_handlers or None,
                 )
                 if resume_decisions is not None:
-                    stream_input: Any = Command(resume={"decisions": resume_decisions})
+                    decision_value = {"decisions": resume_decisions}
+                    normalized_interrupt_id = str(resume_interrupt_id or "").strip()
+                    pending_interrupt_ids: Set[str] = set()
+                    resume_stream_config = stream_config
+                    try:
+                        checkpoint_state = await agent.aget_state(stream_config, subgraphs=True)
+                        states_to_inspect = [checkpoint_state]
+                        while states_to_inspect:
+                            current_state = states_to_inspect.pop()
+                            for task_state in getattr(current_state, "tasks", ()) or ():
+                                for pending_interrupt in getattr(task_state, "interrupts", ()) or ():
+                                    pending_id = str(getattr(pending_interrupt, "id", "") or "").strip()
+                                    if pending_id:
+                                        pending_interrupt_ids.add(pending_id)
+                                    if pending_id == normalized_interrupt_id:
+                                        nested_config = getattr(current_state, "config", None)
+                                        if isinstance(nested_config, dict):
+                                            resume_stream_config = {
+                                                **nested_config,
+                                                "callbacks": stream_config.get("callbacks"),
+                                                "metadata": stream_config.get("metadata"),
+                                                "tags": stream_config.get("tags"),
+                                                "run_name": stream_config.get("run_name"),
+                                            }
+                                nested_state = getattr(task_state, "state", None)
+                                if hasattr(nested_state, "tasks"):
+                                    states_to_inspect.append(nested_state)
+                    except Exception:
+                        logger.debug("Unable to inspect pending interrupt ids", exc_info=True)
+                    logger.warning(
+                        "Dispatching plan decision resume "
+                        "(has_interrupt_id=%s pending_count=%s id_matches=%s)",
+                        bool(normalized_interrupt_id),
+                        len(pending_interrupt_ids),
+                        normalized_interrupt_id in pending_interrupt_ids,
+                    )
+                    if dashboard_approval_resume or dashboard_edit_resume:
+                        context = runtime.workspace_state.context
+                        decision_label = "approve" if dashboard_approval_resume else "edit"
+                        context["last_plan_decision"] = decision_label
+                        context["host_plan_approved"] = dashboard_approval_resume
+                        context["host_dashboard_output_path"] = (
+                            requested_dashboard_output_path(message.message)
+                            if dashboard_approval_resume
+                            else ""
+                        )
+                        context["host_dashboard_filters"] = (
+                            requested_dashboard_filters(message.message)
+                            if dashboard_approval_resume
+                            else []
+                        )
+                        context["host_dashboard_time_field"] = (
+                            requested_dashboard_time_field(message.message)
+                            if dashboard_approval_resume
+                            else ""
+                        )
+                        context["plan_approved"] = dashboard_approval_resume
+                        context["skip_plan_approvals"] = False
+                        base_thread_id = str(
+                            stream_config.get("configurable", {}).get("thread_id") or uuid4()
+                        )
+                        resume_stream_config = {
+                            **stream_config,
+                            "configurable": {
+                                **stream_config.get("configurable", {}),
+                                "thread_id": f"{base_thread_id}:decision:{decision_label}",
+                            },
+                        }
+                        original_request = (message.message or "").strip()
+                        if dashboard_approval_resume:
+                            decision_instruction = (
+                                "The user approved the reviewed dashboard plan. Execute that exact plan now. "
+                                "Do not request approval again. Generate the native dashboard package exactly "
+                                "once and preserve every source row and value exactly as requested."
+                            )
+                        else:
+                            decision_instruction = (
+                                "The user requested revisions to the dashboard plan. Apply the reviewer feedback "
+                                "below, then call request_plan_approval with the revised plan. Do not build any "
+                                "dashboard files before the revised plan is approved.\n\n"
+                                f"Reviewer feedback: {_edit_resume_feedback() or 'Apply the requested edits.'}"
+                            )
+                        stream_input = {
+                            "messages": [
+                                {
+                                    "role": "user",
+                                    "content": (
+                                        f"{original_request}\n\n"
+                                        f"HOST DECISION CONTINUATION:\n{decision_instruction}"
+                                    ),
+                                }
+                            ]
+                        }
+                    else:
+                        stream_input = Command(
+                            resume=(
+                                {normalized_interrupt_id: decision_value}
+                                if normalized_interrupt_id
+                                else decision_value
+                            )
+                        )
                 elif resume_value is not None:
                     stream_input = Command(resume=resume_value)
                 else:
                     stream_input = _validated_fresh_stream_input(payload, message.message)
-                final_result = None
-                event_stream = agent.astream_events(
-                    stream_input,
-                    config=stream_config,
-                    context=runtime.workspace_state.context,
-                    version="v3",
-                )
-                if inspect.isawaitable(event_stream):
-                    event_stream = await event_stream
-                async for event in event_stream:
-                    data = _event_data(event)
-                    method = _event_method(event)
-                    if method in {"on_chain_end", "values", "updates"} and data is not None:
-                        final_result = data
-                    interrupt_payload = _extract_v3_interrupt_payload(event)
-                    if interrupt_payload:
+
+                async def _consume_event_stream(
+                    agent_input: Any,
+                    *,
+                    include_message_fallback: bool,
+                    config_override: Dict[str, Any] | None = None,
+                ) -> Tuple[Any, bool]:
+                    nonlocal saw_interrupt, defer_checkpoint_interrupt
+                    nonlocal approval_resume_contract_error
+                    stream_result = None
+                    pending_interrupt_payload: Dict[str, Any] | None = None
+                    event_stream = agent.astream_events(
+                        agent_input,
+                        config=config_override or stream_config,
+                        context=runtime.workspace_state.context,
+                        version="v3",
+                    )
+                    if inspect.isawaitable(event_stream):
+                        event_stream = await event_stream
+                    async for event in event_stream:
+                        data = _event_data(event)
+                        method = _event_method(event)
+                        if method in {"on_chain_end", "values", "updates"} and data is not None:
+                            stream_result = data
+                        interrupt_payload = _extract_v3_interrupt_payload(
+                            event,
+                            include_message_fallback=include_message_fallback,
+                        )
+                        if (
+                            interrupt_payload is None
+                            and method
+                            in {
+                                "content-block-start",
+                                "content-block-delta",
+                                "content-block-finish",
+                            }
+                        ):
+                            interrupt_payload = _extract_content_block_interrupt_payload(event)
+                        if (
+                            interrupt_payload is None
+                            and method in {"on_tool_end", "tools/end", "tool_end", "tool-finished"}
+                        ):
+                            run_key = _event_run_id(event) or method
+                            tool_name = handler._tool_names.get(
+                                run_key,
+                                _event_name(event) or "tool",
+                            )
+                            if tool_name in _INTERRUPT_TOOL_NAMES:
+                                interrupt_payload = extract_interrupt_payload_from_tool_text(
+                                    _event_output_text(data)
+                                )
+                        if handler.resume_interrupt_consumed:
+                            defer_checkpoint_interrupt = False
+                        if interrupt_payload and not defer_checkpoint_interrupt:
+                            # Drain the graph event stream before exposing the
+                            # form. Closing the generator on the first interrupt
+                            # event can leave the checkpoint at the preceding
+                            # model node, so a later decision never reaches the
+                            # interrupted tool.
+                            pending_interrupt_payload = interrupt_payload
+                            continue
+                        if await _emit_v3_event(
+                            event,
+                            handler,
+                            suppress_interrupt_tool_start=is_resume_stream,
+                        ):
+                            saw_interrupt = True
+                            return stream_result, True
+                        if handler.resume_interrupt_consumed:
+                            defer_checkpoint_interrupt = False
+                    if pending_interrupt_payload is not None:
+                        if expected_dashboard_title:
+                            proposed_title = _interrupt_plan_title(pending_interrupt_payload)
+                            normalized_expected = " ".join(expected_dashboard_title.casefold().split())
+                            normalized_proposed = " ".join(proposed_title.casefold().split())
+                            if not proposed_title or normalized_expected not in normalized_proposed:
+                                approval_resume_contract_error = (
+                                    "The dashboard plan is stale or mismatched: expected a plan for "
+                                    f"'{expected_dashboard_title}', but received "
+                                    f"'{proposed_title or 'an untitled plan'}'."
+                                )
+                                return stream_result, False
                         saw_interrupt = True
                         await _emit_progress(
                             handler,
@@ -1899,15 +2168,124 @@ def register_chat_routes(
                             "Awaiting your input to proceed",
                             status="pending",
                         )
-                        await handler._emit(interrupt_payload)
+                        await handler._emit(pending_interrupt_payload)
+                        return stream_result, True
+                    return stream_result, False
+
+                final_result, interrupted = await _consume_event_stream(
+                    stream_input,
+                    include_message_fallback=not is_resume_stream,
+                    config_override=resume_stream_config if resume_decisions is not None else None,
+                )
+                if interrupted:
+                    return
+
+                if edit_plan_resume:
+                    context = runtime.workspace_state.context
+                    if str(context.get("last_plan_decision") or "").strip().lower() != "edit":
+                        approval_resume_contract_error = (
+                            "The requested plan edits were not consumed by the pending plan."
+                        )
                         return
-                    if await _emit_v3_event(
-                        event,
+                    await _emit_progress(
                         handler,
-                        suppress_interrupt_tool_start=resume_decisions is not None or resume_value is not None,
-                    ):
-                        saw_interrupt = True
+                        "planning",
+                        "Revising the plan from reviewer feedback",
+                        status="running",
+                    )
+                    defer_checkpoint_interrupt = False
+                    feedback = _edit_resume_feedback()
+                    continuation_input = {
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": (
+                                    "Revise the pending plan using the review feedback below, then call "
+                                    "request_plan_approval again. Do not execute the plan and do not stop "
+                                    "with prose before producing the revised approval form.\n\n"
+                                    f"Reviewer feedback: {feedback or 'Apply the requested plan edits.'}"
+                                ),
+                            }
+                        ]
+                    }
+                    final_result, interrupted = await _consume_event_stream(
+                        continuation_input,
+                        include_message_fallback=False,
+                        config_override=resume_stream_config,
+                    )
+                    if interrupted:
                         return
+                    approval_resume_contract_error = (
+                        "The plan edit was consumed, but the revised plan was not resubmitted for approval."
+                    )
+                    return
+
+                if dashboard_approval_resume:
+                    context = runtime.workspace_state.context
+                    if not bool(
+                        context.get("plan_approved") or context.get("host_plan_approved")
+                    ):
+                        approval_resume_contract_error = (
+                            "The approval decision was not consumed by the pending dashboard plan."
+                        )
+                        return
+
+                    dashboard_packages_after_resume = _dashboard_package_snapshot()
+                    if dashboard_packages_after_resume == dashboard_packages_before:
+                        await _emit_progress(
+                            handler,
+                            "executing",
+                            "Continuing the approved dashboard plan",
+                            status="running",
+                        )
+                        defer_checkpoint_interrupt = False
+                        continuation_input = {
+                            "messages": [
+                                {
+                                    "role": "user",
+                                    "content": (
+                                        "The user approved the pending dashboard plan. "
+                                        "Continue executing that exact approved plan now. "
+                                        "Do not request approval again and do not stop with approval-seeking prose. "
+                                        "Generate the required native dashboard package exactly once."
+                                    ),
+                                }
+                            ]
+                        }
+                        final_result, interrupted = await _consume_event_stream(
+                            continuation_input,
+                            include_message_fallback=False,
+                            config_override=resume_stream_config,
+                        )
+                        if interrupted:
+                            return
+
+                    dashboard_packages_after = _dashboard_package_snapshot()
+                    if dashboard_packages_after == dashboard_packages_before:
+                        approval_resume_contract_error = (
+                            "The approved dashboard run completed without generating or updating a package."
+                        )
+                        return
+                    builder_executions = int(
+                        context.get("_native_dashboard_builder_executions") or 0
+                    )
+                    if builder_executions != 1:
+                        approval_resume_contract_error = (
+                            "The approved dashboard must execute the native package builder exactly once; "
+                            f"observed {builder_executions} executions."
+                        )
+                        return
+                    allow_approval_summary = True
+                    await handler._emit(
+                        {
+                            "type": "token",
+                            "content": (
+                                "The approved dashboard package was generated successfully "
+                                "with the reviewed source-preservation rules."
+                            ),
+                            "role": "assistant",
+                        }
+                    )
 
                 await _emit_progress(
                     handler,
@@ -1917,7 +2295,22 @@ def register_chat_routes(
                 )
 
                 emitted = False
-                interrupt_payload = _extract_v3_interrupt_payload(final_result) or _extract_interrupt_payload(final_result)
+                if reject_plan_resume:
+                    allow_rejection_summary = True
+                    await handler._emit(
+                        {
+                            "type": "token",
+                            "content": "The dashboard plan was rejected. No dashboard files were generated.",
+                            "role": "assistant",
+                        }
+                    )
+                    emitted = True
+                interrupt_payload = _extract_v3_interrupt_payload(
+                    final_result,
+                    include_message_fallback=not is_resume_stream,
+                )
+                if interrupt_payload is None and not is_resume_stream:
+                    interrupt_payload = _extract_interrupt_payload(final_result)
                 if interrupt_payload:
                     saw_interrupt = True
                     emitted = True
@@ -2018,6 +2411,22 @@ def register_chat_routes(
             source_tracker.update_final_report(runtime.workspace_state)
             if saw_interrupt:
                 yield _json_line({"type": "done", "status": "interrupted"})
+            elif approval_resume_contract_error:
+                yield _json_line({
+                    "type": "progress",
+                    "phase": "failed",
+                    "label": "Dashboard interaction contract failed",
+                    "detail": approval_resume_contract_error,
+                    "status": "error",
+                    "timestamp": datetime.utcnow().isoformat() + "Z",
+                })
+                yield _json_line(
+                    {
+                        "type": "contract_error",
+                        "message": approval_resume_contract_error,
+                    }
+                )
+                yield _json_line({"type": "done", "status": "failed"})
             else:
                 missing = _missing_required_artifacts(runtime)
                 if missing:
@@ -2095,12 +2504,17 @@ def register_chat_routes(
             else:
                 decisions_payload.append(item.dict(exclude_none=True))  # type: ignore[attr-defined]
         placeholder = ChatRequest(
-            message="",
+            message=resume_request.originalPrompt or "",
             history=None,
             forceReset=False,
             langfuseTraceContext=resume_request.langfuseTraceContext,
         )
-        stream = _stream_agent_response(runtime, placeholder, resume_decisions=decisions_payload)
+        stream = _stream_agent_response(
+            runtime,
+            placeholder,
+            resume_decisions=decisions_payload,
+            resume_interrupt_id=resume_request.interruptId or "",
+        )
         return StreamingResponse(stream, media_type="application/jsonl")
 
     @app.post("/agents/{agent_name}/workspace/{workspace_id}/chat/stream/respond")

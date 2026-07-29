@@ -32,7 +32,9 @@ def load_rows(dataset_path: str, request: dict[str, Any]) -> tuple[list[dict[str
         raise SystemExit(f"dashboard dataset not found: {dataset_path}")
     suffix = path.suffix.lower()
     if suffix == ".csv":
-        df = pd.read_csv(path)
+        # Preserve explicit sentinel text such as "N/A", "NA", or "null".
+        # Only genuinely empty CSV cells should become missing JSON values.
+        df = pd.read_csv(path, keep_default_na=False, na_values=[""])
     elif suffix == ".parquet":
         df = pd.read_parquet(path)
     elif suffix == ".json":

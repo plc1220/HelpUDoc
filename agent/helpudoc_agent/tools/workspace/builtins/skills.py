@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import PurePosixPath
 from typing import List, Optional
 
 from langchain_core.callbacks import CallbackManagerForToolRun
@@ -29,6 +30,39 @@ from ....tagged_file_policy import tagged_files_mode_guard
 from ..constants import MAX_DISTINCT_SKILLS_PER_TURN, MAX_SKILL_LOAD_ATTEMPTS_PER_TURN
 
 MAX_SKILL_ASSET_MANIFEST_ITEMS = 40
+MAX_DATA_WORKSPACE_QUERIES_PER_TURN = 10
+
+
+def _data_workspace_action(args: List[str]) -> str:
+    raw = ""
+    if "--request-json" in args:
+        index = args.index("--request-json") + 1
+        if index < len(args):
+            raw = args[index]
+    elif args:
+        raw = args[0]
+    if not str(raw).lstrip().startswith("{"):
+        return ""
+    try:
+        payload = json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        return ""
+    return str(payload.get("action") or "schema").strip().lower() if isinstance(payload, dict) else ""
+
+
+def _canonical_declared_script_name(workspace_state: WorkspaceState, raw_name: str) -> str:
+    normalized = str(raw_name or "").strip().replace("\\", "/")
+    scope = workspace_state.context.get("active_skill_scope")
+    raw_scripts = scope.get("sandbox_scripts") if isinstance(scope, dict) else []
+    declared = {
+        str(item.get("name") or "").strip()
+        for item in raw_scripts or []
+        if isinstance(item, dict) and str(item.get("name") or "").strip()
+    }
+    if normalized in declared:
+        return normalized
+    stem = PurePosixPath(normalized).stem
+    return stem if stem in declared else normalized
 
 
 def _skill_asset_backend_paths(skill) -> list[str]:
@@ -250,6 +284,107 @@ def build_run_skill_python_script_tool(settings: Settings, workspace_state: Work
         blocked = tagged_files_mode_guard(workspace_state.context, "run_skill_python_script")
         if blocked:
             return blocked
+        script_name = _canonical_declared_script_name(workspace_state, script_name)
+        effective_args = list(args or [])
+        if script_name == "build_native_dashboard_package":
+            if "--help" in effective_args or "-h" in effective_args:
+                return (
+                    "Native dashboard builder usage: pass exactly one complete request with "
+                    "args=['--request-json', '<JSON object>']. This help check does not execute "
+                    "the builder."
+                )
+            execution_count = int(
+                workspace_state.context.get("_native_dashboard_builder_executions") or 0
+            )
+            if execution_count >= 1:
+                return (
+                    "NATIVE_DASHBOARD_BUILDER_DUPLICATE_BLOCKED\n"
+                    "The native dashboard builder already executed once for this task. "
+                    "Do not call it again."
+                )
+            approved_output_path = str(
+                workspace_state.context.get("host_dashboard_output_path") or ""
+            ).strip()
+            if "--request-json" in effective_args:
+                request_index = effective_args.index("--request-json") + 1
+                if request_index < len(effective_args):
+                    try:
+                        request_payload = json.loads(effective_args[request_index])
+                    except (TypeError, json.JSONDecodeError):
+                        request_payload = None
+                    if isinstance(request_payload, dict):
+                        if approved_output_path:
+                            request_payload["output_path"] = approved_output_path
+                        approved_filters = workspace_state.context.get(
+                            "host_dashboard_filters"
+                        )
+                        if isinstance(approved_filters, list) and approved_filters:
+                            request_payload["filter_schema"] = [
+                                {
+                                    "id": str(field),
+                                    "field": str(field),
+                                    "type": "categorical",
+                                    "label": str(field).replace("_", " ").title(),
+                                    "multi": True,
+                                }
+                                for field in approved_filters
+                                if str(field).strip()
+                            ]
+                        if not request_payload.get("chart_bindings"):
+                            time_field = str(
+                                workspace_state.context.get("host_dashboard_time_field")
+                                or "order_date"
+                            )
+                            request_payload["chart_bindings"] = [
+                                {
+                                    "title": "Order Count Over Time",
+                                    "chart_type": "line",
+                                    "x_field": time_field,
+                                    "y_field": "order_id",
+                                    "aggregation": "count",
+                                },
+                                {
+                                    "title": "Revenue by Country",
+                                    "chart_type": "bar",
+                                    "x_field": "country",
+                                    "y_field": "revenue",
+                                    "aggregation": "sum",
+                                },
+                                {
+                                    "title": "Order Count by Category",
+                                    "chart_type": "bar",
+                                    "x_field": "category",
+                                    "y_field": "order_id",
+                                    "aggregation": "count",
+                                },
+                                {
+                                    "title": "Order Count by Device",
+                                    "chart_type": "bar",
+                                    "x_field": "device",
+                                    "y_field": "order_id",
+                                    "aggregation": "count",
+                                },
+                            ]
+                        effective_args[request_index] = json.dumps(
+                            request_payload,
+                            ensure_ascii=False,
+                            separators=(",", ":"),
+                        )
+            workspace_state.context["_native_dashboard_builder_executions"] = 1
+        data_workspace_action = (
+            _data_workspace_action(effective_args) if script_name == "data_workspace" else ""
+        )
+        if data_workspace_action in {"query", "export"}:
+            query_count = int(
+                workspace_state.context.get("_data_workspace_query_executions") or 0
+            )
+            if query_count >= MAX_DATA_WORKSPACE_QUERIES_PER_TURN:
+                return (
+                    "DATA_WORKSPACE_QUERY_LIMIT_REACHED\n"
+                    f"This task already executed {MAX_DATA_WORKSPACE_QUERIES_PER_TURN} "
+                    "bounded data_workspace queries. Use the existing results or explain "
+                    "that the analysis limit was reached."
+                )
         try:
             result = run_declared_skill_python_script(
                 skills_root=skills_root,
@@ -257,12 +392,21 @@ def build_run_skill_python_script_tool(settings: Settings, workspace_state: Work
                 workspace_state=workspace_state,
                 script_name=script_name,
                 input_paths=input_paths or [],
-                args=args or [],
+                args=effective_args,
             )
         except SandboxUnavailableError as exc:
             return str(exc)
         except SandboxExecutionError as exc:
             return f"Skill sandbox execution blocked: {exc}"
+        if data_workspace_action in {"query", "export"}:
+            workspace_state.context["_data_workspace_query_executions"] = (
+                int(workspace_state.context.get("_data_workspace_query_executions") or 0) + 1
+            )
+        current_run_ids = workspace_state.context.get("_current_sandbox_run_ids")
+        run_ids = [str(item).strip() for item in current_run_ids] if isinstance(current_run_ids, list) else []
+        if result.run_id not in run_ids:
+            run_ids.append(result.run_id)
+            workspace_state.context["_current_sandbox_run_ids"] = run_ids
         tool_payload = _emit_script_events(result, callbacks)
 
         lines = [

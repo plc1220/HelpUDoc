@@ -65,6 +65,8 @@ type RunAgentOptions = {
   messageContent?: AgentMessageContentBlock[];
   internetSearchEnabled?: boolean;
   traceContext?: AgentTraceContext;
+  interruptId?: string;
+  originalPrompt?: string;
 };
 
 export type DocumentExtractionResponse = {
@@ -159,6 +161,12 @@ export async function resumeAgentStream(
     headers.Authorization = `Bearer ${options.authToken}`;
   }
   const payload: Record<string, unknown> = { decisions };
+  if (options?.interruptId) {
+    payload.interruptId = options.interruptId;
+  }
+  if (options?.originalPrompt) {
+    payload.originalPrompt = options.originalPrompt;
+  }
   if (options?.traceContext) {
     payload.langfuseTraceContext = options.traceContext;
   }

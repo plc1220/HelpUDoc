@@ -19,6 +19,7 @@ import {
 } from '../../services/agentRunService';
 import { blockingRedisClient } from '../../services/redisService';
 import { createAgentPolicyApi } from './policy';
+import { safeErrorForLog } from '../../lib/safeError';
 
 const IMAGE_NAME_PATTERN = /\.(png|jpe?g|gif|bmp|webp|svg)$/i;
 const DEBUG_AGENT_RUN_STREAM =
@@ -80,7 +81,7 @@ const handleError = (res: Response, error: unknown, fallbackMessage: string) => 
   if (error instanceof HttpError) {
     return res.status(error.statusCode).json({ error: error.message, details: error.details });
   }
-  console.error(fallbackMessage, error);
+  console.error(fallbackMessage, safeErrorForLog(error));
   return res.status(500).json({ error: fallbackMessage });
 };
 
@@ -235,6 +236,7 @@ export function registerRunRoutes(
         userId: user.userId,
         workspaceId,
         policy,
+        skipPlanApprovals: workspacePolicy.skipPlanApprovals,
       });
       const messageContent = await buildCurrentTurnMessageContent(workspaceId, user.userId, enrichedPrompt, currentTurnFileIds);
       const response = await runAgent(persona, workspaceId, enrichedPrompt, history, {
@@ -290,6 +292,7 @@ export function registerRunRoutes(
         userId: user.userId,
         workspaceId,
         policy,
+        skipPlanApprovals: workspacePolicy.skipPlanApprovals,
       });
       const messageContent = await buildCurrentTurnMessageContent(workspaceId, user.userId, enrichedPrompt, currentTurnFileIds);
       streamResponse = await runAgentStream(persona, workspaceId, enrichedPrompt, history, {
@@ -317,7 +320,7 @@ export function registerRunRoutes(
         cleanupListeners();
       });
       streamResponse.data.on('error', (error: Error) => {
-        console.error('Agent stream error', error);
+        console.error('Agent stream error', safeErrorForLog(error));
         if (!res.headersSent) {
           res.status(500).json({ error: 'Agent stream failed' });
         } else if (!res.writableEnded) {
@@ -355,6 +358,7 @@ export function registerRunRoutes(
         userId: user.userId,
         workspaceId,
         policy,
+        skipPlanApprovals: workspacePolicy.skipPlanApprovals,
       });
       const messageContent = await buildCurrentTurnMessageContent(workspaceId, user.userId, enrichedPrompt, currentTurnFileIds);
       const { runId, status } = await startAgentRun({
@@ -423,6 +427,7 @@ export function registerRunRoutes(
         userId: user.userId,
         workspaceId: meta.workspaceId,
         policy,
+        skipPlanApprovals: workspacePolicy.skipPlanApprovals,
       });
       if (meta.status !== 'awaiting_approval') {
         return res.status(409).json({ error: 'Run is not awaiting approval' });
@@ -436,6 +441,7 @@ export function registerRunRoutes(
         workspaceId: meta.workspaceId,
         decision: payload.decision,
         status: meta.status,
+        hasInterruptId: Boolean(meta.pendingInterrupt?.interruptId),
       });
       const decisions = [
         payload.decision === 'edit'
@@ -453,6 +459,7 @@ export function registerRunRoutes(
       ];
       const result = await resumeAgentRun(runId, decisions, {
         authToken: authToken || undefined,
+        interruptId: meta.pendingInterrupt?.interruptId,
       });
       res.json(result);
     } catch (error: any) {
@@ -478,6 +485,7 @@ export function registerRunRoutes(
         userId: user.userId,
         workspaceId: meta.workspaceId,
         policy,
+        skipPlanApprovals: workspacePolicy.skipPlanApprovals,
       });
       if (meta.status !== 'awaiting_approval') {
         return res.status(409).json({ error: 'Run is not awaiting input' });
@@ -528,6 +536,7 @@ export function registerRunRoutes(
         userId: user.userId,
         workspaceId: meta.workspaceId,
         policy,
+        skipPlanApprovals: workspacePolicy.skipPlanApprovals,
       });
       if (meta.status !== 'awaiting_approval') {
         return res.status(409).json({ error: 'Run is not awaiting human input' });

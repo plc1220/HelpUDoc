@@ -616,3 +616,23 @@ test('gate completion allows edit-existing-deck frontend-slides completion', () 
   });
   assert.equal(err, null);
 });
+
+test('implicit input detection ignores SQL SELECT followed by summary bullets', () => {
+  const result = detectImplicitInputAwaiting({
+    status: 'completed',
+    skillId: 'data/analyze',
+    hadInterrupt: false,
+    assistantText: [
+      'The guarded query produced the expected binder error:',
+      '```sql',
+      'SELECT nonexistent_column FROM sensitive_orders',
+      '```',
+      '',
+      '- Row count: 2',
+      '- Total revenue: 365',
+      '- Sensitive columns: excluded',
+    ].join('\n'),
+  });
+
+  assert.equal(result.awaiting, false);
+});

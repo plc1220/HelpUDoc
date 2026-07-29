@@ -1,0 +1,16 @@
+{
+  "data": [
+    {
+      "x": [
+        "stale"
+      ],
+      "y": [
+        999
+      ],
+      "type": "bar"
+    }
+  ],
+  "layout": {
+    "title": "STALE"
+  }
+}

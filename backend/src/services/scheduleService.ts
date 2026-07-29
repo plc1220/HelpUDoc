@@ -570,6 +570,7 @@ export class ScheduleService {
         userId: runAsUserId,
         workspaceId: schedule.workspaceId,
         policy,
+        skipPlanApprovals: workspacePolicy.skipPlanApprovals,
       });
       const agentPrompt = buildAgentPrompt(schedule);
       const { runId } = await startAgentRun({

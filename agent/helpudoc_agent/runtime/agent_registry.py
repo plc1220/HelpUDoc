@@ -4,9 +4,11 @@ from __future__ import annotations
 from copy import deepcopy
 import json
 import logging
+from pathlib import PurePosixPath
 from typing import Any, Dict, Tuple
 
 from deepagents.backends import CompositeBackend, FilesystemBackend
+from deepagents.backends.protocol import GlobResult, GrepResult, LsResult, ReadResult
 from deepagents.middleware.filesystem import FilesystemMiddleware
 from deepagents.middleware.patch_tool_calls import PatchToolCallsMiddleware
 from langchain.agents import create_agent
@@ -83,6 +85,160 @@ ALWAYS_AVAILABLE_TOOL_GROUPS = (
     "request_interaction",
     "workflow_action",
 )
+
+_STRUCTURED_DATA_SUFFIXES = frozenset({".csv", ".tsv", ".parquet", ".json"})
+_DATA_ARTIFACT_OUTPUT_DIRS = frozenset({"sandbox-runs", "charts", "dashboards", "reports"})
+
+
+class SkillScopedFilesystemBackend(FilesystemBackend):
+    """Keep structured source rows out of a Data Analytics model context."""
+
+    def __init__(self, *, workspace_state: WorkspaceState, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.workspace_state = workspace_state
+
+    def _data_skill_context(self) -> tuple[bool, dict[str, Any]]:
+        context = self.workspace_state.context if isinstance(self.workspace_state.context, dict) else {}
+        skill_id = str(context.get("active_skill") or "").strip()
+        return skill_id == "data" or skill_id.startswith("data/"), context
+
+    @staticmethod
+    def _virtual_path(file_path: str) -> PurePosixPath:
+        normalized = str(file_path or "").strip().replace("\\", "/")
+        return PurePosixPath("/" + normalized.lstrip("/"))
+
+    def _data_path_is_visible(self, file_path: str, context: dict[str, Any]) -> bool:
+        virtual_path = self._virtual_path(file_path)
+        top_level = virtual_path.parts[1] if len(virtual_path.parts) > 1 else ""
+        if top_level == "sandbox-runs" and len(virtual_path.parts) > 2:
+            current_run_ids = {
+                str(item).strip()
+                for item in context.get("_current_sandbox_run_ids") or []
+                if str(item).strip()
+            }
+            return virtual_path.parts[2] in current_run_ids
+        if top_level in {"charts", "dashboards", "reports"} and len(virtual_path.parts) > 2:
+            tagged_files = {
+                str(item).strip().replace("\\", "/").lstrip("/")
+                for item in context.get("tagged_files") or []
+                if str(item).strip()
+            }
+            normalized = str(file_path or "").strip().replace("\\", "/").lstrip("/")
+            return normalized in tagged_files
+        return True
+
+    def ls(self, path: str) -> LsResult:
+        result = super().ls(path)
+        is_data_skill, context = self._data_skill_context()
+        if not is_data_skill or not result.entries:
+            return result
+        if not self._data_path_is_visible(path, context):
+            return LsResult(entries=[])
+        return LsResult(
+            error=result.error,
+            entries=[
+                entry
+                for entry in result.entries
+                if self._data_path_is_visible(str(entry.get("path") or ""), context)
+            ],
+        )
+
+    def glob(self, pattern: str, path: str = "/") -> GlobResult:
+        result = super().glob(pattern, path=path)
+        is_data_skill, context = self._data_skill_context()
+        if not is_data_skill or not result.matches:
+            return result
+        return GlobResult(
+            error=result.error,
+            matches=[
+                match
+                for match in result.matches
+                if self._data_path_is_visible(str(match.get("path") or ""), context)
+            ],
+        )
+
+    def grep(
+        self,
+        pattern: str,
+        path: str | None = None,
+        glob: str | None = None,
+    ) -> GrepResult:
+        result = super().grep(pattern, path=path, glob=glob)
+        is_data_skill, context = self._data_skill_context()
+        if not is_data_skill or not result.matches:
+            return result
+        visible_matches = []
+        for match in result.matches:
+            match_path = str(match.get("path") or "")
+            virtual_path = self._virtual_path(match_path)
+            top_level = virtual_path.parts[1] if len(virtual_path.parts) > 1 else ""
+            if (
+                virtual_path.suffix.lower() in _STRUCTURED_DATA_SUFFIXES
+                and top_level not in _DATA_ARTIFACT_OUTPUT_DIRS
+            ):
+                continue
+            if self._data_path_is_visible(match_path, context):
+                visible_matches.append(match)
+        return GrepResult(error=result.error, matches=visible_matches)
+
+    def read(self, file_path: str, offset: int = 0, limit: int = 2000) -> ReadResult:
+        is_data_skill, context = self._data_skill_context()
+        skill_id = str(context.get("active_skill") or "").strip()
+        normalized = str(file_path or "").strip().replace("\\", "/")
+        virtual_path = self._virtual_path(file_path)
+        top_level = virtual_path.parts[1] if len(virtual_path.parts) > 1 else ""
+        if (
+            is_data_skill
+            and top_level == "sandbox-runs"
+            and len(virtual_path.parts) > 2
+        ):
+            current_run_ids = {
+                str(item).strip()
+                for item in context.get("_current_sandbox_run_ids") or []
+                if str(item).strip()
+            }
+            sandbox_run_id = virtual_path.parts[2]
+            if sandbox_run_id not in current_run_ids:
+                return ReadResult(
+                    error=(
+                        f"Prior sandbox artifact read blocked for '{normalized}'. "
+                        "Data Analytics may read only sandbox outputs created during "
+                        "the current top-level task."
+                    )
+                )
+        if (
+            is_data_skill
+            and top_level in {"charts", "dashboards", "reports"}
+            and virtual_path.suffix.lower() in _STRUCTURED_DATA_SUFFIXES
+        ):
+            tagged_files = {
+                str(item).strip().replace("\\", "/").lstrip("/")
+                for item in context.get("tagged_files") or []
+                if str(item).strip()
+            }
+            relative_path = normalized.lstrip("/")
+            if relative_path not in tagged_files:
+                return ReadResult(
+                    error=(
+                        f"Untagged prior artifact read blocked for '{normalized}'. "
+                        "Data Analytics may not reuse prior chart, dashboard, or report "
+                        "artifacts unless the user explicitly tags that artifact."
+                    )
+                )
+        if (
+            is_data_skill
+            and virtual_path.suffix.lower() in _STRUCTURED_DATA_SUFFIXES
+            and top_level not in _DATA_ARTIFACT_OUTPUT_DIRS
+        ):
+            return ReadResult(
+                error=(
+                    f"Structured data read blocked for '{normalized}' while Data Analytics skill "
+                    f"'{skill_id}' is active. Use run_skill_python_script with the declared "
+                    "'data_workspace' script for schema, profile, and bounded SQL queries instead "
+                    "of paging raw rows into model context."
+                )
+            )
+        return super().read(file_path, offset=offset, limit=limit)
 
 
 def _normalize_mcp_candidate_servers(server_names: Any) -> list[str]:
@@ -350,7 +506,8 @@ class AgentRegistry:
                     virtual_mode=True,
                 )
             return CompositeBackend(
-                default=FilesystemBackend(
+                default=SkillScopedFilesystemBackend(
+                    workspace_state=workspace_state,
                     root_dir=str(workspace_state.root_path),
                     virtual_mode=self.settings.backend.virtual_mode,
                 ),
