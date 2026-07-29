@@ -45,6 +45,8 @@ class Decision(BaseModel):
 
 class ResumeChatRequest(BaseModel):
     decisions: List[Decision]
+    interruptId: Optional[str] = None
+    originalPrompt: Optional[str] = None
     langfuseTraceContext: Dict[str, Any] | None = None
 
 

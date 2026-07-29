@@ -126,6 +126,12 @@ Source handling:
   preview queries before package generation.
 - **BigQuery / MCP datasource**: use the MCP tools to inspect/query the warehouse, then
   create or use a scoped workspace dataset. Treat that dataset as the dashboard source of truth.
+- Preserve source values exactly in the dashboard row file. Never silently repair, replace,
+  rescale, impute, or normalize a suspicious value (for example, changing `99999` to `99.99`
+  or replacing a future date). If a value appears invalid, report it as a data-quality issue.
+- Exclude or transform questionable rows only when the exact rule is disclosed in the plan
+  and approved by the reviewer. Record every approved exclusion or transformation in
+  `data_quality_notes`; otherwise keep the original value and its provenance.
 
 ### 2. Curate before assembling
 Before generating the dashboard, review the current run and be selective.
@@ -240,6 +246,10 @@ Call `run_skill_python_script` with `script_name="build_native_dashboard_package
 - `sections` (optional): named chart groups with `chart_indexes` to control narrative flow.
 - `chart_tags` (optional): tags aligned to chart order so controls can filter charts by theme
   or audience.
+
+Invoke the builder exactly once. Pass the complete request JSON directly in that invocation
+using `--request-json`; do not first call the builder with a workspace request-file path and
+then retry with inline JSON.
 
 The script will:
 - Build a dashboard package under `dashboards/<slug>/`.

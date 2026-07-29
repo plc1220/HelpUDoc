@@ -14,6 +14,9 @@ packages; it must write `dashboard.meta.json`, `dashboard.spec.json`, and
 
 Operational rules carried forward from the old data-agent prompt:
 - inspect schema or metadata before SQL;
+- pass `paths` in every `data_workspace` request when the user names or tags
+  source files, so unrelated workspace artifacts are never registered;
+- use `sql` for query text (`sql_query` and `query` remain compatibility aliases);
 - keep SQL focused, bounded, and source-backed;
 - use BigQuery MCP for warehouse discovery/querying, then export scoped local data
   before repeated DuckDB slicing;

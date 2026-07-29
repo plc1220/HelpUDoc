@@ -22,6 +22,11 @@ def read_request(argv: list[str] | None = None) -> dict[str, Any]:
     stripped = raw.lstrip()
     if not stripped.startswith("{"):
         candidate = Path(raw)
+        if not candidate.is_file():
+            workspace = Path(
+                os.environ.get("HELPUDOC_WORKSPACE_ROOT") or os.getcwd()
+            ).resolve()
+            candidate = workspace / raw.lstrip("/\\")
         if candidate.is_file():
             raw = candidate.read_text(encoding="utf-8")
     payload = json.loads(raw)

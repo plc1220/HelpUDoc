@@ -163,6 +163,7 @@ def build_request_plan_approval_tool(workspace_state: WorkspaceState) -> Tool:
 
         if decision_type == "reject":
             workspace_state.context["plan_approved"] = False
+            workspace_state.context["last_plan_decision"] = "reject"
             workspace_state.context["last_plan_feedback"] = decision_message or "Rejected by user"
             return (
                 "PLAN_REJECTION_RECORDED\n"
@@ -176,6 +177,7 @@ def build_request_plan_approval_tool(workspace_state: WorkspaceState) -> Tool:
             draft_content = edited_draft_content
             workspace_state.context["last_plan_feedback"] = feedback
             workspace_state.context["plan_approved"] = False
+            workspace_state.context["last_plan_decision"] = "edit"
             return (
                 "PLAN_EDIT_FEEDBACK_RECORDED\n"
                 f"{base_fields}"
@@ -186,6 +188,7 @@ def build_request_plan_approval_tool(workspace_state: WorkspaceState) -> Tool:
 
         if decision_type and decision_type != "approve":
             workspace_state.context["plan_approved"] = False
+            workspace_state.context["last_plan_decision"] = decision_type
             return (
                 "PLAN_APPROVAL_DECISION_UNRECOGNIZED\n"
                 f"Decision: {decision_type}\n"
@@ -193,6 +196,7 @@ def build_request_plan_approval_tool(workspace_state: WorkspaceState) -> Tool:
             )
 
         workspace_state.context["plan_approved"] = True
+        workspace_state.context["last_plan_decision"] = "approve"
         return (
             "PLAN_APPROVAL_RECORDED\n"
             f"{base_fields}"

@@ -50,24 +50,6 @@ def _extract_message_text(message: AIMessage) -> str:
     return str(content or "").strip()
 
 
-def _extract_recent_human_text(messages: list[Any]) -> str:
-    for message in reversed(messages):
-        if isinstance(message, HumanMessage):
-            content = message.content
-            if isinstance(content, str):
-                return content.strip()
-            if isinstance(content, list):
-                parts: list[str] = []
-                for block in content:
-                    if isinstance(block, dict) and block.get("type") == "text":
-                        parts.append(str(block.get("text") or ""))
-                    elif isinstance(block, str):
-                        parts.append(block)
-                return "\n".join(part for part in parts if part).strip()
-            return str(content or "").strip()
-    return ""
-
-
 def _resolve_active_skill_id(context: Any) -> str | None:
     if not isinstance(context, dict):
         return None
@@ -712,10 +694,10 @@ class ImplicitInputGuardMiddleware(AgentMiddleware):
 
         runtime_context = getattr(runtime, "context", None)
         assistant_text = _extract_message_text(last_ai_msg)
-        recent_human_text = _extract_recent_human_text(messages)
-        generic_choice_source_text = "\n".join(
-            part for part in (assistant_text, recent_human_text) if part
-        )
+        # A synthetic form may only infer choices from the assistant's explicit
+        # request. Mining the original user prompt turns examples, field names,
+        # and security exclusions into selectable actions.
+        generic_choice_source_text = assistant_text
         detection = detect_implicit_input_awaiting(skill_id=skill_id, assistant_text=assistant_text)
         raw_missing_gate = (
             _frontend_slides_required_gate_missing(runtime_context)

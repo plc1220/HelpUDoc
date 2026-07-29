@@ -1,4 +1,5 @@
 import { redisClient } from '../redisService';
+import { safeErrorForLog } from '../../lib/safeError';
 import type { PersistedRunMeta } from './types';
 
 export const STREAM_TTL_SECONDS = 60 * 60 * 24; // 24h
@@ -42,7 +43,11 @@ export const appendStreamEvent = async (runId: string, line: string) => {
       });
     }
   } catch (error) {
-    console.error('[agent-run-stream] failed to append', { runId, streamKey, error });
+    console.error('[agent-run-stream] failed to append', {
+      runId,
+      streamKey,
+      error: safeErrorForLog(error),
+    });
     throw error;
   }
 };

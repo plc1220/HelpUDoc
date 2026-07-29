@@ -608,7 +608,9 @@ def activate_skill_context(
     }
     # Plan approval is per top-level task; a newly activated skill starts fresh unless
     # the workspace is explicitly configured to auto-approve plan reviews.
-    context["plan_approved"] = bool(context.get("skip_plan_approvals"))
+    context["plan_approved"] = bool(
+        context.get("skip_plan_approvals") or context.get("host_plan_approved")
+    )
     context["pre_plan_search_count"] = 0
 
 

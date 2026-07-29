@@ -43,7 +43,11 @@ _STRONG_GATE_PATTERNS: tuple[Pattern[str], ...] = (
 )
 
 _SELECTION_PROMPT_PATTERNS: tuple[Pattern[str], ...] = (
-    re.compile(r"\b(?:please\s+)?select\b", re.IGNORECASE),
+    re.compile(
+        r"\bplease\s+select\b|\bselect\s+(?:one|an?\s+option|your\s+(?:preferred\s+)?"
+        r"(?:option|format|path|audience|tone|depth|scope|style|mood|vibe))\b",
+        re.IGNORECASE,
+    ),
     re.compile(r"\b(?:please\s+)?choose\b", re.IGNORECASE),
     re.compile(r"\bwhich\s+(?:one|option|format|path|audience|tone|depth|scope|style|mood|vibe)", re.IGNORECASE),
     re.compile(r"\b(?:choose|select|pick)\s+(?:the\s+)?(?:output\s+)?(?:format|audience|tone|depth|scope|option|path)\b", re.IGNORECASE),

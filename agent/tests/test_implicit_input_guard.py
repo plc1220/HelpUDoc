@@ -88,6 +88,21 @@ def test_detect_implicit_input_non_slide_pausing_after_prompting_choice() -> Non
     assert result.awaiting is True
 
 
+def test_detect_implicit_input_ignores_sql_select_with_summary_bullets() -> None:
+    result = detect_implicit_input_awaiting(
+        skill_id="data/analyze",
+        assistant_text=(
+            "The guarded query produced the expected binder error:\n"
+            "```sql\nSELECT nonexistent_column FROM sensitive_orders\n```\n\n"
+            "The safe aggregation then completed:\n"
+            "- Row count: 2\n"
+            "- Total revenue: 365\n"
+            "- Sensitive columns: excluded"
+        ),
+    )
+    assert result.awaiting is False
+
+
 def test_detect_implicit_input_non_slide_claimed_interaction_gate_presented() -> None:
     result = detect_implicit_input_awaiting(
         skill_id="research",
@@ -757,7 +772,7 @@ def test_guard_generic_interaction_extracts_colon_choice_list() -> None:
     ]
 
 
-def test_guard_generic_interaction_extracts_choices_from_user_prompt_when_assistant_omits_them() -> None:
+def test_guard_generic_interaction_does_not_extract_choices_from_user_prompt() -> None:
     middleware = ImplicitInputGuardMiddleware()
     state = {
         "messages": [
@@ -782,9 +797,5 @@ def test_guard_generic_interaction_extracts_choices_from_user_prompt_when_assist
     messages = result.get("messages") or []
     payload = extract_interrupt_payload_from_tool_text(messages[0].content)
     assert payload is not None
-    options = payload["interactionRequest"]["props"]["questions"][0]["options"]
-    assert [option["label"] for option in options] == [
-        "Executive Summary",
-        "Full Report",
-        "Checklist",
-    ]
+    options = payload["interactionRequest"]["props"]["questions"][0].get("options", [])
+    assert options == []

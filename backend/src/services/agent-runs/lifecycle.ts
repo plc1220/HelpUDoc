@@ -30,6 +30,7 @@ import {
   requiredArtifactsForSkill,
   requiredGateIdsForSkill,
 } from './workflowContracts';
+import { safeErrorForLog, safeTelemetryForPersistence } from '../../lib/safeError';
 
 export type AgentRunStatus =
   | 'queued'
@@ -128,7 +129,7 @@ type PersistedRunContext = {
 };
 
 type ResumePayload =
-  | { decisions: AgentDecision[]; response?: never }
+  | { decisions: AgentDecision[]; interruptId?: string; response?: never }
   | { response: AgentInterruptResponse; decisions?: never }
   | { action: AgentInterruptActionResponse; decisions?: never; response?: never };
 
@@ -641,7 +642,11 @@ const appendStreamEvent = async (runId: string, line: string) => {
       });
     }
   } catch (error) {
-    console.error('[agent-run-stream] failed to append', { runId, streamKey, error });
+    console.error('[agent-run-stream] failed to append', {
+      runId,
+      streamKey,
+      error: safeErrorForLog(error),
+    });
     throw error;
   }
 };
@@ -2227,7 +2232,7 @@ const persistRunConversationMessage = async (
       conversationId: params.conversationId,
       turnId: params.turnId,
       status,
-      error,
+      error: safeErrorForLog(error),
     });
   }
 };
@@ -2260,7 +2265,7 @@ const STRONG_GATE_PATTERNS = [
 ];
 
 const SELECTION_PROMPT_PATTERNS = [
-  /\b(?:please\s+)?select\b/i,
+  /\bplease\s+select\b|\bselect\s+(?:one|an?\s+option|your\s+(?:preferred\s+)?(?:option|format|path|audience|tone|depth|scope|style|mood|vibe))\b/i,
   /\b(?:please\s+)?choose\b/i,
   /\bwhich\s+(?:one|option|format|path|audience|tone|depth|scope|style|mood|vibe)/i,
   /\b(?:choose|select|pick)\s+(?:the\s+)?(?:output\s+)?(?:format|audience|tone|depth|scope|option|path)\b/i,
@@ -2743,7 +2748,10 @@ const inspectRunStreamForRecovery = async (
       }
     }
   } catch (error) {
-    console.error('Failed to inspect run stream for stale run recovery', { runId, error });
+    console.error('Failed to inspect run stream for stale run recovery', {
+      runId,
+      error: safeErrorForLog(error),
+    });
   }
   return inspection;
 };
@@ -3396,7 +3404,10 @@ async function runAgentRunWorker(
           conversationId: params.conversationId,
         })
         .catch((memoryError) => {
-          console.error('Failed to build memory suggestions for completed run', { runId, error: memoryError });
+          console.error('Failed to build memory suggestions for completed run', {
+            runId,
+            error: safeErrorForLog(memoryError),
+          });
         });
     }
     if ((effectiveStatus === 'completed' || effectiveStatus === 'failed') && skillEvolutionService && params.userId && params.conversationId) {
@@ -3415,7 +3426,10 @@ async function runAgentRunWorker(
           clarificationInterruptCount,
         })
         .catch((err) => {
-          console.error('Failed to build skill evolution suggestions for run', { runId, error: err });
+          console.error('Failed to build skill evolution suggestions for run', {
+            runId,
+            error: safeErrorForLog(err),
+          });
         });
     }
     cleanupRun(runId, upstream || undefined);
@@ -3467,14 +3481,20 @@ async function runAgentRunWorker(
           ...langfuseStreamMeta,
         },
       }).catch((telemetryError) => {
-        console.error('Failed to finalize interrupted agent run telemetry', { runId, error: telemetryError });
+        console.error('Failed to finalize interrupted agent run telemetry', {
+          runId,
+          error: safeErrorForLog(telemetryError),
+        });
       });
     }
     await updateConversationFromRun('awaiting_approval', { pendingInterrupt });
   };
 
   const processParsedLine = async (line: string): Promise<'continue' | 'stop'> => {
-    const parsed = parseLine(line);
+    const rawParsed = parseLine(line);
+    const parsed = rawParsed
+      ? safeTelemetryForPersistence(rawParsed) as Record<string, unknown>
+      : null;
     captureConversationEvent(parsed);
     latestFrontendSlidesArtifactPaths = mergeFrontendSlidesArtifactPaths(
       latestFrontendSlidesArtifactPaths,
@@ -3616,7 +3636,11 @@ async function runAgentRunWorker(
             eventAt: new Date().toISOString(),
           });
         } catch (telemetryError) {
-          console.error('Failed to append agent run tool event', { runId, eventIndex, error: telemetryError });
+          console.error('Failed to append agent run tool event', {
+            runId,
+            eventIndex,
+            error: safeErrorForLog(telemetryError),
+          });
         }
       }
     }
@@ -3691,7 +3715,7 @@ async function runAgentRunWorker(
         newlineIndex = buffer.indexOf('\n');
       }
     } catch (error) {
-      console.error('Failed to process agent run chunk', error);
+      console.error('Failed to process agent run chunk', safeErrorForLog(error));
     }
   };
 
@@ -3724,6 +3748,8 @@ async function runAgentRunWorker(
           signal: controller.signal,
           authToken: params.authToken,
           traceContext,
+          interruptId: resumePayload.interruptId,
+          originalPrompt: params.prompt,
         })
       : resumePayload && 'response' in resumePayload && resumePayload.response
       ? await agentStreamClient.resumeAgentResponseStream(params.persona, params.workspaceId, resumePayload.response, {
@@ -3824,7 +3850,7 @@ async function runAgentRunWorker(
 export async function resumeAgentRun(
   runId: string,
   decisions: AgentDecision[],
-  options?: { authToken?: string },
+  options?: { authToken?: string; interruptId?: string },
 ): Promise<{ runId: string; status: AgentRunStatus }> {
   const context = await loadRunContext(runId);
   if (!context) {
@@ -3839,7 +3865,10 @@ export async function resumeAgentRun(
     pendingInterrupt: '',
     runContext: serializeRunContext(nextParams),
   });
-  void runAgentRunWorker(runId, nextParams, { decisions });
+  void runAgentRunWorker(runId, nextParams, {
+    decisions,
+    interruptId: options?.interruptId,
+  });
   return { runId, status: 'queued' };
 }
 

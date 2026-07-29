@@ -43,6 +43,7 @@ export type McpServerPolicy = {
   mcpServerAllowIds: string[];
   mcpServerDenyIds: string[];
   isAdmin: boolean;
+  skipPlanApprovals: boolean;
 };
 
 export class WorkspaceService {
@@ -365,6 +366,10 @@ export class WorkspaceService {
     options: MembershipCheckOptions = {},
   ): Promise<McpServerPolicy> {
     const { membership } = await this.ensureMembership(workspaceId, userId, options);
+    const workspacePolicy = await this.db('workspaces')
+      .select('skipPlanApprovals')
+      .where({ id: workspaceId })
+      .first();
     const isAdmin = membership.role === 'owner';
 
     const allow: string[] = [];
@@ -389,6 +394,7 @@ export class WorkspaceService {
       mcpServerAllowIds: Array.from(new Set(allow)).sort(),
       mcpServerDenyIds: Array.from(new Set(deny)).sort(),
       isAdmin,
+      skipPlanApprovals: Boolean(workspacePolicy?.skipPlanApprovals),
     };
   }
 

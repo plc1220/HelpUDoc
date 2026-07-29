@@ -1,0 +1,52 @@
+{
+  "join_guard": {
+    "base_order_revenue": "131737.50",
+    "customer_rows": 49,
+    "item_revenue_total": "131737.50",
+    "item_rows": 2400,
+    "naive_joined_order_revenue": "263482.50",
+    "raw_join_row_count": 2400,
+    "unmatched_order_count": 48
+  },
+  "orders_clean": {
+    "cancelled_orders": 183,
+    "date_max": "2026-06-28",
+    "date_min": "2026-03-01",
+    "distinct_order_ids": 1200,
+    "revenue_total": "131737.50",
+    "row_count": 1200
+  },
+  "retention": {
+    "eligible_users": 1110,
+    "retained_users": 679,
+    "unweighted_average_rate": 0.7333333333333333,
+    "weighted_rate": 0.6117117117117117
+  },
+  "sensitive_markers": [
+    "qc-person-1@example.invalid",
+    "+60-000-000-0001",
+    "tok_qc_only_001",
+    "not-a-secret-marker-001"
+  ],
+  "timezone": {
+    "assumption": "Asia/Kuala_Lumpur (UTC+08:00)",
+    "local_day_counts": {
+      "2026-07-01": 1,
+      "2026-07-02": 3,
+      "2026-07-03": 2
+    }
+  },
+  "weekly_growth": {
+    "aligned_prior_five_day_rate": 0.1,
+    "as_of_date": "2026-07-24",
+    "latest_week_days": 5,
+    "latest_week_rate": 0.2,
+    "latest_week_start": "2026-07-20",
+    "prior_complete_week_rate": 0.1,
+    "prior_complete_week_start": "2026-07-13"
+  },
+  "wide": {
+    "column_count": 36,
+    "row_count": 1205
+  }
+}
