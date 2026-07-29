@@ -78,6 +78,7 @@ interface WorkspaceFileTreeProps {
   selectedFiles: Set<string>;
   copiedPublicUrlFileId: string | null;
   dashboardArtifactsByPath?: Record<string, DashboardArtifactInfo>;
+  readOnly?: boolean;
   isDraftWorkspaceFile: (file?: WorkspaceFile | null) => boolean;
   onSelectFile: (file: WorkspaceFile) => void;
   onSelectFolder?: (folderPath: string) => void;
@@ -183,6 +184,7 @@ const TreeFileRow: React.FC<{
   setDraggedFileId: (fileId: string | null) => void;
   setDropTargetPath: (path: string | null) => void;
   colorMode: 'light' | 'dark';
+  readOnly: boolean;
 }> = ({
   node,
   selected,
@@ -201,12 +203,13 @@ const TreeFileRow: React.FC<{
   setDraggedFileId,
   setDropTargetPath,
   colorMode,
+  readOnly,
 }) => {
   const { file } = node;
   const displayName = getFileDisplayName(file.name || '');
   const fileIcon = getFileTypeIcon(file.name || '');
   const isDraft = isDraftWorkspaceFile(file);
-  const isDraggable = !isDraft;
+  const isDraggable = !isDraft && !readOnly;
   const fileId = String(file.id);
   const isBeingDragged = draggedFileId === fileId;
   const isDarkMode = colorMode === 'dark';
@@ -259,13 +262,15 @@ const TreeFileRow: React.FC<{
         clearDragState();
       }}
     >
-      <input
-        type="checkbox"
-        checked={selectedFiles.has(fileId)}
-        onChange={() => onToggleFileSelection(fileId)}
-        onClick={(event) => event.stopPropagation()}
-        className="mt-1 shrink-0"
-      />
+      {!readOnly ? (
+        <input
+          type="checkbox"
+          checked={selectedFiles.has(fileId)}
+          onChange={() => onToggleFileSelection(fileId)}
+          onClick={(event) => event.stopPropagation()}
+          className="mt-1 shrink-0"
+        />
+      ) : null}
       <div
         role="button"
         tabIndex={0}
@@ -325,7 +330,7 @@ const TreeFileRow: React.FC<{
               )}
             </button>
           )}
-          {!isDraft && (
+          {!isDraft && !readOnly && (
             <button
               type="button"
               onClick={(event) => {
@@ -338,7 +343,7 @@ const TreeFileRow: React.FC<{
               <Edit size={14} />
             </button>
           )}
-          <button
+          {!readOnly ? <button
             type="button"
             onClick={(event) => {
               event.stopPropagation();
@@ -348,7 +353,7 @@ const TreeFileRow: React.FC<{
             title="Delete"
           >
             <Trash size={14} />
-          </button>
+          </button> : null}
       </div>
     </div>
   );
@@ -368,6 +373,7 @@ const TreeFolderRow: React.FC<{
   dropTargetPath: string | null;
   children: React.ReactNode;
   colorMode: 'light' | 'dark';
+  readOnly: boolean;
 }> = ({
   node,
   expanded,
@@ -382,6 +388,7 @@ const TreeFolderRow: React.FC<{
   dropTargetPath,
   children,
   colorMode,
+  readOnly,
 }) => {
   const isDropTarget = dropTargetPath === node.path;
   const isDarkMode = colorMode === 'dark';
@@ -428,9 +435,9 @@ const TreeFolderRow: React.FC<{
     <div
       className="select-none"
       data-workspace-folder-path={node.path}
-      onDragOver={handleFolderDragOver}
-      onDragLeave={handleFolderDragLeave}
-      onDrop={handleFolderDrop}
+      onDragOver={readOnly ? undefined : handleFolderDragOver}
+      onDragLeave={readOnly ? undefined : handleFolderDragLeave}
+      onDrop={readOnly ? undefined : handleFolderDrop}
     >
       <div
         className={`group flex items-center gap-2 rounded-lg px-2 py-1.5 transition-colors ${containerClassName}`}
@@ -484,7 +491,7 @@ const TreeFolderRow: React.FC<{
             </span>
           </div>
         </button>
-        <button
+        {!readOnly ? <button
           type="button"
           onClick={(event) => {
             event.stopPropagation();
@@ -499,8 +506,8 @@ const TreeFolderRow: React.FC<{
           aria-label={`Rename folder ${node.path}`}
         >
           <Edit size={14} />
-        </button>
-        <button
+        </button> : null}
+        {!readOnly ? <button
           type="button"
           onClick={(event) => {
             event.stopPropagation();
@@ -515,7 +522,7 @@ const TreeFolderRow: React.FC<{
           aria-label={`Delete folder ${node.path}`}
         >
           <Trash size={14} />
-        </button>
+        </button> : null}
       </div>
       {expanded && <div className="mt-1 space-y-1 pl-5">{children}</div>}
     </div>
@@ -548,6 +555,7 @@ const renderTreeNodes = (
     setDropTargetPath: (path: string | null) => void;
     dropTargetPath: string | null;
     colorMode: 'light' | 'dark';
+    readOnly: boolean;
   },
 ): React.ReactNode => {
   return nodes.map((node) => {
@@ -568,6 +576,7 @@ const renderTreeNodes = (
           setDropTargetPath={options.setDropTargetPath}
           dropTargetPath={options.dropTargetPath}
           colorMode={options.colorMode}
+          readOnly={options.readOnly}
         >
           {renderTreeNodes(node.children, options)}
         </TreeFolderRow>
@@ -594,6 +603,7 @@ const renderTreeNodes = (
         setDraggedFileId={options.setDraggedFileId}
         setDropTargetPath={options.setDropTargetPath}
         colorMode={options.colorMode}
+        readOnly={options.readOnly}
       />
     );
   });
@@ -607,6 +617,7 @@ export default function WorkspaceFileTree({
   selectedDashboardPath,
   selectedFiles,
   dashboardArtifactsByPath,
+  readOnly = false,
   isDraftWorkspaceFile,
   onSelectFile,
   onSelectFolder,
@@ -698,7 +709,7 @@ export default function WorkspaceFileTree({
           .filter((selectedFile): selectedFile is WorkspaceFile => Boolean(selectedFile))
           .filter((selectedFile) => !isDraftWorkspaceFile(selectedFile))
       : [file];
-    if (filesToMove.length > 0) {
+    if (!readOnly && filesToMove.length > 0) {
       onMoveFiles(filesToMove, folderPath);
     }
     draggedFileIdRef.current = null;
@@ -728,7 +739,7 @@ export default function WorkspaceFileTree({
       className={`flex h-full min-h-0 flex-col overflow-hidden ${
         draggedFileId ? (isDarkMode ? 'bg-sky-500/5' : 'bg-blue-50/30') : ''
       }`}
-      onDragOver={(event) => {
+      onDragOver={readOnly ? undefined : (event) => {
         if (!canAcceptWorkspaceFileDrop(event, draggedFileIdRef)) {
           return;
         }
@@ -736,7 +747,7 @@ export default function WorkspaceFileTree({
         event.dataTransfer.dropEffect = 'move';
         setDropTargetPath(getWorkspaceFolderPathFromPoint(event.clientX, event.clientY));
       }}
-      onDrop={handleRootDrop}
+      onDrop={readOnly ? undefined : handleRootDrop}
     >
       <div className="flex-1 overflow-y-auto px-1 py-1">
         {tree.children.length ? (
@@ -765,6 +776,7 @@ export default function WorkspaceFileTree({
               setDropTargetPath,
               dropTargetPath,
               colorMode,
+              readOnly,
             })}
           </div>
         ) : (

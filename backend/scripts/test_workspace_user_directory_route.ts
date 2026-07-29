@@ -22,6 +22,8 @@ const userService = {
   }),
 } as any;
 
+const publicationService = {} as any;
+
 const app = express();
 app.use((req, _res, next) => {
   (req as any).userContext = {
@@ -31,7 +33,7 @@ app.use((req, _res, next) => {
   };
   next();
 });
-app.use('/workspaces', workspaceRoutes(workspaceService, userService));
+app.use('/workspaces', workspaceRoutes(workspaceService, publicationService, userService));
 
 const server = app.listen(0);
 const address = server.address();

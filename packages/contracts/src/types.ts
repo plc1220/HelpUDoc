@@ -5,6 +5,22 @@ export interface Workspace {
   slug?: string;
   role?: 'owner' | 'editor' | 'viewer';
   canEdit?: boolean;
+  canPublish?: boolean;
+  visibility?: 'private' | 'team';
+  teamId?: string | null;
+  teamName?: string | null;
+  publicationStatus?:
+    | 'private_draft'
+    | 'up_to_date'
+    | 'changes_to_publish'
+    | 'team_updates_available'
+    | 'review_needed';
+  linkedTeamWorkspaceId?: string | null;
+  privateCopyWorkspaceId?: string | null;
+  currentPublishedVersionId?: string | null;
+  currentPublishedVersionNumber?: number | null;
+  latestPublisherName?: string | null;
+  lastPublishedAt?: string | null;
   createdAt?: string;
   updatedAt?: string;
 }

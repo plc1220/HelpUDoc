@@ -11,7 +11,16 @@ import {
 import { BookOpen, Check, CheckSquare, Copy, Edit, Trash, Plus, Minus, X, ChevronLeft, ChevronDown, RotateCcw, Printer, Download, Link as LinkIcon, Loader2, FolderPlus, FolderUp, Upload, Home, ArrowUp, Search, File as FileIcon, Wrench, Plug, Sparkles, Info } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { getWorkspaces, createWorkspace, deleteWorkspace, renameWorkspace } from '../../services/workspaceApi';
+import {
+  WorkspaceApiError,
+  createPrivateWorkspaceCopy,
+  createWorkspace,
+  deleteWorkspace,
+  getWorkspaces,
+  renameWorkspace,
+  syncWorkspaceWithTeam,
+  type PublicationConflict,
+} from '../../services/workspaceApi';
 import {
   createWorkspaceSchedule,
   deleteWorkspaceSchedule,
@@ -77,6 +86,9 @@ import type {
 } from '../../types';
 import CollapsibleDrawer from '../../components/CollapsibleDrawer';
 import WorkspaceShareDialog from '../../components/WorkspaceShareDialog';
+import WorkspacePublishDialog from '../../components/WorkspacePublishDialog';
+import WorkspaceConflictDialog from '../../components/WorkspaceConflictDialog';
+import WorkspaceHistoryDialog from '../../components/WorkspaceHistoryDialog';
 import ScheduleDialog from '../../components/schedules/ScheduleDialog';
 import WorkspaceSchedulesPanel from '../../components/schedules/WorkspaceSchedulesPanel';
 import type { UIBlock } from '../../components/UIBlockRenderer';
@@ -771,6 +783,12 @@ export default function WorkspacePage() {
   const [internetSearchEnabled, setInternetSearchEnabled] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [shareWorkspace, setShareWorkspace] = useState<Workspace | null>(null);
+  const [publishWorkspaceTarget, setPublishWorkspaceTarget] = useState<Workspace | null>(null);
+  const [historyWorkspaceTarget, setHistoryWorkspaceTarget] = useState<Workspace | null>(null);
+  const [syncWorkspaceTarget, setSyncWorkspaceTarget] = useState<Workspace | null>(null);
+  const [syncConflicts, setSyncConflicts] = useState<PublicationConflict[]>([]);
+  const [syncBusy, setSyncBusy] = useState(false);
+  const [syncError, setSyncError] = useState('');
   const personas = DEFAULT_PERSONAS;
   const [selectedPersona, setSelectedPersona] = useState(DEFAULT_PERSONA_NAME);
   const [isEditMode, setIsEditMode] = useState(false);
@@ -821,6 +839,7 @@ export default function WorkspacePage() {
   const landingWorkspacePickerRef = useRef<HTMLDivElement | null>(null);
   const workspaceNameInputRef = useRef<HTMLInputElement | null>(null);
   const autoSaveTimerRef = useRef<number | null>(null);
+  const pendingAutoSaveRef = useRef<Promise<boolean> | null>(null);
   const lastAutoSavedContentRef = useRef<string>('');
   const fileContentRequestIdRef = useRef(0);
   const [isMentionOpen, setIsMentionOpen] = useState(false);
@@ -844,6 +863,14 @@ export default function WorkspacePage() {
     }
     return workspaces.filter((workspace) => workspace.name.toLowerCase().includes(query));
   }, [workspaceSearchQuery, workspaces]);
+  const mobilePrivateWorkspaces = useMemo(
+    () => filteredWorkspaces.filter((workspace) => workspace.visibility !== 'team').slice(0, 8),
+    [filteredWorkspaces],
+  );
+  const mobileTeamWorkspaces = useMemo(
+    () => filteredWorkspaces.filter((workspace) => workspace.visibility === 'team').slice(0, 8),
+    [filteredWorkspaces],
+  );
   const landingFilteredWorkspaces = useMemo(() => {
     const query = landingWorkspaceQuery.trim().toLowerCase();
     if (!query) {
@@ -885,6 +912,22 @@ export default function WorkspacePage() {
   const resumeInFlightRef = useRef<Set<string>>(new Set());
   const resumeAttemptedRef = useRef<Set<string>>(new Set());
   const theme = useMemo(() => buildAppTheme(colorMode), [colorMode]);
+
+  const markPrivateWorkspaceChanged = useCallback((workspaceId: string) => {
+    const update = (workspace: Workspace): Workspace => {
+      if (workspace.id !== workspaceId || workspace.visibility === 'team') return workspace;
+      const publicationStatus = !workspace.linkedTeamWorkspaceId
+        ? 'private_draft'
+        : workspace.publicationStatus === 'team_updates_available'
+          ? 'review_needed'
+          : workspace.publicationStatus === 'review_needed'
+            ? 'review_needed'
+            : 'changes_to_publish';
+      return { ...workspace, publicationStatus };
+    };
+    setWorkspaces((current) => current.map(update));
+    setSelectedWorkspace((current) => current ? update(current) : current);
+  }, []);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -1759,6 +1802,7 @@ export default function WorkspacePage() {
 
       try {
         const updated = await renameFile(selectedWorkspace.id, file.id, { path: normalizedFolder });
+        markPrivateWorkspaceChanged(selectedWorkspace.id);
         applyWorkspaceFileUpdate(file.name, updated);
       } catch (error) {
         console.error('Failed to move file:', error);
@@ -1911,16 +1955,21 @@ export default function WorkspacePage() {
     cancelStreamForConversation(activeConversationId);
   };
 
-  const loadFilesForWorkspace = useCallback(async (workspaceId: string | null) => {
+  const loadFilesForWorkspace = useCallback(async (
+    workspaceId: string | null,
+    options: { includePrivateData?: boolean } = {},
+  ) => {
     if (!workspaceId) return;
     try {
       const [files, folders, knowledge] = await Promise.all([
         getFiles(workspaceId),
         getFolders(workspaceId),
-        listKnowledge(workspaceId).catch((error) => {
-          console.error('Failed to load knowledge for workspace', error);
-          return [];
-        }),
+        options.includePrivateData === false
+          ? Promise.resolve([])
+          : listKnowledge(workspaceId).catch((error) => {
+              console.error('Failed to load knowledge for workspace', error);
+              return [];
+            }),
       ]);
       setFolderPaths(folders);
       setFiles(files);
@@ -2778,8 +2827,10 @@ export default function WorkspacePage() {
   }, [selectedWorkspace?.id]);
 
   useEffect(() => {
-    void loadSchedulesForWorkspace(selectedWorkspace?.id || null);
-  }, [loadSchedulesForWorkspace, selectedWorkspace?.id]);
+    void loadSchedulesForWorkspace(
+      selectedWorkspace?.visibility === 'team' ? null : selectedWorkspace?.id || null,
+    );
+  }, [loadSchedulesForWorkspace, selectedWorkspace?.id, selectedWorkspace?.visibility]);
 
   const ensureConversation = useCallback(async (workspaceOverride?: Workspace | null) => {
     const targetWorkspaceId = workspaceOverride?.id || selectedWorkspace?.id || null;
@@ -2845,7 +2896,7 @@ export default function WorkspacePage() {
 
   useEffect(() => {
     const loadConversations = async () => {
-      if (!selectedWorkspace) {
+      if (!selectedWorkspace || selectedWorkspace.visibility === 'team') {
         setConversationHistory([]);
         setActiveConversationId(null);
         agentMessageBufferRef.current.clear();
@@ -2869,13 +2920,22 @@ export default function WorkspacePage() {
     loadConversations();
   }, [selectedWorkspace, refreshConversationHistory, loadConversationMessages, cancelAllStreams]);
 
-  useEffect(() => {
-    const fetchWorkspaces = async () => {
-      const fetchedWorkspaces = await getWorkspaces();
-      setWorkspaces((fetchedWorkspaces || []).map((ws: Omit<Workspace, 'lastUsed'>) => hydrateWorkspace(ws)));
-    };
-    fetchWorkspaces();
+  const refreshWorkspaceList = useCallback(async () => {
+    const fetchedWorkspaces = await getWorkspaces();
+    const hydrated = (fetchedWorkspaces || []).map(
+      (workspace: Omit<Workspace, 'lastUsed'>) => hydrateWorkspace(workspace),
+    );
+    setWorkspaces(hydrated);
+    setSelectedWorkspace((current) => {
+      if (!current) return current;
+      return hydrated.find((workspace: Workspace) => workspace.id === current.id) || current;
+    });
+    return hydrated as Workspace[];
   }, []);
+
+  useEffect(() => {
+    void refreshWorkspaceList();
+  }, [refreshWorkspaceList]);
 
   useEffect(() => {
     if (!selectedWorkspace) {
@@ -2884,7 +2944,7 @@ export default function WorkspacePage() {
       return;
     }
     setWorkspaceNameDraft(selectedWorkspace.name);
-  }, [selectedWorkspace]);
+  }, [markPrivateWorkspaceChanged, selectedWorkspace]);
 
   useEffect(() => {
     if (isWorkspaceRenameActive && workspaceNameInputRef.current) {
@@ -2931,15 +2991,22 @@ export default function WorkspacePage() {
 
   const handleSelectWorkspace = useCallback((workspace: Workspace) => {
     setIsWorkspaceRenameActive(false);
+    setIsEditMode(false);
     setWorkspaceNameDraft(workspace.name);
     setFolderPaths([]);
     setSelectedWorkspace(workspace);
     setIsLandingPageVisible(false);
+    if (workspace.visibility === 'team') {
+      setIsAgentPaneVisible(false);
+      setMobileSurface('canvas');
+    }
   }, []);
 
   useEffect(() => {
     if (selectedWorkspace) {
-      loadFilesForWorkspace(selectedWorkspace.id);
+      loadFilesForWorkspace(selectedWorkspace.id, {
+        includePrivateData: selectedWorkspace.visibility !== 'team',
+      });
     }
   }, [selectedWorkspace, loadFilesForWorkspace]);
   const handleRefreshFiles = () => {
@@ -6047,12 +6114,14 @@ export default function WorkspacePage() {
           const uploadedFiles: WorkspaceFile[] = [];
           for (const attachment of localAttachments) {
             uploadedFiles.push(await createFile(workspaceId, attachment.file));
+            markPrivateWorkspaceChanged(workspaceId);
           }
           if (driveAttachments.length) {
             const imported = await importGoogleDriveFiles(
               workspaceId,
               driveAttachments.map((attachment) => attachment.driveItem.id),
             );
+            markPrivateWorkspaceChanged(workspaceId);
             if (Array.isArray(imported?.files)) {
               uploadedFiles.push(...imported.files);
             }
@@ -6312,24 +6381,85 @@ export default function WorkspacePage() {
   };
 
   const handleDeleteWorkspace = async (id: string) => {
+    const target = workspaces.find((workspace) => workspace.id === id);
+    if (target && !window.confirm(`Delete ${target.visibility === 'team' ? 'team' : 'private'} workspace "${target.name}"?`)) {
+      return;
+    }
     try {
       await deleteWorkspace(id);
-      setWorkspaces(workspaces.filter((workspace) => workspace.id !== id));
-      setSelectedWorkspace(null);
-      setFiles([]);
-      setFolderPaths([]);
-      setIsLandingPageVisible(true);
+      setWorkspaces((current) => current.filter((workspace) => workspace.id !== id));
+      if (selectedWorkspace?.id === id) {
+        setSelectedWorkspace(null);
+        setFiles([]);
+        setFolderPaths([]);
+        setIsLandingPageVisible(true);
+      }
     } catch (error) {
       console.error('Failed to delete workspace:', error);
     }
   };
 
-  const handleShareWorkspace = useCallback((ws: Workspace) => {
-    setShareWorkspace(ws);
+  const handleManageTeamAccess = useCallback((workspace: Workspace) => {
+    if (workspace.visibility === 'team') setShareWorkspace(workspace);
   }, []);
 
-  const handleUpdateFile = useCallback(async (targetFile: WorkspaceFile | null, content: string) => {
-    if (!selectedWorkspace || !targetFile) return;
+  const handleWorkPrivately = useCallback(async (workspace: Workspace) => {
+    try {
+      if (workspace.privateCopyWorkspaceId) {
+        const existing = workspaces.find((item) => item.id === workspace.privateCopyWorkspaceId);
+        if (existing) {
+          handleSelectWorkspace(existing);
+          return;
+        }
+      }
+      const created = hydrateWorkspace(await createPrivateWorkspaceCopy(workspace.id));
+      const refreshed = await refreshWorkspaceList();
+      const privateCopy = refreshed.find((item) => item.id === created.id) || created;
+      handleSelectWorkspace(privateCopy);
+    } catch (error) {
+      console.error('Failed to open private working copy:', error);
+    }
+  }, [handleSelectWorkspace, refreshWorkspaceList, workspaces]);
+
+  const applyTeamSync = useCallback(async (
+    workspace: Workspace,
+    resolutions: Record<string, 'private' | 'team'> = {},
+  ) => {
+    setSyncBusy(true);
+    setSyncError('');
+    try {
+      await syncWorkspaceWithTeam(workspace.id, resolutions);
+      setSyncConflicts([]);
+      setSyncWorkspaceTarget(null);
+      await refreshWorkspaceList();
+      await loadFilesForWorkspace(workspace.id, { includePrivateData: true });
+    } catch (error) {
+      if (error instanceof WorkspaceApiError) {
+        const details = error.details as { code?: string; conflicts?: PublicationConflict[] } | undefined;
+        if (details?.code === 'REVIEW_NEEDED' && Array.isArray(details.conflicts)) {
+          setSyncWorkspaceTarget(workspace);
+          setSyncConflicts(details.conflicts);
+          return;
+        }
+      }
+      setSyncError(error instanceof Error ? error.message : 'Failed to sync team updates');
+      if (resolutions && Object.keys(resolutions).length) {
+        setSyncWorkspaceTarget(workspace);
+      }
+    } finally {
+      setSyncBusy(false);
+    }
+  }, [loadFilesForWorkspace, refreshWorkspaceList]);
+
+  const handleSyncWorkspace = useCallback((workspace: Workspace) => {
+    void applyTeamSync(workspace);
+  }, [applyTeamSync]);
+
+  const handleUpdateFile = useCallback(async (
+    targetFile: WorkspaceFile | null,
+    content: string,
+  ): Promise<boolean> => {
+    if (!selectedWorkspace || !targetFile) return false;
 
     try {
       if (isDraftWorkspaceFile(targetFile)) {
@@ -6338,6 +6468,7 @@ export default function WorkspacePage() {
           content,
           mimeType: targetFile.mimeType || 'text/markdown',
         });
+        markPrivateWorkspaceChanged(selectedWorkspace.id);
         setFiles((prev) => {
           const withoutDraft = prev.filter((file) => String(file.id) !== String(targetFile.id));
           return [createdFile, ...withoutDraft];
@@ -6350,13 +6481,30 @@ export default function WorkspacePage() {
         setSelectedFileDetails(hydratedCreatedFile);
       } else {
         await updateFileContent(selectedWorkspace.id, Number(targetFile.id), content);
+        markPrivateWorkspaceChanged(selectedWorkspace.id);
         setSelectedFileDetails((prev) => (prev ? { ...prev, content } : prev));
       }
       lastAutoSavedContentRef.current = content;
+      return true;
     } catch (error) {
       console.error('Failed to update file:', error);
+      return false;
     }
-  }, [selectedWorkspace]);
+  }, [markPrivateWorkspaceChanged, selectedWorkspace]);
+
+  const runTrackedWorkspaceSave = useCallback((
+    targetFile: WorkspaceFile | null,
+    content: string,
+  ): Promise<boolean> => {
+    const pendingSave = handleUpdateFile(targetFile, content);
+    pendingAutoSaveRef.current = pendingSave;
+    void pendingSave.finally(() => {
+      if (pendingAutoSaveRef.current === pendingSave) {
+        pendingAutoSaveRef.current = null;
+      }
+    });
+    return pendingSave;
+  }, [handleUpdateFile]);
 
   useEffect(() => {
     if (!isEditMode || !selectedWorkspace || !selectedFile || isDraftWorkspaceFile(selectedFile)) return;
@@ -6369,8 +6517,7 @@ export default function WorkspacePage() {
       if (fileContent === lastAutoSavedContentRef.current) {
         return;
       }
-      await handleUpdateFile(selectedFile, fileContent);
-      lastAutoSavedContentRef.current = fileContent;
+      await runTrackedWorkspaceSave(selectedFile, fileContent);
     }, 2000);
 
     return () => {
@@ -6378,7 +6525,34 @@ export default function WorkspacePage() {
         window.clearTimeout(autoSaveTimerRef.current);
       }
     };
-  }, [fileContent, isEditMode, selectedFile, selectedWorkspace, handleUpdateFile]);
+  }, [fileContent, isEditMode, selectedFile, selectedWorkspace, runTrackedWorkspaceSave]);
+
+  const flushPendingWorkspaceSave = useCallback(async (workspaceId: string) => {
+    if (
+      selectedWorkspace?.id !== workspaceId
+      || !selectedFile
+      || !isEditMode
+    ) {
+      return;
+    }
+    if (autoSaveTimerRef.current) {
+      window.clearTimeout(autoSaveTimerRef.current);
+      autoSaveTimerRef.current = null;
+    }
+    if (pendingAutoSaveRef.current) {
+      await pendingAutoSaveRef.current;
+    }
+    if (
+      !isDraftWorkspaceFile(selectedFile)
+      && fileContent === lastAutoSavedContentRef.current
+    ) {
+      return;
+    }
+    const saved = await runTrackedWorkspaceSave(selectedFile, fileContent);
+    if (!saved) {
+      throw new Error('Save the current file before publishing.');
+    }
+  }, [fileContent, isEditMode, runTrackedWorkspaceSave, selectedFile, selectedWorkspace?.id]);
 
   const handleBulkDelete = async () => {
     if (!selectedWorkspace) return;
@@ -6454,6 +6628,7 @@ export default function WorkspacePage() {
         }
 
         const created = await createFolder(selectedWorkspace.id, normalizedFolder);
+        markPrivateWorkspaceChanged(selectedWorkspace.id);
         const createdPath = typeof created?.path === 'string' ? created.path : normalizedFolder;
         setFolderPaths((prev) => addFolderPath(prev, createdPath));
         setWorkspaceFileDialog(null);
@@ -6480,6 +6655,7 @@ export default function WorkspacePage() {
         const parentFolder = getWorkspaceParentFolderPath(sourceFolder);
         const destinationFolder = parentFolder ? `${parentFolder}/${normalizedName}` : normalizedName;
         const renamed = await renameFolder(selectedWorkspace.id, sourceFolder, normalizedName);
+        markPrivateWorkspaceChanged(selectedWorkspace.id);
         const updatedFiles = Array.isArray(renamed?.files) ? renamed.files as WorkspaceFile[] : [];
         const updatedFilesById = new Map(updatedFiles.map((file) => [String(file.id), file]));
         const renameFilePath = (file: WorkspaceFile): WorkspaceFile => {
@@ -6515,6 +6691,7 @@ export default function WorkspacePage() {
         }
 
         const updated = await renameFile(selectedWorkspace.id, currentDialog.file.id, { name: proposedName });
+        markPrivateWorkspaceChanged(selectedWorkspace.id);
         applyWorkspaceFileUpdate(currentDialog.file.name, updated);
         setWorkspaceFileDialog(null);
         return;
@@ -6523,6 +6700,7 @@ export default function WorkspacePage() {
       if (currentDialog.kind === 'delete-file') {
         const { file } = currentDialog;
         await deleteFile(selectedWorkspace.id, file.id);
+        markPrivateWorkspaceChanged(selectedWorkspace.id);
         setFiles((prev) => prev.filter((item) => item.id !== file.id));
         setSelectedFiles((prev) => {
           const next = new Set(prev);
@@ -6548,6 +6726,7 @@ export default function WorkspacePage() {
         });
 
         await deleteFolder(selectedWorkspace.id, folder.path);
+        markPrivateWorkspaceChanged(selectedWorkspace.id);
 
         const deletedIds = new Set(filesInFolder.map((file) => file.id));
         setFiles((prev) =>
@@ -6582,6 +6761,7 @@ export default function WorkspacePage() {
           continue;
         }
         await deleteFile(selectedWorkspace.id, fileId);
+        markPrivateWorkspaceChanged(selectedWorkspace.id);
       }
       setFiles((prevFiles) => prevFiles.filter((file) => !fileIdsToDelete.has(file.id)));
       setSelectedFiles(new Set());
@@ -6630,6 +6810,7 @@ export default function WorkspacePage() {
 
       try {
         await createFile(workspaceId, file, destinationPath);
+        markPrivateWorkspaceChanged(workspaceId);
         uploadedCount += 1;
       } catch (error) {
         console.error('Failed to upload workspace file:', error);
@@ -6740,6 +6921,7 @@ export default function WorkspacePage() {
     try {
       setIsDriveImporting(true);
       const imported = await importGoogleDriveFiles(workspaceId, items.map((item) => item.id));
+      markPrivateWorkspaceChanged(workspaceId);
       const importedFiles = Array.isArray(imported.files) ? imported.files : [];
       if (importedFiles.length && selectedWorkspaceIdRef.current === workspaceId) {
         await loadFilesForWorkspace(workspaceId);
@@ -7013,19 +7195,21 @@ export default function WorkspacePage() {
             </span>
           </button>
           <div className="flex shrink-0 items-center gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                void handleNewChat();
-                setMobileSurface('chat');
-              }}
-              className={`inline-flex h-10 w-10 items-center justify-center rounded-xl ${
-                isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-600 hover:bg-slate-100'
-              }`}
-              aria-label="Start new chat"
-            >
-              <Plus size={18} />
-            </button>
+            {selectedWorkspace?.visibility !== 'team' ? (
+              <button
+                type="button"
+                onClick={() => {
+                  void handleNewChat();
+                  setMobileSurface('chat');
+                }}
+                className={`inline-flex h-10 w-10 items-center justify-center rounded-xl ${
+                  isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-600 hover:bg-slate-100'
+                }`}
+                aria-label="Start new chat"
+              >
+                <Plus size={18} />
+              </button>
+            ) : null}
             <button
               type="button"
               onClick={() => setIsMobileWorkspaceSheetOpen(true)}
@@ -7038,10 +7222,15 @@ export default function WorkspacePage() {
             </button>
           </div>
         </div>
-        <div className={`mt-3 grid grid-cols-2 rounded-2xl p-1 ${
+        <div className={`mt-3 grid ${
+          selectedWorkspace?.visibility === 'team' ? 'grid-cols-1' : 'grid-cols-2'
+        } rounded-2xl p-1 ${
           isDarkMode ? 'bg-slate-900' : 'bg-slate-100'
         }`}>
-          {(['chat', 'canvas'] as const).map((surface) => (
+          {(selectedWorkspace?.visibility === 'team'
+            ? (['canvas'] as MobileWorkspaceSurface[])
+            : (['chat', 'canvas'] as MobileWorkspaceSurface[])
+          ).map((surface) => (
             <button
               key={surface}
               type="button"
@@ -7060,9 +7249,51 @@ export default function WorkspacePage() {
             </button>
           ))}
         </div>
+        {selectedWorkspace?.visibility === 'team' ? (
+          <button
+            type="button"
+            onClick={() => void handleWorkPrivately(selectedWorkspace)}
+            className={`mt-2 w-full rounded-xl px-3 py-2 text-sm font-semibold ${
+              isDarkMode
+                ? 'bg-sky-500/15 text-sky-200 hover:bg-sky-500/25'
+                : 'bg-blue-50 text-blue-700 hover:bg-blue-100'
+            }`}
+          >
+            {selectedWorkspace.privateCopyWorkspaceId ? 'Open private copy' : 'Work privately'}
+          </button>
+        ) : selectedWorkspace?.publicationStatus === 'team_updates_available'
+          || selectedWorkspace?.publicationStatus === 'review_needed' ? (
+            <button
+              type="button"
+              onClick={() => handleSyncWorkspace(selectedWorkspace)}
+              className={`mt-2 w-full rounded-xl px-3 py-2 text-sm font-semibold ${
+                isDarkMode
+                  ? 'bg-amber-500/15 text-amber-200 hover:bg-amber-500/25'
+                  : 'bg-amber-50 text-amber-700 hover:bg-amber-100'
+              }`}
+            >
+              {selectedWorkspace.publicationStatus === 'review_needed' ? 'Review changes' : 'Sync team updates'}
+            </button>
+          ) : selectedWorkspace?.canPublish
+            && (
+              selectedWorkspace.publicationStatus === 'private_draft'
+              || selectedWorkspace.publicationStatus === 'changes_to_publish'
+            ) ? (
+              <button
+                type="button"
+                onClick={() => setPublishWorkspaceTarget(selectedWorkspace)}
+                className={`mt-2 w-full rounded-xl px-3 py-2 text-sm font-semibold ${
+                  isDarkMode
+                    ? 'bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/25'
+                    : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                }`}
+              >
+                {selectedWorkspace.publicationStatus === 'private_draft' ? 'Publish to team' : 'Publish changes'}
+              </button>
+            ) : null}
       </header>
 
-      {mobileSurface === 'chat' ? (
+      {mobileSurface === 'chat' && selectedWorkspace?.visibility !== 'team' ? (
         <div className={`flex min-h-0 flex-1 flex-col overflow-hidden ${isDarkMode ? 'bg-[#0d1524]' : 'bg-white'}`}>
           <ChatMessageList
             colorMode={colorMode}
@@ -7168,7 +7399,7 @@ export default function WorkspacePage() {
             <div className="max-h-[70dvh] overflow-y-auto px-4 pb-5">
               <section className="space-y-2">
                 <p className={`text-[10px] font-semibold uppercase tracking-normal ${isDarkMode ? 'text-slate-500' : 'text-slate-500'}`}>
-                  Workspaces
+                  Private workspaces
                 </p>
                 <button
                   type="button"
@@ -7184,7 +7415,7 @@ export default function WorkspacePage() {
                   <Plus size={15} />
                   New Workspace
                 </button>
-                {filteredWorkspaces.slice(0, 8).map((workspace) => (
+                {mobilePrivateWorkspaces.map((workspace) => (
                   <button
                     key={workspace.id}
                     type="button"
@@ -7203,6 +7434,52 @@ export default function WorkspacePage() {
                     {selectedWorkspace?.id === workspace.id ? <Check size={15} className="shrink-0" /> : null}
                   </button>
                 ))}
+                {!mobilePrivateWorkspaces.length ? (
+                  <p className={`rounded-xl px-3 py-3 text-sm ${
+                    isDarkMode ? 'bg-slate-900 text-slate-500' : 'bg-slate-50 text-slate-500'
+                  }`}>
+                    No private workspaces.
+                  </p>
+                ) : null}
+              </section>
+
+              <section className="mt-5 space-y-2">
+                <p className={`text-[10px] font-semibold uppercase tracking-normal ${isDarkMode ? 'text-slate-500' : 'text-slate-500'}`}>
+                  Team workspaces
+                </p>
+                {mobileTeamWorkspaces.map((workspace) => (
+                  <button
+                    key={workspace.id}
+                    type="button"
+                    onClick={() => {
+                      handleSelectWorkspace(workspace);
+                      setIsMobileWorkspaceSheetOpen(false);
+                      setMobileSurface('canvas');
+                    }}
+                    className={`flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2 text-left text-sm transition ${
+                      selectedWorkspace?.id === workspace.id
+                        ? isDarkMode ? 'bg-sky-500/15 text-sky-200' : 'bg-blue-50 text-blue-700'
+                        : isDarkMode ? 'text-slate-200 hover:bg-slate-900' : 'text-slate-700 hover:bg-slate-50'
+                    }`}
+                  >
+                    <span className="min-w-0">
+                      <span className="block truncate">{workspace.name}</span>
+                      <span className={`block truncate text-[10px] ${
+                        isDarkMode ? 'text-slate-500' : 'text-slate-500'
+                      }`}>
+                        {workspace.teamName || 'Team workspace'}
+                      </span>
+                    </span>
+                    {selectedWorkspace?.id === workspace.id ? <Check size={15} className="shrink-0" /> : null}
+                  </button>
+                ))}
+                {!mobileTeamWorkspaces.length ? (
+                  <p className={`rounded-xl px-3 py-3 text-sm ${
+                    isDarkMode ? 'bg-slate-900 text-slate-500' : 'bg-slate-50 text-slate-500'
+                  }`}>
+                    No team workspaces.
+                  </p>
+                ) : null}
               </section>
 
               <section className="mt-5 space-y-2">
@@ -7336,7 +7613,13 @@ export default function WorkspacePage() {
           workspaceSearchQuery={workspaceSearchQuery}
           setWorkspaceSearchQuery={setWorkspaceSearchQuery}
           handleDeleteWorkspace={handleDeleteWorkspace}
-          onShareWorkspace={handleShareWorkspace}
+          onPublishWorkspace={setPublishWorkspaceTarget}
+          onSyncWorkspace={handleSyncWorkspace}
+          onWorkPrivately={(workspace) => {
+            void handleWorkPrivately(workspace);
+          }}
+          onHistoryWorkspace={setHistoryWorkspaceTarget}
+          onManageTeamAccess={handleManageTeamAccess}
           onSelectWorkspace={handleSelectWorkspace}
           onCreateWorkspace={() => {
             void handleCreateWorkspace();
@@ -7828,6 +8111,19 @@ export default function WorkspacePage() {
                   <h2 className={`text-lg font-semibold ${isDarkMode ? 'text-slate-100' : 'text-gray-800'}`}>No workspace selected</h2>
                 )}
                 </div>
+                {selectedWorkspace?.visibility === 'team' ? (
+                  <button
+                    type="button"
+                    onClick={() => void handleWorkPrivately(selectedWorkspace)}
+                    className={`inline-flex h-9 shrink-0 items-center justify-center rounded-lg px-3 text-sm font-medium ${
+                      isDarkMode
+                        ? 'bg-sky-500/15 text-sky-200 hover:bg-sky-500/25'
+                        : 'bg-blue-50 text-blue-700 hover:bg-blue-100'
+                    }`}
+                  >
+                    {selectedWorkspace.privateCopyWorkspaceId ? 'Open private copy' : 'Work privately'}
+                  </button>
+                ) : null}
               </div>
               <div className="flex-1 flex min-h-0">
                 {/* File Explorer */}
@@ -7888,7 +8184,7 @@ export default function WorkspacePage() {
                           <button
                             type="button"
                             onClick={() => setIsFileActionMenuOpen((prev) => !prev)}
-                            disabled={!selectedWorkspace}
+                            disabled={!selectedWorkspace?.canEdit}
                             className={`h-8 w-8 inline-flex items-center justify-center rounded-lg disabled:opacity-50 ${
                               isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-100'
                             }`}
@@ -7983,7 +8279,7 @@ export default function WorkspacePage() {
                         </button>
                         <button
                           onClick={handleSelectAllFiles}
-                          disabled={visibleFiles.length === 0}
+                          disabled={!selectedWorkspace?.canEdit || visibleFiles.length === 0}
                           className={`h-8 w-8 inline-flex items-center justify-center rounded-lg disabled:opacity-50 ${
                             isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-100'
                           }`}
@@ -7993,7 +8289,7 @@ export default function WorkspacePage() {
                         </button>
                         <button
                           onClick={handleBulkDelete}
-                          disabled={selectedFiles.size === 0}
+                          disabled={!selectedWorkspace?.canEdit || selectedFiles.size === 0}
                           className={`h-8 w-8 inline-flex items-center justify-center rounded-lg disabled:opacity-50 ${
                             isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-100'
                           }`}
@@ -8036,12 +8332,13 @@ export default function WorkspacePage() {
                         selectedFiles={selectedFiles}
                         copiedPublicUrlFileId={copiedPublicUrlFileId}
                         dashboardArtifactsByPath={dashboardArtifactsByPath}
+                        readOnly={!selectedWorkspace?.canEdit}
                         isDraftWorkspaceFile={isDraftWorkspaceFile}
                         onSelectFile={(file) => {
                           setSelectedFile(file);
                           setSelectedFileDetails(null);
                           setFileContent('');
-                          setIsEditMode(shouldForceEditMode(file.name));
+                          setIsEditMode(Boolean(selectedWorkspace?.canEdit) && shouldForceEditMode(file.name));
                         }}
                         onSelectFolder={handleDashboardFolderSelect}
                         onToggleFileSelection={handleFileSelect}
@@ -8142,7 +8439,7 @@ export default function WorkspacePage() {
                             }
                             setIsEditMode(!isEditMode);
                           }}
-                          disabled={!selectedFile || !isFileEditable(selectedFile.name)}
+                          disabled={!selectedWorkspace?.canEdit || !selectedFile || !isFileEditable(selectedFile.name)}
                         >
                           <Edit size={16} className={isDarkMode ? 'text-slate-300' : 'text-gray-600'} />
                         </button>
@@ -8151,8 +8448,8 @@ export default function WorkspacePage() {
                         className={`h-8 px-3 inline-flex items-center justify-center rounded-lg text-xs font-medium disabled:opacity-50 ${
                           isDarkMode ? 'text-slate-200 hover:bg-slate-800' : 'text-slate-700 hover:bg-gray-200'
                         }`}
-                        onClick={() => selectedFile && handleUpdateFile(selectedFile, fileContent)}
-                        disabled={!isEditMode}
+                        onClick={() => selectedFile && runTrackedWorkspaceSave(selectedFile, fileContent)}
+                        disabled={!selectedWorkspace?.canEdit || !isEditMode}
                       >
                         Save
                       </button>
@@ -8509,6 +8806,42 @@ export default function WorkspacePage() {
         open={shareWorkspace !== null}
         workspace={shareWorkspace}
         onClose={() => setShareWorkspace(null)}
+      />
+      <WorkspacePublishDialog
+        open={publishWorkspaceTarget !== null}
+        workspace={publishWorkspaceTarget}
+        onClose={() => setPublishWorkspaceTarget(null)}
+        onBeforePublish={(workspace) => flushPendingWorkspaceSave(workspace.id)}
+        onPublished={async () => {
+          await refreshWorkspaceList();
+        }}
+      />
+      <WorkspaceConflictDialog
+        open={syncWorkspaceTarget !== null && syncConflicts.length > 0}
+        conflicts={syncConflicts}
+        busy={syncBusy}
+        error={syncError}
+        onClose={() => {
+          setSyncWorkspaceTarget(null);
+          setSyncConflicts([]);
+          setSyncError('');
+        }}
+        onConfirm={(resolutions) => {
+          if (syncWorkspaceTarget) {
+            void applyTeamSync(syncWorkspaceTarget, resolutions);
+          }
+        }}
+      />
+      <WorkspaceHistoryDialog
+        open={historyWorkspaceTarget !== null}
+        workspace={historyWorkspaceTarget}
+        onClose={() => setHistoryWorkspaceTarget(null)}
+        onRestored={async () => {
+          await refreshWorkspaceList();
+          if (historyWorkspaceTarget) {
+            await loadFilesForWorkspace(historyWorkspaceTarget.id, { includePrivateData: false });
+          }
+        }}
       />
     </ThemeProvider>
   );

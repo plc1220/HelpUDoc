@@ -1,5 +1,26 @@
 import { API_URL, apiFetch } from './apiClient';
 
+export class WorkspaceApiError extends Error {
+  status: number;
+  details?: unknown;
+
+  constructor(message: string, status: number, details?: unknown) {
+    super(message);
+    this.name = 'WorkspaceApiError';
+    this.status = status;
+    this.details = details;
+  }
+}
+
+const throwWorkspaceApiError = async (response: Response, fallback: string): Promise<never> => {
+  const payload = await response.json().catch(() => ({}));
+  throw new WorkspaceApiError(
+    typeof payload?.error === 'string' ? payload.error : fallback,
+    response.status,
+    payload?.details,
+  );
+};
+
 export const getWorkspaces = async () => {
   const response = await apiFetch(`${API_URL}/workspaces`);
   if (!response.ok) {
@@ -111,4 +132,106 @@ export const removeWorkspaceCollaborator = async (workspaceId: string, targetUse
     const err = await response.json().catch(() => ({}));
     throw new Error(typeof err?.error === 'string' ? err.error : 'Failed to remove collaborator');
   }
+};
+
+export type WorkspaceTeam = {
+  id: string;
+  name: string;
+};
+
+export type PublicationConflict = {
+  path: string;
+  privateChange: 'added' | 'changed' | 'deleted';
+  teamChange: 'added' | 'changed' | 'deleted';
+  privateText?: string;
+  teamText?: string;
+  textTruncated?: boolean;
+};
+
+export type PublishedWorkspaceVersion = {
+  id: string;
+  versionNumber: number;
+  note: string | null;
+  createdAt: string;
+  publisherName: string;
+};
+
+export const listWorkspaceTeams = async (): Promise<WorkspaceTeam[]> => {
+  const response = await apiFetch(`${API_URL}/workspaces/teams`);
+  if (!response.ok) {
+    return throwWorkspaceApiError(response, 'Failed to list teams');
+  }
+  const payload = await response.json() as { teams?: WorkspaceTeam[] };
+  return payload.teams || [];
+};
+
+export const publishWorkspace = async (
+  workspaceId: string,
+  payload: { teamId?: string; name?: string; note?: string },
+) => {
+  const response = await apiFetch(`${API_URL}/workspaces/${workspaceId}/publish`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    return throwWorkspaceApiError(response, 'Failed to publish workspace');
+  }
+  return response.json() as Promise<{
+    teamWorkspaceId: string;
+    privateWorkspaceId: string;
+    publishedVersionId: string;
+    publishedVersionNumber: number;
+    publishedAt: string;
+  }>;
+};
+
+export const createPrivateWorkspaceCopy = async (teamWorkspaceId: string) => {
+  const response = await apiFetch(`${API_URL}/workspaces/${teamWorkspaceId}/private-copy`, {
+    method: 'POST',
+  });
+  if (!response.ok) {
+    return throwWorkspaceApiError(response, 'Failed to create private working copy');
+  }
+  return response.json();
+};
+
+export const syncWorkspaceWithTeam = async (
+  privateWorkspaceId: string,
+  resolutions: Record<string, 'private' | 'team'> = {},
+) => {
+  const response = await apiFetch(`${API_URL}/workspaces/${privateWorkspaceId}/sync`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ resolutions }),
+  });
+  if (!response.ok) {
+    return throwWorkspaceApiError(response, 'Failed to sync team updates');
+  }
+  return response.json();
+};
+
+export const listPublishedWorkspaceHistory = async (
+  teamWorkspaceId: string,
+): Promise<PublishedWorkspaceVersion[]> => {
+  const response = await apiFetch(`${API_URL}/workspaces/${teamWorkspaceId}/history`);
+  if (!response.ok) {
+    return throwWorkspaceApiError(response, 'Failed to load publication history');
+  }
+  const payload = await response.json() as { versions?: PublishedWorkspaceVersion[] };
+  return payload.versions || [];
+};
+
+export const restorePublishedWorkspaceVersion = async (
+  teamWorkspaceId: string,
+  versionId: string,
+) => {
+  const response = await apiFetch(
+    `${API_URL}/workspaces/${teamWorkspaceId}/versions/${versionId}/restore`,
+    { method: 'POST' },
+  );
+  if (!response.ok) {
+    return throwWorkspaceApiError(response, 'Failed to restore published version');
+  }
+  return response.json();
 };

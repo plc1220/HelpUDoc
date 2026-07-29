@@ -308,7 +308,7 @@ export class ScheduleService {
   }
 
   async listSchedulesForWorkspace(userId: string, workspaceId: string): Promise<WorkspaceSchedule[]> {
-    await this.workspaceService.ensureMembership(workspaceId, userId);
+    await this.workspaceService.ensureMembership(workspaceId, userId, { requireEdit: true });
     const rows = await this.db<WorkspaceScheduleRow>('workspace_schedules')
       .where({ workspaceId })
       .orderBy('createdAt', 'desc');
@@ -322,7 +322,7 @@ export class ScheduleService {
   }
 
   async getSchedule(userId: string, workspaceId: string, scheduleId: string): Promise<WorkspaceSchedule> {
-    await this.workspaceService.ensureMembership(workspaceId, userId);
+    await this.workspaceService.ensureMembership(workspaceId, userId, { requireEdit: true });
     const row = await this.db<WorkspaceScheduleRow>('workspace_schedules')
       .where({ id: scheduleId, workspaceId })
       .first();
@@ -448,7 +448,7 @@ export class ScheduleService {
     scheduleId: string,
     limit = 20,
   ): Promise<WorkspaceScheduleRun[]> {
-    await this.workspaceService.ensureMembership(workspaceId, userId);
+    await this.workspaceService.ensureMembership(workspaceId, userId, { requireEdit: true });
     const rows = await this.db<WorkspaceScheduleRunRow>('workspace_schedule_runs')
       .where({ scheduleId, workspaceId })
       .orderBy('createdAt', 'desc')
