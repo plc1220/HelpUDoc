@@ -1,4 +1,4 @@
-import { useMemo, type ComponentType, type ReactNode } from 'react';
+import { useMemo, useState, type ComponentType, type ReactNode } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard,
@@ -7,6 +7,8 @@ import {
   CreditCard,
   MessageCircle,
   ArrowLeftCircle,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from 'lucide-react';
 
 type NavItem = {
@@ -31,10 +33,35 @@ const BASE_NAV_ITEMS: NavItem[] = [
   { label: 'Billing', icon: CreditCard, path: '/settings/billing' },
 ];
 
+const SETTINGS_NAV_COLLAPSED_KEY = 'helpudoc-settings-nav-collapsed';
+
+const getInitialNavigationState = () => {
+  if (typeof window === 'undefined') {
+    return false;
+  }
+  try {
+    return window.localStorage.getItem(SETTINGS_NAV_COLLAPSED_KEY) === 'true';
+  } catch {
+    return false;
+  }
+};
+
 const SettingsShell = ({ title, description, eyebrow = 'Workspace settings', actions, children }: SettingsShellProps) => {
   const location = useLocation();
+  const [isNavigationCollapsed, setIsNavigationCollapsed] = useState(getInitialNavigationState);
 
   const navItems = useMemo(() => BASE_NAV_ITEMS, []);
+  const toggleNavigation = () => {
+    setIsNavigationCollapsed((current) => {
+      const next = !current;
+      try {
+        window.localStorage.setItem(SETTINGS_NAV_COLLAPSED_KEY, String(next));
+      } catch {
+        // The control remains usable when storage is unavailable.
+      }
+      return next;
+    });
+  };
   const backToWorkspaceAction = (
     <Link
       to="/"
@@ -47,11 +74,35 @@ const SettingsShell = ({ title, description, eyebrow = 'Workspace settings', act
 
   return (
     <div className="settings-portal min-h-screen lg:flex">
-      <aside className="settings-portal-sidebar border-b lg:flex lg:min-h-screen lg:w-64 lg:flex-col lg:border-b-0 lg:border-r">
-        <div className="border-b border-slate-100 px-4 py-4 sm:px-5">
-          <h1 className="text-sm font-semibold text-slate-900">Settings</h1>
+      <aside
+        className={`settings-portal-sidebar border-b transition-[width] duration-200 ease-out lg:flex lg:min-h-screen lg:flex-col lg:border-b-0 lg:border-r ${
+          isNavigationCollapsed ? 'lg:w-[72px]' : 'lg:w-64'
+        }`}
+      >
+        <div
+          className={`flex min-h-[53px] items-center border-b border-slate-100 px-4 py-3 ${
+            isNavigationCollapsed ? 'lg:justify-center lg:px-2' : 'justify-between sm:px-5'
+          }`}
+        >
+          <h1 className={`text-sm font-semibold text-slate-900 ${isNavigationCollapsed ? 'lg:hidden' : ''}`}>
+            Settings
+          </h1>
+          <button
+            type="button"
+            onClick={toggleNavigation}
+            className="settings-portal-button-secondary hidden h-8 w-8 items-center justify-center rounded-lg transition-colors lg:inline-flex"
+            aria-label={isNavigationCollapsed ? 'Expand settings navigation' : 'Collapse settings navigation'}
+            title={isNavigationCollapsed ? 'Expand navigation' : 'Collapse navigation'}
+          >
+            {isNavigationCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
+          </button>
         </div>
-        <nav className="flex-1 overflow-x-auto p-3">
+        <nav
+          className={`flex-1 overflow-x-auto p-3 ${
+            isNavigationCollapsed ? 'lg:px-2' : ''
+          }`}
+          aria-label="Settings navigation"
+        >
           <div className="flex gap-2 lg:block lg:space-y-1">
             {navItems.map(({ label, icon: Icon, path }) => {
               const isActive = path === '/settings'
@@ -63,13 +114,13 @@ const SettingsShell = ({ title, description, eyebrow = 'Workspace settings', act
                   key={label}
                   to={path}
                   aria-current={isActive ? 'page' : undefined}
-                  className={`settings-portal-nav-item flex min-w-fit items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${isActive
-                    ? 'settings-portal-nav-item-active'
-                    : ''
-                    }`}
+                  title={isNavigationCollapsed ? label : undefined}
+                  className={`settings-portal-nav-item flex min-w-fit items-center rounded-lg py-2 text-sm font-medium transition-colors ${
+                    isNavigationCollapsed ? 'gap-3 px-3 lg:justify-center lg:gap-0 lg:px-2' : 'gap-3 px-3'
+                  } ${isActive ? 'settings-portal-nav-item-active' : ''}`}
                 >
                   <Icon size={16} />
-                  {label}
+                  <span className={isNavigationCollapsed ? 'lg:hidden' : ''}>{label}</span>
                 </Link>
               );
             })}

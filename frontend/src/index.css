@@ -26,7 +26,7 @@ html[data-astryx-theme="neutral"] {
   --accent-strong: var(--color-accent);
   --accent-soft: var(--color-background-muted);
   --accent-soft-strong: var(--color-background-card);
-  --danger: var(--color-text-error);
+  --danger: var(--color-error);
   --danger-soft: var(--color-background-red);
   --code-text: var(--color-text-primary);
   --slate-900: var(--color-background-body);
@@ -40,8 +40,8 @@ html[data-astryx-theme="neutral"] {
   --admin-card-bg: var(--color-background-surface);
   --admin-border-subtle: var(--color-border);
   --admin-border-strong: var(--color-border-emphasized);
-  --admin-shadow-soft: var(--shadow-sm);
-  --admin-shadow-strong: var(--shadow-md);
+  --admin-shadow-soft: var(--shadow-low);
+  --admin-shadow-strong: var(--shadow-med);
   --admin-ring: color-mix(in srgb, var(--color-accent) 18%, transparent);
   --admin-accent-soft: var(--color-background-muted);
   --admin-icon-bg: var(--color-accent);
@@ -55,6 +55,37 @@ body {
 
 .settings-portal {
   background: var(--admin-shell-bg);
+}
+
+/* The settings pages still use a few legacy Tailwind neutral utilities. Keep
+   those utilities readable when the app is in its token-driven dark mode. */
+:root[data-theme='dark'] .settings-portal .text-slate-950,
+:root[data-theme='dark'] .settings-portal .text-slate-900,
+:root[data-theme='dark'] .settings-portal .text-slate-800 {
+  color: var(--text-primary) !important;
+}
+
+:root[data-theme='dark'] .settings-portal .text-slate-700,
+:root[data-theme='dark'] .settings-portal .text-slate-600,
+:root[data-theme='dark'] .settings-portal .text-slate-500 {
+  color: var(--text-secondary) !important;
+}
+
+:root[data-theme='dark'] .settings-portal .bg-white,
+:root[data-theme='dark'] .settings-portal .bg-slate-50,
+:root[data-theme='dark'] .settings-portal .bg-slate-100,
+:root[data-theme='dark'] .settings-portal .bg-slate-200 {
+  background-color: var(--surface) !important;
+}
+
+:root[data-theme='dark'] .settings-portal .bg-slate-50\/70 {
+  background-color: color-mix(in srgb, var(--surface-subtle) 70%, transparent) !important;
+}
+
+:root[data-theme='dark'] .settings-portal .border-slate-100,
+:root[data-theme='dark'] .settings-portal .border-slate-200,
+:root[data-theme='dark'] .settings-portal .border-slate-300 {
+  border-color: var(--admin-border-subtle) !important;
 }
 
 .settings-portal-sidebar {
