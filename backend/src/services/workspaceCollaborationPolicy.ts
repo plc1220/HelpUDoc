@@ -73,3 +73,6 @@ export const canCreateWorkspaceCollaborationObject = (
 
 export const canModerateWorkspaceCollaboration = (role: WorkspaceRole): boolean =>
   role === 'owner' || role === 'editor';
+
+export const canPostWorkspaceTeamMessage = (role: WorkspaceRole): boolean =>
+  getWorkspaceRoleCapabilities(role).canComment;

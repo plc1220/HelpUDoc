@@ -8,6 +8,7 @@ import { WorkspaceMembershipRecord, WorkspaceService } from './workspaceService'
 import {
   canCreateWorkspaceCollaborationObject,
   canModerateWorkspaceCollaboration,
+  canPostWorkspaceTeamMessage,
   getWorkspaceRoleCapabilities,
   type WorkspaceCollaborationObjectType,
   type WorkspaceCollaborationVisibility,
@@ -43,6 +44,7 @@ export type WorkspaceCollaborationObject = {
   assigneeName?: string | null;
   linkedPrivateWorkspaceId: string | null;
   resolvedByVersionId: string | null;
+  sourceTeamMessageId: string | null;
   dueAt: string | null;
   resolvedAt: string | null;
   createdAt: string;
@@ -65,6 +67,7 @@ export type CreateWorkspaceCollaborationInput = {
   assigneeId?: string;
   dueAt?: string;
   mentionedUserIds?: string[];
+  sourceTeamMessageId?: string;
 };
 
 export type UpdateWorkspaceCollaborationInput = {
@@ -76,6 +79,35 @@ export type UpdateWorkspaceCollaborationInput = {
 type CollaborationAccess = {
   membership: WorkspaceMembershipRecord;
   currentPublishedVersionId: string | null;
+};
+
+export type WorkspaceTeamMessageAuthorType = 'user' | 'lumo' | 'system';
+
+export type WorkspaceTeamMessage = {
+  id: string;
+  workspaceId: string;
+  originVersionId: string | null;
+  originVersionNumber: number | null;
+  authorId: string | null;
+  authorType: WorkspaceTeamMessageAuthorType;
+  authorName: string;
+  body: string;
+  replyToMessageId: string | null;
+  threadRootId: string | null;
+  mentionsLumo: boolean;
+  mentionedUserIds: string[];
+  isMentioned: boolean;
+  isMine: boolean;
+  metadata: Record<string, unknown> | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type WorkspaceTeamAgentHistoryMessage = {
+  id: string;
+  role: 'user' | 'assistant';
+  authorName: string;
+  content: string;
 };
 
 export class WorkspaceCollaborationService {
@@ -91,6 +123,173 @@ export class WorkspaceCollaborationService {
     this.db = databaseService.getDb();
     this.workspaceService = workspaceService;
     this.publicationService = publicationService;
+  }
+
+  async listTeamMessages(
+    workspaceId: string,
+    userId: string,
+    limit = 200,
+  ): Promise<WorkspaceTeamMessage[]> {
+    await this.ensurePublishedWorkspaceAccess(workspaceId, userId);
+    const rows = await this.teamMessageQuery(userId)
+      .where('message.workspaceId', workspaceId)
+      .orderBy('message.createdAt', 'desc')
+      .limit(Math.min(Math.max(limit, 1), 500));
+    return (rows as WorkspaceTeamMessage[]).reverse();
+  }
+
+  async createTeamMessage(
+    workspaceId: string,
+    userId: string,
+    input: {
+      body: string;
+      replyToMessageId?: string;
+      mentionedUserIds?: string[];
+    },
+  ): Promise<WorkspaceTeamMessage> {
+    const access = await this.ensurePublishedWorkspaceAccess(workspaceId, userId);
+    if (!canPostWorkspaceTeamMessage(access.membership.role)) {
+      throw new AccessDeniedError('Commenter access is required to post in Team Chat');
+    }
+
+    const mentionedUserIds = Array.from(new Set(input.mentionedUserIds || []));
+    for (const mentionedUserId of mentionedUserIds) {
+      await this.ensureMentionTargetHasAccess(workspaceId, mentionedUserId);
+    }
+
+    let replyTo: WorkspaceTeamMessage | null = null;
+    if (input.replyToMessageId) {
+      replyTo = await this.getTeamMessage(workspaceId, input.replyToMessageId, userId);
+    }
+
+    const id = uuidv4();
+    const body = input.body.trim();
+    await this.db.transaction(async (tx) => {
+      await tx('workspace_team_messages').insert({
+        id,
+        workspaceId,
+        originVersionId: access.currentPublishedVersionId,
+        authorId: userId,
+        authorType: 'user',
+        body,
+        replyToMessageId: replyTo?.id || null,
+        threadRootId: replyTo ? (replyTo.threadRootId || replyTo.id) : null,
+        mentionsLumo: /(^|\s)@lumo\b/i.test(body),
+      });
+      if (mentionedUserIds.length) {
+        await tx('workspace_team_message_mentions').insert(
+          mentionedUserIds.map((mentionedUserId) => ({
+            messageId: id,
+            userId: mentionedUserId,
+          })),
+        );
+      }
+    });
+
+    return this.getTeamMessage(workspaceId, id, userId);
+  }
+
+  async getLumoRequestMessage(
+    workspaceId: string,
+    messageId: string,
+    userId: string,
+  ): Promise<WorkspaceTeamMessage> {
+    const access = await this.ensurePublishedWorkspaceAccess(workspaceId, userId);
+    if (!canPostWorkspaceTeamMessage(access.membership.role)) {
+      throw new AccessDeniedError('Commenter access is required to invoke Lumo in Team Chat');
+    }
+    const message = await this.getTeamMessage(workspaceId, messageId, userId);
+    if (message.authorType !== 'user' || message.authorId !== userId) {
+      throw new AccessDeniedError('Lumo can only be invoked from your own Team Chat message');
+    }
+    if (!message.mentionsLumo) {
+      throw new ConflictError('Tag @Lumo in the message to request a response');
+    }
+    return message;
+  }
+
+  async findLumoReply(
+    workspaceId: string,
+    sourceMessageId: string,
+    userId: string,
+  ): Promise<WorkspaceTeamMessage | null> {
+    await this.ensurePublishedWorkspaceAccess(workspaceId, userId);
+    const existing = await this.teamMessageQuery(userId)
+      .where('message.workspaceId', workspaceId)
+      .andWhere('message.replyToMessageId', sourceMessageId)
+      .andWhere('message.authorType', 'lumo')
+      .first();
+    return (existing as WorkspaceTeamMessage | undefined) || null;
+  }
+
+  async appendLumoReply(
+    workspaceId: string,
+    sourceMessage: WorkspaceTeamMessage,
+    invokingUserId: string,
+    body: string,
+  ): Promise<WorkspaceTeamMessage> {
+    const existing = await this.findLumoReply(workspaceId, sourceMessage.id, invokingUserId);
+    if (existing) {
+      return existing;
+    }
+    const id = uuidv4();
+    try {
+      await this.db('workspace_team_messages').insert({
+        id,
+        workspaceId,
+        originVersionId: sourceMessage.originVersionId,
+        authorId: null,
+        authorType: 'lumo',
+        body: body.trim(),
+        replyToMessageId: sourceMessage.id,
+        threadRootId: sourceMessage.threadRootId || sourceMessage.id,
+        mentionsLumo: false,
+        metadata: {
+          readOnly: true,
+          invokedByUserId: invokingUserId,
+          sourceMessageId: sourceMessage.id,
+        },
+      });
+    } catch (error: any) {
+      if (error?.code !== '23505') {
+        throw error;
+      }
+      const duplicate = await this.findLumoReply(workspaceId, sourceMessage.id, invokingUserId);
+      if (duplicate) return duplicate;
+      throw error;
+    }
+    return this.getTeamMessage(workspaceId, id, invokingUserId);
+  }
+
+  async listTeamAgentHistory(
+    workspaceId: string,
+    userId: string,
+    excludeMessageId?: string,
+    limit = 20,
+  ): Promise<WorkspaceTeamAgentHistoryMessage[]> {
+    await this.ensurePublishedWorkspaceAccess(workspaceId, userId);
+    const rows = await this.db('workspace_team_messages as message')
+      .leftJoin('users as author', 'author.id', 'message.authorId')
+      .where('message.workspaceId', workspaceId)
+      .modify((query) => {
+        if (excludeMessageId) query.whereNot('message.id', excludeMessageId);
+      })
+      .whereIn('message.authorType', ['user', 'lumo'])
+      .select(
+        'message.id',
+        'message.authorType',
+        'message.body',
+        this.db.raw(`COALESCE(author."displayName", 'Workspace member') as "authorName"`),
+      )
+      .orderBy('message.createdAt', 'desc')
+      .limit(Math.min(Math.max(limit, 1), 50));
+
+    return rows.reverse().map((row: any) => ({
+      id: row.id,
+      role: row.authorType === 'lumo' ? 'assistant' : 'user',
+      authorName: row.authorType === 'lumo' ? 'Lumo' : row.authorName,
+      content: row.body,
+    }));
   }
 
   async listObjects(
@@ -191,6 +390,9 @@ export class WorkspaceCollaborationService {
     if (input.assigneeId) {
       await this.ensureMentionTargetHasAccess(workspaceId, input.assigneeId);
     }
+    if (input.sourceTeamMessageId) {
+      await this.getTeamMessage(workspaceId, input.sourceTeamMessageId, userId);
+    }
 
     const id = uuidv4();
     await this.db.transaction(async (tx) => {
@@ -212,6 +414,7 @@ export class WorkspaceCollaborationService {
         body: input.body.trim(),
         authorId: userId,
         assigneeId: input.assigneeId || null,
+        sourceTeamMessageId: input.sourceTeamMessageId || null,
         dueAt: input.dueAt || null,
       });
       if (mentionedUserIds.length) {
@@ -379,6 +582,51 @@ export class WorkspaceCollaborationService {
       throw new NotFoundError('Collaboration item not found');
     }
     return object;
+  }
+
+  private teamMessageQuery(userId: string) {
+    return this.db('workspace_team_messages as message')
+      .leftJoin('users as author', 'author.id', 'message.authorId')
+      .leftJoin('workspace_published_versions as version', 'version.id', 'message.originVersionId')
+      .select(
+        'message.*',
+        'version.versionNumber as originVersionNumber',
+        this.db.raw(`
+          CASE
+            WHEN message."authorType" = 'lumo' THEN 'Lumo'
+            WHEN message."authorType" = 'system' THEN 'HelpUdoc'
+            ELSE COALESCE(author."displayName", 'Former user')
+          END as "authorName"
+        `),
+        this.db.raw(`ARRAY(
+          SELECT mention."userId"::text
+          FROM workspace_team_message_mentions mention
+          WHERE mention."messageId" = message.id
+          ORDER BY mention."createdAt" ASC
+        ) as "mentionedUserIds"`),
+        this.db.raw(`EXISTS(
+          SELECT 1
+          FROM workspace_team_message_mentions mention
+          WHERE mention."messageId" = message.id
+            AND mention."userId" = ?
+        ) as "isMentioned"`, [userId]),
+      this.db.raw(`COALESCE(message."authorId" = ?, false) as "isMine"`, [userId]),
+      );
+  }
+
+  private async getTeamMessage(
+    workspaceId: string,
+    messageId: string,
+    userId: string,
+  ): Promise<WorkspaceTeamMessage> {
+    const message = await this.teamMessageQuery(userId)
+      .where('message.workspaceId', workspaceId)
+      .andWhere('message.id', messageId)
+      .first() as WorkspaceTeamMessage | undefined;
+    if (!message) {
+      throw new NotFoundError('Team Chat message not found');
+    }
+    return message;
   }
 
   private async ensureMentionTargetHasAccess(workspaceId: string, targetUserId: string): Promise<void> {

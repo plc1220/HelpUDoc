@@ -495,8 +495,8 @@ export class WorkspaceService {
     workspaceId: string,
     userId: string,
   ): Promise<Array<{ userId: string; displayName: string; role: WorkspaceRole; canEdit: boolean }>> {
-    await this.ensureMembership(workspaceId, userId);
-    const collaborators = await this.db('workspace_members')
+    const { workspace } = await this.ensureMembership(workspaceId, userId);
+    const directCollaborators = await this.db('workspace_members')
       .join('users', 'workspace_members.userId', 'users.id')
       .select(
         'workspace_members.userId',
@@ -506,13 +506,37 @@ export class WorkspaceService {
       )
       .where('workspace_members.workspaceId', workspaceId)
       .orderBy('users.displayName', 'asc');
-
-    return collaborators.map((row: any) => ({
-      userId: row.userId,
-      displayName: row.displayName,
-      role: row.role as WorkspaceRole,
-      canEdit: Boolean(row.canEdit),
-    }));
+    const byUserId = new Map<string, {
+      userId: string;
+      displayName: string;
+      role: WorkspaceRole;
+      canEdit: boolean;
+    }>();
+    if (workspace.teamId) {
+      const groupMembers = await this.db('group_members')
+        .join('users', 'group_members.userId', 'users.id')
+        .select('group_members.userId', 'users.displayName')
+        .where('group_members.groupId', workspace.teamId)
+        .orderBy('users.displayName', 'asc');
+      groupMembers.forEach((row: any) => {
+        byUserId.set(row.userId, {
+          userId: row.userId,
+          displayName: row.displayName,
+          role: 'viewer',
+          canEdit: false,
+        });
+      });
+    }
+    directCollaborators.forEach((row: any) => {
+      byUserId.set(row.userId, {
+        userId: row.userId,
+        displayName: row.displayName,
+        role: row.role as WorkspaceRole,
+        canEdit: Boolean(row.canEdit),
+      });
+    });
+    return Array.from(byUserId.values()).sort((a, b) =>
+      a.displayName.localeCompare(b.displayName));
   }
 
   async touchWorkspace(

@@ -38,6 +38,8 @@ export class DatabaseService {
     await this.createFilesTable();
     await this.createWorkspacePublishedVersionsTable();
     await this.createWorkspacePublicationLinksTable();
+    await this.createWorkspaceTeamMessagesTable();
+    await this.createWorkspaceTeamMessageMentionsTable();
     await this.createWorkspaceCollaborationObjectsTable();
     await this.createWorkspaceCollaborationMessagesTable();
     await this.createWorkspaceCollaborationMentionsTable();
@@ -579,6 +581,10 @@ export class DatabaseService {
         table.uuid('assigneeId').references('id').inTable('users').onDelete('SET NULL');
         table.uuid('linkedPrivateWorkspaceId').references('id').inTable('workspaces').onDelete('SET NULL');
         table.uuid('resolvedByVersionId').references('id').inTable('workspace_published_versions').onDelete('SET NULL');
+        table.uuid('sourceTeamMessageId')
+          .references('id')
+          .inTable('workspace_team_messages')
+          .onDelete('SET NULL');
         table.timestamp('dueAt', { useTz: true });
         table.timestamp('resolvedAt', { useTz: true });
         table.timestamp('createdAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
@@ -591,8 +597,82 @@ export class DatabaseService {
           ['workspaceId', 'filePath', 'updatedAt'],
           'workspace_collaboration_objects_anchor_idx',
         );
+        table.index(
+          ['sourceTeamMessageId'],
+          'workspace_collaboration_objects_source_team_message_idx',
+        );
       });
       console.log('Created "workspace_collaboration_objects" table.');
+    } else {
+      await this.ensureColumn('workspace_collaboration_objects', 'sourceTeamMessageId', (table) =>
+        table.uuid('sourceTeamMessageId')
+          .references('id')
+          .inTable('workspace_team_messages')
+          .onDelete('SET NULL'));
+      await this.db.raw(
+        'CREATE INDEX IF NOT EXISTS workspace_collaboration_objects_source_team_message_idx ON workspace_collaboration_objects ("sourceTeamMessageId")',
+      );
+    }
+  }
+
+  private async createWorkspaceTeamMessagesTable(): Promise<void> {
+    const exists = await this.db.schema.hasTable('workspace_team_messages');
+    if (!exists) {
+      await this.db.schema.createTable('workspace_team_messages', (table) => {
+        table.uuid('id').primary();
+        table.uuid('workspaceId').notNullable().references('id').inTable('workspaces').onDelete('CASCADE');
+        table.uuid('originVersionId').references('id').inTable('workspace_published_versions').onDelete('SET NULL');
+        table.uuid('authorId').references('id').inTable('users').onDelete('SET NULL');
+        table.string('authorType', 16).notNullable().defaultTo('user');
+        table.text('body').notNullable();
+        table.uuid('replyToMessageId')
+          .references('id')
+          .inTable('workspace_team_messages')
+          .onDelete('SET NULL');
+        table.uuid('threadRootId')
+          .references('id')
+          .inTable('workspace_team_messages')
+          .onDelete('CASCADE');
+        table.boolean('mentionsLumo').notNullable().defaultTo(false);
+        table.jsonb('metadata');
+        table.timestamp('createdAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.timestamp('updatedAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.index(
+          ['workspaceId', 'createdAt'],
+          'workspace_team_messages_workspace_created_idx',
+        );
+        table.index(
+          ['threadRootId', 'createdAt'],
+          'workspace_team_messages_thread_created_idx',
+        );
+      });
+      await this.db.raw(
+        `CREATE UNIQUE INDEX IF NOT EXISTS workspace_team_messages_lumo_reply_uidx
+         ON workspace_team_messages ("replyToMessageId")
+         WHERE "authorType" = 'lumo'`,
+      );
+      console.log('Created "workspace_team_messages" table.');
+    }
+  }
+
+  private async createWorkspaceTeamMessageMentionsTable(): Promise<void> {
+    const exists = await this.db.schema.hasTable('workspace_team_message_mentions');
+    if (!exists) {
+      await this.db.schema.createTable('workspace_team_message_mentions', (table) => {
+        table.uuid('messageId')
+          .notNullable()
+          .references('id')
+          .inTable('workspace_team_messages')
+          .onDelete('CASCADE');
+        table.uuid('userId').notNullable().references('id').inTable('users').onDelete('CASCADE');
+        table.timestamp('createdAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.primary(['messageId', 'userId']);
+        table.index(
+          ['userId', 'createdAt'],
+          'workspace_team_message_mentions_user_created_idx',
+        );
+      });
+      console.log('Created "workspace_team_message_mentions" table.');
     }
   }
 

@@ -8,6 +8,10 @@ import {
   ThemeProvider,
   type PaletteMode,
 } from '@mui/material';
+import { Button } from '@astryxdesign/core/Button';
+import { ButtonGroup } from '@astryxdesign/core/ButtonGroup';
+import { IconButton } from '@astryxdesign/core/IconButton';
+import { ToggleButton } from '@astryxdesign/core/ToggleButton';
 import { BookOpen, Check, CheckSquare, Copy, Edit, Trash, Plus, Minus, X, ChevronLeft, ChevronDown, RotateCcw, Printer, Download, Link as LinkIcon, Loader2, FolderPlus, FolderUp, Upload, Home, ArrowUp, Search, File as FileIcon, MessageSquare, Wrench, Plug, Sparkles, Info } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -8108,23 +8112,20 @@ export default function WorkspacePage() {
                       }`}
                   >
                     <div className={`flex items-center ${isFilePaneVisible ? 'gap-3' : ''}`}>
-                      <button
-                        onClick={() => setIsFilePaneVisible(!isFilePaneVisible)}
-                        className={`h-8 w-8 inline-flex items-center justify-center shrink-0 border rounded-full ${
-                          isDarkMode
-                            ? 'border-slate-700 text-slate-300 hover:bg-slate-800'
-                            : 'border-gray-200 hover:bg-gray-100'
-                        }`}
-                        title={isFilePaneVisible ? 'Collapse files' : 'Expand files'}
-                      >
-                        <ChevronLeft
-                          size={16}
-                          className={`transition-transform duration-300 ${
-                            isDarkMode ? 'text-slate-300' : 'text-gray-600'
-                          } ${isFilePaneVisible ? '' : 'rotate-180'
+                      <IconButton
+                        label={isFilePaneVisible ? 'Collapse files' : 'Expand files'}
+                        icon={(
+                          <ChevronLeft
+                            size={16}
+                            className={`transition-transform duration-300 ${
+                              isFilePaneVisible ? '' : 'rotate-180'
                             }`}
-                        />
-                      </button>
+                          />
+                        )}
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => setIsFilePaneVisible(!isFilePaneVisible)}
+                      />
                       {isFilePaneVisible && <h3 className={`text-base font-semibold ${isDarkMode ? 'text-slate-100' : 'text-gray-800'}`}>Files</h3>}
                     </div>
                     {isFilePaneVisible && (
@@ -8150,19 +8151,16 @@ export default function WorkspacePage() {
                           multiple
                         />
                         <div ref={fileActionMenuRef} className="relative">
-                          <button
-                            type="button"
+                          <IconButton
+                            label="Add files or folders"
+                            icon={<Plus size={16} />}
+                            variant="ghost"
+                            size="sm"
                             onClick={() => setIsFileActionMenuOpen((prev) => !prev)}
-                            disabled={!selectedWorkspace?.canEdit}
-                            className={`h-8 w-8 inline-flex items-center justify-center rounded-lg disabled:opacity-50 ${
-                              isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-100'
-                            }`}
-                            title="Add files or folders"
+                            isDisabled={!selectedWorkspace?.canEdit}
                             aria-haspopup="menu"
                             aria-expanded={isFileActionMenuOpen}
-                          >
-                            <Plus size={16} className={isDarkMode ? 'text-slate-300' : 'text-gray-600'} />
-                          </button>
+                          />
                           {isFileActionMenuOpen && (
                             <div
                               role="menu"
@@ -8236,35 +8234,30 @@ export default function WorkspacePage() {
                             </div>
                           )}
                         </div>
-                        <button
+                        <IconButton
+                          label="Refresh files"
+                          icon={<RotateCcw size={16} />}
+                          variant="ghost"
+                          size="sm"
                           onClick={handleRefreshFiles}
-                          disabled={!selectedWorkspace}
-                          className={`h-8 w-8 inline-flex items-center justify-center rounded-lg disabled:opacity-50 ${
-                            isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-100'
-                          }`}
-                          title="Refresh files"
-                        >
-                          <RotateCcw size={16} className={isDarkMode ? 'text-slate-300' : 'text-gray-600'} />
-                        </button>
-                        <button
+                          isDisabled={!selectedWorkspace}
+                        />
+                        <IconButton
+                          label={allFilesSelected ? 'Clear file selection' : 'Select all files'}
+                          icon={<CheckSquare size={16} />}
+                          variant={allFilesSelected ? 'primary' : 'ghost'}
+                          size="sm"
                           onClick={handleSelectAllFiles}
-                          disabled={!selectedWorkspace?.canEdit || visibleFiles.length === 0}
-                          className={`h-8 w-8 inline-flex items-center justify-center rounded-lg disabled:opacity-50 ${
-                            isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-100'
-                          }`}
-                          title={allFilesSelected ? 'Clear selection' : 'Select all files'}
-                        >
-                          <CheckSquare size={16} className={isDarkMode ? 'text-slate-300' : 'text-gray-600'} />
-                        </button>
-                        <button
+                          isDisabled={!selectedWorkspace?.canEdit || visibleFiles.length === 0}
+                        />
+                        <IconButton
+                          label="Delete selected files"
+                          icon={<Trash size={16} />}
+                          variant="destructive"
+                          size="sm"
                           onClick={handleBulkDelete}
-                          disabled={!selectedWorkspace?.canEdit || selectedFiles.size === 0}
-                          className={`h-8 w-8 inline-flex items-center justify-center rounded-lg disabled:opacity-50 ${
-                            isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-100'
-                          }`}
-                        >
-                          <Trash size={16} className={isDarkMode ? 'text-slate-300' : 'text-gray-600'} />
-                        </button>
+                          isDisabled={!selectedWorkspace?.canEdit || selectedFiles.size === 0}
+                        />
                       </div>
                     )}
                   </div>
@@ -8277,13 +8270,12 @@ export default function WorkspacePage() {
                           ? `Showing ${files.length} files`
                           : `Showing ${visibleFiles.length} of ${files.length}`}
                       </span>
-                      <button
-                        type="button"
-                        className={isDarkMode ? 'text-sky-400 hover:text-sky-300' : 'text-blue-600 hover:text-blue-700'}
-                        onClick={() => setShowSystemFiles((prev) => !prev)}
-                      >
-                        {showSystemFiles ? 'Hide system files' : `Show ${hiddenFileCount} hidden`}
-                      </button>
+                      <ToggleButton
+                        label={showSystemFiles ? 'Hide system files' : `Show ${hiddenFileCount} hidden`}
+                        size="sm"
+                        isPressed={showSystemFiles}
+                        onPressedChange={setShowSystemFiles}
+                      />
                     </div>
                   )}
                   <div
@@ -8341,122 +8333,85 @@ export default function WorkspacePage() {
                     </div>
                     <div className="flex items-center space-x-2">
                       {canCopyImageUrl && (
-                        <button
-                          type="button"
-                          className={`h-8 w-8 inline-flex items-center justify-center rounded-lg disabled:opacity-50 ${
-                            isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-200'
-                          }`}
+                        <IconButton
+                          label={copiedImageUrl ? 'Copied to clipboard' : 'Copy image public URL'}
+                          icon={copiedImageUrl ? <Check size={16} /> : <LinkIcon size={16} />}
+                          variant="ghost"
+                          size="sm"
                           onClick={handleCopyImageUrl}
-                          title={copiedImageUrl ? 'Copied!' : 'Copy public URL'}
-                          aria-label={copiedImageUrl ? 'Copied to clipboard' : 'Copy image public URL'}
-                        >
-                          {copiedImageUrl ? (
-                            <Check size={16} className={isDarkMode ? 'text-emerald-400' : 'text-emerald-600'} />
-                          ) : (
-                            <LinkIcon size={16} className={isDarkMode ? 'text-slate-300' : 'text-gray-600'} />
-                          )}
-                        </button>
+                        />
                       )}
-                      <button
-                        type="button"
-                        className={`h-8 w-8 inline-flex items-center justify-center rounded-lg disabled:opacity-50 ${
-                          isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-200'
-                        }`}
+                      <IconButton
+                        label={copiedWorkspaceContent ? 'Copied to clipboard' : 'Copy file content'}
+                        icon={copiedWorkspaceContent ? <Check size={16} /> : <Copy size={16} />}
+                        variant="ghost"
+                        size="sm"
                         onClick={handleCopyWorkspaceContent}
-                        disabled={!selectedFile}
-                        title={copiedWorkspaceContent ? 'Copied!' : 'Copy file content'}
-                        aria-label={copiedWorkspaceContent ? 'Copied to clipboard' : 'Copy file content'}
-                      >
-                        {copiedWorkspaceContent ? (
-                          <Check size={16} className={isDarkMode ? 'text-emerald-400' : 'text-emerald-600'} />
-                        ) : (
-                          <Copy size={16} className={isDarkMode ? 'text-slate-300' : 'text-gray-600'} />
-                        )}
-                      </button>
+                        isDisabled={!selectedFile}
+                      />
                       {canPrintOrDownloadFile && (
-                        <>
-                          <button
-                            type="button"
-                            className={`h-8 w-8 inline-flex items-center justify-center rounded-lg disabled:opacity-50 ${
-                              isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-200'
-                            }`}
+                        <ButtonGroup label="Export file" size="sm">
+                          <IconButton
+                            label="Print file"
+                            icon={<Printer size={16} />}
+                            variant="secondary"
                             onClick={handlePrintActiveFile}
-                            title="Print file"
-                          >
-                            <Printer size={16} className={isDarkMode ? 'text-slate-300' : 'text-gray-600'} />
-                          </button>
-                          <button
-                            type="button"
-                            className={`h-8 w-8 inline-flex items-center justify-center rounded-lg disabled:opacity-50 ${
-                              isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-200'
-                            }`}
+                          />
+                          <IconButton
+                            label="Download file"
+                            icon={<Download size={16} />}
+                            variant="secondary"
                             onClick={handleDownloadActiveFile}
-                            title="Download file"
-                          >
-                            <Download size={16} className={isDarkMode ? 'text-slate-300' : 'text-gray-600'} />
-                          </button>
-                        </>
+                          />
+                        </ButtonGroup>
                       )}
                       {!shouldForceEditMode(selectedFile?.name || '') && (
-                        <button
-                          className={`h-8 w-8 inline-flex items-center justify-center rounded-lg disabled:opacity-50 ${
-                            isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-200'
-                          }`}
-                          onClick={() => {
-                            if (!isAgentPaneVisible) {
+                        <ToggleButton
+                          label="Edit file"
+                          icon={<Edit size={16} />}
+                          size="sm"
+                          isPressed={isEditMode}
+                          isDisabled={!selectedWorkspace?.canEdit || !selectedFile || !isFileEditable(selectedFile.name)}
+                          onPressedChange={(isPressed) => {
+                            if (isPressed && !isAgentPaneVisible) {
                               setIsAgentPaneVisible(true);
                             }
-                            setIsEditMode(!isEditMode);
+                            setIsEditMode(isPressed);
                           }}
-                          disabled={!selectedWorkspace?.canEdit || !selectedFile || !isFileEditable(selectedFile.name)}
-                        >
-                          <Edit size={16} className={isDarkMode ? 'text-slate-300' : 'text-gray-600'} />
-                        </button>
+                        />
                       )}
-                      <button
-                        className={`h-8 px-3 inline-flex items-center justify-center rounded-lg text-xs font-medium disabled:opacity-50 ${
-                          isDarkMode ? 'text-slate-200 hover:bg-slate-800' : 'text-slate-700 hover:bg-gray-200'
-                        }`}
+                      <Button
+                        label="Save"
+                        variant="primary"
+                        size="sm"
                         onClick={() => selectedFile && runTrackedWorkspaceSave(selectedFile, fileContent)}
-                        disabled={!selectedWorkspace?.canEdit || !isEditMode}
-                      >
-                        Save
-                      </button>
+                        isDisabled={!selectedWorkspace?.canEdit || !isEditMode}
+                      />
                       {!isEditMode && (
-                        <>
-                          <button
-                            type="button"
-                            className={`h-8 w-8 inline-flex items-center justify-center rounded-lg disabled:opacity-50 ${
-                              isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-200'
-                            }`}
+                        <ButtonGroup label="Canvas zoom" size="sm">
+                          <IconButton
+                            label="Zoom out canvas"
+                            icon={<Minus size={16} />}
+                            variant="secondary"
                             onClick={handleCanvasZoomOut}
-                            disabled={!canZoomOutCanvas}
-                            title="Zoom out canvas"
-                          >
-                            <Minus size={16} className={isDarkMode ? 'text-slate-300' : 'text-gray-600'} />
-                          </button>
-                          <button
-                            type="button"
-                            className={`h-8 px-2 inline-flex items-center justify-center rounded-lg text-[11px] font-semibold ${
-                              isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-700 hover:bg-gray-200'
-                            }`}
+                            isDisabled={!canZoomOutCanvas}
+                          />
+                          <Button
+                            label={`Reset canvas zoom to 100%. Current zoom ${Math.round(canvasZoom * 100)}%`}
+                            variant="secondary"
+                            size="sm"
                             onClick={handleCanvasZoomReset}
-                            title="Reset canvas zoom"
                           >
                             {Math.round(canvasZoom * 100)}%
-                          </button>
-                          <button
-                            type="button"
-                            className={`h-8 w-8 inline-flex items-center justify-center rounded-lg disabled:opacity-50 ${
-                              isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-200'
-                            }`}
+                          </Button>
+                          <IconButton
+                            label="Zoom in canvas"
+                            icon={<Plus size={16} />}
+                            variant="secondary"
                             onClick={handleCanvasZoomIn}
-                            disabled={!canZoomInCanvas}
-                            title="Zoom in canvas"
-                          >
-                            <Plus size={16} className={isDarkMode ? 'text-slate-300' : 'text-gray-600'} />
-                          </button>
-                        </>
+                            isDisabled={!canZoomInCanvas}
+                          />
+                        </ButtonGroup>
                       )}
                     </div>
                   </div>
@@ -8560,6 +8515,8 @@ export default function WorkspacePage() {
               attachmentInputRef={attachmentInputRef}
               workspaceId={selectedWorkspace?.id}
               isPublishedWorkspace={selectedWorkspace?.visibility === 'team'}
+              publishedWorkspace={selectedWorkspace?.visibility === 'team' ? selectedWorkspace : undefined}
+              activeFilePath={selectedFile?.name || selectedDashboardPath || undefined}
               internetSearchEnabled={internetSearchEnabled}
               formatMessageTimestamp={formatMessageTimestamp}
               interruptFieldKey={interruptFieldKey}
@@ -8605,6 +8562,11 @@ export default function WorkspacePage() {
               onSelectMention={handleSelectMention}
               onSelectCommand={handleSelectCommand}
               onInteractionSubmit={handleInteractionSubmit}
+              onOpenCollaboration={() => {
+                if (selectedWorkspace?.visibility === 'team') {
+                  setCollaborationWorkspace(selectedWorkspace);
+                }
+              }}
             />
               </>
             )}

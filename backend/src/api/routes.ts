@@ -17,6 +17,7 @@ import { DatabaseService } from '../services/databaseService';
 import { WorkspaceService } from '../services/workspaceService';
 import { WorkspacePublicationService } from '../services/workspacePublicationService';
 import { WorkspaceCollaborationService } from '../services/workspaceCollaborationService';
+import { WorkspaceTeamChatAgentService } from '../services/workspaceTeamChatAgentService';
 import { FileService } from '../services/fileService';
 import { ConversationService } from '../services/conversationService';
 import { UserService } from '../services/userService';
@@ -44,6 +45,10 @@ export default function(dbService: DatabaseService, userService: UserService) {
   const knowledgeService = new KnowledgeService(dbService, workspaceService, fileService);
   const userOAuthTokenService = new UserOAuthTokenService(dbService);
   const googleOAuthService = new GoogleOAuthService(userOAuthTokenService);
+  const workspaceTeamChatAgentService = new WorkspaceTeamChatAgentService(
+    workspaceService,
+    userService,
+  );
   const skillEvolutionService = new SkillEvolutionService(dbService);
   const dailyReflectionService = new DailyReflectionService(dbService, skillEvolutionService);
   const userMemoryService = new UserMemoryService(dbService);
@@ -64,7 +69,7 @@ export default function(dbService: DatabaseService, userService: UserService) {
   router.use('/workspaces', workspaceRoutes(workspaceService, workspacePublicationService, userService));
   router.use(
     '/workspaces/:workspaceId/collaboration',
-    workspaceCollaborationRoutes(workspaceCollaborationService),
+    workspaceCollaborationRoutes(workspaceCollaborationService, workspaceTeamChatAgentService),
   );
   router.use('/workspaces/:workspaceId/files', fileRoutes(fileService, workspaceService, googleOAuthService));
   router.use('/workspaces/:workspaceId/knowledge', knowledgeRoutes(knowledgeService));

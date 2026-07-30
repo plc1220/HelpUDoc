@@ -308,6 +308,7 @@ Rules:
 | Role | View and chat | Notes, discussions, and tasks | Propose revisions in review mode | Edit current Team Workspace in Freeflow | Publish immutable version | Manage access and policy |
 |---|---:|---:|---:|---:|---:|---:|
 | Workspace Viewer | Yes | Private notes only | No | No | No | No |
+| Workspace Commenter | Yes | Yes | No | No | No | No |
 | Workspace Contributor | Yes | Yes | Yes | Yes | No | No |
 | Workspace Publisher | Yes | Yes | Yes | Yes | Yes | No |
 | Workspace Owner | Yes | Yes | Yes | Yes | Yes | Yes |
@@ -320,9 +321,14 @@ Rules:
 - A Team Workspace can be shared with multiple Teams and with individual registered users from any Team.
 - Workspace access does not change a person's Team affiliations and does not merge the skill catalogs available through those affiliations.
 - A published version is an immutable snapshot of the Team Workspace and is read-only for every role, including Workspace Owner.
+- Every published workspace has a shared **Team Chat** and a separate per-user **Private with Lumo** mode.
+- Workspace Viewers may read Team Chat. Workspace Commenters and higher roles may post, reply, tag existing members, and invoke Lumo by explicitly mentioning `@Lumo`.
+- Untagged Team Chat messages are human-only; Lumo does not monitor or answer them.
+- A Team Chat `@Lumo` response is visible to the workspace audience, identifies its source published version, and cannot mutate published content.
+- Private with Lumo remains visible only to the invoking user. It may read the published version and authorized knowledge, but it cannot mutate the published content.
 - Publishing does not close, fork, or reset the Team Workspace. Subsequent edits accumulate toward the next version.
 - The owner can transfer ownership, but the system must always retain one active accountable owner.
-- Team grants may provide Viewer or Contributor access.
+- Team grants may provide Viewer, Commenter, or Contributor access.
 - Publisher and Owner are privileged roles assigned directly to named registered users in the first release.
 - A mention or task assignment may target only a registered principal that already has workspace access. A mention never grants access.
 
@@ -366,6 +372,24 @@ Freeflow requirements:
 Notes, annotations, discussions, tasks, mentions, and change proposals are records within the Team Workspace. When anchored to a published version, they retain the origin version and content fingerprint so the UI can show whether the anchor still matches.
 
 Detailed authorization traces are not permanent workspace content. The workspace shows a compact skill-availability state and a clear remediation message. Full policy checks appear only in an optional authorization-details view or an administrator access inspector.
+
+#### Published workspace Team Chat
+
+Team Chat is the default right-hand collaboration surface for a published workspace.
+
+- A workspace has one shared default channel in the first release: `#team-chat`.
+- Messages may be roots or threaded replies.
+- Structured mentions store registered user identifiers; displayed `@name` text is not itself an authorization grant.
+- Only users who already have workspace access may be mentioned.
+- An explicit structured `@Lumo` mention invokes one read-only response. Retrying the same source message does not create duplicate Lumo replies.
+- Lumo receives recent shared-channel context and published workspace context, but not private conversations, private notes, personal OAuth credentials, or private MCP connections.
+- Shared-channel Lumo runs set `published_read_only`, `canWriteWorkspace = false`, disable delegated MCP credentials, deny configured MCP servers, and do not grant Code Interpreter or skill-sandbox execution.
+- Lumo may inspect published files and approved knowledge with read-only built-in retrieval. It may suggest changes in prose but may not create, edit, resolve, assign, or publish collaboration or content records.
+- A human member must explicitly convert a message or Lumo response into a private note, shared note, task, annotation, or change proposal.
+- Derived collaboration objects retain the source Team Chat message identifier and origin published-version identifier.
+- Viewer access is read-only in Team Chat. Commenter is the minimum role for posting, replying, mentioning users, or invoking Lumo. Contributor remains the minimum role for creating change proposals.
+
+The UI presents Team Chat and Private with Lumo as an exclusive Astryx ToggleButtonGroup. Human conversion actions use an Astryx ButtonGroup, and Lumo read-only context activity is presented with Astryx ChatToolCalls.
 
 ### 7.5 Skill roles
 

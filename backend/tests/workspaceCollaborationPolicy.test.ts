@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   canCreateWorkspaceCollaborationObject,
   canModerateWorkspaceCollaboration,
+  canPostWorkspaceTeamMessage,
   getWorkspaceRoleCapabilities,
 } from '../src/services/workspaceCollaborationPolicy';
 
@@ -47,4 +48,12 @@ test('only publishers and owners moderate shared collaboration', () => {
   assert.equal(canModerateWorkspaceCollaboration('contributor'), false);
   assert.equal(canModerateWorkspaceCollaboration('editor'), true);
   assert.equal(canModerateWorkspaceCollaboration('owner'), true);
+});
+
+test('Team Chat is readable by viewers but writable from Commenter access', () => {
+  assert.equal(canPostWorkspaceTeamMessage('viewer'), false);
+  assert.equal(canPostWorkspaceTeamMessage('commenter'), true);
+  assert.equal(canPostWorkspaceTeamMessage('contributor'), true);
+  assert.equal(canPostWorkspaceTeamMessage('editor'), true);
+  assert.equal(canPostWorkspaceTeamMessage('owner'), true);
 });

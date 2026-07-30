@@ -8,6 +8,7 @@ import type {
   SetStateAction,
   SyntheticEvent,
 } from 'react';
+import { useEffect, useState } from 'react';
 import type { Components } from 'react-markdown';
 import type { InteractionRequest, InteractionResponse } from '@helpudoc/contracts/types';
 import type {
@@ -16,6 +17,7 @@ import type {
   ConversationMessageMetadata,
   ConversationSummary,
   InterruptAnswersByQuestionId,
+  Workspace,
 } from '../../types';
 import ChatHeader from './ChatHeader';
 import ChatHistoryPanel from './ChatHistoryPanel';
@@ -23,6 +25,10 @@ import ChatInputArea, { type ChatMentionSuggestion } from './ChatInputArea';
 import ChatMessageList from './ChatMessageList';
 import type { RenderableInterruptAction } from './interruptActions';
 import type { ChatComposerAttachment } from './chatTypes';
+import PublishedWorkspaceChatHeader, {
+  type PublishedChatMode,
+} from './PublishedWorkspaceChatHeader';
+import WorkspaceTeamChatPanel from './WorkspaceTeamChatPanel';
 
 type CommandSuggestion = {
   id: string;
@@ -87,6 +93,8 @@ export default function AgentChatPane({
   attachmentInputRef,
   workspaceId,
   isPublishedWorkspace,
+  publishedWorkspace,
+  activeFilePath,
   internetSearchEnabled,
   formatMessageTimestamp,
   interruptFieldKey,
@@ -132,6 +140,7 @@ export default function AgentChatPane({
   onSelectMention,
   onSelectCommand,
   onInteractionSubmit,
+  onOpenCollaboration,
 }: {
   colorMode: 'light' | 'dark';
   agentPaneStyles: CSSProperties;
@@ -171,6 +180,8 @@ export default function AgentChatPane({
   attachmentInputRef: RefObject<HTMLInputElement | null>;
   workspaceId?: string;
   isPublishedWorkspace?: boolean;
+  publishedWorkspace?: Workspace;
+  activeFilePath?: string;
   internetSearchEnabled: boolean;
   formatMessageTimestamp: (value?: string) => string;
   interruptFieldKey: (
@@ -233,8 +244,14 @@ export default function AgentChatPane({
   onSelectMention: (suggestion: ChatMentionSuggestion) => void;
   onSelectCommand: (command: CommandSuggestion) => void;
   onInteractionSubmit?: (response: InteractionResponse, request: InteractionRequest, message?: ConversationMessage) => Promise<void>;
+  onOpenCollaboration?: () => void;
 }) {
   const isDarkMode = colorMode === 'dark';
+  const [publishedMode, setPublishedMode] = useState<PublishedChatMode>('team');
+
+  useEffect(() => {
+    setPublishedMode('team');
+  }, [publishedWorkspace?.id]);
 
   return (
     <div
@@ -244,116 +261,150 @@ export default function AgentChatPane({
       style={agentPaneStyles}
     >
       <style>{`@keyframes chat-pane-message-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }`}</style>
-      <ChatHeader
-        colorMode={colorMode}
-        isAgentPaneVisible={isAgentPaneVisible}
-        isEditMode={isEditMode}
-        isHistoryOpen={isHistoryOpen}
-        isAgentPaneFullScreen={isAgentPaneFullScreen}
-        personas={personas}
-        selectedPersona={selectedPersona}
-        onToggleVisibility={onToggleAgentPaneVisibility}
-        onModeChange={onModeChange}
-        onToggleHistory={onToggleHistory}
-        onNewChat={onNewChat}
-        onScheduleChat={isPublishedWorkspace ? undefined : onScheduleChat}
-        onToggleFullScreen={onToggleFullScreen}
-      />
+      {isPublishedWorkspace && publishedWorkspace ? (
+        <PublishedWorkspaceChatHeader
+          colorMode={colorMode}
+          isAgentPaneVisible={isAgentPaneVisible}
+          isAgentPaneFullScreen={isAgentPaneFullScreen}
+          mode={publishedMode}
+          personas={personas}
+          selectedPersona={selectedPersona}
+          onToggleVisibility={onToggleAgentPaneVisibility}
+          onModeChange={setPublishedMode}
+          onPersonaChange={onModeChange}
+          onToggleHistory={onToggleHistory}
+          onNewChat={onNewChat}
+          onOpenCollaboration={onOpenCollaboration || (() => undefined)}
+          onToggleFullScreen={onToggleFullScreen}
+        />
+      ) : (
+        <ChatHeader
+          colorMode={colorMode}
+          isAgentPaneVisible={isAgentPaneVisible}
+          isEditMode={isEditMode}
+          isHistoryOpen={isHistoryOpen}
+          isAgentPaneFullScreen={isAgentPaneFullScreen}
+          personas={personas}
+          selectedPersona={selectedPersona}
+          onToggleVisibility={onToggleAgentPaneVisibility}
+          onModeChange={onModeChange}
+          onToggleHistory={onToggleHistory}
+          onNewChat={onNewChat}
+          onScheduleChat={onScheduleChat}
+          onToggleFullScreen={onToggleFullScreen}
+        />
+      )}
       <div
         className={`relative flex min-h-0 flex-1 flex-col overflow-hidden ${
           isAgentPaneFullScreen || isAgentPaneVisible ? 'block' : 'hidden'
         }`}
       >
-        <ChatHistoryPanel
-          colorMode={colorMode}
-          isHistoryOpen={isHistoryOpen}
-          conversationHistory={conversationHistory}
-          activeConversationId={activeConversationId}
-          conversationStreaming={conversationStreaming}
-          conversationAttentionById={conversationAttentionById}
-          personas={personas}
-          onClose={onCloseHistory}
-          onSelectConversation={onSelectConversation}
-          onDeleteConversation={onDeleteConversation}
-        />
-        {isPublishedWorkspace ? (
-          <div className={`border-b px-4 py-2 text-xs ${
-            isDarkMode
-              ? 'border-sky-900/60 bg-sky-950/40 text-sky-200'
-              : 'border-blue-100 bg-blue-50 text-blue-700'
-          }`}>
-            Published files are read-only. Chat can analyze them, but changes must go through a private copy and
-            proposal.
-          </div>
-        ) : null}
-        <ChatMessageList
-          colorMode={colorMode}
-          messages={messages}
-          isStreaming={isStreaming}
-          personaDisplayName={personaDisplayName}
-          messageBubbleMaxWidth={messageBubbleMaxWidth}
-          markdownComponents={markdownComponents}
-          expandedToolMessages={expandedToolMessages}
-          expandedThinkingMessages={expandedThinkingMessages}
-          copiedMessageId={copiedMessageId}
-          interruptInputByMessageId={interruptInputByMessageId}
-          interruptStructuredAnswersByMessageId={interruptStructuredAnswersByMessageId}
-          interruptSelectedChoicesByMessageId={interruptSelectedChoicesByMessageId}
-          interruptSubmittingByMessageId={interruptSubmittingByMessageId}
-          interruptErrorByMessageId={interruptErrorByMessageId}
-          interruptFieldKey={interruptFieldKey}
-          interruptActionFieldKey={interruptActionFieldKey}
-          getInterruptKind={getInterruptKind}
-          formatMessageTimestamp={formatMessageTimestamp}
-          getInterruptActions={getInterruptActions}
-          getPrimaryInterruptAction={getPrimaryInterruptAction}
-          isPlanApprovalInterrupt={isPlanApprovalInterrupt}
-          setInterruptInputByMessageId={setInterruptInputByMessageId}
-          setInterruptStructuredAnswersByMessageId={setInterruptStructuredAnswersByMessageId}
-          toggleInterruptSelectedChoice={toggleInterruptSelectedChoice}
-          toggleThinkingVisibility={onToggleThinkingVisibility}
-          toggleToolActivityVisibility={onToggleToolActivityVisibility}
-          handleCopyMessageText={onCopyMessageText}
-          handleRerunMessage={onRerunMessage}
-          handleScheduleMessage={onScheduleMessage}
-          handlePrepareInterruptAction={onPrepareInterruptAction}
-          handleInterruptAction={onInterruptAction}
-          workspaceId={workspaceId}
-          onInteractionSubmit={onInteractionSubmit}
-        />
-        <ChatInputArea
-          colorMode={colorMode}
-          chatMessage={chatMessage}
-          chatAttachments={chatAttachments}
-          chatInputRef={chatInputRef}
-          attachmentInputRef={attachmentInputRef}
-          isStreaming={isStreaming}
-          isPreparingAttachments={isPreparingAttachments}
-          internetSearchEnabled={internetSearchEnabled}
-          commandTags={commandTags}
-          isMentionOpen={isMentionOpen}
-          mentionSuggestions={mentionSuggestions}
-          mentionSelectedIndex={mentionSelectedIndex}
-          isCommandOpen={isCommandOpen}
-          commandSuggestions={commandSuggestions}
-          commandSelectedIndex={commandSelectedIndex}
-          onChatInputChange={onChatInputChange}
-          onChatInputKeyDown={onChatInputKeyDown}
-          onChatInputKeyUp={onChatInputKeyUp}
-          onChatInputSelectionChange={onChatInputSelectionChange}
-          onChatInputPaste={onChatInputPaste}
-          onOpenLocalAttachmentPicker={onOpenLocalAttachmentPicker}
-          onInsertKnowledgeTrigger={onInsertKnowledgeTrigger}
-          onToggleInternetSearch={onToggleInternetSearch}
-          onInsertSlashTrigger={onInsertSlashTrigger}
-          onStopStreaming={onStopStreaming}
-          onSendMessage={onSendMessage}
-          onChatAttachmentChange={onChatAttachmentChange}
-          onRemoveChatAttachment={onRemoveChatAttachment}
-          onRemoveCommandTag={onRemoveCommandTag}
-          onSelectMention={onSelectMention}
-          onSelectCommand={onSelectCommand}
-        />
+        {isPublishedWorkspace && publishedWorkspace && publishedMode === 'team' ? (
+          <WorkspaceTeamChatPanel
+            workspace={publishedWorkspace}
+            filePath={activeFilePath}
+            colorMode={colorMode}
+            onOpenCollaboration={onOpenCollaboration || (() => undefined)}
+          />
+        ) : (
+          <>
+            <ChatHistoryPanel
+              colorMode={colorMode}
+              isHistoryOpen={isHistoryOpen}
+              conversationHistory={conversationHistory}
+              activeConversationId={activeConversationId}
+              conversationStreaming={conversationStreaming}
+              conversationAttentionById={conversationAttentionById}
+              personas={personas}
+              onClose={onCloseHistory}
+              onSelectConversation={onSelectConversation}
+              onDeleteConversation={onDeleteConversation}
+            />
+            {isPublishedWorkspace ? (
+              <div className={`border-b px-4 py-2 text-xs ${
+                isDarkMode
+                  ? 'border-violet-900/60 bg-violet-950/30 text-violet-200'
+                  : 'border-violet-100 bg-violet-50 text-violet-700'
+              }`}>
+                Private with Lumo is visible only to you. Lumo may analyze published files, but cannot edit them.
+              </div>
+            ) : null}
+            <ChatMessageList
+              colorMode={colorMode}
+              messages={messages}
+              isStreaming={isStreaming}
+              personaDisplayName={personaDisplayName}
+              emptyStateDescription={isPublishedWorkspace
+                ? 'Ask Lumo to explain, summarize, or analyze the published workspace without changing it.'
+                : undefined}
+              messageBubbleMaxWidth={messageBubbleMaxWidth}
+              markdownComponents={markdownComponents}
+              expandedToolMessages={expandedToolMessages}
+              expandedThinkingMessages={expandedThinkingMessages}
+              copiedMessageId={copiedMessageId}
+              interruptInputByMessageId={interruptInputByMessageId}
+              interruptStructuredAnswersByMessageId={interruptStructuredAnswersByMessageId}
+              interruptSelectedChoicesByMessageId={interruptSelectedChoicesByMessageId}
+              interruptSubmittingByMessageId={interruptSubmittingByMessageId}
+              interruptErrorByMessageId={interruptErrorByMessageId}
+              interruptFieldKey={interruptFieldKey}
+              interruptActionFieldKey={interruptActionFieldKey}
+              getInterruptKind={getInterruptKind}
+              formatMessageTimestamp={formatMessageTimestamp}
+              getInterruptActions={getInterruptActions}
+              getPrimaryInterruptAction={getPrimaryInterruptAction}
+              isPlanApprovalInterrupt={isPlanApprovalInterrupt}
+              setInterruptInputByMessageId={setInterruptInputByMessageId}
+              setInterruptStructuredAnswersByMessageId={setInterruptStructuredAnswersByMessageId}
+              toggleInterruptSelectedChoice={toggleInterruptSelectedChoice}
+              toggleThinkingVisibility={onToggleThinkingVisibility}
+              toggleToolActivityVisibility={onToggleToolActivityVisibility}
+              handleCopyMessageText={onCopyMessageText}
+              handleRerunMessage={onRerunMessage}
+              handleScheduleMessage={onScheduleMessage}
+              handlePrepareInterruptAction={onPrepareInterruptAction}
+              handleInterruptAction={onInterruptAction}
+              workspaceId={workspaceId}
+              onInteractionSubmit={onInteractionSubmit}
+            />
+            <ChatInputArea
+              colorMode={colorMode}
+              chatMessage={chatMessage}
+              chatAttachments={chatAttachments}
+              placeholder={isPublishedWorkspace
+                ? 'Ask Lumo about this published workspace…'
+                : undefined}
+              chatInputRef={chatInputRef}
+              attachmentInputRef={attachmentInputRef}
+              isStreaming={isStreaming}
+              isPreparingAttachments={isPreparingAttachments}
+              internetSearchEnabled={internetSearchEnabled}
+              commandTags={commandTags}
+              isMentionOpen={isMentionOpen}
+              mentionSuggestions={mentionSuggestions}
+              mentionSelectedIndex={mentionSelectedIndex}
+              isCommandOpen={isCommandOpen}
+              commandSuggestions={commandSuggestions}
+              commandSelectedIndex={commandSelectedIndex}
+              onChatInputChange={onChatInputChange}
+              onChatInputKeyDown={onChatInputKeyDown}
+              onChatInputKeyUp={onChatInputKeyUp}
+              onChatInputSelectionChange={onChatInputSelectionChange}
+              onChatInputPaste={onChatInputPaste}
+              onOpenLocalAttachmentPicker={onOpenLocalAttachmentPicker}
+              onInsertKnowledgeTrigger={onInsertKnowledgeTrigger}
+              onToggleInternetSearch={onToggleInternetSearch}
+              onInsertSlashTrigger={onInsertSlashTrigger}
+              onStopStreaming={onStopStreaming}
+              onSendMessage={onSendMessage}
+              onChatAttachmentChange={onChatAttachmentChange}
+              onRemoveChatAttachment={onRemoveChatAttachment}
+              onRemoveCommandTag={onRemoveCommandTag}
+              onSelectMention={onSelectMention}
+              onSelectCommand={onSelectCommand}
+            />
+          </>
+        )}
       </div>
     </div>
   );

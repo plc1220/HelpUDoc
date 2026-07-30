@@ -3,6 +3,7 @@ import { z } from 'zod';
 
 import { HttpError } from '../errors';
 import { WorkspaceCollaborationService } from '../services/workspaceCollaborationService';
+import type { WorkspaceTeamChatAgentService } from '../services/workspaceTeamChatAgentService';
 
 const objectTypeSchema = z.enum(['annotation', 'sticky_note', 'task', 'change_proposal']);
 const statusSchema = z.enum(['open', 'discussing', 'proposed', 'resolved', 'addressed', 'anchor_changed']);
@@ -22,6 +23,7 @@ const createObjectSchema = z.object({
   assigneeId: z.string().uuid().optional(),
   dueAt: z.string().datetime().optional(),
   mentionedUserIds: z.array(z.string().uuid()).max(50).optional(),
+  sourceTeamMessageId: z.string().uuid().optional(),
 }).superRefine((payload, ctx) => {
   if (
     payload.anchorStart !== undefined
@@ -46,7 +48,16 @@ const messageSchema = z.object({
   body: z.string().trim().min(1).max(20_000),
 });
 
-export default function workspaceCollaborationRoutes(service: WorkspaceCollaborationService) {
+const teamMessageSchema = z.object({
+  body: z.string().trim().min(1).max(20_000),
+  replyToMessageId: z.string().uuid().optional(),
+  mentionedUserIds: z.array(z.string().uuid()).max(50).optional(),
+});
+
+export default function workspaceCollaborationRoutes(
+  service: WorkspaceCollaborationService,
+  teamChatAgentService: WorkspaceTeamChatAgentService,
+) {
   const router = Router({ mergeParams: true });
 
   const requireUserContext = (req: Request) => {
@@ -74,6 +85,74 @@ export default function workspaceCollaborationRoutes(service: WorkspaceCollabora
     console.error(fallbackMessage, error);
     return res.status(500).json({ error: fallbackMessage });
   };
+
+  router.get('/team-chat/messages', async (req, res) => {
+    try {
+      const user = requireUserContext(req);
+      const { limit } = z.object({
+        limit: z.coerce.number().int().positive().max(500).default(200),
+      }).parse(req.query);
+      const messages = await service.listTeamMessages(
+        requireWorkspaceId(req),
+        user.userId,
+        limit,
+      );
+      res.json({ messages });
+    } catch (error) {
+      handleError(res, error, 'Failed to load Team Chat');
+    }
+  });
+
+  router.post('/team-chat/messages', async (req, res) => {
+    try {
+      const user = requireUserContext(req);
+      const input = teamMessageSchema.parse(req.body);
+      const message = await service.createTeamMessage(
+        requireWorkspaceId(req),
+        user.userId,
+        input,
+      );
+      res.status(201).json(message);
+    } catch (error) {
+      handleError(res, error, 'Failed to post Team Chat message');
+    }
+  });
+
+  router.post('/team-chat/messages/:messageId/lumo', async (req, res) => {
+    try {
+      const user = requireUserContext(req);
+      const workspaceId = requireWorkspaceId(req);
+      const sourceMessage = await service.getLumoRequestMessage(
+        workspaceId,
+        req.params.messageId,
+        user.userId,
+      );
+      const existing = await service.findLumoReply(workspaceId, sourceMessage.id, user.userId);
+      if (existing) {
+        return res.json(existing);
+      }
+      const history = await service.listTeamAgentHistory(
+        workspaceId,
+        user.userId,
+        sourceMessage.id,
+      );
+      const body = await teamChatAgentService.respond(
+        workspaceId,
+        user.userId,
+        sourceMessage,
+        history,
+      );
+      const reply = await service.appendLumoReply(
+        workspaceId,
+        sourceMessage,
+        user.userId,
+        body,
+      );
+      res.status(201).json(reply);
+    } catch (error) {
+      handleError(res, error, 'Failed to invoke Lumo in Team Chat');
+    }
+  });
 
   router.get('/objects', async (req, res) => {
     try {
