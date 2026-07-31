@@ -9,7 +9,8 @@ const client = axios.create({
   baseURL: AGENT_URL,
 });
 
-const ATTACHMENT_UNDERSTANDING_TIMEOUT_MS = 30 * 60 * 1000;
+const ATTACHMENT_UNDERSTANDING_TIMEOUT_MS =
+  Number(process.env.ATTACHMENT_UNDERSTANDING_TIMEOUT_MS) || 30 * 60 * 1000;
 
 export type AgentHistoryEntry = {
   role: string;
