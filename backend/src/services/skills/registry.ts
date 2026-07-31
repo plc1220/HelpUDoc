@@ -19,7 +19,7 @@ export async function collectSkillIds(rootDir: string, relativeDir = ''): Promis
   let ids: string[] = [];
 
   for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
+    if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
     const relPath = relativeDir ? path.posix.join(relativeDir, entry.name) : entry.name;
     const fullPath = path.join(currentDir, entry.name);
     const skillFile = path.join(fullPath, 'SKILL.md');

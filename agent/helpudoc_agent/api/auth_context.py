@@ -1,6 +1,7 @@
 """JWT-derived request context for agent routes."""
 from __future__ import annotations
 
+import re
 from typing import Any, Dict
 
 from fastapi import HTTPException, Request
@@ -39,9 +40,40 @@ def extract_agent_request_context(request: Request, *, agent_jwt_secret: str) ->
     skill_allow_ids = payload.get("skillAllowIds") or []
     if isinstance(skill_allow_ids, list):
         context["skill_allow_ids"] = [str(x).strip() for x in skill_allow_ids if str(x).strip()]
+    raw_skill_version_pins = payload.get("skillVersionPins") or {}
+    if isinstance(raw_skill_version_pins, dict):
+        normalized_pins: Dict[str, Dict[str, str]] = {}
+        for raw_skill_key, raw_pin in raw_skill_version_pins.items():
+            skill_key = str(raw_skill_key or "").strip()
+            if not skill_key or not isinstance(raw_pin, dict):
+                continue
+            version_id = str(raw_pin.get("versionId") or "").strip()
+            semantic_version = str(raw_pin.get("semanticVersion") or "").strip()
+            manifest_hash = str(raw_pin.get("manifestHash") or "").strip().lower()
+            skill_id = str(raw_pin.get("skillId") or "").strip()
+            if (
+                not re.fullmatch(
+                    r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
+                    version_id,
+                )
+                or not semantic_version
+                or not re.fullmatch(r"[0-9a-f]{64}", manifest_hash)
+            ):
+                continue
+            normalized_pins[skill_key] = {
+                "skillId": skill_id,
+                "versionId": version_id,
+                "semanticVersion": semantic_version,
+                "manifestHash": manifest_hash,
+            }
+        if normalized_pins:
+            context["skill_version_pins"] = normalized_pins
     allow_ids = payload.get("mcpServerAllowIds") or []
     deny_ids = payload.get("mcpServerDenyIds") or []
-    is_admin = bool(payload.get("isAdmin", False))
+    # Platform administration never grants runtime-capability consumption.
+    # Preserve the field for compatibility, but never turn it into an allow
+    # bypass in the trusted agent context.
+    is_admin = False
     allow_skill_sandbox = bool(
         payload.get("allowSkillSandbox")
         or payload.get("allow_skill_sandbox")

@@ -81,8 +81,9 @@ export const startAgentRun = async (
   return response.json();
 };
 
-export const fetchSlashMetadata = async (): Promise<SlashMetadataResponse> => {
-  const response = await apiFetch(`${API_URL}/agent/slash-metadata`);
+export const fetchSlashMetadata = async (workspaceId?: string): Promise<SlashMetadataResponse> => {
+  const query = workspaceId ? `?workspaceId=${encodeURIComponent(workspaceId)}` : '';
+  const response = await apiFetch(`${API_URL}/agent/slash-metadata${query}`);
   if (!response.ok) {
     throw new Error(await readErrorMessage(response, 'Failed to load slash metadata'));
   }

@@ -119,6 +119,10 @@ function extractActionsFromText(text: string): unknown[] {
 }
 
 export function registerSkillsRoutes(router: Router) {
+  const governedWriteResponse = (res: any) => res.status(410).json({
+    error: 'Direct runtime-registry writes are disabled. Create or update a private governed skill draft instead.',
+    code: 'GOVERNED_SKILL_DRAFT_REQUIRED',
+  });
   router.get('/plugins', async (_req, res) => {
     try {
       res.json({ plugins: await listPlugins() });
@@ -156,6 +160,9 @@ export function registerSkillsRoutes(router: Router) {
   });
 
   router.post('/skills', async (req, res) => {
+    if (String(process.env.ENABLE_GOVERNED_SKILLS ?? 'true').toLowerCase() !== 'false') {
+      return governedWriteResponse(res);
+    }
     try {
       const { id, name, description } = createSkillSchema.parse(req.body);
       await fs.mkdir(skillsRoot, { recursive: true });
@@ -215,6 +222,9 @@ export function registerSkillsRoutes(router: Router) {
   });
 
   router.put(/^\/skills\/(.+)\/content$/, async (req, res) => {
+    if (String(process.env.ENABLE_GOVERNED_SKILLS ?? 'true').toLowerCase() !== 'false') {
+      return governedWriteResponse(res);
+    }
     try {
       const { path: filePath, content } = updateSkillContentSchema.parse(req.body);
       const skillId = req.params[0];
@@ -250,6 +260,9 @@ export function registerSkillsRoutes(router: Router) {
   });
 
   router.post('/skills/apply-actions', async (req, res) => {
+    if (String(process.env.ENABLE_GOVERNED_SKILLS ?? 'true').toLowerCase() !== 'false') {
+      return governedWriteResponse(res);
+    }
     try {
       const user = req.userContext;
       if (!user) {

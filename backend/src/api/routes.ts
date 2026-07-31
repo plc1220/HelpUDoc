@@ -10,7 +10,7 @@ import settingsRoutes from './settings';
 import knowledgeRoutes from './knowledge';
 import usersRoutes from './users';
 import settingsReflectionRoutes from './settingsReflections';
-import settingsSkillEvolutionRoutes from './settingsSkillEvolution';
+import governanceRoutes from './governance';
 import meMemoryRoutes from './meMemory';
 import { requireSystemAdmin } from '../middleware/adminOnly';
 import { DatabaseService } from '../services/databaseService';
@@ -24,13 +24,17 @@ import { UserService } from '../services/userService';
 import { KnowledgeService } from '../services/knowledgeService';
 import { DailyReflectionService } from '../services/dailyReflectionService';
 import { UserMemoryService } from '../services/userMemoryService';
-import { SkillEvolutionService } from '../services/skillEvolutionService';
 import { UserOAuthTokenService } from '../services/userOAuthTokenService';
 import { GoogleOAuthService } from '../services/googleOAuthService';
 import { ScheduleService } from '../services/scheduleService';
 import { configureAgentRunServices } from '../services/agentRunService';
+import { SkillGovernanceService } from '../services/governance/skillGovernanceService';
 
-export default function(dbService: DatabaseService, userService: UserService) {
+export default function(
+  dbService: DatabaseService,
+  userService: UserService,
+  skillGovernanceService: SkillGovernanceService,
+) {
   const router = Router();
   const workspaceService = new WorkspaceService(dbService);
   const workspacePublicationService = new WorkspacePublicationService(dbService, workspaceService);
@@ -49,8 +53,7 @@ export default function(dbService: DatabaseService, userService: UserService) {
     workspaceService,
     userService,
   );
-  const skillEvolutionService = new SkillEvolutionService(dbService);
-  const dailyReflectionService = new DailyReflectionService(dbService, skillEvolutionService);
+  const dailyReflectionService = new DailyReflectionService(dbService);
   const userMemoryService = new UserMemoryService(dbService);
   const scheduleService = new ScheduleService(
     dbService,
@@ -60,10 +63,10 @@ export default function(dbService: DatabaseService, userService: UserService) {
     googleOAuthService,
   );
   router.use('/auth', authRoutes(userService, googleOAuthService));
+  router.use('/', governanceRoutes(skillGovernanceService));
   router.use('/agent', agentRoutes(workspaceService, fileService, googleOAuthService, userService, conversationService));
   router.use('/settings', requireSystemAdmin(userService), settingsRoutes(workspaceService, userService, dbService));
   router.use('/settings/reflections', requireSystemAdmin(userService), settingsReflectionRoutes(dailyReflectionService));
-  router.use('/settings/skill-evolution', requireSystemAdmin(userService), settingsSkillEvolutionRoutes(skillEvolutionService));
   router.use('/users', requireSystemAdmin(userService), usersRoutes(userService, workspaceService));
   router.use('/knowledge', requireSystemAdmin(userService), knowledgeRoutes(knowledgeService, { global: true }));
   router.use('/workspaces', workspaceRoutes(workspaceService, workspacePublicationService, userService));

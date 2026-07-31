@@ -83,6 +83,9 @@ export class WorkspaceTeamChatAgentService {
     if (!promptAccess) {
       throw new HttpError(401, 'User not found');
     }
+    const workspacePins = await this.userService.getWorkspaceSkillRuntimePins(workspaceId);
+    const entitledSkills = new Set(promptAccess.skillIds);
+    const authorizedPins = workspacePins.filter((pin) => pin.available && entitledSkills.has(pin.skillKey));
 
     const configuredServers = await loadRuntimeMcpServers();
     const deniedMcpServerIds = Array.from(new Set(
@@ -95,7 +98,16 @@ export class WorkspaceTeamChatAgentService {
       userId,
       workspaceId,
       isAdmin: false,
-      skillAllowIds: promptAccess.skillIds,
+      skillAllowIds: authorizedPins.map((pin) => pin.skillKey),
+      skillVersionPins: Object.fromEntries(authorizedPins.map((pin) => [
+        pin.skillKey,
+        {
+          skillId: pin.skillId,
+          versionId: pin.versionId,
+          semanticVersion: pin.semanticVersion,
+          manifestHash: pin.manifestHash,
+        },
+      ])),
       mcpServerAllowIds: [],
       mcpServerDenyIds: deniedMcpServerIds,
       workspaceMode: 'published_read_only',

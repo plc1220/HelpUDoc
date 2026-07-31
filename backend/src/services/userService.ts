@@ -1,6 +1,7 @@
 import { Knex } from 'knex';
 import { v4 as uuidv4 } from 'uuid';
 import { DatabaseService } from './databaseService';
+import { ConflictError } from '../errors';
 
 export interface UserRecord {
   id: string;
@@ -27,6 +28,15 @@ export interface GroupPromptAccess {
 
 export interface EffectivePromptAccess extends GroupPromptAccess {
   isAdmin: boolean;
+}
+
+export interface WorkspaceSkillRuntimePin {
+  skillId: string;
+  skillKey: string;
+  versionId: string;
+  semanticVersion: string;
+  manifestHash: string;
+  available: boolean;
 }
 
 export interface DirectoryUser {
@@ -102,6 +112,12 @@ export class UserService {
           isAdmin,
         })
         .returning('*');
+      if (created.isAdmin) {
+        await this.db('platform_role_bindings').insert({
+          userId: created.id,
+          role: 'platform_admin',
+        }).onConflict(['userId', 'role']).ignore();
+      }
       return created;
     }
 
@@ -125,6 +141,12 @@ export class UserService {
           updatedAt: this.db.fn.now(),
         })
         .returning('*');
+      if (updated.isAdmin) {
+        await this.db('platform_role_bindings').insert({
+          userId: updated.id,
+          role: 'platform_admin',
+        }).onConflict(['userId', 'role']).ignore();
+      }
       return updated;
     }
 
@@ -223,15 +245,34 @@ export class UserService {
   }
 
   async setUserAdmin(userId: string, isAdmin: boolean): Promise<UserRecord | null> {
-    const [updated] = await this.db<UserRecord>('users')
-      .where({ id: userId })
-      .update({
-        isAdmin,
-        updatedAt: this.db.fn.now(),
-      })
-      .returning('*');
-
-    return updated || null;
+    return this.db.transaction(async (tx) => {
+      const target = await tx<UserRecord>('users').where({ id: userId }).forUpdate().first();
+      if (!target) return null;
+      if (target.isAdmin && !isAdmin) {
+        const activeAdmins = await tx<UserRecord>('users')
+          .where({ isAdmin: true })
+          .forUpdate();
+        if (activeAdmins.length <= 1) {
+          throw new ConflictError('The final active Platform Admin cannot be removed or demoted');
+        }
+      }
+      const [updated] = await tx<UserRecord>('users')
+        .where({ id: userId })
+        .update({
+          isAdmin,
+          updatedAt: tx.fn.now(),
+        })
+        .returning('*');
+      if (isAdmin) {
+        await tx('platform_role_bindings').insert({
+          userId,
+          role: 'platform_admin',
+        }).onConflict(['userId', 'role']).ignore();
+      } else {
+        await tx('platform_role_bindings').where({ userId, role: 'platform_admin' }).del();
+      }
+      return updated || null;
+    });
   }
 
   async listGroups(): Promise<GroupRecord[]> {
@@ -257,6 +298,13 @@ export class UserService {
 
   async deleteGroup(groupId: string): Promise<number> {
     return this.db.transaction(async (tx) => {
+      const [ownedSkill, review] = await Promise.all([
+        tx('skills').where({ ownerTeamId: groupId }).first(),
+        tx('skill_review_requests').where({ ownerTeamId: groupId }).first(),
+      ]);
+      if (ownedSkill || review) {
+        throw new ConflictError('A Team that owns governed skills or skill review history cannot be deleted');
+      }
       await tx('skill_grants').where({ principalType: 'group', principalId: groupId }).del();
       await tx('mcp_server_group_grants').where({ groupId }).del();
       await tx('knowledge_source_group_grants').where({ groupId }).del();
@@ -265,11 +313,17 @@ export class UserService {
     });
   }
 
-  async listGroupMembers(groupId: string): Promise<UserRecord[]> {
+  async listGroupMembers(groupId: string): Promise<Array<UserRecord & { isTeamLead: boolean }>> {
     return this.db<UserRecord>('users as u')
       .join('group_members as gm', 'u.id', 'gm.userId')
+      .leftJoin('team_role_bindings as tr', function joinTeamLead() {
+        this.on('tr.teamId', '=', 'gm.groupId')
+          .andOn('tr.userId', '=', 'gm.userId')
+          .andOnVal('tr.role', '=', 'lead');
+      })
       .where('gm.groupId', groupId)
       .select('u.*')
+      .select(this.db.raw('CASE WHEN tr."userId" IS NULL THEN FALSE ELSE TRUE END AS "isTeamLead"'))
       .orderBy('u.displayName', 'asc');
   }
 
@@ -284,7 +338,11 @@ export class UserService {
   }
 
   async removeGroupMember(groupId: string, userId: string): Promise<number> {
-    return this.db('group_members').where({ groupId, userId }).del();
+    return this.db.transaction(async (tx) => {
+      await tx('team_role_bindings').where({ teamId: groupId, userId }).del();
+      const deleted = await tx('group_members').where({ groupId, userId }).del();
+      return Number(deleted || 0);
+    });
   }
 
   async getGroupPromptAccess(groupId: string): Promise<GroupPromptAccess | null> {
@@ -292,10 +350,14 @@ export class UserService {
     if (!group) {
       return null;
     }
-    const [skillRows, mcpRows, knowledgeRows] = await Promise.all([
+    const [legacySkillRows, governedSkillRows, mcpRows, knowledgeRows] = await Promise.all([
       this.db('skill_grants')
         .select('skillId')
         .where({ principalType: 'group', principalId: groupId, effect: 'allow' }),
+      this.db('team_skill_grants as grant')
+        .join('skills as skill', 'skill.id', 'grant.skillId')
+        .select('skill.skillKey as skillId')
+        .where({ 'grant.teamId': groupId, 'grant.effect': 'allow' }),
       this.db('mcp_server_group_grants')
         .select('serverId')
         .where({ groupId }),
@@ -305,7 +367,10 @@ export class UserService {
     ]);
 
     return {
-      skillIds: normalizeUniqueStrings((skillRows as Array<{ skillId?: string }>).map((row) => String(row.skillId || ''))),
+      skillIds: normalizeUniqueStrings(
+        [...legacySkillRows, ...governedSkillRows]
+          .map((row: any) => String(row.skillId || '')),
+      ),
       mcpServerIds: normalizeUniqueStrings((mcpRows as Array<{ serverId?: string }>).map((row) => String(row.serverId || ''))),
       knowledgeSourceIds: normalizeUniqueNumbers(
         (knowledgeRows as Array<{ knowledgeSourceId?: number }>).map((row) => Number(row.knowledgeSourceId)),
@@ -313,7 +378,11 @@ export class UserService {
     };
   }
 
-  async replaceGroupPromptAccess(groupId: string, access: GroupPromptAccess): Promise<GroupPromptAccess | null> {
+  async replaceGroupPromptAccess(
+    groupId: string,
+    access: GroupPromptAccess,
+    actorUserId?: string,
+  ): Promise<(GroupPromptAccess & { auditEventId?: string }) | null> {
     const skillIds = normalizeUniqueStrings(access.skillIds || []);
     const mcpServerIds = normalizeUniqueStrings(access.mcpServerIds || []);
     const knowledgeSourceIds = normalizeUniqueNumbers(access.knowledgeSourceIds || []);
@@ -323,6 +392,10 @@ export class UserService {
       if (!group) {
         return null;
       }
+      const previousGoverned = await tx('team_skill_grants as grant')
+        .join('skills as skill', 'skill.id', 'grant.skillId')
+        .select('skill.skillKey')
+        .where({ 'grant.teamId': groupId, 'grant.effect': 'allow' });
 
       await tx('skill_grants').where({ principalType: 'group', principalId: groupId }).del();
       if (skillIds.length) {
@@ -334,6 +407,30 @@ export class UserService {
             effect: 'allow',
           })),
         );
+      }
+      await tx('team_skill_grants').where({ teamId: groupId }).del();
+      const previousGovernedSkillKeys = previousGoverned.map((row: any) => String(row.skillKey));
+      const governedSkills = skillIds.length
+        ? await tx('skills as skill')
+          .leftJoin('skill_versions as version', 'version.id', 'skill.defaultVersionId')
+          .select('skill.id')
+          .whereIn('skill.skillKey', skillIds)
+          .andWhere((builder) => {
+            builder.where((active) => active
+              .where('skill.status', 'active')
+              .andWhere('version.status', 'active'));
+            if (previousGovernedSkillKeys.length) {
+              builder.orWhereIn('skill.skillKey', previousGovernedSkillKeys);
+            }
+          })
+        : [];
+      if (governedSkills.length) {
+        await tx('team_skill_grants').insert(governedSkills.map((skill: any) => ({
+          teamId: groupId,
+          skillId: skill.id,
+          effect: 'allow',
+          grantedByUserId: actorUserId || null,
+        })));
       }
 
       await tx('mcp_server_group_grants').where({ groupId }).del();
@@ -356,10 +453,29 @@ export class UserService {
         );
       }
 
+      let auditEventId: string | undefined;
+      if (actorUserId) {
+        auditEventId = uuidv4();
+        await tx('audit_events').insert({
+          id: auditEventId,
+          actorUserId,
+          actorRole: 'platform_admin',
+          action: 'skill_access.team_replaced',
+          resourceType: 'team',
+          resourceId: groupId,
+          previousStateHash: null,
+          newStateHash: null,
+          metadata: JSON.stringify({
+            previousSkillKeys: previousGoverned.map((row: any) => row.skillKey).sort(),
+            skillKeys: skillIds,
+          }),
+        });
+      }
       return {
         skillIds,
         mcpServerIds,
         knowledgeSourceIds,
+        auditEventId,
       };
     });
   }
@@ -369,47 +485,115 @@ export class UserService {
     if (!user) {
       return null;
     }
-    if (user.isAdmin) {
-      return {
-        isAdmin: true,
-        skillIds: [],
-        mcpServerIds: [],
-        knowledgeSourceIds: [],
-      };
-    }
 
     const memberships = await this.db('group_members').select('groupId').where({ userId });
     const groupIds = normalizeUniqueStrings((memberships as Array<{ groupId?: string }>).map((row) => String(row.groupId || '')));
-    if (!groupIds.length) {
-      return {
-        isAdmin: false,
-        skillIds: [],
-        mcpServerIds: [],
-        knowledgeSourceIds: [],
-      };
-    }
 
-    const [skillRows, mcpRows, knowledgeRows] = await Promise.all([
-      this.db('skill_grants')
-        .select('skillId')
-        .where({ principalType: 'group', effect: 'allow' })
-        .whereIn('principalId', groupIds),
-      this.db('mcp_server_group_grants')
-        .select('serverId')
-        .whereIn('groupId', groupIds),
-      this.db('knowledge_source_group_grants')
-        .select('knowledgeSourceId')
-        .whereIn('groupId', groupIds),
+    const [legacyGroupSkills, legacyDirectSkills, governedTeamSkills, governedDirectSkills, mcpRows, knowledgeRows] = await Promise.all([
+      groupIds.length
+        ? this.db('skill_grants as grant')
+          .leftJoin('skills as governedSkill', 'governedSkill.skillKey', 'grant.skillId')
+          .leftJoin('skill_versions as governedVersion', 'governedVersion.id', 'governedSkill.defaultVersionId')
+          .select('grant.skillId')
+          .where({ 'grant.principalType': 'group', 'grant.effect': 'allow' })
+          .whereIn('grant.principalId', groupIds)
+          .andWhere((builder) => {
+            builder
+              .whereNull('governedSkill.id')
+              .orWhere((governed) => governed
+                .where('governedSkill.status', 'active')
+                .andWhere('governedVersion.status', 'active'));
+          })
+        : Promise.resolve([]),
+      this.db('skill_grants as grant')
+        .leftJoin('skills as governedSkill', 'governedSkill.skillKey', 'grant.skillId')
+        .leftJoin('skill_versions as governedVersion', 'governedVersion.id', 'governedSkill.defaultVersionId')
+        .select('grant.skillId')
+        .where({ 'grant.principalType': 'user', 'grant.principalId': userId, 'grant.effect': 'allow' })
+        .andWhere((builder) => {
+          builder
+            .whereNull('governedSkill.id')
+            .orWhere((governed) => governed
+              .where('governedSkill.status', 'active')
+              .andWhere('governedVersion.status', 'active'));
+        }),
+      groupIds.length
+        ? this.db('team_skill_grants as grant')
+          .join('skills as skill', 'skill.id', 'grant.skillId')
+          .join('skill_versions as version', 'version.id', 'skill.defaultVersionId')
+          .select('skill.skillKey as skillId')
+          .where({ 'grant.effect': 'allow', 'skill.status': 'active', 'version.status': 'active' })
+          .whereIn('grant.teamId', groupIds)
+        : Promise.resolve([]),
+      this.db('user_skill_grants as grant')
+        .join('skills as skill', 'skill.id', 'grant.skillId')
+        .join('skill_versions as version', 'version.id', 'skill.defaultVersionId')
+        .select('skill.skillKey as skillId')
+        .where({
+          'grant.userId': userId,
+          'grant.effect': 'allow',
+          'skill.status': 'active',
+          'version.status': 'active',
+        }),
+      groupIds.length
+        ? this.db('mcp_server_group_grants')
+          .select('serverId')
+          .whereIn('groupId', groupIds)
+        : Promise.resolve([]),
+      groupIds.length
+        ? this.db('knowledge_source_group_grants')
+          .select('knowledgeSourceId')
+          .whereIn('groupId', groupIds)
+        : Promise.resolve([]),
     ]);
 
     return {
-      isAdmin: false,
-      skillIds: normalizeUniqueStrings((skillRows as Array<{ skillId?: string }>).map((row) => String(row.skillId || ''))),
+      isAdmin: user.isAdmin,
+      skillIds: normalizeUniqueStrings(
+        [
+          ...legacyGroupSkills,
+          ...legacyDirectSkills,
+          ...governedTeamSkills,
+          ...governedDirectSkills,
+        ].map((row: any) => String(row.skillId || '')),
+      ),
       mcpServerIds: normalizeUniqueStrings((mcpRows as Array<{ serverId?: string }>).map((row) => String(row.serverId || ''))),
       knowledgeSourceIds: normalizeUniqueNumbers(
         (knowledgeRows as Array<{ knowledgeSourceId?: number }>).map((row) => Number(row.knowledgeSourceId)),
       ),
     };
+  }
+
+  async getWorkspaceSkillRuntimePins(workspaceId: string): Promise<WorkspaceSkillRuntimePin[]> {
+    const rows = await this.db('workspace_skill_pins as pin')
+      .join('skills as skill', 'skill.id', 'pin.skillId')
+      .join('skill_versions as version', 'version.id', 'pin.skillVersionId')
+      .select(
+        'skill.id as skillId',
+        'skill.skillKey',
+        'version.id as versionId',
+        'version.semanticVersion',
+        'version.manifestHash',
+        'pin.semanticVersion as pinnedSemanticVersion',
+        'pin.manifestHash as pinnedManifestHash',
+        'pin.validationStatus',
+        'skill.status as skillStatus',
+        'version.status as versionStatus',
+      )
+      .where({ 'pin.workspaceId': workspaceId })
+      .orderBy('skill.skillKey', 'asc');
+    return rows.map((row: any) => ({
+      skillId: row.skillId,
+      skillKey: row.skillKey,
+      versionId: row.versionId,
+      semanticVersion: row.semanticVersion,
+      manifestHash: row.manifestHash,
+      available: row.validationStatus === 'valid'
+        && row.skillStatus === 'active'
+        && row.versionStatus === 'active'
+        && row.pinnedSemanticVersion === row.semanticVersion
+        && row.pinnedManifestHash === row.manifestHash,
+    }));
   }
 
   async listOwnedWorkspaces(userId: string): Promise<Array<{ id: string; name: string }>> {
@@ -463,6 +647,18 @@ export class UserService {
     }
 
     await this.db.transaction(async (tx) => {
+      if (user.isAdmin) {
+        const admins = await tx<UserRecord>('users').where({ isAdmin: true }).forUpdate();
+        if (admins.length <= 1) {
+          throw new ConflictError('The final active Platform Admin cannot be deleted');
+        }
+      }
+      const governedReview = await tx('skill_review_requests')
+        .where({ proposerUserId: userId })
+        .first();
+      if (governedReview) {
+        throw new ConflictError('A user with governed skill review history cannot be deleted');
+      }
       await this.detachUserReferences(tx, userId);
       await tx('group_members').where({ userId }).del();
       await tx('workspace_members').where({ userId }).del();

@@ -1,17 +1,15 @@
 import { Suspense, lazy, useState, useEffect, useCallback } from 'react';
-import { Wrench, Library, Loader2, PackageOpen, Sparkles } from 'lucide-react';
+import { Wrench, Loader2, PackageOpen } from 'lucide-react';
 import { fetchAgentConfig, saveAgentConfig } from '../../../services/settingsApi';
 import ToolsTab, { type AgentConfig } from './ToolsTab';
 import { SettingsEmptyState, SettingsLoadingState, SettingsTabPanel, SettingsTabs } from './SettingsScaffold';
 import YAML from 'yaml';
 import { getAuthUser } from '../../../auth/authStore';
 
-const SkillsRegistryTab = lazy(() => import('./SkillsRegistryTab'));
 const PluginsRegistryTab = lazy(() => import('./PluginsRegistryTab'));
-const SkillEvolutionTab = lazy(() => import('./SkillEvolutionTab'));
 
 const AgentSettingsTabs = () => {
-    const [activeTab, setActiveTab] = useState<'tools' | 'plugins' | 'skills' | 'evolution'>('skills');
+    const [activeTab, setActiveTab] = useState<'tools' | 'plugins'>('plugins');
     const [config, setConfig] = useState<AgentConfig | null>(null);
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
@@ -97,9 +95,7 @@ const AgentSettingsTabs = () => {
         <div className="space-y-6">
             <SettingsTabs
                 tabs={[
-                    { id: 'skills', label: 'Skills', icon: Library },
                     { id: 'plugins', label: 'Plugins', icon: PackageOpen },
-                    { id: 'evolution', label: 'Skill evolution', icon: Sparkles },
                     { id: 'tools', label: 'Tools & MCP', icon: Wrench },
                 ]}
                 value={activeTab}
@@ -110,19 +106,9 @@ const AgentSettingsTabs = () => {
                 {activeTab === 'tools' && (
                     <ToolsTab config={config} onSave={handleSave} isSaving={saving} />
                 )}
-                {activeTab === 'skills' && (
-                    <Suspense fallback={<SettingsLoadingState label="Loading skill registry..." />}>
-                        <SkillsRegistryTab />
-                    </Suspense>
-                )}
                 {activeTab === 'plugins' && (
                     <Suspense fallback={<SettingsLoadingState label="Loading plugin registry..." />}>
                         <PluginsRegistryTab />
-                    </Suspense>
-                )}
-                {activeTab === 'evolution' && (
-                    <Suspense fallback={<SettingsLoadingState label="Loading skill evolution..." />}>
-                        <SkillEvolutionTab />
                     </Suspense>
                 )}
             </SettingsTabPanel>

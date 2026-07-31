@@ -2129,10 +2129,19 @@ export default function WorkspacePage() {
 
   useEffect(() => {
     let cancelled = false;
+    const workspaceId = selectedWorkspace?.id;
+    if (!workspaceId) {
+      setAvailableSkills([]);
+      setAvailableMcpServers([]);
+      setAvailablePlugins([]);
+      return () => {
+        cancelled = true;
+      };
+    }
 
     const loadSlashMetadata = async () => {
       try {
-        const { skills, mcpServers, plugins } = await fetchSlashMetadata();
+        const { skills, mcpServers, plugins } = await fetchSlashMetadata(workspaceId);
         if (cancelled) {
           return;
         }
@@ -2149,7 +2158,7 @@ export default function WorkspacePage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [selectedWorkspace?.id]);
 
   const isFileEditable = (fileName: string): boolean => {
     const editableExtensions = [

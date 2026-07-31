@@ -4,12 +4,33 @@ import { skillsRoot } from './constants';
 export const ACTION_ALLOWED_PREFIXES = ['SKILL.md', 'scripts/', 'references/', 'assets/', 'templates/'];
 export const IMPORT_ALLOWED_PREFIXES = [
   'SKILL.md',
+  'LICENSE',
+  'LICENSE.txt',
+  'README.md',
+  'QUICKREF.md',
+  'STYLE_PRESETS.md',
+  'animation-patterns.md',
+  'html-template.md',
+  'interaction_contract.yaml',
+  'interaction_contract.yml',
+  'manifest.txt',
+  'render_docx.py',
+  'viewport-base.css',
+  'agents/',
+  'artifact_tool/',
   'scripts/',
   'references/',
   'assets/',
   'templates/',
   'docs/',
   'examples/',
+  'bold-template-pack/',
+  'builtin_templates_support/',
+  'container_tools/',
+  'ooxml/',
+  'tasks/',
+  'template_following_scripts/',
+  'troubleshooting/',
 ];
 
 export const IMPORT_BLOCKED_EXTENSIONS = new Set(['.exe', '.dll', '.so', '.dylib', '.bat', '.cmd', '.com']);

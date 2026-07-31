@@ -178,6 +178,8 @@ export class WorkspacePublicationService {
         ownerId: userId,
         lastModifiedBy: userId,
         visibility: 'private',
+        workspaceType: 'private',
+        editingPolicy: null,
         contentRevision: 0,
       });
       await tx('workspace_members').insert({
@@ -186,6 +188,12 @@ export class WorkspacePublicationService {
         role: 'owner',
         canEdit: true,
       });
+      await this.copyPublishedSkillPinsToWorkspace(
+        tx,
+        currentVersion.id,
+        privateWorkspaceId,
+        userId,
+      );
     });
 
     try {
@@ -282,6 +290,12 @@ export class WorkspacePublicationService {
         if (updated !== 1) {
           throw new ConflictError('The private workspace link changed while syncing');
         }
+        await this.copyPublishedSkillPinsToWorkspace(
+          tx,
+          latestVersion.id,
+          privateWorkspaceId,
+          userId,
+        );
       },
     );
 
@@ -367,6 +381,7 @@ export class WorkspacePublicationService {
               manifest,
             })
             .returning('*');
+          await this.restorePublishedSkillPins(tx, restoredVersion.id, teamWorkspaceId, created.id);
           await tx('workspaces')
             .where({ id: teamWorkspaceId })
             .update({
@@ -406,6 +421,8 @@ export class WorkspacePublicationService {
         ownerId: userId,
         lastModifiedBy: userId,
         visibility: 'team',
+        workspaceType: 'team',
+        editingPolicy: 'review',
         teamId: input.teamId,
         contentRevision: 0,
       });
@@ -522,6 +539,12 @@ export class WorkspacePublicationService {
               manifest,
             })
             .returning('*');
+          await this.freezeWorkspaceSkillPins(
+            tx,
+            input.privateWorkspace.id,
+            lockedTeam.id,
+            version.id,
+          );
 
           await tx('workspaces')
             .where({ id: lockedTeam.id })
@@ -586,22 +609,162 @@ export class WorkspacePublicationService {
     const versionId = uuidv4();
     const manifest = await this.writeVersionSnapshot(versionId, content);
     const publisherUserId = teamWorkspace.ownerId || userId;
-    const [version] = await this.db<PublishedVersionRecord>('workspace_published_versions')
-      .insert({
-        id: versionId,
-        teamWorkspaceId: teamWorkspace.id,
-        versionNumber: 1,
-        sourcePrivateWorkspaceId: null,
-        publisherUserId,
-        note: 'Initial published version',
-        manifest,
-      })
-      .returning('*');
-    await this.db('workspaces')
-      .where({ id: teamWorkspace.id })
-      .whereNull('currentPublishedVersionId')
-      .update({ currentPublishedVersionId: version.id });
-    return version;
+    try {
+      const result = await this.db.transaction(async (tx) => {
+        const lockedTeam = await tx<WorkspaceRecord>('workspaces')
+          .where({ id: teamWorkspace.id })
+          .forUpdate()
+          .first();
+        if (!lockedTeam) {
+          throw new NotFoundError('Team workspace not found');
+        }
+        if (lockedTeam.currentPublishedVersionId) {
+          const current = await tx<PublishedVersionRecord>('workspace_published_versions')
+            .where({ id: lockedTeam.currentPublishedVersionId, teamWorkspaceId: lockedTeam.id })
+            .first();
+          if (!current) {
+            throw new NotFoundError('Current published version not found');
+          }
+          return { version: current, created: false };
+        }
+
+        const [version] = await tx<PublishedVersionRecord>('workspace_published_versions')
+          .insert({
+            id: versionId,
+            teamWorkspaceId: lockedTeam.id,
+            versionNumber: 1,
+            sourcePrivateWorkspaceId: null,
+            publisherUserId,
+            note: 'Initial published version',
+            manifest,
+          })
+          .returning('*');
+        await this.freezeWorkspaceSkillPins(tx, lockedTeam.id, lockedTeam.id, version.id);
+        await tx('workspaces')
+          .where({ id: lockedTeam.id })
+          .update({ currentPublishedVersionId: version.id });
+        return { version, created: true };
+      });
+      if (!result.created) {
+        await fs.rm(this.versionDirectory(versionId), { recursive: true, force: true });
+      }
+      return result.version;
+    } catch (error) {
+      await fs.rm(this.versionDirectory(versionId), { recursive: true, force: true });
+      throw error;
+    }
+  }
+
+  private async freezeWorkspaceSkillPins(
+    tx: Knex.Transaction,
+    sourceWorkspaceId: string,
+    teamWorkspaceId: string,
+    publishedVersionId: string,
+  ): Promise<void> {
+    const pins = await tx('workspace_skill_pins as pin')
+      .join('skills as skill', 'skill.id', 'pin.skillId')
+      .join('skill_versions as version', 'version.id', 'pin.skillVersionId')
+      .select(
+        'pin.skillId',
+        'pin.skillVersionId',
+        'pin.semanticVersion',
+        'pin.manifestHash',
+        'pin.pinnedByUserId',
+        'skill.status as skillStatus',
+        'version.status as versionStatus',
+        'version.semanticVersion as storedSemanticVersion',
+        'version.manifestHash as storedManifestHash',
+      )
+      .where('pin.workspaceId', sourceWorkspaceId)
+      .orderBy('pin.skillId', 'asc');
+
+    const invalid = pins.find((pin: any) =>
+      pin.skillStatus !== 'active'
+      || pin.versionStatus !== 'active'
+      || pin.semanticVersion !== pin.storedSemanticVersion
+      || pin.manifestHash !== pin.storedManifestHash);
+    if (invalid) {
+      throw new ConflictError('Workspace publication contains an unavailable or invalid skill pin', {
+        code: 'INVALID_WORKSPACE_SKILL_PIN',
+        skillId: invalid.skillId,
+        versionId: invalid.skillVersionId,
+      });
+    }
+
+    if (sourceWorkspaceId !== teamWorkspaceId) {
+      await tx('workspace_skill_pins').where({ workspaceId: teamWorkspaceId }).del();
+      if (pins.length) {
+        await tx('workspace_skill_pins').insert(pins.map((pin: any) => ({
+          workspaceId: teamWorkspaceId,
+          skillId: pin.skillId,
+          skillVersionId: pin.skillVersionId,
+          semanticVersion: pin.semanticVersion,
+          manifestHash: pin.manifestHash,
+          pinnedByUserId: pin.pinnedByUserId,
+          validationStatus: 'valid',
+        })));
+      }
+    }
+    if (pins.length) {
+      await tx('published_version_skill_pins').insert(pins.map((pin: any) => ({
+        publishedVersionId,
+        skillId: pin.skillId,
+        skillVersionId: pin.skillVersionId,
+        semanticVersion: pin.semanticVersion,
+        manifestHash: pin.manifestHash,
+      })));
+    }
+  }
+
+  private async restorePublishedSkillPins(
+    tx: Knex.Transaction,
+    restoredPublishedVersionId: string,
+    workspaceId: string,
+    newPublishedVersionId: string,
+  ): Promise<void> {
+    const pins = await tx('published_version_skill_pins')
+      .where({ publishedVersionId: restoredPublishedVersionId })
+      .orderBy('skillId', 'asc');
+    await tx('workspace_skill_pins').where({ workspaceId }).del();
+    if (!pins.length) return;
+    await tx('workspace_skill_pins').insert(pins.map((pin: any) => ({
+      workspaceId,
+      skillId: pin.skillId,
+      skillVersionId: pin.skillVersionId,
+      semanticVersion: pin.semanticVersion,
+      manifestHash: pin.manifestHash,
+      pinnedByUserId: null,
+      validationStatus: 'valid',
+    })));
+    await tx('published_version_skill_pins').insert(pins.map((pin: any) => ({
+      publishedVersionId: newPublishedVersionId,
+      skillId: pin.skillId,
+      skillVersionId: pin.skillVersionId,
+      semanticVersion: pin.semanticVersion,
+      manifestHash: pin.manifestHash,
+    })));
+  }
+
+  private async copyPublishedSkillPinsToWorkspace(
+    tx: Knex.Transaction,
+    publishedVersionId: string,
+    workspaceId: string,
+    pinnedByUserId: string,
+  ): Promise<void> {
+    const pins = await tx('published_version_skill_pins')
+      .where({ publishedVersionId })
+      .orderBy('skillId', 'asc');
+    await tx('workspace_skill_pins').where({ workspaceId }).del();
+    if (!pins.length) return;
+    await tx('workspace_skill_pins').insert(pins.map((pin: any) => ({
+      workspaceId,
+      skillId: pin.skillId,
+      skillVersionId: pin.skillVersionId,
+      semanticVersion: pin.semanticVersion,
+      manifestHash: pin.manifestHash,
+      pinnedByUserId,
+      validationStatus: 'valid',
+    })));
   }
 
   private ensurePublisher(role: WorkspaceRole): void {

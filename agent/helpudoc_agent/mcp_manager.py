@@ -522,14 +522,9 @@ class MCPServerManager:
         mcp_policy = self.workspace_state.context.get("mcp_policy", {}) or {}
         deny_ids = set(mcp_policy.get("denyIds", []) or [])
         allow_ids = set(mcp_policy.get("allowIds", []) or [])
-        is_admin = bool(mcp_policy.get("isAdmin", False))
 
         allowed: Dict[str, MCPServerConfig] = {}
         for name, cfg in (self.settings.mcp_servers or {}).items():
-            # Admin gets everything.
-            if is_admin:
-                allowed[name] = cfg
-                continue
             # Explicit deny always wins.
             if name in deny_ids:
                 continue

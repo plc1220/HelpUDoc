@@ -6,7 +6,7 @@ import { parse as parseYaml } from 'yaml';
 import { HttpError } from '../../errors';
 import { signAgentContextToken } from '../../services/agentToken';
 import { GoogleOAuthService, GoogleOAuthTokenMissingError } from '../../services/googleOAuthService';
-import type { UserService } from '../../services/userService';
+import type { UserService, WorkspaceSkillRuntimePin } from '../../services/userService';
 
 const AUTH_MODE = (process.env.AUTH_MODE || 'headers').trim().toLowerCase();
 const isSkillSandboxRunnerEnabled = () =>
@@ -54,6 +54,23 @@ export type EffectiveAgentPolicy = {
 
 const normalizeUniqueIds = (values: string[]) =>
   Array.from(new Set(values.map((value) => value.trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+
+export function resolveRuntimeSkillAccess(
+  entitledSkillIds: string[],
+  workspacePins: WorkspaceSkillRuntimePin[],
+  workspaceMode: EffectiveAgentPolicy['workspaceMode'],
+): { skillAllowIds: string[]; authorizedPins: WorkspaceSkillRuntimePin[] } {
+  const entitledSkills = new Set(entitledSkillIds);
+  const pinnedSkillKeys = new Set(workspacePins.map((pin) => pin.skillKey));
+  const authorizedPins = workspacePins.filter((pin) =>
+    pin.available && entitledSkills.has(pin.skillKey));
+  const authorizedPinnedSkillKeys = new Set(authorizedPins.map((pin) => pin.skillKey));
+  const skillAllowIds = workspaceMode === 'published_read_only'
+    ? authorizedPins.map((pin) => pin.skillKey).sort((a, b) => a.localeCompare(b))
+    : entitledSkillIds.filter((skillKey) =>
+      !pinnedSkillKeys.has(skillKey) || authorizedPinnedSkillKeys.has(skillKey));
+  return { skillAllowIds, authorizedPins };
+}
 
 const normalizeDelegatedAuthProvider = (value: unknown): string | null => {
   if (typeof value !== 'string') {
@@ -132,9 +149,6 @@ export function createAgentPolicyApi(googleOAuthService: GoogleOAuthService, use
         if (normalizeDelegatedAuthProvider(server.delegated_auth_provider ?? server.delegatedAuthProvider) !== 'google') {
           return false;
         }
-        if (policy.isAdmin) {
-          return true;
-        }
         if (denyIds.has(serverId)) {
           return false;
         }
@@ -167,12 +181,33 @@ export function createAgentPolicyApi(googleOAuthService: GoogleOAuthService, use
     policy: EffectiveAgentPolicy;
     skipPlanApprovals: boolean;
   }): Promise<string | null> => {
+    const workspacePins = typeof (userService as any).getWorkspaceSkillRuntimePins === 'function'
+      ? await userService.getWorkspaceSkillRuntimePins(input.workspaceId)
+      : [];
+    const { skillAllowIds: runtimeSkillAllowIds, authorizedPins } = resolveRuntimeSkillAccess(
+      input.policy.skillAllowIds,
+      workspacePins,
+      input.policy.workspaceMode,
+    );
     const payload: Record<string, unknown> = {
       sub: input.userId,
       userId: input.userId,
       workspaceId: input.workspaceId,
       skipPlanApprovals: input.skipPlanApprovals,
       ...input.policy,
+      // Team workspaces execute only the exact, signed version pins that were
+      // frozen into the published workspace version. Private workspaces retain
+      // their entitlement set and use exact versions wherever they have pins.
+      skillAllowIds: runtimeSkillAllowIds,
+      skillVersionPins: Object.fromEntries(authorizedPins.map((pin) => [
+        pin.skillKey,
+        {
+          skillId: pin.skillId,
+          versionId: pin.versionId,
+          semanticVersion: pin.semanticVersion,
+          manifestHash: pin.manifestHash,
+        },
+      ])),
     };
     if (isSkillSandboxRunnerEnabled()) {
       payload.allowSkillSandbox = true;
@@ -250,18 +285,6 @@ export function createAgentPolicyApi(googleOAuthService: GoogleOAuthService, use
     if (!promptAccess) {
       throw new HttpError(401, 'User not found');
     }
-    if (promptAccess.isAdmin) {
-      return {
-        isAdmin: true,
-        skillAllowIds: [],
-        mcpServerAllowIds: [],
-        mcpServerDenyIds: [],
-        workspaceMode: workspacePolicy.workspaceMode,
-        workspaceRole: workspacePolicy.workspaceRole,
-        canWriteWorkspace: workspacePolicy.canWriteWorkspace,
-      };
-    }
-
     const configuredServers = await loadRuntimeMcpServers();
     const groupAllowedServerIds = new Set(promptAccess.mcpServerIds);
     const workspaceAllowIds = new Set(normalizeUniqueIds(workspacePolicy.mcpServerAllowIds || []));
@@ -290,6 +313,8 @@ export function createAgentPolicyApi(googleOAuthService: GoogleOAuthService, use
     });
 
     return {
+      // Platform administration and runtime consumption are deliberately
+      // separate. Never propagate the catalog-admin flag as a runtime bypass.
       isAdmin: false,
       skillAllowIds: normalizeUniqueIds(promptAccess.skillIds),
       mcpServerAllowIds: Array.from(finalAllowIds).sort((a, b) => a.localeCompare(b)),

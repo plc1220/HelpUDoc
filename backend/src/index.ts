@@ -18,13 +18,13 @@ import { DatabaseService } from './services/databaseService';
 import { UserService } from './services/userService';
 import { RunTelemetryService } from './services/runTelemetryService';
 import { UserMemoryService } from './services/userMemoryService';
-import { SkillEvolutionService } from './services/skillEvolutionService';
 import { configureAgentRunServices } from './services/agentRunService';
 import { userContextMiddleware } from './middleware/userContext';
 import { blockingRedisClient, redisClient } from './services/redisService';
 import { startCollabServer } from './collab/collabServer';
 import { logWorkspaceRootDiagnostic } from './config/workspaceRoot';
 import { getBackendEnv } from './config/env';
+import { SkillGovernanceService } from './services/governance/skillGovernanceService';
 
 const app = express();
 const backendEnv = getBackendEnv();
@@ -39,10 +39,12 @@ async function startServer() {
   const databaseService = new DatabaseService();
   await databaseService.initialize();
   const userService = new UserService(databaseService);
+  const skillGovernanceService = new SkillGovernanceService(databaseService);
+  await skillGovernanceService.initialize();
   configureAgentRunServices({
     telemetryService: new RunTelemetryService(databaseService),
     userMemoryService: new UserMemoryService(databaseService),
-    skillEvolutionService: new SkillEvolutionService(databaseService),
+    skillEvolutionService: null,
   });
   await Promise.all([redisClient.connect(), blockingRedisClient.connect()]);
 
@@ -53,7 +55,15 @@ async function startServer() {
     origin: true,
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-User-Id', 'X-User-Name', 'X-User-Email'],
+    allowedHeaders: [
+      'Content-Type',
+      'Authorization',
+      'X-User-Id',
+      'X-User-Name',
+      'X-User-Email',
+      'If-Match',
+      'Idempotency-Key',
+    ],
   }));
   app.set('trust proxy', 1);
   app.use(session({
@@ -79,7 +89,7 @@ async function startServer() {
   app.use(express.urlencoded({ limit: '50mb', extended: true }));
   app.use(userContextMiddleware(userService));
 
-  app.use('/api', apiRoutes(databaseService, userService));
+  app.use('/api', apiRoutes(databaseService, userService, skillGovernanceService));
   startCollabServer(databaseService, userService);
 
   app.listen(port, () => {

@@ -8,6 +8,7 @@ export type ManagedUser = {
   displayName: string;
   email?: string | null;
   isAdmin: boolean;
+  isTeamLead?: boolean;
   createdAt: string;
   updatedAt: string;
 };

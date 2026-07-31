@@ -646,7 +646,10 @@ export class DailyReflectionService {
     const authToken = signAgentContextToken({
       sub: 'system-admin',
       userId: 'system-admin',
-      isAdmin: true,
+      isAdmin: false,
+      skillAllowIds: [],
+      mcpServerAllowIds: [],
+      mcpServerDenyIds: [],
     }) || undefined;
 
     try {

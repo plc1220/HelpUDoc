@@ -19,6 +19,9 @@ export interface WorkspaceRecord {
   ownerId: string;
   lastModifiedBy?: string | null;
   visibility: 'private' | 'team';
+  workspaceType?: 'private' | 'team';
+  editingPolicy?: 'direct' | 'review' | null;
+  status?: 'active' | 'archived';
   teamId?: string | null;
   currentPublishedVersionId?: string | null;
   contentRevision: number;
@@ -246,6 +249,8 @@ export class WorkspaceService {
         ownerId: user.userId,
         lastModifiedBy: user.userId,
         visibility: 'private',
+        workspaceType: 'private',
+        editingPolicy: null,
         contentRevision: 0,
       })
       .returning('*');

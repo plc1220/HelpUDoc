@@ -275,6 +275,12 @@ export function registerGithubImportRoutes(router: Router) {
     if (!ENABLE_GITHUB_SKILL_IMPORTER) {
       return res.status(404).json({ error: 'GitHub skill importer is disabled' });
     }
+    if (String(process.env.ENABLE_GOVERNED_SKILLS ?? 'true').toLowerCase() !== 'false') {
+      return res.status(410).json({
+        error: 'Direct runtime-registry imports are disabled. Import files into a private governed skill draft.',
+        code: 'GOVERNED_SKILL_DRAFT_REQUIRED',
+      });
+    }
     try {
       const user = requireUserContext(req);
       const { importSessionId, destinationSkillId, onCollision } = githubApplySchema.parse(req.body);

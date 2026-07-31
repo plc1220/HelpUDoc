@@ -3110,6 +3110,9 @@ async function runAgentRunWorker(
     if (parsed.type === 'policy') {
       conversationRunPolicy = {
         ...(typeof parsed.skill === 'string' && parsed.skill.trim() ? { skill: parsed.skill.trim() } : {}),
+        ...(parsed.skillVersion && typeof parsed.skillVersion === 'object'
+          ? { skillVersion: parsed.skillVersion }
+          : {}),
         ...(typeof parsed.requiresHitlPlan === 'boolean' ? { requiresHitlPlan: parsed.requiresHitlPlan } : {}),
         ...(typeof parsed.requiresArtifacts === 'boolean' ? { requiresArtifacts: parsed.requiresArtifacts } : {}),
         ...(typeof parsed.requiredArtifactsMode === 'string' && parsed.requiredArtifactsMode.trim()

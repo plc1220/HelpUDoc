@@ -1,12 +1,13 @@
 import { Router, type Request } from 'express';
 import { promises as fs } from 'fs';
 import type { UserService } from '../../services/userService';
+import type { WorkspaceService } from '../../services/workspaceService';
 import { HttpError } from '../../errors';
 import { skillsRoot } from '../../services/skills/constants';
 import { collectSkillIds } from '../../services/skills/registry';
 import { getSkillMetadata } from '../../services/skills/metadata';
 import { buildPluginBySkillMap, filterPluginsForAccess, listPlugins } from '../../services/plugins/registry';
-import { loadRuntimeMcpServers } from './policy';
+import { loadRuntimeMcpServers, resolveRuntimeSkillAccess } from './policy';
 
 type SlashSkillMetadata = {
   id: string;
@@ -28,6 +29,7 @@ const requireUserContext = (req: Request) => {
 
 export function registerSlashRoutes(
   router: Router,
+  workspaceService: WorkspaceService,
   userService: UserService,
 ) {
   router.get('/slash-metadata', async (req, res) => {
@@ -44,9 +46,24 @@ export function registerSlashRoutes(
       ]);
       const pluginBySkill = buildPluginBySkillMap(plugins);
       const skills: SlashSkillMetadata[] = [];
-      const allowedSkillIds = new Set(promptAccess.skillIds);
+      let runtimeSkillIds = promptAccess.skillIds;
+      const workspaceId = typeof req.query.workspaceId === 'string'
+        ? req.query.workspaceId.trim()
+        : '';
+      if (workspaceId) {
+        const [workspacePolicy, pins] = await Promise.all([
+          workspaceService.getMcpServerPolicy(workspaceId, user.userId),
+          userService.getWorkspaceSkillRuntimePins(workspaceId),
+        ]);
+        runtimeSkillIds = resolveRuntimeSkillAccess(
+          promptAccess.skillIds,
+          pins,
+          workspacePolicy.workspaceMode,
+        ).skillAllowIds;
+      }
+      const allowedSkillIds = new Set(runtimeSkillIds);
       for (const skillId of skillIds) {
-        if (!promptAccess.isAdmin && !allowedSkillIds.has(skillId)) {
+        if (!allowedSkillIds.has(skillId)) {
           continue;
         }
         try {
@@ -68,15 +85,15 @@ export function registerSlashRoutes(
           name: typeof server.name === 'string' ? server.name.trim() : '',
           description: undefined as string | undefined,
         }))
-          .filter((server) => promptAccess.isAdmin || allowedMcpServerIds.has(server.name))
+          .filter((server) => allowedMcpServerIds.has(server.name))
           .filter((server) => server.name);
 
       res.json({
         skills,
         mcpServers,
         plugins: filterPluginsForAccess(plugins, {
-          isAdmin: promptAccess.isAdmin,
-          skillIds: promptAccess.skillIds,
+          isAdmin: false,
+          skillIds: runtimeSkillIds,
           mcpServerIds: promptAccess.mcpServerIds,
         }),
       });
