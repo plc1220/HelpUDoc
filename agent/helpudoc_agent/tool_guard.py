@@ -14,7 +14,6 @@ from .state import WorkspaceState
 _PREFERRED_MCP_ONLY_BUILTINS = {
     "google_search",
     "url_context",
-    "rag_query",
 }
 
 

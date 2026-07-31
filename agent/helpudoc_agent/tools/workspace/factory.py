@@ -17,6 +17,7 @@ from .builtins.human_interrupts import (
     build_request_plan_approval_tool,
 )
 from .builtins.rag import build_rag_query_tool
+from .builtins.read_document import build_read_tagged_document_tool
 from .builtins.skills import (
     build_list_skills_tool,
     build_load_skill_tool,
@@ -59,6 +60,7 @@ class ToolFactory:
             "create_pdf_from_images": lambda ws: build_create_pdf_from_images_tool(ws),
             "get_image_url": lambda ws: build_get_image_url_tool(ws),
             "rag_query": lambda ws: build_rag_query_tool(self.settings, ws),
+            "read_tagged_document": lambda ws: build_read_tagged_document_tool(self.settings, ws),
             "list_skills": lambda ws: build_list_skills_tool(self.settings, ws),
             "load_skill": lambda ws: build_load_skill_tool(self.settings, ws),
             "request_plan_approval": lambda ws: build_request_plan_approval_tool(ws),

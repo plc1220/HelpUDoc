@@ -24,6 +24,9 @@ from ..attachment_processing import (
     _guess_attachment_strategy,
     _lc_ai_message_text,
     _parse_attachment_payload,
+    docling_parse_concurrency,
+    docling_timeout_s,
+    should_use_docling,
 )
 from ..schemas import (
     AttachmentUnderstandingAsset,
@@ -33,6 +36,16 @@ from ..schemas import (
 )
 
 logger = logging.getLogger(__name__)
+
+_DOCLING_SEMAPHORE: asyncio.Semaphore | None = None
+
+
+def _get_docling_semaphore() -> asyncio.Semaphore:
+    """Bound concurrent Docling parses so they can't stack and starve the event loop / RAG worker."""
+    global _DOCLING_SEMAPHORE
+    if _DOCLING_SEMAPHORE is None:
+        _DOCLING_SEMAPHORE = asyncio.Semaphore(docling_parse_concurrency())
+    return _DOCLING_SEMAPHORE
 
 
 def register_attachments_routes(app: FastAPI, *, settings: Settings, gemini_manager: GeminiClientManager) -> None:
@@ -72,53 +85,65 @@ def register_attachments_routes(app: FastAPI, *, settings: Settings, gemini_mana
             understand_model = gemini_manager.get_attachment_chat_model()
             message: HumanMessage
             if kind in {"docx", "pptx", "pdf"}:
-                try:
-                    markdown, extracted_assets = await asyncio.to_thread(
-                        _extract_docling_payload,
-                        req.fileName,
-                        req.mimeType,
-                        buffer,
-                    )
-                    payload = _docling_markdown_to_payload(req.fileName, markdown, effective_mode="parser")
-                    return AttachmentUnderstandingResponse(
-                        title=str(payload.get("title") or req.fileName),
-                        summary=str(payload.get("summary") or ""),
-                        outline=[str(item) for item in (payload.get("outline") or [])],
-                        markdown=str(payload.get("markdown") or ""),
-                        sections=[
-                            AttachmentUnderstandingSection(
-                                heading=str(item.get("heading") or "Section"),
-                                body=str(item.get("body") or ""),
+                if should_use_docling(kind, buffer, force=bool(req.forceDocling)):
+                    try:
+                        async with _get_docling_semaphore():
+                            markdown, extracted_assets = await asyncio.wait_for(
+                                asyncio.to_thread(
+                                    _extract_docling_payload,
+                                    req.fileName,
+                                    req.mimeType,
+                                    buffer,
+                                ),
+                                timeout=docling_timeout_s(),
                             )
-                            for item in (payload.get("sections") or [])
-                            if isinstance(item, dict) and str(item.get("body") or "").strip()
-                        ],
-                        extractedAssets=[
-                            AttachmentUnderstandingAsset(
-                                name=str(item.get("name") or "image.png"),
-                                mimeType=str(item.get("mimeType") or "image/png"),
-                                contentB64=str(item.get("contentB64") or ""),
-                                sourcePath=str(item.get("sourcePath") or "") or None,
-                                caption=str(item.get("caption") or "") or None,
-                                footnote=str(item.get("footnote") or "") or None,
-                            )
-                            for item in extracted_assets
-                            if str(item.get("contentB64") or "").strip()
-                        ],
-                        effectiveMode="parser",
-                        status="ready",
-                    )
-                except Exception:
-                    logger.exception("Docling extraction failed for %s; falling back to legacy extraction", req.fileName)
-                    if kind == "docx":
-                        extracted_text = _extract_text_from_docx(buffer)
-                    elif kind == "pptx":
-                        extracted_text = _extract_text_from_pptx(buffer)
-                    else:
-                        extracted_text = _extract_text_from_pdf(buffer)
-                    message = HumanMessage(
-                        content=_attachment_understanding_prompt(req.fileName, extracted_text, kind)
-                    )
+                        payload = _docling_markdown_to_payload(req.fileName, markdown, effective_mode="parser")
+                        return AttachmentUnderstandingResponse(
+                            title=str(payload.get("title") or req.fileName),
+                            summary=str(payload.get("summary") or ""),
+                            outline=[str(item) for item in (payload.get("outline") or [])],
+                            markdown=str(payload.get("markdown") or ""),
+                            sections=[
+                                AttachmentUnderstandingSection(
+                                    heading=str(item.get("heading") or "Section"),
+                                    body=str(item.get("body") or ""),
+                                )
+                                for item in (payload.get("sections") or [])
+                                if isinstance(item, dict) and str(item.get("body") or "").strip()
+                            ],
+                            extractedAssets=[
+                                AttachmentUnderstandingAsset(
+                                    name=str(item.get("name") or "image.png"),
+                                    mimeType=str(item.get("mimeType") or "image/png"),
+                                    contentB64=str(item.get("contentB64") or ""),
+                                    sourcePath=str(item.get("sourcePath") or "") or None,
+                                    caption=str(item.get("caption") or "") or None,
+                                    footnote=str(item.get("footnote") or "") or None,
+                                )
+                                for item in extracted_assets
+                                if str(item.get("contentB64") or "").strip()
+                            ],
+                            effectiveMode="parser",
+                            status="ready",
+                        )
+                    except asyncio.TimeoutError:
+                        logger.warning(
+                            "Docling timed out for %s after %ss; falling back to lightweight extraction",
+                            req.fileName,
+                            docling_timeout_s(),
+                        )
+                    except Exception:
+                        logger.exception("Docling extraction failed for %s; falling back to lightweight extraction", req.fileName)
+                # Lightweight default: also the fallback when Docling is skipped, times out, or fails.
+                if kind == "docx":
+                    extracted_text = _extract_text_from_docx(buffer)
+                elif kind == "pptx":
+                    extracted_text = _extract_text_from_pptx(buffer)
+                else:
+                    extracted_text = _extract_text_from_pdf(buffer)
+                message = HumanMessage(
+                    content=_attachment_understanding_prompt(req.fileName, extracted_text, kind)
+                )
             elif kind == "image":
                 image_b64 = base64.b64encode(buffer).decode("utf-8")
                 mime = (req.mimeType or "").strip() or "image/jpeg"

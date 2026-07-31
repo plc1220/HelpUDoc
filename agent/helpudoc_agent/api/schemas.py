@@ -75,6 +75,7 @@ class AttachmentUnderstandingRequest(BaseModel):
     contentB64: str = ""
     workspaceId: Optional[str] = None
     relativePath: Optional[str] = None
+    forceDocling: bool = False
 
     @model_validator(mode="after")
     def validate_attachment_source(self) -> "AttachmentUnderstandingRequest":

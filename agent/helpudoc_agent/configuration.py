@@ -98,7 +98,6 @@ class CodeInterpreterConfig(BaseModel):
     max_snapshot_bytes: Optional[int] = None
     ptc_tools: List[str] = Field(
         default_factory=lambda: [
-            "rag_query",
             "get_table_schema",
             "run_sql_query",
             "google_search",
