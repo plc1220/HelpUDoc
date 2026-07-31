@@ -19,6 +19,10 @@ data:
   WORKSPACE_ROOT: /app/workspaces
   RAG_OFFLINE: "true"
   LLM_MODEL: gemini-3.5-flash
+  # Route Gemini traffic through Vertex AI (ADC auth) instead of the AI Studio API key.
+  GOOGLE_GENAI_USE_VERTEXAI: "true"
+  GOOGLE_CLOUD_PROJECT: ccob-my-ai-engine-dev
+  GOOGLE_CLOUD_LOCATION: us-central1
   AUTH_MODE: hybrid
   SESSION_COOKIE_DOMAIN: .lc-demo.com
   GOOGLE_OAUTH_CLIENT_ID: 16646144790-fvdv7liepgo18aiu20n3btmdr56l33pq.apps.googleusercontent.com
