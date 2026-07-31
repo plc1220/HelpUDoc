@@ -20,19 +20,47 @@ export const GOVERNED_VERSIONS_DIR = '.governed-versions';
 const MAX_FILE_BYTES = 20 * 1024 * 1024;
 
 export class SkillPackageStore {
-  private readonly blobRoot = path.join(skillsRoot, GOVERNED_VERSIONS_DIR, 'blobs');
-  private readonly versionsRoot = path.join(skillsRoot, GOVERNED_VERSIONS_DIR, 'packages');
+  private readonly governedRoot: string;
+  private readonly blobRoot: string;
+  private readonly versionsRoot: string;
 
   constructor(
     private readonly db: Knex,
     private readonly assertPackageLimits: (files: FileSnapshot[]) => void,
-  ) {}
+    private readonly root: string = skillsRoot,
+  ) {
+    this.governedRoot = path.join(this.root, GOVERNED_VERSIONS_DIR);
+    this.blobRoot = path.join(this.governedRoot, 'blobs');
+    this.versionsRoot = path.join(this.governedRoot, 'packages');
+  }
 
   async initialize(): Promise<void> {
     await Promise.all([
       fs.mkdir(this.blobRoot, { recursive: true }),
       fs.mkdir(this.versionsRoot, { recursive: true }),
     ]);
+    await this.normalizeLocalStorageKeys();
+  }
+
+  private blobStorageKey(contentHash: string): string {
+    return path.posix.join('blobs', contentHash.slice(0, 2), contentHash);
+  }
+
+  private blobPath(contentHash: string): string {
+    return path.join(this.governedRoot, ...this.blobStorageKey(contentHash).split('/'));
+  }
+
+  private async normalizeLocalStorageKeys(): Promise<void> {
+    const blobs = await this.db('content_blobs')
+      .select('contentHash', 'storageKey')
+      .where({ storageProvider: 'local' });
+    await Promise.all(blobs.map((blob: any) => {
+      const storageKey = this.blobStorageKey(String(blob.contentHash));
+      if (blob.storageKey === storageKey) return Promise.resolve();
+      return this.db('content_blobs')
+        .where({ contentHash: blob.contentHash, storageProvider: 'local' })
+        .update({ storageKey });
+    }));
   }
 
   async persistBlob(buffer: Buffer, filePath: string, executable = false): Promise<FileSnapshot> {
@@ -40,13 +68,14 @@ export class SkillPackageStore {
       governanceError(422, 'SKILL_VALIDATION_FAILED', `File exceeds ${MAX_FILE_BYTES} byte limit`, { path: filePath });
     }
     const contentHash = sha256(buffer);
-    const storageKey = path.join(this.blobRoot, contentHash.slice(0, 2), contentHash);
-    await fs.mkdir(path.dirname(storageKey), { recursive: true });
-    if (!await pathExists(storageKey)) {
-      const temporary = `${storageKey}.${uuidv4()}.tmp`;
+    const storageKey = this.blobStorageKey(contentHash);
+    const blobPath = this.blobPath(contentHash);
+    await fs.mkdir(path.dirname(blobPath), { recursive: true });
+    if (!await pathExists(blobPath)) {
+      const temporary = `${blobPath}.${uuidv4()}.tmp`;
       await fs.writeFile(temporary, buffer, { mode: 0o600 });
       try {
-        await fs.rename(temporary, storageKey);
+        await fs.rename(temporary, blobPath);
       } catch (error: any) {
         if (error?.code !== 'EEXIST') throw error;
         await fs.rm(temporary, { force: true });
@@ -75,7 +104,10 @@ export class SkillPackageStore {
       governanceError(503, 'SKILL_MATERIALIZATION_UNAVAILABLE', 'Immutable skill content is unavailable');
     }
     try {
-      const content = await fs.readFile(blob.storageKey);
+      // Local blobs are content-addressed beneath the configured skills root.
+      // Deriving the physical path keeps database keys portable between a host,
+      // a Docker container, and other deployments with a different mount root.
+      const content = await fs.readFile(this.blobPath(contentHash));
       if (sha256(content) !== contentHash) {
         governanceError(503, 'SKILL_MATERIALIZATION_UNAVAILABLE', 'Immutable skill content failed its integrity check');
       }
@@ -149,9 +181,9 @@ export class SkillPackageStore {
     if (!materializedPath || !await pathExists(materializedPath)) {
       governanceError(503, 'SKILL_MATERIALIZATION_UNAVAILABLE', 'The selected immutable package is not materialized');
     }
-    const target = path.join(skillsRoot, skillKey);
-    const temporary = path.join(skillsRoot, `.governed-default-${uuidv4()}`);
-    const backup = path.join(skillsRoot, `.governed-backup-${uuidv4()}`);
+    const target = path.join(this.root, skillKey);
+    const temporary = path.join(this.root, `.governed-default-${uuidv4()}`);
+    const backup = path.join(this.root, `.governed-backup-${uuidv4()}`);
     let movedExisting = false;
     try {
       await fs.cp(materializedPath, temporary, { recursive: true });
