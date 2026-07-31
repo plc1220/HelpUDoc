@@ -1474,21 +1474,6 @@ def register_chat_routes(
                     break
         if not prompt_for_tagged_files:
             prompt_for_tagged_files = message.message or ""
-        if message.internetSearchEnabled:
-            internet_guidance = (
-                "Internet search is enabled for this turn. "
-                "Use the google_search tool for current, external, or web-grounded information before answering, "
-                "and cite the useful sources it returns."
-            )
-            for index in range(len(payload) - 1, -1, -1):
-                role = str(payload[index].get("role") or "").strip().lower()
-                if role in {"user", "human"}:
-                    payload[index]["content"] = _replace_content_text(
-                        payload[index].get("content"),
-                        f"{prompt_for_tagged_files.rstrip()}\n\n{internet_guidance}".strip(),
-                    )
-                    prompt_for_tagged_files = _extract_text_from_content(payload[index].get("content"))
-                    break
         message_file_context_refs = _normalize_file_context_refs(message.fileContextRefs)
         if message_file_context_refs:
             runtime.workspace_state.context["file_context_refs"] = message_file_context_refs
@@ -1505,6 +1490,21 @@ def register_chat_routes(
             if str(item.get("status") or "").strip().lower() == "pending"
         ]
         tagged_files = explicit_artifact_paths or _extract_tagged_files(prompt_for_tagged_files)
+        if message.internetSearchEnabled and not tagged_files:
+            internet_guidance = (
+                "Internet search is enabled for this turn. "
+                "Use the google_search tool for current, external, or web-grounded information before answering, "
+                "and cite the useful sources it returns."
+            )
+            for index in range(len(payload) - 1, -1, -1):
+                role = str(payload[index].get("role") or "").strip().lower()
+                if role in {"user", "human"}:
+                    payload[index]["content"] = _replace_content_text(
+                        payload[index].get("content"),
+                        f"{prompt_for_tagged_files.rstrip()}\n\n{internet_guidance}".strip(),
+                    )
+                    prompt_for_tagged_files = _extract_text_from_content(payload[index].get("content"))
+                    break
         guided_prompt = _append_tagged_file_guidance(prompt_for_tagged_files, tagged_files)
         guided_prompt = _append_artifact_first_guidance(
             guided_prompt,
@@ -1550,14 +1550,8 @@ def register_chat_routes(
             "on",
         }
         runtime.workspace_state.context["tagged_files_only"] = bool(tagged_files) and tagged_files_rag_only
-        if tagged_files:
-            rag_context = await _prefetch_rag_context(
-                runtime.workspace_state.workspace_id,
-                prompt_for_tagged_files,
-                tagged_paths_override=tagged_files,
-            )
-            if rag_context:
-                runtime.workspace_state.context["tagged_rag_context"] = rag_context
+        # RAG prefetch removed: tagged files are now grounded via the read_tagged_document tool
+        # (see the tagged-document grounding guidance in tagged_context.py), not LightRAG retrieval.
         _inject_host_datetime_context(payload)
         return payload
 

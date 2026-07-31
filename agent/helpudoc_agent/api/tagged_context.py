@@ -228,7 +228,7 @@ def _append_artifact_first_guidance(
 ) -> str:
     if not prompt:
         return prompt
-    if "Artifact-first guidance:" in prompt:
+    if "Tagged-document grounding (mandatory):" in prompt:
         return prompt
     if not file_context_refs:
         return prompt
@@ -246,23 +246,48 @@ def _append_artifact_first_guidance(
     ]
     if not binary_ready:
         return prompt
+
+    # Resolve the path to READ for each ready ref. For PDFs (and other binary docs)
+    # read the ORIGINAL source file so the full text is extracted — the derived
+    # artifact is a lossy Gemini summary that can drop details (e.g. fee tables).
+    binary_doc_suffixes = (".pdf", ".docx", ".pptx")
+    read_targets: list[str] = []
+    has_pdf = False
+    for item in ready_refs:
+        source_name = str(item.get("sourceName") or "").strip()
+        mime = str(item.get("sourceMimeType") or "").strip().lower()
+        derived = str(item.get("derivedArtifactPath") or "").strip()
+        is_binary_doc = mime in {
+            "application/pdf",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        } or source_name.lower().endswith(binary_doc_suffixes)
+        if mime == "application/pdf" or source_name.lower().endswith(".pdf"):
+            has_pdf = True
+        target = source_name if (is_binary_doc and source_name) else (derived or source_name)
+        if target:
+            read_targets.append(target)
+    # De-dupe, preserve order.
+    read_targets = list(dict.fromkeys(read_targets)) or list(tagged_paths)
+
     guidance_lines = [
-        "Artifact-first guidance:",
-        "- Ready derived artifacts are available for the attached files and are the primary source of truth for this turn.",
-        "- Prefer the tagged derived artifact paths over the original source file when answering.",
-        "- Do not call read_file on the original binary source (.docx, .pptx, .pdf, etc.) if a ready derived artifact is already available.",
+        "Tagged-document grounding (mandatory):",
+        "- Call read_tagged_document on each tagged path listed below and read the WHOLE document before answering; if a response ends with a truncation marker, call it again with the given offset until you have read all of it.",
+        "- For PDFs, read_tagged_document extracts the full original PDF (every page). Do NOT rely on any derived-artifact summary for PDFs — read the original file so nothing (fees, table rows, clauses) is missed.",
+        "- Ground your answer strictly in the tagged document(s). If the answer is not in them, say so. Do not use google_search/web search for a tagged-document question.",
+        "- Never call read_file on raw binary bytes (.pdf/.docx/.pptx); always use read_tagged_document.",
     ]
+    if has_pdf:
+        guidance_lines.insert(
+            1,
+            "- These tagged files include a PDF: use the pdf skill's approach — read the actual PDF text via read_tagged_document, not the derived artifact.",
+        )
     if multimodal_active:
         guidance_lines.append(
-            "- Use the current-turn multimodal attachment only for additional grounding; keep follow-up reasoning anchored to the derived artifact."
+            "- Use the current-turn multimodal attachment only for additional grounding; keep follow-up reasoning anchored to the full document text."
         )
-    else:
-        guidance_lines.append(
-            "- If you need to inspect content, read the derived artifact markdown first rather than the original binary file."
-        )
-    if tagged_paths:
-        guidance_lines.append("- Tagged derived artifacts:")
-        guidance_lines.extend(f"  - {path}" for path in tagged_paths)
+    guidance_lines.append("- Tagged documents to read:")
+    guidance_lines.extend(f"  - {path}" for path in read_targets)
     return f"{prompt.rstrip()}\n\n" + "\n".join(guidance_lines)
 
 

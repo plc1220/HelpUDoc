@@ -5,13 +5,60 @@ import base64
 import json
 import logging
 import mimetypes
+import os
 import re
 import tempfile
+from functools import lru_cache
 from io import BytesIO
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
+
+
+def _env_flag(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        return int(raw.strip())
+    except (TypeError, ValueError):
+        return default
+
+
+def _docling_enabled() -> bool:
+    return _env_flag("DOCLING_ENABLED", True)
+
+
+def _docling_force() -> bool:
+    return _env_flag("DOCLING_FORCE", False)
+
+
+def _docling_generate_images() -> bool:
+    return _env_flag("DOCLING_GENERATE_IMAGES", False)
+
+
+def _docling_max_pages() -> int:
+    return _env_int("DOCLING_MAX_PAGES", 15)
+
+
+def _docling_max_bytes() -> int:
+    return _env_int("DOCLING_MAX_BYTES", 5 * 1024 * 1024)
+
+
+def docling_timeout_s() -> int:
+    return _env_int("DOCLING_TIMEOUT_S", 600)
+
+
+def docling_parse_concurrency() -> int:
+    return max(1, _env_int("DOCLING_PARSE_CONCURRENCY", 1))
 
 
 def _extract_json_block(text: str) -> str:
@@ -159,15 +206,85 @@ def _docling_markdown_to_payload(file_name: str, markdown: str, *, effective_mod
     return payload
 
 
-def _extract_docling_payload(file_name: str, mime_type: str, buffer: bytes) -> Tuple[str, List[Dict[str, Any]]]:
+def _pdf_page_count(buffer: bytes) -> Optional[int]:
+    try:
+        from pypdf import PdfReader  # type: ignore
+
+        return len(PdfReader(BytesIO(buffer)).pages)
+    except Exception:
+        return None
+
+
+def pdf_has_extractable_text(buffer: bytes, *, min_chars: int = 32, sample_pages: int = 5) -> bool:
+    """Return True if the PDF has a usable text layer (so OCR can be skipped).
+
+    Errs on the side of True (skip OCR) when uncertain, since OCR is the heavy path.
+    """
+    try:
+        from pypdf import PdfReader  # type: ignore
+
+        reader = PdfReader(BytesIO(buffer))
+        total = 0
+        for page in reader.pages[:sample_pages]:
+            total += len((page.extract_text() or "").strip())
+            if total >= min_chars:
+                return True
+        return total >= min_chars
+    except Exception:
+        return True
+
+
+def should_use_docling(kind: str, buffer: bytes, *, force: bool = False) -> bool:
+    """Gate the heavy Docling path: only small docs (or explicit opt-in) use it."""
+    if not _docling_enabled() or not _docling_available():
+        return False
+    if force or _docling_force():
+        return True
+    if len(buffer) > _docling_max_bytes():
+        return False
+    if kind == "pdf":
+        pages = _pdf_page_count(buffer)
+        if pages is not None and pages > _docling_max_pages():
+            return False
+    return True
+
+
+@lru_cache(maxsize=8)
+def _get_docling_converter(is_pdf: bool, do_ocr: bool, generate_images: bool):
+    """Build (and cache) a DocumentConverter per option-set to avoid per-request model reloads."""
     from docling.document_converter import DocumentConverter
 
+    converter_kwargs: Dict[str, Any] = {}
+    if is_pdf:
+        try:
+            from docling.datamodel.base_models import InputFormat
+            from docling.datamodel.pipeline_options import PdfPipelineOptions
+            from docling.document_converter import PdfFormatOption
+
+            pdf_options = PdfPipelineOptions()
+            pdf_options.do_ocr = do_ocr
+            pdf_options.generate_picture_images = generate_images
+            converter_kwargs["format_options"] = {
+                InputFormat.PDF: PdfFormatOption(pipeline_options=pdf_options)
+            }
+        except Exception:
+            logger.debug("Docling PDF pipeline options unavailable; continuing with default conversion", exc_info=True)
+
+    return DocumentConverter(**converter_kwargs)
+
+
+def _extract_docling_payload(file_name: str, mime_type: str, buffer: bytes) -> Tuple[str, List[Dict[str, Any]]]:
     suffix = Path(file_name).suffix.lower()
     guessed_suffix = mimetypes.guess_extension(mime_type or "") or ""
     if not suffix and guessed_suffix:
         suffix = guessed_suffix.lower()
     if not suffix:
         suffix = ".bin"
+    is_pdf = suffix == ".pdf"
+    # OCR auto by text layer: skip OCR (the heavy path) for digital PDFs; enable only for scanned.
+    do_ocr = (not pdf_has_extractable_text(buffer)) if is_pdf else False
+    if is_pdf:
+        logger.info("Docling parsing %s (do_ocr=%s, generate_images=%s)", file_name, do_ocr, _docling_generate_images())
     with tempfile.TemporaryDirectory(prefix="helpudoc-docling-") as temp_dir:
         temp_root = Path(temp_dir)
         temp_input = temp_root / f"source{suffix}"
@@ -175,22 +292,7 @@ def _extract_docling_payload(file_name: str, mime_type: str, buffer: bytes) -> T
         output_dir = temp_root / "parsed"
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        converter_kwargs: Dict[str, Any] = {}
-        if suffix == ".pdf":
-            try:
-                from docling.datamodel.base_models import InputFormat
-                from docling.datamodel.pipeline_options import PdfPipelineOptions
-                from docling.document_converter import PdfFormatOption
-
-                pdf_options = PdfPipelineOptions()
-                pdf_options.generate_picture_images = True
-                converter_kwargs["format_options"] = {
-                    InputFormat.PDF: PdfFormatOption(pipeline_options=pdf_options)
-                }
-            except Exception:
-                logger.debug("Docling PDF image export options unavailable; continuing with default conversion", exc_info=True)
-
-        converter = DocumentConverter(**converter_kwargs)
+        converter = _get_docling_converter(is_pdf, do_ocr, _docling_generate_images())
         conversion = converter.convert(temp_input)
         document = conversion.document
         md_path = output_dir / f"{temp_input.stem}.md"

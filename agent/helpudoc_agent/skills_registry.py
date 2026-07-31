@@ -424,6 +424,8 @@ ALWAYS_ALLOWED_TOOLS: frozenset[str] = frozenset(
     {
         "list_skills",
         "load_skill",
+        # Read-only grounding of tagged documents must work under any (or no) active skill.
+        "read_tagged_document",
         # Human-in-the-loop / clarification
         "request_plan_approval",
         "request_clarification",

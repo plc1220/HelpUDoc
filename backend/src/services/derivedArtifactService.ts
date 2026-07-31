@@ -91,6 +91,41 @@ const agentReadsWorkspaceFiles = (): boolean => {
   return raw === 'true' || raw === '1' || raw === 'yes';
 };
 
+const DEFAULT_MAX_CONCURRENCY = 2;
+
+const resolveMaxConcurrency = (): number => {
+  const raw = Number(process.env.FILE_UNDERSTANDING_MAX_CONCURRENCY || DEFAULT_MAX_CONCURRENCY);
+  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : DEFAULT_MAX_CONCURRENCY;
+};
+
+/** Minimal in-process counting semaphore — bounds how many understanding builds run at once. */
+class Semaphore {
+  private available: number;
+  private readonly waiters: Array<() => void> = [];
+
+  constructor(max: number) {
+    this.available = Math.max(1, max);
+  }
+
+  async acquire(): Promise<void> {
+    if (this.available > 0) {
+      this.available -= 1;
+      return;
+    }
+    await new Promise<void>((resolve) => this.waiters.push(resolve));
+  }
+
+  release(): void {
+    const next = this.waiters.shift();
+    if (next) {
+      // Hand the permit directly to the next waiter (count stays the same).
+      next();
+    } else {
+      this.available += 1;
+    }
+  }
+}
+
 const isMarkdownLike = (fileName: string, mimeType?: string | null): boolean => {
   const ext = path.extname(fileName).toLowerCase();
   if (['.md', '.txt', '.csv', '.json', '.html', '.htm'].includes(ext)) {
@@ -190,6 +225,7 @@ export class DerivedArtifactService {
   private workspaceService: WorkspaceService;
   private inFlightJobs = new Map<string, Promise<void>>();
   private readonly syncMaxBytes = resolveSyncMaxBytes();
+  private readonly understandingSemaphore = new Semaphore(resolveMaxConcurrency());
 
   constructor(databaseService: DatabaseService, fileService: FileService, workspaceService: WorkspaceService) {
     this.db = databaseService.getDb();
@@ -507,11 +543,21 @@ export class DerivedArtifactService {
     if (this.inFlightJobs.has(artifactId)) {
       return;
     }
-    const promise = this.buildArtifactInBackground(artifactId, workspaceId, userId, sourceFile, buffer)
-      .finally(() => {
-        this.inFlightJobs.delete(artifactId);
-      });
+    const promise = this.runWithConcurrencyLimit(() =>
+      this.buildArtifactInBackground(artifactId, workspaceId, userId, sourceFile, buffer),
+    ).finally(() => {
+      this.inFlightJobs.delete(artifactId);
+    });
     this.inFlightJobs.set(artifactId, promise);
+  }
+
+  private async runWithConcurrencyLimit(task: () => Promise<void>): Promise<void> {
+    await this.understandingSemaphore.acquire();
+    try {
+      await task();
+    } finally {
+      this.understandingSemaphore.release();
+    }
   }
 
   private async waitForFileContextRef(
