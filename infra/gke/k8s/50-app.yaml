@@ -264,6 +264,10 @@ spec:
                   optional: true
             - name: FILE_UNDERSTANDING_AGENT_READS_WORKSPACE
               value: "true"
+            - name: FILE_UNDERSTANDING_MAX_CONCURRENCY
+              value: "2"
+            - name: ATTACHMENT_UNDERSTANDING_TIMEOUT_MS
+              value: "660000"
             - name: ENABLE_SKILL_SANDBOX_RUNNER
               valueFrom:
                 configMapKeyRef:
@@ -319,6 +323,20 @@ spec:
               value: docling
             - name: PARSER_ENRICHMENT_MODE
               value: docling
+            # Attachment understanding: lightweight-first (pypdf+Gemini) by default;
+            # Docling reserved for small docs, with OCR auto-off for digital PDFs.
+            - name: DOCLING_ENABLED
+              value: "true"
+            - name: DOCLING_MAX_PAGES
+              value: "15"
+            - name: DOCLING_MAX_BYTES
+              value: "5242880"
+            - name: DOCLING_GENERATE_IMAGES
+              value: "false"
+            - name: DOCLING_TIMEOUT_S
+              value: "600"
+            - name: DOCLING_PARSE_CONCURRENCY
+              value: "1"
             - name: POSTGRES_HOST
               value: postgres
             - name: POSTGRES_PORT
