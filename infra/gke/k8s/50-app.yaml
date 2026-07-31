@@ -380,6 +380,27 @@ spec:
                 configMapKeyRef:
                   name: helpudoc-config
                   key: LLM_MODEL
+            - name: GOOGLE_GENAI_USE_VERTEXAI
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: GOOGLE_GENAI_USE_VERTEXAI
+                  optional: true
+            - name: GOOGLE_CLOUD_PROJECT
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: GOOGLE_CLOUD_PROJECT
+                  optional: true
+            - name: GOOGLE_CLOUD_LOCATION
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: GOOGLE_CLOUD_LOCATION
+                  optional: true
+            # ADC reads the mounted Vertex service-account key from this path.
+            - name: GOOGLE_APPLICATION_CREDENTIALS
+              value: /var/secrets/vertex/key.json
             - name: WORKSPACE_ROOT
               valueFrom:
                 configMapKeyRef:
@@ -536,6 +557,9 @@ spec:
               mountPath: /skills
             - name: agent-config-data
               mountPath: /agent/config
+            - name: vertex-sa-key
+              mountPath: /var/secrets/vertex
+              readOnly: true
         - name: google-workspace-mcp
           image: python:3.13-slim
           ports:
@@ -588,6 +612,13 @@ spec:
         - name: agent-config-data
           persistentVolumeClaim:
             claimName: agent-config-pvc
+        - name: vertex-sa-key
+          secret:
+            secretName: helpudoc-secrets
+            optional: true
+            items:
+              - key: VERTEX_SA_JSON
+                path: key.json
 ---
 apiVersion: v1
 kind: Service

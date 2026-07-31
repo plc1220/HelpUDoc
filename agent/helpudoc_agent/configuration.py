@@ -420,6 +420,19 @@ def load_settings(config_path: Path | None = None) -> Settings:
             )
             config_dict["backend"] = backend_cfg
 
+    # Allow env vars to override the Vertex AI routing block. On GKE the model
+    # config comes from a seeded PVC, so this lets a ConfigMap flip Vertex mode
+    # without re-seeding runtime.yaml.
+    model_cfg = config_dict.get("model") or {}
+    if isinstance(model_cfg, dict):
+        if runtime.google_genai_use_vertexai is not None:
+            model_cfg["use_vertex_ai"] = runtime.google_genai_use_vertexai
+        if runtime.google_cloud_project:
+            model_cfg["project"] = runtime.google_cloud_project
+        if runtime.google_cloud_location:
+            model_cfg["location"] = runtime.google_cloud_location
+        config_dict["model"] = model_cfg
+
     payload = {
         "model": config_dict.get("model", {}),
         "backend": config_dict.get("backend", {}),

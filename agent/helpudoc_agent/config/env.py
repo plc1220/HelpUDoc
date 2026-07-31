@@ -22,23 +22,44 @@ def is_local_dev_node_env() -> bool:
     return (env_trim("NODE_ENV") or "").lower() in _LOCAL_DEV_NODE_ENVS
 
 
+_TRUTHY = frozenset({"1", "true", "yes", "y", "on"})
+
+
+def env_bool(name: str, default: bool = False) -> bool:
+    """Return a boolean env value (accepts 1/true/yes/y/on, case-insensitive)."""
+    value = env_trim(name)
+    if value is None:
+        return default
+    return value.lower() in _TRUTHY
+
+
 @dataclass(frozen=True)
 class AgentRuntimeEnv:
     node_env: str | None
     workspace_root_raw: str | None
     skills_root_raw: str | None
     gemini_api_key: str | None
+    google_genai_use_vertexai: bool | None
+    google_cloud_project: str | None
+    google_cloud_location: str | None
 
 
 _runtime_cache: AgentRuntimeEnv | None = None
 
 
 def load_agent_runtime_env() -> AgentRuntimeEnv:
+    # Distinguish "unset" (None) from an explicit false so config overrides are opt-in.
+    use_vertex_raw = env_trim("GOOGLE_GENAI_USE_VERTEXAI")
     return AgentRuntimeEnv(
         node_env=env_trim("NODE_ENV"),
         workspace_root_raw=env_trim("WORKSPACE_ROOT"),
         skills_root_raw=env_trim("SKILLS_ROOT"),
         gemini_api_key=env_trim("GEMINI_API_KEY"),
+        google_genai_use_vertexai=(
+            None if use_vertex_raw is None else use_vertex_raw.lower() in _TRUTHY
+        ),
+        google_cloud_project=env_trim("GOOGLE_CLOUD_PROJECT"),
+        google_cloud_location=env_trim("GOOGLE_CLOUD_LOCATION"),
     )
 
 

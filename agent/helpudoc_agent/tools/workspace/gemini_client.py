@@ -32,12 +32,11 @@ class GeminiClientManager:
         use_vertex = model_cfg.use_vertex_ai
 
         client_kwargs: dict = {}
-        if api_key:
-            client_kwargs["api_key"] = api_key
 
         if use_vertex:
             if not model_cfg.project or not model_cfg.location:
                 raise ValueError("Vertex AI mode requires both project and location")
+            # Vertex authenticates via ADC; the AI Studio api_key is not forwarded.
             vertexai.init(project=model_cfg.project, location=model_cfg.location)
             client_kwargs.update(
                 {
@@ -48,6 +47,8 @@ class GeminiClientManager:
             )
         else:
             client_kwargs["vertexai"] = False
+            if api_key:
+                client_kwargs["api_key"] = api_key
 
         self.client = genai.Client(
             **client_kwargs,
