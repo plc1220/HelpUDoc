@@ -41,12 +41,12 @@ def create_chat_google_generative_ai(
     if cfg.use_vertex_ai:
         if not cfg.project or not cfg.location:
             raise ValueError("Vertex AI mode requires both project and location")
+        # Vertex authenticates via ADC; an AI Studio api_key is not a valid
+        # Vertex credential, so we deliberately do not forward it here.
         vertexai.init(project=cfg.project, location=cfg.location)
         kwargs["vertexai"] = True
         kwargs["project"] = cfg.project
         kwargs["location"] = cfg.location
-        if api_key:
-            kwargs["api_key"] = api_key
     else:
         kwargs["vertexai"] = False
         if api_key:

@@ -29,7 +29,7 @@ except Exception:  # pragma: no cover - optional dependency for some test enviro
         return f"{prefix}{hashlib.md5(text.encode('utf-8')).hexdigest()}"
 
 
-from .config.env import ensure_lightrag_postgres_env_defaults, env_trim, gemini_key_for_embeddings
+from .config.env import ensure_lightrag_postgres_env_defaults, env_bool, env_trim, gemini_key_for_embeddings
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +48,9 @@ class RagConfig:
     max_text_chars: int
     offline: bool
     enable_rerank: bool
+    use_vertex_ai: bool = False
+    project: str | None = None
+    location: str | None = None
 
     @classmethod
     def from_env(cls, workspace_root: Path) -> "RagConfig":
@@ -58,10 +61,16 @@ class RagConfig:
         embedding_dim = int(env_trim("RAG_EMBEDDING_DIM", env_trim("EMBEDDING_DIM", "3072")) or "3072")
         api_key = env_trim("GEMINI_API_KEY", env_trim("LLM_BINDING_API_KEY"))
         base_url = env_trim("LLM_BINDING_HOST")
+        use_vertex_ai = env_bool("GOOGLE_GENAI_USE_VERTEXAI")
+        project = env_trim("GOOGLE_CLOUD_PROJECT")
+        location = env_trim("GOOGLE_CLOUD_LOCATION")
         max_file_bytes = int(env_trim("RAG_MAX_FILE_BYTES", str(25 * 1024 * 1024)) or str(25 * 1024 * 1024))
         max_text_chars = int(env_trim("RAG_MAX_TEXT_CHARS", "250000") or "250000")
         offline_env = (env_trim("RAG_OFFLINE", "false") or "false").lower()
-        offline = offline_env in {"1", "true", "yes", "y", "on"} or not api_key
+        # Vertex mode has valid credentials (ADC) even without an API key, so it
+        # must not be forced offline for lack of GEMINI_API_KEY.
+        has_credentials = bool(api_key) or (use_vertex_ai and bool(project) and bool(location))
+        offline = offline_env in {"1", "true", "yes", "y", "on"} or not has_credentials
         enable_rerank = (env_trim("RAG_ENABLE_RERANK", "false") or "false").strip().lower() in {"1", "true", "yes", "y", "on"}
         return cls(
             working_dir=working_dir,
@@ -74,6 +83,9 @@ class RagConfig:
             max_text_chars=max_text_chars,
             offline=offline,
             enable_rerank=enable_rerank,
+            use_vertex_ai=use_vertex_ai,
+            project=project,
+            location=location,
         )
 
 
@@ -95,6 +107,9 @@ async def _embed_gemini(
     model: str,
     api_key: str | None,
     output_dimensionality: int,
+    use_vertex_ai: bool = False,
+    project: str | None = None,
+    location: str | None = None,
 ) -> np.ndarray:
     try:
         from google import genai  # type: ignore
@@ -102,11 +117,16 @@ async def _embed_gemini(
     except Exception as exc:  # pragma: no cover
         raise RuntimeError("google-genai is required for Gemini embeddings") from exc
 
-    key = gemini_key_for_embeddings(api_key)
-    if not key:
-        raise RuntimeError("Missing GEMINI_API_KEY/GOOGLE_API_KEY for embeddings")
-
-    client = genai.Client(api_key=key)
+    if use_vertex_ai:
+        if not project or not location:
+            raise RuntimeError("Vertex AI mode requires GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION")
+        # Vertex authenticates via ADC; no api_key is forwarded.
+        client = genai.Client(vertexai=True, project=project, location=location)
+    else:
+        key = gemini_key_for_embeddings(api_key)
+        if not key:
+            raise RuntimeError("Missing GEMINI_API_KEY/GOOGLE_API_KEY for embeddings")
+        client = genai.Client(api_key=key)
 
     def _call() -> np.ndarray:
         config = types.EmbedContentConfig(output_dimensionality=output_dimensionality)
@@ -141,6 +161,9 @@ def _build_llm_func(config: RagConfig):
 
         return _noop_llm
 
+    if config.use_vertex_ai:
+        return _build_vertex_llm_func(config)
+
     from lightrag.llm.gemini import gemini_complete_if_cache
 
     async def llm(
@@ -160,6 +183,62 @@ def _build_llm_func(config: RagConfig):
             keyword_extraction=keyword_extraction,
             **kwargs,
         )
+
+    return llm
+
+
+def _coerce_message_text(content: Any) -> str:
+    """Flatten a LangChain message content (str or list of parts) to plain text."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for part in content:
+            if isinstance(part, str):
+                parts.append(part)
+            elif isinstance(part, dict) and isinstance(part.get("text"), str):
+                parts.append(part["text"])
+        return "".join(parts)
+    return str(content) if content is not None else ""
+
+
+def _build_vertex_llm_func(config: RagConfig):
+    """RAG graph LLM routed through the Vertex-capable chat factory (ADC auth).
+
+    The lightrag.llm.gemini binding is API-key/base-URL only, so in Vertex mode we
+    reuse ``create_chat_google_generative_ai`` (shared with the interactive agent).
+    """
+    from .configuration import ModelConfig
+    from .gemini_chat import create_chat_google_generative_ai
+
+    model_cfg = ModelConfig(
+        name=config.llm_model,
+        use_vertex_ai=True,
+        project=config.project,
+        location=config.location,
+    )
+    chat_model = create_chat_google_generative_ai(model_cfg, config.llm_model)
+
+    async def llm(
+        prompt: str,
+        system_prompt: str | None = None,
+        history_messages: list[dict[str, Any]] | None = None,
+        keyword_extraction: bool = False,
+        **_kwargs: Any,
+    ) -> str:
+        messages: list[tuple[str, str]] = []
+        if system_prompt:
+            messages.append(("system", system_prompt))
+        for message in history_messages or []:
+            role = str(message.get("role", "user")).lower()
+            content = _coerce_message_text(message.get("content", ""))
+            if role in {"assistant", "ai", "model"}:
+                messages.append(("assistant", content))
+            else:
+                messages.append(("user", content))
+        messages.append(("user", prompt))
+        result = await chat_model.ainvoke(messages)
+        return _coerce_message_text(getattr(result, "content", ""))
 
     return llm
 
@@ -232,6 +311,9 @@ class WorkspaceRagStore:
                         model=self.config.embedding_model,
                         api_key=self.config.gemini_api_key,
                         output_dimensionality=self.config.embedding_dim,
+                        use_vertex_ai=self.config.use_vertex_ai,
+                        project=self.config.project,
+                        location=self.config.location,
                     ),
                 )
 
