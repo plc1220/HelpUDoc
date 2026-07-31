@@ -2,7 +2,7 @@
 
 Status: Proposed
 
-Last updated: 2026-07-30
+Last updated: 2026-07-31
 
 Audience: Product, design, engineering, security, and platform administrators
 
@@ -15,7 +15,7 @@ HelpUDoc needs one understandable governance model across six authorization scop
 1. **Platform** — who can administer the HelpUDoc installation and its governance settings.
 2. **Team** — which registered users share access and governance responsibilities.
 3. **Workspace** — who can view, contribute to, publish, and manage a Team Workspace.
-4. **Skill** — which team governs a skill, who can propose improvements, which exact version a workspace pins, and who may invoke it.
+4. **Skill** — which Team governs a skill, who can create a new skill or propose an improvement, which exact version a workspace pins, and who may invoke it.
 5. **Knowledge** — who can privately create knowledge, curate it for platform use, assign it, and consume it.
 6. **Runtime capability** — who can configure or use built-in tools, MCP servers, delegated connections, and the Code Interpreter sandbox.
 
@@ -27,8 +27,8 @@ The gate depends on the artifact:
 
 - A **Workspace Owner** chooses whether contributors use review mode or Freeflow editing.
 - A **Workspace Owner or Publisher** creates immutable published workspace versions.
-- A **Team Lead** reviews skill versions owned by their team.
-- An **Enterprise Skill Admin** governs catalog policy, high-risk activation, suspension, and emergency controls without becoming the routine approver for every team improvement.
+- A **Team Lead** reviews new-skill and skill-improvement proposals submitted to their Team and manages approved skill access for that Team.
+- A **Platform Admin** defines automated skill admission policy and manages approved-skill access, suspension, ownership transfer, and emergency controls, but does not review or approve skill proposals.
 - A **knowledge curator** governs platform knowledge.
 - A **runtime capability administrator** governs the available tool, MCP-server, connection, and sandbox policies.
 - A **platform administrator** governs users, teams, privileged role assignments, platform policy, and emergency controls.
@@ -41,7 +41,7 @@ For example, a person may simultaneously be:
 - a member of the Research Team;
 - Owner of Workspace A;
 - Viewer of Workspace B through a team grant;
-- proposer of an improvement to a Research Team skill;
+- proposer of a new Research Team skill or an improvement to an existing skill;
 - Team Lead for a different team; and
 - Consumer of knowledge assigned to the Research Team.
 
@@ -57,14 +57,14 @@ HelpUDoc currently has several useful authorization mechanisms, but they are exp
 - Skill creation and editing are currently administrator functions operating directly on the shared skill registry.
 - Global knowledge is currently administered centrally and assigned to legacy groups.
 
-As Team Workspaces, direct sharing, user-proposed skill improvements, and governed knowledge contribution are introduced, the product needs to answer clearly:
+As Team Workspaces, direct sharing, user-created skills, skill-improvement proposals, and governed knowledge contribution are introduced, the product needs to answer clearly:
 
 - Who may create privately?
 - When should work remain in a Private Workspace, and when should it move into a Team Workspace?
 - May contributors edit the Team Workspace directly, or must their changes be reviewed?
 - Who may publish an immutable snapshot without waiting for the Workspace Owner?
 - How are concurrent edits attributed, queued, reviewed, and recovered?
-- How does a workspace pin one approved skill version without bypassing team or enterprise skill governance?
+- How does a workspace pin one approved skill version without bypassing Team ownership, skill entitlement, or platform policy?
 - What happens when a workspace is shared with multiple teams or a registered user outside those teams?
 - Who may activate or suspend a published artifact?
 - Who may assign it to users or teams?
@@ -84,7 +84,7 @@ Without a unified model, role names can become misleading and broad roles can ac
 - Retain attribution and a complete change feed even when per-change approval is disabled.
 - Allow named Publishers to publish without requiring the Workspace Owner to approve every release.
 - Introduce governed submission, review, approval, activation, assignment, suspension, and rollback.
-- Reuse Teams for audience access to skills, knowledge, runtime capabilities, and Team Workspaces.
+- Reuse Teams as the primary audience mechanism for skills, knowledge, runtime capabilities, and Team Workspaces, while allowing Platform Admin to assign an approved skill directly to an individual when needed.
 - Require every workspace skill reference to pin an exact approved version.
 - Keep workspace access and skill entitlement independent.
 - Govern built-in tools, MCP servers, delegated credentials, and sandbox execution independently from skill assignment.
@@ -196,18 +196,19 @@ flowchart TB
     end
 
     subgraph S["Skill scope"]
-        SD["Private skill improvement<br/>Proposer edits and tests"]
+        SD["Private skill draft<br/>New skill or improvement"]
+        SP["Automated platform policy<br/>Validate and classify"]
         SR["Team skill proposal<br/>Frozen candidate"]
         SV["Team-approved skill version<br/>Immutable"]
-        EA["Enterprise policy and activation"]
-        ST["Team skill grants"]
+        ST["Direct-user and Team skill grants"]
         WM["Workspace skill manifest<br/>Exact version pins"]
 
-        SD --> SR
-        SR -->|"Team Lead approves"| SV
+        SD --> SP
+        SP -->|"Passes"| SR
+        SP -->|"Blocked with issues"| SD
+        SR -->|"Team Lead approves<br/>policy rechecked"| SV
         SR -->|"Changes requested"| SD
-        SV --> EA
-        EA --> ST
+        SV --> ST
         SV --> WM
     end
 
@@ -273,9 +274,9 @@ Platform Admin may:
 
 - see resource metadata needed for administration;
 - manage published catalogs and assignments;
-- assign reviewers and curators;
+- assign Team Leads and curators;
 - suspend a published skill or knowledge source;
-- inspect submitted review candidates; and
+- inspect approved skill-version metadata and validation summaries without joining the skill proposal queue; and
 - initiate an audited break-glass process when required.
 
 Platform Admin does not automatically:
@@ -290,9 +291,8 @@ Platform Admin does not automatically:
 
 | Role | Scope | Capabilities |
 |---|---|---|
-| Team Member | One Team | Receive Team-based workspace, skill, knowledge, tool, MCP, and sandbox grants; propose improvements to Team-owned skills |
-| Team Lead | One Team | Govern Team membership when delegated; review Team skill proposals; approve immutable Team skill versions; manage Team skill assignments within enterprise policy |
-| Enterprise Skill Admin | Platform skill catalog | Define validation and risk policy; approve high-risk activation when required; suspend, retire, restore, and audit any catalog skill; control cross-Team skill-assignment policy |
+| Team Member | One Team | Receive Team-based workspace, skill, knowledge, tool, MCP, and sandbox grants; submit new-skill proposals to the Team and propose improvements to Team-owned skills |
+| Team Lead | One Team | Govern Team membership when delegated; review Team skill proposals; approve immutable Team skill versions; manage Team skill assignments within platform policy |
 
 Rules:
 
@@ -300,8 +300,8 @@ Rules:
 - A Team may be granted workspace, skill, knowledge, and runtime access.
 - Team Lead authority applies only to the Team and its Team-owned skills.
 - Team Lead does not imply Workspace Owner, Workspace Publisher, or Platform Admin.
-- Enterprise Skill Admin is an enterprise guardrail, not the routine reviewer for every Team skill improvement.
-- Platform Admin may perform Enterprise Skill Admin duties in the MVP, but the permission boundary remains distinct.
+- The owning Team Lead is the only human approver in a skill proposal lifecycle.
+- Platform Admin configures automated admission policy and administers approved skills, but cannot approve, reject, request changes, or otherwise decide a skill proposal.
 
 ### 7.4 Workspace roles
 
@@ -371,24 +371,30 @@ Detailed authorization traces are not permanent workspace content. The workspace
 
 | Role | Scope | Capabilities |
 |---|---|---|
-| Skill Proposer | One private proposal | Create and test a private improvement to a Team-owned skill; submit a frozen candidate; respond to Team Lead feedback |
-| Team Lead | Skills owned by one Team | Review submitted candidates; approve, reject, or request changes; publish an immutable Team skill version within enterprise policy |
-| Enterprise Skill Admin | Platform skill catalog | Configure validation and risk gates; approve exceptional or high-risk activation; suspend, retire, restore, roll back, and audit |
-| Skill Consumer | Skills granted through an affiliated Team | Discover and invoke an approved version within the consumer's workspace and runtime permissions |
+| Skill Proposer | One private proposal | Create and test a new private skill or an improvement to a Team-owned skill; submit a frozen candidate; respond to Team Lead feedback |
+| Team Lead | Skills owned by one Team | Review submitted candidates; approve, reject, or request changes; publish an immutable Team skill version within platform policy |
+| Skill Consumer | Skills granted directly or through an affiliated Team | Discover and invoke an approved version within the consumer's workspace and runtime permissions |
 
 Rules:
 
-- Every governed skill has one owning Team.
-- Any Team Member may propose an improvement unless Team policy restricts proposal creation.
+- Every submitted or governed skill has exactly one owning Team.
+- Any Platform Member may create a new private skill draft when platform policy permits.
+- Any Team Member may propose an improvement to a skill owned by that Team unless Team policy restricts proposal creation.
+- A new private draft may remain unassigned while the proposer is editing. Before submission, the proposer must select one owning Team from their active Team memberships. If only one Team is eligible, the interface may preselect it.
+- A user with no eligible Team may continue editing privately but cannot submit; the interface must explain that Team membership is required.
+- Submitting a new-skill proposal locks the owning Team for that candidate. Changing ownership after submission is a separate, authorized, audited transfer; it is not an edit to the candidate.
+- An improvement proposal inherits the existing skill's owning Team and cannot select a different Team.
 - The proposer owns the private proposal draft, not the Team skill identity.
 - A Team Lead sees the submitted immutable candidate, not the proposer's ongoing private draft.
 - A proposer cannot approve their own candidate by default, including when they are also a Team Lead.
 - An approved skill version is immutable. A later improvement creates a new candidate and semantic version.
-- Enterprise validation applies before Team Lead approval can make a version active. High-risk classes may additionally require Enterprise Skill Admin approval.
+- Automated platform validation applies before submission and is rechecked before Team Lead approval can activate a version.
+- A candidate outside platform policy is blocked with validation errors. It is not routed to a Platform Admin approval queue.
+- Platform Admin changes policy independently of any proposal and cannot waive policy by approving an individual candidate.
 - A workspace skill manifest may reference only approved active versions and must pin an exact version, not `latest`.
 - Publishing a workspace copies the exact skill manifest into the published workspace version.
 - A Private Workspace may use a private skill proposal for testing, but a Team Workspace or published workspace cannot inherit or invoke that private proposal.
-- Sharing a workspace with another Team does not grant the owning Team's skill. Each user must receive the skill through one of their Team affiliations.
+- Sharing a workspace with another Team does not grant the owning Team's skill. Each user must receive the skill through a Team affiliation or a direct Platform Admin grant.
 - Skill assignment does not grant any underlying tool, MCP server, credential, knowledge, or workspace access.
 
 ### 7.6 Knowledge roles
@@ -415,7 +421,7 @@ Rules:
 - A Knowledge Consumer receives query/use access, not edit authority.
 - Source classification, provenance, retention, and expiry policies constrain all roles.
 
-For the MVP, Platform Admin may perform Enterprise Skill Admin, Knowledge Curator, and Knowledge Access Admin duties. Team Leads remain the routine approvers for their Team-owned skills.
+For the MVP, Platform Admin performs skill catalog administration, Knowledge Curator, and Knowledge Access Admin duties. Team Leads are the sole human approvers for their Team-owned skills.
 
 ### 7.7 Runtime capability roles
 
@@ -447,13 +453,12 @@ Rules:
 | Platform Auditor | Platform Admin | Read-only |
 | Team Member | Platform Admin, provisioning, or delegated Team Lead | Active registered user |
 | Team Lead | Platform Admin | Direct named-user assignment; scope is one Team |
-| Enterprise Skill Admin | Platform Admin | Privileged direct assignment |
 | Workspace Owner | Creation flow or current Workspace Owner through transfer | Must be a direct registered user; cannot be Team-derived |
 | Workspace Publisher | Workspace Owner | Direct named-user assignment recommended |
 | Workspace Contributor | Workspace Owner | Direct or Team grant |
 | Workspace Viewer | Workspace Owner | Direct or Team grant |
-| Skill Proposer | Skill-improvement creation flow | Private proposal bound to one Team-owned skill |
-| Skill Consumer | Team Lead through Team assignment, or Enterprise Skill Admin under enterprise policy | Approved active exact versions only |
+| Skill Proposer | New-skill or skill-improvement creation flow | Private draft; owning Team is selected or inherited before submission |
+| Skill Consumer | Team Lead for their own Team; Platform Admin for any Team or direct user | Stable skill identities with at least one approved active version |
 | Knowledge Author | Knowledge creation flow | Bound to the created source |
 | Knowledge Curator | Platform Admin | Must not approve own submitted candidate by default |
 | Knowledge Access Admin | Platform Admin | Privileged direct assignment |
@@ -552,19 +557,16 @@ Version behaviour:
 
 ```mermaid
 stateDiagram-v2
-    [*] --> PrivateDraft
-    PrivateDraft --> Submitted: Team Member submits frozen proposal
+    [*] --> PrivateDraft: User creates skill or starts improvement
+    PrivateDraft --> Submitted: Owning Team fixed and candidate frozen
     Submitted --> ChangesRequested: Team Lead requests changes
     ChangesRequested --> PrivateDraft: Proposer revises
     Submitted --> Rejected: Team Lead rejects
-    Submitted --> Approved: Team Lead approves and enterprise checks pass
-    Submitted --> EnterpriseReview: High-risk policy requires additional review
-    EnterpriseReview --> Approved: Enterprise Skill Admin approves
-    EnterpriseReview --> Rejected: Enterprise Skill Admin rejects
-    Approved --> Active: Version becomes assignable
-    Active --> Suspended: Team Lead or Enterprise Skill Admin
+    Submitted --> Approved: Team Lead approves and automated policy passes
+    Approved --> Active: Version becomes runnable
+    Active --> Suspended: Team Lead or Platform Admin
     Suspended --> Active: Authorized administrator restores
-    Active --> Retired: Team Lead or Enterprise Skill Admin retires
+    Active --> Retired: Team Lead or Platform Admin retires
     Approved --> PrivateDraft: Team Member starts next improvement
     Active --> PrivateDraft: Team Member starts next improvement
 ```
@@ -573,13 +575,12 @@ Status meanings:
 
 | Status | Meaning |
 |---|---|
-| Private Draft | Proposer-only editable files |
-| Submitted | Frozen candidate in the owning Team's review queue |
+| Private Draft | Proposer-only editable files for a new skill or an improvement; a new skill may not yet have an owning Team |
+| Submitted | Frozen candidate in the owning Team's review queue; owning Team is locked |
 | Changes Requested | Review completed with required changes |
 | Rejected | Candidate will not proceed |
-| Enterprise Review | Additional high-risk or exception review is required |
-| Approved | Immutable version permitted by Team and enterprise policy |
-| Active | Approved version is the current runnable version |
+| Approved | Immutable version approved by the owning Team Lead and permitted by automated platform policy |
+| Active | Approved version is runnable. Multiple immutable versions may remain active; the skill's default-version pointer identifies the recommended version for new pins. |
 | Suspended | Invocation blocked immediately; history and assignments retained |
 | Retired | No longer available for new use; history retained |
 
@@ -625,7 +626,7 @@ Knowledge approval must record:
 ### 10.2 Platform Admin
 
 1. The admin opens the governance area.
-2. The admin manages users, Teams, platform policies, Team Leads, curators, and enterprise administrators.
+2. The admin manages users, Teams, platform policies, Team Leads, curators, and other privileged administrators.
 3. The admin monitors skill and knowledge governance and published-catalog health.
 4. The admin may suspend unsafe published artifacts immediately.
 5. The admin reviews audit events and access explanations.
@@ -683,40 +684,42 @@ Knowledge approval must record:
 
 ### 10.8 Skill Proposer
 
-1. The Team Member chooses `Propose skill improvement` on a Team-owned skill.
-2. HelpUDoc creates a private proposal from an approved version.
+1. The user opens `My Skills` and chooses `Create skill`, or chooses `Improve` on an approved skill owned by one of their Teams.
+2. HelpUDoc creates a private draft from scratch or from the selected approved version.
 3. The proposer edits instructions and permitted supporting files.
 4. The proposer tests privately within a governed sandbox and their existing entitlements.
-5. The proposer sees validation errors, declared capabilities, test results, and the proposed semantic version.
-6. The proposer submits an immutable candidate to the owning Team's lead.
-7. The proposer responds to requested changes or sees approval and activation status.
-8. The private proposal never becomes available to a Team Workspace until it is approved and active.
+5. For a new skill, the proposer selects one owning Team from their active memberships before submission. An improvement inherits its existing owning Team.
+6. The proposer sees validation errors, declared capabilities, test results, and the proposed semantic version.
+7. The proposer submits a frozen immutable candidate to the owning Team's review queue. The owning Team is locked at this point.
+8. The proposer responds to requested changes in their private draft and resubmits, or sees approval and activation status.
+9. The private draft never becomes available to a Team Workspace or runtime catalog until a submitted version is approved and active.
 
 ### 10.9 Team Lead skill review
 
-1. The Team Lead opens their Team's skill-improvement queue.
+1. The Team Lead opens their Team's skill-review queue.
 2. The Team Lead sees the frozen candidate, proposer, version diff, validation results, test evidence, scripts, dependencies, and requested capabilities.
 3. The Team Lead verifies that the skill does not attempt to bypass runtime authorization.
 4. The Team Lead approves, rejects, or requests changes with notes.
-5. Approval creates a new immutable version when enterprise checks pass, or routes a high-risk candidate to Enterprise Skill Admin.
+5. Approval creates and activates a new immutable version when automated platform checks pass.
 6. The Team Lead cannot silently edit the proposer's draft or self-approve their own proposal by default.
 
-### 10.10 Enterprise Skill Admin
+### 10.10 Platform Admin skill administration
 
-1. The admin defines enterprise validation, risk classification, runtime-declaration, and cross-Team-sharing policy.
-2. The admin reviews only candidates requiring an enterprise exception or high-risk approval.
-3. The admin monitors active versions, assignments, usage, and incident reports across Teams.
-4. The admin may suspend an unsafe skill immediately, restore it, retire it, or roll back to a previously approved version.
-5. The admin does not routinely replace Team Lead approval.
-6. Team approval, enterprise approval when required, activation, assignment, and suspension remain separate audit events.
+1. The admin defines automated validation, risk classification, runtime-declaration, and sharing policy.
+2. The admin does not receive, review, approve, reject, or request changes on skill proposals.
+3. The admin monitors approved versions, assignments, usage, and incident reports across Teams.
+4. The admin may suspend an unsafe approved version immediately, restore it, retire it, roll back the default pointer, or transfer skill ownership.
+5. The admin may grant or revoke approved active skill access for any Team or individual registered user and inspect effective assignments.
+6. Access assignment does not approve a candidate, activate an unapproved version, or grant any declared tool, MCP server, knowledge source, credential, or sandbox entitlement.
+7. Team Lead approval, activation, access assignment, and suspension remain separate audit events.
 
 ### 10.11 Skill Consumer
 
-1. The user belongs to one or more Teams.
-2. Active skills assigned through those Teams appear in discovery.
+1. The user may receive skill access through one or more Teams or a direct Platform Admin grant.
+2. Active skills from the union of those grants appear in discovery.
 3. A Team Workspace pins an exact approved version in its skill manifest.
 4. The user invokes the pinned skill.
-5. Runtime authorization verifies workspace access, exact-version status, the user's Team skill entitlement, declared dependencies, tools, MCP servers, knowledge, connections, sandbox policy, and platform policy.
+5. Runtime authorization verifies workspace access, exact-version status, the user's direct-or-Team skill entitlement, declared dependencies, tools, MCP servers, knowledge, connections, sandbox policy, and platform policy.
 6. The user cannot invoke a suspended, retired, unapproved, unassigned, or differently versioned skill.
 7. If blocked, the workspace shows a concise reason and request-access action; the full authorization trace remains optional diagnostic detail.
 
@@ -889,11 +892,11 @@ When one person is both a skill proposer and a Team Lead:
 - they may review other Team Members' submissions;
 - they may not approve their own candidate by default.
 
-When one person is both Team Lead and Enterprise Skill Admin:
+When one person is both Team Lead and Platform Admin:
 
-- they may approve a Team candidate and later perform a required enterprise decision;
-- these remain separate recorded decisions;
-- a stricter deployment may require different users for each action.
+- they approve a Team candidate only through their Team Lead role;
+- Platform Admin authority adds no second approval or candidate override; and
+- any later catalog-control or access-assignment action is separate and explicitly audited.
 
 When one person is both Platform Admin and Workspace Owner:
 
@@ -908,13 +911,13 @@ When one person is both Platform Admin and Workspace Owner:
 | Publish current Team Workspace | Allowed for Workspace Owner and Publisher |
 | Contributor publish directly | Not allowed |
 | Approve own skill proposal | Not allowed |
-| Perform Team and required enterprise approval on the same skill | Allowed in MVP, separately audited |
 | Approve own platform knowledge | Not allowed |
-| Assign approved skill or knowledge to Teams | Team Lead or Access Admin within policy |
+| Assign approved skill access | Team Lead for their own Team; Platform Admin for any Team or individual |
+| Assign approved knowledge to Teams | Knowledge Access Admin within policy |
 | Inspect unsubmitted private artifact | Not allowed |
 | Break-glass private access | Reason, time limit, and audit required |
 
-For a single-lead Team or single-administrator installation, an explicit enterprise setting may permit self-approval of skill or knowledge candidates. When enabled:
+For a single-lead Team, an explicit deployment setting may permit skill self-approval. Knowledge self-approval is controlled separately for single-curator installations. When either exception is enabled:
 
 - the UI shows a warning;
 - the event is marked `selfApproved`;
@@ -938,7 +941,6 @@ Teams may grant:
 Teams must not grant in the first release:
 
 - Platform Admin;
-- Enterprise Skill Admin;
 - Workspace Owner;
 - Workspace Publisher;
 - Team Lead;
@@ -965,8 +967,16 @@ Workspace and skill boundaries remain independent:
 
 - granting a Team Workspace to Team B does not assign Team A's skills to Team B;
 - a workspace skill pin expresses the version the workspace expects, not the user's entitlement;
-- a Team B member may invoke that version only if Team B also receives an approved cross-Team skill assignment; and
-- users affiliated with several Teams receive the union of their active Team skill grants, subject to workspace and platform policy.
+- a Team B member may invoke that version only if Team B receives an approved cross-Team assignment or the member receives a direct skill grant; and
+- users receive the union of active direct-user and Team skill grants, subject to workspace and platform policy.
+
+Skill access administration follows these boundaries:
+
+- a Team Lead may grant or revoke approved active skills for their own Team within platform policy;
+- a Platform Admin may grant or revoke approved active skills for any Team or individual registered user, manage assignment policy, and inspect effective assignments;
+- assigning access never substitutes for Team Lead approval of a new skill version;
+- approving a skill never assigns it automatically to a Team; and
+- no administrator may assign an unsubmitted private draft or an unapproved candidate.
 
 ## 13. Review Requirements
 
@@ -988,9 +998,11 @@ Before creating a published workspace version, HelpUDoc must:
 
 ### 13.2 Skill review
 
-A skill publication request must provide:
+A skill review request must provide:
 
+- proposal type: new skill or improvement;
 - skill name, description, owning Team, proposer, and intended Team audience;
+- source skill and previous approved version when the proposal is an improvement;
 - immutable version and file manifest;
 - diff from the previous approved version, if any;
 - declared tools, MCP servers, scripts, dependencies, network needs, and storage needs;
@@ -1000,7 +1012,9 @@ A skill publication request must provide:
 - known limitations; and
 - proposer publication note.
 
-The owning Team Lead reviews the request. Enterprise Skill Admin review is required only when enterprise risk or exception policy says so. Approval must not grant the skill's consumers any declared dependency automatically.
+The owning Team Lead is the only human reviewer. Automated platform policy must pass before submission and is rechecked before activation. A policy failure blocks the candidate with actionable validation errors; it does not create a Platform Admin review step. Approval must not grant the skill's consumers any declared dependency automatically.
+
+For a new skill, approval creates the governed skill identity and its first immutable version. For an improvement, approval creates a new immutable version under the existing skill identity. Approval and direct or Team access assignment are separate actions.
 
 ### 13.3 Knowledge review
 
@@ -1082,7 +1096,7 @@ The platform records immutable audit events for:
 - Team creation, deletion, membership, Team Lead assignment, and access changes;
 - direct workspace access grants and revocations;
 - workspace editing-policy changes, proposals, merges, Freeflow edits, conflicts, restores, publication, ownership transfer, and archive;
-- skill proposal submission, Team Lead decision, enterprise decision when required, activation, Team assignment, suspension, rollback, and retirement;
+- skill proposal submission, Team Lead decision, automated policy result, activation, direct or Team assignment, suspension, rollback, and retirement;
 - knowledge submission, review decision, activation, assignment, suspension, rollback, and retirement;
 - tool and MCP registration, enablement, assignment, invocation approval, disablement, and connection revocation;
 - sandbox entitlement, execution request, selected inputs, policy decision, completion, limit violation, and output publication;
@@ -1111,7 +1125,7 @@ Examples:
 - `You have Contributor access through the Research Team.`
 - `You have Publisher access directly and Viewer access through Product.`
 - `This workspace pins research-synthesis@3.2.0. You may run it through the Policy Team.`
-- `You can edit this workspace, but Research Analysis is not assigned through any of your Teams.`
+- `You can edit this workspace, but Research Analysis is not assigned to you directly or through any of your Teams.`
 - `This knowledge source is assigned through the Compliance Team.`
 - `This MCP server is assigned through the Research Team; your Google connection supplies authentication.`
 - `Code Interpreter is allowed through the Data Analysts Team and runs under the Restricted Python sandbox policy.`
@@ -1134,6 +1148,8 @@ An optional authorization-details view and the administrator effective-access in
 ## 17. Proposed Data Model
 
 Domain-specific grant tables are preferred over one unconstrained generic ACL table. This keeps invariants enforceable and queries understandable.
+
+The delivery-level relational design, constraints, indexes, transaction boundaries, and current-schema migration are defined in [Unified Governance Database Design](./unified-governance-database-design.md).
 
 ### 17.1 Identity and platform governance
 
@@ -1162,13 +1178,17 @@ The existing `users.isAdmin` may remain during migration but should eventually m
   - `editingPolicy`: `review` or `freeflow` for Team Workspaces
   - `currentRevisionId`
   - `currentPublishedVersionId`
-- `workspace_access_grants`
+- `workspace_user_grants`
   - `workspaceId`
-  - `principalType`: `user` or `team`
-  - `principalId`
+  - `userId`
   - `role`: `viewer`, `contributor`, or `publisher`
   - `grantedBy`
-  - invariant: `publisher` is valid only for `principalType = user`
+- `workspace_team_grants`
+  - `workspaceId`
+  - `teamId`
+  - `role`: `viewer` or `contributor`
+  - `grantedBy`
+- optional `workspace_access_grants` read view over both physical grant tables
 - `workspace_revisions`
   - immutable revision identifier, parent revision, actor, source, timestamp, and content-manifest reference
 - `workspace_changes`
@@ -1183,6 +1203,10 @@ The existing `users.isAdmin` may remain during migration but should eventually m
   - exact `skillVersionId`
   - `pinnedBy`
   - validation status
+- `private_workspace_skill_draft_pins`
+  - owner-matched Private Workspace and private skill draft
+  - exact private draft revision for reproducible testing
+  - prohibited from Team Workspace and published-version manifests
 - `workspace_collaboration_objects`
   - `workspaceId`
   - `originVersionId`
@@ -1205,27 +1229,41 @@ Workspace Owner remains an accountable direct membership or ownership field, not
 
 ### 17.3 Skill governance
 
+- `private_skill_drafts`
+  - draft identifier and optimistic-concurrency revision
+  - proposer
+  - proposal type: `new` or `improvement`
+  - optional source skill and source version
+  - proposed owning Team, optional until submission for a new skill
+  - proposer-only editable content and test evidence
 - `skills`
   - stable skill identity
   - owning Team
   - original creator attribution
-  - active version
+  - default active version identifier
   - lifecycle status
 - `skill_versions`
-  - immutable version manifest and content reference
+  - immutable version identifier, semantic version, manifest hash, and content reference
+  - optional base version identifier
   - status
   - creator
   - validation summary
 - `skill_review_requests`
-  - submitted version
+  - submitted candidate manifest and proposed version
   - owning Team
+  - proposal type: `new` or `improvement`
+  - optional source skill and source version
   - Team Lead reviewer and decision
-  - optional Enterprise Skill Admin reviewer and decision
   - notes
-- `skill_role_bindings`
-  - enterprise skill administrators
-- existing or evolved `skill_grants`
-  - Team-to-approved-skill consumption grants
+- `skill_candidate_policy_results`
+  - candidate identifier and platform-policy version
+  - automated `pass` or `block` outcome
+  - risk classification and actionable issue summary
+- `team_skill_grants`
+  - Team-to-stable-skill-identity consumption grants
+- `user_skill_grants`
+  - direct user and stable skill identity
+  - granted by Platform Admin
 
 Private proposals must be stored separately from the shared runtime registry. Only an activated approved version is materialized into the runtime skill catalog. Workspace skill pins must reference immutable approved versions.
 
@@ -1284,10 +1322,12 @@ Private proposals must be stored separately from the shared runtime registry. On
   - publication note, publisher, validation status, and exact skill manifest
   - restore as a new current revision
 - **My skills**
-  - Private improvement proposals
+  - Create skill
+  - Private drafts for new skills and improvements
   - Submitted to Team Lead
   - Changes requested
   - Team-approved versions
+  - Available directly or through Teams
 - **My knowledge**
   - Private drafts
   - In review
@@ -1299,6 +1339,8 @@ Private proposals must be stored separately from the shared runtime registry. On
 - **Workspace governance**
 - **Team skill reviews**
 - **Skill catalog**
+  - Versions
+  - Team and individual access
 - **Knowledge reviews**
 - **Knowledge catalog**
 - **Runtime capabilities**
@@ -1317,10 +1359,12 @@ Use user-facing terms:
 - `Published version` for an immutable workspace snapshot;
 - `Publisher`, not `Editor`, for publication authority;
 - `Contributor` for a user who may propose or Freeflow-edit but not publish;
-- `Skill Proposer`, `Team Lead`, `Enterprise Skill Admin`, and `Skill Consumer` for skills;
+- `Skill Proposer`, `Team Lead`, `Platform Admin`, and `Skill Consumer` for skills;
 - `Author`, `Curator`, `Access Admin`, and `Consumer` for knowledge.
 
 Do not label anyone as an editor of a published version. `Edit` applies only to the current Team Workspace.
+
+Do not use `Skill Evolution` as a separate user-facing feature, navigation item, permission, or lifecycle. Use `Create skill`, `Improve`, `Submit to Team Lead`, `Changes requested`, and `Versions`. The underlying proposal, review, immutable-version, assignment, and audit records remain part of skill governance.
 
 The Team Workspace header must display:
 
@@ -1335,7 +1379,7 @@ The workspace skill surface shows a compact summary such as:
 
 When blocked:
 
-> You can edit this workspace, but Research Analysis is not assigned through any of your Teams. Request access.
+> You can edit this workspace, but Research Analysis is not assigned to you directly or through any of your Teams. Request access.
 
 The complete six-check authorization trace is available through `View authorization details` or the administrator access inspector. It is not displayed as primary workspace content.
 
@@ -1351,7 +1395,7 @@ For skill invocation:
 allowed =
     skill is approved and active
     AND Team Workspace pins the exact approved skill version, when invoked in a Team Workspace
-    AND user is entitled through an affiliated Team
+    AND user is entitled through an affiliated Team or a direct user grant
     AND requested capability is declared by the skill
     AND user is entitled to that capability
     AND workspace policy permits that capability
@@ -1412,11 +1456,12 @@ Publication, approval, assignment, restoration, suspension, and deletion permiss
 ### 20.3 Skills
 
 - Existing global skills become approved active catalog skills.
-- Every existing skill receives an accountable owning Team or an enterprise-owned migration placeholder.
+- Every existing skill receives an accountable owning Team or a temporary platform migration holding Team.
 - Existing Skill Builder and direct registry-editing routes remain Platform Admin-only.
-- Existing group skill grants become Team-based Skill Consumer assignments.
-- Existing skill reviewers or catalog administrators map to Team Lead or Enterprise Skill Admin according to scope.
-- User-created private proposals use new draft storage and never write directly to the active shared registry.
+- Existing group skill grants become Team-based Skill Consumer assignments, and valid direct-user grants remain direct assignments.
+- Existing skill reviewers map to Team Lead according to owning-Team scope; catalog administrators map to Platform Admin without proposal-decision authority.
+- User-created private new-skill and improvement proposals use new draft storage and never write directly to the active shared registry.
+- The existing `Skill Evolution` navigation is retired. Existing suggestions and decisions remain read-only for retention, are not moved into Team skill reviews, and pending suggestions are archived without being applied.
 - Existing workspaces that reference `latest` are resolved to their current approved exact skill version and then pinned.
 
 ### 20.4 Knowledge
@@ -1447,13 +1492,13 @@ The first governed release should include:
 7. Attributed change feed, proposal queue, per-file history, conflict states, and restore.
 8. Immutable workspace publication by Owner or Publisher.
 9. Team Workspace chat, private notes, shared annotations, discussions, mentions, assignments, and tasks.
-10. Private user-created Team skill-improvement proposals.
-11. Team Lead review, enterprise validation, high-risk escalation, activation, suspension, rollback, and Team assignment.
+10. Private user-created new-skill and skill-improvement proposals.
+11. Team Lead review, automated platform validation, activation, suspension, rollback, and Team or direct-user assignment.
 12. Exact approved skill-version pins in the Team Workspace and every published version.
 13. Cross-Team skill grants without workspace-driven catalog inheritance.
 14. Knowledge Author, Curator, Access Admin, and Consumer roles, with admin fulfilling curator and access-admin duties initially.
-15. Team-based consumption grants.
-16. Self-approval prevention with a single-lead or single-admin exception setting.
+15. Team-based consumption grants plus Platform-Admin-managed direct skill grants.
+16. Skill self-approval prevention with a single-lead exception setting.
 17. Immutable versions and audit events.
 18. Tool, MCP-server, personal-connection, and Code Interpreter sandbox governance.
 19. Compact in-workspace access explanations plus an optional detailed authorization inspector.
@@ -1467,7 +1512,7 @@ Deferred:
 - explicit deny rules;
 - delegated Team administrators beyond Team Lead;
 - Publisher grants through Teams;
-- direct skill grants outside Teams;
+- direct skill grants created by roles other than Platform Admin;
 - character-by-character simultaneous co-editing;
 - formal break-glass automation beyond an audited administrative procedure.
 
@@ -1505,15 +1550,21 @@ Deferred:
 ### Skill
 
 - Every governed skill has one owning Team.
-- A Team Member can create and test a private skill-improvement proposal without changing the shared catalog.
+- A Platform Member can create and test a new private skill draft without changing the shared catalog.
+- A Team Member can create and test a private improvement to a skill owned by their Team.
+- A new-skill proposer selects one eligible owning Team before submission; submission locks that Team for the candidate.
 - Submission freezes an immutable candidate in the owning Team's queue.
 - A proposer cannot approve their own candidate by default.
-- A Team Lead can approve ordinary Team skill improvements after mandatory enterprise validation passes.
-- Enterprise Skill Admin reviews high-risk or exception cases and can suspend unsafe versions.
-- Only approved active versions can be assigned or invoked.
+- A Team Lead is the only human approver for new-skill and skill-improvement proposals owned by their Team.
+- Automated platform policy blocks non-compliant candidates instead of routing them to a second reviewer.
+- Platform Admin can suspend unsafe versions but does not participate in proposal decisions.
+- Only a skill with at least one approved active version can be assigned; only an approved active exact version can be invoked.
+- A Team Lead can manage approved skill access for their own Team; Platform Admin can manage approved skill access for any Team or individual.
+- Platform Admin role alone does not grant skill consumption; the admin also needs a direct or Team grant to invoke a skill.
+- Approval and skill access assignment remain separate actions.
 - Every Team Workspace and published version pins an exact approved skill version.
 - Workspace access alone does not grant the pinned skill.
-- A user may invoke the pinned version only through an affiliated Team grant.
+- A user may invoke the pinned version through an affiliated Team grant or a direct Platform Admin grant.
 - A skill cannot extend the invoking user's runtime authority.
 - Suspension blocks new invocation immediately.
 
@@ -1550,13 +1601,421 @@ Adopt the following model as the product baseline:
 5. **Workspace Owner and named Publishers create immutable versions from the current Team Workspace.**
 6. **Contributors never gain publication authority merely because Freeflow is enabled.**
 7. **Teams are the user-facing identity, access, and skill-governance unit.**
-8. **Every governed skill has an owning Team, and Team Members submit improvements to that Team's Lead.**
-9. **Enterprise Skill Admin supplies guardrails, exceptional approval, and emergency control without becoming the routine Team reviewer.**
+8. **Every governed skill has an owning Team, and users submit new skills or improvements to that Team's Lead.**
+9. **Platform Admin supplies automated policy, access administration, and emergency control but never becomes a skill-proposal reviewer.**
 10. **Every Team Workspace pins exact approved skill versions, and publication freezes those pins.**
 11. **Workspace access never merges Team skill catalogs or bypasses skill entitlement.**
-12. **A multi-Team or directly shared workspace user may invoke a pinned skill only through one of their Team affiliations.**
+12. **A workspace user may invoke a pinned skill only through an affiliated Team grant or a direct Platform Admin grant.**
 13. **The workspace shows concise access status; full authorization traces are optional diagnostics.**
 14. **Platform-knowledge publication is governed by Knowledge Curators and the Knowledge Access Admin.**
 15. **Tools, MCP servers, personal connections, and sandbox execution are independent governed capabilities.**
-16. **A person's permissions are the explainable composition of scoped roles, artifact state, Team grants, exact skill pins, runtime entitlements, and platform policy.**
+16. **A person's permissions are the explainable composition of scoped roles, direct and Team grants, artifact state, exact skill pins, runtime entitlements, and platform policy.**
 17. **Platform administration does not silently invalidate private-work boundaries.**
+
+## 24. Delivery Contract
+
+This section is the implementation baseline for the first governed-skill delivery. It resolves the remaining storage, versioning, authorization, API, migration, and test decisions needed for engineering estimation and execution.
+
+### 24.1 Existing implementation to reuse
+
+The delivery must evolve the existing paths rather than create a parallel skill platform:
+
+- The current Skill Builder remains the editing experience, but its writes target an owner-scoped private draft instead of the shared runtime registry.
+- Existing `groups`, `group_members`, and group-based grant tables may remain physical persistence names during the MVP. Product labels and new APIs use `Team`.
+- Existing `skill_grants` remain the migration basis for direct-user and Team access, but each governed grant targets a stable skill identity rather than a mutable directory or one version.
+- Existing effective-access calculation, slash-command filtering, agent-token propagation, and runtime skill allowlisting remain the authorization chain, but effective access must add direct-user grants and remove implicit skill-consumption access based only on `isAdmin`.
+- Existing skill frontmatter, declared tools, MCP servers, plugin linkage, sandbox scripts, interaction contracts, and package validation remain part of candidate validation.
+- Existing content-hash conflict checks may be reused for optimistic concurrency and stale-candidate detection.
+- Existing `SKILLS_ROOT` discovery may remain as a compatibility adapter and runtime cache during migration, but it is not the governed source of truth.
+
+The current admin-only direct-write routes must not be exposed to Team Members. Once governed skills are enabled, user and administrator edits use the same draft, review, version, and activation services.
+
+### 24.2 Canonical identity, versions, grants, and pins
+
+The implementation must distinguish four identifiers:
+
+| Identifier | Meaning | Mutability |
+|---|---|---|
+| `skillId` | Stable platform-wide skill identity | Immutable after first approval |
+| `versionId` | Internal immutable version identifier | Immutable |
+| `semanticVersion` | Human-readable version within one skill | Immutable and unique per skill |
+| `manifestHash` | Content hash of the complete frozen package | Immutable |
+
+Rules:
+
+- A display name need not be unique. `skillId` is globally unique.
+- New user-created skill IDs are lowercase, use the existing safe path pattern, and are limited to 128 characters. Existing valid IDs are retained during migration.
+- A new skill defaults to semantic version `1.0.0`.
+- An improvement must propose a semantic version greater than every existing version for that skill under Semantic Versioning precedence.
+- Pre-release and build-metadata versions are deferred from the MVP.
+- A submitted candidate retains a separate monotonically increasing candidate revision. Changes-requested resubmission does not mutate the previous frozen candidate.
+- A direct-user or Team skill grant targets `skillId`, not `versionId`. The grant therefore survives later approved versions.
+- A Team Workspace manifest pins `skillId` plus exact `versionId`, `semanticVersion`, and `manifestHash`.
+- A skill may have several active immutable versions so existing workspace pins remain runnable.
+- `skills.defaultVersionId` identifies the version offered for new workspace pins and discovery. Activating a newer default never silently upgrades an existing workspace.
+- Rolling back a skill changes `defaultVersionId` to a prior active version. It does not delete or rewrite any version.
+- Version suspension blocks that exact version. Skill-level suspension blocks every version. Both fail closed at the next invocation.
+- Retirement prevents new pins while preserving historical manifests. A version already pinned to a published workspace remains inspectable but is not runnable after retirement unless restored.
+
+### 24.3 Source of truth and runtime materialization
+
+Governed skill metadata and state are stored transactionally in the database. Skill package content is stored as immutable manifests and blobs through the existing artifact-storage abstraction; local filesystem storage is acceptable only as the development implementation of that abstraction.
+
+The storage boundary is:
+
+```text
+Private draft files
+    -> validation snapshot
+    -> frozen candidate manifest + immutable blobs
+    -> owning Team Lead decision
+    -> automated platform-policy recheck
+    -> active immutable version
+    -> content-addressed runtime materialization
+    -> exact-version invocation
+```
+
+Requirements:
+
+- Private draft files use an owner-scoped prefix and are never placed under the shared runtime skill root.
+- Submission calculates file hashes, package `manifestHash`, validation inputs, and declared capabilities in one frozen candidate.
+- Approved package blobs are immutable and deduplicated by content hash where supported.
+- Runtime materialization is keyed by `skillId`, `versionId`, and `manifestHash`.
+- The runtime resolver must load the exact requested version. It must not resolve a workspace pin through `latest` or the default pointer.
+- A materialized runtime cache is reconstructable and contains no unique governance state.
+- Cache population writes into a temporary directory and uses an atomic rename or equivalent atomic object-store promotion.
+- A failed materialization leaves the previous cache and catalog state unchanged.
+- Direct writes to active package files are prohibited after migration.
+- Database state becomes active only after immutable content is readable. If activation fails, the candidate remains approved but unavailable, with an actionable error and audit event.
+
+### 24.4 Authorization contract
+
+Authorization is evaluated by the server at action time.
+
+| Action | Platform Member / Proposer | Team Lead | Platform Admin |
+|---|---|---|---|
+| Create private draft | Own drafts | Own drafts | Own drafts |
+| Read or edit unsubmitted draft | Draft owner only | No automatic access | No automatic access |
+| Submit new skill | To an active Team they belong to | Same rule | Same rule unless acting through a Team membership |
+| Submit improvement | Skill must be owned by one of their Teams | Same rule | Same rule unless acting through a Team membership |
+| View frozen candidate | Own submission | Candidate owned by their Team | No proposal-content access through admin role |
+| Request changes, reject, or approve | No | Own Team, excluding own candidate | No |
+| Assign approved skill access | No | Own Team | Any Team or individual user |
+| Set default version | No | Skill's owning Team after approval | Any skill under platform policy |
+| Suspend or restore version | No | Own Team when platform policy permits | Any skill |
+| Transfer skill ownership | No | No in MVP | Platform Admin only |
+
+Additional rules:
+
+- Team membership is rechecked on submission. A user with no eligible Team may continue editing privately but cannot submit.
+- Team Lead authority is rechecked when the decision is committed.
+- If the proposer leaves the Team after submission, the frozen candidate may still be reviewed. If changes are requested, the proposer may edit privately but cannot resubmit until membership is restored. A new-skill proposer may instead withdraw and select another eligible Team; an improvement remains tied to the existing skill's owning Team.
+- A Team cannot be deleted while it owns an active skill or an open skill-review request. Skills must first be transferred, retired, or otherwise resolved.
+- Skill ownership transfer is blocked while review requests are open.
+- Platform Admin access covers catalog metadata, approved-version validation summaries, assignments, and audit records. It does not grant access to private drafts or submitted candidate content.
+- An unauthorized request for another user's private draft returns `404` to avoid disclosing its existence.
+
+### 24.5 API surface
+
+New governed endpoints use `Team` terminology. Existing `/groups` endpoints may remain as one-release compatibility aliases but must not be used by new clients.
+
+Member and proposer APIs:
+
+- `GET /skills/mine` — list owned drafts, submitted requests, requested changes, and approved versions created by the user.
+- `POST /skills/drafts` — create `{ proposalType: "new" | "improvement", sourceSkillId?, sourceVersionId? }`.
+- `GET /skills/drafts/:draftId` — return metadata, current draft revision, files, validation summary, and eligible Teams.
+- `PATCH /skills/drafts/:draftId` — update draft metadata or file manifest using `If-Match`.
+- `POST /skills/drafts/:draftId/actions` — apply validated Skill Builder file actions inside the draft boundary.
+- `POST /skills/drafts/:draftId/validate` — run structural, dependency, policy, and sandbox validation without submission.
+- `POST /skills/drafts/:draftId/submit` — submit `{ owningTeamId?, semanticVersion, submissionNote, expectedDraftRevision }`.
+
+Review APIs:
+
+- `GET /teams/:teamId/skill-reviews` — paginated Team queue with status filters.
+- `GET /skill-reviews/:requestId` — frozen candidate, diff, validation evidence, risk classification, and review history.
+- `POST /skill-reviews/:requestId/decision` — submit `{ decision: "approve" | "request_changes" | "reject", comment, expectedRequestRevision }`.
+- `GET /skill-reviews/:requestId/events` — immutable review timeline.
+
+Catalog and access APIs:
+
+- `GET /skills/catalog` — paginated governed catalog filtered by caller scope.
+- `GET /skills/:skillId/versions` — immutable version history and statuses.
+- `PUT /teams/:teamId/skill-grants/:skillId` — grant stable skill access.
+- `DELETE /teams/:teamId/skill-grants/:skillId` — revoke stable skill access.
+- `PUT /users/:userId/skill-grants/:skillId` — Platform Admin grants direct stable skill access.
+- `DELETE /users/:userId/skill-grants/:skillId` — Platform Admin revokes direct stable skill access.
+- `PUT /skills/:skillId/default-version` — select an active version as default.
+- `POST /skills/:skillId/versions/:versionId/suspend` — block exact-version invocation.
+- `POST /skills/:skillId/versions/:versionId/restore` — restore an eligible suspended version.
+- `POST /skills/:skillId/transfer` — Platform Admin ownership transfer when invariants permit.
+
+API rules:
+
+- State-changing `POST` requests accept an `Idempotency-Key`.
+- Mutable draft and review resources return an `ETag`; updates and decisions require `If-Match` or the equivalent expected revision.
+- Every state-changing response includes the resulting resource state and `auditEventId`.
+- List endpoints are paginated and deterministically ordered.
+- File paths are server-normalized and constrained to the draft root. Existing traversal and allowlisted-path checks remain mandatory.
+- Server responses use stable machine-readable error codes in addition to user-facing messages.
+
+### 24.6 State transitions and concurrency
+
+Only the following transitions are valid:
+
+```text
+PrivateDraft --submit--> Submitted
+Submitted --request changes--> ChangesRequested
+ChangesRequested --edit--> PrivateDraft
+Submitted --reject--> Rejected
+Submitted --approve, policy passes--> Approved --automatic activation--> Active
+Active --suspend--> Suspended
+Suspended --restore--> Active
+Active --retire--> Retired
+```
+
+Rules:
+
+- Submission never mutates a previously submitted candidate.
+- `request_changes` creates or reopens an editable draft revision linked to the frozen candidate.
+- Review decisions are append-only. A second decision with the same idempotency key returns the first result.
+- A stale `If-Match`, draft revision, request revision, base version, or manifest hash returns `409`.
+- If another candidate claims the same new `skillId` or semantic version first, the later submission returns `409` and remains editable.
+- An improvement may be submitted from an older active base version. The review UI must show that it is not based on the current default; approval is still allowed when validation and semantic-version rules pass.
+- Approval, activation, default-version selection, and access assignment are separate audit events even when approval and activation occur in one transaction.
+
+### 24.7 Validation, risk, activation, and rollback
+
+Mandatory validation before submission:
+
+- `SKILL.md` exists and frontmatter parses;
+- skill ID, display name, description, and semantic version are valid;
+- all files are inside the package boundary and pass size and type limits;
+- plugin references and interaction contracts are valid;
+- declared tools and MCP servers exist;
+- sandbox script names, paths, hashes, timeouts, and output declarations are valid;
+- dependency, static-safety, and secret scans pass; and
+- a sandbox test result exists when the skill declares executable scripts.
+
+Platform policy classifies risk automatically. A candidate is blocked rather than escalated when it:
+
+- declares a tool or MCP action prohibited for governed skills;
+- requests network-enabled sandbox execution outside the approved policy;
+- introduces executable dependencies outside the approved allowlist;
+- handles credentials or regulated/sensitive data in a prohibited way; or
+- otherwise fails a mandatory structural, safety, secret, dependency, or sandbox check.
+
+An allowed high-risk declaration remains visible to the Team Lead, but it does not create a second reviewer. Runtime actions that require human confirmation retain their per-action approval gates.
+
+Activation rules:
+
+- Team Lead approval automatically activates the immutable version after automated platform validation is rechecked.
+- The first active version becomes the skill's default.
+- A newly activated improvement becomes the default version for new pins unless the reviewer explicitly leaves the previous default in place.
+- Existing workspaces remain pinned to their exact versions.
+- Rollback changes the default pointer to a prior active version. Suspended or retired versions must first be restored.
+
+### 24.8 Direct and Team grants and runtime authorization
+
+The authorization chain is:
+
+```text
+User
+  -> direct user grant for stable skillId
+     OR active Team memberships -> Team grant for stable skillId
+  -> workspace exact version pin
+  -> version is active and manifest hash matches
+  -> declared tool, MCP, knowledge, connection, and sandbox checks
+  -> invocation
+```
+
+Requirements:
+
+- Effective access is the union of active direct-user and Team-derived grants and returns stable skill IDs.
+- Agent authorization tokens carry allowed stable skill IDs and the selected exact skill-version identity where a workspace pin applies.
+- The agent runtime records `skillId`, `versionId`, `semanticVersion`, and `manifestHash` on every skill-assisted run and content mutation.
+- Platform Admin assignment authority does not imply Skill Consumer access. An admin must also receive a direct or Team grant to invoke a skill.
+- Existing `isAdmin` allowlist bypasses in skill discovery, plugin filtering, slash commands, agent tokens, and invocation must be removed or narrowed to catalog administration only.
+- A direct or Team skill grant does not grant the skill's required tool, MCP server, knowledge source, credential, network access, or sandbox entitlement.
+- Revoking the final effective direct-or-Team grant blocks new invocation immediately but does not delete prior outputs or audit history.
+
+### 24.9 Error contract
+
+The API uses the following status and error semantics:
+
+| HTTP status | Example machine code | Meaning |
+|---|---|---|
+| `400` | `INVALID_SKILL_MANIFEST` | Malformed ID, path, payload, or manifest |
+| `401` | `AUTHENTICATION_REQUIRED` | No active user context |
+| `403` | `SKILL_ACTION_FORBIDDEN` | Authenticated caller lacks the scoped role |
+| `404` | `SKILL_RESOURCE_NOT_FOUND` | Resource absent or private resource intentionally concealed |
+| `409` | `SKILL_REVISION_CONFLICT` | Stale revision, duplicate ID/version, invalid transition, or ownership conflict |
+| `422` | `SKILL_VALIDATION_FAILED` | Candidate is well-formed but fails mandatory checks |
+| `503` | `SKILL_MATERIALIZATION_UNAVAILABLE` | Immutable package cannot currently be made available to runtime |
+
+Validation responses contain field or file-level issues. A partial multi-file action never silently succeeds: either the complete action batch commits, or the response identifies the failed action and leaves the draft at its previous revision.
+
+### 24.10 Notifications and audit
+
+The MVP provides in-app notifications and queue badges for:
+
+- submission to a Team;
+- changes requested;
+- approval or rejection;
+- activation or materialization failure;
+- direct or Team access grant or revocation affecting the current user; and
+- suspension or retirement of a pinned version.
+
+Email, chat, and external webhook notifications are deferred. Notification-delivery failure does not roll back the governance transaction; it is retried and the authoritative state remains visible in `My Skills` or the review queue.
+
+Audit events include:
+
+- draft creation metadata without private content;
+- validation attempt and summary;
+- candidate submission and manifest hash;
+- Team Lead decision and automated policy result;
+- activation and default-version changes;
+- direct-user and Team grant or revocation;
+- version and skill suspension, restoration, retirement, and rollback;
+- ownership transfer;
+- migration and compatibility-override use; and
+- blocked or failed privileged operations.
+
+Audit records contain actor, scoped role used, resource identifiers, prior and resulting states, reason or review comment, request or idempotency identifier, timestamp, and policy version. Private draft content is not copied into the audit log.
+
+### 24.11 Skill Evolution retirement
+
+The existing `Skill Evolution` feature is an automated operational-learning flow, not the governed user skill-version workflow. It proposes changes to routing memory or `HELPUDOC_LEARNINGS.md` from agent-run evidence and therefore must not be migrated into Team skill-review requests.
+
+At governed-skill rollout:
+
+- remove the `Skill Evolution` navigation and stop manual or scheduled generation of new suggestions;
+- retain existing suggestion rows and decisions read-only for the configured audit-retention period;
+- preserve already accepted content changes as part of the migrated skill package;
+- do not expose pending suggestions to Team Leads or convert them into private user drafts;
+- mark remaining pending suggestions `archived` or store an equivalent archival state without applying them; and
+- remove direct learning-file writes from the active governed path.
+
+A future operational-learning feature may reintroduce these suggestions as `Skill Insights`, but it requires its own ownership, privacy, review, and version-proposal design.
+
+### 24.12 Migration and rollout
+
+Migration is incremental and reversible:
+
+1. Create governed-skill metadata, draft, version, Team review, direct and Team grant, notification, idempotency, and audit structures.
+2. Backfill every existing registry skill as one stable skill identity with an immutable `1.0.0` version, its current package hash, and an accountable owning Team or temporary platform migration holding Team.
+3. Mark the migrated version active and set it as the default without moving workspace pins yet.
+4. Convert existing group skill grants into Team-to-skill-identity grants without changing effective access.
+5. Preserve physical `groups` storage while exposing `Team` in the new API and UI.
+6. Keep legacy `/groups` APIs as compatibility aliases for one release; new clients use `/teams`.
+7. Resolve every workspace `latest` reference to the then-current default version and store its exact version and manifest hash.
+8. Validate and backfill legacy direct-user skill grants into governed `user_skill_grants`, preserving effective access.
+9. Report Platform Admin accounts that currently rely on the implicit skill-consumption bypass; do not create grants silently. Administrators may assign an explicit direct or Team grant before enforcement.
+10. Disable legacy direct registry writes and Skill Evolution generation only after backfill validation succeeds.
+11. Enable governed writes behind a rollout flag, then remove the legacy write path after the rollback window.
+
+Migration validation must compare:
+
+- skill count and package hashes;
+- Team membership and effective skill access before and after;
+- workspace skill resolution before and after exact pinning;
+- plugin and runtime dependency declarations;
+- active default versions;
+- pending review and archived Skill Evolution counts; and
+- failed or unmapped ownership and grant records.
+
+Rollback may restore the prior read path while governed writes remain disabled. It must not discard drafts or submitted candidates created after migration began.
+
+### 24.13 Test contract
+
+Delivery is incomplete without automated coverage for the following matrix.
+
+Unit tests:
+
+- role and scope authorization for every action;
+- state-transition allow and deny cases;
+- semantic-version ordering and duplicate handling;
+- manifest hashing, path normalization, and traversal rejection;
+- risk classification;
+- direct-user and Team-grant union and revocation;
+- exact-version and manifest-hash authorization; and
+- idempotency and optimistic-concurrency handling.
+
+Integration tests:
+
+- create new private skill, validate, submit, approve, activate, assign, pin, and invoke;
+- improve from current and older active versions;
+- request changes, edit, resubmit, and approve;
+- self-approval denial and single-lead exception;
+- policy-blocked candidates and allowed high-risk candidates without a second review queue;
+- Platform Admin cannot make a proposal decision but can grant or revoke an approved skill for a Team or individual;
+- proposer or Team Lead removal during review;
+- Team deletion and ownership-transfer guards;
+- concurrent ID, semantic-version, draft, and decision conflicts;
+- runtime materialization failure and retry;
+- version suspension, skill suspension, restoration, retirement, and rollback;
+- direct-user and Team grant revocation while a workspace remains pinned;
+- workspace publication freezing exact skill metadata;
+- migration parity for skills, direct-user and Team grants, workspace pins, and runtime discovery; and
+- Skill Evolution archival without applying pending suggestions.
+
+Security tests:
+
+- another user, Team Lead, or Platform Admin cannot read an unsubmitted private draft;
+- submitted-candidate access is limited to the proposer and owning Team review scope;
+- no draft or candidate path escapes its storage boundary;
+- Platform Admin assignment authority does not create implicit Skill Consumer access or bypass runtime and version-status checks;
+- undeclared tools, MCP servers, scripts, network access, and credentials fail closed; and
+- audit and notification payloads do not leak private draft content or secrets.
+
+Frontend tests:
+
+- `My Skills` loading, empty, error, draft, submitted, changes-requested, approved, and materialization-failed states;
+- Team review queue filters and decision outcomes;
+- stale revision and duplicate version recovery;
+- access-management grant and revocation explanations;
+- removal of Skill Evolution navigation; and
+- keyboard, focus, status-announcement, and narrow-screen behaviour for new surfaces.
+
+Runtime and migration tests must use immutable fixtures and verify both the selected version and `manifestHash`, not only `skillId`.
+
+### 24.14 Performance and operational requirements
+
+- Review, catalog, and audit queries are paginated and indexed by owning Team, proposer, skill, status, and creation time.
+- Effective direct-or-Team skill access is calculated without scanning the filesystem.
+- Runtime package resolution uses a content-addressed cache and avoids reading every version on each request.
+- Cache entries are safe to evict and reconstruct.
+- Validation and materialization expose duration, outcome, and failure reason metrics.
+- Alerts cover repeated activation failures, unauthorized decision attempts, stale-candidate conflicts, migration mismatches, and invocation of suspended versions.
+- Structured logs include resource identifiers and audit-event IDs but exclude draft content, credentials, and secrets.
+
+### 24.15 Delivery slices and definition of done
+
+Recommended delivery order:
+
+1. **Foundation** — schema, immutable package storage, Team aliases, catalog read model, migration dry run, and compatibility reporting.
+2. **Private authoring** — member `My Skills`, owner-scoped draft APIs, Skill Builder adaptation, validation, and draft tests.
+3. **Review and activation** — Team queues, frozen candidates, one Team Lead decision, automated policy checks, notifications, and audit.
+4. **Access and runtime** — direct and Team grants, exact workspace pins, exact-version agent loading, suspension, rollback, and authorization tests.
+5. **Migration and cleanup** — production backfill, legacy direct-write disablement, Skill Evolution archival, compatibility window, and operational dashboards.
+
+The governed-skill delivery is done when:
+
+- no non-test path edits an active skill package in place;
+- all user and administrator edits create private drafts and immutable candidates;
+- Team Lead decisions and automated policy checks enforce scoped authorization and separation of duties;
+- direct and Team grants, workspace pins, runtime selection, and audit records resolve the same stable skill and exact version;
+- old workspace pins remain deterministic after a newer default activates;
+- migration parity checks pass with no unexplained access loss;
+- the full test contract passes; and
+- rollback and materialization-failure procedures are documented and exercised.
+
+### 24.16 Explicitly not in scope
+
+- Multiple mandatory Team approvers.
+- Platform Admin participation in skill proposal review or approval.
+- Team Lead authority to transfer skill ownership across Teams.
+- Automatic workspace upgrades to a newer default skill version.
+- Editing or republishing an immutable version in place.
+- Email, chat, or webhook notifications.
+- A replacement `Skill Insights` or automated evolution feature.
+- A redesign of plugin governance beyond validating and preserving existing plugin relationships.
+- A new runtime tool, MCP, credential, network, or sandbox entitlement model.
