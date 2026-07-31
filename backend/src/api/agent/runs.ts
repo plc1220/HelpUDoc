@@ -7,7 +7,7 @@ import type { FileService } from '../../services/fileService';
 import type { GoogleOAuthService } from '../../services/googleOAuthService';
 import type { UserService } from '../../services/userService';
 import type { ConversationService } from '../../services/conversationService';
-import { HttpError } from '../../errors';
+import { HttpError, NotFoundError } from '../../errors';
 import {
   cancelAgentRun,
   getRunMeta,
@@ -104,6 +104,15 @@ export function registerRunRoutes(
   conversationService: ConversationService,
 ) {
   const policyApi = createAgentPolicyApi(googleOAuthService, userService);
+  const ensureRunAccess = async (
+    meta: NonNullable<Awaited<ReturnType<typeof getRunMeta>>>,
+    userId: string,
+  ) => {
+    if (meta.userId && meta.userId !== userId) {
+      throw new NotFoundError('Run not found');
+    }
+    await workspaceService.ensureMembership(meta.workspaceId, userId);
+  };
 
   const injectTaggedFileUrls = async (
     prompt: string,
@@ -229,7 +238,7 @@ export function registerRunRoutes(
     try {
       const user = requireUserContext(req);
       const { persona, prompt, workspaceId, history, forceReset, taggedFiles, currentTurnFileIds, internetSearchEnabled } = runAgentSchema.parse(req.body);
-      const workspacePolicy = await workspaceService.getMcpServerPolicy(workspaceId, user.userId, { requireEdit: true });
+      const workspacePolicy = await workspaceService.getMcpServerPolicy(workspaceId, user.userId);
       const policy = await policyApi.resolveEffectiveAgentPolicy(user.userId, workspacePolicy);
       const enrichedPrompt = await injectTaggedFileUrls(prompt, workspaceId, user.userId, taggedFiles);
       const authToken = await policyApi.buildAgentAuthToken({
@@ -285,7 +294,7 @@ export function registerRunRoutes(
     try {
       const user = requireUserContext(req);
       const { persona, prompt, workspaceId, history, forceReset, taggedFiles, currentTurnFileIds, internetSearchEnabled } = runAgentSchema.parse(req.body);
-      const workspacePolicy = await workspaceService.getMcpServerPolicy(workspaceId, user.userId, { requireEdit: true });
+      const workspacePolicy = await workspaceService.getMcpServerPolicy(workspaceId, user.userId);
       const policy = await policyApi.resolveEffectiveAgentPolicy(user.userId, workspacePolicy);
       const enrichedPrompt = await injectTaggedFileUrls(prompt, workspaceId, user.userId, taggedFiles);
       const authToken = await policyApi.buildAgentAuthToken({
@@ -347,11 +356,11 @@ export function registerRunRoutes(
     try {
       const user = requireUserContext(req);
       const { persona, prompt, workspaceId, conversationId, history, forceReset, turnId, taggedFiles, currentTurnFileIds, internetSearchEnabled } = runAgentSchema.parse(req.body);
-      await workspaceService.ensureMembership(workspaceId, user.userId, { requireEdit: true });
+      await workspaceService.ensureMembership(workspaceId, user.userId);
       if (conversationId) {
-        await conversationService.ensureConversationAccess(user.userId, workspaceId, conversationId, { requireEdit: true });
+        await conversationService.ensureConversationAccess(user.userId, workspaceId, conversationId);
       }
-      const workspacePolicy = await workspaceService.getMcpServerPolicy(workspaceId, user.userId, { requireEdit: true });
+      const workspacePolicy = await workspaceService.getMcpServerPolicy(workspaceId, user.userId);
       const policy = await policyApi.resolveEffectiveAgentPolicy(user.userId, workspacePolicy);
       const enrichedPrompt = await injectTaggedFileUrls(prompt, workspaceId, user.userId, taggedFiles);
       const authToken = await policyApi.buildAgentAuthToken({
@@ -390,7 +399,7 @@ export function registerRunRoutes(
       if (!meta) {
         return res.status(404).json({ error: 'Run not found' });
       }
-      await workspaceService.ensureMembership(meta.workspaceId, user.userId, { requireEdit: true });
+      await ensureRunAccess(meta, user.userId);
       res.json(meta);
     } catch (error) {
       handleError(res, error, 'Failed to fetch run status');
@@ -404,7 +413,7 @@ export function registerRunRoutes(
       if (!meta) {
         return res.status(404).json({ error: 'Run not found' });
       }
-      await workspaceService.ensureMembership(meta.workspaceId, user.userId, { requireEdit: true });
+      await ensureRunAccess(meta, user.userId);
       await cancelAgentRun(req.params.runId);
       res.json({ status: 'cancelled' });
     } catch (error) {
@@ -420,8 +429,8 @@ export function registerRunRoutes(
       if (!meta) {
         return res.status(404).json({ error: 'Run not found' });
       }
-      await workspaceService.ensureMembership(meta.workspaceId, user.userId, { requireEdit: true });
-      const workspacePolicy = await workspaceService.getMcpServerPolicy(meta.workspaceId, user.userId, { requireEdit: true });
+      await ensureRunAccess(meta, user.userId);
+      const workspacePolicy = await workspaceService.getMcpServerPolicy(meta.workspaceId, user.userId);
       const policy = await policyApi.resolveEffectiveAgentPolicy(user.userId, workspacePolicy);
       const authToken = await policyApi.buildAgentAuthToken({
         userId: user.userId,
@@ -478,8 +487,8 @@ export function registerRunRoutes(
       if (!meta) {
         return res.status(404).json({ error: 'Run not found' });
       }
-      await workspaceService.ensureMembership(meta.workspaceId, user.userId, { requireEdit: true });
-      const workspacePolicy = await workspaceService.getMcpServerPolicy(meta.workspaceId, user.userId, { requireEdit: true });
+      await ensureRunAccess(meta, user.userId);
+      const workspacePolicy = await workspaceService.getMcpServerPolicy(meta.workspaceId, user.userId);
       const policy = await policyApi.resolveEffectiveAgentPolicy(user.userId, workspacePolicy);
       const authToken = await policyApi.buildAgentAuthToken({
         userId: user.userId,
@@ -529,8 +538,8 @@ export function registerRunRoutes(
       if (!meta) {
         return res.status(404).json({ error: 'Run not found' });
       }
-      await workspaceService.ensureMembership(meta.workspaceId, user.userId, { requireEdit: true });
-      const workspacePolicy = await workspaceService.getMcpServerPolicy(meta.workspaceId, user.userId, { requireEdit: true });
+      await ensureRunAccess(meta, user.userId);
+      const workspacePolicy = await workspaceService.getMcpServerPolicy(meta.workspaceId, user.userId);
       const policy = await policyApi.resolveEffectiveAgentPolicy(user.userId, workspacePolicy);
       const authToken = await policyApi.buildAgentAuthToken({
         userId: user.userId,
@@ -589,7 +598,7 @@ export function registerRunRoutes(
       if (!meta) {
         return res.status(404).json({ error: 'Run not found' });
       }
-      await workspaceService.ensureMembership(meta.workspaceId, user.userId, { requireEdit: true });
+      await ensureRunAccess(meta, user.userId);
       streamKey = getRunStreamKey(runId);
     } catch (error) {
       if (error instanceof HttpError) {

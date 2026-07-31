@@ -11,6 +11,7 @@ export interface ConversationRecord {
   workspaceId: string;
   persona: string;
   title: string;
+  createdBy?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -74,7 +75,7 @@ export class ConversationService {
   }
 
   async createConversation(userId: string, workspaceId: string, persona: string): Promise<ConversationRecord> {
-    await this.workspaceService.ensureMembership(workspaceId, userId, { requireEdit: true });
+    const { workspace } = await this.workspaceService.ensureMembership(workspaceId, userId);
     const [conversation] = await this.db('conversations')
       .insert({
         id: uuidv4(),
@@ -86,15 +87,17 @@ export class ConversationService {
       })
       .returning('*');
 
-    await this.workspaceService.touchWorkspace(workspaceId, userId);
+    if (workspace.visibility === 'private') {
+      await this.workspaceService.touchWorkspace(workspaceId, userId);
+    }
 
     return conversation as ConversationRecord;
   }
 
   async listRecentConversations(userId: string, workspaceId: string, limit = 5): Promise<ConversationRecord[]> {
-    await this.workspaceService.ensureMembership(workspaceId, userId, { requireEdit: true });
+    await this.workspaceService.ensureMembership(workspaceId, userId);
     const conversations = await this.db('conversations')
-      .where({ workspaceId })
+      .where({ workspaceId, createdBy: userId })
       .orderBy('updatedAt', 'desc')
       .limit(limit);
 
@@ -110,7 +113,10 @@ export class ConversationService {
       return null;
     }
 
-    await this.workspaceService.ensureMembership(conversation.workspaceId, userId, { requireEdit: true });
+    await this.workspaceService.ensureMembership(conversation.workspaceId, userId);
+    if (conversation.createdBy && conversation.createdBy !== userId) {
+      return null;
+    }
 
     const messages = await this.db('conversation_messages')
       .where({ conversationId })
@@ -133,7 +139,12 @@ export class ConversationService {
       throw new NotFoundError('Conversation not found');
     }
 
-    await this.workspaceService.ensureMembership(workspaceId, userId, { requireEdit: true });
+    await this.workspaceService.ensureMembership(workspaceId, userId, {
+      requireEdit: options.requireEdit,
+    });
+    if (conversation.createdBy && conversation.createdBy !== userId) {
+      throw new NotFoundError('Conversation not found');
+    }
     return conversation as ConversationRecord;
   }
 
@@ -149,7 +160,10 @@ export class ConversationService {
       throw new NotFoundError('Conversation not found');
     }
 
-    await this.workspaceService.ensureMembership(conversation.workspaceId, userId, { requireEdit: true });
+    await this.workspaceService.ensureMembership(conversation.workspaceId, userId);
+    if (conversation.createdBy && conversation.createdBy !== userId) {
+      throw new NotFoundError('Conversation not found');
+    }
 
     const turnId = options.turnId || (sender === 'user' ? uuidv4() : undefined);
     const timestamp = this.db.fn.now();
@@ -207,11 +221,16 @@ export class ConversationService {
       return false;
     }
 
-    await this.workspaceService.ensureMembership(conversation.workspaceId, userId, { requireEdit: true });
+    const { workspace } = await this.workspaceService.ensureMembership(conversation.workspaceId, userId);
+    if (conversation.createdBy && conversation.createdBy !== userId) {
+      throw new NotFoundError('Conversation not found');
+    }
 
     const deleted = await this.db('conversations').where({ id: conversationId }).del();
     if (deleted) {
-      await this.workspaceService.touchWorkspace(conversation.workspaceId, userId);
+      if (workspace.visibility === 'private') {
+        await this.workspaceService.touchWorkspace(conversation.workspaceId, userId);
+      }
     }
     return deleted > 0;
   }
@@ -226,7 +245,10 @@ export class ConversationService {
       throw new NotFoundError('Conversation not found');
     }
 
-    await this.workspaceService.ensureMembership(conversation.workspaceId, userId, { requireEdit: true });
+    const { workspace } = await this.workspaceService.ensureMembership(conversation.workspaceId, userId);
+    if (conversation.createdBy && conversation.createdBy !== userId) {
+      throw new NotFoundError('Conversation not found');
+    }
 
     const targetMessage = await this.db('conversation_messages')
       .where({ id: messageId, conversationId })
@@ -243,7 +265,9 @@ export class ConversationService {
     await this.db('conversations')
       .where({ id: conversationId })
       .update({ updatedAt: this.db.fn.now(), updatedBy: userId });
-    await this.workspaceService.touchWorkspace(conversation.workspaceId, userId);
+    if (workspace.visibility === 'private') {
+      await this.workspaceService.touchWorkspace(conversation.workspaceId, userId);
+    }
 
     return deleted;
   }
@@ -271,7 +295,13 @@ export class ConversationService {
     }
 
     await this.db('conversations').where({ id: conversation.id }).update(updatePayload);
-    await this.workspaceService.touchWorkspace(conversation.workspaceId, userId);
+    const workspace = await this.db('workspaces')
+      .select('visibility')
+      .where({ id: conversation.workspaceId })
+      .first();
+    if (workspace?.visibility === 'private') {
+      await this.workspaceService.touchWorkspace(conversation.workspaceId, userId);
+    }
   }
 
   private buildConversationTitle(text: string): string {

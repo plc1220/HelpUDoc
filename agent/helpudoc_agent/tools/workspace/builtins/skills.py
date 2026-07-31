@@ -18,7 +18,7 @@ from ....sandbox_runner import (
 from ....skills_registry import (
     activate_skill_context,
     build_loaded_skill_text,
-    find_skill,
+    find_skill_for_context,
     is_skill_allowed,
     load_skills,
     read_helpudoc_learnings,
@@ -166,7 +166,7 @@ def build_load_skill_tool(settings: Settings, workspace_state: WorkspaceState) -
         if not skills:
             return "No skills found."
         normalized = skill_id.strip()
-        skill = find_skill(skills_root, normalized)
+        skill = find_skill_for_context(skills_root, normalized, workspace_state.context)
         if skill is None:
             available = ", ".join(sorted({s.skill_id for s in skills}))
             return f"Skill '{normalized}' not found. Available skills: {available}"

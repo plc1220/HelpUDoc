@@ -1,9 +1,12 @@
 """Skill discovery and workspace syncing helpers."""
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Iterable, List
+import hashlib
+import json
+import re
 import shutil
 import yaml
 
@@ -430,6 +433,12 @@ def load_skills(skills_root: Path) -> List[SkillMetadata]:
     # Deduplicate by resolved path (symlinks) just in case.
     seen_paths: set[Path] = set()
     for skill_file in skill_files:
+        try:
+            relative_parts = skill_file.relative_to(skills_root).parts
+        except ValueError:
+            continue
+        if any(part.startswith(".") for part in relative_parts):
+            continue
         resolved = skill_file.resolve()
         if resolved in seen_paths:
             continue
@@ -546,6 +555,98 @@ def find_skill(skills_root: Path | None, skill_id_or_name: str) -> SkillMetadata
     return None
 
 
+def find_skill_for_context(
+    skills_root: Path | None,
+    skill_id_or_name: str,
+    context: dict[str, Any] | None,
+) -> SkillMetadata | None:
+    """Resolve an exact governed workspace pin before the mutable default."""
+    normalized = str(skill_id_or_name or "").strip()
+    if skills_root is None or not normalized:
+        return None
+    pins = context.get("skill_version_pins") if isinstance(context, dict) else None
+    if not isinstance(pins, dict):
+        return find_skill(skills_root, normalized)
+
+    raw_pin = pins.get(normalized)
+    if isinstance(raw_pin, dict):
+        return _load_governed_pin(skills_root, normalized, raw_pin)
+
+    # The public load_skill contract also accepts a display name. Resolve that
+    # alias back to its canonical key before deciding whether a mutable default
+    # is allowed.
+    mutable_match = find_skill(skills_root, normalized)
+    if mutable_match is not None and isinstance(pins.get(mutable_match.skill_id), dict):
+        return _load_governed_pin(skills_root, mutable_match.skill_id, pins[mutable_match.skill_id])
+
+    governed_name_matches: list[SkillMetadata] = []
+    for skill_key in sorted(pins):
+        pin = pins.get(skill_key)
+        if not isinstance(pin, dict):
+            continue
+        governed = _load_governed_pin(skills_root, skill_key, pin)
+        if governed is not None and normalized == governed.name:
+            governed_name_matches.append(governed)
+    if len(governed_name_matches) == 1:
+        return governed_name_matches[0]
+    if governed_name_matches:
+        return None
+
+    if isinstance(context, dict) and context.get("workspace_mode") == "published_read_only":
+        return None
+    return mutable_match
+
+
+def _load_governed_pin(
+    skills_root: Path,
+    skill_key: str,
+    raw_pin: dict[str, Any],
+) -> SkillMetadata | None:
+    version_id = str(raw_pin.get("versionId") or "").strip()
+    manifest_hash = str(raw_pin.get("manifestHash") or "").strip().lower()
+    if (
+        not re.fullmatch(
+            r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
+            version_id,
+        )
+        or not re.fullmatch(r"[0-9a-f]{64}", manifest_hash)
+    ):
+        return None
+    governed_root = (skills_root / ".governed-versions" / "packages").resolve()
+    version_root = (governed_root / skill_key / version_id).resolve()
+    if governed_root not in version_root.parents or not (version_root / "SKILL.md").is_file():
+        return None
+    if _compute_governed_manifest_hash(version_root) != manifest_hash:
+        return None
+    loaded = load_skills(version_root)
+    return replace(loaded[0], skill_id=skill_key) if loaded else None
+
+
+def _compute_governed_manifest_hash(package_root: Path) -> str | None:
+    """Compute the canonical manifest hash used by the governance backend."""
+    manifest: list[dict[str, Any]] = []
+    try:
+        for candidate in sorted(package_root.rglob("*"), key=lambda item: item.as_posix()):
+            if candidate.is_symlink():
+                return None
+            if not candidate.is_file():
+                continue
+            relative = candidate.relative_to(package_root).as_posix()
+            content = candidate.read_bytes()
+            manifest.append(
+                {
+                    "path": relative,
+                    "contentHash": hashlib.sha256(content).hexdigest(),
+                    "mode": candidate.stat().st_mode & 0o777,
+                    "sizeBytes": len(content),
+                }
+            )
+    except (OSError, ValueError):
+        return None
+    encoded = json.dumps(manifest, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
 def expand_runtime_tool_names(tool_names: Iterable[str]) -> List[str]:
     seen: set[str] = set()
     expanded: List[str] = []
@@ -577,6 +678,17 @@ def activate_skill_context(
     if preferred_mcp_server and preferred_mcp_server not in allowed_mcp_servers:
         allowed_mcp_servers.append(preferred_mcp_server)
     context["active_skill"] = skill.skill_id
+    version_pins = context.get("skill_version_pins")
+    active_version = version_pins.get(skill.skill_id) if isinstance(version_pins, dict) else None
+    if isinstance(active_version, dict):
+        context["active_skill_version"] = {
+            "skill_id": str(active_version.get("skillId") or ""),
+            "version_id": str(active_version.get("versionId") or ""),
+            "semantic_version": str(active_version.get("semanticVersion") or ""),
+            "manifest_hash": str(active_version.get("manifestHash") or ""),
+        }
+    else:
+        context.pop("active_skill_version", None)
     context["active_skill_scope"] = {
         "skill_id": skill.skill_id,
         "name": skill.name,
@@ -744,9 +856,6 @@ def is_skill_allowed(
     context: dict[str, Any] | None,
 ) -> bool:
     if not isinstance(context, dict):
-        return True
-    mcp_policy = context.get("mcp_policy")
-    if isinstance(mcp_policy, dict) and bool(mcp_policy.get("isAdmin", False)):
         return True
     allowed_skill_ids = context.get("skill_allow_ids")
     if not isinstance(allowed_skill_ids, list):

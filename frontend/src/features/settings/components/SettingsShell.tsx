@@ -9,6 +9,7 @@ import {
   ArrowLeftCircle,
   PanelLeftClose,
   PanelLeftOpen,
+  ShieldCheck,
 } from 'lucide-react';
 
 type NavItem = {
@@ -27,6 +28,7 @@ type SettingsShellProps = {
 
 const BASE_NAV_ITEMS: NavItem[] = [
   { label: 'Dashboard', icon: LayoutDashboard, path: '/settings' },
+  { label: 'Skill Governance', icon: ShieldCheck, path: '/skills' },
   { label: 'Skills & Tools', icon: Users2, path: '/settings/agents' },
   { label: 'Knowledge', icon: BookOpen, path: '/settings/knowledge' },
   { label: 'Users', icon: MessageCircle, path: '/settings/users' },

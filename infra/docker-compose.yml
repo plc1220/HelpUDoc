@@ -239,7 +239,9 @@ services:
       - "3000:3000"
     volumes:
       - workspace_data:/app/workspaces
-      - ../skills:/app/skills:ro
+      # Governance materializes immutable versions and promotes the selected
+      # default package in this tree. The agent mounts the same tree read-only.
+      - ../skills:/app/skills
       - ../plugins:/app/plugins:ro
       - ../agent/config:/agent/config
 

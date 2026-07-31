@@ -38,6 +38,7 @@ backend/workspaces.db
 .pytest_cache/
 backend/workspaces/
 agent/outputs/
+skills/.governed-versions/
 rag_storage/
 .local-run/
 .diagnostics/

@@ -55,7 +55,7 @@ from helpudoc_agent.skills_registry import (
     activate_skill_context,
     build_loaded_skill_text,
     collect_tool_names,
-    find_skill,
+    find_skill_for_context,
     is_skill_allowed,
     load_skills,
     read_helpudoc_learnings,
@@ -283,7 +283,7 @@ def register_chat_routes(
         user_request: str,
     ) -> str:
         fallback_request = user_request.strip() or "Continue with the selected skill."
-        skill = find_skill(settings.backend.skills_root, skill_id)
+        skill = find_skill_for_context(settings.backend.skills_root, skill_id, runtime.workspace_state.context)
         if skill is None:
             return (
                 f"The user explicitly selected skill '{skill_id}', but it was not found in the configured skills registry.\n\n"
@@ -345,7 +345,7 @@ def register_chat_routes(
         skill_id = _trace_skill_id(trace_context)
         if not skill_id or context.get("active_skill"):
             return
-        skill = find_skill(settings.backend.skills_root, skill_id)
+        skill = find_skill_for_context(settings.backend.skills_root, skill_id, context)
         if skill is not None and is_skill_allowed(skill, context):
             context.pop("preferred_mcp_server", None)
             activate_skill_context(context, skill, plugins_root=getattr(settings.backend, "plugins_root", None))
@@ -535,7 +535,11 @@ def register_chat_routes(
                 break
             saw_directive = True
             if directive.kind == "skill" and directive.skillId:
-                skill = find_skill(settings.backend.skills_root, directive.skillId)
+                skill = find_skill_for_context(
+                    settings.backend.skills_root,
+                    directive.skillId,
+                    runtime.workspace_state.context,
+                )
                 if skill is not None and is_skill_allowed(skill, seeded):
                     seeded.pop("preferred_mcp_server", None)
                     activate_skill_context(seeded, skill, plugins_root=getattr(settings.backend, "plugins_root", None))
@@ -652,6 +656,14 @@ def register_chat_routes(
             metadata["helpudoc_conversation_id"] = conversation_id
         if skill_trace:
             metadata["helpudoc_skill_id"] = skill_trace
+        active_version = context.get("active_skill_version")
+        if isinstance(active_version, dict):
+            if _clean_langfuse_value(active_version.get("version_id")):
+                metadata["helpudoc_skill_version_id"] = active_version.get("version_id")
+            if _clean_langfuse_value(active_version.get("semantic_version")):
+                metadata["helpudoc_skill_semantic_version"] = active_version.get("semantic_version")
+            if _clean_langfuse_value(active_version.get("manifest_hash")):
+                metadata["helpudoc_skill_manifest_hash"] = active_version.get("manifest_hash")
 
         tags = [
             "helpudoc",
@@ -1617,6 +1629,7 @@ def register_chat_routes(
             pre_plan_search_used = 0
         return {
             "skill": context.get("active_skill"),
+            "skillVersion": context.get("active_skill_version"),
             "requiresHitlPlan": bool(raw_policy.get("requires_hitl_plan", False)),
             "requiresArtifacts": bool(raw_policy.get("requires_workspace_artifacts", False)),
             "requiredArtifactsMode": raw_policy.get("required_artifacts_mode"),

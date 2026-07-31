@@ -14,7 +14,7 @@ from typing import Any, Iterable, List
 from uuid import uuid4
 
 from .config.env import load_sandbox_k8s_env
-from .skills_registry import SkillMetadata, SkillSandboxScript, find_skill, resolve_skill_scope
+from .skills_registry import SkillMetadata, SkillSandboxScript, find_skill_for_context, resolve_skill_scope
 from .state import WorkspaceState
 
 logger = logging.getLogger(__name__)
@@ -155,7 +155,7 @@ def _resolve_skill(
             active_skill_id = str(active_scope.get("skill_id") or "").strip()
     if not active_skill_id:
         raise SandboxExecutionError("Load a skill before running a skill script.")
-    skill = find_skill(skills_root, active_skill_id)
+    skill = find_skill_for_context(skills_root, active_skill_id, workspace_state.context)
     if skill is None:
         raise SandboxExecutionError(f"Active skill '{active_skill_id}' was not found in the skills registry.")
     return skill

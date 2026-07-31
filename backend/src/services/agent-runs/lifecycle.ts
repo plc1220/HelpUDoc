@@ -96,6 +96,7 @@ type RunPendingInterrupt = {
 
 type RunMeta = {
   workspaceId: string;
+  userId?: string;
   persona: string;
   status: AgentRunStatus;
   createdAt: string;
@@ -203,8 +204,12 @@ export function configureAgentRunServices(services: {
 
 const buildStreamKey = (runId: string) => `agent:run:${runId}`;
 const buildMetaKey = (runId: string) => `agent:run:${runId}:meta`;
-const buildRunDedupeKey = (workspaceId: string, persona: string, turnId: string) =>
-  `agent:run:key:${workspaceId}:${persona}:${turnId}`;
+const buildRunDedupeKey = (
+  workspaceId: string,
+  persona: string,
+  turnId: string,
+  userId?: string,
+) => `agent:run:key:${workspaceId}:${userId || 'anonymous'}:${persona}:${turnId}`;
 
 const stableNormalize = (value: unknown): unknown => {
   if (Array.isArray(value)) {
@@ -2827,7 +2832,9 @@ const markRunAwaitingApproval = async (runId: string, interruptPayload: string, 
 
 export async function startAgentRun(params: StartRunParams): Promise<{ runId: string; status: AgentRunStatus }> {
   if (params.turnId?.trim()) {
-    const existingRunId = await redisClient.get(buildRunDedupeKey(params.workspaceId, params.persona, params.turnId.trim()));
+    const existingRunId = await redisClient.get(
+      buildRunDedupeKey(params.workspaceId, params.persona, params.turnId.trim(), params.userId),
+    );
     if (existingRunId) {
       const existingMeta = await getRunMeta(existingRunId);
       if (existingMeta && !['completed', 'failed', 'cancelled'].includes(existingMeta.status)) {
@@ -2844,6 +2851,7 @@ export async function startAgentRun(params: StartRunParams): Promise<{ runId: st
   await redisClient.del(metaKey);
   await persistMeta(runId, {
     workspaceId: params.workspaceId,
+    userId: params.userId,
     persona: params.persona,
     status: 'queued',
     createdAt: queuedAt,
@@ -2854,7 +2862,7 @@ export async function startAgentRun(params: StartRunParams): Promise<{ runId: st
   });
   if (params.turnId?.trim()) {
     await redisClient.set(
-      buildRunDedupeKey(params.workspaceId, params.persona, params.turnId.trim()),
+      buildRunDedupeKey(params.workspaceId, params.persona, params.turnId.trim(), params.userId),
       runId,
       { EX: STREAM_TTL_SECONDS },
     );
@@ -3102,6 +3110,9 @@ async function runAgentRunWorker(
     if (parsed.type === 'policy') {
       conversationRunPolicy = {
         ...(typeof parsed.skill === 'string' && parsed.skill.trim() ? { skill: parsed.skill.trim() } : {}),
+        ...(parsed.skillVersion && typeof parsed.skillVersion === 'object'
+          ? { skillVersion: parsed.skillVersion }
+          : {}),
         ...(typeof parsed.requiresHitlPlan === 'boolean' ? { requiresHitlPlan: parsed.requiresHitlPlan } : {}),
         ...(typeof parsed.requiresArtifacts === 'boolean' ? { requiresArtifacts: parsed.requiresArtifacts } : {}),
         ...(typeof parsed.requiredArtifactsMode === 'string' && parsed.requiredArtifactsMode.trim()
@@ -4126,6 +4137,7 @@ export async function getRunMeta(runId: string): Promise<RunMeta | null> {
   await reconcileActiveRunMetaFromStream(runId, meta, interactionGateState);
   return {
     workspaceId: meta.workspaceId,
+    userId: meta.userId,
     persona: meta.persona,
     status: (meta.status as AgentRunStatus) || 'queued',
     createdAt: meta.createdAt,

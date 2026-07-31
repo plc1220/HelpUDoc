@@ -28,7 +28,7 @@ const collaboratorSchema = z
     userId: z.string().uuid().optional(),
     externalUserId: z.string().min(1).optional(),
     displayName: z.string().min(1).optional(),
-    role: z.enum(['editor', 'viewer']),
+    role: z.enum(['editor', 'contributor', 'commenter', 'viewer']),
   })
   .superRefine((data, ctx) => {
     if (data.userId && data.externalUserId) {

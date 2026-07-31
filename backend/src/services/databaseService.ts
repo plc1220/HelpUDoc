@@ -38,6 +38,11 @@ export class DatabaseService {
     await this.createFilesTable();
     await this.createWorkspacePublishedVersionsTable();
     await this.createWorkspacePublicationLinksTable();
+    await this.createWorkspaceTeamMessagesTable();
+    await this.createWorkspaceTeamMessageMentionsTable();
+    await this.createWorkspaceCollaborationObjectsTable();
+    await this.createWorkspaceCollaborationMessagesTable();
+    await this.createWorkspaceCollaborationMentionsTable();
     await this.createCollabDocumentsTable();
     await this.createKnowledgeSourcesTable();
     await this.createKnowledgeSourceGroupGrantsTable();
@@ -51,6 +56,7 @@ export class DatabaseService {
     await this.createAgentDailyReflectionBreakdownsTable();
     await this.createUserMemorySuggestionsTable();
     await this.createSkillEvolutionSuggestionsTable();
+    await this.createUnifiedGovernanceTables();
   }
 
   private buildConnectionConfig(env: ReturnType<typeof getBackendEnv>): PgConnection {
@@ -553,6 +559,165 @@ export class DatabaseService {
     }
   }
 
+  private async createWorkspaceCollaborationObjectsTable(): Promise<void> {
+    const exists = await this.db.schema.hasTable('workspace_collaboration_objects');
+    if (!exists) {
+      await this.db.schema.createTable('workspace_collaboration_objects', (table) => {
+        table.uuid('id').primary();
+        table.uuid('workspaceId').notNullable().references('id').inTable('workspaces').onDelete('CASCADE');
+        table.uuid('originVersionId').references('id').inTable('workspace_published_versions').onDelete('SET NULL');
+        table.string('type', 32).notNullable();
+        table.string('visibility', 32).notNullable().defaultTo('workspace_audience');
+        table.string('status', 32).notNullable().defaultTo('open');
+        table.integer('fileId').references('id').inTable('files').onDelete('SET NULL');
+        table.string('filePath');
+        table.string('blockId');
+        table.text('anchorText');
+        table.integer('anchorStart');
+        table.integer('anchorEnd');
+        table.string('anchorFingerprint');
+        table.string('title');
+        table.text('body').notNullable();
+        table.uuid('authorId').references('id').inTable('users').onDelete('SET NULL');
+        table.uuid('assigneeId').references('id').inTable('users').onDelete('SET NULL');
+        table.uuid('linkedPrivateWorkspaceId').references('id').inTable('workspaces').onDelete('SET NULL');
+        table.uuid('resolvedByVersionId').references('id').inTable('workspace_published_versions').onDelete('SET NULL');
+        table.uuid('sourceTeamMessageId')
+          .references('id')
+          .inTable('workspace_team_messages')
+          .onDelete('SET NULL');
+        table.timestamp('dueAt', { useTz: true });
+        table.timestamp('resolvedAt', { useTz: true });
+        table.timestamp('createdAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.timestamp('updatedAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.index(
+          ['workspaceId', 'status', 'updatedAt'],
+          'workspace_collaboration_objects_workspace_status_idx',
+        );
+        table.index(
+          ['workspaceId', 'filePath', 'updatedAt'],
+          'workspace_collaboration_objects_anchor_idx',
+        );
+        table.index(
+          ['sourceTeamMessageId'],
+          'workspace_collaboration_objects_source_team_message_idx',
+        );
+      });
+      console.log('Created "workspace_collaboration_objects" table.');
+    } else {
+      await this.ensureColumn('workspace_collaboration_objects', 'sourceTeamMessageId', (table) =>
+        table.uuid('sourceTeamMessageId')
+          .references('id')
+          .inTable('workspace_team_messages')
+          .onDelete('SET NULL'));
+      await this.db.raw(
+        'CREATE INDEX IF NOT EXISTS workspace_collaboration_objects_source_team_message_idx ON workspace_collaboration_objects ("sourceTeamMessageId")',
+      );
+    }
+  }
+
+  private async createWorkspaceTeamMessagesTable(): Promise<void> {
+    const exists = await this.db.schema.hasTable('workspace_team_messages');
+    if (!exists) {
+      await this.db.schema.createTable('workspace_team_messages', (table) => {
+        table.uuid('id').primary();
+        table.uuid('workspaceId').notNullable().references('id').inTable('workspaces').onDelete('CASCADE');
+        table.uuid('originVersionId').references('id').inTable('workspace_published_versions').onDelete('SET NULL');
+        table.uuid('authorId').references('id').inTable('users').onDelete('SET NULL');
+        table.string('authorType', 16).notNullable().defaultTo('user');
+        table.text('body').notNullable();
+        table.uuid('replyToMessageId')
+          .references('id')
+          .inTable('workspace_team_messages')
+          .onDelete('SET NULL');
+        table.uuid('threadRootId')
+          .references('id')
+          .inTable('workspace_team_messages')
+          .onDelete('CASCADE');
+        table.boolean('mentionsLumo').notNullable().defaultTo(false);
+        table.jsonb('metadata');
+        table.timestamp('createdAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.timestamp('updatedAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.index(
+          ['workspaceId', 'createdAt'],
+          'workspace_team_messages_workspace_created_idx',
+        );
+        table.index(
+          ['threadRootId', 'createdAt'],
+          'workspace_team_messages_thread_created_idx',
+        );
+      });
+      await this.db.raw(
+        `CREATE UNIQUE INDEX IF NOT EXISTS workspace_team_messages_lumo_reply_uidx
+         ON workspace_team_messages ("replyToMessageId")
+         WHERE "authorType" = 'lumo'`,
+      );
+      console.log('Created "workspace_team_messages" table.');
+    }
+  }
+
+  private async createWorkspaceTeamMessageMentionsTable(): Promise<void> {
+    const exists = await this.db.schema.hasTable('workspace_team_message_mentions');
+    if (!exists) {
+      await this.db.schema.createTable('workspace_team_message_mentions', (table) => {
+        table.uuid('messageId')
+          .notNullable()
+          .references('id')
+          .inTable('workspace_team_messages')
+          .onDelete('CASCADE');
+        table.uuid('userId').notNullable().references('id').inTable('users').onDelete('CASCADE');
+        table.timestamp('createdAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.primary(['messageId', 'userId']);
+        table.index(
+          ['userId', 'createdAt'],
+          'workspace_team_message_mentions_user_created_idx',
+        );
+      });
+      console.log('Created "workspace_team_message_mentions" table.');
+    }
+  }
+
+  private async createWorkspaceCollaborationMessagesTable(): Promise<void> {
+    const exists = await this.db.schema.hasTable('workspace_collaboration_messages');
+    if (!exists) {
+      await this.db.schema.createTable('workspace_collaboration_messages', (table) => {
+        table.uuid('id').primary();
+        table.uuid('objectId')
+          .notNullable()
+          .references('id')
+          .inTable('workspace_collaboration_objects')
+          .onDelete('CASCADE');
+        table.uuid('authorId').references('id').inTable('users').onDelete('SET NULL');
+        table.text('body').notNullable();
+        table.timestamp('createdAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.timestamp('updatedAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.index(
+          ['objectId', 'createdAt'],
+          'workspace_collaboration_messages_object_created_idx',
+        );
+      });
+      console.log('Created "workspace_collaboration_messages" table.');
+    }
+  }
+
+  private async createWorkspaceCollaborationMentionsTable(): Promise<void> {
+    const exists = await this.db.schema.hasTable('workspace_collaboration_mentions');
+    if (!exists) {
+      await this.db.schema.createTable('workspace_collaboration_mentions', (table) => {
+        table.uuid('objectId')
+          .notNullable()
+          .references('id')
+          .inTable('workspace_collaboration_objects')
+          .onDelete('CASCADE');
+        table.uuid('userId').notNullable().references('id').inTable('users').onDelete('CASCADE');
+        table.timestamp('createdAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.primary(['objectId', 'userId']);
+        table.index(['userId', 'createdAt'], 'workspace_collaboration_mentions_user_created_idx');
+      });
+      console.log('Created "workspace_collaboration_mentions" table.');
+    }
+  }
+
   private async ensureFilesTableColumns(): Promise<void> {
     await this.ensureColumn('files', 'mimeType', (table) => table.string('mimeType'));
     await this.ensureColumn('files', 'publicUrl', (table) => table.string('publicUrl'));
@@ -1041,6 +1206,495 @@ export class DatabaseService {
         'CREATE INDEX IF NOT EXISTS skill_evolution_suggestions_user_status_idx ON skill_evolution_suggestions ("memoryUserId", "status")',
       );
     }
+  }
+
+  /**
+   * Governed-skill and scoped-role persistence.
+   *
+   * HelpUDoc historically bootstraps its schema in-process instead of using a
+   * migration runner. Keep that convention here, but keep the tables
+   * domain-specific so their ownership and privacy invariants remain explicit.
+   */
+  private async createUnifiedGovernanceTables(): Promise<void> {
+    await this.ensureColumn('workspaces', 'workspaceType', (table) =>
+      table.string('workspaceType', 16).notNullable().defaultTo('private'));
+    await this.ensureColumn('workspaces', 'editingPolicy', (table) =>
+      table.string('editingPolicy', 16));
+    await this.ensureColumn('workspaces', 'status', (table) =>
+      table.string('status', 16).notNullable().defaultTo('active'));
+
+    await this.db.raw(`
+      UPDATE workspaces
+      SET "workspaceType" = CASE WHEN visibility = 'team' THEN 'team' ELSE 'private' END,
+          "editingPolicy" = CASE
+            WHEN visibility = 'team' THEN COALESCE("editingPolicy", 'review')
+            ELSE NULL
+          END
+    `);
+
+    if (!await this.db.schema.hasTable('platform_role_bindings')) {
+      await this.db.schema.createTable('platform_role_bindings', (table) => {
+        table.uuid('userId').notNullable().references('id').inTable('users').onDelete('CASCADE');
+        table.string('role', 32).notNullable();
+        table.uuid('assignedByUserId').references('id').inTable('users').onDelete('SET NULL');
+        table.timestamp('createdAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.primary(['userId', 'role']);
+      });
+    }
+
+    if (!await this.db.schema.hasTable('team_role_bindings')) {
+      await this.db.schema.createTable('team_role_bindings', (table) => {
+        table.uuid('teamId').notNullable().references('id').inTable('groups').onDelete('CASCADE');
+        table.uuid('userId').notNullable().references('id').inTable('users').onDelete('CASCADE');
+        table.string('role', 32).notNullable();
+        table.uuid('assignedByUserId').references('id').inTable('users').onDelete('SET NULL');
+        table.timestamp('createdAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.primary(['teamId', 'userId', 'role']);
+        table.index(['userId', 'teamId', 'role'], 'team_role_bindings_user_team_role_idx');
+      });
+    }
+
+    if (!await this.db.schema.hasTable('workspace_user_grants')) {
+      await this.db.schema.createTable('workspace_user_grants', (table) => {
+        table.uuid('workspaceId').notNullable().references('id').inTable('workspaces').onDelete('CASCADE');
+        table.uuid('userId').notNullable().references('id').inTable('users').onDelete('CASCADE');
+        table.string('role', 32).notNullable();
+        table.uuid('grantedByUserId').references('id').inTable('users').onDelete('SET NULL');
+        table.timestamp('createdAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.timestamp('updatedAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.primary(['workspaceId', 'userId']);
+        table.index(['userId', 'workspaceId', 'role'], 'workspace_user_grants_user_workspace_role_idx');
+      });
+    }
+
+    if (!await this.db.schema.hasTable('workspace_team_grants')) {
+      await this.db.schema.createTable('workspace_team_grants', (table) => {
+        table.uuid('workspaceId').notNullable().references('id').inTable('workspaces').onDelete('CASCADE');
+        table.uuid('teamId').notNullable().references('id').inTable('groups').onDelete('CASCADE');
+        table.string('role', 32).notNullable();
+        table.uuid('grantedByUserId').references('id').inTable('users').onDelete('SET NULL');
+        table.timestamp('createdAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.timestamp('updatedAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.primary(['workspaceId', 'teamId']);
+        table.index(['teamId', 'workspaceId', 'role'], 'workspace_team_grants_team_workspace_role_idx');
+      });
+    }
+
+    if (!await this.db.schema.hasTable('content_blobs')) {
+      await this.db.schema.createTable('content_blobs', (table) => {
+        table.string('contentHash', 64).primary();
+        table.string('storageProvider', 32).notNullable().defaultTo('local');
+        table.text('storageKey').notNullable().unique();
+        table.bigInteger('sizeBytes').notNullable();
+        table.string('mimeType', 255);
+        table.timestamp('createdAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+      });
+    }
+
+    if (!await this.db.schema.hasTable('private_skill_drafts')) {
+      await this.db.schema.createTable('private_skill_drafts', (table) => {
+        table.uuid('id').primary();
+        table.uuid('ownerUserId').notNullable().references('id').inTable('users').onDelete('CASCADE');
+        table.string('proposalType', 16).notNullable();
+        table.uuid('sourceSkillId');
+        table.uuid('sourceVersionId');
+        table.uuid('proposedOwnerTeamId').references('id').inTable('groups').onDelete('SET NULL');
+        table.string('proposedSkillKey', 128);
+        table.string('displayName');
+        table.text('description');
+        table.uuid('currentDraftRevisionId');
+        table.bigInteger('draftRevision').notNullable().defaultTo(0);
+        table.string('status', 24).notNullable().defaultTo('private');
+        table.timestamp('createdAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.timestamp('updatedAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.index(['ownerUserId', 'status', 'updatedAt'], 'private_skill_drafts_owner_status_updated_idx');
+      });
+    }
+
+    if (!await this.db.schema.hasTable('skill_draft_revisions')) {
+      await this.db.schema.createTable('skill_draft_revisions', (table) => {
+        table.uuid('id').primary();
+        table.uuid('draftId').notNullable().references('id').inTable('private_skill_drafts').onDelete('CASCADE');
+        table.bigInteger('revisionNumber').notNullable();
+        table.uuid('parentRevisionId');
+        table.string('manifestHash', 64).notNullable();
+        table.jsonb('validationSummary').notNullable().defaultTo(this.db.raw(`'{}'::jsonb`));
+        table.uuid('createdByUserId').references('id').inTable('users').onDelete('SET NULL');
+        table.timestamp('createdAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.unique(['draftId', 'revisionNumber']);
+      });
+    }
+
+    if (!await this.db.schema.hasTable('skill_draft_revision_files')) {
+      await this.db.schema.createTable('skill_draft_revision_files', (table) => {
+        table.uuid('draftRevisionId').notNullable().references('id').inTable('skill_draft_revisions').onDelete('CASCADE');
+        table.text('path').notNullable();
+        table.string('contentHash', 64).notNullable().references('contentHash').inTable('content_blobs').onDelete('RESTRICT');
+        table.integer('mode').notNullable().defaultTo(420);
+        table.bigInteger('sizeBytes').notNullable();
+        table.string('mimeType', 255);
+        table.primary(['draftRevisionId', 'path']);
+      });
+    }
+
+    if (!await this.db.schema.hasTable('skills')) {
+      await this.db.schema.createTable('skills', (table) => {
+        table.uuid('id').primary();
+        table.string('skillKey', 128).notNullable().unique();
+        table.string('displayName').notNullable();
+        table.text('description');
+        table.uuid('ownerTeamId').notNullable().references('id').inTable('groups').onDelete('RESTRICT');
+        table.uuid('originalCreatorUserId').references('id').inTable('users').onDelete('SET NULL');
+        table.uuid('defaultVersionId');
+        table.string('status', 24).notNullable().defaultTo('active');
+        table.timestamp('createdAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.timestamp('updatedAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.index(['ownerTeamId', 'status'], 'skills_owner_team_status_idx');
+      });
+    }
+
+    if (!await this.db.schema.hasTable('skill_review_requests')) {
+      await this.db.schema.createTable('skill_review_requests', (table) => {
+        table.uuid('id').primary();
+        table.uuid('draftId').notNullable().references('id').inTable('private_skill_drafts').onDelete('RESTRICT');
+        table.string('proposalType', 16).notNullable();
+        table.uuid('ownerTeamId').notNullable().references('id').inTable('groups').onDelete('RESTRICT');
+        table.uuid('targetSkillId').references('id').inTable('skills').onDelete('RESTRICT');
+        table.uuid('proposerUserId').notNullable().references('id').inTable('users').onDelete('RESTRICT');
+        table.string('status', 24).notNullable().defaultTo('submitted');
+        table.uuid('currentCandidateId');
+        table.bigInteger('requestRevision').notNullable().defaultTo(1);
+        table.timestamp('createdAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.timestamp('updatedAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.index(['ownerTeamId', 'status', 'updatedAt'], 'skill_review_requests_team_status_updated_idx');
+        table.index(['proposerUserId', 'status', 'updatedAt'], 'skill_review_requests_proposer_status_updated_idx');
+      });
+    }
+    await this.ensureColumn('skill_review_requests', 'activationStatus', (table) =>
+      table.string('activationStatus', 24));
+    await this.ensureColumn('skill_review_requests', 'activationErrorCode', (table) =>
+      table.string('activationErrorCode', 64));
+
+    if (!await this.db.schema.hasTable('skill_review_candidates')) {
+      await this.db.schema.createTable('skill_review_candidates', (table) => {
+        table.uuid('id').primary();
+        table.uuid('requestId').notNullable().references('id').inTable('skill_review_requests').onDelete('CASCADE');
+        table.integer('candidateNumber').notNullable();
+        table.uuid('sourceDraftRevisionId').notNullable().references('id').inTable('skill_draft_revisions').onDelete('RESTRICT');
+        table.string('skillKey', 128).notNullable();
+        table.string('semanticVersion', 64).notNullable();
+        table.uuid('sourceSkillId').references('id').inTable('skills').onDelete('RESTRICT');
+        table.uuid('sourceVersionId');
+        table.string('manifestHash', 64).notNullable();
+        table.text('submissionNote');
+        table.jsonb('validationSummary').notNullable().defaultTo(this.db.raw(`'{}'::jsonb`));
+        table.jsonb('riskSummary').notNullable().defaultTo(this.db.raw(`'{}'::jsonb`));
+        table.uuid('submittedByUserId').references('id').inTable('users').onDelete('SET NULL');
+        table.timestamp('submittedAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.unique(['requestId', 'candidateNumber']);
+        table.index(['requestId', 'submittedAt'], 'skill_review_candidates_request_submitted_idx');
+      });
+    }
+
+    if (!await this.db.schema.hasTable('skill_review_candidate_files')) {
+      await this.db.schema.createTable('skill_review_candidate_files', (table) => {
+        table.uuid('candidateId').notNullable().references('id').inTable('skill_review_candidates').onDelete('CASCADE');
+        table.text('path').notNullable();
+        table.string('contentHash', 64).notNullable().references('contentHash').inTable('content_blobs').onDelete('RESTRICT');
+        table.integer('mode').notNullable().defaultTo(420);
+        table.bigInteger('sizeBytes').notNullable();
+        table.string('mimeType', 255);
+        table.primary(['candidateId', 'path']);
+      });
+    }
+
+    if (!await this.db.schema.hasTable('skill_candidate_policy_results')) {
+      await this.db.schema.createTable('skill_candidate_policy_results', (table) => {
+        table.uuid('id').primary();
+        table.uuid('candidateId').notNullable().references('id').inTable('skill_review_candidates').onDelete('CASCADE');
+        table.string('policyVersion', 64).notNullable();
+        table.string('outcome', 16).notNullable();
+        table.string('riskClass', 32).notNullable();
+        table.jsonb('issues').notNullable().defaultTo(this.db.raw(`'[]'::jsonb`));
+        table.jsonb('validationSummary').notNullable().defaultTo(this.db.raw(`'{}'::jsonb`));
+        table.timestamp('evaluatedAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.index(['candidateId', 'evaluatedAt'], 'skill_candidate_policy_candidate_evaluated_idx');
+      });
+    }
+
+    if (!await this.db.schema.hasTable('skill_review_decisions')) {
+      await this.db.schema.createTable('skill_review_decisions', (table) => {
+        table.uuid('id').primary();
+        table.uuid('requestId').notNullable().references('id').inTable('skill_review_requests').onDelete('CASCADE');
+        table.uuid('candidateId').notNullable().references('id').inTable('skill_review_candidates').onDelete('RESTRICT');
+        table.string('decision', 24).notNullable();
+        table.uuid('reviewerUserId').references('id').inTable('users').onDelete('SET NULL');
+        table.string('reviewerRole', 32).notNullable().defaultTo('team_lead');
+        table.text('comment');
+        table.string('policyVersion', 64).notNullable();
+        table.boolean('selfApproved').notNullable().defaultTo(false);
+        table.timestamp('createdAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.index(['requestId', 'createdAt'], 'skill_review_decisions_request_created_idx');
+      });
+    }
+
+    if (!await this.db.schema.hasTable('skill_versions')) {
+      await this.db.schema.createTable('skill_versions', (table) => {
+        table.uuid('id').primary();
+        table.uuid('skillId').notNullable().references('id').inTable('skills').onDelete('RESTRICT');
+        table.string('semanticVersion', 64).notNullable();
+        table.string('manifestHash', 64).notNullable();
+        table.uuid('baseVersionId');
+        table.string('status', 24).notNullable().defaultTo('active');
+        table.uuid('createdByUserId').references('id').inTable('users').onDelete('SET NULL');
+        table.uuid('approvedCandidateId').references('id').inTable('skill_review_candidates').onDelete('RESTRICT');
+        table.jsonb('validationSummary').notNullable().defaultTo(this.db.raw(`'{}'::jsonb`));
+        table.text('materializedPath');
+        table.timestamp('activatedAt', { useTz: true });
+        table.timestamp('createdAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.unique(['skillId', 'semanticVersion']);
+        table.unique(['skillId', 'id', 'semanticVersion', 'manifestHash']);
+        table.index(['skillId', 'status', 'semanticVersion'], 'skill_versions_skill_status_semver_idx');
+      });
+    }
+
+    if (!await this.db.schema.hasTable('skill_version_files')) {
+      await this.db.schema.createTable('skill_version_files', (table) => {
+        table.uuid('skillVersionId').notNullable().references('id').inTable('skill_versions').onDelete('RESTRICT');
+        table.text('path').notNullable();
+        table.string('contentHash', 64).notNullable().references('contentHash').inTable('content_blobs').onDelete('RESTRICT');
+        table.boolean('executable').notNullable().defaultTo(false);
+        table.integer('mode').notNullable().defaultTo(420);
+        table.bigInteger('sizeBytes').notNullable();
+        table.string('mimeType', 255);
+        table.primary(['skillVersionId', 'path']);
+      });
+    }
+
+    if (!await this.db.schema.hasTable('team_skill_grants')) {
+      await this.db.schema.createTable('team_skill_grants', (table) => {
+        table.uuid('teamId').notNullable().references('id').inTable('groups').onDelete('CASCADE');
+        table.uuid('skillId').notNullable().references('id').inTable('skills').onDelete('CASCADE');
+        table.string('effect', 16).notNullable().defaultTo('allow');
+        table.uuid('grantedByUserId').references('id').inTable('users').onDelete('SET NULL');
+        table.timestamp('createdAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.timestamp('updatedAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.primary(['teamId', 'skillId']);
+      });
+    }
+
+    if (!await this.db.schema.hasTable('user_skill_grants')) {
+      await this.db.schema.createTable('user_skill_grants', (table) => {
+        table.uuid('userId').notNullable().references('id').inTable('users').onDelete('CASCADE');
+        table.uuid('skillId').notNullable().references('id').inTable('skills').onDelete('CASCADE');
+        table.string('effect', 16).notNullable().defaultTo('allow');
+        table.uuid('grantedByUserId').references('id').inTable('users').onDelete('SET NULL');
+        table.timestamp('createdAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.timestamp('updatedAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.primary(['userId', 'skillId']);
+      });
+    }
+
+    if (!await this.db.schema.hasTable('workspace_skill_pins')) {
+      await this.db.schema.createTable('workspace_skill_pins', (table) => {
+        table.uuid('workspaceId').notNullable().references('id').inTable('workspaces').onDelete('CASCADE');
+        table.uuid('skillId').notNullable().references('id').inTable('skills').onDelete('RESTRICT');
+        table.uuid('skillVersionId').notNullable().references('id').inTable('skill_versions').onDelete('RESTRICT');
+        table.string('semanticVersion', 64).notNullable();
+        table.string('manifestHash', 64).notNullable();
+        table.uuid('pinnedByUserId').references('id').inTable('users').onDelete('SET NULL');
+        table.string('validationStatus', 24).notNullable().defaultTo('valid');
+        table.timestamp('createdAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.timestamp('updatedAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.primary(['workspaceId', 'skillId']);
+      });
+    }
+
+    if (!await this.db.schema.hasTable('private_workspace_skill_draft_pins')) {
+      await this.db.schema.createTable('private_workspace_skill_draft_pins', (table) => {
+        table.uuid('workspaceId').notNullable().references('id').inTable('workspaces').onDelete('CASCADE');
+        table.uuid('draftId').notNullable().references('id').inTable('private_skill_drafts').onDelete('CASCADE');
+        table.uuid('draftRevisionId').notNullable().references('id').inTable('skill_draft_revisions').onDelete('RESTRICT');
+        table.timestamp('pinnedAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.primary(['workspaceId', 'draftId']);
+      });
+    }
+
+    if (!await this.db.schema.hasTable('published_version_skill_pins')) {
+      await this.db.schema.createTable('published_version_skill_pins', (table) => {
+        table.uuid('publishedVersionId').notNullable().references('id').inTable('workspace_published_versions').onDelete('CASCADE');
+        table.uuid('skillId').notNullable().references('id').inTable('skills').onDelete('RESTRICT');
+        table.uuid('skillVersionId').notNullable().references('id').inTable('skill_versions').onDelete('RESTRICT');
+        table.string('semanticVersion', 64).notNullable();
+        table.string('manifestHash', 64).notNullable();
+        table.primary(['publishedVersionId', 'skillId']);
+      });
+    }
+
+    if (!await this.db.schema.hasTable('audit_events')) {
+      await this.db.schema.createTable('audit_events', (table) => {
+        table.uuid('id').primary();
+        table.uuid('actorUserId').references('id').inTable('users').onDelete('SET NULL');
+        table.string('actorRole', 64);
+        table.string('action', 96).notNullable();
+        table.string('resourceType', 64).notNullable();
+        table.string('resourceId', 160).notNullable();
+        table.string('previousStateHash', 64);
+        table.string('newStateHash', 64);
+        table.text('reason');
+        table.string('policyVersion', 64);
+        table.string('requestId', 160);
+        table.boolean('platformOverride').notNullable().defaultTo(false);
+        table.boolean('selfApproved').notNullable().defaultTo(false);
+        table.jsonb('metadata').notNullable().defaultTo(this.db.raw(`'{}'::jsonb`));
+        table.timestamp('createdAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.index(['resourceType', 'resourceId', 'createdAt'], 'audit_events_resource_created_idx');
+      });
+    }
+
+    if (!await this.db.schema.hasTable('idempotency_records')) {
+      await this.db.schema.createTable('idempotency_records', (table) => {
+        table.uuid('actorUserId').notNullable().references('id').inTable('users').onDelete('CASCADE');
+        table.string('action', 128).notNullable();
+        table.string('idempotencyKey', 255).notNullable();
+        table.string('requestHash', 64).notNullable();
+        table.jsonb('responseBody').notNullable();
+        table.integer('responseStatus').notNullable();
+        table.timestamp('createdAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.timestamp('expiresAt', { useTz: true }).notNullable();
+        table.primary(['actorUserId', 'action', 'idempotencyKey']);
+      });
+    }
+
+    if (!await this.db.schema.hasTable('notifications')) {
+      await this.db.schema.createTable('notifications', (table) => {
+        table.uuid('id').primary();
+        table.uuid('recipientUserId').notNullable().references('id').inTable('users').onDelete('CASCADE');
+        table.string('eventType', 96).notNullable();
+        table.string('resourceType', 64).notNullable();
+        table.string('resourceId', 160).notNullable();
+        table.jsonb('payload').notNullable().defaultTo(this.db.raw(`'{}'::jsonb`));
+        table.timestamp('readAt', { useTz: true });
+        table.timestamp('createdAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+        table.index(['recipientUserId', 'readAt', 'createdAt'], 'notifications_recipient_read_created_idx');
+      });
+    }
+
+    await this.createUnifiedGovernanceConstraints();
+
+    // Compatibility backfills. They add bindings/grants without changing the
+    // legacy read path; governed services become authoritative as clients move.
+    await this.db.raw(`
+      INSERT INTO platform_role_bindings ("userId", role, "createdAt")
+      SELECT id, 'platform_admin', NOW()
+      FROM users
+      WHERE "isAdmin" = TRUE
+      ON CONFLICT ("userId", role) DO NOTHING
+    `);
+    await this.db.raw(`
+      INSERT INTO workspace_user_grants
+        ("workspaceId", "userId", role, "grantedByUserId", "createdAt", "updatedAt")
+      SELECT wm."workspaceId", wm."userId",
+        CASE wm.role
+          WHEN 'editor' THEN 'publisher'
+          WHEN 'publisher' THEN 'publisher'
+          WHEN 'contributor' THEN 'contributor'
+          ELSE 'viewer'
+        END,
+        w."ownerId", wm."createdAt", wm."updatedAt"
+      FROM workspace_members wm
+      JOIN workspaces w ON w.id = wm."workspaceId"
+      WHERE wm."userId" <> w."ownerId" AND w."workspaceType" = 'team'
+      ON CONFLICT ("workspaceId", "userId") DO NOTHING
+    `);
+    await this.db.raw(`
+      INSERT INTO workspace_team_grants
+        ("workspaceId", "teamId", role, "grantedByUserId", "createdAt", "updatedAt")
+      SELECT id, "teamId", 'viewer', "ownerId", NOW(), NOW()
+      FROM workspaces
+      WHERE "workspaceType" = 'team' AND "teamId" IS NOT NULL
+      ON CONFLICT ("workspaceId", "teamId") DO NOTHING
+    `);
+  }
+
+  private async createUnifiedGovernanceConstraints(): Promise<void> {
+    await this.db.raw(`
+      CREATE UNIQUE INDEX IF NOT EXISTS skill_versions_skill_id_id_unique
+        ON skill_versions ("skillId", id);
+      CREATE UNIQUE INDEX IF NOT EXISTS skill_review_candidates_request_id_id_unique
+        ON skill_review_candidates ("requestId", id);
+      CREATE UNIQUE INDEX IF NOT EXISTS skill_draft_revisions_draft_id_id_unique
+        ON skill_draft_revisions ("draftId", id);
+    `);
+    await this.db.raw(`
+      DO $governance$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint WHERE conname = 'skills_default_version_same_skill_fk'
+        ) THEN
+          ALTER TABLE skills
+            ADD CONSTRAINT skills_default_version_same_skill_fk
+            FOREIGN KEY (id, "defaultVersionId")
+            REFERENCES skill_versions ("skillId", id)
+            DEFERRABLE INITIALLY DEFERRED;
+        END IF;
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint WHERE conname = 'skill_versions_base_same_skill_fk'
+        ) THEN
+          ALTER TABLE skill_versions
+            ADD CONSTRAINT skill_versions_base_same_skill_fk
+            FOREIGN KEY ("skillId", "baseVersionId")
+            REFERENCES skill_versions ("skillId", id)
+            DEFERRABLE INITIALLY DEFERRED;
+        END IF;
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint WHERE conname = 'private_skill_drafts_current_revision_fk'
+        ) THEN
+          ALTER TABLE private_skill_drafts
+            ADD CONSTRAINT private_skill_drafts_current_revision_fk
+            FOREIGN KEY (id, "currentDraftRevisionId")
+            REFERENCES skill_draft_revisions ("draftId", id)
+            DEFERRABLE INITIALLY DEFERRED;
+        END IF;
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint WHERE conname = 'skill_review_requests_current_candidate_fk'
+        ) THEN
+          ALTER TABLE skill_review_requests
+            ADD CONSTRAINT skill_review_requests_current_candidate_fk
+            FOREIGN KEY (id, "currentCandidateId")
+            REFERENCES skill_review_candidates ("requestId", id)
+            DEFERRABLE INITIALLY DEFERRED;
+        END IF;
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint WHERE conname = 'workspace_skill_pins_exact_version_fk'
+        ) THEN
+          ALTER TABLE workspace_skill_pins
+            ADD CONSTRAINT workspace_skill_pins_exact_version_fk
+            FOREIGN KEY ("skillId", "skillVersionId", "semanticVersion", "manifestHash")
+            REFERENCES skill_versions ("skillId", id, "semanticVersion", "manifestHash")
+            ON DELETE RESTRICT;
+        END IF;
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint WHERE conname = 'private_workspace_skill_draft_pins_exact_revision_fk'
+        ) THEN
+          ALTER TABLE private_workspace_skill_draft_pins
+            ADD CONSTRAINT private_workspace_skill_draft_pins_exact_revision_fk
+            FOREIGN KEY ("draftId", "draftRevisionId")
+            REFERENCES skill_draft_revisions ("draftId", id)
+            ON DELETE RESTRICT;
+        END IF;
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint WHERE conname = 'published_version_skill_pins_exact_version_fk'
+        ) THEN
+          ALTER TABLE published_version_skill_pins
+            ADD CONSTRAINT published_version_skill_pins_exact_version_fk
+            FOREIGN KEY ("skillId", "skillVersionId", "semanticVersion", "manifestHash")
+            REFERENCES skill_versions ("skillId", id, "semanticVersion", "manifestHash")
+            ON DELETE RESTRICT;
+        END IF;
+      END
+      $governance$;
+    `);
   }
 
   private async ensureColumn(

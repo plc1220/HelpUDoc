@@ -53,6 +53,7 @@ import {
   type UserSortOrder,
 } from '../services/settingsApi';
 import type { PluginDefinition, SkillDefinition } from '../types';
+import { setTeamLead } from '../services/governanceApi';
 
 type ManagementView = 'users' | 'groups';
 type UserTableRow = ManagedUser & Record<string, unknown>;
@@ -323,6 +324,17 @@ const UsersPage = () => {
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to remove member');
+    }
+  };
+
+  const handleToggleTeamLead = async (member: ManagedUser) => {
+    if (!selectedGroupId) return;
+    try {
+      await setTeamLead(selectedGroupId, member.id, !member.isTeamLead);
+      await loadGroupDetails(selectedGroupId);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update Team Lead');
     }
   };
 
@@ -712,13 +724,27 @@ const UsersPage = () => {
                                   <p className="truncate text-xs text-slate-500">{member.email || member.externalId}</p>
                                 </div>
                               </div>
-                              <button
-                                type="button"
-                                onClick={() => void handleRemoveMember(member.id)}
-                                className="shrink-0 text-xs font-semibold text-rose-600 hover:text-rose-700"
-                              >
-                                Remove
-                              </button>
+                              <div className="flex shrink-0 items-center gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => void handleToggleTeamLead(member)}
+                                  className={`inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-semibold ${
+                                    member.isTeamLead
+                                      ? 'bg-emerald-50 text-emerald-700'
+                                      : 'bg-slate-100 text-slate-600'
+                                  }`}
+                                >
+                                  <ShieldCheck size={13} />
+                                  {member.isTeamLead ? 'Team Lead' : 'Make lead'}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => void handleRemoveMember(member.id)}
+                                  className="text-xs font-semibold text-rose-600 hover:text-rose-700"
+                                >
+                                  Remove
+                                </button>
+                              </div>
                             </div>
                           ))}
                         </div>

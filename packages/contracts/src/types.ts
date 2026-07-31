@@ -3,7 +3,7 @@ export interface Workspace {
   name: string;
   lastUsed: string;
   slug?: string;
-  role?: 'owner' | 'editor' | 'viewer';
+  role?: 'owner' | 'editor' | 'contributor' | 'commenter' | 'viewer';
   canEdit?: boolean;
   canPublish?: boolean;
   visibility?: 'private' | 'team';

@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { UserService } from '../services/userService';
 import { WorkspaceService } from '../services/workspaceService';
+import { HttpError } from '../errors';
 
 const updateAdminSchema = z.object({
   isAdmin: z.boolean(),
@@ -68,6 +69,9 @@ export default function usersRoutes(userService: UserService, workspaceService: 
       if (error instanceof z.ZodError) {
         return res.status(400).json({ error: error.issues[0]?.message || 'Invalid payload' });
       }
+      if (error instanceof HttpError) {
+        return res.status(error.statusCode).json({ error: error.message, details: error.details });
+      }
       console.error('Failed to update admin role', error);
       res.status(500).json({ error: 'Failed to update admin role' });
     }
@@ -113,6 +117,9 @@ export default function usersRoutes(userService: UserService, workspaceService: 
 
       res.status(204).send();
     } catch (error) {
+      if (error instanceof HttpError) {
+        return res.status(error.statusCode).json({ error: error.message, details: error.details });
+      }
       console.error('Failed to delete user', error);
       res.status(500).json({ error: 'Failed to delete user' });
     }
@@ -150,6 +157,9 @@ export default function usersRoutes(userService: UserService, workspaceService: 
       }
       res.status(204).send();
     } catch (error) {
+      if (error instanceof HttpError) {
+        return res.status(error.statusCode).json({ error: error.message, details: error.details });
+      }
       console.error('Failed to delete group', error);
       res.status(500).json({ error: 'Failed to delete team' });
     }
@@ -171,7 +181,11 @@ export default function usersRoutes(userService: UserService, workspaceService: 
   router.put('/groups/:groupId/access', async (req, res) => {
     try {
       const payload = groupPromptAccessSchema.parse(req.body);
-      const access = await userService.replaceGroupPromptAccess(req.params.groupId, payload);
+      const access = await userService.replaceGroupPromptAccess(
+        req.params.groupId,
+        payload,
+        req.userContext?.userId,
+      );
       if (!access) {
         return res.status(404).json({ error: 'Team not found' });
       }

@@ -16,7 +16,7 @@ export default function(
 ) {
   const router = Router();
 
-  registerSlashRoutes(router, userService);
+  registerSlashRoutes(router, workspaceService, userService);
   registerRunRoutes(router, workspaceService, fileService, googleOAuthService, userService, conversationService);
 
   return router;

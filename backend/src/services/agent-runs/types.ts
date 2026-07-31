@@ -71,6 +71,7 @@ export type RunPendingInterrupt = {
 
 export type RunMeta = {
   workspaceId: string;
+  userId?: string;
   persona: string;
   status: AgentRunStatus;
   createdAt: string;

@@ -419,6 +419,10 @@ export class UserMemoryService {
       sub: userId,
       userId,
       workspaceId,
+      isAdmin: false,
+      skillAllowIds: [],
+      mcpServerAllowIds: [],
+      mcpServerDenyIds: [],
     }) || undefined;
   }
 }

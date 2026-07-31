@@ -8,6 +8,7 @@ const DashboardPage = lazy(() => import('./pages/DashboardPage'));
 const KnowledgePage = lazy(() => import('./pages/KnowledgePage'));
 const UsersPage = lazy(() => import('./pages/UsersPage'));
 const BillingPage = lazy(() => import('./pages/BillingPage'));
+const SkillGovernancePage = lazy(() => import('./pages/SkillGovernancePage'));
 
 const RequireAuth: FC<{ children: ReactElement }> = ({ children }) => {
   const { user, loading } = useAuth();
@@ -43,6 +44,14 @@ const ProtectedShell: FC = () => {
           element={
             <RequireAuth>
               <WorkspacePage />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/skills"
+          element={
+            <RequireAuth>
+              <SkillGovernancePage />
             </RequireAuth>
           }
         />

@@ -16,6 +16,14 @@ _PREFERRED_MCP_ONLY_BUILTINS = {
     "url_context",
 }
 
+_WORKSPACE_MUTATING_TOOLS = {
+    "append_to_report",
+    "create_pdf_from_images",
+    "export_bigquery_query",
+    "gemini_image",
+    "run_skill_python_script",
+}
+
 
 def _normalize_candidate_path(value: Any) -> str | None:
     if not isinstance(value, str):
@@ -121,6 +129,18 @@ class GuardedTool(BaseTool):
             if isinstance(raw_skill_id, str) and raw_skill_id.strip():
                 skill_id = raw_skill_id.strip()
         return _tool_scope_error(self.name, skill_id, self.tool_mcp_server)
+
+    def _workspace_write_guard(self) -> Optional[str]:
+        context = self.workspace_state.context if isinstance(self.workspace_state.context, dict) else {}
+        is_published = context.get("workspace_mode") == "published_read_only"
+        write_denied = context.get("can_write_workspace") is False
+        if not (is_published or write_denied) or self.name not in _WORKSPACE_MUTATING_TOOLS:
+            return None
+        return (
+            f"Tool '{self.name}' cannot write into a published workspace. "
+            "Use the published content for analysis, then create or open a governed private working copy "
+            "before generating files or running scripts."
+        )
 
     def _memory_guard(self, input: Any) -> Optional[str]:
         context = self.workspace_state.context if isinstance(self.workspace_state.context, dict) else {}
@@ -230,7 +250,7 @@ class GuardedTool(BaseTool):
         }
 
     def invoke(self, input: Any, config: Any = None, **kwargs: Any) -> Any:
-        error = self._guard()
+        error = self._workspace_write_guard() or self._guard()
         if error:
             return self._blocked_result(input, error)
         memory_error = self._memory_guard(input)
@@ -243,7 +263,7 @@ class GuardedTool(BaseTool):
             return self._exception_result(input, exc)
 
     async def ainvoke(self, input: Any, config: Any = None, **kwargs: Any) -> Any:
-        error = self._guard()
+        error = self._workspace_write_guard() or self._guard()
         if error:
             return self._blocked_result(input, error)
         memory_error = self._memory_guard(input)
@@ -260,7 +280,7 @@ class GuardedTool(BaseTool):
             return self._exception_result(input, exc)
 
     def _run(self, *args: Any, **kwargs: Any) -> Any:
-        error = self._guard()
+        error = self._workspace_write_guard() or self._guard()
         if error:
             payload = kwargs if kwargs else (args[0] if len(args) == 1 else list(args) if args else {})
             return self._blocked_result(payload, error)
@@ -281,7 +301,7 @@ class GuardedTool(BaseTool):
             return self._exception_result(payload, exc)
 
     async def _arun(self, *args: Any, **kwargs: Any) -> Any:
-        error = self._guard()
+        error = self._workspace_write_guard() or self._guard()
         if error:
             payload = kwargs if kwargs else (args[0] if len(args) == 1 else list(args) if args else {})
             return self._blocked_result(payload, error)

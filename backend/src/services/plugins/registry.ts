@@ -165,12 +165,10 @@ export function filterPluginsForAccess(
   const allowedSkills = new Set(access.skillIds);
   const allowedMcpServers = new Set(access.mcpServerIds);
   return plugins
-    .filter((plugin) => access.isAdmin || allowedSkills.has(plugin.defaultSkillId))
+    .filter((plugin) => allowedSkills.has(plugin.defaultSkillId))
     .map((plugin) => ({
       ...plugin,
-      skillIds: access.isAdmin ? plugin.skillIds : plugin.skillIds.filter((skillId) => allowedSkills.has(skillId)),
-      mcpServers: access.isAdmin
-        ? plugin.mcpServers
-        : plugin.mcpServers.filter((serverId) => allowedMcpServers.has(serverId)),
+      skillIds: plugin.skillIds.filter((skillId) => allowedSkills.has(skillId)),
+      mcpServers: plugin.mcpServers.filter((serverId) => allowedMcpServers.has(serverId)),
     }));
 }
