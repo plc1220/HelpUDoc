@@ -200,7 +200,7 @@ const UsersPage = () => {
       });
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load groups');
+      setError(err instanceof Error ? err.message : 'Failed to load teams');
     } finally {
       setGroupsLoading(false);
     }
@@ -247,7 +247,7 @@ const UsersPage = () => {
       setSavedGroupAccess(normalized);
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load group details');
+      setError(err instanceof Error ? err.message : 'Failed to load team details');
     } finally {
       setAccessLoading(false);
     }
@@ -286,12 +286,12 @@ const UsersPage = () => {
       setNewGroupName('');
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create group');
+      setError(err instanceof Error ? err.message : 'Failed to create team');
     }
   };
 
   const handleDeleteGroup = async (groupId: string) => {
-    if (!window.confirm(`Delete group "${selectedGroup?.name || 'this group'}"?`)) return;
+    if (!window.confirm(`Delete team "${selectedGroup?.name || 'this team'}"?`)) return;
     try {
       await deleteGroup(groupId);
       const remaining = groups.filter((group) => group.id !== groupId);
@@ -299,7 +299,7 @@ const UsersPage = () => {
       setSelectedGroupId(remaining[0]?.id || '');
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to delete group');
+      setError(err instanceof Error ? err.message : 'Failed to delete team');
     }
   };
 
@@ -344,7 +344,7 @@ const UsersPage = () => {
       setSavedGroupAccess(normalized);
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save group access');
+      setError(err instanceof Error ? err.message : 'Failed to save team access');
     } finally {
       setAccessSaving(false);
     }
@@ -473,7 +473,7 @@ const UsersPage = () => {
   return (
     <SettingsShell
       eyebrow="Identity & access"
-      title="User & Group Management"
+      title="User & Team Management"
       description="Manage people, organize teams, and control access to shared knowledge, skills, and connected tools."
       actions={(
         <SegmentedControl
@@ -483,7 +483,7 @@ const UsersPage = () => {
           size="sm"
         >
           <SegmentedControlItem value="users" label="Users" icon={<UserRound size={15} />} />
-          <SegmentedControlItem value="groups" label="Groups" icon={<Users2 size={15} />} />
+          <SegmentedControlItem value="groups" label="Teams" icon={<Users2 size={15} />} />
         </SegmentedControl>
       )}
     >
@@ -584,9 +584,9 @@ const UsersPage = () => {
           <div className="grid gap-6 md:grid-cols-[280px_minmax(0,1fr)]">
             <SettingsSurface className="h-fit">
               <SettingsSectionHeader
-                eyebrow="Groups"
+                eyebrow="Teams"
                 title="Teams"
-                description="Select a group to manage membership and access."
+                description="Select a team to manage membership and access."
                 actions={<Badge variant="neutral" label={String(groups.length)} />}
               />
 
@@ -597,26 +597,26 @@ const UsersPage = () => {
                   onKeyDown={(event) => {
                     if (event.key === 'Enter') void handleCreateGroup();
                   }}
-                  placeholder="New group name"
+                  placeholder="New team name"
                   className="settings-control min-w-0 flex-1 rounded-xl px-3 py-2.5 text-sm"
                 />
                 <button
                   type="button"
                   onClick={() => void handleCreateGroup()}
                   className="settings-button-primary inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl"
-                  aria-label="Create group"
-                  title="Create group"
+                  aria-label="Create team"
+                  title="Create team"
                 >
                   <Plus size={16} />
                 </button>
               </div>
 
               <div className="mt-4 max-h-80 space-y-2 overflow-y-auto pr-1 md:max-h-[calc(100vh-22rem)]">
-                {groupsLoading ? <SettingsLoadingState label="Loading groups..." /> : null}
+                {groupsLoading ? <SettingsLoadingState label="Loading teams..." /> : null}
                 {!groupsLoading && groups.length === 0 ? (
                   <SettingsEmptyState
-                    title="No groups yet"
-                    description="Create a group to assign members and access."
+                    title="No teams yet"
+                    description="Create a team to assign members and access."
                     icon={Users2}
                     align="left"
                   />
@@ -642,8 +642,8 @@ const UsersPage = () => {
               {!selectedGroup ? (
                 <SettingsSurface>
                   <SettingsEmptyState
-                    title="Select a group"
-                    description="Choose a group from the list to manage its members and access."
+                    title="Select a team"
+                    description="Choose a team from the list to manage its members and access."
                     icon={Users2}
                   />
                 </SettingsSurface>
@@ -651,9 +651,9 @@ const UsersPage = () => {
                 <>
                   <SettingsSurface>
                     <SettingsSectionHeader
-                      eyebrow="Selected group"
+                      eyebrow="Selected team"
                       title={selectedGroup.name}
-                      description={`${groupMembers.length} member${groupMembers.length === 1 ? '' : 's'} · access is inherited by every group member`}
+                      description={`${groupMembers.length} member${groupMembers.length === 1 ? '' : 's'} · access is inherited by every team member`}
                       actions={(
                         <button
                           type="button"
@@ -661,7 +661,7 @@ const UsersPage = () => {
                           className="inline-flex items-center gap-2 rounded-xl bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700 transition hover:bg-rose-100"
                         >
                           <Trash2 size={14} />
-                          Delete group
+                          Delete team
                         </button>
                       )}
                     />
@@ -669,7 +669,7 @@ const UsersPage = () => {
                     <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
                       <div>
                         <p className="text-sm font-semibold text-slate-900">Add member</p>
-                        <p className="mt-1 text-xs text-slate-500">Members inherit the union of access from every group they belong to.</p>
+                        <p className="mt-1 text-xs text-slate-500">Members inherit the union of access from every team they belong to.</p>
                         <div className="mt-3 flex gap-2">
                           <select
                             value={selectedUserId}
@@ -699,7 +699,7 @@ const UsersPage = () => {
                           {!accessLoading && groupMembers.length === 0 ? (
                             <SettingsEmptyState
                               title="No members"
-                              description="Add the first member to this group."
+                              description="Add the first member to this team."
                               align="left"
                             />
                           ) : null}
@@ -730,7 +730,7 @@ const UsersPage = () => {
                     <SettingsSectionHeader
                       eyebrow="Access control"
                       title="Knowledge, skills & tools"
-                      description="Choose what members of this group can use. System administrators bypass these grants."
+                      description="Choose what members of this team can use. System administrators bypass these grants."
                       actions={(
                         <div className="flex items-center gap-2">
                           <button
@@ -781,7 +781,7 @@ const UsersPage = () => {
                         <div className="grid gap-5 lg:grid-cols-3">
                           <MultiSelector
                             label="Knowledge sources"
-                            description="Shared sources this group can reference from any workspace."
+                            description="Shared sources this team can reference from any workspace."
                             options={knowledgeOptions}
                             value={groupAccess.knowledgeSourceIds.map(String)}
                             onChange={(values) => setGroupAccess((previous) => ({
@@ -813,7 +813,7 @@ const UsersPage = () => {
                           />
                           <MultiSelector
                             label="MCP servers"
-                            description="Connected tools the group may target."
+                            description="Connected tools the team may target."
                             options={mcpOptions}
                             value={groupAccess.mcpServerIds}
                             onChange={(values) => setGroupAccess((previous) => ({
@@ -910,7 +910,7 @@ const UsersPage = () => {
                   </div>
                   <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
                     <p className="font-semibold">{deletionImpact.sharedWorkspaceCount} shared memberships removed</p>
-                    <p className="mt-1 text-xs">{deletionImpact.groupMembershipCount} group memberships and {deletionImpact.oauthTokenCount} OAuth tokens</p>
+                    <p className="mt-1 text-xs">{deletionImpact.groupMembershipCount} team memberships and {deletionImpact.oauthTokenCount} OAuth tokens</p>
                   </div>
                   <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
                     <p className="font-semibold">Detached shared references</p>

@@ -2,62 +2,72 @@
 
 Status: Proposed
 
+Last updated: 2026-07-30
+
 Audience: Product, design, engineering, security, and platform administrators
 
-Applies to: Platform administration, workspaces, skills, knowledge, users, and groups
+Applies to: Platform administration, workspaces, skills, knowledge, users, and Teams
 
 ## 1. Summary
 
-HelpUDoc needs one understandable governance model across five authorization scopes:
+HelpUDoc needs one understandable governance model across six authorization scopes:
 
 1. **Platform** — who can administer the HelpUDoc installation and its governance settings.
-2. **Workspace** — who can view, contribute to, publish, and manage a published workspace.
-3. **Skill** — who can privately create a skill, review it, publish it to the catalog, and use it.
-4. **Knowledge** — who can privately create knowledge, curate it for platform use, assign it, and consume it.
-5. **Runtime capability** — who can configure or use built-in tools, MCP servers, delegated connections, and the Code Interpreter sandbox.
+2. **Team** — which registered users share access and governance responsibilities.
+3. **Workspace** — who can view, contribute to, publish, and manage a Team Workspace.
+4. **Skill** — which team governs a skill, who can propose improvements, which exact version a workspace pins, and who may invoke it.
+5. **Knowledge** — who can privately create knowledge, curate it for platform use, assign it, and consume it.
+6. **Runtime capability** — who can configure or use built-in tools, MCP servers, delegated connections, and the Code Interpreter sandbox.
 
 The governing rule is:
 
-> Published artifacts are immutable versions. People edit private drafts or private working copies, then promote a new version through an appropriate publication gate.
+> A Team Workspace is the mutable collaboration surface. Every published workspace version is an immutable snapshot of that surface.
 
 The gate depends on the artifact:
 
-- A **workspace owner or trusted publisher** governs published workspace versions.
-- A **skill reviewer and catalog administrator** govern published skills.
+- A **Workspace Owner** chooses whether contributors use review mode or Freeflow editing.
+- A **Workspace Owner or Publisher** creates immutable published workspace versions.
+- A **Team Lead** reviews skill versions owned by their team.
+- An **Enterprise Skill Admin** governs catalog policy, high-risk activation, suspension, and emergency controls without becoming the routine approver for every team improvement.
 - A **knowledge curator** governs platform knowledge.
 - A **runtime capability administrator** governs the available tool, MCP-server, connection, and sandbox policies.
-- A **platform administrator** governs users, groups, privileged role assignments, platform policy, and emergency controls.
+- A **platform administrator** governs users, teams, privileged role assignments, platform policy, and emergency controls.
 
 A single person can hold different roles at the same time. Roles are evaluated within their own scope and resource. Being powerful in one scope does not automatically grant power in another.
 
 For example, a person may simultaneously be:
 
 - a normal Platform Member;
+- a member of the Research Team;
 - Owner of Workspace A;
-- Viewer of Workspace B through a group;
-- Creator of a private skill;
-- Reviewer of skills created by other users; and
-- Consumer of knowledge assigned to the Research group.
+- Viewer of Workspace B through a team grant;
+- proposer of an improvement to a Research Team skill;
+- Team Lead for a different team; and
+- Consumer of knowledge assigned to the Research Team.
 
 ## 2. Problem
 
 HelpUDoc currently has several useful authorization mechanisms, but they are expressed differently:
 
 - `users.isAdmin` provides broad system-administration authority.
-- Groups grant access to skills, MCP servers, and global knowledge.
+- Teams grant access to skills, MCP servers, global knowledge, and Team Workspaces.
 - Private workspaces are owner-only.
-- Published team workspaces use Owner, Editor, and Viewer memberships.
+- Existing shared workspaces use inconsistent Owner, Editor, and Viewer semantics.
+- Published workspace versions are stable, but the old model requires private copies, synchronization, and submission for every content change.
 - Skill creation and editing are currently administrator functions operating directly on the shared skill registry.
-- Global knowledge is currently administered centrally and assigned to groups.
+- Global knowledge is currently administered centrally and assigned to legacy groups.
 
-As user-created skills, direct workspace sharing, and governed knowledge contribution are introduced, the product needs to answer clearly:
+As Team Workspaces, direct sharing, user-proposed skill improvements, and governed knowledge contribution are introduced, the product needs to answer clearly:
 
 - Who may create privately?
-- Who may see a draft?
-- Who may submit a publication request?
-- Who may approve it?
+- When should work remain in a Private Workspace, and when should it move into a Team Workspace?
+- May contributors edit the Team Workspace directly, or must their changes be reviewed?
+- Who may publish an immutable snapshot without waiting for the Workspace Owner?
+- How are concurrent edits attributed, queued, reviewed, and recovered?
+- How does a workspace pin one approved skill version without bypassing team or enterprise skill governance?
+- What happens when a workspace is shared with multiple teams or a registered user outside those teams?
 - Who may activate or suspend a published artifact?
-- Who may assign it to users or groups?
+- Who may assign it to users or teams?
 - What happens when one user holds several roles?
 - Which safety rules remain in force even for privileged users?
 
@@ -67,10 +77,16 @@ Without a unified model, role names can become misleading and broad roles can ac
 
 - Give registered users freedom to create private workspaces, skills, and knowledge.
 - Preserve private drafts as owner-only by default.
-- Make published workspaces shareable with registered users outside the owner's team.
-- Prevent direct in-place editing of published workspaces, skills, and knowledge versions.
+- Provide one clearly named Team Workspace for ongoing collaboration.
+- Make Team Workspaces shareable with multiple teams and registered users outside those teams.
+- Let Workspace Owners choose review mode or Freeflow editing without creating another workspace type.
+- Preserve immutable published workspace, skill, and knowledge versions.
+- Retain attribution and a complete change feed even when per-change approval is disabled.
+- Allow named Publishers to publish without requiring the Workspace Owner to approve every release.
 - Introduce governed submission, review, approval, activation, assignment, suspension, and rollback.
-- Reuse groups for audience access to skills, knowledge, and published workspaces.
+- Reuse Teams for audience access to skills, knowledge, runtime capabilities, and Team Workspaces.
+- Require every workspace skill reference to pin an exact approved version.
+- Keep workspace access and skill entitlement independent.
 - Govern built-in tools, MCP servers, delegated credentials, and sandbox execution independently from skill assignment.
 - Make a user's effective access explainable.
 - Support users holding multiple roles without merging those roles into one global rank.
@@ -80,13 +96,13 @@ Without a unified model, role names can become misleading and broad roles can ac
 ## 4. Non-goals for the First Release
 
 - Anonymous or public sharing links.
-- Sharing a live private workspace with collaborators.
-- Real-time co-editing of workspace or skill drafts.
+- Sharing a live Private Workspace with collaborators; sharing converts or publishes it into a Team Workspace.
+- Character-by-character collaborative editing; Freeflow initially means autosaved, attributed file-level revisions with conflict handling.
 - Custom role builders or arbitrary permission sets.
 - Explicit deny rules.
-- Nested groups.
+- Nested Teams.
 - Approval workflows with more than one required approver.
-- Per-document permissions inside one published workspace.
+- Per-document permissions inside one Team Workspace.
 - Per-conversation sharing.
 - Arbitrary unsandboxed shell or code execution.
 - A skill automatically granting access to a tool, MCP server, credential, or sandbox.
@@ -98,9 +114,9 @@ Without a unified model, role names can become misleading and broad roles can ac
 
 New workspaces, skill drafts, and knowledge drafts are visible only to their creator unless explicitly submitted or published.
 
-### 5.2 Published means versioned, not editable
+### 5.2 Team work is mutable; published versions are immutable
 
-No actor edits an active published version in place. An update creates a new version.
+Authorized users edit the current Team Workspace according to its editing policy. No actor edits a published version in place. Publishing creates a new immutable snapshot and leaves the Team Workspace open for subsequent work.
 
 ### 5.3 Creation authority and publication authority are separate
 
@@ -119,9 +135,9 @@ A role applies only within its declared scope:
 - the skill catalog or a particular skill;
 - the knowledge catalog or a particular knowledge source.
 
-### 5.6 Groups distribute access, not ownership
+### 5.6 Teams distribute access, not ownership
 
-Groups are primarily an audience and entitlement mechanism. Group membership may grant consumption or contribution access, but must not silently create ownership or platform-administration authority.
+Teams are the primary audience, entitlement, and skill-governance unit. Team membership may grant consumption or contribution access, but must not silently create Workspace Owner, Publisher, or platform-administration authority.
 
 ### 5.7 Privilege does not erase privacy
 
@@ -133,59 +149,73 @@ A skill can guide the agent, but it cannot grant its user additional tools, MCP 
 
 ### 5.9 Connections prove identity; they do not grant authorization
 
-A connected OAuth account or other MCP credential proves that the user can authenticate to an external service. The connection does not make the MCP server available unless platform, group, workspace, and skill policy also permit it.
+A connected OAuth account or other MCP credential proves that the user can authenticate to an external service. The connection does not make the MCP server available unless platform, Team, workspace, and skill policy also permit it.
 
 ### 5.10 Code runs only inside an explicit execution envelope
 
 Code Interpreter and skill scripts run only when the platform enables the sandbox, the user is entitled to execute code, the active skill declares the script or capability, and the workspace policy permits it. The sandbox enforces resource, filesystem, network, timeout, and output boundaries.
 
-### 5.11 Published content is stable; collaboration around it is active
+### 5.11 Collaboration happens in the Team Workspace
 
-A published workspace remains immutable, but authorized users may collaborate through a separate mutable overlay containing private notes, shared annotations, discussion threads, sticky notes, tasks, mentions, and change proposals.
+The Team Workspace contains files, conversations, annotations, discussions, tasks, and its attributed change feed. It is the only shared mutable workspace layer.
 
-Collaboration objects never modify the published content manifest. They retain their own authorship, audience, lifecycle, and version anchors. Any content change still requires private work, submission when applicable, approval, and publication of a new workspace version.
+Published versions remain immutable snapshots. Discussions and annotations may reference a published version, but content changes occur in the Team Workspace under review mode or Freeflow—not in a second “shared workspace” or mandatory private working copy.
+
+### 5.12 Editing policy and publication authority are independent
+
+Review mode versus Freeflow controls how contributor changes enter the current Team Workspace. Owner versus Publisher controls who may create a published version. Enabling Freeflow does not let Contributors publish, and requiring review does not prevent a Publisher from publishing merged work.
+
+### 5.13 Workspace access does not merge skill catalogs
+
+Sharing a workspace with a Team or a registered user grants only the assigned workspace role. It does not grant skills from another Team. The workspace pins exact approved skill versions, and each invocation separately verifies that the current user is entitled through one of their Teams.
 
 ## 6. Governance Map
 
 ```mermaid
 flowchart TB
-    PA["Platform governance<br/>Users, groups, policies, privileged roles"]
+    PA["Platform governance<br/>Users, Teams, policies, privileged roles"]
 
     subgraph W["Workspace scope"]
-        WD["Private workspace<br/>Owner edits"]
-        WR["Update request<br/>Frozen version"]
-        WP["Published workspace<br/>Read-only version"]
-        WC["Collaboration overlay<br/>Annotations, notes, tasks, discussions"]
-        CP["Change proposal<br/>Version-anchored handoff"]
-        WG["Direct people and group grants"]
+        PW["Private Workspace<br/>Owner-only exploration"]
+        TW["Team Workspace<br/>Current mutable state"]
+        EP{"Editing policy"}
+        RQ["Review queue<br/>Proposed revisions"]
+        CF["Freeflow change feed<br/>Autosaved attributed revisions"]
+        PV["Published version<br/>Immutable snapshot"]
+        WA["Direct-user and Team grants"]
 
-        WD -->|"Owner or Publisher publishes"| WP
-        WD -->|"Contributor submits"| WR
-        WR -->|"Owner or Publisher approves"| WP
-        WP -->|"Comment without editing"| WC
-        WC -->|"Convert discussion"| CP
-        CP -->|"Create private work"| WD
-        WP --> WG
-        WG -->|"Work privately"| WD
+        PW -->|"Owner shares or promotes"| TW
+        TW --> EP
+        EP -->|"Review mode"| RQ
+        RQ -->|"Owner or Publisher merges"| TW
+        EP -->|"Freeflow"| CF
+        CF --> TW
+        TW -->|"Owner or Publisher publishes"| PV
+        PV -->|"Restore as new current revision"| TW
+        WA --> TW
     end
 
     subgraph S["Skill scope"]
-        SD["Private skill draft<br/>Creator edits and tests"]
-        SR["Publication request<br/>Frozen candidate"]
-        SV["Approved skill version<br/>Immutable"]
-        SG["Group assignments"]
+        SD["Private skill improvement<br/>Proposer edits and tests"]
+        SR["Team skill proposal<br/>Frozen candidate"]
+        SV["Team-approved skill version<br/>Immutable"]
+        EA["Enterprise policy and activation"]
+        ST["Team skill grants"]
+        WM["Workspace skill manifest<br/>Exact version pins"]
 
         SD --> SR
-        SR -->|"Reviewer approves"| SV
+        SR -->|"Team Lead approves"| SV
         SR -->|"Changes requested"| SD
-        SV -->|"Catalog Admin activates"| SG
+        SV --> EA
+        EA --> ST
+        SV --> WM
     end
 
     subgraph K["Knowledge scope"]
         KD["Private or workspace knowledge draft<br/>Author edits"]
         KR["Publication request<br/>Frozen candidate"]
         KV["Approved knowledge version<br/>Immutable"]
-        KG["Group assignments"]
+        KG["Team assignments"]
 
         KD --> KR
         KR -->|"Curator approves"| KV
@@ -195,7 +225,7 @@ flowchart TB
 
     subgraph R["Runtime capability scope"]
         RC["Platform capability registry<br/>Built-in tools and MCP servers"]
-        RE["User and group entitlements"]
+        RE["User and Team entitlements"]
         RW["Workspace allow and deny policy"]
         RS["Active skill declarations"]
         RX["Sandbox and connection checks"]
@@ -208,7 +238,7 @@ flowchart TB
         RX --> RT
     end
 
-    PA -.-> WG
+    PA -.-> WA
     PA -.-> SR
     PA -.-> KR
     PA -.-> RC
@@ -225,14 +255,14 @@ HelpUDoc uses four kinds of role:
 | Baseline role | Capabilities every active registered user receives | Implicit |
 | Ownership role | Accountability for a specific private or published resource | Created with or transferred with the resource |
 | Governance role | Review, approval, activation, rollback, access administration | Direct grant by an authorized administrator |
-| Audience role | View, use, or contribute to an artifact | Direct grant or group membership |
+| Audience role | View, use, or contribute to an artifact | Direct grant or Team membership |
 
 ### 7.2 Platform roles
 
 | Role | Scope | Capabilities |
 |---|---|---|
-| Platform Member | Platform | Sign in; create permitted private artifacts; use resources granted directly or through groups |
-| Platform Admin | Platform | Manage users, groups, platform policy, privileged domain roles, global audit, catalog emergency controls, and break-glass requests |
+| Platform Member | Platform | Sign in; create permitted private artifacts; use resources granted directly or through Teams |
+| Platform Admin | Platform | Manage users, Teams, platform policy, privileged domain roles, global audit, catalog emergency controls, and break-glass requests |
 | Platform Auditor | Platform | Read governance configuration, review history, access explanations, and audit events without changing state |
 
 `Platform Auditor` may be deferred from the MVP, but the permission boundary should be preserved so audit access does not require full administration authority.
@@ -256,111 +286,138 @@ Platform Admin does not automatically:
 - edit a private artifact; or
 - impersonate a resource owner.
 
-### 7.3 Workspace roles
-
-| Role | View and chat | Private notes | Shared annotations, sticky notes, and tasks | Create private copy | Submit update | Publish directly | Govern access and discussions |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| Workspace Viewer | Yes | Yes | No | Policy-controlled | No | No | No |
-| Workspace Commenter | Yes | Yes | Yes | Policy-controlled | No | No | No |
-| Workspace Contributor | Yes | Yes | Yes | Yes | Yes | No | No |
-| Workspace Publisher | Yes | Yes | Yes | Yes | Yes | Yes, subject to policy | Moderate discussions and review updates |
-| Workspace Owner | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
-
-Rules:
-
-- A private workspace has exactly one owner and no collaborators.
-- Every private working copy is editable only by its owner.
-- A published workspace is read-only for every role, including Workspace Owner.
-- Chat remains available in a published workspace when workspace and runtime policy permit it. Chat may read the published version and authorized knowledge, but it cannot mutate the published content.
-- Private notes are visible only to their author.
-- Shared annotations, sticky notes, discussions, and tasks belong to the collaboration overlay, not the published content manifest.
-- Mentions and assignments may target only registered users or groups that already have access to the published workspace. A mention never grants workspace access.
-- Workspace Commenter grants collaboration authority without granting private-copy submission or publication authority.
-- A published workspace may be personally owned or group-owned, but at least one active registered user must hold the direct accountable Workspace Owner role.
-- Group ownership provides continuity; it does not make every group member a Workspace Owner.
-- `Publish directly` means promoting a private working-copy snapshot as the next published version.
-- The owner can transfer ownership, but the system must always retain at least one active accountable owner.
-- Group grants may provide Viewer, Commenter, or Contributor access.
-- Publisher and Owner are privileged roles and should be assigned directly to named users in the first release.
-
-#### Workspace publication policy
-
-Each published workspace has one of two policies:
-
-| Policy | Behaviour |
-|---|---|
-| Trusted publishing | Workspace Owner and Workspace Publishers may publish directly |
-| Approval required | Workspace Owner may publish directly; all other users submit an update request |
-
-Recommended default:
-
-- personally owned workspace: Trusted publishing;
-- group-owned or externally shared workspace: Approval required.
-
-#### Workspace collaboration policy
-
-Each published workspace also has an independent collaboration policy:
-
-| Policy | Behaviour |
-|---|---|
-| Closed | Users may chat and keep private notes, but cannot create shared collaboration objects |
-| Comments enabled | Workspace Commenters and higher roles may create shared annotations, sticky notes, discussions, mentions, and tasks |
-| Proposals enabled | Workspace Contributors and higher roles may additionally convert discussions into governed change proposals and private working copies |
-
-Recommended default:
-
-- personally owned workspace: Comments enabled;
-- group-owned or externally shared workspace: Comments enabled with Proposals enabled for Contributors;
-- sensitive or regulated workspace: Closed unless explicitly enabled.
-
-Workspace Owner and Workspace Publisher may resolve, reopen, move, re-anchor, or moderate shared discussions. This moderation authority does not permit editing the underlying published content.
-
-### 7.4 Skill roles
+### 7.3 Team roles
 
 | Role | Scope | Capabilities |
 |---|---|---|
-| Skill Creator | One skill | Create and edit private drafts, run permitted private tests, submit versions, respond to review feedback |
-| Skill Reviewer | Skill catalog or selected skill family | Inspect submitted candidates, diffs, test results, declared capabilities, and approve, reject, or request changes |
-| Skill Catalog Admin | Skill catalog | Activate approved versions, suspend, retire, restore, roll back, and assign approved skills to groups |
-| Skill Consumer | Assigned skills | Discover and invoke approved assigned skills within the consumer's own runtime permissions |
+| Team Member | One Team | Receive Team-based workspace, skill, knowledge, tool, MCP, and sandbox grants; propose improvements to Team-owned skills |
+| Team Lead | One Team | Govern Team membership when delegated; review Team skill proposals; approve immutable Team skill versions; manage Team skill assignments within enterprise policy |
+| Enterprise Skill Admin | Platform skill catalog | Define validation and risk policy; approve high-risk activation when required; suspend, retire, restore, and audit any catalog skill; control cross-Team skill-assignment policy |
 
 Rules:
 
-- The creator owns the private draft, not the platform catalog entry.
-- Once approved, the catalog entry is platform-governed while retaining creator attribution.
-- A reviewer sees only the submitted immutable candidate, not the creator's ongoing draft.
-- An approved skill version cannot be edited.
-- A creator updates a published skill by creating a new draft from an approved version and submitting it again.
-- A Skill Consumer cannot inspect private drafts or change published skill files.
+- `Team` is the user-facing name for the existing reusable user-group concept.
+- A Team may be granted workspace, skill, knowledge, and runtime access.
+- Team Lead authority applies only to the Team and its Team-owned skills.
+- Team Lead does not imply Workspace Owner, Workspace Publisher, or Platform Admin.
+- Enterprise Skill Admin is an enterprise guardrail, not the routine reviewer for every Team skill improvement.
+- Platform Admin may perform Enterprise Skill Admin duties in the MVP, but the permission boundary remains distinct.
+
+### 7.4 Workspace roles
+
+| Role | View and chat | Notes, discussions, and tasks | Propose revisions in review mode | Edit current Team Workspace in Freeflow | Publish immutable version | Manage access and policy |
+|---|---:|---:|---:|---:|---:|---:|
+| Workspace Viewer | Yes | Private notes only | No | No | No | No |
+| Workspace Contributor | Yes | Yes | Yes | Yes | No | No |
+| Workspace Publisher | Yes | Yes | Yes | Yes | Yes | No |
+| Workspace Owner | Yes | Yes | Yes | Yes | Yes | Yes |
+
+Rules:
+
+- A Private Workspace has exactly one owner and no collaborators.
+- Sharing or promoting a Private Workspace creates a Team Workspace; the Private Workspace is not turned into a hidden synchronization branch.
+- A Team Workspace is the single mutable collaboration surface.
+- A Team Workspace can be shared with multiple Teams and with individual registered users from any Team.
+- Workspace access does not change a person's Team affiliations and does not merge the skill catalogs available through those affiliations.
+- A published version is an immutable snapshot of the Team Workspace and is read-only for every role, including Workspace Owner.
+- Publishing does not close, fork, or reset the Team Workspace. Subsequent edits accumulate toward the next version.
+- The owner can transfer ownership, but the system must always retain one active accountable owner.
+- Team grants may provide Viewer or Contributor access.
+- Publisher and Owner are privileged roles assigned directly to named registered users in the first release.
+- A mention or task assignment may target only a registered principal that already has workspace access. A mention never grants access.
+
+#### Team Workspace editing policy
+
+Every Team Workspace has exactly one editing policy:
+
+| Policy | Contributor behaviour | Authoritative state |
+|---|---|---|
+| Review mode | Contributor revisions enter a proposal queue. An Owner or Publisher reviews and merges them. | The current Team Workspace changes only when a proposal is merged. |
+| Freeflow | Contributor revisions autosave directly with actor, timestamp, source, and skill-version attribution. | The current Team Workspace changes immediately; published versions remain unchanged. |
+
+The Owner may toggle the policy. The transition is audited and must not discard pending proposals or unreviewed Freeflow revisions.
+
+Recommended default:
+
+- new or sensitive Team Workspace: Review mode;
+- established team with trusted Contributors: Freeflow;
+- externally shared or regulated Team Workspace: Review mode unless the Owner explicitly accepts Freeflow.
+
+Freeflow requirements:
+
+- an append-only change feed;
+- per-file revision history and deterministic restore;
+- optimistic concurrency checks and explicit conflict states;
+- attribution for manual edits, agent edits, uploads, and automated changes;
+- the exact active skill version on any skill-assisted change;
+- Owner and Publisher ability to inspect all changes since the last published version; and
+- no implication that a Contributor may publish.
+
+#### Workspace publication
+
+- Workspace Owner and Workspace Publisher may publish the current Team Workspace as the next immutable version.
+- Publisher exists so routine publication does not require the Owner to approve every release.
+- The publication screen shows all changes since the previous published version, unresolved conflicts, validation results, and the exact workspace skill manifest.
+- Publication is atomic. A failure leaves both the current Team Workspace and the previous published version unchanged.
+- Restoring an older version creates a new current revision or a new published version; it never mutates historical snapshots.
+
+#### Workspace collaboration objects
+
+Notes, annotations, discussions, tasks, mentions, and change proposals are records within the Team Workspace. When anchored to a published version, they retain the origin version and content fingerprint so the UI can show whether the anchor still matches.
+
+Detailed authorization traces are not permanent workspace content. The workspace shows a compact skill-availability state and a clear remediation message. Full policy checks appear only in an optional authorization-details view or an administrator access inspector.
+
+### 7.5 Skill roles
+
+| Role | Scope | Capabilities |
+|---|---|---|
+| Skill Proposer | One private proposal | Create and test a private improvement to a Team-owned skill; submit a frozen candidate; respond to Team Lead feedback |
+| Team Lead | Skills owned by one Team | Review submitted candidates; approve, reject, or request changes; publish an immutable Team skill version within enterprise policy |
+| Enterprise Skill Admin | Platform skill catalog | Configure validation and risk gates; approve exceptional or high-risk activation; suspend, retire, restore, roll back, and audit |
+| Skill Consumer | Skills granted through an affiliated Team | Discover and invoke an approved version within the consumer's workspace and runtime permissions |
+
+Rules:
+
+- Every governed skill has one owning Team.
+- Any Team Member may propose an improvement unless Team policy restricts proposal creation.
+- The proposer owns the private proposal draft, not the Team skill identity.
+- A Team Lead sees the submitted immutable candidate, not the proposer's ongoing private draft.
+- A proposer cannot approve their own candidate by default, including when they are also a Team Lead.
+- An approved skill version is immutable. A later improvement creates a new candidate and semantic version.
+- Enterprise validation applies before Team Lead approval can make a version active. High-risk classes may additionally require Enterprise Skill Admin approval.
+- A workspace skill manifest may reference only approved active versions and must pin an exact version, not `latest`.
+- Publishing a workspace copies the exact skill manifest into the published workspace version.
+- A Private Workspace may use a private skill proposal for testing, but a Team Workspace or published workspace cannot inherit or invoke that private proposal.
+- Sharing a workspace with another Team does not grant the owning Team's skill. Each user must receive the skill through one of their Team affiliations.
 - Skill assignment does not grant any underlying tool, MCP server, credential, knowledge, or workspace access.
 
-### 7.5 Knowledge roles
+### 7.6 Knowledge roles
 
 HelpUDoc distinguishes two knowledge scopes:
 
 1. **Workspace knowledge** belongs to a private workspace and follows that private workspace's ownership and publication lifecycle.
-2. **Platform knowledge** is an approved catalog source that can be assigned to groups and used across authorized workspaces.
+2. **Platform knowledge** is an approved catalog source that can be assigned to Teams and used across authorized workspaces.
 
 | Role | Scope | Capabilities |
 |---|---|---|
 | Knowledge Author | One knowledge source | Create and edit a private or workspace source, maintain provenance, submit a candidate |
 | Knowledge Curator | Knowledge catalog or selected collection | Review content, provenance, classification, quality, freshness, and approve, reject, or request changes |
-| Knowledge Access Admin | Knowledge catalog | Activate, suspend, retire, restore, and assign approved knowledge to groups |
+| Knowledge Access Admin | Knowledge catalog | Activate, suspend, retire, restore, and assign approved knowledge to Teams |
 | Knowledge Consumer | Assigned sources | Search and use approved assigned knowledge in authorized workspaces |
 
 Rules:
 
 - Workspace knowledge is accessible only inside its authorized workspace context.
 - Publishing a workspace copies only allowlisted knowledge artifacts into that published version.
-- Platform knowledge requires curator approval before group assignment.
+- Platform knowledge requires curator approval before Team assignment.
 - An approved platform knowledge version cannot be edited in place.
 - The source author creates a new candidate to update published knowledge.
 - A Knowledge Consumer receives query/use access, not edit authority.
 - Source classification, provenance, retention, and expiry policies constrain all roles.
 
-For the MVP, Platform Admin may perform Skill Reviewer, Skill Catalog Admin, Knowledge Curator, and Knowledge Access Admin duties. The roles remain logically distinct so they can be delegated later.
+For the MVP, Platform Admin may perform Enterprise Skill Admin, Knowledge Curator, and Knowledge Access Admin duties. Team Leads remain the routine approvers for their Team-owned skills.
 
-### 7.6 Runtime capability roles
+### 7.7 Runtime capability roles
 
 | Role | Scope | Capabilities |
 |---|---|---|
@@ -378,7 +435,7 @@ Rules:
 - Assigning an MCP server does not create or share a user's OAuth connection.
 - A personal connection cannot be used by another user.
 - Sandbox Executor is an entitlement to request execution, not permission to bypass the sandbox.
-- Platform Admin or Runtime Capability Admin may disable a capability globally without editing every skill or group grant.
+- Platform Admin or Runtime Capability Admin may disable a capability globally without editing every skill or Team grant.
 - High-risk tools may additionally require per-action human approval.
 
 ## 8. Role Assignment Authority
@@ -388,24 +445,24 @@ Rules:
 | Platform Member | Provisioning or sign-in flow | User must be active and registered |
 | Platform Admin | Another Platform Admin | Cannot remove or demote the final active Platform Admin |
 | Platform Auditor | Platform Admin | Read-only |
-| Workspace Owner | Creation flow or current Workspace Owner through transfer | Must be a direct registered user; cannot be group-derived |
+| Team Member | Platform Admin, provisioning, or delegated Team Lead | Active registered user |
+| Team Lead | Platform Admin | Direct named-user assignment; scope is one Team |
+| Enterprise Skill Admin | Platform Admin | Privileged direct assignment |
+| Workspace Owner | Creation flow or current Workspace Owner through transfer | Must be a direct registered user; cannot be Team-derived |
 | Workspace Publisher | Workspace Owner | Direct named-user assignment recommended |
-| Workspace Contributor | Workspace Owner | Direct or group grant |
-| Workspace Commenter | Workspace Owner | Direct or group grant; does not grant submission authority |
-| Workspace Viewer | Workspace Owner | Direct or group grant |
-| Skill Creator | Skill creation flow | Bound to the created skill |
-| Skill Reviewer | Platform Admin | Must not approve own submitted candidate by default |
-| Skill Catalog Admin | Platform Admin | Privileged direct assignment |
-| Skill Consumer | Skill Catalog Admin through group assignment | Approved active skills only |
+| Workspace Contributor | Workspace Owner | Direct or Team grant |
+| Workspace Viewer | Workspace Owner | Direct or Team grant |
+| Skill Proposer | Skill-improvement creation flow | Private proposal bound to one Team-owned skill |
+| Skill Consumer | Team Lead through Team assignment, or Enterprise Skill Admin under enterprise policy | Approved active exact versions only |
 | Knowledge Author | Knowledge creation flow | Bound to the created source |
 | Knowledge Curator | Platform Admin | Must not approve own submitted candidate by default |
 | Knowledge Access Admin | Platform Admin | Privileged direct assignment |
-| Knowledge Consumer | Knowledge Access Admin through group assignment | Approved active sources only |
+| Knowledge Consumer | Knowledge Access Admin through Team assignment | Approved active sources only |
 | Runtime Capability Admin | Platform Admin | Privileged direct assignment |
-| Tool Consumer | Runtime Capability Admin through group assignment or platform default | Enabled tools only |
-| MCP Consumer | Runtime Capability Admin through group assignment | Enabled registered servers only |
+| Tool Consumer | Runtime Capability Admin through Team assignment or platform default | Enabled tools only |
+| MCP Consumer | Runtime Capability Admin through Team assignment | Enabled registered servers only |
 | MCP Connection Owner | Connection authorization flow | Personal credential only |
-| Sandbox Executor | Runtime Capability Admin through group assignment or approved platform policy | Sandbox must be healthy and enabled |
+| Sandbox Executor | Runtime Capability Admin through Team assignment or approved platform policy | Sandbox must be healthy and enabled |
 
 ## 9. Artifact Lifecycles
 
@@ -413,55 +470,74 @@ Rules:
 
 ```mermaid
 stateDiagram-v2
-    [*] --> PrivateDraft
-    PrivateDraft --> Published: Owner or trusted Publisher publishes
-    PrivateDraft --> UpdateSubmitted: Contributor submits
-    UpdateSubmitted --> ChangesRequested: Reviewer requests changes
-    ChangesRequested --> PrivateDraft: Contributor revises
-    UpdateSubmitted --> Published: Owner or Publisher approves
-    Published --> PrivateDraft: User creates private working copy
-    Published --> Archived: Owner archives
-    Archived --> Published: Owner restores
+    [*] --> PrivateWorkspace
+    PrivateWorkspace --> TeamWorkspace: Owner shares or promotes
+    TeamWorkspace --> ReviewMode: Owner selects review
+    TeamWorkspace --> Freeflow: Owner selects Freeflow
+    ReviewMode --> ChangeProposed: Contributor submits revisions
+    ChangeProposed --> ChangesRequested: Owner or Publisher requests changes
+    ChangesRequested --> ChangeProposed: Contributor revises
+    ChangeProposed --> ReviewMode: Owner or Publisher merges
+    Freeflow --> Freeflow: Attributed revision autosaves
+    ReviewMode --> PublishedVersion: Owner or Publisher publishes snapshot
+    Freeflow --> PublishedVersion: Owner or Publisher publishes snapshot
+    PublishedVersion --> TeamWorkspace: Work continues
+    TeamWorkspace --> Archived: Owner archives
+    Archived --> TeamWorkspace: Owner restores
 ```
 
 Each publication creates an immutable version containing:
 
 - version identifier and sequence number;
 - publisher or approving user;
-- source private-workspace identifier;
+- source Team Workspace identifier and revision boundary;
 - publication note;
 - content manifest;
+- exact approved workspace skill manifest;
+- included change identifiers since the previous publication;
 - creation timestamp; and
 - validation results.
 
-#### 9.1.1 Published-workspace collaboration lifecycle
+The Team Workspace retains:
 
-Collaboration objects are mutable records anchored to, but stored separately from, an immutable published version.
+- the current editable content state;
+- editing-policy history;
+- pending review proposals, if any;
+- an append-only attributed change feed;
+- per-file revision and conflict history;
+- notes, discussions, tasks, and annotations; and
+- links to every published version.
+
+#### 9.1.1 Team Workspace change lifecycle
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Open: User creates shared annotation, sticky note, or task
-    Open --> Discussing: Authorized users reply or mention others
-    Open --> Resolved: Moderator resolves without a content change
-    Discussing --> Resolved: Discussion is complete
-    Discussing --> Proposed: Contributor converts thread to change proposal
-    Proposed --> PrivateWork: Authorized user accepts private handoff
-    PrivateWork --> UpdateSubmitted: Contributor submits frozen update
-    UpdateSubmitted --> Addressed: New published version addresses proposal
-    Resolved --> Open: Moderator reopens
+    [*] --> Proposed: Contributor edits in review mode
+    Proposed --> ChangesRequested: Owner or Publisher requests revision
+    ChangesRequested --> Proposed: Contributor updates proposal
+    Proposed --> Merged: Owner or Publisher accepts
+    Proposed --> Rejected: Owner or Publisher rejects
+    [*] --> Applied: Contributor edits in Freeflow
+    Applied --> Reverted: Authorized user restores prior revision
+    Merged --> Included: Published version includes change
+    Applied --> Included: Published version includes change
 ```
 
-Every shared collaboration object contains:
+Every proposed or applied content change contains:
 
-- stable collaboration-object identifier and type;
-- source published-workspace identifier and version identifier;
-- optional content anchor containing file, block, text range, and anchor fingerprint;
-- author and creation timestamp;
-- visibility and explicit audience;
-- thread participants, mentions, optional assignee, and optional due date;
-- lifecycle status;
-- optional linked change proposal, private working copy, update request, and resolving published version; and
-- complete moderation and edit history.
+- stable change identifier and workspace identifier;
+- actor, timestamp, source, and editing policy;
+- base revision and resulting revision;
+- affected file or artifact identifiers;
+- change type: manual edit, agent edit, upload, automation, merge, restore, or policy transition;
+- optional originating discussion or task;
+- exact skill version for skill-assisted work;
+- validation and conflict status; and
+- optional published-version identifier that first included the change.
+
+#### 9.1.2 Version-anchored collaboration objects
+
+An annotation or discussion may be anchored to an immutable published version while remaining a Team Workspace record.
 
 Version behaviour:
 
@@ -477,28 +553,32 @@ Version behaviour:
 ```mermaid
 stateDiagram-v2
     [*] --> PrivateDraft
-    PrivateDraft --> Submitted: Creator submits frozen candidate
-    Submitted --> ChangesRequested: Reviewer requests changes
-    ChangesRequested --> PrivateDraft: Creator revises
-    Submitted --> Rejected: Reviewer rejects
-    Submitted --> Approved: Reviewer approves
-    Approved --> Active: Catalog Admin activates
-    Active --> Suspended: Catalog Admin or emergency control
-    Suspended --> Active: Catalog Admin restores
-    Active --> Retired: Catalog Admin retires
-    Approved --> PrivateDraft: Creator starts next version
-    Active --> PrivateDraft: Creator starts next version
+    PrivateDraft --> Submitted: Team Member submits frozen proposal
+    Submitted --> ChangesRequested: Team Lead requests changes
+    ChangesRequested --> PrivateDraft: Proposer revises
+    Submitted --> Rejected: Team Lead rejects
+    Submitted --> Approved: Team Lead approves and enterprise checks pass
+    Submitted --> EnterpriseReview: High-risk policy requires additional review
+    EnterpriseReview --> Approved: Enterprise Skill Admin approves
+    EnterpriseReview --> Rejected: Enterprise Skill Admin rejects
+    Approved --> Active: Version becomes assignable
+    Active --> Suspended: Team Lead or Enterprise Skill Admin
+    Suspended --> Active: Authorized administrator restores
+    Active --> Retired: Team Lead or Enterprise Skill Admin retires
+    Approved --> PrivateDraft: Team Member starts next improvement
+    Active --> PrivateDraft: Team Member starts next improvement
 ```
 
 Status meanings:
 
 | Status | Meaning |
 |---|---|
-| Private Draft | Creator-only editable files |
-| Submitted | Frozen candidate under review |
+| Private Draft | Proposer-only editable files |
+| Submitted | Frozen candidate in the owning Team's review queue |
 | Changes Requested | Review completed with required changes |
 | Rejected | Candidate will not proceed |
-| Approved | Immutable version permitted in the catalog |
+| Enterprise Review | Additional high-risk or exception review is required |
+| Approved | Immutable version permitted by Team and enterprise policy |
 | Active | Approved version is the current runnable version |
 | Suspended | Invocation blocked immediately; history and assignments retained |
 | Retired | No longer available for new use; history retained |
@@ -536,17 +616,17 @@ Knowledge approval must record:
 ### 10.1 Platform Member
 
 1. The user signs in and becomes an active Platform Member.
-2. HelpUDoc resolves the user's direct roles and group memberships.
-3. The user sees only published workspaces, active skills, and active knowledge authorized for them.
-4. The user may create private workspaces, skill drafts, and knowledge drafts if platform policy permits.
+2. HelpUDoc resolves the user's direct roles and Team memberships.
+3. The user sees only Private Workspaces they own and Team Workspaces, published versions, active skills, and active knowledge authorized for them.
+4. The user may create Private Workspaces, private skill-improvement proposals, and knowledge drafts if platform policy permits.
 5. The user may submit artifacts for review but cannot approve or broadly assign them without another role.
-6. The interface can explain why each shared resource is available, such as `Direct access` or `via Research group`.
+6. The interface can explain why each shared resource is available, such as `Direct access` or `via Research Team`.
 
 ### 10.2 Platform Admin
 
 1. The admin opens the governance area.
-2. The admin manages users, groups, platform policies, reviewers, curators, and catalog administrators.
-3. The admin monitors skill and knowledge review queues and published-catalog health.
+2. The admin manages users, Teams, platform policies, Team Leads, curators, and enterprise administrators.
+3. The admin monitors skill and knowledge governance and published-catalog health.
 4. The admin may suspend unsafe published artifacts immediately.
 5. The admin reviews audit events and access explanations.
 6. If private content must be inspected, the admin initiates a reasoned, time-bounded, audited break-glass request.
@@ -561,93 +641,84 @@ Knowledge approval must record:
 ### 10.4 Workspace Owner
 
 1. The user creates a private workspace and is its private owner.
-2. The user publishes an immutable version.
-3. The user chooses personal or group ownership context and a publication policy.
-4. The user selects the collaboration policy.
-5. The user grants Viewer, Commenter, Contributor, or Publisher access to registered users and Viewer, Commenter, or Contributor access to groups.
-6. The user moderates shared discussions and may convert a discussion into a governed change proposal.
-7. The user continues editing only in a private working copy.
-8. The user publishes directly or reviews Contributor update requests.
-9. The user may restore a previous version, archive the published workspace, or transfer accountable ownership.
+2. When collaboration is needed, the user promotes it into a Team Workspace.
+3. The user grants Viewer or Contributor access to one or more Teams or registered users.
+4. The user assigns Publisher only to trusted named users.
+5. The user chooses Review mode or Freeflow and may change the policy later without creating another workspace layer.
+6. The user selects exact approved skill versions for the workspace skill manifest.
+7. The user reviews proposals in Review mode or monitors the attributed change feed in Freeflow.
+8. The user publishes the current Team Workspace as an immutable version.
+9. The user may restore a prior version as a new revision, archive the Team Workspace, or transfer accountable ownership.
 
 ### 10.5 Workspace Publisher
 
 1. The user receives direct Publisher access.
-2. The user browses the current published version.
-3. The user creates a private working copy.
-4. The user edits privately without exposing unfinished work.
-5. Under Trusted publishing, the user publishes a new version.
-6. Under Approval required, the user submits the version to the Workspace Owner.
-7. The user may moderate collaboration objects and review Contributor requests if workspace policy permits, but cannot manage access or ownership.
+2. The user works in the current Team Workspace.
+3. In Review mode, the user reviews and merges Contributor proposals.
+4. In Freeflow, the user reviews the changes since the last published version and resolves conflicts or reverts changes where authorized.
+5. The user verifies validation results and the exact pinned skill manifest.
+6. The user publishes the next immutable version without waiting for the Workspace Owner.
+7. The user may moderate collaboration objects but cannot manage access, change the editing policy, transfer ownership, or archive the workspace.
 
 ### 10.6 Workspace Contributor
 
-1. The user receives Contributor access directly or through a group.
-2. The user chats against the published version and participates in shared annotations, sticky notes, discussions, and tasks.
-3. The user may convert a discussion into a change proposal.
-4. The user creates a private working copy of the published workspace.
-5. The user makes changes privately.
-6. The user submits a frozen update request with a note and links it to the originating discussion when applicable.
-7. The owner or publisher approves it or requests changes.
-8. The user revises their private copy and resubmits when necessary.
-9. The user cannot make their content changes visible without approval.
+1. The user receives Contributor access directly or through a Team.
+2. The user opens the current Team Workspace and participates in chat, annotations, discussions, and tasks.
+3. In Review mode, revisions remain proposed until an Owner or Publisher merges them.
+4. The user responds to requested changes in the same proposal flow.
+5. In Freeflow, revisions autosave directly and appear in the change feed with complete attribution.
+6. Agent-assisted changes record the exact skill version used.
+7. The user may inspect their own revisions and recover from detected conflicts.
+8. The user cannot publish, change the editing policy, or grant access.
 
 ### 10.7 Workspace Viewer
 
-1. The user receives Viewer access directly or through a group.
-2. The user browses the stable published content.
-3. The user may use the chat agent against the published version and authorized knowledge.
+1. The user receives Viewer access directly or through a Team.
+2. The user browses the current Team Workspace or a selected immutable published version.
+3. The user may use the chat agent against authorized workspace content and knowledge.
 4. The user may create private notes that remain visible only to them.
-5. If workspace policy permits, the user creates a detached or linked private copy for personal work.
-6. The user cannot create shared collaboration objects, submit, or publish unless upgraded.
+5. If workspace policy permits, the user copies selected content into a separate Private Workspace for personal exploration.
+6. The user cannot create shared collaboration objects, edit, submit a proposal, or publish unless upgraded.
 7. Revocation blocks future source access but cannot recall material the user already copied or downloaded.
 
-### 10.7a Workspace Commenter
+### 10.8 Skill Proposer
 
-1. The user receives Commenter access directly or through a group.
-2. The user browses and chats against the stable published content.
-3. The user selects content and creates a shared annotation, or creates a workspace-level sticky note or task.
-4. The user mentions or assigns registered users and groups that already have workspace access.
-5. Recipients open the exact anchored content and participate in the discussion.
-6. The user may resolve their own discussion when policy permits but cannot modify published content, submit an update, or publish.
-7. A Contributor, Publisher, or Owner may convert the discussion into a governed change proposal.
+1. The Team Member chooses `Propose skill improvement` on a Team-owned skill.
+2. HelpUDoc creates a private proposal from an approved version.
+3. The proposer edits instructions and permitted supporting files.
+4. The proposer tests privately within a governed sandbox and their existing entitlements.
+5. The proposer sees validation errors, declared capabilities, test results, and the proposed semantic version.
+6. The proposer submits an immutable candidate to the owning Team's lead.
+7. The proposer responds to requested changes or sees approval and activation status.
+8. The private proposal never becomes available to a Team Workspace until it is approved and active.
 
-### 10.8 Skill Creator
+### 10.9 Team Lead skill review
 
-1. The user chooses `Create skill`.
-2. HelpUDoc creates a private skill draft owned by the user.
-3. The creator uses Skill Creator assistance to edit instructions and permitted supporting files.
-4. The creator tests privately within a governed sandbox and their existing entitlements.
-5. The creator sees validation errors, declared capabilities, and test results.
-6. The creator submits an immutable candidate and publication note.
-7. The creator responds to requested changes or sees the approval and active-version status.
-8. To update an approved skill, the creator starts a new private version.
+1. The Team Lead opens their Team's skill-improvement queue.
+2. The Team Lead sees the frozen candidate, proposer, version diff, validation results, test evidence, scripts, dependencies, and requested capabilities.
+3. The Team Lead verifies that the skill does not attempt to bypass runtime authorization.
+4. The Team Lead approves, rejects, or requests changes with notes.
+5. Approval creates a new immutable version when enterprise checks pass, or routes a high-risk candidate to Enterprise Skill Admin.
+6. The Team Lead cannot silently edit the proposer's draft or self-approve their own proposal by default.
 
-### 10.9 Skill Reviewer
+### 10.10 Enterprise Skill Admin
 
-1. The reviewer opens the skill review queue.
-2. The reviewer sees the frozen candidate, author, version diff, validation results, test evidence, scripts, dependencies, and requested capabilities.
-3. The reviewer verifies that the skill does not attempt to bypass runtime authorization.
-4. The reviewer approves, rejects, or requests changes with notes.
-5. The reviewer cannot silently edit the creator's draft.
-6. If the reviewer is also the creator, self-approval is blocked unless an explicit single-admin exception applies.
-
-### 10.10 Skill Catalog Admin
-
-1. The catalog admin sees approved skill versions.
-2. The admin activates a selected approved version.
-3. The admin assigns the skill to one or more groups.
-4. The admin monitors usage and incident reports.
-5. The admin may suspend the skill immediately, restore it, retire it, or roll back to a previously approved version.
-6. Assignment and activation remain separate audit events.
+1. The admin defines enterprise validation, risk classification, runtime-declaration, and cross-Team-sharing policy.
+2. The admin reviews only candidates requiring an enterprise exception or high-risk approval.
+3. The admin monitors active versions, assignments, usage, and incident reports across Teams.
+4. The admin may suspend an unsafe skill immediately, restore it, retire it, or roll back to a previously approved version.
+5. The admin does not routinely replace Team Lead approval.
+6. Team approval, enterprise approval when required, activation, assignment, and suspension remain separate audit events.
 
 ### 10.11 Skill Consumer
 
-1. The user joins one or more groups.
-2. Active skills assigned to those groups appear in discovery and slash commands.
-3. The user invokes a skill.
-4. Runtime authorization intersects the skill's declared needs with the user's allowed tools, MCP servers, knowledge, workspace access, and platform policy.
-5. The user cannot invoke suspended, retired, unapproved, or unassigned skills.
+1. The user belongs to one or more Teams.
+2. Active skills assigned through those Teams appear in discovery.
+3. A Team Workspace pins an exact approved version in its skill manifest.
+4. The user invokes the pinned skill.
+5. Runtime authorization verifies workspace access, exact-version status, the user's Team skill entitlement, declared dependencies, tools, MCP servers, knowledge, connections, sandbox policy, and platform policy.
+6. The user cannot invoke a suspended, retired, unapproved, unassigned, or differently versioned skill.
+7. If blocked, the workspace shows a concise reason and request-access action; the full authorization trace remains optional diagnostic detail.
 
 ### 10.12 Knowledge Author
 
@@ -669,30 +740,30 @@ Knowledge approval must record:
 ### 10.14 Knowledge Access Admin
 
 1. The access admin activates an approved knowledge version.
-2. The admin assigns the knowledge source to groups.
+2. The admin assigns the knowledge source to Teams.
 3. The admin sets review or expiry dates where required.
 4. The admin may suspend, restore, retire, or roll back the source.
-5. The admin can explain which users currently receive access through which groups.
+5. The admin can explain which users currently receive access through which Teams.
 
 ### 10.15 Knowledge Consumer
 
-1. The user receives knowledge access through one or more groups.
+1. The user receives knowledge access through one or more Teams.
 2. The knowledge appears in search or agent retrieval only in an authorized workspace context.
 3. The user may consume the source but cannot alter it.
-4. Removing the user from every granting group blocks future retrieval.
+4. Removing the user from every granting Team blocks future retrieval.
 
 ### 10.16 Runtime Capability Admin
 
 1. The administrator opens the runtime-capability registry.
 2. The administrator enables or disables built-in tools and registers approved MCP servers.
 3. The administrator classifies capabilities by risk and defines whether human approval is required.
-4. The administrator assigns Tool Consumer, MCP Consumer, and Sandbox Executor entitlements to groups.
+4. The administrator assigns Tool Consumer, MCP Consumer, and Sandbox Executor entitlements to Teams.
 5. The administrator configures sandbox limits, allowed execution images, network policy, timeouts, and output retention.
 6. The administrator monitors failures, revokes unsafe capabilities, and reviews audit events.
 
 ### 10.17 Tool Consumer
 
-1. A built-in tool is assigned to one of the user's groups or enabled by platform default.
+1. A built-in tool is assigned to one of the user's Teams or enabled by platform default.
 2. The user starts work in an authorized workspace.
 3. The active skill declares the tool when a skill is active.
 4. Workspace and platform policy permit the requested action.
@@ -701,12 +772,12 @@ Knowledge approval must record:
 
 ### 10.18 MCP Consumer and Connection Owner
 
-1. The user receives MCP Consumer access through a group.
+1. The user receives MCP Consumer access through a Team.
 2. If the server requires delegated authentication, the user connects their own external account.
-3. HelpUDoc stores the credential as a personal connection and never shares it with the group.
+3. HelpUDoc stores the credential as a personal connection and never shares it with the Team.
 4. The user invokes an approved skill or workflow.
 5. The runtime verifies server entitlement, workspace policy, skill declaration, connection validity, and server availability.
-6. The user may revoke their connection at any time without changing group entitlement.
+6. The user may revoke their connection at any time without changing Team entitlement.
 7. Entitlement without a valid connection produces `Connection required`; a connection without entitlement remains unavailable.
 
 ### 10.19 Sandbox Executor
@@ -731,28 +802,28 @@ Example:
 |---|---|---|
 | Platform | Platform Member | No general administration |
 | Workspace A | Workspace Owner | Manages access and versions for Workspace A |
-| Workspace B | Workspace Viewer via Research group | Views Workspace B only |
-| Skill `proposal-writer` | Skill Creator | Edits private drafts and submits versions |
-| Skill catalog | Skill Reviewer | Reviews other creators' submissions |
-| Knowledge catalog | Knowledge Consumer via Research group | Uses assigned Research knowledge |
-| Runtime | MCP Consumer via Research group | May use assigned MCP servers with Alice's own valid connection |
-| Runtime | Sandbox Executor via Data Analysts group | May request governed code execution |
+| Workspace B | Workspace Viewer via Research Team | Views Workspace B only |
+| Skill `proposal-writer` | Skill Proposer | Edits a private improvement proposal and submits it to the owning Team |
+| Research Team | Team Lead | Reviews Team-owned skill proposals except her own |
+| Knowledge catalog | Knowledge Consumer via Research Team | Uses assigned Research knowledge |
+| Runtime | MCP Consumer via Research Team | May use assigned MCP servers with Alice's own valid connection |
+| Runtime | Sandbox Executor via Data Analysts Team | May request governed code execution |
 
-Alice's Workspace Owner role does not let her approve skills. Her Skill Reviewer role does not let her manage Workspace B. Her group-based knowledge access does not let her curate knowledge.
+Alice's Workspace Owner role does not let her approve skills. Her Team Lead role does not let her manage Workspace B. Her Team-based knowledge access does not let her curate knowledge.
 
 ```mermaid
 flowchart LR
     U["Alice"]
     PM["Platform Member"]
     WA["Workspace A<br/>Owner"]
-    SC["Skill: proposal-writer<br/>Creator"]
-    SR["Skill catalog<br/>Reviewer"]
-    GM["Research group<br/>Member"]
+    SC["Skill: proposal-writer<br/>Proposer"]
+    SR["Research Team<br/>Team Lead"]
+    GM["Research Team<br/>Member"]
     WB["Workspace B<br/>Viewer"]
     KC["Research knowledge<br/>Consumer"]
     MCP["Research MCP servers<br/>Consumer"]
     SE["Code Interpreter sandbox<br/>Executor"]
-    DG["Data Analysts group<br/>Member"]
+    DG["Data Analysts Team<br/>Member"]
 
     U --> PM
     U --> WA
@@ -766,7 +837,7 @@ flowchart LR
     DG --> SE
 ```
 
-Each edge is an independent role binding or group-derived grant. It contributes only the capabilities defined for that scope.
+Each edge is an independent role binding or Team-derived grant. It contributes only the capabilities defined for that scope.
 
 ### 11.2 Effective authorization
 
@@ -776,7 +847,7 @@ For every protected operation, HelpUDoc computes:
 candidate capabilities =
     ownership capabilities
     UNION direct role grants
-    UNION group-derived audience grants
+    UNION Team-derived audience grants
     UNION permitted platform override
 
 effective capabilities =
@@ -789,8 +860,8 @@ effective capabilities =
 Examples:
 
 - Workspace Publisher plus Workspace Viewer yields Publisher capabilities for that workspace.
-- Skill Consumer through two groups still produces one effective consume grant.
-- Skill Reviewer cannot edit an approved version because artifact-state rules make it immutable.
+- Skill Consumer through two Teams still produces one effective consume grant.
+- Team Lead cannot edit an approved skill version because artifact-state rules make it immutable.
 - A skill requesting an MCP server remains unable to use it if the invoking user is not entitled to that server.
 - A user with an OAuth connection remains unable to use its MCP server without an MCP Consumer entitlement.
 - A Sandbox Executor remains unable to run an undeclared skill script or escape sandbox policy.
@@ -800,27 +871,27 @@ Examples:
 
 The first release uses allow-only grants:
 
-- direct and group grants are combined;
+- direct and Team grants are combined;
 - duplicate grants are deduplicated;
 - the strongest applicable resource role determines candidate capabilities;
 - no explicit deny grant exists;
 - platform and artifact policies may still prohibit an action.
 
-Removing a direct grant does not remove access that remains available through a group. The UI must state this before removal:
+Removing a direct grant does not remove access that remains available through a Team. The UI must state this before removal:
 
-> Removing direct access will not remove Alice's Viewer access through the Research group.
+> Removing direct access will not remove Alice's Viewer access through the Research Team.
 
 ### 11.4 Privileged-role composition
 
-When one person holds both creator and reviewer roles:
+When one person is both a skill proposer and a Team Lead:
 
 - they may create and submit;
-- they may review other users' submissions;
+- they may review other Team Members' submissions;
 - they may not approve their own candidate by default.
 
-When one person holds both Reviewer and Catalog Admin:
+When one person is both Team Lead and Enterprise Skill Admin:
 
-- they may approve a candidate and later activate it;
+- they may approve a Team candidate and later perform a required enterprise decision;
 - these remain separate recorded decisions;
 - a stricter deployment may require different users for each action.
 
@@ -834,27 +905,27 @@ When one person is both Platform Admin and Workspace Owner:
 
 | Action | Default separation rule |
 |---|---|
-| Publish own private workspace | Allowed for Workspace Owner |
+| Publish current Team Workspace | Allowed for Workspace Owner and Publisher |
 | Contributor publish directly | Not allowed |
-| Approve own skill | Not allowed |
-| Activate skill after reviewing it | Allowed in MVP, separately audited |
+| Approve own skill proposal | Not allowed |
+| Perform Team and required enterprise approval on the same skill | Allowed in MVP, separately audited |
 | Approve own platform knowledge | Not allowed |
-| Assign approved skill or knowledge to groups | Catalog or Access Admin only |
+| Assign approved skill or knowledge to Teams | Team Lead or Access Admin within policy |
 | Inspect unsubmitted private artifact | Not allowed |
 | Break-glass private access | Reason, time limit, and audit required |
 
-For a single-administrator installation, an explicit platform setting may permit self-approval of skill or knowledge candidates. When enabled:
+For a single-lead Team or single-administrator installation, an explicit enterprise setting may permit self-approval of skill or knowledge candidates. When enabled:
 
 - the UI shows a warning;
 - the event is marked `selfApproved`;
 - all validation checks remain mandatory; and
 - the action is highlighted in the audit log.
 
-## 12. Group Governance
+## 12. Team Governance
 
-Groups are reusable collections of registered users.
+Teams are reusable collections of registered users and replace `Group` in the user-facing model. Existing group records may remain an implementation detail during migration.
 
-Groups may grant:
+Teams may grant:
 
 - Workspace Viewer;
 - Workspace Contributor;
@@ -864,13 +935,14 @@ Groups may grant:
 - MCP Consumer; and
 - Sandbox Executor.
 
-Groups must not grant in the first release:
+Teams must not grant in the first release:
 
 - Platform Admin;
+- Enterprise Skill Admin;
 - Workspace Owner;
-- Skill Creator;
-- Skill Reviewer;
-- Skill Catalog Admin;
+- Workspace Publisher;
+- Team Lead;
+- Skill Proposer;
 - Knowledge Author;
 - Knowledge Curator;
 - Knowledge Access Admin; or
@@ -878,15 +950,23 @@ Groups must not grant in the first release:
 
 These privileged or accountable roles are direct assignments to named users.
 
-Effective group access is the union of all active group memberships.
+Effective Team access is the union of all active Team memberships.
 
-Removing a user from a group:
+Removing a user from a Team:
 
-- immediately removes future access derived only from that group;
-- does not remove access available through another group or direct grant;
-- does not delete the user's private workspace copies or drafts;
+- immediately removes future access derived only from that Team;
+- does not remove access available through another Team or direct grant;
+- does not delete the user's Private Workspaces or private proposal drafts;
+- does not remove Team Workspace edits already incorporated into revision history;
 - blocks future publication if the removed grant was the user's only publication authority; and
 - is recorded in the audit log.
+
+Workspace and skill boundaries remain independent:
+
+- granting a Team Workspace to Team B does not assign Team A's skills to Team B;
+- a workspace skill pin expresses the version the workspace expects, not the user's entitlement;
+- a Team B member may invoke that version only if Team B also receives an approved cross-Team skill assignment; and
+- users affiliated with several Teams receive the union of their active Team skill grants, subject to workspace and platform policy.
 
 ## 13. Review Requirements
 
@@ -895,18 +975,22 @@ Removing a user from a group:
 Before creating a published workspace version, HelpUDoc must:
 
 - verify the publisher or approver at request time;
-- verify the publication policy;
+- verify that the actor is the Workspace Owner or a named Workspace Publisher;
+- identify the Team Workspace revision boundary;
+- show all proposed, merged, applied, reverted, and conflicted changes since the previous publication;
+- block publication on unresolved conflicts or failed mandatory validation;
 - freeze a complete version manifest;
+- freeze the exact approved workspace skill manifest;
 - exclude conversations, agent activity, schedules, credentials, connections, and personal settings;
 - validate that referenced content is included and readable;
-- detect conflicts with a newer published version; and
+- detect a newer Team Workspace revision before the atomic commit; and
 - publish atomically.
 
 ### 13.2 Skill review
 
 A skill publication request must provide:
 
-- skill name, description, owner, and intended audience;
+- skill name, description, owning Team, proposer, and intended Team audience;
 - immutable version and file manifest;
 - diff from the previous approved version, if any;
 - declared tools, MCP servers, scripts, dependencies, network needs, and storage needs;
@@ -914,9 +998,9 @@ A skill publication request must provide:
 - static safety scan results;
 - sandbox test results;
 - known limitations; and
-- creator publication note.
+- proposer publication note.
 
-Approval must not grant the skill's consumers any declared dependency automatically.
+The owning Team Lead reviews the request. Enterprise Skill Admin review is required only when enterprise risk or exception policy says so. Approval must not grant the skill's consumers any declared dependency automatically.
 
 ### 13.3 Knowledge review
 
@@ -927,7 +1011,7 @@ A platform-knowledge publication request must provide:
 - provenance and licensing information;
 - classification and sensitive-data assessment;
 - ingestion or extraction status;
-- intended group audience;
+- intended Team audience;
 - freshness or next-review date; and
 - diff from the previous approved version, if any.
 
@@ -945,7 +1029,7 @@ Before enabling a built-in tool, MCP server, or sandbox execution mode, the revi
 - sandbox compatibility and resource limits where applicable;
 - logging, retention, and incident response;
 - default-access policy; and
-- groups eligible for assignment.
+- Teams eligible for assignment.
 
 Code Interpreter and skill-script execution must additionally enforce:
 
@@ -962,22 +1046,22 @@ Code Interpreter and skill-script execution must additionally enforce:
 
 ## 14. Access Revocation and Artifact Retention
 
-### 14.1 Published access
+### 14.1 Workspace and catalog access
 
 Revocation blocks:
 
-- future published-workspace reads;
+- future Team Workspace and published-version reads;
 - future skill invocation;
 - future knowledge retrieval;
-- creation of new linked private copies; and
+- creation of new personal copies from the Team Workspace; and
 - future publication or review actions derived from the removed role.
 
-### 14.2 Existing private copies
+### 14.2 Existing personal copies
 
-Revocation does not automatically delete a user's private working copy or information already copied from an artifact. Instead:
+Revocation does not automatically delete information a user already copied into a separate Private Workspace. Instead:
 
-- the private copy becomes detached;
-- the user cannot sync from or publish back to the former source;
+- the personal copy remains detached from the source Team Workspace;
+- the user cannot refresh from or publish back to the former source;
 - source version and grant details are hidden where necessary; and
 - the owner is warned during sharing that access cannot function as digital-rights recall.
 
@@ -995,10 +1079,10 @@ Suspending a skill or knowledge source:
 The platform records immutable audit events for:
 
 - platform-role assignment and removal;
-- group creation, deletion, membership, and access changes;
+- Team creation, deletion, membership, Team Lead assignment, and access changes;
 - direct workspace access grants and revocations;
-- workspace publication, approval, restoration, ownership transfer, and archive;
-- skill submission, review decision, activation, assignment, suspension, rollback, and retirement;
+- workspace editing-policy changes, proposals, merges, Freeflow edits, conflicts, restores, publication, ownership transfer, and archive;
+- skill proposal submission, Team Lead decision, enterprise decision when required, activation, Team assignment, suspension, rollback, and retirement;
 - knowledge submission, review decision, activation, assignment, suspension, rollback, and retirement;
 - tool and MCP registration, enablement, assignment, invocation approval, disablement, and connection revocation;
 - sandbox entitlement, execution request, selected inputs, policy decision, completion, limit violation, and output publication;
@@ -1024,20 +1108,25 @@ Every shared-resource surface should support `Why do I have access?`.
 Examples:
 
 - `You are the Workspace Owner.`
-- `You have Contributor access through the Research group.`
+- `You have Contributor access through the Research Team.`
 - `You have Publisher access directly and Viewer access through Product.`
-- `This skill is assigned through the Sales and Proposal Operations groups.`
-- `This knowledge source is assigned through the Compliance group.`
-- `This MCP server is assigned through the Research group; your Google connection supplies authentication.`
-- `Code Interpreter is allowed through the Data Analysts group and runs under the Restricted Python sandbox policy.`
+- `This workspace pins research-synthesis@3.2.0. You may run it through the Policy Team.`
+- `You can edit this workspace, but Research Analysis is not assigned through any of your Teams.`
+- `This knowledge source is assigned through the Compliance Team.`
+- `This MCP server is assigned through the Research Team; your Google connection supplies authentication.`
+- `Code Interpreter is allowed through the Data Analysts Team and runs under the Restricted Python sandbox policy.`
 - `Platform Admin override is active until 16:00 UTC under request BRK-1042.`
 
-Administrators need an effective-access inspector that shows:
+The default workspace UI shows only the decision, its main reason, and an action such as `Request skill access`. It must not permanently display the full runtime-policy matrix.
+
+An optional authorization-details view and the administrator effective-access inspector show:
 
 - direct grants;
-- group-derived grants;
+- Team-derived grants;
 - ownership;
 - role-to-capability expansion;
+- exact workspace skill pin;
+- skill-owning Team and granting Team;
 - artifact-state restrictions;
 - platform-policy restrictions; and
 - the final allow or deny decision.
@@ -1049,8 +1138,13 @@ Domain-specific grant tables are preferred over one unconstrained generic ACL ta
 ### 17.1 Identity and platform governance
 
 - `users`
-- `groups`
-- `group_members`
+- `teams`
+- `team_members`
+- `team_role_bindings`
+  - `teamId`
+  - `userId`
+  - `role`: `member` or `lead`
+- existing `groups` and `group_members` may map to these tables during migration
 - `platform_role_bindings`
   - `userId`
   - `role`
@@ -1063,20 +1157,32 @@ The existing `users.isAdmin` may remain during migration but should eventually m
 ### 17.2 Workspace governance
 
 - `workspaces`
-  - `visibility`: `private` or `published`
+  - `workspaceType`: `private` or `team`
   - `ownerId`
-  - optional ownership group or team context
-  - `publicationPolicy`
+  - `editingPolicy`: `review` or `freeflow` for Team Workspaces
+  - `currentRevisionId`
   - `currentPublishedVersionId`
 - `workspace_access_grants`
   - `workspaceId`
-  - `principalType`: `user` or `group`
+  - `principalType`: `user` or `team`
   - `principalId`
-  - `role`: `viewer`, `commenter`, `contributor`, or `publisher`
+  - `role`: `viewer`, `contributor`, or `publisher`
   - `grantedBy`
-- `workspace_publication_links`
-- `workspace_publication_requests`
+  - invariant: `publisher` is valid only for `principalType = user`
+- `workspace_revisions`
+  - immutable revision identifier, parent revision, actor, source, timestamp, and content-manifest reference
+- `workspace_changes`
+  - editing policy, base and result revisions, actor, source, affected artifacts, skill version, conflict state, and published-version inclusion
+- `workspace_change_proposals`
+  - proposal revision set, author, reviewer, decision, notes, and merge revision
 - `workspace_published_versions`
+  - immutable content manifest, source revision boundary, publisher, publication note, validation results, and workspace skill manifest
+- `workspace_skill_pins`
+  - `workspaceId`
+  - `skillId`
+  - exact `skillVersionId`
+  - `pinnedBy`
+  - validation status
 - `workspace_collaboration_objects`
   - `workspaceId`
   - `originVersionId`
@@ -1085,23 +1191,24 @@ The existing `users.isAdmin` may remain during migration but should eventually m
   - `authorId`
   - `visibility`: `private`, `selected_principals`, or `workspace_audience`
   - `status`: `open`, `discussing`, `proposed`, `resolved`, `addressed`, or `anchor_changed`
-  - optional `assigneeId`, `dueAt`, `linkedPrivateWorkspaceId`, `linkedPublicationRequestId`, and `resolvedByVersionId`
+  - optional `assigneeId`, `dueAt`, `linkedChangeProposalId`, `linkedChangeId`, and `resolvedByVersionId`
 - `workspace_collaboration_audiences`
-  - collaboration object to user or group audience bindings
+  - collaboration object to user or Team audience bindings
 - `workspace_collaboration_messages`
   - immutable message history with author and timestamp
 - `workspace_collaboration_mentions`
-  - mentioned user or group, notification status, and access-check result
+  - mentioned user or Team, notification status, and access-check result
 - `workspace_collaboration_events`
   - edits, status changes, assignments, re-anchors, moderation, proposal conversion, and resolution
 
-Workspace Owner remains an accountable direct membership or ownership field, not a group grant.
+Workspace Owner remains an accountable direct membership or ownership field, not a Team grant.
 
 ### 17.3 Skill governance
 
 - `skills`
   - stable skill identity
-  - creator attribution
+  - owning Team
+  - original creator attribution
   - active version
   - lifecycle status
 - `skill_versions`
@@ -1111,15 +1218,16 @@ Workspace Owner remains an accountable direct membership or ownership field, not
   - validation summary
 - `skill_review_requests`
   - submitted version
-  - reviewer
-  - decision
+  - owning Team
+  - Team Lead reviewer and decision
+  - optional Enterprise Skill Admin reviewer and decision
   - notes
 - `skill_role_bindings`
-  - reviewers and catalog admins
+  - enterprise skill administrators
 - existing or evolved `skill_grants`
-  - group-to-approved-skill consumption grants
+  - Team-to-approved-skill consumption grants
 
-Private drafts must be stored separately from the shared runtime registry. Only an activated approved version is materialized into the runtime skill catalog.
+Private proposals must be stored separately from the shared runtime registry. Only an activated approved version is materialized into the runtime skill catalog. Workspace skill pins must reference immutable approved versions.
 
 ### 17.4 Knowledge governance
 
@@ -1134,20 +1242,20 @@ Private drafts must be stored separately from the shared runtime registry. Only 
   - provenance and classification metadata
 - `knowledge_review_requests`
 - `knowledge_role_bindings`
-- existing or evolved `knowledge_source_group_grants`
+- existing or evolved `knowledge_source_team_grants`
 
 ### 17.5 Runtime capability governance
 
 - `tool_registry`
   - tool identifier, risk class, status, and approval mode
-- `tool_group_grants`
+- `tool_team_grants`
 - existing or evolved `mcp_server_registry`
-- existing or evolved `mcp_server_group_grants`
+- existing or evolved `mcp_server_team_grants`
 - `user_connections`
   - encrypted personal credential reference and expiry
 - `sandbox_policies`
   - execution image, resource, filesystem, network, timeout, and retention limits
-- `sandbox_group_grants`
+- `sandbox_team_grants`
 - `sandbox_runs`
   - requester, skill version, selected inputs, policy snapshot, status, and output manifest
 
@@ -1156,25 +1264,30 @@ Private drafts must be stored separately from the shared runtime registry. Only 
 ### 18.1 Member navigation
 
 - **Private workspaces**
-- **Published workspaces**
+- **Team workspaces**
   - Owned by you
   - Shared directly
-  - Available through groups
-  - Open discussions
-  - Assigned notes and tasks
-- **Published workspace collaboration**
-  - `Preview` and `Annotate` modes
+  - Available through Teams
+  - Editing policy and unpublished-change count
+  - Current published version
+- **Team Workspace collaboration**
+  - `Edit`, `Preview`, and `History` modes according to role
+  - Review proposal queue or Freeflow change feed
   - content-anchored annotation rail
   - workspace-level `Notes & Tasks` panel
-  - audience selector for registered users and groups with existing access
+  - audience selector for registered users and Teams with existing access
   - mentions, assignees, due dates, replies, resolve and reopen actions
-  - `Convert to change proposal` action for authorized roles
+  - link a discussion to a proposed or applied change
   - visible origin-version, re-anchor, and resolution status
+- **Published versions**
+  - immutable snapshot history
+  - publication note, publisher, validation status, and exact skill manifest
+  - restore as a new current revision
 - **My skills**
-  - Private drafts
-  - In review
+  - Private improvement proposals
+  - Submitted to Team Lead
   - Changes requested
-  - Published
+  - Team-approved versions
 - **My knowledge**
   - Private drafts
   - In review
@@ -1182,9 +1295,9 @@ Private drafts must be stored separately from the shared runtime registry. Only 
 
 ### 18.2 Governance navigation
 
-- **Users and groups**
+- **Users and Teams**
 - **Workspace governance**
-- **Skill reviews**
+- **Team skill reviews**
 - **Skill catalog**
 - **Knowledge reviews**
 - **Knowledge catalog**
@@ -1200,18 +1313,33 @@ Private drafts must be stored separately from the shared runtime registry. Only 
 
 Use user-facing terms:
 
-- `Publisher`, not `Editor`, for a published workspace;
-- `Contributor` for a user who may submit but not publish;
-- `Creator`, `Reviewer`, `Catalog Admin`, and `Consumer` for skills;
+- `Team Workspace`, not `Shared Workspace` or `Published Workspace`, for the mutable collaboration surface;
+- `Published version` for an immutable workspace snapshot;
+- `Publisher`, not `Editor`, for publication authority;
+- `Contributor` for a user who may propose or Freeflow-edit but not publish;
+- `Skill Proposer`, `Team Lead`, `Enterprise Skill Admin`, and `Skill Consumer` for skills;
 - `Author`, `Curator`, `Access Admin`, and `Consumer` for knowledge.
 
-Do not label anyone as an editor of a published artifact.
+Do not label anyone as an editor of a published version. `Edit` applies only to the current Team Workspace.
 
-Published workspace chat must display a persistent boundary message such as:
+The Team Workspace header must display:
 
-> You are working from published version v3. Chat and annotations cannot change this version. Generated changes will be saved privately.
+- the editing policy;
+- autosave or proposal status;
+- the number of changes since the current published version; and
+- whether the user is viewing the current Team Workspace or an immutable published version.
 
-Notifications for annotations, mentions, and tasks must not include protected content excerpts unless the recipient is authorized to access the underlying published workspace at delivery time. If a mentioned principal lacks access, HelpUDoc must block the mention and offer an access-request workflow rather than silently granting access.
+The workspace skill surface shows a compact summary such as:
+
+> research-synthesis@3.2.0 · Available through Policy Team
+
+When blocked:
+
+> You can edit this workspace, but Research Analysis is not assigned through any of your Teams. Request access.
+
+The complete six-check authorization trace is available through `View authorization details` or the administrator access inspector. It is not displayed as primary workspace content.
+
+Notifications for annotations, mentions, and tasks must not include protected content excerpts unless the recipient is authorized to access the Team Workspace at delivery time. If a mentioned principal lacks access, HelpUDoc must block the mention and offer an access-request workflow rather than silently granting access.
 
 ## 19. Runtime Enforcement
 
@@ -1222,7 +1350,8 @@ For skill invocation:
 ```text
 allowed =
     skill is approved and active
-    AND user is an assigned consumer or platform-authorized administrator
+    AND Team Workspace pins the exact approved skill version, when invoked in a Team Workspace
+    AND user is entitled through an affiliated Team
     AND requested capability is declared by the skill
     AND user is entitled to that capability
     AND workspace policy permits that capability
@@ -1234,7 +1363,7 @@ For a concrete tool, MCP, or sandbox invocation:
 ```text
 allowed =
     capability is registered and enabled
-    AND user has direct or group entitlement
+    AND user has direct or Team entitlement
     AND workspace policy allows it
     AND active skill declares it, when a skill is active
     AND required personal connection is valid
@@ -1242,15 +1371,17 @@ allowed =
     AND required human approval is present
 ```
 
-For chat or agent activity in a published workspace:
+For chat or agent activity in a Team Workspace:
 
 ```text
 allowed =
-    user can view the published workspace
+    user can view the Team Workspace
     AND requested knowledge and runtime capabilities are independently authorized
-    AND the agent reads only the selected published version and authorized collaboration context
-    AND any generated content mutation targets a private workspace, draft, or change proposal
-    AND the published content manifest remains unchanged
+    AND any active skill matches the exact workspace pin and the user is entitled to it
+    AND the agent reads only authorized workspace and collaboration context
+    AND any generated content mutation follows Review mode or Freeflow
+    AND every generated change records actor, source, and exact skill version
+    AND every published version remains unchanged
 ```
 
 Client-side filtering is for usability only and is never sufficient authorization.
@@ -1270,30 +1401,35 @@ Publication, approval, assignment, restoration, suspension, and deletion permiss
 - Existing `owner` memberships become Workspace Owner.
 - Existing `editor` memberships become Workspace Publisher.
 - Existing `viewer` memberships remain Workspace Viewer.
-- Existing team membership continues as an audience grant.
-- The UI term `Team workspaces` becomes `Published workspaces`.
+- Existing Team membership continues as an audience grant.
+- Existing shared workspaces become Team Workspaces.
+- Existing released workspace states migrate into immutable published-version history.
+- Existing editable state becomes the current Team Workspace revision.
+- Existing workspaces default to Review mode unless current collaborative editing can be migrated with reliable attribution.
 - Direct registered-user grants become valid even when the user is not in the owning team.
-- Existing workspace comments, if any, migrate into the collaboration overlay with their source version recorded.
-- Workspace Commenter is introduced as a non-editing role between Viewer and Contributor.
+- Existing workspace comments migrate into Team Workspace collaboration records with their source version recorded.
 
 ### 20.3 Skills
 
 - Existing global skills become approved active catalog skills.
+- Every existing skill receives an accountable owning Team or an enterprise-owned migration placeholder.
 - Existing Skill Builder and direct registry-editing routes remain Platform Admin-only.
-- Existing group skill grants become Skill Consumer assignments.
-- User-created private drafts use new draft storage and never write directly to the active shared registry.
+- Existing group skill grants become Team-based Skill Consumer assignments.
+- Existing skill reviewers or catalog administrators map to Team Lead or Enterprise Skill Admin according to scope.
+- User-created private proposals use new draft storage and never write directly to the active shared registry.
+- Existing workspaces that reference `latest` are resolved to their current approved exact skill version and then pinned.
 
 ### 20.4 Knowledge
 
 - Existing global knowledge becomes approved active platform knowledge.
-- Existing knowledge group grants become Knowledge Consumer assignments.
+- Existing knowledge group grants become Team-based Knowledge Consumer assignments.
 - Existing workspace-local knowledge remains governed by the owning private workspace.
 
 ### 20.5 Runtime capabilities
 
 - Existing runtime-configured built-in tools become enabled registry tools with documented default access.
 - Existing MCP servers become registered servers.
-- Existing `mcp_server_group_grants` become MCP Consumer assignments.
+- Existing `mcp_server_group_grants` become Team-based MCP Consumer assignments.
 - Existing personal delegated OAuth tokens become MCP Connection Owner records.
 - Existing skill sandbox enablement becomes an explicit sandbox policy and Sandbox Executor entitlement.
 - Existing skills must declare required built-in tools, MCP servers, and sandbox scripts before stricter enforcement is enabled.
@@ -1303,18 +1439,24 @@ Publication, approval, assignment, restoration, suspension, and deletion permiss
 The first governed release should include:
 
 1. Platform Member and Platform Admin.
-2. Workspace Owner, Publisher, Contributor, Commenter, and Viewer.
-3. Direct published-workspace sharing with registered users outside a team.
-4. Published-workspace chat, private notes, shared annotations, sticky notes, discussions, mentions, assignments, and tasks.
-5. Version anchors, re-anchor status, moderation, and conversion of discussions into change proposals and private work.
-6. Private user-created skill drafts.
-7. Skill submission, one-reviewer approval, activation, suspension, rollback, and group assignment.
-8. Knowledge Author, Curator, Access Admin, and Consumer roles, with admin fulfilling curator and access-admin duties initially.
-9. Group-based consumption grants.
-10. Self-approval prevention with a single-admin exception setting.
-11. Immutable versions and audit events.
-12. Tool, MCP-server, personal-connection, and Code Interpreter sandbox governance.
-13. An access-explanation view.
+2. Team Member, Team Lead, and the user-facing migration from Group to Team.
+3. Workspace Owner, Publisher, Contributor, and Viewer.
+4. One Team Workspace mutable collaboration layer.
+5. Direct and multi-Team workspace sharing, including registered users outside the owner's Team.
+6. Review mode and Freeflow editing with policy-toggle audit.
+7. Attributed change feed, proposal queue, per-file history, conflict states, and restore.
+8. Immutable workspace publication by Owner or Publisher.
+9. Team Workspace chat, private notes, shared annotations, discussions, mentions, assignments, and tasks.
+10. Private user-created Team skill-improvement proposals.
+11. Team Lead review, enterprise validation, high-risk escalation, activation, suspension, rollback, and Team assignment.
+12. Exact approved skill-version pins in the Team Workspace and every published version.
+13. Cross-Team skill grants without workspace-driven catalog inheritance.
+14. Knowledge Author, Curator, Access Admin, and Consumer roles, with admin fulfilling curator and access-admin duties initially.
+15. Team-based consumption grants.
+16. Self-approval prevention with a single-lead or single-admin exception setting.
+17. Immutable versions and audit events.
+18. Tool, MCP-server, personal-connection, and Code Interpreter sandbox governance.
+19. Compact in-workspace access explanations plus an optional detailed authorization inspector.
 
 Deferred:
 
@@ -1323,8 +1465,10 @@ Deferred:
 - multiple required approvers;
 - custom roles;
 - explicit deny rules;
-- delegated group administrators;
-- Publisher grants through groups;
+- delegated Team administrators beyond Team Lead;
+- Publisher grants through Teams;
+- direct skill grants outside Teams;
+- character-by-character simultaneous co-editing;
 - formal break-glass automation beyond an audited administrative procedure.
 
 ## 22. Acceptance Criteria
@@ -1338,32 +1482,44 @@ Deferred:
 
 ### Workspace
 
-- No role edits a published workspace in place.
-- Authorized users can use chat against a published workspace without mutating its content.
+- A Private Workspace remains owner-only.
+- Sharing or promotion creates one Team Workspace, not a second shared or synchronization layer.
+- A Team Workspace can be granted to multiple Teams and direct registered users.
+- No role edits an immutable published version in place.
+- Authorized users can use chat against a Team Workspace or published version without mutating historical versions.
 - A Viewer can create private notes without exposing them to other users.
-- A Commenter can create shared annotations, sticky notes, discussions, and tasks but cannot submit or publish content changes.
+- A Contributor can create shared annotations, discussions, and tasks and can propose or make content changes according to the workspace editing policy, but cannot publish.
 - Mentions and assignments do not grant access and cannot expose content to unauthorized recipients.
 - Shared annotations retain the originating published version and content anchor.
 - New publications re-anchor unchanged content and mark ambiguous or missing anchors for review.
-- A Contributor can convert a discussion into a change proposal and private working copy.
+- In Review mode, Contributor revisions do not change the current Team Workspace until Owner or Publisher merge.
+- In Freeflow, Contributor revisions autosave directly with actor, timestamp, source, and exact skill-version attribution.
+- Switching editing policy does not discard pending proposals or revision history.
 - Resolving or moderating a discussion does not modify the published version.
-- A Contributor can submit but cannot publish.
-- A Publisher can publish only when workspace policy permits.
+- A Contributor cannot publish under either editing policy.
+- A Publisher can publish the current Team Workspace without waiting for the Owner.
+- Publication freezes the exact workspace content and skill manifests atomically.
 - An external registered user can receive direct access without joining the owning team.
-- Private working copies remain owner-only.
+- Publishing leaves the Team Workspace open for subsequent work.
 
 ### Skill
 
-- A member can create and test a private skill without changing the shared catalog.
-- Submission freezes an immutable candidate.
-- A creator cannot approve their own candidate by default.
+- Every governed skill has one owning Team.
+- A Team Member can create and test a private skill-improvement proposal without changing the shared catalog.
+- Submission freezes an immutable candidate in the owning Team's queue.
+- A proposer cannot approve their own candidate by default.
+- A Team Lead can approve ordinary Team skill improvements after mandatory enterprise validation passes.
+- Enterprise Skill Admin reviews high-risk or exception cases and can suspend unsafe versions.
 - Only approved active versions can be assigned or invoked.
+- Every Team Workspace and published version pins an exact approved skill version.
+- Workspace access alone does not grant the pinned skill.
+- A user may invoke the pinned version only through an affiliated Team grant.
 - A skill cannot extend the invoking user's runtime authority.
 - Suspension blocks new invocation immediately.
 
 ### Knowledge
 
-- Workspace knowledge follows private-workspace access.
+- Private Workspace knowledge remains owner-only; Team Workspace knowledge follows Team Workspace access and publication boundaries.
 - Platform knowledge requires approval before assignment.
 - Only assigned active knowledge is available to a non-admin user.
 - Published knowledge updates create new immutable versions.
@@ -1387,15 +1543,20 @@ Deferred:
 
 Adopt the following model as the product baseline:
 
-1. **Nobody edits a published artifact in place.**
-2. **Published content is stable while its version-aware collaboration layer remains active.**
-3. **Chat, private notes, shared annotations, sticky notes, tasks, and discussions do not modify the published content manifest.**
-4. **Every user may create privately within platform policy.**
-5. **Shared discussions become content changes only through a governed proposal, private-work, review, and publication flow.**
-6. **Workspace publication is governed by the Workspace Owner and trusted Publishers.**
-7. **Skill publication is governed by Skill Reviewers and the Skill Catalog Admin.**
-8. **Platform-knowledge publication is governed by Knowledge Curators and the Knowledge Access Admin.**
-9. **Groups grant consumption, commenting, or contribution access, not ownership or privileged governance.**
-10. **Tools, MCP servers, personal connections, and sandbox execution are independent governed capabilities.**
-11. **A person's permissions are the explainable composition of their scoped roles, artifact state, group grants, runtime entitlements, and platform policy.**
-12. **Platform administration does not silently invalidate private-work boundaries.**
+1. **A Private Workspace is for owner-only exploration; a Team Workspace is the single mutable collaboration surface.**
+2. **Review mode and Freeflow are editing policies, not separate workspace types.**
+3. **Every content revision is attributed, recoverable, and visible in a proposal queue or change feed.**
+4. **Nobody edits an immutable published artifact in place.**
+5. **Workspace Owner and named Publishers create immutable versions from the current Team Workspace.**
+6. **Contributors never gain publication authority merely because Freeflow is enabled.**
+7. **Teams are the user-facing identity, access, and skill-governance unit.**
+8. **Every governed skill has an owning Team, and Team Members submit improvements to that Team's Lead.**
+9. **Enterprise Skill Admin supplies guardrails, exceptional approval, and emergency control without becoming the routine Team reviewer.**
+10. **Every Team Workspace pins exact approved skill versions, and publication freezes those pins.**
+11. **Workspace access never merges Team skill catalogs or bypasses skill entitlement.**
+12. **A multi-Team or directly shared workspace user may invoke a pinned skill only through one of their Team affiliations.**
+13. **The workspace shows concise access status; full authorization traces are optional diagnostics.**
+14. **Platform-knowledge publication is governed by Knowledge Curators and the Knowledge Access Admin.**
+15. **Tools, MCP servers, personal connections, and sandbox execution are independent governed capabilities.**
+16. **A person's permissions are the explainable composition of scoped roles, artifact state, Team grants, exact skill pins, runtime entitlements, and platform policy.**
+17. **Platform administration does not silently invalidate private-work boundaries.**

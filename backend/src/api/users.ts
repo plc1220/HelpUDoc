@@ -124,7 +124,7 @@ export default function usersRoutes(userService: UserService, workspaceService: 
       res.json({ groups });
     } catch (error) {
       console.error('Failed to list groups', error);
-      res.status(500).json({ error: 'Failed to list groups' });
+      res.status(500).json({ error: 'Failed to list teams' });
     }
   });
 
@@ -138,7 +138,7 @@ export default function usersRoutes(userService: UserService, workspaceService: 
         return res.status(400).json({ error: error.issues[0]?.message || 'Invalid payload' });
       }
       console.error('Failed to create group', error);
-      res.status(500).json({ error: 'Failed to create group' });
+      res.status(500).json({ error: 'Failed to create team' });
     }
   });
 
@@ -146,12 +146,12 @@ export default function usersRoutes(userService: UserService, workspaceService: 
     try {
       const removed = await userService.deleteGroup(req.params.groupId);
       if (!removed) {
-        return res.status(404).json({ error: 'Group not found' });
+        return res.status(404).json({ error: 'Team not found' });
       }
       res.status(204).send();
     } catch (error) {
       console.error('Failed to delete group', error);
-      res.status(500).json({ error: 'Failed to delete group' });
+      res.status(500).json({ error: 'Failed to delete team' });
     }
   });
 
@@ -159,12 +159,12 @@ export default function usersRoutes(userService: UserService, workspaceService: 
     try {
       const access = await userService.getGroupPromptAccess(req.params.groupId);
       if (!access) {
-        return res.status(404).json({ error: 'Group not found' });
+        return res.status(404).json({ error: 'Team not found' });
       }
       res.json(access);
     } catch (error) {
       console.error('Failed to load group access', error);
-      res.status(500).json({ error: 'Failed to load group access' });
+      res.status(500).json({ error: 'Failed to load team access' });
     }
   });
 
@@ -173,7 +173,7 @@ export default function usersRoutes(userService: UserService, workspaceService: 
       const payload = groupPromptAccessSchema.parse(req.body);
       const access = await userService.replaceGroupPromptAccess(req.params.groupId, payload);
       if (!access) {
-        return res.status(404).json({ error: 'Group not found' });
+        return res.status(404).json({ error: 'Team not found' });
       }
       res.json(access);
     } catch (error) {
@@ -181,7 +181,7 @@ export default function usersRoutes(userService: UserService, workspaceService: 
         return res.status(400).json({ error: error.issues[0]?.message || 'Invalid payload' });
       }
       console.error('Failed to update group access', error);
-      res.status(500).json({ error: 'Failed to update group access' });
+      res.status(500).json({ error: 'Failed to update team access' });
     }
   });
 
@@ -191,7 +191,7 @@ export default function usersRoutes(userService: UserService, workspaceService: 
       res.json({ members });
     } catch (error) {
       console.error('Failed to list group members', error);
-      res.status(500).json({ error: 'Failed to list group members' });
+      res.status(500).json({ error: 'Failed to list team members' });
     }
   });
 
@@ -205,7 +205,7 @@ export default function usersRoutes(userService: UserService, workspaceService: 
         return res.status(400).json({ error: error.issues[0]?.message || 'Invalid payload' });
       }
       console.error('Failed to add group member', error);
-      res.status(500).json({ error: 'Failed to add group member' });
+      res.status(500).json({ error: 'Failed to add team member' });
     }
   });
 
@@ -215,7 +215,7 @@ export default function usersRoutes(userService: UserService, workspaceService: 
       res.status(204).send();
     } catch (error) {
       console.error('Failed to remove group member', error);
-      res.status(500).json({ error: 'Failed to remove group member' });
+      res.status(500).json({ error: 'Failed to remove team member' });
     }
   });
 

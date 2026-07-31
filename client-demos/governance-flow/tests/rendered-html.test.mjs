@@ -31,11 +31,14 @@ test("server-renders the HelpUDoc UI scenario prototype", async () => {
   assert.match(html, /<title>HelpUDoc Governance UI Prototype<\/title>/i);
   assert.match(html, /HelpUDoc governance scenarios/);
   assert.match(html, /Private workspaces/);
-  assert.match(html, /Published workspaces/);
+  assert.match(html, /Team workspaces/);
   assert.match(html, /Customer research/);
-  assert.match(html, /Create private skill/);
-  assert.match(html, /Review and assign skill/);
-  assert.match(html, /Governed runtime/);
+  assert.match(html, /Configure team workspace/);
+  assert.match(html, /Edit in Freeflow/);
+  assert.match(html, /Publisher change feed/);
+  assert.match(html, /Propose skill improvement/);
+  assert.match(html, /Team Lead skill review/);
+  assert.match(html, /Cross-team skill coverage/);
   assert.match(html, /Annotate published work/);
   assert.match(html, /Turn discussion into proposal/);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton/i);

@@ -574,7 +574,7 @@ export const fetchGroups = async (): Promise<ManagedGroup[]> => {
   const response = await apiFetch(`${API_URL}/users/groups/list`);
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));
-    throw new Error(data.error || 'Failed to load groups');
+    throw new Error(data.error || 'Failed to load teams');
   }
   const data = await response.json();
   return data.groups;
@@ -590,7 +590,7 @@ export const createGroup = async (name: string): Promise<ManagedGroup> => {
   });
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));
-    throw new Error(data.error || 'Failed to create group');
+    throw new Error(data.error || 'Failed to create team');
   }
   const data = await response.json();
   return data.group;
@@ -602,7 +602,7 @@ export const deleteGroup = async (groupId: string): Promise<void> => {
   });
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));
-    throw new Error(data.error || 'Failed to delete group');
+    throw new Error(data.error || 'Failed to delete team');
   }
 };
 
@@ -610,7 +610,7 @@ export const fetchGroupMembers = async (groupId: string): Promise<ManagedUser[]>
   const response = await apiFetch(`${API_URL}/users/groups/${groupId}/members`);
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));
-    throw new Error(data.error || 'Failed to load group members');
+    throw new Error(data.error || 'Failed to load team members');
   }
   const data = await response.json();
   return data.members;
@@ -644,7 +644,7 @@ export const fetchGroupPromptAccess = async (groupId: string): Promise<GroupProm
   const response = await apiFetch(`${API_URL}/users/groups/${groupId}/access`);
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));
-    throw new Error(data.error || 'Failed to load group access');
+    throw new Error(data.error || 'Failed to load team access');
   }
   return response.json();
 };
@@ -659,7 +659,7 @@ export const saveGroupPromptAccess = async (groupId: string, payload: GroupPromp
   });
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));
-    throw new Error(data.error || 'Failed to update group access');
+    throw new Error(data.error || 'Failed to update team access');
   }
   return response.json();
 };

@@ -4,12 +4,12 @@ import { useState } from "react";
 
 type ScenarioId =
   | "private-owner"
-  | "share-external"
-  | "external-contributor"
-  | "submit-update"
-  | "skill-creator"
-  | "admin-review"
-  | "runtime-run"
+  | "team-policy"
+  | "freeflow-edit"
+  | "publisher-queue"
+  | "skill-improvement"
+  | "team-skill-review"
+  | "cross-team-runtime"
   | "annotate-published"
   | "discussion-proposal";
 
@@ -35,63 +35,63 @@ const scenarios: Scenario[] = [
     surface: "workspace",
   },
   {
-    id: "share-external",
+    id: "team-policy",
     number: "02",
-    label: "Share published version",
+    label: "Configure team workspace",
     viewer: "Alice Chen",
     role: "Workspace Owner",
     summary:
-      "Alice publishes a stable version, then gives Bob Contributor access without adding him to her team.",
+      "Alice shares the workspace with teams and named users, enables Freeflow editing, and delegates publication to Priya.",
     surface: "workspace",
   },
   {
-    id: "external-contributor",
+    id: "freeflow-edit",
     number: "03",
-    label: "External contributor",
+    label: "Edit in Freeflow",
     viewer: "Bob Rahman",
     role: "Workspace Contributor",
     summary:
-      "Bob can read the published version and create his own private working copy, but cannot edit the published workspace.",
+      "Bob edits the current Team Workspace directly. Changes autosave into the activity feed without changing published version 3.",
     surface: "workspace",
   },
   {
-    id: "submit-update",
+    id: "publisher-queue",
     number: "04",
-    label: "Submit workspace update",
-    viewer: "Bob Rahman",
-    role: "Workspace Contributor",
+    label: "Publisher change feed",
+    viewer: "Priya Nair",
+    role: "Workspace Publisher",
     summary:
-      "Bob’s work stays private until he submits a frozen update request for Alice to review.",
+      "Priya reviews the accumulated changes and publishes version 4 without waiting for the Workspace Owner.",
     surface: "workspace",
   },
   {
-    id: "skill-creator",
+    id: "skill-improvement",
     number: "05",
-    label: "Create private skill",
+    label: "Propose skill improvement",
     viewer: "Priya Nair",
     role: "Skill Creator",
     summary:
-      "Priya builds and tests a private skill. The draft is not available to other users or the shared catalog.",
+      "Priya privately improves a Research Team skill and submits a frozen candidate to the owning Team Lead.",
     surface: "skills",
   },
   {
-    id: "admin-review",
+    id: "team-skill-review",
     number: "06",
-    label: "Review and assign skill",
+    label: "Team Lead skill review",
     viewer: "Maya Wong",
-    role: "Skill Catalog Admin",
+    role: "Research Team Lead",
     summary:
-      "Maya reviews the frozen candidate, requested capabilities, and sandbox tests before approving and assigning it.",
+      "Maya reviews the improvement, creates an immutable team version, and controls which other teams may consume it.",
     surface: "skills",
   },
   {
-    id: "runtime-run",
+    id: "cross-team-runtime",
     number: "07",
-    label: "Governed runtime",
-    viewer: "Priya Nair",
-    role: "Skill Consumer · Sandbox Executor",
+    label: "Cross-team skill coverage",
+    viewer: "Elena Garcia",
+    role: "Workspace Contributor · Policy Team",
     summary:
-      "A run proceeds only when the user, group, workspace, skill, connection, and sandbox gates all agree.",
+      "The workspace pins one approved skill version. Team affiliation and explicit grants determine who can invoke it.",
     surface: "runtime",
   },
   {
@@ -99,9 +99,9 @@ const scenarios: Scenario[] = [
     number: "08",
     label: "Annotate published work",
     viewer: "Elena Garcia",
-    role: "Workspace Commenter",
+    role: "Workspace Contributor",
     summary:
-      "Elena cannot edit version 3, but she can anchor a shared annotation, mention authorized collaborators, and create a team task.",
+      "Elena cannot edit published version 3, but she can anchor an annotation, mention authorized workspace members, and create a team task.",
     surface: "workspace",
   },
   {
@@ -111,21 +111,21 @@ const scenarios: Scenario[] = [
     viewer: "Bob Rahman",
     role: "Workspace Contributor",
     summary:
-      "Bob turns the version-anchored discussion into a governed change proposal and private work without changing version 3.",
+      "Bob converts a version-anchored discussion into a tracked Team Workspace change without modifying published version 3.",
     surface: "workspace",
   },
 ];
 
 const privateWorkspaces = [
-  { name: "Customer research", meta: "Private · changes to publish" },
+  { name: "Customer research", meta: "Private · only you" },
   { name: "Proposal sandbox", meta: "Private draft" },
   { name: "Q3 planning", meta: "Up to date" },
 ];
 
-const publishedWorkspaces = [
-  { name: "Product knowledge", meta: "Product Team · v8" },
-  { name: "Customer research", meta: "Shared by Alice · v3" },
-  { name: "Policy handbook", meta: "Operations · v12" },
+const teamWorkspaces = [
+  { name: "Product knowledge", meta: "Product Team · published v8" },
+  { name: "Customer research", meta: "2 teams · published v3" },
+  { name: "Policy handbook", meta: "Operations Team · published v12" },
 ];
 
 function Glyph({ children }: { children: React.ReactNode }) {
@@ -144,10 +144,10 @@ function StatusChip({
 
 function WorkspaceDrawer({
   selected,
-  published,
+  team,
 }: {
   selected: string;
-  published: boolean;
+  team: boolean;
 }) {
   return (
     <aside className="workspace-drawer">
@@ -171,7 +171,7 @@ function WorkspaceDrawer({
               <button
                 type="button"
                 className={
-                  selected === workspace.name && !published ? "workspace-active" : ""
+                  selected === workspace.name && !team ? "workspace-active" : ""
                 }
                 key={workspace.name}
               >
@@ -187,15 +187,15 @@ function WorkspaceDrawer({
         </section>
         <section>
           <div className="section-label">
-            <span>Published workspaces</span>
-            <span>{publishedWorkspaces.length}</span>
+            <span>Team workspaces</span>
+            <span>{teamWorkspaces.length}</span>
           </div>
           <div className="workspace-list">
-            {publishedWorkspaces.map((workspace) => (
+            {teamWorkspaces.map((workspace) => (
               <button
                 type="button"
                 className={
-                  selected === workspace.name && published ? "workspace-active" : ""
+                  selected === workspace.name && team ? "workspace-active" : ""
                 }
                 key={workspace.name}
               >
@@ -262,27 +262,30 @@ function FilePane({ readOnly = false }: { readOnly?: boolean }) {
 
 function DocumentCanvas({
   readOnly,
-  submitState,
+  freeflowState,
   collaborationState,
   onCollaborationAction,
 }: {
   readOnly?: boolean;
-  submitState?: boolean;
+  freeflowState?: "editing" | "publisher";
   collaborationState?: "annotate" | "proposal";
   onCollaborationAction?: () => void;
 }) {
   const collaborating = Boolean(collaborationState);
+  const changed = Boolean(freeflowState);
   return (
-    <section className={`document-canvas ${collaborating ? "collaboration-mode" : ""}`}>
+    <section className={`document-canvas ${collaborating ? "collaboration-mode" : ""} ${changed ? "freeflow-document" : ""}`}>
       <div className="document-toolbar">
         <div>
           <Glyph>▤</Glyph>
           <span>Research / interview-summary.md</span>
           {readOnly ? <StatusChip tone="published">Read only</StatusChip> : null}
-          {submitState ? <StatusChip tone="pending">4 unpublished changes</StatusChip> : null}
+          {freeflowState === "editing" ? <StatusChip tone="allowed">Autosaved · Bob</StatusChip> : null}
+          {freeflowState === "publisher" ? <StatusChip tone="pending">4 changes since v3</StatusChip> : null}
         </div>
         <div>
-          <button type="button" className={!collaborating ? "toolbar-active" : ""}>Preview</button>
+          <button type="button" className={!collaborating ? "toolbar-active" : ""}>{changed ? "Edit" : "Preview"}</button>
+          {changed ? <button type="button">History</button> : null}
           {collaborating ? <button type="button" className="toolbar-active">Annotate</button> : null}
           {collaborating ? <button type="button">Notes &amp; tasks <b>2</b></button> : null}
           <button type="button">···</button>
@@ -309,11 +312,12 @@ function DocumentCanvas({
             <p>Registered collaborators need access without joining an internal team.</p>
             {collaborating ? <button type="button" className="annotation-pin" aria-label="Open annotation thread">3</button> : null}
           </div>
-          <div className={submitState ? "changed-finding" : ""}>
+          <div className={changed ? "changed-finding" : ""}>
             <span>03</span>
             <strong>Clear contribution boundaries</strong>
-            <p>Contributors should propose changes without replacing the approved version.</p>
-            {submitState ? <small>Edited in this private copy</small> : null}
+            <p>Contributors can edit the Team Workspace while published versions remain immutable.</p>
+            {freeflowState === "editing" ? <small>Bob edited · autosaved 1m ago</small> : null}
+            {freeflowState === "publisher" ? <small>Changed since published v3</small> : null}
           </div>
         </div>
         <h2>Recommended direction</h2>
@@ -336,7 +340,7 @@ function DocumentCanvas({
           <div className="annotation-audience">
             <span>Share with</span>
             <b>Priya Nair</b>
-            <b>Research group</b>
+            <b>Research Team</b>
           </div>
           <div className="annotation-meta-row">
             <span>Assign to Alice Chen</span>
@@ -369,13 +373,13 @@ function DocumentCanvas({
           </div>
           <div className="annotation-actions">
             <button type="button">Resolve</button>
-            <button type="button" className="primary-action" onClick={onCollaborationAction}>Convert to change proposal</button>
+            <button type="button" className="primary-action" onClick={onCollaborationAction}>Create tracked team change</button>
           </div>
         </aside>
       ) : null}
       {collaborating ? (
         <div className="sticky-tray">
-          <div><span>Sticky note</span><strong>Confirm notification privacy</strong><small>Research group · open</small></div>
+          <div><span>Sticky note</span><strong>Confirm notification privacy</strong><small>Research Team · open</small></div>
           <div><span>Task</span><strong>Review external access wording</strong><small>Alice Chen · due 5 Aug</small></div>
         </div>
       ) : null}
@@ -388,9 +392,9 @@ function LumoPane({
 }: {
   scenario: ScenarioId;
 }) {
-  const runtime = scenario === "runtime-run";
-  const contributor = scenario === "external-contributor";
-  const submit = scenario === "submit-update";
+  const runtime = scenario === "cross-team-runtime";
+  const contributor = scenario === "freeflow-edit";
+  const submit = scenario === "publisher-queue";
   const annotating = scenario === "annotate-published";
   const proposing = scenario === "discussion-proposal";
   return (
@@ -424,11 +428,11 @@ function LumoPane({
             </div>
             <div className="user-message">Turn this thread into an actionable change.</div>
             <div className="assistant-message">
-              I can create a change proposal linked to this thread, then open private work for you. Alice will still approve what becomes version 4.
+              I can create a tracked change linked to this thread in the current Team Workspace. Published version 3 will remain unchanged.
             </div>
             <div className="tool-activity">
               <div><span className="pulse-dot"></span><strong>Proposal handoff</strong><small>Ready</small></div>
-              <p>Origin version, content anchor, participants, and discussion summary will be preserved.</p>
+              <p>The source version, content anchor, participants, and discussion summary will be preserved in the change feed.</p>
             </div>
           </>
         ) : runtime ? (
@@ -446,14 +450,14 @@ function LumoPane({
           <>
             <div className="user-message">Can you update the published interview summary?</div>
             <div className="assistant-message">
-              This version is read-only. Choose <strong>Work privately</strong> to make changes in your own copy.
+              Freeflow is enabled. Your edits are autosaved to the Team Workspace and attributed in the change feed.
             </div>
           </>
         ) : submit ? (
           <>
             <div className="user-message">Summarize what I changed before I submit it.</div>
             <div className="assistant-message">
-              You clarified the contribution boundary and added evidence from the latest interviews. These changes are still private.
+              Four changes have accumulated since published version 3. As Publisher, you can inspect the feed and publish version 4.
             </div>
           </>
         ) : (
@@ -473,56 +477,96 @@ function LumoPane({
   );
 }
 
-function ShareDialog({
+function TeamWorkspaceSettingsDialog({
   onNext,
 }: {
   onNext: () => void;
 }) {
+  const [freeflow, setFreeflow] = useState(true);
   return (
     <div className="modal-layer">
       <div className="share-dialog" role="dialog" aria-modal="true" aria-labelledby="share-title">
         <div className="dialog-head">
           <div>
-            <small>Published workspace</small>
-            <h2 id="share-title">Manage access</h2>
+            <small>Team Workspace</small>
+            <h2 id="share-title">Collaboration settings</h2>
           </div>
           <button type="button">×</button>
         </div>
         <p className="dialog-copy">
-          Share the stable published version of <strong>Customer research</strong>.
-          Your private workspace and conversations remain visible only to you.
+          Choose how people collaborate in <strong>Customer research</strong>.
+          Published versions remain immutable in either mode.
         </p>
-        <label className="people-search">
-          <span>⌕</span>
-          <input value="Bob Rahman" readOnly aria-label="Search registered users" />
-          <StatusChip tone="pending">Registered user</StatusChip>
-        </label>
-        <div className="role-choice">
-          <span>Role</span>
-          <button type="button">Viewer</button>
-          <button type="button">Commenter</button>
-          <button type="button" className="selected">Contributor</button>
-          <button type="button">Publisher</button>
+        <div className="editing-policy" aria-label="Editing policy">
+          <span>Editing policy</span>
+          <button type="button" className={!freeflow ? "selected" : ""} onClick={() => setFreeflow(false)}>
+            <strong>Changes require review</strong>
+            <small>Contributors submit proposals for an Owner or Publisher to merge.</small>
+          </button>
+          <button type="button" className={freeflow ? "selected" : ""} onClick={() => setFreeflow(true)}>
+            <strong>Freeflow editing</strong>
+            <small>Contributors edit directly; every revision appears in the change feed.</small>
+          </button>
         </div>
         <div className="policy-note">
           <Glyph>✓</Glyph>
           <div>
-            <strong>Approval required</strong>
-            <p>Bob can submit changes from a private copy. Alice approves what becomes published.</p>
+            <strong>Owner and Publishers can publish</strong>
+            <p>Priya can publish a new immutable version without waiting for Alice.</p>
           </div>
         </div>
         <div className="access-list">
-          <span>People with access</span>
+          <span>Teams and people with access</span>
           <div><b className="avatar alice">AC</b><p><strong>Alice Chen</strong><small>Owner · Direct access</small></p><em>Owner</em></div>
-          <div><b className="avatar bob">BR</b><p><strong>Bob Rahman</strong><small>Outside Product Team · Direct access</small></p><em>Contributor</em></div>
-          <div><b className="avatar group">PT</b><p><strong>Product Team</strong><small>8 members · Group access</small></p><em>Viewer</em></div>
+          <div><b className="avatar priya">PN</b><p><strong>Priya Nair</strong><small>Product Team · Direct role</small></p><em>Publisher</em></div>
+          <div><b className="avatar group">PT</b><p><strong>Product Team</strong><small>8 members · Team access</small></p><em>Contributor</em></div>
+          <div><b className="avatar group">PL</b><p><strong>Policy Team</strong><small>5 members · Team access</small></p><em>Contributor</em></div>
         </div>
+        <div className="capability-boundary"><Glyph>i</Glyph><p>Workspace access does not merge team skill catalogs. Pinned skills are checked separately for every user.</p></div>
         <div className="dialog-actions">
           <button type="button">Cancel</button>
-          <button type="button" className="primary-action" onClick={onNext}>Update access</button>
+          <button type="button" className="primary-action" onClick={onNext}>Save collaboration policy</button>
         </div>
       </div>
     </div>
+  );
+}
+
+function ChangeQueuePane({ onPublish }: { onPublish: () => void }) {
+  const changes = [
+    ["BR", "interview-summary.md", "Bob Rahman · manual edit · 1m ago", "Modified"],
+    ["L", "themes.md", "Lumo · research-synthesis@3.2.0 · 8m ago", "Modified"],
+    ["EG", "survey-results.xlsx", "Elena Garcia · uploaded · 18m ago", "Replaced"],
+    ["PN", "README.md", "Priya Nair · manual edit · 32m ago", "Modified"],
+  ];
+  return (
+    <aside className="change-queue-pane">
+      <div className="change-queue-head">
+        <div><small>Publisher view</small><strong>Changes since v3</strong></div>
+        <span>4</span>
+      </div>
+      <div className="queue-summary-card">
+        <div><strong>Current Team Workspace</strong><small>All changes are included in the next snapshot.</small></div>
+        <StatusChip tone="allowed">No conflicts</StatusChip>
+      </div>
+      <div className="change-list">
+        {changes.map(([initials, file, detail, state]) => (
+          <button type="button" key={file}>
+            <span className={`avatar small-avatar ${initials === "BR" ? "bob" : initials === "L" ? "group" : ""}`}>{initials}</span>
+            <p><strong>{file}</strong><small>{detail}</small></p>
+            <em>{state}</em>
+          </button>
+        ))}
+      </div>
+      <div className="skill-lock-card">
+        <div><Glyph>✦</Glyph><p><strong>Workspace skill set</strong><small>research-synthesis@3.2.0 · exact version pinned</small></p></div>
+        <StatusChip tone="allowed">2 teams covered</StatusChip>
+      </div>
+      <div className="change-queue-foot">
+        <p>Publishing creates immutable version 4. The Team Workspace remains open for new work.</p>
+        <button type="button" className="primary-action" onClick={onPublish}>Publish version 4</button>
+      </div>
+    </aside>
   );
 }
 
@@ -535,30 +579,32 @@ function WorkspaceSurface({
   onNext: () => void;
   onToast: (message: string) => void;
 }) {
-  const published =
-    scenario.id === "share-external" ||
-    scenario.id === "external-contributor" ||
-    scenario.id === "annotate-published" ||
-    scenario.id === "discussion-proposal";
+  const team = scenario.id !== "private-owner";
+  const freeflowEditing = scenario.id === "freeflow-edit";
+  const publisherQueue = scenario.id === "publisher-queue";
+  const publishedSnapshot =
+    scenario.id === "annotate-published" || scenario.id === "discussion-proposal";
   const collaborating =
     scenario.id === "annotate-published" || scenario.id === "discussion-proposal";
-  const readOnly =
-    scenario.id === "external-contributor" || collaborating;
-  const submitting = scenario.id === "submit-update";
+  const readOnly = publishedSnapshot;
   const headerStatus = collaborating
     ? "Published · version 3 · 3 discussions"
-    : published
-      ? "Published · version 3"
-      : submitting
-        ? "Private copy · 4 changes"
-        : "Private · only you";
+    : freeflowEditing
+      ? "Team · Freeflow · autosaved"
+      : publisherQueue
+        ? "Team · 4 changes since v3"
+        : team
+          ? "Team · Freeflow · published v3"
+          : "Private · only you";
   const action =
     scenario.id === "private-owner"
-      ? "Publish workspace"
-      : scenario.id === "share-external"
-        ? "Manage access"
-        : scenario.id === "external-contributor"
-          ? "Work privately"
+      ? "Create Team Workspace"
+      : scenario.id === "team-policy"
+        ? "Collaboration settings"
+        : scenario.id === "freeflow-edit"
+          ? "Open change feed"
+          : scenario.id === "publisher-queue"
+            ? "Publish version 4"
           : scenario.id === "annotate-published"
             ? "Notes & tasks"
             : scenario.id === "discussion-proposal"
@@ -567,12 +613,12 @@ function WorkspaceSurface({
 
   const triggerAction = () => {
     const messages: Record<string, string> = {
-      "private-owner": "Published version 3 created. Your private workspace remains private.",
-      "share-external": "Bob now has Contributor access.",
-      "external-contributor": "Private working copy created for Bob.",
-      "submit-update": "Update request sent to Alice for review.",
-      "annotate-published": "Annotation sent to Priya, Alice, and the Research group.",
-      "discussion-proposal": "Change proposal created. Bob can now work on it privately.",
+      "private-owner": "Team Workspace setup opened. Your original private workspace remains private.",
+      "team-policy": "Freeflow enabled. Priya can publish without waiting for Alice.",
+      "freeflow-edit": "Bob’s autosaved revision is visible in the Publisher change feed.",
+      "publisher-queue": "Immutable version 4 published. The Team Workspace remains open for new work.",
+      "annotate-published": "Annotation sent to Priya, Alice, and the Research Team.",
+      "discussion-proposal": "Tracked Team Workspace change created from the version 3 discussion.",
     };
     onToast(messages[scenario.id]);
     onNext();
@@ -581,49 +627,49 @@ function WorkspaceSurface({
   return (
     <div className="product-shell">
       <ProductRail />
-      <WorkspaceDrawer selected="Customer research" published={published} />
+      <WorkspaceDrawer selected="Customer research" team={team} />
       <div className="workspace-main">
         <header className="workspace-header">
           <div className="workspace-identity">
             <div className="workspace-icon">CR</div>
             <div>
-              <span>{published ? "Published workspaces" : "Private workspaces"} /</span>
+              <span>{team ? "Team workspaces" : "Private workspaces"} /</span>
               <strong>Customer research</strong>
             </div>
-            <StatusChip tone={published ? "published" : submitting ? "pending" : "private"}>
+            <StatusChip tone={publishedSnapshot ? "published" : publisherQueue ? "pending" : team ? "allowed" : "private"}>
               {headerStatus}
             </StatusChip>
           </div>
           <div className="workspace-actions">
-            {published ? <button type="button">Version history</button> : null}
+            {team ? <button type="button">Published versions</button> : null}
             <button type="button" className="primary-action" onClick={triggerAction}>{action}</button>
             <button type="button">···</button>
           </div>
         </header>
-        {collaborating ? (
+        {freeflowEditing ? (
+          <div className="context-banner freeflow-banner">
+            <span>Freeflow editing</span>
+            Contributors edit directly. Revisions autosave to the change feed; published version 3 stays unchanged.
+            <button type="button" onClick={triggerAction}>View change feed</button>
+          </div>
+        ) : publisherQueue ? (
+          <div className="context-banner publisher-banner">
+            <span>Publisher review</span>
+            No per-change approval is required. Review the activity feed and publish the current Team Workspace.
+            <button type="button" onClick={triggerAction}>Publish version 4</button>
+          </div>
+        ) : collaborating ? (
           <div className="context-banner collaboration-banner">
             <span>Published content is read-only</span>
-            Discussions, annotations, and tasks stay active in a separate collaboration layer.
+            Discussions and tasks stay active; tracked changes target the current Team Workspace.
             <button type="button" onClick={triggerAction}>{action}</button>
-          </div>
-        ) : readOnly ? (
-          <div className="context-banner">
-            <span>Published workspace</span>
-            This is a stable read-only version shared directly with you by Alice Chen.
-            <button type="button" onClick={triggerAction}>Work privately</button>
-          </div>
-        ) : submitting ? (
-          <div className="context-banner contribution-banner">
-            <span>Private working copy</span>
-            Only you can see these changes. Submit an update when they are ready for Alice’s review.
-            <button type="button" onClick={triggerAction}>Submit update</button>
           </div>
         ) : null}
         <div className="workspace-columns">
           <FilePane readOnly={readOnly} />
           <DocumentCanvas
             readOnly={readOnly}
-            submitState={submitting}
+            freeflowState={freeflowEditing ? "editing" : publisherQueue ? "publisher" : undefined}
             collaborationState={
               scenario.id === "annotate-published"
                 ? "annotate"
@@ -633,10 +679,10 @@ function WorkspaceSurface({
             }
             onCollaborationAction={triggerAction}
           />
-          <LumoPane scenario={scenario.id} />
+          {publisherQueue ? <ChangeQueuePane onPublish={triggerAction} /> : <LumoPane scenario={scenario.id} />}
         </div>
       </div>
-      {scenario.id === "share-external" ? <ShareDialog onNext={triggerAction} /> : null}
+      {scenario.id === "team-policy" ? <TeamWorkspaceSettingsDialog onNext={triggerAction} /> : null}
     </div>
   );
 }
@@ -647,18 +693,18 @@ function SettingsSidebar({ review }: { review: boolean }) {
       <div>
         <small>Administration</small>
         <button type="button"><Glyph>⌂</Glyph>Dashboard</button>
-        <button type="button"><Glyph>♙</Glyph>Users &amp; Groups</button>
+        <button type="button"><Glyph>♙</Glyph>Users &amp; Teams</button>
         <button type="button"><Glyph>◇</Glyph>Knowledge</button>
       </div>
       <div>
         <small>Agents</small>
-        <button type="button" className="active"><Glyph>✦</Glyph>{review ? "Skill reviews" : "My skills"}</button>
+        <button type="button" className="active"><Glyph>✦</Glyph>{review ? "Team skill reviews" : "My skill proposals"}</button>
         <button type="button"><Glyph>⌘</Glyph>Plugins &amp; Tools</button>
         <button type="button"><Glyph>⇄</Glyph>MCP servers</button>
       </div>
       <div className="settings-user">
         <div className="avatar alice">{review ? "MW" : "PN"}</div>
-        <span><strong>{review ? "Maya Wong" : "Priya Nair"}</strong><small>{review ? "Platform Admin" : "Platform Member"}</small></span>
+        <span><strong>{review ? "Maya Wong" : "Priya Nair"}</strong><small>{review ? "Research Team Lead" : "Product Team member"}</small></span>
       </div>
     </aside>
   );
@@ -672,41 +718,41 @@ function SkillCreatorView({
   onToast: (message: string) => void;
 }) {
   const submit = () => {
-    onToast("Skill publication request submitted to the review queue.");
+    onToast("Skill improvement proposal submitted to the Research Team Lead.");
     onNext();
   };
   return (
     <div className="settings-main">
       <header className="settings-header">
-        <div><small>Skills &amp; tooling</small><h1>My skills</h1><p>Create and test private skills before requesting publication.</p></div>
-        <button type="button" className="primary-action">＋ Create skill</button>
+        <div><small>Skills &amp; tooling</small><h1>My skill proposals</h1><p>Improve a team skill privately, then submit a frozen candidate to its owning team.</p></div>
+        <button type="button" className="primary-action">＋ Create private skill</button>
       </header>
       <div className="skill-workbench">
         <aside className="skill-list-pane">
-          <label className="search-box"><span>⌕</span><input placeholder="Search my skills" /></label>
+          <label className="search-box"><span>⌕</span><input placeholder="Search proposals" /></label>
           <div className="skill-filter"><button type="button" className="active">All</button><button type="button">Drafts</button><button type="button">In review</button></div>
           <button type="button" className="skill-list-item active">
             <div className="skill-symbol">✦</div>
-            <span><strong>Research synthesis</strong><small>research-synthesis · edited 4m ago</small></span>
-            <StatusChip tone="private">Private draft</StatusChip>
+            <span><strong>Research synthesis</strong><small>Research Team v3.1.0 · edited 4m ago</small></span>
+            <StatusChip tone="private">Private improvement</StatusChip>
           </button>
           <button type="button" className="skill-list-item">
             <div className="skill-symbol muted">✦</div>
-            <span><strong>Proposal helper</strong><small>proposal-helper · version 2</small></span>
-            <StatusChip tone="published">Published</StatusChip>
+            <span><strong>Proposal helper</strong><small>Product Team v2.0.0</small></span>
+            <StatusChip tone="published">Team skill</StatusChip>
           </button>
         </aside>
         <section className="skill-editor">
           <div className="skill-editor-head">
-            <div><span className="skill-symbol">✦</span><div><small>Private skill draft</small><h2>Research synthesis</h2></div></div>
-            <div><button type="button">Test privately</button><button type="button" className="primary-action" onClick={submit}>Submit for publication</button></div>
+            <div><span className="skill-symbol">✦</span><div><small>Private improvement of Research Team v3.1.0</small><h2>Research synthesis · proposed v3.2</h2></div></div>
+            <div><button type="button">Test privately</button><button type="button" className="primary-action" onClick={submit}>Submit to Team Lead</button></div>
           </div>
           <div className="editor-tabs"><button type="button" className="active">Overview</button><button type="button">SKILL.md</button><button type="button">Scripts</button><button type="button">Test runs</button></div>
           <div className="skill-editor-body">
             <div className="field-block"><label>Description</label><div>Synthesize customer interviews and structured survey evidence into traceable research findings.</div></div>
             <div className="two-fields">
-              <div className="field-block"><label>Owner</label><div><span className="avatar small-avatar">PN</span>Priya Nair</div></div>
-              <div className="field-block"><label>Visibility</label><div><StatusChip tone="private">Only you</StatusChip></div></div>
+              <div className="field-block"><label>Creator</label><div><span className="avatar small-avatar">PN</span>Priya Nair</div></div>
+              <div className="field-block"><label>Owning team</label><div><span className="avatar small-avatar group">RT</span>Research Team</div></div>
             </div>
             <div className="field-block">
               <label>Declared capabilities</label>
@@ -722,9 +768,9 @@ function SkillCreatorView({
         <aside className="builder-pane">
           <div className="builder-head"><span className="lumo-orb mini">L</span><div><strong>Skill Creator</strong><small>Private assistant</small></div></div>
           <div className="builder-chat">
-            <div className="assistant-message">I updated the skill to require explicit workspace inputs and declared the analysis script for sandbox execution.</div>
-            <div className="user-message">Check whether it is ready to submit.</div>
-            <div className="assistant-message">All structural checks pass. The reviewer will see one MCP server and one sandbox script request.</div>
+            <div className="assistant-message">I based this improvement on Research Team version 3.1.0 and preserved its capability boundaries.</div>
+            <div className="user-message">Check whether it is ready for the Team Lead.</div>
+            <div className="assistant-message">All checks pass. Maya will see the exact diff, one MCP dependency, and the sandbox test evidence.</div>
           </div>
           <div className="builder-input">Ask Skill Creator…<button type="button">↑</button></div>
         </aside>
@@ -741,39 +787,40 @@ function AdminReviewView({
   onToast: (message: string) => void;
 }) {
   const approve = () => {
-    onToast("Research synthesis approved and assigned to the Research group.");
+    onToast("Research synthesis v3.2.0 approved for the Research Team and shared with the Policy Team.");
     onNext();
   };
   return (
     <div className="settings-main">
       <header className="settings-header">
-        <div><small>Governance</small><h1>Skill review queue</h1><p>Review frozen candidates before activation and group assignment.</p></div>
+        <div><small>Research Team governance</small><h1>Skill improvement queue</h1><p>Review frozen proposals before creating a new immutable team skill version.</p></div>
         <div className="review-count"><strong>3</strong><span>Awaiting review</span></div>
       </header>
       <div className="review-layout">
         <aside className="review-queue">
-          <div className="queue-head"><strong>Publication requests</strong><button type="button">Filter</button></div>
+          <div className="queue-head"><strong>Improvement proposals</strong><button type="button">Filter</button></div>
           <button type="button" className="review-item active">
             <div className="avatar small-avatar">PN</div>
-            <span><strong>Research synthesis</strong><small>Priya Nair · submitted 9m ago</small><em>1 script · 1 MCP server</em></span>
+            <span><strong>Research synthesis · v3.2</strong><small>Priya Nair · submitted 9m ago</small><em>Based on Research Team v3.1.0</em></span>
           </button>
           <button type="button" className="review-item">
             <div className="avatar small-avatar bob">BR</div>
-            <span><strong>Contract extractor</strong><small>Bob Rahman · submitted 2h ago</small><em>2 tools · no scripts</em></span>
+            <span><strong>Contract extractor · v2.1</strong><small>Bob Rahman · submitted 2h ago</small><em>Based on Research Team v2.0.0</em></span>
           </button>
           <button type="button" className="review-item">
             <div className="avatar small-avatar group">SL</div>
-            <span><strong>Sales follow-up</strong><small>Sarah Lee · submitted yesterday</small><em>Gmail MCP · approval required</em></span>
+            <span><strong>Evidence checker · v1.4</strong><small>Sarah Lee · submitted yesterday</small><em>New BigQuery dependency</em></span>
           </button>
         </aside>
         <section className="review-detail">
           <div className="review-title">
-            <div><small>Publication request · candidate v1</small><h2>Research synthesis</h2><p>Synthesize customer interviews and survey evidence into traceable findings.</p></div>
-            <StatusChip tone="pending">Awaiting review</StatusChip>
+            <div><small>Research Team · improvement proposal</small><h2>Research synthesis · proposed v3.2.0</h2><p>Synthesize customer interviews and survey evidence into traceable findings.</p></div>
+            <StatusChip tone="pending">Team Lead review</StatusChip>
           </div>
           <div className="review-meta">
             <div><span>Creator</span><strong>Priya Nair</strong></div>
             <div><span>Submitted</span><strong>29 Jul · 17:42</strong></div>
+            <div><span>Base version</span><strong>v3.1.0 · exact</strong></div>
             <div><span>Validation</span><strong className="green-text">All checks passed</strong></div>
             <div><span>Self-approval</span><strong>Blocked</strong></div>
           </div>
@@ -791,11 +838,11 @@ function AdminReviewView({
           </div>
         </section>
         <aside className="assignment-pane">
-          <div><small>After approval</small><h3>Activate and assign</h3><p>Approval creates an immutable catalog version. Assignment controls who can invoke it.</p></div>
-          <label>Active version<select aria-label="Active version"><option>Candidate version 1</option></select></label>
-          <label>Assign to groups<div className="group-select"><span>Research</span><button type="button">×</button></div></label>
-          <div className="assignment-note"><Glyph>i</Glyph><p>The Research group already has the required data-artifacts MCP entitlement and Sandbox Executor role.</p></div>
-          <div className="review-actions"><button type="button">Request changes</button><button type="button" className="primary-action" onClick={approve}>Approve &amp; activate</button></div>
+          <div><small>After approval</small><h3>Create team version</h3><p>The Research Team remains the sole owner. Other teams receive consumption grants, not ownership.</p></div>
+          <label>New immutable version<select aria-label="New immutable version"><option>3.2.0</option></select></label>
+          <label>Available to teams<div className="group-select"><span>Research Team</span><span>Policy Team</span></div></label>
+          <div className="assignment-note"><Glyph>i</Glyph><p>Existing workspaces stay pinned to v3.1.0 until an Owner or Publisher intentionally upgrades them.</p></div>
+          <div className="review-actions"><button type="button">Request changes</button><button type="button" className="primary-action" onClick={approve}>Approve team version</button></div>
         </aside>
       </div>
     </div>
@@ -811,7 +858,7 @@ function SkillsSurface({
   onNext: () => void;
   onToast: (message: string) => void;
 }) {
-  const review = scenario.id === "admin-review";
+  const review = scenario.id === "team-skill-review";
   return (
     <div className="product-shell">
       <ProductRail settings />
@@ -828,46 +875,54 @@ function RuntimeSurface({
   onNext: () => void;
   onToast: (message: string) => void;
 }) {
-  const [blocked, setBlocked] = useState(false);
+  const [persona, setPersona] = useState<"research" | "policy" | "direct">("policy");
+  const allowed = persona !== "direct";
+  const affiliation =
+    persona === "research"
+      ? "Research Team · owning-team grant"
+      : persona === "policy"
+        ? "Policy Team · cross-team grant"
+        : "Direct workspace access · no skill grant";
   const checks = [
-    ["Skill assignment", "Research group", true],
-    ["Tool entitlement", "workspace_read", true],
-    ["MCP entitlement", "data-artifacts", true],
-    ["Workspace policy", "Customer research allows analysis", true],
-    ["Skill declaration", blocked ? "undeclared shell command" : "analyze_research.py", !blocked],
-    ["Sandbox policy", "Restricted Python · current-run outputs", true],
+    ["Workspace access", persona === "direct" ? "Direct Contributor grant" : `${persona === "research" ? "Research" : "Policy"} Team`, true],
+    ["Workspace pin", "research-synthesis@3.2.0 · exact immutable version", true],
+    ["Skill assignment", affiliation, allowed],
+    ["Tool entitlement", allowed ? "workspace_read · granted through team" : "Missing for this direct user", allowed],
+    ["Skill declaration", "workspace_read and analyze_research.py", true],
+    ["Platform policy", "Skill version active · sandbox healthy", true],
   ] as const;
   const run = () => {
-    if (blocked) {
-      onToast("Run blocked: the requested command is not declared by the active skill.");
+    if (!allowed) {
+      onToast("Run blocked: workspace access does not grant the pinned team skill.");
     } else {
-      onToast("All six checks passed. Sandboxed analysis started.");
+      onToast("All six checks passed. The pinned team skill v3.2.0 started.");
       onNext();
     }
   };
   return (
     <div className="product-shell">
       <ProductRail />
-      <WorkspaceDrawer selected="Customer research" published={false} />
+      <WorkspaceDrawer selected="Customer research" team />
       <div className="workspace-main">
         <header className="workspace-header">
           <div className="workspace-identity">
             <div className="workspace-icon">CR</div>
-            <div><span>Private workspaces /</span><strong>Customer research</strong></div>
-            <StatusChip tone="private">Private · only you</StatusChip>
+            <div><span>Team workspaces /</span><strong>Customer research</strong></div>
+            <StatusChip tone="allowed">Pinned skill set · 2 skills</StatusChip>
           </div>
-          <div className="workspace-actions"><button type="button">Runtime policy</button><button type="button">···</button></div>
+          <div className="workspace-actions"><button type="button">Manage skill set</button><button type="button">Published versions</button><button type="button">···</button></div>
         </header>
         <div className="workspace-columns runtime-columns">
           <FilePane />
           <section className="runtime-canvas">
             <div className="runtime-title">
-              <div><small>Tool activity · authorization preview</small><h2>Research synthesis run</h2><p>HelpUDoc evaluates every governing layer at invocation time.</p></div>
-              <StatusChip tone={blocked ? "blocked" : "allowed"}>{blocked ? "Will be blocked" : "Ready to run"}</StatusChip>
+              <div><small>Team Workspace · skill coverage preview</small><h2>One pinned version, different affiliations</h2><p>The workspace constrains the version; team and direct grants determine who may invoke it.</p></div>
+              <StatusChip tone={allowed ? "allowed" : "blocked"}>{allowed ? "Ready to run" : "Skill access missing"}</StatusChip>
             </div>
             <div className="runtime-toggle">
-              <button type="button" className={!blocked ? "active" : ""} onClick={() => setBlocked(false)}>Approved request</button>
-              <button type="button" className={blocked ? "active danger" : ""} onClick={() => setBlocked(true)}>Undeclared command</button>
+              <button type="button" className={persona === "research" ? "active" : ""} onClick={() => setPersona("research")}>Research Team member</button>
+              <button type="button" className={persona === "policy" ? "active" : ""} onClick={() => setPersona("policy")}>Policy Team member</button>
+              <button type="button" className={persona === "direct" ? "active danger" : ""} onClick={() => setPersona("direct")}>Direct workspace member</button>
             </div>
             <div className="auth-checks">
               {checks.map(([label, detail, allowed], index) => (
@@ -879,15 +934,15 @@ function RuntimeSurface({
               ))}
             </div>
             <div className="sandbox-envelope">
-              <div><Glyph>⌘</Glyph><span><strong>Restricted Python sandbox</strong><small>No ambient credentials · network denied · workspace read-only</small></span></div>
-              <div><span>CPU 1</span><span>Memory 1 GiB</span><span>Timeout 30s</span><span>Outputs isolated</span></div>
+              <div><Glyph>✦</Glyph><span><strong>Workspace Skill Set</strong><small>research-synthesis@3.2.0 · source-checker@1.4.2</small></span></div>
+              <div><span>Research Team owner</span><span>Policy Team shared</span><span>Exact versions</span><span>2 of 2 teams covered</span></div>
             </div>
             <div className="run-actions">
-              <p>{blocked ? "The tool guard fails closed before any code is staged." : "Selected inputs: survey-results.xlsx and customer-quotes.csv"}</p>
-              <button type="button" className={blocked ? "blocked-action" : "primary-action"} onClick={run}>{blocked ? "Demonstrate blocked run" : "Start governed run"}</button>
+              <p>{allowed ? "Every authorized member runs the same pinned skill version." : "The user can edit workspace files, but needs a team or direct skill grant before invoking this skill."}</p>
+              <button type="button" className={allowed ? "primary-action" : "blocked-action"} onClick={run}>{allowed ? "Run pinned skill" : "Demonstrate blocked run"}</button>
             </div>
           </section>
-          <LumoPane scenario="runtime-run" />
+          <LumoPane scenario="cross-team-runtime" />
         </div>
       </div>
     </div>
