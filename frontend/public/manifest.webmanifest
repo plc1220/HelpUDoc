@@ -1,0 +1,21 @@
+{
+  "name": "Lumo Studio",
+  "short_name": "Lumo",
+  "description": "A workspace for knowledge, memory, skills, and workflows.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#F1F4F7",
+  "theme_color": "#F1F4F7",
+  "icons": [
+    {
+      "src": "/lumo-icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/lumo-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

@@ -10,9 +10,11 @@ import {
 } from '@mui/material';
 import { Button } from '@astryxdesign/core/Button';
 import { ButtonGroup } from '@astryxdesign/core/ButtonGroup';
+import { CodeBlock } from '@astryxdesign/core/CodeBlock';
+import { DropdownMenu } from '@astryxdesign/core/DropdownMenu';
 import { IconButton } from '@astryxdesign/core/IconButton';
 import { ToggleButton } from '@astryxdesign/core/ToggleButton';
-import { BookOpen, Check, CheckSquare, Copy, Edit, Trash, Plus, Minus, X, ChevronLeft, ChevronDown, RotateCcw, Printer, Download, Link as LinkIcon, Loader2, FolderPlus, FolderUp, Upload, Home, ArrowUp, Search, File as FileIcon, MessageSquare, Wrench, Plug, Sparkles, Info } from 'lucide-react';
+import { BookOpen, Check, CheckSquare, Copy, Edit, Trash, Plus, Minus, X, ChevronLeft, ChevronDown, RotateCcw, Printer, Download, Link as LinkIcon, Loader2, FolderPlus, FolderUp, Upload, Paperclip, Home, ArrowUp, Search, File as FileIcon, MessageSquare, Wrench, Plug, Sparkles, Info } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
@@ -881,7 +883,6 @@ export default function WorkspacePage() {
   const [commandSelectedIndex, setCommandSelectedIndex] = useState(0);
   const [expandedToolMessages, setExpandedToolMessages] = useState<Set<ConversationMessage['id']>>(new Set());
   const [expandedThinkingMessages, setExpandedThinkingMessages] = useState<Set<ConversationMessage['id']>>(new Set());
-  const [copiedCodeBlockId, setCopiedCodeBlockId] = useState<string | null>(null);
 
   const filteredWorkspaces = useMemo(() => {
     const query = workspaceSearchQuery.trim().toLowerCase();
@@ -1477,21 +1478,6 @@ export default function WorkspacePage() {
     return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   }, []);
 
-  const handleCopyCodeBlock = useCallback(async (blockId: string, content: string) => {
-    if (typeof navigator === 'undefined' || !navigator.clipboard?.writeText) {
-      return;
-    }
-    try {
-      await navigator.clipboard.writeText(content);
-      setCopiedCodeBlockId(blockId);
-      window.setTimeout(() => {
-        setCopiedCodeBlockId((current) => (current === blockId ? null : current));
-      }, 1500);
-    } catch (error) {
-      console.error('Failed to copy code snippet', error);
-    }
-  }, []);
-
   const markdownComponents = useMemo(
     () => ({
       ...createMarkdownComponents({
@@ -1501,40 +1487,16 @@ export default function WorkspacePage() {
         inlineCodeClassName: colorMode === 'dark'
           ? 'rounded-md border border-slate-700/70 bg-slate-900/80 px-1.5 py-0.5 font-mono text-xs text-slate-100'
           : 'rounded-md border border-slate-200 bg-slate-100 px-1.5 py-0.5 font-mono text-xs text-slate-800',
-        codeBlockShell: ({ blockId, codeContent, languageLabel, className, children }) => {
-          const copyLabel = copiedCodeBlockId === blockId ? 'Copied' : 'Copy';
-          return (
-            <div className={`mb-4 mt-2 overflow-hidden rounded-2xl border shadow-lg ${
-              colorMode === 'dark'
-                ? 'border-slate-700/70 bg-slate-950/90 text-slate-100'
-                : 'border-slate-200 bg-white text-slate-900 shadow-[0_24px_60px_-40px_rgba(15,23,42,0.16)]'
-            }`}>
-              <div className={`flex items-center justify-between border-b px-4 py-2 text-[11px] font-semibold tracking-wide uppercase ${
-                colorMode === 'dark'
-                  ? 'border-slate-800 bg-slate-900/60 text-slate-300'
-                  : 'border-slate-200 bg-slate-50 text-slate-500'
-              }`}>
-                <span>{languageLabel}</span>
-                <button
-                  type="button"
-                  onClick={() => handleCopyCodeBlock(blockId, codeContent)}
-                  className={`flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest ${
-                    colorMode === 'dark'
-                      ? 'border-slate-600 text-slate-200 hover:border-slate-400'
-                      : 'border-slate-300 text-slate-700 hover:border-slate-400'
-                  }`}
-                >
-                  {copyLabel}
-                </button>
-              </div>
-              <pre className="overflow-x-auto px-4 py-3 text-xs leading-relaxed whitespace-pre-wrap break-words sm:text-sm">
-                <code className={`font-mono ${className || ''}`.trim()}>
-                  {children}
-                </code>
-              </pre>
-            </div>
-          );
-        },
+        codeBlockShell: ({ codeContent, languageLabel }) => (
+          <CodeBlock
+            code={codeContent}
+            language={languageLabel.toLowerCase()}
+            width="100%"
+            container="section"
+            isCollapsible
+            collapsibleThreshold={18}
+          />
+        ),
       }),
       a({ ...props }: ComponentProps<'a'>) {
         return (
@@ -1547,7 +1509,7 @@ export default function WorkspacePage() {
         );
       },
     }),
-    [colorMode, copiedCodeBlockId, handleCopyCodeBlock, selectedWorkspace?.id]
+    [colorMode, selectedWorkspace?.id]
   );
 
   const toggleToolActivityVisibility = useCallback((messageId: ConversationMessage['id']) => {
@@ -7139,7 +7101,7 @@ export default function WorkspacePage() {
             <MobileLumoAvatar size={42} busy={isStreaming} notify={hasPendingInterruptMessage} />
             <span className="min-w-0">
               <span className={`block text-sm font-semibold ${isDarkMode ? 'text-slate-100' : 'text-slate-900'}`}>
-                HelpUDoc
+                Lumo Studio
               </span>
               <span className={`block truncate text-xs font-medium ${isDarkMode ? 'text-slate-500' : 'text-slate-500'}`}>
                 {selectedWorkspace?.name || 'New Workspace'}
@@ -7301,11 +7263,13 @@ export default function WorkspacePage() {
             colorMode={colorMode}
             chatMessage={chatMessage}
             chatAttachments={chatAttachments}
-            placeholder="Ask Lumo... (Type / for commands, skills, and MCP servers)"
+            placeholder="Ask anything…"
             chatInputRef={chatInputRef}
             attachmentInputRef={attachmentInputRef}
             isStreaming={isStreaming}
             isPreparingAttachments={isDriveImporting}
+            personas={personas}
+            selectedPersona={normalizePersonaName(activeConversationPersona || selectedPersona || DEFAULT_PERSONA_NAME)}
             internetSearchEnabled={internetSearchEnabled}
             commandTags={commandTags}
             isMentionOpen={isMentionOpen}
@@ -7320,6 +7284,9 @@ export default function WorkspacePage() {
             onChatInputSelectionChange={handleChatInputSelectionChange}
             onChatInputPaste={handleChatInputPaste}
             onOpenLocalAttachmentPicker={handleOpenLocalAttachmentPicker}
+            onModeChange={(personaName) => {
+              handleModeChange({ target: { value: personaName } } as ChangeEvent<HTMLSelectElement>);
+            }}
             onInsertKnowledgeTrigger={handleInsertKnowledgeTrigger}
             onToggleInternetSearch={() => setInternetSearchEnabled((prev) => !prev)}
             onInsertSlashTrigger={handleInsertSlashTrigger}
@@ -7645,7 +7612,7 @@ export default function WorkspacePage() {
                       isDarkMode ? 'border-slate-700/80 bg-slate-950/80' : 'border-slate-200 bg-white'
                     }`}>
                       <textarea
-                        placeholder="Ask HelpUDoc anything..."
+                        placeholder="Ask Lumo anything…"
                         value={chatMessage}
                         ref={chatInputRef}
                         onChange={handleChatInputChange}
@@ -7846,7 +7813,7 @@ export default function WorkspacePage() {
                               aria-label="Attach files"
                               aria-expanded={isLandingAttachmentMenuOpen}
                             >
-                              <Plus size={22} />
+                              <Paperclip size={18} />
                             </button>
                             {isLandingAttachmentMenuOpen ? (
                               <div className={`absolute bottom-full left-0 z-40 mb-2 w-56 rounded-2xl border p-1.5 text-sm shadow-2xl backdrop-blur-md ${
@@ -7888,6 +7855,24 @@ export default function WorkspacePage() {
                               </div>
                             ) : null}
                           </div>
+                          <Button
+                            label="@ Context"
+                            tooltip="Add files or knowledge with @"
+                            variant="ghost"
+                            size="sm"
+                            icon={<span className="lumo-composer-at">@</span>}
+                            onClick={handleInsertKnowledgeTrigger}
+                            isDisabled={isDriveImporting}
+                          />
+                          <Button
+                            label="/ Commands"
+                            tooltip="Browse commands with /"
+                            variant="ghost"
+                            size="sm"
+                            icon={<span className="lumo-composer-slash">/</span>}
+                            onClick={handleInsertSlashTrigger}
+                            isDisabled={isDriveImporting}
+                          />
                           <div ref={landingWorkspacePickerRef} className="relative">
                             <button
                               type="button"
@@ -7960,22 +7945,24 @@ export default function WorkspacePage() {
                               </div>
                             ) : null}
                           </div>
-                          <select
-                            value={normalizePersonaName(activeConversationPersona || selectedPersona || DEFAULT_PERSONA_NAME)}
-                            onChange={handleModeChange}
-                            className={`h-10 rounded-xl border px-3 text-sm font-medium capitalize outline-none transition ${
-                              isDarkMode
-                                ? 'border-slate-700 bg-slate-900 text-slate-100 focus:border-sky-400 focus:ring-2 focus:ring-sky-400/20'
-                                : 'border-slate-200 bg-slate-50 text-slate-700 focus:border-blue-400 focus:ring-2 focus:ring-blue-100'
-                            }`}
-                            aria-label="Select model mode"
-                          >
-                            {landingPersonas.map((persona) => (
-                              <option key={persona.name} value={persona.name}>
-                                {(persona.displayName || persona.name).toLowerCase()}
-                              </option>
-                            ))}
-                          </select>
+                          <DropdownMenu
+                            placement="above"
+                            menuWidth={220}
+                            button={{
+                              label: landingPersonas.find((persona) => persona.name === normalizePersonaName(activeConversationPersona || selectedPersona || DEFAULT_PERSONA_NAME))?.displayName
+                                || normalizePersonaName(activeConversationPersona || selectedPersona || DEFAULT_PERSONA_NAME),
+                              variant: 'ghost',
+                              size: 'sm',
+                              tooltip: 'Select agent mode',
+                            }}
+                            items={landingPersonas.map((persona) => ({
+                              label: persona.displayName || persona.name,
+                              icon: persona.name === normalizePersonaName(activeConversationPersona || selectedPersona || DEFAULT_PERSONA_NAME)
+                                ? <Check size={15} />
+                                : undefined,
+                              onClick: () => handleModeChange({ target: { value: persona.name } } as ChangeEvent<HTMLSelectElement>),
+                            }))}
+                          />
                         </div>
                         <button
                           type="button"

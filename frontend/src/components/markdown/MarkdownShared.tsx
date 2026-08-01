@@ -150,9 +150,28 @@ export const configureMermaid = async (mode: MermaidColorMode) => {
     securityLevel: 'loose',
     theme: 'base',
     themeVariables: buildMermaidTheme(mode),
-    fontFamily: 'Inter, "Segoe UI", Arial, sans-serif',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
   });
   return mermaid;
+};
+
+export const prepareMermaidSvg = (
+  container: HTMLElement,
+  accessibleLabel = 'Mermaid diagram',
+) => {
+  const svgElement = container.querySelector('svg');
+  if (!svgElement) {
+    return;
+  }
+  svgElement.removeAttribute('height');
+  svgElement.setAttribute('role', 'img');
+  svgElement.setAttribute('aria-label', accessibleLabel);
+  const viewBox = svgElement.viewBox?.baseVal;
+  if (viewBox?.width) {
+    svgElement.style.width = `${Math.ceil(viewBox.width)}px`;
+  }
+  svgElement.style.height = 'auto';
+  svgElement.style.maxWidth = 'none';
 };
 
 export const extractCodeText = (value: ReactNode): string => {
@@ -258,6 +277,7 @@ export const MermaidDiagram = ({
         const { svg } = await mermaid.render(renderId, chart);
         if (!cancelled && diagramRef.current) {
           diagramRef.current.innerHTML = svg;
+          prepareMermaidSvg(diagramRef.current);
         }
       } catch (error) {
         console.error('Mermaid rendering error:', error);
@@ -287,7 +307,10 @@ export const MermaidDiagram = ({
   return (
     <div
       ref={diagramRef}
-      className={className || `mermaid-container my-4 overflow-auto rounded-xl border p-4 ${colorMode === 'dark' ? 'border-slate-700 bg-slate-950' : 'border-gray-200 bg-white'}`}
+      className={`lumo-mermaid mermaid-container ${className || ''}`.trim()}
+      role="figure"
+      aria-label="Diagram"
+      tabIndex={0}
     />
   );
 };

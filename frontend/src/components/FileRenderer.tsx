@@ -36,6 +36,7 @@ import { parsePlotlySpec } from '../utils/plotlySpec';
 import {
   configureMermaid,
   createMarkdownComponents,
+  prepareMermaidSvg,
   useMermaidColorMode,
 } from './markdown/MarkdownShared';
 import {
@@ -521,6 +522,7 @@ const FileRenderer: React.FC<FileRendererProps> = ({
           const { svg } = await mermaid.render(renderId, fileContent);
           if (!cancelled && mermaidRef.current) {
             mermaidRef.current.innerHTML = svg;
+            prepareMermaidSvg(mermaidRef.current);
             setIsMermaidRendered(true);
           }
         } catch (e) {
@@ -958,7 +960,10 @@ const FileRenderer: React.FC<FileRendererProps> = ({
         <div className="relative h-full">
           <div
             ref={mermaidRef}
-            className={`mermaid-container h-full w-full rounded-xl ${colorMode === 'dark' ? 'bg-slate-950' : 'bg-white'}`}
+            className="lumo-mermaid mermaid-container h-full w-full"
+            role="figure"
+            aria-label={file.name || 'Mermaid diagram'}
+            tabIndex={0}
           ></div>
           {isMermaidRendered && (
             <button

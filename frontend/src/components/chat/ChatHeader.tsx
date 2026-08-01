@@ -1,18 +1,11 @@
 import { CalendarClock, ChevronRight, History, Maximize2, Minimize2, Plus } from 'lucide-react';
-import type { ChangeEvent } from 'react';
-
-import type { AgentPersona } from '../../types';
-
 export default function ChatHeader({
   colorMode,
   isAgentPaneVisible,
   isEditMode,
   isHistoryOpen,
   isAgentPaneFullScreen,
-  personas,
-  selectedPersona,
   onToggleVisibility,
-  onModeChange,
   onToggleHistory,
   onNewChat,
   onScheduleChat,
@@ -23,10 +16,7 @@ export default function ChatHeader({
   isEditMode: boolean;
   isHistoryOpen: boolean;
   isAgentPaneFullScreen: boolean;
-  personas: AgentPersona[];
-  selectedPersona: string;
   onToggleVisibility: () => void;
-  onModeChange: (event: ChangeEvent<HTMLSelectElement>) => void;
   onToggleHistory: () => void;
   onNewChat: () => void;
   onScheduleChat?: () => void;
@@ -52,30 +42,6 @@ export default function ChatHeader({
               className={`transition-transform duration-300 ${isAgentPaneVisible ? '' : 'rotate-180'}`}
             />
           </button>
-          {isAgentPaneVisible && (
-            <div className="flex min-w-0 items-center gap-1 sm:gap-2">
-              <span className={`hidden text-[10px] font-semibold uppercase tracking-wide sm:inline ${
-                isDarkMode ? 'text-slate-400' : 'text-slate-500'
-              }`}>Mode</span>
-              <select
-                value={selectedPersona}
-                onChange={onModeChange}
-                className={`max-w-20 rounded-xl border px-2 py-1 text-xs font-semibold shadow-sm transition-all duration-200 focus:outline-none sm:max-w-none sm:px-2.5 ${
-                  isDarkMode
-                    ? 'border-[#2b3a55] bg-[#152033] text-slate-100 focus:border-sky-400 focus:ring-2 focus:ring-sky-400/20'
-                    : 'border-slate-200/80 bg-slate-100/90 text-slate-700 focus:border-blue-400 focus:ring-2 focus:ring-blue-200'
-                }`}
-                aria-label="Select agent mode"
-                disabled={!personas.length}
-              >
-                {personas.map((persona) => (
-                  <option key={persona.name} value={persona.name}>
-                    {persona.displayName || persona.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
         </div>
         {isAgentPaneVisible && (
           <div className="flex shrink-0 items-center gap-1 sm:gap-2">
