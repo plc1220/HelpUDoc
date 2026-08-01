@@ -1,6 +1,11 @@
 import { CalendarClock, Check, CheckCircle2, ChevronRight, Copy, FilePenLine, ImageIcon, Loader2, RotateCcw } from 'lucide-react';
-import ReactMarkdown, { type Components } from 'react-markdown';
-import remarkGfm from 'remark-gfm';
+import {
+  ChatMessage as AstryxChatMessage,
+  ChatMessageBubble as AstryxChatMessageBubble,
+  ChatMessageMetadata,
+  ChatToolCalls,
+} from '@astryxdesign/core/Chat';
+import type { Components } from 'react-markdown';
 import { useCallback, useEffect, useMemo, useState, type Dispatch, type KeyboardEvent, type ReactNode, type SetStateAction } from 'react';
 import { InteractionSurfaceRenderer } from '../../interactions/InteractionSurfaceRenderer';
 import type { InteractionRequest, InteractionResponse } from '@helpudoc/contracts/types';
@@ -26,6 +31,7 @@ import {
   stripOperationalThinkingBlocks,
 } from '../../utils/toolActivitySummary';
 import { buildApiUrl } from '../../services/apiClient';
+import LumoMarkdown from '../markdown/LumoMarkdown';
 import {
   getAttachmentFileIcon,
   getAttachmentTypeLabel,
@@ -1780,13 +1786,7 @@ export default function ChatMessageBubble({
     : [];
   const shouldShowApprovalDescription = Boolean(approvalReview?.description && !approvalReview.summaryMarkdown);
 
-  const agentContainerClassName = isDarkMode
-    ? 'w-full rounded-xl border border-[#2a3850] bg-[#121c2e] px-4 py-4 text-slate-100 shadow-[0_16px_40px_-32px_rgba(2,6,23,0.88)]'
-    : 'w-full rounded-xl border border-slate-200/90 bg-white px-4 py-4 text-slate-900 shadow-[0_16px_40px_-32px_rgba(15,23,42,0.16)]';
-  const agentMetaClassName = isDarkMode
-    ? 'flex flex-wrap items-center justify-between gap-2 text-[11px] font-bold uppercase tracking-wide text-slate-300'
-    : 'flex flex-wrap items-center justify-between gap-2 text-[11px] font-bold uppercase tracking-wide text-slate-500';
-  const agentPersonaClassName = isDarkMode ? 'text-slate-300' : 'text-slate-700';
+  const agentContainerClassName = 'lumo-assistant-content';
   const toolPanelClassName = isDarkMode
     ? 'mt-3 border-t border-[#26354d] pt-3'
     : 'mt-3 border-t border-slate-200/80 pt-3';
@@ -1865,23 +1865,13 @@ export default function ChatMessageBubble({
     ? 'mt-3 space-y-3 text-xs text-slate-200'
     : 'mt-3 space-y-3 text-xs text-slate-600';
   const userPathPillClassName = 'inline-flex max-w-full items-center gap-1.5 rounded-full border border-white/20 bg-white/10 px-2.5 py-1 text-xs font-medium text-white';
-  const userBubbleClassName = isDarkMode
-    ? 'rounded-xl bg-[#2d5f9f] px-4 py-3 text-sm text-white shadow-[0_14px_34px_-28px_rgba(45,95,159,0.82)]'
-    : 'rounded-xl bg-[#315f9f] px-4 py-3 text-sm text-white shadow-[0_14px_34px_-28px_rgba(49,95,159,0.42)]';
+  const userBubbleClassName = 'lumo-user-content';
   const inlineEditTextareaClassName =
     'min-h-24 w-full resize-y rounded-lg border border-white/10 bg-black/15 px-3 py-2.5 text-sm leading-relaxed text-white placeholder:text-white/45 shadow-inner shadow-black/10 outline-none transition-all duration-150 focus:border-white/25 focus:bg-black/20 focus:ring-2 focus:ring-white/15';
   const inlineEditButtonBaseClassName =
     'inline-flex h-8 items-center justify-center rounded-md px-3 text-xs font-semibold transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/25 disabled:cursor-not-allowed disabled:opacity-50';
-  const messageActionBarClassName = isAgentMessage
-    ? isDarkMode
-      ? 'inline-flex shrink-0 items-center gap-0.5 rounded-lg border border-slate-600/90 bg-slate-900 p-0.5 text-slate-300 shadow-none'
-      : 'inline-flex shrink-0 items-center gap-0.5 rounded-lg border border-slate-200 bg-white p-0.5 text-slate-500 shadow-none'
-    : isDarkMode
-      ? 'absolute -top-2.5 right-2 inline-flex items-center gap-0.5 rounded-lg border border-slate-600/90 bg-slate-900 p-0.5 text-slate-300 opacity-0 shadow-none transition-opacity duration-150 group-hover:opacity-100 focus-within:opacity-100'
-      : 'absolute -top-2.5 right-2 inline-flex items-center gap-0.5 rounded-lg border border-slate-200 bg-white p-0.5 text-slate-500 opacity-0 shadow-none transition-opacity duration-150 group-hover:opacity-100 focus-within:opacity-100';
-  const messageActionButtonClassName = isDarkMode
-    ? 'inline-flex h-7 w-7 items-center justify-center rounded-md transition-colors duration-150 hover:bg-slate-800 hover:text-white focus-visible:bg-slate-800 focus-visible:text-white focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50'
-    : 'inline-flex h-7 w-7 items-center justify-center rounded-md transition-colors duration-150 hover:bg-slate-100 hover:text-slate-900 focus-visible:bg-slate-100 focus-visible:text-slate-900 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50';
+  const messageActionBarClassName = 'lumo-message-actions';
+  const messageActionButtonClassName = 'lumo-message-action-button';
   const hasMessageActions = !isEditing && (canCopyMessage || message.sender === 'user' || handleScheduleMessage);
   const messageActionButtons = (
     <>
@@ -1947,30 +1937,23 @@ export default function ChatMessageBubble({
     return () => window.clearInterval(interval);
   }, [isLiveAgentStatus]);
 
+  const messageFooterMetadata = timestampLabel || hasMessageActions ? (
+    <ChatMessageMetadata
+      timestamp={timestampLabel || undefined}
+      footer={hasMessageActions ? <div className={messageActionBarClassName}>{messageActionButtons}</div> : undefined}
+    />
+  ) : undefined;
+
   return (
-    <div className={`group flex items-start gap-3 motion-safe:animate-[chat-pane-message-in_220ms_ease-out] ${isAgentMessage ? '' : 'justify-end'}`}>
-      <div style={{ width: '100%', maxWidth: messageBubbleMaxWidth }} className="relative flex-1 md:flex-initial">
+    <AstryxChatMessage sender={isAgentMessage ? 'assistant' : 'user'} density="balanced">
+      <div style={{ width: '100%', maxWidth: messageBubbleMaxWidth }} className="lumo-message-width">
         {isAgentMessage ? (
-          <div className={agentContainerClassName}>
-            <div className={agentMetaClassName}>
-              <div className="flex min-w-0 flex-wrap items-center gap-2">
-                <span className={agentPersonaClassName}>{personaDisplayName}</span>
-              </div>
-              <div className="flex shrink-0 items-center gap-2">
-                {timestampLabel ? (
-                  <span className={`text-[10px] font-medium normal-case tracking-normal ${
-                    isDarkMode ? 'text-slate-500' : 'text-slate-400'
-                  }`}>
-                    {timestampLabel}
-                  </span>
-                ) : null}
-                {hasMessageActions ? (
-                  <div className={messageActionBarClassName}>
-                    {messageActionButtons}
-                  </div>
-                ) : null}
-              </div>
-            </div>
+          <AstryxChatMessageBubble
+            variant="ghost"
+            name={personaDisplayName}
+            metadata={messageFooterMetadata}
+          >
+            <div className={agentContainerClassName}>
             {shouldShowThoughtRow ? (
               <div>
                 <button
@@ -2167,9 +2150,9 @@ export default function ChatMessageBubble({
                 aria-live={isStreamingAgentText ? 'polite' : undefined}
                 aria-busy={isStreamingAgentText || undefined}
               >
-                <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+                <LumoMarkdown components={markdownComponents} isStreaming={isStreamingAgentText}>
                   {liveAgentPreviewText}
-                </ReactMarkdown>
+                </LumoMarkdown>
                 {isStreamingAgentText ? (
                   <span
                     aria-hidden="true"
@@ -2234,9 +2217,9 @@ export default function ChatMessageBubble({
                         </div>
                         {approvalReview.summaryMarkdown ? (
                           <div className="agent-markdown mt-3 text-sm leading-relaxed text-slate-700">
-                            <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+                            <LumoMarkdown components={markdownComponents}>
                               {approvalReview.summaryMarkdown}
-                            </ReactMarkdown>
+                            </LumoMarkdown>
                           </div>
                         ) : null}
                       </div>
@@ -2424,13 +2407,27 @@ export default function ChatMessageBubble({
             ) : null}
             {hasToolEvents ? (
               <div className={toolPanelClassName}>
-                <button
-                  type="button"
-                  onClick={() => toggleToolActivityVisibility(message.id)}
-                  className={toolButtonClassName}
-                >
-                  {isToolActivityExpanded ? 'Hide activity' : activitySummaryLabel}
-                </button>
+                <ChatToolCalls
+                  label={activitySummaryLabel}
+                  isExpanded={isToolActivityExpanded}
+                  onExpandedChange={() => toggleToolActivityVisibility(message.id)}
+                  calls={toolEvents.map((event) => ({
+                    key: event.id,
+                    name: getFriendlyToolName(event.name),
+                    status: event.status === 'completed'
+                      ? 'complete'
+                      : event.status === 'error'
+                        ? 'error'
+                        : 'running',
+                    target: event.outputFiles?.[0]?.path
+                      || event.relatedFiles?.[0]?.path
+                      || event.summary,
+                    duration: event.finishedAt
+                      ? formatElapsedTime(event.startedAt, now, event.finishedAt)
+                      : undefined,
+                    errorMessage: event.status === 'error' ? event.summary : undefined,
+                  }))}
+                />
                 {isToolActivityExpanded ? (
                   <div className="mt-2 space-y-3">
                     <div className={toolExpandedClassName}>
@@ -2650,9 +2647,11 @@ export default function ChatMessageBubble({
                 ) : null}
               </div>
             ) : null}
-          </div>
+            </div>
+          </AstryxChatMessageBubble>
         ) : (
-          <div className={userBubbleClassName}>
+          <AstryxChatMessageBubble metadata={messageFooterMetadata}>
+            <div className={userBubbleClassName}>
             {isEditing ? (
               <div className="space-y-2.5">
                 <textarea
@@ -2730,17 +2729,10 @@ export default function ChatMessageBubble({
                 ))}
               </div>
             ) : null}
-            {timestampLabel ? (
-              <span className="mt-2 block text-[11px] font-medium uppercase tracking-wide text-white/85">{timestampLabel}</span>
-            ) : null}
-          </div>
+            </div>
+          </AstryxChatMessageBubble>
         )}
-        {hasMessageActions && !isAgentMessage ? (
-          <div className={messageActionBarClassName}>
-            {messageActionButtons}
-          </div>
-        ) : null}
       </div>
-    </div>
+    </AstryxChatMessage>
   );
 }

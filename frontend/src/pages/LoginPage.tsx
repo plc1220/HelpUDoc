@@ -1,13 +1,29 @@
-import { useEffect, useMemo, useState } from 'react';
+import { Banner } from '@astryxdesign/core/Banner';
+import { Button } from '@astryxdesign/core/Button';
+import { Card } from '@astryxdesign/core/Card';
+import { Icon } from '@astryxdesign/core/Icon';
+import { IconButton } from '@astryxdesign/core/IconButton';
+import { TextInput } from '@astryxdesign/core/TextInput';
 import type { PaletteMode } from '@mui/material';
+import { Moon, Sun } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Sun, Moon } from 'lucide-react';
+
 import { useAuth } from '../auth/useAuth';
 import { applyColorModeToDocument, resolveInitialColorMode } from '../colorMode';
 
 interface LocationState {
   from?: string;
 }
+
+const GoogleMark = () => (
+  <svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18">
+    <path fill="#4285F4" d="M21.6 12.23c0-.71-.06-1.4-.18-2.07H12v3.91h5.38a4.6 4.6 0 0 1-2 3.02v2.54h3.24c1.9-1.74 2.98-4.31 2.98-7.4Z" />
+    <path fill="#34A853" d="M12 22c2.7 0 4.97-.9 6.62-2.37l-3.24-2.54c-.9.6-2.05.96-3.38.96-2.61 0-4.82-1.76-5.61-4.13H3.04v2.62A10 10 0 0 0 12 22Z" />
+    <path fill="#FBBC05" d="M6.39 13.92A6 6 0 0 1 6.08 12c0-.67.11-1.32.31-1.92V7.46H3.04A10 10 0 0 0 2 12c0 1.61.39 3.14 1.04 4.54l3.35-2.62Z" />
+    <path fill="#EA4335" d="M12 5.95c1.47 0 2.79.5 3.83 1.5l2.87-2.87A9.63 9.63 0 0 0 12 2a10 10 0 0 0-8.96 5.46l3.35 2.62C7.18 7.71 9.39 5.95 12 5.95Z" />
+  </svg>
+);
 
 const LoginPage = () => {
   const { user, googleReady, googleError, authMode, signInWithGoogle, signInWithHeaders } = useAuth();
@@ -33,12 +49,10 @@ const LoginPage = () => {
     if (user) {
       const state = location.state as LocationState | null;
       const returnTo = params.get('returnTo');
-      const redirectTo = (returnTo && returnTo.startsWith('/')) ? returnTo : (state?.from || '/');
+      const redirectTo = returnTo?.startsWith('/') ? returnTo : (state?.from || '/');
       navigate(redirectTo, { replace: true });
     }
   }, [location.search, location.state, navigate, user]);
-
-  const heroImage = useMemo(() => (colorMode === 'light' ? '/Day.png' : '/Night.png'), [colorMode]);
 
   const handleGoogleLogin = async () => {
     setError(null);
@@ -46,9 +60,8 @@ const LoginPage = () => {
     try {
       const state = location.state as LocationState | null;
       await signInWithGoogle(state?.from || '/');
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unable to start Google sign-in.';
-      setError(message);
+    } catch (signInError) {
+      setError(signInError instanceof Error ? signInError.message : 'Unable to start Google sign-in.');
       setSubmitting(false);
     }
   };
@@ -56,7 +69,7 @@ const LoginPage = () => {
   const handleHeaderLogin = async () => {
     const trimmedName = headerName.trim();
     if (!trimmedName) {
-      setError('Enter a display name to continue in header auth mode.');
+      setError('Enter a display name to continue in development mode.');
       return;
     }
     setError(null);
@@ -66,163 +79,107 @@ const LoginPage = () => {
         name: trimmedName,
         email: headerEmail.trim() || null,
       });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unable to start header-mode sign-in.';
-      setError(message);
+    } catch (signInError) {
+      setError(signInError instanceof Error ? signInError.message : 'Unable to start development sign-in.');
       setSubmitting(false);
     }
   };
 
   return (
-    <div className="relative min-h-screen overflow-hidden">
-      {/* Background Image */}
-      <div className="absolute inset-0">
-        <div
-          className="absolute inset-0 bg-cover bg-center transition-all duration-700"
-          style={{ backgroundImage: `url(${heroImage})` }}
+    <main className="lumo-login-page">
+      <div className="lumo-login-glow" aria-hidden="true" />
+      <div className="lumo-login-theme-toggle">
+        <IconButton
+          label={colorMode === 'light' ? 'Use dark appearance' : 'Use light appearance'}
+          tooltip={colorMode === 'light' ? 'Use dark appearance' : 'Use light appearance'}
+          variant="ghost"
+          size="md"
+          icon={<Icon icon={colorMode === 'light' ? Moon : Sun} size="sm" />}
+          onClick={() => setColorMode((current) => (current === 'light' ? 'dark' : 'light'))}
         />
-        {/* Subtle overlay for better contrast */}
-        <div className="absolute inset-0 bg-black/10 dark:bg-black/30" />
       </div>
 
-      {/* Floating decorative elements */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-20 left-10 w-72 h-72 bg-gradient-to-br from-blue-500/10 to-cyan-500/10 rounded-full blur-3xl animate-pulse" style={{ animationDuration: '4s' }} />
-        <div className="absolute bottom-20 right-10 w-96 h-96 bg-gradient-to-br from-teal-500/10 to-blue-500/10 rounded-full blur-3xl animate-pulse" style={{ animationDuration: '6s', animationDelay: '2s' }} />
-      </div>
-
-      {/* Main content */}
-      <div className="relative z-10 flex min-h-screen items-center justify-center px-4 py-10">
-        <div
-          className="w-full max-w-md"
-          style={{ animation: 'float 6s ease-in-out infinite' }}
-        >
-          {/* Glass Card */}
-          <div
-            className="relative backdrop-blur-xl rounded-[28px] border border-slate-200 dark:border-slate-700/50 shadow-2xl shadow-black/10 dark:shadow-black/30 overflow-hidden"
-            style={{ backgroundColor: colorMode === 'light' ? 'rgba(255, 255, 255, 0.50)' : 'rgba(15, 23, 42, 0.50)' }}
-          >
-
-
-            {/* Card content */}
-            <div className="p-8 lg:p-10 relative">
-              {/* Theme toggle - inside card, top left */}
-              <button
-                type="button"
-                onClick={() => setColorMode((prev) => (prev === 'light' ? 'dark' : 'light'))}
-                className="absolute top-6 left-6 z-20"
-                aria-label="Toggle color mode"
-              >
-                <div className="p-2.5 rounded-xl bg-slate-100 dark:bg-slate-800/50 backdrop-blur-sm border border-slate-200 dark:border-slate-700/50 shadow-sm transition-all duration-300 hover:scale-110 hover:bg-slate-200 dark:hover:bg-slate-700/80 hover:shadow-md">
-                  {colorMode === 'light' ? (
-                    <Moon size={16} className="text-slate-700" />
-                  ) : (
-                    <Sun size={16} className="text-amber-400" />
-                  )}
-                </div>
-              </button>
-
-              {/* Logo and title */}
-              <div className="text-center mb-8">
-                <div className="inline-flex items-center justify-center mb-4">
-                  <img src="/logo.png" alt="HelpUDoc Logo" className="w-32 h-32 object-contain" />
-                </div>
-                <h1 className="text-3xl font-bold text-slate-900 dark:text-white mb-2">
-                  Welcome back
-                </h1>
-                <p className="text-slate-600 dark:text-slate-300 text-sm">
-                  Sign in to continue to <span className="font-semibold text-blue-600 dark:text-blue-400">HelpUDoc</span>
-                </p>
-              </div>
-
-              {/* Error message */}
-              {error && (
-                <div className="mb-6 p-4 rounded-2xl bg-red-100/80 dark:bg-red-500/20 backdrop-blur-sm border border-red-200 dark:border-red-500/30 animate-shake">
-                  <p className="text-red-700 dark:text-red-300 text-sm text-center">{error}</p>
-                </div>
-              )}
-
-              {authMode === 'headers' ? (
-                <>
-                  <div className="mb-6 rounded-2xl bg-slate-100/70 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700/50 px-4 py-3 text-sm text-slate-600 dark:text-slate-300 text-center">
-                    Header auth mode is enabled. Enter a local identity to seed the `X-User-*` headers for this browser.
-                  </div>
-
-                  <div className="space-y-3">
-                    <input
-                      type="text"
-                      value={headerName}
-                      onChange={(event) => setHeaderName(event.target.value)}
-                      placeholder="Display name"
-                      className="w-full rounded-xl border border-slate-300 dark:border-slate-600 bg-white/70 dark:bg-slate-800/70 px-4 py-3 text-sm text-slate-900 dark:text-slate-100 outline-none focus:border-blue-500"
-                    />
-                    <input
-                      type="email"
-                      value={headerEmail}
-                      onChange={(event) => setHeaderEmail(event.target.value)}
-                      placeholder="Email (optional)"
-                      className="w-full rounded-xl border border-slate-300 dark:border-slate-600 bg-white/70 dark:bg-slate-800/70 px-4 py-3 text-sm text-slate-900 dark:text-slate-100 outline-none focus:border-blue-500"
-                    />
-                    <button
-                      type="button"
-                      onClick={handleHeaderLogin}
-                      disabled={submitting}
-                      className="w-full mt-1 py-3 rounded-xl border border-slate-300 dark:border-slate-600 bg-white/70 dark:bg-slate-800/70 text-slate-800 dark:text-slate-100 text-sm font-semibold transition-all duration-300 hover:bg-white dark:hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      Continue in Header Mode
-                    </button>
-                  </div>
-                </>
-              ) : (
-                <>
-                  <div className="mb-6 rounded-2xl bg-slate-100/70 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700/50 px-4 py-3 text-sm text-slate-600 dark:text-slate-300 text-center">
-                    Sign in with your Google account to access HelpUDoc.
-                  </div>
-
-                  <div className="relative">
-                    {googleError ? (
-                      <div className="text-center text-xs text-red-600 dark:text-red-400 p-3 rounded-xl bg-red-100/80 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20">
-                        {googleError}
-                      </div>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={handleGoogleLogin}
-                        disabled={!googleReady || submitting}
-                        className="w-full mt-1 py-3 rounded-xl border border-slate-300 dark:border-slate-600 bg-white/70 dark:bg-slate-800/70 text-slate-800 dark:text-slate-100 text-sm font-semibold transition-all duration-300 hover:bg-white dark:hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        Continue with Google
-                      </button>
-                    )}
-                  </div>
-                </>
-              )}
-
-              {/* Footer text */}
-              <p className="mt-8 text-center text-xs text-slate-500 dark:text-slate-400">
-                By continuing, you agree to our Terms of Service and Privacy Policy
-              </p>
-            </div>
-          </div>
+      <section className="lumo-login-intro" aria-labelledby="lumo-login-heading">
+        <div className="lumo-login-brand">
+          <img src="/lumo-icon-512.png" alt="" className="lumo-login-mark" />
+          <span>Lumo</span>
+          <span className="lumo-login-product">Studio</span>
         </div>
-      </div>
+        <p className="lumo-login-eyebrow">Trusted knowledge, ready for work</p>
+        <h1 id="lumo-login-heading">Welcome to Lumo Studio</h1>
+        <p className="lumo-login-description">
+          Your workspace for knowledge, memory, skills, and workflows.
+        </p>
+        <p className="lumo-login-promise">Lumo turns trusted knowledge into useful work.</p>
+      </section>
 
-      {/* Custom CSS animations */}
-      <style>{`
-        @keyframes float {
-          0%, 100% { transform: translateY(0px); }
-          50% { transform: translateY(-10px); }
-        }
-        @keyframes shake {
-          0%, 100% { transform: translateX(0); }
-          25% { transform: translateX(-5px); }
-          75% { transform: translateX(5px); }
-        }
-        .animate-shake {
-          animation: shake 0.4s ease-in-out;
-        }
-      `}</style>
-    </div>
+      <Card className="lumo-login-card" width="100%" maxWidth={440} padding={8}>
+        <div className="lumo-login-card-heading">
+          <p className="lumo-login-card-kicker">Lumo Studio</p>
+          <h2>{authMode === 'headers' ? 'Development sign-in' : 'Continue to your workspace'}</h2>
+          <p>{authMode === 'headers'
+            ? 'Use a local identity for this development environment.'
+            : 'Sign in securely with your Google account.'}</p>
+        </div>
+
+        {error ? (
+          <Banner status="error" title="Sign-in needs attention" description={error} />
+        ) : null}
+
+        {authMode === 'headers' ? (
+          <div className="lumo-login-form">
+            <Banner
+              status="info"
+              title="Development mode"
+              description="This local identity seeds the configured X-User headers in this browser."
+            />
+            <TextInput
+              label="Display name"
+              value={headerName}
+              onChange={setHeaderName}
+              placeholder="Your name"
+              width="100%"
+              isRequired
+            />
+            <TextInput
+              label="Email"
+              value={headerEmail}
+              onChange={setHeaderEmail}
+              placeholder="you@example.com"
+              type="email"
+              width="100%"
+              isOptional
+              onEnter={() => void handleHeaderLogin()}
+            />
+            <Button
+              label="Continue in development mode"
+              variant="primary"
+              width="100%"
+              isLoading={submitting}
+              isDisabled={submitting}
+              onClick={() => void handleHeaderLogin()}
+            />
+          </div>
+        ) : googleError ? (
+          <Banner status="error" title="Google sign-in is unavailable" description={googleError} />
+        ) : (
+          <Button
+            label="Continue with Google"
+            variant="primary"
+            size="lg"
+            width="100%"
+            icon={<GoogleMark />}
+            isLoading={submitting}
+            isDisabled={!googleReady || submitting}
+            onClick={() => void handleGoogleLogin()}
+          />
+        )}
+
+        <p className="lumo-login-legal">
+          By continuing, you agree to the Terms of Service and Privacy Policy.
+        </p>
+      </Card>
+    </main>
   );
 };
 

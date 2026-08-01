@@ -773,3 +773,508 @@ body {
   border-left-color: #334155;
   border-right-color: #0f172a;
 }
+
+/* Lumo Studio — Astryx-first chat and authentication surfaces */
+.lumo-agent-pane {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--color-background-body);
+  color: var(--color-text-primary);
+  font-family: var(--font-family-body);
+}
+
+.lumo-agent-pane-body {
+  position: relative;
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.lumo-agent-pane-hidden {
+  display: none;
+}
+
+.lumo-chat-layout {
+  background:
+    radial-gradient(circle at 50% -20%, color-mix(in srgb, var(--color-background-cyan) 36%, transparent), transparent 42%),
+    var(--color-background-body);
+}
+
+.lumo-message-list {
+  box-sizing: border-box;
+  min-height: 0;
+  flex: 1;
+  width: min(100%, 72rem);
+  margin-inline: auto;
+  padding: var(--spacing-4) var(--spacing-3) var(--spacing-8);
+  overflow-y: auto;
+}
+
+.lumo-chat-layout .lumo-message-list {
+  flex: none;
+  overflow: visible;
+}
+
+.lumo-message-width {
+  position: relative;
+  min-width: 0;
+  flex: 1;
+}
+
+.astryx-chat-message[data-sender='user'] .lumo-message-width {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.astryx-chat-message[data-sender='user'] .astryx-chat-message-bubble[data-variant='filled'] {
+  border: var(--border-width) solid color-mix(in srgb, var(--color-border-blue) 22%, var(--color-border));
+  background: color-mix(in srgb, var(--color-background-blue) 56%, var(--color-background-surface));
+  color: var(--color-text-primary);
+  box-shadow: var(--shadow-low);
+}
+
+.lumo-assistant-content,
+.lumo-user-content {
+  min-width: 0;
+  font-size: var(--text-body-size);
+  line-height: 1.55;
+}
+
+.lumo-assistant-content {
+  width: 100%;
+}
+
+.lumo-user-content {
+  color: var(--color-text-primary);
+}
+
+.lumo-message-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-0-5);
+}
+
+.lumo-message-action-button {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: var(--radius-element);
+  background: transparent;
+  color: var(--color-icon-secondary);
+  transition:
+    color var(--duration-fast-min) var(--ease-standard),
+    background-color var(--duration-fast-min) var(--ease-standard),
+    transform 100ms ease-out;
+}
+
+.lumo-message-action-button:hover {
+  background: var(--color-overlay-hover);
+  color: var(--color-icon-primary);
+}
+
+.lumo-message-action-button:active {
+  transform: scale(0.96);
+}
+
+.lumo-message-action-button:focus-visible {
+  outline: 2px solid var(--color-border-blue);
+  outline-offset: 2px;
+}
+
+.lumo-composer-dock,
+.lumo-composer-wrap {
+  box-sizing: border-box;
+  width: 100%;
+}
+
+.lumo-composer-dock {
+  padding: var(--spacing-2) var(--spacing-3) var(--spacing-3);
+}
+
+.lumo-chat-layout .lumo-composer-dock {
+  padding: 0;
+}
+
+.lumo-composer-wrap {
+  position: relative;
+}
+
+.lumo-chat-composer {
+  width: min(100%, 52rem);
+  margin-inline: auto;
+}
+
+.lumo-composer-input {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 52px;
+  max-height: 184px;
+  resize: none;
+  overflow-y: auto;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--color-text-primary);
+  caret-color: var(--color-accent);
+  font: inherit;
+  font-size: var(--text-body-size);
+  line-height: 1.55;
+  padding: var(--spacing-2) var(--spacing-1);
+}
+
+.lumo-composer-input::placeholder {
+  color: var(--color-text-secondary);
+  opacity: 0.82;
+}
+
+.lumo-composer-tokens,
+.lumo-composer-footer-actions {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--spacing-1);
+}
+
+.lumo-composer-send-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-1);
+}
+
+.lumo-composer-at,
+.lumo-composer-slash {
+  font-weight: var(--font-weight-semibold);
+  line-height: 1;
+}
+
+.lumo-composer-status,
+.lumo-composer-empty-suggestion {
+  color: var(--color-text-secondary);
+  font-size: var(--text-supporting-size);
+  line-height: var(--text-supporting-leading);
+}
+
+.lumo-composer-status {
+  letter-spacing: 0.01em;
+}
+
+.lumo-composer-suggestions {
+  position: absolute;
+  z-index: 30;
+  bottom: calc(100% + var(--spacing-2));
+  left: var(--spacing-3);
+  width: min(22rem, calc(100% - var(--spacing-6)));
+  max-height: 240px;
+  overflow-y: auto;
+  padding: var(--spacing-1);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-container);
+  background: color-mix(in srgb, var(--color-background-popover) 92%, transparent);
+  box-shadow: var(--shadow-high);
+  backdrop-filter: blur(20px) saturate(150%);
+  transform-origin: bottom left;
+  animation: lumo-materialize var(--duration-fast) var(--ease-standard) both;
+}
+
+.lumo-composer-command-suggestions {
+  width: min(26rem, calc(100% - var(--spacing-6)));
+}
+
+.lumo-composer-empty-suggestion {
+  padding: var(--spacing-3);
+  text-align: center;
+}
+
+.lumo-markdown {
+  min-width: 0;
+  color: var(--color-text-primary);
+}
+
+.lumo-markdown-rich {
+  max-width: 100%;
+}
+
+.lumo-mermaid {
+  box-sizing: border-box;
+  display: block;
+  width: 100%;
+  margin-block: var(--spacing-4);
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: var(--spacing-4);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-container);
+  background: var(--color-background-muted);
+  color: var(--color-text-primary);
+  overscroll-behavior-inline: contain;
+  scrollbar-gutter: stable;
+}
+
+.lumo-mermaid svg {
+  display: block;
+  height: auto !important;
+  min-width: min(100%, 40rem);
+  max-width: none !important;
+  margin-inline: auto;
+}
+
+.lumo-mermaid svg text,
+.lumo-mermaid svg tspan,
+.lumo-mermaid svg foreignObject,
+.lumo-mermaid svg foreignObject * {
+  line-height: normal !important;
+  letter-spacing: normal !important;
+  white-space: normal !important;
+  text-transform: none !important;
+}
+
+.lumo-login-page {
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  min-height: 100dvh;
+  grid-template-columns: minmax(0, 1fr) minmax(20rem, 27.5rem);
+  align-items: center;
+  gap: clamp(2.5rem, 8vw, 8rem);
+  overflow: hidden;
+  padding: clamp(2rem, 7vw, 7rem);
+  background: var(--color-background-body);
+  color: var(--color-text-primary);
+}
+
+.lumo-login-glow {
+  position: absolute;
+  z-index: -1;
+  top: -22rem;
+  left: -12rem;
+  width: min(70vw, 64rem);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 55% 52%, color-mix(in srgb, var(--color-background-cyan) 70%, transparent), transparent 40%),
+    radial-gradient(circle at 42% 42%, color-mix(in srgb, var(--color-background-blue) 66%, transparent), transparent 62%);
+  filter: blur(28px);
+  opacity: 0.8;
+}
+
+.lumo-login-theme-toggle {
+  position: absolute;
+  top: var(--spacing-5);
+  right: var(--spacing-5);
+}
+
+.lumo-login-intro {
+  max-width: 42rem;
+}
+
+.lumo-login-brand {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: -0.02em;
+}
+
+.lumo-login-mark {
+  width: 40px;
+  height: 40px;
+}
+
+.lumo-login-product {
+  color: var(--color-text-secondary);
+  font-weight: var(--font-weight-medium);
+}
+
+.lumo-login-eyebrow,
+.lumo-login-card-kicker {
+  margin: 0;
+  color: var(--color-text-accent);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.lumo-login-eyebrow {
+  margin-top: clamp(4rem, 10vh, 8rem);
+}
+
+.lumo-login-intro h1 {
+  max-width: 11ch;
+  margin: var(--spacing-3) 0 0;
+  font-size: clamp(2.7rem, 6vw, 5.2rem);
+  font-weight: var(--font-weight-semibold);
+  line-height: 0.98;
+  letter-spacing: -0.05em;
+  text-wrap: balance;
+}
+
+.lumo-login-description {
+  max-width: 35rem;
+  margin: var(--spacing-6) 0 0;
+  color: var(--color-text-secondary);
+  font-size: clamp(1.05rem, 2vw, 1.35rem);
+  line-height: 1.5;
+}
+
+.lumo-login-promise {
+  margin: var(--spacing-4) 0 0;
+  color: var(--color-text-primary);
+  font-weight: var(--font-weight-medium);
+}
+
+.lumo-login-card {
+  position: relative;
+  justify-self: end;
+  border-color: color-mix(in srgb, var(--color-border-emphasized) 66%, transparent);
+  background: color-mix(in srgb, var(--color-background-card) 92%, transparent);
+  box-shadow: var(--shadow-high);
+  backdrop-filter: blur(28px) saturate(140%);
+}
+
+.lumo-login-card-heading {
+  margin-bottom: var(--spacing-6);
+}
+
+.lumo-login-card-heading h2 {
+  margin: var(--spacing-2) 0 0;
+  font-size: var(--font-size-2xl);
+  line-height: 1.25;
+  letter-spacing: -0.025em;
+}
+
+.lumo-login-card-heading p:last-child,
+.lumo-login-legal {
+  color: var(--color-text-secondary);
+  font-size: var(--text-supporting-size);
+  line-height: 1.55;
+}
+
+.lumo-login-card-heading p:last-child {
+  margin: var(--spacing-2) 0 0;
+}
+
+.lumo-login-form {
+  display: grid;
+  gap: var(--spacing-4);
+}
+
+.lumo-login-card > * + * {
+  margin-top: var(--spacing-4);
+}
+
+.lumo-login-legal {
+  margin-bottom: 0;
+  text-align: center;
+}
+
+@keyframes lumo-materialize {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.985);
+    filter: blur(3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+  }
+}
+
+@media (max-width: 840px) {
+  .lumo-login-page {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--spacing-8);
+    align-content: center;
+    padding: var(--spacing-6);
+  }
+
+  .lumo-login-intro {
+    text-align: center;
+  }
+
+  .lumo-login-brand {
+    justify-content: center;
+  }
+
+  .lumo-login-eyebrow {
+    margin-top: var(--spacing-8);
+  }
+
+  .lumo-login-intro h1,
+  .lumo-login-description {
+    margin-inline: auto;
+  }
+
+  .lumo-login-intro h1 {
+    max-width: 16ch;
+    font-size: clamp(2.4rem, 10vw, 4rem);
+  }
+
+  .lumo-login-card {
+    justify-self: center;
+  }
+}
+
+@media (max-width: 640px) {
+  .lumo-message-list {
+    padding-inline: var(--spacing-2);
+  }
+
+  .lumo-login-page {
+    padding: var(--spacing-5) var(--spacing-4);
+  }
+
+  .lumo-login-intro h1 {
+    font-size: clamp(2.2rem, 12vw, 3.2rem);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lumo-composer-suggestions {
+    animation: none;
+  }
+
+  .lumo-message-action-button,
+  .lumo-chat-composer * {
+    scroll-behavior: auto !important;
+    transition-duration: 1ms !important;
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .lumo-composer-suggestions,
+  .lumo-login-card {
+    background: var(--color-background-popover);
+    backdrop-filter: none;
+  }
+
+  .lumo-login-glow {
+    display: none;
+  }
+}
+
+@media (prefers-contrast: more) {
+  .lumo-composer-suggestions,
+  .lumo-login-card,
+  .lumo-mermaid {
+    border-color: var(--color-text-primary);
+  }
+
+  .lumo-login-card {
+    background: var(--color-background-card);
+  }
+}

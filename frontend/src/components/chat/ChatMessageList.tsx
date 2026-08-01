@@ -1,7 +1,13 @@
-import { ArrowDown, MessageSquareText } from 'lucide-react';
-import { type Dispatch, type SetStateAction, useEffect, useMemo, useRef, useState } from 'react';
-import type { Components } from 'react-markdown';
+import {
+  ChatMessageList as AstryxChatMessageList,
+  ChatSystemMessage,
+} from '@astryxdesign/core/Chat';
+import { EmptyState } from '@astryxdesign/core/EmptyState';
+import { Icon } from '@astryxdesign/core/Icon';
 import type { InteractionRequest, InteractionResponse } from '@helpudoc/contracts/types';
+import { MessageSquareText } from 'lucide-react';
+import { type Dispatch, type SetStateAction, useMemo } from 'react';
+import type { Components } from 'react-markdown';
 
 import type {
   ConversationMessage,
@@ -21,7 +27,7 @@ export default function ChatMessageList({
   messages,
   isStreaming,
   personaDisplayName,
-  emptyStateDescription = 'Ask the agent to inspect files, generate content, or run a task.',
+  emptyStateDescription = 'Ask Lumo to inspect files, create an artifact, or run a workflow.',
   messageBubbleMaxWidth,
   markdownComponents,
   expandedToolMessages,
@@ -102,48 +108,12 @@ export default function ChatMessageList({
     pendingInterrupt?: ConversationMessageMetadata['pendingInterrupt'],
   ) => void;
   workspaceId?: string;
-  onInteractionSubmit?: (response: InteractionResponse, request: InteractionRequest, message?: ConversationMessage) => Promise<void>;
+  onInteractionSubmit?: (
+    response: InteractionResponse,
+    request: InteractionRequest,
+    message?: ConversationMessage,
+  ) => Promise<void>;
 }) {
-  const isDarkMode = colorMode === 'dark';
-  const listRef = useRef<HTMLDivElement | null>(null);
-  const [shouldAutoScroll, setShouldAutoScroll] = useState(true);
-  const [showJumpToLatest, setShowJumpToLatest] = useState(false);
-  const lastMessageSignature = useMemo(
-    () => messages.map((message) => `${message.id}:${message.updatedAt || message.createdAt}:${message.text?.length || 0}`).join('|'),
-    [messages],
-  );
-
-  useEffect(() => {
-    const list = listRef.current;
-    if (!list || !shouldAutoScroll) {
-      return;
-    }
-    list.scrollTo({ top: list.scrollHeight, behavior: 'smooth' });
-  }, [lastMessageSignature, shouldAutoScroll, isStreaming]);
-
-  useEffect(() => {
-    setShowJumpToLatest(!shouldAutoScroll && messages.length > 0);
-  }, [messages.length, shouldAutoScroll]);
-
-  const handleScroll = () => {
-    const list = listRef.current;
-    if (!list) {
-      return;
-    }
-    const distanceFromBottom = list.scrollHeight - list.scrollTop - list.clientHeight;
-    setShouldAutoScroll(distanceFromBottom < 120);
-  };
-
-  const scrollToLatest = () => {
-    const list = listRef.current;
-    if (!list) {
-      return;
-    }
-    list.scrollTo({ top: list.scrollHeight, behavior: 'smooth' });
-    setShouldAutoScroll(true);
-    setShowJumpToLatest(false);
-  };
-
   const latestAgentMessageId = useMemo(() => {
     const latestAgentMessage = [...messages].reverse().find((message) => message.sender === 'agent');
     return latestAgentMessage?.id ?? null;
@@ -163,155 +133,70 @@ export default function ChatMessageList({
     return groups;
   }, [messages]);
 
-  const messageItems = useMemo(() => {
-    return messageGroups.map((group, groupIndex) => (
-      <section
-        key={`date-section-${group.dateLabel || 'undated'}-${group.messages[0]?.id ?? groupIndex}`}
-        className="space-y-3"
-      >
-        {group.dateLabel ? (
-          <div className="relative flex items-center justify-center py-4">
-            <div
-              className={`absolute inset-x-0 top-1/2 h-px -translate-y-1/2 ${
-                isDarkMode ? 'bg-slate-700/80' : 'bg-slate-200'
-              }`}
-            />
-            <span className={`relative rounded-full border px-3 py-1 text-[10px] font-semibold uppercase tracking-wide ${
-              isDarkMode
-                ? 'border-slate-700/70 bg-slate-950 text-slate-300'
-                : 'border-slate-200 bg-white text-slate-600 shadow-sm'
-            }`}>
-              {group.dateLabel}
-            </span>
-          </div>
-        ) : null}
-        {group.messages.map((message) => (
-          <ChatMessageBubble
-          key={message.id}
-          message={message}
-          isLatestAgentMessage={message.sender === 'agent' && message.id === latestAgentMessageId}
-          personaDisplayName={personaDisplayName}
-          messageBubbleMaxWidth={messageBubbleMaxWidth}
-          markdownComponents={markdownComponents}
-          expandedToolMessages={expandedToolMessages}
-          expandedThinkingMessages={expandedThinkingMessages}
-          copiedMessageId={copiedMessageId}
-          interruptInputByMessageId={interruptInputByMessageId}
-          interruptStructuredAnswersByMessageId={interruptStructuredAnswersByMessageId}
-          interruptSelectedChoicesByMessageId={interruptSelectedChoicesByMessageId}
-          interruptSubmittingByMessageId={interruptSubmittingByMessageId}
-          interruptErrorByMessageId={interruptErrorByMessageId}
-          interruptFieldKey={interruptFieldKey}
-          interruptActionFieldKey={interruptActionFieldKey}
-          formatMessageTimestamp={formatMessageTimestamp}
-          getInterruptKind={getInterruptKind}
-          getInterruptActions={getInterruptActions}
-          getPrimaryInterruptAction={getPrimaryInterruptAction}
-          isPlanApprovalInterrupt={isPlanApprovalInterrupt}
-          setInterruptInputByMessageId={setInterruptInputByMessageId}
-          setInterruptStructuredAnswersByMessageId={setInterruptStructuredAnswersByMessageId}
-          toggleInterruptSelectedChoice={toggleInterruptSelectedChoice}
-          toggleThinkingVisibility={toggleThinkingVisibility}
-          toggleToolActivityVisibility={toggleToolActivityVisibility}
-          handleCopyMessageText={handleCopyMessageText}
-          handleRerunMessage={handleRerunMessage}
-          handleScheduleMessage={handleScheduleMessage}
-          handlePrepareInterruptAction={handlePrepareInterruptAction}
-          handleInterruptAction={handleInterruptAction}
-          workspaceId={workspaceId}
-          colorMode={colorMode}
-          isStreaming={isStreaming}
-          onInteractionSubmit={onInteractionSubmit}
-          />
-        ))}
-      </section>
-    ));
-  }, [
-    messageGroups,
-    interruptFieldKey,
-    interruptActionFieldKey,
-    interruptInputByMessageId,
-    interruptStructuredAnswersByMessageId,
-    interruptSelectedChoicesByMessageId,
-    interruptSubmittingByMessageId,
-    interruptErrorByMessageId,
-    copiedMessageId,
-    expandedThinkingMessages,
-    expandedToolMessages,
-    formatMessageTimestamp,
-    getInterruptKind,
-    getInterruptActions,
-    getPrimaryInterruptAction,
-    handleCopyMessageText,
-    handleInterruptAction,
-    handleRerunMessage,
-    handleScheduleMessage,
-    isPlanApprovalInterrupt,
-    isStreaming,
-    markdownComponents,
-    messageBubbleMaxWidth,
-    personaDisplayName,
-    latestAgentMessageId,
-    setInterruptInputByMessageId,
-    setInterruptStructuredAnswersByMessageId,
-    toggleInterruptSelectedChoice,
-    toggleThinkingVisibility,
-    toggleToolActivityVisibility,
-    workspaceId,
-    handlePrepareInterruptAction,
-    onInteractionSubmit,
-    colorMode,
-    isDarkMode,
-  ]);
-
   return (
-    <div className="relative flex-1 min-h-0">
-      <div
-        ref={listRef}
-        onScroll={handleScroll}
-        className={`h-full min-h-0 overflow-y-auto px-3 pt-3 ${showJumpToLatest ? 'pb-20' : 'pb-3'}`}
+    <div className="lumo-message-list">
+      <AstryxChatMessageList
+        density="balanced"
+        gap={3}
+        isStreaming={isStreaming}
+        emptyState={(
+          <EmptyState
+            title="Start with trusted context"
+            description={emptyStateDescription}
+            icon={<Icon icon={MessageSquareText} size="lg" color="accent" />}
+          />
+        )}
       >
-        <div className="mx-auto w-full max-w-[72rem] space-y-3">
-          {messages.length === 0 ? (
-            <div className={`flex h-full min-h-[40vh] flex-col items-center justify-center text-center ${
-              isDarkMode ? 'text-slate-400' : 'text-slate-500'
-            }`}>
-              <div className={`rounded-3xl border px-5 py-7 backdrop-blur-sm ${
-                isDarkMode
-                  ? 'border-slate-700/70 bg-slate-900/75 shadow-[0_20px_50px_-32px_rgba(15,23,42,0.95)]'
-                  : 'border-slate-200/80 bg-white/92 shadow-[0_24px_60px_-40px_rgba(15,23,42,0.16)]'
-              }`}>
-                <div className={`mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full border ${
-                  isDarkMode
-                    ? 'border-slate-700/70 bg-slate-950/90 text-slate-300'
-                    : 'border-slate-200 bg-slate-100 text-slate-600'
-                }`}>
-                  <MessageSquareText size={18} />
-                </div>
-                <p className={`text-sm font-semibold ${isDarkMode ? 'text-slate-100' : 'text-slate-900'}`}>No messages yet</p>
-                <p className={`mt-1 text-xs ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>{emptyStateDescription}</p>
-              </div>
-            </div>
-          ) : (
-            messageItems
-          )}
-        </div>
-      </div>
-      {showJumpToLatest ? (
-        <button
-          type="button"
-          onClick={scrollToLatest}
-          className={`absolute bottom-4 right-4 inline-flex items-center gap-1 rounded-full border px-3 py-1.5 text-xs font-semibold shadow-lg backdrop-blur transition-all duration-200 ${
-            isDarkMode
-              ? 'border-slate-700/70 bg-slate-900/95 text-slate-200 hover:bg-slate-800'
-              : 'border-slate-200 bg-white/95 text-slate-700 hover:bg-slate-50'
-          }`}
-          title="Jump to latest message"
-        >
-          <ArrowDown size={14} />
-          Latest
-        </button>
-      ) : null}
+        {messageGroups.flatMap((group, groupIndex) => [
+          group.dateLabel ? (
+            <ChatSystemMessage
+              key={`date-${group.dateLabel}-${groupIndex}`}
+              variant="divider"
+            >
+              {group.dateLabel}
+            </ChatSystemMessage>
+          ) : null,
+          ...group.messages.map((message) => (
+            <ChatMessageBubble
+              key={message.id}
+              message={message}
+              isLatestAgentMessage={message.sender === 'agent' && message.id === latestAgentMessageId}
+              personaDisplayName={personaDisplayName}
+              messageBubbleMaxWidth={messageBubbleMaxWidth}
+              markdownComponents={markdownComponents}
+              expandedToolMessages={expandedToolMessages}
+              expandedThinkingMessages={expandedThinkingMessages}
+              copiedMessageId={copiedMessageId}
+              interruptInputByMessageId={interruptInputByMessageId}
+              interruptStructuredAnswersByMessageId={interruptStructuredAnswersByMessageId}
+              interruptSelectedChoicesByMessageId={interruptSelectedChoicesByMessageId}
+              interruptSubmittingByMessageId={interruptSubmittingByMessageId}
+              interruptErrorByMessageId={interruptErrorByMessageId}
+              interruptFieldKey={interruptFieldKey}
+              interruptActionFieldKey={interruptActionFieldKey}
+              formatMessageTimestamp={formatMessageTimestamp}
+              getInterruptKind={getInterruptKind}
+              getInterruptActions={getInterruptActions}
+              getPrimaryInterruptAction={getPrimaryInterruptAction}
+              isPlanApprovalInterrupt={isPlanApprovalInterrupt}
+              setInterruptInputByMessageId={setInterruptInputByMessageId}
+              setInterruptStructuredAnswersByMessageId={setInterruptStructuredAnswersByMessageId}
+              toggleInterruptSelectedChoice={toggleInterruptSelectedChoice}
+              toggleThinkingVisibility={toggleThinkingVisibility}
+              toggleToolActivityVisibility={toggleToolActivityVisibility}
+              handleCopyMessageText={handleCopyMessageText}
+              handleRerunMessage={handleRerunMessage}
+              handleScheduleMessage={handleScheduleMessage}
+              handlePrepareInterruptAction={handlePrepareInterruptAction}
+              handleInterruptAction={handleInterruptAction}
+              workspaceId={workspaceId}
+              colorMode={colorMode}
+              isStreaming={isStreaming}
+              onInteractionSubmit={onInteractionSubmit}
+            />
+          )),
+        ])}
+      </AstryxChatMessageList>
     </div>
   );
 }
@@ -325,15 +210,12 @@ function formatDateLabel(value?: string): string {
     return '';
   }
   const today = new Date();
-  const todayKey = today.toDateString();
   const yesterday = new Date();
   yesterday.setDate(today.getDate() - 1);
-  const yesterdayKey = yesterday.toDateString();
-  const dateKey = date.toDateString();
-  if (dateKey === todayKey) {
+  if (date.toDateString() === today.toDateString()) {
     return 'Today';
   }
-  if (dateKey === yesterdayKey) {
+  if (date.toDateString() === yesterday.toDateString()) {
     return 'Yesterday';
   }
   return date.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });

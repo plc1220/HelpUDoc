@@ -9,6 +9,7 @@ import type {
   SyntheticEvent,
 } from 'react';
 import { useEffect, useState } from 'react';
+import { ChatLayout } from '@astryxdesign/core/Chat';
 import type { Components } from 'react-markdown';
 import type { InteractionRequest, InteractionResponse } from '@helpudoc/contracts/types';
 import type {
@@ -255,12 +256,9 @@ export default function AgentChatPane({
 
   return (
     <div
-      className={`flex min-h-0 flex-col overflow-hidden ${
-        isDarkMode ? 'bg-[#0d1524]' : 'bg-white'
-      }`}
+      className="lumo-agent-pane"
       style={agentPaneStyles}
     >
-      <style>{`@keyframes chat-pane-message-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }`}</style>
       {isPublishedWorkspace && publishedWorkspace ? (
         <PublishedWorkspaceChatHeader
           colorMode={colorMode}
@@ -284,21 +282,14 @@ export default function AgentChatPane({
           isEditMode={isEditMode}
           isHistoryOpen={isHistoryOpen}
           isAgentPaneFullScreen={isAgentPaneFullScreen}
-          personas={personas}
-          selectedPersona={selectedPersona}
           onToggleVisibility={onToggleAgentPaneVisibility}
-          onModeChange={onModeChange}
           onToggleHistory={onToggleHistory}
           onNewChat={onNewChat}
           onScheduleChat={onScheduleChat}
           onToggleFullScreen={onToggleFullScreen}
         />
       )}
-      <div
-        className={`relative flex min-h-0 flex-1 flex-col overflow-hidden ${
-          isAgentPaneFullScreen || isAgentPaneVisible ? 'block' : 'hidden'
-        }`}
-      >
+      <div className={`lumo-agent-pane-body ${isAgentPaneFullScreen || isAgentPaneVisible ? '' : 'lumo-agent-pane-hidden'}`}>
         {isPublishedWorkspace && publishedWorkspace && publishedMode === 'team' ? (
           <WorkspaceTeamChatPanel
             workspace={publishedWorkspace}
@@ -329,80 +320,92 @@ export default function AgentChatPane({
                 Private with Lumo is visible only to you. Lumo may analyze published files, but cannot edit them.
               </div>
             ) : null}
-            <ChatMessageList
-              colorMode={colorMode}
-              messages={messages}
-              isStreaming={isStreaming}
-              personaDisplayName={personaDisplayName}
-              emptyStateDescription={isPublishedWorkspace
-                ? 'Ask Lumo to explain, summarize, or analyze the published workspace without changing it.'
-                : undefined}
-              messageBubbleMaxWidth={messageBubbleMaxWidth}
-              markdownComponents={markdownComponents}
-              expandedToolMessages={expandedToolMessages}
-              expandedThinkingMessages={expandedThinkingMessages}
-              copiedMessageId={copiedMessageId}
-              interruptInputByMessageId={interruptInputByMessageId}
-              interruptStructuredAnswersByMessageId={interruptStructuredAnswersByMessageId}
-              interruptSelectedChoicesByMessageId={interruptSelectedChoicesByMessageId}
-              interruptSubmittingByMessageId={interruptSubmittingByMessageId}
-              interruptErrorByMessageId={interruptErrorByMessageId}
-              interruptFieldKey={interruptFieldKey}
-              interruptActionFieldKey={interruptActionFieldKey}
-              getInterruptKind={getInterruptKind}
-              formatMessageTimestamp={formatMessageTimestamp}
-              getInterruptActions={getInterruptActions}
-              getPrimaryInterruptAction={getPrimaryInterruptAction}
-              isPlanApprovalInterrupt={isPlanApprovalInterrupt}
-              setInterruptInputByMessageId={setInterruptInputByMessageId}
-              setInterruptStructuredAnswersByMessageId={setInterruptStructuredAnswersByMessageId}
-              toggleInterruptSelectedChoice={toggleInterruptSelectedChoice}
-              toggleThinkingVisibility={onToggleThinkingVisibility}
-              toggleToolActivityVisibility={onToggleToolActivityVisibility}
-              handleCopyMessageText={onCopyMessageText}
-              handleRerunMessage={onRerunMessage}
-              handleScheduleMessage={onScheduleMessage}
-              handlePrepareInterruptAction={onPrepareInterruptAction}
-              handleInterruptAction={onInterruptAction}
-              workspaceId={workspaceId}
-              onInteractionSubmit={onInteractionSubmit}
-            />
-            <ChatInputArea
-              colorMode={colorMode}
-              chatMessage={chatMessage}
-              chatAttachments={chatAttachments}
-              placeholder={isPublishedWorkspace
-                ? 'Ask Lumo about this published workspace…'
-                : undefined}
-              chatInputRef={chatInputRef}
-              attachmentInputRef={attachmentInputRef}
-              isStreaming={isStreaming}
-              isPreparingAttachments={isPreparingAttachments}
-              internetSearchEnabled={internetSearchEnabled}
-              commandTags={commandTags}
-              isMentionOpen={isMentionOpen}
-              mentionSuggestions={mentionSuggestions}
-              mentionSelectedIndex={mentionSelectedIndex}
-              isCommandOpen={isCommandOpen}
-              commandSuggestions={commandSuggestions}
-              commandSelectedIndex={commandSelectedIndex}
-              onChatInputChange={onChatInputChange}
-              onChatInputKeyDown={onChatInputKeyDown}
-              onChatInputKeyUp={onChatInputKeyUp}
-              onChatInputSelectionChange={onChatInputSelectionChange}
-              onChatInputPaste={onChatInputPaste}
-              onOpenLocalAttachmentPicker={onOpenLocalAttachmentPicker}
-              onInsertKnowledgeTrigger={onInsertKnowledgeTrigger}
-              onToggleInternetSearch={onToggleInternetSearch}
-              onInsertSlashTrigger={onInsertSlashTrigger}
-              onStopStreaming={onStopStreaming}
-              onSendMessage={onSendMessage}
-              onChatAttachmentChange={onChatAttachmentChange}
-              onRemoveChatAttachment={onRemoveChatAttachment}
-              onRemoveCommandTag={onRemoveCommandTag}
-              onSelectMention={onSelectMention}
-              onSelectCommand={onSelectCommand}
-            />
+            <ChatLayout
+              className="lumo-chat-layout"
+              density={isAgentPaneFullScreen ? 'spacious' : 'balanced'}
+              composer={(
+                <ChatInputArea
+                  colorMode={colorMode}
+                  chatMessage={chatMessage}
+                  chatAttachments={chatAttachments}
+                  placeholder={isPublishedWorkspace
+                    ? 'Ask Lumo about this published workspace…'
+                    : undefined}
+                  chatInputRef={chatInputRef}
+                  attachmentInputRef={attachmentInputRef}
+                  isStreaming={isStreaming}
+                  isPreparingAttachments={isPreparingAttachments}
+                  personas={personas}
+                  selectedPersona={selectedPersona}
+                  internetSearchEnabled={internetSearchEnabled}
+                  commandTags={commandTags}
+                  isMentionOpen={isMentionOpen}
+                  mentionSuggestions={mentionSuggestions}
+                  mentionSelectedIndex={mentionSelectedIndex}
+                  isCommandOpen={isCommandOpen}
+                  commandSuggestions={commandSuggestions}
+                  commandSelectedIndex={commandSelectedIndex}
+                  onChatInputChange={onChatInputChange}
+                  onChatInputKeyDown={onChatInputKeyDown}
+                  onChatInputKeyUp={onChatInputKeyUp}
+                  onChatInputSelectionChange={onChatInputSelectionChange}
+                  onChatInputPaste={onChatInputPaste}
+                  onOpenLocalAttachmentPicker={onOpenLocalAttachmentPicker}
+                  onModeChange={(personaName) => {
+                    onModeChange({ target: { value: personaName } } as ChangeEvent<HTMLSelectElement>);
+                  }}
+                  onInsertKnowledgeTrigger={onInsertKnowledgeTrigger}
+                  onToggleInternetSearch={onToggleInternetSearch}
+                  onInsertSlashTrigger={onInsertSlashTrigger}
+                  onStopStreaming={onStopStreaming}
+                  onSendMessage={onSendMessage}
+                  onChatAttachmentChange={onChatAttachmentChange}
+                  onRemoveChatAttachment={onRemoveChatAttachment}
+                  onRemoveCommandTag={onRemoveCommandTag}
+                  onSelectMention={onSelectMention}
+                  onSelectCommand={onSelectCommand}
+                />
+              )}
+            >
+              <ChatMessageList
+                colorMode={colorMode}
+                messages={messages}
+                isStreaming={isStreaming}
+                personaDisplayName={personaDisplayName}
+                emptyStateDescription={isPublishedWorkspace
+                  ? 'Ask Lumo to explain, summarize, or analyze the published workspace without changing it.'
+                  : undefined}
+                messageBubbleMaxWidth={messageBubbleMaxWidth}
+                markdownComponents={markdownComponents}
+                expandedToolMessages={expandedToolMessages}
+                expandedThinkingMessages={expandedThinkingMessages}
+                copiedMessageId={copiedMessageId}
+                interruptInputByMessageId={interruptInputByMessageId}
+                interruptStructuredAnswersByMessageId={interruptStructuredAnswersByMessageId}
+                interruptSelectedChoicesByMessageId={interruptSelectedChoicesByMessageId}
+                interruptSubmittingByMessageId={interruptSubmittingByMessageId}
+                interruptErrorByMessageId={interruptErrorByMessageId}
+                interruptFieldKey={interruptFieldKey}
+                interruptActionFieldKey={interruptActionFieldKey}
+                getInterruptKind={getInterruptKind}
+                formatMessageTimestamp={formatMessageTimestamp}
+                getInterruptActions={getInterruptActions}
+                getPrimaryInterruptAction={getPrimaryInterruptAction}
+                isPlanApprovalInterrupt={isPlanApprovalInterrupt}
+                setInterruptInputByMessageId={setInterruptInputByMessageId}
+                setInterruptStructuredAnswersByMessageId={setInterruptStructuredAnswersByMessageId}
+                toggleInterruptSelectedChoice={toggleInterruptSelectedChoice}
+                toggleThinkingVisibility={onToggleThinkingVisibility}
+                toggleToolActivityVisibility={onToggleToolActivityVisibility}
+                handleCopyMessageText={onCopyMessageText}
+                handleRerunMessage={onRerunMessage}
+                handleScheduleMessage={onScheduleMessage}
+                handlePrepareInterruptAction={onPrepareInterruptAction}
+                handleInterruptAction={onInterruptAction}
+                workspaceId={workspaceId}
+                onInteractionSubmit={onInteractionSubmit}
+              />
+            </ChatLayout>
           </>
         )}
       </div>
