@@ -3,6 +3,11 @@ import { z } from 'zod';
 import type { SkillGovernanceService } from '../services/governance/skillGovernanceService';
 import { SkillGovernanceError } from '../services/governance/skillGovernanceService';
 import { HttpError } from '../errors';
+import { getContextFilesForUser } from './settings/skillBuilder';
+import {
+  builderActionsToDraftMutation,
+  type GovernedBuilderAction,
+} from '../services/governance/skillBuilderDraftAdapter';
 
 const createDraftSchema = z.object({
   proposalType: z.enum(['new', 'improvement']),
@@ -28,6 +33,38 @@ const updateDraftSchema = z.object({
   files: z.array(draftFileSchema).max(100).optional(),
   deletePaths: z.array(z.string().min(1)).max(100).optional(),
   expectedDraftRevision: z.number().int().nonnegative().optional(),
+});
+
+const builderActionSchema = z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('create_skill'),
+    skillId: z.string().min(1),
+    name: z.string().optional(),
+    description: z.string().optional(),
+  }),
+  z.object({
+    type: z.literal('upsert_text'),
+    skillId: z.string().min(1),
+    path: z.string().min(1),
+    content: z.string(),
+    encoding: z.literal('utf-8').optional(),
+  }),
+  z.object({
+    type: z.literal('upload_binary_from_context'),
+    skillId: z.string().min(1),
+    contextFileId: z.string().min(1),
+    targetPath: z.string().min(1),
+  }),
+  z.object({
+    type: z.literal('delete_file'),
+    skillId: z.string().min(1),
+    path: z.string().min(1),
+  }),
+]);
+
+const builderDraftActionsSchema = z.object({
+  actions: z.array(builderActionSchema).min(1).max(100),
+  expectedDraftRevision: z.number().int().nonnegative(),
 });
 
 const submitDraftSchema = z.object({
@@ -179,6 +216,35 @@ export default function governanceRoutes(service: SkillGovernanceService) {
     }
   });
 
+  router.post('/skills/drafts/:draftId/builder-actions', async (req, res) => {
+    try {
+      const user = requireUser(req);
+      const payload = builderDraftActionsSchema.parse(req.body);
+      const mutation = await builderActionsToDraftMutation(
+        payload.actions as GovernedBuilderAction[],
+        getContextFilesForUser(user.userId),
+      );
+      return sendResource(res, await service.updateDraft(
+        user.userId,
+        req.params.draftId,
+        payload.expectedDraftRevision,
+        mutation,
+      ));
+    } catch (error) {
+      return handleError(res, error);
+    }
+  });
+
+  router.delete('/skills/drafts/:draftId', async (req, res) => {
+    try {
+      const user = requireUser(req);
+      const revision = expectedRevision(req);
+      return res.json(await service.deleteDraft(user.userId, req.params.draftId, revision));
+    } catch (error) {
+      return handleError(res, error);
+    }
+  });
+
   router.post('/skills/drafts/:draftId/validate', async (req, res) => {
     try {
       const user = requireUser(req);
@@ -302,6 +368,15 @@ export default function governanceRoutes(service: SkillGovernanceService) {
     }
   });
 
+  router.get('/skills/:skillId', async (req, res) => {
+    try {
+      const user = requireUser(req);
+      return res.json(await service.getSkillDetail(user.userId, req.params.skillId));
+    } catch (error) {
+      return handleError(res, error);
+    }
+  });
+
   router.get('/skills/:skillId/versions', async (req, res) => {
     try {
       const user = requireUser(req);
@@ -367,6 +442,25 @@ export default function governanceRoutes(service: SkillGovernanceService) {
           req.header('idempotency-key') || undefined,
           req.body,
           () => service.setVersionStatus(user.userId, req.params.skillId, req.params.versionId, action),
+        );
+        res.setHeader('Idempotency-Replayed', String(result.replayed));
+        return res.json(result.body);
+      } catch (error) {
+        return handleError(res, error);
+      }
+    });
+  }
+
+  for (const action of ['archive', 'restore'] as const) {
+    router.post(`/skills/:skillId/${action}`, async (req, res) => {
+      try {
+        const user = requireUser(req);
+        const result = await service.runIdempotent(
+          user.userId,
+          `skill.${action}:${req.params.skillId}`,
+          req.header('idempotency-key') || undefined,
+          req.body,
+          () => service.setSkillStatus(user.userId, req.params.skillId, action),
         );
         res.setHeader('Idempotency-Replayed', String(result.replayed));
         return res.json(result.body);

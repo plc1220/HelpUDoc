@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { UserService } from '../services/userService';
 import { WorkspaceService } from '../services/workspaceService';
 import { HttpError } from '../errors';
+import { findUnknownRuntimeMcpServerIds, loadRuntimeMcpServers } from './agent/policy';
 
 const updateAdminSchema = z.object({
   isAdmin: z.boolean(),
@@ -181,6 +182,13 @@ export default function usersRoutes(userService: UserService, workspaceService: 
   router.put('/groups/:groupId/access', async (req, res) => {
     try {
       const payload = groupPromptAccessSchema.parse(req.body);
+      const unknownMcpServerIds = findUnknownRuntimeMcpServerIds(
+        payload.mcpServerIds,
+        await loadRuntimeMcpServers(),
+      );
+      if (unknownMcpServerIds.length) {
+        throw new HttpError(400, `Unknown or disabled MCP servers cannot be assigned: ${unknownMcpServerIds.join(', ')}`);
+      }
       const access = await userService.replaceGroupPromptAccess(
         req.params.groupId,
         payload,
@@ -193,6 +201,9 @@ export default function usersRoutes(userService: UserService, workspaceService: 
     } catch (error) {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ error: error.issues[0]?.message || 'Invalid payload' });
+      }
+      if (error instanceof HttpError) {
+        return res.status(error.statusCode).json({ error: error.message, details: error.details });
       }
       console.error('Failed to update group access', error);
       res.status(500).json({ error: 'Failed to update team access' });

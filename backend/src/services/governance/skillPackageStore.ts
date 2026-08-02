@@ -208,6 +208,26 @@ export class SkillPackageStore {
     }
   }
 
+  async withdrawDefaultPackage(skillKey: string): Promise<void> {
+    const target = path.join(this.root, skillKey);
+    if (!await pathExists(target)) return;
+
+    const temporary = path.join(this.root, `.governed-withdrawn-${uuidv4()}`);
+    try {
+      await fs.rename(target, temporary);
+      await fs.rm(temporary, { recursive: true, force: true });
+    } catch (error) {
+      if (!await pathExists(target) && await pathExists(temporary)) {
+        await fs.rename(temporary, target);
+      }
+      throw new SkillGovernanceError(
+        503,
+        'SKILL_MATERIALIZATION_UNAVAILABLE',
+        'The governed default package could not be withdrawn safely',
+      );
+    }
+  }
+
   async snapshotDirectory(root: string): Promise<FileSnapshot[]> {
     const files: FileSnapshot[] = [];
     const visit = async (current: string): Promise<void> => {
@@ -234,19 +254,34 @@ export class SkillPackageStore {
     return files.sort((a, b) => a.path.localeCompare(b.path));
   }
 
-  async readSkillMetadata(files: FileSnapshot[]): Promise<{ name?: string; description?: string }> {
+  async readSkillMetadata(files: FileSnapshot[]): Promise<{
+    name?: string;
+    description?: string;
+    tools: string[];
+    mcpServers: string[];
+    scripts: string[];
+  }> {
     const skillFile = files.find((file) => file.path === 'SKILL.md');
-    if (!skillFile) return {};
+    if (!skillFile) return { tools: [], mcpServers: [], scripts: [] };
     try {
       const raw = extractFrontmatter((await this.readBlob(skillFile.contentHash)).toString('utf-8'));
       const parsed = raw ? parseYaml(raw) : null;
-      if (!parsed || typeof parsed !== 'object') return {};
+      if (!parsed || typeof parsed !== 'object') return { tools: [], mcpServers: [], scripts: [] };
+      const metadata = parsed as any;
+      const stringList = (value: unknown) => Array.isArray(value)
+        ? Array.from(new Set(value.map((item) => String(item || '').trim()).filter(Boolean)))
+        : [];
       return {
-        name: String((parsed as any).name || '').trim() || undefined,
-        description: String((parsed as any).description || '').trim() || undefined,
+        name: String(metadata.name || '').trim() || undefined,
+        description: String(metadata.description || '').trim() || undefined,
+        tools: stringList(metadata.tools),
+        mcpServers: stringList(metadata.mcp_servers ?? metadata.mcpServers),
+        scripts: Array.isArray(metadata.sandbox_scripts)
+          ? stringList(metadata.sandbox_scripts.map((script: any) => script?.name))
+          : [],
       };
     } catch {
-      return {};
+      return { tools: [], mcpServers: [], scripts: [] };
     }
   }
 }

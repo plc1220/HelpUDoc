@@ -2,9 +2,17 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   createAgentPolicyApi,
+  findUnknownRuntimeMcpServerIds,
   resolveRuntimeSkillAccess,
   type EffectiveAgentPolicy,
 } from '../src/api/agent/policy';
+
+test('MCP Team assignments reject unknown or disabled runtime servers', () => {
+  assert.deepEqual(findUnknownRuntimeMcpServerIds(
+    ['google-workspace', 'removed-server', 'removed-server'],
+    [{ name: 'google-workspace' }, { name: 'aws-pricing' }],
+  ), ['removed-server']);
+});
 
 const policy: EffectiveAgentPolicy = {
   isAdmin: false,

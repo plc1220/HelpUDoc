@@ -14,8 +14,10 @@ import {
   Loader2,
   Plus,
   RefreshCw,
+  Search,
   Send,
   ShieldCheck,
+  Trash2,
   Users2,
   X,
   XCircle,
@@ -32,6 +34,7 @@ import {
 import {
   createImprovementDraft,
   createSkillDraft,
+  deleteSkillDraft,
   decideSkillReview,
   fetchMySkills,
   fetchSkillCatalog,
@@ -56,6 +59,10 @@ import {
   type TeamReviewSummary,
 } from '../services/governanceApi';
 import { getWorkspaces } from '../services/workspaceApi';
+import { getAuthUser } from '../auth/authStore';
+import SkillCreatorDialog from '../features/governance/SkillCreatorDialog';
+import SkillDetailsDialog from '../features/governance/SkillDetailsDialog';
+import GovernanceViewToggle, { type GovernanceViewMode } from '../features/governance/GovernanceViewToggle';
 import type { Workspace } from '../types';
 
 type TabId = 'mine' | 'reviews' | 'catalog';
@@ -68,11 +75,41 @@ const statusTone = (status: string) => {
   return 'bg-slate-50 text-slate-600 ring-slate-200';
 };
 
+const friendlyStatus = (status: string) => {
+  const labels: Record<string, string> = {
+    active: 'Available',
+    approved: 'Approved',
+    private: 'Private',
+    submitted: 'In review',
+    changes_requested: 'Changes requested',
+    rejected: 'Not approved',
+    retired: 'Archived',
+    suspended: 'Unavailable',
+    pass: 'Checks passed',
+    block: 'Checks failed',
+    activation_active: 'Published',
+    activation_failed: 'Publish failed',
+    activation_pending: 'Publishing',
+  };
+  return labels[status] || status.replace(/_/g, ' ');
+};
+
 const StatusBadge = ({ status }: { status: string }) => (
   <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ${statusTone(status)}`}>
-    {status.replace(/_/g, ' ')}
+    {friendlyStatus(status)}
   </span>
 );
+
+const useStoredViewMode = (area: 'drafts' | 'catalog') => {
+  const identity = getAuthUser()?.id || 'anonymous';
+  const key = `skill-governance:${identity}:${area}:view`;
+  const [value, setValue] = useState<GovernanceViewMode>(() => {
+    const stored = window.localStorage.getItem(key);
+    return stored === 'list' || stored === 'compact' ? stored : 'card';
+  });
+  useEffect(() => window.localStorage.setItem(key, value), [key, value]);
+  return [value, setValue] as const;
+};
 
 const shortHash = (value?: string | null) => value ? value.slice(0, 10) : '—';
 
@@ -212,7 +249,7 @@ const DraftEditor = ({
               {draft.proposalType === 'new' ? 'Private new-skill draft' : 'Private improvement draft'}
             </h2>
             <p className="mt-1 text-sm text-slate-600">
-              Only you can read this editable draft. Submission freezes a candidate for the owning Team Lead.
+              Only you can read this editable draft. When submitted, the Team Lead reviews a copy of this version.
             </p>
           </div>
           <button
@@ -453,7 +490,7 @@ const ReviewDialog = ({
               {review.candidate.skillKey}@{review.candidate.semanticVersion}
             </h2>
             <p className="mt-1 text-sm text-slate-600">
-              Frozen candidate {review.candidate.candidateNumber} · manifest {shortHash(review.candidate.manifestHash)}
+              Submitted version {review.candidate.candidateNumber} · reference {shortHash(review.candidate.manifestHash)}
             </p>
           </div>
           <button type="button" onClick={onClose} className="settings-portal-button-secondary rounded-xl p-2" aria-label="Close review">
@@ -463,7 +500,7 @@ const ReviewDialog = ({
 
         <div className="grid min-h-0 flex-1 overflow-hidden lg:grid-cols-[minmax(0,1fr)_320px]">
           <section className="flex min-h-0 flex-col border-b border-slate-200 lg:border-b-0 lg:border-r">
-            <div className="border-b border-slate-200 px-5 py-3 text-sm font-semibold text-slate-800">Frozen SKILL.md</div>
+            <div className="border-b border-slate-200 px-5 py-3 text-sm font-semibold text-slate-800">Submitted SKILL.md</div>
             <pre className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap bg-slate-950 p-5 font-mono text-sm leading-6 text-slate-100">
               {skillFile?.content || 'Binary or missing SKILL.md'}
             </pre>
@@ -502,13 +539,13 @@ const ReviewDialog = ({
             </label>
             {!review.permissions.canReview ? (
               <SettingsNotice variant="warning">
-                You cannot decide this candidate. Self-approval is disabled by default.
+                You cannot review this version. Authors cannot approve their own submissions.
               </SettingsNotice>
             ) : null}
             {review.activationStatus === 'failed' ? (
               <SettingsNotice variant="error">
-                Approval is recorded, but the immutable runtime package is unavailable
-                {review.activationErrorCode ? ` (${review.activationErrorCode})` : ''}. A Team Lead can retry activation.
+                Approval is recorded, but publishing did not finish
+                {review.activationErrorCode ? ` (${review.activationErrorCode})` : ''}. A Team Lead can retry publishing.
               </SettingsNotice>
             ) : null}
             {error ? <div className="mt-4 text-sm text-rose-700">{error}</div> : null}
@@ -527,7 +564,7 @@ const ReviewDialog = ({
               className="settings-button-primary inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold disabled:opacity-50"
             >
               {busy === 'retry' ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
-              Retry activation
+              Retry publishing
             </button>
           ) : (
             <>
@@ -554,7 +591,7 @@ const ReviewDialog = ({
                 className="settings-button-primary inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold disabled:opacity-50"
               >
                 {busy === 'approve' ? <Loader2 size={16} className="animate-spin" /> : <BadgeCheck size={16} />}
-                Approve & activate
+                Approve & publish
               </button>
             </>
           )}
@@ -646,7 +683,7 @@ const VersionDialog = ({
         <div className="flex items-start justify-between border-b border-slate-200 px-6 py-4">
           <div>
             <h2 className="text-xl font-semibold text-slate-900">{skill.displayName} versions</h2>
-            <p className="mt-1 font-mono text-xs text-slate-500">{skill.skillKey} · immutable history</p>
+            <p className="mt-1 font-mono text-xs text-slate-500">{skill.skillKey} · published history</p>
           </div>
           <button type="button" onClick={onClose} className="settings-portal-button-secondary rounded-xl p-2" aria-label="Close versions">
             <X size={18} />
@@ -669,9 +706,9 @@ const VersionDialog = ({
               </select>
             </label>
           ) : null}
-          {loading ? <SettingsLoadingState label="Loading immutable versions..." /> : null}
+          {loading ? <SettingsLoadingState label="Loading published versions..." /> : null}
           {!loading && !versions.length ? (
-            <SettingsEmptyState title="No immutable versions" description="Approved versions appear here." icon={History} />
+            <SettingsEmptyState title="No published versions" description="Approved versions appear here." icon={History} />
           ) : null}
           {!loading && versions.length ? (
             <div className="space-y-3">
@@ -764,13 +801,38 @@ const SkillGovernancePage = () => {
   const [selectedLeadTeamId, setSelectedLeadTeamId] = useState('');
   const [reviews, setReviews] = useState<TeamReviewSummary[]>([]);
   const [draftEditor, setDraftEditor] = useState<SkillDraft | null>(null);
+  const [creatorOpen, setCreatorOpen] = useState(false);
+  const [detailSkill, setDetailSkill] = useState<CatalogSkill | null>(null);
   const [reviewDialog, setReviewDialog] = useState<TeamReviewDetail | null>(null);
   const [versionDialog, setVersionDialog] = useState<CatalogSkill | null>(null);
+  const [draftQuery, setDraftQuery] = useState('');
+  const [catalogQuery, setCatalogQuery] = useState('');
+  const [draftView, setDraftView] = useStoredViewMode('drafts');
+  const [catalogView, setCatalogView] = useStoredViewMode('catalog');
   const [loading, setLoading] = useState(true);
   const [actionBusy, setActionBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const leadTeams = useMemo(() => (mine?.eligibleTeams || []).filter((team) => team.isLead), [mine]);
+  const privateDrafts = useMemo(() => {
+    const query = draftQuery.trim().toLocaleLowerCase();
+    return (mine?.drafts || []).filter((draft) => draft.status === 'private').filter((draft) => (
+      !query
+      || draft.displayName.toLocaleLowerCase().includes(query)
+      || draft.proposedSkillKey.toLocaleLowerCase().includes(query)
+      || (draft.proposedOwnerTeamName || '').toLocaleLowerCase().includes(query)
+    ));
+  }, [draftQuery, mine]);
+  const visibleCatalog = useMemo(() => {
+    const query = catalogQuery.trim().toLocaleLowerCase();
+    return catalog.filter((skill) => (
+      !query
+      || skill.displayName.toLocaleLowerCase().includes(query)
+      || skill.skillKey.toLocaleLowerCase().includes(query)
+      || (skill.description || '').toLocaleLowerCase().includes(query)
+      || skill.ownerTeamName.toLocaleLowerCase().includes(query)
+    ));
+  }, [catalog, catalogQuery]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -835,6 +897,24 @@ const SkillGovernancePage = () => {
     }
   };
 
+  const removeDraft = async (draft: MySkillsResponse['drafts'][number]) => {
+    const action = draft.hasReviewHistory ? 'Archive' : 'Delete';
+    const explanation = draft.hasReviewHistory
+      ? 'Its review history will be kept.'
+      : 'This private draft and its editable revisions will be permanently removed.';
+    if (!window.confirm(`${action} “${draft.displayName || draft.proposedSkillKey}”? ${explanation}`)) return;
+    setActionBusy(`delete:${draft.id}`);
+    setError(null);
+    try {
+      await deleteSkillDraft(draft.id, draft.draftRevision);
+      await load();
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : `Failed to ${action.toLocaleLowerCase()} draft`);
+    } finally {
+      setActionBusy(null);
+    }
+  };
+
   const improve = async (skill: CatalogSkill) => {
     setActionBusy(skill.id);
     setError(null);
@@ -865,7 +945,7 @@ const SkillGovernancePage = () => {
     <SettingsShell
       eyebrow="Unified governance"
       title="Skill governance"
-      description="Create privately, submit an immutable candidate to your Team Lead, and consume only approved versions assigned directly or through a Team."
+      description="Create privately, send a version to your Team Lead for review, and use approved skills shared with you or your Team."
       actions={(
         <button
           type="button"
@@ -897,11 +977,11 @@ const SkillGovernancePage = () => {
             <SettingsSectionHeader
               eyebrow="Private by default"
               title="Private drafts"
-              description="Draft files remain visible only to you until you submit a frozen candidate."
+              description="Your drafts stay private until you send a version for Team review."
               actions={(
                 <button
                   type="button"
-                  onClick={() => void createNew()}
+                  onClick={() => setCreatorOpen(true)}
                   disabled={Boolean(actionBusy)}
                   className="settings-button-primary inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold disabled:opacity-50"
                 >
@@ -913,44 +993,57 @@ const SkillGovernancePage = () => {
             {!mine.drafts.filter((draft) => draft.status === 'private').length ? (
               <SettingsEmptyState
                 title="No private drafts"
-                description="Create a skill or start an improvement from the governed catalog."
+                description="Create a skill or start an improvement from the Team catalog."
                 icon={FileCode2}
               />
-            ) : (
-              <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                {mine.drafts.filter((draft) => draft.status === 'private').map((draft) => (
-                  <button
-                    type="button"
-                    key={draft.id}
-                    onClick={() => void openDraft(draft.id)}
-                    className="settings-selection-card rounded-2xl p-4 text-left transition"
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="truncate font-semibold text-slate-900">{draft.displayName || draft.proposedSkillKey}</p>
-                        <p className="mt-1 truncate font-mono text-xs text-slate-500">{draft.proposedSkillKey}</p>
-                      </div>
-                      {actionBusy === draft.id ? <Loader2 size={16} className="animate-spin" /> : <ChevronRight size={16} />}
-                    </div>
-                    <div className="mt-4 flex flex-wrap items-center gap-2">
-                      <StatusBadge status={draft.status} />
-                      <span className="text-xs text-slate-500">rev {draft.draftRevision}</span>
-                      <span className="text-xs text-slate-500">{draft.proposedOwnerTeamName || 'Team not selected'}</span>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            )}
+            ) : null}
+            {mine.drafts.filter((draft) => draft.status === 'private').length ? (
+              <>
+                <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
+                  <label className="relative min-w-[220px] flex-1 sm:max-w-sm">
+                    <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <input value={draftQuery} onChange={(event) => setDraftQuery(event.target.value)} className="settings-control w-full rounded-xl py-2.5 pl-9 pr-3 text-sm" placeholder="Search drafts" aria-label="Search private drafts" />
+                  </label>
+                  <GovernanceViewToggle value={draftView} onChange={setDraftView} />
+                </div>
+                {!privateDrafts.length ? (
+                  <SettingsEmptyState title="No matching drafts" description="Try a different search." icon={Search} />
+                ) : (
+                  <div className={`mt-4 ${draftView === 'card' ? 'grid gap-3 md:grid-cols-2 xl:grid-cols-3' : 'space-y-2'}`}>
+                    {privateDrafts.map((draft) => (
+                      <article key={draft.id} className={`settings-selection-card rounded-2xl ${draftView === 'compact' ? 'flex items-center gap-2 p-2.5' : draftView === 'list' ? 'flex items-center gap-3 p-3' : 'p-4'}`}>
+                        <button type="button" onClick={() => void openDraft(draft.id)} className={`min-w-0 flex-1 text-left ${draftView === 'card' ? 'block w-full' : 'flex items-center justify-between gap-4'}`}>
+                          <div className="min-w-0">
+                            <p className="truncate font-semibold text-slate-900">{draft.displayName || draft.proposedSkillKey}</p>
+                            <p className={`${draftView === 'compact' ? 'inline' : 'mt-1'} truncate font-mono text-xs text-slate-500`}>{draft.proposedSkillKey}</p>
+                          </div>
+                          <div className={`${draftView === 'card' ? 'mt-4' : ''} flex flex-wrap items-center gap-2`}>
+                            <StatusBadge status={draft.status} />
+                            <span className="text-xs text-slate-500">rev {draft.draftRevision}</span>
+                            {draftView !== 'compact' ? <span className="text-xs text-slate-500">{draft.proposedOwnerTeamName || 'Team not selected'}</span> : null}
+                            {actionBusy === draft.id ? <Loader2 size={16} className="animate-spin" /> : <ChevronRight size={16} />}
+                          </div>
+                        </button>
+                        <button type="button" onClick={() => void removeDraft(draft)} disabled={Boolean(actionBusy)} className={`${draftView === 'card' ? 'mt-3 w-full justify-center' : ''} inline-flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-50`}>
+                          {actionBusy === `delete:${draft.id}` ? <Loader2 size={15} className="animate-spin" /> : <Trash2 size={15} />}
+                          {draft.hasReviewHistory ? 'Archive' : 'Delete'}{draftView === 'compact' ? '' : ' draft'}
+                        </button>
+                      </article>
+                    ))}
+                  </div>
+                )}
+              </>
+            ) : null}
           </SettingsSurface>
 
           <SettingsSurface>
             <SettingsSectionHeader
-              eyebrow="Immutable review"
-              title="Submitted candidates"
-              description="Team Leads review frozen candidates; they never edit your live private draft."
+              eyebrow="Team review"
+              title="Submitted versions"
+              description="Team Leads review the version you submitted without changing your private draft."
             />
             {!mine.reviews.length ? (
-              <SettingsEmptyState title="Nothing in review" description="Submitted candidates and requested changes appear here." icon={GitPullRequestArrow} />
+              <SettingsEmptyState title="Nothing in review" description="Submitted versions and requested changes appear here." icon={GitPullRequestArrow} />
             ) : (
               <div className="mt-5 overflow-x-auto">
                 <table className="w-full min-w-[720px] text-left text-sm">
@@ -959,7 +1052,7 @@ const SkillGovernancePage = () => {
                       <th className="px-3 py-3">Skill</th>
                       <th className="px-3 py-3">Team</th>
                       <th className="px-3 py-3">Status</th>
-                      <th className="px-3 py-3">Manifest</th>
+                      <th className="px-3 py-3">Version ID</th>
                       <th className="px-3 py-3">Updated</th>
                     </tr>
                   </thead>
@@ -986,12 +1079,12 @@ const SkillGovernancePage = () => {
 
           <SettingsSurface>
             <SettingsSectionHeader
-              eyebrow="Creator attribution"
+              eyebrow="Your published work"
               title="Approved versions you created"
-              description="Approved versions are immutable and owned by their governing Team."
+              description="Published versions stay in the Team's history and cannot be edited in place."
             />
             {!mine.versions.length ? (
-              <SettingsEmptyState title="No approved versions yet" description="Approved and activated versions will appear here." icon={BookOpenCheck} />
+              <SettingsEmptyState title="No approved versions yet" description="Approved and published versions will appear here." icon={BookOpenCheck} />
             ) : (
               <div className="mt-5 grid gap-3 md:grid-cols-2">
                 {mine.versions.map((version) => (
@@ -1068,55 +1161,72 @@ const SkillGovernancePage = () => {
         <SettingsSurface>
           <SettingsSectionHeader
             eyebrow="Approved catalog"
-            title="Governed skills"
-            description="Access assignment, Team ownership, default versions, and runtime entitlement remain separate."
+            title="Team skills"
+            description="Browse approved skills, see who owns them, and check whether they are available to you."
           />
           {!catalog.length ? (
-            <SettingsEmptyState title="No visible governed skills" description="Skills appear after Team Lead approval or when assigned to you." icon={Library} />
+            <SettingsEmptyState title="No visible Team skills" description="Skills appear after Team Lead approval or when assigned to you." icon={Library} />
           ) : (
-            <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-              {catalog.map((skill) => (
-                <article key={skill.id} className="settings-selection-card rounded-2xl p-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <h3 className="truncate font-semibold text-slate-900">{skill.displayName}</h3>
-                      <p className="mt-1 truncate font-mono text-xs text-slate-500">
-                        {skill.skillKey}@{skill.defaultSemanticVersion || '—'}
-                      </p>
-                    </div>
-                    <StatusBadge status={skill.status} />
-                  </div>
-                  <p className="mt-3 line-clamp-3 min-h-[60px] text-sm leading-5 text-slate-600">{skill.description || 'No description provided.'}</p>
-                  <div className="mt-4 border-t border-slate-100 pt-3 text-xs text-slate-500">
-                    <p>Owned by {skill.ownerTeamName}</p>
-                    <p className="mt-1">
-                      {skill.entitled ? skill.accessReasons.join(' · ') || 'Assigned' : 'Not assigned for consumption'}
-                    </p>
-                  </div>
-                  <div className="mt-4 grid grid-cols-2 gap-2">
-                    <button
-                      type="button"
-                      onClick={() => void improve(skill)}
-                      disabled={Boolean(actionBusy)}
-                      className="settings-portal-button-secondary inline-flex items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-sm font-semibold disabled:opacity-50"
-                    >
-                      {actionBusy === skill.id ? <Loader2 size={16} className="animate-spin" /> : <GitPullRequestArrow size={16} />}
-                      Improve
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setVersionDialog(skill)}
-                      className="settings-portal-button-secondary inline-flex items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-sm font-semibold"
-                    >
-                      <History size={16} />
-                      Versions
-                    </button>
-                  </div>
-                </article>
-              ))}
-            </div>
+            <>
+              <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
+                <label className="relative min-w-[220px] flex-1 sm:max-w-sm">
+                  <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input value={catalogQuery} onChange={(event) => setCatalogQuery(event.target.value)} className="settings-control w-full rounded-xl py-2.5 pl-9 pr-3 text-sm" placeholder="Search Team skills" aria-label="Search Team skills" />
+                </label>
+                <GovernanceViewToggle value={catalogView} onChange={setCatalogView} />
+              </div>
+              {!visibleCatalog.length ? (
+                <SettingsEmptyState title="No matching skills" description="Try a different search." icon={Search} />
+              ) : (
+                <div className={`mt-4 ${catalogView === 'card' ? 'grid gap-4 md:grid-cols-2 xl:grid-cols-3' : 'space-y-2'}`}>
+                  {visibleCatalog.map((skill) => (
+                    <article key={skill.id} className={`settings-selection-card rounded-2xl ${catalogView === 'compact' ? 'flex items-center gap-2 p-2.5' : catalogView === 'list' ? 'flex items-center gap-3 p-3' : 'p-4'}`}>
+                      <button type="button" onClick={() => setDetailSkill(skill)} className={`min-w-0 flex-1 text-left ${catalogView === 'card' ? 'block w-full' : 'flex items-center justify-between gap-4'}`}>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <h3 className="truncate font-semibold text-slate-900">{skill.displayName}</h3>
+                            {catalogView !== 'card' ? <StatusBadge status={skill.status} /> : null}
+                          </div>
+                          <p className={`${catalogView === 'compact' ? 'inline' : 'mt-1'} truncate font-mono text-xs text-slate-500`}>{skill.skillKey}@{skill.defaultSemanticVersion || '—'}</p>
+                          {catalogView !== 'compact' ? <p className={`${catalogView === 'card' ? 'mt-3 line-clamp-3 min-h-[60px]' : 'mt-1 line-clamp-1'} text-sm leading-5 text-slate-600`}>{skill.description || 'No description provided.'}</p> : null}
+                        </div>
+                        <div className={`${catalogView === 'card' ? 'mt-4 border-t border-slate-100 pt-3' : 'shrink-0 text-right'} text-xs text-slate-500`}>
+                          {catalogView === 'card' ? <StatusBadge status={skill.status} /> : null}
+                          <p className={catalogView === 'card' ? 'mt-2' : ''}>Owned by {skill.ownerTeamName}</p>
+                          <p className="mt-1">{skill.entitled ? skill.accessReasons.join(' · ') || 'You have access' : 'Not assigned to you'}</p>
+                        </div>
+                      </button>
+                      <div className={`${catalogView === 'card' ? 'mt-4 grid grid-cols-2' : 'flex shrink-0'} gap-2`}>
+                        <button type="button" onClick={() => void improve(skill)} disabled={Boolean(actionBusy)} className="settings-portal-button-secondary inline-flex items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-sm font-semibold disabled:opacity-50">
+                          {actionBusy === skill.id ? <Loader2 size={16} className="animate-spin" /> : <GitPullRequestArrow size={16} />}
+                          {catalogView === 'compact' ? <span className="sr-only">Improve</span> : 'Improve'}
+                        </button>
+                        <button type="button" onClick={() => setVersionDialog(skill)} className="settings-portal-button-secondary inline-flex items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-sm font-semibold">
+                          <History size={16} /> {catalogView === 'compact' ? <span className="sr-only">Versions</span> : 'Versions'}
+                        </button>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </>
           )}
         </SettingsSurface>
+      ) : null}
+
+      {creatorOpen ? (
+        <SkillCreatorDialog
+          onClose={() => setCreatorOpen(false)}
+          onManual={async () => {
+            setCreatorOpen(false);
+            await createNew();
+          }}
+          onSaved={async (draft) => {
+            setCreatorOpen(false);
+            setDraftEditor(draft);
+            await load();
+          }}
+        />
       ) : null}
 
       {draftEditor ? (
@@ -1140,6 +1250,21 @@ const SkillGovernancePage = () => {
         <VersionDialog
           skill={versionDialog}
           onClose={() => setVersionDialog(null)}
+          onChanged={load}
+        />
+      ) : null}
+      {detailSkill ? (
+        <SkillDetailsDialog
+          initialSkill={detailSkill}
+          onClose={() => setDetailSkill(null)}
+          onImprove={async (skill) => {
+            setDetailSkill(null);
+            await improve(skill);
+          }}
+          onVersions={(skill) => {
+            setDetailSkill(null);
+            setVersionDialog(skill);
+          }}
           onChanged={load}
         />
       ) : null}

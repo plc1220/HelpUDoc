@@ -239,6 +239,28 @@ export const fetchPlugins = async (): Promise<PluginDefinition[]> => {
   return data.plugins || [];
 };
 
+export type RuntimeCapabilityCatalog = {
+  mcpServers: Array<{ name: string; transport?: string }>;
+  plugins: PluginDefinition[];
+};
+
+export const fetchRuntimeCapabilityCatalog = async (): Promise<RuntimeCapabilityCatalog> => {
+  const response = await apiFetch(`${API_URL}/settings/runtime-capabilities`);
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    const apiError = typeof data.error === 'string' ? data.error.trim() : '';
+    if (response.status === 401 || response.status === 403) {
+      throw new Error(apiError || 'System admin access is required to manage runtime capabilities.');
+    }
+    throw new Error(apiError || 'Failed to load runtime capabilities');
+  }
+  const data = await response.json();
+  return {
+    mcpServers: Array.isArray(data.mcpServers) ? data.mcpServers : [],
+    plugins: Array.isArray(data.plugins) ? data.plugins : [],
+  };
+};
+
 export const createSkill = async (payload: { id: string; name?: string; description?: string }) => {
   const response = await apiFetch(`${API_URL}/settings/skills`, {
     method: 'POST',
@@ -318,7 +340,7 @@ export const applySkillBuilderActions = async (actions: SkillBuilderAction[]): P
 };
 
 export const createSkillBuilderSession = async (): Promise<SkillBuilderSession> => {
-  const response = await apiFetch(`${API_URL}/settings/skill-builder/session`, {
+  const response = await apiFetch(`${API_URL}/skill-builder/session`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: '{}',
@@ -332,7 +354,7 @@ export const createSkillBuilderSession = async (): Promise<SkillBuilderSession> 
 export const uploadSkillBuilderContextFile = async (file: File): Promise<SkillBuilderContextFile> => {
   const form = new FormData();
   form.append('file', file);
-  const response = await apiFetch(`${API_URL}/settings/skill-builder/context-files`, {
+  const response = await apiFetch(`${API_URL}/skill-builder/context-files`, {
     method: 'POST',
     body: form,
   });
@@ -343,7 +365,7 @@ export const uploadSkillBuilderContextFile = async (file: File): Promise<SkillBu
 };
 
 export const listSkillBuilderContextFiles = async (): Promise<SkillBuilderContextFile[]> => {
-  const response = await apiFetch(`${API_URL}/settings/skill-builder/context-files`);
+  const response = await apiFetch(`${API_URL}/skill-builder/context-files`);
   if (!response.ok) {
     await unwrapError(response, 'Failed to list context files');
   }
@@ -352,7 +374,7 @@ export const listSkillBuilderContextFiles = async (): Promise<SkillBuilderContex
 };
 
 export const deleteSkillBuilderContextFile = async (fileId: string) => {
-  const response = await apiFetch(`${API_URL}/settings/skill-builder/context-files/${encodeURIComponent(fileId)}`, {
+  const response = await apiFetch(`${API_URL}/skill-builder/context-files/${encodeURIComponent(fileId)}`, {
     method: 'DELETE',
   });
   if (!response.ok) {
@@ -368,7 +390,7 @@ export const startSkillBuilderRun = async (payload: {
   turnId?: string;
   forceReset?: boolean;
 }): Promise<SkillBuilderRun> => {
-  const response = await apiFetch(`${API_URL}/settings/skill-builder/runs`, {
+  const response = await apiFetch(`${API_URL}/skill-builder/runs`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -380,7 +402,7 @@ export const startSkillBuilderRun = async (payload: {
 };
 
 export const getSkillBuilderRun = async (runId: string) => {
-  const response = await apiFetch(`${API_URL}/settings/skill-builder/runs/${encodeURIComponent(runId)}`);
+  const response = await apiFetch(`${API_URL}/skill-builder/runs/${encodeURIComponent(runId)}`);
   if (!response.ok) {
     await unwrapError(response, 'Failed to fetch Skill Builder run');
   }
@@ -388,7 +410,7 @@ export const getSkillBuilderRun = async (runId: string) => {
 };
 
 export const cancelSkillBuilderRun = async (runId: string) => {
-  const response = await apiFetch(`${API_URL}/settings/skill-builder/runs/${encodeURIComponent(runId)}/cancel`, {
+  const response = await apiFetch(`${API_URL}/skill-builder/runs/${encodeURIComponent(runId)}/cancel`, {
     method: 'POST',
   });
   if (!response.ok) {
@@ -405,7 +427,7 @@ export const submitSkillBuilderDecision = async (
     message?: string;
   },
 ) => {
-  const response = await apiFetch(`${API_URL}/settings/skill-builder/runs/${encodeURIComponent(runId)}/decision`, {
+  const response = await apiFetch(`${API_URL}/skill-builder/runs/${encodeURIComponent(runId)}/decision`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -427,8 +449,8 @@ export const streamSkillBuilderRun = async (
   afterId?: string,
 ) => {
   const url = afterId
-    ? `${API_URL}/settings/skill-builder/runs/${encodeURIComponent(runId)}/stream?after=${encodeURIComponent(afterId)}`
-    : `${API_URL}/settings/skill-builder/runs/${encodeURIComponent(runId)}/stream`;
+    ? `${API_URL}/skill-builder/runs/${encodeURIComponent(runId)}/stream?after=${encodeURIComponent(afterId)}`
+    : `${API_URL}/skill-builder/runs/${encodeURIComponent(runId)}/stream`;
 
   const response = await apiFetch(url, { method: 'GET', signal });
   if (!response.ok) {
