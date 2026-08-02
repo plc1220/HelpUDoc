@@ -538,7 +538,7 @@ def register_chat_routes(
                 skill = find_skill_for_context(
                     settings.backend.skills_root,
                     directive.skillId,
-                    runtime.workspace_state.context,
+                    seeded,
                 )
                 if skill is not None and is_skill_allowed(skill, seeded):
                     seeded.pop("preferred_mcp_server", None)

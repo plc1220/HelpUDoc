@@ -96,7 +96,7 @@ const AgentSettingsTabs = () => {
             <SettingsTabs
                 tabs={[
                     { id: 'plugins', label: 'Plugins', icon: PackageOpen },
-                    { id: 'tools', label: 'Tools & MCP', icon: Wrench },
+                    { id: 'tools', label: 'Tools & connections', icon: Wrench },
                 ]}
                 value={activeTab}
                 onChange={setActiveTab}

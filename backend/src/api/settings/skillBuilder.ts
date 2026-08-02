@@ -106,6 +106,21 @@ const ensureSkillBuilderWorkspace = async (user: { userId: string; displayName: 
   return workspaceId;
 };
 
+const requireOwnedBuilderRun = async (req: Request, runId: string) => {
+  const user = requireUserContext(req);
+  const meta = await getRunMeta(runId);
+  const expectedWorkspaceId = await ensureSkillBuilderWorkspace(user);
+  if (
+    !meta
+    || meta.userId !== user.userId
+    || meta.persona !== SKILL_BUILDER_PERSONA
+    || meta.workspaceId !== expectedWorkspaceId
+  ) {
+    throw new HttpError(404, 'Run not found');
+  }
+  return meta;
+};
+
 export function getContextFilesForUser(userId: string): ContextFileMeta[] {
   return contextFilesByUser.get(userId) || [];
 }
@@ -300,11 +315,7 @@ export function registerSkillBuilderRoutes(router: Router, _workspaceService: Wo
 
   router.get('/skill-builder/runs/:runId', async (req, res) => {
     try {
-      requireUserContext(req);
-      const meta = await getRunMeta(req.params.runId);
-      if (!meta) {
-        return res.status(404).json({ error: 'Run not found' });
-      }
+      const meta = await requireOwnedBuilderRun(req, req.params.runId);
       res.json(meta);
     } catch (error) {
       return handleError(res, error, 'Failed to fetch run status');
@@ -313,7 +324,7 @@ export function registerSkillBuilderRoutes(router: Router, _workspaceService: Wo
 
   router.post('/skill-builder/runs/:runId/cancel', async (req, res) => {
     try {
-      requireUserContext(req);
+      await requireOwnedBuilderRun(req, req.params.runId);
       await cancelAgentRun(req.params.runId);
       res.json({ status: 'cancelled' });
     } catch (error) {
@@ -323,7 +334,7 @@ export function registerSkillBuilderRoutes(router: Router, _workspaceService: Wo
 
   router.post('/skill-builder/runs/:runId/decision', async (req, res) => {
     try {
-      requireUserContext(req);
+      await requireOwnedBuilderRun(req, req.params.runId);
       const payload = runDecisionSchema.parse(req.body);
       const decisions = [
         payload.decision === 'edit'
@@ -358,11 +369,7 @@ export function registerSkillBuilderRoutes(router: Router, _workspaceService: Wo
     let terminalStatus: 'completed' | 'failed' | 'cancelled' | 'awaiting_approval' | null = null;
 
     try {
-      requireUserContext(req);
-      const meta = await getRunMeta(runId);
-      if (!meta) {
-        return res.status(404).json({ error: 'Run not found' });
-      }
+      await requireOwnedBuilderRun(req, runId);
       streamKey = getRunStreamKey(runId);
     } catch (error) {
       if (error instanceof HttpError) {

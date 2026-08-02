@@ -11,6 +11,7 @@ import {
 } from '../../services/skills/paths';
 import { getSkillMetadata, type SkillMetadata } from '../../services/skills/metadata';
 import { buildPluginBySkillMap, listPlugins } from '../../services/plugins/registry';
+import { loadRuntimeMcpServers } from '../agent/policy';
 import { getContextFilesForUser } from './skillBuilder';
 
 const createSkillSchema = z.object({
@@ -129,6 +130,27 @@ export function registerSkillsRoutes(router: Router) {
     } catch (error) {
       console.error('Failed to load plugins', error);
       res.status(500).json({ error: 'Failed to load plugins' });
+    }
+  });
+
+  router.get('/runtime-capabilities', async (_req, res) => {
+    try {
+      const [mcpServers, plugins] = await Promise.all([
+        loadRuntimeMcpServers(),
+        listPlugins(),
+      ]);
+      res.json({
+        mcpServers: mcpServers
+          .map((server) => ({
+            name: typeof server.name === 'string' ? server.name.trim() : '',
+            transport: typeof server.transport === 'string' ? server.transport.trim() : undefined,
+          }))
+          .filter((server) => server.name),
+        plugins,
+      });
+    } catch (error) {
+      console.error('Failed to load runtime capability catalog', error);
+      res.status(500).json({ error: 'Failed to load runtime capability catalog' });
     }
   });
 

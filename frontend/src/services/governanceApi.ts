@@ -1,4 +1,5 @@
 import { API_URL, apiFetch } from './apiClient';
+import type { SkillBuilderAction } from './settingsApi';
 
 export type GovernanceTeam = {
   id: string;
@@ -16,6 +17,7 @@ export type SkillDraftSummary = {
   proposedOwnerTeamName?: string | null;
   draftRevision: number;
   status: 'private' | 'submitted' | 'archived';
+  hasReviewHistory?: boolean;
   updatedAt: string;
 };
 
@@ -186,6 +188,24 @@ export type GovernedSkillVersion = {
   isDefault: boolean;
 };
 
+export type SkillDetail = {
+  skill: CatalogSkill;
+  defaultVersion?: GovernedSkillVersion | null;
+  versions: GovernedSkillVersion[];
+  files: SkillDraftFile[];
+  capabilities: SkillValidation['declaredCapabilities'];
+  usage: {
+    teamGrantCount: number;
+    userGrantCount: number;
+    workspacePinCount: number;
+  };
+  permissions: {
+    canImprove: boolean;
+    canArchive: boolean;
+    canRestore: boolean;
+  };
+};
+
 const apiError = async (response: Response, fallback: string): Promise<never> => {
   const body = await response.json().catch(() => ({})) as {
     error?: string;
@@ -252,6 +272,26 @@ export const updateSkillDraft = (
   },
   body: JSON.stringify(input),
 }, 'Failed to save private skill draft');
+
+export const applySkillBuilderDraftActions = (
+  draftId: string,
+  revision: number,
+  actions: SkillBuilderAction[],
+) => jsonRequest<SkillDraft>(`${API_URL}/skills/drafts/${encodeURIComponent(draftId)}/builder-actions`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ expectedDraftRevision: revision, actions }),
+}, 'Failed to save the Skill Creator proposal');
+
+export const deleteSkillDraft = (draftId: string, revision: number) =>
+  jsonRequest<{ draftId: string; disposition: 'deleted' | 'archived'; auditEventId: string }>(
+    `${API_URL}/skills/drafts/${encodeURIComponent(draftId)}`,
+    {
+      method: 'DELETE',
+      headers: { 'If-Match': `"${revision}"` },
+    },
+    'Failed to delete the private draft',
+  );
 
 export const validateSkillDraft = (draftId: string) =>
   jsonRequest<SkillValidation>(`${API_URL}/skills/drafts/${encodeURIComponent(draftId)}/validate`, {
@@ -343,6 +383,27 @@ export const fetchSkillVersions = (skillId: string) =>
     `${API_URL}/skills/${encodeURIComponent(skillId)}/versions`,
     undefined,
     'Failed to load immutable skill versions',
+  );
+
+export const fetchSkillDetail = (skillId: string) =>
+  jsonRequest<SkillDetail>(
+    `${API_URL}/skills/${encodeURIComponent(skillId)}`,
+    undefined,
+    'Failed to load skill details',
+  );
+
+export const updateSkillStatus = (skillId: string, action: 'archive' | 'restore') =>
+  jsonRequest<Record<string, unknown>>(
+    `${API_URL}/skills/${encodeURIComponent(skillId)}/${action}`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Idempotency-Key': idempotencyKey(),
+      },
+      body: '{}',
+    },
+    `Failed to ${action} the skill`,
   );
 
 export const setDefaultSkillVersion = (skillId: string, versionId: string) =>

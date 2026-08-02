@@ -55,6 +55,18 @@ export type EffectiveAgentPolicy = {
 const normalizeUniqueIds = (values: string[]) =>
   Array.from(new Set(values.map((value) => value.trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b));
 
+export function findUnknownRuntimeMcpServerIds(
+  requestedServerIds: string[],
+  configuredServers: Array<{ name?: string }>,
+): string[] {
+  const configuredIds = new Set(
+    configuredServers
+      .map((server) => typeof server.name === 'string' ? server.name.trim() : '')
+      .filter(Boolean),
+  );
+  return normalizeUniqueIds(requestedServerIds).filter((serverId) => !configuredIds.has(serverId));
+}
+
 export function resolveRuntimeSkillAccess(
   entitledSkillIds: string[],
   workspacePins: WorkspaceSkillRuntimePin[],

@@ -71,6 +71,18 @@ body {
   color: var(--text-secondary) !important;
 }
 
+:root[data-theme='dark'] .settings-portal .governance-skill-markdown :is(h1, h2, h3, h4, strong, code) {
+  color: var(--text-primary) !important;
+}
+
+:root[data-theme='dark'] .settings-portal .governance-skill-markdown :is(p, li) {
+  color: var(--text-secondary) !important;
+}
+
+:root[data-theme='dark'] .settings-portal .governance-skill-markdown a {
+  color: var(--accent) !important;
+}
+
 :root[data-theme='dark'] .settings-portal .bg-white,
 :root[data-theme='dark'] .settings-portal .bg-slate-50,
 :root[data-theme='dark'] .settings-portal .bg-slate-100,

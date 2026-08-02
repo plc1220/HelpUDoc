@@ -102,6 +102,9 @@ export class SkillGovernanceService {
           'd.createdAt',
           'd.updatedAt',
         )
+        .select(this.db.raw(
+          'EXISTS (SELECT 1 FROM skill_review_requests review WHERE review."draftId" = d.id) AS "hasReviewHistory"',
+        ))
         .where('d.ownerUserId', userId)
         .orderBy('d.updatedAt', 'desc'),
       this.db('skill_review_requests as r')
@@ -246,6 +249,9 @@ export class SkillGovernanceService {
         {},
       )
       : {};
+    const hasReviewHistory = Boolean(
+      await this.db('skill_review_requests').where({ draftId }).first(),
+    );
     return {
       ...draft,
       draftRevision: Number(draft.draftRevision),
@@ -259,6 +265,7 @@ export class SkillGovernanceService {
       }))),
       validationSummary,
       eligibleTeams,
+      hasReviewHistory,
     };
   }
 
@@ -334,6 +341,44 @@ export class SkillGovernanceService {
       metadata: { draftRevision: nextRevision },
     });
     return { ...await this.getDraft(userId, draftId), auditEventId };
+  }
+
+  async deleteDraft(
+    userId: string,
+    draftId: string,
+    expectedRevision: number,
+  ): Promise<JsonRecord> {
+    const disposition = await withGovernanceLock(this.db, 'skill-draft', draftId, async () => {
+      const draft = await this.ownedEditableDraft(userId, draftId);
+      if (Number(draft.draftRevision) !== expectedRevision) {
+        governanceError(409, 'SKILL_REVISION_CONFLICT', 'The draft changed since it was opened', {
+          expectedRevision,
+          currentRevision: Number(draft.draftRevision),
+        });
+      }
+
+      const review = await this.db('skill_review_requests').where({ draftId }).first();
+      if (review) {
+        await this.db('private_skill_drafts').where({ id: draftId }).update({
+          status: 'archived',
+          updatedAt: this.db.fn.now(),
+        });
+        return 'archived' as const;
+      }
+
+      await this.db('private_skill_drafts').where({ id: draftId }).del();
+      return 'deleted' as const;
+    });
+
+    const auditEventId = await this.audit({
+      actorUserId: userId,
+      actorRole: 'skill_proposer',
+      action: disposition === 'deleted' ? 'skill_draft.deleted' : 'skill_draft.archived',
+      resourceType: 'private_skill_draft',
+      resourceId: draftId,
+      metadata: { disposition, expectedRevision },
+    });
+    return { draftId, disposition, auditEventId };
   }
 
   async validateDraft(userId: string, draftId: string): Promise<ValidationResult & { auditEventId: string }> {
@@ -1184,6 +1229,140 @@ export class SkillGovernanceService {
         isDefault: version.id === skill.defaultVersionId,
       })),
     };
+  }
+
+  async getSkillDetail(userId: string, skillReference: string): Promise<JsonRecord> {
+    const visibleSkill = await this.requireCatalogVisibility(userId, skillReference);
+    const [ownerTeam, effective, isPlatformAdmin, isTeamLead, versionsResult, teamGrantCount, userGrantCount, workspacePinCount] = await Promise.all([
+      this.db('groups').select('id', 'name').where({ id: visibleSkill.ownerTeamId }).first(),
+      this.effectiveSkillAccess(userId),
+      this.isPlatformAdmin(userId),
+      this.isTeamLead(userId, visibleSkill.ownerTeamId),
+      this.listVersions(userId, visibleSkill.id),
+      this.db('team_skill_grants').where({ skillId: visibleSkill.id, effect: 'allow' }).count<{ count: string }[]>({ count: '*' }),
+      this.db('user_skill_grants').where({ skillId: visibleSkill.id, effect: 'allow' }).count<{ count: string }[]>({ count: '*' }),
+      this.db('workspace_skill_pins').where({ skillId: visibleSkill.id }).count<{ count: string }[]>({ count: '*' }),
+    ]);
+    const versions = (versionsResult.versions || []) as any[];
+    const defaultVersion = versions.find((version) => version.id === visibleSkill.defaultVersionId) || null;
+    const files = defaultVersion
+      ? await this.packageStore.versionFiles(defaultVersion.id)
+      : [];
+    const readableFiles = await Promise.all(files.map(async (file) => ({
+      ...file,
+      content: isTextMime(file.mimeType)
+        ? (await this.packageStore.readBlob(file.contentHash)).toString('utf-8')
+        : undefined,
+      encoding: isTextMime(file.mimeType) ? 'utf-8' : 'binary',
+    })));
+    const validationSummary = jsonValue<Partial<ValidationResult>>(
+      defaultVersion?.validationSummary,
+      {},
+    );
+    const metadata = await this.packageStore.readSkillMetadata(files);
+    const declaredCapabilities = validationSummary.declaredCapabilities;
+    const capabilities = {
+      tools: Array.from(new Set([...(declaredCapabilities?.tools || []), ...metadata.tools])),
+      mcpServers: Array.from(new Set([...(declaredCapabilities?.mcpServers || []), ...metadata.mcpServers])),
+      scripts: Array.from(new Set([...(declaredCapabilities?.scripts || []), ...metadata.scripts])),
+      pluginId: declaredCapabilities?.pluginId || null,
+    };
+    return {
+      skill: {
+        ...visibleSkill,
+        ownerTeamName: ownerTeam?.name || 'Unknown Team',
+        defaultSemanticVersion: defaultVersion?.semanticVersion || null,
+        defaultManifestHash: defaultVersion?.manifestHash || null,
+        defaultVersionStatus: defaultVersion?.status || null,
+        entitled: effective.skillIds.includes(visibleSkill.id),
+        accessReasons: effective.reasons[visibleSkill.id] || [],
+        canAdminister: isPlatformAdmin || isTeamLead,
+      },
+      defaultVersion,
+      versions,
+      files: readableFiles,
+      capabilities,
+      usage: {
+        teamGrantCount: Number(teamGrantCount[0]?.count || 0),
+        userGrantCount: Number(userGrantCount[0]?.count || 0),
+        workspacePinCount: Number(workspacePinCount[0]?.count || 0),
+      },
+      permissions: {
+        canImprove: visibleSkill.status === 'active',
+        canArchive: (isPlatformAdmin || isTeamLead) && visibleSkill.status !== 'retired',
+        canRestore: (isPlatformAdmin || isTeamLead) && visibleSkill.status === 'retired',
+      },
+    };
+  }
+
+  async setSkillStatus(
+    userId: string,
+    skillReference: string,
+    action: 'archive' | 'restore',
+  ): Promise<JsonRecord> {
+    const skill = await this.requireSkillAdministration(userId, skillReference);
+    const nextStatus = action === 'archive' ? 'retired' : 'active';
+    const allowed = action === 'archive'
+      ? ['active', 'suspended'].includes(skill.status)
+      : skill.status === 'retired';
+    if (!allowed) {
+      governanceError(409, 'SKILL_REVISION_CONFLICT', `Cannot ${action} a ${skill.status} skill`);
+    }
+
+    const defaultVersion = skill.defaultVersionId
+      ? await this.db('skill_versions').where({ id: skill.defaultVersionId, skillId: skill.id }).first()
+      : null;
+    if (action === 'restore' && (!defaultVersion || defaultVersion.status !== 'active')) {
+      governanceError(409, 'SKILL_REVISION_CONFLICT', 'Restore an active published version before restoring the skill');
+    }
+
+    await withGovernanceLock(this.db, 'governed-skill', skill.id, async () => {
+      const updated = await this.db('skills')
+        .where({ id: skill.id, status: skill.status })
+        .update({ status: nextStatus, updatedAt: this.db.fn.now() });
+      if (!updated) {
+        governanceError(409, 'SKILL_REVISION_CONFLICT', 'The skill changed before the lifecycle update committed');
+      }
+      try {
+        if (action === 'archive') {
+          await this.packageStore.withdrawDefaultPackage(skill.skillKey);
+        } else {
+          await this.packageStore.promoteDefaultPackage(skill.skillKey, defaultVersion.materializedPath);
+        }
+      } catch (error) {
+        await this.db('skills').where({ id: skill.id }).update({
+          status: skill.status,
+          updatedAt: this.db.fn.now(),
+        });
+        throw error;
+      }
+    });
+
+    const auditEventId = await this.audit({
+      actorUserId: userId,
+      actorRole: await this.actorRoleForSkillAdmin(userId, skill.ownerTeamId),
+      action: action === 'archive' ? 'skill.archived' : 'skill.restored',
+      resourceType: 'skill',
+      resourceId: skill.id,
+      previousState: { status: skill.status },
+      newState: { status: nextStatus },
+      metadata: { skillKey: skill.skillKey, defaultVersionId: skill.defaultVersionId },
+    });
+    await this.notifyTeamMembers(
+      skill.ownerTeamId,
+      action === 'archive' ? 'skill.archived' : 'skill.restored',
+      'skill',
+      skill.id,
+      { skillKey: skill.skillKey, status: nextStatus },
+    );
+    if (action === 'archive' && defaultVersion) {
+      await this.notifyPinnedVersionUsers(defaultVersion.id, 'skill.archived', {
+        skillId: skill.id,
+        skillKey: skill.skillKey,
+        versionId: defaultVersion.id,
+      });
+    }
+    return { skillId: skill.id, skillKey: skill.skillKey, status: nextStatus, auditEventId };
   }
 
   async setTeamSkillGrant(userId: string, teamId: string, skillReference: string, allow: boolean): Promise<JsonRecord> {

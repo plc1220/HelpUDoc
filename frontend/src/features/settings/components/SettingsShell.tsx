@@ -2,7 +2,7 @@ import { useMemo, useState, type ComponentType, type ReactNode } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard,
-  Users2,
+  PackageOpen,
   BookOpen,
   CreditCard,
   MessageCircle,
@@ -29,7 +29,7 @@ type SettingsShellProps = {
 const BASE_NAV_ITEMS: NavItem[] = [
   { label: 'Dashboard', icon: LayoutDashboard, path: '/settings' },
   { label: 'Skill Governance', icon: ShieldCheck, path: '/skills' },
-  { label: 'Skills & Tools', icon: Users2, path: '/settings/agents' },
+  { label: 'Plugins & integrations', icon: PackageOpen, path: '/settings/agents' },
   { label: 'Knowledge', icon: BookOpen, path: '/settings/knowledge' },
   { label: 'Users', icon: MessageCircle, path: '/settings/users' },
   { label: 'Billing', icon: CreditCard, path: '/settings/billing' },

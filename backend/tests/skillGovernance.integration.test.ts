@@ -9,6 +9,7 @@ import {
   SkillGovernanceService,
 } from '../src/services/governance/skillGovernanceService';
 import { skillsRoot } from '../src/services/skills/constants';
+import { UserService } from '../src/services/userService';
 
 const enabled = process.env.RUN_GOVERNANCE_INTEGRATION === '1';
 
@@ -66,6 +67,18 @@ test('governed skill lifecycle works against PostgreSQL', { skip: !enabled }, as
         assignedByUserId: null,
       },
     ]);
+
+    const disposable = await governance.createDraft(proposerId, { proposalType: 'new' });
+    const deletion = await governance.deleteDraft(
+      proposerId,
+      String(disposable.id),
+      Number(disposable.draftRevision),
+    );
+    assert.equal(deletion.disposition, 'deleted');
+    await assert.rejects(
+      () => governance.getDraft(proposerId, String(disposable.id)),
+      (error: any) => error?.code === 'SKILL_RESOURCE_NOT_FOUND',
+    );
 
     const created = await governance.createDraft(proposerId, { proposalType: 'new' });
     draftId = String(created.id);
@@ -194,7 +207,18 @@ test('governed skill lifecycle works against PostgreSQL', { skip: !enabled }, as
     assert.equal(approved.status, 'approved');
     assert.equal((await governance.getReview(reviewerId, requestId)).activationStatus, 'active');
 
-    await governance.setTeamSkillGrant(reviewerId, teamId, skillId, true);
+    const users = new UserService(database);
+    await users.replaceGroupPromptAccess(teamId, {
+      skillIds: [skillKey],
+      mcpServerIds: [],
+      knowledgeSourceIds: [],
+    }, reviewerId);
+    assert.equal(await db('team_skill_grants').where({ teamId, skillId }).first().then(Boolean), true);
+    assert.equal(await db('skill_grants').where({ principalType: 'group', principalId: teamId, skillId: skillKey }).first().then(Boolean), false);
+    const detail = await governance.getSkillDetail(proposerId, skillId);
+    assert.equal(detail.skill.skillKey, skillKey);
+    assert.equal(detail.usage.teamGrantCount, 1);
+    assert.equal(detail.files.some((file: any) => file.path === 'SKILL.md'), true);
     await db('workspaces').insert({
       id: workspaceId,
       name: `Governance smoke ${suffix}`,
@@ -234,6 +258,12 @@ test('governed skill lifecycle works against PostgreSQL', { skip: !enabled }, as
     await governance.setVersionStatus(reviewerId, skillId, versionId, 'suspend');
     assert.equal((await governance.authorizeInvocation(proposerId, workspaceId, skillKey)).allowed, false);
     await governance.setVersionStatus(reviewerId, skillId, versionId, 'restore');
+    assert.equal((await governance.authorizeInvocation(proposerId, workspaceId, skillKey)).allowed, true);
+
+    await governance.setSkillStatus(reviewerId, skillId, 'archive');
+    assert.equal((await governance.authorizeInvocation(proposerId, workspaceId, skillKey)).allowed, false);
+    assert.equal((await governance.getSkillDetail(proposerId, skillId)).skill.status, 'retired');
+    await governance.setSkillStatus(reviewerId, skillId, 'restore');
     assert.equal((await governance.authorizeInvocation(proposerId, workspaceId, skillKey)).allowed, true);
 
     let mutations = 0;

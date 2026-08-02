@@ -29,7 +29,6 @@ import {
   SettingsSurface,
 } from '../components/settings/SettingsScaffold';
 import { getAuthUser } from '../auth/authStore';
-import { fetchSlashMetadata } from '../services/agentApi';
 import { listGlobalKnowledge } from '../services/knowledgeApi';
 import {
   addGroupMember,
@@ -39,6 +38,8 @@ import {
   fetchGroupMembers,
   fetchGroupPromptAccess,
   fetchGroups,
+  fetchRuntimeCapabilityCatalog,
+  fetchSkills,
   fetchUserDeletionImpact,
   fetchUserDirectory,
   fetchUsers,
@@ -53,7 +54,7 @@ import {
   type UserSortOrder,
 } from '../services/settingsApi';
 import type { PluginDefinition, SkillDefinition } from '../types';
-import { setTeamLead } from '../services/governanceApi';
+import { fetchSkillCatalog, setTeamLead } from '../services/governanceApi';
 
 type ManagementView = 'users' | 'groups';
 type UserTableRow = ManagedUser & Record<string, unknown>;
@@ -127,9 +128,23 @@ const UsersPage = () => {
   );
 
   const visiblePlugins = useMemo(
-    () => availablePlugins.filter((plugin) => plugin.skillIds.length > 0),
+    () => availablePlugins.filter((plugin) => plugin.skillIds.length > 0 || plugin.mcpServers.length > 0),
     [availablePlugins],
   );
+
+  const pluginBundleAvailability = useMemo(() => {
+    const skillIds = new Set(availableSkills.map((skill) => skill.id));
+    const mcpServerIds = new Set(availableMcpServers.map((server) => server.name));
+    return new Map(visiblePlugins.map((plugin) => {
+      const missingSkillIds = plugin.skillIds.filter((id) => !skillIds.has(id));
+      const missingMcpServerIds = plugin.mcpServers.filter((id) => !mcpServerIds.has(id));
+      return [plugin.id, {
+        assignable: plugin.valid && missingSkillIds.length === 0 && missingMcpServerIds.length === 0,
+        missingSkillIds,
+        missingMcpServerIds,
+      }];
+    }));
+  }, [availableMcpServers, availableSkills, visiblePlugins]);
 
   const knowledgeOptions = useMemo(
     () => knowledgeSources
@@ -141,7 +156,14 @@ const UsersPage = () => {
   const skillOptions = useMemo(
     () => availableSkills.map((skill) => ({
       value: skill.id,
-      label: skill.name || skill.id,
+      disabled: skill.valid === false,
+      label: `${skill.name || skill.id}${
+        skill.pluginName
+          ? ` · ${skill.pluginName} plugin`
+          : skill.warning
+            ? ` · ${skill.warning}`
+            : ''
+      }`,
     })),
     [availableSkills],
   );
@@ -210,13 +232,26 @@ const UsersPage = () => {
   const loadAccessCatalog = useCallback(async () => {
     setCatalogLoading(true);
     try {
-      const [promptCatalog, knowledge] = await Promise.all([
-        fetchSlashMetadata(),
+      const [runtimeSkills, governedCatalog, knowledge, runtimeCatalog] = await Promise.all([
+        fetchSkills(),
+        fetchSkillCatalog(),
         listGlobalKnowledge(),
+        fetchRuntimeCapabilityCatalog(),
       ]);
-      setAvailableSkills(promptCatalog.skills);
-      setAvailableMcpServers(promptCatalog.mcpServers);
-      setAvailablePlugins(promptCatalog.plugins || []);
+      const skillsById = new Map<string, SkillDefinition>();
+      runtimeSkills.forEach((skill) => skillsById.set(skill.id, skill));
+      governedCatalog.skills.forEach((skill) => skillsById.set(skill.skillKey, {
+        id: skill.skillKey,
+        name: skill.displayName,
+        description: skill.description || undefined,
+        valid: skill.status === 'active' && skill.defaultVersionStatus === 'active',
+        warning: skill.status === 'active'
+          ? `Team skill owned by ${skill.ownerTeamName}`
+          : `Team skill is ${skill.status}`,
+      }));
+      setAvailableSkills([...skillsById.values()].sort((left, right) => left.name.localeCompare(right.name)));
+      setAvailableMcpServers(runtimeCatalog.mcpServers);
+      setAvailablePlugins(runtimeCatalog.plugins || []);
       setKnowledgeSources(Array.isArray(knowledge) ? knowledge : []);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load access catalog');
@@ -394,6 +429,7 @@ const UsersPage = () => {
   };
 
   const togglePluginBundle = (plugin: PluginDefinition) => {
+    if (!pluginBundleAvailability.get(plugin.id)?.assignable) return;
     setGroupAccess((previous) => {
       const selected = plugin.skillIds.every((id) => previous.skillIds.includes(id))
         && plugin.mcpServers.every((id) => previous.mcpServerIds.includes(id));
@@ -756,7 +792,7 @@ const UsersPage = () => {
                     <SettingsSectionHeader
                       eyebrow="Access control"
                       title="Knowledge, skills & tools"
-                      description="Choose what members of this team can use. System administrators bypass these grants."
+                      description="Choose what members of this Team can use. Administrators can manage assignments, but also need access themselves to use a skill."
                       actions={(
                         <div className="flex items-center gap-2">
                           <button
@@ -864,16 +900,23 @@ const UsersPage = () => {
                             </div>
                             <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                               {visiblePlugins.map((plugin) => {
+                                const availability = pluginBundleAvailability.get(plugin.id);
+                                const assignable = availability?.assignable === true;
                                 const selected = plugin.skillIds.every((id) => groupAccess.skillIds.includes(id))
                                   && plugin.mcpServers.every((id) => groupAccess.mcpServerIds.includes(id));
+                                const selectedSkillCount = plugin.skillIds.filter((id) => groupAccess.skillIds.includes(id)).length;
+                                const selectedMcpCount = plugin.mcpServers.filter((id) => groupAccess.mcpServerIds.includes(id)).length;
+                                const partiallySelected = !selected && (selectedSkillCount > 0 || selectedMcpCount > 0);
                                 return (
                                   <button
                                     key={plugin.id}
                                     type="button"
                                     onClick={() => togglePluginBundle(plugin)}
+                                    disabled={!assignable}
                                     className={cx(
                                       'settings-selection-card rounded-2xl px-4 py-3 text-left transition',
                                       selected && 'settings-selection-card-active',
+                                      !assignable && 'cursor-not-allowed opacity-60',
                                     )}
                                   >
                                     <div className="flex items-start justify-between gap-3">
@@ -882,7 +925,20 @@ const UsersPage = () => {
                                         <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-500">{plugin.description || plugin.id}</p>
                                       </div>
                                       {selected ? <Badge variant="blue" label="Applied" /> : null}
+                                      {!selected && partiallySelected ? <Badge variant="neutral" label="Partial" /> : null}
+                                      {!assignable ? <Badge variant="neutral" label="Unavailable" /> : null}
                                     </div>
+                                    <p className="mt-2 text-[11px] text-slate-500">
+                                      {plugin.skillIds.length} skill{plugin.skillIds.length === 1 ? '' : 's'} · {plugin.mcpServers.length} connection{plugin.mcpServers.length === 1 ? '' : 's'}
+                                    </p>
+                                    {!assignable && availability ? (
+                                      <p className="mt-2 text-xs leading-5 text-rose-600">
+                                        {plugin.errors?.[0]
+                                          || (availability.missingSkillIds.length
+                                            ? `Missing skills: ${availability.missingSkillIds.join(', ')}`
+                                            : `Missing connections: ${availability.missingMcpServerIds.join(', ')}`)}
+                                      </p>
+                                    ) : null}
                                   </button>
                                 );
                               })}

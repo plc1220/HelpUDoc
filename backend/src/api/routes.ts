@@ -29,6 +29,7 @@ import { GoogleOAuthService } from '../services/googleOAuthService';
 import { ScheduleService } from '../services/scheduleService';
 import { configureAgentRunServices } from '../services/agentRunService';
 import { SkillGovernanceService } from '../services/governance/skillGovernanceService';
+import { registerSkillBuilderRoutes } from './settings/skillBuilder';
 
 export default function(
   dbService: DatabaseService,
@@ -64,6 +65,7 @@ export default function(
   );
   router.use('/auth', authRoutes(userService, googleOAuthService));
   router.use('/', governanceRoutes(skillGovernanceService));
+  registerSkillBuilderRoutes(router, workspaceService);
   router.use('/agent', agentRoutes(workspaceService, fileService, googleOAuthService, userService, conversationService));
   router.use('/settings', requireSystemAdmin(userService), settingsRoutes(workspaceService, userService, dbService));
   router.use('/settings/reflections', requireSystemAdmin(userService), settingsReflectionRoutes(dailyReflectionService));

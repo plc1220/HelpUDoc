@@ -111,7 +111,14 @@ export class UserService {
           email,
           isAdmin,
         })
+        .onConflict('externalId')
+        .ignore()
         .returning('*');
+      if (!created) {
+        // Initial page loads issue several authenticated requests in parallel.
+        // Let the request that lost the insert race reuse the newly created row.
+        return this.ensureUser(profile);
+      }
       if (created.isAdmin) {
         await this.db('platform_role_bindings').insert({
           userId: created.id,
@@ -396,11 +403,38 @@ export class UserService {
         .join('skills as skill', 'skill.id', 'grant.skillId')
         .select('skill.skillKey')
         .where({ 'grant.teamId': groupId, 'grant.effect': 'allow' });
+      const previousMcpServers = await tx('mcp_server_group_grants')
+        .select('serverId')
+        .where({ groupId });
+
+      const previousGovernedSkillKeys = previousGoverned.map((row: any) => String(row.skillKey));
+      const matchingGovernedSkills = skillIds.length
+        ? await tx('skills as skill')
+          .leftJoin('skill_versions as version', 'version.id', 'skill.defaultVersionId')
+          .select('skill.id', 'skill.skillKey', 'skill.status', 'version.status as versionStatus')
+          .whereIn('skill.skillKey', skillIds)
+        : [];
+      const previouslyGranted = new Set(previousGovernedSkillKeys);
+      const unavailableNewSkills = matchingGovernedSkills.filter((skill: any) => (
+        !previouslyGranted.has(String(skill.skillKey))
+        && (skill.status !== 'active' || skill.versionStatus !== 'active')
+      ));
+      if (unavailableNewSkills.length) {
+        throw new ConflictError(
+          `Archived or unavailable Team skills cannot be newly assigned: ${unavailableNewSkills.map((skill: any) => skill.skillKey).join(', ')}`,
+        );
+      }
+      const governedSkills = matchingGovernedSkills.filter((skill: any) => (
+        previouslyGranted.has(String(skill.skillKey))
+        || (skill.status === 'active' && skill.versionStatus === 'active')
+      ));
+      const governedSkillKeys = new Set(matchingGovernedSkills.map((skill: any) => String(skill.skillKey)));
+      const legacySkillIds = skillIds.filter((skillId) => !governedSkillKeys.has(skillId));
 
       await tx('skill_grants').where({ principalType: 'group', principalId: groupId }).del();
-      if (skillIds.length) {
+      if (legacySkillIds.length) {
         await tx('skill_grants').insert(
-          skillIds.map((skillId) => ({
+          legacySkillIds.map((skillId) => ({
             principalType: 'group',
             principalId: groupId,
             skillId,
@@ -409,21 +443,6 @@ export class UserService {
         );
       }
       await tx('team_skill_grants').where({ teamId: groupId }).del();
-      const previousGovernedSkillKeys = previousGoverned.map((row: any) => String(row.skillKey));
-      const governedSkills = skillIds.length
-        ? await tx('skills as skill')
-          .leftJoin('skill_versions as version', 'version.id', 'skill.defaultVersionId')
-          .select('skill.id')
-          .whereIn('skill.skillKey', skillIds)
-          .andWhere((builder) => {
-            builder.where((active) => active
-              .where('skill.status', 'active')
-              .andWhere('version.status', 'active'));
-            if (previousGovernedSkillKeys.length) {
-              builder.orWhereIn('skill.skillKey', previousGovernedSkillKeys);
-            }
-          })
-        : [];
       if (governedSkills.length) {
         await tx('team_skill_grants').insert(governedSkills.map((skill: any) => ({
           teamId: groupId,
@@ -468,6 +487,9 @@ export class UserService {
           metadata: JSON.stringify({
             previousSkillKeys: previousGoverned.map((row: any) => row.skillKey).sort(),
             skillKeys: skillIds,
+            previousMcpServerIds: previousMcpServers.map((row: any) => row.serverId).sort(),
+            mcpServerIds,
+            knowledgeSourceIds,
           }),
         });
       }
