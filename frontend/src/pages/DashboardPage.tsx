@@ -1,16 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { Banner } from '@astryxdesign/core/Banner';
+import { Button } from '@astryxdesign/core/Button';
+import { Card } from '@astryxdesign/core/Card';
 import {
   Activity,
   ArrowRight,
-  BookOpen,
-  ExternalLink,
-  Hammer,
-  MessageCircle,
-  RefreshCw,
-  ShieldCheck,
-  Sparkles,
-  Users2,
 } from 'lucide-react';
 import SettingsShell from '../components/settings/SettingsShell';
 import {
@@ -21,8 +16,6 @@ import {
   SettingsSurface,
 } from '../components/settings/SettingsScaffold';
 import { fetchWorkspaceOverview, type WorkspaceOverview } from '../services/settingsApi';
-
-const FOCUS_ICONS = [Sparkles, ShieldCheck, BookOpen] as const;
 
 function formatRelativeTime(iso: string): string {
   const t = Date.parse(iso);
@@ -83,9 +76,9 @@ const DashboardPage = () => {
       const hint = unavailable ? 'Unavailable. Retry to refresh.' : 'Loading…';
 
       return [
-        { label: 'Total skills', value, hint, icon: Users2, pulse: loading },
-        { label: 'Users with messages (24h)', value, hint, icon: MessageCircle, pulse: loading },
-        { label: 'Langfuse observations (7d)', value, hint, icon: Hammer, pulse: loading },
+        { label: 'Total skills', value, hint, pulse: loading },
+        { label: 'Users with messages (24h)', value, hint, pulse: loading },
+        { label: 'Langfuse observations (7d)', value, hint, pulse: loading },
       ];
     }
 
@@ -102,21 +95,18 @@ const DashboardPage = () => {
         label: 'Total skills',
         value: String(skills.count),
         hint: 'Skill registry size',
-        icon: Users2,
         pulse: false,
       },
       {
         label: 'Users with messages (24h)',
         value: String(users.messaged24h),
         hint: `${users.total} registered total`,
-        icon: MessageCircle,
         pulse: false,
       },
       {
         label: 'Langfuse observations (7d)',
         value: thirdValue,
         hint: thirdHint,
-        icon: Hammer,
         pulse: false,
       },
     ];
@@ -133,18 +123,14 @@ const DashboardPage = () => {
     >
       <div className="space-y-6">
         {loadError ? (
-          <div className="flex flex-col gap-3 rounded-2xl border border-amber-200 bg-amber-50/90 px-4 py-3 text-sm text-amber-950 sm:flex-row sm:items-center sm:justify-between">
-            <span>Dashboard data could not be loaded. {loadError}</span>
-            <button
-              type="button"
-              onClick={retryLoad}
-              disabled={loading}
-              className="settings-portal-button-secondary inline-flex items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition disabled:opacity-60"
-            >
-              <RefreshCw size={15} className={loading ? 'animate-spin' : undefined} />
-              Retry
-            </button>
-          </div>
+          <Banner
+            status="warning"
+            title="Dashboard data could not be loaded"
+            description={loadError}
+            endContent={(
+              <Button label="Retry" variant="secondary" isLoading={loading} onClick={retryLoad} />
+            )}
+          />
         ) : null}
 
         <SettingsSurface className="space-y-6">
@@ -155,9 +141,9 @@ const DashboardPage = () => {
           />
 
           <SettingsMetricsGrid className="md:grid-cols-3">
-            {stats.map(({ label, value, hint, icon: Icon, pulse }) => (
+            {stats.map(({ label, value, hint, pulse }) => (
               <div key={label} className={pulse ? 'animate-pulse' : undefined}>
-                <SettingsMetricCard label={label} value={value} hint={hint} icon={Icon} />
+                <SettingsMetricCard label={label} value={value} hint={hint} />
               </div>
             ))}
           </SettingsMetricsGrid>
@@ -180,29 +166,19 @@ const DashboardPage = () => {
               {!loading && focusAreas.length === 0 ? (
                 <p className="text-sm text-slate-500 lg:col-span-3">No automated recommendations right now.</p>
               ) : null}
-              {focusAreas.map(({ title, description, to, action }, i) => {
-                const Icon = FOCUS_ICONS[i % FOCUS_ICONS.length];
-                return (
-                  <div key={title} className="settings-portal-card rounded-2xl p-4">
-                    <div className="flex items-start gap-3">
-                      <span className="settings-portal-icon-muted inline-flex h-10 w-10 items-center justify-center rounded-xl ring-1 ring-slate-200">
-                        <Icon size={17} />
-                      </span>
-                      <div className="min-w-0 flex-1">
-                        <p className="text-sm font-semibold text-slate-900">{title}</p>
-                        <p className="mt-1 text-sm leading-6 text-slate-600">{description}</p>
-                        <Link
-                          to={to}
-                          className="mt-3 inline-flex items-center gap-2 text-sm font-medium text-blue-600 transition hover:text-blue-700"
-                        >
-                          {action}
-                          <ArrowRight size={16} />
-                        </Link>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
+              {focusAreas.map(({ title, description, to, action }) => (
+                <Card key={title} padding={4} variant="muted">
+                  <p className="text-sm font-semibold text-slate-900">{title}</p>
+                  <p className="mt-1 text-sm leading-6 text-slate-600">{description}</p>
+                  <Link
+                    to={to}
+                    className="mt-3 inline-flex items-center gap-2 text-sm font-medium text-blue-600 transition hover:text-blue-700"
+                  >
+                    {action}
+                    <ArrowRight size={15} />
+                  </Link>
+                </Card>
+              ))}
             </div>
           </div>
         </SettingsSurface>
@@ -213,15 +189,13 @@ const DashboardPage = () => {
             title="Recent activity"
             description="In-app messages and Langfuse traces when the API is reachable."
             actions={data?.langfuse.publicUrl ? (
-              <a
+              <Button
+                label="Open Langfuse"
+                variant="secondary"
                 href={data.langfuse.publicUrl}
                 target="_blank"
                 rel="noreferrer"
-                className="settings-portal-button-secondary inline-flex items-center gap-2 rounded-xl px-3.5 py-2.5 text-sm font-medium transition"
-              >
-                Open Langfuse
-                <ExternalLink size={16} />
-              </a>
+              />
             ) : null}
           />
           <div className="mt-6 space-y-3">
@@ -245,13 +219,8 @@ const DashboardPage = () => {
             ) : null}
             {activities.map((a) => {
               const rel = formatRelativeTime(a.at);
-              const icon = a.source === 'langfuse' ? Activity : a.meta.includes('agent') ? MessageCircle : Sparkles;
-              const Icon = icon;
               return (
-                <div key={a.id} className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50/70 px-4 py-4">
-                  <span className="settings-portal-icon-muted inline-flex h-10 w-10 items-center justify-center rounded-2xl ring-1 ring-slate-200">
-                    <Icon size={18} />
-                  </span>
+                <Card key={a.id} padding={4} variant="muted">
                   <div className="min-w-0">
                     <p className="text-sm font-medium text-slate-900">{a.title}</p>
                     <p className="text-xs text-slate-500">
@@ -259,7 +228,7 @@ const DashboardPage = () => {
                       {a.meta}
                     </p>
                   </div>
-                </div>
+                </Card>
               );
             })}
           </div>

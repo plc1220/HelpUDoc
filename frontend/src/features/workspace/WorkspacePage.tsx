@@ -9,6 +9,7 @@ import {
   type PaletteMode,
 } from '@mui/material';
 import { Button } from '@astryxdesign/core/Button';
+import { AlertDialog } from '@astryxdesign/core/AlertDialog';
 import { ButtonGroup } from '@astryxdesign/core/ButtonGroup';
 import { CodeBlock } from '@astryxdesign/core/CodeBlock';
 import { DropdownMenu } from '@astryxdesign/core/DropdownMenu';
@@ -177,6 +178,16 @@ const LUMO_SPRITE_ROWS = 9;
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 type MobileWorkspaceSurface = 'chat' | 'canvas';
+
+type RerunMessageOptions = {
+  replacementText?: string;
+  skipConfirm?: boolean;
+};
+
+type PendingRerunConfirmation = {
+  messageId: ConversationMessage['id'];
+  options?: RerunMessageOptions;
+};
 
 const summarizeComposerAttachments = (attachments: ChatComposerAttachment[]): string => {
   if (!attachments.length) {
@@ -882,7 +893,7 @@ export default function WorkspacePage() {
   const [commandCursorPosition, setCommandCursorPosition] = useState<number | null>(null);
   const [commandSelectedIndex, setCommandSelectedIndex] = useState(0);
   const [expandedToolMessages, setExpandedToolMessages] = useState<Set<ConversationMessage['id']>>(new Set());
-  const [expandedThinkingMessages, setExpandedThinkingMessages] = useState<Set<ConversationMessage['id']>>(new Set());
+  const [pendingRerunConfirmation, setPendingRerunConfirmation] = useState<PendingRerunConfirmation | null>(null);
 
   const filteredWorkspaces = useMemo(() => {
     const query = workspaceSearchQuery.trim().toLowerCase();
@@ -1524,18 +1535,6 @@ export default function WorkspacePage() {
     });
   }, []);
 
-  const toggleThinkingVisibility = useCallback((messageId: ConversationMessage['id']) => {
-    setExpandedThinkingMessages((prev) => {
-      const next = new Set(prev);
-      if (next.has(messageId)) {
-        next.delete(messageId);
-      } else {
-        next.add(messageId);
-      }
-      return next;
-    });
-  }, []);
-
   const handleCopyMessageText = useCallback(async (message: ConversationMessage) => {
     if (typeof navigator === 'undefined' || !navigator.clipboard?.writeText) {
       return;
@@ -2044,7 +2043,6 @@ export default function WorkspacePage() {
 
   useEffect(() => {
     setExpandedToolMessages(new Set());
-    setExpandedThinkingMessages(new Set());
   }, [activeConversationId]);
 
   useEffect(() => {
@@ -5737,7 +5735,7 @@ export default function WorkspacePage() {
 
   const handleRerunMessage = async (
     messageId: ConversationMessage['id'],
-    options?: { replacementText?: string; skipConfirm?: boolean },
+    options?: RerunMessageOptions,
   ) => {
     if (!selectedWorkspace || !isUsableWorkspaceId(selectedWorkspace.id) || !activeConversationId) {
       addLocalSystemMessage('Please select a workspace and conversation before rerunning messages.');
@@ -5789,12 +5787,8 @@ export default function WorkspacePage() {
       }
     }
     if (!options?.skipConfirm) {
-      const confirmed = window.confirm(
-        'Redo from this message? This will remove all messages below it.'
-      );
-      if (!confirmed) {
-        return;
-      }
+      setPendingRerunConfirmation({ messageId, options });
+      return;
     }
 
     const targetMessageId = Number(targetMessage.id);
@@ -5848,12 +5842,6 @@ export default function WorkspacePage() {
       removedIds.forEach((id) => agentMessageBufferRef.current.delete(id));
       agentChunkBufferRef.current.delete(conversationId);
       setExpandedToolMessages((prev) => {
-        if (!prev.size) return prev;
-        const next = new Set(prev);
-        removedIds.forEach((id) => next.delete(id));
-        return next;
-      });
-      setExpandedThinkingMessages((prev) => {
         if (!prev.size) return prev;
         const next = new Set(prev);
         removedIds.forEach((id) => next.delete(id));
@@ -7238,7 +7226,6 @@ export default function WorkspacePage() {
             messageBubbleMaxWidth="min(100%, 40rem)"
             markdownComponents={markdownComponents}
             expandedToolMessages={expandedToolMessages}
-            expandedThinkingMessages={expandedThinkingMessages}
             copiedMessageId={copiedMessageId}
             interruptInputByMessageId={interruptInputByMessageId}
             interruptStructuredAnswersByMessageId={interruptStructuredAnswersByMessageId}
@@ -7255,7 +7242,6 @@ export default function WorkspacePage() {
             setInterruptInputByMessageId={setInterruptInputByMessageId}
             setInterruptStructuredAnswersByMessageId={setInterruptStructuredAnswersByMessageId}
             toggleInterruptSelectedChoice={toggleInterruptSelectedChoice}
-            toggleThinkingVisibility={toggleThinkingVisibility}
             toggleToolActivityVisibility={toggleToolActivityVisibility}
             handleCopyMessageText={handleCopyMessageText}
             handleRerunMessage={handleRerunMessage}
@@ -7804,24 +7790,21 @@ export default function WorkspacePage() {
                           ) : null}
                         </div>
                       )}
-                      <div className={`flex flex-wrap items-center justify-between gap-3 border-t px-4 py-3 ${
+                      <div className={`landing-composer-footer flex flex-wrap items-center justify-between gap-3 border-t px-4 py-3 ${
                         isDarkMode ? 'border-slate-800' : 'border-slate-100'
                       }`}>
-                        <div className="flex min-w-0 flex-wrap items-center gap-2">
+                        <div className="landing-composer-toolbar flex min-w-0 flex-1 flex-wrap items-center gap-2">
+                          <div className="landing-composer-quick-actions flex items-center gap-1">
                           <div className="relative">
-                            <button
-                              type="button"
+                            <IconButton
+                              label="Attach files"
+                              tooltip="Attach files"
+                              variant="ghost"
+                              size="md"
+                              icon={<Paperclip size={18} />}
                               onClick={() => setIsLandingAttachmentMenuOpen((prev) => !prev)}
-                              disabled={isDriveImporting}
-                              className={`inline-flex h-10 w-10 items-center justify-center rounded-full transition disabled:opacity-50 ${
-                                isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-500 hover:bg-slate-100'
-                              }`}
-                              title="Attach files"
-                              aria-label="Attach files"
-                              aria-expanded={isLandingAttachmentMenuOpen}
-                            >
-                              <Paperclip size={18} />
-                            </button>
+                              isDisabled={isDriveImporting}
+                            />
                             {isLandingAttachmentMenuOpen ? (
                               <div className={`absolute bottom-full left-0 z-40 mb-2 w-56 rounded-2xl border p-1.5 text-sm shadow-2xl backdrop-blur-md ${
                                 isDarkMode ? 'border-slate-700/80 bg-slate-900/95 text-slate-100' : 'border-slate-200 bg-white/95 text-slate-800'
@@ -7863,35 +7846,33 @@ export default function WorkspacePage() {
                             ) : null}
                           </div>
                           <Button
-                            label="@ Context"
+                            label="Context"
                             tooltip="Add files or knowledge with @"
                             variant="ghost"
-                            size="sm"
+                            size="md"
                             icon={<span className="lumo-composer-at">@</span>}
                             onClick={handleInsertKnowledgeTrigger}
                             isDisabled={isDriveImporting}
                           />
                           <Button
-                            label="/ Commands"
+                            label="Commands"
                             tooltip="Browse commands with /"
                             variant="ghost"
-                            size="sm"
+                            size="md"
                             icon={<span className="lumo-composer-slash">/</span>}
                             onClick={handleInsertSlashTrigger}
                             isDisabled={isDriveImporting}
                           />
-                          <div ref={landingWorkspacePickerRef} className="relative">
+                          </div>
+                          <div className="landing-composer-routing flex min-w-0 items-center">
+                          <div ref={landingWorkspacePickerRef} className="landing-composer-workspace-menu relative">
                             <button
                               type="button"
                               onClick={() => {
                                 setIsLandingWorkspacePickerOpen((value) => !value);
                                 setLandingWorkspaceQuery('');
                               }}
-                              className={`flex h-10 w-[18rem] max-w-[44vw] items-center justify-between gap-2 rounded-xl border px-3 text-left text-sm font-medium outline-none transition ${
-                                isDarkMode
-                                  ? 'border-slate-700 bg-slate-900 text-slate-100 hover:border-slate-600 focus:border-sky-400 focus:ring-2 focus:ring-sky-400/20'
-                                  : 'border-slate-200 bg-slate-50 text-slate-700 hover:border-slate-300 focus:border-blue-400 focus:ring-2 focus:ring-blue-100'
-                              }`}
+                              className="landing-composer-workspace-trigger flex items-center justify-between gap-2 px-3 text-left text-sm font-medium"
                               aria-label="Select workspace"
                               aria-expanded={isLandingWorkspacePickerOpen}
                             >
@@ -7952,14 +7933,17 @@ export default function WorkspacePage() {
                               </div>
                             ) : null}
                           </div>
+                          <span className="landing-composer-routing-divider" aria-hidden="true" />
                           <DropdownMenu
+                            className="landing-composer-mode-menu"
                             placement="above"
                             menuWidth={220}
                             button={{
                               label: landingPersonas.find((persona) => persona.name === normalizePersonaName(activeConversationPersona || selectedPersona || DEFAULT_PERSONA_NAME))?.displayName
                                 || normalizePersonaName(activeConversationPersona || selectedPersona || DEFAULT_PERSONA_NAME),
                               variant: 'ghost',
-                              size: 'sm',
+                              size: 'md',
+                              className: 'landing-composer-mode-trigger',
                               tooltip: 'Select agent mode',
                             }}
                             items={landingPersonas.map((persona) => ({
@@ -7970,21 +7954,17 @@ export default function WorkspacePage() {
                               onClick: () => handleModeChange({ target: { value: persona.name } } as ChangeEvent<HTMLSelectElement>),
                             }))}
                           />
+                          </div>
                         </div>
-                        <button
-                          type="button"
+                        <IconButton
+                          label="Send message"
+                          tooltip="Send message"
+                          variant="primary"
+                          size="lg"
+                          icon={<ArrowUp size={20} />}
                           onClick={() => void handleLandingSendMessage()}
-                          disabled={isDriveImporting || (!chatMessage.trim() && !chatAttachments.length)}
-                          className={`inline-flex h-12 w-12 items-center justify-center rounded-full transition disabled:cursor-not-allowed disabled:opacity-50 ${
-                            isDarkMode
-                              ? 'bg-slate-100 text-slate-950 hover:bg-white'
-                              : 'bg-slate-900 text-white hover:bg-slate-700'
-                          }`}
-                          title="Send message"
-                          aria-label="Send message"
-                        >
-                          <ArrowUp size={22} />
-                        </button>
+                          isDisabled={isDriveImporting || (!chatMessage.trim() && !chatAttachments.length)}
+                        />
                       </div>
                     </div>
                     <input
@@ -8498,7 +8478,6 @@ export default function WorkspacePage() {
               messageBubbleMaxWidth={messageBubbleMaxWidth}
               markdownComponents={markdownComponents}
               expandedToolMessages={expandedToolMessages}
-              expandedThinkingMessages={expandedThinkingMessages}
               copiedMessageId={copiedMessageId}
               interruptInputByMessageId={interruptInputByMessageId}
               interruptStructuredAnswersByMessageId={interruptStructuredAnswersByMessageId}
@@ -8542,7 +8521,6 @@ export default function WorkspacePage() {
               onCloseHistory={() => setIsHistoryOpen(false)}
               onSelectConversation={handleSelectConversationFromHistory}
               onDeleteConversation={handleDeleteConversation}
-              onToggleThinkingVisibility={toggleThinkingVisibility}
               onToggleToolActivityVisibility={toggleToolActivityVisibility}
               onCopyMessageText={handleCopyMessageText}
               onRerunMessage={handleRerunMessage}
@@ -8732,6 +8710,29 @@ export default function WorkspacePage() {
           </div>
         </div>
       )}
+      <AlertDialog
+        isOpen={pendingRerunConfirmation !== null}
+        onOpenChange={(isOpen) => {
+          if (!isOpen) {
+            setPendingRerunConfirmation(null);
+          }
+        }}
+        title="Redo from this message?"
+        description="This will remove every message below it and run the request again."
+        cancelLabel="Cancel"
+        actionLabel="Redo"
+        actionVariant="destructive"
+        onAction={() => {
+          const pending = pendingRerunConfirmation;
+          setPendingRerunConfirmation(null);
+          if (pending) {
+            void handleRerunMessage(pending.messageId, {
+              ...pending.options,
+              skipConfirm: true,
+            });
+          }
+        }}
+      />
       <DrivePickerModal
         isOpen={isDrivePickerOpen}
         workspaceId={selectedWorkspace?.id}

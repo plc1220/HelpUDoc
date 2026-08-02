@@ -222,7 +222,7 @@ export default function ChatInputArea({
                 isDisabled={isPreparingAttachments}
               />
               <Button
-                label="@ Context"
+                label="Context"
                 tooltip="Add files or knowledge with @"
                 variant="ghost"
                 size="sm"
@@ -231,7 +231,7 @@ export default function ChatInputArea({
                 isDisabled={isPreparingAttachments}
               />
               <Button
-                label="/ Commands"
+                label="Commands"
                 tooltip="Browse commands with /"
                 variant="ghost"
                 size="sm"

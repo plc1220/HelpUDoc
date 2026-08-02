@@ -1,4 +1,5 @@
 import type { ComponentType, ReactNode } from 'react';
+import { Card } from '@astryxdesign/core/Card';
 import { Loader2 } from 'lucide-react';
 
 const cx = (...classes: Array<string | false | null | undefined>) => classes.filter(Boolean).join(' ');
@@ -9,14 +10,15 @@ type SurfaceProps = {
 };
 
 export const SettingsSurface = ({ children, className }: SurfaceProps) => (
-  <section
+  <Card
+    padding={6}
     className={cx(
-      'settings-portal-surface rounded-[28px] p-6',
+      'settings-portal-surface',
       className,
     )}
   >
     {children}
-  </section>
+  </Card>
 );
 
 type SectionHeaderProps = {
@@ -120,7 +122,7 @@ type MetricCardProps = {
 };
 
 export const SettingsMetricCard = ({ label, value, hint, icon: Icon }: MetricCardProps) => (
-  <div className="settings-portal-card rounded-[24px] p-5">
+  <Card padding={5} className="settings-portal-card">
     <div className="flex items-start justify-between gap-4">
       <div>
         <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">{label}</p>
@@ -133,7 +135,7 @@ export const SettingsMetricCard = ({ label, value, hint, icon: Icon }: MetricCar
         </span>
       ) : null}
     </div>
-  </div>
+  </Card>
 );
 
 type TabsProps<T extends string> = {

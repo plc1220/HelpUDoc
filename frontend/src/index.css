@@ -43,7 +43,7 @@ html[data-astryx-theme="neutral"] {
   --admin-shadow-soft: var(--shadow-low);
   --admin-shadow-strong: var(--shadow-med);
   --admin-ring: color-mix(in srgb, var(--color-accent) 18%, transparent);
-  --admin-accent-soft: var(--color-background-muted);
+  --admin-accent-soft: var(--color-accent-muted);
   --admin-icon-bg: var(--color-accent);
   --admin-icon-muted-bg: var(--color-background-muted);
 }
@@ -55,6 +55,7 @@ body {
 
 .settings-portal {
   background: var(--admin-shell-bg);
+  color: var(--text-primary);
 }
 
 /* The settings pages still use a few legacy Tailwind neutral utilities. Keep
@@ -174,11 +175,7 @@ body {
 .settings-portal-icon {
   background: var(--admin-icon-bg);
   box-shadow: 0 10px 24px rgba(15, 23, 42, 0.18);
-  color: #f8fafc;
-}
-
-:root[data-theme='dark'] .settings-portal-icon {
-  color: #dbeafe;
+  color: var(--color-on-accent);
 }
 
 .settings-portal-icon-muted {
@@ -204,13 +201,88 @@ body {
 }
 
 .settings-button-primary {
-  background: color-mix(in srgb, var(--slate-950) 86%, var(--accent) 14%);
+  background: var(--color-accent);
   box-shadow: 0 10px 24px rgba(15, 23, 42, 0.16);
-  color: #f8fafc;
+  color: var(--color-on-accent);
 }
 
 .settings-button-primary:hover {
-  background: color-mix(in srgb, var(--slate-950) 80%, var(--accent) 20%);
+  background: color-mix(in srgb, var(--color-accent), var(--color-tint-hover) 10%);
+}
+
+.settings-button-primary:focus-visible,
+.settings-portal-button-secondary:focus-visible,
+.settings-portal-nav-item:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+/* Normalize legacy utility colors inside the admin portal to Astryx tokens.
+   These mappings preserve intent and remain legible in both color modes. */
+.settings-portal .text-blue-600,
+.settings-portal .text-blue-700,
+.settings-portal .text-blue-800 {
+  color: var(--color-text-blue) !important;
+}
+
+.settings-portal .text-emerald-600,
+.settings-portal .text-emerald-700,
+.settings-portal .text-green-600,
+.settings-portal .text-green-700 {
+  color: var(--color-success) !important;
+}
+
+.settings-portal .text-amber-700,
+.settings-portal .text-amber-800,
+.settings-portal .text-amber-900,
+.settings-portal .text-amber-950 {
+  color: var(--color-warning) !important;
+}
+
+.settings-portal .text-rose-600,
+.settings-portal .text-rose-700,
+.settings-portal .text-red-600,
+.settings-portal .text-red-700 {
+  color: var(--color-error) !important;
+}
+
+.settings-portal .bg-blue-50,
+.settings-portal .bg-blue-50\/80,
+.settings-portal .bg-blue-100 {
+  background-color: var(--color-background-blue) !important;
+}
+
+.settings-portal .bg-amber-50,
+.settings-portal .bg-amber-50\/80,
+.settings-portal .bg-amber-50\/90 {
+  background-color: var(--color-warning-muted) !important;
+}
+
+.settings-portal .bg-rose-50,
+.settings-portal .bg-red-50 {
+  background-color: var(--color-error-muted) !important;
+}
+
+.settings-portal .helpudoc-markdown-light.helpudoc-markdown,
+.settings-portal .helpudoc-markdown-light.helpudoc-markdown h1,
+.settings-portal .helpudoc-markdown-light.helpudoc-markdown h2,
+.settings-portal .helpudoc-markdown-light.helpudoc-markdown h3,
+.settings-portal .helpudoc-markdown-light.helpudoc-markdown h4,
+.settings-portal .helpudoc-markdown-light.helpudoc-markdown h5,
+.settings-portal .helpudoc-markdown-light.helpudoc-markdown h6 {
+  color: var(--color-text-primary);
+}
+
+.settings-portal .helpudoc-markdown-light.helpudoc-markdown code {
+  background: var(--color-background-muted);
+  border-color: var(--color-border);
+  color: var(--color-text-primary);
+}
+
+.settings-portal .helpudoc-markdown-light.helpudoc-markdown table,
+.settings-portal .helpudoc-markdown-light.helpudoc-markdown thead,
+.settings-portal .helpudoc-markdown-light.helpudoc-markdown tbody tr {
+  border-color: var(--color-border-emphasized);
 }
 
 .settings-button-danger {
@@ -966,6 +1038,87 @@ body {
 .lumo-composer-slash {
   font-weight: var(--font-weight-semibold);
   line-height: 1;
+}
+
+.landing-composer-toolbar {
+  gap: var(--spacing-3);
+}
+
+.landing-composer-quick-actions {
+  flex-shrink: 0;
+}
+
+.landing-composer-routing {
+  min-height: var(--size-element-md);
+  margin-left: auto;
+  overflow: visible;
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-container);
+  background: var(--color-background-muted);
+}
+
+.landing-composer-workspace-trigger {
+  width: clamp(10rem, 18vw, 14rem);
+  height: calc(var(--size-element-md) - 2px);
+  border: 0;
+  border-radius: calc(var(--radius-container) - 1px);
+  background: transparent;
+  color: var(--color-text-primary);
+  outline: none;
+  transition:
+    background-color var(--duration-fast) var(--ease-standard),
+    color var(--duration-fast) var(--ease-standard),
+    box-shadow var(--duration-fast) var(--ease-standard);
+}
+
+.landing-composer-workspace-trigger:hover {
+  background: var(--color-overlay-hover);
+}
+
+.landing-composer-workspace-trigger:active {
+  background: var(--color-overlay-pressed);
+}
+
+.landing-composer-workspace-trigger:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--color-border-blue);
+}
+
+.landing-composer-routing-divider {
+  width: var(--border-width);
+  height: 20px;
+  flex: 0 0 var(--border-width);
+  background: var(--color-border-emphasized);
+}
+
+.landing-composer-mode-trigger {
+  border-radius: calc(var(--radius-container) - 1px) !important;
+}
+
+.landing-composer-mode-trigger:focus-visible,
+.landing-composer-quick-actions button:focus-visible {
+  outline-color: var(--color-border-blue) !important;
+}
+
+@media (max-width: 760px) {
+  .landing-composer-toolbar {
+    width: 100%;
+  }
+
+  .landing-composer-routing {
+    order: 2;
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .landing-composer-workspace-trigger {
+    width: auto;
+    min-width: 0;
+  }
+
+  .landing-composer-workspace-menu {
+    min-width: 0;
+    flex: 1;
+  }
 }
 
 .lumo-composer-status,

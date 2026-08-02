@@ -74,7 +74,6 @@ export default function AgentChatPane({
   messageBubbleMaxWidth,
   markdownComponents,
   expandedToolMessages,
-  expandedThinkingMessages,
   copiedMessageId,
   interruptInputByMessageId,
   interruptStructuredAnswersByMessageId,
@@ -118,7 +117,6 @@ export default function AgentChatPane({
   onCloseHistory,
   onSelectConversation,
   onDeleteConversation,
-  onToggleThinkingVisibility,
   onToggleToolActivityVisibility,
   onCopyMessageText,
   onRerunMessage,
@@ -161,7 +159,6 @@ export default function AgentChatPane({
   messageBubbleMaxWidth: string;
   markdownComponents: Components;
   expandedToolMessages: Set<ConversationMessage['id']>;
-  expandedThinkingMessages: Set<ConversationMessage['id']>;
   copiedMessageId: ConversationMessage['id'] | null;
   interruptInputByMessageId: Record<string, string>;
   interruptStructuredAnswersByMessageId: Record<string, InterruptAnswersByQuestionId>;
@@ -214,7 +211,6 @@ export default function AgentChatPane({
   onCloseHistory: () => void;
   onSelectConversation: (conversationId: string) => void;
   onDeleteConversation: (conversationId: string) => void;
-  onToggleThinkingVisibility: (messageId: ConversationMessage['id']) => void;
   onToggleToolActivityVisibility: (messageId: ConversationMessage['id']) => void;
   onCopyMessageText: (message: ConversationMessage) => void;
   onRerunMessage: (messageId: ConversationMessage['id'], options?: RerunMessageOptions) => void;
@@ -378,7 +374,6 @@ export default function AgentChatPane({
                 messageBubbleMaxWidth={messageBubbleMaxWidth}
                 markdownComponents={markdownComponents}
                 expandedToolMessages={expandedToolMessages}
-                expandedThinkingMessages={expandedThinkingMessages}
                 copiedMessageId={copiedMessageId}
                 interruptInputByMessageId={interruptInputByMessageId}
                 interruptStructuredAnswersByMessageId={interruptStructuredAnswersByMessageId}
@@ -395,7 +390,6 @@ export default function AgentChatPane({
                 setInterruptInputByMessageId={setInterruptInputByMessageId}
                 setInterruptStructuredAnswersByMessageId={setInterruptStructuredAnswersByMessageId}
                 toggleInterruptSelectedChoice={toggleInterruptSelectedChoice}
-                toggleThinkingVisibility={onToggleThinkingVisibility}
                 toggleToolActivityVisibility={onToggleToolActivityVisibility}
                 handleCopyMessageText={onCopyMessageText}
                 handleRerunMessage={onRerunMessage}
