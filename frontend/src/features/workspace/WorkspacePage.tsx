@@ -7207,7 +7207,11 @@ export default function WorkspacePage() {
                     : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
                 }`}
               >
-                {selectedWorkspace.publicationStatus === 'private_draft' ? 'Publish to team' : 'Publish changes'}
+                {selectedWorkspace.publicationStatus === 'private_draft'
+                  ? 'Share or publish'
+                  : selectedWorkspace.currentPublishedVersionNumber == null
+                    ? 'Publish first version'
+                    : 'Publish changes'}
               </button>
             ) : null}
       </header>
@@ -7220,7 +7224,9 @@ export default function WorkspacePage() {
                 ? 'border-sky-900/60 bg-sky-950/40 text-sky-200'
                 : 'border-blue-100 bg-blue-50 text-blue-700'
             }`}>
-              Published files are read-only. Chat can analyze them; propose changes from a private copy.
+              {selectedWorkspace.currentPublishedVersionNumber == null
+                ? 'Shared files are read-only. Chat can analyze them; propose changes from a private copy.'
+                : 'Published files are read-only. Chat can analyze them; propose changes from a private copy.'}
             </div>
           ) : null}
           <ChatMessageList
@@ -7400,7 +7406,8 @@ export default function WorkspacePage() {
                       <span className={`block truncate text-[10px] ${
                         isDarkMode ? 'text-slate-500' : 'text-slate-500'
                       }`}>
-                        {workspace.teamName || 'Team workspace'}
+                        {workspace.teamName
+                          || (workspace.audienceType === 'selected_people' ? 'Selected people' : 'Team workspace')}
                       </span>
                     </span>
                     {selectedWorkspace?.id === workspace.id ? <Check size={15} className="shrink-0" /> : null}

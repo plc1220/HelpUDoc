@@ -208,7 +208,9 @@ const WorkspaceCollaborationDialog = ({
         <Box>
           <Typography variant="h6">Notes, annotations & proposals</Typography>
           <Typography variant="caption" color="text.secondary">
-            Published version {workspace?.currentPublishedVersionNumber || '—'} stays read-only
+            {workspace?.currentPublishedVersionNumber == null
+              ? 'Shared files stay read-only until an immutable version is published'
+              : `Published version ${workspace.currentPublishedVersionNumber} stays read-only`}
           </Typography>
         </Box>
         <IconButton aria-label="close collaboration" onClick={onClose} size="small">

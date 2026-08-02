@@ -539,18 +539,9 @@ export class WorkspaceCollaborationService {
     if (workspace.visibility !== 'team') {
       throw new ConflictError('Collaboration items are attached to published workspaces');
     }
-    let currentPublishedVersionId = workspace.currentPublishedVersionId || null;
-    if (!currentPublishedVersionId) {
-      await this.publicationService.listHistory(workspaceId, userId);
-      const refreshed = await this.db('workspaces')
-        .select('currentPublishedVersionId')
-        .where({ id: workspaceId })
-        .first();
-      currentPublishedVersionId = refreshed?.currentPublishedVersionId || null;
-    }
     return {
       membership,
-      currentPublishedVersionId,
+      currentPublishedVersionId: workspace.currentPublishedVersionId || null,
     };
   }
 

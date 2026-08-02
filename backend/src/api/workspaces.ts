@@ -13,10 +13,28 @@ const renameWorkspaceSchema = z.object({
   name: z.string().trim().min(1).max(255),
 });
 
+const namedWorkspaceRoleSchema = z.enum(['publisher', 'contributor', 'viewer']);
+
 const publishWorkspaceSchema = z.object({
+  audience: z.enum(['team', 'selected_people']).optional(),
   teamId: z.string().uuid().optional(),
+  userIds: z.array(z.string().uuid()).min(1).max(100).optional(),
+  role: namedWorkspaceRoleSchema.optional(),
   name: z.string().trim().min(1).max(255).optional(),
   note: z.string().trim().max(1000).optional(),
+}).superRefine((data, ctx) => {
+  if (data.audience === 'team' && !data.teamId) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Choose a team', path: ['teamId'] });
+  }
+  if (data.audience === 'selected_people' && !data.userIds?.length) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Choose at least one person', path: ['userIds'] });
+  }
+});
+
+const shareWorkspaceSchema = z.object({
+  userIds: z.array(z.string().uuid()).min(1).max(100),
+  role: namedWorkspaceRoleSchema.optional(),
+  name: z.string().trim().min(1).max(255).optional(),
 });
 
 const syncWorkspaceSchema = z.object({
@@ -124,6 +142,24 @@ export default function workspaceRoutes(
         return res.status(400).json({ error: 'Invalid publish payload' });
       }
       handleError(res, error, 'Failed to publish workspace');
+    }
+  });
+
+  router.post('/:workspaceId/share', async (req, res) => {
+    try {
+      const user = requireUserContext(req);
+      const payload = shareWorkspaceSchema.parse(req.body || {});
+      const shared = await publicationService.shareWithSelectedPeople(
+        req.params.workspaceId,
+        user.userId,
+        payload,
+      );
+      res.status(201).json(shared);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: 'Invalid sharing payload' });
+      }
+      handleError(res, error, 'Failed to share workspace');
     }
   });
 

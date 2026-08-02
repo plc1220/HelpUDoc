@@ -75,7 +75,7 @@ export default function PublishedWorkspaceChatHeader({
               onChange={(value) => {
                 if (value === 'team' || value === 'private') onModeChange(value);
               }}
-              label="Published workspace conversation mode"
+              label="Shared workspace conversation mode"
               size="sm"
             >
               <ToggleButton
@@ -92,7 +92,7 @@ export default function PublishedWorkspaceChatHeader({
           ) : null}
         </div>
         {isAgentPaneVisible ? (
-          <ButtonGroup label="Published workspace chat actions" size="sm">
+          <ButtonGroup label="Shared workspace chat actions" size="sm">
             <IconButton
               label="Collaboration board"
               icon={<StickyNote size={15} />}

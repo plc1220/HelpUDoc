@@ -74,32 +74,38 @@ const WorkspaceHistoryDialog: React.FC<WorkspaceHistoryDialogProps> = ({
             <CircularProgress size={28} />
           </Box>
         ) : (
-          <List disablePadding>
-            {versions.map((version, index) => (
-              <ListItem
-                key={version.id}
-                divider
-                secondaryAction={
-                  workspace?.role === 'owner' && index > 0 ? (
-                    <Button
-                      size="small"
-                      disabled={Boolean(restoreId)}
-                      onClick={() => void handleRestore(version)}
-                    >
-                      {restoreId === version.id ? 'Restoring…' : 'Restore'}
-                    </Button>
-                  ) : undefined
-                }
-              >
-                <ListItemText
-                  primary={`Version ${version.versionNumber}${index === 0 ? ' · Current' : ''}`}
-                  secondary={`${version.publisherName} · ${new Date(version.createdAt).toLocaleString()}${
-                    version.note ? ` · ${version.note}` : ''
-                  }`}
-                />
-              </ListItem>
-            ))}
-          </List>
+          versions.length ? (
+            <List disablePadding>
+              {versions.map((version, index) => (
+                <ListItem
+                  key={version.id}
+                  divider
+                  secondaryAction={
+                    workspace?.role === 'owner' && index > 0 ? (
+                      <Button
+                        size="small"
+                        disabled={Boolean(restoreId)}
+                        onClick={() => void handleRestore(version)}
+                      >
+                        {restoreId === version.id ? 'Restoring…' : 'Restore'}
+                      </Button>
+                    ) : undefined
+                  }
+                >
+                  <ListItemText
+                    primary={`Version ${version.versionNumber}${index === 0 ? ' · Current' : ''}`}
+                    secondary={`${version.publisherName} · ${new Date(version.createdAt).toLocaleString()}${
+                      version.note ? ` · ${version.note}` : ''
+                    }`}
+                  />
+                </ListItem>
+              ))}
+            </List>
+          ) : (
+            <Alert severity="info">
+              This workspace has been shared, but no immutable version has been published yet.
+            </Alert>
+          )
         )}
         {error ? <Alert severity="error" sx={{ mt: 2 }}>{error}</Alert> : null}
       </DialogContent>
