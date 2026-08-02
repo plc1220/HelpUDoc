@@ -17,6 +17,7 @@ import {
   Lock,
   ManageAccounts,
   Publish,
+  Share,
   Sync,
 } from '@mui/icons-material';
 
@@ -69,8 +70,12 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
 
     const actions = [
       canPublish && onPublishWorkspace ? {
-        label: status === 'private_draft' ? `Publish ${workspace.name} to team` : `Publish changes from ${workspace.name}`,
-        icon: <Publish fontSize="small" />,
+        label: status === 'private_draft'
+          ? `Share or publish ${workspace.name}`
+          : workspace.currentPublishedVersionNumber == null
+            ? `Publish the first version of ${workspace.name}`
+            : `Publish changes from ${workspace.name}`,
+        icon: status === 'private_draft' ? <Share fontSize="small" /> : <Publish fontSize="small" />,
         onClick: () => onPublishWorkspace(workspace),
       } : null,
       canSync && onSyncWorkspace ? {
@@ -149,7 +154,7 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
             secondary={
               isPrivate
                 ? STATUS_LABELS[status]
-                : `${workspace.teamName || 'Team'}${workspace.latestPublisherName
+                : `${workspace.teamName || (workspace.audienceType === 'selected_people' ? 'Selected people' : 'Team')}${workspace.latestPublisherName
                   ? ` · ${workspace.latestPublisherName}`
                   : ''}`
             }

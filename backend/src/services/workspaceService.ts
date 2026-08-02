@@ -7,6 +7,7 @@ import { S3Service } from './s3Service';
 import { UserContext } from '../types/user';
 import { AccessDeniedError, ConflictError, NotFoundError } from '../errors';
 import { resolveWorkspaceRoot } from '../config/workspaceRoot';
+import { legacyWorkspaceRoleToNamedGrant } from './workspaceAudiencePolicy';
 
 const WORKSPACE_DIR = resolveWorkspaceRoot();
 
@@ -76,6 +77,7 @@ export class WorkspaceService {
     canEdit: boolean;
     canPublish: boolean;
     teamName?: string | null;
+    audienceType: 'private' | 'selected_people' | 'team';
     publicationStatus: 'private_draft' | 'up_to_date' | 'changes_to_publish' | 'team_updates_available' | 'review_needed';
     linkedTeamWorkspaceId?: string | null;
     privateCopyWorkspaceId?: string | null;
@@ -172,10 +174,15 @@ export class WorkspaceService {
         && row.linkedTeamWorkspaceId
         && linkedTeamAccessible
         && String(row.linkedTeamCurrentPublishedVersionId || '') !== String(row.basePublishedVersionId || '');
+      const needsInitialPublication = visibility === 'private'
+        && Boolean(row.linkedTeamWorkspaceId)
+        && !row.linkedTeamCurrentPublishedVersionId;
       const publicationStatus = visibility === 'team'
         ? 'up_to_date'
         : !row.linkedTeamWorkspaceId
           ? 'private_draft'
+          : needsInitialPublication
+            ? 'changes_to_publish'
           : privateChanged && teamChanged
             ? 'review_needed'
             : privateChanged
@@ -206,6 +213,7 @@ export class WorkspaceService {
             )
           : row.directRole === 'owner' || row.directRole === 'editor',
         teamName: row.teamName || null,
+        audienceType: visibility === 'private' ? 'private' : row.teamId ? 'team' : 'selected_people',
         publicationStatus,
         linkedTeamWorkspaceId: row.linkedTeamWorkspaceId || null,
         privateCopyWorkspaceId: row.privateCopyWorkspaceId || null,
@@ -457,23 +465,30 @@ export class WorkspaceService {
     }
 
     const canEdit = false;
-    const existing = await this.db('workspace_members').where({ workspaceId, userId: targetUserId }).first();
-    if (existing) {
-      await this.db('workspace_members')
-        .where({ workspaceId, userId: targetUserId })
-        .update({
-          role,
-          canEdit,
-          updatedAt: this.db.fn.now(),
-        });
-      return;
-    }
-
-    await this.db('workspace_members').insert({
-      workspaceId,
-      userId: targetUserId,
-      role,
-      canEdit,
+    const grantRole = legacyWorkspaceRoleToNamedGrant(role);
+    await this.db.transaction(async (tx) => {
+      await tx('workspace_members')
+        .insert({ workspaceId, userId: targetUserId, role, canEdit })
+        .onConflict(['workspaceId', 'userId'])
+        .merge({ role, canEdit, updatedAt: tx.fn.now() });
+      await tx('workspace_user_grants')
+        .insert({
+          workspaceId,
+          userId: targetUserId,
+          role: grantRole,
+          grantedByUserId: actingUserId,
+        })
+        .onConflict(['workspaceId', 'userId'])
+        .merge({ role: grantRole, grantedByUserId: actingUserId, updatedAt: tx.fn.now() });
+      await tx('audit_events').insert({
+        id: uuidv4(),
+        actorUserId: actingUserId,
+        actorRole: 'workspace_owner',
+        action: 'workspace.access_granted',
+        resourceType: 'workspace',
+        resourceId: workspaceId,
+        metadata: { targetUserId, role: grantRole },
+      });
     });
   }
 
@@ -493,7 +508,19 @@ export class WorkspaceService {
       throw new AccessDeniedError('Cannot remove workspace owner');
     }
 
-    await this.db('workspace_members').where({ workspaceId, userId: targetUserId }).del();
+    await this.db.transaction(async (tx) => {
+      await tx('workspace_members').where({ workspaceId, userId: targetUserId }).del();
+      await tx('workspace_user_grants').where({ workspaceId, userId: targetUserId }).del();
+      await tx('audit_events').insert({
+        id: uuidv4(),
+        actorUserId: actingUserId,
+        actorRole: 'workspace_owner',
+        action: 'workspace.access_revoked',
+        resourceType: 'workspace',
+        resourceId: workspaceId,
+        metadata: { targetUserId, previousRole: legacyWorkspaceRoleToNamedGrant(target.role) },
+      });
+    });
   }
 
   async listCollaborators(

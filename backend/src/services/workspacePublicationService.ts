@@ -11,6 +11,11 @@ import { S3Service } from './s3Service';
 import { WorkspaceRecord, WorkspaceRole, WorkspaceService } from './workspaceService';
 import { getWorkspaceRoleCapabilities } from './workspaceCollaborationPolicy';
 import {
+  namedGrantToLegacyWorkspaceRole,
+  normalizeSelectedWorkspaceUsers,
+  type WorkspaceNamedGrantRole,
+} from './workspaceAudiencePolicy';
+import {
   findPublicationConflicts,
   hasFileChanged,
   mergePublicationFolders,
@@ -84,7 +89,14 @@ export class WorkspacePublicationService {
   async publish(
     privateWorkspaceId: string,
     userId: string,
-    input: { teamId?: string; note?: string; name?: string },
+    input: {
+      audience?: 'team' | 'selected_people';
+      teamId?: string;
+      userIds?: string[];
+      role?: WorkspaceNamedGrantRole;
+      note?: string;
+      name?: string;
+    },
   ) {
     const { workspace: privateWorkspace } = await this.workspaceService.ensureMembership(
       privateWorkspaceId,
@@ -100,6 +112,19 @@ export class WorkspacePublicationService {
       .first();
 
     if (!existingLink) {
+      if (input.audience === 'selected_people') {
+        const selectedUserIds = normalizeSelectedWorkspaceUsers(userId, input.userIds);
+        if (!selectedUserIds.length) {
+          throw new ConflictError('Choose at least one person before publishing');
+        }
+        await this.ensureRegisteredUsers(selectedUserIds);
+        return this.publishFirstVersion(privateWorkspace, userId, {
+          selectedUserIds,
+          selectedRole: input.role || 'viewer',
+          note: input.note,
+          name: input.name,
+        });
+      }
       if (!input.teamId) {
         throw new ConflictError('Choose a team before publishing');
       }
@@ -125,7 +150,8 @@ export class WorkspacePublicationService {
     }
 
     if (
-      !existingLink.hasUnpublishedChanges
+      teamWorkspace.currentPublishedVersionId
+      && !existingLink.hasUnpublishedChanges
       && Number(privateWorkspace.contentRevision || 0) === Number(existingLink.basePrivateContentRevision || 0)
     ) {
       throw new ConflictError('There are no private changes to publish');
@@ -138,6 +164,88 @@ export class WorkspacePublicationService {
       note: input.note,
       existingLink,
     });
+  }
+
+  async shareWithSelectedPeople(
+    privateWorkspaceId: string,
+    userId: string,
+    input: { userIds: string[]; role?: WorkspaceNamedGrantRole; name?: string },
+  ) {
+    const { workspace: privateWorkspace } = await this.workspaceService.ensureMembership(
+      privateWorkspaceId,
+      userId,
+      { requireEdit: true },
+    );
+    if (privateWorkspace.visibility !== 'private' || privateWorkspace.ownerId !== userId) {
+      throw new AccessDeniedError('Only the owner can share a private workspace');
+    }
+
+    const existingLink = await this.db<PublicationLinkRecord>('workspace_publication_links')
+      .where({ privateWorkspaceId })
+      .first();
+    if (existingLink) {
+      throw new ConflictError('This private workspace already has a shared Team Workspace');
+    }
+
+    const selectedUserIds = normalizeSelectedWorkspaceUsers(userId, input.userIds);
+    if (!selectedUserIds.length) {
+      throw new ConflictError('Choose at least one person before sharing');
+    }
+    await this.ensureRegisteredUsers(selectedUserIds);
+
+    const teamWorkspace = await this.createTeamWorkspace(privateWorkspace, userId, {
+      selectedUserIds,
+      selectedRole: input.role || 'viewer',
+      name: input.name,
+    });
+
+    try {
+      const content = await this.readWorkspaceContent(privateWorkspace.id);
+      await this.replaceWorkspaceContent(teamWorkspace.id, content, userId);
+      await this.db.transaction(async (tx) => {
+        const currentPrivate = await tx<WorkspaceRecord>('workspaces')
+          .select('contentRevision')
+          .where({ id: privateWorkspace.id })
+          .forUpdate()
+          .first();
+        if (Number(currentPrivate?.contentRevision || 0) !== Number(privateWorkspace.contentRevision || 0)) {
+          throw new ConflictError('The private workspace changed while it was being shared. Try again.');
+        }
+        await this.copyValidatedWorkspaceSkillPins(tx, privateWorkspace.id, teamWorkspace.id);
+        await tx('workspace_publication_links').insert({
+          privateWorkspaceId: privateWorkspace.id,
+          teamWorkspaceId: teamWorkspace.id,
+          userId,
+          basePublishedVersionId: null,
+          basePrivateContentRevision: Number(currentPrivate?.contentRevision || 0),
+          hasUnpublishedChanges: false,
+        });
+        await tx('audit_events').insert({
+          id: uuidv4(),
+          actorUserId: userId,
+          actorRole: 'workspace_owner',
+          action: 'workspace.promoted',
+          resourceType: 'workspace',
+          resourceId: teamWorkspace.id,
+          metadata: {
+            sourcePrivateWorkspaceId: privateWorkspace.id,
+            audience: 'selected_people',
+            selectedUserIds,
+            selectedRole: input.role || 'viewer',
+            editingPolicy: 'review',
+          },
+        });
+      });
+      return {
+        privateWorkspaceId: privateWorkspace.id,
+        teamWorkspaceId: teamWorkspace.id,
+        sharedWithUserIds: selectedUserIds,
+      };
+    } catch (error) {
+      await this.db('workspaces').where({ id: teamWorkspace.id }).del();
+      await fs.rm(path.join(WORKSPACE_DIR, teamWorkspace.id), { recursive: true, force: true });
+      throw error;
+    }
   }
 
   async createPrivateCopy(teamWorkspaceId: string, userId: string) {
@@ -164,8 +272,12 @@ export class WorkspacePublicationService {
       }
     }
 
-    const currentVersion = await this.ensureCurrentVersion(teamWorkspace, userId);
-    const content = await this.readPublishedVersionContent(currentVersion);
+    const currentVersion = teamWorkspace.currentPublishedVersionId
+      ? await this.getPublishedVersion(teamWorkspace.currentPublishedVersionId, teamWorkspace.id)
+      : null;
+    const content = currentVersion
+      ? await this.readPublishedVersionContent(currentVersion)
+      : await this.readWorkspaceContent(teamWorkspace.id);
     const privateWorkspaceId = uuidv4();
     const name = await this.resolveUniquePrivateCopyName(userId, teamWorkspace.name);
     const slug = await this.generateUniqueSlug(name);
@@ -188,12 +300,16 @@ export class WorkspacePublicationService {
         role: 'owner',
         canEdit: true,
       });
-      await this.copyPublishedSkillPinsToWorkspace(
-        tx,
-        currentVersion.id,
-        privateWorkspaceId,
-        userId,
-      );
+      if (currentVersion) {
+        await this.copyPublishedSkillPinsToWorkspace(
+          tx,
+          currentVersion.id,
+          privateWorkspaceId,
+          userId,
+        );
+      } else {
+        await this.copyValidatedWorkspaceSkillPins(tx, teamWorkspace.id, privateWorkspaceId);
+      }
     });
 
     try {
@@ -202,7 +318,7 @@ export class WorkspacePublicationService {
         privateWorkspaceId,
         teamWorkspaceId,
         userId,
-        basePublishedVersionId: currentVersion.id,
+        basePublishedVersionId: currentVersion?.id || null,
         basePrivateContentRevision: contentRevision,
       });
     } catch (error) {
@@ -240,7 +356,13 @@ export class WorkspacePublicationService {
     }
 
     const { workspace: teamWorkspace } = await this.workspaceService.ensureMembership(link.teamWorkspaceId, userId);
-    const latestVersion = await this.ensureCurrentVersion(teamWorkspace, userId);
+    if (!teamWorkspace.currentPublishedVersionId) {
+      throw new ConflictError('No published Team version is available to sync');
+    }
+    const latestVersion = await this.getPublishedVersion(
+      teamWorkspace.currentPublishedVersionId,
+      teamWorkspace.id,
+    );
     if (latestVersion.id === link.basePublishedVersionId) {
       return {
         workspaceId: privateWorkspaceId,
@@ -314,7 +436,6 @@ export class WorkspacePublicationService {
     if (workspace.visibility !== 'team') {
       throw new ConflictError('Publication history is only available for team workspaces');
     }
-    await this.ensureCurrentVersion(workspace, userId);
     return this.db('workspace_published_versions as version')
       .leftJoin('users as publisher', 'publisher.id', 'version.publisherUserId')
       .where('version.teamWorkspaceId', teamWorkspaceId)
@@ -407,11 +528,47 @@ export class WorkspacePublicationService {
   private async publishFirstVersion(
     privateWorkspace: WorkspaceRecord,
     userId: string,
-    input: { teamId: string; note?: string; name?: string },
+    input: {
+      teamId?: string;
+      selectedUserIds?: string[];
+      selectedRole?: WorkspaceNamedGrantRole;
+      note?: string;
+      name?: string;
+    },
   ) {
+    const teamWorkspace = await this.createTeamWorkspace(privateWorkspace, userId, input);
+
+    try {
+      return await this.createPublishedVersion({
+        privateWorkspace,
+        teamWorkspace,
+        userId,
+        note: input.note,
+        existingLink: null,
+      });
+    } catch (error) {
+      await this.db('workspaces').where({ id: teamWorkspace.id }).del();
+      await fs.rm(path.join(WORKSPACE_DIR, teamWorkspace.id), { recursive: true, force: true });
+      throw error;
+    }
+  }
+
+  private async createTeamWorkspace(
+    privateWorkspace: WorkspaceRecord,
+    userId: string,
+    input: {
+      teamId?: string;
+      selectedUserIds?: string[];
+      selectedRole?: WorkspaceNamedGrantRole;
+      name?: string;
+    },
+  ): Promise<WorkspaceRecord> {
     const teamWorkspaceId = uuidv4();
     const resolvedName = String(input.name || privateWorkspace.name).trim().slice(0, 255) || privateWorkspace.name;
     const slug = await this.generateUniqueSlug(resolvedName);
+    const selectedUserIds = normalizeSelectedWorkspaceUsers(userId, input.selectedUserIds);
+    const selectedRole = input.selectedRole || 'viewer';
+    const legacyRole = namedGrantToLegacyWorkspaceRole(selectedRole);
 
     await this.db.transaction(async (tx) => {
       await tx('workspaces').insert({
@@ -423,7 +580,7 @@ export class WorkspacePublicationService {
         visibility: 'team',
         workspaceType: 'team',
         editingPolicy: 'review',
-        teamId: input.teamId,
+        teamId: input.teamId || null,
         contentRevision: 0,
       });
       await tx('workspace_members').insert({
@@ -432,25 +589,41 @@ export class WorkspacePublicationService {
         role: 'owner',
         canEdit: false,
       });
+      if (selectedUserIds.length) {
+        await tx('workspace_members').insert(selectedUserIds.map((selectedUserId) => ({
+          workspaceId: teamWorkspaceId,
+          userId: selectedUserId,
+          role: legacyRole,
+          canEdit: false,
+        })));
+        await tx('workspace_user_grants').insert(selectedUserIds.map((selectedUserId) => ({
+          workspaceId: teamWorkspaceId,
+          userId: selectedUserId,
+          role: selectedRole,
+          grantedByUserId: userId,
+        })));
+      }
+      if (input.teamId) {
+        await tx('workspace_team_grants').insert({
+          workspaceId: teamWorkspaceId,
+          teamId: input.teamId,
+          role: 'viewer',
+          grantedByUserId: userId,
+        });
+      }
     });
 
     const teamWorkspace = await this.db<WorkspaceRecord>('workspaces').where({ id: teamWorkspaceId }).first();
     if (!teamWorkspace) {
       throw new NotFoundError('Team workspace was not created');
     }
+    return teamWorkspace;
+  }
 
-    try {
-      return await this.createPublishedVersion({
-        privateWorkspace,
-        teamWorkspace,
-        userId,
-        note: input.note,
-        existingLink: null,
-      });
-    } catch (error) {
-      await this.db('workspaces').where({ id: teamWorkspaceId }).del();
-      await fs.rm(path.join(WORKSPACE_DIR, teamWorkspaceId), { recursive: true, force: true });
-      throw error;
+  private async ensureRegisteredUsers(userIds: string[]): Promise<void> {
+    const rows = await this.db('users').select('id').whereIn('id', userIds);
+    if (rows.length !== userIds.length) {
+      throw new NotFoundError('One or more selected users were not found');
     }
   }
 
@@ -502,6 +675,7 @@ export class WorkspacePublicationService {
         }
         if (
           currentLink
+          && lockedTeam.currentPublishedVersionId
           && !currentLink.hasUnpublishedChanges
           && Number(currentPrivate?.contentRevision || 0) === Number(currentLink.basePrivateContentRevision || 0)
         ) {
@@ -539,6 +713,35 @@ export class WorkspacePublicationService {
               manifest,
             })
             .returning('*');
+          if (!input.existingLink) {
+            await tx('audit_events').insert({
+              id: uuidv4(),
+              actorUserId: input.userId,
+              actorRole: 'workspace_owner',
+              action: 'workspace.promoted',
+              resourceType: 'workspace',
+              resourceId: lockedTeam.id,
+              metadata: {
+                sourcePrivateWorkspaceId: input.privateWorkspace.id,
+                audience: lockedTeam.teamId ? 'team' : 'selected_people',
+                teamId: lockedTeam.teamId || null,
+                editingPolicy: lockedTeam.editingPolicy || 'review',
+              },
+            });
+          }
+          await tx('audit_events').insert({
+            id: uuidv4(),
+            actorUserId: input.userId,
+            actorRole: 'workspace_owner_or_publisher',
+            action: 'workspace.version_published',
+            resourceType: 'workspace',
+            resourceId: lockedTeam.id,
+            metadata: {
+              publishedVersionId: version.id,
+              versionNumber: Number(version.versionNumber),
+              sourcePrivateWorkspaceId: input.privateWorkspace.id,
+            },
+          });
           await this.freezeWorkspaceSkillPins(
             tx,
             input.privateWorkspace.id,
@@ -595,72 +798,29 @@ export class WorkspacePublicationService {
     }
   }
 
-  private async ensureCurrentVersion(
-    teamWorkspace: WorkspaceRecord,
-    userId: string,
-  ): Promise<PublishedVersionRecord> {
-    if (teamWorkspace.currentPublishedVersionId) {
-      return this.getPublishedVersion(teamWorkspace.currentPublishedVersionId, teamWorkspace.id);
-    }
-
-    // Legacy shared workspaces are frozen as team workspaces during migration.
-    // Their first immutable version is created lazily when publication features are used.
-    const content = await this.readWorkspaceContent(teamWorkspace.id);
-    const versionId = uuidv4();
-    const manifest = await this.writeVersionSnapshot(versionId, content);
-    const publisherUserId = teamWorkspace.ownerId || userId;
-    try {
-      const result = await this.db.transaction(async (tx) => {
-        const lockedTeam = await tx<WorkspaceRecord>('workspaces')
-          .where({ id: teamWorkspace.id })
-          .forUpdate()
-          .first();
-        if (!lockedTeam) {
-          throw new NotFoundError('Team workspace not found');
-        }
-        if (lockedTeam.currentPublishedVersionId) {
-          const current = await tx<PublishedVersionRecord>('workspace_published_versions')
-            .where({ id: lockedTeam.currentPublishedVersionId, teamWorkspaceId: lockedTeam.id })
-            .first();
-          if (!current) {
-            throw new NotFoundError('Current published version not found');
-          }
-          return { version: current, created: false };
-        }
-
-        const [version] = await tx<PublishedVersionRecord>('workspace_published_versions')
-          .insert({
-            id: versionId,
-            teamWorkspaceId: lockedTeam.id,
-            versionNumber: 1,
-            sourcePrivateWorkspaceId: null,
-            publisherUserId,
-            note: 'Initial published version',
-            manifest,
-          })
-          .returning('*');
-        await this.freezeWorkspaceSkillPins(tx, lockedTeam.id, lockedTeam.id, version.id);
-        await tx('workspaces')
-          .where({ id: lockedTeam.id })
-          .update({ currentPublishedVersionId: version.id });
-        return { version, created: true };
-      });
-      if (!result.created) {
-        await fs.rm(this.versionDirectory(versionId), { recursive: true, force: true });
-      }
-      return result.version;
-    } catch (error) {
-      await fs.rm(this.versionDirectory(versionId), { recursive: true, force: true });
-      throw error;
-    }
-  }
-
   private async freezeWorkspaceSkillPins(
     tx: Knex.Transaction,
     sourceWorkspaceId: string,
     teamWorkspaceId: string,
     publishedVersionId: string,
   ): Promise<void> {
+    const pins = await this.copyValidatedWorkspaceSkillPins(tx, sourceWorkspaceId, teamWorkspaceId);
+    if (pins.length) {
+      await tx('published_version_skill_pins').insert(pins.map((pin: any) => ({
+        publishedVersionId,
+        skillId: pin.skillId,
+        skillVersionId: pin.skillVersionId,
+        semanticVersion: pin.semanticVersion,
+        manifestHash: pin.manifestHash,
+      })));
+    }
+  }
+
+  private async copyValidatedWorkspaceSkillPins(
+    tx: Knex.Transaction,
+    sourceWorkspaceId: string,
+    teamWorkspaceId: string,
+  ): Promise<any[]> {
     const pins = await tx('workspace_skill_pins as pin')
       .join('skills as skill', 'skill.id', 'pin.skillId')
       .join('skill_versions as version', 'version.id', 'pin.skillVersionId')
@@ -705,15 +865,7 @@ export class WorkspacePublicationService {
         })));
       }
     }
-    if (pins.length) {
-      await tx('published_version_skill_pins').insert(pins.map((pin: any) => ({
-        publishedVersionId,
-        skillId: pin.skillId,
-        skillVersionId: pin.skillVersionId,
-        semanticVersion: pin.semanticVersion,
-        manifestHash: pin.manifestHash,
-      })));
-    }
+    return pins;
   }
 
   private async restorePublishedSkillPins(

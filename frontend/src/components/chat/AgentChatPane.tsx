@@ -317,7 +317,7 @@ export default function AgentChatPane({
                   ? 'border-violet-900/60 bg-violet-950/30 text-violet-200'
                   : 'border-violet-100 bg-violet-50 text-violet-700'
               }`}>
-                Private with Lumo is visible only to you. Lumo may analyze published files, but cannot edit them.
+                Private with Lumo is visible only to you. Lumo may analyze shared files, but cannot edit them.
               </div>
             ) : null}
             <ChatLayout
@@ -329,7 +329,7 @@ export default function AgentChatPane({
                   chatMessage={chatMessage}
                   chatAttachments={chatAttachments}
                   placeholder={isPublishedWorkspace
-                    ? 'Ask Lumo about this published workspace…'
+                    ? 'Ask Lumo about this shared workspace…'
                     : undefined}
                   chatInputRef={chatInputRef}
                   attachmentInputRef={attachmentInputRef}
@@ -373,7 +373,7 @@ export default function AgentChatPane({
                 isStreaming={isStreaming}
                 personaDisplayName={personaDisplayName}
                 emptyStateDescription={isPublishedWorkspace
-                  ? 'Ask Lumo to explain, summarize, or analyze the published workspace without changing it.'
+                  ? 'Ask Lumo to explain, summarize, or analyze the shared workspace without changing it.'
                   : undefined}
                 messageBubbleMaxWidth={messageBubbleMaxWidth}
                 markdownComponents={markdownComponents}

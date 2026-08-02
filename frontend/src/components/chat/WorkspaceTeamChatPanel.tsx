@@ -277,7 +277,7 @@ export default function WorkspaceTeamChatPanel({
     const isActionsOpen = actionMessageId === message.id;
     const publishedVersion = message.originVersionNumber
       ? `Published v${message.originVersionNumber}`
-      : 'Published version';
+      : 'Shared workspace';
     return (
       <article
         key={message.id}
@@ -474,7 +474,7 @@ export default function WorkspaceTeamChatPanel({
               }`}>
                 <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-violet-500">
                   <Bot size={16} />
-                  Lumo is checking the published workspace
+                  Lumo is checking the shared workspace
                 </div>
                 <ChatToolCalls
                   calls={[{
@@ -483,7 +483,7 @@ export default function WorkspaceTeamChatPanel({
                     status: 'running',
                     target: workspace.currentPublishedVersionNumber
                       ? `Published v${workspace.currentPublishedVersionNumber}`
-                      : 'Published version',
+                      : 'Shared workspace',
                     node: 'read-only',
                   }]}
                 />

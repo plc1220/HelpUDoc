@@ -7,6 +7,7 @@ export interface Workspace {
   canEdit?: boolean;
   canPublish?: boolean;
   visibility?: 'private' | 'team';
+  audienceType?: 'private' | 'selected_people' | 'team';
   teamId?: string | null;
   teamName?: string | null;
   publicationStatus?:

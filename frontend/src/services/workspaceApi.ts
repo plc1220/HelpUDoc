@@ -139,6 +139,9 @@ export type WorkspaceTeam = {
   name: string;
 };
 
+export type WorkspaceAudienceAction = 'share_selected' | 'publish_selected' | 'publish_team';
+export type WorkspaceNamedGrantRole = 'publisher' | 'contributor' | 'viewer';
+
 export type PublicationConflict = {
   path: string;
   privateChange: 'added' | 'changed' | 'deleted';
@@ -167,7 +170,14 @@ export const listWorkspaceTeams = async (): Promise<WorkspaceTeam[]> => {
 
 export const publishWorkspace = async (
   workspaceId: string,
-  payload: { teamId?: string; name?: string; note?: string },
+  payload: {
+    audience?: 'team' | 'selected_people';
+    teamId?: string;
+    userIds?: string[];
+    role?: WorkspaceNamedGrantRole;
+    name?: string;
+    note?: string;
+  },
 ) => {
   const response = await apiFetch(`${API_URL}/workspaces/${workspaceId}/publish`, {
     method: 'POST',
@@ -183,6 +193,25 @@ export const publishWorkspace = async (
     publishedVersionId: string;
     publishedVersionNumber: number;
     publishedAt: string;
+  }>;
+};
+
+export const shareWorkspaceWithSelectedPeople = async (
+  workspaceId: string,
+  payload: { userIds: string[]; role?: WorkspaceNamedGrantRole; name?: string },
+) => {
+  const response = await apiFetch(`${API_URL}/workspaces/${workspaceId}/share`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    return throwWorkspaceApiError(response, 'Failed to share workspace');
+  }
+  return response.json() as Promise<{
+    teamWorkspaceId: string;
+    privateWorkspaceId: string;
+    sharedWithUserIds: string[];
   }>;
 };
 
