@@ -69,6 +69,46 @@ export default function(knowledgeService: KnowledgeService, options: { global?: 
     }
   });
 
+  router.get('/:knowledgeId/bundle', async (req: Request<{ workspaceId?: string; knowledgeId: string }>, res: Response) => {
+    try {
+      const { knowledgeId } = req.params;
+      const user = requireUserContext(req);
+      const id = parseInt(knowledgeId, 10);
+      if (Number.isNaN(id)) {
+        return res.status(400).json({ error: 'Invalid knowledge id' });
+      }
+      if (!global) {
+        return res.status(404).json({ error: 'Knowledge bundle inspector is only available in the admin catalog' });
+      }
+      const bundle = await knowledgeService.getGlobalBundle(id, user.userId);
+      res.json(bundle);
+    } catch (error) {
+      handleError(res, error, 'Failed to retrieve knowledge bundle');
+    }
+  });
+
+  router.get('/:knowledgeId/bundle/file', async (req: Request<{ workspaceId?: string; knowledgeId: string }>, res: Response) => {
+    try {
+      const { knowledgeId } = req.params;
+      const user = requireUserContext(req);
+      const id = parseInt(knowledgeId, 10);
+      const relativePath = req.query.path;
+      if (Number.isNaN(id)) {
+        return res.status(400).json({ error: 'Invalid knowledge id' });
+      }
+      if (typeof relativePath !== 'string' || !relativePath.trim()) {
+        return res.status(400).json({ error: 'Missing bundle file path' });
+      }
+      if (!global) {
+        return res.status(404).json({ error: 'Knowledge bundle inspector is only available in the admin catalog' });
+      }
+      const file = await knowledgeService.readGlobalBundleFile(id, user.userId, relativePath);
+      res.json(file);
+    } catch (error) {
+      handleError(res, error, 'Failed to retrieve knowledge bundle file');
+    }
+  });
+
   router.post('/', async (req: Request<{ workspaceId?: string }>, res: Response) => {
     try {
       const { workspaceId } = req.params;

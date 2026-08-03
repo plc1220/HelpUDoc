@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { FileIcon, Loader2, NotebookPen, Plus, RotateCcw, Trash } from 'lucide-react';
+import { FileIcon, FolderOpen, Loader2, NotebookPen, Plus, RotateCcw, Trash } from 'lucide-react';
 import SettingsShell from '../components/settings/SettingsShell';
+import KnowledgeBundleExplorer from '../components/KnowledgeBundleExplorer';
 import {
   SettingsEmptyState,
   SettingsLoadingState,
@@ -87,6 +88,7 @@ const KnowledgePage = () => {
   const [uploading, setUploading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [selectedKnowledge, setSelectedKnowledge] = useState<KnowledgeSource | null>(null);
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
 
   const loadKnowledgeSources = useCallback(
@@ -324,7 +326,25 @@ const KnowledgePage = () => {
               {knowledgeSources.map((item) => (
                 <div
                   key={item.id}
-                  className="settings-portal-card rounded-[24px] p-4"
+                  role={normalizeStatus(getIngestion(item)?.status) === 'published' ? 'button' : undefined}
+                  tabIndex={normalizeStatus(getIngestion(item)?.status) === 'published' ? 0 : undefined}
+                  onClick={() => {
+                    if (normalizeStatus(getIngestion(item)?.status) === 'published') setSelectedKnowledge(item);
+                  }}
+                  onKeyDown={(event) => {
+                    if (
+                      normalizeStatus(getIngestion(item)?.status) === 'published'
+                      && (event.key === 'Enter' || event.key === ' ')
+                    ) {
+                      event.preventDefault();
+                      setSelectedKnowledge(item);
+                    }
+                  }}
+                  className={`settings-portal-card rounded-[24px] p-4 transition-[border-color,box-shadow,transform] duration-150 ease-out ${
+                    normalizeStatus(getIngestion(item)?.status) === 'published'
+                      ? 'cursor-pointer hover:border-amber-200 hover:shadow-md active:scale-[0.995]'
+                      : ''
+                  }`}
                 >
                   <div className="flex items-start gap-4">
                     <span className="settings-portal-icon-muted flex h-10 w-10 items-center justify-center rounded-2xl ring-1 ring-slate-200">
@@ -339,8 +359,18 @@ const KnowledgePage = () => {
                             {item.file?.name ? ` • File: ${item.file.name}` : ''}
                           </p>
                         </div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>
                           {renderStatusBadge(item)}
+                          {normalizeStatus(getIngestion(item)?.status) === 'published' ? (
+                            <button
+                              type="button"
+                              className="settings-portal-button-secondary inline-flex items-center gap-1 rounded-xl px-2.5 py-1.5 text-xs transition-transform duration-150 ease-out active:scale-95"
+                              onClick={() => setSelectedKnowledge(item)}
+                            >
+                              <FolderOpen size={12} />
+                              Explore
+                            </button>
+                          ) : null}
                           {normalizeStatus(getIngestion(item)?.status) === 'failed' ? (
                             <button
                               type="button"
@@ -386,6 +416,13 @@ const KnowledgePage = () => {
           />
         </SettingsSurface>
       </div>
+      {selectedKnowledge ? (
+        <KnowledgeBundleExplorer
+          knowledgeId={selectedKnowledge.id}
+          title={selectedKnowledge.title}
+          onClose={() => setSelectedKnowledge(null)}
+        />
+      ) : null}
     </SettingsShell>
   );
 };

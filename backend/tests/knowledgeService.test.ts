@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { KnowledgeService } from '../src/services/knowledgeService';
+import { ConflictError } from '../src/errors';
 
 
 test('list queues legacy file-backed knowledge without ingestion metadata', async () => {
@@ -45,4 +46,28 @@ test('list queues legacy file-backed knowledge without ingestion metadata', asyn
   assert.equal(metadataUpdates[0].status, 'queued');
   assert.deepEqual(scheduled, [7]);
   assert.equal(result[0].metadata.ingestion.status, 'queued');
+});
+
+test('OKF bundle paths are normalized and traversal-safe', () => {
+  const service = Object.create(KnowledgeService.prototype) as any;
+
+  assert.equal(service.normalizeBundleRelativePath('concepts/page-12.md'), 'concepts/page-12.md');
+  assert.throws(
+    () => service.normalizeBundleRelativePath('../source.md'),
+    (error: unknown) => error instanceof ConflictError && error.message === 'Invalid OKF bundle path',
+  );
+  assert.throws(
+    () => service.normalizeBundleRelativePath('concepts/page-12.pdf'),
+    (error: unknown) => error instanceof ConflictError && error.message === 'OKF bundle files must be Markdown',
+  );
+});
+
+test('OKF bundle files receive stable inspector kinds', () => {
+  const service = Object.create(KnowledgeService.prototype) as any;
+
+  assert.equal(service.bundleFileKind('index.md'), 'index');
+  assert.equal(service.bundleFileKind('source.md'), 'source');
+  assert.equal(service.bundleFileKind('log.md'), 'log');
+  assert.equal(service.bundleFileKind('concepts/returns.md'), 'concept');
+  assert.equal(service.bundleFileKind('notes.md'), 'other');
 });

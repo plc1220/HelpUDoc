@@ -45,6 +45,23 @@ type KnowledgeIngestionMetadata = {
   okfVersion?: string;
 };
 
+export type KnowledgeBundleFile = {
+  id: number;
+  path: string;
+  name: string;
+  kind: 'index' | 'source' | 'concept' | 'log' | 'other';
+  mimeType: string | null;
+  updatedAt: string | null;
+};
+
+export type KnowledgeBundleManifest = {
+  knowledgeId: number;
+  title: string;
+  okfVersion: string;
+  bundlePath: string;
+  files: KnowledgeBundleFile[];
+};
+
 const quoteYaml = (value: unknown): string => JSON.stringify(String(value ?? ''));
 
 const slugify = (value: string, fallback = 'concept'): string => {
@@ -115,6 +132,22 @@ export class KnowledgeService {
       throw new NotFoundError('Knowledge source not found');
     }
     return this.mapRow(row);
+  }
+
+  async getGlobalBundle(id: number, userId: string): Promise<KnowledgeBundleManifest> {
+    const knowledge = await this.getKnowledgeRow(id);
+    if (!knowledge.isGlobal) {
+      throw new NotFoundError('Knowledge source not found');
+    }
+    return this.getBundleManifest(knowledge, userId, true);
+  }
+
+  async readGlobalBundleFile(id: number, userId: string, relativePath: string) {
+    const knowledge = await this.getKnowledgeRow(id);
+    if (!knowledge.isGlobal) {
+      throw new NotFoundError('Knowledge source not found');
+    }
+    return this.readBundleFile(knowledge, userId, relativePath, true);
   }
 
   async createGlobal(userId: string, payload: KnowledgeInput) {
@@ -629,6 +662,121 @@ export class KnowledgeService {
       '---',
     ];
     return `${frontmatter.join('\n')}\n\n${String(input.body || '').trim()}\n`;
+  }
+
+  private resolvePublishedBundle(knowledge: any): { bundlePath: string; okfVersion: string } {
+    const ingestion = this.getIngestionMetadata(knowledge.metadata);
+    if (ingestion?.status !== 'published' || !ingestion.bundlePath) {
+      throw new ConflictError('Knowledge source has not published an OKF bundle');
+    }
+    return {
+      bundlePath: String(ingestion.bundlePath),
+      okfVersion: String(ingestion.okfVersion || OKF_VERSION),
+    };
+  }
+
+  private normalizeBundleRelativePath(relativePath: string): string {
+    const raw = String(relativePath || '').trim().replace(/\\/g, '/').replace(/^\/+/, '');
+    const normalized = path.posix.normalize(raw);
+    if (!normalized || normalized === '.' || normalized.startsWith('../') || normalized.includes('/../')) {
+      throw new ConflictError('Invalid OKF bundle path');
+    }
+    if (path.posix.extname(normalized).toLowerCase() !== '.md') {
+      throw new ConflictError('OKF bundle files must be Markdown');
+    }
+    return normalized;
+  }
+
+  private bundleFileKind(relativePath: string): KnowledgeBundleFile['kind'] {
+    if (relativePath === 'index.md') return 'index';
+    if (relativePath === 'source.md') return 'source';
+    if (relativePath === 'log.md') return 'log';
+    if (relativePath.startsWith('concepts/')) return 'concept';
+    return 'other';
+  }
+
+  private async getBundleManifest(
+    knowledge: any,
+    userId: string,
+    allowSystemAdmin = false,
+  ): Promise<KnowledgeBundleManifest> {
+    if (!this.fileService) {
+      throw new ConflictError('OKF ingestion is not configured');
+    }
+    const { bundlePath, okfVersion } = this.resolvePublishedBundle(knowledge);
+    if (!allowSystemAdmin) {
+      await this.workspaceService.ensureMembership(String(knowledge.workspaceId), userId);
+    }
+    const rows = await this.db('files')
+      .where({ workspaceId: knowledge.workspaceId })
+      .whereLike('name', `${bundlePath}/%`)
+      .orderBy('name', 'asc');
+    const prefix = `${bundlePath}/`;
+    const rank: Record<KnowledgeBundleFile['kind'], number> = {
+      index: 0,
+      source: 1,
+      concept: 2,
+      log: 3,
+      other: 4,
+    };
+    const files = rows.map((row: any) => {
+      const relativePath = String(row.name).slice(prefix.length);
+      const kind = this.bundleFileKind(relativePath);
+      return {
+        id: Number(row.id),
+        path: relativePath,
+        name: path.posix.basename(relativePath),
+        kind,
+        mimeType: row.mimeType ? String(row.mimeType) : null,
+        updatedAt: row.updatedAt ? new Date(row.updatedAt).toISOString() : null,
+      } satisfies KnowledgeBundleFile;
+    }).sort((left: KnowledgeBundleFile, right: KnowledgeBundleFile) => (
+      rank[left.kind] - rank[right.kind] || left.path.localeCompare(right.path, undefined, { numeric: true })
+    ));
+    return {
+      knowledgeId: Number(knowledge.id),
+      title: String(knowledge.title),
+      okfVersion,
+      bundlePath,
+      files,
+    };
+  }
+
+  private async readBundleFile(
+    knowledge: any,
+    userId: string,
+    relativePath: string,
+    allowSystemAdmin = false,
+  ) {
+    if (!this.fileService) {
+      throw new ConflictError('OKF ingestion is not configured');
+    }
+    const { bundlePath } = this.resolvePublishedBundle(knowledge);
+    const normalized = this.normalizeBundleRelativePath(relativePath);
+    const fullPath = path.posix.join(bundlePath, normalized);
+    if (!fullPath.startsWith(`${bundlePath}/`)) {
+      throw new ConflictError('Invalid OKF bundle path');
+    }
+    const row = await this.db('files').where({
+      workspaceId: knowledge.workspaceId,
+      name: fullPath,
+    }).first();
+    if (!row) {
+      throw new NotFoundError('OKF bundle file not found');
+    }
+    const file = allowSystemAdmin
+      ? row
+      : await this.fileService.getFileRecord(Number(row.id), userId);
+    const content = (await this.fileService.readFileBuffer(file)).toString('utf-8');
+    return {
+      id: Number(row.id),
+      path: normalized,
+      name: path.posix.basename(normalized),
+      kind: this.bundleFileKind(normalized),
+      mimeType: row.mimeType ? String(row.mimeType) : 'text/markdown',
+      updatedAt: row.updatedAt ? new Date(row.updatedAt).toISOString() : null,
+      content,
+    };
   }
 
   private async removeStaleBundleFiles(

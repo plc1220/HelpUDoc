@@ -11,6 +11,29 @@ type KnowledgePayload = {
   metadata?: Record<string, unknown>;
 };
 
+export type KnowledgeBundleFileKind = 'index' | 'source' | 'concept' | 'log' | 'other';
+
+export type KnowledgeBundleFile = {
+  id: number;
+  path: string;
+  name: string;
+  kind: KnowledgeBundleFileKind;
+  mimeType?: string | null;
+  updatedAt?: string | null;
+};
+
+export type KnowledgeBundleManifest = {
+  knowledgeId: number;
+  title: string;
+  okfVersion: string;
+  bundlePath: string;
+  files: KnowledgeBundleFile[];
+};
+
+export type KnowledgeBundleFileContent = KnowledgeBundleFile & {
+  content: string;
+};
+
 const handleResponse = async (response: Response) => {
   if (!response.ok) {
     const data = await response.json().catch(() => undefined);
@@ -90,6 +113,21 @@ export const rebuildKnowledge = async (workspaceId: string, knowledgeId: number)
 
 export const listGlobalKnowledge = async () => {
   const response = await apiFetch(`${API_URL}/knowledge`);
+  return handleResponse(response);
+};
+
+export const getGlobalKnowledgeBundle = async (knowledgeId: number): Promise<KnowledgeBundleManifest> => {
+  const response = await apiFetch(`${API_URL}/knowledge/${knowledgeId}/bundle`);
+  return handleResponse(response);
+};
+
+export const getGlobalKnowledgeBundleFile = async (
+  knowledgeId: number,
+  path: string,
+): Promise<KnowledgeBundleFileContent> => {
+  const url = new URL(`${API_URL}/knowledge/${knowledgeId}/bundle/file`, window.location.origin);
+  url.searchParams.set('path', path);
+  const response = await apiFetch(url.toString());
   return handleResponse(response);
 };
 
