@@ -3,7 +3,7 @@ import {
   ChatComposerDrawer,
   ChatSendButton,
 } from '@astryxdesign/core/Chat';
-import { Button } from '@astryxdesign/core/Button';
+import { Card } from '@astryxdesign/core/Card';
 import { DropdownMenu } from '@astryxdesign/core/DropdownMenu';
 import { Icon } from '@astryxdesign/core/Icon';
 import { IconButton } from '@astryxdesign/core/IconButton';
@@ -221,20 +221,20 @@ export default function ChatInputArea({
                 onClick={onOpenLocalAttachmentPicker}
                 isDisabled={isPreparingAttachments}
               />
-              <Button
-                label="@ Context"
-                tooltip="Add files or knowledge with @"
+              <IconButton
+                label="Add context"
+                tooltip="Add context (@)"
                 variant="ghost"
-                size="sm"
+                size="md"
                 icon={<span className="lumo-composer-at">@</span>}
                 onClick={onInsertKnowledgeTrigger}
                 isDisabled={isPreparingAttachments}
               />
-              <Button
-                label="/ Commands"
-                tooltip="Browse commands with /"
+              <IconButton
+                label="Commands"
+                tooltip="Browse commands (/)"
                 variant="ghost"
-                size="sm"
+                size="md"
                 icon={<span className="lumo-composer-slash">/</span>}
                 onClick={onInsertSlashTrigger}
                 isDisabled={isPreparingAttachments}
@@ -290,7 +290,7 @@ export default function ChatInputArea({
         />
 
         {isMentionOpen ? (
-          <div className="lumo-composer-suggestions" role="listbox" aria-label="Files and knowledge">
+          <Card padding={1} className="lumo-composer-suggestions" role="listbox" aria-label="Files and knowledge">
             {mentionSuggestions.length ? mentionSuggestions.map((suggestion, index) => (
               <Item
                 key={suggestion.id}
@@ -304,11 +304,11 @@ export default function ChatInputArea({
             )) : (
               <div className="lumo-composer-empty-suggestion">No matching files or knowledge</div>
             )}
-          </div>
+          </Card>
         ) : null}
 
         {isCommandOpen ? (
-          <div className="lumo-composer-suggestions lumo-composer-command-suggestions" role="listbox" aria-label="Commands">
+          <Card padding={1} className="lumo-composer-suggestions lumo-composer-command-suggestions" role="listbox" aria-label="Commands">
             {commandSuggestions.length ? commandSuggestions.map((command, index) => (
               <Item
                 key={command.id}
@@ -321,7 +321,7 @@ export default function ChatInputArea({
             )) : (
               <div className="lumo-composer-empty-suggestion">No matching commands, skills, or connections</div>
             )}
-          </div>
+          </Card>
         ) : null}
       </div>
     </div>

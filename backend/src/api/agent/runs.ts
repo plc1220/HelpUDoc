@@ -21,7 +21,6 @@ import { blockingRedisClient } from '../../services/redisService';
 import { createAgentPolicyApi } from './policy';
 import { safeErrorForLog } from '../../lib/safeError';
 
-const IMAGE_NAME_PATTERN = /\.(png|jpe?g|gif|bmp|webp|svg)$/i;
 const DEBUG_AGENT_RUN_STREAM =
   process.env.DEBUG_AGENT_RUN_STREAM === '1' || process.env.DEBUG_AGENT_RUN_STREAM === 'true';
 const DEFAULT_CURRENT_TURN_MULTIMODAL_MAX_BYTES = 8 * 1024 * 1024;
@@ -85,14 +84,6 @@ const handleError = (res: Response, error: unknown, fallbackMessage: string) => 
   return res.status(500).json({ error: fallbackMessage });
 };
 
-const isImageFile = (file: any): boolean => {
-  const mimeType = typeof file.mimeType === 'string' ? file.mimeType : '';
-  if (mimeType.startsWith('image/')) {
-    return true;
-  }
-  return IMAGE_NAME_PATTERN.test(String(file.name || ''));
-};
-
 const normalizeTaggedValue = (value: string): string => value.trim().replace(/\\/g, '/').replace(/^\/+/, '');
 
 export function registerRunRoutes(
@@ -138,7 +129,6 @@ export function registerRunRoutes(
       }
       return prompt.includes(`@${file.name}`);
     });
-    const withUrls = tagged.filter((file) => file.publicUrl && isImageFile(file));
     const taggedPaths = Array.from(
       new Set(
         tagged
@@ -147,19 +137,13 @@ export function registerRunRoutes(
       ),
     ).map((name) => (name.startsWith('/') ? name : `/${name}`));
 
-    if (!withUrls.length && !taggedPaths.length) {
+    if (!taggedPaths.length) {
       return prompt;
     }
     const fileHint = taggedPaths.length
       ? `\n\nTagged files (preferred for retrieval):\n${taggedPaths.map((entry) => `- ${entry}`).join('\n')}`
       : '';
-    const urlList = withUrls
-      .map((file) => `- ${file.name}: ${file.publicUrl}`)
-      .join('\n');
-    const urlHint = withUrls.length
-      ? `\n\nTagged image URLs (use these HTTP links instead of file paths in HTML/Markdown/Mermaid):\n${urlList}`
-      : '';
-    return `${prompt}${fileHint}${urlHint}`;
+    return `${prompt}${fileHint}`;
   };
 
   const buildCurrentTurnMessageContent = async (

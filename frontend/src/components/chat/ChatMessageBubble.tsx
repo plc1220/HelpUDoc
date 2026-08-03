@@ -1,10 +1,13 @@
-import { CalendarClock, Check, CheckCircle2, ChevronRight, Copy, FilePenLine, ImageIcon, Loader2, RotateCcw } from 'lucide-react';
+import { CalendarClock, Check, CheckCircle2, CircleAlert, Copy, FilePenLine, ImageIcon, Loader2, RotateCcw } from 'lucide-react';
 import {
   ChatMessage as AstryxChatMessage,
   ChatMessageBubble as AstryxChatMessageBubble,
   ChatMessageMetadata,
   ChatToolCalls,
 } from '@astryxdesign/core/Chat';
+import { Collapsible } from '@astryxdesign/core/Collapsible';
+import { Icon as AstryxIcon } from '@astryxdesign/core/Icon';
+import { Item } from '@astryxdesign/core/Item';
 import type { Components } from 'react-markdown';
 import { useCallback, useEffect, useMemo, useState, type Dispatch, type KeyboardEvent, type ReactNode, type SetStateAction } from 'react';
 import { InteractionSurfaceRenderer } from '../../interactions/InteractionSurfaceRenderer';
@@ -28,6 +31,7 @@ import {
   getFriendlyToolName,
   isBenignToolNoise,
   isOperationalThinkingText,
+  normalizeUserFacingSummary,
   stripOperationalThinkingBlocks,
 } from '../../utils/toolActivitySummary';
 import { buildApiUrl } from '../../services/apiClient';
@@ -75,7 +79,14 @@ type RerunMessageOptions = {
 const IMAGE_EXTENSION_PATTERN = /\.(apng|avif|gif|jpe?g|png|svg|webp)$/i;
 const EMPTY_SELECTED_CHOICE_IDS: string[] = [];
 const EMPTY_STRUCTURED_ANSWERS: InterruptAnswersByQuestionId = {};
-
+const WORKFLOW_ACTION_LABELS: Record<string, string> = {
+  request_user_interaction: 'Requested your input',
+  generate_artifact: 'Generated an artifact',
+  revise_artifact: 'Revised an artifact',
+  call_tool: 'Used a tool',
+  complete: 'Completed the workflow',
+  fail: 'Workflow reported an issue',
+};
 const stripAttachmentMarker = (text: string) => text.replace(ATTACHMENT_MARKER_PATTERN, '').trimEnd();
 
 const parseAttachmentNames = (text: string): Array<{ name: string; isDrive: boolean }> => {
@@ -549,7 +560,6 @@ export default function ChatMessageBubble({
   messageBubbleMaxWidth,
   markdownComponents,
   expandedToolMessages,
-  expandedThinkingMessages,
   copiedMessageId,
   interruptInputByMessageId,
   interruptStructuredAnswersByMessageId,
@@ -566,7 +576,6 @@ export default function ChatMessageBubble({
   setInterruptInputByMessageId,
   setInterruptStructuredAnswersByMessageId,
   toggleInterruptSelectedChoice,
-  toggleThinkingVisibility,
   toggleToolActivityVisibility,
   handleCopyMessageText,
   handleRerunMessage,
@@ -584,7 +593,6 @@ export default function ChatMessageBubble({
   messageBubbleMaxWidth: string;
   markdownComponents: Components;
   expandedToolMessages: Set<ConversationMessage['id']>;
-  expandedThinkingMessages: Set<ConversationMessage['id']>;
   copiedMessageId: ConversationMessage['id'] | null;
   interruptInputByMessageId: Record<string, string>;
   interruptStructuredAnswersByMessageId: Record<string, InterruptAnswersByQuestionId>;
@@ -610,7 +618,6 @@ export default function ChatMessageBubble({
   setInterruptInputByMessageId: Dispatch<SetStateAction<Record<string, string>>>;
   setInterruptStructuredAnswersByMessageId: Dispatch<SetStateAction<Record<string, InterruptAnswersByQuestionId>>>;
   toggleInterruptSelectedChoice: (messageKey: string, choiceId: string, multiple: boolean) => void;
-  toggleThinkingVisibility: (messageId: ConversationMessage['id']) => void;
   toggleToolActivityVisibility: (messageId: ConversationMessage['id']) => void;
   handleCopyMessageText: (message: ConversationMessage) => void;
   handleRerunMessage: (messageId: ConversationMessage['id'], options?: RerunMessageOptions) => void;
@@ -634,6 +641,7 @@ export default function ChatMessageBubble({
   const [now, setNow] = useState(() => Date.now());
   const messageMetadata = (message.metadata as ConversationMessageMetadata | null | undefined) || undefined;
   const progressEvents = useMemo(() => messageMetadata?.progressEvents || [], [messageMetadata?.progressEvents]);
+  const workflowActions = useMemo(() => messageMetadata?.workflowActions || [], [messageMetadata?.workflowActions]);
   const effectiveProgressEvents = useMemo(() => {
     const lastIndex = progressEvents.length - 1;
     return progressEvents.map((event, index) => {
@@ -653,7 +661,38 @@ export default function ChatMessageBubble({
     [message.toolEvents],
   );
   const hasToolEvents = toolEvents.length > 0;
-  const runClockAnchor = toolEvents[0]?.startedAt || message.createdAt;
+  const agentSteps = useMemo(() => {
+    const source = effectiveProgressEvents.length
+      ? effectiveProgressEvents.map((event, index) => ({
+          key: `${event.timestamp || index}-${event.phase}-${event.label}`,
+          label: event.label?.trim() || event.phase?.trim() || 'Working',
+          status: event.status,
+          duration: undefined as string | undefined,
+        }))
+      : toolEvents.map((event) => ({
+          key: event.id,
+          label: getFriendlyToolName(event.name),
+          status: event.status,
+          duration: event.finishedAt
+            ? formatElapsedTime(event.startedAt, Date.now(), event.finishedAt)
+            : undefined,
+        }));
+    const deduplicated: typeof source = [];
+    const indexByLabel = new Map<string, number>();
+    source.forEach((step) => {
+      const normalizedLabel = step.label.toLowerCase().replace(/\s+/g, ' ').trim();
+      const existingIndex = indexByLabel.get(normalizedLabel);
+      if (existingIndex === undefined) {
+        indexByLabel.set(normalizedLabel, deduplicated.length);
+        deduplicated.push(step);
+      } else {
+        deduplicated[existingIndex] = step;
+      }
+    });
+    return deduplicated;
+  }, [effectiveProgressEvents, toolEvents]);
+  const hasActivityHistory = agentSteps.length > 0;
+  const showLegacyActivityPanel = false;
   const toolDigest = useMemo(
     () => summarizeToolActivity(toolEvents, formatMessageTimestamp),
     [formatMessageTimestamp, toolEvents],
@@ -700,7 +739,6 @@ export default function ChatMessageBubble({
   const [showRawToolLog, setShowRawToolLog] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState(message.text || '');
-  const isThinkingExpanded = expandedThinkingMessages.has(message.id);
   const rawThinkingText = message.thinkingText?.trim() || '';
   const isSystemThinking = /available skills/i.test(rawThinkingText);
   const sanitizedThinkingText = stripOperationalThinkingBlocks(rawThinkingText);
@@ -1793,74 +1831,38 @@ export default function ChatMessageBubble({
   const toolButtonClassName = isDarkMode
     ? 'text-xs font-medium text-slate-400 transition-all duration-200 hover:text-slate-200'
     : 'text-xs font-medium text-slate-500 transition-all duration-200 hover:text-slate-700';
-  const activitySummaryLabel = toolDigest.stepProgress
-    ? effectiveStatus === 'awaiting_approval'
-      ? interruptKind === 'clarification'
-        ? 'Workflow status: Waiting for input'
-        : 'Workflow status: Interrupted for approval'
-      : toolDigest.lastActivityFormatted
-      ? `Activity · updated ${toolDigest.lastActivityFormatted}`
-      : 'Activity'
-    : 'Activity';
+  const latestToolEvent = [...toolEvents].reverse().find(Boolean);
+  const latestAgentStep = agentSteps[agentSteps.length - 1];
+  const activityEventCount = agentSteps.length;
+  const activityTriggerLabel = effectiveStatus === 'awaiting_approval'
+    ? interruptKind === 'clarification'
+      ? 'Waiting for your input'
+      : 'Waiting for approval'
+    : activeProgress?.label
+      || latestProgress?.label
+      || latestAgentStep?.label
+      || (latestToolEvent ? getFriendlyToolName(latestToolEvent.name) : '')
+      || toolDigest.currentLabel
+      || 'Agent activity';
+  const activityDuration = latestToolEvent?.finishedAt
+    ? formatElapsedTime(latestToolEvent.startedAt, now, latestToolEvent.finishedAt)
+    : undefined;
+  const activityMetaLabel = [
+    `${activityEventCount} recorded ${activityEventCount === 1 ? 'step' : 'steps'}`,
+    activityDuration,
+  ].filter(Boolean).join(' · ');
+  const activityStatus = effectiveStatus === 'failed'
+    ? 'error'
+    : effectiveStatus === 'running'
+      ? 'running'
+      : 'complete';
   const liveAgentPreviewText = visibleAgentText;
-  const latestToolFinishedAt = [...toolEvents].reverse().find((event) => event.finishedAt)?.finishedAt;
-  const thoughtEndedAt = isLiveAgentStatus ? undefined : latestToolFinishedAt || message.updatedAt || message.createdAt;
-  const thoughtElapsed = formatElapsedTime(runClockAnchor || message.createdAt, now, thoughtEndedAt);
-  const compactThoughtElapsed = thoughtElapsed.replace(/^0m\s0?(\d+)s$/, '$1s');
-  const shouldShowThoughtRow = Boolean(
-    isAgentMessage
-    && (isLiveAgentStatus || hasToolEvents || displayThinkingText || progressEvents.length > 0)
-    && !shouldHideAgentBodyForApproval,
-  );
-  const thoughtSummaryItems = toolDigest.digestEvents.slice(-6);
-  const recentToolSummaryItems = toolDigest.digestEvents.slice(-5);
-  const canExpandThought = Boolean(
-    progressEvents.length > 0 ||
-    thoughtSummaryItems.length ||
-    toolDigest.currentLabel ||
-    displayThinkingText
-  );
-  const progressElapsedLabel = compactThoughtElapsed || '0s';
-  const progressStateLabel = liveStatus?.status === 'awaiting_approval'
-    ? 'Waiting for you'
-    : liveStatus?.status === 'running'
-      ? 'Working'
-      : toolDigest.errorCount
-        ? 'Needs attention'
-        : 'Completed';
-  const progressTimingLabel = liveStatus
-    ? `${progressStateLabel} · ${progressElapsedLabel}`
-    : hasToolEvents || progressEvents.length
-      ? `${progressStateLabel} in ${progressElapsedLabel}`
-      : progressStateLabel;
-  const progressSecondaryText = liveStatus?.status === 'awaiting_approval'
-    ? liveStatus.detail
-    : liveStatus?.label || toolDigest.statsLabel || toolDigest.currentLabel || displayThinkingText;
-  const progressDotClassName = liveStatus?.status === 'awaiting_approval'
-    ? 'bg-amber-500'
-    : liveStatus?.status === 'running'
-      ? 'bg-sky-500'
-      : toolDigest.errorCount
-        ? 'bg-rose-500'
-        : 'bg-emerald-500';
-  const hasProgressSummary = Boolean(
-    toolDigest.statsLabel ||
-    toolDigest.reviewedFiles.length ||
-    toolDigest.updatedFileBasenames.length ||
-    toolDigest.updatesInProgress.length
-  );
   const isStreamingAgentText = Boolean(
     isAgentMessage &&
     isLatestAgentMessage &&
     isLiveAgentStatus &&
     visibleAgentText.trim()
   );
-  const thoughtRowClassName = isDarkMode
-    ? 'mt-2 flex w-full items-center gap-2 rounded-lg py-1.5 text-left text-sm font-medium text-slate-400 transition-colors hover:text-slate-200'
-    : 'mt-2 flex w-full items-center gap-2 rounded-lg py-1.5 text-left text-sm font-medium text-slate-500 transition-colors hover:text-slate-700';
-  const thoughtPanelClassName = isDarkMode
-    ? 'mt-2 rounded-lg border border-[#26354d] bg-[#0d1524] px-3 py-3 text-xs text-slate-200'
-    : 'mt-2 rounded-lg border border-slate-200/80 bg-slate-50/90 px-3 py-3 text-xs text-slate-700';
   const toolExpandedClassName = isDarkMode
     ? 'mt-3 space-y-3 text-xs text-slate-200'
     : 'mt-3 space-y-3 text-xs text-slate-600';
@@ -1954,196 +1956,6 @@ export default function ChatMessageBubble({
             metadata={messageFooterMetadata}
           >
             <div className={agentContainerClassName}>
-            {shouldShowThoughtRow ? (
-              <div>
-                <button
-                  type="button"
-                  onClick={() => canExpandThought && toggleThinkingVisibility(message.id)}
-                  className={`${thoughtRowClassName} ${canExpandThought ? '' : 'cursor-default hover:text-inherit'}`}
-                  aria-expanded={canExpandThought ? isThinkingExpanded : undefined}
-                >
-                  <span className="relative flex h-2 w-2 shrink-0" aria-hidden="true">
-                    {liveStatus?.status === 'running' ? (
-                      <span className={`absolute inline-flex h-full w-full animate-ping rounded-full ${progressDotClassName} opacity-70`} />
-                    ) : null}
-                    <span className={`relative inline-flex h-2 w-2 rounded-full ${progressDotClassName}`} />
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className={`block truncate text-sm font-semibold leading-snug ${
-                      isDarkMode ? 'text-slate-200' : 'text-slate-700'
-                    }`}>
-                      {progressTimingLabel}
-                    </span>
-                    {progressSecondaryText ? (
-                      <span className={`mt-0.5 block truncate text-xs font-medium leading-snug ${
-                        isDarkMode ? 'text-slate-500' : 'text-slate-500'
-                      }`}>
-                        {progressSecondaryText}
-                      </span>
-                    ) : null}
-                  </span>
-                  {toolDigest.statsLabel && !liveStatus ? (
-                    <span className={`hidden shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold md:inline-flex ${
-                      isDarkMode ? 'bg-slate-900 text-slate-400' : 'bg-slate-100 text-slate-500'
-                    }`}>
-                      {toolDigest.statsLabel}
-                    </span>
-                  ) : null}
-                  {canExpandThought ? (
-                    <ChevronRight
-                      size={15}
-                      className={`shrink-0 transition-transform duration-150 ${isThinkingExpanded ? 'rotate-90' : ''}`}
-                      aria-hidden="true"
-                    />
-                  ) : null}
-                </button>
-                {canExpandThought && isThinkingExpanded ? (
-                  <div className={thoughtPanelClassName}>
-                    {progressEvents.length > 0 ? (
-                      <div className="space-y-3">
-                        <div className={`text-[10px] font-bold uppercase tracking-widest ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>
-                          Progress
-                        </div>
-                        <ul className="relative ml-1.5 space-y-4 border-l border-slate-200 pl-4 dark:border-slate-800/80">
-                          {effectiveProgressEvents.map((event, index) => {
-                            const isRunning = event.status === 'running';
-                            const isCompleted = event.status === 'completed';
-                            const isError = event.status === 'error';
-
-                            return (
-                              <li key={index} className="relative leading-relaxed">
-                                <span className={`absolute -left-[21px] top-1.5 flex h-2 w-2 items-center justify-center rounded-full border ${
-                                  isCompleted
-                                    ? 'bg-sky-500 border-sky-500 shadow-[0_0_8px_rgba(14,165,233,0.3)]'
-                                    : isRunning
-                                      ? 'bg-sky-500 border-sky-500 animate-pulse'
-                                      : isError
-                                        ? 'bg-rose-500 border-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.3)]'
-                                        : 'bg-slate-200 border-slate-300 dark:bg-slate-800 dark:border-slate-700'
-                                }`} />
-                                
-                                <div className="min-w-0">
-                                  <p className={`font-semibold text-xs ${
-                                    isRunning 
-                                      ? 'text-sky-500 animate-pulse' 
-                                      : isCompleted 
-                                        ? isDarkMode ? 'text-slate-200' : 'text-slate-800'
-                                        : isDarkMode ? 'text-slate-500' : 'text-slate-400'
-                                  }`}>
-                                    {event.label}
-                                  </p>
-                                  {event.detail ? (
-                                    <p className={`mt-0.5 text-[11px] leading-normal ${
-                                      isDarkMode ? 'text-slate-400' : 'text-slate-500'
-                                    }`}>
-                                      {event.detail}
-                                    </p>
-                                  ) : null}
-                                </div>
-                              </li>
-                            );
-                          })}
-                        </ul>
-                        {recentToolSummaryItems.length ? (
-                          <div className={`rounded-md border px-3 py-2 ${
-                            isDarkMode ? 'border-slate-800 bg-slate-950/45' : 'border-slate-200 bg-white/70'
-                          }`}>
-                            <div className={`mb-2 text-[10px] font-bold uppercase tracking-widest ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>
-                              Recent Activity
-                            </div>
-                            <ul className="space-y-2">
-                              {recentToolSummaryItems.map((event) => (
-                                <li key={event.id} className="flex min-w-0 items-start gap-2 leading-relaxed">
-                                  <span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${
-                                    event.status === 'error'
-                                      ? 'bg-rose-500'
-                                      : event.status === 'completed'
-                                        ? 'bg-emerald-400'
-                                        : 'animate-pulse bg-sky-500'
-                                  }`} />
-                                  <div className="min-w-0 flex-1">
-                                    <p className={`font-semibold ${
-                                      event.status === 'error'
-                                        ? isDarkMode ? 'text-rose-300' : 'text-rose-700'
-                                        : isDarkMode ? 'text-slate-200' : 'text-slate-800'
-                                    }`}>
-                                      {event.title}
-                                    </p>
-                                    {event.detail ? (
-                                      <p className={`mt-0.5 line-clamp-2 text-[11px] leading-normal ${
-                                        isDarkMode ? 'text-slate-400' : 'text-slate-500'
-                                      }`}>
-                                        {event.detail}
-                                      </p>
-                                    ) : null}
-                                  </div>
-                                </li>
-                              ))}
-                            </ul>
-                          </div>
-                        ) : null}
-                      </div>
-                    ) : thoughtSummaryItems.length ? (
-                      <ul className="space-y-2">
-                        {thoughtSummaryItems.map((event) => (
-                          <li key={event.id} className="leading-relaxed">
-                            <span className="font-semibold">{event.title}</span>
-                            {event.detail ? (
-                              <span className={isDarkMode ? 'block text-slate-400' : 'block text-slate-500'}>
-                                {event.detail}
-                              </span>
-                            ) : null}
-                          </li>
-                        ))}
-                      </ul>
-                    ) : (
-                      <p className="leading-relaxed">{toolDigest.currentLabel || DEFAULT_THINKING_PLACEHOLDER}</p>
-                    )}
-                    {hasProgressSummary ? (
-                      <div className={`mt-3 rounded-md border px-3 py-2 ${
-                        isDarkMode ? 'border-slate-800 bg-slate-950/45' : 'border-slate-200 bg-white/70'
-                      }`}>
-                        <div className={`mb-2 text-[10px] font-bold uppercase tracking-widest ${
-                          isDarkMode ? 'text-slate-500' : 'text-slate-400'
-                        }`}>
-                          What changed
-                        </div>
-                        {toolDigest.statsLabel ? (
-                          <p className={`text-[11px] font-medium ${
-                            isDarkMode ? 'text-slate-400' : 'text-slate-500'
-                          }`}>
-                            {toolDigest.statsLabel}
-                          </p>
-                        ) : null}
-                        {toolDigest.reviewedFiles.length ? (
-                          <p className="mt-2 leading-relaxed">
-                            <span className="font-semibold">Reviewed: </span>
-                            {toolDigest.reviewedFiles.join(', ')}
-                          </p>
-                        ) : null}
-                        {toolDigest.updatedFileBasenames.length ? (
-                          <p className="mt-2 leading-relaxed">
-                            <span className="font-semibold">Updated: </span>
-                            {toolDigest.updatedFileBasenames.join(', ')}
-                          </p>
-                        ) : null}
-                        {toolDigest.updatesInProgress.length ? (
-                          <p className="mt-2 leading-relaxed">
-                            <span className="font-semibold">In progress: </span>
-                            {toolDigest.updatesInProgress.join(', ')}
-                          </p>
-                        ) : null}
-                      </div>
-                    ) : null}
-                    {toolDigest.errorCount ? (
-                      <p className={`mt-2 font-semibold ${isDarkMode ? 'text-rose-300' : 'text-rose-700'}`}>
-                        {`${toolDigest.errorCount} tool issue${toolDigest.errorCount === 1 ? '' : 's'} detected.`}
-                      </p>
-                    ) : null}
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
             {liveAgentPreviewText ? (
               <div
                 className="agent-markdown mt-3 text-sm"
@@ -2405,32 +2217,147 @@ export default function ChatMessageBubble({
                 </button>
               </div>
             ) : null}
-            {hasToolEvents ? (
+            {hasActivityHistory ? (
+              <ChatToolCalls
+                className="lumo-agent-history"
+                calls={[{
+                  key: `agent-history-${message.id}`,
+                  name: activityTriggerLabel,
+                  target: activityMetaLabel,
+                  status: activityStatus === 'complete' ? 'complete' : activityStatus,
+                  duration: activityDuration,
+                  resultDetail: (
+                    <section className="lumo-agent-activity-section" aria-label="Agent history">
+                      <p className="lumo-agent-activity-section-label">Agent history</p>
+                      <div className="lumo-agent-activity-list">
+                        {agentSteps.map((step) => (
+                          <Item
+                            key={step.key}
+                            density="compact"
+                            label={step.label}
+                            startContent={(
+                              <span className={`lumo-agent-activity-status lumo-agent-activity-status--${step.status === 'error' ? 'error' : step.status === 'running' ? 'running' : 'complete'}`}>
+                                <AstryxIcon
+                                  icon={step.status === 'error' ? CircleAlert : step.status === 'running' ? Loader2 : CheckCircle2}
+                                  size="sm"
+                                />
+                              </span>
+                            )}
+                            endContent={step.duration ? (
+                              <span className="lumo-agent-activity-item-meta">{step.duration}</span>
+                            ) : undefined}
+                          />
+                        ))}
+                      </div>
+                    </section>
+                  ),
+                }]}
+              />
+            ) : null}
+            {showLegacyActivityPanel && hasActivityHistory ? (
               <div className={toolPanelClassName}>
-                <ChatToolCalls
-                  label={activitySummaryLabel}
-                  isExpanded={isToolActivityExpanded}
-                  onExpandedChange={() => toggleToolActivityVisibility(message.id)}
-                  calls={toolEvents.map((event) => ({
-                    key: event.id,
-                    name: getFriendlyToolName(event.name),
-                    status: event.status === 'completed'
-                      ? 'complete'
-                      : event.status === 'error'
-                        ? 'error'
-                        : 'running',
-                    target: event.outputFiles?.[0]?.path
-                      || event.relatedFiles?.[0]?.path
-                      || event.summary,
-                    duration: event.finishedAt
-                      ? formatElapsedTime(event.startedAt, now, event.finishedAt)
-                      : undefined,
-                    errorMessage: event.status === 'error' ? event.summary : undefined,
-                  }))}
-                />
+                <Collapsible
+                  className="lumo-agent-activity"
+                  isOpen={isToolActivityExpanded}
+                  onOpenChange={(nextIsOpen) => {
+                    if (nextIsOpen !== isToolActivityExpanded) {
+                      toggleToolActivityVisibility(message.id);
+                    }
+                  }}
+                  trigger={(
+                    <span className="lumo-agent-activity-trigger">
+                      <span className={`lumo-agent-activity-status lumo-agent-activity-status--${activityStatus}`}>
+                        <AstryxIcon
+                          icon={activityStatus === 'running' ? Loader2 : activityStatus === 'error' ? CircleAlert : CheckCircle2}
+                          size="sm"
+                        />
+                      </span>
+                      <span className="lumo-agent-activity-title">{activityTriggerLabel}</span>
+                      <span className="lumo-agent-activity-meta">{activityMetaLabel}</span>
+                    </span>
+                  )}
+                >
                 {isToolActivityExpanded ? (
                   <div className="mt-2 space-y-3">
-                    <div className={toolExpandedClassName}>
+                    {agentSteps.length ? (
+                      <section className="lumo-agent-activity-section" aria-label="Agent steps">
+                        <p className="lumo-agent-activity-section-label">Agent steps</p>
+                        <div className="lumo-agent-activity-list">
+                          {agentSteps.map((step) => (
+                            <Item
+                              key={step.key}
+                              density="compact"
+                              label={step.label}
+                              startContent={(
+                                <span className={`lumo-agent-activity-status lumo-agent-activity-status--${step.status === 'error' ? 'error' : step.status === 'running' ? 'running' : 'complete'}`}>
+                                  <AstryxIcon
+                                    icon={step.status === 'error' ? CircleAlert : step.status === 'running' ? Loader2 : CheckCircle2}
+                                    size="sm"
+                                  />
+                                </span>
+                              )}
+                              endContent={step.duration ? (
+                                <span className="lumo-agent-activity-item-meta">{step.duration}</span>
+                              ) : undefined}
+                            />
+                          ))}
+                        </div>
+                      </section>
+                    ) : null}
+                    {toolEvents.length ? (
+                      <section className="hidden" aria-hidden="true">
+                        <p className="lumo-agent-activity-section-label">Tool messages</p>
+                        <div className="lumo-agent-activity-list">
+                          {toolEvents.map((event) => {
+                            const friendlySummary = normalizeUserFacingSummary(event.summary || '', event.name);
+                            const fileTarget = event.outputFiles?.[0]?.path || event.relatedFiles?.[0]?.path;
+                            return (
+                              <Item
+                                key={event.id}
+                                density="compact"
+                                label={getFriendlyToolName(event.name)}
+                                description={friendlySummary || fileTarget || (event.status === 'running' ? 'In progress…' : 'Completed')}
+                                descriptionLines={2}
+                                startContent={(
+                                  <span className={`lumo-agent-activity-status lumo-agent-activity-status--${event.status === 'error' ? 'error' : event.status === 'running' ? 'running' : 'complete'}`}>
+                                    <AstryxIcon
+                                      icon={event.status === 'error' ? CircleAlert : event.status === 'running' ? Loader2 : CheckCircle2}
+                                      size="sm"
+                                    />
+                                  </span>
+                                )}
+                                endContent={event.finishedAt ? (
+                                  <span className="lumo-agent-activity-item-meta">
+                                    {formatElapsedTime(event.startedAt, now, event.finishedAt)}
+                                  </span>
+                                ) : undefined}
+                              />
+                            );
+                          })}
+                        </div>
+                      </section>
+                    ) : null}
+                    {workflowActions.length ? (
+                      <section className="hidden" aria-hidden="true">
+                        <p className="lumo-agent-activity-section-label">Workflow decisions</p>
+                        <div className="lumo-agent-activity-list">
+                          {workflowActions.map((action, index) => (
+                            <Item
+                              key={`${action.timestamp || index}-${action.action}`}
+                              density="compact"
+                              label={WORKFLOW_ACTION_LABELS[action.action] || action.action}
+                              description={action.reason || (action.timestamp ? formatMessageTimestamp(action.timestamp) : undefined)}
+                              startContent={(
+                                <span className={`lumo-agent-activity-status lumo-agent-activity-status--${action.action === 'fail' ? 'error' : 'complete'}`}>
+                                  <AstryxIcon icon={action.action === 'fail' ? CircleAlert : CheckCircle2} size="sm" />
+                                </span>
+                              )}
+                            />
+                          ))}
+                        </div>
+                      </section>
+                    ) : null}
+                    <div className="hidden" aria-hidden="true">
                       <p className={`text-xs font-medium ${
                         isDarkMode ? 'text-slate-400' : 'text-slate-500'
                       }`}>
@@ -2543,7 +2470,7 @@ export default function ChatMessageBubble({
                     <button
                       type="button"
                       onClick={() => setShowRawToolLog((prev) => !prev)}
-                      className={toolButtonClassName}
+                      className={`hidden ${toolButtonClassName}`}
                     >
                       {showRawToolLog ? 'Hide developer log' : 'Developer details (raw activity log)'}
                     </button>
@@ -2645,6 +2572,7 @@ export default function ChatMessageBubble({
                     ) : null}
                   </div>
                 ) : null}
+                </Collapsible>
               </div>
             ) : null}
             </div>

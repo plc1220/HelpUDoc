@@ -6,6 +6,7 @@ from typing import Any, Optional
 
 from langchain_core.messages import ToolMessage
 from langchain_core.tools import BaseTool
+from langgraph.errors import GraphBubbleUp
 from pydantic import ConfigDict, Field
 
 from .skills_registry import is_tool_allowed
@@ -173,6 +174,12 @@ class GuardedTool(BaseTool):
         return error
 
     def _exception_result(self, input: Any, exc: Exception) -> Any:
+        # LangGraph uses GraphBubbleUp subclasses (notably GraphInterrupt) as
+        # control-flow signals. Converting one into a ToolMessage makes the
+        # model continue as if the approval tool merely failed and prevents
+        # the checkpointer from recording a resumable interrupt.
+        if isinstance(exc, GraphBubbleUp):
+            raise exc
         message = str(exc) or repr(exc)
         if isinstance(input, dict):
             tool_call_id = input.get("id")

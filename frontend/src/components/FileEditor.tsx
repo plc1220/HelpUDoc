@@ -1,9 +1,8 @@
 import React, { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import type { editor as MonacoEditorNamespace } from 'monaco-editor';
-import { Eye, EyeOff } from 'lucide-react';
 import type { File as WorkspaceFile } from '../types';
 import { getAuthUser } from '../auth/authStore';
-import { createFile } from '../services/fileApi';
+import { createFile, getFileContent } from '../services/fileApi';
 import { createCollabSession } from '../services/collabClient';
 import EditorLoadingState from './EditorLoadingState';
 import FileRenderer from './FileRenderer';
@@ -143,17 +142,20 @@ const CollabWorkspaceFileEditor: React.FC<FileEditorProps> = ({
   const [collabReady, setCollabReady] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState('connecting');
   const [presenceUsers, setPresenceUsers] = useState<Array<{ clientId: number; name: string; color: string }>>([]);
-  const [isRawView, setIsRawView] = useState(false);
   const [mdxError, setMdxError] = useState<string | null>(null);
   const isDarkMode = colorMode === 'dark';
   const monacoTheme = isDarkMode ? 'helpudoc-nord' : 'vs';
 
   const handleImageUpload = useCallback(async (image: File) => {
     const created = await createFile(workspaceId, image);
-    if (!created?.publicUrl) {
-      throw new Error('Image upload did not return a public URL.');
+    if (!created?.id) {
+      throw new Error('Image upload did not return a file identifier.');
     }
-    return created.publicUrl;
+    const stored = await getFileContent(workspaceId, String(created.id));
+    if (!stored?.content) {
+      throw new Error('Image upload could not be read back.');
+    }
+    return `data:${stored.mimeType || image.type || 'image/*'};base64,${stored.content}`;
   }, [workspaceId]);
 
   useEffect(() => {
@@ -337,7 +339,7 @@ const CollabWorkspaceFileEditor: React.FC<FileEditorProps> = ({
   }, [fileContent]);
 
   useEffect(() => {
-    if (!fileName || getLanguage(fileName) !== 'markdown' || isRawView) {
+    if (!fileName || getLanguage(fileName) !== 'markdown') {
       return;
     }
 
@@ -349,11 +351,11 @@ const CollabWorkspaceFileEditor: React.FC<FileEditorProps> = ({
     isApplyingRemoteRef.current = true;
     editorInstance.setMarkdown(fileContent || '');
     isApplyingRemoteRef.current = false;
-  }, [fileContent, fileName, isRawView]);
+  }, [fileContent, fileName]);
 
   useEffect(() => {
     setMdxError(null);
-  }, [fileId, isRawView]);
+  }, [fileId]);
 
   useEffect(() => {
     if (!fileId || isDraftFile) {
@@ -557,80 +559,33 @@ const CollabWorkspaceFileEditor: React.FC<FileEditorProps> = ({
           </button>
         </div>
       )}
-      <div className="flex-grow overflow-auto">
+      <div className="min-h-0 flex-grow overflow-hidden">
         {isMarkdown ? (
-          <div className="helpudoc-mdxeditor-shell h-full overflow-y-auto flex flex-col" style={{ maxHeight: 'calc(100vh - 200px)' }}>
-            <div className={`flex items-center justify-between px-3 py-2 border-b ${
-              isDarkMode ? 'border-slate-700/70 bg-slate-950/45' : 'border-gray-200 bg-gray-50'
-            }`}>
-              <span className={`text-xs font-medium ${isDarkMode ? 'text-slate-400' : 'text-gray-500'}`}>
-                {isRawView ? 'Raw Markdown' : 'Rich Editor'}
-              </span>
-              <button
-                type="button"
-                onClick={() => {
-                  setIsRawView(!isRawView);
-                }}
-                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors ${
-                  isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-gray-600 hover:bg-gray-200'
-                }`}
-                title={isRawView ? 'Switch to Rich Editor' : 'View Raw Markdown'}
-              >
-                {isRawView ? (
-                  <>
-                    <Eye size={14} />
-                    <span>Rich View</span>
-                  </>
-                ) : (
-                  <>
-                    <EyeOff size={14} />
-                    <span>Raw View</span>
-                  </>
-                )}
-              </button>
-            </div>
-            {isRawView ? (
-              <textarea
-                className={`flex-1 w-full h-full p-4 font-mono text-sm border-none resize-none focus:outline-none focus:ring-0 ${
-                  isDarkMode
-                    ? 'bg-[#040816] text-slate-100 placeholder:text-slate-500'
-                    : 'bg-white text-slate-800 placeholder:text-slate-400'
-                }`}
-                value={fileContent}
-                onChange={(event) => {
-                  applyTextUpdate(event.target.value);
-                }}
-                placeholder="Enter markdown content..."
-                spellCheck={false}
-              />
-            ) : (
-              <>
-                {mdxError && (
-                  <div className={`border-b px-4 py-2 text-sm ${
-                    isDarkMode
-                      ? 'border-rose-500/20 bg-rose-950/25 text-rose-200'
-                      : 'border-rose-200 bg-rose-50 text-rose-700'
-                  }`}>
-                    {mdxError}
-                  </div>
-                )}
-                <Suspense fallback={<EditorLoadingState className="min-h-[320px] flex-1" label="Loading rich editor..." />}>
-                  <MarkdownRichEditor
-                    key={fileId ?? resolvedFileName}
-                    ref={mdxEditorRef}
-                    markdown={fileContent}
-                    onChange={(value) => {
-                      if (isApplyingRemoteRef.current) return;
-                      setMdxError(null);
-                      applyTextUpdate(value);
-                    }}
-                    onError={setMdxError}
-                    onImageUpload={handleImageUpload}
-                    colorMode={colorMode}
-                  />
-                </Suspense>
-              </>
+          <div className="helpudoc-mdxeditor-shell flex h-full min-h-0 flex-col overflow-hidden">
+            {mdxError && (
+              <div className={`border-b px-4 py-2 text-sm ${
+                isDarkMode
+                  ? 'border-rose-500/20 bg-rose-950/25 text-rose-200'
+                  : 'border-rose-200 bg-rose-50 text-rose-700'
+              }`}>
+                {mdxError}
+              </div>
             )}
+            <Suspense fallback={<EditorLoadingState className="min-h-[320px] flex-1" label="Loading rich editor..." />}>
+              <MarkdownRichEditor
+                key={fileId ?? resolvedFileName}
+                ref={mdxEditorRef}
+                markdown={fileContent}
+                onChange={(value) => {
+                  if (isApplyingRemoteRef.current) return;
+                  setMdxError(null);
+                  applyTextUpdate(value);
+                }}
+                onError={setMdxError}
+                onImageUpload={handleImageUpload}
+                colorMode={colorMode}
+              />
+            </Suspense>
           </div>
         ) : (
           <Suspense fallback={<EditorLoadingState />}>

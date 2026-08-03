@@ -182,11 +182,6 @@ spec:
                   key: S3_BUCKET_NAME
             - name: S3_ENDPOINT
               value: http://minio:9000
-            - name: S3_PUBLIC_BASE_URL
-              valueFrom:
-                configMapKeyRef:
-                  name: helpudoc-config
-                  key: S3_PUBLIC_BASE_URL
             - name: S3_FORCE_PATH_STYLE
               valueFrom:
                 configMapKeyRef:
@@ -376,11 +371,6 @@ spec:
                 configMapKeyRef:
                   name: helpudoc-config
                   key: S3_BUCKET_NAME
-            - name: S3_PUBLIC_BASE_URL
-              valueFrom:
-                configMapKeyRef:
-                  name: helpudoc-config
-                  key: S3_PUBLIC_BASE_URL
             - name: AWS_ACCESS_KEY_ID
               valueFrom:
                 secretKeyRef:

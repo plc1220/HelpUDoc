@@ -45,7 +45,7 @@ const BLOCK_LEVEL_TAGS = ['div', 'pre', 'table', 'blockquote', 'ul', 'ol', 'hr']
 const buildMermaidTheme = (mode: MermaidColorMode) => (
   mode === 'dark'
     ? {
-        background: '#0f172a',
+        background: 'transparent',
         primaryColor: '#818cf8',
         primaryBorderColor: '#6366f1',
         primaryTextColor: '#e2e8f0',
@@ -74,7 +74,7 @@ const buildMermaidTheme = (mode: MermaidColorMode) => (
         cScale2: '#34d399',
       }
     : {
-        background: '#ffffff',
+        background: 'transparent',
         primaryColor: '#4f46e5',
         primaryBorderColor: '#3730a3',
         primaryTextColor: '#0f172a',
@@ -436,6 +436,12 @@ export const createMarkdownComponents = ({
     || `mb-4 last:mb-0 leading-relaxed ${colorMode === 'dark' ? 'text-slate-200' : 'text-slate-700'}`;
 
   return {
+    // Every fenced block is fully rendered by the custom `code` component
+    // below. ReactMarkdown otherwise adds its own <pre>, which creates nested
+    // code panels around Mermaid, Plotly, and the application's CodeBlock.
+    pre({ children }) {
+      return <>{children}</>;
+    },
     p({ children }) {
     const childArray = Children.toArray(children);
     const containsBlockChild = childArray.some((child) => {
@@ -502,6 +508,7 @@ export const createMarkdownComponents = ({
         <MermaidDiagram
           chart={codeContent}
           colorMode={colorMode}
+          className="markdown-document-mermaid"
           fallbackClassName="my-4"
         />
       );

@@ -2550,10 +2550,30 @@ const parseRunContext = (raw: string | undefined): RunContext | undefined => {
 type RunStreamRecoveryInspection = {
   latestInterruptPayload: Record<string, unknown> | null;
   latestTerminalEvent?: { status: AgentRunStatus; error?: string };
+  assistantText?: string;
   latestRealActivityAt?: number;
   latestEntryAt?: number;
   latestFrontendSlidesArtifactPaths?: Record<string, string>;
 };
+
+export type RunConversationRecoverySnapshot = {
+  assistantText: string;
+  status: AgentRunStatus;
+  error?: string;
+};
+
+export const reconstructAssistantTextFromStreamPayloads = (
+  payloads: Array<Record<string, unknown> | null>,
+): string => payloads.reduce((text, parsed) => {
+  if (
+    !parsed
+    || (parsed.type !== 'token' && parsed.type !== 'chunk')
+    || (parsed.role && parsed.role !== 'assistant')
+  ) {
+    return text;
+  }
+  return mergeAssistantTextChunk(text, coerceText(parsed.content));
+}, '');
 
 const parseRedisStreamEntryTimestamp = (entryId: unknown): number | undefined => {
   if (typeof entryId !== 'string') {
@@ -2712,50 +2732,77 @@ const inspectRunStreamForRecovery = async (
   const inspection: RunStreamRecoveryInspection = {
     latestInterruptPayload: null,
   };
+  const assistantPayloadsNewestFirst: Array<Record<string, unknown>> = [];
   try {
-    const entries = await redisClient.sendCommand([
-      'XREVRANGE',
-      streamKey,
-      '+',
-      '-',
-      'COUNT',
-      '500',
-    ]) as unknown;
-    if (!Array.isArray(entries)) {
-      return inspection;
+    const pageSize = 500;
+    let maximumId = '+';
+    while (true) {
+      const entries = await redisClient.sendCommand([
+        'XREVRANGE',
+        streamKey,
+        maximumId,
+        '-',
+        'COUNT',
+        String(pageSize),
+      ]) as unknown;
+      if (!Array.isArray(entries) || !entries.length) {
+        break;
+      }
+      for (const entry of entries) {
+        if (!Array.isArray(entry) || entry.length < 2 || !Array.isArray(entry[1])) {
+          continue;
+        }
+        const entryAt = parseRedisStreamEntryTimestamp(entry[0]);
+        const isRelevantToCurrentResume = streamEntryIsRelevantToStartedAt(entryAt, startedAtMs);
+        const fields = entry[1] as unknown[];
+        for (let index = 0; index < fields.length - 1; index += 2) {
+          if (fields[index] !== 'data' || typeof fields[index + 1] !== 'string') {
+            continue;
+          }
+          const parsed = parseLine(fields[index + 1] as string);
+          inspection.latestFrontendSlidesArtifactPaths = mergeFrontendSlidesArtifactPaths(
+            inspection.latestFrontendSlidesArtifactPaths || {},
+            extractFrontendSlidesArtifactPaths(parsed),
+          );
+          if (!isRelevantToCurrentResume) {
+            continue;
+          }
+          if (
+            parsed
+            && (parsed.type === 'token' || parsed.type === 'chunk')
+            && (!parsed.role || parsed.role === 'assistant')
+          ) {
+            assistantPayloadsNewestFirst.push(parsed);
+          }
+          if (!inspection.latestEntryAt && entryAt) {
+            inspection.latestEntryAt = entryAt;
+          }
+          if (isRealRunProgressEvent(parsed) && !inspection.latestRealActivityAt && entryAt) {
+            inspection.latestRealActivityAt = entryAt;
+          }
+          if (!inspection.latestTerminalEvent) {
+            inspection.latestTerminalEvent = terminalEventFromStreamPayload(parsed);
+          }
+          if (!inspection.latestInterruptPayload && parsed?.type === 'interrupt') {
+            inspection.latestInterruptPayload = normalizeInterruptPayloadRecord(parsed);
+          }
+        }
+      }
+      if (entries.length < pageSize) {
+        break;
+      }
+      const oldestEntry = entries[entries.length - 1];
+      const oldestEntryId = Array.isArray(oldestEntry) ? oldestEntry[0] : undefined;
+      if (typeof oldestEntryId !== 'string' || !oldestEntryId) {
+        break;
+      }
+      maximumId = `(${oldestEntryId}`;
     }
-    for (const entry of entries) {
-      if (!Array.isArray(entry) || entry.length < 2 || !Array.isArray(entry[1])) {
-        continue;
-      }
-      const entryAt = parseRedisStreamEntryTimestamp(entry[0]);
-      const isRelevantToCurrentResume = streamEntryIsRelevantToStartedAt(entryAt, startedAtMs);
-      const fields = entry[1] as unknown[];
-      for (let index = 0; index < fields.length - 1; index += 2) {
-        if (fields[index] !== 'data' || typeof fields[index + 1] !== 'string') {
-          continue;
-        }
-        const parsed = parseLine(fields[index + 1] as string);
-        inspection.latestFrontendSlidesArtifactPaths = mergeFrontendSlidesArtifactPaths(
-          inspection.latestFrontendSlidesArtifactPaths || {},
-          extractFrontendSlidesArtifactPaths(parsed),
-        );
-        if (!isRelevantToCurrentResume) {
-          continue;
-        }
-        if (!inspection.latestEntryAt && entryAt) {
-          inspection.latestEntryAt = entryAt;
-        }
-        if (isRealRunProgressEvent(parsed) && !inspection.latestRealActivityAt && entryAt) {
-          inspection.latestRealActivityAt = entryAt;
-        }
-        if (!inspection.latestTerminalEvent) {
-          inspection.latestTerminalEvent = terminalEventFromStreamPayload(parsed);
-        }
-        if (!inspection.latestInterruptPayload && parsed?.type === 'interrupt') {
-          inspection.latestInterruptPayload = normalizeInterruptPayloadRecord(parsed);
-        }
-      }
+    const assistantText = reconstructAssistantTextFromStreamPayloads(
+      assistantPayloadsNewestFirst.reverse(),
+    );
+    if (assistantText.trim()) {
+      inspection.assistantText = assistantText;
     }
   } catch (error) {
     console.error('Failed to inspect run stream for stale run recovery', {
@@ -2764,6 +2811,39 @@ const inspectRunStreamForRecovery = async (
     });
   }
   return inspection;
+};
+
+export const getRunConversationRecoverySnapshot = async (
+  runId: string,
+): Promise<RunConversationRecoverySnapshot | null> => {
+  const meta = await redisClient.hGetAll(buildMetaKey(runId));
+  if (!Object.keys(meta).length) {
+    return null;
+  }
+
+  const inspection = await inspectRunStreamForRecovery(
+    runId,
+    meta.startedAt || meta.createdAt,
+  );
+  const assistantText = inspection.assistantText?.trim() || '';
+  if (!assistantText) {
+    return null;
+  }
+
+  const persistedStatus = meta.status as AgentRunStatus;
+  const status = inspection.latestTerminalEvent?.status
+    || (persistedStatus === 'completed'
+      || persistedStatus === 'failed'
+      || persistedStatus === 'cancelled'
+      || persistedStatus === 'awaiting_approval'
+      ? persistedStatus
+      : 'running');
+
+  return {
+    assistantText,
+    status,
+    error: inspection.latestTerminalEvent?.error || meta.error || undefined,
+  };
 };
 
 export const shouldFailRunningRunForStaleActivity = (input: {
@@ -2914,10 +2994,6 @@ export async function persistInterruptAndStopRun(
   const normalized = normalizeInterruptPayloadRecord(parsed);
   state.sawInterruptPayload = normalized;
   await persistInterrupt(runId, JSON.stringify(normalized));
-  state.buffer = '';
-  if (state.upstream && !state.upstream.destroyed) {
-    state.upstream.destroy();
-  }
   return true;
 }
 
@@ -2988,6 +3064,7 @@ async function runAgentRunWorker(
   let upstream: IncomingMessage | null = null;
   let buffer = '';
   let sawInterruptPayload: Record<string, unknown> | null = null;
+  let interruptPublished = false;
   let contractErrorMessage = '';
   let loopErrorMessage = '';
   let stallErrorMessage = '';
@@ -3455,31 +3532,8 @@ async function runAgentRunWorker(
     const normalizedInterrupt = normalizeInterruptPayloadRecord(parsed);
     const pendingGateId = extractInteractionGateId(normalizedInterrupt);
     const pendingInterrupt = parsePendingInterrupt(JSON.stringify(normalizedInterrupt));
-    await persistInterruptAndStopRun(
-      runId,
-      normalizedInterrupt,
-      {
-        get sawInterruptPayload() {
-          return sawInterruptPayload;
-        },
-        set sawInterruptPayload(value: Record<string, unknown> | null) {
-          sawInterruptPayload = value;
-        },
-        get buffer() {
-          return buffer;
-        },
-        set buffer(value: string) {
-          buffer = value;
-        },
-        get upstream() {
-          return upstream;
-        },
-        set upstream(value: IncomingMessage | null) {
-          upstream = value;
-        },
-      },
-      (pendingRunId, interruptPayload) => markRunAwaitingApproval(pendingRunId, interruptPayload, params),
-    );
+    sawInterruptPayload = normalizedInterrupt;
+    await markRunAwaitingApproval(runId, JSON.stringify(normalizedInterrupt), params);
     if (runTelemetryService) {
       void runTelemetryService.finalizeRun(runId, {
         status: 'awaiting_approval',
@@ -3504,6 +3558,25 @@ async function runAgentRunWorker(
       });
     }
     await updateConversationFromRun('awaiting_approval', { pendingInterrupt });
+  };
+
+  const publishDeferredInterrupt = async (interruptPayload: Record<string, unknown>) => {
+    if (interruptPublished) {
+      return;
+    }
+    interruptPublished = true;
+    if (interruptPayload.interactionRequest) {
+      const interactionChunk = {
+        type: 'interaction' as const,
+        message: interruptPayload.interactionRequest,
+        interactionId: (interruptPayload.interactionRequest as any).interactionId,
+        runId,
+      };
+      await appendStreamEvent(runId, JSON.stringify(interactionChunk));
+    }
+    await appendStreamEvent(runId, JSON.stringify(normalizeInterruptPayloadRecord(interruptPayload)));
+    await appendStreamEvent(runId, JSON.stringify({ type: 'done', status: 'interrupted' }));
+    await stopAtInterrupt(interruptPayload);
   };
 
   const processParsedLine = async (line: string): Promise<'continue' | 'stop'> => {
@@ -3695,20 +3768,31 @@ async function runAgentRunWorker(
       contractErrorMessage = completionErrorBeforeTerminal;
       return 'continue';
     }
-    if (eventToAppend?.type === 'interrupt' && eventToAppend.interactionRequest) {
-      const interactionChunk = {
-        type: 'interaction' as const,
-        message: eventToAppend.interactionRequest,
-        interactionId: (eventToAppend.interactionRequest as any).interactionId,
+    if (eventToAppend?.type === 'interrupt') {
+      // Do not expose the approval gate until the agent HTTP stream has
+      // finished. Closing the upstream response as soon as the interrupt
+      // arrives can cancel FastAPI's streaming generator before LangGraph's
+      // checkpoint is fully committed, leaving an approval that cannot be
+      // resumed.
+      sawInterruptPayload = normalizeInterruptPayloadRecord(eventToAppend);
+      console.info('[AgentInterrupt] deferred until upstream drain', {
         runId,
-      };
-      await appendStreamEvent(runId, JSON.stringify(interactionChunk));
+        interruptId: coerceText(eventToAppend.interruptId).trim() || undefined,
+        kind: coerceText(eventToAppend.kind).trim() || undefined,
+      });
+      return 'continue';
+    }
+    if (
+      sawInterruptPayload
+      && parsed?.type === 'done'
+      && coerceText(parsed.status).trim() === 'interrupted'
+    ) {
+      // publishDeferredInterrupt emits the terminal marker after the upstream
+      // stream has drained, keeping the interrupt and its resumable checkpoint
+      // on the same side of the HTTP lifecycle boundary.
+      return 'continue';
     }
     await appendStreamEvent(runId, eventToAppend ? JSON.stringify(normalizeInterruptPayloadRecord(eventToAppend)) : line);
-    if (eventToAppend?.type === 'interrupt') {
-      await stopAtInterrupt(eventToAppend);
-      return 'stop';
-    }
     if (parsed?.type === 'contract_error') {
       contractErrorMessage =
         typeof parsed.message === 'string' && parsed.message.trim()
@@ -3810,6 +3894,10 @@ async function runAgentRunWorker(
         await processTailBuffer();
       }
 
+      if (sawInterruptPayload) {
+        console.info('[AgentInterrupt] upstream drained with deferred interrupt', { runId });
+      }
+
       const disposition = resolveStreamCloseDisposition({
         sawInterruptPayload,
         loopErrorMessage,
@@ -3819,10 +3907,7 @@ async function runAgentRunWorker(
       });
 
       if (disposition.preserveInterrupt && sawInterruptPayload) {
-        await markRunAwaitingApproval(runId, JSON.stringify(sawInterruptPayload), params);
-        await updateConversationFromRun('awaiting_approval', {
-          pendingInterrupt: parsePendingInterrupt(JSON.stringify(sawInterruptPayload)),
-        });
+        await publishDeferredInterrupt(sawInterruptPayload);
         cleanupRun(runId, upstream || undefined);
         return;
       }
@@ -3838,10 +3923,7 @@ async function runAgentRunWorker(
       });
 
       if (disposition.preserveInterrupt && sawInterruptPayload) {
-        await markRunAwaitingApproval(runId, JSON.stringify(sawInterruptPayload), params);
-        await updateConversationFromRun('awaiting_approval', {
-          pendingInterrupt: parsePendingInterrupt(JSON.stringify(sawInterruptPayload)),
-        });
+        await publishDeferredInterrupt(sawInterruptPayload);
         cleanupRun(runId, upstream || undefined);
         return;
       }
@@ -4078,6 +4160,7 @@ const reconcileActiveRunMetaFromStream = async (
     const completedAt = await markRunFinished(runId, terminalEvent.status, terminalEvent.error);
     if (context?.params) {
       await persistRunConversationMessage(runId, context.params, terminalEvent.status === 'queued' ? 'running' : terminalEvent.status, {
+        assistantText: inspection.assistantText,
         error: terminalEvent.error,
       });
     }
@@ -4118,7 +4201,10 @@ const reconcileActiveRunMetaFromStream = async (
   await appendStreamEvent(runId, JSON.stringify({ type: 'done', status: 'failed', recovered: true }));
   const completedAt = await markRunFinished(runId, 'failed', error);
   if (context?.params) {
-    await persistRunConversationMessage(runId, context.params, 'failed', { error });
+    await persistRunConversationMessage(runId, context.params, 'failed', {
+      assistantText: inspection.assistantText,
+      error,
+    });
   }
   abortActiveRunWorker(runId);
   meta.status = 'failed';

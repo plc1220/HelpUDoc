@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mergeRunOwnedAgentText } from '../src/services/conversationService';
+import { mergeRunOwnedAgentMetadata, mergeRunOwnedAgentText } from '../src/services/conversationService';
 
 const runMetadata = { runId: 'run-1', status: 'running' };
 
@@ -50,5 +50,41 @@ test('a different run may replace the previous turn body', () => {
       { runId: 'run-2' },
     ),
     'Regenerated output',
+  );
+});
+
+test('a recovery summary cannot replace assistant text already persisted for the same run', () => {
+  const existingMetadata = {
+    runId: 'run-1',
+    status: 'running',
+    bodySource: 'assistant',
+    progressEvents: [{ phase: 'using_tool', label: 'Checking web sources' }],
+    toolEvents: [{ id: 'tool-1', name: 'web_search', status: 'completed' }],
+  };
+  const recoveryMetadata = { runId: 'run-1', status: 'completed', bodySource: 'summary' };
+
+  assert.equal(
+    mergeRunOwnedAgentText(
+      'The complete generated answer.',
+      'Completed successfully.',
+      existingMetadata,
+      recoveryMetadata,
+    ),
+    'The complete generated answer.',
+  );
+  assert.deepEqual(
+    mergeRunOwnedAgentMetadata(
+      'The complete generated answer.',
+      'Completed successfully.',
+      existingMetadata,
+      recoveryMetadata,
+    ),
+    {
+      runId: 'run-1',
+      status: 'completed',
+      bodySource: 'assistant',
+      progressEvents: [{ phase: 'using_tool', label: 'Checking web sources' }],
+      toolEvents: [{ id: 'tool-1', name: 'web_search', status: 'completed' }],
+    },
   );
 });

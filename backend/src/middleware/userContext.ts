@@ -17,6 +17,11 @@ export function userContextMiddleware(userService: UserService) {
   // at module evaluation time observes the pre-dotenv environment because ESM/
   // TypeScript imports are evaluated before the entrypoint body.
   const authMode = resolveAuthMode(process.env.AUTH_MODE);
+  // Header identity is a local-development convenience, not an authentication
+  // mechanism. In production, hybrid mode must not let a caller impersonate
+  // another user by sending X-User-Id after clearing their session.
+  const allowHeaderAuth = authMode === 'headers'
+    || (authMode === 'hybrid' && process.env.NODE_ENV !== 'production');
   const defaultUserName = process.env.DEFAULT_USER_NAME || 'Local User';
   const defaultUserEmail = process.env.DEFAULT_USER_EMAIL || undefined;
 
@@ -29,7 +34,7 @@ export function userContextMiddleware(userService: UserService) {
         return next();
       }
 
-      if (authMode === 'oidc') {
+      if (!allowHeaderAuth) {
         req.userContext = undefined;
         res.locals.userContext = undefined;
         return next();

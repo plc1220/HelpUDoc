@@ -62,6 +62,11 @@ export default function(
     name: z.string().min(1),
   });
 
+  const moveFolderSchema = z.object({
+    path: z.string().min(1),
+    destinationPath: z.string(),
+  });
+
   const uploadFileSchema = z.object({
     path: z.string().min(1).optional(),
   });
@@ -320,6 +325,26 @@ export default function(
         return res.status(400).json({ error: 'Invalid folder rename payload' });
       }
       handleError(res, error, 'Failed to rename folder');
+    }
+  });
+
+  router.patch('/folders/move', async (req: Request<{ workspaceId: string }>, res: Response) => {
+    try {
+      const { workspaceId } = req.params;
+      const user = requireUserContext(req);
+      const payload = moveFolderSchema.parse(req.body);
+      const movedFolder = await fileService.moveFolder(
+        workspaceId,
+        payload.path,
+        payload.destinationPath,
+        user.userId,
+      );
+      res.json(movedFolder);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: 'Invalid folder move payload' });
+      }
+      handleError(res, error, 'Failed to move folder');
     }
   });
 

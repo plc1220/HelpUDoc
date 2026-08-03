@@ -41,6 +41,11 @@ export interface WorkspaceMembershipRecord {
 
 interface MembershipCheckOptions {
   requireEdit?: boolean;
+  /**
+   * Allows platform support operations for shared workspaces only. Private
+   * workspaces are intentionally excluded: their owner is the sole principal
+   * the application may authorize.
+   */
   allowSystemAdmin?: boolean;
 }
 
@@ -317,6 +322,25 @@ export class WorkspaceService {
     };
     const normalizedWorkspace: WorkspaceRecord = workspaceRest;
 
+    // Resolve private workspaces before any administrator override. A private
+    // workspace is an owner-only boundary, not merely a UI visibility flag.
+    if (normalizedWorkspace.visibility === 'private') {
+      if (normalizedWorkspace.ownerId !== userId) {
+        throw new AccessDeniedError('Private workspace access denied');
+      }
+      return {
+        workspace: normalizedWorkspace,
+        membership: {
+          workspaceId,
+          userId,
+          role: 'owner',
+          canEdit: true,
+          createdAt: normalizedWorkspace.createdAt,
+          updatedAt: normalizedWorkspace.updatedAt,
+        },
+      };
+    }
+
     const isSystemAdmin = Boolean(
       options.allowSystemAdmin
       && await this.db('users').where({ id: userId, isAdmin: true }).first(),
@@ -331,18 +355,6 @@ export class WorkspaceService {
     let membership = directMembership;
     if (isSystemAdmin) {
       membership = {
-        workspaceId,
-        userId,
-        role: 'owner',
-        canEdit: true,
-        createdAt: normalizedWorkspace.createdAt,
-        updatedAt: normalizedWorkspace.updatedAt,
-      };
-    } else if (normalizedWorkspace.visibility === 'private') {
-      if (normalizedWorkspace.ownerId !== userId) {
-        throw new AccessDeniedError('Private workspace access denied');
-      }
-      membership = membership || {
         workspaceId,
         userId,
         role: 'owner',
@@ -374,7 +386,7 @@ export class WorkspaceService {
     const normalizedMembership: WorkspaceMembershipRecord = {
       ...membership,
       role: membership.role as WorkspaceRole,
-      canEdit: isSystemAdmin || (normalizedWorkspace.visibility === 'private' && Boolean(membership.canEdit)),
+      canEdit: isSystemAdmin,
     };
 
     if (options.requireEdit && normalizedWorkspace.visibility === 'team' && !isSystemAdmin) {

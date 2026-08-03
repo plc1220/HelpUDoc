@@ -39,7 +39,7 @@ services:
         sleep 1;
       done;
       mc mb -p local/helpudoc || true;
-      mc anonymous set download local/helpudoc;
+      mc anonymous set none local/helpudoc;
       exit 0;
   redis:
     image: redis:7-alpine

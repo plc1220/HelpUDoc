@@ -43,7 +43,7 @@ html[data-astryx-theme="neutral"] {
   --admin-shadow-soft: var(--shadow-low);
   --admin-shadow-strong: var(--shadow-med);
   --admin-ring: color-mix(in srgb, var(--color-accent) 18%, transparent);
-  --admin-accent-soft: var(--color-background-muted);
+  --admin-accent-soft: var(--color-accent-muted);
   --admin-icon-bg: var(--color-accent);
   --admin-icon-muted-bg: var(--color-background-muted);
 }
@@ -55,6 +55,7 @@ body {
 
 .settings-portal {
   background: var(--admin-shell-bg);
+  color: var(--text-primary);
 }
 
 /* The settings pages still use a few legacy Tailwind neutral utilities. Keep
@@ -174,11 +175,7 @@ body {
 .settings-portal-icon {
   background: var(--admin-icon-bg);
   box-shadow: 0 10px 24px rgba(15, 23, 42, 0.18);
-  color: #f8fafc;
-}
-
-:root[data-theme='dark'] .settings-portal-icon {
-  color: #dbeafe;
+  color: var(--color-on-accent);
 }
 
 .settings-portal-icon-muted {
@@ -204,13 +201,88 @@ body {
 }
 
 .settings-button-primary {
-  background: color-mix(in srgb, var(--slate-950) 86%, var(--accent) 14%);
+  background: var(--color-accent);
   box-shadow: 0 10px 24px rgba(15, 23, 42, 0.16);
-  color: #f8fafc;
+  color: var(--color-on-accent);
 }
 
 .settings-button-primary:hover {
-  background: color-mix(in srgb, var(--slate-950) 80%, var(--accent) 20%);
+  background: color-mix(in srgb, var(--color-accent), var(--color-tint-hover) 10%);
+}
+
+.settings-button-primary:focus-visible,
+.settings-portal-button-secondary:focus-visible,
+.settings-portal-nav-item:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+/* Normalize legacy utility colors inside the admin portal to Astryx tokens.
+   These mappings preserve intent and remain legible in both color modes. */
+.settings-portal .text-blue-600,
+.settings-portal .text-blue-700,
+.settings-portal .text-blue-800 {
+  color: var(--color-text-blue) !important;
+}
+
+.settings-portal .text-emerald-600,
+.settings-portal .text-emerald-700,
+.settings-portal .text-green-600,
+.settings-portal .text-green-700 {
+  color: var(--color-success) !important;
+}
+
+.settings-portal .text-amber-700,
+.settings-portal .text-amber-800,
+.settings-portal .text-amber-900,
+.settings-portal .text-amber-950 {
+  color: var(--color-warning) !important;
+}
+
+.settings-portal .text-rose-600,
+.settings-portal .text-rose-700,
+.settings-portal .text-red-600,
+.settings-portal .text-red-700 {
+  color: var(--color-error) !important;
+}
+
+.settings-portal .bg-blue-50,
+.settings-portal .bg-blue-50\/80,
+.settings-portal .bg-blue-100 {
+  background-color: var(--color-background-blue) !important;
+}
+
+.settings-portal .bg-amber-50,
+.settings-portal .bg-amber-50\/80,
+.settings-portal .bg-amber-50\/90 {
+  background-color: var(--color-warning-muted) !important;
+}
+
+.settings-portal .bg-rose-50,
+.settings-portal .bg-red-50 {
+  background-color: var(--color-error-muted) !important;
+}
+
+.settings-portal .helpudoc-markdown-light.helpudoc-markdown,
+.settings-portal .helpudoc-markdown-light.helpudoc-markdown h1,
+.settings-portal .helpudoc-markdown-light.helpudoc-markdown h2,
+.settings-portal .helpudoc-markdown-light.helpudoc-markdown h3,
+.settings-portal .helpudoc-markdown-light.helpudoc-markdown h4,
+.settings-portal .helpudoc-markdown-light.helpudoc-markdown h5,
+.settings-portal .helpudoc-markdown-light.helpudoc-markdown h6 {
+  color: var(--color-text-primary);
+}
+
+.settings-portal .helpudoc-markdown-light.helpudoc-markdown code {
+  background: var(--color-background-muted);
+  border-color: var(--color-border);
+  color: var(--color-text-primary);
+}
+
+.settings-portal .helpudoc-markdown-light.helpudoc-markdown table,
+.settings-portal .helpudoc-markdown-light.helpudoc-markdown thead,
+.settings-portal .helpudoc-markdown-light.helpudoc-markdown tbody tr {
+  border-color: var(--color-border-emphasized);
 }
 
 .settings-button-danger {
@@ -488,16 +560,34 @@ body {
 
 .helpudoc-markdown-editor {
   min-height: 100%;
-  padding: 1.25rem;
+  width: min(100%, 72rem);
+  margin-inline: auto;
+  padding: clamp(var(--spacing-5), 3vw, var(--spacing-8));
 }
 
 .helpudoc-mdxeditor-shell {
-  background: #fff;
+  background: var(--color-background-surface);
+  color: var(--color-text-primary);
 }
 
 .helpudoc-mdxeditor {
-  background: #fff;
-  color: #0f172a;
+  min-height: 0;
+  background: var(--color-background-surface);
+  color: var(--color-text-primary);
+  --basePageBg: var(--color-background-surface);
+  --baseBase: var(--color-background-muted);
+  --baseBgSubtle: var(--color-background-muted);
+  --baseBg: var(--color-background-muted);
+  --baseBgHover: color-mix(in srgb, var(--color-background-muted), var(--color-text-primary) 6%);
+  --baseBgActive: color-mix(in srgb, var(--color-accent) 12%, var(--color-background-surface));
+  --baseBorder: var(--color-border);
+  --baseBorderHover: var(--color-border-emphasized);
+  --baseText: var(--color-text-secondary);
+  --baseTextContrast: var(--color-text-primary);
+  --accentText: var(--color-text-blue);
+  --accentBg: color-mix(in srgb, var(--color-accent) 12%, transparent);
+  --accentBgHover: color-mix(in srgb, var(--color-accent) 16%, transparent);
+  --accentBgActive: color-mix(in srgb, var(--color-accent) 22%, transparent);
 }
 
 .helpudoc-mdxeditor-light.helpudoc-mdxeditor,
@@ -549,33 +639,102 @@ body {
 
 .helpudoc-mdxeditor .mdxeditor-toolbar,
 .helpudoc-mdxeditor [role='toolbar'] {
-  background: #f8fafc;
-  border-bottom: 1px solid #e2e8f0;
-  padding: 0.5rem 0.75rem;
+  position: sticky;
+  z-index: 2;
+  top: 0;
+  flex-shrink: 0;
+  background: var(--color-background-surface);
+  border-bottom: var(--border-width) solid var(--color-border);
+  padding: var(--spacing-2) var(--spacing-3);
 }
 
 .helpudoc-mdxeditor .mdxeditor-toolbar button,
 .helpudoc-mdxeditor .mdxeditor-toolbar select,
 .helpudoc-mdxeditor [role='toolbar'] button,
 .helpudoc-mdxeditor [role='toolbar'] select {
-  color: #334155;
-  border-color: #dbe4f0;
+  color: var(--color-text-secondary);
+  border-color: transparent;
+  border-radius: var(--radius-element);
 }
 
 .helpudoc-mdxeditor .mdxeditor-toolbar button:hover,
 .helpudoc-mdxeditor [role='toolbar'] button:hover {
-  background: #e2e8f0;
+  background: var(--color-background-muted);
+  color: var(--color-text-primary);
 }
 
 .helpudoc-mdxeditor .mdxeditor-toolbar button[aria-pressed='true'],
 .helpudoc-mdxeditor [role='toolbar'] button[aria-pressed='true'] {
-  background: #dbeafe;
+  background: color-mix(in srgb, var(--color-accent) 14%, transparent);
+  color: var(--color-text-primary);
 }
 
 .helpudoc-mdxeditor .mdxeditor-toolbar [role='separator'],
 .helpudoc-mdxeditor [role='toolbar'] [role='separator'] {
-  border-left-color: #dbe4f0;
-  border-right-color: #ffffff;
+  border-left-color: var(--color-border);
+  border-right-color: transparent;
+}
+
+.helpudoc-mermaid-editor {
+  overflow: hidden;
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-container);
+  background: var(--color-background-surface);
+}
+
+.helpudoc-mermaid-editor-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-3);
+  padding: var(--spacing-3) var(--spacing-4);
+  border-bottom: var(--border-width) solid var(--color-border);
+  background: var(--color-background-muted);
+}
+
+.helpudoc-mermaid-editor-body {
+  display: grid;
+  gap: var(--spacing-4);
+  padding: var(--spacing-4);
+}
+
+.helpudoc-mermaid-editor-pane {
+  display: flex;
+  min-height: 260px;
+  flex-direction: column;
+  gap: var(--spacing-2);
+}
+
+.helpudoc-mermaid-source,
+.helpudoc-mermaid-preview {
+  width: 100%;
+  min-height: 240px;
+  flex: 1;
+  overflow: auto;
+  padding: var(--spacing-4);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-container);
+  background: var(--color-background-surface);
+  color: var(--color-text-primary);
+}
+
+.helpudoc-mermaid-source {
+  resize: vertical;
+  font-family: var(--font-family-mono);
+  font-size: var(--text-body-size);
+  line-height: var(--text-body-leading);
+}
+
+.helpudoc-mermaid-source:focus-visible {
+  border-color: var(--color-accent);
+  outline: 2px solid color-mix(in srgb, var(--color-accent) 25%, transparent);
+  outline-offset: 1px;
+}
+
+@media (min-width: 1024px) {
+  .helpudoc-mermaid-editor-body {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
 }
 
 .helpudoc-mdxeditor .mdxeditor-toolbar svg,
@@ -681,109 +840,9 @@ body {
   border-color: #1f2937;
 }
 
-:root[data-theme='dark'] .helpudoc-mdxeditor-shell,
-:root[data-theme='dark'] .helpudoc-mdxeditor,
-:root.dark .helpudoc-mdxeditor-shell,
-:root.dark .helpudoc-mdxeditor {
-  background: #0f172a;
-  color: #e6edf3;
-}
-
 .helpudoc-mdxeditor-dark.helpudoc-mdxeditor,
 .helpudoc-markdown-dark.helpudoc-markdown {
-  color: #e6edf3;
-}
-
-.helpudoc-mdxeditor-light.helpudoc-mdxeditor {
-  --basePageBg: #ffffff;
-  --baseBase: #f8fafc;
-  --baseBgSubtle: #f8fafc;
-  --baseBg: #eff6ff;
-  --baseBgHover: #e2e8f0;
-  --baseBgActive: #dbeafe;
-  --baseBorder: #dbe4f0;
-  --baseBorderHover: #94a3b8;
-  --baseText: #475569;
-  --baseTextContrast: #334155;
-  --accentText: #2563eb;
-  --accentBg: #dbeafe;
-  --accentBgHover: #bfdbfe;
-  --accentBgActive: #93c5fd;
-}
-
-.helpudoc-mdxeditor-dark.helpudoc-mdxeditor {
-  --basePageBg: #0f172a;
-  --baseBase: #0b1220;
-  --baseBgSubtle: #111c31;
-  --baseBg: #16233a;
-  --baseBgHover: #1d2d48;
-  --baseBgActive: #223452;
-  --baseBorder: #334155;
-  --baseBorderHover: #94a3b8;
-  --baseText: #cbd5e1;
-  --baseTextContrast: #f8fafc;
-  --accentText: #93c5fd;
-  --accentBg: rgba(56, 189, 248, 0.16);
-  --accentBgHover: rgba(56, 189, 248, 0.22);
-  --accentBgActive: rgba(56, 189, 248, 0.28);
-}
-
-:root[data-theme='dark'] .helpudoc-mdxeditor .mdxeditor-toolbar,
-:root[data-theme='dark'] .helpudoc-mdxeditor [role='toolbar'],
-:root.dark .helpudoc-mdxeditor .mdxeditor-toolbar,
-:root.dark .helpudoc-mdxeditor [role='toolbar'] {
-  background: rgba(15, 23, 42, 0.92);
-  border-bottom-color: #1f2937;
-  backdrop-filter: blur(8px);
-}
-
-:root[data-theme='dark'] .helpudoc-mdxeditor .mdxeditor-toolbar button,
-:root[data-theme='dark'] .helpudoc-mdxeditor .mdxeditor-toolbar select,
-:root[data-theme='dark'] .helpudoc-mdxeditor .mdxeditor-toolbar [role='combobox'],
-:root[data-theme='dark'] .helpudoc-mdxeditor [role='toolbar'] button,
-:root[data-theme='dark'] .helpudoc-mdxeditor [role='toolbar'] select,
-:root[data-theme='dark'] .helpudoc-mdxeditor [role='toolbar'] [role='combobox'],
-:root.dark .helpudoc-mdxeditor .mdxeditor-toolbar button,
-:root.dark .helpudoc-mdxeditor .mdxeditor-toolbar select,
-:root.dark .helpudoc-mdxeditor .mdxeditor-toolbar [role='combobox'],
-:root.dark .helpudoc-mdxeditor [role='toolbar'] button,
-:root.dark .helpudoc-mdxeditor [role='toolbar'] select,
-:root.dark .helpudoc-mdxeditor [role='toolbar'] [role='combobox'] {
-  color: #e6edf3;
-  border-color: #263245;
-}
-
-:root[data-theme='dark'] .helpudoc-mdxeditor .mdxeditor-toolbar [role='combobox'],
-:root[data-theme='dark'] .helpudoc-mdxeditor [role='toolbar'] [role='combobox'],
-:root.dark .helpudoc-mdxeditor .mdxeditor-toolbar [role='combobox'],
-:root.dark .helpudoc-mdxeditor [role='toolbar'] [role='combobox'] {
-  background: #16233a;
-}
-
-:root[data-theme='dark'] .helpudoc-mdxeditor .mdxeditor-toolbar button:hover,
-:root[data-theme='dark'] .helpudoc-mdxeditor .mdxeditor-toolbar [role='combobox']:hover,
-:root[data-theme='dark'] .helpudoc-mdxeditor [role='toolbar'] button:hover,
-:root[data-theme='dark'] .helpudoc-mdxeditor [role='toolbar'] [role='combobox']:hover,
-:root.dark .helpudoc-mdxeditor .mdxeditor-toolbar button:hover,
-:root.dark .helpudoc-mdxeditor .mdxeditor-toolbar [role='combobox']:hover,
-:root.dark .helpudoc-mdxeditor [role='toolbar'] button:hover,
-:root.dark .helpudoc-mdxeditor [role='toolbar'] [role='combobox']:hover {
-  background: #1f2937;
-}
-
-:root[data-theme='dark'] .helpudoc-mdxeditor .mdxeditor-toolbar button[aria-pressed='true'],
-:root[data-theme='dark'] .helpudoc-mdxeditor [role='toolbar'] button[aria-pressed='true'],
-:root.dark .helpudoc-mdxeditor .mdxeditor-toolbar button[aria-pressed='true'],
-:root.dark .helpudoc-mdxeditor [role='toolbar'] button[aria-pressed='true'] {
-  background: #26334a;
-}
-
-:root[data-theme='dark'] .helpudoc-mdxeditor .mdxeditor-toolbar [role='separator'],
-:root[data-theme='dark'] .helpudoc-mdxeditor [role='toolbar'] [role='separator'],
-:root.dark .helpudoc-mdxeditor .mdxeditor-toolbar [role='separator'],
-:root.dark .helpudoc-mdxeditor [role='toolbar'] [role='separator'] {
-  border-left-color: #334155;
-  border-right-color: #0f172a;
+  color: var(--color-text-primary);
 }
 
 /* Lumo Studio — Astryx-first chat and authentication surfaces */
@@ -859,6 +918,92 @@ body {
 
 .lumo-assistant-content {
   width: 100%;
+}
+
+.lumo-agent-activity {
+  width: min(100%, 48rem);
+}
+
+.lumo-agent-activity-trigger {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: var(--spacing-2);
+  text-align: left;
+}
+
+.lumo-agent-activity-status {
+  display: inline-flex;
+  width: var(--spacing-5);
+  height: var(--spacing-5);
+  flex: 0 0 var(--spacing-5);
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-full);
+}
+
+.lumo-agent-activity-status--complete {
+  color: var(--color-text-green);
+}
+
+.lumo-agent-activity-status--running {
+  color: var(--color-text-blue);
+}
+
+.lumo-agent-activity-status--running svg {
+  animation: lumo-spin 1s linear infinite;
+}
+
+.lumo-agent-activity-status--error {
+  color: var(--color-text-red);
+}
+
+.lumo-agent-activity-title {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-primary);
+  font-size: var(--text-supporting-size);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--text-supporting-leading);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lumo-agent-activity-meta,
+.lumo-agent-activity-item-meta {
+  flex-shrink: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: 1.6;
+  white-space: nowrap;
+}
+
+.lumo-agent-activity-section {
+  overflow: hidden;
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-container);
+  background: var(--color-background-surface);
+}
+
+.lumo-agent-activity-section-label {
+  padding: var(--spacing-2) var(--spacing-3) var(--spacing-1);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  line-height: 1.6;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.lumo-agent-activity-list {
+  padding: 0 var(--spacing-1) var(--spacing-1);
+}
+
+@media (max-width: 640px) {
+  .lumo-agent-activity-meta {
+    display: none;
+  }
 }
 
 .lumo-user-content {
@@ -968,6 +1113,125 @@ body {
   line-height: 1;
 }
 
+.landing-composer-toolbar {
+  gap: var(--spacing-3);
+}
+
+.landing-composer-quick-actions {
+  flex-shrink: 0;
+}
+
+.landing-composer-routing {
+  min-height: var(--size-element-md);
+  margin-left: auto;
+  overflow: visible;
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-container);
+  background: var(--color-background-muted);
+}
+
+.landing-composer-workspace-trigger {
+  width: clamp(10rem, 18vw, 14rem);
+  height: calc(var(--size-element-md) - 2px);
+  border: 0;
+  border-radius: calc(var(--radius-container) - 1px);
+  background: transparent;
+  color: var(--color-text-primary);
+  outline: none;
+  transition:
+    background-color var(--duration-fast) var(--ease-standard),
+    color var(--duration-fast) var(--ease-standard),
+    box-shadow var(--duration-fast) var(--ease-standard);
+}
+
+.landing-composer-workspace-trigger:hover {
+  background: var(--color-overlay-hover);
+}
+
+.landing-composer-workspace-trigger:active {
+  background: var(--color-overlay-pressed);
+}
+
+.landing-composer-workspace-trigger:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--color-border-blue);
+}
+
+.landing-composer-routing-divider {
+  width: var(--border-width);
+  height: 20px;
+  flex: 0 0 var(--border-width);
+  background: var(--color-border-emphasized);
+}
+
+.landing-composer-mode-trigger {
+  border-radius: calc(var(--radius-container) - 1px) !important;
+}
+
+.landing-composer-mode-trigger:focus-visible,
+.landing-composer-quick-actions button:focus-visible {
+  outline-color: var(--color-border-blue) !important;
+}
+
+.landing-composer-suggestion-surface {
+  width: 100%;
+  background: color-mix(in srgb, var(--color-background-popover) 94%, transparent) !important;
+  box-shadow: var(--shadow-high);
+  backdrop-filter: blur(20px) saturate(150%);
+  transform-origin: top left;
+  animation: lumo-materialize var(--duration-fast) var(--ease-standard) both;
+}
+
+.landing-composer-suggestion-group-label {
+  padding: var(--spacing-2) var(--spacing-3) var(--spacing-1);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  line-height: 1.6;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.landing-composer-suggestion-empty {
+  padding: var(--spacing-4);
+  color: var(--color-text-secondary);
+  font-size: var(--text-supporting-size);
+  line-height: var(--text-supporting-leading);
+  text-align: center;
+}
+
+.landing-composer-key-hint {
+  padding: var(--spacing-0-5) var(--spacing-1-5);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-element);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.6;
+  white-space: nowrap;
+}
+
+@media (max-width: 760px) {
+  .landing-composer-toolbar {
+    width: 100%;
+  }
+
+  .landing-composer-routing {
+    order: 2;
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .landing-composer-workspace-trigger {
+    width: auto;
+    min-width: 0;
+  }
+
+  .landing-composer-workspace-menu {
+    min-width: 0;
+    flex: 1;
+  }
+}
+
 .lumo-composer-status,
 .lumo-composer-empty-suggestion {
   color: var(--color-text-secondary);
@@ -1047,6 +1311,25 @@ body {
   letter-spacing: normal !important;
   white-space: normal !important;
   text-transform: none !important;
+}
+
+/* Mermaid is part of the markdown flow, not a separate application panel. */
+.helpudoc-markdown .lumo-mermaid.markdown-document-mermaid {
+  margin-block: 1.5rem;
+  padding: 0.25rem 0 0.5rem;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.helpudoc-markdown .lumo-mermaid.markdown-document-mermaid:focus {
+  outline: none;
+}
+
+.helpudoc-markdown .lumo-mermaid.markdown-document-mermaid:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--color-accent) 55%, transparent);
+  outline-offset: 4px;
 }
 
 .lumo-login-page {
@@ -1204,6 +1487,12 @@ body {
   }
 }
 
+@keyframes lumo-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 @media (max-width: 840px) {
   .lumo-login-page {
     grid-template-columns: minmax(0, 1fr);
@@ -1254,11 +1543,13 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .lumo-composer-suggestions {
+  .lumo-composer-suggestions,
+  .landing-composer-suggestion-surface {
     animation: none;
   }
 
   .lumo-message-action-button,
+  .lumo-agent-activity *,
   .lumo-chat-composer * {
     scroll-behavior: auto !important;
     transition-duration: 1ms !important;
@@ -1269,6 +1560,7 @@ body {
 
 @media (prefers-reduced-transparency: reduce) {
   .lumo-composer-suggestions,
+  .landing-composer-suggestion-surface,
   .lumo-login-card {
     background: var(--color-background-popover);
     backdrop-filter: none;
@@ -1281,6 +1573,7 @@ body {
 
 @media (prefers-contrast: more) {
   .lumo-composer-suggestions,
+  .landing-composer-suggestion-surface,
   .lumo-login-card,
   .lumo-mermaid {
     border-color: var(--color-text-primary);

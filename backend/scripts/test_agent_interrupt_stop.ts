@@ -38,11 +38,15 @@ async function main() {
   assert.equal(stopped, true);
   assert.equal(persisted.length, 1);
   assert.equal(persisted[0]?.runId, 'run-123');
-  assert.deepEqual(JSON.parse(persisted[0]?.interruptPayload ?? '{}'), interruptPayload);
-  assert.equal(state.buffer, '');
-  assert.deepEqual(state.sawInterruptPayload, interruptPayload);
-  assert.equal(destroyCalls, 1);
-  assert.equal(upstream.destroyed, true);
+  const persistedInterrupt = JSON.parse(persisted[0]?.interruptPayload ?? '{}');
+  assert.equal(persistedInterrupt.type, interruptPayload.type);
+  assert.equal(persistedInterrupt.kind, interruptPayload.kind);
+  assert.equal(persistedInterrupt.title, interruptPayload.title);
+  assert.equal(typeof persistedInterrupt.interruptId, 'string');
+  assert.equal(state.buffer, 'pending-stream-buffer');
+  assert.deepEqual(state.sawInterruptPayload, persistedInterrupt);
+  assert.equal(destroyCalls, 0);
+  assert.equal(upstream.destroyed, false);
 
   const stoppedAgain = await persistInterruptAndStopRun(
     'run-123',
@@ -55,8 +59,8 @@ async function main() {
 
   assert.equal(stoppedAgain, false);
   assert.equal(persisted.length, 1);
-  assert.deepEqual(state.sawInterruptPayload, interruptPayload);
-  assert.equal(destroyCalls, 1);
+  assert.deepEqual(state.sawInterruptPayload, persistedInterrupt);
+  assert.equal(destroyCalls, 0);
 }
 
 void main().catch((error) => {

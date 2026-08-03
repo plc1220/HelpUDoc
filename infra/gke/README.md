@@ -35,6 +35,7 @@ The backend and agent are intentionally co-located around shared workspace/confi
 | `k8s/41-redis.yaml` | Redis workload |
 | `k8s/42-minio.yaml` | MinIO workload |
 | `k8s/43-minio-setup.yaml` | Bucket/bootstrap job (includes `langfuse` bucket) |
+| `k8s/46-minio-private-object-policy.yaml` | One-time enforcement that removes anonymous access from workspace objects |
 | `k8s/44-clickhouse.yaml` | ClickHouse for Langfuse |
 | `k8s/45-langfuse.yaml` | Langfuse web + worker + `langfuse-web` Service |
 | `k8s/49-skill-sandbox.yaml` | Skill sandbox ServiceAccount/RBAC and offline NetworkPolicy |
@@ -100,6 +101,7 @@ kubectl apply -f infra/gke/k8s/40-postgres.yaml
 kubectl apply -f infra/gke/k8s/41-redis.yaml
 kubectl apply -f infra/gke/k8s/42-minio.yaml
 kubectl apply -f infra/gke/k8s/43-minio-setup.yaml
+kubectl apply -f infra/gke/k8s/46-minio-private-object-policy.yaml
 kubectl apply -f infra/gke/k8s/44-clickhouse.yaml
 kubectl apply -f infra/gke/k8s/45-langfuse.yaml
 kubectl apply -f infra/gke/k8s/49-skill-sandbox.yaml

@@ -9,6 +9,7 @@ import {
   Trash,
   Edit,
 } from 'lucide-react';
+import { CheckboxInput } from '@astryxdesign/core/CheckboxInput';
 
 import type { DashboardArtifactInfo, File as WorkspaceFile } from '../types';
 import { getFileDisplayName, getFileTypeIcon } from '../utils/files';
@@ -21,13 +22,17 @@ import {
 } from '../utils/workspaceFileTree';
 
 const WORKSPACE_FILE_DRAG_MIME = 'application/x-helpudoc-workspace-file-id';
+const WORKSPACE_FOLDER_DRAG_MIME = 'application/x-helpudoc-workspace-folder-path';
 
-const canAcceptWorkspaceFileDrop = (
+const canAcceptWorkspaceDrop = (
   event: React.DragEvent,
   draggedFileIdRef: React.RefObject<string | null>,
+  draggedFolderPathRef: React.RefObject<string | null>,
 ): boolean =>
   draggedFileIdRef.current != null
+  || draggedFolderPathRef.current != null
   || event.dataTransfer.types.includes(WORKSPACE_FILE_DRAG_MIME)
+  || event.dataTransfer.types.includes(WORKSPACE_FOLDER_DRAG_MIME)
   || event.dataTransfer.types.includes('text/plain');
 
 const readDroppedFileId = (
@@ -38,6 +43,12 @@ const readDroppedFileId = (
   const fromText = event.dataTransfer.getData('text/plain');
   return fromDataTransfer || draggedFileIdRef.current || fromText || null;
 };
+
+const readDroppedFolderPath = (
+  event: React.DragEvent,
+  draggedFolderPathRef: React.RefObject<string | null>,
+): string | null =>
+  event.dataTransfer.getData(WORKSPACE_FOLDER_DRAG_MIME) || draggedFolderPathRef.current || null;
 
 const getWorkspaceFolderPathFromPoint = (clientX: number, clientY: number): string | null => {
   const folderRows = Array.from(document.querySelectorAll<HTMLElement>('[data-workspace-folder-path]'));
@@ -89,6 +100,7 @@ interface WorkspaceFileTreeProps {
   onDeleteFile: (file: WorkspaceFile) => void;
   onDeleteFolder: (folder: WorkspaceFileTreeFolderNode) => void;
   onMoveFiles: (files: WorkspaceFile[], destinationFolderPath: string) => void;
+  onMoveFolder: (folder: WorkspaceFileTreeFolderNode, destinationFolderPath: string) => void;
 }
 
 const getFolderLabel = (node: WorkspaceFileTreeFolderNode) => {
@@ -123,6 +135,24 @@ const getDashboardArtifactForFolderPath = (
     .filter(([path]) => path.startsWith(`${normalized}/`))
     .map(([, artifact]) => artifact);
   return descendantArtifacts.length === 1 ? descendantArtifacts[0] : undefined;
+};
+
+const findFolderNode = (
+  node: WorkspaceFileTreeFolderNode,
+  folderPath: string,
+): WorkspaceFileTreeFolderNode | null => {
+  if (node.path === folderPath) {
+    return node;
+  }
+  for (const child of node.children) {
+    if (child.kind === 'folder') {
+      const found = findFolderNode(child, folderPath);
+      if (found) {
+        return found;
+      }
+    }
+  }
+  return null;
 };
 
 const SlidingFileName: React.FC<{ name: string; colorMode: 'light' | 'dark' }> = ({ name, colorMode }) => {
@@ -263,13 +293,19 @@ const TreeFileRow: React.FC<{
       }}
     >
       {!readOnly ? (
-        <input
-          type="checkbox"
-          checked={selectedFiles.has(fileId)}
-          onChange={() => onToggleFileSelection(fileId)}
+        <div
+          className="mt-0.5 shrink-0"
           onClick={(event) => event.stopPropagation()}
-          className="mt-1 shrink-0"
-        />
+          onMouseDown={(event) => event.stopPropagation()}
+        >
+          <CheckboxInput
+            label={`Select ${displayName}`}
+            isLabelHidden
+            size="sm"
+            value={selectedFiles.has(fileId)}
+            onChange={() => onToggleFileSelection(fileId)}
+          />
+        </div>
       ) : null}
       <div
         role="button"
@@ -368,7 +404,11 @@ const TreeFolderRow: React.FC<{
   onRenameFolder: (folder: WorkspaceFileTreeFolderNode) => void;
   onDeleteFolder: (folder: WorkspaceFileTreeFolderNode) => void;
   onDropFilesToFolder: (fileId: string, folderPath: string) => void;
+  onDropFolderToFolder: (folderPath: string, destinationFolderPath: string) => void;
   draggedFileIdRef: React.RefObject<string | null>;
+  draggedFolderPath: string | null;
+  draggedFolderPathRef: React.RefObject<string | null>;
+  setDraggedFolderPath: (path: string | null) => void;
   setDropTargetPath: (path: string | null) => void;
   dropTargetPath: string | null;
   children: React.ReactNode;
@@ -383,7 +423,11 @@ const TreeFolderRow: React.FC<{
   onRenameFolder,
   onDeleteFolder,
   onDropFilesToFolder,
+  onDropFolderToFolder,
   draggedFileIdRef,
+  draggedFolderPath,
+  draggedFolderPathRef,
+  setDraggedFolderPath,
   setDropTargetPath,
   dropTargetPath,
   children,
@@ -403,7 +447,7 @@ const TreeFolderRow: React.FC<{
   const dashboardBadge = dashboardArtifact?.status;
 
   const handleFolderDragOver = (event: React.DragEvent) => {
-    if (!canAcceptWorkspaceFileDrop(event, draggedFileIdRef)) {
+    if (!canAcceptWorkspaceDrop(event, draggedFileIdRef, draggedFolderPathRef)) {
       return;
     }
     event.preventDefault();
@@ -424,10 +468,22 @@ const TreeFolderRow: React.FC<{
     event.preventDefault();
     event.stopPropagation();
     const fileId = readDroppedFileId(event, draggedFileIdRef);
-    if (!fileId) {
+    const folderPath = readDroppedFolderPath(event, draggedFolderPathRef);
+    if (fileId) {
+      onDropFilesToFolder(fileId, node.path);
+    } else if (folderPath) {
+      onDropFolderToFolder(folderPath, node.path);
+    } else {
       return;
     }
-    onDropFilesToFolder(fileId, node.path);
+    setDropTargetPath(null);
+  };
+
+  const isDraggable = !readOnly && node.path !== '.system';
+  const isBeingDragged = draggedFolderPath === node.path;
+  const clearFolderDragState = () => {
+    draggedFolderPathRef.current = null;
+    setDraggedFolderPath(null);
     setDropTargetPath(null);
   };
 
@@ -440,7 +496,28 @@ const TreeFolderRow: React.FC<{
       onDrop={readOnly ? undefined : handleFolderDrop}
     >
       <div
-        className={`group flex items-center gap-2 rounded-lg px-2 py-1.5 transition-colors ${containerClassName}`}
+        className={`group flex items-center gap-2 rounded-lg px-2 py-1.5 transition-colors ${containerClassName} ${
+          isBeingDragged ? 'opacity-40' : ''
+        }`}
+        draggable={isDraggable}
+        onDragStart={(event) => {
+          if (!isDraggable) {
+            return;
+          }
+          draggedFolderPathRef.current = node.path;
+          setDraggedFolderPath(node.path);
+          event.dataTransfer.effectAllowed = 'move';
+          event.dataTransfer.setData(WORKSPACE_FOLDER_DRAG_MIME, node.path);
+        }}
+        onDragEnd={(event) => {
+          const folderPath = draggedFolderPathRef.current;
+          const destinationFolderPath = getWorkspaceDropPathFromPoint(event.clientX, event.clientY);
+          if (folderPath && destinationFolderPath != null) {
+            onDropFolderToFolder(folderPath, destinationFolderPath);
+            return;
+          }
+          clearFolderDragState();
+        }}
       >
         <button
           type="button"
@@ -549,8 +626,12 @@ const renderTreeNodes = (
     onDeleteFolder: (folder: WorkspaceFileTreeFolderNode) => void;
     onToggleFolder: (folderPath: string) => void;
     onDropFilesToFolder: (fileId: string, folderPath: string) => void;
+    onDropFolderToFolder: (folderPath: string, destinationFolderPath: string) => void;
     draggedFileId: string | null;
     draggedFileIdRef: React.RefObject<string | null>;
+    draggedFolderPath: string | null;
+    draggedFolderPathRef: React.RefObject<string | null>;
+    setDraggedFolderPath: (path: string | null) => void;
     setDraggedFileId: (fileId: string | null) => void;
     setDropTargetPath: (path: string | null) => void;
     dropTargetPath: string | null;
@@ -572,7 +653,11 @@ const renderTreeNodes = (
           onRenameFolder={options.onRenameFolder}
           onDeleteFolder={options.onDeleteFolder}
           onDropFilesToFolder={options.onDropFilesToFolder}
+          onDropFolderToFolder={options.onDropFolderToFolder}
           draggedFileIdRef={options.draggedFileIdRef}
+          draggedFolderPath={options.draggedFolderPath}
+          draggedFolderPathRef={options.draggedFolderPathRef}
+          setDraggedFolderPath={options.setDraggedFolderPath}
           setDropTargetPath={options.setDropTargetPath}
           dropTargetPath={options.dropTargetPath}
           colorMode={options.colorMode}
@@ -629,12 +714,15 @@ export default function WorkspaceFileTree({
   onDeleteFile,
   onDeleteFolder,
   onMoveFiles,
+  onMoveFolder,
 }: WorkspaceFileTreeProps) {
   const isDarkMode = colorMode === 'dark';
   const tree = useMemo(() => buildWorkspaceFileTree(files, explicitFolderPaths), [files, explicitFolderPaths]);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   const [draggedFileId, setDraggedFileId] = useState<string | null>(null);
   const draggedFileIdRef = useRef<string | null>(null);
+  const [draggedFolderPath, setDraggedFolderPath] = useState<string | null>(null);
+  const draggedFolderPathRef = useRef<string | null>(null);
   const [dropTargetPath, setDropTargetPath] = useState<string | null>(null);
 
   const fileById = useMemo(() => new Map(files.map((file) => [String(file.id), file])), [files]);
@@ -717,6 +805,25 @@ export default function WorkspaceFileTree({
     setDropTargetPath(null);
   };
 
+  const handleDropFolderToFolder = (folderPath: string, destinationFolderPath: string) => {
+    const folder = findFolderNode(tree, folderPath);
+    if (
+      !folder
+      || readOnly
+      || folderPath === destinationFolderPath
+      || destinationFolderPath.startsWith(`${folderPath}/`)
+    ) {
+      draggedFolderPathRef.current = null;
+      setDraggedFolderPath(null);
+      setDropTargetPath(null);
+      return;
+    }
+    onMoveFolder(folder, destinationFolderPath);
+    draggedFolderPathRef.current = null;
+    setDraggedFolderPath(null);
+    setDropTargetPath(null);
+  };
+
   const handleRootDrop = (event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault();
     const folderTarget = (event.target as HTMLElement | null)?.closest('[data-workspace-folder-path]');
@@ -724,12 +831,17 @@ export default function WorkspaceFileTree({
       return;
     }
     const fileId = readDroppedFileId(event, draggedFileIdRef);
-    if (!fileId) {
+    const folderPath = readDroppedFolderPath(event, draggedFolderPathRef);
+    if (!fileId && !folderPath) {
       return;
     }
     const dropPath = getWorkspaceDropPathFromPoint(event.clientX, event.clientY) ?? dropTargetPath;
     if (dropPath != null) {
-      handleDropFilesToFolder(fileId, dropPath);
+      if (fileId) {
+        handleDropFilesToFolder(fileId, dropPath);
+      } else if (folderPath) {
+        handleDropFolderToFolder(folderPath, dropPath);
+      }
     }
   };
 
@@ -740,7 +852,7 @@ export default function WorkspaceFileTree({
         draggedFileId ? (isDarkMode ? 'bg-sky-500/5' : 'bg-blue-50/30') : ''
       }`}
       onDragOver={readOnly ? undefined : (event) => {
-        if (!canAcceptWorkspaceFileDrop(event, draggedFileIdRef)) {
+        if (!canAcceptWorkspaceDrop(event, draggedFileIdRef, draggedFolderPathRef)) {
           return;
         }
         event.preventDefault();
@@ -770,8 +882,12 @@ export default function WorkspaceFileTree({
               onDeleteFolder,
               onToggleFolder: handleToggleFolder,
               onDropFilesToFolder: handleDropFilesToFolder,
+              onDropFolderToFolder: handleDropFolderToFolder,
               draggedFileId,
               draggedFileIdRef,
+              draggedFolderPath,
+              draggedFolderPathRef,
+              setDraggedFolderPath,
               setDraggedFileId,
               setDropTargetPath,
               dropTargetPath,

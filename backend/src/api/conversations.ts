@@ -2,7 +2,10 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { ConversationService } from '../services/conversationService';
 import { HttpError } from '../errors';
-import { getRunMeta } from '../services/agentRunService';
+import {
+  getRunConversationRecoverySnapshot,
+  getRunMeta,
+} from '../services/agentRunService';
 import type { ConversationMessageMetadata } from '@helpudoc/contracts/types';
 
 export default function conversationRoutes(conversationService: ConversationService) {
@@ -59,9 +62,57 @@ export default function conversationRoutes(conversationService: ConversationServ
   router.get('/conversations/:conversationId', async (req, res) => {
     try {
       const user = requireUserContext(req);
-      const conversation = await conversationService.getConversationWithMessages(user.userId, req.params.conversationId);
+      let conversation = await conversationService.getConversationWithMessages(user.userId, req.params.conversationId);
       if (!conversation) {
         return res.status(404).json({ error: 'Conversation not found' });
+      }
+
+      // Older workers could persist only a terminal summary even though the
+      // Redis run stream still held the complete assistant response. Repair
+      // those rows on read so a rebuild/reload restores the durable message.
+      let repairedMessage = false;
+      for (const message of conversation.messages) {
+        const metadata = message.metadata;
+        const runId = typeof metadata?.runId === 'string' ? metadata.runId : '';
+        if (
+          message.sender !== 'agent'
+          || metadata?.bodySource !== 'summary'
+          || !runId
+          || !message.turnId
+        ) {
+          continue;
+        }
+        const recovery = await getRunConversationRecoverySnapshot(runId).catch(() => null);
+        if (!recovery?.assistantText) {
+          continue;
+        }
+        await conversationService.appendMessage(
+          user.userId,
+          conversation.conversation.id,
+          'agent',
+          recovery.assistantText,
+          {
+            turnId: message.turnId,
+            replaceExisting: true,
+            metadata: {
+              ...metadata,
+              runId,
+              status: recovery.status,
+              bodySource: 'assistant',
+            },
+          },
+        );
+        repairedMessage = true;
+      }
+
+      if (repairedMessage) {
+        conversation = await conversationService.getConversationWithMessages(
+          user.userId,
+          req.params.conversationId,
+        );
+        if (!conversation) {
+          return res.status(404).json({ error: 'Conversation not found' });
+        }
       }
       res.json(conversation);
     } catch (error) {

@@ -42,4 +42,6 @@ spec:
               done
               mc mb -p local/"$S3_BUCKET_NAME" || true
               mc mb -p local/langfuse || true
-              mc anonymous set download local/"$S3_BUCKET_NAME"
+              # Workspace objects are served only through authenticated API
+              # endpoints. Never grant anonymous download access.
+              mc anonymous set none local/"$S3_BUCKET_NAME"

@@ -31,7 +31,6 @@ export default function ChatMessageList({
   messageBubbleMaxWidth,
   markdownComponents,
   expandedToolMessages,
-  expandedThinkingMessages,
   copiedMessageId,
   interruptInputByMessageId,
   interruptStructuredAnswersByMessageId,
@@ -48,7 +47,6 @@ export default function ChatMessageList({
   setInterruptInputByMessageId,
   setInterruptStructuredAnswersByMessageId,
   toggleInterruptSelectedChoice,
-  toggleThinkingVisibility,
   toggleToolActivityVisibility,
   handleCopyMessageText,
   handleRerunMessage,
@@ -66,7 +64,6 @@ export default function ChatMessageList({
   messageBubbleMaxWidth: string;
   markdownComponents: Components;
   expandedToolMessages: Set<ConversationMessage['id']>;
-  expandedThinkingMessages: Set<ConversationMessage['id']>;
   copiedMessageId: ConversationMessage['id'] | null;
   interruptInputByMessageId: Record<string, string>;
   interruptStructuredAnswersByMessageId: Record<string, InterruptAnswersByQuestionId>;
@@ -92,7 +89,6 @@ export default function ChatMessageList({
   setInterruptInputByMessageId: Dispatch<SetStateAction<Record<string, string>>>;
   setInterruptStructuredAnswersByMessageId: Dispatch<SetStateAction<Record<string, InterruptAnswersByQuestionId>>>;
   toggleInterruptSelectedChoice: (messageKey: string, choiceId: string, multiple: boolean) => void;
-  toggleThinkingVisibility: (messageId: ConversationMessage['id']) => void;
   toggleToolActivityVisibility: (messageId: ConversationMessage['id']) => void;
   handleCopyMessageText: (message: ConversationMessage) => void;
   handleRerunMessage: (messageId: ConversationMessage['id'], options?: RerunMessageOptions) => void;
@@ -165,7 +161,6 @@ export default function ChatMessageList({
               messageBubbleMaxWidth={messageBubbleMaxWidth}
               markdownComponents={markdownComponents}
               expandedToolMessages={expandedToolMessages}
-              expandedThinkingMessages={expandedThinkingMessages}
               copiedMessageId={copiedMessageId}
               interruptInputByMessageId={interruptInputByMessageId}
               interruptStructuredAnswersByMessageId={interruptStructuredAnswersByMessageId}
@@ -182,7 +177,6 @@ export default function ChatMessageList({
               setInterruptInputByMessageId={setInterruptInputByMessageId}
               setInterruptStructuredAnswersByMessageId={setInterruptStructuredAnswersByMessageId}
               toggleInterruptSelectedChoice={toggleInterruptSelectedChoice}
-              toggleThinkingVisibility={toggleThinkingVisibility}
               toggleToolActivityVisibility={toggleToolActivityVisibility}
               handleCopyMessageText={handleCopyMessageText}
               handleRerunMessage={handleRerunMessage}

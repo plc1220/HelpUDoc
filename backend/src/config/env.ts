@@ -82,7 +82,6 @@ const backendEnvSchema = z.object({
     region: z.string().min(1),
     accessKeyId: z.string().min(1),
     secretAccessKey: z.string().min(1),
-    publicBaseUrl: z.string().min(1),
   }),
   googleOauth: z.object({
     clientId: z.string().optional(),
@@ -118,10 +117,6 @@ export function parseBackendEnv(e: NodeJS.ProcessEnv = process.env): BackendEnv 
     || (!trimEnv(e, 'S3_FORCE_PATH_STYLE') && hasCustomEndpoint);
 
   const bucket = trimEnv(e, 'S3_BUCKET_NAME') || 'helpudoc';
-  const publicBase =
-    trimEnv(e, 'S3_PUBLIC_BASE_URL')
-    || `${endpoint.replace(/\/$/, '')}/${bucket}`;
-
   const raw: BackendEnv = {
     nodeEnv: trimEnv(e, 'NODE_ENV'),
     port,
@@ -158,7 +153,6 @@ export function parseBackendEnv(e: NodeJS.ProcessEnv = process.env): BackendEnv 
         trimEnv(e, 'AWS_SECRET_ACCESS_KEY')
         || trimEnv(e, 'MINIO_ROOT_PASSWORD')
         || 'minioadmin',
-      publicBaseUrl: publicBase,
     },
     googleOauth: {
       clientId: trimEnv(e, 'GOOGLE_OAUTH_CLIENT_ID'),

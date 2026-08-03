@@ -53,6 +53,8 @@ steps:
         'gcr.io/$PROJECT_ID/helpudoc-frontend:latest',
         '--build-arg',
         'VITE_GOOGLE_CLIENT_ID=$_VITE_GOOGLE_CLIENT_ID',
+        '--build-arg',
+        'VITE_AUTH_MODE=oidc',
         '-t',
         'gcr.io/$PROJECT_ID/helpudoc-frontend:$BUILD_ID',
         '.',

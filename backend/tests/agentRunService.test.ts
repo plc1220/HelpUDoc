@@ -24,6 +24,7 @@ import {
   resumeAgentRunWithResponse,
   withFrontendSlidesGateMetadata,
   mergeAssistantTextChunk,
+  reconstructAssistantTextFromStreamPayloads,
 } from '../src/services/agentRunService';
 import {
   artifactPathMatchesRequirement,
@@ -145,6 +146,19 @@ test('mergeAssistantTextChunk collapses cumulative final stream snapshots', () =
   assert.equal(mergeAssistantTextChunk(partial, final), final);
   assert.equal(mergeAssistantTextChunk(final, final), final);
   assert.equal(mergeAssistantTextChunk(final, '- trailing delta'), `${final}- trailing delta`);
+});
+
+test('restart recovery reconstructs assistant text from persisted stream payloads', () => {
+  assert.equal(
+    reconstructAssistantTextFromStreamPayloads([
+      { type: 'progress', label: 'Working' },
+      { type: 'token', role: 'assistant', content: 'The generated ' },
+      { type: 'token', role: 'tool', content: 'hidden tool output' },
+      { type: 'chunk', content: 'answer survives rebuilds.' },
+      { type: 'done', status: 'completed' },
+    ]),
+    'The generated answer survives rebuilds.',
+  );
 });
 
 const presentationContextInterrupt = {

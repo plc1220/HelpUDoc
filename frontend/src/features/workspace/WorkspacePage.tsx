@@ -9,12 +9,16 @@ import {
   type PaletteMode,
 } from '@mui/material';
 import { Button } from '@astryxdesign/core/Button';
+import { AlertDialog } from '@astryxdesign/core/AlertDialog';
 import { ButtonGroup } from '@astryxdesign/core/ButtonGroup';
+import { Card } from '@astryxdesign/core/Card';
 import { CodeBlock } from '@astryxdesign/core/CodeBlock';
 import { DropdownMenu } from '@astryxdesign/core/DropdownMenu';
+import { Icon as AstryxIcon } from '@astryxdesign/core/Icon';
 import { IconButton } from '@astryxdesign/core/IconButton';
+import { Item } from '@astryxdesign/core/Item';
 import { ToggleButton } from '@astryxdesign/core/ToggleButton';
-import { BookOpen, Check, CheckSquare, Copy, Edit, Trash, Plus, Minus, X, ChevronLeft, ChevronDown, RotateCcw, Printer, Download, Link as LinkIcon, Loader2, FolderPlus, FolderUp, Upload, Paperclip, Home, ArrowUp, Search, File as FileIcon, MessageSquare, Wrench, Plug, Sparkles, Info } from 'lucide-react';
+import { BookOpen, Check, CheckSquare, Copy, Edit, Trash, Plus, Minus, X, ChevronLeft, ChevronDown, RotateCcw, Printer, Download, Link as LinkIcon, Loader2, FolderPlus, FolderUp, Upload, Paperclip, Home, ArrowUp, Search, File as FileIcon, MessageSquare, Wrench, Plug, Sparkles } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
@@ -45,6 +49,7 @@ import {
   deleteFolder,
   deleteFile,
   getFileContent,
+  moveFolder,
   renameFolder,
   renameFile,
 } from '../../services/fileApi';
@@ -177,6 +182,16 @@ const LUMO_SPRITE_ROWS = 9;
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 type MobileWorkspaceSurface = 'chat' | 'canvas';
+
+type RerunMessageOptions = {
+  replacementText?: string;
+  skipConfirm?: boolean;
+};
+
+type PendingRerunConfirmation = {
+  messageId: ConversationMessage['id'];
+  options?: RerunMessageOptions;
+};
 
 const summarizeComposerAttachments = (attachments: ChatComposerAttachment[]): string => {
   if (!attachments.length) {
@@ -334,6 +349,91 @@ type CommandSuggestion = {
   insertCommand?: string;
   category?: string;
 };
+
+type RankedCommandSuggestion = {
+  suggestion: CommandSuggestion;
+  searchTerms: string[];
+  boost?: number;
+};
+
+const normalizeSlashSearchText = (value: string) => value
+  .toLowerCase()
+  .replace(/^\/+/, '')
+  .replace(/[_/.-]+/g, ' ')
+  .replace(/[^\p{L}\p{N}\s]+/gu, ' ')
+  .replace(/\s+/g, ' ')
+  .trim();
+
+const slashSearchEditDistance = (left: string, right: string): number => {
+  if (left === right) return 0;
+  if (!left.length) return right.length;
+  if (!right.length) return left.length;
+  const previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+  for (let leftIndex = 1; leftIndex <= left.length; leftIndex += 1) {
+    const current = [leftIndex];
+    for (let rightIndex = 1; rightIndex <= right.length; rightIndex += 1) {
+      current[rightIndex] = Math.min(
+        current[rightIndex - 1] + 1,
+        previous[rightIndex] + 1,
+        previous[rightIndex - 1] + (left[leftIndex - 1] === right[rightIndex - 1] ? 0 : 1),
+      );
+    }
+    previous.splice(0, previous.length, ...current);
+  }
+  return previous[right.length];
+};
+
+const scoreSlashSearchCandidate = (query: string, terms: string[]): number | null => {
+  const normalizedQuery = normalizeSlashSearchText(query);
+  if (!normalizedQuery) return 0;
+  const queryTokens = normalizedQuery.split(' ').filter(Boolean);
+  const normalizedTerms = terms.map(normalizeSlashSearchText).filter(Boolean);
+  const words = normalizedTerms.flatMap((term) => term.split(' ').filter(Boolean));
+  let score = 0;
+
+  for (const queryToken of queryTokens) {
+    let tokenScore = 0;
+    for (const word of words) {
+      if (word === queryToken) {
+        tokenScore = Math.max(tokenScore, 160);
+      } else if (word.startsWith(queryToken)) {
+        tokenScore = Math.max(tokenScore, 130 - Math.min(30, word.length - queryToken.length));
+      } else if (queryToken.length >= 2 && word.includes(queryToken)) {
+        tokenScore = Math.max(tokenScore, 85);
+      } else if (queryToken.length >= 3) {
+        const distance = slashSearchEditDistance(queryToken, word);
+        const allowedDistance = Math.max(1, Math.floor(queryToken.length * 0.3));
+        if (distance <= allowedDistance) {
+          tokenScore = Math.max(tokenScore, 65 - distance * 10);
+        }
+      }
+    }
+    if (!tokenScore) return null;
+    score += tokenScore;
+  }
+
+  for (const term of normalizedTerms) {
+    if (term === normalizedQuery) score += 500;
+    else if (term.startsWith(normalizedQuery)) score += 300;
+    else if (normalizedQuery.length >= 2 && term.includes(normalizedQuery)) score += 180;
+  }
+  return score;
+};
+
+const rankSlashSearchCandidates = (
+  query: string,
+  candidates: RankedCommandSuggestion[],
+  limit = 16,
+): CommandSuggestion[] => candidates
+  .map((candidate, index) => ({
+    ...candidate,
+    index,
+    score: scoreSlashSearchCandidate(query, candidate.searchTerms),
+  }))
+  .filter((candidate): candidate is typeof candidate & { score: number } => candidate.score !== null)
+  .sort((left, right) => (right.score + (right.boost || 0)) - (left.score + (left.boost || 0)) || left.index - right.index)
+  .slice(0, limit)
+  .map(({ suggestion }) => suggestion);
 
 const getCommandCategory = (command: CommandSuggestion) => {
   if (command.category) {
@@ -882,7 +982,7 @@ export default function WorkspacePage() {
   const [commandCursorPosition, setCommandCursorPosition] = useState<number | null>(null);
   const [commandSelectedIndex, setCommandSelectedIndex] = useState(0);
   const [expandedToolMessages, setExpandedToolMessages] = useState<Set<ConversationMessage['id']>>(new Set());
-  const [expandedThinkingMessages, setExpandedThinkingMessages] = useState<Set<ConversationMessage['id']>>(new Set());
+  const [pendingRerunConfirmation, setPendingRerunConfirmation] = useState<PendingRerunConfirmation | null>(null);
 
   const filteredWorkspaces = useMemo(() => {
     const query = workspaceSearchQuery.trim().toLowerCase();
@@ -1049,13 +1149,7 @@ export default function WorkspacePage() {
     () => (showSystemFiles ? folderPaths : folderPaths.filter((path) => !isSystemFile({ id: `folder:${path}`, name: path }))),
     [folderPaths, showSystemFiles],
   );
-  const visibleFileIds = useMemo(() => new Set(visibleFiles.map((file) => file.id)), [visibleFiles]);
-  const allFilesSelected = useMemo(() => {
-    if (!visibleFiles.length) {
-      return false;
-    }
-    return visibleFiles.every((file) => selectedFiles.has(file.id));
-  }, [visibleFiles, selectedFiles]);
+  const visibleFileIds = useMemo(() => new Set(visibleFiles.map((file) => String(file.id))), [visibleFiles]);
   const hiddenFileCount = systemFiles.length;
   const persistActiveRuns = useCallback((runs: Record<string, ActiveRunInfo>) => {
     activeRunsRef.current = runs;
@@ -1310,25 +1404,45 @@ export default function WorkspacePage() {
     }
     const rawQuery = commandQuery.toLowerCase();
     const normalized = rawQuery.trim();
+    const humanizeEntityName = (value: string) => {
+      const trimmed = value.trim();
+      if (!trimmed || /\s/.test(trimmed) || !/[-_/]/.test(trimmed)) return trimmed;
+      return trimmed
+        .split(/[-_/]+/)
+        .filter(Boolean)
+        .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+        .join(' ');
+    };
+    const toSkillSuggestion = (skill: SkillDefinition): CommandSuggestion => ({
+      id: `skill:${skill.id}`,
+      command: humanizeEntityName(skill.name || skill.id),
+      insertCommand: `/skill ${skill.id}`,
+      description: skill.description
+        ? `/skill ${skill.id} · ${skill.description}`
+        : `Use the ${skill.name || skill.id} skill`,
+      category: 'Skills',
+    });
+    const toMcpSuggestion = (server: { name: string; description?: string }): CommandSuggestion => ({
+      id: `mcp:${server.name}`,
+      command: server.name,
+      insertCommand: `/mcp ${server.name}`,
+      description: server.description
+        ? `/mcp ${server.name} · ${server.description}`
+        : `Prefer tools from ${server.name}`,
+      category: 'Data Sources',
+    });
+    const toPluginSuggestion = (plugin: PluginDefinition): CommandSuggestion => ({
+      id: `plugin:${plugin.id}`,
+      command: plugin.displayName,
+      insertCommand: `/skill ${plugin.defaultSkillId}`,
+      description: plugin.description || `Use the ${plugin.displayName} plugin`,
+      category: 'Plugins',
+    });
     if (!normalized) {
       const rootCommands = SLASH_COMMANDS.map((command) => ({ ...command }));
-      const featuredPlugins = availablePlugins.slice(0, 4).map((plugin) => ({
-        id: `plugin:${plugin.id}`,
-        command: plugin.displayName,
-        insertCommand: `/skill ${plugin.defaultSkillId}`,
-        description: plugin.description || `Use the ${plugin.displayName} plugin`,
-        category: 'Plugins',
-      }));
-      const featuredSkills = availableSkills.slice(0, 5).map((skill) => ({
-        id: `skill:${skill.id}`,
-        command: `/skill ${skill.id}`,
-        description: skill.description || `Use the ${skill.id} skill`,
-      }));
-      const featuredMcpServers = availableMcpServers.slice(0, 3).map((server) => ({
-        id: `mcp:${server.name}`,
-        command: `/mcp ${server.name}`,
-        description: server.description || `Prefer tools from ${server.name}`,
-      }));
+      const featuredPlugins = availablePlugins.slice(0, 4).map(toPluginSuggestion);
+      const featuredSkills = availableSkills.slice(0, 5).map(toSkillSuggestion);
+      const featuredMcpServers = availableMcpServers.slice(0, 3).map(toMcpSuggestion);
       return [...rootCommands, ...featuredPlugins, ...featuredSkills, ...featuredMcpServers];
     }
     const pluginMatch = rawQuery.match(/^plugin(?:\s+(.*))?$/);
@@ -1340,13 +1454,7 @@ export default function WorkspacePage() {
           || plugin.displayName.toLowerCase().includes(filter)
           || (plugin.description || '').toLowerCase().includes(filter))
         .slice(0, 8)
-        .map((plugin) => ({
-          id: `plugin:${plugin.id}`,
-          command: plugin.displayName,
-          insertCommand: `/skill ${plugin.defaultSkillId}`,
-          description: plugin.description || `Use the ${plugin.displayName} plugin`,
-          category: 'Plugins',
-        }));
+        .map(toPluginSuggestion);
     }
     const skillMatch = rawQuery.match(/^skill(?:\s+(.*))?$/);
     if (skillMatch) {
@@ -1354,11 +1462,7 @@ export default function WorkspacePage() {
       return availableSkills
         .filter((skill) => !filter || skill.id.toLowerCase().includes(filter) || (skill.name || '').toLowerCase().includes(filter))
         .slice(0, 8)
-        .map((skill) => ({
-          id: `skill:${skill.id}`,
-          command: `/skill ${skill.id}`,
-          description: skill.description || `Use the ${skill.id} skill`,
-        }));
+        .map(toSkillSuggestion);
     }
     const mcpMatch = rawQuery.match(/^mcp(?:\s+(.*))?$/);
     if (mcpMatch) {
@@ -1366,51 +1470,43 @@ export default function WorkspacePage() {
       return availableMcpServers
         .filter((server) => !filter || server.name.toLowerCase().includes(filter))
         .slice(0, 8)
-        .map((server) => ({
-          id: `mcp:${server.name}`,
-          command: `/mcp ${server.name}`,
-          description: server.description || `Prefer tools from ${server.name}`,
-        }));
+        .map(toMcpSuggestion);
     }
-    const matches = SLASH_COMMANDS
-      .filter((command) => {
-        const commandValue = command.command.slice(1).toLowerCase();
-        return commandValue.startsWith(normalized) || command.command.toLowerCase().includes(normalized);
-      })
-      .map((command) => ({ ...command }));
-    if (normalized.startsWith('skill')) {
-      return [
-        ...matches,
-        ...availableSkills.slice(0, 8).map((skill) => ({
-          id: `skill:${skill.id}`,
-          command: `/skill ${skill.id}`,
-          description: skill.description || `Use the ${skill.id} skill`,
-        })),
-      ];
-    }
-    if (normalized.startsWith('plugin') || normalized.startsWith('data')) {
-      return [
-        ...matches,
-        ...availablePlugins.slice(0, 8).map((plugin) => ({
-          id: `plugin:${plugin.id}`,
-          command: plugin.displayName,
-          insertCommand: `/skill ${plugin.defaultSkillId}`,
-          description: plugin.description || `Use the ${plugin.displayName} plugin`,
-          category: 'Plugins',
-        })),
-      ];
-    }
-    if (normalized.startsWith('mcp')) {
-      return [
-        ...matches,
-        ...availableMcpServers.slice(0, 8).map((server) => ({
-          id: `mcp:${server.name}`,
-          command: `/mcp ${server.name}`,
-          description: server.description || `Prefer tools from ${server.name}`,
-        })),
-      ];
-    }
-    return matches;
+    const candidates: RankedCommandSuggestion[] = [
+      ...SLASH_COMMANDS.map((command) => ({
+        suggestion: { ...command },
+        searchTerms: [command.command, command.description, command.id, 'command automation'],
+      })),
+      ...availablePlugins.map((plugin) => ({
+        suggestion: toPluginSuggestion(plugin),
+        boost: 30,
+        searchTerms: [
+          plugin.id,
+          plugin.displayName,
+          plugin.description || '',
+          plugin.defaultSkillId,
+          'plugin',
+        ],
+      })),
+      ...availableSkills.map((skill) => ({
+        suggestion: toSkillSuggestion(skill),
+        boost: 60,
+        searchTerms: [
+          skill.id,
+          skill.name,
+          skill.description || '',
+          skill.pluginId || '',
+          skill.pluginName || '',
+          'skill workflow',
+        ],
+      })),
+      ...availableMcpServers.map((server) => ({
+        suggestion: toMcpSuggestion(server),
+        boost: 30,
+        searchTerms: [server.name, server.description || '', 'mcp data source connection'],
+      })),
+    ];
+    return rankSlashSearchCandidates(normalized, candidates);
   }, [availableMcpServers, availablePlugins, availableSkills, commandQuery, isCommandOpen]);
 
   const landingCommandGroups = useMemo(() => {
@@ -1514,18 +1610,6 @@ export default function WorkspacePage() {
 
   const toggleToolActivityVisibility = useCallback((messageId: ConversationMessage['id']) => {
     setExpandedToolMessages((prev) => {
-      const next = new Set(prev);
-      if (next.has(messageId)) {
-        next.delete(messageId);
-      } else {
-        next.add(messageId);
-      }
-      return next;
-    });
-  }, []);
-
-  const toggleThinkingVisibility = useCallback((messageId: ConversationMessage['id']) => {
-    setExpandedThinkingMessages((prev) => {
       const next = new Set(prev);
       if (next.has(messageId)) {
         next.delete(messageId);
@@ -1796,6 +1880,53 @@ export default function WorkspacePage() {
     }
   };
 
+  const handleMoveFolder = async (
+    folder: { path: string; name: string; fileCount: number },
+    destinationFolderPath: string,
+  ) => {
+    if (!selectedWorkspace || !folder.path) {
+      return;
+    }
+
+    const sourceFolder = normalizeWorkspaceFolderPath(folder.path);
+    const destinationParent = normalizeWorkspaceFolderPath(destinationFolderPath);
+    const destinationFolder = destinationParent
+      ? `${destinationParent}/${folder.name}`
+      : folder.name;
+    if (
+      !sourceFolder
+      || destinationFolder === sourceFolder
+      || destinationFolder.startsWith(`${sourceFolder}/`)
+    ) {
+      return;
+    }
+
+    try {
+      const moved = await moveFolder(selectedWorkspace.id, sourceFolder, destinationParent);
+      markPrivateWorkspaceChanged(selectedWorkspace.id);
+      const updatedFiles = Array.isArray(moved?.files) ? moved.files as WorkspaceFile[] : [];
+      const updatedFilesById = new Map(updatedFiles.map((file) => [String(file.id), file]));
+      const moveFilePath = (file: WorkspaceFile): WorkspaceFile => {
+        const serverFile = updatedFilesById.get(String(file.id));
+        if (serverFile) {
+          return { ...file, ...serverFile, content: serverFile.content ?? file.content };
+        }
+        const nextName = replaceFolderPathPrefix(file.name || '', sourceFolder, destinationFolder);
+        return nextName === file.name ? file : { ...file, name: nextName };
+      };
+
+      setFiles((prev) => prev.map(moveFilePath));
+      setSelectedFile((prev) => (prev ? moveFilePath(prev) : prev));
+      setSelectedFileDetails((prev) => (prev ? moveFilePath(prev) : prev));
+      setFolderPaths((prev) => Array.from(new Set(
+        prev.map((path) => replaceFolderPathPrefix(path, sourceFolder, destinationFolder)),
+      )).sort((left, right) => left.localeCompare(right, undefined, { numeric: true, sensitivity: 'base' })));
+      setSelectedDashboardPath((prev) => (prev ? replaceFolderPathPrefix(prev, sourceFolder, destinationFolder) : prev));
+    } catch (error) {
+      console.error('Failed to move folder:', error);
+    }
+  };
+
   const handleDeleteSingleFile = async (file: WorkspaceFile) => {
     const removeFromState = () => {
       setFiles((prev) => prev.filter((item) => item.id !== file.id));
@@ -2044,7 +2175,6 @@ export default function WorkspacePage() {
 
   useEffect(() => {
     setExpandedToolMessages(new Set());
-    setExpandedThinkingMessages(new Set());
   }, [activeConversationId]);
 
   useEffect(() => {
@@ -2308,8 +2438,11 @@ export default function WorkspacePage() {
       const after = chatMessage.slice(commandCursorPosition);
       const executableCommand = command.insertCommand || command.command;
       const shouldKeepCommandMenuOpen = executableCommand === '/skill' || executableCommand === '/mcp';
-      const insertedCommand = shouldKeepCommandMenuOpen ? `${executableCommand} ` : executableCommand;
-      const needsSpace = after.length === 0 || after.startsWith(' ') || shouldKeepCommandMenuOpen ? '' : ' ';
+      const isResolvedTarget = /^\/(?:skill|mcp)\s+\S+$/i.test(executableCommand);
+      const insertedCommand = shouldKeepCommandMenuOpen || isResolvedTarget
+        ? `${executableCommand} `
+        : executableCommand;
+      const needsSpace = after.length === 0 || after.startsWith(' ') || shouldKeepCommandMenuOpen || isResolvedTarget ? '' : ' ';
       const nextValue = `${before}${insertedCommand}${needsSpace}${after}`;
       setChatMessage(nextValue);
       requestAnimationFrame(() => {
@@ -5737,7 +5870,7 @@ export default function WorkspacePage() {
 
   const handleRerunMessage = async (
     messageId: ConversationMessage['id'],
-    options?: { replacementText?: string; skipConfirm?: boolean },
+    options?: RerunMessageOptions,
   ) => {
     if (!selectedWorkspace || !isUsableWorkspaceId(selectedWorkspace.id) || !activeConversationId) {
       addLocalSystemMessage('Please select a workspace and conversation before rerunning messages.');
@@ -5789,12 +5922,8 @@ export default function WorkspacePage() {
       }
     }
     if (!options?.skipConfirm) {
-      const confirmed = window.confirm(
-        'Redo from this message? This will remove all messages below it.'
-      );
-      if (!confirmed) {
-        return;
-      }
+      setPendingRerunConfirmation({ messageId, options });
+      return;
     }
 
     const targetMessageId = Number(targetMessage.id);
@@ -5848,12 +5977,6 @@ export default function WorkspacePage() {
       removedIds.forEach((id) => agentMessageBufferRef.current.delete(id));
       agentChunkBufferRef.current.delete(conversationId);
       setExpandedToolMessages((prev) => {
-        if (!prev.size) return prev;
-        const next = new Set(prev);
-        removedIds.forEach((id) => next.delete(id));
-        return next;
-      });
-      setExpandedThinkingMessages((prev) => {
         if (!prev.size) return prev;
         const next = new Set(prev);
         removedIds.forEach((id) => next.delete(id));
@@ -6492,15 +6615,12 @@ export default function WorkspacePage() {
   };
 
   const handleSelectAllFiles = () => {
-    if (!visibleFiles.length) {
-      setSelectedFiles(new Set());
-      return;
-    }
-    if (allFilesSelected) {
-      setSelectedFiles(new Set());
-      return;
-    }
-    setSelectedFiles(new Set(visibleFiles.map((file) => file.id)));
+    const visibleFileIds = visibleFiles.map((file) => String(file.id));
+    setSelectedFiles((currentSelection) => {
+      const areAllVisibleFilesSelected = visibleFileIds.length > 0
+        && visibleFileIds.every((fileId) => currentSelection.has(fileId));
+      return areAllVisibleFilesSelected ? new Set() : new Set(visibleFileIds);
+    });
   };
 
   const handleCreateFolder = async () => {
@@ -7238,7 +7358,6 @@ export default function WorkspacePage() {
             messageBubbleMaxWidth="min(100%, 40rem)"
             markdownComponents={markdownComponents}
             expandedToolMessages={expandedToolMessages}
-            expandedThinkingMessages={expandedThinkingMessages}
             copiedMessageId={copiedMessageId}
             interruptInputByMessageId={interruptInputByMessageId}
             interruptStructuredAnswersByMessageId={interruptStructuredAnswersByMessageId}
@@ -7255,7 +7374,6 @@ export default function WorkspacePage() {
             setInterruptInputByMessageId={setInterruptInputByMessageId}
             setInterruptStructuredAnswersByMessageId={setInterruptStructuredAnswersByMessageId}
             toggleInterruptSelectedChoice={toggleInterruptSelectedChoice}
-            toggleThinkingVisibility={toggleThinkingVisibility}
             toggleToolActivityVisibility={toggleToolActivityVisibility}
             handleCopyMessageText={handleCopyMessageText}
             handleRerunMessage={handleRerunMessage}
@@ -7684,56 +7802,41 @@ export default function WorkspacePage() {
                       {(isMentionOpen || isCommandOpen) && (
                         <div className="absolute left-6 top-20 z-30 w-[30rem] max-w-[calc(100%-3rem)]">
                           {isMentionOpen ? (
-                            <div className={`max-h-64 overflow-y-auto rounded-2xl border p-1 text-sm shadow-2xl backdrop-blur-md ${
-                              isDarkMode ? 'border-slate-700/80 bg-slate-900/95' : 'border-slate-200 bg-white/95'
-                            }`}>
+                            <Card padding={1} className="landing-composer-suggestion-surface max-h-64 overflow-y-auto">
                               {mentionSuggestions.length ? (
                                 mentionSuggestions.map((suggestion, index) => (
-                                  <button
+                                  <div
                                     key={suggestion.id}
-                                    type="button"
-                                    onMouseDown={(event) => {
-                                      event.preventDefault();
-                                      handleSelectMention(suggestion);
-                                    }}
-                                    className={`flex w-full items-center rounded-xl px-3 py-2 text-left transition ${
-                                      index === mentionSelectedIndex
-                                        ? isDarkMode
-                                          ? 'bg-sky-500/15 text-sky-200'
-                                          : 'bg-sky-50 text-sky-700'
-                                        : isDarkMode
-                                          ? 'text-slate-200 hover:bg-slate-800'
-                                          : 'text-slate-700 hover:bg-slate-50'
-                                    }`}
+                                    onMouseDown={(event) => event.preventDefault()}
                                   >
-                                    {suggestion.kind === 'knowledge' ? (
-                                      <BookOpen size={16} className={`mr-2 shrink-0 ${isDarkMode ? 'text-emerald-400' : 'text-emerald-600'}`} />
-                                    ) : (
-                                      <FileIcon size={16} className={`mr-2 shrink-0 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`} />
-                                    )}
-                                    <span className="min-w-0 flex-1 truncate">{suggestion.name}</span>
-                                    <span className={`ml-3 shrink-0 text-[10px] uppercase ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>
-                                      {suggestion.detail || suggestion.kind}
-                                    </span>
-                                  </button>
+                                    <Item
+                                      density="compact"
+                                      label={suggestion.name}
+                                      description={suggestion.detail || (suggestion.kind === 'knowledge' ? 'Knowledge' : 'File')}
+                                      startContent={(
+                                        <AstryxIcon
+                                          icon={suggestion.kind === 'knowledge' ? BookOpen : FileIcon}
+                                          size="sm"
+                                        />
+                                      )}
+                                      isHighlighted={index === mentionSelectedIndex}
+                                      onClick={() => handleSelectMention(suggestion)}
+                                    />
+                                  </div>
                                 ))
                               ) : (
-                                <div className={`px-3 py-2 text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                                <div className="landing-composer-suggestion-empty">
                                   No matching files or knowledge
                                 </div>
                               )}
-                            </div>
+                            </Card>
                           ) : null}
                           {isCommandOpen ? (
-                            <div className={`max-h-72 overflow-y-auto rounded-2xl border p-1 text-sm shadow-2xl backdrop-blur-md ${
-                              isDarkMode ? 'border-slate-700/80 bg-slate-900/95' : 'border-slate-200 bg-white/95'
-                            }`}>
+                            <Card padding={1} className="landing-composer-suggestion-surface max-h-72 overflow-y-auto">
                               {landingCommandGroups.length ? (
                                 landingCommandGroups.map((group) => (
                                   <div key={group.category} className="py-0.5">
-                                    <div className={`px-2 py-1 text-[10px] font-semibold uppercase tracking-normal ${
-                                      isDarkMode ? 'text-slate-500' : 'text-slate-400'
-                                    }`}>
+                                    <div className="landing-composer-suggestion-group-label">
                                       {group.category}
                                     </div>
                                     {group.commands.map((command) => {
@@ -7748,80 +7851,50 @@ export default function WorkspacePage() {
                                           ? Plug
                                           : Sparkles;
                                       return (
-                                        <button
+                                        <div
                                           key={command.id}
-                                          type="button"
-                                          onMouseDown={(event) => {
-                                            event.preventDefault();
-                                            handleSelectCommand(command);
-                                          }}
-                                          className={`group flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left transition ${
-                                            isSelectedCommand
-                                              ? isDarkMode
-                                                ? 'bg-sky-500/15 text-sky-200'
-                                                : 'bg-sky-50 text-sky-700'
-                                              : isDarkMode
-                                                ? 'text-slate-200 hover:bg-slate-800'
-                                                : 'text-slate-700 hover:bg-slate-50'
-                                          }`}
+                                          onMouseDown={(event) => event.preventDefault()}
                                         >
-                                          <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${
-                                            isDarkMode ? 'bg-slate-800 text-slate-300' : 'bg-slate-100 text-slate-500'
-                                          }`}>
-                                            <Icon size={15} />
-                                          </span>
-                                          <span className="min-w-0 flex-1 truncate font-semibold">
-                                            {command.command}
-                                          </span>
-                                          <span
-                                            title={command.description}
-                                            className={`shrink-0 opacity-0 transition group-hover:opacity-100 group-focus-visible:opacity-100 ${
-                                              isDarkMode ? 'text-slate-500' : 'text-slate-400'
-                                            }`}
-                                          >
-                                            <Info size={14} />
-                                          </span>
-                                          {isSelectedCommand ? (
-                                            <span className={`hidden shrink-0 items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-medium sm:flex ${
-                                              isDarkMode ? 'border-slate-700 text-slate-400' : 'border-slate-200 text-slate-500'
-                                            }`}>
-                                              Enter
-                                              <span className={isDarkMode ? 'text-slate-600' : 'text-slate-300'}>/</span>
-                                              Tab
-                                            </span>
-                                          ) : null}
-                                        </button>
+                                          <Item
+                                            density="compact"
+                                            label={command.command}
+                                            description={command.description}
+                                            startContent={<AstryxIcon icon={Icon} size="sm" />}
+                                            endContent={isSelectedCommand ? (
+                                              <span className="landing-composer-key-hint">Enter / Tab</span>
+                                            ) : undefined}
+                                            isHighlighted={isSelectedCommand}
+                                            onClick={() => handleSelectCommand(command)}
+                                          />
+                                        </div>
                                       );
                                     })}
                                   </div>
                                 ))
                               ) : (
-                                <div className={`px-3 py-2 text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                                <div className="landing-composer-suggestion-empty">
                                   No matching commands, skills, or MCP servers
                                 </div>
                               )}
-                            </div>
+                            </Card>
                           ) : null}
                         </div>
                       )}
-                      <div className={`flex flex-wrap items-center justify-between gap-3 border-t px-4 py-3 ${
+                      <div className={`landing-composer-footer flex flex-wrap items-center justify-between gap-3 border-t px-4 py-3 ${
                         isDarkMode ? 'border-slate-800' : 'border-slate-100'
                       }`}>
-                        <div className="flex min-w-0 flex-wrap items-center gap-2">
+                        <div className="landing-composer-toolbar flex min-w-0 flex-1 flex-wrap items-center gap-2">
+                          <div className="landing-composer-quick-actions flex items-center gap-1">
                           <div className="relative">
-                            <button
-                              type="button"
+                            <IconButton
+                              label="Attach files"
+                              tooltip="Attach files"
+                              variant="ghost"
+                              size="md"
+                              icon={<Paperclip size={18} />}
                               onClick={() => setIsLandingAttachmentMenuOpen((prev) => !prev)}
-                              disabled={isDriveImporting}
-                              className={`inline-flex h-10 w-10 items-center justify-center rounded-full transition disabled:opacity-50 ${
-                                isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-500 hover:bg-slate-100'
-                              }`}
-                              title="Attach files"
-                              aria-label="Attach files"
-                              aria-expanded={isLandingAttachmentMenuOpen}
-                            >
-                              <Paperclip size={18} />
-                            </button>
+                              isDisabled={isDriveImporting}
+                            />
                             {isLandingAttachmentMenuOpen ? (
                               <div className={`absolute bottom-full left-0 z-40 mb-2 w-56 rounded-2xl border p-1.5 text-sm shadow-2xl backdrop-blur-md ${
                                 isDarkMode ? 'border-slate-700/80 bg-slate-900/95 text-slate-100' : 'border-slate-200 bg-white/95 text-slate-800'
@@ -7862,36 +7935,34 @@ export default function WorkspacePage() {
                               </div>
                             ) : null}
                           </div>
-                          <Button
-                            label="@ Context"
-                            tooltip="Add files or knowledge with @"
+                          <IconButton
+                            label="Add context"
+                            tooltip="Add context (@)"
                             variant="ghost"
-                            size="sm"
+                            size="md"
                             icon={<span className="lumo-composer-at">@</span>}
                             onClick={handleInsertKnowledgeTrigger}
                             isDisabled={isDriveImporting}
                           />
-                          <Button
-                            label="/ Commands"
-                            tooltip="Browse commands with /"
+                          <IconButton
+                            label="Commands"
+                            tooltip="Browse commands (/)"
                             variant="ghost"
-                            size="sm"
+                            size="md"
                             icon={<span className="lumo-composer-slash">/</span>}
                             onClick={handleInsertSlashTrigger}
                             isDisabled={isDriveImporting}
                           />
-                          <div ref={landingWorkspacePickerRef} className="relative">
+                          </div>
+                          <div className="landing-composer-routing flex min-w-0 items-center">
+                          <div ref={landingWorkspacePickerRef} className="landing-composer-workspace-menu relative">
                             <button
                               type="button"
                               onClick={() => {
                                 setIsLandingWorkspacePickerOpen((value) => !value);
                                 setLandingWorkspaceQuery('');
                               }}
-                              className={`flex h-10 w-[18rem] max-w-[44vw] items-center justify-between gap-2 rounded-xl border px-3 text-left text-sm font-medium outline-none transition ${
-                                isDarkMode
-                                  ? 'border-slate-700 bg-slate-900 text-slate-100 hover:border-slate-600 focus:border-sky-400 focus:ring-2 focus:ring-sky-400/20'
-                                  : 'border-slate-200 bg-slate-50 text-slate-700 hover:border-slate-300 focus:border-blue-400 focus:ring-2 focus:ring-blue-100'
-                              }`}
+                              className="landing-composer-workspace-trigger flex items-center justify-between gap-2 px-3 text-left text-sm font-medium"
                               aria-label="Select workspace"
                               aria-expanded={isLandingWorkspacePickerOpen}
                             >
@@ -7952,14 +8023,17 @@ export default function WorkspacePage() {
                               </div>
                             ) : null}
                           </div>
+                          <span className="landing-composer-routing-divider" aria-hidden="true" />
                           <DropdownMenu
+                            className="landing-composer-mode-menu"
                             placement="above"
                             menuWidth={220}
                             button={{
                               label: landingPersonas.find((persona) => persona.name === normalizePersonaName(activeConversationPersona || selectedPersona || DEFAULT_PERSONA_NAME))?.displayName
                                 || normalizePersonaName(activeConversationPersona || selectedPersona || DEFAULT_PERSONA_NAME),
                               variant: 'ghost',
-                              size: 'sm',
+                              size: 'md',
+                              className: 'landing-composer-mode-trigger',
                               tooltip: 'Select agent mode',
                             }}
                             items={landingPersonas.map((persona) => ({
@@ -7970,21 +8044,17 @@ export default function WorkspacePage() {
                               onClick: () => handleModeChange({ target: { value: persona.name } } as ChangeEvent<HTMLSelectElement>),
                             }))}
                           />
+                          </div>
                         </div>
-                        <button
-                          type="button"
+                        <IconButton
+                          label="Send message"
+                          tooltip="Send message"
+                          variant="primary"
+                          size="lg"
+                          icon={<ArrowUp size={20} />}
                           onClick={() => void handleLandingSendMessage()}
-                          disabled={isDriveImporting || (!chatMessage.trim() && !chatAttachments.length)}
-                          className={`inline-flex h-12 w-12 items-center justify-center rounded-full transition disabled:cursor-not-allowed disabled:opacity-50 ${
-                            isDarkMode
-                              ? 'bg-slate-100 text-slate-950 hover:bg-white'
-                              : 'bg-slate-900 text-white hover:bg-slate-700'
-                          }`}
-                          title="Send message"
-                          aria-label="Send message"
-                        >
-                          <ArrowUp size={22} />
-                        </button>
+                          isDisabled={isDriveImporting || (!chatMessage.trim() && !chatAttachments.length)}
+                        />
                       </div>
                     </div>
                     <input
@@ -8246,9 +8316,9 @@ export default function WorkspacePage() {
                           isDisabled={!selectedWorkspace}
                         />
                         <IconButton
-                          label={allFilesSelected ? 'Clear file selection' : 'Select all files'}
+                          label="Select all files"
                           icon={<CheckSquare size={16} />}
-                          variant={allFilesSelected ? 'primary' : 'ghost'}
+                          variant="ghost"
                           size="sm"
                           onClick={handleSelectAllFiles}
                           isDisabled={!selectedWorkspace?.canEdit || visibleFiles.length === 0}
@@ -8312,6 +8382,7 @@ export default function WorkspacePage() {
                         onDeleteFile={handleDeleteSingleFile}
                         onDeleteFolder={handleDeleteFolder}
                         onMoveFiles={handleMoveFiles}
+                        onMoveFolder={handleMoveFolder}
                       />
                     </div>
                   </div>
@@ -8498,7 +8569,6 @@ export default function WorkspacePage() {
               messageBubbleMaxWidth={messageBubbleMaxWidth}
               markdownComponents={markdownComponents}
               expandedToolMessages={expandedToolMessages}
-              expandedThinkingMessages={expandedThinkingMessages}
               copiedMessageId={copiedMessageId}
               interruptInputByMessageId={interruptInputByMessageId}
               interruptStructuredAnswersByMessageId={interruptStructuredAnswersByMessageId}
@@ -8542,7 +8612,6 @@ export default function WorkspacePage() {
               onCloseHistory={() => setIsHistoryOpen(false)}
               onSelectConversation={handleSelectConversationFromHistory}
               onDeleteConversation={handleDeleteConversation}
-              onToggleThinkingVisibility={toggleThinkingVisibility}
               onToggleToolActivityVisibility={toggleToolActivityVisibility}
               onCopyMessageText={handleCopyMessageText}
               onRerunMessage={handleRerunMessage}
@@ -8732,6 +8801,29 @@ export default function WorkspacePage() {
           </div>
         </div>
       )}
+      <AlertDialog
+        isOpen={pendingRerunConfirmation !== null}
+        onOpenChange={(isOpen) => {
+          if (!isOpen) {
+            setPendingRerunConfirmation(null);
+          }
+        }}
+        title="Redo from this message?"
+        description="This will remove every message below it and run the request again."
+        cancelLabel="Cancel"
+        actionLabel="Redo"
+        actionVariant="destructive"
+        onAction={() => {
+          const pending = pendingRerunConfirmation;
+          setPendingRerunConfirmation(null);
+          if (pending) {
+            void handleRerunMessage(pending.messageId, {
+              ...pending.options,
+              skipConfirm: true,
+            });
+          }
+        }}
+      />
       <DrivePickerModal
         isOpen={isDrivePickerOpen}
         workspaceId={selectedWorkspace?.id}

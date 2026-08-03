@@ -246,24 +246,17 @@ def build_get_image_url_tool(workspace_state: WorkspaceState) -> Tool:
             if not matching_file:
                 return f"Error: No file found with name '{file_name}' in workspace metadata."
 
-            public_url = matching_file.get("publicUrl")
-            if public_url:
-                return (
-                    f"File: {matching_file['name']}\n"
-                    f"Public URL: {public_url}\n"
-                    f"MIME Type: {matching_file.get('mimeType', 'unknown')}"
-                )
-            if matching_file.get("storageType") == "local":
-                return (
-                    f"File '{matching_file['name']}' is stored locally and does not have a public URL.\n"
-                    "The file needs to be uploaded to MinIO/S3 to get a public URL."
-                )
-            return f"Error: File '{matching_file['name']}' does not have a public URL available."
+            return (
+                f"File: {matching_file['name']}\n"
+                f"MIME Type: {matching_file.get('mimeType', 'unknown')}\n\n"
+                "Workspace files are private and do not have public URLs. "
+                "Use the workspace file path with an authorized workspace tool instead."
+            )
 
         except Exception as exc:
             logger.exception("get_image_url failed for %r", file_name)
             return f"Error retrieving image URL: {exc}"
 
     get_image_url.name = "get_image_url"
-    get_image_url.description = "Retrieve the public URL for an image file stored in MinIO/S3."
+    get_image_url.description = "Describe a private workspace image file and its authorized workspace path."
     return get_image_url

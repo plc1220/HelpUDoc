@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 
-test('does not generate localhost:9000 public URLs (no mixed content)', async ({ page, baseURL }) => {
+test('keeps workspace media private without localhost object URLs', async ({ page, baseURL }) => {
   const resolvedBaseUrl = baseURL || 'https://lc-demo.com';
 
   const badRequestUrls: string[] = [];
@@ -41,7 +41,7 @@ test('does not generate localhost:9000 public URLs (no mixed content)', async ({
     provider: 'local',
   });
 
-  // Create a disposable workspace so we can validate the backend-generated publicUrl.
+  // Create a disposable workspace so we can validate the private-media path.
   const workspaceName = `e2e-${Date.now()}`;
   const createWs = await page.request.post('/api/workspaces', { data: { name: workspaceName } });
   expect(createWs.status(), await createWs.text()).toBe(201);
@@ -67,11 +67,10 @@ test('does not generate localhost:9000 public URLs (no mixed content)', async ({
 
     expect(upload.status(), await upload.text()).toBe(201);
     const createdFile = await upload.json();
-    const publicUrl: string | undefined = createdFile?.publicUrl || createdFile?.public_url;
-    expect(publicUrl, `Missing publicUrl in response: ${JSON.stringify(createdFile)}`).toBeTruthy();
+    expect(createdFile?.publicUrl || createdFile?.public_url).toBeFalsy();
 
-    expect(publicUrl).not.toContain('localhost:9000');
-    expect(publicUrl).not.toMatch(/^http:\/\//);
+    const directObjectRequest = await page.request.get(`/helpudoc/${workspaceId}/${fileName}`);
+    expect(directObjectRequest.status()).toBe(403);
 
     await page.goto(resolvedBaseUrl, { waitUntil: 'domcontentloaded' });
 

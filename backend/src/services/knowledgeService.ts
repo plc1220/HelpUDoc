@@ -101,6 +101,7 @@ export class KnowledgeService {
 
   async listGlobal() {
     const rows = await this.baseQuery()
+      .where('knowledge_sources.isGlobal', true)
       .orderBy('knowledge_sources.updatedAt', 'desc');
     return rows.map((row) => this.mapRow(row));
   }
@@ -108,6 +109,7 @@ export class KnowledgeService {
   async getGlobalById(id: number) {
     const row = await this.baseQuery()
       .where('knowledge_sources.id', id)
+      .andWhere('knowledge_sources.isGlobal', true)
       .first();
     if (!row) {
       throw new NotFoundError('Knowledge source not found');
@@ -692,7 +694,8 @@ export class KnowledgeService {
           id: row.filePrimaryId as number,
           name: row.fileName as string,
           mimeType: row.fileMimeType as string | null,
-          publicUrl: row.filePublicUrl as string | null,
+          // Workspace objects are private and are never exposed as direct URLs.
+          publicUrl: null,
           storageType: row.fileStorageType as string | null,
           path: row.filePath as string | null,
         }

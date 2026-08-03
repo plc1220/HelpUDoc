@@ -15,19 +15,11 @@ import { getBackendEnv } from '../config/env';
 export class S3Service {
   private readonly client: S3Client;
   private readonly bucketName: string;
-  private readonly publicBaseUrl: string;
-  private readonly region: string;
-  private readonly resolvedEndpoint: string;
-  private readonly hasCustomEndpoint: boolean;
   private bucketReadyPromise: Promise<void> | null = null;
 
   constructor() {
     const s3 = getBackendEnv().s3;
     this.bucketName = s3.bucketName;
-    this.publicBaseUrl = s3.publicBaseUrl;
-    this.region = s3.region;
-    this.resolvedEndpoint = s3.endpoint;
-    this.hasCustomEndpoint = s3.hasCustomEndpoint;
     this.client = new S3Client({
       credentials: {
         accessKeyId: s3.accessKeyId,
@@ -84,7 +76,6 @@ export class S3Service {
       ...result,
       Key: params.Key,
       Bucket: params.Bucket,
-      publicUrl: this.getPublicUrl(params.Key),
     };
   }
 
@@ -152,15 +143,4 @@ export class S3Service {
     } while (continuationToken);
   }
 
-  getPublicUrl(key: string): string {
-    if (this.publicBaseUrl) {
-      return `${this.publicBaseUrl.replace(/\/$/, '')}/${key}`;
-    }
-    if (this.hasCustomEndpoint) {
-      const endpoint = new URL(this.resolvedEndpoint);
-      const port = endpoint.port ? `:${endpoint.port}` : '';
-      return `${endpoint.protocol}//${endpoint.hostname}${port}/${this.bucketName}/${key}`;
-    }
-    return `https://${this.bucketName}.s3.${this.region}.amazonaws.com/${key}`;
-  }
 }

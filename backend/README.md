@@ -65,7 +65,6 @@ The collaboration server starts alongside the API and listens on `ws://localhost
 | `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | MinIO or S3 credentials. |
 | `S3_ENDPOINT` | Object storage endpoint. |
 | `S3_BUCKET_NAME` | Storage bucket for workspace artifacts. |
-| `S3_PUBLIC_BASE_URL` | Browser-safe base URL for stored assets. |
 | `WORKSPACE_ROOT` | Local/shared workspace storage directory. |
 | `SKILLS_ROOT` | Skill catalog root managed by settings flows. |
 | `AGENT_URL` | Base URL of the Python agent service. |

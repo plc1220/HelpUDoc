@@ -1478,9 +1478,8 @@ const FileRenderer: React.FC<FileRendererProps> = ({
           }`}
         >
           <p>
-            Inline {officeKind.toLowerCase()} preview needs a public{' '}
-            <strong className="font-semibold">https</strong> URL to your file. Download it and open it
-            locally, or use a workspace with public file URLs.
+            Inline {officeKind.toLowerCase()} preview is unavailable for private workspace files. Download it
+            and open it locally.
           </p>
           {fileContent.trim() ? (
             <button

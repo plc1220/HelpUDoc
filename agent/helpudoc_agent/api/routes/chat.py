@@ -748,6 +748,7 @@ def register_chat_routes(
             self._has_assistant_text = False
             self._interrupt_emitted = False
             self._resume_interrupt_consumed = False
+            self._pending_interrupt_payload: Dict[str, Any] | None = None
             self._native_dashboard_builder_calls = 0
             self._native_dashboard_builder_run_keys: Set[str] = set()
             self._v3_text_blocks: Dict[Tuple[str, str], str] = {}
@@ -770,6 +771,18 @@ def register_chat_routes(
         @property
         def resume_interrupt_consumed(self) -> bool:
             return self._resume_interrupt_consumed
+
+        def queue_pending_interrupt(self, payload: Dict[str, Any]) -> None:
+            # Callback events can arrive before LangGraph has committed the
+            # interrupt checkpoint. Keep the payload local until the graph
+            # event stream has drained; exposing it earlier lets the backend
+            # close the HTTP stream before the checkpoint is resumable.
+            self._pending_interrupt_payload = payload
+
+        def take_pending_interrupt(self) -> Dict[str, Any] | None:
+            payload = self._pending_interrupt_payload
+            self._pending_interrupt_payload = None
+            return payload
 
         @property
         def native_dashboard_builder_calls(self) -> int:
@@ -921,15 +934,7 @@ def register_chat_routes(
                 interrupt_payload = extract_interrupt_payload_from_tool_text(text)
                 if interrupt_payload:
                     self._tool_meta.pop(run_key, None)
-                    await _emit_progress(
-                        self,
-                        "awaiting_input",
-                        "Preparing clarification question",
-                        detail=name,
-                        tool_name=name,
-                        status="pending",
-                    )
-                    await self._emit(interrupt_payload)
+                    self.queue_pending_interrupt(interrupt_payload)
                     return
                 # The interrupted tool returned a normal value, which proves the
                 # resume payload was applied. Stale checkpoint interrupt events
@@ -1497,16 +1502,8 @@ def register_chat_routes(
             if name in _INTERRUPT_TOOL_NAMES:
                 interrupt_payload = extract_interrupt_payload_from_tool_text(text)
                 if interrupt_payload:
-                    await _emit_progress(
-                        handler,
-                        "awaiting_input",
-                        "Preparing clarification question",
-                        detail=name,
-                        tool_name=name,
-                        status="pending",
-                    )
-                    await handler._emit(interrupt_payload)
-                    return True
+                    handler.queue_pending_interrupt(interrupt_payload)
+                    return False
                 handler._resume_interrupt_consumed = True
             tool_failed = _is_terminal_tool_failure(name, text)
             await _emit_progress(
@@ -1553,17 +1550,8 @@ def register_chat_routes(
             if name in _INTERRUPT_TOOL_NAMES:
                 interrupt_payload = extract_interrupt_payload_from_tool_text(text)
                 if interrupt_payload:
-                    handler._interrupt_emitted = True
-                    await _emit_progress(
-                        handler,
-                        "awaiting_input",
-                        "Preparing clarification question",
-                        detail=name,
-                        tool_name=name,
-                        status="pending",
-                    )
-                    await handler._emit(interrupt_payload)
-                    return True
+                    handler.queue_pending_interrupt(interrupt_payload)
+                    return False
             await _emit_progress(
                 handler,
                 "using_tool",
@@ -2014,6 +2002,20 @@ def register_chat_routes(
                         states_to_inspect = [checkpoint_state]
                         while states_to_inspect:
                             current_state = states_to_inspect.pop()
+                            for pending_interrupt in getattr(current_state, "interrupts", ()) or ():
+                                pending_id = str(getattr(pending_interrupt, "id", "") or "").strip()
+                                if pending_id:
+                                    pending_interrupt_ids.add(pending_id)
+                                if pending_id == normalized_interrupt_id:
+                                    nested_config = getattr(current_state, "config", None)
+                                    if isinstance(nested_config, dict):
+                                        resume_stream_config = {
+                                            **nested_config,
+                                            "callbacks": stream_config.get("callbacks"),
+                                            "metadata": stream_config.get("metadata"),
+                                            "tags": stream_config.get("tags"),
+                                            "run_name": stream_config.get("run_name"),
+                                        }
                             for task_state in getattr(current_state, "tasks", ()) or ():
                                 for pending_interrupt in getattr(task_state, "interrupts", ()) or ():
                                     pending_id = str(getattr(pending_interrupt, "id", "") or "").strip()
@@ -2036,11 +2038,19 @@ def register_chat_routes(
                         logger.debug("Unable to inspect pending interrupt ids", exc_info=True)
                     logger.warning(
                         "Dispatching plan decision resume "
-                        "(has_interrupt_id=%s pending_count=%s id_matches=%s)",
+                        "(thread_id=%s has_interrupt_id=%s pending_count=%s id_matches=%s)",
+                        stream_config.get("configurable", {}).get("thread_id"),
                         bool(normalized_interrupt_id),
                         len(pending_interrupt_ids),
                         normalized_interrupt_id in pending_interrupt_ids,
                     )
+                    if normalized_interrupt_id and normalized_interrupt_id not in pending_interrupt_ids:
+                        approval_resume_contract_error = (
+                            "The submitted plan decision could not be matched to a pending approval "
+                            "checkpoint. The approval was not consumed; start a fresh run or request "
+                            "the plan again."
+                        )
+                        return
                     if dashboard_approval_resume or dashboard_edit_resume:
                         context = runtime.workspace_state.context
                         decision_label = "approve" if dashboard_approval_resume else "edit"
@@ -2170,6 +2180,9 @@ def register_chat_routes(
                                 )
                         if handler.resume_interrupt_consumed:
                             defer_checkpoint_interrupt = False
+                        callback_interrupt_payload = handler.take_pending_interrupt()
+                        if callback_interrupt_payload and not defer_checkpoint_interrupt:
+                            pending_interrupt_payload = callback_interrupt_payload
                         if interrupt_payload and not defer_checkpoint_interrupt:
                             # Drain the graph event stream before exposing the
                             # form. Closing the generator on the first interrupt
@@ -2187,7 +2200,32 @@ def register_chat_routes(
                             return stream_result, True
                         if handler.resume_interrupt_consumed:
                             defer_checkpoint_interrupt = False
+                    trailing_callback_interrupt = handler.take_pending_interrupt()
+                    if trailing_callback_interrupt and not defer_checkpoint_interrupt:
+                        pending_interrupt_payload = trailing_callback_interrupt
                     if pending_interrupt_payload is not None:
+                        try:
+                            checkpoint_state = await agent.aget_state(stream_config, subgraphs=True)
+                            checkpoint_interrupt_ids = {
+                                str(getattr(item, "id", "") or "").strip()
+                                for item in (getattr(checkpoint_state, "interrupts", ()) or ())
+                                if str(getattr(item, "id", "") or "").strip()
+                            }
+                            for task_state in getattr(checkpoint_state, "tasks", ()) or ():
+                                checkpoint_interrupt_ids.update(
+                                    str(getattr(item, "id", "") or "").strip()
+                                    for item in (getattr(task_state, "interrupts", ()) or ())
+                                    if str(getattr(item, "id", "") or "").strip()
+                                )
+                            logger.info(
+                                "Prepared interrupt checkpoint "
+                                "(thread_id=%s pending_count=%s payload_id=%s)",
+                                stream_config.get("configurable", {}).get("thread_id"),
+                                len(checkpoint_interrupt_ids),
+                                str(pending_interrupt_payload.get("interruptId") or "").strip(),
+                            )
+                        except Exception:
+                            logger.warning("Unable to inspect prepared interrupt checkpoint", exc_info=True)
                         if expected_dashboard_title:
                             proposed_title = _interrupt_plan_title(pending_interrupt_payload)
                             normalized_expected = " ".join(expected_dashboard_title.casefold().split())
@@ -2217,6 +2255,23 @@ def register_chat_routes(
                 )
                 if interrupted:
                     return
+
+                if (
+                    resume_decisions is not None
+                    and not (dashboard_approval_resume or dashboard_edit_resume)
+                ):
+                    if not handler.resume_interrupt_consumed:
+                        approval_resume_contract_error = (
+                            "The plan decision was accepted but not consumed by the pending approval "
+                            "checkpoint. No approved work was executed."
+                        )
+                        return
+                    await handler._emit(
+                        {
+                            "type": "interaction_consumed",
+                            "interruptId": str(resume_interrupt_id or "").strip() or None,
+                        }
+                    )
 
                 if resume_value is not None:
                     if not handler.resume_interrupt_consumed:

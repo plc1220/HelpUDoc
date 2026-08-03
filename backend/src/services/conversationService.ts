@@ -45,6 +45,24 @@ const metadataString = (metadata: unknown, key: string): string => {
   return typeof value === 'string' ? value : '';
 };
 
+const shouldPreserveRunOwnedAssistantBody = (
+  existingText: string,
+  incomingText: string,
+  existingMetadata?: Record<string, unknown> | null,
+  incomingMetadata?: Record<string, unknown> | null,
+): boolean => {
+  const existingRunId = metadataString(existingMetadata, 'runId');
+  const incomingRunId = metadataString(incomingMetadata, 'runId');
+  return Boolean(
+    existingText
+    && incomingText
+    && existingRunId
+    && existingRunId === incomingRunId
+    && metadataString(existingMetadata, 'bodySource') === 'assistant'
+    && metadataString(incomingMetadata, 'bodySource') === 'summary'
+  );
+};
+
 export const mergeRunOwnedAgentText = (
   existingText: string,
   incomingText: string,
@@ -56,6 +74,12 @@ export const mergeRunOwnedAgentText = (
   if (!existingRunId || existingRunId !== incomingRunId || !existingText || !incomingText) {
     return incomingText;
   }
+  // Recovery may observe a terminal Redis event while the normal worker is
+  // still settling. Its synthetic summary must never replace assistant text
+  // already persisted for the same run.
+  if (shouldPreserveRunOwnedAssistantBody(existingText, incomingText, existingMetadata, incomingMetadata)) {
+    return existingText;
+  }
   if (incomingText.startsWith(existingText)) {
     return incomingText;
   }
@@ -63,6 +87,33 @@ export const mergeRunOwnedAgentText = (
     return existingText;
   }
   return incomingText;
+};
+
+export const mergeRunOwnedAgentMetadata = (
+  existingText: string,
+  incomingText: string,
+  existingMetadata?: Record<string, unknown> | null,
+  incomingMetadata?: Record<string, unknown> | null,
+): Record<string, unknown> | null | undefined => {
+  const existingRunId = metadataString(existingMetadata, 'runId');
+  const incomingRunId = metadataString(incomingMetadata, 'runId');
+  if (!existingRunId || existingRunId !== incomingRunId || !incomingMetadata) {
+    return incomingMetadata;
+  }
+  const mergedMetadata: Record<string, unknown> = {
+    ...incomingMetadata,
+  };
+  // Recovery snapshots may be intentionally sparse. Preserve durable activity
+  // captured by the live worker unless recovery reconstructed a replacement.
+  for (const key of ['thinkingText', 'toolEvents', 'progressEvents', 'workflowActions', 'runPolicy']) {
+    if (mergedMetadata[key] === undefined && existingMetadata?.[key] !== undefined) {
+      mergedMetadata[key] = existingMetadata[key];
+    }
+  }
+  if (shouldPreserveRunOwnedAssistantBody(existingText, incomingText, existingMetadata, incomingMetadata)) {
+    mergedMetadata.bodySource = 'assistant';
+  }
+  return mergedMetadata;
 };
 
 export class ConversationService {
@@ -176,13 +227,16 @@ export class ConversationService {
         const nextText = sender === 'agent'
           ? mergeRunOwnedAgentText(existing.text || '', text, existing.metadata, options.metadata)
           : text;
+        const nextMetadata = sender === 'agent'
+          ? mergeRunOwnedAgentMetadata(existing.text || '', text, existing.metadata, options.metadata)
+          : options.metadata;
         const updatePayload: Record<string, unknown> = {
           text: nextText,
           updatedAt: timestamp,
           authorId: sender === 'user' ? userId : existing.authorId,
         };
-        if (options.metadata !== undefined) {
-          updatePayload.metadata = options.metadata;
+        if (nextMetadata !== undefined) {
+          updatePayload.metadata = nextMetadata;
         }
         const [updated] = await this.db('conversation_messages')
           .where({ id: existing.id })
