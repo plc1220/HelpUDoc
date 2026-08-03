@@ -933,6 +933,92 @@ body {
   width: 100%;
 }
 
+.lumo-agent-activity {
+  width: min(100%, 48rem);
+}
+
+.lumo-agent-activity-trigger {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: var(--spacing-2);
+  text-align: left;
+}
+
+.lumo-agent-activity-status {
+  display: inline-flex;
+  width: var(--spacing-5);
+  height: var(--spacing-5);
+  flex: 0 0 var(--spacing-5);
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-full);
+}
+
+.lumo-agent-activity-status--complete {
+  color: var(--color-text-green);
+}
+
+.lumo-agent-activity-status--running {
+  color: var(--color-text-blue);
+}
+
+.lumo-agent-activity-status--running svg {
+  animation: lumo-spin 1s linear infinite;
+}
+
+.lumo-agent-activity-status--error {
+  color: var(--color-text-red);
+}
+
+.lumo-agent-activity-title {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-primary);
+  font-size: var(--text-supporting-size);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--text-supporting-leading);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lumo-agent-activity-meta,
+.lumo-agent-activity-item-meta {
+  flex-shrink: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: 1.6;
+  white-space: nowrap;
+}
+
+.lumo-agent-activity-section {
+  overflow: hidden;
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-container);
+  background: var(--color-background-surface);
+}
+
+.lumo-agent-activity-section-label {
+  padding: var(--spacing-2) var(--spacing-3) var(--spacing-1);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  line-height: 1.6;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.lumo-agent-activity-list {
+  padding: 0 var(--spacing-1) var(--spacing-1);
+}
+
+@media (max-width: 640px) {
+  .lumo-agent-activity-meta {
+    display: none;
+  }
+}
+
 .lumo-user-content {
   color: var(--color-text-primary);
 }
@@ -1099,6 +1185,44 @@ body {
   outline-color: var(--color-border-blue) !important;
 }
 
+.landing-composer-suggestion-surface {
+  width: 100%;
+  background: color-mix(in srgb, var(--color-background-popover) 94%, transparent) !important;
+  box-shadow: var(--shadow-high);
+  backdrop-filter: blur(20px) saturate(150%);
+  transform-origin: top left;
+  animation: lumo-materialize var(--duration-fast) var(--ease-standard) both;
+}
+
+.landing-composer-suggestion-group-label {
+  padding: var(--spacing-2) var(--spacing-3) var(--spacing-1);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  line-height: 1.6;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.landing-composer-suggestion-empty {
+  padding: var(--spacing-4);
+  color: var(--color-text-secondary);
+  font-size: var(--text-supporting-size);
+  line-height: var(--text-supporting-leading);
+  text-align: center;
+}
+
+.landing-composer-key-hint {
+  padding: var(--spacing-0-5) var(--spacing-1-5);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-element);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.6;
+  white-space: nowrap;
+}
+
 @media (max-width: 760px) {
   .landing-composer-toolbar {
     width: 100%;
@@ -1200,6 +1324,25 @@ body {
   letter-spacing: normal !important;
   white-space: normal !important;
   text-transform: none !important;
+}
+
+/* Mermaid is part of the markdown flow, not a separate application panel. */
+.helpudoc-markdown .lumo-mermaid.markdown-document-mermaid {
+  margin-block: 1.5rem;
+  padding: 0.25rem 0 0.5rem;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.helpudoc-markdown .lumo-mermaid.markdown-document-mermaid:focus {
+  outline: none;
+}
+
+.helpudoc-markdown .lumo-mermaid.markdown-document-mermaid:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--color-accent) 55%, transparent);
+  outline-offset: 4px;
 }
 
 .lumo-login-page {
@@ -1357,6 +1500,12 @@ body {
   }
 }
 
+@keyframes lumo-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 @media (max-width: 840px) {
   .lumo-login-page {
     grid-template-columns: minmax(0, 1fr);
@@ -1407,11 +1556,13 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .lumo-composer-suggestions {
+  .lumo-composer-suggestions,
+  .landing-composer-suggestion-surface {
     animation: none;
   }
 
   .lumo-message-action-button,
+  .lumo-agent-activity *,
   .lumo-chat-composer * {
     scroll-behavior: auto !important;
     transition-duration: 1ms !important;
@@ -1422,6 +1573,7 @@ body {
 
 @media (prefers-reduced-transparency: reduce) {
   .lumo-composer-suggestions,
+  .landing-composer-suggestion-surface,
   .lumo-login-card {
     background: var(--color-background-popover);
     backdrop-filter: none;
@@ -1434,6 +1586,7 @@ body {
 
 @media (prefers-contrast: more) {
   .lumo-composer-suggestions,
+  .landing-composer-suggestion-surface,
   .lumo-login-card,
   .lumo-mermaid {
     border-color: var(--color-text-primary);

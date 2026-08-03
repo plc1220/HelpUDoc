@@ -31,4 +31,6 @@ export {
   validateInterrupt,
   withFrontendSlidesGateMetadata,
   mergeAssistantTextChunk,
+  reconstructAssistantTextFromStreamPayloads,
+  getRunConversationRecoverySnapshot,
 } from './agent-runs/lifecycle';

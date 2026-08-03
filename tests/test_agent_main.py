@@ -321,6 +321,56 @@ class V3ToolStreamingAgent:
         }
 
 
+class V3ToolErrorInterruptStreamingAgent:
+    async def astream_events(self, *_args, **_kwargs):
+        yield {
+            "event": "on_tool_start",
+            "name": "request_plan_approval",
+            "run_id": "approval-tool-run",
+            "data": {"input": {"plan_title": "Checkpoint-safe plan"}},
+        }
+        yield {
+            "event": "on_tool_error",
+            "name": "request_plan_approval",
+            "run_id": "approval-tool-run",
+            "data": {
+                "output": (
+                    "Interrupt(value={'kind': 'approval', 'title': 'Review plan', "
+                    "'description': 'Approve before execution.', 'step_index': 0, "
+                    "'step_count': 1}, id='approval-interrupt-123')"
+                )
+            },
+        }
+
+
+class ResumeCheckpointAgent:
+    def __init__(self, pending_interrupt_id: str):
+        self.pending_interrupt_id = pending_interrupt_id
+        self.stream_inputs = []
+
+    async def aget_state(self, config, subgraphs=False):
+        return SimpleNamespace(
+            interrupts=(SimpleNamespace(id=self.pending_interrupt_id),),
+            tasks=(),
+            config=config,
+        )
+
+    async def astream_events(self, agent_input, *_args, **_kwargs):
+        self.stream_inputs.append(agent_input)
+        yield {
+            "event": "on_tool_start",
+            "name": "request_plan_approval",
+            "run_id": "approval-resume-tool-run",
+            "data": {"input": {}},
+        }
+        yield {
+            "event": "on_tool_end",
+            "name": "request_plan_approval",
+            "run_id": "approval-resume-tool-run",
+            "data": {"output": "PLAN_APPROVAL_RECORDED\nPlan decision has been applied."},
+        }
+
+
 class AsyncInvokeAgent:
     def __init__(self, reply):
         self._reply = reply
@@ -1199,6 +1249,81 @@ def test_chat_stream_reads_v3_content_block_tool_call_interrupt(client_with_stub
     assert interrupt["displayPayload"]["skill"] == "frontend-slides"
     assert token_text == ""
     assert messages[-1]["type"] == "done"
+    assert source_tracker.updated_workspaces == [runtime.workspace_state]
+
+
+def test_chat_stream_defers_tool_error_interrupt_until_event_stream_drains(client_with_stubs):
+    client, registry, source_tracker = client_with_stubs
+    runtime = DummyRuntime("workspace-v3-tool-error-interrupt", V3ToolErrorInterruptStreamingAgent())
+    registry.set_runtime("research", "workspace-v3-tool-error-interrupt", runtime)
+
+    with client.stream(
+        "POST",
+        "/agents/research/workspace/workspace-v3-tool-error-interrupt/chat/stream",
+        json={"message": "Draft a plan", "history": []},
+    ) as response:
+        assert response.status_code == 200
+        messages = _collect_stream_payloads(response)
+
+    interrupts = [item for item in messages if item.get("type") == "interrupt"]
+    assert len(interrupts) == 1
+    assert interrupts[0]["kind"] == "approval"
+    assert interrupts[0]["interruptId"] == "approval-interrupt-123"
+    assert messages[-1] == {"type": "done", "status": "interrupted"}
+    assert source_tracker.updated_workspaces == [runtime.workspace_state]
+
+
+def test_chat_stream_resume_consumes_matching_top_level_interrupt(client_with_stubs):
+    client, registry, source_tracker = client_with_stubs
+    agent = ResumeCheckpointAgent("approval-interrupt-123")
+    runtime = DummyRuntime("workspace-resume-approval", agent)
+    registry.set_runtime("research", "workspace-resume-approval", runtime)
+
+    with client.stream(
+        "POST",
+        "/agents/research/workspace/workspace-resume-approval/chat/stream/resume",
+        json={
+            "decisions": [{"type": "approve"}],
+            "interruptId": "approval-interrupt-123",
+            "originalPrompt": "Execute the approved plan",
+        },
+    ) as response:
+        assert response.status_code == 200
+        messages = _collect_stream_payloads(response)
+
+    consumed = [item for item in messages if item.get("type") == "interaction_consumed"]
+    assert consumed == [{"type": "interaction_consumed", "interruptId": "approval-interrupt-123"}]
+    assert len(agent.stream_inputs) == 1
+    assert isinstance(agent.stream_inputs[0], Command)
+    assert agent.stream_inputs[0].resume == {
+        "approval-interrupt-123": {"decisions": [{"type": "approve"}]}
+    }
+    assert messages[-1] == {"type": "done", "status": "completed"}
+    assert source_tracker.updated_workspaces == [runtime.workspace_state]
+
+
+def test_chat_stream_resume_fails_closed_when_interrupt_is_missing(client_with_stubs):
+    client, registry, source_tracker = client_with_stubs
+    agent = ResumeCheckpointAgent("different-interrupt")
+    runtime = DummyRuntime("workspace-resume-missing-approval", agent)
+    registry.set_runtime("research", "workspace-resume-missing-approval", runtime)
+
+    with client.stream(
+        "POST",
+        "/agents/research/workspace/workspace-resume-missing-approval/chat/stream/resume",
+        json={
+            "decisions": [{"type": "approve"}],
+            "interruptId": "approval-interrupt-123",
+            "originalPrompt": "Execute the approved plan",
+        },
+    ) as response:
+        assert response.status_code == 200
+        messages = _collect_stream_payloads(response)
+
+    contract_error = next(item for item in messages if item.get("type") == "contract_error")
+    assert "could not be matched to a pending approval checkpoint" in contract_error["message"]
+    assert agent.stream_inputs == []
+    assert messages[-1] == {"type": "done", "status": "failed"}
     assert source_tracker.updated_workspaces == [runtime.workspace_state]
 
 

@@ -1,10 +1,13 @@
-import { CalendarClock, Check, CheckCircle2, Copy, FilePenLine, ImageIcon, Loader2, RotateCcw } from 'lucide-react';
+import { CalendarClock, Check, CheckCircle2, CircleAlert, Copy, FilePenLine, ImageIcon, Loader2, RotateCcw } from 'lucide-react';
 import {
   ChatMessage as AstryxChatMessage,
   ChatMessageBubble as AstryxChatMessageBubble,
   ChatMessageMetadata,
   ChatToolCalls,
 } from '@astryxdesign/core/Chat';
+import { Collapsible } from '@astryxdesign/core/Collapsible';
+import { Icon as AstryxIcon } from '@astryxdesign/core/Icon';
+import { Item } from '@astryxdesign/core/Item';
 import type { Components } from 'react-markdown';
 import { useCallback, useEffect, useMemo, useState, type Dispatch, type KeyboardEvent, type ReactNode, type SetStateAction } from 'react';
 import { InteractionSurfaceRenderer } from '../../interactions/InteractionSurfaceRenderer';
@@ -28,6 +31,7 @@ import {
   getFriendlyToolName,
   isBenignToolNoise,
   isOperationalThinkingText,
+  normalizeUserFacingSummary,
   stripOperationalThinkingBlocks,
 } from '../../utils/toolActivitySummary';
 import { buildApiUrl } from '../../services/apiClient';
@@ -75,7 +79,14 @@ type RerunMessageOptions = {
 const IMAGE_EXTENSION_PATTERN = /\.(apng|avif|gif|jpe?g|png|svg|webp)$/i;
 const EMPTY_SELECTED_CHOICE_IDS: string[] = [];
 const EMPTY_STRUCTURED_ANSWERS: InterruptAnswersByQuestionId = {};
-
+const WORKFLOW_ACTION_LABELS: Record<string, string> = {
+  request_user_interaction: 'Requested your input',
+  generate_artifact: 'Generated an artifact',
+  revise_artifact: 'Revised an artifact',
+  call_tool: 'Used a tool',
+  complete: 'Completed the workflow',
+  fail: 'Workflow reported an issue',
+};
 const stripAttachmentMarker = (text: string) => text.replace(ATTACHMENT_MARKER_PATTERN, '').trimEnd();
 
 const parseAttachmentNames = (text: string): Array<{ name: string; isDrive: boolean }> => {
@@ -630,6 +641,7 @@ export default function ChatMessageBubble({
   const [now, setNow] = useState(() => Date.now());
   const messageMetadata = (message.metadata as ConversationMessageMetadata | null | undefined) || undefined;
   const progressEvents = useMemo(() => messageMetadata?.progressEvents || [], [messageMetadata?.progressEvents]);
+  const workflowActions = useMemo(() => messageMetadata?.workflowActions || [], [messageMetadata?.workflowActions]);
   const effectiveProgressEvents = useMemo(() => {
     const lastIndex = progressEvents.length - 1;
     return progressEvents.map((event, index) => {
@@ -649,6 +661,38 @@ export default function ChatMessageBubble({
     [message.toolEvents],
   );
   const hasToolEvents = toolEvents.length > 0;
+  const agentSteps = useMemo(() => {
+    const source = effectiveProgressEvents.length
+      ? effectiveProgressEvents.map((event, index) => ({
+          key: `${event.timestamp || index}-${event.phase}-${event.label}`,
+          label: event.label?.trim() || event.phase?.trim() || 'Working',
+          status: event.status,
+          duration: undefined as string | undefined,
+        }))
+      : toolEvents.map((event) => ({
+          key: event.id,
+          label: getFriendlyToolName(event.name),
+          status: event.status,
+          duration: event.finishedAt
+            ? formatElapsedTime(event.startedAt, Date.now(), event.finishedAt)
+            : undefined,
+        }));
+    const deduplicated: typeof source = [];
+    const indexByLabel = new Map<string, number>();
+    source.forEach((step) => {
+      const normalizedLabel = step.label.toLowerCase().replace(/\s+/g, ' ').trim();
+      const existingIndex = indexByLabel.get(normalizedLabel);
+      if (existingIndex === undefined) {
+        indexByLabel.set(normalizedLabel, deduplicated.length);
+        deduplicated.push(step);
+      } else {
+        deduplicated[existingIndex] = step;
+      }
+    });
+    return deduplicated;
+  }, [effectiveProgressEvents, toolEvents]);
+  const hasActivityHistory = agentSteps.length > 0;
+  const showLegacyActivityPanel = false;
   const toolDigest = useMemo(
     () => summarizeToolActivity(toolEvents, formatMessageTimestamp),
     [formatMessageTimestamp, toolEvents],
@@ -1787,15 +1831,31 @@ export default function ChatMessageBubble({
   const toolButtonClassName = isDarkMode
     ? 'text-xs font-medium text-slate-400 transition-all duration-200 hover:text-slate-200'
     : 'text-xs font-medium text-slate-500 transition-all duration-200 hover:text-slate-700';
-  const activitySummaryLabel = toolDigest.stepProgress
-    ? effectiveStatus === 'awaiting_approval'
-      ? interruptKind === 'clarification'
-        ? 'Workflow status: Waiting for input'
-        : 'Workflow status: Interrupted for approval'
-      : toolDigest.lastActivityFormatted
-      ? `Activity · updated ${toolDigest.lastActivityFormatted}`
-      : 'Activity'
-    : 'Activity';
+  const latestToolEvent = [...toolEvents].reverse().find(Boolean);
+  const latestAgentStep = agentSteps[agentSteps.length - 1];
+  const activityEventCount = agentSteps.length;
+  const activityTriggerLabel = effectiveStatus === 'awaiting_approval'
+    ? interruptKind === 'clarification'
+      ? 'Waiting for your input'
+      : 'Waiting for approval'
+    : activeProgress?.label
+      || latestProgress?.label
+      || latestAgentStep?.label
+      || (latestToolEvent ? getFriendlyToolName(latestToolEvent.name) : '')
+      || toolDigest.currentLabel
+      || 'Agent activity';
+  const activityDuration = latestToolEvent?.finishedAt
+    ? formatElapsedTime(latestToolEvent.startedAt, now, latestToolEvent.finishedAt)
+    : undefined;
+  const activityMetaLabel = [
+    `${activityEventCount} recorded ${activityEventCount === 1 ? 'step' : 'steps'}`,
+    activityDuration,
+  ].filter(Boolean).join(' · ');
+  const activityStatus = effectiveStatus === 'failed'
+    ? 'error'
+    : effectiveStatus === 'running'
+      ? 'running'
+      : 'complete';
   const liveAgentPreviewText = visibleAgentText;
   const isStreamingAgentText = Boolean(
     isAgentMessage &&
@@ -2157,32 +2217,147 @@ export default function ChatMessageBubble({
                 </button>
               </div>
             ) : null}
-            {hasToolEvents ? (
+            {hasActivityHistory ? (
+              <ChatToolCalls
+                className="lumo-agent-history"
+                calls={[{
+                  key: `agent-history-${message.id}`,
+                  name: activityTriggerLabel,
+                  target: activityMetaLabel,
+                  status: activityStatus === 'complete' ? 'complete' : activityStatus,
+                  duration: activityDuration,
+                  resultDetail: (
+                    <section className="lumo-agent-activity-section" aria-label="Agent history">
+                      <p className="lumo-agent-activity-section-label">Agent history</p>
+                      <div className="lumo-agent-activity-list">
+                        {agentSteps.map((step) => (
+                          <Item
+                            key={step.key}
+                            density="compact"
+                            label={step.label}
+                            startContent={(
+                              <span className={`lumo-agent-activity-status lumo-agent-activity-status--${step.status === 'error' ? 'error' : step.status === 'running' ? 'running' : 'complete'}`}>
+                                <AstryxIcon
+                                  icon={step.status === 'error' ? CircleAlert : step.status === 'running' ? Loader2 : CheckCircle2}
+                                  size="sm"
+                                />
+                              </span>
+                            )}
+                            endContent={step.duration ? (
+                              <span className="lumo-agent-activity-item-meta">{step.duration}</span>
+                            ) : undefined}
+                          />
+                        ))}
+                      </div>
+                    </section>
+                  ),
+                }]}
+              />
+            ) : null}
+            {showLegacyActivityPanel && hasActivityHistory ? (
               <div className={toolPanelClassName}>
-                <ChatToolCalls
-                  label={activitySummaryLabel}
-                  isExpanded={isToolActivityExpanded}
-                  onExpandedChange={() => toggleToolActivityVisibility(message.id)}
-                  calls={toolEvents.map((event) => ({
-                    key: event.id,
-                    name: getFriendlyToolName(event.name),
-                    status: event.status === 'completed'
-                      ? 'complete'
-                      : event.status === 'error'
-                        ? 'error'
-                        : 'running',
-                    target: event.outputFiles?.[0]?.path
-                      || event.relatedFiles?.[0]?.path
-                      || event.summary,
-                    duration: event.finishedAt
-                      ? formatElapsedTime(event.startedAt, now, event.finishedAt)
-                      : undefined,
-                    errorMessage: event.status === 'error' ? event.summary : undefined,
-                  }))}
-                />
+                <Collapsible
+                  className="lumo-agent-activity"
+                  isOpen={isToolActivityExpanded}
+                  onOpenChange={(nextIsOpen) => {
+                    if (nextIsOpen !== isToolActivityExpanded) {
+                      toggleToolActivityVisibility(message.id);
+                    }
+                  }}
+                  trigger={(
+                    <span className="lumo-agent-activity-trigger">
+                      <span className={`lumo-agent-activity-status lumo-agent-activity-status--${activityStatus}`}>
+                        <AstryxIcon
+                          icon={activityStatus === 'running' ? Loader2 : activityStatus === 'error' ? CircleAlert : CheckCircle2}
+                          size="sm"
+                        />
+                      </span>
+                      <span className="lumo-agent-activity-title">{activityTriggerLabel}</span>
+                      <span className="lumo-agent-activity-meta">{activityMetaLabel}</span>
+                    </span>
+                  )}
+                >
                 {isToolActivityExpanded ? (
                   <div className="mt-2 space-y-3">
-                    <div className={toolExpandedClassName}>
+                    {agentSteps.length ? (
+                      <section className="lumo-agent-activity-section" aria-label="Agent steps">
+                        <p className="lumo-agent-activity-section-label">Agent steps</p>
+                        <div className="lumo-agent-activity-list">
+                          {agentSteps.map((step) => (
+                            <Item
+                              key={step.key}
+                              density="compact"
+                              label={step.label}
+                              startContent={(
+                                <span className={`lumo-agent-activity-status lumo-agent-activity-status--${step.status === 'error' ? 'error' : step.status === 'running' ? 'running' : 'complete'}`}>
+                                  <AstryxIcon
+                                    icon={step.status === 'error' ? CircleAlert : step.status === 'running' ? Loader2 : CheckCircle2}
+                                    size="sm"
+                                  />
+                                </span>
+                              )}
+                              endContent={step.duration ? (
+                                <span className="lumo-agent-activity-item-meta">{step.duration}</span>
+                              ) : undefined}
+                            />
+                          ))}
+                        </div>
+                      </section>
+                    ) : null}
+                    {toolEvents.length ? (
+                      <section className="hidden" aria-hidden="true">
+                        <p className="lumo-agent-activity-section-label">Tool messages</p>
+                        <div className="lumo-agent-activity-list">
+                          {toolEvents.map((event) => {
+                            const friendlySummary = normalizeUserFacingSummary(event.summary || '', event.name);
+                            const fileTarget = event.outputFiles?.[0]?.path || event.relatedFiles?.[0]?.path;
+                            return (
+                              <Item
+                                key={event.id}
+                                density="compact"
+                                label={getFriendlyToolName(event.name)}
+                                description={friendlySummary || fileTarget || (event.status === 'running' ? 'In progress…' : 'Completed')}
+                                descriptionLines={2}
+                                startContent={(
+                                  <span className={`lumo-agent-activity-status lumo-agent-activity-status--${event.status === 'error' ? 'error' : event.status === 'running' ? 'running' : 'complete'}`}>
+                                    <AstryxIcon
+                                      icon={event.status === 'error' ? CircleAlert : event.status === 'running' ? Loader2 : CheckCircle2}
+                                      size="sm"
+                                    />
+                                  </span>
+                                )}
+                                endContent={event.finishedAt ? (
+                                  <span className="lumo-agent-activity-item-meta">
+                                    {formatElapsedTime(event.startedAt, now, event.finishedAt)}
+                                  </span>
+                                ) : undefined}
+                              />
+                            );
+                          })}
+                        </div>
+                      </section>
+                    ) : null}
+                    {workflowActions.length ? (
+                      <section className="hidden" aria-hidden="true">
+                        <p className="lumo-agent-activity-section-label">Workflow decisions</p>
+                        <div className="lumo-agent-activity-list">
+                          {workflowActions.map((action, index) => (
+                            <Item
+                              key={`${action.timestamp || index}-${action.action}`}
+                              density="compact"
+                              label={WORKFLOW_ACTION_LABELS[action.action] || action.action}
+                              description={action.reason || (action.timestamp ? formatMessageTimestamp(action.timestamp) : undefined)}
+                              startContent={(
+                                <span className={`lumo-agent-activity-status lumo-agent-activity-status--${action.action === 'fail' ? 'error' : 'complete'}`}>
+                                  <AstryxIcon icon={action.action === 'fail' ? CircleAlert : CheckCircle2} size="sm" />
+                                </span>
+                              )}
+                            />
+                          ))}
+                        </div>
+                      </section>
+                    ) : null}
+                    <div className="hidden" aria-hidden="true">
                       <p className={`text-xs font-medium ${
                         isDarkMode ? 'text-slate-400' : 'text-slate-500'
                       }`}>
@@ -2295,7 +2470,7 @@ export default function ChatMessageBubble({
                     <button
                       type="button"
                       onClick={() => setShowRawToolLog((prev) => !prev)}
-                      className={toolButtonClassName}
+                      className={`hidden ${toolButtonClassName}`}
                     >
                       {showRawToolLog ? 'Hide developer log' : 'Developer details (raw activity log)'}
                     </button>
@@ -2397,6 +2572,7 @@ export default function ChatMessageBubble({
                     ) : null}
                   </div>
                 ) : null}
+                </Collapsible>
               </div>
             ) : null}
             </div>
