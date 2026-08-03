@@ -163,6 +163,33 @@ export const renameFolder = async (workspaceId: string, folderPath: string, name
   return response.json();
 };
 
+export const moveFolder = async (
+  workspaceId: string,
+  folderPath: string,
+  destinationFolderPath: string,
+) => {
+  const response = await apiFetch(`${API_URL}/workspaces/${workspaceId}/files/folders/move`, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ path: folderPath, destinationPath: destinationFolderPath }),
+  });
+  if (!response.ok) {
+    let detail = '';
+    try {
+      const payload = await response.json();
+      if (payload && typeof payload === 'object' && typeof payload.error === 'string') {
+        detail = payload.error;
+      }
+    } catch {
+      // Ignore non-JSON error bodies.
+    }
+    throw new Error(detail || 'Failed to move folder');
+  }
+  return response.json();
+};
+
 export const renameFile = async (
   workspaceId: string,
   fileId: string,

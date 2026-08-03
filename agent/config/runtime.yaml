@@ -67,7 +67,7 @@ tools:
     description: Search arXiv and summarize relevant papers
   - name: get_image_url
     kind: builtin
-    description: Get public URLs for images stored in MinIO/S3
+    description: Describe private workspace images and their authorized workspace paths
   - name: document_inspection
     kind: builtin
     description: Inspect and search original PDF, DOCX, XLSX, and text workspace

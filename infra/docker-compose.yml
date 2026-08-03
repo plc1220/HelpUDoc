@@ -95,7 +95,7 @@ services:
       done;
       mc mb -p local/"$${S3_BUCKET_NAME}" || true;
       mc mb -p local/langfuse || true;
-      mc anonymous set download local/"$${S3_BUCKET_NAME}";
+      mc anonymous set none local/"$${S3_BUCKET_NAME}";
       exit 0;
 
   clickhouse:
@@ -221,7 +221,6 @@ services:
       AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
       S3_BUCKET_NAME: ${S3_BUCKET_NAME:-helpudoc}
       S3_ENDPOINT: http://minio:9000
-      S3_PUBLIC_BASE_URL: ${S3_PUBLIC_BASE_URL:-http://localhost:9000/helpudoc}
       S3_FORCE_PATH_STYLE: "true"
       WORKSPACE_ROOT: /app/workspaces
       SKILLS_ROOT: /app/skills
@@ -269,7 +268,6 @@ services:
       S3_ENDPOINT: http://minio:9000
       MINIO_ENDPOINT: http://minio:9000
       S3_BUCKET_NAME: ${S3_BUCKET_NAME:-helpudoc}
-      S3_PUBLIC_BASE_URL: ${S3_PUBLIC_BASE_URL:-http://localhost:9000/helpudoc}
       LANGFUSE_BASE_URL: ${LANGFUSE_BASE_URL:-http://langfuse-web:3000}
       LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-${LANGFUSE_INIT_PROJECT_PUBLIC_KEY:-lf_pk_helpudoc_local}}
       LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-${LANGFUSE_INIT_PROJECT_SECRET_KEY:-lf_sk_helpudoc_local}}

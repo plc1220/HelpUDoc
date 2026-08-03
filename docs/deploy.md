@@ -168,8 +168,7 @@ cp env/prod/config.env.example env/prod/config.env
 # - SESSION_SECRET
 # - POSTGRES_PASSWORD
 # - GEMINI_API_KEY
-# - S3_PUBLIC_BASE_URL (use /helpudoc when behind HTTPS)
-# - AUTH_MODE=hybrid
+# - AUTH_MODE=oidc
 # - SESSION_COOKIE_DOMAIN=.lc-demo.com
 # - GOOGLE_OAUTH_CLIENT_ID
 # - GOOGLE_OAUTH_REDIRECT_URI=https://lc-demo.com/api/auth/google/callback
@@ -187,7 +186,7 @@ kubectl -n helpudoc create secret generic helpudoc-secrets --from-env-file=env/p
 kubectl -n helpudoc create configmap helpudoc-config --from-env-file=env/prod/config.env
 ```
 
-> **Important:** For HTTPS + Caddy, set `S3_PUBLIC_BASE_URL=/helpudoc` so browsers do not request `http://localhost:9000`.
+> **Important:** Workspace objects are private. Do not configure public object URLs or anonymous bucket access.
 
 ### 4.5 Apply Kubernetes manifests
 
@@ -198,6 +197,7 @@ kubectl apply -f infra/gke/k8s/40-postgres.yaml
 kubectl apply -f infra/gke/k8s/41-redis.yaml
 kubectl apply -f infra/gke/k8s/42-minio.yaml
 kubectl apply -f infra/gke/k8s/43-minio-setup.yaml
+kubectl apply -f infra/gke/k8s/46-minio-private-object-policy.yaml
 kubectl apply -f infra/gke/k8s/44-clickhouse.yaml
 kubectl apply -f infra/gke/k8s/45-langfuse.yaml
 kubectl apply -f infra/gke/k8s/49-skill-sandbox.yaml
@@ -266,7 +266,7 @@ kubectl -n helpudoc get deploy helpudoc-app helpudoc-frontend -o wide
 
 If you see `http://localhost:9000/...` in the browser:
 
-- Confirm `S3_PUBLIC_BASE_URL=/helpudoc` in the `helpudoc-config` ConfigMap
+- Confirm the workspace object bucket has no anonymous-download policy
 - Ensure Caddy is proxying `/helpudoc*` to `minio:9000` (see `infra/gke/k8s/70-caddy.yaml`)
 
 ### 5.2 Restart pods after config changes

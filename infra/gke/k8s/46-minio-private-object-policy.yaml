@@ -1,21 +1,22 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: helpudoc-minio-setup
+  name: helpudoc-minio-private-object-policy
   namespace: helpudoc
   labels:
-    app: helpudoc-minio-setup
+    app: helpudoc-minio-private-object-policy
     app.kubernetes.io/managed-by: gcp-cloud-build-deploy
 spec:
+  backoffLimit: 3
   template:
     metadata:
       labels:
-        app: helpudoc-minio-setup
+        app: helpudoc-minio-private-object-policy
         app.kubernetes.io/managed-by: gcp-cloud-build-deploy
     spec:
       restartPolicy: OnFailure
       containers:
-        - name: minio-setup
+        - name: enforce-private-object-policy
           image: minio/mc:latest
           env:
             - name: MINIO_ROOT_USER
@@ -40,8 +41,4 @@ spec:
               until mc alias set local http://minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"; do
                 sleep 1
               done
-              mc mb -p local/"$S3_BUCKET_NAME" || true
-              mc mb -p local/langfuse || true
-              # Workspace objects are served only through authenticated API
-              # endpoints. Never grant anonymous download access.
               mc anonymous set none local/"$S3_BUCKET_NAME"

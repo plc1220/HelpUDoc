@@ -28,6 +28,8 @@ import {
   Separator,
 } from '@mdxeditor/editor';
 import '@mdxeditor/editor/style.css';
+import { Button } from '@astryxdesign/core/Button';
+import { Text } from '@astryxdesign/core/Text';
 import { MermaidDiagram, useMermaidColorMode } from './markdown/MarkdownShared';
 
 const CODE_BLOCK_LANGUAGES: Record<string, string> = {
@@ -72,28 +74,17 @@ const MermaidCodeBlockEditor = ({
     });
   }, [focusEmitter]);
 
-  const isDarkMode = mermaidColorMode === 'dark';
-
   return (
-    <div className={`helpudoc-mermaid-editor not-prose my-4 overflow-hidden rounded-[1.6rem] border shadow-sm ${
-      isDarkMode
-        ? 'border-slate-700/70 bg-slate-900/85 shadow-[0_26px_70px_-42px_rgba(2,6,23,0.95)]'
-        : 'border-slate-200 bg-white'
-    }`}>
-      <div className={`flex items-center justify-between border-b px-4 py-3 ${
-        isDarkMode ? 'border-slate-700/70 bg-slate-950/45' : 'border-slate-200 bg-slate-50'
-      }`}>
+    <div className="helpudoc-mermaid-editor not-prose my-4">
+      <div className="helpudoc-mermaid-editor-header">
         <div>
-          <p className={`text-xs font-semibold uppercase tracking-[0.18em] ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Mermaid</p>
-          <p className={`text-xs ${isDarkMode ? 'text-slate-500' : 'text-slate-500'}`}>Edit the diagram source and preview it live.</p>
+          <Text type="label" color="secondary">Mermaid</Text>
+          <Text type="supporting" color="secondary">Edit the diagram source and preview it live.</Text>
         </div>
-        <button
-          type="button"
-          className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
-            isDarkMode
-              ? 'border-slate-600 bg-transparent text-slate-200 hover:bg-slate-800'
-              : 'border-slate-300 text-slate-600 hover:bg-slate-100'
-          }`}
+        <Button
+          label="Remove Mermaid diagram"
+          size="sm"
+          variant="secondary"
           onClick={() => {
             parentEditor.update(() => {
               lexicalNode.remove();
@@ -101,11 +92,11 @@ const MermaidCodeBlockEditor = ({
           }}
         >
           Remove
-        </button>
+        </Button>
       </div>
-      <div className="grid gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-        <label className="flex min-h-[260px] flex-col gap-2">
-          <span className={`text-xs font-medium ${isDarkMode ? 'text-slate-300' : 'text-slate-600'}`}>Source</span>
+      <div className="helpudoc-mermaid-editor-body">
+        <label className="helpudoc-mermaid-editor-pane">
+          <Text type="supporting" color="secondary">Source</Text>
           <textarea
             ref={textareaRef}
             value={draft}
@@ -115,21 +106,15 @@ const MermaidCodeBlockEditor = ({
               setCode(nextValue);
             }}
             spellCheck={false}
-            className={`min-h-[240px] w-full resize-y rounded-2xl border p-4 font-mono text-sm leading-relaxed focus:outline-none ${
-              isDarkMode
-                ? 'border-slate-800 bg-[#040816] text-slate-100 focus:border-sky-400'
-                : 'border-slate-200 bg-white text-slate-800 focus:border-blue-400'
-            }`}
+            className="helpudoc-mermaid-source"
           />
         </label>
-        <div className="flex min-h-[260px] flex-col gap-2">
-          <span className={`text-xs font-medium ${isDarkMode ? 'text-slate-300' : 'text-slate-600'}`}>Preview</span>
+        <div className="helpudoc-mermaid-editor-pane">
+          <Text type="supporting" color="secondary">Preview</Text>
           <MermaidDiagram
             chart={draft}
             colorMode={mermaidColorMode}
-            className={`mermaid-container h-full min-h-[240px] overflow-auto rounded-2xl border p-4 ${
-              isDarkMode ? 'border-slate-700/70 bg-slate-950/60' : 'border-slate-200 bg-white'
-            }`}
+            className="helpudoc-mermaid-preview"
             fallbackClassName="h-full min-h-[240px]"
           />
         </div>

@@ -49,6 +49,7 @@ import {
   deleteFolder,
   deleteFile,
   getFileContent,
+  moveFolder,
   renameFolder,
   renameFile,
 } from '../../services/fileApi';
@@ -1148,13 +1149,7 @@ export default function WorkspacePage() {
     () => (showSystemFiles ? folderPaths : folderPaths.filter((path) => !isSystemFile({ id: `folder:${path}`, name: path }))),
     [folderPaths, showSystemFiles],
   );
-  const visibleFileIds = useMemo(() => new Set(visibleFiles.map((file) => file.id)), [visibleFiles]);
-  const allFilesSelected = useMemo(() => {
-    if (!visibleFiles.length) {
-      return false;
-    }
-    return visibleFiles.every((file) => selectedFiles.has(file.id));
-  }, [visibleFiles, selectedFiles]);
+  const visibleFileIds = useMemo(() => new Set(visibleFiles.map((file) => String(file.id))), [visibleFiles]);
   const hiddenFileCount = systemFiles.length;
   const persistActiveRuns = useCallback((runs: Record<string, ActiveRunInfo>) => {
     activeRunsRef.current = runs;
@@ -1882,6 +1877,53 @@ export default function WorkspacePage() {
 
     if (normalizedFolder) {
       setFolderPaths((prev) => addFolderPath(prev, normalizedFolder));
+    }
+  };
+
+  const handleMoveFolder = async (
+    folder: { path: string; name: string; fileCount: number },
+    destinationFolderPath: string,
+  ) => {
+    if (!selectedWorkspace || !folder.path) {
+      return;
+    }
+
+    const sourceFolder = normalizeWorkspaceFolderPath(folder.path);
+    const destinationParent = normalizeWorkspaceFolderPath(destinationFolderPath);
+    const destinationFolder = destinationParent
+      ? `${destinationParent}/${folder.name}`
+      : folder.name;
+    if (
+      !sourceFolder
+      || destinationFolder === sourceFolder
+      || destinationFolder.startsWith(`${sourceFolder}/`)
+    ) {
+      return;
+    }
+
+    try {
+      const moved = await moveFolder(selectedWorkspace.id, sourceFolder, destinationParent);
+      markPrivateWorkspaceChanged(selectedWorkspace.id);
+      const updatedFiles = Array.isArray(moved?.files) ? moved.files as WorkspaceFile[] : [];
+      const updatedFilesById = new Map(updatedFiles.map((file) => [String(file.id), file]));
+      const moveFilePath = (file: WorkspaceFile): WorkspaceFile => {
+        const serverFile = updatedFilesById.get(String(file.id));
+        if (serverFile) {
+          return { ...file, ...serverFile, content: serverFile.content ?? file.content };
+        }
+        const nextName = replaceFolderPathPrefix(file.name || '', sourceFolder, destinationFolder);
+        return nextName === file.name ? file : { ...file, name: nextName };
+      };
+
+      setFiles((prev) => prev.map(moveFilePath));
+      setSelectedFile((prev) => (prev ? moveFilePath(prev) : prev));
+      setSelectedFileDetails((prev) => (prev ? moveFilePath(prev) : prev));
+      setFolderPaths((prev) => Array.from(new Set(
+        prev.map((path) => replaceFolderPathPrefix(path, sourceFolder, destinationFolder)),
+      )).sort((left, right) => left.localeCompare(right, undefined, { numeric: true, sensitivity: 'base' })));
+      setSelectedDashboardPath((prev) => (prev ? replaceFolderPathPrefix(prev, sourceFolder, destinationFolder) : prev));
+    } catch (error) {
+      console.error('Failed to move folder:', error);
     }
   };
 
@@ -6573,15 +6615,12 @@ export default function WorkspacePage() {
   };
 
   const handleSelectAllFiles = () => {
-    if (!visibleFiles.length) {
-      setSelectedFiles(new Set());
-      return;
-    }
-    if (allFilesSelected) {
-      setSelectedFiles(new Set());
-      return;
-    }
-    setSelectedFiles(new Set(visibleFiles.map((file) => file.id)));
+    const visibleFileIds = visibleFiles.map((file) => String(file.id));
+    setSelectedFiles((currentSelection) => {
+      const areAllVisibleFilesSelected = visibleFileIds.length > 0
+        && visibleFileIds.every((fileId) => currentSelection.has(fileId));
+      return areAllVisibleFilesSelected ? new Set() : new Set(visibleFileIds);
+    });
   };
 
   const handleCreateFolder = async () => {
@@ -8277,9 +8316,9 @@ export default function WorkspacePage() {
                           isDisabled={!selectedWorkspace}
                         />
                         <IconButton
-                          label={allFilesSelected ? 'Clear file selection' : 'Select all files'}
+                          label="Select all files"
                           icon={<CheckSquare size={16} />}
-                          variant={allFilesSelected ? 'primary' : 'ghost'}
+                          variant="ghost"
                           size="sm"
                           onClick={handleSelectAllFiles}
                           isDisabled={!selectedWorkspace?.canEdit || visibleFiles.length === 0}
@@ -8343,6 +8382,7 @@ export default function WorkspacePage() {
                         onDeleteFile={handleDeleteSingleFile}
                         onDeleteFolder={handleDeleteFolder}
                         onMoveFiles={handleMoveFiles}
+                        onMoveFolder={handleMoveFolder}
                       />
                     </div>
                   </div>

@@ -78,7 +78,7 @@ export class FileService {
     const visibleFiles = options?.includeInternal
       ? files
       : files.filter((file) => !this.isInternalWorkspacePath(String(file.name || '')));
-    await Promise.all(visibleFiles.map((file) => this.ensurePublicUrl(file)));
+    await Promise.all(visibleFiles.map((file) => this.clearLegacyPublicUrl(file)));
     return visibleFiles;
   }
 
@@ -204,75 +204,19 @@ export class FileService {
     return path.join(WORKSPACE_DIR, workspaceId, relative);
   }
 
-  private async ensurePublicUrl(file: any): Promise<void> {
+  private async clearLegacyPublicUrl(file: any): Promise<void> {
     const mimeType = this.resolveMimeType(file.name, file.mimeType);
-
-    const shouldRefreshPublicUrl = () => {
-      if (!file.publicUrl) return false;
-      const current = String(file.publicUrl);
-      if (current.includes('localhost:9000')) {
-        return true;
-      }
-      const base = process.env.S3_PUBLIC_BASE_URL;
-      if (!base) return false;
-      const normalizedBase = base.replace(/\/$/, '');
-      return !current.startsWith(`${normalizedBase}/`);
-    };
-
-    const updateMimeTypeIfMissing = async () => {
-      if (!file.mimeType && mimeType) {
-        file.mimeType = mimeType;
-        await this.db('files').where({ id: file.id }).update({ mimeType });
-      }
-    };
-
-    if (file.storageType !== 'local') {
-      const key = String(file.path).replace(/\\/g, '/');
-      const expectedUrl = this.s3Service.getPublicUrl(key);
-      if ((!file.publicUrl || shouldRefreshPublicUrl()) && expectedUrl) {
-        file.publicUrl = expectedUrl;
-        await this.db('files').where({ id: file.id }).update({ publicUrl: expectedUrl });
-      }
-      await updateMimeTypeIfMissing();
-      return;
+    const update: Record<string, unknown> = {};
+    if (file.publicUrl) {
+      file.publicUrl = null;
+      update.publicUrl = null;
     }
-
-    if (file.publicUrl && shouldRefreshPublicUrl()) {
-      const key = normalizeS3Key(file.workspaceId, file.name);
-      const expectedUrl = this.s3Service.getPublicUrl(key);
-      if (expectedUrl && expectedUrl !== file.publicUrl) {
-        file.publicUrl = expectedUrl;
-        await this.db('files').where({ id: file.id }).update({ publicUrl: expectedUrl });
-      }
-      await updateMimeTypeIfMissing();
-      return;
+    if (!file.mimeType && mimeType) {
+      file.mimeType = mimeType;
+      update.mimeType = mimeType;
     }
-
-    if (this.isTextFile(file.name, mimeType || '')) {
-      await updateMimeTypeIfMissing();
-      return;
-    }
-
-    try {
-      const buffer = await fs.readFile(file.path);
-      const s3Key = normalizeS3Key(file.workspaceId, file.name);
-      const result = await this.s3Service.uploadFile(
-        file.workspaceId,
-        file.name,
-        buffer,
-        mimeType || undefined,
-        s3Key,
-      );
-      file.publicUrl = result.publicUrl;
-      if (!file.mimeType && mimeType) {
-        file.mimeType = mimeType;
-      }
-      await this.db('files').where({ id: file.id }).update({
-        publicUrl: file.publicUrl,
-        mimeType: file.mimeType,
-      });
-    } catch (error) {
-      console.error('Failed to upload workspace file to object storage', error);
+    if (Object.keys(update).length) {
+      await this.db('files').where({ id: file.id }).update(update);
     }
   }
 
@@ -308,7 +252,6 @@ export class FileService {
     const isText = this.isTextFile(relativePath, mimeType);
     let storageType: 'local' | 's3';
     let filePath: string;
-    let publicUrl: string | null = null;
 
     await fs.mkdir(path.dirname(localPath), { recursive: true });
     await fs.writeFile(localPath, fileBuffer);
@@ -327,7 +270,8 @@ export class FileService {
         key,
       );
       filePath = result.Key || key;
-      publicUrl = result.publicUrl;
+      // Objects remain private in storage and are read through authenticated
+      // workspace APIs. Do not issue persistent object URLs.
     }
 
     const [newFile] = await this.db('files').insert({
@@ -336,7 +280,7 @@ export class FileService {
       storageType,
       path: filePath,
       mimeType,
-      publicUrl,
+      publicUrl: null,
       sourceProvider: options?.sourceProvider || null,
       sourceExternalId: options?.sourceExternalId || null,
       sourceVersionFingerprint: options?.sourceVersionFingerprint || null,
@@ -405,7 +349,7 @@ export class FileService {
     }
 
     await this.workspaceService.ensureMembership(file.workspaceId, userId);
-    await this.ensurePublicUrl(file);
+    await this.clearLegacyPublicUrl(file);
 
     const buffer = file.storageType === 'local'
       ? await fs.readFile(file.path)
@@ -427,7 +371,7 @@ export class FileService {
       throw new NotFoundError('File not found');
     }
     await this.workspaceService.ensureMembership(file.workspaceId, userId, options);
-    await this.ensurePublicUrl(file);
+    await this.clearLegacyPublicUrl(file);
     return file;
   }
 
@@ -452,7 +396,7 @@ export class FileService {
     if (!file) {
       return null;
     }
-    await this.ensurePublicUrl(file);
+    await this.clearLegacyPublicUrl(file);
     return file;
   }
 
@@ -658,11 +602,36 @@ export class FileService {
     const destinationFolder = parentPath === '.'
       ? normalizedName
       : path.posix.join(parentPath, normalizedName);
+    return this.relocateFolder(workspaceId, normalizedFolder, destinationFolder, userId);
+  }
+
+  async moveFolder(workspaceId: string, folderPath: string, destinationFolderPath: string, userId: string) {
+    await this.workspaceService.ensureMembership(workspaceId, userId, { requireEdit: true });
+
+    const normalizedFolder = this.normalizeRelativeFolderPath(folderPath);
+    if (!normalizedFolder) {
+      throw new ConflictError('Folder path is required');
+    }
+    if (this.isInternalWorkspacePath(normalizedFolder)) {
+      throw new ConflictError('System workspace paths are reserved');
+    }
+
+    const destinationParent = this.normalizeRelativeFolderPath(destinationFolderPath);
+    const destinationFolder = destinationParent
+      ? path.posix.join(destinationParent, path.posix.basename(normalizedFolder))
+      : path.posix.basename(normalizedFolder);
+    return this.relocateFolder(workspaceId, normalizedFolder, destinationFolder, userId);
+  }
+
+  private async relocateFolder(workspaceId: string, normalizedFolder: string, destinationFolder: string, userId: string) {
     if (destinationFolder === normalizedFolder) {
       return { path: destinationFolder, files: [] };
     }
     if (this.isInternalWorkspacePath(destinationFolder)) {
       throw new ConflictError('System workspace paths are reserved');
+    }
+    if (destinationFolder.startsWith(`${normalizedFolder}/`)) {
+      throw new ConflictError('A folder cannot be moved into itself');
     }
 
     const workspaceRoot = path.resolve(WORKSPACE_DIR, workspaceId);
@@ -758,7 +727,7 @@ export class FileService {
         await this.db('files').where({ id: file.id }).update({
           name: destinationRelativePath,
           path: newKey,
-          publicUrl: this.s3Service.getPublicUrl(newKey),
+          publicUrl: null,
           updatedBy: userId,
           updatedAt: this.db.fn.now(),
           version: this.assertVersion(file.version) + 1,
@@ -838,7 +807,6 @@ export class FileService {
       const newKey = normalizeS3Key(file.workspaceId, destinationRelativePath);
       await this.s3Service.copyFile(currentKey, newKey);
       await this.s3Service.deleteFile(currentKey);
-      const publicUrl = this.s3Service.getPublicUrl(newKey);
       try {
         await fs.mkdir(path.dirname(newLocalPath), { recursive: true });
         await fs.rename(currentLocalPath, newLocalPath);
@@ -849,7 +817,7 @@ export class FileService {
       await this.db('files').where({ id: fileId }).update({
         name: destinationRelativePath,
         path: newKey,
-        publicUrl,
+        publicUrl: null,
         updatedBy: userId,
         updatedAt: this.db.fn.now(),
         version: nextVersion,

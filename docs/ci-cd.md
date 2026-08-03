@@ -253,8 +253,8 @@ The agent image is large; a fresh node may take several minutes to pull it. This
 
 ### E2E failures
 
-The E2E step primarily exists to catch mixed-content / localhost asset URLs (e.g. `http://localhost:9000/...`).
+The E2E step verifies that workspace media stays private and no browser requests target the local MinIO endpoint.
 
 If you hit that regression:
-- Verify `S3_PUBLIC_BASE_URL` in the `helpudoc-config` ConfigMap (commonly `/helpudoc` when behind HTTPS + Caddy).
-- Verify Caddy routes in `infra/gke/k8s/70-caddy.yaml`.
+- Verify the workspace bucket policy denies anonymous download.
+- Verify private workspace media remains available only through authenticated API requests.
