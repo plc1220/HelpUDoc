@@ -614,11 +614,20 @@ jobs:
             kubectl -n helpudoc rollout restart deployment/helpudoc-app
           fi
 
+      - name: Reload Caddy infrastructure config
+        if: ${{ inputs.deploy_infra }}
+        run: |
+          set -euo pipefail
+          kubectl -n helpudoc rollout restart deployment/helpudoc-caddy
+
       - name: Wait for rollout
         run: |
           set -euo pipefail
           kubectl -n helpudoc rollout status deployment/helpudoc-app --timeout=20m
           kubectl -n helpudoc rollout status deployment/helpudoc-frontend --timeout=10m
+          if [[ "${{ inputs.deploy_infra }}" == "true" ]]; then
+            kubectl -n helpudoc rollout status deployment/helpudoc-caddy --timeout=5m
+          fi
 
       - name: Collect rollout diagnostics
         if: ${{ failure() }}
