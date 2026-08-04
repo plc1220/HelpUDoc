@@ -73,7 +73,12 @@ def create_app() -> FastAPI:
         memory_store_manager=memory_store_manager,
         agent_jwt_secret=agent_jwt_secret,
     )
-    register_document_routes(app, settings=settings)
+    register_document_routes(
+        app,
+        settings=settings,
+        gemini_manager=gemini_manager,
+        agent_jwt_secret=agent_jwt_secret,
+    )
     register_chat_routes(
         app,
         settings=settings,

@@ -25,6 +25,8 @@ class GeminiClientManager:
         self._model_cfg = model_cfg
         self._search_chat_model: ChatGoogleGenerativeAI | None = None
         self._attachment_chat_model: ChatGoogleGenerativeAI | None = None
+        self._lite_chat_model: ChatGoogleGenerativeAI | None = None
+        self._ingestion_chat_model: ChatGoogleGenerativeAI | None = None
         self._api_key = (
             model_cfg.api_key
             or os.getenv("GOOGLE_CLOUD_API_KEY")
@@ -96,3 +98,41 @@ class GeminiClientManager:
                 timeout=float(DEFAULT_HTTP_TIMEOUT),
             )
         return self._attachment_chat_model
+
+    def get_lite_chat_model(self) -> ChatGoogleGenerativeAI:
+        """Configured Gemini Lite model for bounded Knowledge enrichment tasks."""
+        self._require_configured_client()
+        if self._lite_chat_model is None:
+            from ...gemini_chat import create_chat_google_generative_ai
+
+            model_name = self._model_cfg.resolve_chat_model_name("lite")
+            self._lite_chat_model = create_chat_google_generative_ai(
+                self._model_cfg,
+                model_name,
+                thinking_level=self._model_cfg.resolve_thinking_level("lite"),
+                max_output_tokens=self._model_cfg.resolve_max_output_tokens("lite"),
+                timeout=float(DEFAULT_HTTP_TIMEOUT),
+            )
+        return self._lite_chat_model
+
+    def get_ingestion_chat_model(self) -> ChatGoogleGenerativeAI:
+        """Gemini Flash Lite with a larger structured-output budget for map/reduce parsing."""
+        self._require_configured_client()
+        if self._ingestion_chat_model is None:
+            from ...gemini_chat import create_chat_google_generative_ai
+
+            model_name = self._model_cfg.resolve_chat_model_name("lite")
+            configured = self._model_cfg.resolve_max_output_tokens("lite") or 4096
+            output_tokens = max(configured, int(os.environ.get("KNOWLEDGE_GEMINI_MAX_OUTPUT_TOKENS", "8192")))
+            self._ingestion_chat_model = create_chat_google_generative_ai(
+                self._model_cfg,
+                model_name,
+                thinking_level=self._model_cfg.resolve_thinking_level("lite"),
+                max_output_tokens=output_tokens,
+                timeout=float(DEFAULT_HTTP_TIMEOUT),
+            )
+        return self._ingestion_chat_model
+
+    @property
+    def lite_model_name(self) -> str:
+        return self._model_cfg.resolve_chat_model_name("lite")

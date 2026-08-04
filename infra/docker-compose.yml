@@ -234,6 +234,11 @@ services:
       GOOGLE_OAUTH_POST_LOGIN_REDIRECT: ${GOOGLE_OAUTH_POST_LOGIN_REDIRECT:-http://localhost:5173/login}
       GOOGLE_OAUTH_SCOPES: ${GOOGLE_OAUTH_SCOPES:-openid email profile https://www.googleapis.com/auth/bigquery https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/spreadsheets.readonly}
       OAUTH_TOKEN_ENCRYPTION_KEY: ${OAUTH_TOKEN_ENCRYPTION_KEY:-}
+      KNOWLEDGE_DEDICATED_WORKER: "true"
+      KNOWLEDGE_RETRIEVAL_MODE: ${KNOWLEDGE_RETRIEVAL_MODE:-lexical-graph}
+      KNOWLEDGE_VECTOR_ENABLED: ${KNOWLEDGE_VECTOR_ENABLED:-false}
+      KNOWLEDGE_MULTIMODAL_EMBEDDINGS: ${KNOWLEDGE_MULTIMODAL_EMBEDDINGS:-false}
+      KNOWLEDGE_EMBEDDING_DIMENSIONS: ${KNOWLEDGE_EMBEDDING_DIMENSIONS:-768}
     ports:
       - "3000:3000"
     volumes:
@@ -243,6 +248,45 @@ services:
       - ../skills:/app/skills
       - ../plugins:/app/plugins:ro
       - ../agent/config:/agent/config
+
+  knowledge-worker:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    command: ["npm", "run", "worker:knowledge"]
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio-setup:
+        condition: service_completed_successfully
+      agent:
+        condition: service_started
+    environment:
+      NODE_ENV: production
+      AGENT_URL: http://agent:8001
+      AGENT_JWT_SECRET: ${AGENT_JWT_SECRET:-helpudoc-local-dev-agent-jwt-secret}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-helpudoc}
+      POSTGRES_USER: ${POSTGRES_USER:-helpudoc}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-helpudoc}
+      DATABASE_URL: postgres://${POSTGRES_USER:-helpudoc}:${POSTGRES_PASSWORD:-helpudoc}@postgres:5432/${POSTGRES_DB:-helpudoc}
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      S3_BUCKET_NAME: ${S3_BUCKET_NAME:-helpudoc}
+      S3_ENDPOINT: http://minio:9000
+      S3_FORCE_PATH_STYLE: "true"
+      WORKSPACE_ROOT: /app/workspaces
+      KNOWLEDGE_DEDICATED_WORKER: "true"
+      KNOWLEDGE_WORKER_CONCURRENCY: ${KNOWLEDGE_WORKER_CONCURRENCY:-2}
+      KNOWLEDGE_ENRICHMENT_MODE: ${KNOWLEDGE_ENRICHMENT_MODE:-gemini-lite}
+      KNOWLEDGE_MAP_CONCURRENCY: ${KNOWLEDGE_MAP_CONCURRENCY:-4}
+      KNOWLEDGE_VECTOR_ENABLED: ${KNOWLEDGE_VECTOR_ENABLED:-false}
+      KNOWLEDGE_MULTIMODAL_EMBEDDINGS: ${KNOWLEDGE_MULTIMODAL_EMBEDDINGS:-false}
+      KNOWLEDGE_RETRIEVAL_MODE: ${KNOWLEDGE_RETRIEVAL_MODE:-lexical-graph}
+    volumes:
+      - workspace_data:/app/workspaces
 
   agent:
     build:
@@ -256,6 +300,9 @@ services:
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
       GOOGLE_CLOUD_API_KEY: ${GOOGLE_CLOUD_API_KEY:-}
+      # The runtime uses Vertex AI. Mount the host ADC file read-only so a
+      # locally rebuilt agent authenticates the same way as gcloud.
+      GOOGLE_APPLICATION_CREDENTIALS: /var/run/google-adc/application_default_credentials.json
       # Demo: MCP auth for toolbox-bq-demo.
       BQ_ACCESS_TOKEN: ${BQ_ACCESS_TOKEN:-}
       GOOGLE_WORKSPACE_MCP_URL: ${GOOGLE_WORKSPACE_MCP_URL:-http://google-workspace-mcp:8000/mcp}
@@ -264,6 +311,12 @@ services:
       SKILLS_ROOT: /app/skills
       PLUGINS_ROOT: /app/plugins
       HELPUDOC_SANDBOX_BACKEND: ${HELPUDOC_SANDBOX_BACKEND:-local}
+      KNOWLEDGE_MARKITDOWN_MODE: ${KNOWLEDGE_MARKITDOWN_MODE:-primary}
+      KNOWLEDGE_OCR_MODE: ${KNOWLEDGE_OCR_MODE:-auto}
+      KNOWLEDGE_OCR_TEXT_THRESHOLD: ${KNOWLEDGE_OCR_TEXT_THRESHOLD:-40}
+      KNOWLEDGE_OCR_BATCH_SIZE: ${KNOWLEDGE_OCR_BATCH_SIZE:-6}
+      KNOWLEDGE_OCR_CONCURRENCY: ${KNOWLEDGE_OCR_CONCURRENCY:-4}
+      KNOWLEDGE_EMBEDDING_MODEL: ${KNOWLEDGE_EMBEDDING_MODEL:-gemini-embedding-2}
       AGENT_CONFIG_PATH: /agent/config/runtime.yaml
       S3_ENDPOINT: http://minio:9000
       MINIO_ENDPOINT: http://minio:9000
@@ -289,6 +342,7 @@ services:
       - ../plugins:/app/plugins:ro
       - ../plugins:/plugins:ro
       - ../agent/config:/agent/config
+      - ${HOME}/.config/gcloud/application_default_credentials.json:/var/run/google-adc/application_default_credentials.json:ro
 
   frontend:
     build:

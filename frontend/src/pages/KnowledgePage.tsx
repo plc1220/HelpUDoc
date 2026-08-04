@@ -50,6 +50,17 @@ const statusStyles: Record<string, { label: string; className: string }> = {
     label: 'Building OKF',
     className: 'bg-amber-50 text-amber-700 border border-amber-100',
   },
+  extracting: { label: 'Extracting', className: 'bg-amber-50 text-amber-700 border border-amber-100' },
+  structuring: { label: 'Structuring', className: 'bg-amber-50 text-amber-700 border border-amber-100' },
+  chunking: { label: 'Planning windows', className: 'bg-amber-50 text-amber-700 border border-amber-100' },
+  enriching: { label: 'Enriching', className: 'bg-amber-50 text-amber-700 border border-amber-100' },
+  reducing: { label: 'Reducing', className: 'bg-amber-50 text-amber-700 border border-amber-100' },
+  validating: { label: 'Validating', className: 'bg-amber-50 text-amber-700 border border-amber-100' },
+  indexing: { label: 'Indexing', className: 'bg-amber-50 text-amber-700 border border-amber-100' },
+  publishing: { label: 'Publishing', className: 'bg-amber-50 text-amber-700 border border-amber-100' },
+  partial: { label: 'Partial', className: 'bg-orange-50 text-orange-700 border border-orange-100' },
+  cancelled: { label: 'Cancelled', className: 'bg-slate-100 text-slate-600 border border-slate-200' },
+  superseded: { label: 'Superseded', className: 'bg-slate-100 text-slate-600 border border-slate-200' },
   queued: {
     label: 'Queued',
     className: 'bg-amber-50 text-amber-700 border border-amber-100',
@@ -172,7 +183,10 @@ const KnowledgePage = () => {
       const ingestion = item.metadata?.ingestion;
       if (!ingestion || typeof ingestion !== 'object') return false;
       const status = normalizeStatus((ingestion as { status?: string }).status);
-      return status === 'queued' || status === 'processing';
+      return [
+        'queued', 'processing', 'extracting', 'structuring', 'chunking', 'enriching',
+        'reducing', 'validating', 'indexing', 'publishing',
+      ].includes(status);
     });
     if (!hasPending) return;
     const interval = window.setInterval(() => {
@@ -203,6 +217,20 @@ const KnowledgePage = () => {
           publishedAt?: string;
           bundlePath?: string;
           conceptCount?: number;
+          relationshipCount?: number;
+          structureNodeCount?: number;
+          processingWindowCount?: number;
+          discoveredSourceUnits?: number;
+          processedSourceUnits?: number;
+          failedSourceUnits?: number;
+          coveragePercent?: number;
+          warnings?: Array<{ sourceUnit: string; code: string; message: string }>;
+          snapshotHash?: string;
+          enrichmentMode?: string;
+          modelCalls?: number;
+          inputTokens?: number;
+          outputTokens?: number;
+          estimatedCost?: number;
           okfVersion?: string;
         }
       : null
@@ -233,12 +261,31 @@ const KnowledgePage = () => {
     const publishedAt = ingestion.publishedAt
       ? new Date(ingestion.publishedAt).toLocaleString()
       : null;
+    const hasCoverage = typeof ingestion.discoveredSourceUnits === 'number';
     return (
-      <p className="text-xs text-slate-500">
-        {publishedAt
-          ? `OKF ${ingestion.okfVersion || '0.2'} • ${ingestion.conceptCount || 0} concepts • published ${publishedAt}`
-          : 'Preparing a versioned OKF knowledge bundle in the background.'}
-      </p>
+      <div className="space-y-1 text-xs text-slate-500">
+        <p>
+          {publishedAt
+            ? `OKF ${ingestion.okfVersion || '0.2'} • ${ingestion.conceptCount || 0} concepts • ${ingestion.relationshipCount || 0} relationships • published ${publishedAt}`
+            : 'Preparing a versioned OKF knowledge bundle in the background.'}
+        </p>
+        {hasCoverage ? (
+          <p>
+            Coverage: {ingestion.processedSourceUnits || 0}/{ingestion.discoveredSourceUnits || 0} source units
+            {typeof ingestion.coveragePercent === 'number' ? ` (${ingestion.coveragePercent}%)` : ''}
+            {ingestion.failedSourceUnits ? ` • ${ingestion.failedSourceUnits} failed` : ''}
+            {ingestion.processingWindowCount ? ` • ${ingestion.processingWindowCount} windows` : ''}
+          </p>
+        ) : null}
+        {ingestion.snapshotHash ? <p className="truncate">Snapshot: {ingestion.snapshotHash}</p> : null}
+        {ingestion.modelCalls ? (
+          <p>
+            Gemini Lite: {ingestion.modelCalls} calls • {(ingestion.inputTokens || 0) + (ingestion.outputTokens || 0)} tokens
+            {' • '}estimated ${Number(ingestion.estimatedCost || 0).toFixed(4)}
+          </p>
+        ) : null}
+        {ingestion.warnings?.length ? <p className="text-orange-700">{ingestion.warnings.length} extraction warning(s) require review.</p> : null}
+      </div>
     );
   };
 
@@ -292,7 +339,8 @@ const KnowledgePage = () => {
               <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Tips</p>
               <ul className="mt-2 space-y-2 text-sm text-slate-600">
                 <li>Sources are converted into human-readable OKF v0.2 Markdown concepts.</li>
-                <li>No embeddings or vector index are created.</li>
+                <li>Every source unit is accounted for; extraction gaps are reported explicitly.</li>
+                <li>Bundles are content-addressed and switched atomically after validation.</li>
                 <li>Large documents may take a few minutes to publish.</li>
                 <li>These sources are managed from one shared admin catalog.</li>
               </ul>
@@ -326,14 +374,14 @@ const KnowledgePage = () => {
               {knowledgeSources.map((item) => (
                 <div
                   key={item.id}
-                  role={normalizeStatus(getIngestion(item)?.status) === 'published' ? 'button' : undefined}
-                  tabIndex={normalizeStatus(getIngestion(item)?.status) === 'published' ? 0 : undefined}
+                  role={['published', 'partial'].includes(normalizeStatus(getIngestion(item)?.status)) ? 'button' : undefined}
+                  tabIndex={['published', 'partial'].includes(normalizeStatus(getIngestion(item)?.status)) ? 0 : undefined}
                   onClick={() => {
-                    if (normalizeStatus(getIngestion(item)?.status) === 'published') setSelectedKnowledge(item);
+                    if (['published', 'partial'].includes(normalizeStatus(getIngestion(item)?.status))) setSelectedKnowledge(item);
                   }}
                   onKeyDown={(event) => {
                     if (
-                      normalizeStatus(getIngestion(item)?.status) === 'published'
+                      ['published', 'partial'].includes(normalizeStatus(getIngestion(item)?.status))
                       && (event.key === 'Enter' || event.key === ' ')
                     ) {
                       event.preventDefault();
@@ -341,7 +389,7 @@ const KnowledgePage = () => {
                     }
                   }}
                   className={`settings-portal-card rounded-[24px] p-4 transition-[border-color,box-shadow,transform] duration-150 ease-out ${
-                    normalizeStatus(getIngestion(item)?.status) === 'published'
+                    ['published', 'partial'].includes(normalizeStatus(getIngestion(item)?.status))
                       ? 'cursor-pointer hover:border-amber-200 hover:shadow-md active:scale-[0.995]'
                       : ''
                   }`}
@@ -361,7 +409,7 @@ const KnowledgePage = () => {
                         </div>
                         <div className="flex items-center gap-2" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>
                           {renderStatusBadge(item)}
-                          {normalizeStatus(getIngestion(item)?.status) === 'published' ? (
+                          {['published', 'partial'].includes(normalizeStatus(getIngestion(item)?.status)) ? (
                             <button
                               type="button"
                               className="settings-portal-button-secondary inline-flex items-center gap-1 rounded-xl px-2.5 py-1.5 text-xs transition-transform duration-150 ease-out active:scale-95"

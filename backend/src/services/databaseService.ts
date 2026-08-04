@@ -46,6 +46,7 @@ export class DatabaseService {
     await this.createCollabDocumentsTable();
     await this.createKnowledgeSourcesTable();
     await this.createKnowledgeSourceGroupGrantsTable();
+    await this.createKnowledgeIngestionTables();
     await this.createConversationsTable();
     await this.createConversationMessagesTable();
     await this.createWorkspaceSchedulesTable();
@@ -513,6 +514,280 @@ export class DatabaseService {
         table.index(['knowledgeSourceId', 'groupId'], 'knowledge_source_group_grants_source_group_idx');
       });
       console.log('Created "knowledge_source_group_grants" table.');
+    }
+  }
+
+  private async createKnowledgeIngestionTables(): Promise<void> {
+    if (!await this.db.schema.hasTable('knowledge_ingestion_jobs')) {
+      await this.db.schema.createTable('knowledge_ingestion_jobs', (table) => {
+        table.uuid('id').primary();
+        table.integer('knowledgeId').notNullable().references('id').inTable('knowledge_sources').onDelete('CASCADE');
+        table.uuid('workspaceId').notNullable().references('id').inTable('workspaces').onDelete('CASCADE');
+        table.integer('sourceFileId').references('id').inTable('files').onDelete('SET NULL');
+        table.string('status', 32).notNullable().defaultTo('queued');
+        table.string('stage', 32).notNullable().defaultTo('queued');
+        table.string('sourceFingerprint');
+        table.string('snapshotHash');
+        table.string('bundlePath');
+        table.string('extractorVersion');
+        table.string('enrichmentVersion');
+        table.string('okfGeneratorVersion');
+        table.string('modelProfile');
+        table.jsonb('configuration').notNullable().defaultTo('{}');
+        table.integer('discoveredSourceUnits').notNullable().defaultTo(0);
+        table.integer('processedSourceUnits').notNullable().defaultTo(0);
+        table.integer('failedSourceUnits').notNullable().defaultTo(0);
+        table.jsonb('warnings').notNullable().defaultTo('[]');
+        table.text('error');
+        table.timestamp('startedAt');
+        table.timestamp('finishedAt');
+        table.timestamp('cancelledAt');
+        table.timestamp('createdAt').notNullable().defaultTo(this.db.fn.now());
+        table.timestamp('updatedAt').notNullable().defaultTo(this.db.fn.now());
+        table.index(['knowledgeId', 'createdAt'], 'knowledge_ingestion_jobs_source_created_idx');
+        table.index(['status', 'updatedAt'], 'knowledge_ingestion_jobs_status_updated_idx');
+      });
+    }
+    await this.ensureColumn('knowledge_ingestion_jobs', 'snapshotHash', (table) => table.string('snapshotHash'));
+    await this.ensureColumn('knowledge_ingestion_jobs', 'bundlePath', (table) => table.string('bundlePath'));
+
+    if (!await this.db.schema.hasTable('knowledge_ingestion_tasks')) {
+      await this.db.schema.createTable('knowledge_ingestion_tasks', (table) => {
+        table.uuid('id').primary();
+        table.uuid('runId').notNullable().references('id').inTable('knowledge_ingestion_jobs').onDelete('CASCADE');
+        table.string('taskType', 48).notNullable();
+        table.string('contentHash');
+        table.string('status', 24).notNullable().defaultTo('queued');
+        table.integer('attempts').notNullable().defaultTo(0);
+        table.integer('maxAttempts').notNullable().defaultTo(3);
+        table.string('leaseOwner');
+        table.timestamp('leaseExpiresAt');
+        table.timestamp('retryAt');
+        table.jsonb('input').notNullable().defaultTo('{}');
+        table.jsonb('result');
+        table.text('error');
+        table.timestamp('createdAt').notNullable().defaultTo(this.db.fn.now());
+        table.timestamp('updatedAt').notNullable().defaultTo(this.db.fn.now());
+        table.index(['status', 'retryAt', 'leaseExpiresAt'], 'knowledge_tasks_claim_idx');
+        table.index(['runId', 'taskType'], 'knowledge_tasks_run_type_idx');
+      });
+    }
+
+    if (!await this.db.schema.hasTable('knowledge_source_blocks')) {
+      await this.db.schema.createTable('knowledge_source_blocks', (table) => {
+        table.bigIncrements('id').primary();
+        table.uuid('runId').notNullable().references('id').inTable('knowledge_ingestion_jobs').onDelete('CASCADE');
+        table.string('blockId').notNullable();
+        table.integer('ordinal').notNullable();
+        table.string('blockType', 24).notNullable();
+        table.text('text');
+        table.jsonb('locator').notNullable().defaultTo('{}');
+        table.string('extractionMethod', 24).notNullable().defaultTo('native');
+        table.decimal('extractionConfidence', 6, 5).notNullable().defaultTo(1);
+        table.string('contentHash').notNullable();
+        table.unique(['runId', 'blockId']);
+        table.index(['runId', 'ordinal'], 'knowledge_blocks_run_ordinal_idx');
+      });
+    }
+
+    if (!await this.db.schema.hasTable('knowledge_structure_nodes')) {
+      await this.db.schema.createTable('knowledge_structure_nodes', (table) => {
+        table.uuid('id').primary();
+        table.uuid('runId').notNullable().references('id').inTable('knowledge_ingestion_jobs').onDelete('CASCADE');
+        table.uuid('parentId');
+        table.string('externalId').notNullable();
+        table.string('title').notNullable();
+        table.integer('level').notNullable();
+        table.jsonb('blockIds').notNullable().defaultTo('[]');
+        table.jsonb('signals').notNullable().defaultTo('[]');
+        table.decimal('confidence', 6, 5).notNullable();
+        table.jsonb('sourceRange').notNullable().defaultTo('{}');
+        table.unique(['runId', 'externalId']);
+      });
+    }
+
+    if (!await this.db.schema.hasTable('knowledge_processing_windows')) {
+      await this.db.schema.createTable('knowledge_processing_windows', (table) => {
+        table.uuid('id').primary();
+        table.uuid('runId').notNullable().references('id').inTable('knowledge_ingestion_jobs').onDelete('CASCADE');
+        table.string('externalId').notNullable();
+        table.string('structureNodeId').notNullable();
+        table.jsonb('coreBlockIds').notNullable().defaultTo('[]');
+        table.jsonb('contextBeforeBlockIds').notNullable().defaultTo('[]');
+        table.jsonb('contextAfterBlockIds').notNullable().defaultTo('[]');
+        table.integer('tokenCount').notNullable();
+        table.string('contentHash').notNullable();
+        table.string('strategy', 24).notNullable();
+        table.string('status', 24).notNullable().defaultTo('queued');
+        table.unique(['runId', 'externalId']);
+        table.index(['runId', 'status'], 'knowledge_windows_run_status_idx');
+      });
+    }
+
+    if (!await this.db.schema.hasTable('knowledge_candidate_concepts')) {
+      await this.db.schema.createTable('knowledge_candidate_concepts', (table) => {
+        table.uuid('id').primary();
+        table.uuid('runId').notNullable().references('id').inTable('knowledge_ingestion_jobs').onDelete('CASCADE');
+        table.uuid('windowId').references('id').inTable('knowledge_processing_windows').onDelete('CASCADE');
+        table.string('candidateId').notNullable();
+        table.string('kind', 64).notNullable();
+        table.string('name').notNullable();
+        table.jsonb('payload').notNullable();
+        table.decimal('confidence', 6, 5);
+        table.string('contentHash').notNullable();
+        table.unique(['runId', 'candidateId']);
+      });
+    }
+
+    if (!await this.db.schema.hasTable('knowledge_snapshots')) {
+      await this.db.schema.createTable('knowledge_snapshots', (table) => {
+        table.uuid('id').primary();
+        table.uuid('runId').notNullable().references('id').inTable('knowledge_ingestion_jobs').onDelete('CASCADE');
+        table.integer('knowledgeId').notNullable().references('id').inTable('knowledge_sources').onDelete('CASCADE');
+        table.string('contentHash').notNullable();
+        table.string('artifactPath').notNullable();
+        table.string('generatorVersion').notNullable();
+        table.boolean('isPublished').notNullable().defaultTo(false);
+        table.timestamp('publishedAt');
+        table.timestamp('createdAt').notNullable().defaultTo(this.db.fn.now());
+        table.unique(['knowledgeId', 'contentHash']);
+        table.unique(['runId']);
+      });
+    }
+
+    if (!await this.db.schema.hasTable('knowledge_concepts')) {
+      await this.db.schema.createTable('knowledge_concepts', (table) => {
+        table.bigIncrements('pk').primary();
+        table.uuid('snapshotId').notNullable().references('id').inTable('knowledge_snapshots').onDelete('CASCADE');
+        table.string('id').notNullable();
+        table.string('kind', 64).notNullable();
+        table.string('name').notNullable();
+        table.text('description');
+        table.jsonb('aliases').notNullable().defaultTo('[]');
+        table.jsonb('tags').notNullable().defaultTo('[]');
+        table.string('path').notNullable();
+        table.decimal('confidence', 6, 5).notNullable().defaultTo(1);
+        table.unique(['snapshotId', 'id']);
+        table.index(['snapshotId', 'kind'], 'knowledge_concepts_snapshot_kind_idx');
+      });
+    }
+
+    if (!await this.db.schema.hasTable('knowledge_evidence_spans')) {
+      await this.db.schema.createTable('knowledge_evidence_spans', (table) => {
+        table.uuid('id').primary();
+        table.uuid('snapshotId').notNullable().references('id').inTable('knowledge_snapshots').onDelete('CASCADE');
+        table.integer('sourceFileId').references('id').inTable('files').onDelete('SET NULL');
+        table.jsonb('blockIds').notNullable().defaultTo('[]');
+        table.jsonb('locator').notNullable();
+        table.string('contentHash');
+        table.index(['snapshotId'], 'knowledge_evidence_snapshot_idx');
+      });
+    }
+
+    if (!await this.db.schema.hasTable('knowledge_assertions')) {
+      await this.db.schema.createTable('knowledge_assertions', (table) => {
+        table.uuid('id').primary();
+        table.uuid('snapshotId').notNullable().references('id').inTable('knowledge_snapshots').onDelete('CASCADE');
+        table.string('conceptId').notNullable();
+        table.text('text').notNullable();
+        table.decimal('confidence', 6, 5).notNullable();
+        table.jsonb('evidenceSpanIds').notNullable().defaultTo('[]');
+        table.string('contentHash').notNullable();
+        table.index(['snapshotId', 'conceptId'], 'knowledge_assertions_snapshot_concept_idx');
+      });
+    }
+
+    if (!await this.db.schema.hasTable('knowledge_relationships')) {
+      await this.db.schema.createTable('knowledge_relationships', (table) => {
+        table.uuid('id').primary();
+        table.uuid('snapshotId').notNullable().references('id').inTable('knowledge_snapshots').onDelete('CASCADE');
+        table.string('sourceConceptId').notNullable();
+        table.string('targetConceptId').notNullable();
+        table.string('type', 96).notNullable();
+        table.string('confidenceClass', 16).notNullable();
+        table.decimal('confidence', 6, 5).notNullable();
+        table.jsonb('evidenceSpanIds').notNullable().defaultTo('[]');
+        table.index(['snapshotId', 'sourceConceptId'], 'knowledge_relationships_source_idx');
+        table.index(['snapshotId', 'targetConceptId'], 'knowledge_relationships_target_idx');
+      });
+    }
+
+    let vectorAvailable = false;
+    if (process.env.KNOWLEDGE_VECTOR_ENABLED === 'true') {
+      try {
+        await this.db.raw('CREATE EXTENSION IF NOT EXISTS vector');
+        vectorAvailable = true;
+      } catch (error) {
+        console.warn('pgvector is unavailable; Knowledge embeddings will use JSON storage.', error);
+      }
+    }
+    try {
+      await this.db.raw('CREATE EXTENSION IF NOT EXISTS pg_trgm');
+    } catch (error) {
+      console.warn('pg_trgm is unavailable; fuzzy Knowledge retrieval will be disabled.', error);
+    }
+    if (!await this.db.schema.hasTable('knowledge_embeddings')) {
+      await this.db.schema.createTable('knowledge_embeddings', (table) => {
+        table.uuid('id').primary();
+        table.uuid('snapshotId').notNullable().references('id').inTable('knowledge_snapshots').onDelete('CASCADE');
+        table.string('ownerType', 24).notNullable();
+        table.string('ownerId').notNullable();
+        table.string('model').notNullable();
+        table.integer('dimensions').notNullable().defaultTo(768);
+        table.string('modality', 24).notNullable().defaultTo('text');
+        table.string('indexVersion').notNullable().defaultTo('knowledge-vector/1');
+        table.string('contentHash').notNullable();
+        if (vectorAvailable) table.specificType('embedding', 'vector');
+        else table.jsonb('embedding');
+        table.unique(['snapshotId', 'ownerType', 'ownerId', 'model']);
+      });
+    }
+    await this.ensureColumn('knowledge_embeddings', 'dimensions', (table) => table.integer('dimensions').notNullable().defaultTo(768));
+    await this.ensureColumn('knowledge_embeddings', 'modality', (table) => table.string('modality', 24).notNullable().defaultTo('text'));
+    await this.ensureColumn('knowledge_embeddings', 'indexVersion', (table) => table.string('indexVersion').notNullable().defaultTo('knowledge-vector/1'));
+
+    if (!await this.db.schema.hasTable('knowledge_communities')) {
+      await this.db.schema.createTable('knowledge_communities', (table) => {
+        table.uuid('id').primary();
+        table.uuid('snapshotId').notNullable().references('id').inTable('knowledge_snapshots').onDelete('CASCADE');
+        table.string('algorithm').notNullable();
+        table.string('algorithmVersion').notNullable();
+        table.string('label');
+        table.jsonb('conceptIds').notNullable().defaultTo('[]');
+        table.jsonb('metadata').notNullable().defaultTo('{}');
+        table.index(['snapshotId'], 'knowledge_communities_snapshot_idx');
+      });
+    }
+
+    if (!await this.db.schema.hasTable('knowledge_usage_events')) {
+      await this.db.schema.createTable('knowledge_usage_events', (table) => {
+        table.uuid('id').primary();
+        table.uuid('runId').notNullable().references('id').inTable('knowledge_ingestion_jobs').onDelete('CASCADE');
+        table.string('stage', 32).notNullable();
+        table.string('provider');
+        table.string('model');
+        table.string('promptVersion');
+        table.string('schemaVersion');
+        table.integer('inputTokens').notNullable().defaultTo(0);
+        table.integer('cachedInputTokens').notNullable().defaultTo(0);
+        table.integer('outputTokens').notNullable().defaultTo(0);
+        table.integer('retries').notNullable().defaultTo(0);
+        table.integer('latencyMs').notNullable().defaultTo(0);
+        table.string('rateCardVersion');
+        table.decimal('estimatedCost', 18, 8).notNullable().defaultTo(0);
+        table.timestamp('createdAt').notNullable().defaultTo(this.db.fn.now());
+        table.index(['runId', 'stage'], 'knowledge_usage_run_stage_idx');
+      });
+    }
+    try {
+      await this.db.raw(
+        'CREATE INDEX IF NOT EXISTS knowledge_concepts_name_trgm_idx ON knowledge_concepts USING gin (name gin_trgm_ops)',
+      );
+      await this.db.raw(
+        'CREATE INDEX IF NOT EXISTS knowledge_assertions_text_trgm_idx ON knowledge_assertions USING gin (text gin_trgm_ops)',
+      );
+    } catch (error) {
+      console.warn('Knowledge trigram indexes could not be created.', error);
     }
   }
 

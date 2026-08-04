@@ -2,18 +2,18 @@ model:
   provider: gemini
   name: gemini-3.5-flash
   fast_name: gemini-3.5-flash
-  lite_name: gemini-3.1-flash-lite-preview
+  lite_name: gemini-3.1-flash-lite
   thinking_level: low
   fast_thinking_level: low
-  lite_thinking_level: high
+  lite_thinking_level: low
   pro_thinking_level: high
   max_output_tokens: 16384
+  lite_max_output_tokens: 4096
   pro_max_output_tokens: 32768
   image_name: gemini-3.1-flash-image-preview
   project: my-rd-coe-demo-gen-ai
-  location: us-central1
-  api_key: ${GEMINI_API_KEY}
-  use_vertex_ai: false
+  location: global
+  use_vertex_ai: true
 backend:
   workspace_root: backend/workspaces
   virtual_mode: true

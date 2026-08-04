@@ -27,11 +27,65 @@ export type KnowledgeBundleManifest = {
   title: string;
   okfVersion: string;
   bundlePath: string;
+  snapshotHash?: string | null;
+  enrichmentMode?: string | null;
+  coverage?: {
+    discoveredSourceUnits: number;
+    processedSourceUnits: number;
+    failedSourceUnits: number;
+    coveragePercent: number;
+  };
+  statistics?: {
+    conceptCount: number;
+    relationshipCount: number;
+    structureNodeCount: number;
+    processingWindowCount: number;
+  };
+  warnings?: Array<{ sourceUnit: string; code: string; message: string }>;
   files: KnowledgeBundleFile[];
 };
 
 export type KnowledgeBundleFileContent = KnowledgeBundleFile & {
   content: string;
+};
+
+export type KnowledgeIngestionJob = {
+  id: string;
+  knowledgeId: number;
+  status: string;
+  stage: string;
+  discoveredSourceUnits: number;
+  processedSourceUnits: number;
+  failedSourceUnits: number;
+  coveragePercent: number;
+  warnings?: Array<{ sourceUnit: string; code: string; message: string }>;
+  error?: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type KnowledgeGraphSummary = {
+  snapshotId: string | null;
+  snapshotHash?: string;
+  conceptCount: number;
+  relationshipCount: number;
+  communityCount: number;
+  orphanCount: number;
+  communities: Array<Record<string, unknown>>;
+};
+
+export type KnowledgeSnapshot = {
+  id: string;
+  runId: string;
+  contentHash: string;
+  bundlePath?: string | null;
+  isPublished: boolean;
+  publishedAt?: string | null;
+  createdAt: string;
+  status?: string | null;
+  discoveredSourceUnits?: number;
+  processedSourceUnits?: number;
+  failedSourceUnits?: number;
 };
 
 const handleResponse = async (response: Response) => {
@@ -50,6 +104,25 @@ export const listKnowledge = async (workspaceId: string) => {
 
 export const getKnowledge = async (workspaceId: string, knowledgeId: number | string) => {
   const response = await apiFetch(`${API_URL}/workspaces/${workspaceId}/knowledge/${knowledgeId}`);
+  return handleResponse(response);
+};
+
+export const getKnowledgeBundle = async (
+  workspaceId: string,
+  knowledgeId: number,
+): Promise<KnowledgeBundleManifest> => {
+  const response = await apiFetch(`${API_URL}/workspaces/${workspaceId}/knowledge/${knowledgeId}/bundle`);
+  return handleResponse(response);
+};
+
+export const getKnowledgeBundleFile = async (
+  workspaceId: string,
+  knowledgeId: number,
+  path: string,
+): Promise<KnowledgeBundleFileContent> => {
+  const url = new URL(`${API_URL}/workspaces/${workspaceId}/knowledge/${knowledgeId}/bundle/file`, window.location.origin);
+  url.searchParams.set('path', path);
+  const response = await apiFetch(url.toString());
   return handleResponse(response);
 };
 
@@ -111,6 +184,45 @@ export const rebuildKnowledge = async (workspaceId: string, knowledgeId: number)
   return handleResponse(response);
 };
 
+export const getKnowledgeIngestion = async (
+  workspaceId: string,
+  knowledgeId: number,
+): Promise<KnowledgeIngestionJob | null> => {
+  const response = await apiFetch(`${API_URL}/workspaces/${workspaceId}/knowledge/${knowledgeId}/ingestions/current`);
+  return handleResponse(response);
+};
+
+export const getKnowledgeIngestionReport = async (workspaceId: string, knowledgeId: number, runId: string) => {
+  const response = await apiFetch(
+    `${API_URL}/workspaces/${workspaceId}/knowledge/${knowledgeId}/ingestions/${runId}/report`,
+  );
+  return handleResponse(response);
+};
+
+export const cancelKnowledgeIngestion = async (workspaceId: string, knowledgeId: number, runId: string) => {
+  const response = await apiFetch(
+    `${API_URL}/workspaces/${workspaceId}/knowledge/${knowledgeId}/ingestions/${runId}/cancel`,
+    { method: 'POST' },
+  );
+  return handleResponse(response);
+};
+
+export const retryKnowledgeIngestion = async (workspaceId: string, knowledgeId: number, runId: string) => {
+  const response = await apiFetch(
+    `${API_URL}/workspaces/${workspaceId}/knowledge/${knowledgeId}/ingestions/${runId}/retry`,
+    { method: 'POST' },
+  );
+  return handleResponse(response);
+};
+
+export const getKnowledgeGraph = async (
+  workspaceId: string,
+  knowledgeId: number,
+): Promise<KnowledgeGraphSummary> => {
+  const response = await apiFetch(`${API_URL}/workspaces/${workspaceId}/knowledge/${knowledgeId}/graph`);
+  return handleResponse(response);
+};
+
 export const listGlobalKnowledge = async () => {
   const response = await apiFetch(`${API_URL}/knowledge`);
   return handleResponse(response);
@@ -150,6 +262,43 @@ export const uploadGlobalKnowledge = async (
 
 export const rebuildGlobalKnowledge = async (knowledgeId: number) => {
   const response = await apiFetch(`${API_URL}/knowledge/${knowledgeId}/ingest`, { method: 'POST' });
+  return handleResponse(response);
+};
+
+export const getGlobalKnowledgeIngestion = async (knowledgeId: number): Promise<KnowledgeIngestionJob | null> => {
+  const response = await apiFetch(`${API_URL}/knowledge/${knowledgeId}/ingestions/current`);
+  return handleResponse(response);
+};
+
+export const getGlobalKnowledgeIngestionReport = async (knowledgeId: number, runId: string) => {
+  const response = await apiFetch(`${API_URL}/knowledge/${knowledgeId}/ingestions/${runId}/report`);
+  return handleResponse(response);
+};
+
+export const cancelGlobalKnowledgeIngestion = async (knowledgeId: number, runId: string) => {
+  const response = await apiFetch(`${API_URL}/knowledge/${knowledgeId}/ingestions/${runId}/cancel`, { method: 'POST' });
+  return handleResponse(response);
+};
+
+export const retryGlobalKnowledgeIngestion = async (knowledgeId: number, runId: string) => {
+  const response = await apiFetch(`${API_URL}/knowledge/${knowledgeId}/ingestions/${runId}/retry`, { method: 'POST' });
+  return handleResponse(response);
+};
+
+export const getGlobalKnowledgeGraph = async (knowledgeId: number): Promise<KnowledgeGraphSummary> => {
+  const response = await apiFetch(`${API_URL}/knowledge/${knowledgeId}/graph`);
+  return handleResponse(response);
+};
+
+export const listGlobalKnowledgeSnapshots = async (knowledgeId: number): Promise<KnowledgeSnapshot[]> => {
+  const response = await apiFetch(`${API_URL}/knowledge/${knowledgeId}/snapshots`);
+  return handleResponse(response);
+};
+
+export const publishGlobalKnowledgeSnapshot = async (knowledgeId: number, snapshotId: string) => {
+  const response = await apiFetch(`${API_URL}/knowledge/${knowledgeId}/snapshots/${snapshotId}/publish`, {
+    method: 'POST',
+  });
   return handleResponse(response);
 };
 

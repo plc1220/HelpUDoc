@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { KnowledgeService } from '../src/services/knowledgeService';
+import { KnowledgeService, splitMarkdownSections } from '../src/services/knowledgeService';
 import { ConflictError } from '../src/errors';
 
 
@@ -52,6 +52,7 @@ test('OKF bundle paths are normalized and traversal-safe', () => {
   const service = Object.create(KnowledgeService.prototype) as any;
 
   assert.equal(service.normalizeBundleRelativePath('concepts/page-12.md'), 'concepts/page-12.md');
+  assert.equal(service.normalizeBundleRelativePath('manifest.json'), 'manifest.json');
   assert.throws(
     () => service.normalizeBundleRelativePath('../source.md'),
     (error: unknown) => error instanceof ConflictError && error.message === 'Invalid OKF bundle path',
@@ -60,6 +61,15 @@ test('OKF bundle paths are normalized and traversal-safe', () => {
     () => service.normalizeBundleRelativePath('concepts/page-12.pdf'),
     (error: unknown) => error instanceof ConflictError && error.message === 'OKF bundle files must be Markdown',
   );
+});
+
+test('section extraction does not silently truncate large documents', () => {
+  const markdown = Array.from({ length: 75 }, (_, index) => `## Section ${index + 1}\n\nBody ${index + 1}`).join('\n\n');
+
+  const sections = splitMarkdownSections(markdown);
+
+  assert.equal(sections.length, 75);
+  assert.equal(sections[74].title, 'Section 75');
 });
 
 test('OKF bundle files receive stable inspector kinds', () => {

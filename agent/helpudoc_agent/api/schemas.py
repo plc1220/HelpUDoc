@@ -76,10 +76,72 @@ class DocumentExtractionRequest(BaseModel):
     relativePath: str
 
 
+class DocumentPreflightRequest(DocumentExtractionRequest):
+    pass
+
+
 class DocumentExtractionResponse(BaseModel):
     title: str
     summary: str
     markdown: str
+    manifest: Dict[str, Any] | None = None
+    blocks: List[Dict[str, Any]] = Field(default_factory=list)
+    structure: List[Dict[str, Any]] = Field(default_factory=list)
+    windows: List[Dict[str, Any]] = Field(default_factory=list)
+    languageDistribution: Dict[str, float] = Field(default_factory=dict)
+
+
+class KnowledgeMapRequest(BaseModel):
+    workspaceId: str
+    window: Dict[str, Any]
+    blocks: List[Dict[str, Any]]
+    sourceType: str
+    languageDistribution: Dict[str, float] = Field(default_factory=dict)
+    structuralPath: List[str] = Field(default_factory=list)
+
+
+class KnowledgeMapResponse(BaseModel):
+    result: Dict[str, Any]
+    provider: str = "gemini"
+    model: str
+    modelProfile: str = "lite"
+    promptVersion: str
+    schemaVersion: str
+    usage: Dict[str, Any] = Field(default_factory=dict)
+    validationWarnings: List[str] = Field(default_factory=list)
+
+
+class KnowledgeReduceRequest(BaseModel):
+    workspaceId: str
+    mapResults: List[Dict[str, Any]]
+    blocks: List[Dict[str, Any]]
+    fanIn: int = Field(default=6, ge=2, le=8)
+
+
+class KnowledgeEmbeddingRequest(BaseModel):
+    workspaceId: str
+    inputs: List[Dict[str, Any]]
+    dimensions: int = Field(default=768, ge=128, le=3072)
+    taskType: str = "RETRIEVAL_DOCUMENT"
+
+
+class KnowledgeEmbeddingResponse(BaseModel):
+    provider: str = "google"
+    model: str
+    dimensions: int
+    embeddings: List[Dict[str, Any]]
+
+
+class KnowledgeMediaEmbeddingRequest(BaseModel):
+    workspaceId: str
+    relativePath: str
+    pages: List[int] = Field(min_length=1, max_length=500)
+    dimensions: int = Field(default=768, ge=128, le=3072)
+
+
+class KnowledgeGraphAnalysisRequest(BaseModel):
+    workspaceId: str
+    concepts: List[Dict[str, Any]]
 
 
 class EmbeddedDirective(BaseModel):

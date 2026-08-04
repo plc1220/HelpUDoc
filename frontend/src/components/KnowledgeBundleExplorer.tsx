@@ -19,15 +19,21 @@ import {
   Grid2X2,
   List,
   Loader2,
+  RotateCcw,
   X,
 } from 'lucide-react';
 import {
   getGlobalKnowledgeBundle,
   getGlobalKnowledgeBundleFile,
+  getGlobalKnowledgeGraph,
+  listGlobalKnowledgeSnapshots,
+  publishGlobalKnowledgeSnapshot,
   type KnowledgeBundleFile,
   type KnowledgeBundleFileContent,
   type KnowledgeBundleFileKind,
   type KnowledgeBundleManifest,
+  type KnowledgeGraphSummary,
+  type KnowledgeSnapshot,
 } from '../services/knowledgeApi';
 
 type BundleView = 'grid' | 'columns' | 'list';
@@ -141,6 +147,10 @@ export default function KnowledgeBundleExplorer({
   const [loading, setLoading] = useState(true);
   const [fileLoading, setFileLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [graph, setGraph] = useState<KnowledgeGraphSummary | null>(null);
+  const [snapshots, setSnapshots] = useState<KnowledgeSnapshot[]>([]);
+  const [selectedSnapshotId, setSelectedSnapshotId] = useState('');
+  const [publishingSnapshot, setPublishingSnapshot] = useState(false);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -171,6 +181,40 @@ export default function KnowledgeBundleExplorer({
       active = false;
     };
   }, [knowledgeId]);
+
+  useEffect(() => {
+    let active = true;
+    void Promise.all([
+      getGlobalKnowledgeGraph(knowledgeId),
+      listGlobalKnowledgeSnapshots(knowledgeId),
+    ]).then(([graphResult, snapshotResult]) => {
+      if (!active) return;
+      setGraph(graphResult);
+      setSnapshots(snapshotResult || []);
+      setSelectedSnapshotId(snapshotResult?.find((snapshot) => snapshot.isPublished)?.id || '');
+    }).catch(() => undefined);
+    return () => { active = false; };
+  }, [knowledgeId, manifest?.snapshotHash]);
+
+  const handlePublishSnapshot = async () => {
+    if (!selectedSnapshotId || snapshots.find((snapshot) => snapshot.id === selectedSnapshotId)?.isPublished) return;
+    setPublishingSnapshot(true);
+    setError(null);
+    try {
+      await publishGlobalKnowledgeSnapshot(knowledgeId, selectedSnapshotId);
+      const [bundle, snapshotResult] = await Promise.all([
+        getGlobalKnowledgeBundle(knowledgeId),
+        listGlobalKnowledgeSnapshots(knowledgeId),
+      ]);
+      setManifest(bundle);
+      setSnapshots(snapshotResult || []);
+      setSelectedPath(bundle.files.find((file) => file.kind === 'index')?.path || bundle.files[0]?.path || '');
+    } catch (publishError) {
+      setError(publishError instanceof Error ? publishError.message : 'Failed to publish snapshot');
+    } finally {
+      setPublishingSnapshot(false);
+    }
+  };
 
   useEffect(() => {
     if (!selectedPath) {
@@ -256,10 +300,42 @@ export default function KnowledgeBundleExplorer({
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <span className="rounded-full border border-emerald-100 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">Published OKF</span>
-              {manifest ? <span className="text-xs text-slate-500">v{manifest.okfVersion} · {manifest.files.length} files</span> : null}
+              {manifest ? <span className="text-xs text-slate-500">v{manifest.okfVersion} · {manifest.files.length} files · {manifest.statistics?.conceptCount || 0} concepts · {graph?.communityCount || 0} communities · {graph?.orphanCount || 0} orphans</span> : null}
             </div>
+            {snapshots.length > 1 ? (
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <select
+                  value={selectedSnapshotId}
+                  onChange={(event) => setSelectedSnapshotId(event.target.value)}
+                  className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-700"
+                  aria-label="Published Knowledge snapshot"
+                >
+                  {snapshots.map((snapshot) => (
+                    <option key={snapshot.id} value={snapshot.id}>
+                      {snapshot.isPublished ? 'Current · ' : ''}{snapshot.contentHash.slice(0, 20)} · {new Date(snapshot.createdAt).toLocaleString()}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => void handlePublishSnapshot()}
+                  disabled={publishingSnapshot || snapshots.find((snapshot) => snapshot.id === selectedSnapshotId)?.isPublished}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 disabled:opacity-50"
+                >
+                  {publishingSnapshot ? <Loader2 size={13} className="animate-spin" /> : <RotateCcw size={13} />}
+                  Publish selected
+                </button>
+              </div>
+            ) : null}
             <h2 className="mt-2 truncate text-xl font-semibold text-slate-950">{title}</h2>
             <p className="mt-1 truncate text-sm text-slate-500">{manifest?.bundlePath || 'Loading bundle…'}</p>
+            {manifest?.coverage ? (
+              <p className="mt-1 text-xs text-slate-500">
+                Coverage {manifest.coverage.processedSourceUnits}/{manifest.coverage.discoveredSourceUnits} ({manifest.coverage.coveragePercent}%)
+                {' · '}{manifest.statistics?.processingWindowCount || 0} windows
+                {manifest.coverage.failedSourceUnits ? ` · ${manifest.coverage.failedSourceUnits} failed` : ''}
+              </p>
+            ) : null}
           </div>
           <button type="button" onClick={onClose} className="settings-portal-button-secondary rounded-xl p-2 transition-transform duration-150 ease-out active:scale-95" aria-label="Close OKF bundle explorer">
             <X size={18} />
