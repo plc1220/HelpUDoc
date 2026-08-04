@@ -40,6 +40,11 @@ const SUPPORTED_TYPES: KnowledgeType[] = ['text', 'table', 'image', 'presentatio
 const OKF_VERSION = '0.2';
 const OKF_GENERATOR = 'helpudoc-okf/3';
 const OKF_SYSTEM_ROOT = '.system/knowledge';
+const KNOWLEDGE_UPLOAD_EXTENSIONS = new Set([
+  '.pdf', '.docx', '.xlsx', '.xlsm', '.csv', '.tsv', '.txt', '.md',
+]);
+const DEFAULT_KNOWLEDGE_UPLOAD_MAX_BYTES = 1024 * 1024 * 1024;
+const DEFAULT_KNOWLEDGE_UPLOAD_TTL_SECONDS = 30 * 60;
 
 type KnowledgeIngestionStatus =
   | 'queued'
@@ -1285,6 +1290,304 @@ export class KnowledgeService {
     }, { isGlobal: true });
   }
 
+  async createGlobalUploadSession(userId: string, input: {
+    fileName: string;
+    mimeType: string;
+    sizeBytes: number;
+    title: string;
+    type: KnowledgeType;
+    description?: string;
+    metadata?: Record<string, unknown>;
+  }) {
+    if (!this.fileService) {
+      throw new ConflictError('Knowledge file storage is not configured');
+    }
+    this.assertType(input.type);
+    const extension = path.extname(String(input.fileName || '')).toLowerCase();
+    if (!KNOWLEDGE_UPLOAD_EXTENSIONS.has(extension)) {
+      throw new ConflictError(`Unsupported knowledge upload type: ${extension || 'unknown'}`);
+    }
+    const configuredMaxBytes = Number(process.env.KNOWLEDGE_UPLOAD_MAX_BYTES);
+    const maxBytes = Number.isFinite(configuredMaxBytes) && configuredMaxBytes > 0
+      ? Math.max(1024 * 1024, Math.floor(configuredMaxBytes))
+      : DEFAULT_KNOWLEDGE_UPLOAD_MAX_BYTES;
+    if (!Number.isSafeInteger(input.sizeBytes) || input.sizeBytes <= 0 || input.sizeBytes > maxBytes) {
+      throw new ConflictError(`Knowledge uploads must be between 1 byte and ${maxBytes} bytes`);
+    }
+    const configuredTtl = Number(process.env.KNOWLEDGE_UPLOAD_TTL_SECONDS);
+    const expiresInSeconds = Number.isFinite(configuredTtl) && configuredTtl > 0
+      ? Math.max(5 * 60, Math.min(60 * 60, Math.floor(configuredTtl)))
+      : DEFAULT_KNOWLEDGE_UPLOAD_TTL_SECONDS;
+    const id = randomUUID();
+    const workspaceId = await this.resolveStorageWorkspace(userId);
+    const mimeType = String(input.mimeType || 'application/octet-stream').trim() || 'application/octet-stream';
+    const directUpload = await this.fileService.createDirectUploadUrl(
+      workspaceId,
+      id,
+      input.fileName,
+      mimeType,
+      userId,
+      expiresInSeconds,
+    );
+    const expiresAt = new Date(Date.now() + expiresInSeconds * 1000);
+    await this.db('knowledge_upload_sessions').insert({
+      id,
+      workspaceId,
+      userId,
+      status: 'pending',
+      objectKey: directUpload.objectKey,
+      requestedFileName: directUpload.requestedFileName,
+      mimeType,
+      sizeBytes: input.sizeBytes,
+      payload: {
+        title: input.title,
+        type: input.type,
+        description: input.description,
+        metadata: input.metadata || {},
+      },
+      expiresAt,
+    });
+    void this.cleanupExpiredUploadSessions().catch((error) => {
+      console.error('Failed to clean up expired knowledge uploads', error);
+    });
+    return {
+      id,
+      status: 'pending',
+      uploadUrl: directUpload.uploadUrl,
+      expiresAt: expiresAt.toISOString(),
+      headers: { 'Content-Type': mimeType },
+      fileName: directUpload.requestedFileName,
+      sizeBytes: input.sizeBytes,
+    };
+  }
+
+  async completeGlobalUploadSession(userId: string, uploadId: string) {
+    if (!this.fileService) {
+      throw new ConflictError('Knowledge file storage is not configured');
+    }
+    const session = await this.db('knowledge_upload_sessions').where({ id: uploadId }).first();
+    if (!session || String(session.userId || '') !== userId) {
+      throw new NotFoundError('Knowledge upload session not found');
+    }
+    if (session.status === 'completed' && session.knowledgeId) {
+      const knowledge = await this.getGlobalById(Number(session.knowledgeId));
+      return {
+        upload: this.mapUploadSession(session),
+        knowledge,
+        job: await this.ingestionService.current(Number(session.knowledgeId)),
+      };
+    }
+    if (new Date(session.expiresAt).getTime() <= Date.now()) {
+      await this.fileService.deleteStoredObject(String(session.objectKey)).catch(() => undefined);
+      await this.db('knowledge_upload_sessions').where({ id: uploadId }).update({
+        status: 'expired',
+        error: 'Upload session expired before finalization',
+        updatedAt: this.db.fn.now(),
+      });
+      throw new ConflictError('Knowledge upload session has expired');
+    }
+    const claimed = await this.db('knowledge_upload_sessions')
+      .where({ id: uploadId, status: 'pending' })
+      .update({ status: 'finalizing', error: null, updatedAt: this.db.fn.now() });
+    if (!claimed) {
+      throw new ConflictError('Knowledge upload session is already being finalized');
+    }
+
+    let storedFile: any | null = null;
+    try {
+      const object = await this.fileService.inspectStoredObject(String(session.objectKey));
+      const expectedSize = Number(session.sizeBytes);
+      if (object.sizeBytes !== expectedSize) {
+        throw new ConflictError(
+          `Uploaded object size mismatch: expected ${expectedSize} bytes, received ${object.sizeBytes}`,
+        );
+      }
+      if (object.mimeType && String(object.mimeType).toLowerCase() !== String(session.mimeType).toLowerCase()) {
+        throw new ConflictError(
+          `Uploaded object content type mismatch: expected ${session.mimeType}, received ${object.mimeType}`,
+        );
+      }
+      storedFile = await this.fileService.finalizeDirectUpload({
+        workspaceId: String(session.workspaceId),
+        objectKey: String(session.objectKey),
+        requestedFileName: String(session.requestedFileName),
+        mimeType: String(session.mimeType),
+      }, userId);
+      await this.db('knowledge_upload_sessions').where({ id: uploadId }).update({
+        fileId: Number(storedFile.id),
+        etag: object.etag,
+        updatedAt: this.db.fn.now(),
+      });
+      const payload = this.normalizeMetadata(session.payload);
+      const sourceMetadata = this.normalizeMetadata(payload.metadata);
+      const requestedProfile = String(
+        sourceMetadata.enrichmentProfile || process.env.KNOWLEDGE_ENRICHMENT_MODE || 'gemini-lite',
+      ).trim().toLowerCase();
+      const enrichmentMode: 'deterministic' | 'gemini-lite' = requestedProfile === 'deterministic'
+        ? 'deterministic'
+        : 'gemini-lite';
+      const queuedAt = new Date().toISOString();
+      const created = await this.db.transaction(async (trx) => {
+        const [record] = await trx('knowledge_sources').insert({
+          workspaceId: String(session.workspaceId),
+          isGlobal: true,
+          title: String(payload.title || session.requestedFileName),
+          type: payload.type as KnowledgeType,
+          description: payload.description ? String(payload.description) : null,
+          content: null,
+          fileId: Number(storedFile.id),
+          sourceUrl: null,
+          tags: null,
+          metadata: sourceMetadata,
+          createdBy: userId,
+          updatedBy: userId,
+        }).returning('*');
+        const job = await this.ingestionService.queue({
+          knowledgeId: Number(record.id),
+          workspaceId: String(session.workspaceId),
+          sourceFileId: Number(storedFile.id),
+          configuration: {
+            enrichmentMode,
+            okfVersion: OKF_VERSION,
+            requestedBy: userId,
+            allowSystemAdmin: true,
+          },
+        }, trx);
+        await trx('knowledge_sources').where({ id: Number(record.id) }).update({
+          metadata: this.withIngestionMetadata(sourceMetadata, {
+            status: 'queued',
+            stage: 'queued',
+            runId: String(job.id),
+            queuedAt,
+            error: null,
+            enrichmentMode,
+            okfVersion: OKF_VERSION,
+          }),
+          updatedAt: trx.fn.now(),
+        });
+        return { knowledgeId: Number(record.id), job };
+      });
+      await this.ingestionService.publishQueued({
+        workspaceId: String(session.workspaceId),
+        knowledgeId: created.knowledgeId,
+      }, created.job);
+      await this.workspaceService.touchWorkspace(String(session.workspaceId), userId);
+      this.scheduleIngestion(String(session.workspaceId), created.knowledgeId, userId, true);
+      const knowledge = await this.getGlobalById(created.knowledgeId);
+      await this.db('knowledge_upload_sessions').where({ id: uploadId }).update({
+        status: 'completed',
+        knowledgeId: Number(knowledge.id),
+        completedAt: this.db.fn.now(),
+        updatedAt: this.db.fn.now(),
+      });
+      const completed = await this.db('knowledge_upload_sessions').where({ id: uploadId }).first();
+      return {
+        upload: this.mapUploadSession(completed),
+        knowledge,
+        job: created.job,
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (storedFile) {
+        await this.db('knowledge_sources').where({ fileId: Number(storedFile.id) }).del().catch(() => undefined);
+        await this.fileService.deleteFile(Number(storedFile.id), userId).catch(() => undefined);
+      }
+      await this.db('knowledge_upload_sessions').where({ id: uploadId }).update({
+        status: 'failed',
+        fileId: null,
+        error: message,
+        updatedAt: this.db.fn.now(),
+      });
+      throw error;
+    }
+  }
+
+  async cancelGlobalUploadSession(userId: string, uploadId: string) {
+    if (!this.fileService) {
+      throw new ConflictError('Knowledge file storage is not configured');
+    }
+    const session = await this.db('knowledge_upload_sessions').where({ id: uploadId }).first();
+    if (!session || String(session.userId || '') !== userId) {
+      throw new NotFoundError('Knowledge upload session not found');
+    }
+    if (session.status === 'completed' || session.status === 'finalizing') {
+      throw new ConflictError('Knowledge upload can no longer be cancelled');
+    }
+    await this.fileService.deleteStoredObject(String(session.objectKey)).catch(() => undefined);
+    await this.db('knowledge_upload_sessions').where({ id: uploadId }).update({
+      status: 'cancelled',
+      updatedAt: this.db.fn.now(),
+    });
+    return { ...this.mapUploadSession(session), status: 'cancelled' };
+  }
+
+  async cleanupExpiredUploadSessions(limit = 50): Promise<number> {
+    if (!this.fileService) return 0;
+    const rows = await this.db('knowledge_upload_sessions')
+      .whereIn('status', ['pending', 'failed', 'finalizing'])
+      .andWhere('expiresAt', '<', new Date())
+      .orderBy('expiresAt', 'asc')
+      .limit(Math.max(1, Math.min(250, limit)));
+    for (const row of rows) {
+      const storedFile = row.fileId
+        ? await this.db('files').where({ id: Number(row.fileId) }).first()
+        : await this.db('files').where({
+            workspaceId: row.workspaceId,
+            path: row.objectKey,
+          }).first();
+      const knowledge = storedFile
+        ? await this.db('knowledge_sources').where({ fileId: Number(storedFile.id), isGlobal: true }).first()
+        : null;
+      if (knowledge) {
+        if (!await this.ingestionService.current(Number(knowledge.id)) && row.userId) {
+          await this.queueIngestion(
+            String(knowledge.workspaceId),
+            Number(knowledge.id),
+            Number(storedFile.id),
+            String(row.userId),
+            true,
+          );
+        }
+        await this.db('knowledge_upload_sessions').where({ id: row.id }).update({
+          status: 'completed',
+          fileId: Number(storedFile.id),
+          knowledgeId: Number(knowledge.id),
+          completedAt: row.completedAt || this.db.fn.now(),
+          error: null,
+          updatedAt: this.db.fn.now(),
+        });
+        continue;
+      }
+      if (storedFile && row.userId) {
+        await this.fileService.deleteFile(Number(storedFile.id), String(row.userId), {
+          allowSystemAdmin: true,
+        }).catch(() => undefined);
+      } else {
+        await this.fileService.deleteStoredObject(String(row.objectKey)).catch(() => undefined);
+      }
+      await this.db('knowledge_upload_sessions').where({ id: row.id }).update({
+        status: 'expired',
+        error: row.error || 'Upload session expired',
+        updatedAt: this.db.fn.now(),
+      });
+    }
+    return rows.length;
+  }
+
+  private mapUploadSession(row: any) {
+    return {
+      id: String(row.id),
+      status: String(row.status),
+      fileName: String(row.requestedFileName),
+      sizeBytes: Number(row.sizeBytes),
+      fileId: row.fileId ? Number(row.fileId) : null,
+      knowledgeId: row.knowledgeId ? Number(row.knowledgeId) : null,
+      expiresAt: row.expiresAt,
+      completedAt: row.completedAt || null,
+      error: row.error || null,
+    };
+  }
+
   async updateGlobal(id: number, userId: string, payload: Partial<KnowledgeInput>) {
     const row = await this.getKnowledgeRow(id);
     return this.update(String(row.workspaceId), id, userId, payload, { allowSystemAdmin: true });
@@ -1467,6 +1770,9 @@ export class KnowledgeService {
     if (!existing) {
       throw new NotFoundError('Knowledge source not found');
     }
+    const sourceFileId = existing.fileId ? Number(existing.fileId) : null;
+    const sourceMetadata = this.normalizeMetadata(existing.metadata);
+    const deleteManagedUpload = Boolean(existing.isGlobal && sourceMetadata.source === 'upload');
     const deleted = await this.db('knowledge_sources').where({ id, workspaceId }).del();
     if (!deleted) {
       throw new NotFoundError('Knowledge source not found');
@@ -1474,6 +1780,17 @@ export class KnowledgeService {
     if (this.fileService) {
       const knowledgeRoot = path.posix.join(OKF_SYSTEM_ROOT, String(id));
       await this.removeStaleBundleFiles(workspaceId, userId, knowledgeRoot, new Set(), options.allowSystemAdmin);
+      if (deleteManagedUpload && sourceFileId) {
+        const remainingReferences = await this.db('knowledge_sources')
+          .where({ fileId: sourceFileId })
+          .count<{ count: string }[]>('* as count')
+          .first();
+        if (Number(remainingReferences?.count || 0) === 0) {
+          await this.fileService.deleteFile(sourceFileId, userId, {
+            allowSystemAdmin: options.allowSystemAdmin,
+          });
+        }
+      }
     }
     await this.workspaceService.touchWorkspace(workspaceId, userId);
   }
@@ -1678,8 +1995,8 @@ export class KnowledgeService {
       if (!agentAuthToken) {
         throw new ConflictError('Knowledge ingestion requires AGENT_JWT_SECRET');
       }
-      const buffer = await this.fileService.readFileBuffer(sourceFile);
-      const sourceFingerprint = `sha256:${sha256(buffer)}`;
+      await this.fileService.ensureLocalMirror(sourceFile);
+      const sourceFingerprint = `sha256:${await this.fileService.hashFile(sourceFile)}`;
       const runId = this.getIngestionMetadata(knowledge.metadata)?.runId || randomUUID();
       const runRoot = path.posix.join(OKF_SYSTEM_ROOT, String(id), 'runs', runId);
       const hasDurableJob = Boolean(await this.db('knowledge_ingestion_jobs').where({ id: runId }).first());

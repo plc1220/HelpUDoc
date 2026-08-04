@@ -81,3 +81,72 @@ test('OKF bundle files receive stable inspector kinds', () => {
   assert.equal(service.bundleFileKind('concepts/returns.md'), 'concept');
   assert.equal(service.bundleFileKind('notes.md'), 'other');
 });
+
+test('direct knowledge uploads reserve object storage without buffering file bytes', async () => {
+  const inserted: Array<Record<string, unknown>> = [];
+  const service = Object.create(KnowledgeService.prototype) as any;
+  service.fileService = {
+    createDirectUploadUrl: async (
+      workspaceId: string,
+      uploadId: string,
+      fileName: string,
+      mimeType: string,
+    ) => ({
+      objectKey: `${workspaceId}/.system/uploads/${uploadId}/${fileName}`,
+      uploadUrl: `https://uploads.example.test/helpudoc/${uploadId}`,
+      requestedFileName: fileName,
+      mimeType,
+    }),
+  };
+  service.resolveStorageWorkspace = async () => 'workspace-1';
+  service.cleanupExpiredUploadSessions = async () => 0;
+  service.db = (tableName: string) => {
+    assert.equal(tableName, 'knowledge_upload_sessions');
+    return {
+      insert: async (row: Record<string, unknown>) => { inserted.push(row); },
+    };
+  };
+
+  const session = await service.createGlobalUploadSession('user-1', {
+    fileName: 'The History of Bo-Peep.pdf',
+    mimeType: 'application/pdf',
+    sizeBytes: 135_098_025,
+    title: 'The History of Bo-Peep',
+    type: 'text',
+    metadata: { source: 'upload', uploadMode: 'direct' },
+  });
+
+  assert.equal(session.status, 'pending');
+  assert.equal(session.sizeBytes, 135_098_025);
+  assert.equal(session.headers['Content-Type'], 'application/pdf');
+  assert.match(session.uploadUrl, /^https:\/\/uploads\.example\.test\//);
+  assert.equal(inserted.length, 1);
+  assert.equal(inserted[0].sizeBytes, 135_098_025);
+  assert.equal('buffer' in inserted[0], false);
+});
+
+test('direct knowledge upload validation rejects unsupported and oversized files', async () => {
+  const service = Object.create(KnowledgeService.prototype) as any;
+  service.fileService = {};
+
+  await assert.rejects(
+    service.createGlobalUploadSession('user-1', {
+      fileName: 'malware.exe',
+      mimeType: 'application/octet-stream',
+      sizeBytes: 1,
+      title: 'Unsupported',
+      type: 'text',
+    }),
+    /Unsupported knowledge upload type/,
+  );
+  await assert.rejects(
+    service.createGlobalUploadSession('user-1', {
+      fileName: 'too-large.pdf',
+      mimeType: 'application/pdf',
+      sizeBytes: (1024 ** 3) + 1,
+      title: 'Oversized',
+      type: 'text',
+    }),
+    /Knowledge uploads must be between/,
+  );
+});

@@ -194,11 +194,17 @@ spec:
                   key: S3_BUCKET_NAME
             - name: S3_ENDPOINT
               value: http://minio:9000
+            - name: S3_PUBLIC_ENDPOINT
+              value: https://www.lc-demo.com
             - name: S3_FORCE_PATH_STYLE
               valueFrom:
                 configMapKeyRef:
                   name: helpudoc-config
                   key: S3_FORCE_PATH_STYLE
+            - name: KNOWLEDGE_UPLOAD_MAX_BYTES
+              value: "1073741824"
+            - name: KNOWLEDGE_UPLOAD_TTL_SECONDS
+              value: "1800"
             - name: WORKSPACE_ROOT
               valueFrom:
                 configMapKeyRef:

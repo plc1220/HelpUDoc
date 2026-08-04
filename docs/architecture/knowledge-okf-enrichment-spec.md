@@ -153,7 +153,11 @@ Answering these questions requires canonical concepts, relationships, evidence s
 
 ```mermaid
 flowchart LR
-  A["Original supported document"] --> B["Routed conversion + provenance extraction"]
+  U["Browser"] -->|"short-lived signed PUT"| S["Private object storage"]
+  U -->|"authenticated finalize"| C0["Verified source + durable job"]
+  S --> C0
+  C0 --> A["Original supported document"]
+  A --> B["Routed conversion + provenance extraction"]
   B --> C["Normalized source blocks"]
   C --> D["Structure and boundary detection"]
   D --> E["Token-budgeted processing windows"]
@@ -202,13 +206,19 @@ The Python agent service owns:
 
 ### 7.3 Storage plane
 
-- Original file: existing workspace file storage.
+- Original file: private object storage, uploaded directly with a short-lived signed URL and registered only after authenticated size/type verification.
 - Durable job and semantic state: PostgreSQL.
 - Generated source artifacts and OKF files: workspace storage.
 - Progress events and short-lived coordination: Redis Streams.
 - Embeddings: versioned adapter and artifact contracts are retained initially; PostgreSQL with `pgvector` is enabled only for the later multimodal retrieval phase.
 - Graph traversal: relational adjacency tables and recursive queries in the first release.
 - Tracing: existing Langfuse deployment, with source-content capture disabled or redacted by policy.
+
+### 7.4 Upload and dispatch boundary
+
+Large source bytes do not traverse or buffer in the TypeScript API process. The browser first creates an authenticated upload session, streams the file to a short-lived same-origin object-storage URL, and then calls the authenticated completion endpoint. Completion verifies object metadata and atomically registers the source and durable ingestion task. Parsing starts only after that task exists.
+
+The completion call is the authoritative event because it carries the user's authorization and Knowledge metadata. Object-created notifications are optional reconciliation signals, not the source of truth. Expired or abandoned sessions are deleted by the Knowledge worker. The UI presents upload progress separately from the subsequent queued/extracting/enriching/publishing lifecycle.
 
 ## 8. Pipeline methodology
 
@@ -885,6 +895,10 @@ The dedicated TypeScript Knowledge worker claims PostgreSQL tasks with `FOR UPDA
 
 | Method | Route | Purpose |
 |---|---|---|
+| `POST` | `/api/knowledge/uploads` | Create an expiring signed object-storage upload session |
+| `PUT` | signed object URL | Stream source bytes directly from the browser to private storage |
+| `POST` | `/api/knowledge/uploads/:uploadId/complete` | Verify the object and create the source plus durable job |
+| `DELETE` | `/api/knowledge/uploads/:uploadId` | Cancel an incomplete upload and remove its staged object |
 | `POST` | `/api/knowledge/:id/ingestions` | Start or resume enrichment |
 | `GET` | `/api/knowledge/:id/ingestions/current` | Current job, stage, coverage, cost, and warnings |
 | `GET` | `/api/knowledge/:id/ingestions/:runId/report` | Full QC report |

@@ -18,6 +18,7 @@
   "description": "",
   "dependencies": {
     "@aws-sdk/client-s3": "^3.914.0",
+    "@aws-sdk/s3-request-presigner": "3.914.0",
     "@helpudoc/contracts": "file:../packages/contracts",
     "@hocuspocus/extension-database": "^3.4.3",
     "@hocuspocus/server": "^3.4.3",

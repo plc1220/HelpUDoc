@@ -1,4 +1,6 @@
 import * as fs from 'fs/promises';
+import { createReadStream } from 'fs';
+import { createHash } from 'crypto';
 import * as path from 'path';
 import { S3Service } from './s3Service';
 import { DatabaseService } from './databaseService';
@@ -63,6 +65,114 @@ export class FileService {
     this.s3Service = new S3Service();
     this.db = databaseService.getDb();
     this.workspaceService = workspaceService;
+  }
+
+  async createDirectUploadUrl(
+    workspaceId: string,
+    uploadId: string,
+    fileName: string,
+    mimeType: string,
+    userId: string,
+    expiresInSeconds: number,
+    options?: { allowSystemAdmin?: boolean },
+  ): Promise<{ objectKey: string; uploadUrl: string; requestedFileName: string }> {
+    await this.workspaceService.ensureMembership(workspaceId, userId, {
+      requireEdit: true,
+      allowSystemAdmin: options?.allowSystemAdmin,
+    });
+    const requestedFileName = this.normalizeRelativePath(fileName);
+    if (this.isInternalWorkspacePath(requestedFileName)) {
+      throw new ConflictError('System workspace paths are reserved');
+    }
+    const objectKey = normalizeS3Key(
+      workspaceId,
+      path.posix.join('.system', 'uploads', uploadId, path.posix.basename(requestedFileName)),
+    );
+    const uploadUrl = await this.s3Service.createPresignedUploadUrl(
+      objectKey,
+      mimeType,
+      expiresInSeconds,
+    );
+    return { objectKey, uploadUrl, requestedFileName };
+  }
+
+  async inspectStoredObject(objectKey: string) {
+    return this.s3Service.headFile(objectKey);
+  }
+
+  async finalizeDirectUpload(
+    input: {
+      workspaceId: string;
+      objectKey: string;
+      requestedFileName: string;
+      mimeType: string;
+    },
+    userId: string,
+    options?: { allowSystemAdmin?: boolean },
+  ) {
+    await this.workspaceService.ensureMembership(input.workspaceId, userId, {
+      requireEdit: true,
+      allowSystemAdmin: options?.allowSystemAdmin,
+    });
+    const relativePath = await this.resolveUniqueRelativePath(
+      input.workspaceId,
+      input.requestedFileName,
+      userId,
+    );
+    let createdFileId: number | null = null;
+    try {
+      const [newFile] = await this.db('files').insert({
+        name: relativePath,
+        workspaceId: input.workspaceId,
+        storageType: 's3',
+        path: input.objectKey,
+        mimeType: input.mimeType,
+        publicUrl: null,
+        createdBy: userId,
+        updatedBy: userId,
+      }).returning('*');
+      createdFileId = Number(newFile.id);
+      await this.workspaceService.touchWorkspace(input.workspaceId, userId, { contentChanged: true });
+      return newFile;
+    } catch (error) {
+      if (createdFileId) await this.db('files').where({ id: createdFileId }).del().catch(() => undefined);
+      throw error;
+    }
+  }
+
+  async deleteStoredObject(objectKey: string): Promise<void> {
+    await this.s3Service.deleteFile(objectKey);
+  }
+
+  async ensureLocalMirror(file: any): Promise<string> {
+    if (file.storageType === 'local') return String(file.path);
+    const localPath = this.getLocalPath(String(file.workspaceId), String(file.name));
+    try {
+      const local = await fs.stat(localPath);
+      const remote = await this.s3Service.headFile(String(file.path));
+      if (local.isFile() && local.size === remote.sizeBytes) return localPath;
+    } catch {
+      // Missing or stale local mirrors are rebuilt from object storage below.
+    }
+    const temporaryPath = `${localPath}.download-${process.pid}-${Date.now()}.part`;
+    await fs.mkdir(path.dirname(localPath), { recursive: true });
+    try {
+      await this.s3Service.downloadFileToPath(String(file.path), temporaryPath);
+      await fs.rename(temporaryPath, localPath);
+      return localPath;
+    } catch (error) {
+      await fs.unlink(temporaryPath).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  async hashFile(file: any): Promise<string> {
+    const localPath = await this.ensureLocalMirror(file);
+    const digest = createHash('sha256');
+    for await (const chunk of createReadStream(localPath)) {
+      digest.update(chunk as Buffer);
+    }
+    return digest.digest('hex');
   }
 
   private isInternalWorkspacePath(fileName: string): boolean {

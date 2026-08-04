@@ -10,7 +10,10 @@ const knowledgeTypes = ['text', 'table', 'image', 'presentation', 'infographic']
 export default function(knowledgeService: KnowledgeService, options: { global?: boolean } = {}) {
   const router = Router({ mergeParams: true });
   const global = Boolean(options.global);
-  const upload = multer({ storage: multer.memoryStorage() });
+  const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 25 * 1024 * 1024 },
+  });
 
   const createSchema = z.object({
     title: z.string().min(1),
@@ -24,6 +27,15 @@ export default function(knowledgeService: KnowledgeService, options: { global?: 
   });
 
   const updateSchema = createSchema.partial();
+  const uploadSessionSchema = z.object({
+    fileName: z.string().min(1).max(512),
+    mimeType: z.string().min(1).max(255).default('application/octet-stream'),
+    sizeBytes: z.number().int().positive(),
+    title: z.string().min(1),
+    type: z.enum(knowledgeTypes),
+    description: z.string().optional(),
+    metadata: z.record(z.string(), z.any()).optional(),
+  });
   const searchSchema = z.object({
     query: z.string().min(1),
     limit: z.number().int().min(1).max(30).optional(),
@@ -43,6 +55,12 @@ export default function(knowledgeService: KnowledgeService, options: { global?: 
   };
 
   const handleError = (res: Response, error: unknown, fallbackMessage: string) => {
+    if (error instanceof multer.MulterError && error.code === 'LIMIT_FILE_SIZE') {
+      return res.status(413).json({ error: 'Use the direct upload flow for files larger than 25 MB' });
+    }
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ error: 'Invalid request payload', details: error.issues });
+    }
     if (error instanceof HttpError) {
       return res.status(error.statusCode).json({ error: error.message, details: error.details });
     }
@@ -426,6 +444,37 @@ export default function(knowledgeService: KnowledgeService, options: { global?: 
   });
 
   if (global) {
+    router.post('/uploads', async (req: Request, res: Response) => {
+      try {
+        const user = requireUserContext(req);
+        const payload = uploadSessionSchema.parse(req.body);
+        const session = await knowledgeService.createGlobalUploadSession(user.userId, payload);
+        return res.status(201).json(session);
+      } catch (error) {
+        return handleError(res, error, 'Failed to create knowledge upload session');
+      }
+    });
+
+    router.post('/uploads/:uploadId/complete', async (req: Request<{ uploadId: string }>, res: Response) => {
+      try {
+        const user = requireUserContext(req);
+        const result = await knowledgeService.completeGlobalUploadSession(user.userId, req.params.uploadId);
+        return res.status(201).json(result);
+      } catch (error) {
+        return handleError(res, error, 'Failed to finalize knowledge upload');
+      }
+    });
+
+    router.delete('/uploads/:uploadId', async (req: Request<{ uploadId: string }>, res: Response) => {
+      try {
+        const user = requireUserContext(req);
+        const result = await knowledgeService.cancelGlobalUploadSession(user.userId, req.params.uploadId);
+        return res.json(result);
+      } catch (error) {
+        return handleError(res, error, 'Failed to cancel knowledge upload');
+      }
+    });
+
     router.post('/upload', upload.single('file'), async (req: Request, res: Response) => {
       try {
         const user = requireUserContext(req);

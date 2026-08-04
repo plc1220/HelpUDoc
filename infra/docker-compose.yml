@@ -221,6 +221,7 @@ services:
       AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
       S3_BUCKET_NAME: ${S3_BUCKET_NAME:-helpudoc}
       S3_ENDPOINT: http://minio:9000
+      S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:-http://localhost:5173}
       S3_FORCE_PATH_STYLE: "true"
       WORKSPACE_ROOT: /app/workspaces
       SKILLS_ROOT: /app/skills

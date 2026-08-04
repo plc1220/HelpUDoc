@@ -43,9 +43,9 @@ export class KnowledgeIngestionService {
     workspaceId: string;
     sourceFileId?: number | null;
     configuration?: Record<string, unknown>;
-  }): Promise<any> {
+  }, transaction?: Knex.Transaction): Promise<any> {
     const runId = randomUUID();
-    await this.db.transaction(async (trx) => {
+    const persist = async (trx: Knex.Transaction) => {
       const superseded = await trx('knowledge_ingestion_jobs')
         .where({ knowledgeId: input.knowledgeId })
         .whereNotIn('status', Array.from(TERMINAL_STATUSES))
@@ -80,15 +80,26 @@ export class KnowledgeIngestionService {
         status: 'queued',
         input: {},
       });
-    });
-    const job = await this.get(runId);
+    };
+    if (transaction) await persist(transaction);
+    else await this.db.transaction(persist);
+    const row = await (transaction || this.db)('knowledge_ingestion_jobs').where({ id: runId }).first();
+    if (!row) throw new NotFoundError('Knowledge ingestion run not found after queueing');
+    const job = this.mapJob(row);
+    if (!transaction) await this.publishQueued(input, job);
+    return job;
+  }
+
+  async publishQueued(input: {
+    workspaceId: string;
+    knowledgeId: number;
+  }, job: any): Promise<void> {
     await publishKnowledgeIngestionEvent({
       type: 'knowledge.ingestion.updated',
       workspaceId: input.workspaceId,
       knowledgeId: input.knowledgeId,
       job: this.mapNotificationJob(job),
     });
-    return job;
   }
 
   async get(runId: string): Promise<any> {

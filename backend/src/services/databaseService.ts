@@ -518,6 +518,31 @@ export class DatabaseService {
   }
 
   private async createKnowledgeIngestionTables(): Promise<void> {
+    if (!await this.db.schema.hasTable('knowledge_upload_sessions')) {
+      await this.db.schema.createTable('knowledge_upload_sessions', (table) => {
+        table.uuid('id').primary();
+        table.uuid('workspaceId').notNullable().references('id').inTable('workspaces').onDelete('CASCADE');
+        table.uuid('userId').references('id').inTable('users').onDelete('SET NULL');
+        table.string('status', 24).notNullable().defaultTo('pending');
+        table.string('objectKey').notNullable().unique();
+        table.string('requestedFileName').notNullable();
+        table.string('mimeType').notNullable();
+        table.bigInteger('sizeBytes').notNullable();
+        table.jsonb('payload').notNullable().defaultTo('{}');
+        table.string('etag');
+        table.integer('fileId').references('id').inTable('files').onDelete('SET NULL');
+        table.integer('knowledgeId').references('id').inTable('knowledge_sources').onDelete('SET NULL');
+        table.text('error');
+        table.timestamp('expiresAt').notNullable();
+        table.timestamp('completedAt');
+        table.timestamp('createdAt').notNullable().defaultTo(this.db.fn.now());
+        table.timestamp('updatedAt').notNullable().defaultTo(this.db.fn.now());
+        table.index(['status', 'expiresAt'], 'knowledge_upload_sessions_expiry_idx');
+        table.index(['userId', 'createdAt'], 'knowledge_upload_sessions_user_created_idx');
+      });
+      console.log('Created "knowledge_upload_sessions" table.');
+    }
+
     if (!await this.db.schema.hasTable('knowledge_ingestion_jobs')) {
       await this.db.schema.createTable('knowledge_ingestion_jobs', (table) => {
         table.uuid('id').primary();

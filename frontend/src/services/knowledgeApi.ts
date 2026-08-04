@@ -93,6 +93,31 @@ export type KnowledgeSnapshot = {
   failedSourceUnits?: number;
 };
 
+export type KnowledgeUploadSession = {
+  id: string;
+  status: string;
+  uploadUrl: string;
+  expiresAt: string;
+  headers: Record<string, string>;
+  fileName: string;
+  sizeBytes: number;
+};
+
+export type KnowledgeUploadCompletion = {
+  upload: {
+    id: string;
+    status: string;
+    fileName: string;
+    sizeBytes: number;
+    fileId: number | null;
+    knowledgeId: number | null;
+    completedAt?: string | null;
+    error?: string | null;
+  };
+  knowledge: Record<string, unknown>;
+  job: KnowledgeIngestionJob;
+};
+
 const handleResponse = async (response: Response) => {
   if (!response.ok) {
     const data = await response.json().catch(() => undefined);
@@ -305,6 +330,81 @@ export const uploadGlobalKnowledge = async (
     body: formData,
   });
   return handleResponse(response);
+};
+
+export const createGlobalKnowledgeUploadSession = async (
+  file: File,
+  payload: Pick<KnowledgePayload, 'title' | 'type' | 'description' | 'metadata'>,
+  signal?: AbortSignal,
+): Promise<KnowledgeUploadSession> => {
+  const response = await apiFetch(`${API_URL}/knowledge/uploads`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      fileName: file.name,
+      mimeType: file.type || 'application/octet-stream',
+      sizeBytes: file.size,
+      ...payload,
+    }),
+    signal,
+  });
+  return handleResponse(response);
+};
+
+export const putGlobalKnowledgeUpload = (
+  session: KnowledgeUploadSession,
+  file: File,
+  onProgress: (uploadedBytes: number, totalBytes: number) => void,
+  signal: AbortSignal,
+): Promise<void> => new Promise((resolve, reject) => {
+  const request = new XMLHttpRequest();
+  const abort = () => request.abort();
+  request.open('PUT', session.uploadUrl, true);
+  for (const [name, value] of Object.entries(session.headers || {})) {
+    request.setRequestHeader(name, value);
+  }
+  request.upload.onprogress = (event) => {
+    onProgress(event.loaded, event.lengthComputable ? event.total : file.size);
+  };
+  request.onload = () => {
+    signal.removeEventListener('abort', abort);
+    if (request.status >= 200 && request.status < 300) {
+      onProgress(file.size, file.size);
+      resolve();
+      return;
+    }
+    reject(new Error(`Object storage upload failed (${request.status || 'network error'})`));
+  };
+  request.onerror = () => {
+    signal.removeEventListener('abort', abort);
+    reject(new Error('Object storage upload failed due to a network error'));
+  };
+  request.onabort = () => {
+    signal.removeEventListener('abort', abort);
+    reject(new DOMException('Upload cancelled', 'AbortError'));
+  };
+  signal.addEventListener('abort', abort, { once: true });
+  if (signal.aborted) {
+    abort();
+    return;
+  }
+  request.send(file);
+});
+
+export const completeGlobalKnowledgeUpload = async (
+  uploadId: string,
+): Promise<KnowledgeUploadCompletion> => {
+  const response = await apiFetch(`${API_URL}/knowledge/uploads/${encodeURIComponent(uploadId)}/complete`, {
+    method: 'POST',
+  });
+  return handleResponse(response);
+};
+
+export const cancelGlobalKnowledgeUpload = async (uploadId: string): Promise<void> => {
+  const response = await apiFetch(`${API_URL}/knowledge/uploads/${encodeURIComponent(uploadId)}`, {
+    method: 'DELETE',
+  });
+  await handleResponse(response);
 };
 
 export const rebuildGlobalKnowledge = async (knowledgeId: number) => {

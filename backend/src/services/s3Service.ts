@@ -4,31 +4,39 @@ import {
   DeleteObjectsCommand,
   GetObjectCommand,
   HeadBucketCommand,
+  HeadObjectCommand,
   ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
   CopyObjectCommand,
 } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { createWriteStream } from 'fs';
 import { Readable } from 'stream';
+import { pipeline } from 'stream/promises';
 import { getBackendEnv } from '../config/env';
 
 export class S3Service {
   private readonly client: S3Client;
+  private readonly publicClient: S3Client;
   private readonly bucketName: string;
   private bucketReadyPromise: Promise<void> | null = null;
 
   constructor() {
     const s3 = getBackendEnv().s3;
     this.bucketName = s3.bucketName;
-    this.client = new S3Client({
+    const clientOptions = {
       credentials: {
         accessKeyId: s3.accessKeyId,
         secretAccessKey: s3.secretAccessKey,
       },
       region: s3.region,
-      endpoint: s3.endpoint,
       forcePathStyle: s3.forcePathStyle,
-    });
+      requestChecksumCalculation: 'WHEN_REQUIRED' as const,
+      responseChecksumValidation: 'WHEN_REQUIRED' as const,
+    };
+    this.client = new S3Client({ ...clientOptions, endpoint: s3.endpoint });
+    this.publicClient = new S3Client({ ...clientOptions, endpoint: s3.publicEndpoint });
   }
 
   private async ensureBucketExists(): Promise<void> {
@@ -94,6 +102,50 @@ export class S3Service {
       chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Buffer));
     }
     return Buffer.concat(chunks);
+  }
+
+  async createPresignedUploadUrl(
+    key: string,
+    mimeType: string,
+    expiresInSeconds: number,
+  ): Promise<string> {
+    await this.ensureBucketExists();
+    return getSignedUrl(
+      this.publicClient,
+      new PutObjectCommand({
+        Bucket: this.bucketName,
+        Key: key,
+        ContentType: mimeType,
+      }),
+      { expiresIn: expiresInSeconds },
+    );
+  }
+
+  async headFile(key: string): Promise<{
+    sizeBytes: number;
+    mimeType: string | null;
+    etag: string | null;
+  }> {
+    const response = await this.client.send(new HeadObjectCommand({
+      Bucket: this.bucketName,
+      Key: key,
+    }));
+    return {
+      sizeBytes: Number(response.ContentLength || 0),
+      mimeType: response.ContentType || null,
+      etag: response.ETag?.replace(/^"|"$/g, '') || null,
+    };
+  }
+
+  async downloadFileToPath(key: string, destinationPath: string): Promise<void> {
+    const response = await this.client.send(new GetObjectCommand({
+      Bucket: this.bucketName,
+      Key: key,
+    }));
+    if (!response.Body) {
+      throw new Error(`Failed to read S3 object: ${key}`);
+    }
+    await pipeline(response.Body as Readable, createWriteStream(destinationPath));
   }
 
   async deleteFile(key: string): Promise<void> {

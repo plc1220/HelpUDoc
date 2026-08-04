@@ -26,12 +26,17 @@ async function main() {
   const knowledgeService = new KnowledgeService(databaseService, workspaceService, fileService);
   const concurrency = Math.max(1, Math.min(8, Number(process.env.KNOWLEDGE_WORKER_CONCURRENCY || 2)));
   const pollMs = Math.max(500, Number(process.env.KNOWLEDGE_WORKER_POLL_MS || 2000));
+  let lastUploadCleanupAt = 0;
   let stopping = false;
   process.on('SIGTERM', () => { stopping = true; });
   process.on('SIGINT', () => { stopping = true; });
   console.log(`Knowledge worker started (concurrency=${concurrency}, pollMs=${pollMs})`);
   while (!stopping) {
     try {
+      if (Date.now() - lastUploadCleanupAt >= 5 * 60 * 1000) {
+        await knowledgeService.cleanupExpiredUploadSessions();
+        lastUploadCleanupAt = Date.now();
+      }
       const claimed = await knowledgeService.processPendingIngestions(concurrency);
       if (!claimed) await delay(pollMs);
     } catch (error) {

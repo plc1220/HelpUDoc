@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { FileIcon, FolderOpen, Loader2, NotebookPen, Plus, RotateCcw, Trash } from 'lucide-react';
+import { FileIcon, FolderOpen, Loader2, NotebookPen, Plus, RotateCcw, Trash, X } from 'lucide-react';
 import SettingsShell from '../components/settings/SettingsShell';
 import KnowledgeBundleExplorer from '../components/KnowledgeBundleExplorer';
 import { KnowledgeJobsTable } from '../app/table-grouped/page';
@@ -12,11 +12,14 @@ import {
 } from '../components/settings/SettingsScaffold';
 import {
   deleteGlobalKnowledge,
+  cancelGlobalKnowledgeUpload,
+  completeGlobalKnowledgeUpload,
+  createGlobalKnowledgeUploadSession,
   listGlobalKnowledge,
   listGlobalKnowledgeIngestionJobs,
+  putGlobalKnowledgeUpload,
   rebuildGlobalKnowledge,
   streamGlobalKnowledgeIngestionEvents,
-  uploadGlobalKnowledge,
   type KnowledgeIngestionJob,
 } from '../services/knowledgeApi';
 
@@ -42,6 +45,24 @@ type KnowledgeSource = {
     storageType?: string | null;
     path?: string | null;
   } | null;
+};
+
+type KnowledgeUploadItem = {
+  id: string;
+  file: File;
+  sessionId?: string;
+  status: 'preparing' | 'uploading' | 'finalizing' | 'queued' | 'failed' | 'cancelled';
+  uploadedBytes: number;
+  totalBytes: number;
+  error?: string;
+};
+
+const formatBytes = (bytes: number) => {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  const index = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)));
+  const value = bytes / (1024 ** index);
+  return `${value >= 10 || index === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[index]}`;
 };
 
 const statusStyles: Record<string, { label: string; className: string }> = {
@@ -104,8 +125,10 @@ const KnowledgePage = () => {
   const [uploading, setUploading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [uploadItems, setUploadItems] = useState<KnowledgeUploadItem[]>([]);
   const [selectedKnowledge, setSelectedKnowledge] = useState<KnowledgeSource | null>(null);
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
+  const uploadControllersRef = useRef(new Map<string, AbortController>());
 
   const loadKnowledgeSources = useCallback(
     async () => {
@@ -142,22 +165,102 @@ const KnowledgePage = () => {
     uploadInputRef.current?.click();
   };
 
+  const updateUploadItem = (id: string, patch: Partial<KnowledgeUploadItem>) => {
+    setUploadItems((items) => items.map((item) => (item.id === id ? { ...item, ...patch } : item)));
+  };
+
+  const runDirectUpload = async (itemId: string, file: File) => {
+    const controller = new AbortController();
+    uploadControllersRef.current.set(itemId, controller);
+    let sessionId: string | undefined;
+    updateUploadItem(itemId, {
+      status: 'preparing',
+      sessionId: undefined,
+      uploadedBytes: 0,
+      totalBytes: file.size,
+      error: undefined,
+    });
+    try {
+      const session = await createGlobalKnowledgeUploadSession(file, {
+        title: file.name,
+        type: guessKnowledgeType(file),
+        description: `Uploaded file ${file.name}`,
+        metadata: { source: 'upload', uploadMode: 'direct' },
+      }, controller.signal);
+      sessionId = session.id;
+      updateUploadItem(itemId, { status: 'uploading', sessionId });
+      await putGlobalKnowledgeUpload(
+        session,
+        file,
+        (uploadedBytes, totalBytes) => updateUploadItem(itemId, { uploadedBytes, totalBytes }),
+        controller.signal,
+      );
+      updateUploadItem(itemId, {
+        status: 'finalizing',
+        uploadedBytes: file.size,
+        totalBytes: file.size,
+      });
+      await completeGlobalKnowledgeUpload(session.id);
+      updateUploadItem(itemId, { status: 'queued' });
+      await Promise.all([loadKnowledgeSources(), loadIngestionJobs()]);
+    } catch (error) {
+      const cancelled = controller.signal.aborted || (error instanceof DOMException && error.name === 'AbortError');
+      updateUploadItem(itemId, {
+        status: cancelled ? 'cancelled' : 'failed',
+        error: cancelled ? undefined : error instanceof Error ? error.message : 'Upload failed',
+      });
+      if (!cancelled) throw error;
+    } finally {
+      uploadControllersRef.current.delete(itemId);
+    }
+  };
+
+  const handleCancelUpload = async (item: KnowledgeUploadItem) => {
+    uploadControllersRef.current.get(item.id)?.abort();
+    updateUploadItem(item.id, { status: 'cancelled', error: undefined });
+    if (item.sessionId) {
+      await cancelGlobalKnowledgeUpload(item.sessionId).catch((error) => {
+        console.warn('Failed to cancel knowledge upload session', error);
+      });
+    }
+  };
+
+  const handleRetryUpload = async (item: KnowledgeUploadItem) => {
+    setUploading(true);
+    setUploadError(null);
+    try {
+      await runDirectUpload(item.id, item.file);
+    } catch (error) {
+      setUploadError(error instanceof Error ? error.message : 'Failed to upload file.');
+    } finally {
+      setUploading(false);
+    }
+  };
+
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files ? Array.from(event.target.files) : [];
     event.target.value = '';
     if (!files.length) return;
     setUploading(true);
     setUploadError(null);
+    const pendingItems = files.map((file, index) => ({
+      id: `${Date.now()}-${index}-${Math.random().toString(16).slice(2)}`,
+      file,
+      status: 'preparing' as const,
+      uploadedBytes: 0,
+      totalBytes: file.size,
+    }));
+    setUploadItems((items) => [...pendingItems, ...items]);
     try {
-      for (const file of files) {
-        await uploadGlobalKnowledge(file, {
-          title: file.name,
-          type: guessKnowledgeType(file),
-          description: `Uploaded file ${file.name}`,
-          metadata: { source: 'upload' },
-        });
+      let firstError: unknown = null;
+      for (const item of pendingItems) {
+        try {
+          await runDirectUpload(item.id, item.file);
+        } catch (error) {
+          firstError ||= error;
+        }
       }
-      await Promise.all([loadKnowledgeSources(), loadIngestionJobs()]);
+      if (firstError) throw firstError;
     } catch (error) {
       console.error('Failed to upload knowledge files', error);
       setUploadError(error instanceof Error ? error.message : 'Failed to upload files.');
@@ -206,6 +309,11 @@ const KnowledgePage = () => {
     void loadKnowledgeSources();
     void loadIngestionJobs();
   }, [loadIngestionJobs, loadKnowledgeSources]);
+
+  useEffect(() => () => {
+    for (const controller of uploadControllersRef.current.values()) controller.abort();
+    uploadControllersRef.current.clear();
+  }, []);
 
   useEffect(() => {
     const hasPending = ingestionJobs.some((job) => [
@@ -382,6 +490,64 @@ const KnowledgePage = () => {
               </p>
               {uploadError ? (
                 <p className="mt-3 text-xs text-rose-600">{uploadError}</p>
+              ) : null}
+              {uploadItems.length ? (
+                <div className="mt-4 space-y-3 text-left">
+                  {uploadItems.map((item) => {
+                    const percent = item.totalBytes > 0
+                      ? Math.min(100, Math.round((item.uploadedBytes / item.totalBytes) * 100))
+                      : 0;
+                    const statusLabel = item.status === 'preparing'
+                      ? 'Preparing secure upload…'
+                      : item.status === 'uploading'
+                        ? `${percent}% · ${formatBytes(item.uploadedBytes)} of ${formatBytes(item.totalBytes)}`
+                        : item.status === 'finalizing'
+                          ? 'Upload complete · creating build job…'
+                          : item.status === 'queued'
+                            ? 'Build queued'
+                            : item.status === 'cancelled'
+                              ? 'Upload cancelled'
+                              : item.error || 'Upload failed';
+                    return (
+                      <div key={item.id} className="rounded-xl border border-slate-200 bg-white/70 p-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-xs font-medium text-slate-700">{item.file.name}</p>
+                            <p className={`mt-1 text-[11px] ${item.status === 'failed' ? 'text-rose-600' : 'text-slate-500'}`}>
+                              {statusLabel}
+                            </p>
+                          </div>
+                          {item.status === 'preparing' || item.status === 'uploading' ? (
+                            <button
+                              type="button"
+                              className="rounded-lg p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+                              onClick={() => void handleCancelUpload(item)}
+                              aria-label={`Cancel upload ${item.file.name}`}
+                            >
+                              <X size={14} />
+                            </button>
+                          ) : item.status === 'failed' || item.status === 'cancelled' ? (
+                            <button
+                              type="button"
+                              className="settings-portal-button-secondary rounded-lg px-2 py-1 text-[11px]"
+                              onClick={() => void handleRetryUpload(item)}
+                            >
+                              Retry
+                            </button>
+                          ) : null}
+                        </div>
+                        {item.status === 'uploading' || item.status === 'finalizing' ? (
+                          <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100">
+                            <div
+                              className={`h-full rounded-full transition-[width] ${item.status === 'finalizing' ? 'animate-pulse bg-amber-500' : 'bg-blue-600'}`}
+                              style={{ width: `${item.status === 'finalizing' ? 100 : percent}%` }}
+                            />
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </div>
               ) : null}
             </div>
 
