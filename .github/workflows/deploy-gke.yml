@@ -319,6 +319,18 @@ jobs:
           set -euo pipefail
           gcloud container clusters get-credentials "${GKE_CLUSTER}" --location "${GKE_LOCATION}" --project "${PROJECT_ID}"
 
+      - name: Capture currently deployed images
+        run: |
+          set -euo pipefail
+          if kubectl -n helpudoc get deployment helpudoc-app >/dev/null 2>&1; then
+            echo "CURRENT_BACKEND_IMG=$(kubectl -n helpudoc get deployment helpudoc-app -o jsonpath='{.spec.template.spec.containers[?(@.name=="backend")].image}')" >> "${GITHUB_ENV}"
+            echo "CURRENT_WORKER_IMG=$(kubectl -n helpudoc get deployment helpudoc-app -o jsonpath='{.spec.template.spec.containers[?(@.name=="knowledge-worker")].image}')" >> "${GITHUB_ENV}"
+            echo "CURRENT_AGENT_IMG=$(kubectl -n helpudoc get deployment helpudoc-app -o jsonpath='{.spec.template.spec.containers[?(@.name=="agent")].image}')" >> "${GITHUB_ENV}"
+          fi
+          if kubectl -n helpudoc get deployment helpudoc-frontend >/dev/null 2>&1; then
+            echo "CURRENT_FRONTEND_IMG=$(kubectl -n helpudoc get deployment helpudoc-frontend -o jsonpath='{.spec.template.spec.containers[?(@.name=="frontend")].image}')" >> "${GITHUB_ENV}"
+          fi
+
       - name: Ensure helpudoc-config exists (app deploys only)
         if: ${{ !inputs.deploy_infra }}
         run: |
@@ -493,9 +505,14 @@ jobs:
           if [[ "${{ inputs.build_backend }}" == "true" ]]; then
             APP_ARGS+=("backend=${BACKEND_IMG}")
             APP_ARGS+=("knowledge-worker=${BACKEND_IMG}")
+          elif [[ -n "${CURRENT_BACKEND_IMG:-}" && -n "${CURRENT_WORKER_IMG:-}" ]]; then
+            APP_ARGS+=("backend=${CURRENT_BACKEND_IMG}")
+            APP_ARGS+=("knowledge-worker=${CURRENT_WORKER_IMG}")
           fi
           if [[ "${{ inputs.build_agent }}" == "true" ]]; then
             APP_ARGS+=("agent=${AGENT_IMG}")
+          elif [[ -n "${CURRENT_AGENT_IMG:-}" ]]; then
+            APP_ARGS+=("agent=${CURRENT_AGENT_IMG}")
           fi
           if (( ${#APP_ARGS[@]} > 0 )); then
             kubectl -n helpudoc set image deployment/helpudoc-app "${APP_ARGS[@]}"
@@ -548,9 +565,26 @@ jobs:
               }')"
           fi
 
+          INIT_AGENT_IMG="${CURRENT_AGENT_IMG:-}"
+          if [[ "${{ inputs.build_agent }}" == "true" ]]; then
+            INIT_AGENT_IMG="${AGENT_IMG}"
+          fi
+          if [[ -n "${INIT_AGENT_IMG}" ]]; then
+            kubectl -n helpudoc patch deployment helpudoc-app --type=strategic -p "$(jq -n \
+              --arg img "${INIT_AGENT_IMG}" \
+              '{spec:{template:{spec:{initContainers:[
+                {name:"seed-skills",image:$img},
+                {name:"seed-plugins",image:$img},
+                {name:"seed-agent-config",image:$img}
+              ]}}}}')"
+          fi
+
           if [[ "${{ inputs.build_frontend }}" == "true" ]]; then
             kubectl -n helpudoc set image deployment/helpudoc-frontend \
               frontend="${FRONTEND_IMG}"
+          elif [[ -n "${CURRENT_FRONTEND_IMG:-}" ]]; then
+            kubectl -n helpudoc set image deployment/helpudoc-frontend \
+              frontend="${CURRENT_FRONTEND_IMG}"
           fi
 
           if [[ "${{ inputs.build_backend }}" == "true" ]]; then
