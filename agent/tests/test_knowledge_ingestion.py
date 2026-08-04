@@ -16,7 +16,8 @@ from helpudoc_agent.knowledge_ingestion.models import ProcessingWindow, SourceBl
 from helpudoc_agent.knowledge_ingestion.ocr import OcrBlock, OcrPageOutcome
 from helpudoc_agent.knowledge_ingestion.graph import analyze_canonical_graph
 from helpudoc_agent.knowledge_ingestion.structure import detect_structure
-from helpudoc_agent.tools.workspace.builtins.knowledge_navigation import _published_bundle_roots
+from helpudoc_agent.state import WorkspaceState
+from helpudoc_agent.tools.workspace.builtins.knowledge_navigation import _selected_bundle_roots
 
 
 def test_text_plan_has_complete_non_overlapping_core_ownership(tmp_path: Path) -> None:
@@ -136,7 +137,7 @@ def test_networkx_graph_analysis_is_versioned_and_deterministic() -> None:
     assert first["orphanIds"] == ["theme:loss"]
 
 
-def test_navigation_selects_only_the_current_immutable_bundle(tmp_path: Path) -> None:
+def test_navigation_selects_only_the_explicitly_tagged_immutable_bundle(tmp_path: Path) -> None:
     root = tmp_path / ".system" / "knowledge"
     old_bundle = root / "7" / "bundles" / "old"
     new_bundle = root / "7" / "bundles" / "new"
@@ -149,7 +150,12 @@ def test_navigation_selects_only_the_current_immutable_bundle(tmp_path: Path) ->
         encoding="utf-8",
     )
 
-    assert _published_bundle_roots(root) == [(new_bundle.resolve(), "sha256:new")]
+    workspace = WorkspaceState(workspace_id="knowledge", root_path=tmp_path)
+    workspace.context["knowledge_refs"] = [
+        {"id": 7, "bundleRoot": str(new_bundle), "snapshotHash": "sha256:new"}
+    ]
+
+    assert _selected_bundle_roots(workspace) == [(new_bundle.resolve(), "sha256:new", 7)]
 
 
 def test_map_validation_requires_core_span_evidence() -> None:

@@ -128,6 +128,9 @@ def test_current_okf_snapshot_supports_lexical_graph_and_cited_read_retrieval(tm
     )
 
     workspace = WorkspaceState(workspace_id="retrieval-outcome", root_path=tmp_path)
+    workspace.context["knowledge_refs"] = [
+        {"id": 42, "bundleRoot": str(current), "snapshotHash": "snapshot-good"}
+    ]
     tools = {tool.name: tool for tool in build_knowledge_navigation_tools(workspace)}
 
     direct = json.loads(tools["knowledge_search"].invoke({"query": "30 days before renewal"}))

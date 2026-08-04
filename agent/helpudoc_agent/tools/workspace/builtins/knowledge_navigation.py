@@ -10,51 +10,59 @@ from typing import List, Optional
 from langchain_core.tools import Tool, tool
 
 from ....state import WorkspaceState
-from .workspace_files import _display_path, _workspace_root
 
 
-_KNOWLEDGE_ROOT = Path(".system/knowledge")
 _MAX_RESULTS = 50
 _MAX_READ_CHARS = 50000
 _MAX_GRAPH_HOPS = 2
 
 
-def _knowledge_root(workspace_state: WorkspaceState) -> Path:
-    return (_workspace_root(workspace_state) / _KNOWLEDGE_ROOT).resolve()
-
-
-def _published_bundle_roots(root: Path) -> list[tuple[Path, str | None]]:
-    """Resolve only atomically selected bundles, with legacy-layout fallback."""
-    bundles: list[tuple[Path, str | None]] = []
-    if not root.exists():
-        return bundles
-    for knowledge_dir in sorted((item for item in root.iterdir() if item.is_dir()), key=lambda item: item.name):
-        pointer = knowledge_dir / "current.json"
-        if pointer.is_file():
-            try:
-                payload = json.loads(pointer.read_text(encoding="utf-8"))
-                raw_path = str(payload.get("bundlePath") or "").replace("\\", "/").lstrip("/")
-                prefix = ".system/knowledge/"
-                if raw_path.startswith(prefix):
-                    raw_path = raw_path[len(prefix):]
-                candidate = (root / raw_path).resolve()
-                if root in candidate.parents and candidate.is_dir():
-                    bundles.append((candidate, str(payload.get("snapshotHash") or "") or None))
-                    continue
-            except (OSError, ValueError, TypeError, json.JSONDecodeError):
-                pass
-        if (knowledge_dir / "index.md").is_file():
-            bundles.append((knowledge_dir.resolve(), None))
+def _selected_bundle_roots(workspace_state: WorkspaceState) -> list[tuple[Path, str | None, int]]:
+    """Return only backend-authorized bundles explicitly tagged for this turn."""
+    bundles: list[tuple[Path, str | None, int]] = []
+    shared_storage_root = Path(workspace_state.root_path).resolve().parent
+    raw_refs = workspace_state.context.get("knowledge_refs") if isinstance(workspace_state.context, dict) else []
+    for raw in raw_refs if isinstance(raw_refs, list) else []:
+        if not isinstance(raw, dict):
+            continue
+        try:
+            knowledge_id = int(raw.get("id"))
+        except (TypeError, ValueError):
+            continue
+        bundle_root = Path(str(raw.get("bundleRoot") or "")).resolve()
+        if (
+            knowledge_id <= 0
+            or shared_storage_root not in bundle_root.parents
+            or not (bundle_root / "index.md").is_file()
+        ):
+            continue
+        snapshot_hash = str(raw.get("snapshotHash") or "").strip() or None
+        bundles.append((bundle_root, snapshot_hash, knowledge_id))
     return bundles
 
 
-def _resolve_knowledge_path(root: Path, raw_path: str) -> Path:
-    cleaned = str(raw_path or "").strip().replace("\\", "/").lstrip("/")
-    if cleaned.startswith(".system/knowledge/"):
-        cleaned = cleaned[len(".system/knowledge/") :]
-    candidate = (root / cleaned).resolve()
+def _display_knowledge_path(bundle_root: Path, knowledge_id: int, candidate: Path) -> str:
+    relative = candidate.relative_to(bundle_root).as_posix()
+    return f"knowledge://{knowledge_id}/{relative}"
+
+
+def _resolve_knowledge_path(
+    workspace_state: WorkspaceState,
+    raw_path: str,
+) -> tuple[Path, str | None, int, Path]:
+    cleaned = str(raw_path or "").strip().replace("\\", "/")
+    match = re.match(r"^knowledge://(\d+)(?:/(.*))?$", cleaned, flags=re.IGNORECASE)
+    if not match:
+        raise ValueError("Knowledge paths must use a knowledge://<id>/... path returned by knowledge_search")
+    knowledge_id = int(match.group(1))
+    relative = str(match.group(2) or "index.md").lstrip("/")
+    selected = next((item for item in _selected_bundle_roots(workspace_state) if item[2] == knowledge_id), None)
+    if selected is None:
+        raise ValueError("Knowledge bundle was not tagged for this turn")
+    root, snapshot_hash, _ = selected
+    candidate = (root / relative).resolve()
     if root not in candidate.parents and candidate != root:
-        raise ValueError("Knowledge path must remain inside the published knowledge root")
+        raise ValueError("Knowledge path must remain inside the tagged bundle")
     if candidate.is_dir():
         candidate = candidate / "index.md"
     if not candidate.suffix:
@@ -63,9 +71,7 @@ def _resolve_knowledge_path(root: Path, raw_path: str) -> Path:
         raise FileNotFoundError(f"Published knowledge path not found: {raw_path}")
     if candidate.suffix.lower() != ".md":
         raise ValueError("Published knowledge documents must be Markdown")
-    if not any(bundle == candidate.parent or bundle in candidate.parents for bundle, _ in _published_bundle_roots(root)):
-        raise ValueError("Knowledge path is not part of the currently published bundle")
-    return candidate
+    return candidate, snapshot_hash, knowledge_id, root
 
 
 def _title_from_markdown(path: Path, text: str) -> str:
@@ -141,27 +147,24 @@ def _lexical_score(path: Path, title: str, text: str, phrase: str, tokens: list[
 
 
 def build_knowledge_search_tool(workspace_state: WorkspaceState) -> Tool:
-    root = _knowledge_root(workspace_state)
-    workspace_root = _workspace_root(workspace_state)
-
     @tool
     def knowledge_search(query: str = "", max_results: int = 20) -> str:
-        """List or search published OKF concepts in the current workspace."""
-        if not root.exists():
+        """List or search explicitly tagged, published OKF bundles."""
+        published_bundles = _selected_bundle_roots(workspace_state)
+        if not published_bundles:
             return json.dumps(
                 {
                     "query": query,
                     "resultCount": 0,
                     "results": [],
-                    "message": "No published knowledge bundles are available in this workspace.",
+                    "message": "No Knowledge bundle was tagged for this turn. Add one with the @ command.",
                 }
             )
         phrase = str(query or "").strip().lower()
         tokens = _query_tokens(phrase)
         limit = max(1, min(int(max_results or 20), _MAX_RESULTS))
         results = []
-        published_bundles = _published_bundle_roots(root)
-        for bundle_root, snapshot_hash in published_bundles:
+        for bundle_root, snapshot_hash, knowledge_id in published_bundles:
             concept_root = bundle_root / "concepts"
             paths = [bundle_root / "index.md"] if not phrase else (
                 sorted(concept_root.rglob("*.md")) if concept_root.is_dir()
@@ -177,7 +180,7 @@ def build_knowledge_search_tool(workspace_state: WorkspaceState) -> Tool:
                     continue
                 results.append(
                     {
-                        "path": _display_path(workspace_root, path),
+                        "path": _display_knowledge_path(bundle_root, knowledge_id, path),
                         "title": title,
                         "line": _matching_line(text, phrase, tokens) if phrase else 1,
                         "snippet": _snippet(text, phrase),
@@ -199,7 +202,7 @@ def build_knowledge_search_tool(workspace_state: WorkspaceState) -> Tool:
                     continue
                 traversed_paths.add(seed_display)
                 try:
-                    seed_path = _resolve_knowledge_path(root, seed_display)
+                    seed_path, _, seed_knowledge_id, seed_bundle_root = _resolve_knowledge_path(workspace_state, seed_display)
                     seed_text = seed_path.read_text(encoding="utf-8", errors="replace")
                 except (OSError, ValueError):
                     continue
@@ -208,10 +211,10 @@ def build_knowledge_search_tool(workspace_state: WorkspaceState) -> Tool:
                     target = (seed_path.parent / raw_target).resolve()
                     if target.name in {"index.md", "source.md", "log.md"} or not target.is_file():
                         continue
-                    display = _display_path(workspace_root, target)
+                    display = _display_knowledge_path(seed_bundle_root, seed_knowledge_id, target)
                     if display in existing_paths:
                         continue
-                    if not any(bundle == target.parent or bundle in target.parents for bundle, _ in published_bundles):
+                    if seed_bundle_root not in target.parents:
                         continue
                     target_text = target.read_text(encoding="utf-8", errors="replace")
                     target_result = {
@@ -244,16 +247,13 @@ def build_knowledge_search_tool(workspace_state: WorkspaceState) -> Tool:
 
     knowledge_search.name = "knowledge_search"
     knowledge_search.description = (
-        "List published OKF knowledge bundles or search their Markdown concepts. "
-        "Use this for @knowledge context before opening individual concepts."
+        "List or search only the published OKF bundles explicitly selected with @ for this turn. "
+        "Returns knowledge:// paths for knowledge_read."
     )
     return knowledge_search
 
 
 def build_knowledge_read_tool(workspace_state: WorkspaceState) -> Tool:
-    root = _knowledge_root(workspace_state)
-    workspace_root = _workspace_root(workspace_state)
-
     @tool
     def knowledge_read(
         path: str,
@@ -263,7 +263,7 @@ def build_knowledge_read_tool(workspace_state: WorkspaceState) -> Tool:
     ) -> str:
         """Read a bounded line range from one published OKF index or concept."""
         try:
-            candidate = _resolve_knowledge_path(root, path)
+            candidate, snapshot_id, knowledge_id, bundle_root = _resolve_knowledge_path(workspace_state, path)
             full_text = candidate.read_text(encoding="utf-8", errors="replace")
             lines = full_text.splitlines()
             start = max(1, int(start_line or 1))
@@ -273,10 +273,6 @@ def build_knowledge_read_tool(workspace_state: WorkspaceState) -> Tool:
             truncated = len(text) > limit
             if truncated:
                 text = text[:limit].rstrip() + "\n\n[Knowledge document truncated]"
-            snapshot_id = next(
-                (snapshot for bundle, snapshot in _published_bundle_roots(root) if bundle == candidate.parent or bundle in candidate.parents),
-                None,
-            )
             page_ranges = [
                 {"pageStart": int(start), "pageEnd": int(end)}
                 for start, end in re.findall(
@@ -294,7 +290,7 @@ def build_knowledge_read_tool(workspace_state: WorkspaceState) -> Tool:
                     block_locations.append({"kind": "source_blocks", "blockIds": block_ids})
             return json.dumps(
                 {
-                    "path": _display_path(workspace_root, candidate),
+                    "path": _display_knowledge_path(bundle_root, knowledge_id, candidate),
                     "title": _title_from_markdown(candidate, full_text),
                     "lineCount": len(lines),
                     "selectedLines": [start, end],

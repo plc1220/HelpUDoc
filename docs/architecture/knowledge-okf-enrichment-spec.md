@@ -104,7 +104,7 @@ Answering these questions requires canonical concepts, relationships, evidence s
 8. **Durable processing**: survive API, worker, and container restarts without restarting an entire document.
 9. **Observable quality**: show coverage, graph statistics, low-confidence items, token usage, and cost.
 10. **Deterministic publishing**: generate identical OKF files from the same finalized enrichment snapshot and generator version.
-11. **Access preservation**: derived knowledge must inherit the source's workspace and governance boundary.
+11. **Access preservation**: derived knowledge must inherit the standalone Knowledge source grants; a workspace never gains access merely because a user opens or creates it.
 12. **Multilingual support**: preserve and retrieve Chinese and other non-English content without assuming whitespace tokenization.
 
 ## 4. Non-goals
@@ -208,7 +208,7 @@ The Python agent service owns:
 
 - Original file: private object storage, uploaded directly with a short-lived signed URL and registered only after authenticated size/type verification.
 - Durable job and semantic state: PostgreSQL.
-- Generated source artifacts and OKF files: workspace storage.
+- Generated source artifacts and OKF files: the dedicated standalone Knowledge storage namespace. Existing workspace-backed bundles remain readable during migration but are not attached to workspace listings.
 - Progress events and short-lived coordination: Redis Streams.
 - Embeddings: versioned adapter and artifact contracts are retained initially; PostgreSQL with `pgvector` is enabled only for the later multimodal retrieval phase.
 - Graph traversal: relational adjacency tables and recursive queries in the first release.
@@ -910,7 +910,7 @@ The dedicated TypeScript Knowledge worker claims PostgreSQL tasks with `FOR UPDA
 
 Existing bundle routes remain compatible while their backing path moves to the current immutable bundle.
 
-The routes above show the global admin form. Workspace-scoped Knowledge uses the equivalent `/api/workspaces/:workspaceId/knowledge/:id/...` routes and applies workspace membership plus Knowledge-grant policy.
+The routes above show the global admin form. `/api/knowledge-catalog` lists the caller's granted, standalone bundles for the `@` picker. Legacy workspace-scoped Knowledge routes remain for non-global records only and never inherit global sources.
 
 ### 12.2 Internal processing APIs
 
@@ -1373,7 +1373,7 @@ Exit criteria:
 - Add `agent/helpudoc_agent/knowledge_ingestion/`.
 - Move reusable PDF/DOCX extraction out of `api/lightweight_extract.py` into versioned adapters.
 - Add internal ingestion routes under `agent/helpudoc_agent/api/routes/`.
-- Replace the file-scan implementation in `tools/workspace/builtins/knowledge_navigation.py` with calls to the active retrieval and evidence-read services.
+- The agent host must pass backend-validated structured `knowledgeRefs` for the current turn. `knowledge_search` and `knowledge_read` are restricted to those selected bundle roots and return no Knowledge when the turn contains no `@` selection. A future service-backed retrieval transport may replace the bounded bundle reader without changing this contract.
 - Reuse the existing Gemini Lite model profile through the agent configuration layer.
 
 ### Frontend

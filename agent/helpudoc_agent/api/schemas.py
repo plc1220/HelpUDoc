@@ -12,6 +12,7 @@ class ChatRequest(BaseModel):
     forceReset: bool = False
     messageContent: List[Dict[str, Any]] | None = None
     internetSearchEnabled: bool = False
+    knowledgeRefs: List[Dict[str, Any]] = Field(default_factory=list)
     langfuseTraceContext: Dict[str, Any] | None = None
 
 

@@ -4,6 +4,7 @@ import type { FileService } from '../../services/fileService';
 import { GoogleOAuthService } from '../../services/googleOAuthService';
 import { UserService } from '../../services/userService';
 import { ConversationService } from '../../services/conversationService';
+import type { KnowledgeService } from '../../services/knowledgeService';
 import { registerRunRoutes } from './runs';
 import { registerSlashRoutes } from './slash';
 
@@ -13,11 +14,20 @@ export default function(
   googleOAuthService: GoogleOAuthService,
   userService: UserService,
   conversationService: ConversationService,
+  knowledgeService: KnowledgeService,
 ) {
   const router = Router();
 
   registerSlashRoutes(router, workspaceService, userService);
-  registerRunRoutes(router, workspaceService, fileService, googleOAuthService, userService, conversationService);
+  registerRunRoutes(
+    router,
+    workspaceService,
+    fileService,
+    googleOAuthService,
+    userService,
+    conversationService,
+    knowledgeService,
+  );
 
   return router;
 }

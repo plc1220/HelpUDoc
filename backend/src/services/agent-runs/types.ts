@@ -4,6 +4,7 @@ import type {
   AgentInterruptActionResponse,
   AgentInterruptResponse,
   AgentMessageContentBlock,
+  AgentKnowledgeRef,
 } from '../agentService';
 import type { InteractionRequest } from '@helpudoc/contracts/types';
 
@@ -27,6 +28,7 @@ export type StartRunParams = {
   authToken?: string;
   messageContent?: AgentMessageContentBlock[];
   internetSearchEnabled?: boolean;
+  knowledgeRefs?: AgentKnowledgeRef[];
 };
 
 export type RunPendingInterrupt = {
@@ -100,6 +102,7 @@ export type PersistedRunContext = {
   turnId?: string;
   messageContent?: AgentMessageContentBlock[];
   internetSearchEnabled?: boolean;
+  knowledgeRefs?: AgentKnowledgeRef[];
 };
 
 export type ResumePayload =

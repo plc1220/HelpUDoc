@@ -20,6 +20,14 @@ export type AgentMessageContentBlock = {
   [key: string]: unknown;
 };
 
+export type AgentKnowledgeRef = {
+  id: number;
+  title: string;
+  snapshotHash?: string | null;
+  okfVersion: string;
+  bundleRoot: string;
+};
+
 export type AgentTraceContext = {
   runId?: string;
   threadId?: string;
@@ -64,6 +72,7 @@ type RunAgentOptions = {
   authToken?: string;
   messageContent?: AgentMessageContentBlock[];
   internetSearchEnabled?: boolean;
+  knowledgeRefs?: AgentKnowledgeRef[];
   traceContext?: AgentTraceContext;
   interruptId?: string;
   originalPrompt?: string;
@@ -176,6 +185,9 @@ export async function runAgent(
   if (options?.internetSearchEnabled) {
     payload.internetSearchEnabled = true;
   }
+  if (options?.knowledgeRefs?.length) {
+    payload.knowledgeRefs = options.knowledgeRefs;
+  }
   if (options?.traceContext) {
     payload.langfuseTraceContext = options.traceContext;
   }
@@ -210,6 +222,9 @@ export async function runAgentStream(
   }
   if (options?.internetSearchEnabled) {
     payload.internetSearchEnabled = true;
+  }
+  if (options?.knowledgeRefs?.length) {
+    payload.knowledgeRefs = options.knowledgeRefs;
   }
   if (options?.traceContext) {
     payload.langfuseTraceContext = options.traceContext;

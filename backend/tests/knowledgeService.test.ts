@@ -18,16 +18,24 @@ test('list queues legacy file-backed knowledge without ingestion metadata', asyn
   ];
   const metadataUpdates: Array<Record<string, unknown>> = [];
   const scheduled: number[] = [];
+  const filters: Array<[string, unknown]> = [];
   const service = Object.create(KnowledgeService.prototype) as any;
   service.workspaceService = {
     ensureMembership: async () => undefined,
   };
   service.fileService = {};
-  service.resolveGlobalKnowledgeAccess = async () => null;
   service.baseQuery = () => ({
-    where: () => ({
-      orderBy: async () => rows,
-    }),
+    where: (column: string, value: unknown) => {
+      filters.push([column, value]);
+      return {
+      andWhere: (nextColumn: string, nextValue: unknown) => {
+        filters.push([nextColumn, nextValue]);
+        return {
+        orderBy: async () => rows,
+      };
+      },
+    };
+    },
   });
   service.updateIngestionMetadata = async (
     _workspaceId: string,
@@ -46,6 +54,10 @@ test('list queues legacy file-backed knowledge without ingestion metadata', asyn
   assert.equal(metadataUpdates[0].status, 'queued');
   assert.deepEqual(scheduled, [7]);
   assert.equal(result[0].metadata.ingestion.status, 'queued');
+  assert.deepEqual(filters, [
+    ['knowledge_sources.workspaceId', 'workspace-1'],
+    ['knowledge_sources.isGlobal', false],
+  ]);
 });
 
 test('OKF bundle paths are normalized and traversal-safe', () => {
@@ -98,7 +110,7 @@ test('direct knowledge uploads reserve object storage without buffering file byt
       mimeType,
     }),
   };
-  service.resolveStorageWorkspace = async () => 'workspace-1';
+  service.ensureKnowledgeStorageWorkspace = async () => 'workspace-1';
   service.cleanupExpiredUploadSessions = async () => 0;
   service.db = (tableName: string) => {
     assert.equal(tableName, 'knowledge_upload_sessions');

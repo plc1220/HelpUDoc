@@ -522,6 +522,7 @@ def register_chat_routes(
     def _seed_initial_skill_context(initial_context: Dict[str, Any], message: ChatRequest) -> Dict[str, Any]:
         seeded = _merge_trace_gate_context(initial_context, message.langfuseTraceContext)
         seeded["internet_search_enabled"] = bool(message.internetSearchEnabled)
+        seeded["knowledge_refs"] = [dict(item) for item in message.knowledgeRefs if isinstance(item, dict)]
         payload = _prepare_payload(message)
         saw_directive = False
         for index in range(len(payload) - 1, -1, -1):
@@ -1682,6 +1683,7 @@ def register_chat_routes(
         context.pop("last_plan_file_path", None)
         context.pop("preferred_mcp_server", None)
         context.pop("tagged_files", None)
+        context.pop("knowledge_refs", None)
         context.pop("loaded_skill_ids_this_turn", None)
         context.pop("skill_load_attempts_this_turn", None)
         context.pop("dashboard_mode", None)
@@ -1713,6 +1715,9 @@ def register_chat_routes(
                 _merge_trace_gate_context(runtime.workspace_state.context, message.langfuseTraceContext)
             )
             runtime.workspace_state.context["internet_search_enabled"] = bool(message.internetSearchEnabled)
+            runtime.workspace_state.context["knowledge_refs"] = [
+                dict(item) for item in message.knowledgeRefs if isinstance(item, dict)
+            ]
         payload, latest_user_text = _apply_embedded_directives(runtime, payload)
         if fresh_turn:
             payload, trace_skill_user_text = _inject_trace_skill_prompt(runtime, payload, message)

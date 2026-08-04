@@ -162,6 +162,7 @@ export class WorkspaceService {
               });
           });
       })
+      .andWhere('w.isSystem', false)
       .orderBy('w.updatedAt', 'desc');
 
     return rows.map((row: any) => {
@@ -442,6 +443,9 @@ export class WorkspaceService {
 
   async deleteWorkspace(workspaceId: string, userId: string): Promise<void> {
     const { workspace, membership } = await this.ensureMembership(workspaceId, userId);
+    if ((workspace as WorkspaceRecord & { isSystem?: boolean }).isSystem) {
+      throw new AccessDeniedError('System workspaces cannot be deleted');
+    }
     if (membership.role !== 'owner') {
       throw new AccessDeniedError('Only workspace owners can delete a workspace');
     }
@@ -452,6 +456,9 @@ export class WorkspaceService {
   async deleteWorkspaceForCleanup(workspaceId: string): Promise<boolean> {
     const workspace = await this.db<WorkspaceRecord>('workspaces').where({ id: workspaceId }).first();
     if (!workspace) {
+      return false;
+    }
+    if ((workspace as WorkspaceRecord & { isSystem?: boolean }).isSystem) {
       return false;
     }
     await this.performWorkspaceDeletion(workspace.id);
@@ -588,11 +595,18 @@ export class WorkspaceService {
     userId: string,
     options: { contentChanged?: boolean } = {},
   ): Promise<void> {
+    const workspace = await this.db('workspaces')
+      .where({ id: workspaceId })
+      .select('ownerId', 'isSystem')
+      .first();
+    const lastModifiedBy = workspace?.isSystem && workspace.ownerId
+      ? String(workspace.ownerId)
+      : userId;
     await this.db('workspaces')
       .where({ id: workspaceId })
       .update({
         updatedAt: this.db.fn.now(),
-        lastModifiedBy: userId,
+        lastModifiedBy,
         ...(options.contentChanged
           ? { contentRevision: this.db.raw('COALESCE("contentRevision", 0) + 1') }
           : {}),

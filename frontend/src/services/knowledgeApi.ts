@@ -132,6 +132,11 @@ export const listKnowledge = async (workspaceId: string) => {
   return handleResponse(response);
 };
 
+export const listAccessibleKnowledge = async () => {
+  const response = await apiFetch(`${API_URL}/knowledge-catalog`);
+  return handleResponse(response);
+};
+
 export const getKnowledge = async (workspaceId: string, knowledgeId: number | string) => {
   const response = await apiFetch(`${API_URL}/workspaces/${workspaceId}/knowledge/${knowledgeId}`);
   return handleResponse(response);

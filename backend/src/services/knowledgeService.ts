@@ -19,6 +19,7 @@ import {
 } from './agentService';
 import { KnowledgeIngestionService } from './knowledgeIngestionService';
 import { signAgentContextToken } from './agentToken';
+import { resolveWorkspaceRoot } from '../config/workspaceRoot';
 
 export interface KnowledgeInput {
   title: string;
@@ -40,6 +41,10 @@ const SUPPORTED_TYPES: KnowledgeType[] = ['text', 'table', 'image', 'presentatio
 const OKF_VERSION = '0.2';
 const OKF_GENERATOR = 'helpudoc-okf/3';
 const OKF_SYSTEM_ROOT = '.system/knowledge';
+const KNOWLEDGE_STORAGE_WORKSPACE_ID = '00000000-0000-4000-8000-000000000001';
+const KNOWLEDGE_STORAGE_USER_ID = '00000000-0000-4000-8000-000000000002';
+const KNOWLEDGE_STORAGE_WORKSPACE_SLUG = 'system-knowledge-library';
+const WORKSPACE_ROOT = resolveWorkspaceRoot();
 const KNOWLEDGE_UPLOAD_EXTENSIONS = new Set([
   '.pdf', '.docx', '.xlsx', '.xlsm', '.csv', '.tsv', '.txt', '.md',
 ]);
@@ -786,6 +791,49 @@ export class KnowledgeService {
     return rows.map((row) => this.mapRow(row));
   }
 
+  async listAccessibleGlobal(userId: string) {
+    const globalKnowledgeIds = await this.resolveGlobalKnowledgeAccess(userId);
+    const query = this.baseQuery().where('knowledge_sources.isGlobal', true);
+    if (globalKnowledgeIds !== null) {
+      if (!globalKnowledgeIds.length) return [];
+      query.whereIn('knowledge_sources.id', globalKnowledgeIds);
+    }
+    const rows = await query.orderBy('knowledge_sources.updatedAt', 'desc');
+    return rows.map((row) => this.mapRow(row));
+  }
+
+  async resolveTaggedKnowledgeRefs(userId: string, knowledgeIds: number[]) {
+    const ids = Array.from(new Set(knowledgeIds.filter((id) => Number.isInteger(id) && id > 0)));
+    if (!ids.length) return [];
+    const globalKnowledgeIds = await this.resolveGlobalKnowledgeAccess(userId);
+    const query = this.baseQuery()
+      .where('knowledge_sources.isGlobal', true)
+      .whereIn('knowledge_sources.id', ids);
+    if (globalKnowledgeIds !== null) {
+      query.whereIn('knowledge_sources.id', globalKnowledgeIds);
+    }
+    const rows = await query;
+    const byId = new Map(rows.map((row) => [Number(row.id), row]));
+    const missing = ids.filter((id) => !byId.has(id));
+    if (missing.length) throw new NotFoundError('One or more tagged Knowledge bundles are unavailable');
+    return ids.map((id) => {
+      const row = byId.get(id);
+      const { bundlePath, okfVersion } = this.resolvePublishedBundle(row);
+      const storageRoot = path.resolve(WORKSPACE_ROOT, String(row.workspaceId));
+      const bundleRoot = path.resolve(storageRoot, bundlePath);
+      if (!bundleRoot.startsWith(`${storageRoot}${path.sep}`)) {
+        throw new ConflictError('Published Knowledge bundle path is invalid');
+      }
+      return {
+        id,
+        title: String(row.title),
+        snapshotHash: this.getIngestionMetadata(row.metadata)?.snapshotHash || null,
+        okfVersion,
+        bundleRoot,
+      };
+    });
+  }
+
   async listGlobalIngestionJobs(limit = 100) {
     const rows = await this.db('knowledge_ingestion_jobs as job')
       .join('knowledge_sources as source', 'source.id', 'job.knowledgeId')
@@ -1259,8 +1307,8 @@ export class KnowledgeService {
   }
 
   async createGlobal(userId: string, payload: KnowledgeInput) {
-    const workspaceId = await this.resolveStorageWorkspace(userId);
-    return this.create(workspaceId, userId, payload, { isGlobal: true });
+    const workspaceId = await this.ensureKnowledgeStorageWorkspace();
+    return this.create(workspaceId, userId, payload, { isGlobal: true, allowSystemAdmin: true });
   }
 
   async createGlobalUpload(
@@ -1271,11 +1319,12 @@ export class KnowledgeService {
     if (!this.fileService) {
       throw new ConflictError('Knowledge file storage is not configured');
     }
-    const workspaceId = await this.resolveStorageWorkspace(userId);
+    const workspaceId = await this.ensureKnowledgeStorageWorkspace();
     const fileName = await this.fileService.resolveUniqueRelativePath(
       workspaceId,
       file.originalname,
       userId,
+      { allowSystemAdmin: true },
     );
     const storedFile = await this.fileService.createFile(
       workspaceId,
@@ -1283,11 +1332,12 @@ export class KnowledgeService {
       file.buffer,
       file.mimetype || 'application/octet-stream',
       userId,
+      { allowSystemAdmin: true },
     );
     return this.create(workspaceId, userId, {
       ...payload,
       fileId: Number(storedFile.id),
-    }, { isGlobal: true });
+    }, { isGlobal: true, allowSystemAdmin: true });
   }
 
   async createGlobalUploadSession(userId: string, input: {
@@ -1319,7 +1369,7 @@ export class KnowledgeService {
       ? Math.max(5 * 60, Math.min(60 * 60, Math.floor(configuredTtl)))
       : DEFAULT_KNOWLEDGE_UPLOAD_TTL_SECONDS;
     const id = randomUUID();
-    const workspaceId = await this.resolveStorageWorkspace(userId);
+    const workspaceId = await this.ensureKnowledgeStorageWorkspace();
     const mimeType = String(input.mimeType || 'application/octet-stream').trim() || 'application/octet-stream';
     const directUpload = await this.fileService.createDirectUploadUrl(
       workspaceId,
@@ -1328,6 +1378,7 @@ export class KnowledgeService {
       mimeType,
       userId,
       expiresInSeconds,
+      { allowSystemAdmin: true },
     );
     const expiresAt = new Date(Date.now() + expiresInSeconds * 1000);
     await this.db('knowledge_upload_sessions').insert({
@@ -1412,7 +1463,7 @@ export class KnowledgeService {
         objectKey: String(session.objectKey),
         requestedFileName: String(session.requestedFileName),
         mimeType: String(session.mimeType),
-      }, userId);
+      }, userId, { allowSystemAdmin: true });
       await this.db('knowledge_upload_sessions').where({ id: uploadId }).update({
         fileId: Number(storedFile.id),
         etag: object.etag,
@@ -1605,15 +1656,13 @@ export class KnowledgeService {
 
   async list(workspaceId: string, userId: string) {
     await this.workspaceService.ensureMembership(workspaceId, userId, { requireEdit: true });
-    const globalKnowledgeIds = await this.resolveGlobalKnowledgeAccess(userId);
-    const rows = await this.applyKnowledgeAccess(this.baseQuery(), workspaceId, globalKnowledgeIds)
+    const rows = await this.baseQuery()
+      .where('knowledge_sources.workspaceId', workspaceId)
+      .andWhere('knowledge_sources.isGlobal', false)
       .orderBy('knowledge_sources.updatedAt', 'desc');
 
     if (this.fileService) {
       for (const row of rows) {
-        if (row.isGlobal && row.workspaceId !== workspaceId) {
-          continue;
-        }
         const status = this.getIngestionMetadata(row.metadata)?.status;
         if (!row.fileId) {
           continue;
@@ -1644,8 +1693,9 @@ export class KnowledgeService {
       requireEdit: true,
       allowSystemAdmin: options.allowSystemAdmin,
     });
-    const globalKnowledgeIds = await this.resolveGlobalKnowledgeAccess(userId);
-    const row = await this.applyKnowledgeAccess(this.baseQuery(), workspaceId, globalKnowledgeIds)
+    const row = await this.baseQuery()
+      .where('knowledge_sources.workspaceId', workspaceId)
+      .andWhere('knowledge_sources.isGlobal', false)
       .andWhere('knowledge_sources.id', id)
       .first();
     if (!row) {
@@ -3470,13 +3520,41 @@ export class KnowledgeService {
     };
   }
 
-  private async resolveStorageWorkspace(userId: string): Promise<string> {
-    const workspaces = await this.workspaceService.listWorkspacesForUser(userId);
-    const writable = workspaces.find((workspace) => workspace.canEdit);
-    if (!writable) {
-      throw new ConflictError('Create a writable workspace before adding knowledge');
+  private async ensureKnowledgeStorageWorkspace(): Promise<string> {
+    await this.db('users').insert({
+      id: KNOWLEDGE_STORAGE_USER_ID,
+      externalId: 'system:knowledge-library',
+      email: null,
+      displayName: 'Knowledge Library System',
+      isAdmin: false,
+      isSystem: true,
+    }).onConflict().ignore();
+    const existing = await this.db('workspaces').where({ id: KNOWLEDGE_STORAGE_WORKSPACE_ID }).first();
+    if (existing) {
+      // Keep the storage workspace wholly owned and modified by the protected
+      // system identity. Referencing the uploader here would couple its
+      // lifecycle to an otherwise standalone Knowledge upload.
+      await this.db('workspaces').where({ id: KNOWLEDGE_STORAGE_WORKSPACE_ID }).update({
+        ownerId: KNOWLEDGE_STORAGE_USER_ID,
+        lastModifiedBy: KNOWLEDGE_STORAGE_USER_ID,
+        isSystem: true,
+      });
+      return KNOWLEDGE_STORAGE_WORKSPACE_ID;
     }
-    return writable.id;
+    await this.db('workspaces').insert({
+      id: KNOWLEDGE_STORAGE_WORKSPACE_ID,
+      name: 'Knowledge Library Storage',
+      slug: KNOWLEDGE_STORAGE_WORKSPACE_SLUG,
+      ownerId: KNOWLEDGE_STORAGE_USER_ID,
+      lastModifiedBy: KNOWLEDGE_STORAGE_USER_ID,
+      visibility: 'team',
+      workspaceType: 'team',
+      status: 'active',
+      contentRevision: 0,
+      skipPlanApprovals: true,
+      isSystem: true,
+    }).onConflict().ignore();
+    return KNOWLEDGE_STORAGE_WORKSPACE_ID;
   }
 
   private async resolveGlobalKnowledgeAccess(userId: string): Promise<number[] | null> {
@@ -3495,26 +3573,4 @@ export class KnowledgeService {
     ));
   }
 
-  private applyKnowledgeAccess<T extends Knex.QueryBuilder>(
-    query: T,
-    workspaceId: string,
-    globalKnowledgeIds: number[] | null,
-  ): T {
-    return query.where((builder) => {
-      builder.where((workspaceQuery) => {
-        workspaceQuery
-          .where('knowledge_sources.workspaceId', workspaceId)
-          .andWhere('knowledge_sources.isGlobal', false);
-      });
-      if (globalKnowledgeIds === null) {
-        builder.orWhere('knowledge_sources.isGlobal', true);
-      } else if (globalKnowledgeIds.length) {
-        builder.orWhere((globalQuery) => {
-          globalQuery
-            .where('knowledge_sources.isGlobal', true)
-            .whereIn('knowledge_sources.id', globalKnowledgeIds);
-        });
-      }
-    }) as T;
-  }
 }

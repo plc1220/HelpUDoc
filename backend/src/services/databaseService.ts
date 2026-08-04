@@ -111,6 +111,7 @@ export class DatabaseService {
         table.string('email');
         table.string('displayName').notNullable();
         table.boolean('isAdmin').notNullable().defaultTo(false);
+        table.boolean('isSystem').notNullable().defaultTo(false);
         table.string('oidcIssuer');
         table.string('oidcSubject');
         table.timestamp('createdAt').notNullable().defaultTo(this.db.fn.now());
@@ -119,6 +120,7 @@ export class DatabaseService {
       console.log('Created "users" table.');
     } else {
       await this.ensureColumn('users', 'isAdmin', (table) => table.boolean('isAdmin').notNullable().defaultTo(false));
+      await this.ensureColumn('users', 'isSystem', (table) => table.boolean('isSystem').notNullable().defaultTo(false));
       await this.ensureColumn('users', 'oidcIssuer', (table) => table.string('oidcIssuer'));
       await this.ensureColumn('users', 'oidcSubject', (table) => table.string('oidcSubject'));
     }
@@ -206,6 +208,7 @@ export class DatabaseService {
         table.uuid('currentPublishedVersionId');
         table.integer('contentRevision').notNullable().defaultTo(0);
         table.boolean('skipPlanApprovals').notNullable().defaultTo(false);
+        table.boolean('isSystem').notNullable().defaultTo(false);
         table.timestamp('createdAt').notNullable().defaultTo(this.db.fn.now());
         table.timestamp('updatedAt').notNullable().defaultTo(this.db.fn.now());
       });
@@ -219,6 +222,7 @@ export class DatabaseService {
       await this.ensureColumn('workspaces', 'currentPublishedVersionId', (table) => table.uuid('currentPublishedVersionId'));
       await this.ensureColumn('workspaces', 'contentRevision', (table) => table.integer('contentRevision').notNullable().defaultTo(0));
       await this.ensureColumn('workspaces', 'skipPlanApprovals', (table) => table.boolean('skipPlanApprovals').notNullable().defaultTo(false));
+      await this.ensureColumn('workspaces', 'isSystem', (table) => table.boolean('isSystem').notNullable().defaultTo(false));
     }
   }
 

@@ -229,7 +229,7 @@ export interface ConversationMessageMetadata {
   knowledgeRefs?: Array<{
     id: number;
     title: string;
-    bundlePath: string;
+    snapshotHash?: string | null;
   }>;
   awaitingImplicitInput?: boolean;
   implicitInputReason?: 'missing_interrupt';

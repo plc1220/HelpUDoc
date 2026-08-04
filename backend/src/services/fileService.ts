@@ -118,6 +118,7 @@ export class FileService {
       input.workspaceId,
       input.requestedFileName,
       userId,
+      options,
     );
     let createdFileId: number | null = null;
     try {
@@ -185,23 +186,46 @@ export class FileService {
     await this.workspaceService.ensureMembership(workspaceId, userId);
     await this.syncWorkspaceFiles(workspaceId);
     const files = await this.db('files').where({ workspaceId });
+    const globalKnowledgeFiles = await this.db('knowledge_sources')
+      .select('fileId')
+      .where({ isGlobal: true, workspaceId })
+      .whereNotNull('fileId');
+    const standaloneKnowledgeFileIds = new Set(
+      globalKnowledgeFiles.map((row: { fileId: number }) => Number(row.fileId)),
+    );
     const visibleFiles = options?.includeInternal
       ? files
-      : files.filter((file) => !this.isInternalWorkspacePath(String(file.name || '')));
+      : files.filter((file) => (
+          !this.isInternalWorkspacePath(String(file.name || ''))
+          && !standaloneKnowledgeFileIds.has(Number(file.id))
+        ));
     await Promise.all(visibleFiles.map((file) => this.clearLegacyPublicUrl(file)));
     return visibleFiles;
   }
 
-  async hasFileName(workspaceId: string, fileName: string, userId: string): Promise<boolean> {
-    await this.workspaceService.ensureMembership(workspaceId, userId);
+  async hasFileName(
+    workspaceId: string,
+    fileName: string,
+    userId: string,
+    options?: { allowSystemAdmin?: boolean },
+  ): Promise<boolean> {
+    await this.workspaceService.ensureMembership(workspaceId, userId, options);
     const existing = await this.db('files').where({ workspaceId, name: fileName }).first();
     return Boolean(existing);
   }
 
-  async resolveUniqueRelativePath(workspaceId: string, fileName: string, userId: string): Promise<string> {
-    await this.workspaceService.ensureMembership(workspaceId, userId, { requireEdit: true });
+  async resolveUniqueRelativePath(
+    workspaceId: string,
+    fileName: string,
+    userId: string,
+    options?: { allowSystemAdmin?: boolean },
+  ): Promise<string> {
+    await this.workspaceService.ensureMembership(workspaceId, userId, {
+      requireEdit: true,
+      allowSystemAdmin: options?.allowSystemAdmin,
+    });
     const relativePath = this.normalizeRelativePath(fileName);
-    if (!await this.hasFileName(workspaceId, relativePath, userId)) {
+    if (!await this.hasFileName(workspaceId, relativePath, userId, options)) {
       return relativePath;
     }
 
@@ -211,13 +235,13 @@ export class FileService {
     const extension = parsed.ext || '';
     for (let index = 2; index <= 99; index += 1) {
       const candidate = `${directory}${baseName} (${index})${extension}`;
-      if (!await this.hasFileName(workspaceId, candidate, userId)) {
+      if (!await this.hasFileName(workspaceId, candidate, userId, options)) {
         return candidate;
       }
     }
 
     let candidate = `${directory}${baseName}-${Date.now()}${extension}`;
-    while (await this.hasFileName(workspaceId, candidate, userId)) {
+    while (await this.hasFileName(workspaceId, candidate, userId, options)) {
       candidate = `${directory}${baseName}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}${extension}`;
     }
     return candidate;
