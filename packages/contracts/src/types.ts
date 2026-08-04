@@ -7,6 +7,9 @@ export interface Workspace {
   canEdit?: boolean;
   canPublish?: boolean;
   visibility?: 'private' | 'team';
+  workspaceType?: 'private' | 'team';
+  editingPolicy?: 'direct' | 'review' | null;
+  contentRevision?: number;
   audienceType?: 'private' | 'selected_people' | 'team';
   teamId?: string | null;
   teamName?: string | null;
@@ -35,6 +38,8 @@ export interface File {
   mimeType?: string | null;
   publicUrl?: string | null;
   content?: string;
+  version?: number;
+  staleOverwrite?: boolean;
 }
 
 export type GoogleDrivePickerScope = 'recent' | 'my-drive' | 'shared';

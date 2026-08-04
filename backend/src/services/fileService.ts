@@ -419,35 +419,64 @@ export class FileService {
       throw new NotFoundError('File not found');
     }
 
-    await this.workspaceService.ensureMembership(file.workspaceId, userId, {
+    const { workspace } = await this.workspaceService.ensureMembership(file.workspaceId, userId, {
       requireEdit: true,
       allowSystemAdmin: options?.allowSystemAdmin,
     });
-    const currentVersion = this.assertVersion(file.version, expectedVersion);
-    const nextVersion = currentVersion + 1;
-
-    if (file.storageType === 'local') {
-      const mimeType = this.resolveMimeType(file.name, file.mimeType) || 'application/octet-stream';
-      const payload = this.isTextFile(file.name, mimeType)
-        ? Buffer.from(content, 'utf-8')
-        : Buffer.from(content, 'base64');
-      await fs.writeFile(file.path, payload);
-    } else {
+    if (file.storageType !== 'local') {
       throw new ConflictError('Updating S3 files is not supported.');
     }
 
-    const [updated] = await this.db('files')
-      .where({ id: fileId })
-      .update({
-        updatedBy: userId,
-        updatedAt: this.db.fn.now(),
-        version: nextVersion,
-      })
-      .returning('*');
+    const freeflow = workspace.visibility === 'team' && workspace.editingPolicy === 'direct';
+    let staleOverwrite = false;
+    let updated: any;
+    await this.db.transaction(async (tx) => {
+      const lockedFile = await tx('files').where({ id: fileId }).forUpdate().first();
+      if (!lockedFile) {
+        throw new NotFoundError('File not found');
+      }
+      const currentVersion = this.assertVersion(
+        lockedFile.version,
+        freeflow ? undefined : expectedVersion,
+      );
+      staleOverwrite = typeof expectedVersion === 'number'
+        && expectedVersion > 0
+        && expectedVersion !== currentVersion;
+      const nextVersion = currentVersion + 1;
+      const mimeType = this.resolveMimeType(lockedFile.name, lockedFile.mimeType) || 'application/octet-stream';
+      const previousContent = await this.readFileBuffer(lockedFile);
+      const payload = this.isTextFile(lockedFile.name, mimeType)
+        ? Buffer.from(content, 'utf-8')
+        : Buffer.from(content, 'base64');
 
-    await this.workspaceService.touchWorkspace(file.workspaceId, userId, { contentChanged: true });
+      await tx('workspace_file_revisions').insert({
+        fileId: lockedFile.id,
+        workspaceId: lockedFile.workspaceId,
+        name: lockedFile.name,
+        version: currentVersion,
+        storageType: lockedFile.storageType,
+        mimeType,
+        content: previousContent,
+        replacedByUserId: userId,
+        staleOverwrite,
+      });
+      await fs.writeFile(lockedFile.path, payload);
+      [updated] = await tx('files')
+        .where({ id: fileId })
+        .update({
+          updatedBy: userId,
+          updatedAt: tx.fn.now(),
+          version: nextVersion,
+        })
+        .returning('*');
+      await tx('workspaces').where({ id: lockedFile.workspaceId }).update({
+        contentRevision: tx.raw('COALESCE("contentRevision", 0) + 1'),
+        updatedAt: tx.fn.now(),
+        lastModifiedBy: userId,
+      });
+    });
 
-    return updated;
+    return { ...updated, staleOverwrite };
   }
 
   async getWorkspaceFilePreview(workspaceId: string, relativePath: string, userId: string) {

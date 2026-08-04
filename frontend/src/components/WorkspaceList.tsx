@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Box,
   Chip,
+  Collapse,
   IconButton,
   List,
   ListItemButton,
@@ -10,15 +11,15 @@ import {
   Typography,
 } from '@mui/material';
 import {
-  ContentCopy,
   Delete,
+  ExpandLess,
+  ExpandMore,
   Groups,
   History,
   Lock,
   ManageAccounts,
   Publish,
   Share,
-  Sync,
 } from '@mui/icons-material';
 
 import type { Workspace } from '../types';
@@ -29,19 +30,11 @@ interface WorkspaceListProps {
   onSelectWorkspace: (workspace: Workspace) => void;
   onDeleteWorkspace: (id: string) => void;
   onPublishWorkspace?: (workspace: Workspace) => void;
-  onSyncWorkspace?: (workspace: Workspace) => void;
-  onWorkPrivately?: (workspace: Workspace) => void;
   onHistoryWorkspace?: (workspace: Workspace) => void;
   onManageTeamAccess?: (workspace: Workspace) => void;
 }
 
-const STATUS_LABELS: Record<NonNullable<Workspace['publicationStatus']>, string> = {
-  private_draft: 'Private draft',
-  up_to_date: 'Up to date',
-  changes_to_publish: 'Changes to publish',
-  team_updates_available: 'Team updates available',
-  review_needed: 'Review needed',
-};
+const COLLAPSE_STORAGE_KEY = 'helpudoc.workspace-sections';
 
 const WorkspaceList: React.FC<WorkspaceListProps> = ({
   workspaces,
@@ -49,58 +42,68 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
   onSelectWorkspace,
   onDeleteWorkspace,
   onPublishWorkspace,
-  onSyncWorkspace,
-  onWorkPrivately,
   onHistoryWorkspace,
   onManageTeamAccess,
 }) => {
   const privateWorkspaces = workspaces.filter((workspace) => workspace.visibility !== 'team');
-  const teamWorkspaces = workspaces.filter((workspace) => workspace.visibility === 'team');
+  const sharedWorkspaces = workspaces.filter((workspace) => workspace.visibility === 'team');
+  const [expanded, setExpanded] = useState({ private: true, shared: true });
+
+  useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem(COLLAPSE_STORAGE_KEY);
+      if (stored) setExpanded((current) => ({ ...current, ...JSON.parse(stored) }));
+    } catch {
+      // Keep both sections open when preferences are unavailable.
+    }
+  }, []);
+
+  const setSectionExpanded = (section: 'private' | 'shared', value: boolean) => {
+    setExpanded((current) => {
+      const next = { ...current, [section]: value };
+      try {
+        window.localStorage.setItem(COLLAPSE_STORAGE_KEY, JSON.stringify(next));
+      } catch {
+        // Preference persistence is best effort.
+      }
+      return next;
+    });
+  };
 
   const renderWorkspace = (workspace: Workspace) => {
     const isPrivate = workspace.visibility !== 'team';
     const isOwner = workspace.role === 'owner';
     const isSelected = selectedWorkspace?.id === workspace.id;
-    const status = workspace.publicationStatus || (isPrivate ? 'private_draft' : 'up_to_date');
-    const canPublish = isPrivate
-      && workspace.canPublish !== false
-      && (status === 'private_draft' || status === 'changes_to_publish');
-    const canSync = isPrivate
-      && (status === 'team_updates_available' || status === 'review_needed');
+    const hasChangesToPublish = workspace.publicationStatus === 'changes_to_publish';
 
     const actions = [
-      canPublish && onPublishWorkspace ? {
-        label: status === 'private_draft'
-          ? `Share or publish ${workspace.name}`
-          : workspace.currentPublishedVersionNumber == null
-            ? `Publish the first version of ${workspace.name}`
-            : `Publish changes from ${workspace.name}`,
-        icon: status === 'private_draft' ? <Share fontSize="small" /> : <Publish fontSize="small" />,
+      isPrivate && !workspace.linkedTeamWorkspaceId && onPublishWorkspace ? {
+        label: `Share ${workspace.name}`,
+        icon: <Share fontSize="small" />,
         onClick: () => onPublishWorkspace(workspace),
       } : null,
-      canSync && onSyncWorkspace ? {
-        label: status === 'review_needed'
-          ? `Review changes for ${workspace.name}`
-          : `Sync team updates into ${workspace.name}`,
-        icon: <Sync fontSize="small" />,
-        onClick: () => onSyncWorkspace(workspace),
+      isPrivate && workspace.linkedTeamWorkspaceId ? {
+        label: `Open Shared workspace for ${workspace.name}`,
+        icon: <Groups fontSize="small" />,
+        onClick: () => {
+          const linked = workspaces.find((item) => item.id === workspace.linkedTeamWorkspaceId);
+          if (linked) onSelectWorkspace(linked);
+        },
       } : null,
-      !isPrivate
-      && onWorkPrivately
-      && (workspace.role === 'owner' || workspace.role === 'editor' || workspace.role === 'contributor') ? {
-        label: workspace.privateCopyWorkspaceId
-          ? `Open private copy of ${workspace.name}`
-          : `Work privately on ${workspace.name}`,
-        icon: <ContentCopy fontSize="small" />,
-        onClick: () => onWorkPrivately(workspace),
+      !isPrivate && workspace.canPublish && hasChangesToPublish && onPublishWorkspace ? {
+        label: workspace.currentPublishedVersionNumber == null
+          ? `Create the first published version of ${workspace.name}`
+          : `Publish changes from ${workspace.name}`,
+        icon: <Publish fontSize="small" />,
+        onClick: () => onPublishWorkspace(workspace),
       } : null,
-      !isPrivate && onHistoryWorkspace ? {
-        label: `View published history for ${workspace.name}`,
+      !isPrivate && workspace.currentPublishedVersionNumber != null && onHistoryWorkspace ? {
+        label: `View published versions of ${workspace.name}`,
         icon: <History fontSize="small" />,
         onClick: () => onHistoryWorkspace(workspace),
       } : null,
       !isPrivate && isOwner && onManageTeamAccess ? {
-        label: `Manage publishing access for ${workspace.name}`,
+        label: `Manage access for ${workspace.name}`,
         icon: <ManageAccounts fontSize="small" />,
         onClick: () => onManageTeamAccess(workspace),
       } : null,
@@ -110,6 +113,13 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
         onClick: () => onDeleteWorkspace(workspace.id),
       } : null,
     ].filter(Boolean) as Array<{ label: string; icon: React.ReactNode; onClick: () => void }>;
+
+    const sharedDetails = [
+      workspace.editingPolicy === 'review' ? 'Review' : 'Freeflow',
+      workspace.currentPublishedVersionNumber == null
+        ? 'Working version only'
+        : `Published v${workspace.currentPublishedVersionNumber}`,
+    ].join(' · ');
 
     return (
       <Box
@@ -151,13 +161,9 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
         >
           <ListItemText
             primary={workspace.name}
-            secondary={
-              isPrivate
-                ? STATUS_LABELS[status]
-                : `${workspace.teamName || (workspace.audienceType === 'selected_people' ? 'Selected people' : 'Team')}${workspace.latestPublisherName
-                  ? ` · ${workspace.latestPublisherName}`
-                  : ''}`
-            }
+            secondary={isPrivate
+              ? workspace.linkedTeamWorkspaceId ? 'Private copy' : 'Private'
+              : sharedDetails}
             primaryTypographyProps={{
               noWrap: true,
               sx: { fontWeight: 600, fontSize: '0.92rem', lineHeight: 1.3, mb: 0.2 },
@@ -167,11 +173,7 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
               sx: {
                 fontSize: '0.76rem',
                 lineHeight: 1.3,
-                color: status === 'review_needed'
-                  ? 'warning.main'
-                  : status === 'changes_to_publish' || status === 'team_updates_available'
-                    ? 'primary.main'
-                    : 'text.secondary',
+                color: hasChangesToPublish ? 'primary.main' : 'text.secondary',
               },
             }}
           />
@@ -220,31 +222,39 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
   };
 
   const renderSection = (
+    key: 'private' | 'shared',
     title: string,
     icon: React.ReactNode,
     items: Workspace[],
     emptyLabel: string,
   ) => (
-    <Box sx={{ mb: 2 }}>
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, px: 0.5, mb: 0.75 }}>
+    <Box sx={{ mb: 1.5 }}>
+      <ListItemButton
+        onClick={() => setSectionExpanded(key, !expanded[key])}
+        aria-expanded={expanded[key]}
+        sx={{ borderRadius: 1.5, px: 0.5, py: 0.5, mb: 0.5 }}
+      >
         {icon}
-        <Typography variant="overline" sx={{ fontWeight: 700, lineHeight: 1.5 }}>
+        <Typography variant="overline" sx={{ ml: 0.75, fontWeight: 700, lineHeight: 1.5, flex: 1 }}>
           {title}
         </Typography>
-        <Chip label={items.length} size="small" sx={{ height: 18, fontSize: '0.68rem' }} />
-      </Box>
-      {items.length ? items.map(renderWorkspace) : (
-        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', px: 1, py: 1 }}>
-          {emptyLabel}
-        </Typography>
-      )}
+        <Chip label={items.length} size="small" sx={{ height: 18, fontSize: '0.68rem', mr: 0.5 }} />
+        {expanded[key] ? <ExpandLess fontSize="small" /> : <ExpandMore fontSize="small" />}
+      </ListItemButton>
+      <Collapse in={expanded[key]} timeout="auto" unmountOnExit>
+        {items.length ? items.map(renderWorkspace) : (
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', px: 1, py: 1 }}>
+            {emptyLabel}
+          </Typography>
+        )}
+      </Collapse>
     </Box>
   );
 
   return (
     <List disablePadding>
-      {renderSection('Private workspaces', <Lock sx={{ fontSize: 16 }} />, privateWorkspaces, 'No private workspaces')}
-      {renderSection('Team workspaces', <Groups sx={{ fontSize: 16 }} />, teamWorkspaces, 'No team workspaces')}
+      {renderSection('private', 'Private workspaces', <Lock sx={{ fontSize: 16 }} />, privateWorkspaces, 'No private workspaces')}
+      {renderSection('shared', 'Shared workspaces', <Groups sx={{ fontSize: 16 }} />, sharedWorkspaces, 'No shared workspaces')}
     </List>
   );
 };

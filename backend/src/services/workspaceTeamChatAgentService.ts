@@ -76,8 +76,8 @@ export class WorkspaceTeamChatAgentService {
     history: WorkspaceTeamAgentHistoryMessage[],
   ): Promise<string> {
     const workspacePolicy = await this.workspaceService.getMcpServerPolicy(workspaceId, userId);
-    if (workspacePolicy.workspaceMode !== 'published_read_only') {
-      throw new HttpError(409, 'Team Chat Lumo is only available in published workspaces');
+    if (workspacePolicy.workspaceMode !== 'shared_live' && workspacePolicy.workspaceMode !== 'published_read_only') {
+      throw new HttpError(409, 'Shared Chat Lumo is only available in Shared workspaces');
     }
     const promptAccess = await this.userService.getEffectivePromptAccess(userId);
     if (!promptAccess) {

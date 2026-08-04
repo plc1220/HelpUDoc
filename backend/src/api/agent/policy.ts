@@ -47,7 +47,7 @@ export type EffectiveAgentPolicy = {
   skillAllowIds: string[];
   mcpServerAllowIds: string[];
   mcpServerDenyIds: string[];
-  workspaceMode: 'private' | 'published_read_only';
+  workspaceMode: 'private' | 'shared_live' | 'published_read_only';
   workspaceRole: string;
   canWriteWorkspace: boolean;
 };
@@ -288,7 +288,7 @@ export function createAgentPolicyApi(googleOAuthService: GoogleOAuthService, use
     workspacePolicy: {
       mcpServerAllowIds: string[];
       mcpServerDenyIds: string[];
-      workspaceMode: 'private' | 'published_read_only';
+      workspaceMode: 'private' | 'shared_live' | 'published_read_only';
       workspaceRole: string;
       canWriteWorkspace: boolean;
     },

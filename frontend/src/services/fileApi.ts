@@ -109,6 +109,7 @@ export const updateFileContent = async (
   workspaceId: string,
   fileId: number,
   content: string,
+  version?: number,
 ) => {
   const response = await apiFetch(
     `${API_URL}/workspaces/${workspaceId}/files/${fileId}/content`,
@@ -117,7 +118,7 @@ export const updateFileContent = async (
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ content }),
+      body: JSON.stringify({ content, version }),
     },
   );
   if (!response.ok) {

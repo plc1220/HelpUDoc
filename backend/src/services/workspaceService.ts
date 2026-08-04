@@ -54,7 +54,7 @@ export type McpServerPolicy = {
   mcpServerDenyIds: string[];
   isAdmin: boolean;
   skipPlanApprovals: boolean;
-  workspaceMode: 'private' | 'published_read_only';
+  workspaceMode: 'private' | 'shared_live' | 'published_read_only';
   workspaceRole: WorkspaceRole;
   canWriteWorkspace: boolean;
 };
@@ -124,6 +124,8 @@ export class WorkspaceService {
         'w.ownerId',
         'w.lastModifiedBy',
         'w.visibility',
+        'w.workspaceType',
+        'w.editingPolicy',
         'w.teamId',
         'w.currentPublishedVersionId',
         'w.contentRevision',
@@ -142,6 +144,7 @@ export class WorkspaceService {
         'linked_team_group_member.userId as linkedTeamGroupMemberUserId',
         'team_link.privateWorkspaceId as privateCopyWorkspaceId',
         'published.versionNumber as currentPublishedVersionNumber',
+        'published.sourceContentRevision as publishedContentRevision',
         'published.createdAt as lastPublishedAt',
         'publisher.displayName as latestPublisherName',
       )
@@ -183,7 +186,11 @@ export class WorkspaceService {
         && Boolean(row.linkedTeamWorkspaceId)
         && !row.linkedTeamCurrentPublishedVersionId;
       const publicationStatus = visibility === 'team'
-        ? 'up_to_date'
+        ? row.currentPublishedVersionNumber == null
+          ? 'changes_to_publish'
+          : Number(row.contentRevision || 0) !== Number(row.publishedContentRevision || 0)
+            ? 'changes_to_publish'
+            : 'up_to_date'
         : !row.linkedTeamWorkspaceId
           ? 'private_draft'
           : needsInitialPublication
@@ -203,20 +210,22 @@ export class WorkspaceService {
         ownerId: row.ownerId,
         lastModifiedBy: row.lastModifiedBy,
         visibility,
+        workspaceType: visibility === 'team' ? 'team' : 'private',
+        editingPolicy: visibility === 'team' ? (row.editingPolicy || 'review') : null,
         teamId: row.teamId,
         currentPublishedVersionId: row.currentPublishedVersionId,
         contentRevision: Number(row.contentRevision || 0),
         createdAt: row.createdAt,
         updatedAt: row.updatedAt,
         role: visibility === 'private' ? 'owner' : (row.directRole || 'viewer') as WorkspaceRole,
-        canEdit: visibility === 'private',
-        canPublish: visibility === 'private'
-          ? !row.linkedTeamWorkspaceId
-            || (
-              (row.linkedTeamRole === 'owner' || row.linkedTeamRole === 'editor')
-              && linkedTeamAccessible
-            )
-          : row.directRole === 'owner' || row.directRole === 'editor',
+        canEdit: visibility === 'private'
+          || row.directRole === 'owner'
+          || (
+            (row.editingPolicy || 'review') === 'direct'
+            && (row.directRole === 'editor' || row.directRole === 'contributor')
+          ),
+        canPublish: visibility === 'team'
+          && (row.directRole === 'owner' || row.directRole === 'editor'),
         teamName: row.teamName || null,
         audienceType: visibility === 'private' ? 'private' : row.teamId ? 'team' : 'selected_people',
         publicationStatus,
@@ -282,7 +291,14 @@ export class WorkspaceService {
   }
 
   async renameWorkspace(workspaceId: string, userId: string, name: string): Promise<WorkspaceRecord> {
-    await this.ensureMembership(workspaceId, userId, { requireEdit: true });
+    const { workspace: currentWorkspace, membership } = await this.ensureMembership(
+      workspaceId,
+      userId,
+      { requireEdit: true },
+    );
+    if (currentWorkspace.visibility === 'team' && membership.role !== 'owner') {
+      throw new AccessDeniedError('Only the owner can rename a Shared workspace');
+    }
     const normalizedName = this.normalizeWorkspaceName(name);
     if (!normalizedName) {
       throw new Error('Workspace name cannot be empty');
@@ -383,16 +399,22 @@ export class WorkspaceService {
       throw new AccessDeniedError('Workspace access denied');
     }
 
+    const editingPolicy = normalizedWorkspace.editingPolicy || 'review';
+    const roleCanEditShared = membership.role === 'owner'
+      || (
+        editingPolicy === 'direct'
+        && (membership.role === 'editor' || membership.role === 'contributor')
+      );
     const normalizedMembership: WorkspaceMembershipRecord = {
       ...membership,
       role: membership.role as WorkspaceRole,
-      canEdit: isSystemAdmin,
+      canEdit: isSystemAdmin || roleCanEditShared,
     };
 
-    if (options.requireEdit && normalizedWorkspace.visibility === 'team' && !isSystemAdmin) {
-      throw new AccessDeniedError('Team workspaces are read-only. Work privately to make changes.');
-    }
     if (options.requireEdit && !normalizedMembership.canEdit) {
+      if (normalizedWorkspace.visibility === 'team' && editingPolicy === 'review') {
+        throw new AccessDeniedError('This Shared workspace uses Review mode. Submit changes for review.');
+      }
       throw new AccessDeniedError('Workspace is read-only for this user');
     }
 
@@ -406,7 +428,7 @@ export class WorkspaceService {
   ): Promise<McpServerPolicy> {
     const { membership } = await this.ensureMembership(workspaceId, userId, options);
     const workspacePolicy = await this.db('workspaces')
-      .select('skipPlanApprovals', 'visibility')
+      .select('skipPlanApprovals', 'visibility', 'editingPolicy')
       .where({ id: workspaceId })
       .first();
     const isAdmin = membership.role === 'owner';
@@ -434,9 +456,9 @@ export class WorkspaceService {
       mcpServerDenyIds: Array.from(new Set(deny)).sort(),
       isAdmin,
       skipPlanApprovals: Boolean(workspacePolicy?.skipPlanApprovals),
-      workspaceMode: workspacePolicy?.visibility === 'team' ? 'published_read_only' : 'private',
+      workspaceMode: workspacePolicy?.visibility === 'team' ? 'shared_live' : 'private',
       workspaceRole: membership.role,
-      canWriteWorkspace: workspacePolicy?.visibility !== 'team' && membership.canEdit,
+      canWriteWorkspace: membership.canEdit,
     };
   }
 
@@ -470,14 +492,15 @@ export class WorkspaceService {
       throw new ConflictError('Private workspaces cannot have collaborators');
     }
     if (membership.role !== 'owner') {
-      throw new AccessDeniedError('Only Team owners can manage publishing access');
+      throw new AccessDeniedError('Only Shared workspace owners can manage access');
     }
     if (role === 'owner') {
       throw new AccessDeniedError('Workspace ownership cannot be assigned through an invitation');
     }
 
-    const canEdit = false;
     const grantRole = legacyWorkspaceRoleToNamedGrant(role);
+    const canEdit = workspace.editingPolicy === 'direct'
+      && (grantRole === 'publisher' || grantRole === 'contributor');
     await this.db.transaction(async (tx) => {
       await tx('workspace_members')
         .insert({ workspaceId, userId: targetUserId, role, canEdit })
@@ -500,6 +523,40 @@ export class WorkspaceService {
         resourceType: 'workspace',
         resourceId: workspaceId,
         metadata: { targetUserId, role: grantRole },
+      });
+    });
+  }
+
+  async updateEditingPolicy(
+    workspaceId: string,
+    actingUserId: string,
+    editingPolicy: 'direct' | 'review',
+  ): Promise<void> {
+    const { workspace, membership } = await this.ensureMembership(workspaceId, actingUserId);
+    if (workspace.visibility !== 'team') {
+      throw new ConflictError('Only Shared workspaces have an editing policy');
+    }
+    if (membership.role !== 'owner') {
+      throw new AccessDeniedError('Only the workspace owner can change the editing policy');
+    }
+
+    await this.db.transaction(async (tx) => {
+      await tx('workspaces').where({ id: workspaceId }).update({
+        editingPolicy,
+        updatedAt: tx.fn.now(),
+      });
+      await tx('workspace_members')
+        .where({ workspaceId })
+        .whereIn('role', ['editor', 'contributor'])
+        .update({ canEdit: editingPolicy === 'direct', updatedAt: tx.fn.now() });
+      await tx('audit_events').insert({
+        id: uuidv4(),
+        actorUserId: actingUserId,
+        actorRole: 'workspace_owner',
+        action: 'workspace.editing_policy_changed',
+        resourceType: 'workspace',
+        resourceId: workspaceId,
+        metadata: { editingPolicy },
       });
     });
   }
