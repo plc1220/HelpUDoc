@@ -1,0 +1,61 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 238,
+    "blocks": [
+      {
+        "text": "THE UGLY LITTLE DUCK.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "\" You are ugly, indeed,\" said they; \" but that is no consequence, if you do not marry into our family.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.96
+      },
+      {
+        "text": "The poor exile was safe enough on that point,—he only wanted leave to remain quietly lying amongst the reeds, and drinking a little marsh water. Here he lay two whole days. Then came two wild geese, who by chance were ganders, and having just broken out of the egg-shell, were very pert on that account.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "\" Listen, comrade,\" said they; \" you are so ugly that we shall not object to you for a companion. Fly with us to another marsh hard by, wherein some exceedingly pretty wild geese have dwelt since last autumn. You may perhaps obtain one of them, in the dearth of beaux, ugly as you are.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.97
+      },
+      {
+        "text": "\" Bang! bang!\" sounded at this moment over them, and both wild geese sank down dead, while the water around them was dyed red. \" Bang! bang!\" it went again, and whole flocks of wild geese rose up out of the reeds. The sportsman beat about the marsh on all sides, and a spaniel dashed through the thick morass. It was a terrible fright for the poor ugly duckling, when the fearful dog opened his jaws and showed his teeth; but, splash, splash, the hound ran off, without troubling himself about this easy booty.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "\" God be praised!\" sighed the little duck, \" I am so ugly, that even the hound will not touch me.\" And so he remained quite still, while the shots rattled briskly over his head among the rushes.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "8",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

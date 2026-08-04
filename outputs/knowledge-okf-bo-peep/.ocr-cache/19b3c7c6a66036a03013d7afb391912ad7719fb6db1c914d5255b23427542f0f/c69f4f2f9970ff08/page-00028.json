@@ -1,0 +1,61 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 28,
+    "blocks": [
+      {
+        "text": "MOTHER GOOSE.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "Jack's goose and her gander\nGrew very fond,\nThey'd both eat together,\nOr swim in one pond.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "Jack found one morning,\nAs I have been told,\nHis goose had laid him\nAn egg of pure gold.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "Jack rode to his mother,\nThe news for to tell,\nShe called him a good boy,\nAnd said it was well.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "Jack sold his gold egg\nTo a rogue of a Jew,\nWho cheated him out of\nThe half of his due.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "Then Jack went a-courting\nA lady so gay,\nAs fair as the lily,\nAnd sweet as the May.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "6",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 1.0
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

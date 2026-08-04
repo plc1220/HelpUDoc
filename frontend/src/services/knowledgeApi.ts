@@ -62,6 +62,11 @@ export type KnowledgeIngestionJob = {
   error?: string | null;
   createdAt: string;
   updatedAt: string;
+  progressPercent?: number;
+  progressLabel?: string;
+  sourceTitle?: string;
+  sourceType?: string;
+  sourceFileName?: string | null;
 };
 
 export type KnowledgeGraphSummary = {
@@ -226,6 +231,48 @@ export const getKnowledgeGraph = async (
 export const listGlobalKnowledge = async () => {
   const response = await apiFetch(`${API_URL}/knowledge`);
   return handleResponse(response);
+};
+
+export const listGlobalKnowledgeIngestionJobs = async (): Promise<KnowledgeIngestionJob[]> => {
+  const response = await apiFetch(`${API_URL}/knowledge/ingestions`);
+  return handleResponse(response);
+};
+
+export const streamGlobalKnowledgeIngestionEvents = async (
+  onEvent: (job: KnowledgeIngestionJob) => void,
+  signal: AbortSignal,
+): Promise<void> => {
+  const response = await apiFetch(`${API_URL}/knowledge/ingestion-events`, {
+    headers: { Accept: 'text/event-stream' },
+    signal,
+  });
+  if (!response.ok || !response.body) {
+    throw new Error('Knowledge ingestion events are unavailable');
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  while (!signal.aborted) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const chunks = buffer.split('\n\n');
+    buffer = chunks.pop() || '';
+    for (const chunk of chunks) {
+      const data = chunk
+        .split('\n')
+        .find((line) => line.startsWith('data:'))
+        ?.slice(5)
+        .trim();
+      if (!data) continue;
+      try {
+        const event = JSON.parse(data) as { job?: KnowledgeIngestionJob };
+        if (event.job) onEvent(event.job);
+      } catch {
+        // The database polling loop is the fallback for malformed events.
+      }
+    }
+  }
 };
 
 export const getGlobalKnowledgeBundle = async (knowledgeId: number): Promise<KnowledgeBundleManifest> => {

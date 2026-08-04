@@ -1,0 +1,47 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 214,
+    "blocks": [
+      {
+        "text": "THE BEAR AND THE CHILDREN.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "put his muzzle, snuffling, up to them, but did not harm them in the least. He must be a big dog, thought the children; and they began to stroke him familiarly. The bear stretched himself out at his full length upon the floor, and the youngest boy rolled over him, and nestled his curly head in the shaggy black fur of the beast. Then the eldest boy went and fetched his drum, and thumped away on it with might and main; whereupon the Bear stood erect upon his hind-legs, and began to dance. What glorious fun! Each boy shouldered his musket: the Bear must of course have one too; and he held it tight and firm, like any soldier. There's a comrade for you, my lads! and away they marched—one,—two—one,—two!",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "The door suddenly opened, and the children's mother entered. You should have seen her—speechless with terror, her cheeks white as a sheet, and her eyes fixed with horror. But the youngest boy nodded with a look of intense delight, and cried, \" Mamma, we are only playing at soldiers!\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "At that moment the master of the Bear appeared.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "16",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

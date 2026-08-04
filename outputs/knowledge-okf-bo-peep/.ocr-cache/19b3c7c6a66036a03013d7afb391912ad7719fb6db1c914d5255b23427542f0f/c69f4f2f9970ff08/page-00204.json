@@ -1,0 +1,54 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 204,
+    "blocks": [
+      {
+        "text": "THE THREE BEARS.",
+        "blockType": "heading",
+        "headingLevel": 3,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "and then, perhaps, they would have asked her to breakfast; for they were good Bears,—a little rough or so, as the manner of Bears is, but for all that very good-natured and hospitable.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "So first she tasted the porridge of the Great, Huge Bear, and that was too hot for her. And then she tasted the porridge of the Middle Bear, and that was too cold for her. And then she went to the porridge of the Little, Small, Wee Bear, and tasted that; and that was neither too hot nor too cold, but just right; and she liked it so well, that she ate it all up.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "Then little Silver-hair sate down in the chair of the Great, Huge Bear, and that was too hard for her. And then she sate down in the chair of the Middle Bear, and that was too soft for her. And then she sate down in the chair of the Little, Small, Wee Bear, and that was neither too hard nor too soft, but just right. So she seated herself in it, and there she sate till the bottom of the chair came out, and down came her's, plump upon the ground.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "Then little Silver-hair went upstairs into the bed-chamber in which the Three Bears slept. And first she laid down upon the bed of the Great, Huge Bear; but that was too high at the head for her. And",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "6",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

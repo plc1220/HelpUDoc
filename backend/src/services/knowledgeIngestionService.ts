@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto';
 import { Knex } from 'knex';
 import { ConflictError, NotFoundError } from '../errors';
 import { DatabaseService } from './databaseService';
+import { publishKnowledgeIngestionEvent } from './redisService';
 
 export type KnowledgeJobStatus =
   | 'queued' | 'extracting' | 'structuring' | 'chunking' | 'enriching'
@@ -11,6 +12,24 @@ export type KnowledgeJobStatus =
 const TERMINAL_STATUSES = new Set<KnowledgeJobStatus>([
   'published', 'partial', 'failed', 'cancelled', 'superseded',
 ]);
+
+const JOB_PROGRESS: Record<string, { percent: number; label: string }> = {
+  queued: { percent: 0, label: 'Queued' },
+  processing: { percent: 10, label: 'Starting build' },
+  extracting: { percent: 15, label: 'Reading source' },
+  structuring: { percent: 30, label: 'Understanding structure' },
+  chunking: { percent: 45, label: 'Preparing sections' },
+  enriching: { percent: 65, label: 'Building knowledge' },
+  reducing: { percent: 76, label: 'Consolidating concepts' },
+  validating: { percent: 86, label: 'Validating bundle' },
+  indexing: { percent: 93, label: 'Indexing knowledge' },
+  publishing: { percent: 97, label: 'Publishing version' },
+  published: { percent: 100, label: 'Published' },
+  partial: { percent: 100, label: 'Published with warnings' },
+  failed: { percent: 100, label: 'Failed' },
+  cancelled: { percent: 0, label: 'Cancelled' },
+  superseded: { percent: 0, label: 'Superseded' },
+};
 
 export class KnowledgeIngestionService {
   private db: Knex;
@@ -62,7 +81,14 @@ export class KnowledgeIngestionService {
         input: {},
       });
     });
-    return this.get(runId);
+    const job = await this.get(runId);
+    await publishKnowledgeIngestionEvent({
+      type: 'knowledge.ingestion.updated',
+      workspaceId: input.workspaceId,
+      knowledgeId: input.knowledgeId,
+      job: this.mapNotificationJob(job),
+    });
+    return job;
   }
 
   async get(runId: string): Promise<any> {
@@ -105,6 +131,15 @@ export class KnowledgeIngestionService {
     if (status === 'extracting') updates.startedAt = this.db.fn.now();
     if (status && TERMINAL_STATUSES.has(status)) updates.finishedAt = this.db.fn.now();
     await this.db('knowledge_ingestion_jobs').where({ id: runId }).update(updates);
+    const job = await this.get(runId).catch(() => null);
+    if (job) {
+      await publishKnowledgeIngestionEvent({
+        type: 'knowledge.ingestion.updated',
+        workspaceId: String(job.workspaceId),
+        knowledgeId: Number(job.knowledgeId),
+        job: this.mapNotificationJob(job),
+      });
+    }
   }
 
   async claimTask(
@@ -165,15 +200,24 @@ export class KnowledgeIngestionService {
     return this.get(runId);
   }
 
-  private mapJob(row: any): any {
+  mapJob(row: any): any {
     const discovered = Number(row.discoveredSourceUnits || 0);
     const processed = Number(row.processedSourceUnits || 0);
+    const status = String(row.status || 'queued');
+    const progress = JOB_PROGRESS[status] || JOB_PROGRESS.queued;
     return {
       ...row,
+      progressPercent: progress.percent,
+      progressLabel: progress.label,
       discoveredSourceUnits: discovered,
       processedSourceUnits: processed,
       failedSourceUnits: Number(row.failedSourceUnits || 0),
       coveragePercent: discovered ? Math.round((processed / discovered) * 10000) / 100 : 0,
     };
+  }
+
+  private mapNotificationJob(job: any): Record<string, unknown> {
+    const { configuration: _configuration, leaseOwner: _leaseOwner, ...safeJob } = job;
+    return safeJob;
   }
 }

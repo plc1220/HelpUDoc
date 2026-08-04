@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
 import { FileIcon, FolderOpen, Loader2, NotebookPen, Plus, RotateCcw, Trash } from 'lucide-react';
 import SettingsShell from '../components/settings/SettingsShell';
 import KnowledgeBundleExplorer from '../components/KnowledgeBundleExplorer';
+import { KnowledgeJobsTable } from '../app/table-grouped/page';
 import {
   SettingsEmptyState,
   SettingsLoadingState,
@@ -13,8 +13,11 @@ import {
 import {
   deleteGlobalKnowledge,
   listGlobalKnowledge,
+  listGlobalKnowledgeIngestionJobs,
   rebuildGlobalKnowledge,
+  streamGlobalKnowledgeIngestionEvents,
   uploadGlobalKnowledge,
+  type KnowledgeIngestionJob,
 } from '../services/knowledgeApi';
 
 type KnowledgeType = 'text' | 'table' | 'image' | 'presentation' | 'infographic';
@@ -95,7 +98,9 @@ const guessKnowledgeType = (file: File): KnowledgeType => {
 
 const KnowledgePage = () => {
   const [knowledgeSources, setKnowledgeSources] = useState<KnowledgeSource[]>([]);
+  const [ingestionJobs, setIngestionJobs] = useState<KnowledgeIngestionJob[]>([]);
   const [loadingKnowledge, setLoadingKnowledge] = useState(false);
+  const [loadingJobs, setLoadingJobs] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -120,6 +125,19 @@ const KnowledgePage = () => {
     [],
   );
 
+  const loadIngestionJobs = useCallback(async () => {
+    setLoadingJobs(true);
+    try {
+      const jobs = await listGlobalKnowledgeIngestionJobs();
+      setIngestionJobs(jobs || []);
+    } catch (error) {
+      console.error('Failed to load knowledge ingestion jobs', error);
+      setIngestionJobs([]);
+    } finally {
+      setLoadingJobs(false);
+    }
+  }, []);
+
   const handleUploadClick = () => {
     uploadInputRef.current?.click();
   };
@@ -139,7 +157,7 @@ const KnowledgePage = () => {
           metadata: { source: 'upload' },
         });
       }
-      await loadKnowledgeSources();
+      await Promise.all([loadKnowledgeSources(), loadIngestionJobs()]);
     } catch (error) {
       console.error('Failed to upload knowledge files', error);
       setUploadError(error instanceof Error ? error.message : 'Failed to upload files.');
@@ -151,7 +169,7 @@ const KnowledgePage = () => {
   const handleRebuildKnowledge = async (item: KnowledgeSource) => {
     try {
       await rebuildGlobalKnowledge(item.id);
-      await loadKnowledgeSources();
+      await Promise.all([loadKnowledgeSources(), loadIngestionJobs()]);
     } catch (error) {
       console.error('Failed to rebuild knowledge source', error);
       setErrorMessage(error instanceof Error ? error.message : 'Failed to rebuild knowledge source.');
@@ -171,36 +189,68 @@ const KnowledgePage = () => {
   };
 
   const handleRefresh = async () => {
-    await loadKnowledgeSources();
+    await Promise.all([loadKnowledgeSources(), loadIngestionJobs()]);
+  };
+
+  const handleRetryJob = async (job: KnowledgeIngestionJob) => {
+    try {
+      await rebuildGlobalKnowledge(job.knowledgeId);
+      await Promise.all([loadKnowledgeSources(), loadIngestionJobs()]);
+    } catch (error) {
+      console.error('Failed to retry knowledge ingestion job', error);
+      setErrorMessage(error instanceof Error ? error.message : 'Failed to retry knowledge ingestion job.');
+    }
   };
 
   useEffect(() => {
     void loadKnowledgeSources();
-  }, [loadKnowledgeSources]);
+    void loadIngestionJobs();
+  }, [loadIngestionJobs, loadKnowledgeSources]);
 
   useEffect(() => {
-    const hasPending = knowledgeSources.some((item) => {
-      const ingestion = item.metadata?.ingestion;
-      if (!ingestion || typeof ingestion !== 'object') return false;
-      const status = normalizeStatus((ingestion as { status?: string }).status);
-      return [
-        'queued', 'processing', 'extracting', 'structuring', 'chunking', 'enriching',
-        'reducing', 'validating', 'indexing', 'publishing',
-      ].includes(status);
-    });
+    const hasPending = ingestionJobs.some((job) => [
+      'queued', 'processing', 'extracting', 'structuring', 'chunking', 'enriching',
+      'reducing', 'validating', 'indexing', 'publishing',
+    ].includes(normalizeStatus(job.status)));
     if (!hasPending) return;
     const interval = window.setInterval(() => {
-      void loadKnowledgeSources();
-    }, 5000);
+      void Promise.all([loadKnowledgeSources(), loadIngestionJobs()]);
+    }, 7000);
     return () => window.clearInterval(interval);
-  }, [knowledgeSources, loadKnowledgeSources]);
+  }, [ingestionJobs, loadIngestionJobs, loadKnowledgeSources]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let retryTimer: number | null = null;
+    let stopped = false;
+    const connect = async () => {
+      try {
+        await streamGlobalKnowledgeIngestionEvents(() => {
+          void Promise.all([loadKnowledgeSources(), loadIngestionJobs()]);
+        }, controller.signal);
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          console.warn('Knowledge ingestion event stream unavailable; polling remains active.', error);
+        }
+      }
+      if (!stopped && !controller.signal.aborted) {
+        retryTimer = window.setTimeout(() => void connect(), 3000);
+      }
+    };
+    void connect();
+    return () => {
+      stopped = true;
+      controller.abort();
+      if (retryTimer) window.clearTimeout(retryTimer);
+    };
+  }, [loadIngestionJobs, loadKnowledgeSources]);
 
   const actions = (
     <div className="flex flex-wrap items-center gap-3">
       <button
         type="button"
         onClick={handleRefresh}
-        disabled={loadingKnowledge}
+        disabled={loadingKnowledge || loadingJobs}
         className="settings-portal-button-secondary inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium transition disabled:opacity-60"
       >
         {loadingKnowledge ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw size={16} />}
@@ -328,7 +378,7 @@ const KnowledgePage = () => {
                 Upload files
               </button>
               <p className="mt-3 text-xs text-slate-500">
-                Knowledge is shared across the account and runs asynchronously after upload.
+                Each upload creates a build job. Track its high-level progress below while the source is prepared.
               </p>
               {uploadError ? (
                 <p className="mt-3 text-xs text-rose-600">{uploadError}</p>
@@ -451,18 +501,20 @@ const KnowledgePage = () => {
 
         <SettingsSurface>
           <SettingsSectionHeader
-            title="Need to tune skills?"
-            description="Keep skills and tools aligned for best results."
+            eyebrow="Jobs"
+            title="Knowledge build jobs"
+            description="A lightweight view of the background work that turns uploads into searchable knowledge."
             actions={(
-              <Link
-                to="/settings/agents"
-                className="settings-portal-button-secondary inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium transition"
-              >
-                Configure skills
-              </Link>
+              <span className="text-xs text-slate-500">
+                {loadingJobs ? 'Updating jobs...' : `${ingestionJobs.length} jobs`}
+              </span>
             )}
           />
+          <div className="mt-6">
+            <KnowledgeJobsTable jobs={ingestionJobs} onRetry={handleRetryJob} />
+          </div>
         </SettingsSurface>
+
       </div>
       {selectedKnowledge ? (
         <KnowledgeBundleExplorer

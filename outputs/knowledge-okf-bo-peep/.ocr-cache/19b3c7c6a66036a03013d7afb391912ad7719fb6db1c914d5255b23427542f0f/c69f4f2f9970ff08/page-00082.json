@@ -1,0 +1,33 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 82,
+    "blocks": [
+      {
+        "text": "COCK ROBIN AND JENNY WREN.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "Then on her finger fair\nCock Robin put the ring;\n\"You're married now,\" says Parson Rook:\nWhile the Lark aloud did sing,\n\n\"Happy be the Bridegroom,\nAnd happy be the Bride!\nAnd may not man, nor bird, nor beast,\nThis happy pair divide.\"\n\nThe birds were ask'd to dine;\nNot Jenny's friends alone,\nBut every pretty songster\nThat had Cock Robin known.\n\nThey had a cherry-pie,\nBesides some currant-wine,\nAnd every guest brought something,\nThat sumptuous they might dine.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.96
+      },
+      {
+        "text": "12",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

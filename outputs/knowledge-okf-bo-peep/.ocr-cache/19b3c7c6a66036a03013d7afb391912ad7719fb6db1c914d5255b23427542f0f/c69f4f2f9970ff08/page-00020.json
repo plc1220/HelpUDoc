@@ -1,0 +1,33 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 20,
+    "blocks": [
+      {
+        "text": "THE ROBIN's YULE SONG.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "\"No, no, sly Fox; no, no! You worried the wee lamb, but you shan't worry me.\" So wee Robin flew away till he came to the side of a rivulet, and there he saw a wee boy sitting. And the wee Boy says, \"Where are you going, wee Robin?\" And wee Robin says, \"I'm going to the King to sing him a song this good Yule morning.\" And the wee Boy says, \"Come here, wee Robin, and I'll give you some little crumbs out of my pocket.\" But wee Robin says, \"No, no, wee Boy; no, no! You twisted the goldfinch's neck, but you shan't twist mine.\" So wee Robin flew away till he came to the King, and there he sat on a window-sill, and sang the King a bonny song. And the King says to the Queen, \"What shall we give to the wee Robin for singing us this bonny song?\" And the Queen says to the King, \"I think we'll give him the wee Wren to be his wife.\" So wee Robin and the wee Wren were married, and the King, and Queen, and all the court danced at the wedding, and afterwards wee Robin flew away home to his own water-side and hopped on a brier.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "14",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

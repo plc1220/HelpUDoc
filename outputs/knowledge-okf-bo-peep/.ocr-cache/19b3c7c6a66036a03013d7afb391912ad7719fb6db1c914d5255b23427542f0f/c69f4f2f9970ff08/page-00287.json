@@ -1,0 +1,40 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 287,
+    "blocks": [
+      {
+        "text": "ROBIN HOOD.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "not appear before sunset, his lands would be forfeited. Presently the knight of Wierysdale came in, and pretended to beg for mercy ; but the proud Abbot spurned him, when Sir Rychard flung the gold at his feet and snatched away the deed, telling him if he had shown a little Christian mercy he should not only have returned the money, but made a present to the Abbey. And, indeed, the monks had to rue their mercilessness in the end, as Robin Hood levied a toll of eight hundred pounds upon them as they once passed through Sherwood Forest, which enabled him to forgive Sir Rychard's debt, when that trusty knight came to discharge it at the appointed time.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "Another time, as Robin Hood was roaming through the Forest, he saw a handsome young man, in a very elegant suit, who was passing over the plain, singing blithely as he went. On the following morning he was surprised to see the same young man coming along with disordered clothes and dishevelled hair, and sighing deeply at every step, and saying, \" Alack and well-a-day !\" Robin Hood having sent one of his men to fetch him, inquired what lay so heavy on his heart, and why he was so gladsome yesterday and so sorry to-day. The young man pulled out his purse, and showed him a ring, saying, \" I bought this yesterday to marry a maiden I have courted these seven long years, and this morning she is gone to church to wed another.\" \" Does she love you ?\" said Robin. \" She has told me so a hundred times,\" answered Allan-a-Dale—for such was the youth's name. \" Tut, man ! then she is not worth caring for, if she be so fickle !\" cried Robin Hood. \" But she does not love him,\" interrupted Allan-a-Dale : \" he is an old cripple, quite unfit for such a lovely",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "9",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

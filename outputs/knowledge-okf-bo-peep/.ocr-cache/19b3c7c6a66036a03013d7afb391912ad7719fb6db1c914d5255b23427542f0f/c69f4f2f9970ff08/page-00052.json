@@ -1,0 +1,33 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 52,
+    "blocks": [
+      {
+        "text": "THE HOUSE THAT JACK BUILT.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "That wak'd the priest all shaven and shorn,\nThat married the man all tatter'd and torn,\nThat kiss'd the maiden all forlorn,\nThat milk'd the cow with the crumpled horn,\nThat toss'd the dog,\nThat worried the cat,\nThat kill'd the rat,\nThat ate the malt,\nThat lay in the house that Jack built.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "14",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

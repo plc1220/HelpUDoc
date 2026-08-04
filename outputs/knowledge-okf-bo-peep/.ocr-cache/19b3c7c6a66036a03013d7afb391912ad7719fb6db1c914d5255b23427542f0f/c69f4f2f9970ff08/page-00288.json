@@ -1,0 +1,40 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 288,
+    "blocks": [
+      {
+        "text": "ROBIN HOOD.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "lass.\" \" Then why does she marry him ?\" inquired Robin Hood. \" Because the old knight is rich, and her parents insist upon it, and have scolded and raved at her till she is as meek as a lamb.\" \" And where is the wedding to take place ?\" said Robin. \" At our parish, five miles from hence,\" said Allan ; \" and the Bishop of Hereford, who is the bridegroom's brother, is to perform the ceremony.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "Then, without more ado, Robin Hood dressed himself as a harper, with a flowing white beard and a dark-coloured mantle, and bidding twenty-four of his men follow at a distance, he entered the church, and took his place near the altar. Presently the old knight made his appearance, hobbling along, and handing in a maiden as fair as the day, all tears and blushes, accompanied by her young companions strewing flowers. \" This is not a fit match,\" said Robin Hood aloud, \" and I forbid the marriage.\" And then, to the astonishment of the Bishop and of all present, he blew a blast on his horn, when four-and-twenty archers came leaping into the churchyard, and entered the building. Foremost among these was Allan-a-Dale, who presented his bow to Robin Hood. The outlaw by this time had cast off his cloak and false beard, and turning to the bride, said, \" Now, pretty one, tell me freely whom you prefer for a husband—this gouty old knight or one of these bold young fellows ?\" \" Alas !\" said the young maid, casting down her eyes, \" Allan-a-Dale has courted me for seven long years, and he is the man I would choose.\" \" Then now, my good Lord Bishop,\" said Robin, \" prithee unite this loving pair before we leave the church.\" \" That cannot be,\" said the Bishop ; \" the law requires they should be asked three",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "10",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

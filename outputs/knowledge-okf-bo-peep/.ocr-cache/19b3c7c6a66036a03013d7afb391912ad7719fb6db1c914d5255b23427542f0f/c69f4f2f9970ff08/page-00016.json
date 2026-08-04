@@ -1,0 +1,61 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 16,
+    "blocks": [
+      {
+        "text": "TOM THE PIPER'S SON.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "She danced about till her eggs were all broke,\nAnd Tom he thought 'twas a very fine joke.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "Tom saw a cross fellow beating his ass,\nHeavy laden with pots, pans, dishes, and glass;\nHe play'd them a jig, and they danced to the tune,\nAnd the jackass's load was lighten'd soon.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "Once a dog got a piggy fast hold by the ear,\nThe piggy squall'd murder, and Tom, being near,\nHe play'd them a tune, and they didn't dance bad,\nConsidering the little tuition they'd had.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "Tom met with a Farmer in a sad dirty place,\nWhere he made him to dance (he had so little grace);\nHe danced in the dirt till he danced in a ditch,\nWhere he left him in mud as thick as black pitch.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "Some little time after Tom slept on some hay,\nThe very same Farmer was passing that way;\nHe took poor Tom's pipe, and bade him prepare\nTo answer his crimes before the Lord Mayor.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "10",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 1.0
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

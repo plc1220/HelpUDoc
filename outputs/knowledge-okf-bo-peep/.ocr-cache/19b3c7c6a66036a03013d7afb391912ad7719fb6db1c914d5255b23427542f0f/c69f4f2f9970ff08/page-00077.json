@@ -1,0 +1,54 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 77,
+    "blocks": [
+      {
+        "text": "COCK ROBIN AND JENNY WREN.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "Then follow'd him the Lark,\nFor he could sweetly sing,\nAnd he was to be clerk\nAt Cock Robin's wedding.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "He sung of Robin's love\nFor little Jenny Wren;\nAnd when he came unto the end,\nThen he began again.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "The Goldfinch came on next,\nTo give away the Bride;\nThe Linnet, being bridesmaid,\nWalk'd by Jenny's side;",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "And as she was a-walking,\nSaid, \" Upon my word,\nI think that your Cock Robin\nIs a very pretty bird.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "7",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 1.0
+      }
+    ],
+    "blank": false,
+    "confidence": 0.99
+  }
+}

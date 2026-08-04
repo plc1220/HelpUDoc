@@ -1,0 +1,82 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 7,
+    "blocks": [
+      {
+        "text": "Treasury of Pleasure Books for Young People.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "THE HISTORY",
+        "blockType": "heading",
+        "headingLevel": 2,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "OF",
+        "blockType": "heading",
+        "headingLevel": 3,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "LITTLE BO-PEEP,",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "WHO",
+        "blockType": "heading",
+        "headingLevel": 3,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "LOST HER SHEEP.",
+        "blockType": "heading",
+        "headingLevel": 2,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "SYDNEY COLLEGE",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.95
+      },
+      {
+        "text": "ILLUSTRATED BY JOHN ABSOLON.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.95
+      },
+      {
+        "text": "INFORMATION",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.95
+      },
+      {
+        "text": "RESOURCES CENTRE",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.95
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

@@ -1,0 +1,47 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 275,
+    "blocks": [
+      {
+        "text": "HANS IN LUCK.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "Hans stopped to look at him, and at last he said : \" Your trade must be a good one, since you sing so merrily over your work.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.97
+      },
+      {
+        "text": "\" Yes,\" replied the knife-grinder, \" it is a golden business. Your true knife-grinder is a man who finds money as often as he puts his hand into his pocket. But where did you buy that fine goose ?\" \" I did not buy it, but exchanged it for my pig.\" \" And where did you get piggy from ?\" \" I gave my cow for it.\" \" And how did you come by your cow ?\" \" Oh, I gave a horse for it.\" \" And how might you have obtained the horse ?\" \" Why, I got it in exchange for a lump of gold as big as my head.\" \" And how did you come by the gold ?\" \" It was my wages for seven years' service.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.97
+      },
+      {
+        "text": "\" Nay, then,\" said the knife-grinder, \" since you have been so clever each time, you need only manage so as to hear the money jingle in your pocket every time you move, and then you will be a made man.\" \" But how shall I set about that ?\" inquired Hans. \" You must turn knife-grinder, like myself; and nothing is wanting to set you up in the trade but a grindstone : the rest will come of itself. I have one here that is a trifle worn, but I won't ask for anything more than your goose in exchange for it. Shall it be a bargain ?\" \" How can you doubt it ?\" replied Hans; \" I shall be the happiest",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.97
+      },
+      {
+        "text": "13",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

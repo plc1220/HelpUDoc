@@ -7,12 +7,20 @@ import { DatabaseService } from '../services/databaseService';
 import { FileService } from '../services/fileService';
 import { KnowledgeService } from '../services/knowledgeService';
 import { WorkspaceService } from '../services/workspaceService';
+import { redisClient } from '../services/redisService';
 
 const delay = (milliseconds: number) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
 async function main() {
   const databaseService = new DatabaseService();
   await databaseService.initialize();
+  // The database remains the durable job store. Redis carries best-effort
+  // progress notifications to connected knowledge pages.
+  try {
+    await redisClient.connect();
+  } catch (error) {
+    console.error('Knowledge worker Redis notifications unavailable; continuing with database jobs', error);
+  }
   const workspaceService = new WorkspaceService(databaseService);
   const fileService = new FileService(databaseService, workspaceService);
   const knowledgeService = new KnowledgeService(databaseService, workspaceService, fileService);
@@ -32,6 +40,7 @@ async function main() {
     }
   }
   await databaseService.getDb().destroy();
+  if (redisClient.isOpen) await redisClient.quit();
 }
 
 main().catch((error) => {

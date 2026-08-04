@@ -1,0 +1,68 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 141,
+    "blocks": [
+      {
+        "text": "THE FOX AND THE GEESE.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "And she thought that, however the fox might kick,\nHe could not get e'en a paw.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.97
+      },
+      {
+        "text": "So she went to sleep, and at dead of night\nShe heard at the door a low scratch ;\nAnd presently Reynard, with all his might,\nAttempted to jump on the thatch.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.97
+      },
+      {
+        "text": "But he tumbled back, and against the wall\nGrazed his nose in a fearful way,\nThen, almost mad with the pain of his fall,\nHe barked, and ran slowly away.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.97
+      },
+      {
+        "text": "So Goosey laughed, and felt quite o'erjoyed\nTo have thus escaped from all harm ;\nBut had she known how the Fox was employed,\nShe would have felt dreadful alarm ;",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.97
+      },
+      {
+        "text": "For Gobble had been his last dainty meat,\nSo hungry he really did feel,-\nAnd resolved in his mind to accomplish this feat,\nAnd have the young goose for a meal.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.97
+      },
+      {
+        "text": "So he slyly lighted a bundle of straws,\nAnd made no more noise than a mouse,",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.97
+      },
+      {
+        "text": "7",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

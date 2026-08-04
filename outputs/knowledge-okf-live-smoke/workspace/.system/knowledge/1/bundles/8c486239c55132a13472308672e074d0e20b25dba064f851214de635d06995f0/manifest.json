@@ -1,0 +1,2874 @@
+{
+  "okfVersion": "0.2",
+  "generatorVersion": "helpudoc-okf/2",
+  "snapshotHash": "sha256:8c486239c55132a13472308672e074d0e20b25dba064f851214de635d06995f0",
+  "sourceFingerprint": "sha256:d0ac766e8346c15fffadc7dab1a282e17ac32ab37eaf234076a6c6c9911b3c53",
+  "enrichmentMode": "gemini-lite",
+  "coverage": {
+    "discoveredSourceUnits": 304,
+    "processedSourceUnits": 304,
+    "failedSourceUnits": 0
+  },
+  "files": [
+    {
+      "path": "concepts/algorithm/reciprocal-rank-fusion.md",
+      "sha256": "db98cf61aec54309fa188ec2d9f085bfbc21f3895e793f1c9483bd7b952f3daf",
+      "bytes": 629
+    },
+    {
+      "path": "concepts/api/admin-apis.md",
+      "sha256": "ccfdf1d1991e928333b85a8bd20efb393a77190956b9beb8081ee0ffd8d991c1",
+      "bytes": 2059
+    },
+    {
+      "path": "concepts/api/knowledge-neighbors.md",
+      "sha256": "33dac48cc83c70524e31f34e125c791332c78f25a4014a40bc8347ae238d1fc5",
+      "bytes": 843
+    },
+    {
+      "path": "concepts/api/knowledge-read.md",
+      "sha256": "6f89bcc7e8c90531e204bcab9e2cda2af08b88e76c7a2a5f668ea9a9f1a967ae",
+      "bytes": 828
+    },
+    {
+      "path": "concepts/api/knowledge-search-apis.md",
+      "sha256": "a09ffc939b858a4fa95279928d5b5e363e797b2d04ef8705ea1eb6319e52cf88",
+      "bytes": 997
+    },
+    {
+      "path": "concepts/api/knowledge-search.md",
+      "sha256": "4d0e1400375129566bacbeb053eb51a0408a802352be0734eb986e08e77749a9",
+      "bytes": 836
+    },
+    {
+      "path": "concepts/api/knowledgeapi-ts.md",
+      "sha256": "e8d3fa85972b4f5ec9de754e4a2eddc0490265742b465584de8b5e117a70d657",
+      "bytes": 638
+    },
+    {
+      "path": "concepts/api/knowledgeservice-ts.md",
+      "sha256": "2fbc43b51803f038a48c9b9ab5b90f89e98d2c2df11d398e037bd61afe81f802",
+      "bytes": 596
+    },
+    {
+      "path": "concepts/api/progress-report-apis.md",
+      "sha256": "586033651efc3c6eaaad962740c609796c565d9876e21d0a3251627f826af36c",
+      "bytes": 599
+    },
+    {
+      "path": "concepts/api/rag-query.md",
+      "sha256": "d52b5cadaa385e4295a334eacbd32f065ab6473ade929e64ca622111d2715e70",
+      "bytes": 743
+    },
+    {
+      "path": "concepts/artifact/okf-bundle.md",
+      "sha256": "74e404a7553e9638f150ef1643a2fd1ded04736b7eff054d73204e45fb58a89e",
+      "bytes": 639
+    },
+    {
+      "path": "concepts/cache/redis.md",
+      "sha256": "56130e91329f4028c00013f99b93b6ef175a7c78e60daf82fd64af70a90714db",
+      "bytes": 562
+    },
+    {
+      "path": "concepts/capability/pgvector-support.md",
+      "sha256": "964bc1d910ab59ed2b72c07d42238ff134fb353a517d7b1b127863917d278dd4",
+      "bytes": 615
+    },
+    {
+      "path": "concepts/character/ye-wenjie.md",
+      "sha256": "d01a81182597ab7a49a19dbe94fdbf6ad5b86e6365ce314e859357f88599516d",
+      "bytes": 1459
+    },
+    {
+      "path": "concepts/component/retrieval-index.md",
+      "sha256": "3c7d1e6beaedea7fa00a015211100ad6102f7b6b4918f48ea499e5bd4eca5324",
+      "bytes": 608
+    },
+    {
+      "path": "concepts/concept/canonical-concept.md",
+      "sha256": "8279e53bc1da511de27b099a3694e8714d6c867489c0fe41ac2111c165aa6fa0",
+      "bytes": 606
+    },
+    {
+      "path": "concepts/concept/domain-concepts-replace-page-as-concept-output.md",
+      "sha256": "22d117adc540e7cd841e86e13efe0d6a0b3b2787f53e4ce064a78f76ad4b936d",
+      "bytes": 693
+    },
+    {
+      "path": "concepts/concept/every-assertion-has-valid-evidence.md",
+      "sha256": "73a7525ca0679f7558f79f70fe86206f1ca6add581f676412c0530204ee73479",
+      "bytes": 657
+    },
+    {
+      "path": "concepts/concept/graph-hierarchy.md",
+      "sha256": "eaf3fda1a46e5ef68ede1034c8b7363327e42438222c179d40212e759e2c2ae5",
+      "bytes": 1039
+    },
+    {
+      "path": "concepts/concept/job-states.md",
+      "sha256": "66dbff57a773830477ac47945799edaffb6b218ed30e2af3574a72ae8cdebbec",
+      "bytes": 585
+    },
+    {
+      "path": "concepts/concept/knowledge-unit.md",
+      "sha256": "47c80096ae720fec439b624318eabe01da0cc5ed671d0a6febb67a5407e539df",
+      "bytes": 597
+    },
+    {
+      "path": "concepts/concept/rerunning-unchanged-windows-uses-cached-map-results.md",
+      "sha256": "c065d705d2e844999982290b2fd96b983e2523f58055c0afcf10ea9c0abe5092",
+      "bytes": 708
+    },
+    {
+      "path": "concepts/concept/semantic-enrichment-pipeline.md",
+      "sha256": "f3d8bb73b0585b3b791a98159b827e87c8905196f11abb7dea939a9b80f88327",
+      "bytes": 639
+    },
+    {
+      "path": "concepts/concept/source-block.md",
+      "sha256": "b5b4f55f38fc4f3c094c10fbc3fb88af025668879279c3fd56fa6430b60a644e",
+      "bytes": 686
+    },
+    {
+      "path": "concepts/concept/source-unit.md",
+      "sha256": "31cb9899b4ba0e9612724a9ce8867482c309dd0e21ba2a69a8a58626496579e1",
+      "bytes": 731
+    },
+    {
+      "path": "concepts/concept/structure-node.md",
+      "sha256": "969bb16ec9748f6f9499ffd19e5205dd4d06ddc3366360e223f5936fbc053cc5",
+      "bytes": 706
+    },
+    {
+      "path": "concepts/condition/evidence-of-necessity.md",
+      "sha256": "bd71e4d5da2772ec00f0099b735e69df6cd9f051a66c477c47778150ce920015",
+      "bytes": 626
+    },
+    {
+      "path": "concepts/configuration-parameter/hard-maximum-4-000.md",
+      "sha256": "22d3f4f167d006da6b71021c9e4e939f118847c0f11ba0a81e9309eb377ca446",
+      "bytes": 677
+    },
+    {
+      "path": "concepts/configuration-parameter/soft-minimum-600.md",
+      "sha256": "046f3df5610a4a8e0b31d11ca006d545a29b9073267397dc8a23cb345cd95ab1",
+      "bytes": 671
+    },
+    {
+      "path": "concepts/configuration-parameter/target-tokens-2-500.md",
+      "sha256": "3094514d1802eaaf2a5cf5ff056c1bfe9d87a7443d3eb5d4043d50e3354c7dd4",
+      "bytes": 680
+    },
+    {
+      "path": "concepts/configuration/rate-card.md",
+      "sha256": "97c50532e3d11d07ef9bce1788c14d33620417fc264f3bdddffed06e3cb6aa29",
+      "bytes": 1333
+    },
+    {
+      "path": "concepts/constraint/boundary-preference.md",
+      "sha256": "2d59358c460410f5b4b5ca7f05a3b2d6a679538bc2adbf8ba74cc685c3258053",
+      "bytes": 624
+    },
+    {
+      "path": "concepts/constraint/core-span-uniqueness.md",
+      "sha256": "ec4545c59dbef6a0a7d1e127049702a9b90c49da7d477e9ef67537e2db0c054c",
+      "bytes": 627
+    },
+    {
+      "path": "concepts/constraint/future-scalability.md",
+      "sha256": "90c1ed84e696baaa5d34fff18045092d231eb9edf65371e23ce049d2140af4ca",
+      "bytes": 621
+    },
+    {
+      "path": "concepts/constraint/non-goal-inference-accuracy-guarantee.md",
+      "sha256": "b26ad687146da1d4cfa1b788b6b6f26612329d6b9e0177cab3c0aff5d5ecccea",
+      "bytes": 758
+    },
+    {
+      "path": "concepts/constraint/non-goal-neo4j-requirement.md",
+      "sha256": "4544f60620d74b5c939e21560045f1d90a41fd9e88917dd3ed98470c0687766b",
+      "bytes": 684
+    },
+    {
+      "path": "concepts/constraint/non-goal-okf-replacement.md",
+      "sha256": "0b6ff3b19fe0763e18bca51ead7e53620a0be8b3c4793d2ae802f7cdc1a47950",
+      "bytes": 701
+    },
+    {
+      "path": "concepts/constraint/token-constraints.md",
+      "sha256": "d164b532df1cb3fee40151c6264ca09e8257c8fe4dd63878a933bc824a2279fe",
+      "bytes": 618
+    },
+    {
+      "path": "concepts/constraint/token-maximums.md",
+      "sha256": "71b8c5d37a85d0fb693bf7f0cc3ba00b8c28c8daf37e4f23922c71332db71c76",
+      "bytes": 609
+    },
+    {
+      "path": "concepts/constraints/knowledge-source-scope.md",
+      "sha256": "8dc689006ed8c109e9719865ac6f15b185779b98ef44504f3f4c028462b7f518",
+      "bytes": 637
+    },
+    {
+      "path": "concepts/data-format/okf-v0-2-bundles.md",
+      "sha256": "4cf46c5631484b06efb15ef6be8f51113049e443e7da4c09789bd36587968941",
+      "bytes": 619
+    },
+    {
+      "path": "concepts/data-source/original-workspace-file-storage.md",
+      "sha256": "a0288d7667b2c40362dfe907c0ad0a84e7b75eef61adb47b6613249e0534adc0",
+      "bytes": 664
+    },
+    {
+      "path": "concepts/data-structure/sourceblock.md",
+      "sha256": "a3088a530ecc746b060f69153b2a7696b2df80c4111da9910e54961a7ff95d8b",
+      "bytes": 616
+    },
+    {
+      "path": "concepts/data-structure/structure-node.md",
+      "sha256": "d8cd224a4c5b800f89839b33d9f09196e4ad43abbcca15cd3ebdd28b196d5f38",
+      "bytes": 625
+    },
+    {
+      "path": "concepts/data-type/concept-embeddings.md",
+      "sha256": "61916cbd6d7a624cdd486ce0e84948de3dff49c21b765bfc69d0f481b83caac0",
+      "bytes": 617
+    },
+    {
+      "path": "concepts/database/postgresql.md",
+      "sha256": "a93af712dd3a50f799b3e63e1302f5c7bbf7f1f57f52a1842a384ebe14408428",
+      "bytes": 589
+    },
+    {
+      "path": "concepts/decision/defer-graph-database-implementation.md",
+      "sha256": "44f415329af8bdeb4d82548d70b679ecbc3d0bfe94a5a8993048f6282c2c66c0",
+      "bytes": 993
+    },
+    {
+      "path": "concepts/deliverable/atomic-current-bundle-pointer.md",
+      "sha256": "0719a36580e50d729b757998bbf20fcaeb12f442dc241d38d63990e6f0151743",
+      "bytes": 658
+    },
+    {
+      "path": "concepts/deliverable/baseline-deliverables.md",
+      "sha256": "25610ea5bf85a499ae44f450d1061e5cffee1caaeaae9a1528ba6dbe6980b7b6",
+      "bytes": 634
+    },
+    {
+      "path": "concepts/deliverable/bundle-validation-and-link-checking.md",
+      "sha256": "208e79bc34cf641c2a97f8d5259f759b0bb1a8356eed0e0766c0aabd73b28673",
+      "bytes": 676
+    },
+    {
+      "path": "concepts/deliverable/canonical-concept-assertion-relationship-tables.md",
+      "sha256": "ad555cf0f99afc82536f569caa59400c8dc988e539ae1470c9a077078ac77672",
+      "bytes": 712
+    },
+    {
+      "path": "concepts/deliverable/deterministic-okf-publisher-and-manifest.md",
+      "sha256": "523921ab12254480a29764a42f89c80e30f078cc6a5357e7d941cc6422deb0b8",
+      "bytes": 691
+    },
+    {
+      "path": "concepts/deliverable/immutable-enrichment-snapshots.md",
+      "sha256": "2f23059d3b30acd6036e5c2a7ee190d25a85ea695b7f31ccbed16f40787d833f",
+      "bytes": 661
+    },
+    {
+      "path": "concepts/deliverable/networkx-clustering-and-graph-audit.md",
+      "sha256": "83acfc2cc2b19ccb0fe90cda2f168e45f84ee6d9b79ed48a0b49dec26fada50c",
+      "bytes": 676
+    },
+    {
+      "path": "concepts/deliverable/phase-5-deliverables.md",
+      "sha256": "3e53d954bb6b741c8640b50a3407633fa0db19c8a9a48a790f3f5d8ad403b8f9",
+      "bytes": 1069
+    },
+    {
+      "path": "concepts/deployment-procedure/knowledge-worker-deployment.md",
+      "sha256": "367e6b329229de1e4307fd16f101a1e30e70f1c5eb49deb860e1b5746a1ce899",
+      "bytes": 688
+    },
+    {
+      "path": "concepts/document-processing-flow/extraction-workflow.md",
+      "sha256": "f27554d6ce6391e2fd3809fb60e1e0761e659a5a4b65e8cdbb0c36dd2f4b9f5d",
+      "bytes": 680
+    },
+    {
+      "path": "concepts/document-processing/untrusted-content-handling.md",
+      "sha256": "e43dc83aa2dc5eb6c7014e92b9b2548010cf5ce5b1b087c95e0054f004239fa8",
+      "bytes": 681
+    },
+    {
+      "path": "concepts/documentexample/example-okf-concept.md",
+      "sha256": "6f66406014d6b228e34f58bdc04959bf24c2467657fc8b465cc62d56f00fac85",
+      "bytes": 748
+    },
+    {
+      "path": "concepts/evaluation-procedure/evaluation-metrics.md",
+      "sha256": "882f5280f60ef797527fc30da539554ee2dbb27d3f4ca892665171b01a19049a",
+      "bytes": 794
+    },
+    {
+      "path": "concepts/event/first-contact.md",
+      "sha256": "c87626995a7aabed00129322e558b5f06facf622d9032b0de4b323f1a8ff8c54",
+      "bytes": 664
+    },
+    {
+      "path": "concepts/event/phase-1.md",
+      "sha256": "7f619aea2269e49311b98d3fcec0884897765b2106988e74afec6711b8fcd3ff",
+      "bytes": 568
+    },
+    {
+      "path": "concepts/event/phase-2-gemini-lite-map-reduce-enrichment.md",
+      "sha256": "540e7b91eb4db84f0e77f102566cc771b5eba0fbca9c4b8b190109a27e577a29",
+      "bytes": 1682
+    },
+    {
+      "path": "concepts/event/phase-5-backfill-evaluation-and-controlled-rollout.md",
+      "sha256": "4806d335dbf6b93c2821f8563046f897d45e9f0cb3850a631623b44248f632a9",
+      "bytes": 1448
+    },
+    {
+      "path": "concepts/event/three-body-pdf-qc-case-study.md",
+      "sha256": "f963b2e23fa3f1c67df8e7ab855f1a6012108c9fc6c54f7359551d2d3bc340c0",
+      "bytes": 1342
+    },
+    {
+      "path": "concepts/feature/knowledgebundleexplorer.md",
+      "sha256": "bbe584bba616fd00145d8d743299abeb0afc049df50181eabf5e1d4c6a9d1350",
+      "bytes": 624
+    },
+    {
+      "path": "concepts/fileformat/okf-bundle.md",
+      "sha256": "101c7b43dafd6415bee02a3f023b45ebd6fed57ab1b31c43df7f23bc5e1c8710",
+      "bytes": 956
+    },
+    {
+      "path": "concepts/format-specification/okf-concept-format.md",
+      "sha256": "72fc21474ab35351acc560563752cea7357b9a7fb1fdb118678b53c86f74f2dc",
+      "bytes": 679
+    },
+    {
+      "path": "concepts/format/okf-v0-2.md",
+      "sha256": "eb817ff07594d38d838789ddf39689bcd09f913aea42f0b3a1ef306be233446e",
+      "bytes": 928
+    },
+    {
+      "path": "concepts/framework/agent-framework.md",
+      "sha256": "ef6f12255318c8e35cdd46964ceda7704209eedda43b0417c7037e34a8634338",
+      "bytes": 608
+    },
+    {
+      "path": "concepts/functionality/canonicalization-candidates.md",
+      "sha256": "187d4c234f7af61f2028399133651f0fc3ed25e2894b6b3782870d3746d7dc41",
+      "bytes": 660
+    },
+    {
+      "path": "concepts/functionality/dynamic-chunk-planning.md",
+      "sha256": "178dac8e247036c5842195fb0f00ffc7ba7ace4ab332486b6df7fc6e4d98b774",
+      "bytes": 645
+    },
+    {
+      "path": "concepts/functionality/gemini-lite-structured-extraction-and-reduction.md",
+      "sha256": "995c05d49e42b098e79f2eb6a2d97cd9c6bc47e121d4542939345bf7c1acae4e",
+      "bytes": 720
+    },
+    {
+      "path": "concepts/functionality/graph-analysis-and-community-detection.md",
+      "sha256": "bc60a29e4cc850a8f381c786b0c63f0c587725fbdeb7ad74447bc3427375a1ac",
+      "bytes": 693
+    },
+    {
+      "path": "concepts/functionality/layout-and-heading-analysis.md",
+      "sha256": "cbd483baac3fdd7c98cb6b424327c39311345606f12baab3b8eb681d76a6e01b",
+      "bytes": 660
+    },
+    {
+      "path": "concepts/functionality/pdf-docx-extraction-adapters.md",
+      "sha256": "7f1489700ed2bd3117a3955a9b845afd8ba847b55cffe3cd2c21f88fe6a98ca3",
+      "bytes": 663
+    },
+    {
+      "path": "concepts/functionality/query-time-reranking-and-evidence-selection.md",
+      "sha256": "158b2ab67a92beee0904c97faefe74f135f8e13b9f0a665d604aee21f8e9ce6f",
+      "bytes": 708
+    },
+    {
+      "path": "concepts/functionality/validation-helpers.md",
+      "sha256": "c18ee662ffbe492356e12ed3c88ce9f7b62cf3fa6c567181b9f043fad086e137",
+      "bytes": 633
+    },
+    {
+      "path": "concepts/goal/helpudoc-system-goals.md",
+      "sha256": "e10bf1d04557571a8f08dc7ad4f4894b56629d47a5f2770f51f5866331ea3e89",
+      "bytes": 816
+    },
+    {
+      "path": "concepts/infrastructure-requirement/pgvector-enabled-database-path.md",
+      "sha256": "540b69f917dd89a7cb77bb009513b7dd41d2a7164f2aa4ca657390250019361a",
+      "bytes": 1035
+    },
+    {
+      "path": "concepts/input/pipeline-inputs.md",
+      "sha256": "e5547521b01199850f194d757799ee3101079de58bfad54b89974cabad99f51b",
+      "bytes": 592
+    },
+    {
+      "path": "concepts/method/reciprocal-rank-fusion.md",
+      "sha256": "c3258b980d75410ecae714c752fc7b3d8c07ccd3f628b57897a2a64b58db5964",
+      "bytes": 799
+    },
+    {
+      "path": "concepts/metric-framework/evaluation-metrics.md",
+      "sha256": "93f4c6871b72e28328327740e99eac7adfbe35cdc721e0daeeeb069bdd0d38f0",
+      "bytes": 755
+    },
+    {
+      "path": "concepts/metrics/phase-0-metrics.md",
+      "sha256": "5114bcea3e0ee71846f36080dc7c4a434f23dded82b35735b253e1cc706c5ebf",
+      "bytes": 809
+    },
+    {
+      "path": "concepts/model/gemini-lite.md",
+      "sha256": "482a5f8ae827dc0db0c2ce171290dc235839e28bfdc41424f2de0e35de537802",
+      "bytes": 881
+    },
+    {
+      "path": "concepts/module/knowledge-ingestion.md",
+      "sha256": "08282bbce56f12ddecdfa448509d400121b31f543a42c63f06bdcd001f6b2a6d",
+      "bytes": 676
+    },
+    {
+      "path": "concepts/objective/document-processing-and-semantic-organization.md",
+      "sha256": "d4fe208f0f3f4dadff105354f8ab65c76a28d8a888aed59cb1564a747a65b2be",
+      "bytes": 894
+    },
+    {
+      "path": "concepts/organization/red-coast-base.md",
+      "sha256": "cfeb830edb93a4d37d47c2ed9242c395c159650618cb4a4e6f555e66d95a1b1e",
+      "bytes": 643
+    },
+    {
+      "path": "concepts/output/ingestion-metadata.md",
+      "sha256": "1fdf193d75d1d00e5ad72ee961fd36c8b3186a81905c87387f8a8528890ee0f2",
+      "bytes": 605
+    },
+    {
+      "path": "concepts/performance-metric/system-performance.md",
+      "sha256": "4fedef7c86270940f9f715fa16b6c4bbf60187817867cfd85b09363f3e6c27a1",
+      "bytes": 653
+    },
+    {
+      "path": "concepts/person/ye-wenjie.md",
+      "sha256": "0b442a11cb000fdfe6ba4ed4008d6870bbe45f9d962c8a2e28c71c9e96cca513",
+      "bytes": 993
+    },
+    {
+      "path": "concepts/phase/phase-0-correctness-and-observability-baseline.md",
+      "sha256": "23dbabad1ded34dfbf76e4a3b88d62c85155e341af5fc4d7761c7bbde17c1de3",
+      "bytes": 1043
+    },
+    {
+      "path": "concepts/plan/implementation-plan.md",
+      "sha256": "50d327db261641838d29f9f6d81d905f9da8e0c49b7e0f6342b7c7558a1accd7",
+      "bytes": 911
+    },
+    {
+      "path": "concepts/policies/access-control.md",
+      "sha256": "16ecf18ff325c91403c9ccbed5cf360b98f2e3da10f29623cd356c5b14583edf",
+      "bytes": 601
+    },
+    {
+      "path": "concepts/policies/retention-policy.md",
+      "sha256": "de1b0f436e74932f584460195fc502e9ef2ac5315d01f61b70b6cde2777df809",
+      "bytes": 607
+    },
+    {
+      "path": "concepts/policy/adapter-design-policy.md",
+      "sha256": "d34ea251d4a306a8f674d0c59e0230929b2cdc6f702f8da84d3115fe7ad89426",
+      "bytes": 1069
+    },
+    {
+      "path": "concepts/policy/api-idempotency-policy.md",
+      "sha256": "8d5967c1e1c9fb8591c8b7ac32349c5e79c3892afc9c5dfb7a06193df45d6ce0",
+      "bytes": 976
+    },
+    {
+      "path": "concepts/policy/bundle-management-policy.md",
+      "sha256": "9f9dcf48494cf612d356d881da73325631d070fac0fb64eae631d89d19f9a76e",
+      "bytes": 711
+    },
+    {
+      "path": "concepts/policy/chunking-policy.md",
+      "sha256": "478f2fea1185a7350b5b91fe96640f56dd41808565cc00558ae1983c7b3f7bd9",
+      "bytes": 711
+    },
+    {
+      "path": "concepts/policy/concurrency-policy.md",
+      "sha256": "317d3b3dc57b0073ec694b4f887e922e22358670a312af04743c09d92fe0d8dd",
+      "bytes": 1223
+    },
+    {
+      "path": "concepts/policy/data-integrity-policy.md",
+      "sha256": "09a0c1379935f6670e8292fbedd947969c9f0ab910d91f177d7b9ecd79b6b430",
+      "bytes": 614
+    },
+    {
+      "path": "concepts/policy/data-retention-policy.md",
+      "sha256": "7c33a0d42aad7d971c42ca663fc8ac5b9e527e12297932e2395578bcd62bb319",
+      "bytes": 614
+    },
+    {
+      "path": "concepts/policy/deployment-exclusion-policy.md",
+      "sha256": "93982419560a683c9a9cca04cead3756f5ddac7715e3d48df00ea175860b8580",
+      "bytes": 721
+    },
+    {
+      "path": "concepts/policy/enrichment-policy.md",
+      "sha256": "e521e26a210b4111431bafb241a1ab99219ffe9aafa336decfee64a1504e48fb",
+      "bytes": 1029
+    },
+    {
+      "path": "concepts/policy/graph-traversal-policy.md",
+      "sha256": "7890a38911dae57cdc956035a3601491563d8525e9295355857f2eaab5c9089a",
+      "bytes": 772
+    },
+    {
+      "path": "concepts/policy/knowledge-grant-policy.md",
+      "sha256": "c34320eb804b83a46a37d1ad906b8626031c82654f8bf48a75cb84d1b8c0bc6c",
+      "bytes": 683
+    },
+    {
+      "path": "concepts/policy/knowledge-upgrade-policy.md",
+      "sha256": "532875cfb9ba876fa9dbed69285d409b4aef84d41529951612f770c30d387d00",
+      "bytes": 789
+    },
+    {
+      "path": "concepts/policy/ocr-provider-policy.md",
+      "sha256": "697235d895a0a754073bf5a1ca53a47ccc653042a5831565790eebf73330d6b6",
+      "bytes": 608
+    },
+    {
+      "path": "concepts/policy/okf-policy.md",
+      "sha256": "f265e5bf0bb352cac328ab1a95c034ca09ea036f4ff29d9b2748e9d36bf0a607",
+      "bytes": 627
+    },
+    {
+      "path": "concepts/policy/okf-v0-2.md",
+      "sha256": "989e177beadf34b061cc63af5e3083c1a2327829311bb264048d088b397f8d86",
+      "bytes": 869
+    },
+    {
+      "path": "concepts/policy/output-contracts.md",
+      "sha256": "4b0d4236e0b092f678f0f99e82c634da8ea2348800f64b0a0bbdbb8b1519d766",
+      "bytes": 773
+    },
+    {
+      "path": "concepts/policy/persistence-model.md",
+      "sha256": "909ae7d71c56f98a4fcf8d58aeadfcb9f27c2ff924b1e49fe50b746d5eb2274c",
+      "bytes": 703
+    },
+    {
+      "path": "concepts/policy/product-principles.md",
+      "sha256": "70f61abd126e65aba32eaac355ecd28b7ab449b46210c190491000406a28562c",
+      "bytes": 810
+    },
+    {
+      "path": "concepts/policy/retrieval-rules.md",
+      "sha256": "471a10af55f73efe3f9362a7c7d9e00baaf9b8120d9e78387637208ae54d5eca",
+      "bytes": 644
+    },
+    {
+      "path": "concepts/policy/rollout-and-compatibility-policy.md",
+      "sha256": "06ab80ed485c332d50534801dee3569bcb208913e6a9e19c780d1972da0ccd93",
+      "bytes": 1123
+    },
+    {
+      "path": "concepts/policy/rollout-compatibility-policy.md",
+      "sha256": "aabde01d2be32e6656ace6ab329f23aca9b6ac23d9f86d9d89a746823cda8c78",
+      "bytes": 963
+    },
+    {
+      "path": "concepts/policy/safety-against-document-instructions.md",
+      "sha256": "840d3778090e373056a3e831423cbf6575f2436eefa768b59c746fc9dc6d4e08",
+      "bytes": 925
+    },
+    {
+      "path": "concepts/policy/safety-policy.md",
+      "sha256": "664b16ba7e287b84c3bdc5c39641642b6d45187953cd1fba6fddb3b159e4a815",
+      "bytes": 966
+    },
+    {
+      "path": "concepts/policy/security-and-governance-policy.md",
+      "sha256": "5888150ae7cf5cb6a8f09ff35227f467c014825464928e5da74bf54c045328fa",
+      "bytes": 999
+    },
+    {
+      "path": "concepts/policy/security-and-governance.md",
+      "sha256": "962b75c5f0e600f9e43cffea3d1a7beb13c12b0731407794d54effa1c5532ea2",
+      "bytes": 706
+    },
+    {
+      "path": "concepts/policy/selective-enrichment-policy.md",
+      "sha256": "d1c5d06cdbe5c7e8ee29062fe080d8cef1a6d2cd6d342a1774c0c85d888f86df",
+      "bytes": 891
+    },
+    {
+      "path": "concepts/policy/snapshot-mutability-policy.md",
+      "sha256": "cd02756d2b4a7ec59f6b90a8484d83dfb0d5371acf979ae2537da04536caf703",
+      "bytes": 1054
+    },
+    {
+      "path": "concepts/policy/token-constraints-policy.md",
+      "sha256": "2876ba8f482935d3a461484c22ad8702b7d7e4957032f1132d392b85a3818e24",
+      "bytes": 1105
+    },
+    {
+      "path": "concepts/policy/tracing-privacy-policy.md",
+      "sha256": "c0a8e66537591a9c9b2ea4012a0858602b525ad0280ab46b1320cf16788b63e9",
+      "bytes": 862
+    },
+    {
+      "path": "concepts/policy/versioning-policy.md",
+      "sha256": "aacdb06da4c8fabc31fa2d199e2f8506176087f973ab0f9ff395c0e0556c7186",
+      "bytes": 926
+    },
+    {
+      "path": "concepts/principle/adapter-modularity-principle.md",
+      "sha256": "8347f60a47150d1527ca560ffaf283b342e754c697ffe350adeb35549c32eda8",
+      "bytes": 953
+    },
+    {
+      "path": "concepts/problem/page-indexing-limitations.md",
+      "sha256": "cea70de12a52915bd7ea584dd63b75fa058ac564119615e2e959782ee5cfe5d4",
+      "bytes": 1088
+    },
+    {
+      "path": "concepts/procedure-step/chunk-planning.md",
+      "sha256": "fa8bd7dc9d422a92ccb458af50d8ecd7a3acfb7287a524b1576c90fc0cafea22",
+      "bytes": 625
+    },
+    {
+      "path": "concepts/procedure-step/extraction-planning-and-execution.md",
+      "sha256": "fc814a19787877374a5be7d002811e054e7101fea14d46c7ffeb3a6d3e927bbe",
+      "bytes": 682
+    },
+    {
+      "path": "concepts/procedure-step/graph-analysis.md",
+      "sha256": "ea4620b8b2410c3e17239e6a928c458e624a913350e0d812a82b2aa8d30747dc",
+      "bytes": 625
+    },
+    {
+      "path": "concepts/procedure-step/map-extraction.md",
+      "sha256": "b752caea802f584aaef209636ad540b74baec0215725b5ea74d541d547a76c9b",
+      "bytes": 625
+    },
+    {
+      "path": "concepts/procedure-step/optional-query-reranking.md",
+      "sha256": "108e2ae9df5b8c8db892176d91814cbca3f50ae7f586898e62f946c755e444fe",
+      "bytes": 655
+    },
+    {
+      "path": "concepts/procedure-step/reduce-canonicalization.md",
+      "sha256": "2db007d800180440dd31b59fcc061ea6946ca9b09d8d90e840560d882c78b80c",
+      "bytes": 652
+    },
+    {
+      "path": "concepts/procedure-step/structure-detection.md",
+      "sha256": "e68fcd9c20ce230f656361dd548d198a26f611091672038144c9b934a3cf0915",
+      "bytes": 640
+    },
+    {
+      "path": "concepts/procedure/acceptance-gate.md",
+      "sha256": "7b91487665bd3db64e63fad913960ec21c8a86cce161d4bad4326c307de996dd",
+      "bytes": 942
+    },
+    {
+      "path": "concepts/procedure/adaptive-threshold-calculation.md",
+      "sha256": "67a527e02bd930bee2b7aab5720b69cd43e208325ee45ed16398ab7d578992ce",
+      "bytes": 1012
+    },
+    {
+      "path": "concepts/procedure/atomic-version-switching.md",
+      "sha256": "67df289590a30285371366d3079d65d0c97b3e5945de89dafaafef0544203146",
+      "bytes": 1002
+    },
+    {
+      "path": "concepts/procedure/boundary-adjudication-process.md",
+      "sha256": "5509a85097ed5f557fe37c26619c00128c5a613d15a7324e0d7c46e5bf7bb870",
+      "bytes": 714
+    },
+    {
+      "path": "concepts/procedure/boundary-signal-analysis.md",
+      "sha256": "3d2159463e5f931f9b948bad476c8f81d5953b92943dc7e876dcbc312f1f5f71",
+      "bytes": 635
+    },
+    {
+      "path": "concepts/procedure/caching-methodology.md",
+      "sha256": "e8e24f6cd201fa3db145b8b3448bb877555816dce5e9430e0bf11f1614b26479",
+      "bytes": 870
+    },
+    {
+      "path": "concepts/procedure/caching-strategy.md",
+      "sha256": "bb1ad71b6e323efde2c9d97871ee526384bc10193b2a21582439344b3dda8577",
+      "bytes": 1274
+    },
+    {
+      "path": "concepts/procedure/canonicalization-process.md",
+      "sha256": "6165fee96f060b02d65538cf25c9206d2cad52489a7f0fc48fe97af2f98b8ba7",
+      "bytes": 1898
+    },
+    {
+      "path": "concepts/procedure/chunking-procedure.md",
+      "sha256": "c105cda073492241907dfea92232cf2a0e2d9866488c40df952f22427478d2a9",
+      "bytes": 1060
+    },
+    {
+      "path": "concepts/procedure/community-detection.md",
+      "sha256": "c267522a593f0b719fe341297aa540165508bef4807c56515343ea21188775bf",
+      "bytes": 1131
+    },
+    {
+      "path": "concepts/procedure/community-naming.md",
+      "sha256": "ff9d1825689e07c2b96a50ed3dddd1900e7bf7fa6e82d702c2ab23e2ca5ca733",
+      "bytes": 611
+    },
+    {
+      "path": "concepts/procedure/concurrency-control.md",
+      "sha256": "0f816a88fa4baa7de4b6351bba4afbcabed935847cfc2c70f262d8d554a10102",
+      "bytes": 692
+    },
+    {
+      "path": "concepts/procedure/current-ingestion-process.md",
+      "sha256": "84db7b4cb2feed67a9871d6222e4e43502f5c5c9987233267efcdc82c7943de3",
+      "bytes": 1327
+    },
+    {
+      "path": "concepts/procedure/data-extraction-procedure.md",
+      "sha256": "b48b641cb2b08f976e2fad644b63a06ab5209cc14a839c24fea1276741f0d35c",
+      "bytes": 708
+    },
+    {
+      "path": "concepts/procedure/deterministic-extraction-process.md",
+      "sha256": "893c2189b33e0d813acd72486fe6f99576ec694fbc1f2cc106c3de1465328f6e",
+      "bytes": 995
+    },
+    {
+      "path": "concepts/procedure/deterministic-okf-publication.md",
+      "sha256": "aa52e3eba1007dfd69bb040e4fef37c63241c3da4535f7da31da10da5f41c4fe",
+      "bytes": 936
+    },
+    {
+      "path": "concepts/procedure/deterministic-publication.md",
+      "sha256": "4ea144f56d1add5ab01da9e6e5dff36821da01e6b6efc77feb336dc5f871318b",
+      "bytes": 638
+    },
+    {
+      "path": "concepts/procedure/document-level-synthesis.md",
+      "sha256": "c5b9d2e10ab3d1d0e9afa7189c9130a231df6de4d1267ad6473d2369d21825b2",
+      "bytes": 635
+    },
+    {
+      "path": "concepts/procedure/domain-profile-substitution.md",
+      "sha256": "c3c6ea2cbfe5e2ccc4c618af893237ef67486fb2c8f98b5054ebe27dd2675f95",
+      "bytes": 716
+    },
+    {
+      "path": "concepts/procedure/domain-specific-profiling.md",
+      "sha256": "2cf3edad21e7dfe8340197d2f9f73b47dbf13c83f121304e0925fc0d516fd7f8",
+      "bytes": 1005
+    },
+    {
+      "path": "concepts/procedure/dynamic-chunk-planning.md",
+      "sha256": "2e12c518d83968e33137b5854807a9d64cb6d71465377bff3739b3801e901505",
+      "bytes": 629
+    },
+    {
+      "path": "concepts/procedure/dynamic-chunking.md",
+      "sha256": "4d7c49b88dd39e9c56bad2af811f80f8d12710bc93e787b682e1cb0438d0581d",
+      "bytes": 611
+    },
+    {
+      "path": "concepts/procedure/embedding-caching.md",
+      "sha256": "502c186891cb47e0e4227d153a8456ea12b05c4aadb03f643abcda0442cddba6",
+      "bytes": 614
+    },
+    {
+      "path": "concepts/procedure/enrichment-procedure.md",
+      "sha256": "b71d767897d703ea430c4eeb2f32eb86d90c3b593e3271f83ce227c4483466b0",
+      "bytes": 694
+    },
+    {
+      "path": "concepts/procedure/enrichment-process.md",
+      "sha256": "68194a1126a9e35549729fd926ec3015059db48e60e7b5d1108e8f84b0db772f",
+      "bytes": 617
+    },
+    {
+      "path": "concepts/procedure/enrichment.md",
+      "sha256": "7bc1a89da1c4f96290b116a83f3847de1baa7136be7bba2ed0b19ed83818fb70",
+      "bytes": 683
+    },
+    {
+      "path": "concepts/procedure/error-handling-procedure.md",
+      "sha256": "4a3df359de71871500609053a8bcde5a54765d46bf78dc487bf9216a702695ef",
+      "bytes": 741
+    },
+    {
+      "path": "concepts/procedure/extraction-validation.md",
+      "sha256": "bd592e1203de6565f62406963afe8cdfca865987d0a3d583fcd84d3441525be0",
+      "bytes": 1022
+    },
+    {
+      "path": "concepts/procedure/extraction.md",
+      "sha256": "6fd0057f2b49a6076a016fc444cc5e116e90c496c3afa64cf3808b705c0b9ecd",
+      "bytes": 661
+    },
+    {
+      "path": "concepts/procedure/file-fingerprinting.md",
+      "sha256": "d7f894f8c6845716d76f07acdb5dccde99513d20df44a21d4fe46913b3e88531",
+      "bytes": 620
+    },
+    {
+      "path": "concepts/procedure/gemini-lite-map-extraction.md",
+      "sha256": "24f2e6da7a9429e958ae263772dda74909da864189ffbe9b4f0b8231921f9c21",
+      "bytes": 991
+    },
+    {
+      "path": "concepts/procedure/golden-corpora.md",
+      "sha256": "e43ffd8940f0d9cd95570774c936a5ecfccce032f6f7b9fb9a90702f4dfe3e04",
+      "bytes": 876
+    },
+    {
+      "path": "concepts/procedure/graph-analysis-and-community-detection.md",
+      "sha256": "5c193ccebdc65b8892f63a00591448c80d8f59b4ee1db8cf8d1cb6f8fef6dcb7",
+      "bytes": 677
+    },
+    {
+      "path": "concepts/procedure/graph-expansion.md",
+      "sha256": "48ec9efe237b7908e91a93a527af9dc64ec3965cb87c56a79c74129137e672fb",
+      "bytes": 608
+    },
+    {
+      "path": "concepts/procedure/header-footer-removal.md",
+      "sha256": "4eaf070ee0a817dccd099d74da1b1b8e89d0f739bb604beb5ad7210ba44941bd",
+      "bytes": 626
+    },
+    {
+      "path": "concepts/procedure/hierarchical-reduction.md",
+      "sha256": "55fc3cd6666262881a9b94d2e743ae95402a20cbfe57bf7353e4fe391c625f67",
+      "bytes": 994
+    },
+    {
+      "path": "concepts/procedure/hierarchical-splitting-algorithm.md",
+      "sha256": "4a9ae12ea8b1c7bf1a3f3ec9edd5019273008031a083b89785662f4a8ef65be8",
+      "bytes": 1445
+    },
+    {
+      "path": "concepts/procedure/human-review-workflow.md",
+      "sha256": "d66a66b06874df57f5c0090dd23f526f62d9d66d33a1b2a331dd5f1b48e097db",
+      "bytes": 626
+    },
+    {
+      "path": "concepts/procedure/immutable-enrichment-snapshot.md",
+      "sha256": "f10a6a46fa5a86a65028994c5665473724ba87c505f2efd06dc5d2717ac48575",
+      "bytes": 1024
+    },
+    {
+      "path": "concepts/procedure/in-memory-graph-construction.md",
+      "sha256": "c62e30120272284626ab77397322e4893fd2207bc5d59444367ba64812b22391",
+      "bytes": 1120
+    },
+    {
+      "path": "concepts/procedure/ingestion-management.md",
+      "sha256": "b4f526ee061bbb6edb8d1427d329c65b781c7bef5006f402931d702119acc6b8",
+      "bytes": 623
+    },
+    {
+      "path": "concepts/procedure/ingestion-migration.md",
+      "sha256": "903f238f3032145c49172f4309f6bfbf3ed5abd5fc1444c02ea5936c4003386a",
+      "bytes": 620
+    },
+    {
+      "path": "concepts/procedure/ingestion-pipeline.md",
+      "sha256": "2bfe948638d01e9528531b132e181729665589eb4b682bffd3ed749ba0ab4f2b",
+      "bytes": 1254
+    },
+    {
+      "path": "concepts/procedure/integration-tests.md",
+      "sha256": "f50591944b1f600b4c230af63bf07dcc7864bc56cc5bae9d27e8f33a9475b2fa",
+      "bytes": 986
+    },
+    {
+      "path": "concepts/procedure/knowledge-graph-processing-pipeline.md",
+      "sha256": "290a5562d258e3fb7406d9f4d5064d7a5d58cb6f3afac5497da2838fda6249c5",
+      "bytes": 1656
+    },
+    {
+      "path": "concepts/procedure/language-distribution-analysis.md",
+      "sha256": "e5f88f05a5eb442ba0620e89c465ea6fe76d5193bfdc8ad987678d62ddacc740",
+      "bytes": 653
+    },
+    {
+      "path": "concepts/procedure/layout-and-heading-analysis.md",
+      "sha256": "853b6359be19f4668c4fa4ac08d28b819a845c2cae0a4b55114e4afd93a0519b",
+      "bytes": 644
+    },
+    {
+      "path": "concepts/procedure/leaf-semantic-extraction.md",
+      "sha256": "218016f5aad0624dcbe10a9a49b00e3d36d835daec9ddf0d5270b4e625e9a5ef",
+      "bytes": 635
+    },
+    {
+      "path": "concepts/procedure/lexical-retrieval.md",
+      "sha256": "4020330c117dbe83c941a7db69d6f5458c977a00af39c2003b40c48498d7e276",
+      "bytes": 614
+    },
+    {
+      "path": "concepts/procedure/line-wrap-repair.md",
+      "sha256": "b4c8095ac634a6fd54630d456be1dc12c6637ca9f50726e220f7c1c33a95f340",
+      "bytes": 611
+    },
+    {
+      "path": "concepts/procedure/low-confidence-alias-adjudication.md",
+      "sha256": "bc395c64d6f3404f97670fa047bbd29752c516433430d2a35b202ccf64d836d6",
+      "bytes": 662
+    },
+    {
+      "path": "concepts/procedure/low-confidence-structural-boundary-adjudication.md",
+      "sha256": "16d7ace5a0e027548837a8420b79e6190c919353dace5cdb222bd4bddbd2d6a5",
+      "bytes": 704
+    },
+    {
+      "path": "concepts/procedure/map-tasks-execution.md",
+      "sha256": "2b8d58a1f9db5503ca018d9e3c3053a8bc7326790bb402701f78e2f110bcf58f",
+      "bytes": 692
+    },
+    {
+      "path": "concepts/procedure/model-map-result-caching.md",
+      "sha256": "8abff7ce30be024cecf8251ed59a793e081653e10ca64322d0a4d271f3b75bf3",
+      "bytes": 635
+    },
+    {
+      "path": "concepts/procedure/normalization-stage.md",
+      "sha256": "07742c19e20af1cbce51e8e8fbe58e4ba0823cf6401791bcd21ad2457db1e7da",
+      "bytes": 1496
+    },
+    {
+      "path": "concepts/procedure/ocr-fallback-procedure.md",
+      "sha256": "edb93d5a4e5d33e28f903c0c8a055fa0343b3ff63e033e1d8ab551956f1c1947",
+      "bytes": 994
+    },
+    {
+      "path": "concepts/procedure/ocr-handling-procedure.md",
+      "sha256": "db5cce605015b622c2886fc9f041e36f3cb146198d74de2e7ca764ce36e6421b",
+      "bytes": 943
+    },
+    {
+      "path": "concepts/procedure/okf-bundle-publication.md",
+      "sha256": "d6868698d36abdb4999518af2cd432cf2db8a25c8e150a08a17a8f3b34fda52d",
+      "bytes": 663
+    },
+    {
+      "path": "concepts/procedure/okf-generation.md",
+      "sha256": "51a5a112c90849d76932f00a00afc02f4ef06ca70d0faab6f390bb5e2ceecedf",
+      "bytes": 605
+    },
+    {
+      "path": "concepts/procedure/optional-top-candidate-reranking.md",
+      "sha256": "c9cdc302a82ee3a60211cc2ac2c448a01fb7b3506946975a8a316e6f455c30b6",
+      "bytes": 659
+    },
+    {
+      "path": "concepts/procedure/page-based-indexing.md",
+      "sha256": "342e20d032c6f5474d383ec558d8b8c8dd98ac571d003a1fc88877c92b045357",
+      "bytes": 696
+    },
+    {
+      "path": "concepts/procedure/page-boundary-joining.md",
+      "sha256": "db599b654e787ca06161b22fc33ae159c03013dca34e150fe9309ba6fbb0679f",
+      "bytes": 626
+    },
+    {
+      "path": "concepts/procedure/pdf-docx-extraction.md",
+      "sha256": "b5b08f99d25032e5148c3fe60db339de39c648f252aa86a089c29c7cd3a14fca",
+      "bytes": 620
+    },
+    {
+      "path": "concepts/procedure/phase-0-implementation.md",
+      "sha256": "ae75b9abd9a9f737e9d2e7ce4294d8532748ab357f07a00b9f497e4acbdb5a78",
+      "bytes": 1875
+    },
+    {
+      "path": "concepts/procedure/phase-2-prerequisites.md",
+      "sha256": "af9f3176fd41243c92ee52d333335ebb212a8cace3282c0d2c3ae07fe101c8df",
+      "bytes": 1226
+    },
+    {
+      "path": "concepts/procedure/processing-window-caching.md",
+      "sha256": "ef287df61b3bb99fe5b3d87c3f2368a8350ed3a52e1c09042c277058dafcc2e5",
+      "bytes": 638
+    },
+    {
+      "path": "concepts/procedure/processing-window-synthesis.md",
+      "sha256": "c38d3b435dc3cb9fd4781c3f2f857a8b1558900b156e05751221da5f79bd4c69",
+      "bytes": 644
+    },
+    {
+      "path": "concepts/procedure/publication-procedure.md",
+      "sha256": "cf11928e9accf5688ef96a64a20c40f3ba9d3a28a7150b9e17b2b65cef317de7",
+      "bytes": 949
+    },
+    {
+      "path": "concepts/procedure/publication-process.md",
+      "sha256": "0f5a307f2b01b68d233c75f9c0bc116d095d62760d29d3fba1efc7b799eb82c6",
+      "bytes": 1476
+    },
+    {
+      "path": "concepts/procedure/query-flow-procedure.md",
+      "sha256": "f4664dc635324b2c888a09b7078216fb3f1c2c6ea0b9b1e039a802167ce1c31d",
+      "bytes": 1846
+    },
+    {
+      "path": "concepts/procedure/query-flow.md",
+      "sha256": "1d71906d845c39088d09d399f888f461726ba0be270108b16fd9ddc8ae2d73d7",
+      "bytes": 811
+    },
+    {
+      "path": "concepts/procedure/query-time-reranking.md",
+      "sha256": "7e00220cbcb178e61635ae096d368a6b3f1874d937bb7f871ad4049be3a97d40",
+      "bytes": 623
+    },
+    {
+      "path": "concepts/procedure/re-enrichment-action.md",
+      "sha256": "e19e615e26f48242b9dcdbaf21e7efbd200cdf46aadcc62bf049865cbb71122d",
+      "bytes": 623
+    },
+    {
+      "path": "concepts/procedure/reduce-tasks-execution.md",
+      "sha256": "e011bcb8e35055075ad3510d1c97ca1e79153cd7c52949180825904fdd51b5d1",
+      "bytes": 705
+    },
+    {
+      "path": "concepts/procedure/refactor-knowledgeservice.md",
+      "sha256": "a94c93090b62b2fc4ab9a6f720c175a60dea2e4b087c9c4182c8ed80b7cf5896",
+      "bytes": 918
+    },
+    {
+      "path": "concepts/procedure/relationship-validation-process.md",
+      "sha256": "a1d7e8ec910b07cde9a29083be60daa735d31ce0ecbe60ec5b786e54a4016d64",
+      "bytes": 1461
+    },
+    {
+      "path": "concepts/procedure/retrieval-evaluation-set.md",
+      "sha256": "6122b27dfc37960aa4a113c2569cd41e59e2cc170ad72fc5d85af93c457917ad",
+      "bytes": 955
+    },
+    {
+      "path": "concepts/procedure/retrieval-methodology.md",
+      "sha256": "20b39cb178e7b69a93c2a0882d0d54500096f834a6bd792e5332c67e37c9ecbf",
+      "bytes": 1288
+    },
+    {
+      "path": "concepts/procedure/schema-migration-and-redis-setup.md",
+      "sha256": "c6531713d78fefb0f43096b62487e5276724cdc44d390f1e3b864b207f3c8d66",
+      "bytes": 995
+    },
+    {
+      "path": "concepts/procedure/section-and-document-reductions.md",
+      "sha256": "9c27a4cb4653f84df5841f08abcaa9b4016fdcbbc6773e883fd1f0ae1f54c040",
+      "bytes": 656
+    },
+    {
+      "path": "concepts/procedure/semantic-enrichment-pipeline.md",
+      "sha256": "d3bc2ae6b0a7bbc32006b9883f6efe38d9843550cd85a76a15a3659e6f681cad",
+      "bytes": 1056
+    },
+    {
+      "path": "concepts/procedure/source-extraction-caching.md",
+      "sha256": "15b1af94a9b8ff0acbcab58c13817eec187052b763b40260ebd64d5a3b6f06e9",
+      "bytes": 638
+    },
+    {
+      "path": "concepts/procedure/source-mapping-retention.md",
+      "sha256": "13dd8180a1b93e266eeec0b0d8a8cc7b064af1dfef6f6e72daa2e68ebfa71bb6",
+      "bytes": 635
+    },
+    {
+      "path": "concepts/procedure/stage-0-intake-and-fingerprinting.md",
+      "sha256": "91163116ecc86ef9e0041ef89ad98021dc69771db9c5baac9a872a1858d6279b",
+      "bytes": 1654
+    },
+    {
+      "path": "concepts/procedure/structure-detection.md",
+      "sha256": "d9f9b3b31a5ce731f6bdd4311d429b19e61a546478eccb7c1a01960ed0aba570",
+      "bytes": 1317
+    },
+    {
+      "path": "concepts/procedure/structured-extraction-and-reduction.md",
+      "sha256": "0ea6c4ea3bb373377df7555a54bcefb5dc9ce7e9a3e600b9d36aaabb637277f6",
+      "bytes": 668
+    },
+    {
+      "path": "concepts/procedure/synthesis-pipeline.md",
+      "sha256": "2c80094b2c80d06859418b7b2174e48b508c3c0c572ba3402501e63c5d47bff8",
+      "bytes": 1039
+    },
+    {
+      "path": "concepts/procedure/system-infrastructure-decisions.md",
+      "sha256": "721aa78b24767b91006800541fcf2959a60ad9387f1d9a92d6fecadf9d17d889",
+      "bytes": 656
+    },
+    {
+      "path": "concepts/procedure/task-retry-and-recovery.md",
+      "sha256": "93f7f12c2e7e28fd2f617c4773728d3ff43ea3edfe07eeeb292eeeb91fc3186d",
+      "bytes": 734
+    },
+    {
+      "path": "concepts/procedure/test-case.md",
+      "sha256": "ecdf34c82e340f0e63ea612a137b7529caed5f82a10e1115a162686fce29ef5b",
+      "bytes": 639
+    },
+    {
+      "path": "concepts/procedure/text-normalization.md",
+      "sha256": "99512a98da5307cd8a0b7d96916c45cfb3bdab70888e4227df8aba493ab54253",
+      "bytes": 778
+    },
+    {
+      "path": "concepts/procedure/three-body-qc.md",
+      "sha256": "da18c2c13319f326b6452ef5e16a5056569240991d3300f15eee8c600392a64e",
+      "bytes": 674
+    },
+    {
+      "path": "concepts/procedure/unicode-normalization.md",
+      "sha256": "903f49057dc5057f10e86cdf12cfdb6ab9d3180d8d9677c2a9bb551f5c97d3fc",
+      "bytes": 626
+    },
+    {
+      "path": "concepts/procedure/unit-testing-strategy.md",
+      "sha256": "de16782cbb38e8822a212bc3aecffeebe0afa45838cba97757efaab7a9784061",
+      "bytes": 1136
+    },
+    {
+      "path": "concepts/procedure/unit-tests.md",
+      "sha256": "39c118aae63227a774c9d1d5fa17b2b4904606a64cd6177bdb29dabfcb2c6dd7",
+      "bytes": 1388
+    },
+    {
+      "path": "concepts/procedure/untrusted-document-handling.md",
+      "sha256": "152fd24f383728c46ed1a99591c6204b8f5eec0f59575dc0670d07ce45b9812a",
+      "bytes": 768
+    },
+    {
+      "path": "concepts/procedure/vector-retrieval.md",
+      "sha256": "ca93a601879853b372c9a9f8b98c30ec5798683dcf94cfd8f621b96452ad58df",
+      "bytes": 611
+    },
+    {
+      "path": "concepts/procedure/window-merge-logic.md",
+      "sha256": "e1ebb71108dfd33516d068422758778ff256da8553b6d105324a8197e713de6b",
+      "bytes": 977
+    },
+    {
+      "path": "concepts/procedure/window-merging-policy.md",
+      "sha256": "fc91c24aab483ddb6cdf518f687b1e3e87d08d6e1b41f78699a48cc83e17caee",
+      "bytes": 742
+    },
+    {
+      "path": "concepts/procedures/chunking-procedure.md",
+      "sha256": "fca1c216838bb84e15594bf5ec84ea54c989f793ced4bb561e182963db0f0c20",
+      "bytes": 904
+    },
+    {
+      "path": "concepts/procedures/completeness-audit.md",
+      "sha256": "a9216dc4cf1148cc7642179fab7d9115803cf7c1270f2f623a59905d3bf8e4b7",
+      "bytes": 899
+    },
+    {
+      "path": "concepts/procedures/source-deletion-procedure.md",
+      "sha256": "5a1b1c3f9678e981634ab50e45c9d2e871eda29bbfcac761258ddcaf72953c3b",
+      "bytes": 913
+    },
+    {
+      "path": "concepts/process-stage/stage-1-deterministic-extraction.md",
+      "sha256": "18bf6c63fbdf716a60cbe523897e0ff4f9897a5b05869775c69e9cad39d85505",
+      "bytes": 1162
+    },
+    {
+      "path": "concepts/process/document-processing-pipeline.md",
+      "sha256": "5769e484e40a082aac0bedb6d4f3268c03a797241e57888fde32158459e4136f",
+      "bytes": 639
+    },
+    {
+      "path": "concepts/process/knowledge-source-upgrade.md",
+      "sha256": "88230ae9a7e28e761d0adc843b8a1f81ef471eff71d1e48f4c979f2ac7786b8c",
+      "bytes": 627
+    },
+    {
+      "path": "concepts/project-goal/exit-criteria.md",
+      "sha256": "eb4de1b614b885043fb8b7d1e5499ffd219e2b4b513747247d4919e16aa09605",
+      "bytes": 1116
+    },
+    {
+      "path": "concepts/project-phase/phase-1-durable-extraction-and-dynamic-chunk-planning.md",
+      "sha256": "f36a74bb058fc7fba4e454acb886d4dc29b51b82c3c4e2202890df59be0aa1d5",
+      "bytes": 2148
+    },
+    {
+      "path": "concepts/project-phase/phase-3-canonical-graph-and-deterministic-okf-v0-2.md",
+      "sha256": "d48e454d4edb196c0285df99facd0fe69f86751dbffc4d9d93f48dd76f78f66c",
+      "bytes": 1916
+    },
+    {
+      "path": "concepts/project-phase/phase-4-hybrid-retrieval.md",
+      "sha256": "607ad8f719bda074f4191fe3876b83cb8e7b59df26dcd5cfce84c87ac60bdba7",
+      "bytes": 1627
+    },
+    {
+      "path": "concepts/property/idempotency.md",
+      "sha256": "8f384bbc703ae437757fb7e7fbfcd8fbe3ecb094c16ed34e403e8533c2a53526",
+      "bytes": 592
+    },
+    {
+      "path": "concepts/quality-gates/completeness-qc.md",
+      "sha256": "95fb75a500e7120412f2aae0cc22257f9d0d41bfe4576a221fba0e6beb3bec6f",
+      "bytes": 624
+    },
+    {
+      "path": "concepts/requirement/acceptance-gate.md",
+      "sha256": "59242efb014b03e23060ce02577d39d3c061015643e03d819b19aa86086c1680",
+      "bytes": 1095
+    },
+    {
+      "path": "concepts/requirement/access-preservation.md",
+      "sha256": "0e0636bc7f020af1ce9bccbd0be454bc21b19fec6e755a71e7fe63bd2d0a834c",
+      "bytes": 882
+    },
+    {
+      "path": "concepts/requirement/add-admin-coverage-and-warning-fields.md",
+      "sha256": "34e3450a6487e8eded9b52bfcd295b866fe853d7ee5f813304c7c4135e68c1a7",
+      "bytes": 682
+    },
+    {
+      "path": "concepts/requirement/ambiguity-resolution-requirement.md",
+      "sha256": "b9ca7cc126a15c061e8533c3e87192c044eec5b9c6c7f5ec1d13554774320524",
+      "bytes": 824
+    },
+    {
+      "path": "concepts/requirement/atomic-publication.md",
+      "sha256": "9864dd81070d73e28d414b04098f7e9fbaeac9e477b2a4fc2979de0885047443",
+      "bytes": 625
+    },
+    {
+      "path": "concepts/requirement/bundle-validation.md",
+      "sha256": "ba99380427df969d851e426fcf300abf4496e4dd786f129111cee4d589088c39",
+      "bytes": 738
+    },
+    {
+      "path": "concepts/requirement/complete-coverage.md",
+      "sha256": "3e411e18371e3f4c786bc14b26b420f5f3b3fb7a2ee3e59eda3ba35f86b3d92d",
+      "bytes": 901
+    },
+    {
+      "path": "concepts/requirement/complete-document-accounting.md",
+      "sha256": "bc19ee60f64849e5ce3dd552e089e734768bee490c3d1ef8ed7852c71ed601f2",
+      "bytes": 655
+    },
+    {
+      "path": "concepts/requirement/core-window-coverage.md",
+      "sha256": "2e832789febc139514ddd61cb79a9c1d3e6f04e8f314cfae7751f64b629e3a52",
+      "bytes": 631
+    },
+    {
+      "path": "concepts/requirement/cost-control.md",
+      "sha256": "0c4e1bf7c017712791933905818aeea2fa3fc700dba66c491f424a6ac84393d8",
+      "bytes": 863
+    },
+    {
+      "path": "concepts/requirement/deterministic-publishing.md",
+      "sha256": "d24e6c5e8cf4f31a25caf97e885f71aafe5826fb7c4b36c436cb699b5e05fb01",
+      "bytes": 908
+    },
+    {
+      "path": "concepts/requirement/docx-extraction-standard.md",
+      "sha256": "d2e0d8671d50b09014f1c96c1614b4f44b6bd8c8ca17a3f9d6655769e34a851f",
+      "bytes": 945
+    },
+    {
+      "path": "concepts/requirement/durable-processing.md",
+      "sha256": "627964fbead74ff61536ea95da47f2a4a046e656bb7337651e64b1d03ee42f3c",
+      "bytes": 892
+    },
+    {
+      "path": "concepts/requirement/efficient-retrieval.md",
+      "sha256": "d97f7ae048c1551333ba11ea8c55b1f6d21eed93ba6fece08536249c482cf584",
+      "bytes": 905
+    },
+    {
+      "path": "concepts/requirement/embedding-dependency-policy.md",
+      "sha256": "fc4978f3acf938c11e691fb782e2aeb4f9fddcfc57dffd07b3b300421a493bcf",
+      "bytes": 1101
+    },
+    {
+      "path": "concepts/requirement/evaluation-set-composition.md",
+      "sha256": "ffbf0f9ba5ee1ff00563b12518181b47f00855286741709a03f385078b899b04",
+      "bytes": 921
+    },
+    {
+      "path": "concepts/requirement/evidence-level-provenance.md",
+      "sha256": "9acae3bb20cb1b5a1f5216118759507b548f96e407695c428ab473f3fce1867b",
+      "bytes": 902
+    },
+    {
+      "path": "concepts/requirement/evidence-span-pdf-docx-location-exposure.md",
+      "sha256": "c60d51305247c19d87c5a7845da989565697671e567ae506edb3dda2e240a01d",
+      "bytes": 691
+    },
+    {
+      "path": "concepts/requirement/evidence-validation.md",
+      "sha256": "717a1b1651a19b7ba526d14fa7fc1052854ddd1827f96d82dea9ed140dbbca07",
+      "bytes": 628
+    },
+    {
+      "path": "concepts/requirement/exact-retrieval-beyond-page-50.md",
+      "sha256": "a778105e4aad2f8c659b7310aa076aae513d49f568a49fe529b24237782245c2",
+      "bytes": 661
+    },
+    {
+      "path": "concepts/requirement/exit-criteria.md",
+      "sha256": "21cb43b12f1d89a2a3de6f2d238bc83151c8f641d655fc2e429feaa769ea0a1e",
+      "bytes": 1371
+    },
+    {
+      "path": "concepts/requirement/extraction-failure-constraint.md",
+      "sha256": "00b388ac05b0fef5d33d5e78e1ea43731605b99b5f7da7b2614767e9e65e4d68",
+      "bytes": 658
+    },
+    {
+      "path": "concepts/requirement/fix-filename-encoding.md",
+      "sha256": "129aee829520643657684675e2c328ef6c0556d2b0db1ba39caa3cea5dbbfaba",
+      "bytes": 634
+    },
+    {
+      "path": "concepts/requirement/hard-split-policy.md",
+      "sha256": "12fe1a652678bb4bf0108a5bdc521d13e8299c7e7796c04bf5941722390f46e8",
+      "bytes": 708
+    },
+    {
+      "path": "concepts/requirement/initial-technology-exclusions.md",
+      "sha256": "dbd162b2c510c2e5369742ebdaaedb2beaf5f4f9933bfc804bfff88a01a6d45e",
+      "bytes": 1346
+    },
+    {
+      "path": "concepts/requirement/knowledge-retrieval-requirements.md",
+      "sha256": "b82ba35a0b7617d44df80f55a999119b08df8dd43836bd3ebd23f77d4316bbe1",
+      "bytes": 1118
+    },
+    {
+      "path": "concepts/requirement/multilingual-support.md",
+      "sha256": "f256da62aa4ae0948e9bb77db26b4747b859ef3356aba81351f2c9ff104be4ab",
+      "bytes": 925
+    },
+    {
+      "path": "concepts/requirement/no-silent-caps.md",
+      "sha256": "a2b5ba4fbb7e12f4022fc3ce80e6e4caac50accc9e6ff8ee888cc2f65de9ff81",
+      "bytes": 889
+    },
+    {
+      "path": "concepts/requirement/observable-quality.md",
+      "sha256": "1207a6291bf9feffbdaebabf3f0ab2d2bbc51c49bd35e0d83cfff10025afd7db",
+      "bytes": 872
+    },
+    {
+      "path": "concepts/requirement/output-contract.md",
+      "sha256": "7485e0d2707bd913eaff8ce76f66d0a886c179914e0389885bd8b98c83e963dd",
+      "bytes": 948
+    },
+    {
+      "path": "concepts/requirement/output-contracts.md",
+      "sha256": "a3295c38ed9796e9c9f82bc6ec6e8c4ea5b62d3af25a891e3a51add4b9706d22",
+      "bytes": 901
+    },
+    {
+      "path": "concepts/requirement/pdf-extraction-requirements.md",
+      "sha256": "48eb27ba6f7ff42f39c40d01b33a83d55db0d5d2e36c8b3e438820599b085e05",
+      "bytes": 728
+    },
+    {
+      "path": "concepts/requirement/portable-knowledge.md",
+      "sha256": "2a23039f438b747ab3fddc4577717bfccbb9c87dba8c3747e3cbe7bf504d10a1",
+      "bytes": 909
+    },
+    {
+      "path": "concepts/requirement/preserve-page-paragraph-locators.md",
+      "sha256": "137287e7461e919c56c63ec9e3131ad24f39801e987ab35888ea9bc8267b9ea9",
+      "bytes": 667
+    },
+    {
+      "path": "concepts/requirement/prevent-silent-partial-document-publishing.md",
+      "sha256": "b437b5285ab23083bc2db1397ed8371f3bbeb80b98e6669bf2936087091982f6",
+      "bytes": 697
+    },
+    {
+      "path": "concepts/requirement/publication-procedure.md",
+      "sha256": "306467536433b46f1cdac3229cccb67c9e6355df7729d0b008af4c548c16ffcd",
+      "bytes": 634
+    },
+    {
+      "path": "concepts/requirement/quality-gates-and-acceptance-criteria.md",
+      "sha256": "54e00a8e97353d6445e8d645edbde74a24869f4dc7eb1442d000b0b622208148",
+      "bytes": 724
+    },
+    {
+      "path": "concepts/requirement/record-source-unit-counts.md",
+      "sha256": "c870b13bc1594704e40e809be761f305b520b16fe7364dda30d104008393fa81",
+      "bytes": 646
+    },
+    {
+      "path": "concepts/requirement/relationship-attribution.md",
+      "sha256": "01925d21911241729b5d055d9c7b67d8fe32de305b31fc532041efbf6d602749",
+      "bytes": 643
+    },
+    {
+      "path": "concepts/requirement/remove-50-section-truncation.md",
+      "sha256": "710a72bd9d4b7c2848f4e2ab62fae3755e6a5c6d72a99620b3913bd393a6dbf4",
+      "bytes": 655
+    },
+    {
+      "path": "concepts/requirement/restart-safe-extraction.md",
+      "sha256": "572f65db55bcca22506cffe5f1167b5ad92313dc7dadb04562afdbbff83a3498",
+      "bytes": 640
+    },
+    {
+      "path": "concepts/requirement/retrieval-acceptance-expectations.md",
+      "sha256": "5d44e0986b091fd13c1b9ae8483654e8b02cc5bf33a8acd7f6649f791282cd5e",
+      "bytes": 961
+    },
+    {
+      "path": "concepts/requirement/safety-requirement.md",
+      "sha256": "b300f5ef5539c8dcba35082cc3cd3f09a2fcba358f2c5635857708c756a9ea22",
+      "bytes": 817
+    },
+    {
+      "path": "concepts/requirement/semantic-and-multi-hop-evaluation-target-success.md",
+      "sha256": "cd6314f629292ccc97534d90543f76f03245675da7f55d57bad5911929804ae0",
+      "bytes": 715
+    },
+    {
+      "path": "concepts/requirement/semantic-concepts.md",
+      "sha256": "6466422993af6d2755e863bfc053847b982f1d011b8850cfda86f39305a3e9ce",
+      "bytes": 931
+    },
+    {
+      "path": "concepts/requirement/snapshot-mutability-policy.md",
+      "sha256": "2ac2b26d3e986d376329a475f461e4760edd7193e1bcbe8ca60aec384155cd7f",
+      "bytes": 649
+    },
+    {
+      "path": "concepts/requirement/source-unit-accounting-consistency.md",
+      "sha256": "b9df0cc2663fdcd536b3fa9801cda74da2a9fcda74e96f48d378f3b869953f8e",
+      "bytes": 673
+    },
+    {
+      "path": "concepts/requirement/structured-output-constraint.md",
+      "sha256": "402f676961b51af7198dfb379a9eb62a00fd15375a14c5a5db3172bf0e6f45da",
+      "bytes": 811
+    },
+    {
+      "path": "concepts/requirement/version-tracking-requirement.md",
+      "sha256": "4d424b5ecb79b136f093ec1b11a96d07675b925db4a506935fa165fea6e1add0",
+      "bytes": 1040
+    },
+    {
+      "path": "concepts/requirements/acceptance-criteria.md",
+      "sha256": "1de0d67e49a20c01487a916ddd54c68d0df3a412cb03dfa7c68f604e7ee89588",
+      "bytes": 783
+    },
+    {
+      "path": "concepts/requirements/definition-of-done.md",
+      "sha256": "58cadf891ec4e7ed03a6e83a72c858339a9af9c7f7d9c4c22819a96146a65e2e",
+      "bytes": 1126
+    },
+    {
+      "path": "concepts/requirements/display-requirements.md",
+      "sha256": "e651530ad8f236c3e2f1cac69bc8263fc9d1d417f4a4823f17cac7944a3a9475",
+      "bytes": 635
+    },
+    {
+      "path": "concepts/requirements/exit-criteria.md",
+      "sha256": "310bcddc14c7877268856180df79768513fe52dfe5cb9a6460f0c3fc09806c54",
+      "bytes": 1184
+    },
+    {
+      "path": "concepts/requirements/initiative-completion-criteria.md",
+      "sha256": "e43822196654981968af159d75b680f7bef2bb58cc2a8e151af982f47db0f282",
+      "bytes": 809
+    },
+    {
+      "path": "concepts/requirements/knowledge-job-requirements.md",
+      "sha256": "f73e17c1fbafc0ac1d9342c1abf425c0b8f2a9cfa86778cb04b9ce6ff172749b",
+      "bytes": 1241
+    },
+    {
+      "path": "concepts/requirements/phase-2-readiness-items.md",
+      "sha256": "353b1abf71a16db1166c66572dcab1b3d2b48ae2dd1ac28680850d2ee5a5e733",
+      "bytes": 1227
+    },
+    {
+      "path": "concepts/requirements/product-principles.md",
+      "sha256": "69f374d98f0fe4a9f09b65921cb9351591846702e1bfeb635e75a1aab76a8424",
+      "bytes": 965
+    },
+    {
+      "path": "concepts/requirements/required-system-outputs.md",
+      "sha256": "1525f17f6e08c942bd48760962e5685ec8f255e8c4fdf6f2c077b7e1cad3978f",
+      "bytes": 1060
+    },
+    {
+      "path": "concepts/role/baseline-search-method.md",
+      "sha256": "908f78a2bde1b02d805d728e9ac1644019ffadd7b6b0db7701501e49cf412193",
+      "bytes": 609
+    },
+    {
+      "path": "concepts/role/deterministic-publisher.md",
+      "sha256": "fb78ba3e497155537966fdb01f0e71a91d03239c5f67f4bd91eccf6aaa012e61",
+      "bytes": 612
+    },
+    {
+      "path": "concepts/security/artifact-isolation.md",
+      "sha256": "3dd6b08a23cfa494e9845bfccb9cc792b27f0e9434fe59434345d7c1da2b9fa0",
+      "bytes": 613
+    },
+    {
+      "path": "concepts/security/data-privacy.md",
+      "sha256": "ceccd1d66ffa123b3c7226275bc4358b50b8491ab02b800f36d83894079110af",
+      "bytes": 595
+    },
+    {
+      "path": "concepts/service/hybrid-retrieval-service.md",
+      "sha256": "dbbe0b7a9987d706fa8336ac26fc2610869bdab7102a669a17d71674686f5550",
+      "bytes": 639
+    },
+    {
+      "path": "concepts/software-module/helpudoc-agent-knowledge-ingestion.md",
+      "sha256": "533c1b885cc3cb19a34beaa25623bb00581380ccf1d9274e0cdae8ad58eeef20",
+      "bytes": 689
+    },
+    {
+      "path": "concepts/specification/okf-v0-2.md",
+      "sha256": "9e7a934f921aba99f5720cc2c31e12ca6d2b6abde9b642702d5016d09c5b16ae",
+      "bytes": 874
+    },
+    {
+      "path": "concepts/specification/retrieval-result-contract.md",
+      "sha256": "a87651cb2d7ed82f7e8ccb132ea88219ad00063f3e3e0d9f3098f8be707751ac",
+      "bytes": 830
+    },
+    {
+      "path": "concepts/specification/sourceblock-type.md",
+      "sha256": "7180a7603d4234dbdf4d6fd3bdfecd5952c31e5adef44c1fa3f06a68e39db9b1",
+      "bytes": 907
+    },
+    {
+      "path": "concepts/specifications/open-knowledge-format-v0-2.md",
+      "sha256": "e04d2a6d017f6ebd5f60ec94da03638cde1a1d4fd0fa7dc2db304e415e996873",
+      "bytes": 661
+    },
+    {
+      "path": "concepts/standard/okf-v0-2.md",
+      "sha256": "98afb50d0d7191594d25864e4d5666768356cd9aa0004ca5dd8707809fe2bb24",
+      "bytes": 1056
+    },
+    {
+      "path": "concepts/standards/boundary-preference.md",
+      "sha256": "4e98bc2c81dc3f697097ed774f55293c5ad3de02ad7a0c0cbb06927c155823b1",
+      "bytes": 620
+    },
+    {
+      "path": "concepts/state/semantically-weak.md",
+      "sha256": "1034bf0361f1fe65fb9a2ddc4eb3dd130e1b1209aa5e0ea24ba09cbc74cb98c2",
+      "bytes": 598
+    },
+    {
+      "path": "concepts/storage/workspace-storage.md",
+      "sha256": "dcf6536027bb7bae88a95ec9ec6ba5c10282d4f184a26004d09fa7b981e49784",
+      "bytes": 606
+    },
+    {
+      "path": "concepts/strategy/testing-strategy.md",
+      "sha256": "bb634b45093ba0fd90911b3dffdc4944c4d6e957899917829d38a35a2edcea99",
+      "bytes": 959
+    },
+    {
+      "path": "concepts/system-ai-model/gemini-lite.md",
+      "sha256": "1c289aaa3cb06b01b402db8edea3edc774dabb99ff0cbc615e90e7b26adc06d6",
+      "bytes": 829
+    },
+    {
+      "path": "concepts/system-api/internal-agent-endpoints.md",
+      "sha256": "3d4b87cf49d4df4b9a047512ec79e7faa1ca690b71376ef71fa6e6c584eafdc5",
+      "bytes": 1316
+    },
+    {
+      "path": "concepts/system-api/knowledge-api-routes.md",
+      "sha256": "b07b0de69aeebc8b0f2c541aed3939ae7960ac784a7ec6682708389a1d4ac627",
+      "bytes": 803
+    },
+    {
+      "path": "concepts/system-component/agent.md",
+      "sha256": "38b4e0f33935296e4f26b37286d0cf5665ede55a06068eacf9ff51f39ae86c4d",
+      "bytes": 1167
+    },
+    {
+      "path": "concepts/system-component/artifact-staging.md",
+      "sha256": "74bce53d68ae0f2e80201f70ebd3030858e4516f12f009e8a12d98c34422532a",
+      "bytes": 639
+    },
+    {
+      "path": "concepts/system-component/backend.md",
+      "sha256": "2c2d47fee460907c39b2616eee58ca8b674e72928b7c94332d1553374594e2f5",
+      "bytes": 1166
+    },
+    {
+      "path": "concepts/system-component/dynamic-processing-window.md",
+      "sha256": "7ccb5086313f33fec634379fc872cfcd2aa53fcbd40e62bcc1c98f851dbb0a1a",
+      "bytes": 1555
+    },
+    {
+      "path": "concepts/system-component/enrichment-snapshot.md",
+      "sha256": "3314a3e7e1366ccffa10accf7b247e50621da75a74807e228b1318e89bbb628d",
+      "bytes": 1474
+    },
+    {
+      "path": "concepts/system-component/explorer.md",
+      "sha256": "946ec7c10a92072d6ac5e10a30ee9fbca8daac64c46c4ba4768d3f728e346c2f",
+      "bytes": 744
+    },
+    {
+      "path": "concepts/system-component/extraction-pipeline.md",
+      "sha256": "2ddf022379802a8f7d5ee0243d618f6a8a73b657360d6f7d88c261c55d4b81e7",
+      "bytes": 648
+    },
+    {
+      "path": "concepts/system-component/frontend.md",
+      "sha256": "e94a55f9a291da012cab713fbd1bbe45db22ded1323e1b67151c3c274571d9de",
+      "bytes": 887
+    },
+    {
+      "path": "concepts/system-component/gemini-lite-reranking.md",
+      "sha256": "bd1a4d76e85296a6d4447ffadb27d4602cac7d16a30e842b67a78bf43dae816d",
+      "bytes": 654
+    },
+    {
+      "path": "concepts/system-component/gemini-lite.md",
+      "sha256": "0ad42da850fef83971430fd133ef8581ae0c2fdb7a852f9ec9572721d47426a9",
+      "bytes": 1047
+    },
+    {
+      "path": "concepts/system-component/hybrid-retrieval-service.md",
+      "sha256": "60ecadfa63e8de45d8133391f2e26a468a6d63b3dd5616b6bb69902480090816",
+      "bytes": 1064
+    },
+    {
+      "path": "concepts/system-component/knowledge-jobs.md",
+      "sha256": "c205d8d517c3a45769cb6fb59076f01efd547305d53bcdfed30ab8de86684e77",
+      "bytes": 1005
+    },
+    {
+      "path": "concepts/system-component/knowledge-source-card.md",
+      "sha256": "2753b4336474ea81a75428b39e76533317dd2f94b07f3604165e37c072c84f6c",
+      "bytes": 855
+    },
+    {
+      "path": "concepts/system-component/knowledge-worker.md",
+      "sha256": "c0752d43c880daca16d9b0690c16226a27e5916a217efdfdb25b1ab89c3bf746",
+      "bytes": 639
+    },
+    {
+      "path": "concepts/system-component/okf-publisher.md",
+      "sha256": "20b57fa625f745b5374daec0f2b2657665b88f16238c373ca8dd98c28c0b8024",
+      "bytes": 630
+    },
+    {
+      "path": "concepts/system-component/processing-window.md",
+      "sha256": "0f4dd8315d2803259e2ad4c42c7a9af86a231436a353361b5dcea224966e4de0",
+      "bytes": 799
+    },
+    {
+      "path": "concepts/system-component/structure-node.md",
+      "sha256": "c585c189572d55b03f95859faa341b3d1d2d325789c318ef66d0e8c706608b4f",
+      "bytes": 765
+    },
+    {
+      "path": "concepts/system-component/system-file-structure.md",
+      "sha256": "7b2811267bab4ba3129f8ea4acbf1320bc2e3083b97e9ddd4f30810502da0186",
+      "bytes": 680
+    },
+    {
+      "path": "concepts/system-component/typescript-backend.md",
+      "sha256": "ff4ea57aa1db89baa9e5312c666a452c12cee2fdfa90f2c04760f551a17a101b",
+      "bytes": 653
+    },
+    {
+      "path": "concepts/system-feature/internal-agent-endpoints.md",
+      "sha256": "45060d5a26b1e979e533f3da086cad550d287bc156adeb1eab23b8e610dcb097",
+      "bytes": 655
+    },
+    {
+      "path": "concepts/system-goal/project-goals.md",
+      "sha256": "c220510251633f702196d21890d00029d17627a94961d7abfd81660009fa711a",
+      "bytes": 610
+    },
+    {
+      "path": "concepts/system-metric/usage-metrics.md",
+      "sha256": "53e1d3793cf1ab13028ddb5c27c4d2683a66b702270ebec9afa73a67431518ac",
+      "bytes": 1013
+    },
+    {
+      "path": "concepts/system-procedure/integration-tests.md",
+      "sha256": "d685937b0b5793ea1578890d875d46d731848a606c204180eb5a8a2dc1afab16",
+      "bytes": 856
+    },
+    {
+      "path": "concepts/system-procedure/knowledge-worker-deployment.md",
+      "sha256": "8d11a25e3c936a749a00f13c9aa80e56d99d2a326264da74a94e180a5ce329ed",
+      "bytes": 957
+    },
+    {
+      "path": "concepts/system-process/rollback-procedure.md",
+      "sha256": "be0cda5fa5b8b2a89dcbd3a25110b4deb7d28ebefc03924208e40f3061af330f",
+      "bytes": 637
+    },
+    {
+      "path": "concepts/system-requirement/infrastructure-requirements.md",
+      "sha256": "ddf3707b041485ef1411e8d75a8d88f45eed86c0f8e4c22df1594bca5d43b8b0",
+      "bytes": 1042
+    },
+    {
+      "path": "concepts/system-resource/950-page-novel.md",
+      "sha256": "3ded46c502443467a5a47ec938c8451b73bff8583412c2299da72458af3d8db0",
+      "bytes": 629
+    },
+    {
+      "path": "concepts/system-resource/docx-fixtures.md",
+      "sha256": "d39bf32f516d0dbb9e202e88795f84adbd83cd9ef872f02d4674cef02482420a",
+      "bytes": 626
+    },
+    {
+      "path": "concepts/system-resource/golden-corpora.md",
+      "sha256": "e774e0ddbe8c14fe5925ca9f853972470c919e65b649f5701e2ba8df05bcf7c8",
+      "bytes": 1464
+    },
+    {
+      "path": "concepts/system-resource/pdf-fixtures.md",
+      "sha256": "e1a189f347c862e5727b1161b0d12511b9cf6b553af3cf2e21c937200535d7c5",
+      "bytes": 623
+    },
+    {
+      "path": "concepts/system-resource/table-caption-fixtures.md",
+      "sha256": "4607119f150dc2123c6ecea36ba145a024af4617069f6eeb6412cda3d3a1d390",
+      "bytes": 653
+    },
+    {
+      "path": "concepts/system-software/knowledge-system.md",
+      "sha256": "1d4a06b22285c82e8c423374ba4035fda2ca07295e118009a70808e49f448cb1",
+      "bytes": 635
+    },
+    {
+      "path": "concepts/system-software/postgresql.md",
+      "sha256": "b2212ef1b530a7224633b2aec2d19a24bc41b8f74162eadd3a496af68ec8da8d",
+      "bytes": 890
+    },
+    {
+      "path": "concepts/system-standard/okf-v0-2.md",
+      "sha256": "c1c90d49e7ccc09e77a66c3263fd95cc22e1affe9f3e8efe93e3d63a6b5db793",
+      "bytes": 834
+    },
+    {
+      "path": "concepts/system-standard/publication-system.md",
+      "sha256": "de93a1b70b4b1a879e2c334f64d491b235f09eefdfeb394110443cbf841d5fe3",
+      "bytes": 641
+    },
+    {
+      "path": "concepts/system/950-page-novel-fixture.md",
+      "sha256": "e13b15312cb8118cb56c9186749255022b1cac0c4ea80305836749cc6aebe72a",
+      "bytes": 870
+    },
+    {
+      "path": "concepts/system/adapters.md",
+      "sha256": "3f7db9070aaafd3216b6b54eec5a9315ed8e6fa04caf30b8220a7d04e422e5f6",
+      "bytes": 693
+    },
+    {
+      "path": "concepts/system/admin-portal.md",
+      "sha256": "7690205e93c671d483ca5e8e0fef7f31ebbfb9ae3962e7eb4fc52605965bb4f2",
+      "bytes": 587
+    },
+    {
+      "path": "concepts/system/agent-module.md",
+      "sha256": "18ba554e6c91ca17215f3a0cfffd13974fbc9b15b5e489f6325f695c62ac9317",
+      "bytes": 986
+    },
+    {
+      "path": "concepts/system/agent-processing-layer.md",
+      "sha256": "680bd34dc7d898f72e39c1eee3db56c976cbfde9e6418ae1c7f1d717ee26b62f",
+      "bytes": 1427
+    },
+    {
+      "path": "concepts/system/agent-processing.md",
+      "sha256": "a02b8d2f9b906bc164b0062496ce93aaefa5ee33a0e80d9821406ec06b8fe821",
+      "bytes": 794
+    },
+    {
+      "path": "concepts/system/agent-system.md",
+      "sha256": "c40c73252c18d4a2ee331a977a7fb88bb0a0799283aa4b97d700e9cc6deafca8",
+      "bytes": 1054
+    },
+    {
+      "path": "concepts/system/api-orchestration-layer.md",
+      "sha256": "5646f076a6a10be1d49391cea89c79006726aed7a43e50fbc25717c6838ada0d",
+      "bytes": 1175
+    },
+    {
+      "path": "concepts/system/api-orchestration.md",
+      "sha256": "dfd992a1466128ee1e81d9b1c43e15764b55eded14cfe31fe4b78e78e3e9eaf1",
+      "bytes": 814
+    },
+    {
+      "path": "concepts/system/artifact-layout.md",
+      "sha256": "84f47c7652faa73deba62f5bd7ecac3944bf8fbd4a730458df1c1df5a0690b5d",
+      "bytes": 874
+    },
+    {
+      "path": "concepts/system/backend-changes.md",
+      "sha256": "34cde9e5e2919364b19bd7348d21e23a459b8d9b1f11236023177d78a2f5a371",
+      "bytes": 963
+    },
+    {
+      "path": "concepts/system/backend-services.md",
+      "sha256": "6cf26ef800bf7ec175a104c310fcf702240a27fc879043b528a0a98545b1ad92",
+      "bytes": 1091
+    },
+    {
+      "path": "concepts/system/canonical-entity-registry.md",
+      "sha256": "ffa354314146223265184ad3ce531579e5e33da0a9b2e4c425126718cb702309",
+      "bytes": 626
+    },
+    {
+      "path": "concepts/system/chapter-section-reducers.md",
+      "sha256": "21b6bb3b2934d6ca7785f395bc17d7b4149d7ffc41d2e478d0cf6bd199f4eb3d",
+      "bytes": 623
+    },
+    {
+      "path": "concepts/system/chunk-planning-release.md",
+      "sha256": "ef9218bb6a40dc2390944ffa3d3900bb13dc648fc97ef3a1abfafc3e01c95133",
+      "bytes": 659
+    },
+    {
+      "path": "concepts/system/chunking-algorithm.md",
+      "sha256": "a50ccbcf40850cb4bd1f7d33c446d30f7bae6353e9603ca21403d228f0885cd0",
+      "bytes": 605
+    },
+    {
+      "path": "concepts/system/context-span.md",
+      "sha256": "1dc192c2d1b9720a46db64229a1052c2a07aa7bcad4c3fe27c9b6740e23f54b6",
+      "bytes": 786
+    },
+    {
+      "path": "concepts/system/control-plane.md",
+      "sha256": "489db38eb9c888c2ffdb41c736c3210abecd80af4657c18724f3b592d692081f",
+      "bytes": 1113
+    },
+    {
+      "path": "concepts/system/core-span.md",
+      "sha256": "2d00b04b6ac96977658c2f66eebc18338bf594fe950b53b4323ec6b1d1bb53d0",
+      "bytes": 808
+    },
+    {
+      "path": "concepts/system/current-bundle-pointer.md",
+      "sha256": "e3e902b3ae8f91af51f9658409dfeb3fd38293f9f2df0ebd592f9b20d0672c5f",
+      "bytes": 905
+    },
+    {
+      "path": "concepts/system/database.md",
+      "sha256": "7be7e4c517adb58adbfc3306f39c590e655352359efed1749dfd47379073919d",
+      "bytes": 575
+    },
+    {
+      "path": "concepts/system/deliverables.md",
+      "sha256": "7e71d9fb86ed2661ff8824bcffef158c0e1fbf0454f6f3a0a344cecbbd36f25f",
+      "bytes": 1450
+    },
+    {
+      "path": "concepts/system/deterministic-publication.md",
+      "sha256": "4ead527431bd7b8a9ddf2900822fcb3aa25985876f093db3b0850bd05fea9612",
+      "bytes": 626
+    },
+    {
+      "path": "concepts/system/document-extraction-system.md",
+      "sha256": "32c5b2bfeacd5c37c60ef3c984606218a91cc3dcb47695fa69b0557b1ce128b6",
+      "bytes": 629
+    },
+    {
+      "path": "concepts/system/document-hierarchy-model.md",
+      "sha256": "5004e0d884c115e2691f92192f183e99a7326374fb32f4b9ba5b48080ed9908c",
+      "bytes": 958
+    },
+    {
+      "path": "concepts/system/document-processing-system.md",
+      "sha256": "0a616139d2bd7da50c74a5b0f7c7c25d8eeebe235bac153a5580ef623398a7a4",
+      "bytes": 629
+    },
+    {
+      "path": "concepts/system/docx-evidence-locators.md",
+      "sha256": "abd0486d8d7a64cb3b17daa7924f9f568e07aecb5a1fe7b2ee7921b255bd5b14",
+      "bytes": 827
+    },
+    {
+      "path": "concepts/system/elasticsearch-opensearch.md",
+      "sha256": "31071d962cacae83377fc12c7fb7e0d005c0b802700d73c38db28acd8a149c87",
+      "bytes": 623
+    },
+    {
+      "path": "concepts/system/enrichment-metadata.md",
+      "sha256": "03a009ab667390ab84122add0c573dd40e844de35c7203657e87e7405a3df5f3",
+      "bytes": 896
+    },
+    {
+      "path": "concepts/system/enrichment-process.md",
+      "sha256": "973b448067f33b5ef5c0097d39237d8a78e228578f0127e3aa793a39ead90529",
+      "bytes": 605
+    },
+    {
+      "path": "concepts/system/enrichment-system.md",
+      "sha256": "2e5cb2704365671c11078319b6f41f2e2877ca340c3cf2e6611680d8380abc01",
+      "bytes": 756
+    },
+    {
+      "path": "concepts/system/enrichment-versioning-system.md",
+      "sha256": "2013df6479dcbc189359a9f7f067e7f033a38af6f5abe9986b3bf7427375a793",
+      "bytes": 635
+    },
+    {
+      "path": "concepts/system/evaluation-dashboard.md",
+      "sha256": "41239825939c99edcb6d17f5e23af81d40e141581edc90a431c8070226ca25aa",
+      "bytes": 611
+    },
+    {
+      "path": "concepts/system/evaluation-document-types.md",
+      "sha256": "ba76a3ab6bd8da2e48fd4ce9ea3f0504023d8f8539058d93035578b0b85f79c2",
+      "bytes": 884
+    },
+    {
+      "path": "concepts/system/evaluation-metrics.md",
+      "sha256": "81a0621d9cf4fa46ed2c08cb281a4411b462ce07f4ac26543079709fe82125d9",
+      "bytes": 650
+    },
+    {
+      "path": "concepts/system/existing-system-stack.md",
+      "sha256": "a603b2ef3369fc73d0c72eed3c0a042fe61242de1acd7c670723f6ddbecb7435",
+      "bytes": 1457
+    },
+    {
+      "path": "concepts/system/extraction-pipeline.md",
+      "sha256": "03e357b8a86585ac3c4e2e8563e50a5e16df37c00fe1e8a9de045b16e57daf9f",
+      "bytes": 800
+    },
+    {
+      "path": "concepts/system/feature-flags.md",
+      "sha256": "8472ac00bbf8d2ede86af9a0309ce5221ded7fdc1f98ebae8d6248afaf414aa7",
+      "bytes": 590
+    },
+    {
+      "path": "concepts/system/fileservice.md",
+      "sha256": "53d7dfd7bc52db2d68cca0033973912176cf24a985987098062d58d4258984a3",
+      "bytes": 894
+    },
+    {
+      "path": "concepts/system/frontend-interface.md",
+      "sha256": "29621646fa01cc60d7e343cd4f68ae59021d237ac345e007640e821153273093",
+      "bytes": 1136
+    },
+    {
+      "path": "concepts/system/frontend-layer.md",
+      "sha256": "43f5d43feeba6a20915d2b3c67670ecf3e81f42c852f2667aa99bf1eaed58793",
+      "bytes": 1213
+    },
+    {
+      "path": "concepts/system/frontend-system.md",
+      "sha256": "6d95da4af728547b2f3449bd9599016928e488420c9e04f561dc5a266c8be68d",
+      "bytes": 954
+    },
+    {
+      "path": "concepts/system/frontend.md",
+      "sha256": "cdbd0ebd6fc38803b858282e4287afd4c21c67e04c1540419826bda39e8eead6",
+      "bytes": 851
+    },
+    {
+      "path": "concepts/system/future-technology-options.md",
+      "sha256": "eeaa87d12640f513ed1d400129a010fbf38f4a28c64a8fba70d7a3ade5f4ec7c",
+      "bytes": 1439
+    },
+    {
+      "path": "concepts/system/gemini-lite-generation.md",
+      "sha256": "5a90c15ac24ecb6f35e10f6cb5862080664fe2fe45c71d12af6e45781685b3b6",
+      "bytes": 617
+    },
+    {
+      "path": "concepts/system/gemini-lite.md",
+      "sha256": "0c7d3fa4df1d1158dd2ceab2463a3131a8da0e29ee65d51c349cf3cc1746ba4d",
+      "bytes": 3484
+    },
+    {
+      "path": "concepts/system/graph-persistence-system.md",
+      "sha256": "501db49fe3cae46979e4c8606da8ec942d1dd75258c064f5be3f15a259d8d64b",
+      "bytes": 699
+    },
+    {
+      "path": "concepts/system/graph-persistence.md",
+      "sha256": "6fc7a10859b91aa53d52023c59daf6879623ba312bc2053b0b32baef28770942",
+      "bytes": 925
+    },
+    {
+      "path": "concepts/system/helpudoc-agent.md",
+      "sha256": "c83276545be2db85611b948c7a6cfc0e2d2e53704e672f23259eb456afd79ed1",
+      "bytes": 655
+    },
+    {
+      "path": "concepts/system/helpudoc.md",
+      "sha256": "a82b725b0f008cc6de72ac942a5752f3b847c17b572ea4ab3442157340ac19aa",
+      "bytes": 2017
+    },
+    {
+      "path": "concepts/system/hybrid-retrieval-system.md",
+      "sha256": "d64d20ad59eaf5b77cdac5623c8629173f758622ea7b8e4e1679d6a1ff0a195c",
+      "bytes": 620
+    },
+    {
+      "path": "concepts/system/immutable-enrichment-snapshot.md",
+      "sha256": "cea0cace150251df3f9c163ba256efca6eda95744aa1ef84fb03d653812ee25d",
+      "bytes": 638
+    },
+    {
+      "path": "concepts/system/indexes.md",
+      "sha256": "fed1b038432faff4b391173a36a70dc7035b215457dbfc6637a7d6148df60bc6",
+      "bytes": 980
+    },
+    {
+      "path": "concepts/system/infrastructure-layer.md",
+      "sha256": "b974447299a7449e411e290edbdccfa01cc98059ace437805892068b31450c9e",
+      "bytes": 1029
+    },
+    {
+      "path": "concepts/system/infrastructure-stack.md",
+      "sha256": "4b870a972de79367f7dd8ee7f135bbfd451129ad62fb1862036c63e07af49c20",
+      "bytes": 1123
+    },
+    {
+      "path": "concepts/system/infrastructure.md",
+      "sha256": "bf42b7532d9e8643420c64163df765c9aeb2bf0d59f7611f66aef60164daca61",
+      "bytes": 593
+    },
+    {
+      "path": "concepts/system/kafka.md",
+      "sha256": "cc5be2cfae871715ee41649c25420b4c4579cbb208acf28ecee0208d2e2633f7",
+      "bytes": 566
+    },
+    {
+      "path": "concepts/system/knex.md",
+      "sha256": "a57343f03e357553cbceca94db9286241edb2e61c38b6ba09faddf750302a170",
+      "bytes": 563
+    },
+    {
+      "path": "concepts/system/knowledge-bundle.md",
+      "sha256": "e353cadcc5cf5d7e67a27c00f60ac316a897ddb4566c067eba62ddbe81884aac",
+      "bytes": 790
+    },
+    {
+      "path": "concepts/system/knowledge-documentation-system.md",
+      "sha256": "2437565e0147a9e8e873d07ecfd8b998e9ecd650324bb9c90977d6cc35219de0",
+      "bytes": 641
+    },
+    {
+      "path": "concepts/system/knowledge-enrichment-system.md",
+      "sha256": "73e980467250a92738a220dd00914485ea513dc6cf0428bba75917fc7e64baec",
+      "bytes": 632
+    },
+    {
+      "path": "concepts/system/knowledge-graph-system.md",
+      "sha256": "417b0ce6c3ebcb15e7da761cd0208b51c8b6d046f73917db2d50934dd8a250c5",
+      "bytes": 1165
+    },
+    {
+      "path": "concepts/system/knowledge-infrastructure.md",
+      "sha256": "8b183dfb68e8c2979bd073760197c95f785e10282067cd1d513b0077a83e0aff",
+      "bytes": 623
+    },
+    {
+      "path": "concepts/system/knowledge-ingestion-job-state.md",
+      "sha256": "4c33cf4c28efcdb1b8d6f6a659d91e2e00eb2da1afc4efc2a7cec2810db94463",
+      "bytes": 883
+    },
+    {
+      "path": "concepts/system/knowledge-ingestion-jobs.md",
+      "sha256": "1bfe0027307bf3ffad7d173e26777d96b08b6f4a56a15be1eb35b0aec35023e9",
+      "bytes": 623
+    },
+    {
+      "path": "concepts/system/knowledge-ingestion-tables.md",
+      "sha256": "4e908591656565af21ba044aa713afe576c6381f841278c162f7d39959a7963a",
+      "bytes": 1009
+    },
+    {
+      "path": "concepts/system/knowledge-ingestion-tasks.md",
+      "sha256": "72b6998818803d804edec8e66fa33f5769bc31a27bfecb14c741b92b93042cb0",
+      "bytes": 626
+    },
+    {
+      "path": "concepts/system/knowledge-jobs.md",
+      "sha256": "789b3afde677a22cb505bdafcf31e17d110ecc284d6fcf469658568139ea178f",
+      "bytes": 671
+    },
+    {
+      "path": "concepts/system/knowledge-management-system.md",
+      "sha256": "8171b1619e7b09cdc8587b75567ed3354659236f9037636c74e5d6fdaab3d88e",
+      "bytes": 1062
+    },
+    {
+      "path": "concepts/system/knowledge-processing-consent-flag.md",
+      "sha256": "6d6c143e1b9d2b0ee2bd656d01a4023f9fb307a7dfa06f6af93442d8cb452a1f",
+      "bytes": 650
+    },
+    {
+      "path": "concepts/system/knowledge-retrieval-service.md",
+      "sha256": "011a894e996cadb92a1aa3fb346e5ce11f1975995087f76b2a9c2b5dd8970264",
+      "bytes": 1482
+    },
+    {
+      "path": "concepts/system/knowledge-service.md",
+      "sha256": "93fc46a1164b41265faddc19c98a9a081c482f12a02ecc5144d5f2b2bd3c2572",
+      "bytes": 602
+    },
+    {
+      "path": "concepts/system/knowledge-snapshots.md",
+      "sha256": "0da0869e413698f0d45df4576e13516a138aed4ea8bb72c5effcf615d8ab0366",
+      "bytes": 608
+    },
+    {
+      "path": "concepts/system/knowledge-usage-events.md",
+      "sha256": "a18ef878a97c14bcee55cdefd8b8007b01867d55faf6aadd3795ca50988f00dc",
+      "bytes": 617
+    },
+    {
+      "path": "concepts/system/knowledge-worker.md",
+      "sha256": "1354291fac443c6a806416dca63d03435e921999c6b8864d1efc1d3139f9d1ff",
+      "bytes": 1208
+    },
+    {
+      "path": "concepts/system/knowledgebundleexplorer-tsx.md",
+      "sha256": "73b29c9308c0e378ef9ba24187a059426160b760e8cbc9f15e71977b9fd11e2f",
+      "bytes": 822
+    },
+    {
+      "path": "concepts/system/knowledgebundleexplorer.md",
+      "sha256": "9053b183a34cd36d3a443f98487ce3a539948a490710465845afb24eb6347511",
+      "bytes": 620
+    },
+    {
+      "path": "concepts/system/knowledgepage-tsx.md",
+      "sha256": "641ea5fef5a25420e53a11c36034525e0886cc4e20ccd779bdcbd9ea6db96abf",
+      "bytes": 716
+    },
+    {
+      "path": "concepts/system/langfuse.md",
+      "sha256": "38e4d219e98d87921396fc49aa00c4c3cd8ecb1445cc7e3ce5dd0e500531c5c2",
+      "bytes": 575
+    },
+    {
+      "path": "concepts/system/legacy-knowledge-publisher.md",
+      "sha256": "850be7e81db24767731d29ea874df9f497918e152f553bcddb9a1ecb6652c098",
+      "bytes": 994
+    },
+    {
+      "path": "concepts/system/lexical-index-system.md",
+      "sha256": "58f38117a2eac79526ffd5f2b19621ad821b834a5f7cdb34e5b04b2921fe210f",
+      "bytes": 729
+    },
+    {
+      "path": "concepts/system/lexical-index.md",
+      "sha256": "1c183a6c9dd36e57595c899546817a0625d69bb1eed93959aed1cc1cbb0d946f",
+      "bytes": 1197
+    },
+    {
+      "path": "concepts/system/lexical-indexes.md",
+      "sha256": "8b0020d4d5d9dace80bec08a5bae621702265c227cf2805b9e94b91cf9fa8346",
+      "bytes": 964
+    },
+    {
+      "path": "concepts/system/lexical-search-system.md",
+      "sha256": "9151510ca10684e4fe4bdf8d6f95e048bb186e8792f436b0959d5138e9131317",
+      "bytes": 720
+    },
+    {
+      "path": "concepts/system/lexical-vector-graph-signals.md",
+      "sha256": "01f1be26ef18a3e68552bb4d34b2a6a3079a0e79d1bb5fee0626a5bb64578e66",
+      "bytes": 635
+    },
+    {
+      "path": "concepts/system/llm-integration.md",
+      "sha256": "08feada7a0614fd244170d90f71562d716ba0539333bdc757e92aabb2c46a958",
+      "bytes": 1334
+    },
+    {
+      "path": "concepts/system/llm.md",
+      "sha256": "2cfda86ea1da4bd65bfc570bc639cf2e352dae2699696e8aca23e1d8e2e93666",
+      "bytes": 791
+    },
+    {
+      "path": "concepts/system/local-postgresql.md",
+      "sha256": "bf6da241030aa53e519faebb3e33e0170180cc9792a47fd1f2abcb71a4f15014",
+      "bytes": 1048
+    },
+    {
+      "path": "concepts/system/model-assisted-output.md",
+      "sha256": "a2fd768d327cec4ec170d70675378a103f1596eb95a684bcba1a714f3ce47aac",
+      "bytes": 1332
+    },
+    {
+      "path": "concepts/system/model-result-caching.md",
+      "sha256": "07d71d963909fa48701edb6946cdc03459b5dc0b81df400c8d13c2f2b151d26b",
+      "bytes": 611
+    },
+    {
+      "path": "concepts/system/multilingual-boundary-benchmarks.md",
+      "sha256": "856d11da879be2bf12a91d578ec81fb0d89cd27861be06da8858700acd525862",
+      "bytes": 683
+    },
+    {
+      "path": "concepts/system/neo4j.md",
+      "sha256": "a797a75bc6efc85cc3dace24cecd45112302b2256dbdadb1dfd9f2f0e60c95d4",
+      "bytes": 566
+    },
+    {
+      "path": "concepts/system/networkx.md",
+      "sha256": "f362bc2575300028a9090d56aa4adb0b75b000f068134cf4cc2842824b899529",
+      "bytes": 1204
+    },
+    {
+      "path": "concepts/system/normalized-artifact.md",
+      "sha256": "e2ee6db4f5aee8f163ee168002bc482284aa4f9b9cf6d9cd5cd0c3c7ccb6cf55",
+      "bytes": 930
+    },
+    {
+      "path": "concepts/system/ocr-policy.md",
+      "sha256": "3b716d49c624b507d492bb849e4b311213c64217a08a89606a6c0b6aeadb00f4",
+      "bytes": 581
+    },
+    {
+      "path": "concepts/system/okf-bundle.md",
+      "sha256": "bc9c51831124ca7e5c15cbc6b45b76fa472f6023325f25e4fe3fbf9ea504b60d",
+      "bytes": 825
+    },
+    {
+      "path": "concepts/system/okf-directory.md",
+      "sha256": "baeb534f470e20b1dc4dee8e4628ec9343f903b4d6db5128d16353c662bb9179",
+      "bytes": 590
+    },
+    {
+      "path": "concepts/system/okf-enrichment-pipeline.md",
+      "sha256": "8e41fd0529d05291abc2676647ea99635db08f4e0089f1e81122de812b7af0a3",
+      "bytes": 911
+    },
+    {
+      "path": "concepts/system/okf-generation.md",
+      "sha256": "8b74029efb3706f611ddceb8ee981bf5bd47faa97f1414ae3b2d66a3b56d5f6e",
+      "bytes": 593
+    },
+    {
+      "path": "concepts/system/okf-organized-knowledge-framework.md",
+      "sha256": "72736df94e29300bd79083fea89d8e9e92131aab8ef44cffaf3ac97d559988a0",
+      "bytes": 1533
+    },
+    {
+      "path": "concepts/system/okf-v0-2-bundle-emission.md",
+      "sha256": "8f6f5d68132c52c99a81fbe6c027f52d3ef6d118c3b3cd6951217f3325a16c8d",
+      "bytes": 623
+    },
+    {
+      "path": "concepts/system/okf-v0-2-specification.md",
+      "sha256": "552f096b669d9f780e258e12cccbfbbfc2a5a756fa669554ad859f8b51f3f8a7",
+      "bytes": 893
+    },
+    {
+      "path": "concepts/system/okf-v0-2.md",
+      "sha256": "96caae9e771ded5b47efaa6792a9b62fd6a382328b4b9809fd0e09315b4c3d08",
+      "bytes": 811
+    },
+    {
+      "path": "concepts/system/pdf-extractor.md",
+      "sha256": "a2e1f629bd2f05eb01a2b752116d0b4e6889dcd2f2a8782b10392fb0fbd56796",
+      "bytes": 1392
+    },
+    {
+      "path": "concepts/system/persistence-layer.md",
+      "sha256": "27760204fd5ceb22b53f7208fc7e5c529d9e1eb25085e240a7004ebf0ca0071b",
+      "bytes": 1398
+    },
+    {
+      "path": "concepts/system/persistence-model.md",
+      "sha256": "992de433c1102e52f4077014556eb412cb515730674f1c291dec7e452a12a9cf",
+      "bytes": 998
+    },
+    {
+      "path": "concepts/system/persistence.md",
+      "sha256": "05bed1822438b93b49417c5d99cc54cf0133f636dcd7f38d57a7bf0f72623601",
+      "bytes": 819
+    },
+    {
+      "path": "concepts/system/pg-trgm.md",
+      "sha256": "33df12d47b545e2ca06b8834b537d32c0165f820c3499a9129bffd7e38738837",
+      "bytes": 886
+    },
+    {
+      "path": "concepts/system/pgvector-and-pg-trgm.md",
+      "sha256": "d836ea20da4b8f1cc2fad099e3714a6cc03ab4bb579110e8bbe9c3d5a0f2a26d",
+      "bytes": 900
+    },
+    {
+      "path": "concepts/system/pgvector.md",
+      "sha256": "abd6a5d3e22b660c4776d6ef0c193be13cfe5dc8301361b46e6ae0597202bac2",
+      "bytes": 634
+    },
+    {
+      "path": "concepts/system/postgresql-full-text-search.md",
+      "sha256": "a35cfb24f4b9a8f968ddabe25b79cf8b6c8ae2822266dd08da96ce19e021b41e",
+      "bytes": 718
+    },
+    {
+      "path": "concepts/system/postgresql-pg-trgm.md",
+      "sha256": "0e81e97e339e1f7fc91b19ed3e5a655a698ca9e1f5427b13a3fa219a38762de4",
+      "bytes": 702
+    },
+    {
+      "path": "concepts/system/postgresql-pgvector.md",
+      "sha256": "780b304de96da5b57b87e8606a1c3bd4098644017949a3e09a1606d71fac313f",
+      "bytes": 612
+    },
+    {
+      "path": "concepts/system/postgresql-recursive-ctes.md",
+      "sha256": "0fe1e882e03fa13aab71a7f0b3f47c0afc467f604bb232624565d79361914aab",
+      "bytes": 723
+    },
+    {
+      "path": "concepts/system/postgresql.md",
+      "sha256": "2e6636005db7f1e0ffa64f03006183f9bc216669d922bb4294d3c851aa043a68",
+      "bytes": 1623
+    },
+    {
+      "path": "concepts/system/processing-window.md",
+      "sha256": "4c8b854deda40f0d63d63e8c380954563859e08b5a7508463ee0d58cb71ecf2a",
+      "bytes": 1406
+    },
+    {
+      "path": "concepts/system/progress.md",
+      "sha256": "901dafe1e0378f73867eed5b68194c4fdb7710bd78836ea2886e9d9b03bc90bc",
+      "bytes": 790
+    },
+    {
+      "path": "concepts/system/provenance-tracking.md",
+      "sha256": "a46f11ce2ab09014c7aeb2de78f759f114700e850bade1650936bb85ee9cbabf",
+      "bytes": 790
+    },
+    {
+      "path": "concepts/system/publisher-system.md",
+      "sha256": "2ece5dae7f44a75d7a6752ddc2f0aa0eb6be097937fbe1e65306d5284cc0835c",
+      "bytes": 1009
+    },
+    {
+      "path": "concepts/system/pydantic-schemas-and-prompts.md",
+      "sha256": "9e0065e2082f82a7a712d80ea9a202832ac34ae711eeca1dfb7da7a3081a3be0",
+      "bytes": 635
+    },
+    {
+      "path": "concepts/system/pymupdf.md",
+      "sha256": "6fda87b0719d0994617d6bd87d45bbefeeabc0af893b025420dd277a74ed58e8",
+      "bytes": 624
+    },
+    {
+      "path": "concepts/system/pypdf.md",
+      "sha256": "9406796eedbde4b809dc45dded51201cc495a3b36737d4230d6cc0535ac011cd",
+      "bytes": 658
+    },
+    {
+      "path": "concepts/system/python-agent-service.md",
+      "sha256": "7039873e81a62b5ac28dbb493ae0399dba7a8fcaed07ec465c3cef71cf477adb",
+      "bytes": 3016
+    },
+    {
+      "path": "concepts/system/python-docx.md",
+      "sha256": "9c0cda5c0493a9f33f0d7f2217b10203bd76b6d4dc3b9fc38e67b2d0dd756c55",
+      "bytes": 584
+    },
+    {
+      "path": "concepts/system/redis-streams.md",
+      "sha256": "b9cb92de6d627444545674c8c2f0f6799228dc92c18631bfe8f224b3e8958739",
+      "bytes": 590
+    },
+    {
+      "path": "concepts/system/redis.md",
+      "sha256": "889c4b340a9075aa4ea707b3649357a4210908c4c8ccaca5171b04bea52aea65",
+      "bytes": 905
+    },
+    {
+      "path": "concepts/system/reducer.md",
+      "sha256": "9592c7fd070a56e9cf95a8db9d4e66f1d47bcf35d71c7c747f8724b92db356b9",
+      "bytes": 1336
+    },
+    {
+      "path": "concepts/system/relational-adjacency-tables.md",
+      "sha256": "0fd1a40a9d8d8c6e7a72a14aeeb301e81ee95a06015ef7e069138533232e7232",
+      "bytes": 632
+    },
+    {
+      "path": "concepts/system/relationship-and-evidence-validation.md",
+      "sha256": "e903f10e7c4a4517572b4385d13962bee38cc61581458788fa6e9b2c389dca8f",
+      "bytes": 659
+    },
+    {
+      "path": "concepts/system/retrieval-methodology.md",
+      "sha256": "914bdb062a006bc632e7a7df4857045958ee252431b3c845818d4be3dc0ba0e5",
+      "bytes": 614
+    },
+    {
+      "path": "concepts/system/retrieval-result-contract.md",
+      "sha256": "a1b05c45f30cb372199c95c8318825c181f81081cd2069eb96586309eb09d35e",
+      "bytes": 986
+    },
+    {
+      "path": "concepts/system/retrieval-result-json-schema.md",
+      "sha256": "c14d46450e5dadf60a329fca687114cac12efcb2cdc268db794436b27273bcd7",
+      "bytes": 635
+    },
+    {
+      "path": "concepts/system/retrieval-system.md",
+      "sha256": "d24bf7bf6f061628ed0cefe0c72440dd3dca88cf34fdefe6a14f27a1dec16ace",
+      "bytes": 873
+    },
+    {
+      "path": "concepts/system/runtime-indexes.md",
+      "sha256": "d1357a2f0dca0e5ca249e984c65696fdf6f676e87e7eb37a900f04c6954a0721",
+      "bytes": 638
+    },
+    {
+      "path": "concepts/system/semantic-fallback-boundaries-system.md",
+      "sha256": "a767f917e6be1dc2fdb1b8c30881c5966a118f558965522cde1ef9c73a16a4b0",
+      "bytes": 974
+    },
+    {
+      "path": "concepts/system/semantic-retrieval-system.md",
+      "sha256": "ad3a42fbc84097003b09e31405424032e2ddf38e188cc23cc04ede590ce8f155",
+      "bytes": 626
+    },
+    {
+      "path": "concepts/system/semantic-state-store.md",
+      "sha256": "e7c272f00f800269ac220ff3a857eaee27216bd0a401d765013ee0f8d48352f1",
+      "bytes": 611
+    },
+    {
+      "path": "concepts/system/snapshot-content.md",
+      "sha256": "82091cdd71de6db59f491045ca08bd6bfcd1681a147b6c4b68d907d4140494bd",
+      "bytes": 866
+    },
+    {
+      "path": "concepts/system/sourceblock-schema.md",
+      "sha256": "30308dcc5ef0faf94bfe9c3c53ec5ac451c4a1afed67f3c7002c49cdf2461e86",
+      "bytes": 926
+    },
+    {
+      "path": "concepts/system/storage-plane.md",
+      "sha256": "5323bfa34e3f97da6202c509cedd29e5e48d2268b929f997bbdd9e384a1aae2a",
+      "bytes": 2845
+    },
+    {
+      "path": "concepts/system/structured-map-extraction.md",
+      "sha256": "211a0dc7ccd52d9f6ab5817f2217c40a1b740bd2d6c1355116d6760ce9420248",
+      "bytes": 626
+    },
+    {
+      "path": "concepts/system/system-additions.md",
+      "sha256": "fbb7671b05db2477c1273941467bb0f97a066daf7b0d3d188b63c9a54b890487",
+      "bytes": 1801
+    },
+    {
+      "path": "concepts/system/system-enrichment-pipeline.md",
+      "sha256": "59b879995f0e153cb0767c47e4eb095c360a1ab470ecb955f2fbedac3384ac84",
+      "bytes": 1264
+    },
+    {
+      "path": "concepts/system/target-architecture.md",
+      "sha256": "8b2787b6ce7229815907a0dd672c892a664f3a09e2476b2446d7d2dd4960c927",
+      "bytes": 928
+    },
+    {
+      "path": "concepts/system/terminology-system.md",
+      "sha256": "fc6fdd2bd74f44c45b1970117934c9838f00dfa70490da7bc0bb22de76a9d3e0",
+      "bytes": 699
+    },
+    {
+      "path": "concepts/system/three-body-pdf-qc-case-study.md",
+      "sha256": "f437facb5e229eec6b8160c02c918a7d6bfafb1d78f771034a84e79ee92b9db6",
+      "bytes": 635
+    },
+    {
+      "path": "concepts/system/three-body-qc.md",
+      "sha256": "f209191205a2dad9b8b6bb8711f831097814ed3db030fddfbbda1ebaaa748cac",
+      "bytes": 639
+    },
+    {
+      "path": "concepts/system/tracing-system.md",
+      "sha256": "fd0fbb368457de10d900e4783ace5347451b602605a7d6f61319bff1290f13a0",
+      "bytes": 901
+    },
+    {
+      "path": "concepts/system/tracing.md",
+      "sha256": "3197517ed40d873e8e87e632e390da08728bd7e776fb641355e7de9bf65c7f8a",
+      "bytes": 789
+    },
+    {
+      "path": "concepts/system/typescript-backend.md",
+      "sha256": "bbed67cb46f8ffa45d6f7e7b27f175f4b1bf6f24deb11632c0cee5f6af5e7b91",
+      "bytes": 957
+    },
+    {
+      "path": "concepts/system/typescript-knowledge-worker.md",
+      "sha256": "e0a9be1eaabe7644db74f0bce99d51951e6783cb7b416933b94e782cd53d8d38",
+      "bytes": 1050
+    },
+    {
+      "path": "concepts/system/usage-cost-capture.md",
+      "sha256": "62f4291ce98bfabc59252c3dc37daeffda8fbd06044740a8d7134a33f3e19b80",
+      "bytes": 605
+    },
+    {
+      "path": "concepts/system/vector-database.md",
+      "sha256": "92c1e5edb7d56a75820f855fa542378b3704fccb974930a2dd9249d4f5c1dc3d",
+      "bytes": 596
+    },
+    {
+      "path": "concepts/system/vector-search-system.md",
+      "sha256": "0123fde28872aaea62b00cb262b7ea13437b18ea6f9a40def9284c2ff1099aeb",
+      "bytes": 1209
+    },
+    {
+      "path": "concepts/system/workspace-file-storage.md",
+      "sha256": "3fa9d2722bca1124778c3d9d973a18899a7472e0f314a227cb7622fa426ee3ee",
+      "bytes": 617
+    },
+    {
+      "path": "concepts/system/workspace-storage.md",
+      "sha256": "e7232c5f07d97e2772ce85e2a7f87c52699e034e370ae82b2336b2f4bbd6d543",
+      "bytes": 602
+    },
+    {
+      "path": "concepts/systemfeature/usage-report.md",
+      "sha256": "e84faa0edceb92cbde9a35f6cde66d3e186995141f3b7e1b1e2a35208d753e01",
+      "bytes": 2053
+    },
+    {
+      "path": "concepts/systemmetric/elapsed-time-by-stage.md",
+      "sha256": "1224b55f4a31dcbe017825397d5c4b71ca7310217199df32d73dd09791f2d150",
+      "bytes": 638
+    },
+    {
+      "path": "concepts/systemmetric/embedding-and-ocr-units.md",
+      "sha256": "19bc182bf643df39d3651ee44a9de0b9073c428065706114d7bf058ec12d13e2",
+      "bytes": 644
+    },
+    {
+      "path": "concepts/systemmetric/estimated-cost-and-rate-card-version.md",
+      "sha256": "1b528a9c6ada3a7daaf45ba74851421dd72a878b147b62f96976e0d407a0a857",
+      "bytes": 683
+    },
+    {
+      "path": "concepts/systemmetric/model-call-counts-by-stage.md",
+      "sha256": "b1ecfb70e0c69ae3c729ebac6e1e849533e92b639a66c8d5a485b1b136444bc4",
+      "bytes": 653
+    },
+    {
+      "path": "concepts/systemmetric/retry-and-validation-repair-counts.md",
+      "sha256": "124ab789d3f32af8441056529914c73b21c999d7821083f978ff1b8a19babf07",
+      "bytes": 677
+    },
+    {
+      "path": "concepts/systemmetric/token-usage.md",
+      "sha256": "d6be59fee37b6acd2aac79bf86b0d2cd48d359a2aa9972f824cf16075ba869f6",
+      "bytes": 608
+    },
+    {
+      "path": "concepts/systems/admin-explorer.md",
+      "sha256": "43cca3b365ec3c42c58ae3a70c0a10c95c1a3418ba7412026259435e753ab515",
+      "bytes": 881
+    },
+    {
+      "path": "concepts/systems/knowledge-documentation-system.md",
+      "sha256": "74b2008e03c5f241c3b37ef37b5d04ef541ca8ee678c7c0e9ed92a695f7c75ab",
+      "bytes": 784
+    },
+    {
+      "path": "concepts/systems/knowledge-source-card.md",
+      "sha256": "f43b9ab12aaa8722238abce76eb1efab587a0895783f25c1b8dd5078a5b0c26f",
+      "bytes": 988
+    },
+    {
+      "path": "concepts/systems/knowledge-workspace.md",
+      "sha256": "c241b338dc1f96a380ad5e4ee04004a39a2a595b395254fabb3eb3089fe0a80e",
+      "bytes": 612
+    },
+    {
+      "path": "concepts/systems/langfuse-tracing.md",
+      "sha256": "69e44ce09861ece3a289cad071e636f3015914f3753140eba35a70b2727b7c6a",
+      "bytes": 873
+    },
+    {
+      "path": "concepts/systems/okf-bundle.md",
+      "sha256": "9fc202eff85cb0feb1220d952c080301a207406314a74a369ab9bd5de28ccd73",
+      "bytes": 694
+    },
+    {
+      "path": "concepts/systems/target-architecture-pipeline.md",
+      "sha256": "7faad52efdbc9453d7be59c3f99c3b34b92cffac926775dabb2043b12d714018",
+      "bytes": 790
+    },
+    {
+      "path": "concepts/task/authorization.md",
+      "sha256": "44b834dfd8346b2af8415e0243bdd5577d0447986409ec488894262d6b17b9db",
+      "bytes": 582
+    },
+    {
+      "path": "concepts/task/extraction-and-analysis-tasks.md",
+      "sha256": "a2345b5ea279517930114c56d352c7d4a4517370ff82b612c6afae122c412406",
+      "bytes": 946
+    },
+    {
+      "path": "concepts/task/ingestion-job-lifecycle.md",
+      "sha256": "ae2f1d314515ed7d550ad9bceacf8a946d3ddffd5fff8f5b68e824ae4760531f",
+      "bytes": 612
+    },
+    {
+      "path": "concepts/task/publication-lifecycle.md",
+      "sha256": "79b437d8eae30065b235751abeb6dc138ded9a4794e1aa8602178beff1180933",
+      "bytes": 606
+    },
+    {
+      "path": "concepts/technique/exact-phrase-search.md",
+      "sha256": "1f0dba2343598bfbcfd258bfbfe6a098dbb67ff18a0cf7f8277ee1610b26ed93",
+      "bytes": 620
+    },
+    {
+      "path": "concepts/technique/full-text-search.md",
+      "sha256": "444b7bc7200ba3c337a73ceac6754ef0772534411b07f1d7c1dcfd8f6292e1c5",
+      "bytes": 611
+    },
+    {
+      "path": "concepts/technique/trigram-search-pg-trgm.md",
+      "sha256": "d02c6ed57bc870e68e20097e3557c9283d8c5d68a2350e15862d0ede6270b105",
+      "bytes": 633
+    },
+    {
+      "path": "concepts/technology/agent-framework.md",
+      "sha256": "e4fb2bd0e747e45079b11ddfa1bf6bab1924eb6d89645695ef19262917ef5adf",
+      "bytes": 612
+    },
+    {
+      "path": "concepts/technology/astryx-components.md",
+      "sha256": "7cc3481f88a93c5c754960b99da5d7bff075d2012de9c75a6ee752f8544f646a",
+      "bytes": 618
+    },
+    {
+      "path": "concepts/technology/durable-task-orchestration.md",
+      "sha256": "5b123c0e245b18b791531479920b1af4de50b32c1df2adc795e6ce5935236001",
+      "bytes": 645
+    },
+    {
+      "path": "concepts/technology/elasticsearch-opensearch.md",
+      "sha256": "5f4771dfd41b6b3be533e4eb3dfeb0876ceac6c0015aced1fba94b45da204779",
+      "bytes": 639
+    },
+    {
+      "path": "concepts/technology/express.md",
+      "sha256": "850e7870763e71703a4f87a2ab6dc401513ee53c8feb239b6331d47504ead02f",
+      "bytes": 588
+    },
+    {
+      "path": "concepts/technology/fastapi.md",
+      "sha256": "3726bca8a554194faaa272ef8cfe5ec86184df947c0b36fac049d37e035798fe",
+      "bytes": 588
+    },
+    {
+      "path": "concepts/technology/gemini-lite.md",
+      "sha256": "e73d0fd4b12a172836e4002fc6e8748c1e6769156ebf9e6d562e7c5a58a72ae4",
+      "bytes": 600
+    },
+    {
+      "path": "concepts/technology/kafka.md",
+      "sha256": "93f0b0132c4bd6fa7cac1706befe6d79755c51a8de45717aa6761029aae3f425",
+      "bytes": 582
+    },
+    {
+      "path": "concepts/technology/knex.md",
+      "sha256": "748ea1779490e5b0a327e4888c5d7fd0d5b90388b56cb2301295e20b689f018a",
+      "bytes": 579
+    },
+    {
+      "path": "concepts/technology/langfuse.md",
+      "sha256": "e52b8c1546973cecda1c93b01ff3685eb20ec8f55bc967fffea318738256db98",
+      "bytes": 591
+    },
+    {
+      "path": "concepts/technology/neo4j.md",
+      "sha256": "15007abd1789472e18157c3921d4f0d51c5bba23d181de847bfac5f0885cc966",
+      "bytes": 582
+    },
+    {
+      "path": "concepts/technology/networkx.md",
+      "sha256": "b69c4b5738f8514e8adea3502a87eac3fe012a0951da76178cc3432db06c6d35",
+      "bytes": 591
+    },
+    {
+      "path": "concepts/technology/node-js-express.md",
+      "sha256": "e5a847e6a8701a151b8da03b4150c13a8e14c0814f05fb82b6607673b15f3c8e",
+      "bytes": 612
+    },
+    {
+      "path": "concepts/technology/node-js.md",
+      "sha256": "c803b146c4cbbcd73b370c4fdcd1d3eb6251b8a7f7b6257c54d17ad0fd474d14",
+      "bytes": 588
+    },
+    {
+      "path": "concepts/technology/ocr-adapter-interface.md",
+      "sha256": "c4931a6e611ff8869da7d7a1322a302d22e319cc9287b89ebdd70ca5934dfbe4",
+      "bytes": 630
+    },
+    {
+      "path": "concepts/technology/pgvector.md",
+      "sha256": "30e37079c0b9efccdaf2d8babfc79b21f2270ff9538cbe38ac4e1ceba9979b30",
+      "bytes": 591
+    },
+    {
+      "path": "concepts/technology/postgresql-knex.md",
+      "sha256": "05cfeb71783318404c521dfebadef78874bc3f9987fcdf64dc53a4ecc008c0df",
+      "bytes": 612
+    },
+    {
+      "path": "concepts/technology/postgresql-pg-trgm.md",
+      "sha256": "3da2329b9982c502b4c31257535b1106a9ea8d53f8e6f9758e2eac5cd62f9c36",
+      "bytes": 621
+    },
+    {
+      "path": "concepts/technology/postgresql-recursive-ctes.md",
+      "sha256": "e536cc34c3968219d8c80b273eca685a255e74a7a8bbda7a580f0f92e8e89c77",
+      "bytes": 642
+    },
+    {
+      "path": "concepts/technology/postgresql.md",
+      "sha256": "b81c7d8329b51eddd63f2d1fbe765fd0cd53058a7eaff9ea1cfa1c3d9f10a641",
+      "bytes": 597
+    },
+    {
+      "path": "concepts/technology/pydantic-json-schema.md",
+      "sha256": "1d9b9a6976daee69ff439b6008596fd5294e6c42076900e834c7797b9ed09661",
+      "bytes": 627
+    },
+    {
+      "path": "concepts/technology/pydantic.md",
+      "sha256": "ee73fef6b1715a0cfd6d685843b5b766306ed1d120b74ead0070a3d20545948d",
+      "bytes": 591
+    },
+    {
+      "path": "concepts/technology/pymupdf-and-ocr-adapters.md",
+      "sha256": "2bbe05e2177a1da61796f559a1599010d32faf709e0ef6de145ec95a081f2e0b",
+      "bytes": 639
+    },
+    {
+      "path": "concepts/technology/pymupdf.md",
+      "sha256": "4262af224b9c34758838832f90e747f8006f5e42c40d88cb4a0f89d6a6f8c27c",
+      "bytes": 588
+    },
+    {
+      "path": "concepts/technology/python-fastapi.md",
+      "sha256": "d6313d07ec182da1f57bc66c8a500e8b7de3caa094142fa3b834c1ee7c46bb5b",
+      "bytes": 609
+    },
+    {
+      "path": "concepts/technology/python.md",
+      "sha256": "04e0a4556e0e1e88c21de4ee63e759f87f905702d1344fb88b8c53de5a48d523",
+      "bytes": 585
+    },
+    {
+      "path": "concepts/technology/react-typescript-astryx.md",
+      "sha256": "4c9a3fe02b0985f77bf1dd9869e3f84b9cc96c79006eb03748c0e9eaa35f7316",
+      "bytes": 636
+    },
+    {
+      "path": "concepts/technology/react.md",
+      "sha256": "4bd9811290a3f772a5afc6722bdd9e604b3a3792db414a53f640106ae1805653",
+      "bytes": 582
+    },
+    {
+      "path": "concepts/technology/redis-streams.md",
+      "sha256": "69b95a62ca64e034a7d3472c3e7d025fa5b5cf586c7b49d2a92942494fc22d69",
+      "bytes": 606
+    },
+    {
+      "path": "concepts/technology/typescript.md",
+      "sha256": "868e73cf0af316de924c02d5e08540a73e9f1ebb32f5fd4bb58ecaa2272b94dd",
+      "bytes": 597
+    },
+    {
+      "path": "concepts/technology/vector-database.md",
+      "sha256": "a60c0a52f47f4ef591d2993abf0f18007f55ee7c72f4487feef76fd29601e8d9",
+      "bytes": 612
+    },
+    {
+      "path": "concepts/technology/zod.md",
+      "sha256": "2299aaf51e894bada4841ae440859f8befe5497ca8bddd4c44b9f4e942837619",
+      "bytes": 576
+    },
+    {
+      "path": "concepts/testing-tool/source-specific-test-fixtures.md",
+      "sha256": "9a1748b276a35bbac7ea221b13d8ce5b467cb0714006ef4e59815679bf253174",
+      "bytes": 662
+    },
+    {
+      "path": "concepts/tool/knowledge-navigation-py.md",
+      "sha256": "cd1044da9c95c2454fc45ce38be5bad32a07eb2e237afe3bcf31e089c3ea10dd",
+      "bytes": 712
+    },
+    {
+      "path": "concepts/user-interface/explorer-dashboard.md",
+      "sha256": "6a69938c426cfc77852542ee00a73c14192da5101cc99d87324acfbba2e55d98",
+      "bytes": 637
+    },
+    {
+      "path": "concepts/version/postgresql-16.md",
+      "sha256": "9601d0fc40c8219c74dad74b0c5faab9a9b505b44c8f2609e2c874e779d7b75d",
+      "bytes": 594
+    },
+    {
+      "path": "index.md",
+      "sha256": "dfd1414b27bf66223c233d9b0ff3950e147729d7fe31da25a12b8b0b8e6f1673",
+      "bytes": 76021
+    },
+    {
+      "path": "log.md",
+      "sha256": "f648a53bfe7fdbbf733ee2b08e53b46e57e16382c451869d025cf2e37071316e",
+      "bytes": 144
+    },
+    {
+      "path": "source.md",
+      "sha256": "9b1899cc948a378c72dc1b3e3ed90348d88d33a4e5b89e60e361a8c0f1a68043",
+      "bytes": 50155
+    }
+  ]
+}

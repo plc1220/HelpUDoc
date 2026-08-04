@@ -1,0 +1,47 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 249,
+    "blocks": [
+      {
+        "text": "THE CHARMED FAWN.",
+        "blockType": "heading",
+        "headingLevel": 2,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "nothing but beat or kick us all day long. She gives us dry crusts for our dinner, and treats us much worse than the dog under the table, for he often gets a nice bit. What would our poor mother say if she knew how ill we are used! Come, let us go forth into the wide world.\" And away they wandered over meadows, fields, and stones; and whenever it rained, the sister would say, \"The sky is crying, like our poor hearts.\" Towards evening they reached a large wood; and what with grief, hunger, and fatigue, they were so exhausted that they took refuge in a hollow tree, where they fell fast asleep.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "When they awoke next morning, the sun was already high in the heavens, and its warm beams were falling right upon the tree. The brother then said, \"Sister, I am very thirsty, and if I could but find a spring, I should be so glad to drink. I almost think I hear the sound of water, bubbling just by.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "And he took his sister by the hand, and they went to look for a stream. But their wicked stepmother, who was a witch, and was well aware that the children had run away, had slunk after them, and bewitched all the springs in the forest. So, when they reached a stream that ran sparkling over the pebbles, and the brother was going to drink of its water, the sister heard it murmur as it rushed along, \"Whoever drinks out of me will become a tiger.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "3",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

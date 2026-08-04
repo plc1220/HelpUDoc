@@ -1,0 +1,68 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 234,
+    "blocks": [
+      {
+        "text": "THE UGLY LITTLE DUCK.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "the brood ; for let me entice, or even peck them as I might, into the water they would not go. Yes, I am quite right ; it is a turkey's egg. So, get off your nest, and teach the other ones to swim.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "\" I can but sit a little while longer,\" replied the mother.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "\" Oh, very well, if you are contented !\" said the old duck, taking her leave ; \" but, trust me, the changeling will be a fine trouble to you.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "At last the great egg cracked. \" Piep ! piep !\" cried the little terrified new-comer, as he broke through the shell. Oh, how big and how ugly he was ! The mother scarcely dared to look at him ; she knew not what to think of him. At last she exclaimed, involuntarily, \" This is certainly a curious young drake. It may turn out to be a turkey ; but we will soon see. Into the water he must go, even should I be obliged to push him in.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "The next day was very beautiful, and the sun shone delightfully on the green burdock. The mother duck left home, with her whole family waddling about her. Splash ! she went into the water. \" Quack ! quack !\" she exclaimed, and one duck after the other followed her example : not one remained behind ; even the ugly grey last comer swam merrily about with the rest.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "\" He is no turkey after all, and will not disgrace my family,\" said the old duck. \" Really, if one examines him closely, he is rather pretty. Quack ! quack ! now come with",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "4",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

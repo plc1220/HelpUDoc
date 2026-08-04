@@ -1,0 +1,82 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 210,
+    "blocks": [
+      {
+        "text": "THE THREE BEARS.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "said the Great, Huge Bear, in his great, rough, gruff voice.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "And little Silver-hair had pulled the bolster of the Middle Bear out of its place.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "\" Somebody has been lying in my bed ! \"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.95
+      },
+      {
+        "text": "said the Middle Bear, in his middle voice.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "And when the Little, Small, Wee Bear, came to look at his bed, there was the bolster in its place; and the pillow in its place upon the bolster; and upon the pillow was little Silver-hair's pretty head,—which was not in its place, for she had no business there.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "\" Somebody has been lying in my bed,—and here she is ! \"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.95
+      },
+      {
+        "text": "said the Little, Small, Wee Bear, in his little, small, wee voice.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "Little Silver-hair had heard in her sleep the great, rough, gruff voice of the Great, Huge Bear; but she was so fast asleep that it was no more to her than the roaring of wind, or the rumbling of thunder. And she had heard the middle voice of the Middle Bear, but it was only as if she had heard some one speaking in a dream. But when she heard the little, small, wee voice of the Little, Small, Wee Bear, it was so sharp, and so shrill, that it awakened her at once. Up she",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "12",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

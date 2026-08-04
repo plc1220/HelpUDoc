@@ -1,0 +1,54 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 78,
+    "blocks": [
+      {
+        "text": "COCK ROBIN AND JENNY WREN.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "The Blackbird and the Thrush,\nAnd charming Nightingale,\nWhose sweet jug sweetly echoes\nThrough every grove and dale ;",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "The Sparrow and Tom-Tit,\nAnd many more, were there ;\nAll came to see the wedding\nOf Jenny Wren the fair.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "The Bulfinch walk'd by Robin,\nAnd thus to him did say,\n\" Pray mark, friend Robin Redbreast,\nThat Goldfinch, dress'd so gay ;",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.97
+      },
+      {
+        "text": "What though her gay apparel\nBecomes her very well,\nYet Jenny's modest dress and look\nMust bear away the bell.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "8",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 1.0
+      }
+    ],
+    "blank": false,
+    "confidence": 0.98
+  }
+}

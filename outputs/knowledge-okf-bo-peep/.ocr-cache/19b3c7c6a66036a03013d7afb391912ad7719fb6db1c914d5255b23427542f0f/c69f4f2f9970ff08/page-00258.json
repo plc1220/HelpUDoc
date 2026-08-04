@@ -1,0 +1,47 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 258,
+    "blocks": [
+      {
+        "text": "THE CHARMED FAWN.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "him.\" \" The fawn shall remain with you as long as you live,\" rejoined the king, \" and he shall want for nothing.\" Meantime the fawn came bounding home, when his sister fastened the rope to his collar, and led him away with her.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "The king took the beautiful girl to his palace, where their marriage was celebrated with great pomp ; and he lived very happily with his new queen, while the fawn was fondled and pampered, and had the run of the palace-gardens. Meantime the wicked stepmother, whose cruelty had obliged the children to go forth into the wide world, had hoped all along that the little girl had been torn to pieces by the wild beasts in the forest, and that the little boy had been shot dead by some huntsmen, mistaking him for a real fawn. So when she heard how happy they were, envy and malice were continually gnawing at her heart ; and she thought of nothing else but how she should bring them into trouble again. Her own daughter, too, who was one-eyed and as ugly as sin, kept kindling her bad passions by incessant reproaches, and saying, that it was she who ought to have been a queen. \" Be easy,\" said the old beldame ; \" when a good opportunity offers, I will not let it slip.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "Accordingly, as soon as she heard that the queen had become the mother of a fine little boy, the old witch went to",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "12",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 1.0
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

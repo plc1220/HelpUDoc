@@ -1,0 +1,47 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 36,
+    "blocks": [
+      {
+        "text": "THE FROG WHO WOULD\nA-WOOING GO.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "A FROG he would a-wooing go,\nSing heigho says Rowley,\nWhether his mother would let him or no.\nWith a rowley powley gammon and spinach,\nHeigho says Anthony Rowley.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "So off he march'd with his opera hat,\nHeigho says Rowley,\nAnd on the way he met with a rat;\nWith a rowley powley, &c.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "And when they came to mouse's hall,\nHeigho says Rowley,\nThey gave a loud knock, and they gave a loud call.\nWith a rowley powley, &c.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "14",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 1.0
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

@@ -1,0 +1,61 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 144,
+    "blocks": [
+      {
+        "text": "THE FOX AND THE GEESE.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "He called at her door the very next day,\nAnd loudly and long did he knock,\nBut she said to him,-\" Leave my house, I pray,\nFor the door I will not unlock ;",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.97
+      },
+      {
+        "text": "\" For you've killed my sisters I know full well,\nAnd you wish that I too were dead.\"\n\" Oh dear,\" said the Fox, \" I can't really tell\nWho put such a thought in your head :",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.97
+      },
+      {
+        "text": "\" For I've always liked geese more than other birds,\nAnd you of your race I've loved best.\"\nBut the Goose ne'er heeded his flattering words,\nSo hungry he went to his rest.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.97
+      },
+      {
+        "text": "Next week she beheld him again appear,\n\" Let me in very quick,\" he cried,\n\" For the news I've to tell you'll be charmed to hear,\nAnd 'tis rude to keep me outside.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.97
+      },
+      {
+        "text": "But the Goose only opened one window-pane,\nAnd popped out her pretty red bill,\nSaid she, \" Your fair words are all in vain,\nBut talk to me here if you will.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.97
+      },
+      {
+        "text": "10",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

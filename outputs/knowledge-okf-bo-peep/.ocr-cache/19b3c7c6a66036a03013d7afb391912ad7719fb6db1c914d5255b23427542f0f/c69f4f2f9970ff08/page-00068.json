@@ -1,0 +1,33 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 68,
+    "blocks": [
+      {
+        "text": "HENNY-PENNY.",
+        "blockType": "heading",
+        "headingLevel": 2,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "gaed, and she gaed, and she met a Cock, and the Cock said,-- \"Where are you going to-day, Henny-penny?\" And she said,--\"Oh, Cocky-locky, the sky is falling, and I am going to tell the king.\" And Cocky-locky said,--\"I will go with you, Henny-penny.\" So Cocky-locky and Henny-penny, they gaed, and they gaed, and they gaed, till they met a Duck. So the Duck said,--\"Where are you going to-day, Cocky-locky and Henny-penny?\" And they said,--\"Oh, Ducky-daddles, the sky is falling, and we are going to tell the king.\" And Ducky-daddles said,--\"I will go with you, Cocky-locky and Henny-penny.\" So Ducky-daddles, and Cocky-locky, and Henny-penny, they gaed, and they gaed, and they gaed, till they met a Goose. So the Goose said,--\"Where are you going to-day, Ducky-daddles, Cocky-locky, and Henny-penny?\" And they said,--\"Oh, Goosie-poosie, the sky is falling, and we are going to tell the king.\" And Goosie-poosie said,--\"I will go with you, Ducky-daddles, Cocky-locky, and Henny-penny.\" So Goosie-poosie, and Ducky-daddles, and Cocky-locky, and Henny-penny, they gaed, and they gaed, and",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "14",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

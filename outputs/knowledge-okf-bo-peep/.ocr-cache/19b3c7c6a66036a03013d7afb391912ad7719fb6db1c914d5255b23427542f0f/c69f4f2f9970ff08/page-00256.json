@@ -1,0 +1,33 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 256,
+    "blocks": [
+      {
+        "text": "THE CHARMED FAWN.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "simples on the wound, and said, \" Go and lie down, dear fawn, that you may get cured.\" The wound was so slight that it had healed by the next morning ; and when the fawn again heard the huntsmen in the forest, he said, \" I can't keep away, I must be after them ; but they shall not catch me so easily again.\" The sister shed tears, and said, \" They will certainly kill you ; so I will not let you go.\" \" Then if you prevent my going, I shall die of grief here instead,\" answered the fawn ; \" for when I hear the sound of the horn, I feel as if I wanted to jump out of my shoes.\" So the sister could not help opening the door, though she did it with a heavy heart ; and the fawn bounded gaily across the forest. When the king saw him, he said to his huntsmen, \" Now we must hunt him till evening, only mind nobody hurts him.\" Towards sunset the king said to the huntsman who had followed the fawn the day before, \" Come now, and show me the hut where he dwells.\" On reaching the door, he knocked, and said, \" Dear sister, let me come in.\" The door flew open, and the king walked in, and beheld the most beautiful maiden he had ever seen. But the poor girl was very much frightened when she saw the king with his golden crown on her head instead of her beloved fawn. Then the king looked at her in a kindly manner, and held out his hand to her, saying, \" Will you accompany me to my",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "10",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 1.0
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

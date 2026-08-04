@@ -1,0 +1,68 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 64,
+    "blocks": [
+      {
+        "text": "THE CAT AND MOUSE.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "\" Oh, the Butcher will give me some,\" said the Mouse.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.95
+      },
+      {
+        "text": "So she frisked, and jumped, and then she ran Till she came to the Butcher, and thus began :—",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.94
+      },
+      {
+        "text": "\" Please, Mr. Butcher, give me some meat ; I want to give the Baker meat. The Baker will give me some bread, I will give the Farmer bread ; the Farmer will give me some hay, I will give the Cow hay ; the Cow will give me some milk, I will give Pussy milk, and Pussy will give me my own tail again.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.96
+      },
+      {
+        "text": "\" So I will, Mousey, if you will eat up the crumbs that have fallen at my breakfast,\" said the Butcher.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.95
+      },
+      {
+        "text": "\" Oh, that I will,\" said the Mouse ; and she soon cleared the floor of every crumb.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.95
+      },
+      {
+        "text": "Then the Butcher gave the Mouse some meat, and the Mouse gave the Baker the meat, and the Baker gave the Mouse some bread, and the Mouse gave the Farmer the bread, and the Farmer gave the Mouse some hay, and the Mouse gave the Cow the hay, and the",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.95
+      },
+      {
+        "text": "10",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

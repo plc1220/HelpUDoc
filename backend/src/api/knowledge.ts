@@ -3,6 +3,7 @@ import { z } from 'zod';
 import multer from 'multer';
 import { KnowledgeService } from '../services/knowledgeService';
 import { HttpError } from '../errors';
+import { KNOWLEDGE_INGESTION_EVENTS_CHANNEL, redisClient } from '../services/redisService';
 
 const knowledgeTypes = ['text', 'table', 'image', 'presentation', 'infographic'] as const;
 
@@ -59,6 +60,70 @@ export default function(knowledgeService: KnowledgeService, options: { global?: 
       res.json(items);
     } catch (error) {
       handleError(res, error, 'Failed to list knowledge sources');
+    }
+  });
+
+  router.get('/ingestions', async (_req: Request, res: Response) => {
+    try {
+      const jobs = global
+        ? await knowledgeService.listGlobalIngestionJobs()
+        : [];
+      res.json(jobs);
+    } catch (error) {
+      handleError(res, error, 'Failed to list knowledge ingestion jobs');
+    }
+  });
+
+  router.get('/ingestion-events', async (req: Request, res: Response) => {
+    let subscriber: ReturnType<typeof redisClient.duplicate> | null = null;
+    let keepAlive: NodeJS.Timeout | null = null;
+    let closed = false;
+    try {
+      const user = requireUserContext(req);
+      if (!user) return;
+      res.status(200);
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache, no-transform');
+      res.setHeader('Connection', 'keep-alive');
+      res.flushHeaders();
+      res.write(': connected\n\n');
+
+      subscriber = redisClient.duplicate();
+      subscriber.on('error', (error) => {
+        if (!closed) console.error('Knowledge ingestion event subscriber error', error);
+      });
+      await subscriber.connect();
+      await subscriber.subscribe(KNOWLEDGE_INGESTION_EVENTS_CHANNEL, (message) => {
+        if (closed) return;
+        try {
+          const event = JSON.parse(message) as { workspaceId?: string };
+          // The global route is system-admin protected; workspace routes should
+          // only receive events from their own workspace.
+          const requestedWorkspaceId = req.params.workspaceId;
+          if (requestedWorkspaceId && event.workspaceId !== requestedWorkspaceId) return;
+          res.write(`event: knowledge-ingestion\ndata: ${message}\n\n`);
+        } catch {
+          // Ignore malformed notification payloads; the database polling fallback remains available.
+        }
+      });
+      keepAlive = setInterval(() => {
+        if (!closed) res.write(': keep-alive\n\n');
+      }, 15_000);
+      keepAlive.unref();
+      req.on('close', () => {
+        closed = true;
+        if (keepAlive) clearInterval(keepAlive);
+        void subscriber?.unsubscribe().catch(() => undefined);
+        void subscriber?.quit().catch(() => undefined);
+      });
+    } catch (error) {
+      closed = true;
+      if (keepAlive) clearInterval(keepAlive);
+      if (!res.headersSent) {
+        handleError(res, error, 'Failed to subscribe to knowledge ingestion events');
+      } else {
+        res.end();
+      }
     }
   });
 

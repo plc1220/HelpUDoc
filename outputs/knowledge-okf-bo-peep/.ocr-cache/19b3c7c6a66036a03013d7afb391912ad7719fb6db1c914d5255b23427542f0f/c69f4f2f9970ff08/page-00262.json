@@ -1,0 +1,40 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 262,
+    "blocks": [
+      {
+        "text": "THE CHARMED FAWN.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "but on the following night he sat up again, when she came, and said once more:",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "\" Say, how is my baby, and how is my fawn?\nFor the last time I come, and shall vanish at dawn.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "The king could now restrain himself no longer, and jumped up, crying, \" You can be no other than my dear wife.\" \" Yes,\" replied she, \" I am your dear wife;\" and at the same moment she was restored to life, and was once more rosy and full of health. She then related to the king the crime the abominable witch and her daughter had committed. The king caused them both to be delivered up to justice, and the daughter was condemned to be carried into the forest, where the wild beasts tore her to pieces the moment they saw her, while the wicked old hag was burnt for a witch. And no sooner had the flames consumed her, than the fawn recovered his human shape, and the brother and sister were happy ever after to the end of their days.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

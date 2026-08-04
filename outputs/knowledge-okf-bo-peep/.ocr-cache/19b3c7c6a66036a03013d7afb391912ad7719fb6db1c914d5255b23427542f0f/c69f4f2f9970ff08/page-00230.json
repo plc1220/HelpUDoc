@@ -1,0 +1,40 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 230,
+    "blocks": [
+      {
+        "text": "LITTLE GOODY TWO-SHOES.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "post to see that a proper settlement was made on her, which he thought she was now entitled to, as he himself was both able and willing to give her an ample fortune. They soon returned to the communion-table, and were married in tears, but they were tears of joy.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "Sir Charles and Lady Jones lived happily for many years. Her ladyship continued to visit the school in which she had passed so many happy days, and always gave the prizes to the best scholars with her own hands. She also gave to the parish several acres of land to be planted yearly with potatoes, for all the poor who would come and fetch them for the use of their families ; but if any took them to sell, they were deprived of that privilege ever after. And these roots were planted and raised from the rent arising from a farm which she had assigned over for that purpose. In short, she was a mother to the poor, a physician to the sick, and a friend to all who were in distress. Her life was the greatest blessing, and her death the greatest calamity that ever was felt in the neighbourhood.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "AND THUS ENDED THE HAPPY HISTORY OF LITTLE GOODY TWO-SHOES.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

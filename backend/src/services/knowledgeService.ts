@@ -781,6 +781,27 @@ export class KnowledgeService {
     return rows.map((row) => this.mapRow(row));
   }
 
+  async listGlobalIngestionJobs(limit = 100) {
+    const rows = await this.db('knowledge_ingestion_jobs as job')
+      .join('knowledge_sources as source', 'source.id', 'job.knowledgeId')
+      .leftJoin('files', 'files.id', 'job.sourceFileId')
+      .where('source.isGlobal', true)
+      .select(
+        'job.*',
+        'source.title as sourceTitle',
+        'source.type as sourceType',
+        'files.name as sourceFileName',
+      )
+      .orderBy('job.createdAt', 'desc')
+      .limit(Math.max(1, Math.min(250, limit)));
+    return rows.map((row) => ({
+      ...this.ingestionService.mapJob(row),
+      sourceTitle: row.sourceTitle,
+      sourceType: row.sourceType,
+      sourceFileName: row.sourceFileName || null,
+    }));
+  }
+
   async getGlobalById(id: number) {
     const row = await this.baseQuery()
       .where('knowledge_sources.id', id)

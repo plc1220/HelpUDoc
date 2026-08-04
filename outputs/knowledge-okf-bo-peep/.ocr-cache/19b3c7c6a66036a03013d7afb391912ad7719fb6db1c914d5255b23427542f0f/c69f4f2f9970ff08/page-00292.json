@@ -1,0 +1,47 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 292,
+    "blocks": [
+      {
+        "text": "ROBIN HOOD.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "him to join his band. \"If there's an archer amongst you that can beat me at the long bow, then I'll be your man,\" quoth Friar Tuck. Then pointing to a hawk on the wing, he added, \"I'll kill it; and he who can strike it again before it falls, will be the better man of the two.\" Little John accepted the challenge. The shafts flew off; and when the dead bird was picked up, it was found that the friar's arrow had pinioned the hawk's wings to his sides, and that Little John had transfixed it from breast to back. So Friar Tuck owned himself outdone, and joined Robin's merry men.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "The whole country now rang with Robin Hood's lawless pranks; when one morning six priests passed through Sherwood Forest, on richly caparisoned horses, and thinking a good prize was in the wind, the outlaws bid them halt, and Friar Tuck seized the bridle of the one whom he judged to be the abbot, and bade him pay the toll. The abbot got down and gave him a cuff that made his ears tingle; then Robin flung him on his knees, and plucked him by the beard. Quoth Friar Tuck, \"We don't take that sort of coin.\" \"But we are going on a message from King Richard,\" said the abbot. Then Robin bade the friar desist, saying, \"God save the king, and confound all his foes!\" \"You are a noble fellow,\" quoth the abbot; \"and if you and your men will give up this lawless life and become my archers, you shall have the King's pardon.\" He then opened his gown; and Robin Hood and his archers, guessing at once that Richard himself stood before them, bent their knees to their liege lord, crying, \"Long live King Richard!\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "So Robin Hood accompanied the King to London, followed",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.95
+      },
+      {
+        "text": "14",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

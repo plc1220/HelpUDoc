@@ -1,0 +1,68 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 225,
+    "blocks": [
+      {
+        "text": "LITTLE GOODY TWO-SHOES.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "No sooner was Tippy, the lark, and Will, the ba-lamb, brought into the school, than that sensible rogue Ralph, the raven, composed the following verse, which every good little boy and girl should get by heart:—",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "\"Early to bed, and early to rise,\nIs the way to be healthy, wealthy, and wise.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "Soon after this, a present was made to Mrs. Margery of a little dog, whom she called Jumper. He was always in a good humour, and playing and jumping about, and therefore he was called Jumper. The place assigned for Jumper was that of keeping the door, so that he may be called the porter of a college, for he would let nobody go out nor any one come in, without leave of his mistress.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "Billy, the ba-lamb, was a cheerful fellow, and all the children were fond of him; wherefore Mrs. Two-Shoes made it a rule that those who behaved best should have Will home with them at night, to carry their satchel or basket on his back, and bring it in the morning.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "It was about this time that a farmer stopped one evening at Mrs. Margery's gate, and, to her great surprise, pulled out a letter, which, he said, the postman at the town had given him for her. Margery jumped for joy, for she knew the letter was from her brother Tommy. He had written from India to tell her he was quite well, that he was getting some money, and that as soon as he had sufficient he meant to return to England to see his dear sister. This letter was a source of great comfort to Margery, and she read it very often.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "Mrs. Margery, as we have frequently observed, was always",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "11",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}
