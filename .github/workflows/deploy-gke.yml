@@ -353,7 +353,39 @@ jobs:
         run: |
           set -euo pipefail
           kubectl -n helpudoc delete job helpudoc-minio-setup --ignore-not-found
-          kubectl apply -f infra/gke/k8s/
+          kubectl apply -f infra/gke/k8s/00-namespace.yaml
+          STORAGE_PVCS=(
+            postgres-pvc
+            redis-pvc
+            minio-pvc
+            workspace-pvc
+            skills-pvc
+            plugins-pvc
+            agent-config-pvc
+            clickhouse-pvc
+          )
+          EXISTING_PVCS=0
+          for pvc in "${STORAGE_PVCS[@]}"; do
+            if kubectl -n helpudoc get pvc "${pvc}" >/dev/null 2>&1; then
+              EXISTING_PVCS=$((EXISTING_PVCS + 1))
+            fi
+          done
+          if (( EXISTING_PVCS == 0 )); then
+            kubectl apply -f infra/gke/k8s/30-storage.yaml
+          elif (( EXISTING_PVCS == ${#STORAGE_PVCS[@]} )); then
+            echo "PersistentVolumeClaims already exist; preserving their live capacities."
+          else
+            echo "Only ${EXISTING_PVCS}/${#STORAGE_PVCS[@]} expected PersistentVolumeClaims exist; refusing a partial storage reconciliation." >&2
+            exit 1
+          fi
+
+          for manifest in infra/gke/k8s/*.yaml; do
+            MANIFEST_NAME="$(basename "${manifest}")"
+            if [[ "${MANIFEST_NAME}" == "00-namespace.yaml" || "${MANIFEST_NAME}" == "30-storage.yaml" ]]; then
+              continue
+            fi
+            kubectl apply -f "${manifest}"
+          done
 
       - name: Ensure helpudoc-config exists (first install only)
         if: ${{ inputs.deploy_infra }}

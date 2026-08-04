@@ -109,8 +109,10 @@ spec:
             failureThreshold: 3
           resources:
             requests:
-              cpu: "250m"
-              memory: "512Mi"
+              # The worker shares this pod's scheduling budget. Keep the
+              # combined backend + worker request at the pre-worker footprint.
+              cpu: "200m"
+              memory: "384Mi"
             limits:
               cpu: "1000m"
               memory: "1Gi"
@@ -305,8 +307,8 @@ spec:
           args: ["run", "worker:knowledge"]
           resources:
             requests:
-              cpu: "250m"
-              memory: "512Mi"
+              cpu: "50m"
+              memory: "128Mi"
             limits:
               cpu: "1000m"
               memory: "1Gi"
