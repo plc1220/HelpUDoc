@@ -1,0 +1,2 @@
+# Deterministic map-checkpoint cache key; this is a content hash, not a credential.
+bdcaf96084f92ac633a45323b253912262cee5e8:outputs/knowledge-okf-bo-peep/.map-checkpoint.json:generic-api-key:1
