@@ -37,7 +37,9 @@ class GeminiClientManager:
         if model_cfg.provider != "gemini":
             raise ValueError(f"Unsupported model provider {model_cfg.provider}")
 
-        use_vertex = model_cfg.use_vertex_ai
+        # GEMINI_API_KEY is the credential provisioned by the GKE manifests.
+        # Only use Vertex ADC when no API key is available.
+        use_vertex = model_cfg.use_vertex_ai and not self._api_key
 
         client_kwargs: dict = {}
 

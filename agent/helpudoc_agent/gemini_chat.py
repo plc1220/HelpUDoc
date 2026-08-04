@@ -43,7 +43,11 @@ def create_chat_google_generative_ai(
     if deadline is not None:
         kwargs["request_timeout"] = float(deadline)
 
-    if cfg.use_vertex_ai:
+    # A provisioned API key is an explicit credential for the Gemini Developer
+    # API. Prefer it over Vertex ADC so Kubernetes deployments do not silently
+    # depend on an unbound workload identity.
+    use_vertex = cfg.use_vertex_ai and not api_key
+    if use_vertex:
         if not cfg.project or not cfg.location:
             raise ValueError("Vertex AI mode requires both project and location")
         vertexai.init(project=cfg.project, location=cfg.location)

@@ -705,3 +705,27 @@ jobs:
             kubectl -n helpudoc logs deploy/helpudoc-app -c agent --tail=200 || true
             exit 1
           fi
+
+      - name: Post-deploy smoke (Gemini model)
+        run: |
+          set -euo pipefail
+          if ! kubectl -n helpudoc exec -i deploy/helpudoc-app -c agent -- \
+            python - <<'PY'
+          import os
+          from pathlib import Path
+
+          from helpudoc_agent.configuration import load_settings
+          from helpudoc_agent.tools.workspace.gemini_client import GeminiClientManager
+
+          config_path = Path(os.environ["AGENT_CONFIG_PATH"])
+          manager = GeminiClientManager(load_settings(config_path))
+          response = manager.get_lite_chat_model().invoke("Reply with exactly OK.")
+          content = str(getattr(response, "content", "") or "").strip()
+          if not content:
+              raise RuntimeError("Gemini returned an empty response")
+          print(f"GEMINI_MODEL_SMOKE_OK model={manager.lite_model_name}")
+          PY
+          then
+            kubectl -n helpudoc logs deploy/helpudoc-app -c agent --tail=200 || true
+            exit 1
+          fi

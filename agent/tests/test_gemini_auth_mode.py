@@ -11,7 +11,7 @@ def _vertex_model_config() -> ModelConfig:
         name="gemini-3.1-flash-lite",
         project="example-project",
         location="global",
-        api_key="configured-api-key",
+        api_key=None,
         use_vertex_ai=True,
     )
 
@@ -61,3 +61,36 @@ def test_api_key_mode_still_passes_api_key() -> None:
     kwargs = chat_model.call_args.kwargs
     assert kwargs["vertexai"] is False
     assert kwargs["api_key"] == "configured-api-key"
+
+
+def test_provisioned_api_key_takes_precedence_over_vertex_config() -> None:
+    config = ModelConfig(
+        name="gemini-3.1-flash-lite",
+        project="example-project",
+        location="global",
+        api_key="configured-api-key",
+        use_vertex_ai=True,
+    )
+
+    with (
+        patch("helpudoc_agent.tools.workspace.gemini_client.vertexai.init") as vertex_init,
+        patch("helpudoc_agent.tools.workspace.gemini_client.genai.Client") as client,
+        patch("helpudoc_agent.gemini_chat.vertexai.init") as chat_vertex_init,
+        patch("helpudoc_agent.gemini_chat.ChatGoogleGenerativeAI") as chat_model,
+    ):
+        GeminiClientManager(SimpleNamespace(model=config))
+        create_chat_google_generative_ai(config, config.name)
+
+    client_kwargs = client.call_args.kwargs
+    assert client_kwargs["vertexai"] is False
+    assert client_kwargs["api_key"] == "configured-api-key"
+    assert "project" not in client_kwargs
+    assert "location" not in client_kwargs
+    vertex_init.assert_not_called()
+
+    chat_kwargs = chat_model.call_args.kwargs
+    assert chat_kwargs["vertexai"] is False
+    assert chat_kwargs["api_key"] == "configured-api-key"
+    assert "project" not in chat_kwargs
+    assert "location" not in chat_kwargs
+    chat_vertex_init.assert_not_called()

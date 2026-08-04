@@ -10,10 +10,10 @@ model:
   max_output_tokens: 16384
   lite_max_output_tokens: 4096
   pro_max_output_tokens: 32768
-  image_name: gemini-3.1-flash-image-preview
+  image_name: gemini-3.1-flash-image
   project: my-rd-coe-demo-gen-ai
   location: global
-  use_vertex_ai: true
+  use_vertex_ai: false
 backend:
   workspace_root: backend/workspaces
   virtual_mode: true
