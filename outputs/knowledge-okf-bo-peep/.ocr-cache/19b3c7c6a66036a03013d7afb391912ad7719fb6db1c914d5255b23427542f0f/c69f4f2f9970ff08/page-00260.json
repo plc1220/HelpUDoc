@@ -1,0 +1,61 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 260,
+    "blocks": [
+      {
+        "text": "THE CHARMED FAWN.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "out of the cradle, and gave it some drink. She then shook up its little pillow, and put it back into the cradle, and covered it up with the counterpane. Nor did she forget the fawn, but went into the corner where it lay, and stroked its back. She then retired as silently as she had come; and the nurse inquired next morning of the sentinels whether any one had entered the palace during the night? But they all answered that they had seen nobody. She came in this manner for several nights, but never spoke a word; and the nurse always saw her, but did not dare mention anything about it.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "After a time, the queen began to speak in the night, and her words ran as follows:",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "\" Say, how is my baby, and how is my fawn?\nTwice more will I come, and then vanish at dawn.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "The nurse made no answer, but when she had disappeared, she went and told the king what she had heard. \" Gracious heavens!\" exclaimed the king, \" what can all this mean? To-morrow night I will keep watch myself by the baby's cradle.\" And accordingly, when evening came, the king went into the nursery, and towards midnight the queen appeared again, and murmured:",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "\" Say, how is my baby, and how is my fawn?\nOnce more will I come, and then vanish at dawn.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "14",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

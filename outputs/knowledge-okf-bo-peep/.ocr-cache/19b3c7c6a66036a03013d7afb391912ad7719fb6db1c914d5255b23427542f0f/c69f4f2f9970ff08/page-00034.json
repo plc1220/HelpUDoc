@@ -1,0 +1,54 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 34,
+    "blocks": [
+      {
+        "text": "SIMPLE SIMON.",
+        "blockType": "heading",
+        "headingLevel": 2,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "Simon made a great snow-ball,\nAnd brought it in to roast;\nHe laid it down before the fire,\nAnd soon the ball was lost.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "And Simon he would honey eat\nOut of the mustard-pot;\nHe bit his tongue until he cried,-\nThat was all the good he got.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "He went to ride a spotted cow,\nThat had got a little calf;\nShe threw him down upon the ground,\nAnd made all the people laugh.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "He went to shoot a wild duck,\nBut wild duck flew away;\nSays Simple Simon, \"I can't hit him,\nBecause he will not stay.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "12",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 1.0
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

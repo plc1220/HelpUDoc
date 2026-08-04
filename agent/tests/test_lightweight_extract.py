@@ -23,7 +23,9 @@ def test_extract_docx_preserves_headings_paragraphs_and_tables(tmp_path: Path) -
     result = extract_workspace_document(source)
 
     assert result["title"] == "policy.docx"
-    assert "## Renewal Policy" in result["markdown"]
+    # MarkItDown is the canonical Markdown facade and preserves the document's
+    # native level-one heading instead of nesting it beneath the filename.
+    assert "# Renewal Policy" in result["markdown"]
     assert "Customers must provide 30 days notice." in result["markdown"]
     assert "| Tier | Notice |" in result["markdown"]
 

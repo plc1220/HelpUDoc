@@ -1,0 +1,40 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 284,
+    "blocks": [
+      {
+        "text": "ROBIN HOOD.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "began to sell its contents about five times cheaper than all the other butchers ; for Robin Hood neither knew nor cared about the price usually paid for meat, and it amused him vastly to see his stall surrounded by customers. The other butchers could not at first understand why everybody flocked to purchase his goods in preference to theirs ; but when they heard that he had sold a leg of pork for a shilling, they consulted together, and agreed that he must be some rich man's son who was after a frolic, or else a downright madman, and that they had better try and learn something more about him, or else he would ruin their business. So when the market was over, one of them invited Robin Hood to dine with their company. The Sheriff of Nottingham presided at the head of the table, while at the other end sat the innkeeper. The outlaw played his part as well as the rest of them ; and when the dishes were removed, he called for more wine, telling them all to drink as much as they could carry, and he would pay the reckoning.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "The Sheriff then turned to Robin Hood, and asked him whether he had any horned beasts to sell ; for he was a miser, and hoped to profit by the new butcher's want of experience, and drive a good bargain with him. Robin Hood replied he had some two or three hundred ; whereupon the Sheriff said that as he wanted a few head of cattle, he would like to ride over and look at them that same day. So Robin Hood flung down a handful of silver on the table, by way of farewell to his astonished companions, and set out for Sherwood Forest with the Sheriff, who had mounted his palfrey and provided himself with a bag of gold for his purchase. The outlaw was so full of jokes and merriment as they went along, that the Sheriff",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "6",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

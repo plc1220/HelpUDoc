@@ -1,0 +1,68 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 268,
+    "blocks": [
+      {
+        "text": "HANS IN LUCK.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "milk, butter, and cheese, for certain every day. What would I not give to have such a cow for my own !\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "\" Well,\" said the peasant, \" if that's all, I should not mind changing my cow for your horse.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "Hans agreed most joyfully to such a proposal, and the peasant leaped into the saddle, and was presently out of sight.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "Hans now drove the cow before him at a quiet pace, and kept ruminating upon the excellent bargain he had made. \" If I have only a bit of bread—and that is not likely to fail me—I shall be able to add butter and cheese to it as often as I wish. If I feel thirsty, I need only milk my cow, and I shall have milk to drink.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "On reaching a public-house, he stopped to rest himself, and in the fulness of his joy he ate up his dinner and supper all at one meal, and spent his two remaining farthings to purchase half a glass of beer. He then went his way, and continued driving his cow towards his mother's village.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "Towards noon, the heat grew more and more oppressive, particularly as Hans was crossing a moor during a full hour's time. At length his thirst became so intolerable that his tongue cleaved to the roof of his mouth. \" The remedy is simple enough,\" thought Hans, \" and now is the time to milk my cow, and refresh myself with a good draught of milk.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "6",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 1.0
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

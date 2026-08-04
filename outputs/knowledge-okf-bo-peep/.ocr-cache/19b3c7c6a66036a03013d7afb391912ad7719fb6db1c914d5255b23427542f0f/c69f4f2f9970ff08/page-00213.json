@@ -1,0 +1,47 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 213,
+    "blocks": [
+      {
+        "text": "THE",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "BEAR AND THE CHILDREN.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "I WILL tell you a circumstance which occurred a year ago, in a country town in the south of Germany. The master of a dancing Bear was sitting in the tap-room of an inn, eating his supper; whilst the Bear, poor harmless beast! was tied up behind the wood-stack in the yard.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "In the room upstairs three little children were playing about. Tramp, tramp! was suddenly heard on the stairs; who could it be? The door flew open, and enter—the Bear, the huge shaggy beast, with his clanking chain! Tired of standing so long in the yard alone, Bruin had at length found his way to the staircase. At first the little children were in a terrible fright at this unexpected visit, and each ran into a corner to hide himself. But the Bear found them all out, and",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "15",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

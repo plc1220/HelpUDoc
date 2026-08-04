@@ -55,6 +55,7 @@ export const startAgentRun = async (
     taggedFiles?: string[];
     currentTurnFileIds?: number[];
     internetSearchEnabled?: boolean;
+    knowledgeRefs?: Array<{ id: number }>;
   },
 ): Promise<AgentRunStartResponse> => {
   const response = await apiFetch(`${API_URL}/agent/runs`, {
@@ -73,6 +74,7 @@ export const startAgentRun = async (
       taggedFiles: options?.taggedFiles,
       currentTurnFileIds: options?.currentTurnFileIds,
       internetSearchEnabled: options?.internetSearchEnabled,
+      knowledgeRefs: options?.knowledgeRefs,
     }),
   });
   if (!response.ok) {

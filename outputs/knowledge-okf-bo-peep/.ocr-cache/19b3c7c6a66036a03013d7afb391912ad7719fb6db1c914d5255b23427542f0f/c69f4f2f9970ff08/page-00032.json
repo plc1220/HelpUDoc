@@ -1,0 +1,54 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 32,
+    "blocks": [
+      {
+        "text": "SIMPLE SIMON.",
+        "blockType": "heading",
+        "headingLevel": 2,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "Says the pieman to Simple Simon,\n\"Shew me first your penny.\"\nSays Simple Simon to the pieman,\n\"Indeed I have not any.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "Simple Simon went a-fishing\nFor to catch a whale;\nAll the water he had got\nWas in his mother's pail.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "Simple Simon went to look\nIf plums grew on a thistle;\nHe prick'd his fingers very much,\nWhich made poor Simon whistle.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "Then Simple Simon went a-hunting,\nFor to catch a hare;\nHe rode on a goat about the street,\nBut could not find one there.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "10",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 1.0
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

@@ -1,0 +1,61 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 58,
+    "blocks": [
+      {
+        "text": "THE CAT AND MOUSE.",
+        "blockType": "heading",
+        "headingLevel": 2,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "Vale, when, quite by accident, the Cat bit off the Mouse's tail.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.97
+      },
+      {
+        "text": "It was very strange that the Cat did not bite off the Mouse's head; but this Mouse was a good Mouse, and never stole any cheese, and so the Cat only bit off her tail. Mousey was very much vexed to see that her tail was gone, so she said to Pussy,—",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.95
+      },
+      {
+        "text": "\" Oh, dear Pussy ! do give me my tail again.\"\n\" No, that I will not,\" said Pussy, \" till you get me some milk for my breakfast.\"\n\" Oh, the Cow will give me some,\" said the Mouse.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.94
+      },
+      {
+        "text": "So she frisked, and jumped, and then she ran Till she came to the Cow, and thus began :—",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.96
+      },
+      {
+        "text": "\" Please, Cow, give me some milk; I want to give Pussy milk, and Pussy will give me my own tail again.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.95
+      },
+      {
+        "text": "4",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

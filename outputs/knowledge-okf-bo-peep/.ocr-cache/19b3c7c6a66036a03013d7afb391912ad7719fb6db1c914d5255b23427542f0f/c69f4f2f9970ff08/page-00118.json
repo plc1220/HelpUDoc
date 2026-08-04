@@ -1,0 +1,26 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 118,
+    "blocks": [
+      {
+        "text": "OLD MOTHER HUBBARD.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "The Dame made a curtsey, the Dog made a bow;\nThe Dame said, \"Your servant,\" the Dog said, \"Bow, wow.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

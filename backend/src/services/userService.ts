@@ -163,6 +163,7 @@ export class UserService {
   async listUsers(): Promise<UserRecord[]> {
     return this.db<UserRecord>('users')
       .select('*')
+      .where('isSystem', false)
       .orderBy('createdAt', 'asc');
   }
 
@@ -195,7 +196,7 @@ export class UserService {
       }) as T;
     };
 
-    const countRow = await applySearch(this.db('users'))
+    const countRow = await applySearch(this.db('users').where('isSystem', false))
       .count<{ count: string }>('id as count')
       .first();
     const total = Number(countRow?.count || 0);
@@ -203,7 +204,7 @@ export class UserService {
     const page = Math.min(requestedPage, totalPages);
     const sortColumn = sortColumns[options.sortBy];
 
-    const users = await applySearch(this.db<UserRecord>('users').select('*'))
+    const users = await applySearch(this.db<UserRecord>('users').select('*').where('isSystem', false))
       .orderBy(sortColumn, options.sortOrder, options.sortBy === 'email' ? 'last' : undefined)
       .orderBy('id', 'asc')
       .limit(pageSize)
@@ -213,7 +214,10 @@ export class UserService {
   }
 
   async getUserById(userId: string): Promise<UserRecord | null> {
-    const user = await this.db<UserRecord>('users').where({ id: userId }).first();
+    const user = await this.db<UserRecord>('users')
+      .where({ id: userId })
+      .andWhere('isSystem', false)
+      .first();
     return user || null;
   }
 
@@ -236,6 +240,7 @@ export class UserService {
       .where((qb) => {
         qb.where('displayName', 'ilike', pattern).orWhere('email', 'ilike', pattern);
       })
+      .andWhere('isSystem', false)
       .orderBy('displayName', 'asc')
       .limit(limit);
 
@@ -255,6 +260,9 @@ export class UserService {
     return this.db.transaction(async (tx) => {
       const target = await tx<UserRecord>('users').where({ id: userId }).forUpdate().first();
       if (!target) return null;
+      if ((target as UserRecord & { isSystem?: boolean }).isSystem) {
+        throw new ConflictError('System identities cannot be modified');
+      }
       if (target.isAdmin && !isAdmin) {
         const activeAdmins = await tx<UserRecord>('users')
           .where({ isAdmin: true })

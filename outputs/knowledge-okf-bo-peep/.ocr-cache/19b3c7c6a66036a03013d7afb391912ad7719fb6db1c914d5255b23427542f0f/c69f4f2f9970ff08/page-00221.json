@@ -1,0 +1,68 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 221,
+    "blocks": [
+      {
+        "text": "LITTLE GOODY TWO-SHOES.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "ac ec ic oc uc ad ed id od ud af ef if of uf ag eg ig og ug",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.95
+      },
+      {
+        "text": "and pronounced them likewise.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "After this, little Two-Shoes taught Sally to spell words of one syllable, and she soon set up pear, plum, top, ball, pin, puss, dog, hog, doe, lamb, sheep, ram, cow, bull, cock, hen, and many more.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.97
+      },
+      {
+        "text": "The next place we came to was Gaffer Cook's cottage. Here a number of poor children were met to learn, and all came round little Margery at once ; who having pulled out her letters, asked the little boy next her what he had for dinner. He answered, \" Bread.\" \" Well, then,\" says she, \" set up the first letter.\" He put up the B, to which the next added r, and the next e, the next a, the next d, and it stood thus, Bread.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.96
+      },
+      {
+        "text": "\" And what had you, Polly Comb, for your dinner ?\" \" Apple-Pie,\" answered the little girl. Upon which the next in turn set up a great A, the two next a p each, and so on till the two words Apple and Pie were united, and stood thus, Apple-Pie. The next had potatoes, the next beef and turnips, which were spelt, with many others, till the game of spelling was finished. She then set them another task, and we proceeded.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.96
+      },
+      {
+        "text": "The next place we came to was Farmer Thompson's, where there were a great many little ones waiting for her. \" So, little Mrs. Goody Two-Shoes,\" says one of them, \" where have you been so long ?\" \" I have been teaching,\" says she, \" longer than I intended, and am, I am afraid, come too soon for you now.\" \" No, but indeed you are not,\" replied the other ; \" for I have learned my lesson, and so has Sally Dawson,",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.96
+      },
+      {
+        "text": "7",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

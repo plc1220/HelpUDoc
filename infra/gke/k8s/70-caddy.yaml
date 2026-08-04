@@ -17,7 +17,10 @@ data:
           header_up X-Forwarded-Proto https
         }
         @s3 path /helpudoc*
-        reverse_proxy @s3 minio:9000
+        reverse_proxy @s3 minio:9000 {
+          # SigV4 signs the public hostname; preserve it through the proxy.
+          header_up Host {http.request.host}
+        }
         @apex host lc-demo.com
         redir @apex https://www.lc-demo.com{uri} permanent
         reverse_proxy helpudoc-frontend:80

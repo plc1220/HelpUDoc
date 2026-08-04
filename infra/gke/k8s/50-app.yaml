@@ -109,8 +109,10 @@ spec:
             failureThreshold: 3
           resources:
             requests:
-              cpu: "250m"
-              memory: "512Mi"
+              # The worker shares this pod's scheduling budget. Keep the
+              # combined backend + worker request at the pre-worker footprint.
+              cpu: "200m"
+              memory: "384Mi"
             limits:
               cpu: "1000m"
               memory: "1Gi"
@@ -119,6 +121,16 @@ spec:
               value: production
             - name: PORT
               value: "3000"
+            - name: KNOWLEDGE_DEDICATED_WORKER
+              value: "true"
+            - name: KNOWLEDGE_RETRIEVAL_MODE
+              value: lexical-graph
+            - name: KNOWLEDGE_VECTOR_ENABLED
+              value: "false"
+            - name: KNOWLEDGE_MULTIMODAL_EMBEDDINGS
+              value: "false"
+            - name: KNOWLEDGE_EMBEDDING_DIMENSIONS
+              value: "768"
             - name: AGENT_URL
               value: http://localhost:8001
             - name: SESSION_SECRET
@@ -182,11 +194,17 @@ spec:
                   key: S3_BUCKET_NAME
             - name: S3_ENDPOINT
               value: http://minio:9000
+            - name: S3_PUBLIC_ENDPOINT
+              value: https://www.lc-demo.com
             - name: S3_FORCE_PATH_STYLE
               valueFrom:
                 configMapKeyRef:
                   name: helpudoc-config
                   key: S3_FORCE_PATH_STYLE
+            - name: KNOWLEDGE_UPLOAD_MAX_BYTES
+              value: "1073741824"
+            - name: KNOWLEDGE_UPLOAD_TTL_SECONDS
+              value: "1800"
             - name: WORKSPACE_ROOT
               valueFrom:
                 configMapKeyRef:
@@ -289,6 +307,90 @@ spec:
               mountPath: /app/plugins
             - name: agent-config-data
               mountPath: /agent/config
+        - name: knowledge-worker
+          image: gcr.io/my-rd-coe-demo-gen-ai/helpudoc-backend:latest
+          command: ["npm"]
+          args: ["run", "worker:knowledge"]
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "128Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+          env:
+            - name: NODE_ENV
+              value: production
+            - name: REDIS_URL
+              value: redis://redis:6379
+            - name: AGENT_URL
+              value: http://localhost:8001
+            - name: KNOWLEDGE_DEDICATED_WORKER
+              value: "true"
+            - name: KNOWLEDGE_WORKER_CONCURRENCY
+              value: "2"
+            - name: KNOWLEDGE_ENRICHMENT_MODE
+              value: gemini-lite
+            - name: KNOWLEDGE_RETRIEVAL_MODE
+              value: lexical-graph
+            - name: KNOWLEDGE_VECTOR_ENABLED
+              value: "false"
+            - name: POSTGRES_HOST
+              value: postgres
+            - name: POSTGRES_PORT
+              value: "5432"
+            - name: POSTGRES_DB
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: POSTGRES_DB
+            - name: POSTGRES_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: POSTGRES_PASSWORD
+            - name: DATABASE_URL
+              value: "postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@postgres:5432/$(POSTGRES_DB)"
+            - name: AGENT_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: AGENT_JWT_SECRET
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: MINIO_ROOT_USER
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: helpudoc-secrets
+                  key: MINIO_ROOT_PASSWORD
+            - name: S3_BUCKET_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: S3_BUCKET_NAME
+            - name: S3_ENDPOINT
+              value: http://minio:9000
+            - name: S3_FORCE_PATH_STYLE
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: S3_FORCE_PATH_STYLE
+            - name: WORKSPACE_ROOT
+              valueFrom:
+                configMapKeyRef:
+                  name: helpudoc-config
+                  key: WORKSPACE_ROOT
+          volumeMounts:
+            - name: workspace-data
+              mountPath: /app/workspaces
         - name: agent
           image: gcr.io/my-rd-coe-demo-gen-ai/helpudoc-agent:latest
           ports:
@@ -325,6 +427,18 @@ spec:
               value: redis://redis:6379
             - name: AGENT_CONFIG_PATH
               value: /agent/config/runtime.yaml
+            - name: KNOWLEDGE_MARKITDOWN_MODE
+              value: primary
+            - name: KNOWLEDGE_OCR_MODE
+              value: auto
+            - name: KNOWLEDGE_OCR_TEXT_THRESHOLD
+              value: "40"
+            - name: KNOWLEDGE_OCR_BATCH_SIZE
+              value: "6"
+            - name: KNOWLEDGE_OCR_CONCURRENCY
+              value: "4"
+            - name: KNOWLEDGE_EMBEDDING_MODEL
+              value: gemini-embedding-2
             - name: POSTGRES_HOST
               value: postgres
             - name: POSTGRES_PORT

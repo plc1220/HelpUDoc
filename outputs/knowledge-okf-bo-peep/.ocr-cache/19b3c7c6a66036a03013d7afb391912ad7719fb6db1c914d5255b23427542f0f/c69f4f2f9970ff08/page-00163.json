@@ -1,0 +1,47 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 163,
+    "blocks": [
+      {
+        "text": "JACK SPRAT.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "Jack Sprat could eat no fat, his wife could eat no lean, And so between them both, they licked the platter clean. Jack eat all the lean, Joan eat all the fat, The bone they picked clean, then gave it to the cat.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "When Jack Sprat was young, he dressed very smart, He courted Joan Cole, and he gained her heart. In his fine leather doublet, and old greasy hat, Oh, what a smart fellow was little Jack Sprat !",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "Jack Sprat was the bridegroom, Joan Cole was the bride, Jack said, From the church, his Joan home should ride. But no coach could take her, the lane was so narrow, Said Jack, Then I'll take her home in a wheelbarrow.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "13",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

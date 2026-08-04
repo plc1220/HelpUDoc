@@ -1,0 +1,61 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 224,
+    "blocks": [
+      {
+        "text": "LITTLE GOODY TWO-SHOES.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "them a penny for him, and brought him home. She called his name Ralph, and a fine bird he was.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "Now this bird she taught to speak, to spell, and to read; and as he was particularly fond of playing with the large letters, the children used to call them Ralph's alphabet.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "Some days after she had met with the raven, as she was walking in the fields, she saw some naughty boys who had taken a pigeon and tied a string to its legs, in order to let it fly and draw it back again when they pleased; and by this means they tortured the poor bird with the hopes of liberty and repeated disappointment. This pigeon she also bought, and taught him how to spell and read, though not to talk. He was a very pretty fellow, and she called him Tom. And as the raven Ralph was fond of the large letters, Tom the pigeon took care of the small ones.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "The neighbours knowing that Mrs. Two-Shoes was very good, as, to be sure, nobody was better, made her a present of a little skylark. She thought the lark might be of use to her and her pupils, and tell them when it was time to get up. \"For he that is fond of his bed, and lies till noon, lives but half his days, the rest being lost in sleep, which is a kind of death.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "Some time after this a poor lamb had lost its dam, and the farmer being about to kill it, she bought it of him, and brought him home with her to play with the children, and teach them when to go to bed; for it was a rule with the wise men of that age (and a very good one, let me tell you) to \"Rise with the lark, and lie down with the lamb.\" This lamb she called Will, and a pretty fellow he was.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "10",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

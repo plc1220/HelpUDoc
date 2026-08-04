@@ -1,0 +1,68 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 265,
+    "blocks": [
+      {
+        "text": "HANS IN LUCK.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "master answered : \" You have served me like a trusty, honest fellow, as you are, and such as your services have been, so shall be your hire.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "And thereupon he gave him a piece of gold as large as Hans' head. Hans took a cloth and rolled up the lump of gold, and slung it over his shoulder, and began to trudge home. As he went along, and kept setting one foot before the other, he happened to come up with a traveller, who was riding at a brisk pace on a lively horse.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "\" Oh, what a delightful thing it is to ride !\" cried Hans aloud : \" it is every bit as good as sitting on a chair ; one doesn't knock one's toes against the stones, and one saves one's shoes ; and yet one gets on, one hardly knows how.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "The man on horseback having heard these wise reflections, cried out to him, \" Nay, then, Hans, why do you go on foot ?\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "\" Why, you see, I am obliged to carry this lump home,\" replied Hans, \" and gold though it be, it bothers me sadly, as I am obliged to hold my head on one side, and it weighs so heavily on my shoulder.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "\" I'll tell you what,\" said the rider, stopping his horse, \" we can make a bargain. Suppose I were to give you my horse, and you were to let me have your lump in exchange.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "3",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 1.0
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

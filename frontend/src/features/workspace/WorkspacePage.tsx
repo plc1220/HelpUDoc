@@ -75,7 +75,7 @@ import {
   deleteConversation as deleteConversationApi,
   truncateConversationMessages,
 } from '../../services/conversationApi';
-import { listKnowledge } from '../../services/knowledgeApi';
+import { listAccessibleKnowledge } from '../../services/knowledgeApi';
 import type {
   Workspace,
   File as WorkspaceFile,
@@ -2084,7 +2084,7 @@ export default function WorkspacePage() {
         getFolders(workspaceId),
         options.includePrivateData === false
           ? Promise.resolve([])
-          : listKnowledge(workspaceId).catch((error) => {
+          : listAccessibleKnowledge().catch((error) => {
               console.error('Failed to load knowledge for workspace', error);
               return [];
             }),
@@ -2562,18 +2562,17 @@ export default function WorkspacePage() {
   );
 
   const findMentionedKnowledge = useCallback(
-    (value: string): Array<{ id: number; title: string; bundlePath: string }> => {
+    (value: string): Array<{ id: number; title: string; snapshotHash?: string | null }> => {
       if (!value) {
         return [];
       }
       return workspaceKnowledge.flatMap((item) => {
-        const bundlePath = item.metadata?.ingestion?.bundlePath;
-        if (item.metadata?.ingestion?.status !== 'published' || !bundlePath) {
+        if (item.metadata?.ingestion?.status !== 'published') {
           return [];
         }
         const mentionPattern = new RegExp(`(^|[\\s([{])@knowledge:${item.id}(?=$|[\\s)\\]}])`, 'i');
         return mentionPattern.test(value)
-          ? [{ id: item.id, title: item.title, bundlePath }]
+          ? [{ id: item.id, title: item.title }]
           : [];
       });
     },
@@ -4922,6 +4921,7 @@ export default function WorkspacePage() {
     historyPayload: Array<{ role: string; content: string }>;
     currentTurnFileIds?: number[];
     taggedFiles?: string[];
+    knowledgeRefs?: Array<{ id: number }>;
     internetSearchEnabled?: boolean;
   }) => {
     const {
@@ -4933,6 +4933,7 @@ export default function WorkspacePage() {
       historyPayload,
       currentTurnFileIds,
       taggedFiles,
+      knowledgeRefs,
       internetSearchEnabled,
     } = params;
     if (!isUsableWorkspaceId(workspaceId)) {
@@ -4948,6 +4949,7 @@ export default function WorkspacePage() {
       {
         forceReset: true,
         taggedFiles,
+        knowledgeRefs,
         currentTurnFileIds,
         internetSearchEnabled,
       },
@@ -6250,7 +6252,7 @@ export default function WorkspacePage() {
       const knowledgePrompt = mentionedKnowledge.length
         ? [
             'Use these published OKF knowledge bundles as context:',
-            ...mentionedKnowledge.map((item) => `- ${item.title}: ${item.bundlePath}/index.md`),
+            ...mentionedKnowledge.map((item) => `- ${item.title} (Knowledge ID ${item.id})`),
             'Navigate them with knowledge_read and knowledge_search. Read index.md first, then only the relevant concept files.',
           ].join('\n')
         : '';
@@ -6270,6 +6272,7 @@ export default function WorkspacePage() {
           historyPayload,
           currentTurnFileIds,
           taggedFiles,
+          knowledgeRefs: mentionedKnowledge.map((item) => ({ id: item.id })),
           internetSearchEnabled: useInternetSearch,
         });
       } catch (error) {

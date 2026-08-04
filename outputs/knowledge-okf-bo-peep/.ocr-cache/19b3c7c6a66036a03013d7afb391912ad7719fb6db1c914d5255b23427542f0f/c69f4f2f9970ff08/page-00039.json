@@ -1,0 +1,61 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 39,
+    "blocks": [
+      {
+        "text": "Treasury of Pleasure Books for Young People.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.96
+      },
+      {
+        "text": "THE RENOWNED STORY",
+        "blockType": "heading",
+        "headingLevel": 2,
+        "bbox": null,
+        "confidence": 0.95
+      },
+      {
+        "text": "OF",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.9
+      },
+      {
+        "text": "THE HOUSE",
+        "blockType": "heading",
+        "headingLevel": 2,
+        "bbox": null,
+        "confidence": 0.95
+      },
+      {
+        "text": "THAT JACK BUILT.",
+        "blockType": "heading",
+        "headingLevel": 2,
+        "bbox": null,
+        "confidence": 0.95
+      },
+      {
+        "text": "ILLUSTRATED BY JOHN ABSOLON AND HARRISON WEIR.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.94
+      },
+      {
+        "text": "V",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.9
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 70,
+    "blocks": [
+      {
+        "text": "HENNY-PENNY.",
+        "blockType": "heading",
+        "headingLevel": 2,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "Ducky-daddles, Cocky-locky, and Henny-penny?\" And they said,--\"Oh, Turkey-lurky, the sky is falling, and we are going to tell the king.\" And Turkey-lurky said,--\"I will go with you, Goosie-poosie, Ducky-daddles, Cocky-locky, and Henny-penny.\" So Turkey-lurky, and Goosie-poosie, and Ducky-daddles, and Cocky-locky, and Henny-penny, they gaed, and they gaed, and they gaed, till they met a Fox. So the Fox said,--\"Where are you going to-day, Turkey-lurky, Goosie-poosie, Ducky-daddles, Cocky-locky, and Henny-penny?\" And they said,--\"Oh, Mr. Fox, the sky is falling, and we are going to tell the king.\" And the Fox said,--\"Come with me, Turkey-lurky, Goosie-poosie, Ducky-daddles, Cocky-locky, and Henny-penny, and I will show you the road to the king's house.\" So they all gaed, and they gaed, and they gaed, till they came to the Fox's hole, and the Fox took them all into his hole; and he and his young cubs ate up first poor Henny-penny, then poor Cocky-locky, then poor Ducky-daddles, then poor Goosie-poosie, and then poor Turkey-lurky: and so they never got to the king to tell him that the clouds had fallen on the head of poor Henny-penny.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

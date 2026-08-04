@@ -1,0 +1,33 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 22,
+    "blocks": [
+      {
+        "text": "THE FOX AND THE FARMER.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "\"Oh, ho!\" said the Fox, \"it's but a short mile From this unto yonder town, e-oh!\" The Fox when he came to the Farmer's gate, Who should he see but the Farmer's drake; \"I love you well for your master's sake, And long to be picking your bones, e-oh!\" The grey goose ran right round the hay-stack, \"Oh, ho!\" said the Fox, \"you are very fat; You'll do very well to ride on my back From this into yonder town, e-oh!\" The Farmer's wife she jump'd out of bed, And out of the window she popp'd her head; \"Oh, husband! oh, husband! the geese are all dead, For the Fox has been through the town, e-oh!\" The Farmer he loaded his pistol with lead, And shot the old rogue of a Fox through the head: \"Ah, ha!\" said the Farmer, \"I think you're quite dead, And no more you'll trouble the town, e-oh!\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "16",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

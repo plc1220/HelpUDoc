@@ -1,0 +1,54 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 75,
+    "blocks": [
+      {
+        "text": "COCK ROBIN AND JENNY WREN.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "Cherry-pie is very good!\nSo is currant-wine;\nBut I will wear my brown gown,\nAnd never dress too fine.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "Robin rose up early,\nAt the break of day;\nHe flew to Jenny Wren's house,\nTo sing a roundelay.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "He met the Cock and Hen,\nAnd bade the Cock declare,\nThis was his wedding-day\nWith Jenny Wren the fair.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "The Cock then blew his horn\nTo let the neighbours know\nThis was Robin's wedding-day,\nAnd they might see the show.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "5",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      }
+    ],
+    "blank": false,
+    "confidence": 0.99
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 229,
+    "blocks": [
+      {
+        "text": "LITTLE GOODY TWO-SHOES.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "returned her public thanks for the great service she had done the country. One gentleman in particular, Sir Charles Jones, had conceived such an high opinion of her that he offered her a considerable sum to take the care of his family and the education of his daughter, which, however, she refused ; but this gentleman sending for her afterwards, when he had a dangerous fit of illness, she went, and behaved so prudently in the family, and so tenderly to him and his daughter, that he would not permit her to leave his house, but soon after made her proposals of marriage. She was truly sensible of the honour he intended her, but, though poor, would not consent to be made a lady till he had provided for his daughter.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "All things being settled, and the day fixed, the neighbours came in crowds to see the wedding ; for they were all glad that one who had been such a good little girl, and was become such a virtuous and good woman, was going to be made a lady. But just as the clergyman had opened his book, a gentleman richly dressed ran into the church, and cried, \" Stop ! stop !\" This greatly alarmed the congregation, and particularly the intended bride and bridegroom, whom he first accosted, desiring to speak with them apart. After they had been talking some little time, the people were greatly surprised to see Sir Charles stand motionless, and his bride cry and faint away in the stranger's arms. This seeming grief, however, was only a prelude to a flood of joy, which immediately succeeded ; for you must know that this gentleman so richly dressed was little Tommy Meanwell, Mrs. Margery's brother, who was just come from sea, where he had made a large fortune, and hearing as soon as he landed of his sister's intended wedding, had rode",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "15",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

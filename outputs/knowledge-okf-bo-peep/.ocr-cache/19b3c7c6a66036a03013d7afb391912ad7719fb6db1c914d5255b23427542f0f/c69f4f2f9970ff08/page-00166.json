@@ -1,0 +1,47 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 166,
+    "blocks": [
+      {
+        "text": "JACK SPRAT.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "Jack Sprat went to market, and bought him a mare, She was lame of three legs, and as blind as she could stare ; Her ribs were bare for the mare had no fat, She looks like a racer, says little Jack Sprat.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "Jack and Joan went abroad, Puss took care of the house, She caught a large rat and a very small mouse : She caught a small mouse, and a very large rat ; You're an excellent hunter, says little Jack Sprat.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "Now I have told you the story of little Jack Sprat, And little Joan Cole, and the poor one-ear'd cat. Now Jack loved Joan, and good things he taught her, Then she gave him a son, then after a daughter.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "Now Jack has got rich and has plenty of pelf ; If you know any more, you may tell it yourself.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

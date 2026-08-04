@@ -1,0 +1,26 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 278,
+    "blocks": [
+      {
+        "text": "HANS IN LUCK.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "thus mercifully ridded him of his heavy burden, without the slightest reproach on his own conscience. For these stones were the only things that stood in his way. \"There is not a luckier fellow than I beneath the sun,\" exclaimed Hans ; and with a light heart and empty hands he now bounded along till he reached his mother's home.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.96
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

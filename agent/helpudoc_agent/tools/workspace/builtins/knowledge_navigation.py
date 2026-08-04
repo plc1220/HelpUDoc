@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 from pathlib import Path
 from typing import List, Optional
@@ -9,25 +10,59 @@ from typing import List, Optional
 from langchain_core.tools import Tool, tool
 
 from ....state import WorkspaceState
-from .workspace_files import _display_path, _workspace_root
 
 
-_KNOWLEDGE_ROOT = Path(".system/knowledge")
 _MAX_RESULTS = 50
 _MAX_READ_CHARS = 50000
+_MAX_GRAPH_HOPS = 2
 
 
-def _knowledge_root(workspace_state: WorkspaceState) -> Path:
-    return (_workspace_root(workspace_state) / _KNOWLEDGE_ROOT).resolve()
+def _selected_bundle_roots(workspace_state: WorkspaceState) -> list[tuple[Path, str | None, int]]:
+    """Return only backend-authorized bundles explicitly tagged for this turn."""
+    bundles: list[tuple[Path, str | None, int]] = []
+    shared_storage_root = Path(workspace_state.root_path).resolve().parent
+    raw_refs = workspace_state.context.get("knowledge_refs") if isinstance(workspace_state.context, dict) else []
+    for raw in raw_refs if isinstance(raw_refs, list) else []:
+        if not isinstance(raw, dict):
+            continue
+        try:
+            knowledge_id = int(raw.get("id"))
+        except (TypeError, ValueError):
+            continue
+        bundle_root = Path(str(raw.get("bundleRoot") or "")).resolve()
+        if (
+            knowledge_id <= 0
+            or shared_storage_root not in bundle_root.parents
+            or not (bundle_root / "index.md").is_file()
+        ):
+            continue
+        snapshot_hash = str(raw.get("snapshotHash") or "").strip() or None
+        bundles.append((bundle_root, snapshot_hash, knowledge_id))
+    return bundles
 
 
-def _resolve_knowledge_path(root: Path, raw_path: str) -> Path:
-    cleaned = str(raw_path or "").strip().replace("\\", "/").lstrip("/")
-    if cleaned.startswith(".system/knowledge/"):
-        cleaned = cleaned[len(".system/knowledge/") :]
-    candidate = (root / cleaned).resolve()
+def _display_knowledge_path(bundle_root: Path, knowledge_id: int, candidate: Path) -> str:
+    relative = candidate.relative_to(bundle_root).as_posix()
+    return f"knowledge://{knowledge_id}/{relative}"
+
+
+def _resolve_knowledge_path(
+    workspace_state: WorkspaceState,
+    raw_path: str,
+) -> tuple[Path, str | None, int, Path]:
+    cleaned = str(raw_path or "").strip().replace("\\", "/")
+    match = re.match(r"^knowledge://(\d+)(?:/(.*))?$", cleaned, flags=re.IGNORECASE)
+    if not match:
+        raise ValueError("Knowledge paths must use a knowledge://<id>/... path returned by knowledge_search")
+    knowledge_id = int(match.group(1))
+    relative = str(match.group(2) or "index.md").lstrip("/")
+    selected = next((item for item in _selected_bundle_roots(workspace_state) if item[2] == knowledge_id), None)
+    if selected is None:
+        raise ValueError("Knowledge bundle was not tagged for this turn")
+    root, snapshot_hash, _ = selected
+    candidate = (root / relative).resolve()
     if root not in candidate.parents and candidate != root:
-        raise ValueError("Knowledge path must remain inside the published knowledge root")
+        raise ValueError("Knowledge path must remain inside the tagged bundle")
     if candidate.is_dir():
         candidate = candidate / "index.md"
     if not candidate.suffix:
@@ -36,7 +71,7 @@ def _resolve_knowledge_path(root: Path, raw_path: str) -> Path:
         raise FileNotFoundError(f"Published knowledge path not found: {raw_path}")
     if candidate.suffix.lower() != ".md":
         raise ValueError("Published knowledge documents must be Markdown")
-    return candidate
+    return candidate, snapshot_hash, knowledge_id, root
 
 
 def _title_from_markdown(path: Path, text: str) -> str:
@@ -78,44 +113,128 @@ def _matching_line(text: str, query: str, tokens: list[str]) -> int:
     return 1
 
 
-def build_knowledge_search_tool(workspace_state: WorkspaceState) -> Tool:
-    root = _knowledge_root(workspace_state)
-    workspace_root = _workspace_root(workspace_state)
+def _query_tokens(value: str) -> list[str]:
+    lowered = value.lower()
+    words = [token for token in re.findall(r"[\w.-]+", lowered) if len(token) > 1]
+    cjk_runs = re.findall(r"[\u3400-\u9fff\uf900-\ufaff]+", lowered)
+    cjk_tokens = [run[index:index + 2] for run in cjk_runs for index in range(max(1, len(run) - 1))]
+    return list(dict.fromkeys([*words, *cjk_tokens]))
 
+
+def _lexical_score(path: Path, title: str, text: str, phrase: str, tokens: list[str]) -> tuple[float, list[str]]:
+    if not phrase:
+        return 1.0, ["bundle-index"]
+    lowered_title = title.lower()
+    lowered_path = path.as_posix().lower()
+    lowered_text = text.lower()
+    score = 0.0
+    reasons: list[str] = []
+    if phrase in lowered_title:
+        score += 8.0
+        reasons.append("title_phrase")
+    if phrase in lowered_path:
+        score += 5.0
+        reasons.append("path_phrase")
+    if phrase in lowered_text:
+        score += 4.0
+        reasons.append("exact_phrase")
+    matched = sum(token in lowered_text for token in tokens)
+    minimum_matches = 1 if len(tokens) <= 2 else max(2, math.ceil(len(tokens) * 0.4))
+    if matched >= minimum_matches:
+        score += 3.0 * matched / max(1, len(tokens))
+        reasons.append("lexical")
+    return score, reasons
+
+
+def build_knowledge_search_tool(workspace_state: WorkspaceState) -> Tool:
     @tool
     def knowledge_search(query: str = "", max_results: int = 20) -> str:
-        """List or search published OKF concepts in the current workspace."""
-        if not root.exists():
+        """List or search explicitly tagged, published OKF bundles."""
+        published_bundles = _selected_bundle_roots(workspace_state)
+        if not published_bundles:
             return json.dumps(
                 {
                     "query": query,
                     "resultCount": 0,
                     "results": [],
-                    "message": "No published knowledge bundles are available in this workspace.",
+                    "message": "No Knowledge bundle was tagged for this turn. Add one with the @ command.",
                 }
             )
         phrase = str(query or "").strip().lower()
-        tokens = [token for token in re.findall(r"[\w.-]+", phrase) if len(token) > 1]
+        tokens = _query_tokens(phrase)
         limit = max(1, min(int(max_results or 20), _MAX_RESULTS))
         results = []
-        paths = sorted(root.rglob("index.md")) if not phrase else sorted(root.rglob("*.md"))
-        for path in paths:
-            if path.name == "log.md":
-                continue
-            text = path.read_text(encoding="utf-8", errors="replace")
-            haystack = f"{path.as_posix()}\n{text}".lower()
-            if phrase and phrase not in haystack and not all(token in haystack for token in tokens):
-                continue
-            results.append(
-                {
-                    "path": _display_path(workspace_root, path),
-                    "title": _title_from_markdown(path, text),
-                    "line": _matching_line(text, phrase, tokens) if phrase else 1,
-                    "snippet": _snippet(text, phrase),
-                }
+        for bundle_root, snapshot_hash, knowledge_id in published_bundles:
+            concept_root = bundle_root / "concepts"
+            paths = [bundle_root / "index.md"] if not phrase else (
+                sorted(concept_root.rglob("*.md")) if concept_root.is_dir()
+                else sorted(bundle_root.rglob("*.md"))
             )
-            if len(results) >= limit:
-                break
+            for path in paths:
+                if path.name == "log.md" or not path.is_file():
+                    continue
+                text = path.read_text(encoding="utf-8", errors="replace")
+                title = _title_from_markdown(path, text)
+                score, reasons = _lexical_score(path, title, text, phrase, tokens)
+                if phrase and score <= 0:
+                    continue
+                results.append(
+                    {
+                        "path": _display_knowledge_path(bundle_root, knowledge_id, path),
+                        "title": title,
+                        "line": _matching_line(text, phrase, tokens) if phrase else 1,
+                        "snippet": _snippet(text, phrase),
+                        "score": round(score, 4),
+                        "reasons": reasons,
+                        "snapshotId": snapshot_hash,
+                    }
+                )
+        results.sort(key=lambda item: (-float(item["score"]), str(item["path"])))
+        if phrase and results:
+            existing_paths = {str(item["path"]) for item in results}
+            expanded = []
+            queue = [(seed, 0) for seed in results[:5]]
+            traversed_paths: set[str] = set()
+            while queue and len(expanded) < limit:
+                seed, hop = queue.pop(0)
+                seed_display = str(seed["path"])
+                if seed_display in traversed_paths or hop >= _MAX_GRAPH_HOPS:
+                    continue
+                traversed_paths.add(seed_display)
+                try:
+                    seed_path, _, seed_knowledge_id, seed_bundle_root = _resolve_knowledge_path(workspace_state, seed_display)
+                    seed_text = seed_path.read_text(encoding="utf-8", errors="replace")
+                except (OSError, ValueError):
+                    continue
+                for match in re.finditer(r"\[[^\]]+\]\(([^)#?]+)(?:[?#][^)]*)?\)", seed_text):
+                    raw_target = match.group(1)
+                    target = (seed_path.parent / raw_target).resolve()
+                    if target.name in {"index.md", "source.md", "log.md"} or not target.is_file():
+                        continue
+                    display = _display_knowledge_path(seed_bundle_root, seed_knowledge_id, target)
+                    if display in existing_paths:
+                        continue
+                    if seed_bundle_root not in target.parents:
+                        continue
+                    target_text = target.read_text(encoding="utf-8", errors="replace")
+                    target_result = {
+                        "path": display,
+                        "title": _title_from_markdown(target, target_text),
+                        "line": 1,
+                        "snippet": _snippet(target_text, ""),
+                        "score": round(float(seed["score"]) * 0.5, 4),
+                        "reasons": ["graph"],
+                        "snapshotId": seed.get("snapshotId"),
+                        "graphHop": hop + 1,
+                    }
+                    expanded.append(target_result)
+                    existing_paths.add(display)
+                    queue.append((target_result, hop + 1))
+                    if len(expanded) >= limit:
+                        break
+            results.extend(expanded)
+            results.sort(key=lambda item: (-float(item["score"]), str(item["path"])))
+        results = results[:limit]
         return json.dumps(
             {
                 "query": query,
@@ -128,16 +247,13 @@ def build_knowledge_search_tool(workspace_state: WorkspaceState) -> Tool:
 
     knowledge_search.name = "knowledge_search"
     knowledge_search.description = (
-        "List published OKF knowledge bundles or search their Markdown concepts. "
-        "Use this for @knowledge context before opening individual concepts."
+        "List or search only the published OKF bundles explicitly selected with @ for this turn. "
+        "Returns knowledge:// paths for knowledge_read."
     )
     return knowledge_search
 
 
 def build_knowledge_read_tool(workspace_state: WorkspaceState) -> Tool:
-    root = _knowledge_root(workspace_state)
-    workspace_root = _workspace_root(workspace_state)
-
     @tool
     def knowledge_read(
         path: str,
@@ -147,7 +263,7 @@ def build_knowledge_read_tool(workspace_state: WorkspaceState) -> Tool:
     ) -> str:
         """Read a bounded line range from one published OKF index or concept."""
         try:
-            candidate = _resolve_knowledge_path(root, path)
+            candidate, snapshot_id, knowledge_id, bundle_root = _resolve_knowledge_path(workspace_state, path)
             full_text = candidate.read_text(encoding="utf-8", errors="replace")
             lines = full_text.splitlines()
             start = max(1, int(start_line or 1))
@@ -157,14 +273,31 @@ def build_knowledge_read_tool(workspace_state: WorkspaceState) -> Tool:
             truncated = len(text) > limit
             if truncated:
                 text = text[:limit].rstrip() + "\n\n[Knowledge document truncated]"
+            page_ranges = [
+                {"pageStart": int(start), "pageEnd": int(end)}
+                for start, end in re.findall(
+                    r"(?ms)^\s*kind:\s*[\"']?pdf_page_range[\"']?.*?^\s*start:\s*(\d+).*?^\s*end:\s*(\d+)",
+                    full_text,
+                )
+            ]
+            block_locations = []
+            for raw_ids in re.findall(
+                r"(?ms)^\s*kind:\s*[\"']?source_blocks[\"']?.*?^\s*block_ids:\s*\[([^\]]*)\]",
+                full_text,
+            ):
+                block_ids = re.findall(r"[\"']([^\"']+)[\"']", raw_ids)
+                if block_ids:
+                    block_locations.append({"kind": "source_blocks", "blockIds": block_ids})
             return json.dumps(
                 {
-                    "path": _display_path(workspace_root, candidate),
+                    "path": _display_knowledge_path(bundle_root, knowledge_id, candidate),
                     "title": _title_from_markdown(candidate, full_text),
                     "lineCount": len(lines),
                     "selectedLines": [start, end],
                     "content": text,
                     "truncated": truncated,
+                    "snapshotId": snapshot_id,
+                    "sourceLocations": [*page_ranges, *block_locations],
                 },
                 ensure_ascii=False,
                 indent=2,
@@ -203,13 +336,20 @@ def build_legacy_rag_query_tool(workspace_state: WorkspaceState) -> Tool:
         include_references: bool = False,
     ) -> str:
         """Compatibility search over original files or published OKF knowledge."""
-        del mode, include_references
         phrase = str(query or "").strip()
         if not phrase:
             return "Query is required"
         paths = [str(item).strip() for item in (file_paths or []) if str(item).strip()]
         if not paths:
-            return str(knowledge_search.invoke({"query": phrase, "max_results": 20}))
+            result = knowledge_search.invoke({"query": phrase, "max_results": 20})
+            try:
+                payload = json.loads(str(result))
+                payload["mode"] = str(mode or "hybrid")
+                payload["includeReferences"] = bool(include_references)
+                payload["compatibilityTool"] = "rag_query"
+                return json.dumps(payload, ensure_ascii=False, indent=2)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                return str(result)
         results = [
             {
                 "file": file_path,
@@ -227,6 +367,8 @@ def build_legacy_rag_query_tool(workspace_state: WorkspaceState) -> Tool:
             {
                 "compatibilityTool": "rag_query",
                 "query": phrase,
+                "mode": str(mode or "naive"),
+                "includeReferences": bool(include_references),
                 "files": results,
             },
             ensure_ascii=False,

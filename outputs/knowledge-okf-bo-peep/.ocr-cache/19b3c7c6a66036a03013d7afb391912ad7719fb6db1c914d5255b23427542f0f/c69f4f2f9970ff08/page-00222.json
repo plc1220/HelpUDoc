@@ -1,0 +1,54 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 222,
+    "blocks": [
+      {
+        "text": "LITTLE GOODY TWO-SHOES.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "and so has Harry Wilson, and so have we all.\" And they capered about as if they were overjoyed to see her. \" Why, then,\" says she, \" you are all very good ; so let us begin our lessons.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.97
+      },
+      {
+        "text": "As we were returning home, we saw a gentleman, who was very ill, sitting under a shady tree at the corner of the rookery. Though ill, he began to joke with little Margery, and said, laughing, \" So, Goody Two-Shoes, they tell me you are a cunning little baggage ; pray, can you tell me what I shall do to get well ?\" \" Yes, sir,\" says she ; \" go to bed when your rooks do, and get up with them in the morning ; earn as they do every day what you eat, and eat and drink no more than you earn, and you'll get health and keep it.\" The gentleman, laughing, gave Margery sixpence, and told her she was a sensible hussey.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.96
+      },
+      {
+        "text": "There was in the same parish Mrs. Williams, who kept a college for instructing little gentlemen and ladies in the science of A B C, who was at this time very old and infirm, and wanted to decline this important trust. This being told to Sir William Dove, he sent for Mrs. Williams, and desired she would examine little Two-Shoes, and see whether she was qualified for the office. This was done, and Mrs. Williams made the following report in her favour : namely, that little Margery was the best scholar, and had the best head and the best heart of any one she had examined. All the country had a great opinion of Mrs. Williams, and this character gave them also a great opinion of Mrs. Margery, for so we must now call her.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.96
+      },
+      {
+        "text": "The room in which Mrs. Margery taught her scholars was",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "8",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

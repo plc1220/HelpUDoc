@@ -1,0 +1,61 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 143,
+    "blocks": [
+      {
+        "text": "THE FOX AND THE GEESE.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "'Twas soon in a blaze, and Goosey awoke,\nWith fright almost ready to die,\nAnd, nearly smothered with heat and with smoke,\nUp the chimney was forced to fly.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.97
+      },
+      {
+        "text": "The Fox was rejoiced to witness her flight,\nAnd, heedless of all her sad groans,\nHe chased her until he saw her alight,\nThen eat her up all but her bones.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.97
+      },
+      {
+        "text": "Poor Ganderee's heart was ready to break\nWhen the sad news reached her ear.\n\"'Twas that villain the Fox,\" said good Mr. Drake,\nWho lived in a pond very near.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.97
+      },
+      {
+        "text": "\" Now listen to me, I pray you,\" he said,\n\" And roof your new house with some tiles,\nOr you, like your sisters, will soon be dead,-\nA prey to your enemy's wiles.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.97
+      },
+      {
+        "text": "So she took the advice of her mother and friend,\nAnd made her house very secure,\nThen she said,-\" Now, whatever may be my end,\nThe Fox cannot catch me, I'm sure.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.97
+      },
+      {
+        "text": "9",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

@@ -121,19 +121,22 @@ def test_knowledge_tools_navigate_published_okf_bundle(tmp_path) -> None:
     )
 
     workspace = WorkspaceState(workspace_id="knowledge", root_path=tmp_path)
+    workspace.context["knowledge_refs"] = [
+        {"id": 7, "bundleRoot": str(bundle), "snapshotHash": "snapshot-7"}
+    ]
     tools = {tool.name: tool for tool in build_knowledge_navigation_tools(workspace)}
 
     listing = json.loads(tools["knowledge_search"].invoke({"query": ""}))
-    assert listing["results"][0]["path"] == "/.system/knowledge/7/index.md"
+    assert listing["results"][0]["path"] == "knowledge://7/index.md"
 
     search = json.loads(tools["knowledge_search"].invoke({"query": "30 days"}))
-    assert search["results"][0]["path"] == "/.system/knowledge/7/concepts/returns.md"
+    assert search["results"][0]["path"] == "knowledge://7/concepts/returns.md"
     assert search["results"][0]["line"] == 7
 
     content = json.loads(
         tools["knowledge_read"].invoke(
             {
-                "path": "/.system/knowledge/7/concepts/returns.md",
+                "path": "knowledge://7/concepts/returns.md",
                 "start_line": 7,
                 "end_line": 7,
             }
@@ -141,3 +144,18 @@ def test_knowledge_tools_navigate_published_okf_bundle(tmp_path) -> None:
     )
     assert content["content"] == "Customers have 30 days."
     assert content["selectedLines"] == [7, 7]
+
+
+def test_knowledge_tools_require_an_explicit_tagged_bundle(tmp_path) -> None:
+    bundle = tmp_path / "standalone-bundle"
+    bundle.mkdir()
+    (bundle / "index.md").write_text("# Secret Knowledge\n", encoding="utf-8")
+    workspace = WorkspaceState(workspace_id="knowledge", root_path=tmp_path)
+    tools = {tool.name: tool for tool in build_knowledge_navigation_tools(workspace)}
+
+    search = json.loads(tools["knowledge_search"].invoke({"query": "Secret"}))
+    assert search["resultCount"] == 0
+    assert "@ command" in search["message"]
+    assert tools["knowledge_read"].invoke({"path": "knowledge://7/index.md"}).startswith(
+        "Knowledge read failed: Knowledge bundle was not tagged"
+    )

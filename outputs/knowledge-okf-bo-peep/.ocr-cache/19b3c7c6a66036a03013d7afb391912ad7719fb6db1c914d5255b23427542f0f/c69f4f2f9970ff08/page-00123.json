@@ -1,0 +1,75 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 123,
+    "blocks": [
+      {
+        "text": "AND HER PIG.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "little bargaining, she gave the boy the silver sixpence for the white pig, and then she tied a piece of string to one of the pig's hind legs, and began to drive him home.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "Piggy went through the streets very well, only grunting sometimes and running into the gutter when he saw anything he could eat, until at last they came to the stile into the meadow. The old Dame tried to lift the pig over the lower bar of the stile, but he squeaked, and grunted, and wriggled about till the old Dame was quite tired, and then piggy laid down and would not stir. Just then a little dog came trotting up, so the old Dame said to him,—",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "\" Good dog, bite pig, pig will not get over the stile, and I shall not get home to-night.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "But the dog would not.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "So the old Dame held up her stick and said,—",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "\" Good stick, beat dog; dog will not bite pig, pig will not get over the stile, and I shall not get home to-night.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "But the stick would not.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "5",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 1.0
+      }
+    ],
+    "blank": false,
+    "confidence": 0.99
+  }
+}

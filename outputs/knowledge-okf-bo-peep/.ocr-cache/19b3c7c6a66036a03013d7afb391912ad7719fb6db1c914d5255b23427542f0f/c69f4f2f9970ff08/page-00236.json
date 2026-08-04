@@ -1,0 +1,68 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 236,
+    "blocks": [
+      {
+        "text": "THE UGLY LITTLE DUCK.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "another brood! as if we were not numerous enough already. But see, what an ugly thing that duckling is; he is not to be suffered among us.\" At these words, an insolent drake bit the poor duckling in the neck.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.97
+      },
+      {
+        "text": "\" Leave him alone,\" exclaimed his mother; \" he doesn't harm any one.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.96
+      },
+      {
+        "text": "\" Perhaps not,\" answered the offending drake; \" but he is much too big for his age, and a beating will do him good.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.96
+      },
+      {
+        "text": "The mother smoothed his ruffled feathers, but the poor ugly-looking duckling was pecked at, pushed, and ridiculed by both ducks and chickens. So the poor persecuted creature knew not where he might stand, or where he might go; and was quite cast down by the insults which he suffered on account of his unfortunate ugliness.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "Thus the first day passed, but every succeeding one was more and more full of trouble and vexation. The duckling was hunted by all like a wild animal; even his brothers and sisters behaved very badly to him, the hens pecked him, and the girl who fed the fowls pushed him roughly away.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "Then he ran and flew over the palings, until at last, by a great effort, he alighted on a hedge. The little singing-birds in the bushes flew away frightened. \" That is because I am so ugly,\" thought the young duck, shutting his eyes; but nevertheless he continued to fly onwards till he reached a large marsh, where the wild ducks flock together. There he remained,",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "6",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

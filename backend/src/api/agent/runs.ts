@@ -7,6 +7,7 @@ import type { FileService } from '../../services/fileService';
 import type { GoogleOAuthService } from '../../services/googleOAuthService';
 import type { UserService } from '../../services/userService';
 import type { ConversationService } from '../../services/conversationService';
+import type { KnowledgeService } from '../../services/knowledgeService';
 import { HttpError, NotFoundError } from '../../errors';
 import {
   cancelAgentRun,
@@ -46,6 +47,7 @@ const runAgentSchema = z.object({
   taggedFiles: z.array(z.string().min(1)).optional(),
   currentTurnFileIds: z.array(z.number().int().positive()).optional(),
   internetSearchEnabled: z.boolean().optional(),
+  knowledgeRefs: z.array(z.object({ id: z.number().int().positive() })).max(20).optional(),
 });
 
 const runDecisionSchema = z.object({
@@ -93,6 +95,7 @@ export function registerRunRoutes(
   googleOAuthService: GoogleOAuthService,
   userService: UserService,
   conversationService: ConversationService,
+  knowledgeService: KnowledgeService,
 ) {
   const policyApi = createAgentPolicyApi(googleOAuthService, userService);
   const ensureRunAccess = async (
@@ -144,6 +147,27 @@ export function registerRunRoutes(
       ? `\n\nTagged files (preferred for retrieval):\n${taggedPaths.map((entry) => `- ${entry}`).join('\n')}`
       : '';
     return `${prompt}${fileHint}`;
+  };
+
+  const resolveKnowledgeContext = async (
+    prompt: string,
+    userId: string,
+    refs?: Array<{ id: number }>,
+  ) => {
+    const resolved = await knowledgeService.resolveTaggedKnowledgeRefs(
+      userId,
+      (refs || []).map((ref) => ref.id),
+    );
+    if (!resolved.length) return { prompt, knowledgeRefs: [] };
+    const guidance = [
+      'Tagged Knowledge bundles (the only Knowledge scope for this turn):',
+      ...resolved.map((ref) => `- ${ref.title} (knowledge://${ref.id}/index.md)`),
+      'Use knowledge_read or knowledge_search only within these selected bundles.',
+    ].join('\n');
+    return {
+      prompt: `${prompt.trim()}\n\n${guidance}`,
+      knowledgeRefs: resolved,
+    };
   };
 
   const buildCurrentTurnMessageContent = async (
@@ -221,10 +245,12 @@ export function registerRunRoutes(
   router.post('/run', async (req, res) => {
     try {
       const user = requireUserContext(req);
-      const { persona, prompt, workspaceId, history, forceReset, taggedFiles, currentTurnFileIds, internetSearchEnabled } = runAgentSchema.parse(req.body);
+      const { persona, prompt, workspaceId, history, forceReset, taggedFiles, currentTurnFileIds, internetSearchEnabled, knowledgeRefs } = runAgentSchema.parse(req.body);
       const workspacePolicy = await workspaceService.getMcpServerPolicy(workspaceId, user.userId);
       const policy = await policyApi.resolveEffectiveAgentPolicy(user.userId, workspacePolicy);
-      const enrichedPrompt = await injectTaggedFileUrls(prompt, workspaceId, user.userId, taggedFiles);
+      const taggedPrompt = await injectTaggedFileUrls(prompt, workspaceId, user.userId, taggedFiles);
+      const knowledgeContext = await resolveKnowledgeContext(taggedPrompt, user.userId, knowledgeRefs);
+      const enrichedPrompt = knowledgeContext.prompt;
       const authToken = await policyApi.buildAgentAuthToken({
         userId: user.userId,
         workspaceId,
@@ -237,6 +263,7 @@ export function registerRunRoutes(
         authToken: authToken || undefined,
         messageContent,
         internetSearchEnabled,
+        knowledgeRefs: knowledgeContext.knowledgeRefs,
         traceContext: {
           userId: user.userId,
           workspaceId,
@@ -277,10 +304,12 @@ export function registerRunRoutes(
 
     try {
       const user = requireUserContext(req);
-      const { persona, prompt, workspaceId, history, forceReset, taggedFiles, currentTurnFileIds, internetSearchEnabled } = runAgentSchema.parse(req.body);
+      const { persona, prompt, workspaceId, history, forceReset, taggedFiles, currentTurnFileIds, internetSearchEnabled, knowledgeRefs } = runAgentSchema.parse(req.body);
       const workspacePolicy = await workspaceService.getMcpServerPolicy(workspaceId, user.userId);
       const policy = await policyApi.resolveEffectiveAgentPolicy(user.userId, workspacePolicy);
-      const enrichedPrompt = await injectTaggedFileUrls(prompt, workspaceId, user.userId, taggedFiles);
+      const taggedPrompt = await injectTaggedFileUrls(prompt, workspaceId, user.userId, taggedFiles);
+      const knowledgeContext = await resolveKnowledgeContext(taggedPrompt, user.userId, knowledgeRefs);
+      const enrichedPrompt = knowledgeContext.prompt;
       const authToken = await policyApi.buildAgentAuthToken({
         userId: user.userId,
         workspaceId,
@@ -294,6 +323,7 @@ export function registerRunRoutes(
         authToken: authToken || undefined,
         messageContent,
         internetSearchEnabled,
+        knowledgeRefs: knowledgeContext.knowledgeRefs,
         traceContext: {
           userId: user.userId,
           workspaceId,
@@ -339,14 +369,16 @@ export function registerRunRoutes(
   router.post('/runs', async (req, res) => {
     try {
       const user = requireUserContext(req);
-      const { persona, prompt, workspaceId, conversationId, history, forceReset, turnId, taggedFiles, currentTurnFileIds, internetSearchEnabled } = runAgentSchema.parse(req.body);
+      const { persona, prompt, workspaceId, conversationId, history, forceReset, turnId, taggedFiles, currentTurnFileIds, internetSearchEnabled, knowledgeRefs } = runAgentSchema.parse(req.body);
       await workspaceService.ensureMembership(workspaceId, user.userId);
       if (conversationId) {
         await conversationService.ensureConversationAccess(user.userId, workspaceId, conversationId);
       }
       const workspacePolicy = await workspaceService.getMcpServerPolicy(workspaceId, user.userId);
       const policy = await policyApi.resolveEffectiveAgentPolicy(user.userId, workspacePolicy);
-      const enrichedPrompt = await injectTaggedFileUrls(prompt, workspaceId, user.userId, taggedFiles);
+      const taggedPrompt = await injectTaggedFileUrls(prompt, workspaceId, user.userId, taggedFiles);
+      const knowledgeContext = await resolveKnowledgeContext(taggedPrompt, user.userId, knowledgeRefs);
+      const enrichedPrompt = knowledgeContext.prompt;
       const authToken = await policyApi.buildAgentAuthToken({
         userId: user.userId,
         workspaceId,
@@ -366,6 +398,7 @@ export function registerRunRoutes(
         authToken: authToken || undefined,
         messageContent,
         internetSearchEnabled,
+        knowledgeRefs: knowledgeContext.knowledgeRefs,
       });
       res.json({ runId, status });
     } catch (error: any) {

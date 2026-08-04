@@ -1,0 +1,68 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 240,
+    "blocks": [
+      {
+        "text": "THE UGLY LITTLE DUCK.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "his hiding-place, and then ran away from the terrible marsh.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.97
+      },
+      {
+        "text": "Towards evening our fugitive reached a poor peasant's hut, the rotten door of which had fallen from its hinges, so that a very welcome chink was left, through which he could slip into the room.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "An old woman with her cat and hen were the only inhabitants; and they next morning discovered their strange unbidden guest.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "\" What is that?\" said the dame, who, not seeing well, took the poor lean bird for a fat duck who had mistaken his way in the dark. \" Here is indeed a piece of good luck!\" exclaimed she, overjoyed. \" Now I can have duck's eggs, provided the stupid thing be not a drake after all!\" addded she. \" But we will let it remain on trial.\" And so the youngster remained three weeks, but without laying any eggs, when one morning, after a sleepless night, he felt himself seized with an unconquerable longing to swim once more in the clear water. At last he could bear it no longer, and he spoke his wish to the hen. \" What whim has seized upon you now?\" answered she, quite angrily; \" this comes of having nothing to do. Lay some eggs, and then you will be all right.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "\" But it is so beautiful to swim on the water,\" answered the young drake, sighing.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.97
+      },
+      {
+        "text": "\" A mighty pleasure, truly!\" scolded the hen. \" You",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.97
+      },
+      {
+        "text": "10",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

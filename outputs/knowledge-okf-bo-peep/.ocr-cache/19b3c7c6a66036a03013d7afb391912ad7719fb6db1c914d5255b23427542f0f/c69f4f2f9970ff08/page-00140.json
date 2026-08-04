@@ -1,0 +1,68 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 140,
+    "blocks": [
+      {
+        "text": "THE FOX AND THE GEESE.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "Thought he, \" Now I'll have some supper and fun,\nFor of both I am really fond.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.96
+      },
+      {
+        "text": "Then on to the box he sprang in a trice,\nAnd roused Mrs. Gobble from bed ;\nShe only had time to hiss once or twice\nEre he snapped off her lily-white head.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.97
+      },
+      {
+        "text": "Her sisters at home felt anxious and low\nWhen poor Gobble did not appear,\nAnd Goosey, determined her fate to know,\nWent and sought all the field far and near.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.97
+      },
+      {
+        "text": "At last she descried poor Gobble's head,\nAnd some feathers not far apart,\nSo she told Ganderee she had found her dead,\nAnd they both felt quite sad at heart.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.97
+      },
+      {
+        "text": "Now Goosey was pretty, but liked her own way,\nLike Gobble, and some other birds.\n\"'Tis no matter,\" said she, \" if I only obey\nA part of my mother's last words.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.97
+      },
+      {
+        "text": "So her house she soon built of nice red brick,\nBut she only thatched it with straw ;",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.97
+      },
+      {
+        "text": "6",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

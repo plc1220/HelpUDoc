@@ -1,0 +1,47 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 259,
+    "blocks": [
+      {
+        "text": "THE CHARMED FAWN.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "the palace while the king was out hunting; and having assumed the shape of one of the queen's maids, she went into her bedchamber, and said, \" The bath is now ready, and if it pleases your majesty to get up before it gets cold, no doubt it will do you good.\" The witch's daughter, who was likewise at hand, then helped to lift the sick queen into the bath. No sooner had they done this than they closed the door of the bath-room, where they had made such a fire, that they felt certain the beautiful young queen would be instantly stifled.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "The old crone then put a cap on her daughter's head, and laid her in the queen's bed, and tried to make her look as like her majesty as possible; only, not being able to give her back the eye that was missing, she bade her lie on that side, so as to conceal the defect. Towards evening the king came home, and hearing that a son was born to him, was delighted at the news, and immediately went to see his beloved wife. As he approached the bed, the old crone cried out to him, \" For goodness' sake, do not draw the curtain, for the queen wants rest, and the light would hurt her.\" So the king retired, without imagining that a false queen was lying in the bed.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "Towards midnight, when every one was asleep except the nurse, who sat watching beside the cradle in the nursery, the door opened, and the real queen came in. She took the baby",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "13",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

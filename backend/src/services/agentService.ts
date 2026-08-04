@@ -20,6 +20,14 @@ export type AgentMessageContentBlock = {
   [key: string]: unknown;
 };
 
+export type AgentKnowledgeRef = {
+  id: number;
+  title: string;
+  snapshotHash?: string | null;
+  okfVersion: string;
+  bundleRoot: string;
+};
+
 export type AgentTraceContext = {
   runId?: string;
   threadId?: string;
@@ -64,6 +72,7 @@ type RunAgentOptions = {
   authToken?: string;
   messageContent?: AgentMessageContentBlock[];
   internetSearchEnabled?: boolean;
+  knowledgeRefs?: AgentKnowledgeRef[];
   traceContext?: AgentTraceContext;
   interruptId?: string;
   originalPrompt?: string;
@@ -73,6 +82,82 @@ export type DocumentExtractionResponse = {
   title: string;
   summary: string;
   markdown: string;
+  manifest?: {
+    extractorVersion: string;
+    sourceType: string;
+    discoveredSourceUnits: number;
+    processedSourceUnits: number;
+    failedSourceUnits: number;
+    needsOcrSourceUnits?: number;
+    converter?: string;
+    markdownConverter?: string | null;
+    locatorStrategy?: string;
+    mediaType?: string | null;
+    ocrMode?: 'off' | 'auto' | 'always';
+    ocrProvider?: string | null;
+    ocrModel?: string | null;
+    ocrTextThreshold?: number;
+    modelUsage?: Array<{
+      stage: string;
+      provider: string;
+      model: string;
+      sourceUnits: string[];
+      inputTokens: number;
+      cachedInputTokens: number;
+      outputTokens: number;
+      retries: number;
+      latencyMs: number;
+      outcome: 'completed' | 'failed' | 'cached';
+      error?: string | null;
+    }>;
+    mediaArtifacts?: Array<Record<string, unknown>>;
+    warnings?: Array<{ sourceUnit: string; code: string; message: string }>;
+  };
+  blocks?: Array<Record<string, unknown>>;
+  structure?: Array<Record<string, unknown>>;
+  windows?: Array<Record<string, unknown>>;
+  languageDistribution?: Record<string, number>;
+};
+
+export type KnowledgeMapResponse = {
+  result: {
+    concepts: Array<{
+      candidateId: string;
+      kind: string;
+      name: string;
+      description: string;
+      aliases: string[];
+      tags: string[];
+      assertions: Array<{
+        text: string;
+        confidence: number;
+        evidence: Array<{ blockIds: string[]; pageStart?: number | null; pageEnd?: number | null }>;
+      }>;
+      relationships: Array<{
+        targetName: string;
+        targetKind: string;
+        type: string;
+        confidence: number;
+        confidenceClass: 'EXTRACTED' | 'INFERRED' | 'AMBIGUOUS';
+        evidenceBlockIds: string[];
+      }>;
+    }>;
+    summary: string;
+    unresolvedReferences: string[];
+  };
+  provider: string;
+  model: string;
+  modelProfile: string;
+  promptVersion: string;
+  schemaVersion: string;
+  usage?: {
+    events?: Array<Record<string, unknown>>;
+    inputTokens?: number;
+    cachedInputTokens?: number;
+    outputTokens?: number;
+    attempts?: number;
+  };
+  validationWarnings?: string[];
 };
 
 type InternalAgentOptions = {
@@ -99,6 +184,9 @@ export async function runAgent(
   }
   if (options?.internetSearchEnabled) {
     payload.internetSearchEnabled = true;
+  }
+  if (options?.knowledgeRefs?.length) {
+    payload.knowledgeRefs = options.knowledgeRefs;
   }
   if (options?.traceContext) {
     payload.langfuseTraceContext = options.traceContext;
@@ -134,6 +222,9 @@ export async function runAgentStream(
   }
   if (options?.internetSearchEnabled) {
     payload.internetSearchEnabled = true;
+  }
+  if (options?.knowledgeRefs?.length) {
+    payload.knowledgeRefs = options.knowledgeRefs;
   }
   if (options?.traceContext) {
     payload.langfuseTraceContext = options.traceContext;
@@ -307,12 +398,126 @@ export async function deleteInternalMemoryFile(
 export async function extractWorkspaceDocument(
   workspaceId: string,
   relativePath: string,
+  options?: InternalAgentOptions,
 ): Promise<DocumentExtractionResponse> {
+  const headers: Record<string, string> = {};
+  if (options?.authToken) headers.Authorization = `Bearer ${options.authToken}`;
   const res = await client.post('/documents/extract', {
     workspaceId,
     relativePath,
   }, {
     timeout: DOCUMENT_EXTRACTION_TIMEOUT_MS,
+    headers,
+  });
+  return res.data;
+}
+
+export async function preflightWorkspaceDocument(
+  workspaceId: string,
+  relativePath: string,
+  options?: InternalAgentOptions,
+): Promise<{
+  sourceType: string;
+  bytes: number;
+  sourceUnits: number | null;
+  nativeCharacters: number | null;
+  ocrSourceUnits: number;
+  ocrPages: number[];
+  ocrTextThreshold: number;
+}> {
+  const headers: Record<string, string> = {};
+  if (options?.authToken) headers.Authorization = `Bearer ${options.authToken}`;
+  const res = await client.post('/documents/preflight', { workspaceId, relativePath }, {
+    timeout: DOCUMENT_EXTRACTION_TIMEOUT_MS,
+    headers,
+  });
+  return res.data;
+}
+
+export async function enrichKnowledgeWindow(payload: {
+  workspaceId: string;
+  window: Record<string, unknown>;
+  blocks: Array<Record<string, unknown>>;
+  sourceType: string;
+  languageDistribution?: Record<string, number>;
+  structuralPath?: string[];
+}, options?: InternalAgentOptions): Promise<KnowledgeMapResponse> {
+  const headers: Record<string, string> = {};
+  if (options?.authToken) headers.Authorization = `Bearer ${options.authToken}`;
+  const res = await client.post('/knowledge/ingestion/map', payload, {
+    timeout: DOCUMENT_EXTRACTION_TIMEOUT_MS,
+    headers,
+  });
+  return res.data;
+}
+
+export async function reduceKnowledgeMapResults(payload: {
+  workspaceId: string;
+  mapResults: KnowledgeMapResponse[];
+  blocks: Array<Record<string, unknown>>;
+  fanIn?: number;
+}, options?: InternalAgentOptions): Promise<KnowledgeMapResponse> {
+  const headers: Record<string, string> = {};
+  if (options?.authToken) headers.Authorization = `Bearer ${options.authToken}`;
+  const res = await client.post('/knowledge/ingestion/reduce', payload, {
+    timeout: DOCUMENT_EXTRACTION_TIMEOUT_MS,
+    headers,
+  });
+  return res.data;
+}
+
+export type KnowledgeEmbeddingResponse = {
+  provider: string;
+  model: string;
+  dimensions: number;
+  embeddings: Array<{
+    id: string;
+    values: number[];
+    tokenCount: number;
+    contentHash?: string | null;
+    page?: number | null;
+  }>;
+};
+
+export async function embedKnowledgeInputs(payload: {
+  workspaceId: string;
+  inputs: Array<{ id: string; text: string; title?: string }>;
+  dimensions?: number;
+  taskType?: 'RETRIEVAL_DOCUMENT' | 'RETRIEVAL_QUERY';
+}, options?: InternalAgentOptions): Promise<KnowledgeEmbeddingResponse> {
+  const headers: Record<string, string> = {};
+  if (options?.authToken) headers.Authorization = `Bearer ${options.authToken}`;
+  const res = await client.post('/knowledge/ingestion/embed', payload, {
+    timeout: DOCUMENT_EXTRACTION_TIMEOUT_MS,
+    headers,
+  });
+  return res.data;
+}
+
+export async function embedKnowledgeMedia(payload: {
+  workspaceId: string;
+  relativePath: string;
+  pages: number[];
+  dimensions?: number;
+}, options?: InternalAgentOptions): Promise<KnowledgeEmbeddingResponse> {
+  const headers: Record<string, string> = {};
+  if (options?.authToken) headers.Authorization = `Bearer ${options.authToken}`;
+  const res = await client.post('/knowledge/ingestion/embed-media', payload, {
+    timeout: DOCUMENT_EXTRACTION_TIMEOUT_MS,
+    headers,
+  });
+  return res.data;
+}
+
+export async function analyzeKnowledgeGraph(payload: {
+  workspaceId: string;
+  concepts: Array<Record<string, unknown>>;
+}, options?: InternalAgentOptions): Promise<Record<string, any>> {
+  const headers: Record<string, string> = {};
+  if (options?.authToken) headers.Authorization = `Bearer ${options.authToken}`;
+  const res = await client.post('/knowledge/ingestion/graph-analysis', payload, {
+    timeout: DOCUMENT_EXTRACTION_TIMEOUT_MS,
+    headers,
   });
   return res.data;
 }

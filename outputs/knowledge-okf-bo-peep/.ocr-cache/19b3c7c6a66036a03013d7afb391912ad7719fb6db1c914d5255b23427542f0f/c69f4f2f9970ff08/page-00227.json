@@ -1,0 +1,54 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 227,
+    "blocks": [
+      {
+        "text": "LITTLE GOODY TWO-SHOES.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "advice, and by that means got in their hay without damage, while most of that in the neighbouring village was spoiled. This occasioned a very great noise in the country, and so greatly provoked were the people who resided in the other parishes, that they absolutely accused her of being a witch, and sent old Gaffer Goosecap, a busy fellow in other people's concerns, to find out evidence against her. The wiseacre happened to come to her school when she was walking about with the raven on one shoulder, the pigeon on the other, the lark on her hand, and the lamb and the dog by her side; which indeed made a droll figure, and so surprised the man, that he cried out, \"A witch! a witch! a witch!\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "Upon this, she, laughing, answered, \"A conjurer! a conjurer!\" and so they parted. But it did not end thus, for a warrant was issued out against Mrs. Margery, and she was carried to a meeting of the justices, whither all the neighbours followed her.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "At the meeting, one of the justices, who knew little of life and less of the law, behaved very badly, and though nobody was able to prove anything against her, asked who she could bring to her character. \"Who can you bring against my character, sir?\" says she. \"There are people enough who would appear in my defence, were it necessary; but I never supposed that any one here could be so weak as to believe there was any such thing as a witch. If I am a witch, this is my charm, and (laying a barometer or weather-glass upon the table) it is with this,\" says she, \"that I have taught my neighbours to know the state of the weather.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "All the company laughed; and Sir William Dove, who",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "13",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

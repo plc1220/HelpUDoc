@@ -77,6 +77,7 @@ const backendEnvSchema = z.object({
   s3: z.object({
     bucketName: z.string().min(1),
     endpoint: z.string().min(1),
+    publicEndpoint: z.string().url(),
     forcePathStyle: z.boolean(),
     hasCustomEndpoint: z.boolean(),
     region: z.string().min(1),
@@ -142,6 +143,7 @@ export function parseBackendEnv(e: NodeJS.ProcessEnv = process.env): BackendEnv 
     s3: {
       bucketName: bucket,
       endpoint,
+      publicEndpoint: trimEnv(e, 'S3_PUBLIC_ENDPOINT') || endpoint,
       forcePathStyle,
       hasCustomEndpoint,
       region: trimEnv(e, 'AWS_REGION') || 'us-east-1',

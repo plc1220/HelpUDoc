@@ -1,0 +1,33 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 294,
+    "blocks": [
+      {
+        "text": "ROBIN HOOD.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "confinement of court, and asked permission to revisit the woods. The King granted him seven days; but when once he breathed the pure air of Sherwood again, he could not tear himself away; and when, from old habit, he sounded his bugle, he was surprised to see the signal answered by fourscore youths. Little John soon joined him, and he again became the leader of a band. King Richard was so enraged on hearing this, that he sent two hundred soldiers to reduce the rebel, and a desperate fight took place on a plain in the forest, when Robin Hood was wounded by an arrow, and removed to Kirkley's Nunnery, where the treacherous prioress suffered him to bleed to death. Seeing his end fast approaching, he called to Little John, and begged him to remove him to the woods; and there poor Robin Hood died as he had lived, beneath the green trees, and was buried according to his wish. The stone that marked the spot bore the following inscription : -",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "Here, underneath this little stone,\nLies Robert Earl of Huntingdon.\nNe'er archer was as he so good,\nAnd people called him 'Robin Hood.'\nSuch outlaws as he and his men\nWill England never see again.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.95
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

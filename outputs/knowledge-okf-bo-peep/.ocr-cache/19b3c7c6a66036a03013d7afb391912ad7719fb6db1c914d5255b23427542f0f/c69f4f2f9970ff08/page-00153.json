@@ -1,0 +1,33 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 153,
+    "blocks": [
+      {
+        "text": "JENNY WREN.",
+        "blockType": "heading",
+        "headingLevel": 3,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "\"Eat well of the sop, Jenny, drink well of the wine.\" \"Thank you, Robin, kindly, you shall be mine.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "3",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 1.0
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

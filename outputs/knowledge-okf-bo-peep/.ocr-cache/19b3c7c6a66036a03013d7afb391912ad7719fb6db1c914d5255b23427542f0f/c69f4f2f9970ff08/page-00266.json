@@ -1,0 +1,54 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 266,
+    "blocks": [
+      {
+        "text": "HANS IN LUCK.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "\" That I will, and thank you too,\" said Hans ; \" but I remind you that you will have to drag it along as best you may.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "The traveller got down from his horse, and took the lump of gold, and then helped Hans to mount ; and having placed the bridle in his hand, said to him, \" When you want to go very fast, you have only to smack your tongue, and cry, ' Hop ! hop !'\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "Hans was in great delight, as he sat on the horse, and found he rode along so easily and so pleasantly. After awhile, however, he fancied he should like to go a little quicker, so he began to smack his tongue, and to shout \" Hop ! hop !\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "The horse set off at a brisk trot, and before Hans had time to collect his thoughts, he was pitched into a ditch that divided the main road from the adjoining fields. The horse would have cleared the ditch at a bound, had he not been stopped by a peasant, who was driving a cow along the same road, and happened to come up with the luckless rider just at this moment. Hans crawled out of the ditch as best he might, and got upon his legs again. But he was sorely vexed, and observed to the peasant that riding was no joke, especially when one had to do with a troublesome beast that thought nothing of kicking, and plunging, and breaking a man's neck ; and that nobody should ever catch him again attempting to mount such a dangerous animal. Then he concluded by",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "4",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 1.0
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

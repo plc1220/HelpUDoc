@@ -1,0 +1,54 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 233,
+    "blocks": [
+      {
+        "text": "THE UGLY LITTLE DUCK.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "sitting in her nest hatching her eggs ; but of this important task she was almost tired, for scarcely one had visited her, as the other ducks were swimming about in the pond, and did not stay to gossip with her. At last, one egg cracked, then a second, then a third, a fourth, a fifth, to a sixth.—\" Piep ! piep !\" went one, \" Piep ! piep !\" went another, until a dozen had cracked, and the little half-naked brood thrust their heads out of their narrow, fragile dwelling, as if out of a window. \" Quack ! quack !\" said the mother, as the little ducklings hastened out as fast as they could, looking about them in great amazement. \" How big the world is !\" said the little ones. \" Do you think that this is the whole world ?\" said the mothe \" Ah, no ! it stretches far away beyond the garden. But are you all here ?\" continued she, with true motherly care. \" No, they are not all hatched yet,\" added she ; \" the biggest egg lies there still ! How long will it last ? I begin really to be quite tired.\" However, she sat down on the nest again.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "\" Well ! how are you to-day ?\" exclaimed an old duck, who came bustling to pay her friend a visit.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "\" Oh, there is no end to hatching this one egg !\" complained the mother ; \" the shell must be too hard for the duckling to break. But now you shall see the others. There is my pretty little family.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "\" Show me the egg that will not break,\" interrupted the old duck. \" Believe me, it is a Turkey's egg. The same thing happened to me once, and I had a precious trouble with",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "3",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}
