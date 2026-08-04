@@ -460,6 +460,7 @@ jobs:
           APP_ARGS=()
           if [[ "${{ inputs.build_backend }}" == "true" ]]; then
             APP_ARGS+=("backend=${BACKEND_IMG}")
+            APP_ARGS+=("knowledge-worker=${BACKEND_IMG}")
           fi
           if [[ "${{ inputs.build_agent }}" == "true" ]]; then
             APP_ARGS+=("agent=${AGENT_IMG}")
