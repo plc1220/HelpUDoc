@@ -40,8 +40,6 @@ class GeminiClientManager:
         use_vertex = model_cfg.use_vertex_ai
 
         client_kwargs: dict = {}
-        if self._api_key:
-            client_kwargs["api_key"] = self._api_key
 
         if use_vertex:
             if not model_cfg.project or not model_cfg.location:
@@ -56,6 +54,8 @@ class GeminiClientManager:
             )
         else:
             client_kwargs["vertexai"] = False
+            if self._api_key:
+                client_kwargs["api_key"] = self._api_key
 
         self.client = self._build_client(client_kwargs)
         self.model_name = model_cfg.chat_model_name

@@ -50,8 +50,6 @@ def create_chat_google_generative_ai(
         kwargs["vertexai"] = True
         kwargs["project"] = cfg.project
         kwargs["location"] = cfg.location
-        if api_key:
-            kwargs["api_key"] = api_key
     else:
         kwargs["vertexai"] = False
         if api_key:
