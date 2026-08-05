@@ -187,7 +187,8 @@ const WorkspacePublishDialog: React.FC<WorkspacePublishDialogProps> = ({
             )}
             {teamId ? (
               <Alert severity="info" sx={{ mb: 2 }}>
-                Team members will receive Viewer access to the shared workspace, including Team Chat and collaboration.
+                Team members will receive {namedRole === 'viewer' ? 'Viewer' : 'Contributor'} access to the
+                shared workspace, including Team Chat and collaboration. Publisher authority remains direct-user only.
               </Alert>
             ) : null}
             <Autocomplete

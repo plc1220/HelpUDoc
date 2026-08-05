@@ -18,10 +18,12 @@ import {
   Switch,
   TextField,
   Typography,
+  useTheme,
 } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
 
 import type { Workspace } from '../types';
+import WorkspaceReviewChangesDialog from './WorkspaceReviewChangesDialog';
 import {
   applyWorkspaceCollaborationProposal,
   convertWorkspaceCollaborationObjectToProposal,
@@ -68,6 +70,7 @@ const WorkspaceCollaborationDialog = ({
   onClose,
   onWorkspaceListChanged,
 }: Props) => {
+  const theme = useTheme();
   const workspaceId = workspace?.id;
   const canComment = roleCanComment(workspace?.role);
   const canPropose = roleCanPropose(workspace?.role);
@@ -84,6 +87,7 @@ const WorkspaceCollaborationDialog = ({
   const [messages, setMessages] = useState<WorkspaceCollaborationMessage[]>([]);
   const [reply, setReply] = useState('');
   const [actionBusy, setActionBusy] = useState(false);
+  const [reviewCopy, setReviewCopy] = useState<{ id: string; name: string } | null>(null);
 
   const selected = useMemo(
     () => objects.find((object) => object.id === selectedId) || null,
@@ -128,6 +132,10 @@ const WorkspaceCollaborationDialog = ({
     setType(filePath ? 'annotation' : 'sticky_note');
     void loadObjects();
   }, [canComment, filePath, loadObjects, open]);
+
+  useEffect(() => {
+    if (!open) setReviewCopy(null);
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -367,9 +375,22 @@ const WorkspaceCollaborationDialog = ({
                     && selected.type === 'change_proposal'
                     && Boolean(selected.linkedPrivateWorkspaceId)
                     && (selected.status === 'proposed' || selected.status === 'discussing') ? (
-                      <Button size="small" variant="contained" disabled={actionBusy} onClick={() => void handleApplyProposal()}>
-                        Apply to working version
-                      </Button>
+                      <>
+                        <Button
+                          size="small"
+                          variant="outlined"
+                          disabled={actionBusy}
+                          onClick={() => setReviewCopy({
+                            id: selected.linkedPrivateWorkspaceId!,
+                            name: selected.title || 'Proposed private changes',
+                          })}
+                        >
+                          Review changes
+                        </Button>
+                        <Button size="small" variant="contained" disabled={actionBusy} onClick={() => void handleApplyProposal()}>
+                          Apply to working version
+                        </Button>
+                      </>
                     ) : null}
                 </Stack>
                 <Divider />
@@ -417,6 +438,13 @@ const WorkspaceCollaborationDialog = ({
       <DialogActions>
         <Button color="inherit" onClick={onClose}>Done</Button>
       </DialogActions>
+      <WorkspaceReviewChangesDialog
+        open={reviewCopy !== null}
+        workspace={reviewCopy}
+        colorMode={theme.palette.mode}
+        onClose={() => setReviewCopy(null)}
+        onSubmitted={loadObjects}
+      />
     </Dialog>
   );
 };

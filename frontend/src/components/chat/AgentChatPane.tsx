@@ -255,21 +255,34 @@ export default function AgentChatPane({
     && sharedWorkspace.canEdit,
   );
   const hasPrivateWorkingCopy = Boolean(sharedWorkspace?.privateCopyWorkspaceId);
-  const canCreatePrivateWorkingCopy = Boolean(
+  const canReceivePrivateWorkingCopy = Boolean(
     sharedWorkspace?.role === 'owner'
     || sharedWorkspace?.role === 'editor'
     || sharedWorkspace?.role === 'contributor',
   );
-  const canUsePrivateWorkingCopy = Boolean(
+  const canOpenPrivateWorkingCopy = Boolean(
     isSharedWorkspace
     && sharedWorkspace?.editingPolicy === 'review'
-    && (hasPrivateWorkingCopy || canCreatePrivateWorkingCopy)
+    && hasPrivateWorkingCopy
     && onOpenPrivateWorkingCopy,
   );
 
   useEffect(() => {
     setSharedMode('team');
   }, [sharedWorkspace?.id]);
+
+  const handleSharedModeChange = (mode: SharedChatMode) => {
+    if (
+      mode === 'private'
+      && sharedWorkspace?.editingPolicy === 'review'
+      && canReceivePrivateWorkingCopy
+      && onOpenPrivateWorkingCopy
+    ) {
+      void onOpenPrivateWorkingCopy();
+      return;
+    }
+    setSharedMode(mode);
+  };
 
   return (
     <div
@@ -285,7 +298,7 @@ export default function AgentChatPane({
           personas={personas}
           selectedPersona={selectedPersona}
           onToggleVisibility={onToggleAgentPaneVisibility}
-          onModeChange={setSharedMode}
+          onModeChange={handleSharedModeChange}
           onPersonaChange={onModeChange}
           onToggleHistory={onToggleHistory}
           onNewChat={onNewChat}
@@ -339,13 +352,13 @@ export default function AgentChatPane({
                     ? 'Lumo may update the Shared working version in Freeflow.'
                     : hasPrivateWorkingCopy
                       ? 'Use your Private copy when you want Lumo to make changes.'
-                      : canCreatePrivateWorkingCopy
-                        ? 'Create a Private copy when you want Lumo to make changes.'
-                        : 'Ask a Contributor or Publisher to create a proposal for Lumo changes.'}
+                      : canReceivePrivateWorkingCopy
+                        ? 'Preparing your Private copy for Lumo changes…'
+                        : 'Review access is read-only for Viewers.'}
                 </span>
-                {canUsePrivateWorkingCopy ? (
+                {canOpenPrivateWorkingCopy ? (
                   <Button
-                    label={hasPrivateWorkingCopy ? 'Open private copy' : 'Create private copy'}
+                    label="Open private copy"
                     size="sm"
                     variant="secondary"
                     icon={<ArrowRight size={14} />}

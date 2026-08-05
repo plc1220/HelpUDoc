@@ -89,7 +89,7 @@ export type WorkspaceCollaborator = {
 export type WorkspaceAccessTeam = {
   id: string;
   name: string;
-  role: 'viewer' | 'contributor' | 'publisher';
+  role: 'viewer' | 'contributor';
 };
 
 export const fetchUserDirectory = async (query: string, limit = 20) => {
@@ -143,11 +143,15 @@ export const removeWorkspaceCollaborator = async (workspaceId: string, targetUse
   }
 };
 
-export const addWorkspaceTeam = async (workspaceId: string, teamId: string) => {
+export const addWorkspaceTeam = async (
+  workspaceId: string,
+  teamId: string,
+  role: 'viewer' | 'contributor' = 'viewer',
+) => {
   const response = await apiFetch(`${API_URL}/workspaces/${workspaceId}/collaborators/teams`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ teamId }),
+    body: JSON.stringify({ teamId, role }),
   });
   if (!response.ok) {
     const err = await response.json().catch(() => ({}));
@@ -262,7 +266,8 @@ export const shareWorkspaceWithAudience = async (
   return response.json() as Promise<{
     workspaceId: string;
     teamWorkspaceId: string;
-    privateWorkspaceId: string;
+    privateWorkspaceId: string | null;
+    privateCopyWorkspaceId?: string | null;
     sharedWithUserIds: string[];
     sharedWithTeamId: string | null;
   }>;
@@ -288,6 +293,46 @@ export const createPrivateWorkspaceCopy = async (teamWorkspaceId: string) => {
   });
   if (!response.ok) {
     return throwWorkspaceApiError(response, 'Failed to create private working copy');
+  }
+  return response.json();
+};
+
+export type WorkspaceReviewChangeFile = {
+  path: string;
+  status: 'added' | 'modified' | 'deleted';
+  mimeType: string | null;
+  privateSize: number;
+  sharedSize: number;
+  addedLines: number;
+  removedLines: number;
+  lineCountsExact: boolean;
+  canCompareText: boolean;
+  privateText?: string;
+  sharedText?: string;
+  textTruncated?: boolean;
+};
+
+export type WorkspaceReviewChanges = {
+  privateWorkspaceId: string;
+  sharedWorkspaceId: string;
+  privateWorkspaceName: string;
+  sharedWorkspaceName: string;
+  baseSharedContentRevision: number;
+  currentSharedContentRevision: number;
+  privateContentRevision: number;
+  isStale: boolean;
+  hasChanges: boolean;
+  files: WorkspaceReviewChangeFile[];
+  folderChanges: Array<{ path: string; status: 'added' | 'deleted' }>;
+  proposal: { id: string; status: string; title: string | null; updatedAt: string } | null;
+};
+
+export const getWorkspaceReviewChanges = async (
+  privateWorkspaceId: string,
+): Promise<WorkspaceReviewChanges> => {
+  const response = await apiFetch(`${API_URL}/workspaces/${privateWorkspaceId}/review-changes`);
+  if (!response.ok) {
+    return throwWorkspaceApiError(response, 'Failed to load working-copy changes');
   }
   return response.json();
 };

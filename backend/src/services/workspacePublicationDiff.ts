@@ -22,6 +22,36 @@ export const hasFileChanged = (
   next: PublicationFileState | undefined,
 ): boolean => (base?.hash || null) !== (next?.hash || null);
 
+export const countChangedLines = (
+  originalText: string,
+  modifiedText: string,
+  maxComparableLines = 1_000,
+): { added: number; removed: number; exact: boolean } => {
+  const original = originalText ? originalText.split('\n') : [];
+  const modified = modifiedText ? modifiedText.split('\n') : [];
+  if (original.length > maxComparableLines || modified.length > maxComparableLines) {
+    return { added: modified.length, removed: original.length, exact: false };
+  }
+
+  let previous = new Uint32Array(modified.length + 1);
+  for (let originalIndex = 1; originalIndex <= original.length; originalIndex += 1) {
+    const current = new Uint32Array(modified.length + 1);
+    for (let modifiedIndex = 1; modifiedIndex <= modified.length; modifiedIndex += 1) {
+      current[modifiedIndex] = original[originalIndex - 1] === modified[modifiedIndex - 1]
+        ? previous[modifiedIndex - 1] + 1
+        : Math.max(previous[modifiedIndex], current[modifiedIndex - 1]);
+    }
+    previous = current;
+  }
+
+  const commonLines = previous[modified.length];
+  return {
+    added: modified.length - commonLines,
+    removed: original.length - commonLines,
+    exact: true,
+  };
+};
+
 export const findPublicationConflicts = (
   base: Map<string, PublicationFileState>,
   privateFiles: Map<string, PublicationFileState>,

@@ -7,7 +7,7 @@ import {
   namedGrantToLegacyWorkspaceRole,
   normalizeSelectedWorkspaceUsers,
 } from '../src/services/workspaceAudiencePolicy';
-import { buildWorkspaceTeamAccessQuery } from '../src/services/workspaceService';
+import { buildWorkspaceTeamAccessQuery, strongestWorkspaceRole } from '../src/services/workspaceService';
 
 test('selected-person sharing excludes the owner and removes duplicates', () => {
   assert.deepEqual(
@@ -34,4 +34,11 @@ test('workspace team access lookup does not use PostgreSQL reserved aliases', ()
   assert.doesNotMatch(sql, /\bgrant\b/i);
   assert.match(sql, /workspaceTeamGrant/);
   void db.destroy();
+});
+
+test('effective workspace access keeps the strongest direct or Team role', () => {
+  assert.equal(strongestWorkspaceRole('viewer', 'contributor'), 'contributor');
+  assert.equal(strongestWorkspaceRole('editor', 'contributor'), 'editor');
+  assert.equal(strongestWorkspaceRole('owner', 'viewer'), 'owner');
+  assert.equal(strongestWorkspaceRole(undefined, 'viewer'), 'viewer');
 });

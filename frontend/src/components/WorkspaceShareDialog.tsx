@@ -71,6 +71,7 @@ const WorkspaceShareDialog: React.FC<WorkspaceShareDialogProps> = ({
   const [collaboratorsError, setCollaboratorsError] = useState<string | null>(null);
   const [availableTeams, setAvailableTeams] = useState<WorkspaceTeam[]>([]);
   const [selectedTeamId, setSelectedTeamId] = useState('');
+  const [selectedTeamRole, setSelectedTeamRole] = useState<'contributor' | 'viewer'>('contributor');
   const [teamsLoading, setTeamsLoading] = useState(false);
   const [teamBusyId, setTeamBusyId] = useState<string | null>(null);
   const [teamError, setTeamError] = useState<string | null>(null);
@@ -133,6 +134,7 @@ const WorkspaceShareDialog: React.FC<WorkspaceShareDialogProps> = ({
       setAccessTeams([]);
       setAvailableTeams([]);
       setSelectedTeamId('');
+      setSelectedTeamRole('contributor');
       setInviteRole('contributor');
       setEditingPolicy(workspace?.editingPolicy || 'direct');
       setInviteError(null);
@@ -245,7 +247,7 @@ const WorkspaceShareDialog: React.FC<WorkspaceShareDialogProps> = ({
     setTeamBusyId(selectedTeamId);
     setTeamError(null);
     try {
-      await addWorkspaceTeam(workspaceId, selectedTeamId);
+      await addWorkspaceTeam(workspaceId, selectedTeamId, selectedTeamRole);
       setSelectedTeamId('');
       await Promise.all([loadCollaborators(), loadAvailableTeams()]);
       await onWorkspaceChanged?.();
@@ -323,7 +325,9 @@ const WorkspaceShareDialog: React.FC<WorkspaceShareDialogProps> = ({
                   <GroupsIcon fontSize="small" color="action" />
                   <Box sx={{ minWidth: 0 }}>
                     <Typography variant="body2" noWrap>{team.name}</Typography>
-                    <Typography variant="caption" color="text.secondary">Team members have Viewer access</Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      Team members have {team.role === 'contributor' ? 'Contributor' : 'Viewer'} access
+                    </Typography>
                   </Box>
                 </Box>
                 <IconButton
@@ -342,7 +346,7 @@ const WorkspaceShareDialog: React.FC<WorkspaceShareDialogProps> = ({
             No team currently has access.
           </Typography>
         )}
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 3 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
           <FormControl fullWidth size="small">
             <InputLabel id="workspace-team-access-label">Add a team</InputLabel>
             <Select
@@ -366,6 +370,18 @@ const WorkspaceShareDialog: React.FC<WorkspaceShareDialogProps> = ({
             Add team
           </Button>
         </Box>
+        <ToggleButtonGroup
+          exclusive
+          size="small"
+          value={selectedTeamRole}
+          onChange={(_event, value) => {
+            if (value) setSelectedTeamRole(value as 'contributor' | 'viewer');
+          }}
+          sx={{ mb: 3 }}
+        >
+          <ToggleButton value="contributor">Contributor</ToggleButton>
+          <ToggleButton value="viewer">Viewer</ToggleButton>
+        </ToggleButtonGroup>
         {teamError ? <Typography color="error" variant="body2" sx={{ mb: 2 }}>{teamError}</Typography> : null}
 
         <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600 }}>

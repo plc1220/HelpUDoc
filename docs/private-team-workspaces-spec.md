@@ -73,7 +73,7 @@ The workspace pane has two collapsible top-level sections:
 ### Private workspaces
 
 - Contains owner-only drafts.
-- Contains optional private working copies created from Shared workspaces.
+- Contains linked private working copies automatically provisioned for Review work.
 - Provides the primary `New workspace` action.
 - Shows `Private` or `Private copy` badges where useful.
 
@@ -169,10 +169,15 @@ Freeflow must not queue an entire workspace behind one slow editor. The server s
 ### Review mode
 
 - Contributors' changes enter a proposal queue.
+- Enabling Review automatically provisions a linked Private working copy for the owner.
+- Eligible Contributors receive a linked Private working copy transparently the first time they open the Review workspace. The product must not require a separate `Create private copy` action.
+- A clean existing Private copy is reused and refreshed to the current Shared revision. A copy with unsubmitted changes is preserved and marked as needing review or rebase.
 - The proposal records its base revision and affected artifacts.
 - Owner or Publisher applies, rejects, or requests changes.
 - Applying a proposal creates a new current revision atomically.
 - A stale proposal returns to review with an explanation rather than silently overwriting newer work.
+- The Private copy provides a `Review changes` surface with a changed-file list, added/removed line counts, and side-by-side or inline comparison against the current Shared working revision. If that revision differs from the copy's recorded base, the UI identifies the proposal as stale and preserves the base revision for merge validation.
+- `Submit changes for review` creates or updates a proposal linked to that Private copy. Review proposals work against the Shared working version and do not require a published version.
 
 The proposal queue is a governance mechanism. It is separate from the short-lived technical write queue used to make individual mutations safe.
 
@@ -194,7 +199,8 @@ In **Freeflow**:
 In **Review**:
 
 - Team Chat Lumo is read-only for every role. It may inspect the current working version and suggest changes, but it must not modify Shared workspace files or apply a proposal directly from the shared channel.
-- A member who wants Lumo to make changes works in an authorized Private working copy. The member can then submit or sync those changes through the normal Review proposal flow for Owner or Publisher review.
+- Private with Lumo opens the invoking member's automatically provisioned Private working copy, where Lumo may make changes within that member's permission.
+- The member reviews a visual comparison and submits those changes through the normal Review proposal flow for Owner or Publisher review.
 - Private prompts, agent history, tool calls, credentials, and other runtime state from that working copy remain private.
 
 ## 8. Sharing flow
@@ -205,9 +211,18 @@ In **Review**:
 2. The workspace becomes Shared while retaining the same workspace identity and content.
 3. The owner chooses `Freeflow` or `Review` mode.
 4. The owner adds registered users or Teams and assigns roles.
-5. Invited users immediately see the Shared workspace in their Shared section.
+5. If Review is selected, the owner receives a linked Private working copy automatically.
+6. Invited users immediately see the Shared workspace in their Shared section. Eligible Contributors receive their own linked copy transparently on first access.
 
-Sharing does not create a published version and does not create a private copy for every recipient.
+Sharing does not create a published version. Review copies are per-user and are provisioned only for users with proposal permission; Viewers do not receive copies.
+
+### Change editing policy
+
+- `Freeflow` to `Review` preserves the Shared working version, stops new direct Contributor/Lumo writes, provisions the owner's Review copy, and transparently provisions Contributor copies on first access.
+- `Review` to `Freeflow` enables direct Shared editing without applying, deleting, or detaching existing proposals or Private copies.
+- Pending proposals remain reviewable after a switch to Freeflow and retain stale-revision checks.
+- Returning to Review reuses existing linked copies. Clean copies refresh to the latest Shared revision; copies with private changes remain intact and surface their divergence in `Review changes`.
+- A policy switch changes how future changes enter Shared content. It never silently merges, discards, or publishes content.
 
 ### Manage access
 
@@ -305,6 +320,7 @@ Search indexes and derived previews are rebuilt from authorized content.
 | Shared, unpublished | Shared workspace has no published version | Create published version |
 | Shared, changes since publication | Working revision is newer than current publication | Create published version |
 | Shared, up to date | Working revision matches current publication | Continue working |
+| Private Review copy has changes | Private copy differs from its Shared base | Review changes |
 | Review proposals pending | One or more proposals await action | Review changes |
 | Published history available | At least one immutable version exists | View published versions |
 
@@ -447,8 +463,11 @@ Migration must preserve workspace IDs or provide redirects for saved links.
 5. Shared workspaces default to Freeflow for compatibility with the existing live-sharing behavior.
 6. Review mode is available when the owner wants proposals instead of direct edits.
 7. Publication does not freeze the live workspace and does not alter access grants.
-8. Optional private working copies remain available for users who need isolated work, but they are not required for normal collaboration.
+8. Review automatically provisions per-user Private working copies for the owner and eligible Contributors; Freeflow does not require a Private copy.
 9. Team Chat is available to authorized Shared workspace members independently of publication state.
 10. In Freeflow, Team Chat Lumo may write to the Shared working version only within the invoking member's effective edit permission.
 11. In Review, Team Chat Lumo is read-only; file changes go through a Private working copy and the Review proposal flow.
 12. Lumo execution in Team Chat is attributed to the invoking member and is subject to the same audit, concurrency, and content-boundary rules as other workspace actions.
+13. Review copies and proposals operate on the Shared working version and are available before the first publication.
+14. Review changes are visualized before submission and before application, including file status and text diffs where supported.
+15. Editing-policy transitions preserve existing proposals and Private copies and never merge or discard content implicitly.

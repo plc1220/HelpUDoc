@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  countChangedLines,
   findPublicationConflicts,
   hasFileChanged,
   mergePublicationFolders,
@@ -16,6 +17,24 @@ test('hasFileChanged detects additions, edits, and deletions', () => {
   assert.equal(hasFileChanged({ hash: 'a' }, undefined), true);
   assert.equal(hasFileChanged({ hash: 'a' }, { hash: 'a' }), false);
   assert.equal(hasFileChanged(undefined, undefined), false);
+});
+
+test('countChangedLines summarizes additions and removals', () => {
+  assert.deepEqual(countChangedLines('one\ntwo\nthree', 'one\ntwo changed\nthree\nfour'), {
+    added: 2,
+    removed: 1,
+    exact: true,
+  });
+  assert.deepEqual(countChangedLines('', 'one\ntwo'), { added: 2, removed: 0, exact: true });
+  assert.deepEqual(countChangedLines('one\ntwo', ''), { added: 0, removed: 2, exact: true });
+});
+
+test('countChangedLines bounds expensive comparisons', () => {
+  assert.deepEqual(countChangedLines('one\ntwo', 'one\nthree', 1), {
+    added: 2,
+    removed: 2,
+    exact: false,
+  });
 });
 
 test('different files can change without creating a conflict', () => {

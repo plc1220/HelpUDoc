@@ -45,6 +45,7 @@ const workspaceEditingPolicySchema = z.object({
 
 const teamAccessSchema = z.object({
   teamId: z.string().uuid(),
+  role: z.enum(['contributor', 'viewer']).optional(),
 });
 
 const syncWorkspaceSchema = z.object({
@@ -192,6 +193,9 @@ export default function workspaceRoutes(
         user.userId,
         payload.editingPolicy,
       );
+      if (payload.editingPolicy === 'review') {
+        await publicationService.createPrivateCopy(req.params.workspaceId, user.userId);
+      }
       res.status(204).send();
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -208,6 +212,19 @@ export default function workspaceRoutes(
       res.status(201).json(workspace);
     } catch (error) {
       handleError(res, error, 'Failed to create private working copy');
+    }
+  });
+
+  router.get('/:workspaceId/review-changes', async (req, res) => {
+    try {
+      const user = requireUserContext(req);
+      const changes = await publicationService.getPrivateCopyReviewChanges(
+        req.params.workspaceId,
+        user.userId,
+      );
+      res.json(changes);
+    } catch (error) {
+      handleError(res, error, 'Failed to load private working-copy changes');
     }
   });
 
@@ -333,7 +350,12 @@ export default function workspaceRoutes(
     try {
       const user = requireUserContext(req);
       const payload = teamAccessSchema.parse(req.body);
-      await workspaceService.addTeamAccess(req.params.workspaceId, user.userId, payload.teamId);
+      await workspaceService.addTeamAccess(
+        req.params.workspaceId,
+        user.userId,
+        payload.teamId,
+        payload.role,
+      );
       res.status(204).send();
     } catch (error) {
       if (error instanceof z.ZodError) {

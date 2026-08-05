@@ -18,7 +18,7 @@ import { Icon as AstryxIcon } from '@astryxdesign/core/Icon';
 import { IconButton } from '@astryxdesign/core/IconButton';
 import { Item } from '@astryxdesign/core/Item';
 import { ToggleButton } from '@astryxdesign/core/ToggleButton';
-import { BookOpen, Check, CheckSquare, Copy, Edit, Trash, Plus, Minus, X, ChevronLeft, ChevronDown, RotateCcw, Printer, Download, Link as LinkIcon, Loader2, FolderPlus, FolderUp, Upload, Paperclip, Home, ArrowUp, Search, File as FileIcon, MessageSquare, Wrench, Plug, Sparkles } from 'lucide-react';
+import { BookOpen, Check, CheckSquare, Copy, Edit, Trash, Plus, Minus, X, ChevronLeft, ChevronDown, RotateCcw, Printer, Download, Link as LinkIcon, Loader2, FolderPlus, FolderUp, Upload, Paperclip, Home, ArrowUp, Search, File as FileIcon, MessageSquare, Wrench, Plug, Sparkles, GitCompareArrows } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
@@ -98,6 +98,7 @@ import WorkspacePublishDialog from '../../components/WorkspacePublishDialog';
 import WorkspaceHistoryDialog from '../../components/WorkspaceHistoryDialog';
 import WorkspaceWithdrawPublicationDialog from '../../components/WorkspaceWithdrawPublicationDialog';
 import WorkspaceCollaborationDialog from '../../components/WorkspaceCollaborationDialog';
+import WorkspaceReviewChangesDialog from '../../components/WorkspaceReviewChangesDialog';
 import ScheduleDialog from '../../components/schedules/ScheduleDialog';
 import WorkspaceSchedulesPanel from '../../components/schedules/WorkspaceSchedulesPanel';
 import type { UIBlock } from '../../components/UIBlockRenderer';
@@ -911,6 +912,7 @@ export default function WorkspacePage() {
   const [publishWorkspaceTarget, setPublishWorkspaceTarget] = useState<Workspace | null>(null);
   const [historyWorkspaceTarget, setHistoryWorkspaceTarget] = useState<Workspace | null>(null);
   const [withdrawWorkspaceTarget, setWithdrawWorkspaceTarget] = useState<Workspace | null>(null);
+  const [reviewChangesWorkspace, setReviewChangesWorkspace] = useState<Workspace | null>(null);
   const personas = DEFAULT_PERSONAS;
   const [selectedPersona, setSelectedPersona] = useState(DEFAULT_PERSONA_NAME);
   const [isEditMode, setIsEditMode] = useState(false);
@@ -962,6 +964,7 @@ export default function WorkspacePage() {
   const pendingAutoSaveRef = useRef<Promise<boolean> | null>(null);
   const lastAutoSavedContentRef = useRef<string>('');
   const fileContentRequestIdRef = useRef(0);
+  const autoReviewCopyInFlightRef = useRef<Set<string>>(new Set());
   const [isMentionOpen, setIsMentionOpen] = useState(false);
   const [mentionQuery, setMentionQuery] = useState('');
   const [mentionTriggerIndex, setMentionTriggerIndex] = useState<number | null>(null);
@@ -3170,6 +3173,36 @@ export default function WorkspacePage() {
       addLocalSystemMessage(error instanceof Error ? error.message : 'Failed to open private working copy.');
     }
   }, [addLocalSystemMessage, handleSelectWorkspace, refreshWorkspaceList, selectedWorkspace]);
+
+  useEffect(() => {
+    const workspace = selectedWorkspace;
+    const canPropose = workspace?.role === 'owner'
+      || workspace?.role === 'editor'
+      || workspace?.role === 'contributor';
+    if (
+      !workspace
+      || workspace.visibility !== 'team'
+      || workspace.editingPolicy !== 'review'
+      || workspace.privateCopyWorkspaceId
+      || !canPropose
+      || autoReviewCopyInFlightRef.current.has(workspace.id)
+    ) {
+      return;
+    }
+
+    autoReviewCopyInFlightRef.current.add(workspace.id);
+    void createPrivateWorkspaceCopy(workspace.id)
+      .then(() => refreshWorkspaceList())
+      .catch((error) => {
+        console.error('Failed to provision Review private copy', error);
+        addLocalSystemMessage(error instanceof Error
+          ? error.message
+          : 'Failed to provision your Review private copy.');
+      })
+      .finally(() => {
+        autoReviewCopyInFlightRef.current.delete(workspace.id);
+      });
+  }, [addLocalSystemMessage, refreshWorkspaceList, selectedWorkspace]);
 
   useEffect(() => {
     if (selectedWorkspace) {
@@ -8354,6 +8387,15 @@ export default function WorkspacePage() {
                       <h3 className={`text-base font-semibold ${isDarkMode ? 'text-slate-100' : 'text-gray-800'}`}>{canvasTitle}</h3>
                     </div>
                     <div className="flex items-center space-x-2">
+                      {selectedWorkspace?.linkedTeamWorkspaceId ? (
+                        <Button
+                          label="Review changes"
+                          variant="secondary"
+                          size="sm"
+                          icon={<GitCompareArrows size={16} />}
+                          onClick={() => setReviewChangesWorkspace(selectedWorkspace)}
+                        />
+                      ) : null}
                       {canCopyImageUrl && (
                         <IconButton
                           label={copiedImageUrl ? 'Copied to clipboard' : 'Copy image public URL'}
@@ -8792,6 +8834,15 @@ export default function WorkspacePage() {
         filePath={selectedFile?.name || selectedDashboardPath}
         onClose={() => setCollaborationWorkspace(null)}
         onWorkspaceListChanged={refreshWorkspaceList}
+      />
+      <WorkspaceReviewChangesDialog
+        open={reviewChangesWorkspace !== null}
+        workspace={reviewChangesWorkspace}
+        colorMode={colorMode}
+        onClose={() => setReviewChangesWorkspace(null)}
+        onSubmitted={async () => {
+          await refreshWorkspaceList();
+        }}
       />
       <WorkspacePublishDialog
         open={publishWorkspaceTarget !== null}

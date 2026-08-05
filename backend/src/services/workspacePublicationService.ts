@@ -16,6 +16,7 @@ import {
   type WorkspaceNamedGrantRole,
 } from './workspaceAudiencePolicy';
 import {
+  countChangedLines,
   findPublicationConflicts,
   hasFileChanged,
   mergePublicationFolders,
@@ -210,6 +211,7 @@ export class WorkspacePublicationService {
     }
     const selectedRole = input.role || 'viewer';
     const legacyRole = namedGrantToLegacyWorkspaceRole(selectedRole);
+    const teamRole = selectedRole === 'viewer' ? 'viewer' : 'contributor';
     const editingPolicy = input.editingPolicy || workspace.editingPolicy || 'direct';
 
     await this.db.transaction(async (tx) => {
@@ -263,11 +265,11 @@ export class WorkspacePublicationService {
           .insert({
             workspaceId: workspace.id,
             teamId: input.teamId,
-            role: 'viewer',
+            role: teamRole,
             grantedByUserId: userId,
           })
           .onConflict(['workspaceId', 'teamId'])
-          .merge({ role: 'viewer', grantedByUserId: userId, updatedAt: tx.fn.now() });
+          .merge({ role: teamRole, grantedByUserId: userId, updatedAt: tx.fn.now() });
       }
       await tx('audit_events').insert({
         id: uuidv4(),
@@ -280,9 +282,14 @@ export class WorkspacePublicationService {
       });
     });
 
+    const privateCopy = editingPolicy === 'review'
+      ? await this.createPrivateCopy(workspace.id, userId)
+      : null;
+
     return {
       workspaceId: workspace.id,
-      privateWorkspaceId: workspace.id,
+      privateWorkspaceId: privateCopy?.id || null,
+      privateCopyWorkspaceId: privateCopy?.id || null,
       teamWorkspaceId: workspace.id,
       sharedWithUserIds: selectedUserIds,
       sharedWithTeamId: input.teamId || null,
@@ -306,10 +313,30 @@ export class WorkspacePublicationService {
       .where({ teamWorkspaceId, userId })
       .first();
     if (existing) {
-      const workspace = await this.db<WorkspaceRecord>('workspaces')
+      let workspace = await this.db<WorkspaceRecord>('workspaces')
         .where({ id: existing.privateWorkspaceId })
         .first();
       if (workspace) {
+        const privateCopyIsClean = Number(workspace.contentRevision || 0)
+          === Number(existing.basePrivateContentRevision || 0);
+        const sharedCopyAdvanced = Number(teamWorkspace.contentRevision || 0)
+          !== Number(existing.baseSharedContentRevision || 0);
+        if (privateCopyIsClean && sharedCopyAdvanced) {
+          const content = await this.readWorkspaceContent(teamWorkspace.id);
+          const contentRevision = await this.replaceWorkspaceContent(workspace.id, content, userId);
+          await this.db('workspace_publication_links')
+            .where({ privateWorkspaceId: workspace.id, teamWorkspaceId, userId })
+            .update({
+              basePublishedVersionId: teamWorkspace.currentPublishedVersionId || null,
+              basePrivateContentRevision: contentRevision,
+              baseSharedContentRevision: Number(teamWorkspace.contentRevision || 0),
+              hasUnpublishedChanges: false,
+              updatedAt: this.db.fn.now(),
+            });
+          workspace = await this.db<WorkspaceRecord>('workspaces')
+            .where({ id: existing.privateWorkspaceId })
+            .first() as WorkspaceRecord;
+        }
         return this.toPrivateWorkspaceResponse(workspace, teamWorkspaceId);
       }
     }
@@ -373,6 +400,115 @@ export class WorkspacePublicationService {
       throw new NotFoundError('Private working copy was not created');
     }
     return this.toPrivateWorkspaceResponse(workspace, teamWorkspaceId);
+  }
+
+  async getPrivateCopyReviewChanges(privateWorkspaceId: string, userId: string) {
+    const privateWorkspace = await this.db<WorkspaceRecord>('workspaces')
+      .where({ id: privateWorkspaceId, visibility: 'private' })
+      .first();
+    if (!privateWorkspace) throw new NotFoundError('Private working copy not found');
+    const link = await this.db<PublicationLinkRecord>('workspace_publication_links')
+      .where({ privateWorkspaceId })
+      .first();
+    if (!link) {
+      throw new ConflictError('This private workspace is not linked to a Shared workspace');
+    }
+    const { workspace: sharedWorkspace, membership: sharedMembership } = await this.workspaceService.ensureMembership(
+      link.teamWorkspaceId,
+      userId,
+    );
+    const ownsPrivateCopy = privateWorkspace.ownerId === userId;
+    if (!ownsPrivateCopy) {
+      if (sharedMembership.role !== 'owner' && sharedMembership.role !== 'editor') {
+        throw new AccessDeniedError('Owner or Publisher access is required to review proposed changes');
+      }
+      const linkedProposal = await this.db('workspace_collaboration_objects')
+        .where({
+          workspaceId: link.teamWorkspaceId,
+          linkedPrivateWorkspaceId: privateWorkspaceId,
+          type: 'change_proposal',
+        })
+        .whereIn('status', ['proposed', 'discussing'])
+        .first();
+      if (!linkedProposal) {
+        throw new AccessDeniedError('This private copy does not have an open Review proposal');
+      }
+    }
+    const [privateContent, sharedContent, proposal] = await Promise.all([
+      this.readWorkspaceContent(privateWorkspaceId),
+      this.readWorkspaceContent(link.teamWorkspaceId),
+      this.db('workspace_collaboration_objects')
+        .select('id', 'status', 'title', 'updatedAt')
+        .where({
+          workspaceId: link.teamWorkspaceId,
+          linkedPrivateWorkspaceId: privateWorkspaceId,
+          type: 'change_proposal',
+        })
+        .whereIn('status', ['proposed', 'discussing'])
+        .orderBy('updatedAt', 'desc')
+        .first(),
+    ]);
+
+    const filePaths = [...new Set([
+      ...privateContent.files.keys(),
+      ...sharedContent.files.keys(),
+    ])].sort((left, right) => left.localeCompare(right));
+    const files = filePaths.flatMap((filePath) => {
+      const privateFile = privateContent.files.get(filePath);
+      const sharedFile = sharedContent.files.get(filePath);
+      if (privateFile?.hash === sharedFile?.hash) return [];
+      const status = !sharedFile ? 'added' : !privateFile ? 'deleted' : 'modified';
+      const canCompareText = (!privateFile || this.isTextContent(privateFile))
+        && (!sharedFile || this.isTextContent(sharedFile));
+      const privateText = canCompareText ? privateFile?.buffer.toString('utf-8') || '' : undefined;
+      const sharedText = canCompareText ? sharedFile?.buffer.toString('utf-8') || '' : undefined;
+      const textLimit = 100_000;
+      const lineChanges = canCompareText
+        ? countChangedLines(sharedText!, privateText!)
+        : { added: status === 'added' ? 1 : 0, removed: status === 'deleted' ? 1 : 0, exact: false };
+      return [{
+        path: filePath,
+        status,
+        mimeType: privateFile?.mimeType || sharedFile?.mimeType || null,
+        privateSize: privateFile?.size || 0,
+        sharedSize: sharedFile?.size || 0,
+        addedLines: lineChanges.added,
+        removedLines: lineChanges.removed,
+        lineCountsExact: lineChanges.exact,
+        canCompareText,
+        ...(canCompareText ? {
+          privateText: privateText!.slice(0, textLimit),
+          sharedText: sharedText!.slice(0, textLimit),
+          textTruncated: privateText!.length > textLimit || sharedText!.length > textLimit,
+        } : {}),
+      }];
+    });
+
+    const privateFolders = new Set(privateContent.folders);
+    const sharedFolders = new Set(sharedContent.folders);
+    const folderChanges = [
+      ...privateContent.folders
+        .filter((folder) => !sharedFolders.has(folder))
+        .map((path) => ({ path, status: 'added' as const })),
+      ...sharedContent.folders
+        .filter((folder) => !privateFolders.has(folder))
+        .map((path) => ({ path, status: 'deleted' as const })),
+    ].sort((left, right) => left.path.localeCompare(right.path));
+
+    return {
+      privateWorkspaceId,
+      sharedWorkspaceId: link.teamWorkspaceId,
+      privateWorkspaceName: privateWorkspace.name,
+      sharedWorkspaceName: sharedWorkspace.name,
+      baseSharedContentRevision: Number(link.baseSharedContentRevision || 0),
+      currentSharedContentRevision: Number(sharedWorkspace.contentRevision || 0),
+      privateContentRevision: Number(privateWorkspace.contentRevision || 0),
+      isStale: Number(link.baseSharedContentRevision || 0) !== Number(sharedWorkspace.contentRevision || 0),
+      hasChanges: files.length > 0 || folderChanges.length > 0,
+      files,
+      folderChanges,
+      proposal: proposal || null,
+    };
   }
 
   async applyPrivateCopyToShared(
@@ -781,6 +917,7 @@ export class WorkspacePublicationService {
     const selectedUserIds = normalizeSelectedWorkspaceUsers(userId, input.selectedUserIds);
     const selectedRole = input.selectedRole || 'viewer';
     const legacyRole = namedGrantToLegacyWorkspaceRole(selectedRole);
+    const teamRole = selectedRole === 'viewer' ? 'viewer' : 'contributor';
 
     await this.db.transaction(async (tx) => {
       await tx('workspaces').insert({
@@ -819,7 +956,7 @@ export class WorkspacePublicationService {
         await tx('workspace_team_grants').insert({
           workspaceId: teamWorkspaceId,
           teamId: input.teamId,
-          role: 'viewer',
+          role: teamRole,
           grantedByUserId: userId,
         });
       }

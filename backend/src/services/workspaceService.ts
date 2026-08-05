@@ -27,6 +27,23 @@ export function buildWorkspaceTeamAccessQuery(db: Knex, workspaceId: string, tea
 
 export type WorkspaceRole = 'owner' | 'editor' | 'contributor' | 'commenter' | 'viewer';
 
+const WORKSPACE_ROLE_RANK: Record<WorkspaceRole, number> = {
+  viewer: 0,
+  commenter: 1,
+  contributor: 2,
+  editor: 3,
+  owner: 4,
+};
+
+export const strongestWorkspaceRole = (
+  ...roles: Array<WorkspaceRole | null | undefined>
+): WorkspaceRole => roles.reduce<WorkspaceRole>(
+  (strongest, role) => role && WORKSPACE_ROLE_RANK[role] > WORKSPACE_ROLE_RANK[strongest]
+    ? role
+    : strongest,
+  'viewer',
+);
+
 export interface WorkspaceRecord {
   id: string;
   name: string;
@@ -113,6 +130,9 @@ export class WorkspaceService {
       .leftJoin('group_members as gm', function joinTeamMembership() {
         this.on('gm.groupId', '=', 'w.teamId').andOnVal('gm.userId', '=', userId);
       })
+      .leftJoin('workspace_team_grants as wtg', function joinTeamGrant() {
+        this.on('wtg.workspaceId', '=', 'w.id').andOn('wtg.teamId', '=', 'w.teamId');
+      })
       .leftJoin('groups as g', 'g.id', 'w.teamId')
       .leftJoin('workspace_publication_links as private_link', 'private_link.privateWorkspaceId', 'w.id')
       .leftJoin('workspaces as linked_team', 'linked_team.id', 'private_link.teamWorkspaceId')
@@ -149,6 +169,8 @@ export class WorkspaceService {
         'w.updatedAt',
         'wm.role as directRole',
         'wm.canEdit as directCanEdit',
+        'gm.userId as teamMemberUserId',
+        'wtg.role as teamGrantRole',
         'g.name as teamName',
         'private_link.teamWorkspaceId as linkedTeamWorkspaceId',
         'linked_team.teamId as linkedTeamId',
@@ -191,6 +213,12 @@ export class WorkspaceService {
 
     return rows.map((row: any) => {
       const visibility = row.visibility === 'team' ? 'team' : 'private';
+      const teamRole = row.teamMemberUserId
+        ? row.teamGrantRole === 'contributor' ? 'contributor' : 'viewer'
+        : null;
+      const effectiveRole = visibility === 'private'
+        ? 'owner'
+        : strongestWorkspaceRole(row.directRole as WorkspaceRole | null, teamRole);
       const privateChanged = visibility === 'private'
         && row.linkedTeamWorkspaceId
         && (
@@ -241,12 +269,12 @@ export class WorkspaceService {
         contentRevision: Number(row.contentRevision || 0),
         createdAt: row.createdAt,
         updatedAt: row.updatedAt,
-        role: visibility === 'private' ? 'owner' : (row.directRole || 'viewer') as WorkspaceRole,
+        role: effectiveRole,
         canEdit: visibility === 'private'
-          || row.directRole === 'owner'
+          || effectiveRole === 'owner'
           || (
             (row.editingPolicy || 'review') === 'direct'
-            && (row.directRole === 'editor' || row.directRole === 'contributor')
+            && (effectiveRole === 'editor' || effectiveRole === 'contributor')
           ),
         canPublish: visibility === 'team'
           && (row.directRole === 'owner' || row.directRole === 'editor'),
@@ -405,21 +433,28 @@ export class WorkspaceService {
         createdAt: normalizedWorkspace.createdAt,
         updatedAt: normalizedWorkspace.updatedAt,
       };
-    } else if (normalizedWorkspace.teamId && !membership) {
+    } else if (normalizedWorkspace.teamId) {
       const groupMembership = await this.db('group_members')
         .where({ groupId: normalizedWorkspace.teamId, userId })
         .first();
-      if (!groupMembership) {
+      if (!groupMembership && !membership) {
         throw new AccessDeniedError('Team membership is required to access this workspace');
       }
-      membership = {
-        workspaceId,
-        userId,
-        role: 'viewer',
-        canEdit: false,
-        createdAt: groupMembership.createdAt,
-        updatedAt: groupMembership.updatedAt,
-      };
+      if (groupMembership) {
+        const teamGrant = await this.db('workspace_team_grants')
+          .where({ workspaceId, teamId: normalizedWorkspace.teamId })
+          .first();
+        const teamRole: WorkspaceRole = teamGrant?.role === 'contributor' ? 'contributor' : 'viewer';
+        const effectiveRole = strongestWorkspaceRole(membership?.role, teamRole);
+        membership = {
+          workspaceId,
+          userId,
+          role: effectiveRole,
+          canEdit: false,
+          createdAt: membership?.createdAt || groupMembership.createdAt,
+          updatedAt: membership?.updatedAt || groupMembership.updatedAt,
+        };
+      }
     }
 
     if (!membership) {
@@ -633,7 +668,12 @@ export class WorkspaceService {
     });
   }
 
-  async addTeamAccess(workspaceId: string, actingUserId: string, teamId: string): Promise<void> {
+  async addTeamAccess(
+    workspaceId: string,
+    actingUserId: string,
+    teamId: string,
+    role: 'contributor' | 'viewer' = 'viewer',
+  ): Promise<void> {
     const { membership } = await this.ensureMembership(workspaceId, actingUserId);
     const workspace = await this.db<WorkspaceRecord>('workspaces').where({ id: workspaceId }).first();
     if (workspace?.visibility !== 'team') {
@@ -665,11 +705,11 @@ export class WorkspaceService {
         .insert({
           workspaceId,
           teamId,
-          role: 'viewer',
+          role,
           grantedByUserId: actingUserId,
         })
         .onConflict(['workspaceId', 'teamId'])
-        .merge({ role: 'viewer', grantedByUserId: actingUserId, updatedAt: tx.fn.now() });
+        .merge({ role, grantedByUserId: actingUserId, updatedAt: tx.fn.now() });
       await tx('audit_events').insert({
         id: uuidv4(),
         actorUserId: actingUserId,
@@ -677,7 +717,7 @@ export class WorkspaceService {
         action: 'workspace.team_access_granted',
         resourceType: 'workspace',
         resourceId: workspaceId,
-        metadata: { teamId, role: 'viewer' },
+        metadata: { teamId, role },
       });
     });
   }
@@ -718,7 +758,7 @@ export class WorkspaceService {
   ): Promise<{
     collaborators: Array<{ userId: string; displayName: string; role: WorkspaceRole; canEdit: boolean }>;
     directCollaborators: Array<{ userId: string; displayName: string; role: WorkspaceRole; canEdit: boolean }>;
-    teams: Array<{ id: string; name: string; role: 'viewer' | 'contributor' | 'publisher' }>;
+    teams: Array<{ id: string; name: string; role: 'viewer' | 'contributor' }>;
   }> {
     const { workspace } = await this.ensureMembership(workspaceId, userId);
     const directCollaborators = await this.db('workspace_members')
@@ -740,27 +780,34 @@ export class WorkspaceService {
     const effectiveCollaborators = new Map(
       directCollaboratorList.map((collaborator) => [collaborator.userId, collaborator]),
     );
+    const teams = workspace.teamId
+      ? await buildWorkspaceTeamAccessQuery(this.db, workspaceId, workspace.teamId) as Array<{
+          id: string;
+          name: string;
+          role: 'viewer' | 'contributor';
+        }>
+      : [];
     if (workspace.teamId) {
+      const teamRole: WorkspaceRole = teams[0]?.role === 'contributor' ? 'contributor' : 'viewer';
       const groupMembers = await this.db('group_members')
         .join('users', 'group_members.userId', 'users.id')
         .select('group_members.userId', 'users.displayName')
         .where('group_members.groupId', workspace.teamId)
         .orderBy('users.displayName', 'asc');
       groupMembers.forEach((row: any) => {
-        if (!effectiveCollaborators.has(row.userId)) {
-          effectiveCollaborators.set(row.userId, {
-            userId: row.userId,
-            displayName: row.displayName,
-            role: 'viewer',
-            canEdit: false,
-          });
-        }
+        const direct = effectiveCollaborators.get(row.userId);
+        const role = strongestWorkspaceRole(direct?.role, teamRole);
+        effectiveCollaborators.set(row.userId, {
+          userId: row.userId,
+          displayName: row.displayName,
+          role,
+          canEdit: role === 'owner' || (
+            workspace.editingPolicy === 'direct'
+            && (role === 'editor' || role === 'contributor')
+          ),
+        });
       });
     }
-
-    const teams = workspace.teamId
-      ? await buildWorkspaceTeamAccessQuery(this.db, workspaceId, workspace.teamId)
-      : [];
 
     return {
       collaborators: Array.from(effectiveCollaborators.values()).sort((a, b) =>
@@ -769,7 +816,7 @@ export class WorkspaceService {
       teams: teams.map((row: any) => ({
         id: row.id,
         name: row.name,
-        role: row.role as 'viewer' | 'contributor' | 'publisher',
+        role: row.role === 'contributor' ? 'contributor' as const : 'viewer' as const,
       })),
     };
   }
