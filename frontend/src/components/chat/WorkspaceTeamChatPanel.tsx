@@ -18,6 +18,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Workspace } from '../../types';
 import {
   createWorkspaceCollaborationObject,
+  convertWorkspaceCollaborationObjectToProposal,
   invokeLumoForWorkspaceTeamMessage,
   listWorkspaceTeamMessages,
   postWorkspaceTeamMessage,
@@ -103,10 +104,12 @@ export default function WorkspaceTeamChatPanel({
   workspace,
   filePath,
   colorMode,
+  onOpenPrivateWorkingCopy,
 }: {
   workspace: Workspace;
   filePath?: string;
   colorMode: 'light' | 'dark';
+  onOpenPrivateWorkingCopy?: () => Promise<void>;
 }) {
   const isDarkMode = colorMode === 'dark';
   const [messages, setMessages] = useState<WorkspaceTeamMessage[]>([]);
@@ -125,6 +128,8 @@ export default function WorkspaceTeamChatPanel({
   const role = workspace.role || 'viewer';
   const canComment = COMMENT_ROLES.has(role);
   const canPropose = CONTRIBUTOR_ROLES.has(role);
+  const canLumoWrite = workspace.editingPolicy === 'direct' && workspace.canEdit === true;
+  const workingContextLabel = 'Shared working version';
 
   const loadMessages = useCallback(async (showLoading = false) => {
     if (showLoading) setLoading(true);
@@ -180,7 +185,7 @@ export default function WorkspaceTeamChatPanel({
   const mentionSuggestions = useMemo(() => {
     if (mentionQuery === null) return [];
     const options = [
-      { id: 'lumo', displayName: 'Lumo', role: 'AI · read-only' },
+      { id: 'lumo', displayName: 'Lumo', role: canLumoWrite ? 'AI · Freeflow editor' : 'AI · read-only' },
       ...collaborators.map((collaborator) => ({
         id: collaborator.userId,
         displayName: collaborator.displayName,
@@ -190,7 +195,7 @@ export default function WorkspaceTeamChatPanel({
     return options
       .filter((option) => option.displayName.toLowerCase().includes(mentionQuery))
       .slice(0, 8);
-  }, [collaborators, mentionQuery]);
+  }, [canLumoWrite, collaborators, mentionQuery]);
 
   const selectMention = (displayName: string) => {
     setDraft((value) => value.replace(/@[^@\n]*$/, `@${displayName} `));
@@ -246,16 +251,22 @@ export default function WorkspaceTeamChatPanel({
     setError('');
     setNotice('');
     try {
-      await createWorkspaceCollaborationObject(workspace.id, {
-        type: conversion.type,
+      const created = await createWorkspaceCollaborationObject(workspace.id, {
+        type: conversion.type === 'change_proposal' ? 'sticky_note' : conversion.type,
         visibility: conversion.visibility,
         title: titleFromMessage(message, conversion.label),
         body: message.body,
         filePath: conversion.requiresFile ? filePath : undefined,
         sourceTeamMessageId: message.id,
       });
+      if (conversion.type === 'change_proposal') {
+        await convertWorkspaceCollaborationObjectToProposal(workspace.id, created.id);
+      }
       setNotice(`${conversion.label} created from the conversation.`);
       setActionMessageId(null);
+      if (conversion.type === 'change_proposal' && onOpenPrivateWorkingCopy) {
+        await onOpenPrivateWorkingCopy();
+      }
     } catch (conversionError) {
       setError(conversionError instanceof Error
         ? conversionError.message
@@ -273,9 +284,7 @@ export default function WorkspaceTeamChatPanel({
   const renderMessage = (message: WorkspaceTeamMessage, isReply = false) => {
     const isLumo = message.authorType === 'lumo';
     const isActionsOpen = actionMessageId === message.id;
-    const publishedVersion = message.originVersionNumber
-      ? `Published v${message.originVersionNumber}`
-      : 'Shared workspace';
+    const lumoCapability = canLumoWrite ? 'Freeflow · can edit' : 'Read-only · Review';
     return (
       <article
         key={message.id}
@@ -312,7 +321,7 @@ export default function WorkspaceTeamChatPanel({
                 <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
                   isDarkMode ? 'bg-violet-400/15 text-violet-200' : 'bg-violet-50 text-violet-700'
                 }`}>
-                  Read-only · {publishedVersion}
+                  {lumoCapability} · {workingContextLabel}
                 </span>
               ) : null}
               <span className={`text-[11px] ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>
@@ -328,11 +337,11 @@ export default function WorkspaceTeamChatPanel({
               <div className="mt-2">
                 <ChatToolCalls
                   calls={[{
-                    key: `${message.id}-published-context`,
-                    name: 'published_workspace_context',
+                    key: `${message.id}-shared-context`,
+                    name: 'shared_workspace_context',
                     status: 'complete',
-                    target: publishedVersion,
-                    node: 'read-only',
+                    target: workingContextLabel,
+                    node: canLumoWrite ? 'shared-workspace' : 'read-only',
                   }]}
                 />
               </div>
@@ -390,7 +399,7 @@ export default function WorkspaceTeamChatPanel({
       <div className={`border-b px-4 py-2.5 ${
         isDarkMode ? 'border-slate-800 bg-slate-950/30' : 'border-slate-200 bg-white'
       }`}>
-        <div>
+        <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className={`flex items-center gap-2 text-sm font-semibold ${
               isDarkMode ? 'text-slate-100' : 'text-slate-900'
@@ -399,7 +408,11 @@ export default function WorkspaceTeamChatPanel({
               <span># team-chat</span>
             </div>
             <p className={`mt-0.5 text-[11px] ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
-              Visible to workspace members. Message normally, or tag <strong>@Lumo</strong> for a read-only answer.
+              Visible to workspace members. Message normally, or tag <strong>@Lumo</strong> for {canLumoWrite
+                ? 'help that can update Freeflow files.'
+                : workspace.editingPolicy === 'review' && canPropose
+                  ? 'read-only guidance. Use a message proposal to edit privately.'
+                  : 'read-only guidance.'}
             </p>
           </div>
         </div>
@@ -446,7 +459,7 @@ export default function WorkspaceTeamChatPanel({
                 Start the workspace conversation
               </p>
               <p className={`mt-1 text-xs leading-5 ${isDarkMode ? 'text-slate-500' : 'text-slate-500'}`}>
-                Share context, tag teammates, or ask @Lumo about the published version.
+                Share context, tag teammates, or ask @Lumo about the Shared working version.
               </p>
             </div>
           </div>
@@ -470,12 +483,10 @@ export default function WorkspaceTeamChatPanel({
                 <ChatToolCalls
                   calls={[{
                     key: `${lumoBusyMessageId}-reading`,
-                    name: 'published_workspace_context',
+                    name: 'shared_workspace_context',
                     status: 'running',
-                    target: workspace.currentPublishedVersionNumber
-                      ? `Published v${workspace.currentPublishedVersionNumber}`
-                      : 'Shared workspace',
-                    node: 'read-only',
+                    target: workingContextLabel,
+                    node: canLumoWrite ? 'shared-workspace' : 'read-only',
                   }]}
                 />
               </div>
@@ -502,7 +513,7 @@ export default function WorkspaceTeamChatPanel({
             rows={3}
             width="100%"
             placeholder={canComment
-              ? 'Message the team… Use @Lumo for read-only help'
+              ? `Message the team… Use @Lumo for ${canLumoWrite ? 'Freeflow file help' : 'read-only guidance'}`
               : 'Viewer access is read-only'}
             isDisabled={!canComment || sending}
             disabledMessage="Commenter access is required to post in Team Chat."

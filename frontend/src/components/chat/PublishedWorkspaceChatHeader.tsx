@@ -18,7 +18,7 @@ import type { ChangeEvent } from 'react';
 
 import type { AgentPersona } from '../../types';
 
-export type PublishedChatMode = 'team' | 'private';
+export type SharedChatMode = 'team' | 'private';
 
 export default function PublishedWorkspaceChatHeader({
   colorMode,
@@ -38,11 +38,11 @@ export default function PublishedWorkspaceChatHeader({
   colorMode: 'light' | 'dark';
   isAgentPaneVisible: boolean;
   isAgentPaneFullScreen: boolean;
-  mode: PublishedChatMode;
+  mode: SharedChatMode;
   personas: AgentPersona[];
   selectedPersona: string;
   onToggleVisibility: () => void;
-  onModeChange: (mode: PublishedChatMode) => void;
+  onModeChange: (mode: SharedChatMode) => void;
   onPersonaChange: (event: ChangeEvent<HTMLSelectElement>) => void;
   onToggleHistory: () => void;
   onNewChat: () => void;
@@ -131,7 +131,7 @@ export default function PublishedWorkspaceChatHeader({
           <div className="flex min-w-0 items-center gap-2">
             <Bot size={14} className="shrink-0 text-violet-500" />
             <span className="truncate text-[11px]">
-              Only you can see this conversation. Published content remains read-only.
+              Only you can see this conversation. Shared workspace collaboration remains separate.
             </span>
           </div>
           <select

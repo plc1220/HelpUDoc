@@ -27,7 +27,7 @@ import ChatMessageList from './ChatMessageList';
 import type { RenderableInterruptAction } from './interruptActions';
 import type { ChatComposerAttachment } from './chatTypes';
 import PublishedWorkspaceChatHeader, {
-  type PublishedChatMode,
+  type SharedChatMode,
 } from './PublishedWorkspaceChatHeader';
 import WorkspaceTeamChatPanel from './WorkspaceTeamChatPanel';
 
@@ -92,8 +92,8 @@ export default function AgentChatPane({
   chatInputRef,
   attachmentInputRef,
   workspaceId,
-  isPublishedWorkspace,
-  publishedWorkspace,
+  isSharedWorkspace,
+  sharedWorkspace,
   activeFilePath,
   internetSearchEnabled,
   formatMessageTimestamp,
@@ -140,6 +140,7 @@ export default function AgentChatPane({
   onSelectCommand,
   onInteractionSubmit,
   onOpenCollaboration,
+  onOpenPrivateWorkingCopy,
 }: {
   colorMode: 'light' | 'dark';
   agentPaneStyles: CSSProperties;
@@ -177,8 +178,8 @@ export default function AgentChatPane({
   chatInputRef: RefObject<HTMLTextAreaElement | null>;
   attachmentInputRef: RefObject<HTMLInputElement | null>;
   workspaceId?: string;
-  isPublishedWorkspace?: boolean;
-  publishedWorkspace?: Workspace;
+  isSharedWorkspace?: boolean;
+  sharedWorkspace?: Workspace;
   activeFilePath?: string;
   internetSearchEnabled: boolean;
   formatMessageTimestamp: (value?: string) => string;
@@ -242,29 +243,35 @@ export default function AgentChatPane({
   onSelectCommand: (command: CommandSuggestion) => void;
   onInteractionSubmit?: (response: InteractionResponse, request: InteractionRequest, message?: ConversationMessage) => Promise<void>;
   onOpenCollaboration?: () => void;
+  onOpenPrivateWorkingCopy?: () => Promise<void>;
 }) {
   const isDarkMode = colorMode === 'dark';
-  const [publishedMode, setPublishedMode] = useState<PublishedChatMode>('team');
+  const [sharedMode, setSharedMode] = useState<SharedChatMode>('team');
+  const sharedLumoCanWrite = Boolean(
+    isSharedWorkspace
+    && sharedWorkspace?.editingPolicy === 'direct'
+    && sharedWorkspace.canEdit,
+  );
 
   useEffect(() => {
-    setPublishedMode('team');
-  }, [publishedWorkspace?.id]);
+    setSharedMode('team');
+  }, [sharedWorkspace?.id]);
 
   return (
     <div
       className="lumo-agent-pane"
       style={agentPaneStyles}
     >
-      {isPublishedWorkspace && publishedWorkspace ? (
+      {isSharedWorkspace && sharedWorkspace ? (
         <PublishedWorkspaceChatHeader
           colorMode={colorMode}
           isAgentPaneVisible={isAgentPaneVisible}
           isAgentPaneFullScreen={isAgentPaneFullScreen}
-          mode={publishedMode}
+          mode={sharedMode}
           personas={personas}
           selectedPersona={selectedPersona}
           onToggleVisibility={onToggleAgentPaneVisibility}
-          onModeChange={setPublishedMode}
+          onModeChange={setSharedMode}
           onPersonaChange={onModeChange}
           onToggleHistory={onToggleHistory}
           onNewChat={onNewChat}
@@ -286,11 +293,12 @@ export default function AgentChatPane({
         />
       )}
       <div className={`lumo-agent-pane-body ${isAgentPaneFullScreen || isAgentPaneVisible ? '' : 'lumo-agent-pane-hidden'}`}>
-        {isPublishedWorkspace && publishedWorkspace && publishedMode === 'team' ? (
+        {isSharedWorkspace && sharedWorkspace && sharedMode === 'team' ? (
           <WorkspaceTeamChatPanel
-            workspace={publishedWorkspace}
+            workspace={sharedWorkspace}
             filePath={activeFilePath}
             colorMode={colorMode}
+            onOpenPrivateWorkingCopy={onOpenPrivateWorkingCopy}
           />
         ) : (
           <>
@@ -306,13 +314,15 @@ export default function AgentChatPane({
               onSelectConversation={onSelectConversation}
               onDeleteConversation={onDeleteConversation}
             />
-            {isPublishedWorkspace ? (
+            {isSharedWorkspace ? (
               <div className={`border-b px-4 py-2 text-xs ${
                 isDarkMode
                   ? 'border-violet-900/60 bg-violet-950/30 text-violet-200'
                   : 'border-violet-100 bg-violet-50 text-violet-700'
               }`}>
-                Private with Lumo is visible only to you. Lumo may analyze shared files, but cannot edit them.
+                Private with Lumo is visible only to you. {sharedLumoCanWrite
+                  ? 'Lumo may update the Shared working version in Freeflow.'
+                  : 'In Review, open a Private copy when you want Lumo to make changes.'}
               </div>
             ) : null}
             <ChatLayout
@@ -323,8 +333,10 @@ export default function AgentChatPane({
                   colorMode={colorMode}
                   chatMessage={chatMessage}
                   chatAttachments={chatAttachments}
-                  placeholder={isPublishedWorkspace
-                    ? 'Ask Lumo about this shared workspace…'
+                  placeholder={isSharedWorkspace
+                    ? sharedLumoCanWrite
+                      ? 'Ask Lumo to work on this shared workspace…'
+                      : 'Ask Lumo about this shared workspace…'
                     : undefined}
                   chatInputRef={chatInputRef}
                   attachmentInputRef={attachmentInputRef}
@@ -367,8 +379,10 @@ export default function AgentChatPane({
                 messages={messages}
                 isStreaming={isStreaming}
                 personaDisplayName={personaDisplayName}
-                emptyStateDescription={isPublishedWorkspace
-                  ? 'Ask Lumo to explain, summarize, or analyze the shared workspace without changing it.'
+                emptyStateDescription={isSharedWorkspace
+                  ? sharedLumoCanWrite
+                    ? 'Ask Lumo to explain, summarize, or update the shared working files.'
+                    : 'Ask Lumo to explain or analyze the shared workspace without changing it.'
                   : undefined}
                 messageBubbleMaxWidth={messageBubbleMaxWidth}
                 markdownComponents={markdownComponents}

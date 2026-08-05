@@ -23,6 +23,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
   createWorkspace,
+  createPrivateWorkspaceCopy,
   deleteWorkspace,
   getWorkspaces,
   renameWorkspace,
@@ -3154,6 +3155,21 @@ export default function WorkspacePage() {
       setMobileSurface('canvas');
     }
   }, []);
+
+  const handleOpenPrivateWorkingCopy = useCallback(async () => {
+    if (!selectedWorkspace || selectedWorkspace.visibility !== 'team') {
+      return;
+    }
+    try {
+      const created = hydrateWorkspace(await createPrivateWorkspaceCopy(selectedWorkspace.id));
+      const refreshed = await refreshWorkspaceList();
+      const privateCopy = refreshed.find((workspace) => workspace.id === created.id) || created;
+      handleSelectWorkspace(privateCopy);
+    } catch (error) {
+      console.error('Failed to open private working copy', error);
+      addLocalSystemMessage(error instanceof Error ? error.message : 'Failed to open private working copy.');
+    }
+  }, [addLocalSystemMessage, handleSelectWorkspace, refreshWorkspaceList, selectedWorkspace]);
 
   useEffect(() => {
     if (selectedWorkspace) {
@@ -8519,8 +8535,8 @@ export default function WorkspacePage() {
               chatInputRef={chatInputRef}
               attachmentInputRef={attachmentInputRef}
               workspaceId={selectedWorkspace?.id}
-              isPublishedWorkspace={selectedWorkspace?.visibility === 'team' && selectedWorkspace.canEdit === false}
-              publishedWorkspace={selectedWorkspace?.visibility === 'team' ? selectedWorkspace : undefined}
+              isSharedWorkspace={selectedWorkspace?.visibility === 'team'}
+              sharedWorkspace={selectedWorkspace?.visibility === 'team' ? selectedWorkspace : undefined}
               activeFilePath={selectedFile?.name || selectedDashboardPath || undefined}
               internetSearchEnabled={internetSearchEnabled}
               formatMessageTimestamp={formatMessageTimestamp}
@@ -8571,6 +8587,7 @@ export default function WorkspacePage() {
                   setCollaborationWorkspace(selectedWorkspace);
                 }
               }}
+              onOpenPrivateWorkingCopy={handleOpenPrivateWorkingCopy}
             />
               </>
             )}

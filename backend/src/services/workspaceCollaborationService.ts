@@ -130,7 +130,7 @@ export class WorkspaceCollaborationService {
     userId: string,
     limit = 200,
   ): Promise<WorkspaceTeamMessage[]> {
-    await this.ensurePublishedWorkspaceAccess(workspaceId, userId);
+    await this.ensureSharedWorkspaceAccess(workspaceId, userId);
     const rows = await this.teamMessageQuery(userId)
       .where('message.workspaceId', workspaceId)
       .orderBy('message.createdAt', 'desc')
@@ -147,7 +147,7 @@ export class WorkspaceCollaborationService {
       mentionedUserIds?: string[];
     },
   ): Promise<WorkspaceTeamMessage> {
-    const access = await this.ensurePublishedWorkspaceAccess(workspaceId, userId);
+    const access = await this.ensureSharedWorkspaceAccess(workspaceId, userId);
     if (!canPostWorkspaceTeamMessage(access.membership.role)) {
       throw new AccessDeniedError('Commenter access is required to post in Team Chat');
     }
@@ -194,7 +194,7 @@ export class WorkspaceCollaborationService {
     messageId: string,
     userId: string,
   ): Promise<WorkspaceTeamMessage> {
-    const access = await this.ensurePublishedWorkspaceAccess(workspaceId, userId);
+    const access = await this.ensureSharedWorkspaceAccess(workspaceId, userId);
     if (!canPostWorkspaceTeamMessage(access.membership.role)) {
       throw new AccessDeniedError('Commenter access is required to invoke Lumo in Team Chat');
     }
@@ -213,7 +213,7 @@ export class WorkspaceCollaborationService {
     sourceMessageId: string,
     userId: string,
   ): Promise<WorkspaceTeamMessage | null> {
-    await this.ensurePublishedWorkspaceAccess(workspaceId, userId);
+    await this.ensureSharedWorkspaceAccess(workspaceId, userId);
     const existing = await this.teamMessageQuery(userId)
       .where('message.workspaceId', workspaceId)
       .andWhere('message.replyToMessageId', sourceMessageId)
@@ -267,7 +267,7 @@ export class WorkspaceCollaborationService {
     excludeMessageId?: string,
     limit = 20,
   ): Promise<WorkspaceTeamAgentHistoryMessage[]> {
-    await this.ensurePublishedWorkspaceAccess(workspaceId, userId);
+    await this.ensureSharedWorkspaceAccess(workspaceId, userId);
     const rows = await this.db('workspace_team_messages as message')
       .leftJoin('users as author', 'author.id', 'message.authorId')
       .where('message.workspaceId', workspaceId)
@@ -301,7 +301,7 @@ export class WorkspaceCollaborationService {
       filePath?: string;
     } = {},
   ): Promise<WorkspaceCollaborationObject[]> {
-    await this.ensurePublishedWorkspaceAccess(workspaceId, userId);
+    await this.ensureSharedWorkspaceAccess(workspaceId, userId);
 
     const rows = await this.db('workspace_collaboration_objects as object')
       .leftJoin('users as author', 'author.id', 'object.authorId')
@@ -347,7 +347,7 @@ export class WorkspaceCollaborationService {
       updatedAt: string;
     }>;
   }> {
-    await this.ensurePublishedWorkspaceAccess(workspaceId, userId);
+    await this.ensureSharedWorkspaceAccess(workspaceId, userId);
     const object = await this.ensureObjectAccess(workspaceId, objectId, userId);
     const messages = await this.db('workspace_collaboration_messages as message')
       .leftJoin('users as author', 'author.id', 'message.authorId')
@@ -365,7 +365,7 @@ export class WorkspaceCollaborationService {
     userId: string,
     input: CreateWorkspaceCollaborationInput,
   ): Promise<WorkspaceCollaborationObject> {
-    const access = await this.ensurePublishedWorkspaceAccess(workspaceId, userId);
+    const access = await this.ensureSharedWorkspaceAccess(workspaceId, userId);
     if (!canCreateWorkspaceCollaborationObject(access.membership.role, input.type, input.visibility)) {
       throw new AccessDeniedError(
         input.type === 'change_proposal'
@@ -436,7 +436,7 @@ export class WorkspaceCollaborationService {
     userId: string,
     body: string,
   ) {
-    const { membership } = await this.ensurePublishedWorkspaceAccess(workspaceId, userId);
+    const { membership } = await this.ensureSharedWorkspaceAccess(workspaceId, userId);
     const object = await this.ensureObjectAccess(workspaceId, objectId, userId);
     if (
       object.visibility === 'workspace_audience'
@@ -468,7 +468,7 @@ export class WorkspaceCollaborationService {
     userId: string,
     input: UpdateWorkspaceCollaborationInput,
   ): Promise<WorkspaceCollaborationObject> {
-    const access = await this.ensurePublishedWorkspaceAccess(workspaceId, userId);
+    const access = await this.ensureSharedWorkspaceAccess(workspaceId, userId);
     const object = await this.ensureObjectAccess(workspaceId, objectId, userId);
     const canModerate = canModerateWorkspaceCollaboration(access.membership.role);
     const canManageItem = canModerate
@@ -510,7 +510,7 @@ export class WorkspaceCollaborationService {
     objectId: string,
     userId: string,
   ): Promise<WorkspaceCollaborationObject> {
-    const access = await this.ensurePublishedWorkspaceAccess(workspaceId, userId);
+    const access = await this.ensureSharedWorkspaceAccess(workspaceId, userId);
     if (!getWorkspaceRoleCapabilities(access.membership.role).canPropose) {
       throw new AccessDeniedError('Contributor access is required to create a proposal');
     }
@@ -536,7 +536,7 @@ export class WorkspaceCollaborationService {
     objectId: string,
     userId: string,
   ): Promise<WorkspaceCollaborationObject> {
-    const access = await this.ensurePublishedWorkspaceAccess(workspaceId, userId);
+    const access = await this.ensureSharedWorkspaceAccess(workspaceId, userId);
     if (!canModerateWorkspaceCollaboration(access.membership.role)) {
       throw new AccessDeniedError('Owner or Publisher access is required to apply a proposal');
     }
@@ -568,13 +568,13 @@ export class WorkspaceCollaborationService {
     return this.ensureObjectAccess(workspaceId, objectId, userId);
   }
 
-  private async ensurePublishedWorkspaceAccess(
+  private async ensureSharedWorkspaceAccess(
     workspaceId: string,
     userId: string,
   ): Promise<CollaborationAccess> {
     const { workspace, membership } = await this.workspaceService.ensureMembership(workspaceId, userId);
     if (workspace.visibility !== 'team') {
-      throw new ConflictError('Collaboration items are attached to published workspaces');
+      throw new ConflictError('Collaboration items are available only in Shared workspaces');
     }
     return {
       membership,

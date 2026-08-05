@@ -71,6 +71,7 @@ export type McpServerPolicy = {
   workspaceMode: 'private' | 'shared_live' | 'published_read_only';
   workspaceRole: WorkspaceRole;
   canWriteWorkspace: boolean;
+  editingPolicy: 'direct' | 'review' | null;
 };
 
 export class WorkspaceService {
@@ -477,6 +478,9 @@ export class WorkspaceService {
       console.warn('Failed to load mcp_server_grants; continuing without explicit allow/deny', error);
     }
 
+    const isSharedFreeflow = workspacePolicy?.visibility === 'team'
+      && workspacePolicy.editingPolicy === 'direct';
+
     return {
       mcpServerAllowIds: Array.from(new Set(allow)).sort(),
       mcpServerDenyIds: Array.from(new Set(deny)).sort(),
@@ -484,7 +488,12 @@ export class WorkspaceService {
       skipPlanApprovals: Boolean(workspacePolicy?.skipPlanApprovals),
       workspaceMode: workspacePolicy?.visibility === 'team' ? 'shared_live' : 'private',
       workspaceRole: membership.role,
-      canWriteWorkspace: membership.canEdit,
+      canWriteWorkspace: workspacePolicy?.visibility !== 'team'
+        ? membership.canEdit
+        : isSharedFreeflow && membership.canEdit,
+      editingPolicy: workspacePolicy?.visibility === 'team'
+        ? (workspacePolicy.editingPolicy === 'direct' ? 'direct' : 'review')
+        : null,
     };
   }
 

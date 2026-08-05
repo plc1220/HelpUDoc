@@ -1,6 +1,6 @@
 # Private and Shared Workspaces — Product Specification
 
-Status: Implemented baseline — direct-user sharing, Freeflow, Review proposals, and published snapshots
+Status: Implemented baseline with the intended Team Chat and mode-aware Lumo policy
 
 ## 1. Summary
 
@@ -43,6 +43,9 @@ The workspace pane should expose only the two categories above. Published versio
 
 7. **Private runtime state stays private**
    Sharing or publishing never exposes credentials, personal integrations, private activity, unsent prompts, or private agent state.
+
+8. **Team collaboration is independent of publication**
+   Authorized Shared workspace members can use Team Chat before or after publication. Publication provides an immutable snapshot; it is not a prerequisite for collaboration.
 
 ## 3. Terminology
 
@@ -126,12 +129,12 @@ Private workspaces must not have access-grant rows.
 
 ### Shared workspace
 
-| Role | View working version | Edit Freeflow | Submit Review proposal | Create published version | Manage access |
-|---|---:|---:|---:|---:|---:|
-| Viewer | Yes | No | No | No | No |
-| Contributor | Yes | Yes | Yes | No | No |
-| Publisher | Yes | Yes | Yes | Yes | No |
-| Owner | Yes | Yes | Yes | Yes | Yes |
+| Role | View working version | Read Team Chat | Post / mention Lumo | Edit Freeflow | Submit Review proposal | Create published version | Manage access |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Viewer | Yes | Yes | No | No | No | No | No |
+| Contributor | Yes | Yes | Yes | Yes | Yes | No | No |
+| Publisher | Yes | Yes | Yes | Yes | Yes | Yes | No |
+| Owner | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
 
 Publisher is a direct user grant. A Team grant may provide Viewer or Contributor, but must not grant Publisher authority to every Team member.
 
@@ -172,6 +175,27 @@ Freeflow must not queue an entire workspace behind one slow editor. The server s
 - A stale proposal returns to review with an explanation rather than silently overwriting newer work.
 
 The proposal queue is a governance mechanism. It is separate from the short-lived technical write queue used to make individual mutations safe.
+
+### Team Chat and Lumo execution
+
+Team Chat is part of the Shared workspace surface and is available to every authorized member, whether or not the workspace has a published version. It is opened from the Shared workspace's Working version view. Published history is a separate read-only view and must not be the gate for Team Chat access.
+
+- Viewers may read Team Chat but cannot post, reply, mention Lumo, or create collaboration items that require write access.
+- Contributors, Publishers, and Owners may post, reply, mention Lumo, and use the collaboration actions allowed by their role.
+- Team Chat Lumo always uses the current Shared workspace working version as its context. If no publication exists, the UI must identify the context as the Working version rather than implying that a published version exists.
+- Lumo inherits the invoking member's effective workspace permission and must never gain more authority than that member.
+
+In **Freeflow**:
+
+- Lumo may apply file and folder changes directly to the current working version when the invoking member has Freeflow edit permission.
+- Those changes use the same concurrency, revision history, attribution, and audit rules as a human edit.
+- Viewers remain read-only and cannot invoke Lumo from Team Chat.
+
+In **Review**:
+
+- Team Chat Lumo is read-only for every role. It may inspect the current working version and suggest changes, but it must not modify Shared workspace files or apply a proposal directly from the shared channel.
+- A member who wants Lumo to make changes works in an authorized Private working copy. The member can then submit or sync those changes through the normal Review proposal flow for Owner or Publisher review.
+- Private prompts, agent history, tool calls, credentials, and other runtime state from that working copy remain private.
 
 ## 8. Sharing flow
 
@@ -268,6 +292,8 @@ Withdrawal is not deletion. Published history remains reachable from the expanda
 - Hidden runtime files, caches, temporary uploads, and generated previews.
 
 Shared collaboration messages, comments, annotations, and tasks may be visible to Shared workspace members when they are explicitly part of the workspace collaboration surface. They must not expose personal agent state or credentials.
+
+Team Chat messages are part of that Shared collaboration surface. They are governed by the same workspace membership checks as the Working version and remain available when a publication is withdrawn or has not yet been created.
 
 Search indexes and derived previews are rebuilt from authorized content.
 
@@ -422,3 +448,7 @@ Migration must preserve workspace IDs or provide redirects for saved links.
 6. Review mode is available when the owner wants proposals instead of direct edits.
 7. Publication does not freeze the live workspace and does not alter access grants.
 8. Optional private working copies remain available for users who need isolated work, but they are not required for normal collaboration.
+9. Team Chat is available to authorized Shared workspace members independently of publication state.
+10. In Freeflow, Team Chat Lumo may write to the Shared working version only within the invoking member's effective edit permission.
+11. In Review, Team Chat Lumo is read-only; file changes go through a Private working copy and the Review proposal flow.
+12. Lumo execution in Team Chat is attributed to the invoking member and is subject to the same audit, concurrency, and content-boundary rules as other workspace actions.

@@ -79,6 +79,9 @@ export class WorkspaceTeamChatAgentService {
     if (workspacePolicy.workspaceMode !== 'shared_live' && workspacePolicy.workspaceMode !== 'published_read_only') {
       throw new HttpError(409, 'Shared Chat Lumo is only available in Shared workspaces');
     }
+    const canWriteSharedWorkspace = workspacePolicy.workspaceMode === 'shared_live'
+      && workspacePolicy.editingPolicy === 'direct'
+      && workspacePolicy.canWriteWorkspace;
     const promptAccess = await this.userService.getEffectivePromptAccess(userId);
     if (!promptAccess) {
       throw new HttpError(401, 'User not found');
@@ -110,9 +113,9 @@ export class WorkspaceTeamChatAgentService {
       ])),
       mcpServerAllowIds: [],
       mcpServerDenyIds: deniedMcpServerIds,
-      workspaceMode: 'published_read_only',
+      workspaceMode: 'shared_live',
       workspaceRole: workspacePolicy.workspaceRole,
-      canWriteWorkspace: false,
+      canWriteWorkspace: canWriteSharedWorkspace,
       skipPlanApprovals: false,
       sharedTeamChannel: true,
     });
@@ -123,16 +126,19 @@ export class WorkspaceTeamChatAgentService {
     const question = sourceMessage.body
       .replace(/(^|\s)@lumo\b[:,]?/ig, '$1')
       .trim();
-    const publishedVersionLabel = sourceMessage.originVersionNumber
-      ? `Published v${sourceMessage.originVersionNumber}`
-      : 'the current published version';
+    const workingVersionLabel = 'the current Shared working version';
+    const writeInstruction = canWriteSharedWorkspace
+      ? 'You may edit Shared workspace files and folders when the request requires it. Apply the same workspace permissions, concurrency, revision-history, attribution, and audit rules as a human Freeflow edit.'
+      : 'You are read-only in the Shared workspace. Do not edit files, write workspace content, create tasks or proposals, use personal credentials, run write-capable MCP actions, or cause external side effects.';
     const prompt = [
       'You are Lumo responding inside a shared HelpUdoc Team Chat.',
-      `Your answer is read-only and must be based on ${publishedVersionLabel}.`,
+      `Your answer must be based on ${workingVersionLabel}.`,
       'Answer the current question directly. Follow requested brevity, and do not claim that you completed or verified an action unless the available context proves it.',
-      'You may inspect published workspace files and approved knowledge to answer.',
-      'Do not edit files, write workspace content, create tasks or proposals, use personal credentials, run write-capable MCP actions, or cause external side effects.',
-      'If the team asks for a change, provide a suggested change in your response. A human may explicitly convert it into a governed note, task, annotation, or proposal.',
+      'You may inspect Shared workspace files and approved knowledge to answer.',
+      writeInstruction,
+      canWriteSharedWorkspace
+        ? 'If you make a change, report what changed and keep the response grounded in the actual tool result.'
+        : 'If the team asks for a change, provide a suggested change in your response. In Review mode, the member must use a Private working copy and submit the result through the Review proposal flow.',
       `Question from ${sourceMessage.authorName}: ${question || sourceMessage.body}`,
     ].join('\n\n');
     const agentHistory = history.map((message) => ({
