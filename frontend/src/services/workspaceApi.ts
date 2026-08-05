@@ -86,6 +86,12 @@ export type WorkspaceCollaborator = {
   canEdit: boolean;
 };
 
+export type WorkspaceAccessTeam = {
+  id: string;
+  name: string;
+  role: 'viewer' | 'contributor' | 'publisher';
+};
+
 export const fetchUserDirectory = async (query: string, limit = 20) => {
   const params = new URLSearchParams({
     q: query,
@@ -105,8 +111,11 @@ export const listWorkspaceCollaborators = async (workspaceId: string) => {
   if (!response.ok) {
     throw new Error('Failed to list collaborators');
   }
-  const data = (await response.json()) as { collaborators: WorkspaceCollaborator[] };
-  return data.collaborators ?? [];
+  return (await response.json()) as {
+    collaborators: WorkspaceCollaborator[];
+    directCollaborators: WorkspaceCollaborator[];
+    teams: WorkspaceAccessTeam[];
+  };
 };
 
 export const addWorkspaceCollaborator = async (
@@ -131,6 +140,28 @@ export const removeWorkspaceCollaborator = async (workspaceId: string, targetUse
   if (!response.ok) {
     const err = await response.json().catch(() => ({}));
     throw new Error(typeof err?.error === 'string' ? err.error : 'Failed to remove collaborator');
+  }
+};
+
+export const addWorkspaceTeam = async (workspaceId: string, teamId: string) => {
+  const response = await apiFetch(`${API_URL}/workspaces/${workspaceId}/collaborators/teams`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ teamId }),
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(typeof err?.error === 'string' ? err.error : 'Failed to add team access');
+  }
+};
+
+export const removeWorkspaceTeam = async (workspaceId: string, teamId: string) => {
+  const response = await apiFetch(`${API_URL}/workspaces/${workspaceId}/collaborators/teams/${teamId}`, {
+    method: 'DELETE',
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(typeof err?.error === 'string' ? err.error : 'Failed to remove team access');
   }
 };
 
@@ -172,6 +203,10 @@ export const listWorkspaceTeams = async (): Promise<WorkspaceTeam[]> => {
 export const publishWorkspace = async (
   workspaceId: string,
   payload: {
+    audience?: 'team' | 'selected_people';
+    teamId?: string;
+    userIds?: string[];
+    role?: WorkspaceNamedGrantRole;
     note?: string;
   },
 ) => {

@@ -147,7 +147,7 @@ export default function WorkspaceTeamChatPanel({
     setError('');
     void loadMessages(true);
     void listWorkspaceCollaborators(workspace.id)
-      .then(setCollaborators)
+      .then((access) => setCollaborators(access.collaborators ?? []))
       .catch(() => setCollaborators([]));
     const timer = window.setInterval(() => void loadMessages(false), 5000);
     return () => window.clearInterval(timer);

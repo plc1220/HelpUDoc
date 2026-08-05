@@ -16,6 +16,10 @@ const renameWorkspaceSchema = z.object({
 const namedWorkspaceRoleSchema = z.enum(['publisher', 'contributor', 'viewer']);
 
 const publishWorkspaceSchema = z.object({
+  audience: z.enum(['team', 'selected_people']).optional(),
+  teamId: z.string().uuid().optional(),
+  userIds: z.array(z.string().uuid()).min(1).max(100).optional(),
+  role: namedWorkspaceRoleSchema.optional(),
   note: z.string().trim().max(1000).optional(),
 }).strict();
 
@@ -28,6 +32,10 @@ const shareWorkspaceSchema = z.object({
 
 const workspaceEditingPolicySchema = z.object({
   editingPolicy: z.enum(['direct', 'review']),
+});
+
+const teamAccessSchema = z.object({
+  teamId: z.string().uuid(),
 });
 
 const syncWorkspaceSchema = z.object({
@@ -273,8 +281,8 @@ export default function workspaceRoutes(
   router.get('/:workspaceId/collaborators', async (req, res) => {
     try {
       const user = requireUserContext(req);
-      const collaborators = await workspaceService.listCollaborators(req.params.workspaceId, user.userId);
-      res.json({ collaborators });
+      const access = await workspaceService.listCollaborators(req.params.workspaceId, user.userId);
+      res.json(access);
     } catch (error) {
       handleError(res, error, 'Failed to list collaborators');
     }
@@ -312,6 +320,20 @@ export default function workspaceRoutes(
     }
   });
 
+  router.post('/:workspaceId/collaborators/teams', async (req, res) => {
+    try {
+      const user = requireUserContext(req);
+      const payload = teamAccessSchema.parse(req.body);
+      await workspaceService.addTeamAccess(req.params.workspaceId, user.userId, payload.teamId);
+      res.status(204).send();
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: 'Invalid team access payload' });
+      }
+      handleError(res, error, 'Failed to add team access');
+    }
+  });
+
   router.delete('/:workspaceId/collaborators/:targetUserId', async (req, res) => {
     try {
       const user = requireUserContext(req);
@@ -323,6 +345,16 @@ export default function workspaceRoutes(
       res.status(204).send();
     } catch (error) {
       handleError(res, error, 'Failed to remove collaborator');
+    }
+  });
+
+  router.delete('/:workspaceId/collaborators/teams/:teamId', async (req, res) => {
+    try {
+      const user = requireUserContext(req);
+      await workspaceService.removeTeamAccess(req.params.workspaceId, user.userId, req.params.teamId);
+      res.status(204).send();
+    } catch (error) {
+      handleError(res, error, 'Failed to remove team access');
     }
   });
 

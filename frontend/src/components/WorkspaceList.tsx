@@ -55,7 +55,6 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
   const privateWorkspaces = workspaces.filter((workspace) => workspace.visibility !== 'team');
   const sharedWorkspaces = workspaces.filter((workspace) => workspace.visibility === 'team');
   const [expanded, setExpanded] = useState({ private: true, shared: true });
-  const [expandedSharedWorkspaces, setExpandedSharedWorkspaces] = useState<Record<string, boolean>>({});
   const [actionAnchorEl, setActionAnchorEl] = useState<null | HTMLElement>(null);
   const [actionWorkspaceId, setActionWorkspaceId] = useState<string | null>(null);
 
@@ -88,8 +87,6 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
     const isWithdrawn = workspace.publicationStatus === 'withdrawn';
     const hasPublishedVersions = Number(workspace.publishedVersionCount || 0) > 0
       || workspace.currentPublishedVersionNumber != null;
-    const isWorkspaceExpanded = Boolean(expandedSharedWorkspaces[workspace.id]);
-
     const actions = [
       isPrivate && !workspace.linkedTeamWorkspaceId && onPublishWorkspace ? {
         label: `Share ${workspace.name}`,
@@ -124,7 +121,7 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
         onClick: () => onWithdrawWorkspace(workspace),
       } : null,
       !isPrivate && isOwner && onManageTeamAccess ? {
-        label: `Manage access for ${workspace.name}`,
+        label: `Manage shared workspace access for ${workspace.name}`,
         icon: <ManageAccounts fontSize="small" />,
         onClick: () => onManageTeamAccess(workspace),
       } : null,
@@ -178,12 +175,7 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
       >
         <ListItemButton
           selected={isSelected}
-          onClick={() => {
-            onSelectWorkspace(workspace);
-            if (!isPrivate) {
-              setExpandedSharedWorkspaces((current) => ({ ...current, [workspace.id]: true }));
-            }
-          }}
+          onClick={() => onSelectWorkspace(workspace)}
           sx={{
             minWidth: 0,
             minHeight: 68,
@@ -195,23 +187,6 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
             '&.Mui-selected, &.Mui-selected:hover, &:hover': { backgroundColor: 'transparent' },
           }}
         >
-          {!isPrivate ? (
-            <IconButton
-              size="small"
-              aria-label={`${isWorkspaceExpanded ? 'Collapse' : 'Expand'} ${workspace.name}`}
-              aria-expanded={isWorkspaceExpanded}
-              onClick={(event) => {
-                event.stopPropagation();
-                setExpandedSharedWorkspaces((current) => ({
-                  ...current,
-                  [workspace.id]: !current[workspace.id],
-                }));
-              }}
-              sx={{ width: 28, height: 28, mr: 0.25, flexShrink: 0 }}
-            >
-              {isWorkspaceExpanded ? <ExpandLess fontSize="small" /> : <ExpandMore fontSize="small" />}
-            </IconButton>
-          ) : null}
           <ListItemText
             sx={{ minWidth: 0 }}
             primary={workspace.name}
@@ -326,35 +301,6 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
             </MenuItem>
           ))}
         </Menu>
-        {!isPrivate ? (
-          <Collapse in={isWorkspaceExpanded} timeout="auto" unmountOnExit>
-            <Box sx={{ pb: 0.75, pl: 4.25, pr: 1 }}>
-              <Box sx={{ px: 1, py: 0.6 }}>
-                <Typography variant="body2" sx={{ fontSize: '0.8rem', fontWeight: 500 }}>
-                  Working version
-                </Typography>
-                <Typography variant="caption" color="text.secondary">
-                  The shared workspace you are viewing
-                </Typography>
-              </Box>
-              {hasPublishedVersions ? (
-                <ListItemButton
-                  onClick={() => onHistoryWorkspace?.(workspace)}
-                  sx={{ minHeight: 34, borderRadius: 1.5, px: 1, py: 0.35 }}
-                >
-                  <ListItemText
-                    primary="Published history & restore"
-                    secondary={workspace.currentPublishedVersionNumber == null
-                      ? 'No current version'
-                      : `v${workspace.currentPublishedVersionNumber} is current`}
-                    primaryTypographyProps={{ sx: { fontSize: '0.8rem', fontWeight: 500 } }}
-                    secondaryTypographyProps={{ sx: { fontSize: '0.7rem' } }}
-                  />
-                </ListItemButton>
-              ) : null}
-            </Box>
-          </Collapse>
-        ) : null}
       </Box>
     );
   };

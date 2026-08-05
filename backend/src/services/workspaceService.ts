@@ -610,10 +610,93 @@ export class WorkspaceService {
     });
   }
 
+  async addTeamAccess(workspaceId: string, actingUserId: string, teamId: string): Promise<void> {
+    const { membership } = await this.ensureMembership(workspaceId, actingUserId);
+    const workspace = await this.db<WorkspaceRecord>('workspaces').where({ id: workspaceId }).first();
+    if (workspace?.visibility !== 'team') {
+      throw new ConflictError('Private workspaces cannot have team access');
+    }
+    if (membership.role !== 'owner') {
+      throw new AccessDeniedError('Only Team owners can manage publishing access');
+    }
+
+    const team = await this.db('groups').where({ id: teamId }).first();
+    if (!team) {
+      throw new NotFoundError('Team not found');
+    }
+    const actingTeamMembership = await this.db('group_members')
+      .where({ groupId: teamId, userId: actingUserId })
+      .first();
+    if (!actingTeamMembership) {
+      throw new AccessDeniedError('You must belong to the team before sharing with it');
+    }
+    if (workspace.teamId && workspace.teamId !== teamId) {
+      throw new ConflictError('A shared workspace can only be connected to one team');
+    }
+
+    await this.db.transaction(async (tx) => {
+      await tx('workspaces')
+        .where({ id: workspaceId })
+        .update({ teamId, updatedAt: tx.fn.now() });
+      await tx('workspace_team_grants')
+        .insert({
+          workspaceId,
+          teamId,
+          role: 'viewer',
+          grantedByUserId: actingUserId,
+        })
+        .onConflict(['workspaceId', 'teamId'])
+        .merge({ role: 'viewer', grantedByUserId: actingUserId, updatedAt: tx.fn.now() });
+      await tx('audit_events').insert({
+        id: uuidv4(),
+        actorUserId: actingUserId,
+        actorRole: 'workspace_owner',
+        action: 'workspace.team_access_granted',
+        resourceType: 'workspace',
+        resourceId: workspaceId,
+        metadata: { teamId, role: 'viewer' },
+      });
+    });
+  }
+
+  async removeTeamAccess(workspaceId: string, actingUserId: string, teamId: string): Promise<void> {
+    const { membership } = await this.ensureMembership(workspaceId, actingUserId);
+    const workspace = await this.db<WorkspaceRecord>('workspaces').where({ id: workspaceId }).first();
+    if (workspace?.visibility !== 'team') {
+      throw new ConflictError('Private workspaces cannot have team access');
+    }
+    if (membership.role !== 'owner') {
+      throw new AccessDeniedError('Only Team owners can manage publishing access');
+    }
+    if (workspace.teamId !== teamId) {
+      throw new NotFoundError('Team access not found');
+    }
+
+    await this.db.transaction(async (tx) => {
+      await tx('workspaces')
+        .where({ id: workspaceId, teamId })
+        .update({ teamId: null, updatedAt: tx.fn.now() });
+      await tx('workspace_team_grants').where({ workspaceId, teamId }).del();
+      await tx('audit_events').insert({
+        id: uuidv4(),
+        actorUserId: actingUserId,
+        actorRole: 'workspace_owner',
+        action: 'workspace.team_access_revoked',
+        resourceType: 'workspace',
+        resourceId: workspaceId,
+        metadata: { teamId },
+      });
+    });
+  }
+
   async listCollaborators(
     workspaceId: string,
     userId: string,
-  ): Promise<Array<{ userId: string; displayName: string; role: WorkspaceRole; canEdit: boolean }>> {
+  ): Promise<{
+    collaborators: Array<{ userId: string; displayName: string; role: WorkspaceRole; canEdit: boolean }>;
+    directCollaborators: Array<{ userId: string; displayName: string; role: WorkspaceRole; canEdit: boolean }>;
+    teams: Array<{ id: string; name: string; role: 'viewer' | 'contributor' | 'publisher' }>;
+  }> {
     const { workspace } = await this.ensureMembership(workspaceId, userId);
     const directCollaborators = await this.db('workspace_members')
       .join('users', 'workspace_members.userId', 'users.id')
@@ -625,12 +708,15 @@ export class WorkspaceService {
       )
       .where('workspace_members.workspaceId', workspaceId)
       .orderBy('users.displayName', 'asc');
-    const byUserId = new Map<string, {
-      userId: string;
-      displayName: string;
-      role: WorkspaceRole;
-      canEdit: boolean;
-    }>();
+    const directCollaboratorList = directCollaborators.map((row: any) => ({
+      userId: row.userId,
+      displayName: row.displayName,
+      role: row.role as WorkspaceRole,
+      canEdit: Boolean(row.canEdit),
+    }));
+    const effectiveCollaborators = new Map(
+      directCollaboratorList.map((collaborator) => [collaborator.userId, collaborator]),
+    );
     if (workspace.teamId) {
       const groupMembers = await this.db('group_members')
         .join('users', 'group_members.userId', 'users.id')
@@ -638,24 +724,40 @@ export class WorkspaceService {
         .where('group_members.groupId', workspace.teamId)
         .orderBy('users.displayName', 'asc');
       groupMembers.forEach((row: any) => {
-        byUserId.set(row.userId, {
-          userId: row.userId,
-          displayName: row.displayName,
-          role: 'viewer',
-          canEdit: false,
-        });
+        if (!effectiveCollaborators.has(row.userId)) {
+          effectiveCollaborators.set(row.userId, {
+            userId: row.userId,
+            displayName: row.displayName,
+            role: 'viewer',
+            canEdit: false,
+          });
+        }
       });
     }
-    directCollaborators.forEach((row: any) => {
-      byUserId.set(row.userId, {
-        userId: row.userId,
-        displayName: row.displayName,
-        role: row.role as WorkspaceRole,
-        canEdit: Boolean(row.canEdit),
-      });
-    });
-    return Array.from(byUserId.values()).sort((a, b) =>
-      a.displayName.localeCompare(b.displayName));
+
+    const teams = workspace.teamId
+      ? await this.db('groups as group')
+        .leftJoin('workspace_team_grants as grant', function joinTeamGrant() {
+          this.on('grant.teamId', '=', 'group.id').andOnVal('grant.workspaceId', '=', workspaceId);
+        })
+        .where('group.id', workspace.teamId)
+        .select(
+          'group.id',
+          'group.name',
+          this.db.raw(`COALESCE(grant.role, 'viewer') as role`),
+        )
+      : [];
+
+    return {
+      collaborators: Array.from(effectiveCollaborators.values()).sort((a, b) =>
+        a.displayName.localeCompare(b.displayName)),
+      directCollaborators: directCollaboratorList,
+      teams: teams.map((row: any) => ({
+        id: row.id,
+        name: row.name,
+        role: row.role as 'viewer' | 'contributor' | 'publisher',
+      })),
+    };
   }
 
   async touchWorkspace(

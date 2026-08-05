@@ -9,25 +9,36 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
+  FormControl,
   IconButton,
+  InputLabel,
+  MenuItem,
+  Select,
   TextField,
   ToggleButton,
   ToggleButtonGroup,
   Typography,
 } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
+import GroupsIcon from '@mui/icons-material/Groups';
 import PersonRemoveIcon from '@mui/icons-material/PersonRemove';
+import RemoveCircleOutlineIcon from '@mui/icons-material/RemoveCircleOutline';
 
 import type { Workspace } from '../types';
 import {
   addWorkspaceCollaborator,
+  addWorkspaceTeam,
   fetchUserDirectory,
   listWorkspaceCollaborators,
+  listWorkspaceTeams,
   removeWorkspaceCollaborator,
+  removeWorkspaceTeam,
   updateWorkspaceEditingPolicy,
   type DirectoryUser,
+  type WorkspaceAccessTeam,
   type WorkspaceEditingPolicy,
   type WorkspaceCollaborator,
+  type WorkspaceTeam,
 } from '../services/workspaceApi';
 
 const SEARCH_DEBOUNCE_MS = 300;
@@ -55,8 +66,14 @@ const WorkspaceShareDialog: React.FC<WorkspaceShareDialogProps> = ({
   onWorkspaceChanged,
 }) => {
   const [collaborators, setCollaborators] = useState<WorkspaceCollaborator[]>([]);
+  const [accessTeams, setAccessTeams] = useState<WorkspaceAccessTeam[]>([]);
   const [collaboratorsLoading, setCollaboratorsLoading] = useState(false);
   const [collaboratorsError, setCollaboratorsError] = useState<string | null>(null);
+  const [availableTeams, setAvailableTeams] = useState<WorkspaceTeam[]>([]);
+  const [selectedTeamId, setSelectedTeamId] = useState('');
+  const [teamsLoading, setTeamsLoading] = useState(false);
+  const [teamBusyId, setTeamBusyId] = useState<string | null>(null);
+  const [teamError, setTeamError] = useState<string | null>(null);
 
   const [searchInput, setSearchInput] = useState('');
   const debouncedSearch = useDebouncedValue(searchInput, SEARCH_DEBOUNCE_MS);
@@ -78,12 +95,26 @@ const WorkspaceShareDialog: React.FC<WorkspaceShareDialogProps> = ({
     setCollaboratorsLoading(true);
     setCollaboratorsError(null);
     try {
-      const list = await listWorkspaceCollaborators(workspaceId);
-      setCollaborators(list);
+      const access = await listWorkspaceCollaborators(workspaceId);
+      setCollaborators(access.directCollaborators ?? access.collaborators ?? []);
+      setAccessTeams(access.teams ?? []);
     } catch (e) {
       setCollaboratorsError(e instanceof Error ? e.message : 'Failed to load collaborators');
     } finally {
       setCollaboratorsLoading(false);
+    }
+  }, [workspaceId]);
+
+  const loadAvailableTeams = useCallback(async () => {
+    if (!workspaceId) return;
+    setTeamsLoading(true);
+    setTeamError(null);
+    try {
+      setAvailableTeams(await listWorkspaceTeams());
+    } catch (e) {
+      setTeamError(e instanceof Error ? e.message : 'Failed to load teams');
+    } finally {
+      setTeamsLoading(false);
     }
   }, [workspaceId]);
 
@@ -99,11 +130,21 @@ const WorkspaceShareDialog: React.FC<WorkspaceShareDialogProps> = ({
       setSearchInput('');
       setOptions([]);
       setSelected([]);
+      setAccessTeams([]);
+      setAvailableTeams([]);
+      setSelectedTeamId('');
       setInviteRole('contributor');
       setEditingPolicy(workspace?.editingPolicy || 'direct');
       setInviteError(null);
+      setTeamError(null);
     }
   }, [open, workspace?.editingPolicy]);
+
+  useEffect(() => {
+    if (open && workspaceId) {
+      void loadAvailableTeams();
+    }
+  }, [open, workspaceId, loadAvailableTeams]);
 
   useEffect(() => {
     if (!open || !workspaceId) {
@@ -143,6 +184,11 @@ const WorkspaceShareDialog: React.FC<WorkspaceShareDialogProps> = ({
   const filteredOptions = useMemo(
     () => options.filter((u) => !memberIds.has(u.id)),
     [options, memberIds],
+  );
+
+  const teamOptions = useMemo(
+    () => availableTeams.filter((team) => !accessTeams.some((accessTeam) => accessTeam.id === team.id)),
+    [accessTeams, availableTeams],
   );
 
   const handleInvite = async () => {
@@ -194,10 +240,41 @@ const WorkspaceShareDialog: React.FC<WorkspaceShareDialogProps> = ({
     }
   };
 
+  const handleAddTeam = async () => {
+    if (!workspaceId || !selectedTeamId) return;
+    setTeamBusyId(selectedTeamId);
+    setTeamError(null);
+    try {
+      await addWorkspaceTeam(workspaceId, selectedTeamId);
+      setSelectedTeamId('');
+      await Promise.all([loadCollaborators(), loadAvailableTeams()]);
+      await onWorkspaceChanged?.();
+    } catch (e) {
+      setTeamError(e instanceof Error ? e.message : 'Failed to add team access');
+    } finally {
+      setTeamBusyId(null);
+    }
+  };
+
+  const handleRemoveTeam = async (teamId: string) => {
+    if (!workspaceId) return;
+    setTeamBusyId(teamId);
+    setTeamError(null);
+    try {
+      await removeWorkspaceTeam(workspaceId, teamId);
+      await Promise.all([loadCollaborators(), loadAvailableTeams()]);
+      await onWorkspaceChanged?.();
+    } catch (e) {
+      setTeamError(e instanceof Error ? e.message : 'Failed to remove team access');
+    } finally {
+      setTeamBusyId(null);
+    }
+  };
+
   return (
     <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm">
       <DialogTitle sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', pr: 1 }}>
-        <span>Manage workspace access</span>
+        <span>Manage shared workspace access</span>
         <IconButton aria-label="close" onClick={onClose} size="small">
           <CloseIcon />
         </IconButton>
@@ -231,6 +308,65 @@ const WorkspaceShareDialog: React.FC<WorkspaceShareDialogProps> = ({
             ? 'Contributors edit the live working version directly.'
             : 'Contributors submit changes for review before they reach the working version.'}
         </Typography>
+
+        <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600 }}>
+          Teams with access
+        </Typography>
+        {accessTeams.length ? (
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, mb: 2 }}>
+            {accessTeams.map((team) => (
+              <Box
+                key={team.id}
+                sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, py: 0.5 }}
+              >
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
+                  <GroupsIcon fontSize="small" color="action" />
+                  <Box sx={{ minWidth: 0 }}>
+                    <Typography variant="body2" noWrap>{team.name}</Typography>
+                    <Typography variant="caption" color="text.secondary">Team members have Viewer access</Typography>
+                  </Box>
+                </Box>
+                <IconButton
+                  size="small"
+                  aria-label={`Remove ${team.name} team access`}
+                  disabled={teamBusyId === team.id}
+                  onClick={() => void handleRemoveTeam(team.id)}
+                >
+                  {teamBusyId === team.id ? <CircularProgress size={20} /> : <RemoveCircleOutlineIcon fontSize="small" />}
+                </IconButton>
+              </Box>
+            ))}
+          </Box>
+        ) : (
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+            No team currently has access.
+          </Typography>
+        )}
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 3 }}>
+          <FormControl fullWidth size="small">
+            <InputLabel id="workspace-team-access-label">Add a team</InputLabel>
+            <Select
+              labelId="workspace-team-access-label"
+              label="Add a team"
+              value={selectedTeamId}
+              onChange={(event) => setSelectedTeamId(String(event.target.value))}
+              disabled={teamsLoading || teamOptions.length === 0 || Boolean(teamBusyId)}
+            >
+              {teamOptions.map((team) => (
+                <MenuItem key={team.id} value={team.id}>{team.name}</MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+          <Button
+            variant="outlined"
+            onClick={() => void handleAddTeam()}
+            disabled={!selectedTeamId || Boolean(teamBusyId)}
+            sx={{ flexShrink: 0 }}
+          >
+            Add team
+          </Button>
+        </Box>
+        {teamError ? <Typography color="error" variant="body2" sx={{ mb: 2 }}>{teamError}</Typography> : null}
 
         <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600 }}>
           People with direct access
