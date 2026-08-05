@@ -16,25 +16,18 @@ const renameWorkspaceSchema = z.object({
 const namedWorkspaceRoleSchema = z.enum(['publisher', 'contributor', 'viewer']);
 
 const publishWorkspaceSchema = z.object({
-  audience: z.enum(['team', 'selected_people']).optional(),
-  teamId: z.string().uuid().optional(),
-  userIds: z.array(z.string().uuid()).min(1).max(100).optional(),
-  role: namedWorkspaceRoleSchema.optional(),
-  name: z.string().trim().min(1).max(255).optional(),
   note: z.string().trim().max(1000).optional(),
-}).superRefine((data, ctx) => {
-  if (data.audience === 'team' && !data.teamId) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Choose a team', path: ['teamId'] });
-  }
-  if (data.audience === 'selected_people' && !data.userIds?.length) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Choose at least one person', path: ['userIds'] });
-  }
-});
+}).strict();
 
 const shareWorkspaceSchema = z.object({
   userIds: z.array(z.string().uuid()).min(1).max(100),
   role: namedWorkspaceRoleSchema.optional(),
   name: z.string().trim().min(1).max(255).optional(),
+  editingPolicy: z.enum(['direct', 'review']).optional(),
+});
+
+const workspaceEditingPolicySchema = z.object({
+  editingPolicy: z.enum(['direct', 'review']),
 });
 
 const syncWorkspaceSchema = z.object({
@@ -145,6 +138,16 @@ export default function workspaceRoutes(
     }
   });
 
+  router.post('/:workspaceId/publication/withdraw', async (req, res) => {
+    try {
+      const user = requireUserContext(req);
+      const result = await publicationService.withdraw(req.params.workspaceId, user.userId);
+      res.json(result);
+    } catch (error) {
+      handleError(res, error, 'Failed to withdraw publication');
+    }
+  });
+
   router.post('/:workspaceId/share', async (req, res) => {
     try {
       const user = requireUserContext(req);
@@ -160,6 +163,24 @@ export default function workspaceRoutes(
         return res.status(400).json({ error: 'Invalid sharing payload' });
       }
       handleError(res, error, 'Failed to share workspace');
+    }
+  });
+
+  router.patch('/:workspaceId/editing-policy', async (req, res) => {
+    try {
+      const user = requireUserContext(req);
+      const payload = workspaceEditingPolicySchema.parse(req.body || {});
+      await workspaceService.updateEditingPolicy(
+        req.params.workspaceId,
+        user.userId,
+        payload.editingPolicy,
+      );
+      res.status(204).send();
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: 'Invalid editing policy' });
+      }
+      handleError(res, error, 'Failed to update workspace editing policy');
     }
   });
 

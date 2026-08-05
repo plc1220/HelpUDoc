@@ -240,5 +240,19 @@ export default function workspaceCollaborationRoutes(
     }
   });
 
+  router.post('/objects/:objectId/apply', async (req, res) => {
+    try {
+      const user = requireUserContext(req);
+      const object = await service.applyProposal(
+        requireWorkspaceId(req),
+        req.params.objectId,
+        user.userId,
+      );
+      res.json(object);
+    } catch (error) {
+      handleError(res, error, 'Failed to apply change proposal');
+    }
+  });
+
   return router;
 }

@@ -36,6 +36,7 @@ export class DatabaseService {
     await this.createMcpConnectionsTable();
     await this.createMcpConnectionGrantsTable();
     await this.createFilesTable();
+    await this.createWorkspaceFileRevisionsTable();
     await this.createWorkspacePublishedVersionsTable();
     await this.createWorkspacePublicationLinksTable();
     await this.createWorkspaceTeamMessagesTable();
@@ -58,6 +59,7 @@ export class DatabaseService {
     await this.createUserMemorySuggestionsTable();
     await this.createSkillEvolutionSuggestionsTable();
     await this.createUnifiedGovernanceTables();
+    await this.migrateLegacyTeamWorkspacesToSharedFreeflow();
   }
 
   private buildConnectionConfig(env: ReturnType<typeof getBackendEnv>): PgConnection {
@@ -239,6 +241,36 @@ export class DatabaseService {
     `);
   }
 
+  private async migrateLegacyTeamWorkspacesToSharedFreeflow(): Promise<void> {
+    if (!await this.db.schema.hasTable('application_migrations')) {
+      await this.db.schema.createTable('application_migrations', (table) => {
+        table.string('key', 160).primary();
+        table.timestamp('appliedAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+      });
+    }
+    const key = '2026-08-live-shared-workspaces';
+    if (await this.db('application_migrations').where({ key }).first()) return;
+
+    await this.db.transaction(async (tx) => {
+      await tx('workspaces').where({ visibility: 'team' }).update({
+        workspaceType: 'team',
+        editingPolicy: 'direct',
+      });
+      await tx('workspace_members')
+        .whereIn('role', ['owner', 'editor', 'contributor'])
+        .whereIn('workspaceId', tx('workspaces').select('id').where({ visibility: 'team' }))
+        .update({ canEdit: true, updatedAt: tx.fn.now() });
+      await tx.raw(`
+        UPDATE workspace_published_versions AS version
+        SET "sourceContentRevision" = workspace."contentRevision"
+        FROM workspaces AS workspace
+        WHERE workspace."currentPublishedVersionId" = version.id
+          AND version."sourceContentRevision" = 0
+      `);
+      await tx('application_migrations').insert({ key }).onConflict('key').ignore();
+    });
+  }
+
   private async createMcpServerGroupGrantsTable(): Promise<void> {
     const exists = await this.db.schema.hasTable('mcp_server_group_grants');
     if (!exists) {
@@ -368,6 +400,25 @@ export class DatabaseService {
     }
   }
 
+  private async createWorkspaceFileRevisionsTable(): Promise<void> {
+    if (await this.db.schema.hasTable('workspace_file_revisions')) return;
+    await this.db.schema.createTable('workspace_file_revisions', (table) => {
+      table.bigIncrements('id').primary();
+      table.integer('fileId').references('id').inTable('files').onDelete('SET NULL');
+      table.uuid('workspaceId').notNullable().references('id').inTable('workspaces').onDelete('CASCADE');
+      table.text('name').notNullable();
+      table.integer('version').notNullable();
+      table.string('storageType', 16).notNullable();
+      table.string('mimeType');
+      table.binary('content').notNullable();
+      table.uuid('replacedByUserId').references('id').inTable('users').onDelete('SET NULL');
+      table.boolean('staleOverwrite').notNullable().defaultTo(false);
+      table.timestamp('createdAt', { useTz: true }).notNullable().defaultTo(this.db.fn.now());
+      table.index(['workspaceId', 'name', 'version'], 'workspace_file_revisions_workspace_name_version_idx');
+    });
+    console.log('Created "workspace_file_revisions" table.');
+  }
+
   private async createWorkspacePublishedVersionsTable(): Promise<void> {
     const exists = await this.db.schema.hasTable('workspace_published_versions');
     if (!exists) {
@@ -376,6 +427,7 @@ export class DatabaseService {
         table.uuid('teamWorkspaceId').notNullable().references('id').inTable('workspaces').onDelete('CASCADE');
         table.integer('versionNumber').notNullable();
         table.uuid('sourcePrivateWorkspaceId').references('id').inTable('workspaces').onDelete('SET NULL');
+        table.integer('sourceContentRevision').notNullable().defaultTo(0);
         table.uuid('publisherUserId').references('id').inTable('users').onDelete('SET NULL');
         table.text('note');
         table.jsonb('manifest').notNullable().defaultTo('[]');
@@ -385,6 +437,11 @@ export class DatabaseService {
       });
       console.log('Created "workspace_published_versions" table.');
     } else {
+      await this.ensureColumn(
+        'workspace_published_versions',
+        'sourceContentRevision',
+        (table) => table.integer('sourceContentRevision').notNullable().defaultTo(0),
+      );
       const foreignKeys = await this.db.raw<{
         rows: Array<{ constraint_name: string; delete_rule: string }>;
       }>(`
@@ -426,6 +483,7 @@ export class DatabaseService {
         table.uuid('userId').notNullable().references('id').inTable('users').onDelete('CASCADE');
         table.uuid('basePublishedVersionId').references('id').inTable('workspace_published_versions').onDelete('SET NULL');
         table.integer('basePrivateContentRevision').notNullable().defaultTo(0);
+        table.integer('baseSharedContentRevision').notNullable().defaultTo(0);
         table.boolean('hasUnpublishedChanges').notNullable().defaultTo(false);
         table.timestamp('createdAt').notNullable().defaultTo(this.db.fn.now());
         table.timestamp('updatedAt').notNullable().defaultTo(this.db.fn.now());
@@ -438,6 +496,11 @@ export class DatabaseService {
         'workspace_publication_links',
         'hasUnpublishedChanges',
         (table) => table.boolean('hasUnpublishedChanges').notNullable().defaultTo(false),
+      );
+      await this.ensureColumn(
+        'workspace_publication_links',
+        'baseSharedContentRevision',
+        (table) => table.integer('baseSharedContentRevision').notNullable().defaultTo(0),
       );
     }
   }

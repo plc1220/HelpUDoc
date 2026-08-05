@@ -57,6 +57,67 @@ test('private workspaces authorize only their owner without consulting grants', 
   assert.equal(membership.canEdit, true);
 });
 
+function workspaceServiceForSharedWorkspace(
+  editingPolicy: 'direct' | 'review',
+  role: 'owner' | 'editor' | 'contributor' | 'viewer',
+) {
+  const sharedWorkspace = {
+    ...privateWorkspace,
+    id: 'workspace-shared',
+    name: 'Shared workspace',
+    ownerId: 'owner-user',
+    visibility: 'team' as const,
+    workspaceType: 'team' as const,
+    editingPolicy,
+  };
+  const membership = {
+    workspaceId: sharedWorkspace.id,
+    userId: role === 'owner' ? 'owner-user' : 'collaborator-user',
+    role,
+    canEdit: false,
+    createdAt: sharedWorkspace.createdAt,
+    updatedAt: sharedWorkspace.updatedAt,
+  };
+  const db = ((table: string) => {
+    if (table === 'workspaces') {
+      return { where: () => ({ first: async () => sharedWorkspace }) };
+    }
+    if (table === 'workspace_members') {
+      return { where: () => ({ first: async () => membership }) };
+    }
+    throw new Error(`Unexpected query for ${table}`);
+  }) as any;
+  return new WorkspaceService({ getDb: () => db } as any);
+}
+
+test('Freeflow contributors can edit the live Shared workspace', async () => {
+  const service = workspaceServiceForSharedWorkspace('direct', 'contributor');
+  const { membership } = await service.ensureMembership(
+    'workspace-shared',
+    'collaborator-user',
+    { requireEdit: true },
+  );
+  assert.equal(membership.canEdit, true);
+});
+
+test('Review contributors cannot bypass the proposal boundary with direct writes', async () => {
+  const service = workspaceServiceForSharedWorkspace('review', 'contributor');
+  await assert.rejects(
+    service.ensureMembership('workspace-shared', 'collaborator-user', { requireEdit: true }),
+    /uses Review mode/,
+  );
+});
+
+test('Shared workspace owners retain direct edit access in Review mode', async () => {
+  const service = workspaceServiceForSharedWorkspace('review', 'owner');
+  const { membership } = await service.ensureMembership(
+    'workspace-shared',
+    'owner-user',
+    { requireEdit: true },
+  );
+  assert.equal(membership.canEdit, true);
+});
+
 test('workspace object bucket denies anonymous download in the GKE deployment', () => {
   const manifest = readFileSync(
     path.resolve(__dirname, '../../infra/gke/k8s/43-minio-setup.yaml'),

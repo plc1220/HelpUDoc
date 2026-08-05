@@ -117,8 +117,8 @@ class SkillScopedFilesystemBackend(FilesystemBackend):
         if not (is_published or write_denied):
             return None
         return (
-            f"Cannot {operation} '{file_path}' in a published workspace. "
-            "Published content is read-only; use a governed private working copy for changes."
+            f"Cannot {operation} '{file_path}' with the current workspace access or editing policy. "
+            "Ask an owner to grant edit access or review the proposed change."
         )
 
     def write(self, file_path: str, content: str) -> WriteResult:
@@ -474,10 +474,10 @@ class AgentRegistry:
             or workspace_state.context.get("can_write_workspace") is False
         ):
             system_prompt += (
-                "\n\nThis is a published, read-only workspace. You may inspect and analyze its content, "
+                "\n\nThis workspace is read-only for the current role or editing policy. You may inspect and analyze its content, "
                 "but you must not create, edit, upload, or generate workspace files. If the user wants "
-                "content changes or generated artifacts, explain that they must use a governed private "
-                "working copy and change proposal."
+                "content changes or generated artifacts, explain that an owner must grant edit access "
+                "or review the proposed change."
             )
         skills_root = self.settings.backend.skills_root
         if skills_root is not None:

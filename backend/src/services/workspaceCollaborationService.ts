@@ -531,6 +531,43 @@ export class WorkspaceCollaborationService {
     return this.ensureObjectAccess(workspaceId, objectId, userId);
   }
 
+  async applyProposal(
+    workspaceId: string,
+    objectId: string,
+    userId: string,
+  ): Promise<WorkspaceCollaborationObject> {
+    const access = await this.ensurePublishedWorkspaceAccess(workspaceId, userId);
+    if (!canModerateWorkspaceCollaboration(access.membership.role)) {
+      throw new AccessDeniedError('Owner or Publisher access is required to apply a proposal');
+    }
+    const object = await this.ensureObjectAccess(workspaceId, objectId, userId);
+    if (object.type !== 'change_proposal' || !object.linkedPrivateWorkspaceId) {
+      throw new ConflictError('This collaboration item does not have a linked change proposal');
+    }
+    if (object.status !== 'proposed' && object.status !== 'discussing') {
+      throw new ConflictError('Only an open proposal can be applied');
+    }
+
+    const applied = await this.publicationService.applyPrivateCopyToShared(
+      object.linkedPrivateWorkspaceId,
+      workspaceId,
+      userId,
+    );
+    await this.db('workspace_collaboration_objects').where({ id: objectId }).update({
+      status: 'addressed',
+      resolvedAt: this.db.fn.now(),
+      resolvedByVersionId: null,
+      updatedAt: this.db.fn.now(),
+    });
+    await this.db('workspace_collaboration_messages').insert({
+      id: uuidv4(),
+      objectId,
+      authorId: userId,
+      body: `Applied to working revision ${applied.contentRevision}.`,
+    });
+    return this.ensureObjectAccess(workspaceId, objectId, userId);
+  }
+
   private async ensurePublishedWorkspaceAccess(
     workspaceId: string,
     userId: string,

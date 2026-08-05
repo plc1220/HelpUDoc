@@ -7,6 +7,9 @@ export interface Workspace {
   canEdit?: boolean;
   canPublish?: boolean;
   visibility?: 'private' | 'team';
+  workspaceType?: 'private' | 'team';
+  editingPolicy?: 'direct' | 'review' | null;
+  contentRevision?: number;
   audienceType?: 'private' | 'selected_people' | 'team';
   teamId?: string | null;
   teamName?: string | null;
@@ -14,12 +17,14 @@ export interface Workspace {
     | 'private_draft'
     | 'up_to_date'
     | 'changes_to_publish'
+    | 'withdrawn'
     | 'team_updates_available'
     | 'review_needed';
   linkedTeamWorkspaceId?: string | null;
   privateCopyWorkspaceId?: string | null;
   currentPublishedVersionId?: string | null;
   currentPublishedVersionNumber?: number | null;
+  publishedVersionCount?: number;
   latestPublisherName?: string | null;
   lastPublishedAt?: string | null;
   createdAt?: string;
@@ -35,6 +40,8 @@ export interface File {
   mimeType?: string | null;
   publicUrl?: string | null;
   content?: string;
+  version?: number;
+  staleOverwrite?: boolean;
 }
 
 export type GoogleDrivePickerScope = 'recent' | 'my-drive' | 'shared';

@@ -23,6 +23,7 @@ import CloseIcon from '@mui/icons-material/Close';
 
 import type { Workspace } from '../types';
 import {
+  applyWorkspaceCollaborationProposal,
   convertWorkspaceCollaborationObjectToProposal,
   createWorkspaceCollaborationObject,
   getWorkspaceCollaborationObject,
@@ -48,6 +49,8 @@ const roleCanComment = (role: Workspace['role']) =>
 const roleCanPropose = (role: Workspace['role']) =>
   role === 'owner' || role === 'editor' || role === 'contributor';
 
+const roleCanModerate = (role: Workspace['role']) => role === 'owner' || role === 'editor';
+
 const typeLabel: Record<WorkspaceCollaborationObjectType, string> = {
   annotation: 'Annotation',
   sticky_note: 'Note',
@@ -68,6 +71,7 @@ const WorkspaceCollaborationDialog = ({
   const workspaceId = workspace?.id;
   const canComment = roleCanComment(workspace?.role);
   const canPropose = roleCanPropose(workspace?.role);
+  const canModerate = roleCanModerate(workspace?.role);
   const [objects, setObjects] = useState<WorkspaceCollaborationObject[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -202,15 +206,29 @@ const WorkspaceCollaborationDialog = ({
     }
   };
 
+  const handleApplyProposal = async () => {
+    if (!workspaceId || !selected) return;
+    setActionBusy(true);
+    setError('');
+    try {
+      await applyWorkspaceCollaborationProposal(workspaceId, selected.id);
+      await Promise.all([loadObjects(), onWorkspaceListChanged?.()]);
+    } catch (applyError) {
+      setError(applyError instanceof Error ? applyError.message : 'Failed to apply proposal');
+    } finally {
+      setActionBusy(false);
+    }
+  };
+
   return (
     <Dialog open={open} onClose={onClose} fullWidth maxWidth="lg">
       <DialogTitle sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', pr: 1 }}>
         <Box>
           <Typography variant="h6">Notes, annotations & proposals</Typography>
           <Typography variant="caption" color="text.secondary">
-            {workspace?.currentPublishedVersionNumber == null
-              ? 'Shared files stay read-only until an immutable version is published'
-              : `Published version ${workspace.currentPublishedVersionNumber} stays read-only`}
+            {workspace?.editingPolicy === 'review'
+              ? 'Review proposals before applying them to the working version'
+              : 'Notes and proposals stay attached to the live Shared workspace'}
           </Typography>
         </Box>
         <IconButton aria-label="close collaboration" onClick={onClose} size="small">
@@ -343,6 +361,14 @@ const WorkspaceCollaborationDialog = ({
                     && selected.type !== 'change_proposal' ? (
                       <Button size="small" variant="outlined" disabled={actionBusy} onClick={() => void handleConvertToProposal()}>
                         Turn into proposal
+                      </Button>
+                    ) : null}
+                  {canModerate
+                    && selected.type === 'change_proposal'
+                    && Boolean(selected.linkedPrivateWorkspaceId)
+                    && (selected.status === 'proposed' || selected.status === 'discussing') ? (
+                      <Button size="small" variant="contained" disabled={actionBusy} onClick={() => void handleApplyProposal()}>
+                        Apply to working version
                       </Button>
                     ) : null}
                 </Stack>

@@ -22,14 +22,10 @@ import { BookOpen, Check, CheckSquare, Copy, Edit, Trash, Plus, Minus, X, Chevro
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
-  WorkspaceApiError,
-  createPrivateWorkspaceCopy,
   createWorkspace,
   deleteWorkspace,
   getWorkspaces,
   renameWorkspace,
-  syncWorkspaceWithTeam,
-  type PublicationConflict,
 } from '../../services/workspaceApi';
 import {
   createWorkspaceSchedule,
@@ -98,8 +94,8 @@ import type {
 import CollapsibleDrawer from '../../components/CollapsibleDrawer';
 import WorkspaceShareDialog from '../../components/WorkspaceShareDialog';
 import WorkspacePublishDialog from '../../components/WorkspacePublishDialog';
-import WorkspaceConflictDialog from '../../components/WorkspaceConflictDialog';
 import WorkspaceHistoryDialog from '../../components/WorkspaceHistoryDialog';
+import WorkspaceWithdrawPublicationDialog from '../../components/WorkspaceWithdrawPublicationDialog';
 import WorkspaceCollaborationDialog from '../../components/WorkspaceCollaborationDialog';
 import ScheduleDialog from '../../components/schedules/ScheduleDialog';
 import WorkspaceSchedulesPanel from '../../components/schedules/WorkspaceSchedulesPanel';
@@ -876,9 +872,6 @@ const isUsableWorkspaceId = (value: string | null | undefined): value is string 
   return Boolean(normalized && normalized !== 'undefined' && normalized !== 'null');
 };
 
-const canProposeWorkspaceChanges = (workspace: Workspace | null | undefined): boolean =>
-  workspace?.role === 'owner' || workspace?.role === 'editor' || workspace?.role === 'contributor';
-
 export default function WorkspacePage() {
   const navigate = useNavigate();
   const { signOut, user: authUser } = useAuth();
@@ -916,10 +909,7 @@ export default function WorkspacePage() {
   const [collaborationWorkspace, setCollaborationWorkspace] = useState<Workspace | null>(null);
   const [publishWorkspaceTarget, setPublishWorkspaceTarget] = useState<Workspace | null>(null);
   const [historyWorkspaceTarget, setHistoryWorkspaceTarget] = useState<Workspace | null>(null);
-  const [syncWorkspaceTarget, setSyncWorkspaceTarget] = useState<Workspace | null>(null);
-  const [syncConflicts, setSyncConflicts] = useState<PublicationConflict[]>([]);
-  const [syncBusy, setSyncBusy] = useState(false);
-  const [syncError, setSyncError] = useState('');
+  const [withdrawWorkspaceTarget, setWithdrawWorkspaceTarget] = useState<Workspace | null>(null);
   const personas = DEFAULT_PERSONAS;
   const [selectedPersona, setSelectedPersona] = useState(DEFAULT_PERSONA_NAME);
   const [isEditMode, setIsEditMode] = useState(false);
@@ -1043,7 +1033,10 @@ export default function WorkspacePage() {
 
   const markPrivateWorkspaceChanged = useCallback((workspaceId: string) => {
     const update = (workspace: Workspace): Workspace => {
-      if (workspace.id !== workspaceId || workspace.visibility === 'team') return workspace;
+      if (workspace.id !== workspaceId) return workspace;
+      if (workspace.visibility === 'team') {
+        return { ...workspace, publicationStatus: 'changes_to_publish' };
+      }
       const publicationStatus = !workspace.linkedTeamWorkspaceId
         ? 'private_draft'
         : workspace.publicationStatus === 'team_updates_available'
@@ -6422,7 +6415,7 @@ export default function WorkspacePage() {
 
   const handleDeleteWorkspace = async (id: string) => {
     const target = workspaces.find((workspace) => workspace.id === id);
-    if (target && !window.confirm(`Delete ${target.visibility === 'team' ? 'team' : 'private'} workspace "${target.name}"?`)) {
+    if (target && !window.confirm(`Delete ${target.visibility === 'team' ? 'shared' : 'private'} workspace "${target.name}"?`)) {
       return;
     }
     try {
@@ -6442,58 +6435,6 @@ export default function WorkspacePage() {
   const handleManageTeamAccess = useCallback((workspace: Workspace) => {
     if (workspace.visibility === 'team') setShareWorkspace(workspace);
   }, []);
-
-  const handleWorkPrivately = useCallback(async (workspace: Workspace) => {
-    try {
-      if (workspace.privateCopyWorkspaceId) {
-        const existing = workspaces.find((item) => item.id === workspace.privateCopyWorkspaceId);
-        if (existing) {
-          handleSelectWorkspace(existing);
-          return;
-        }
-      }
-      const created = hydrateWorkspace(await createPrivateWorkspaceCopy(workspace.id));
-      const refreshed = await refreshWorkspaceList();
-      const privateCopy = refreshed.find((item) => item.id === created.id) || created;
-      handleSelectWorkspace(privateCopy);
-    } catch (error) {
-      console.error('Failed to open private working copy:', error);
-    }
-  }, [handleSelectWorkspace, refreshWorkspaceList, workspaces]);
-
-  const applyTeamSync = useCallback(async (
-    workspace: Workspace,
-    resolutions: Record<string, 'private' | 'team'> = {},
-  ) => {
-    setSyncBusy(true);
-    setSyncError('');
-    try {
-      await syncWorkspaceWithTeam(workspace.id, resolutions);
-      setSyncConflicts([]);
-      setSyncWorkspaceTarget(null);
-      await refreshWorkspaceList();
-      await loadFilesForWorkspace(workspace.id, { includePrivateData: true });
-    } catch (error) {
-      if (error instanceof WorkspaceApiError) {
-        const details = error.details as { code?: string; conflicts?: PublicationConflict[] } | undefined;
-        if (details?.code === 'REVIEW_NEEDED' && Array.isArray(details.conflicts)) {
-          setSyncWorkspaceTarget(workspace);
-          setSyncConflicts(details.conflicts);
-          return;
-        }
-      }
-      setSyncError(error instanceof Error ? error.message : 'Failed to sync team updates');
-      if (resolutions && Object.keys(resolutions).length) {
-        setSyncWorkspaceTarget(workspace);
-      }
-    } finally {
-      setSyncBusy(false);
-    }
-  }, [loadFilesForWorkspace, refreshWorkspaceList]);
-
-  const handleSyncWorkspace = useCallback((workspace: Workspace) => {
-    void applyTeamSync(workspace);
-  }, [applyTeamSync]);
 
   const handleUpdateFile = useCallback(async (
     targetFile: WorkspaceFile | null,
@@ -6520,9 +6461,23 @@ export default function WorkspacePage() {
         setSelectedFile(hydratedCreatedFile);
         setSelectedFileDetails(hydratedCreatedFile);
       } else {
-        await updateFileContent(selectedWorkspace.id, Number(targetFile.id), content);
+        const updated = await updateFileContent(
+          selectedWorkspace.id,
+          Number(targetFile.id),
+          content,
+          targetFile.version,
+        );
         markPrivateWorkspaceChanged(selectedWorkspace.id);
-        setSelectedFileDetails((prev) => (prev ? { ...prev, content } : prev));
+        setFiles((prev) => prev.map((file) => (
+          String(file.id) === String(targetFile.id) ? { ...file, ...updated, content } : file
+        )));
+        setSelectedFile((prev) => (prev ? { ...prev, ...updated, content } : prev));
+        setSelectedFileDetails((prev) => (prev ? { ...prev, ...updated, content } : prev));
+        if (updated.staleOverwrite) {
+          addLocalSystemMessage(
+            `Your save to ${targetFile.name} replaced a newer revision. The previous revision remains recoverable.`,
+          );
+        }
       }
       lastAutoSavedContentRef.current = content;
       return true;
@@ -6530,7 +6485,7 @@ export default function WorkspacePage() {
       console.error('Failed to update file:', error);
       return false;
     }
-  }, [markPrivateWorkspaceChanged, selectedWorkspace]);
+  }, [addLocalSystemMessage, markPrivateWorkspaceChanged, selectedWorkspace]);
 
   const runTrackedWorkspaceSave = useCallback((
     targetFile: WorkspaceFile | null,
@@ -7291,52 +7246,27 @@ export default function WorkspacePage() {
             </button>
           ))}
         </div>
-        {selectedWorkspace?.visibility === 'team' && canProposeWorkspaceChanges(selectedWorkspace) ? (
-          <button
-            type="button"
-            onClick={() => void handleWorkPrivately(selectedWorkspace)}
-            className={`mt-2 w-full rounded-xl px-3 py-2 text-sm font-semibold ${
-              isDarkMode
-                ? 'bg-sky-500/15 text-sky-200 hover:bg-sky-500/25'
-                : 'bg-blue-50 text-blue-700 hover:bg-blue-100'
-            }`}
-          >
-            {selectedWorkspace.privateCopyWorkspaceId ? 'Open private copy' : 'Work privately'}
-          </button>
-        ) : selectedWorkspace?.publicationStatus === 'team_updates_available'
-          || selectedWorkspace?.publicationStatus === 'review_needed' ? (
+        {selectedWorkspace
+          && (
+            (selectedWorkspace.visibility !== 'team' && !selectedWorkspace.linkedTeamWorkspaceId)
+            || (selectedWorkspace.canPublish && selectedWorkspace.publicationStatus === 'changes_to_publish')
+          ) ? (
             <button
               type="button"
-              onClick={() => handleSyncWorkspace(selectedWorkspace)}
+              onClick={() => setPublishWorkspaceTarget(selectedWorkspace)}
               className={`mt-2 w-full rounded-xl px-3 py-2 text-sm font-semibold ${
                 isDarkMode
-                  ? 'bg-amber-500/15 text-amber-200 hover:bg-amber-500/25'
-                  : 'bg-amber-50 text-amber-700 hover:bg-amber-100'
+                  ? 'bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/25'
+                  : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
               }`}
             >
-              {selectedWorkspace.publicationStatus === 'review_needed' ? 'Review changes' : 'Sync team updates'}
+              {selectedWorkspace.visibility !== 'team'
+                ? 'Share workspace'
+                : selectedWorkspace.currentPublishedVersionNumber == null
+                  ? 'Create first published version'
+                  : 'Publish changes'}
             </button>
-          ) : selectedWorkspace?.canPublish
-            && (
-              selectedWorkspace.publicationStatus === 'private_draft'
-              || selectedWorkspace.publicationStatus === 'changes_to_publish'
-            ) ? (
-              <button
-                type="button"
-                onClick={() => setPublishWorkspaceTarget(selectedWorkspace)}
-                className={`mt-2 w-full rounded-xl px-3 py-2 text-sm font-semibold ${
-                  isDarkMode
-                    ? 'bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/25'
-                    : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
-                }`}
-              >
-                {selectedWorkspace.publicationStatus === 'private_draft'
-                  ? 'Share or publish'
-                  : selectedWorkspace.currentPublishedVersionNumber == null
-                    ? 'Publish first version'
-                    : 'Publish changes'}
-              </button>
-            ) : null}
+          ) : null}
       </header>
 
       {mobileSurface === 'chat' ? (
@@ -7347,9 +7277,11 @@ export default function WorkspacePage() {
                 ? 'border-sky-900/60 bg-sky-950/40 text-sky-200'
                 : 'border-blue-100 bg-blue-50 text-blue-700'
             }`}>
-              {selectedWorkspace.currentPublishedVersionNumber == null
-                ? 'Shared files are read-only. Chat can analyze them; propose changes from a private copy.'
-                : 'Published files are read-only. Chat can analyze them; propose changes from a private copy.'}
+              {selectedWorkspace.canEdit
+                ? selectedWorkspace.editingPolicy === 'review'
+                  ? 'Shared workspace · Review mode'
+                  : 'Shared workspace · Freeflow editing'
+                : 'Shared workspace · View only'}
             </div>
           ) : null}
           <ChatMessageList
@@ -7505,7 +7437,7 @@ export default function WorkspacePage() {
 
               <section className="mt-5 space-y-2">
                 <p className={`text-[10px] font-semibold uppercase tracking-normal ${isDarkMode ? 'text-slate-500' : 'text-slate-500'}`}>
-                  Team workspaces
+                  Shared workspaces
                 </p>
                 {mobileTeamWorkspaces.map((workspace) => (
                   <button
@@ -7528,7 +7460,7 @@ export default function WorkspacePage() {
                         isDarkMode ? 'text-slate-500' : 'text-slate-500'
                       }`}>
                         {workspace.teamName
-                          || (workspace.audienceType === 'selected_people' ? 'Selected people' : 'Team workspace')}
+                          || (workspace.editingPolicy === 'review' ? 'Review' : 'Freeflow')}
                       </span>
                     </span>
                     {selectedWorkspace?.id === workspace.id ? <Check size={15} className="shrink-0" /> : null}
@@ -7538,7 +7470,7 @@ export default function WorkspacePage() {
                   <p className={`rounded-xl px-3 py-3 text-sm ${
                     isDarkMode ? 'bg-slate-900 text-slate-500' : 'bg-slate-50 text-slate-500'
                   }`}>
-                    No team workspaces.
+                    No shared workspaces.
                   </p>
                 ) : null}
               </section>
@@ -7675,11 +7607,8 @@ export default function WorkspacePage() {
           setWorkspaceSearchQuery={setWorkspaceSearchQuery}
           handleDeleteWorkspace={handleDeleteWorkspace}
           onPublishWorkspace={setPublishWorkspaceTarget}
-          onSyncWorkspace={handleSyncWorkspace}
-          onWorkPrivately={(workspace) => {
-            void handleWorkPrivately(workspace);
-          }}
           onHistoryWorkspace={setHistoryWorkspaceTarget}
+          onWithdrawWorkspace={setWithdrawWorkspaceTarget}
           onManageTeamAccess={handleManageTeamAccess}
           onSelectWorkspace={handleSelectWorkspace}
           onCreateWorkspace={() => {
@@ -8097,7 +8026,9 @@ export default function WorkspacePage() {
                 </button>
                 <div className="min-w-0 flex-1">
                 {selectedWorkspace ? (
-                  isWorkspaceRenameActive && selectedWorkspace.canEdit ? (
+                  isWorkspaceRenameActive
+                  && selectedWorkspace.canEdit
+                  && (selectedWorkspace.visibility !== 'team' || selectedWorkspace.role === 'owner') ? (
                     <input
                       ref={workspaceNameInputRef}
                       value={workspaceNameDraft}
@@ -8126,18 +8057,25 @@ export default function WorkspacePage() {
                     <button
                       type="button"
                       onClick={() => {
-                        if (!selectedWorkspace.canEdit) return;
+                        if (
+                          !selectedWorkspace.canEdit
+                          || (selectedWorkspace.visibility === 'team' && selectedWorkspace.role !== 'owner')
+                        ) return;
                         setWorkspaceNameDraft(selectedWorkspace.name);
                         setIsWorkspaceRenameActive(true);
                       }}
                       className={`flex items-center gap-2 text-left text-lg font-semibold ${
                         selectedWorkspace.canEdit
+                        && (selectedWorkspace.visibility !== 'team' || selectedWorkspace.role === 'owner')
                           ? isDarkMode ? 'text-slate-100 hover:text-sky-300' : 'text-gray-800 hover:text-blue-700'
                           : isDarkMode ? 'cursor-default text-slate-100' : 'cursor-default text-gray-800'
                       }`}
                     >
                       <span>{selectedWorkspace.name}</span>
-                      {selectedWorkspace.canEdit ? <Edit size={16} className={isDarkMode ? 'text-slate-500' : 'text-gray-400'} /> : null}
+                      {selectedWorkspace.canEdit
+                        && (selectedWorkspace.visibility !== 'team' || selectedWorkspace.role === 'owner')
+                        ? <Edit size={16} className={isDarkMode ? 'text-slate-500' : 'text-gray-400'} />
+                        : null}
                     </button>
                   )
                 ) : (
@@ -8158,19 +8096,6 @@ export default function WorkspacePage() {
                       <MessageSquare size={15} />
                       Discuss
                     </button>
-                    {canProposeWorkspaceChanges(selectedWorkspace) ? (
-                      <button
-                        type="button"
-                        onClick={() => void handleWorkPrivately(selectedWorkspace)}
-                        className={`inline-flex h-9 items-center justify-center rounded-lg px-3 text-sm font-medium ${
-                          isDarkMode
-                            ? 'bg-sky-500/15 text-sky-200 hover:bg-sky-500/25'
-                            : 'bg-blue-50 text-blue-700 hover:bg-blue-100'
-                        }`}
-                      >
-                        {selectedWorkspace.privateCopyWorkspaceId ? 'Open private copy' : 'Work privately'}
-                      </button>
-                    ) : null}
                   </div>
                 ) : null}
               </div>
@@ -8590,7 +8515,7 @@ export default function WorkspacePage() {
               chatInputRef={chatInputRef}
               attachmentInputRef={attachmentInputRef}
               workspaceId={selectedWorkspace?.id}
-              isPublishedWorkspace={selectedWorkspace?.visibility === 'team'}
+              isPublishedWorkspace={selectedWorkspace?.visibility === 'team' && selectedWorkspace.canEdit === false}
               publishedWorkspace={selectedWorkspace?.visibility === 'team' ? selectedWorkspace : undefined}
               activeFilePath={selectedFile?.name || selectedDashboardPath || undefined}
               internetSearchEnabled={internetSearchEnabled}
@@ -8838,6 +8763,7 @@ export default function WorkspacePage() {
         open={shareWorkspace !== null}
         workspace={shareWorkspace}
         onClose={() => setShareWorkspace(null)}
+        onWorkspaceChanged={refreshWorkspaceList}
       />
       <WorkspaceCollaborationDialog
         open={collaborationWorkspace !== null}
@@ -8855,22 +8781,6 @@ export default function WorkspacePage() {
           await refreshWorkspaceList();
         }}
       />
-      <WorkspaceConflictDialog
-        open={syncWorkspaceTarget !== null && syncConflicts.length > 0}
-        conflicts={syncConflicts}
-        busy={syncBusy}
-        error={syncError}
-        onClose={() => {
-          setSyncWorkspaceTarget(null);
-          setSyncConflicts([]);
-          setSyncError('');
-        }}
-        onConfirm={(resolutions) => {
-          if (syncWorkspaceTarget) {
-            void applyTeamSync(syncWorkspaceTarget, resolutions);
-          }
-        }}
-      />
       <WorkspaceHistoryDialog
         open={historyWorkspaceTarget !== null}
         workspace={historyWorkspaceTarget}
@@ -8880,6 +8790,14 @@ export default function WorkspacePage() {
           if (historyWorkspaceTarget) {
             await loadFilesForWorkspace(historyWorkspaceTarget.id, { includePrivateData: false });
           }
+        }}
+      />
+      <WorkspaceWithdrawPublicationDialog
+        open={withdrawWorkspaceTarget !== null}
+        workspace={withdrawWorkspaceTarget}
+        onClose={() => setWithdrawWorkspaceTarget(null)}
+        onWithdrawn={async () => {
+          await refreshWorkspaceList();
         }}
       />
     </ThemeProvider>
