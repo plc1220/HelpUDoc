@@ -26,7 +26,7 @@
     "@types/helmet": "^0.0.48",
     "@types/knex": "^0.15.2",
     "axios": "^1.13.2",
-    "connect-redis": "^9.0.0",
+    "connect-redis": "^8.1.0",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
     "exceljs": "^4.4.0",
