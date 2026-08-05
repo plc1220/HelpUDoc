@@ -11,6 +11,20 @@ import { legacyWorkspaceRoleToNamedGrant } from './workspaceAudiencePolicy';
 
 const WORKSPACE_DIR = resolveWorkspaceRoot();
 
+export function buildWorkspaceTeamAccessQuery(db: Knex, workspaceId: string, teamId: string) {
+  return db('groups as group')
+    .leftJoin('workspace_team_grants as workspaceTeamGrant', function joinTeamGrant() {
+      this.on('workspaceTeamGrant.teamId', '=', 'group.id')
+        .andOnVal('workspaceTeamGrant.workspaceId', '=', workspaceId);
+    })
+    .where('group.id', teamId)
+    .select(
+      'group.id',
+      'group.name',
+      db.raw(`COALESCE("workspaceTeamGrant"."role", 'viewer') as role`),
+    );
+}
+
 export type WorkspaceRole = 'owner' | 'editor' | 'contributor' | 'commenter' | 'viewer';
 
 export interface WorkspaceRecord {
@@ -736,16 +750,7 @@ export class WorkspaceService {
     }
 
     const teams = workspace.teamId
-      ? await this.db('groups as group')
-        .leftJoin('workspace_team_grants as grant', function joinTeamGrant() {
-          this.on('grant.teamId', '=', 'group.id').andOnVal('grant.workspaceId', '=', workspaceId);
-        })
-        .where('group.id', workspace.teamId)
-        .select(
-          'group.id',
-          'group.name',
-          this.db.raw(`COALESCE(grant.role, 'viewer') as role`),
-        )
+      ? await buildWorkspaceTeamAccessQuery(this.db, workspaceId, workspace.teamId)
       : [];
 
     return {

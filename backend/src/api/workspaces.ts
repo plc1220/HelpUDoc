@@ -24,10 +24,19 @@ const publishWorkspaceSchema = z.object({
 }).strict();
 
 const shareWorkspaceSchema = z.object({
-  userIds: z.array(z.string().uuid()).min(1).max(100),
+  userIds: z.array(z.string().uuid()).max(100).optional(),
+  teamId: z.string().uuid().optional(),
   role: namedWorkspaceRoleSchema.optional(),
   name: z.string().trim().min(1).max(255).optional(),
   editingPolicy: z.enum(['direct', 'review']).optional(),
+}).superRefine((data, ctx) => {
+  if (!data.teamId && !data.userIds?.length) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Choose at least one team or person',
+      path: ['teamId'],
+    });
+  }
 });
 
 const workspaceEditingPolicySchema = z.object({
@@ -160,7 +169,7 @@ export default function workspaceRoutes(
     try {
       const user = requireUserContext(req);
       const payload = shareWorkspaceSchema.parse(req.body || {});
-      const shared = await publicationService.shareWithSelectedPeople(
+      const shared = await publicationService.shareWithAudience(
         req.params.workspaceId,
         user.userId,
         payload,

@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import knex from 'knex';
 
 import {
   legacyWorkspaceRoleToNamedGrant,
   namedGrantToLegacyWorkspaceRole,
   normalizeSelectedWorkspaceUsers,
 } from '../src/services/workspaceAudiencePolicy';
+import { buildWorkspaceTeamAccessQuery } from '../src/services/workspaceService';
 
 test('selected-person sharing excludes the owner and removes duplicates', () => {
   assert.deepEqual(
@@ -23,4 +25,13 @@ test('legacy roles map to the least-privileged governance grant', () => {
   assert.equal(legacyWorkspaceRoleToNamedGrant('contributor'), 'contributor');
   assert.equal(legacyWorkspaceRoleToNamedGrant('commenter'), 'viewer');
   assert.equal(legacyWorkspaceRoleToNamedGrant('viewer'), 'viewer');
+});
+
+test('workspace team access lookup does not use PostgreSQL reserved aliases', () => {
+  const db = knex({ client: 'pg' });
+  const sql = buildWorkspaceTeamAccessQuery(db, 'workspace-id', 'team-id').toSQL().sql;
+
+  assert.doesNotMatch(sql, /\bgrant\b/i);
+  assert.match(sql, /workspaceTeamGrant/);
+  void db.destroy();
 });

@@ -167,11 +167,12 @@ export class WorkspacePublicationService {
     });
   }
 
-  async shareWithSelectedPeople(
+  async shareWithAudience(
     privateWorkspaceId: string,
     userId: string,
     input: {
-      userIds: string[];
+      userIds?: string[];
+      teamId?: string;
       role?: WorkspaceNamedGrantRole;
       name?: string;
       editingPolicy?: 'direct' | 'review';
@@ -184,12 +185,29 @@ export class WorkspacePublicationService {
     if (membership.role !== 'owner' || workspace.ownerId !== userId) {
       throw new AccessDeniedError('Only the owner can share this workspace');
     }
+    if (workspace.visibility !== 'private') {
+      throw new ConflictError('This workspace is already shared; manage access instead');
+    }
 
     const selectedUserIds = normalizeSelectedWorkspaceUsers(userId, input.userIds);
-    if (!selectedUserIds.length) {
-      throw new ConflictError('Choose at least one person before sharing');
+    if (!selectedUserIds.length && !input.teamId) {
+      throw new ConflictError('Choose at least one team or person before sharing');
     }
-    await this.ensureRegisteredUsers(selectedUserIds);
+    if (selectedUserIds.length) {
+      await this.ensureRegisteredUsers(selectedUserIds);
+    }
+    if (input.teamId) {
+      const team = await this.db('groups').where({ id: input.teamId }).first();
+      if (!team) {
+        throw new NotFoundError('Team not found');
+      }
+      const teamMembership = await this.db('group_members')
+        .where({ groupId: input.teamId, userId })
+        .first();
+      if (!teamMembership) {
+        throw new AccessDeniedError('You must belong to the team before sharing with it');
+      }
+    }
     const selectedRole = input.role || 'viewer';
     const legacyRole = namedGrantToLegacyWorkspaceRole(selectedRole);
     const editingPolicy = input.editingPolicy || workspace.editingPolicy || 'direct';
@@ -206,6 +224,7 @@ export class WorkspacePublicationService {
       await tx('workspaces').where({ id: workspace.id }).update({
         visibility: 'team',
         workspaceType: 'team',
+        teamId: input.teamId || null,
         editingPolicy,
         updatedAt: tx.fn.now(),
       });
@@ -213,28 +232,43 @@ export class WorkspacePublicationService {
         .insert({ workspaceId: workspace.id, userId, role: 'owner', canEdit: true })
         .onConflict(['workspaceId', 'userId'])
         .merge({ role: 'owner', canEdit: true, updatedAt: tx.fn.now() });
-      await tx('workspace_members')
-        .insert(selectedUserIds.map((selectedUserId) => ({
-          workspaceId: workspace.id,
-          userId: selectedUserId,
-          role: legacyRole,
-          canEdit: editingPolicy === 'direct' && selectedRole !== 'viewer',
-        })))
-        .onConflict(['workspaceId', 'userId'])
-        .merge({
-          role: legacyRole,
-          canEdit: editingPolicy === 'direct' && selectedRole !== 'viewer',
-          updatedAt: tx.fn.now(),
-        });
-      await tx('workspace_user_grants')
-        .insert(selectedUserIds.map((selectedUserId) => ({
-          workspaceId: workspace.id,
-          userId: selectedUserId,
-          role: selectedRole,
-          grantedByUserId: userId,
-        })))
-        .onConflict(['workspaceId', 'userId'])
-        .merge({ role: selectedRole, grantedByUserId: userId, updatedAt: tx.fn.now() });
+      if (selectedUserIds.length) {
+        await tx('workspace_members')
+          .insert(selectedUserIds.map((selectedUserId) => ({
+            workspaceId: workspace.id,
+            userId: selectedUserId,
+            role: legacyRole,
+            canEdit: editingPolicy === 'direct' && selectedRole !== 'viewer',
+          })))
+          .onConflict(['workspaceId', 'userId'])
+          .merge({
+            role: legacyRole,
+            canEdit: editingPolicy === 'direct' && selectedRole !== 'viewer',
+            updatedAt: tx.fn.now(),
+          });
+      }
+      if (selectedUserIds.length) {
+        await tx('workspace_user_grants')
+          .insert(selectedUserIds.map((selectedUserId) => ({
+            workspaceId: workspace.id,
+            userId: selectedUserId,
+            role: selectedRole,
+            grantedByUserId: userId,
+          })))
+          .onConflict(['workspaceId', 'userId'])
+          .merge({ role: selectedRole, grantedByUserId: userId, updatedAt: tx.fn.now() });
+      }
+      if (input.teamId) {
+        await tx('workspace_team_grants')
+          .insert({
+            workspaceId: workspace.id,
+            teamId: input.teamId,
+            role: 'viewer',
+            grantedByUserId: userId,
+          })
+          .onConflict(['workspaceId', 'teamId'])
+          .merge({ role: 'viewer', grantedByUserId: userId, updatedAt: tx.fn.now() });
+      }
       await tx('audit_events').insert({
         id: uuidv4(),
         actorUserId: userId,
@@ -242,7 +276,7 @@ export class WorkspacePublicationService {
         action: locked.visibility === 'private' ? 'workspace.shared' : 'workspace.access_granted',
         resourceType: 'workspace',
         resourceId: workspace.id,
-        metadata: { selectedUserIds, selectedRole, editingPolicy },
+        metadata: { selectedUserIds, selectedRole, editingPolicy, teamId: input.teamId || null },
       });
     });
 
@@ -251,6 +285,7 @@ export class WorkspacePublicationService {
       privateWorkspaceId: workspace.id,
       teamWorkspaceId: workspace.id,
       sharedWithUserIds: selectedUserIds,
+      sharedWithTeamId: input.teamId || null,
       editingPolicy,
     };
   }

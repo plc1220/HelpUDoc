@@ -11,11 +11,8 @@ import {
   DialogContent,
   DialogTitle,
   FormControl,
-  FormControlLabel,
   InputLabel,
   MenuItem,
-  Radio,
-  RadioGroup,
   Select,
   TextField,
   ToggleButton,
@@ -28,7 +25,7 @@ import {
   fetchUserDirectory,
   listWorkspaceTeams,
   publishWorkspace,
-  shareWorkspaceWithSelectedPeople,
+  shareWorkspaceWithAudience,
   type DirectoryUser,
   type WorkspaceEditingPolicy,
   type WorkspaceNamedGrantRole,
@@ -54,7 +51,6 @@ const WorkspacePublishDialog: React.FC<WorkspacePublishDialogProps> = ({
   const [peopleOptions, setPeopleOptions] = useState<DirectoryUser[]>([]);
   const [peopleQuery, setPeopleQuery] = useState('');
   const [peopleLoading, setPeopleLoading] = useState(false);
-  const [audience, setAudience] = useState<'selected_people' | 'team'>('selected_people');
   const [teams, setTeams] = useState<WorkspaceTeam[]>([]);
   const [teamId, setTeamId] = useState('');
   const [teamsLoading, setTeamsLoading] = useState(false);
@@ -70,7 +66,6 @@ const WorkspacePublishDialog: React.FC<WorkspacePublishDialogProps> = ({
       setSelectedPeople([]);
       setPeopleOptions([]);
       setPeopleQuery('');
-      setAudience('selected_people');
       setTeams([]);
       setTeamId('');
       setNamedRole('contributor');
@@ -107,7 +102,7 @@ const WorkspacePublishDialog: React.FC<WorkspacePublishDialogProps> = ({
   }, [isPrivate, open, peopleQuery]);
 
   useEffect(() => {
-    if (!open || !isPrivate || audience !== 'team') return;
+    if (!open || !isPrivate) return;
     setTeamsLoading(true);
     void listWorkspaceTeams()
       .then((items) => {
@@ -116,14 +111,13 @@ const WorkspacePublishDialog: React.FC<WorkspacePublishDialogProps> = ({
       })
       .catch(() => setTeams([]))
       .finally(() => setTeamsLoading(false));
-  }, [audience, isPrivate, open]);
+  }, [isPrivate, open]);
 
   const canSubmit = useMemo(() => {
     if (!workspace || busy) return false;
     if (!isPrivate) return true;
-    if (audience === 'team') return Boolean(teamId) && !teamsLoading;
-    return selectedPeople.length > 0 && !peopleLoading;
-  }, [audience, busy, isPrivate, peopleLoading, selectedPeople.length, teamId, teamsLoading, workspace]);
+    return (Boolean(teamId) || selectedPeople.length > 0) && !peopleLoading && !teamsLoading;
+  }, [busy, isPrivate, peopleLoading, selectedPeople.length, teamId, teamsLoading, workspace]);
 
   const handleSubmit = async () => {
     if (!workspace || !canSubmit) return;
@@ -132,19 +126,12 @@ const WorkspacePublishDialog: React.FC<WorkspacePublishDialogProps> = ({
     try {
       await onBeforePublish?.(workspace);
       if (isPrivate) {
-        if (audience === 'team') {
-          await publishWorkspace(workspace.id, {
-            audience: 'team',
-            teamId,
-            note: note.trim() || undefined,
-          });
-        } else {
-          await shareWorkspaceWithSelectedPeople(workspace.id, {
-            userIds: selectedPeople.map((person) => person.id),
-            role: namedRole,
-            editingPolicy,
-          });
-        }
+        await shareWorkspaceWithAudience(workspace.id, {
+          userIds: selectedPeople.map((person) => person.id),
+          teamId: teamId || undefined,
+          role: namedRole,
+          editingPolicy,
+        });
       } else {
         await publishWorkspace(workspace.id, { note: note.trim() || undefined });
       }
@@ -176,40 +163,33 @@ const WorkspacePublishDialog: React.FC<WorkspacePublishDialogProps> = ({
         {isPrivate ? (
           <>
             <Typography variant="subtitle2" sx={{ mb: 1 }}>Share with</Typography>
-            <RadioGroup
-              row
-              value={audience}
-              onChange={(event) => setAudience(event.target.value as 'selected_people' | 'team')}
-              sx={{ mb: 2 }}
-            >
-              <FormControlLabel value="selected_people" control={<Radio size="small" />} label="People" />
-              <FormControlLabel value="team" control={<Radio size="small" />} label="Team" />
-            </RadioGroup>
-            {audience === 'team' ? (
-              teamsLoading ? (
-                <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
-                  <CircularProgress size={26} />
-                </Box>
-              ) : teams.length ? (
-                <FormControl fullWidth size="small" sx={{ mb: 2 }}>
-                  <InputLabel id="publish-team-label">Team</InputLabel>
-                  <Select
-                    labelId="publish-team-label"
-                    label="Team"
-                    value={teamId}
-                    onChange={(event) => setTeamId(String(event.target.value))}
-                  >
-                    {teams.map((team) => <MenuItem key={team.id} value={team.id}>{team.name}</MenuItem>)}
-                  </Select>
-                </FormControl>
-              ) : (
-                <Alert severity="info" sx={{ mb: 2 }}>
-                  You need to belong to a team before sharing with one.
-                </Alert>
-              )
+            {teamsLoading ? (
+              <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
+                <CircularProgress size={26} />
+              </Box>
+            ) : teams.length ? (
+              <FormControl fullWidth size="small" sx={{ mb: 2 }}>
+                <InputLabel id="publish-team-label">Team (optional)</InputLabel>
+                <Select
+                  labelId="publish-team-label"
+                  label="Team (optional)"
+                  value={teamId}
+                  onChange={(event) => setTeamId(String(event.target.value))}
+                >
+                  <MenuItem value="">No team</MenuItem>
+                  {teams.map((team) => <MenuItem key={team.id} value={team.id}>{team.name}</MenuItem>)}
+                </Select>
+              </FormControl>
+            ) : (
+              <Alert severity="info" sx={{ mb: 2 }}>
+                You do not belong to a team yet. You can still share with individual people.
+              </Alert>
+            )}
+            {teamId ? (
+              <Alert severity="info" sx={{ mb: 2 }}>
+                Team members will receive Viewer access to the shared workspace, including Team Chat and collaboration.
+              </Alert>
             ) : null}
-            {audience === 'selected_people' ? (
-              <>
             <Autocomplete
               multiple
               options={peopleOptions}
@@ -269,12 +249,11 @@ const WorkspacePublishDialog: React.FC<WorkspacePublishDialogProps> = ({
                 ? 'Contributors edit the working version directly. The latest successful save wins.'
                 : 'Contributors propose changes; the owner reviews them before they reach the working version.'}
             </Alert>
-              </>
-            ) : (
-              <Alert severity="info" sx={{ mb: 2 }}>
-                Team members will receive Viewer access to the read-only shared workspace, including Team Chat and collaboration.
+            {!teamId && selectedPeople.length === 0 ? (
+              <Alert severity="warning" sx={{ mt: 2 }}>
+                Choose at least one team or person before sharing.
               </Alert>
-            )}
+            ) : null}
           </>
         ) : (
           <TextField

@@ -241,10 +241,11 @@ export const withdrawWorkspacePublication = async (workspaceId: string) => {
   }>;
 };
 
-export const shareWorkspaceWithSelectedPeople = async (
+export const shareWorkspaceWithAudience = async (
   workspaceId: string,
   payload: {
-    userIds: string[];
+    userIds?: string[];
+    teamId?: string;
     role?: WorkspaceNamedGrantRole;
     name?: string;
     editingPolicy?: WorkspaceEditingPolicy;
@@ -263,6 +264,7 @@ export const shareWorkspaceWithSelectedPeople = async (
     teamWorkspaceId: string;
     privateWorkspaceId: string;
     sharedWithUserIds: string[];
+    sharedWithTeamId: string | null;
   }>;
 };
 
