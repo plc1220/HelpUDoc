@@ -17,12 +17,14 @@ export interface Workspace {
     | 'private_draft'
     | 'up_to_date'
     | 'changes_to_publish'
+    | 'withdrawn'
     | 'team_updates_available'
     | 'review_needed';
   linkedTeamWorkspaceId?: string | null;
   privateCopyWorkspaceId?: string | null;
   currentPublishedVersionId?: string | null;
   currentPublishedVersionNumber?: number | null;
+  publishedVersionCount?: number;
   latestPublisherName?: string | null;
   lastPublishedAt?: string | null;
   createdAt?: string;

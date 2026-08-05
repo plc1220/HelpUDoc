@@ -95,6 +95,7 @@ import CollapsibleDrawer from '../../components/CollapsibleDrawer';
 import WorkspaceShareDialog from '../../components/WorkspaceShareDialog';
 import WorkspacePublishDialog from '../../components/WorkspacePublishDialog';
 import WorkspaceHistoryDialog from '../../components/WorkspaceHistoryDialog';
+import WorkspaceWithdrawPublicationDialog from '../../components/WorkspaceWithdrawPublicationDialog';
 import WorkspaceCollaborationDialog from '../../components/WorkspaceCollaborationDialog';
 import ScheduleDialog from '../../components/schedules/ScheduleDialog';
 import WorkspaceSchedulesPanel from '../../components/schedules/WorkspaceSchedulesPanel';
@@ -908,6 +909,7 @@ export default function WorkspacePage() {
   const [collaborationWorkspace, setCollaborationWorkspace] = useState<Workspace | null>(null);
   const [publishWorkspaceTarget, setPublishWorkspaceTarget] = useState<Workspace | null>(null);
   const [historyWorkspaceTarget, setHistoryWorkspaceTarget] = useState<Workspace | null>(null);
+  const [withdrawWorkspaceTarget, setWithdrawWorkspaceTarget] = useState<Workspace | null>(null);
   const personas = DEFAULT_PERSONAS;
   const [selectedPersona, setSelectedPersona] = useState(DEFAULT_PERSONA_NAME);
   const [isEditMode, setIsEditMode] = useState(false);
@@ -7603,6 +7605,7 @@ export default function WorkspacePage() {
           handleDeleteWorkspace={handleDeleteWorkspace}
           onPublishWorkspace={setPublishWorkspaceTarget}
           onHistoryWorkspace={setHistoryWorkspaceTarget}
+          onWithdrawWorkspace={setWithdrawWorkspaceTarget}
           onManageTeamAccess={handleManageTeamAccess}
           onSelectWorkspace={handleSelectWorkspace}
           onCreateWorkspace={() => {
@@ -8784,6 +8787,14 @@ export default function WorkspacePage() {
           if (historyWorkspaceTarget) {
             await loadFilesForWorkspace(historyWorkspaceTarget.id, { includePrivateData: false });
           }
+        }}
+      />
+      <WorkspaceWithdrawPublicationDialog
+        open={withdrawWorkspaceTarget !== null}
+        workspace={withdrawWorkspaceTarget}
+        onClose={() => setWithdrawWorkspaceTarget(null)}
+        onWithdrawn={async () => {
+          await refreshWorkspaceList();
         }}
       />
     </ThemeProvider>

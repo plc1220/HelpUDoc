@@ -157,6 +157,7 @@ export type PublishedWorkspaceVersion = {
   note: string | null;
   createdAt: string;
   publisherName: string;
+  isCurrent: boolean;
 };
 
 export const listWorkspaceTeams = async (): Promise<WorkspaceTeam[]> => {
@@ -188,6 +189,20 @@ export const publishWorkspace = async (
     publishedVersionId: string;
     publishedVersionNumber: number;
     publishedAt: string;
+  }>;
+};
+
+export const withdrawWorkspacePublication = async (workspaceId: string) => {
+  const response = await apiFetch(`${API_URL}/workspaces/${workspaceId}/publication/withdraw`, {
+    method: 'POST',
+  });
+  if (!response.ok) {
+    return throwWorkspaceApiError(response, 'Failed to withdraw publication');
+  }
+  return response.json() as Promise<{
+    workspaceId: string;
+    withdrawnVersionId: string;
+    withdrawnVersionNumber: number;
   }>;
 };
 

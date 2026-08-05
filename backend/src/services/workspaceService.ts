@@ -83,10 +83,11 @@ export class WorkspaceService {
     canPublish: boolean;
     teamName?: string | null;
     audienceType: 'private' | 'selected_people' | 'team';
-    publicationStatus: 'private_draft' | 'up_to_date' | 'changes_to_publish' | 'team_updates_available' | 'review_needed';
+    publicationStatus: 'private_draft' | 'up_to_date' | 'changes_to_publish' | 'withdrawn' | 'team_updates_available' | 'review_needed';
     linkedTeamWorkspaceId?: string | null;
     privateCopyWorkspaceId?: string | null;
     currentPublishedVersionNumber?: number | null;
+    publishedVersionCount?: number;
     latestPublisherName?: string | null;
     lastPublishedAt?: string | null;
   }>> {
@@ -147,6 +148,11 @@ export class WorkspaceService {
         'published.sourceContentRevision as publishedContentRevision',
         'published.createdAt as lastPublishedAt',
         'publisher.displayName as latestPublisherName',
+        this.db.raw(`(
+          SELECT COUNT(*)::int
+          FROM workspace_published_versions AS version_history
+          WHERE version_history."teamWorkspaceId" = w.id
+        ) as "publishedVersionCount"`),
       )
       .where((query) => {
         query
@@ -187,7 +193,9 @@ export class WorkspaceService {
         && !row.linkedTeamCurrentPublishedVersionId;
       const publicationStatus = visibility === 'team'
         ? row.currentPublishedVersionNumber == null
-          ? 'changes_to_publish'
+          ? Number(row.publishedVersionCount || 0) > 0
+            ? 'withdrawn'
+            : 'changes_to_publish'
           : Number(row.contentRevision || 0) !== Number(row.publishedContentRevision || 0)
             ? 'changes_to_publish'
             : 'up_to_date'
@@ -238,6 +246,9 @@ export class WorkspaceService {
         ) || row.currentPublishedVersionNumber == null
           ? null
           : Number(row.currentPublishedVersionNumber),
+        publishedVersionCount: visibility === 'team'
+          ? Number(row.publishedVersionCount || 0)
+          : 0,
         latestPublisherName: visibility === 'private' && row.linkedTeamWorkspaceId && !linkedTeamAccessible
           ? null
           : row.latestPublisherName || null,

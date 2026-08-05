@@ -11,6 +11,8 @@ HelpUDoc presents two workspace categories:
 
 A **published version** is not a third workspace category. It is an immutable snapshot of a Shared workspace's current revision. A Shared workspace can continue changing after a version is published.
 
+A current publication may be **withdrawn** by an Owner or Publisher. Withdrawal removes the current-publication pointer without deleting immutable version history or changing access to the live Shared workspace.
+
 The product therefore separates three independent decisions:
 
 1. **Access** — who can see the workspace;
@@ -78,6 +80,7 @@ The workspace pane has two collapsible top-level sections:
 - Shows the owner's name, access source, editing policy, and latest published-version badge.
 - Opens to the current `Working version` by default for collaborators with live access.
 - Provides a `Published versions` view inside the workspace rather than another sidebar section.
+- Shows `Publication withdrawn` when version history exists but no version is currently published.
 
 The Shared section may have lightweight filters:
 
@@ -230,7 +233,21 @@ The view shows:
 - changes since the previous publication; and
 - owner-only restore action.
 
+When no version is current, the latest historical version is marked `Withdrawn` rather than `Current`.
+
 Restoring creates a new publication from the restored content. It does not delete history or rewrite the live workspace without an explicit owner action.
+
+### Withdraw publication
+
+An Owner or Publisher may withdraw the current published version. The operation:
+
+1. clears `currentPublishedVersionId`;
+2. preserves every immutable published-version record and manifest;
+3. leaves the Shared working version and its audience unchanged;
+4. records an audit event containing the withdrawn version ID and number; and
+5. allows a later publication, which receives the next version number.
+
+Withdrawal is not deletion. Published history remains reachable from the expandable Shared workspace item and identifies that no version is currently published.
 
 ## 10. Publishable content boundary
 

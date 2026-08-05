@@ -108,6 +108,65 @@ export class WorkspacePublicationService {
     return this.createLivePublishedVersion(workspace, userId, input.note);
   }
 
+  async withdraw(workspaceId: string, userId: string) {
+    const { workspace, membership } = await this.workspaceService.ensureMembership(workspaceId, userId);
+    if (workspace.visibility !== 'team') {
+      throw new ConflictError('Only Shared workspace publications can be withdrawn');
+    }
+    this.ensurePublisher(membership.role);
+
+    return this.db.transaction(async (tx) => {
+      const locked = await tx<WorkspaceRecord>('workspaces')
+        .where({ id: workspaceId })
+        .forUpdate()
+        .first();
+      if (!locked || locked.visibility !== 'team') {
+        throw new ConflictError('Only Shared workspace publications can be withdrawn');
+      }
+
+      const publisherMembership = await tx('workspace_members')
+        .select('role')
+        .where({ workspaceId, userId })
+        .forShare()
+        .first() as { role?: WorkspaceRole } | undefined;
+      this.ensurePublisher(publisherMembership?.role || 'viewer');
+
+      if (!locked.currentPublishedVersionId) {
+        throw new ConflictError('This workspace does not have a current published version');
+      }
+      const withdrawnVersion = await tx<PublishedVersionRecord>('workspace_published_versions')
+        .where({ id: locked.currentPublishedVersionId, teamWorkspaceId: workspaceId })
+        .first();
+      if (!withdrawnVersion) {
+        throw new NotFoundError('Current published version not found');
+      }
+
+      await tx('workspaces').where({ id: workspaceId }).update({
+        currentPublishedVersionId: null,
+        updatedAt: tx.fn.now(),
+        lastModifiedBy: userId,
+      });
+      await tx('audit_events').insert({
+        id: uuidv4(),
+        actorUserId: userId,
+        actorRole: 'workspace_owner_or_publisher',
+        action: 'workspace.publication_withdrawn',
+        resourceType: 'workspace',
+        resourceId: workspaceId,
+        metadata: {
+          withdrawnVersionId: withdrawnVersion.id,
+          withdrawnVersionNumber: Number(withdrawnVersion.versionNumber),
+        },
+      });
+
+      return {
+        workspaceId,
+        withdrawnVersionId: withdrawnVersion.id,
+        withdrawnVersionNumber: Number(withdrawnVersion.versionNumber),
+      };
+    });
+  }
+
   async shareWithSelectedPeople(
     privateWorkspaceId: string,
     userId: string,
@@ -463,6 +522,7 @@ export class WorkspacePublicationService {
       throw new ConflictError('Publication history is only available for Shared workspaces');
     }
     return this.db('workspace_published_versions as version')
+      .join('workspaces as workspace', 'workspace.id', 'version.teamWorkspaceId')
       .leftJoin('users as publisher', 'publisher.id', 'version.publisherUserId')
       .where('version.teamWorkspaceId', teamWorkspaceId)
       .select(
@@ -470,6 +530,7 @@ export class WorkspacePublicationService {
         'version.versionNumber',
         'version.note',
         'version.createdAt',
+        this.db.raw('(version.id = workspace."currentPublishedVersionId") as "isCurrent"'),
         this.db.raw(`COALESCE(publisher."displayName", 'Former user') as "publisherName"`),
       )
       .orderBy('version.versionNumber', 'desc');

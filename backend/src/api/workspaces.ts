@@ -138,6 +138,16 @@ export default function workspaceRoutes(
     }
   });
 
+  router.post('/:workspaceId/publication/withdraw', async (req, res) => {
+    try {
+      const user = requireUserContext(req);
+      const result = await publicationService.withdraw(req.params.workspaceId, user.userId);
+      res.json(result);
+    } catch (error) {
+      handleError(res, error, 'Failed to withdraw publication');
+    }
+  });
+
   router.post('/:workspaceId/share', async (req, res) => {
     try {
       const user = requireUserContext(req);
