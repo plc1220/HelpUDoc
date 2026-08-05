@@ -20,6 +20,7 @@ import type {
   InterruptAnswersByQuestionId,
   Workspace,
 } from '../../types';
+import { Button } from '@astryxdesign/core/Button';
 import ChatHeader from './ChatHeader';
 import ChatHistoryPanel from './ChatHistoryPanel';
 import ChatInputArea, { type ChatMentionSuggestion } from './ChatInputArea';
@@ -30,6 +31,7 @@ import PublishedWorkspaceChatHeader, {
   type SharedChatMode,
 } from './PublishedWorkspaceChatHeader';
 import WorkspaceTeamChatPanel from './WorkspaceTeamChatPanel';
+import { ArrowRight } from 'lucide-react';
 
 type CommandSuggestion = {
   id: string;
@@ -252,6 +254,12 @@ export default function AgentChatPane({
     && sharedWorkspace?.editingPolicy === 'direct'
     && sharedWorkspace.canEdit,
   );
+  const canOpenPrivateWorkingCopy = Boolean(
+    isSharedWorkspace
+    && sharedWorkspace?.editingPolicy === 'review'
+    && sharedWorkspace.privateCopyWorkspaceId
+    && onOpenPrivateWorkingCopy,
+  );
 
   useEffect(() => {
     setSharedMode('team');
@@ -315,14 +323,27 @@ export default function AgentChatPane({
               onDeleteConversation={onDeleteConversation}
             />
             {isSharedWorkspace ? (
-              <div className={`border-b px-4 py-2 text-xs ${
+              <div className={`flex items-center justify-between gap-3 border-b px-4 py-2 text-xs ${
                 isDarkMode
                   ? 'border-violet-900/60 bg-violet-950/30 text-violet-200'
                   : 'border-violet-100 bg-violet-50 text-violet-700'
               }`}>
-                Private with Lumo is visible only to you. {sharedLumoCanWrite
-                  ? 'Lumo may update the Shared working version in Freeflow.'
-                  : 'In Review, open a Private copy when you want Lumo to make changes.'}
+                <span className="min-w-0">
+                  Private with Lumo is visible only to you. {sharedLumoCanWrite
+                    ? 'Lumo may update the Shared working version in Freeflow.'
+                    : canOpenPrivateWorkingCopy
+                      ? 'Use your Private copy when you want Lumo to make changes.'
+                      : 'Use a message proposal to create a Private copy for Lumo changes.'}
+                </span>
+                {canOpenPrivateWorkingCopy ? (
+                  <Button
+                    label="Open private copy"
+                    size="sm"
+                    variant="secondary"
+                    icon={<ArrowRight size={14} />}
+                    clickAction={() => onOpenPrivateWorkingCopy?.()}
+                  />
+                ) : null}
               </div>
             ) : null}
             <ChatLayout
