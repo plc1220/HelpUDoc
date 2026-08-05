@@ -7502,7 +7502,7 @@ export default function WorkspacePage() {
 
               <section className="mt-5 space-y-2">
                 <p className={`text-[10px] font-semibold uppercase tracking-normal ${isDarkMode ? 'text-slate-500' : 'text-slate-500'}`}>
-                  Team workspaces
+                  Shared workspaces
                 </p>
                 {mobileTeamWorkspaces.map((workspace) => (
                   <button
@@ -7525,7 +7525,11 @@ export default function WorkspacePage() {
                         isDarkMode ? 'text-slate-500' : 'text-slate-500'
                       }`}>
                         {workspace.teamName
-                          || (workspace.audienceType === 'selected_people' ? 'Selected people' : 'Team workspace')}
+                          || (workspace.audienceType === 'selected_people' ? 'Selected people' : 'Shared')}
+                        {' · '}
+                        {workspace.currentPublishedVersionNumber == null
+                          ? 'Not published'
+                          : `Published v${workspace.currentPublishedVersionNumber}`}
                       </span>
                     </span>
                     {selectedWorkspace?.id === workspace.id ? <Check size={15} className="shrink-0" /> : null}
@@ -7535,7 +7539,7 @@ export default function WorkspacePage() {
                   <p className={`rounded-xl px-3 py-3 text-sm ${
                     isDarkMode ? 'bg-slate-900 text-slate-500' : 'bg-slate-50 text-slate-500'
                   }`}>
-                    No team workspaces.
+                    No shared workspaces.
                   </p>
                 ) : null}
               </section>

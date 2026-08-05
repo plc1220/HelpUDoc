@@ -291,7 +291,6 @@ export default function AgentChatPane({
             workspace={publishedWorkspace}
             filePath={activeFilePath}
             colorMode={colorMode}
-            onOpenCollaboration={onOpenCollaboration || (() => undefined)}
           />
         ) : (
           <>

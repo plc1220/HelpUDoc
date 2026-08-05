@@ -6,6 +6,9 @@ import {
   List,
   ListItemButton,
   ListItemText,
+  ListItemIcon,
+  Menu,
+  MenuItem,
   Tooltip,
   Typography,
 } from '@mui/material';
@@ -16,6 +19,7 @@ import {
   History,
   Lock,
   ManageAccounts,
+  MoreHoriz,
   Publish,
   Share,
   Sync,
@@ -56,6 +60,8 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
 }) => {
   const privateWorkspaces = workspaces.filter((workspace) => workspace.visibility !== 'team');
   const teamWorkspaces = workspaces.filter((workspace) => workspace.visibility === 'team');
+  const [actionAnchorEl, setActionAnchorEl] = React.useState<null | HTMLElement>(null);
+  const [actionWorkspaceId, setActionWorkspaceId] = React.useState<string | null>(null);
 
   const renderWorkspace = (workspace: Workspace) => {
     const isPrivate = workspace.visibility !== 'team';
@@ -95,7 +101,7 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
         onClick: () => onWorkPrivately(workspace),
       } : null,
       !isPrivate && onHistoryWorkspace ? {
-        label: `View published history for ${workspace.name}`,
+        label: `Open published history for ${workspace.name}`,
         icon: <History fontSize="small" />,
         onClick: () => onHistoryWorkspace(workspace),
       } : null,
@@ -110,6 +116,11 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
         onClick: () => onDeleteWorkspace(workspace.id),
       } : null,
     ].filter(Boolean) as Array<{ label: string; icon: React.ReactNode; onClick: () => void }>;
+
+    const isActionMenuOpen = actionWorkspaceId === workspace.id;
+    const sharedWorkspaceSubtitle = workspace.currentPublishedVersionNumber == null
+      ? `${workspace.teamName || (workspace.audienceType === 'selected_people' ? 'Selected people' : 'Shared')} · Not published`
+      : `${workspace.teamName || (workspace.audienceType === 'selected_people' ? 'Selected people' : 'Shared')} · Published v${workspace.currentPublishedVersionNumber}`;
 
     return (
       <Box
@@ -129,7 +140,7 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
               ? undefined
               : theme.palette.mode === 'light' ? 'rgba(15, 23, 42, 0.04)' : 'rgba(148, 163, 184, 0.08)',
           },
-          '&:hover .workspace-list-actions, &:focus-within .workspace-list-actions': {
+          '&:hover .workspace-list-more, &:focus-within .workspace-list-more': {
             opacity: 1,
             pointerEvents: 'auto',
           },
@@ -143,30 +154,42 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
             minHeight: 68,
             py: 1,
             pl: 1.5,
-            pr: actions.length ? Math.min(12, 2.5 + actions.length * 3.5) : 1.5,
+            pr: actions.length ? 6 : 1.5,
             borderRadius: 2,
             backgroundColor: 'transparent',
             '&.Mui-selected, &.Mui-selected:hover, &:hover': { backgroundColor: 'transparent' },
           }}
         >
           <ListItemText
+            sx={{ minWidth: 0 }}
             primary={workspace.name}
             secondary={
               isPrivate
                 ? STATUS_LABELS[status]
-                : `${workspace.teamName || (workspace.audienceType === 'selected_people' ? 'Selected people' : 'Team')}${workspace.latestPublisherName
-                  ? ` · ${workspace.latestPublisherName}`
-                  : ''}`
+                : sharedWorkspaceSubtitle
             }
             primaryTypographyProps={{
-              noWrap: true,
-              sx: { fontWeight: 600, fontSize: '0.92rem', lineHeight: 1.3, mb: 0.2 },
+              sx: {
+                display: '-webkit-box',
+                overflow: 'hidden',
+                WebkitBoxOrient: 'vertical',
+                WebkitLineClamp: 2,
+                overflowWrap: 'anywhere',
+                fontWeight: 600,
+                fontSize: '0.92rem',
+                lineHeight: 1.2,
+                mb: 0.25,
+              },
             }}
             secondaryTypographyProps={{
-              noWrap: true,
               sx: {
+                display: '-webkit-box',
+                overflow: 'hidden',
+                WebkitBoxOrient: 'vertical',
+                WebkitLineClamp: 2,
+                overflowWrap: 'anywhere',
                 fontSize: '0.76rem',
-                lineHeight: 1.3,
+                lineHeight: 1.25,
                 color: status === 'review_needed'
                   ? 'warning.main'
                   : status === 'changes_to_publish' || status === 'team_updates_available'
@@ -178,43 +201,72 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
         </ListItemButton>
         {actions.length ? (
           <Box
-            className="workspace-list-actions"
+            className="workspace-list-more"
             sx={{
               position: 'absolute',
               top: '50%',
               right: 6,
               transform: 'translateY(-50%)',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 0.1,
               opacity: 0,
               pointerEvents: 'none',
-              backgroundColor: (theme) => theme.palette.mode === 'light'
-                ? 'rgba(248, 250, 252, 0.92)'
-                : 'rgba(15, 23, 42, 0.9)',
-              borderRadius: 1.5,
-              px: 0.2,
-              py: 0.2,
-              backdropFilter: 'blur(6px)',
             }}
           >
-            {actions.map((action) => (
-              <Tooltip key={action.label} title={action.label}>
-                <IconButton
-                  size="small"
-                  aria-label={action.label}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    action.onClick();
-                  }}
-                  sx={{ width: 29, height: 29 }}
-                >
-                  {action.icon}
-                </IconButton>
-              </Tooltip>
-            ))}
+            <Tooltip title="More workspace actions">
+              <IconButton
+                size="small"
+                aria-label={`More actions for ${workspace.name}`}
+                aria-haspopup="menu"
+                aria-expanded={isActionMenuOpen ? 'true' : undefined}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setActionAnchorEl(event.currentTarget);
+                  setActionWorkspaceId(workspace.id);
+                }}
+                sx={{
+                  width: 32,
+                  height: 32,
+                  backgroundColor: (theme) => theme.palette.mode === 'light'
+                    ? 'rgba(248, 250, 252, 0.94)'
+                    : 'rgba(15, 23, 42, 0.94)',
+                  '&:hover': {
+                    backgroundColor: (theme) => theme.palette.mode === 'light'
+                      ? 'rgba(241, 245, 249, 1)'
+                      : 'rgba(30, 41, 59, 1)',
+                  },
+                }}
+              >
+                <MoreHoriz fontSize="small" />
+              </IconButton>
+            </Tooltip>
           </Box>
         ) : null}
+        <Menu
+          anchorEl={actionAnchorEl}
+          open={isActionMenuOpen}
+          onClose={() => {
+            setActionAnchorEl(null);
+            setActionWorkspaceId(null);
+          }}
+          onClick={(event) => event.stopPropagation()}
+          anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+          transformOrigin={{ vertical: 'top', horizontal: 'right' }}
+          slotProps={{ paper: { sx: { minWidth: 220 } } }}
+        >
+          {actions.map((action) => (
+            <MenuItem
+              key={action.label}
+              onClick={() => {
+                setActionAnchorEl(null);
+                setActionWorkspaceId(null);
+                action.onClick();
+              }}
+              sx={{ gap: 1 }}
+            >
+              <ListItemIcon sx={{ minWidth: 28 }}>{action.icon}</ListItemIcon>
+              <Typography variant="body2">{action.label}</Typography>
+            </MenuItem>
+          ))}
+        </Menu>
       </Box>
     );
   };
@@ -226,9 +278,19 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
     emptyLabel: string,
   ) => (
     <Box sx={{ mb: 2 }}>
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, px: 0.5, mb: 0.75 }}>
+      <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 0.75, px: 0.5, mb: 0.75, minWidth: 0 }}>
         {icon}
-        <Typography variant="overline" sx={{ fontWeight: 700, lineHeight: 1.5 }}>
+        <Typography
+          variant="overline"
+          sx={{
+            minWidth: 0,
+            flex: 1,
+            fontWeight: 700,
+            lineHeight: 1.25,
+            whiteSpace: 'normal',
+            overflowWrap: 'anywhere',
+          }}
+        >
           {title}
         </Typography>
         <Chip label={items.length} size="small" sx={{ height: 18, fontSize: '0.68rem' }} />
@@ -244,7 +306,7 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
   return (
     <List disablePadding>
       {renderSection('Private workspaces', <Lock sx={{ fontSize: 16 }} />, privateWorkspaces, 'No private workspaces')}
-      {renderSection('Team workspaces', <Groups sx={{ fontSize: 16 }} />, teamWorkspaces, 'No team workspaces')}
+      {renderSection('Shared workspaces', <Groups sx={{ fontSize: 16 }} />, teamWorkspaces, 'No shared workspaces')}
     </List>
   );
 };

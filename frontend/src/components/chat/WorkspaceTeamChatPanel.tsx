@@ -103,12 +103,10 @@ export default function WorkspaceTeamChatPanel({
   workspace,
   filePath,
   colorMode,
-  onOpenCollaboration,
 }: {
   workspace: Workspace;
   filePath?: string;
   colorMode: 'light' | 'dark';
-  onOpenCollaboration: () => void;
 }) {
   const isDarkMode = colorMode === 'dark';
   const [messages, setMessages] = useState<WorkspaceTeamMessage[]>([]);
@@ -392,7 +390,7 @@ export default function WorkspaceTeamChatPanel({
       <div className={`border-b px-4 py-2.5 ${
         isDarkMode ? 'border-slate-800 bg-slate-950/30' : 'border-slate-200 bg-white'
       }`}>
-        <div className="flex items-center justify-between gap-3">
+        <div>
           <div className="min-w-0">
             <div className={`flex items-center gap-2 text-sm font-semibold ${
               isDarkMode ? 'text-slate-100' : 'text-slate-900'
@@ -401,16 +399,9 @@ export default function WorkspaceTeamChatPanel({
               <span># team-chat</span>
             </div>
             <p className={`mt-0.5 text-[11px] ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
-              Message members normally. Tag <strong>@Lumo</strong> when the team wants a read-only answer.
+              Visible to workspace members. Message normally, or tag <strong>@Lumo</strong> for a read-only answer.
             </p>
           </div>
-          <Button
-            label="Collaboration board"
-            size="sm"
-            variant="secondary"
-            icon={<StickyNote size={14} />}
-            onClick={onOpenCollaboration}
-          />
         </div>
       </div>
 

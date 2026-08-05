@@ -167,6 +167,8 @@ const CollapsibleDrawer: React.FC<CollapsibleDrawerProps> = ({
               minHeight: 0,
               overflowY: 'auto',
               overflowX: 'hidden',
+              scrollbarGutter: 'stable',
+              pr: 0.25,
               pb: 1,
             }}
           >
