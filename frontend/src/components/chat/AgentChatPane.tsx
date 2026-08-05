@@ -254,10 +254,16 @@ export default function AgentChatPane({
     && sharedWorkspace?.editingPolicy === 'direct'
     && sharedWorkspace.canEdit,
   );
-  const canOpenPrivateWorkingCopy = Boolean(
+  const hasPrivateWorkingCopy = Boolean(sharedWorkspace?.privateCopyWorkspaceId);
+  const canCreatePrivateWorkingCopy = Boolean(
+    sharedWorkspace?.role === 'owner'
+    || sharedWorkspace?.role === 'editor'
+    || sharedWorkspace?.role === 'contributor',
+  );
+  const canUsePrivateWorkingCopy = Boolean(
     isSharedWorkspace
     && sharedWorkspace?.editingPolicy === 'review'
-    && sharedWorkspace.privateCopyWorkspaceId
+    && (hasPrivateWorkingCopy || canCreatePrivateWorkingCopy)
     && onOpenPrivateWorkingCopy,
   );
 
@@ -331,13 +337,15 @@ export default function AgentChatPane({
                 <span className="min-w-0">
                   Private with Lumo is visible only to you. {sharedLumoCanWrite
                     ? 'Lumo may update the Shared working version in Freeflow.'
-                    : canOpenPrivateWorkingCopy
+                    : hasPrivateWorkingCopy
                       ? 'Use your Private copy when you want Lumo to make changes.'
-                      : 'Use a message proposal to create a Private copy for Lumo changes.'}
+                      : canCreatePrivateWorkingCopy
+                        ? 'Create a Private copy when you want Lumo to make changes.'
+                        : 'Ask a Contributor or Publisher to create a proposal for Lumo changes.'}
                 </span>
-                {canOpenPrivateWorkingCopy ? (
+                {canUsePrivateWorkingCopy ? (
                   <Button
-                    label="Open private copy"
+                    label={hasPrivateWorkingCopy ? 'Open private copy' : 'Create private copy'}
                     size="sm"
                     variant="secondary"
                     icon={<ArrowRight size={14} />}
