@@ -1010,6 +1010,37 @@ body {
   color: var(--color-text-primary);
 }
 
+.lumo-user-attachments {
+  width: min(100%, 28rem);
+  margin-top: var(--spacing-2);
+}
+
+.lumo-user-attachment-item {
+  border-top: var(--border-width) solid var(--color-border);
+}
+
+.lumo-attachment-thumb {
+  position: relative;
+  display: inline-flex;
+  width: var(--size-element-md);
+  height: var(--size-element-md);
+  flex: 0 0 var(--size-element-md);
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-element);
+  background: var(--color-background-muted);
+}
+
+.lumo-attachment-thumb-image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
 .lumo-message-actions {
   display: inline-flex;
   align-items: center;

@@ -5,6 +5,7 @@ import {
   ChatMessageMetadata,
   ChatToolCalls,
 } from '@astryxdesign/core/Chat';
+import { Card } from '@astryxdesign/core/Card';
 import { Collapsible } from '@astryxdesign/core/Collapsible';
 import { Icon as AstryxIcon } from '@astryxdesign/core/Icon';
 import { Item } from '@astryxdesign/core/Item';
@@ -2613,49 +2614,42 @@ export default function ChatMessageBubble({
               renderFormattedUserText(userText, userPathPillClassName)
             ) : null}
             {!isEditing && attachmentPreviews.length ? (
-              <div className="mt-2.5 overflow-hidden rounded-lg border border-white/15 bg-black/10">
+              <Card variant="default" padding={1} className="lumo-user-attachments">
                 {attachmentPreviews.map((attachment, index) => (
-                  <div
+                  <Item
                     key={`${attachment.name}-${index}`}
-                    className={`flex min-w-0 items-center gap-2.5 px-2.5 py-2 ${
-                      index > 0 ? 'border-t border-white/10' : ''
-                    }`}
-                  >
-                      <div className="relative flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-md bg-white/12 text-white/90">
+                    density="compact"
+                    className={index > 0 ? 'lumo-user-attachment-item' : undefined}
+                    label={attachment.name}
+                    description={getAttachmentTypeLabel(attachment.name, {
+                      isDrive: attachment.isDrive,
+                      isImage: attachment.isImage,
+                    })}
+                    labelLines={1}
+                    descriptionLines={1}
+                    startContent={(
+                      <div className="lumo-attachment-thumb" aria-hidden="true">
+                        <AstryxIcon
+                          icon={attachment.isImage ? ImageIcon : getAttachmentFileIcon(attachment.name, false)}
+                          size="sm"
+                          color="secondary"
+                        />
                         {attachment.previewUrl ? (
-                          <>
-                            <ImageIcon size={16} />
-                            <img
-                              src={attachment.previewUrl}
-                              alt=""
-                              className="absolute inset-0 h-full w-full object-cover"
-                              loading="lazy"
-                              onError={(event) => {
-                                event.currentTarget.style.display = 'none';
-                              }}
-                            />
-                          </>
-                        ) : attachment.isImage ? (
-                          <ImageIcon size={16} />
-                        ) : (
-                          (() => {
-                            const AttachmentIcon = getAttachmentFileIcon(attachment.name, attachment.isImage);
-                            return <AttachmentIcon size={16} />;
-                          })()
-                        )}
+                          <img
+                            src={attachment.previewUrl}
+                            alt=""
+                            className="lumo-attachment-thumb-image"
+                            loading="lazy"
+                            onError={(event) => {
+                              event.currentTarget.style.display = 'none';
+                            }}
+                          />
+                        ) : null}
                       </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="truncate text-sm font-medium leading-5 text-white">{attachment.name}</div>
-                        <div className="text-[11px] text-white/65">
-                          {getAttachmentTypeLabel(attachment.name, {
-                            isDrive: attachment.isDrive,
-                            isImage: attachment.isImage,
-                          })}
-                        </div>
-                      </div>
-                    </div>
+                    )}
+                  />
                 ))}
-              </div>
+              </Card>
             ) : null}
             </div>
           </AstryxChatMessageBubble>
