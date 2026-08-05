@@ -1,0 +1,68 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 250,
+    "blocks": [
+      {
+        "text": "THE CHARMED FAWN.",
+        "blockType": "heading",
+        "headingLevel": 2,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "The sister then cried out, \"I beseech you, brother, do not drink, or else you will become a wild beast, and tear me to pieces.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "So the brother refrained from drinking, though he wanted sadly to quench his thirst, and said, \"I will wait till we come to the next stream.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "And when they reached another spring, the sister heard it murmur, \"Whoever drinks out of me will become a wolf.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "Then the sister exclaimed, \"I beseech you, brother, do not drink, or you will become a wolf, and eat me up.\" So the brother did not drink, but answered, \"I will wait till we come to the next stream; but then I must drink, say what you will.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "And when they reached the third spring, the sister heard it say, as it ran along, \"Whoever drinks out of me will become a fawn.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "Then the sister said, \"Oh, brother, I beseech you not to drink, or you will become a fawn, and run away from me.\" But the brother had already knelt beside the stream, and stooped down and drunk of its waters; and the first drop had no sooner moistened his lips than he was changed to a young fawn. The sister wept over her poor transformed brother, and the fawn wept likewise as he sat mournfully by her side.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "4",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

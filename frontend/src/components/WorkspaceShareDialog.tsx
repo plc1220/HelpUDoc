@@ -24,7 +24,9 @@ import {
   fetchUserDirectory,
   listWorkspaceCollaborators,
   removeWorkspaceCollaborator,
+  updateWorkspaceEditingPolicy,
   type DirectoryUser,
+  type WorkspaceEditingPolicy,
   type WorkspaceCollaborator,
 } from '../services/workspaceApi';
 
@@ -43,9 +45,15 @@ export interface WorkspaceShareDialogProps {
   open: boolean;
   workspace: Workspace | null;
   onClose: () => void;
+  onWorkspaceChanged?: () => void | Promise<unknown>;
 }
 
-const WorkspaceShareDialog: React.FC<WorkspaceShareDialogProps> = ({ open, workspace, onClose }) => {
+const WorkspaceShareDialog: React.FC<WorkspaceShareDialogProps> = ({
+  open,
+  workspace,
+  onClose,
+  onWorkspaceChanged,
+}) => {
   const [collaborators, setCollaborators] = useState<WorkspaceCollaborator[]>([]);
   const [collaboratorsLoading, setCollaboratorsLoading] = useState(false);
   const [collaboratorsError, setCollaboratorsError] = useState<string | null>(null);
@@ -56,7 +64,9 @@ const WorkspaceShareDialog: React.FC<WorkspaceShareDialogProps> = ({ open, works
   const [optionsLoading, setOptionsLoading] = useState(false);
 
   const [selected, setSelected] = useState<DirectoryUser[]>([]);
-  const [inviteRole, setInviteRole] = useState<'editor' | 'contributor' | 'commenter' | 'viewer'>('commenter');
+  const [inviteRole, setInviteRole] = useState<'editor' | 'contributor' | 'viewer'>('contributor');
+  const [editingPolicy, setEditingPolicy] = useState<WorkspaceEditingPolicy>('direct');
+  const [policyBusy, setPolicyBusy] = useState(false);
   const [inviteBusy, setInviteBusy] = useState(false);
   const [inviteError, setInviteError] = useState<string | null>(null);
   const [removeBusyId, setRemoveBusyId] = useState<string | null>(null);
@@ -89,10 +99,11 @@ const WorkspaceShareDialog: React.FC<WorkspaceShareDialogProps> = ({ open, works
       setSearchInput('');
       setOptions([]);
       setSelected([]);
-      setInviteRole('commenter');
+      setInviteRole('contributor');
+      setEditingPolicy(workspace?.editingPolicy || 'direct');
       setInviteError(null);
     }
-  }, [open]);
+  }, [open, workspace?.editingPolicy]);
 
   useEffect(() => {
     if (!open || !workspaceId) {
@@ -144,10 +155,28 @@ const WorkspaceShareDialog: React.FC<WorkspaceShareDialogProps> = ({ open, works
       }
       setSelected([]);
       await loadCollaborators();
+      await onWorkspaceChanged?.();
     } catch (e) {
       setInviteError(e instanceof Error ? e.message : 'Failed to update workspace access');
     } finally {
       setInviteBusy(false);
+    }
+  };
+
+  const handlePolicyChange = async (nextPolicy: WorkspaceEditingPolicy) => {
+    if (!workspaceId || nextPolicy === editingPolicy) return;
+    const previous = editingPolicy;
+    setEditingPolicy(nextPolicy);
+    setPolicyBusy(true);
+    try {
+      await updateWorkspaceEditingPolicy(workspaceId, nextPolicy);
+      await loadCollaborators();
+      await onWorkspaceChanged?.();
+    } catch (e) {
+      setEditingPolicy(previous);
+      setInviteError(e instanceof Error ? e.message : 'Failed to update editing policy');
+    } finally {
+      setPolicyBusy(false);
     }
   };
 
@@ -157,6 +186,7 @@ const WorkspaceShareDialog: React.FC<WorkspaceShareDialogProps> = ({ open, works
     try {
       await removeWorkspaceCollaborator(workspaceId, targetUserId);
       await loadCollaborators();
+      await onWorkspaceChanged?.();
     } catch {
       // keep list; user can retry
     } finally {
@@ -178,6 +208,29 @@ const WorkspaceShareDialog: React.FC<WorkspaceShareDialogProps> = ({ open, works
             {workspace.name}
           </Typography>
         ) : null}
+
+        <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600 }}>
+          Editing policy
+        </Typography>
+        <ToggleButtonGroup
+          exclusive
+          fullWidth
+          size="small"
+          value={editingPolicy}
+          disabled={policyBusy}
+          onChange={(_event, value) => {
+            if (value) void handlePolicyChange(value as WorkspaceEditingPolicy);
+          }}
+          sx={{ mb: 1 }}
+        >
+          <ToggleButton value="direct">Freeflow</ToggleButton>
+          <ToggleButton value="review">Review</ToggleButton>
+        </ToggleButtonGroup>
+        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 3 }}>
+          {editingPolicy === 'direct'
+            ? 'Contributors edit the live working version directly.'
+            : 'Contributors submit changes for review before they reach the working version.'}
+        </Typography>
 
         <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600 }}>
           People with direct access
@@ -287,13 +340,12 @@ const WorkspaceShareDialog: React.FC<WorkspaceShareDialogProps> = ({ open, works
           >
             <ToggleButton value="editor">Publisher</ToggleButton>
             <ToggleButton value="contributor">Contributor</ToggleButton>
-            <ToggleButton value="commenter">Commenter</ToggleButton>
             <ToggleButton value="viewer">Viewer</ToggleButton>
           </ToggleButtonGroup>
         </Box>
         <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
-          Commenters discuss and assign tasks. Contributors can also create private copies and submit change
-          proposals. Publishers review and publish new immutable versions.
+          Contributors edit directly in Freeflow or submit changes in Review. Publishers can also create
+          immutable published versions.
         </Typography>
 
         {inviteError ? (

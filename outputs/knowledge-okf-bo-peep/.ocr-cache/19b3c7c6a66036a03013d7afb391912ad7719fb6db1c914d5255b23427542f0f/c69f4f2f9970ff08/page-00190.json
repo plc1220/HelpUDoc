@@ -1,0 +1,33 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 190,
+    "blocks": [
+      {
+        "text": "THE LITTLE MAN AND",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "At length she came to him, and said, \" Little sir, walk in,\nAnd we'll talk this little matter o'er, o'er, o'er.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "10",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

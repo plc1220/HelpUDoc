@@ -1,0 +1,40 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 55,
+    "blocks": [
+      {
+        "text": "Treasury of Pleasure Books for Young People.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "THE STORY OF THE CAT AND THE MOUSE, WHO PLAY'D IN THE FARM-HOUSE.",
+        "blockType": "heading",
+        "headingLevel": 2,
+        "bbox": null,
+        "confidence": 0.95
+      },
+      {
+        "text": "ILLUSTRATED BY JOHN ABSOLON AND HARRISON WEIR.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.92
+      },
+      {
+        "text": "VI",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

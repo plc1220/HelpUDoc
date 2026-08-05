@@ -1,0 +1,40 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 286,
+    "blocks": [
+      {
+        "text": "ROBIN HOOD.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "infested by Robin Hood and his band, and said to his companion he hoped they would not meet with any of them, to which Robin only answered by a loud laugh. Presently they reached the Forest, when a herd of deer crossed their path. \" How do you like my horned beasts, Master Sheriff?\" inquired Robin. \" To tell you the truth,\" replied the Sheriff, \" I only half like your company, and wish myself away from hence.\" Then Robin Hood put his bugle to his mouth and blew three blasts, when about a hundred men, with Little John at their head, immediately surrounded them ; and the latter inquired what his master wanted. \" I have brought the Sheriff of Nottingham to dine with us,\" said Robin Hood. \" He is welcome,\" quoth Little John ; \" and I hope he will pay well for his dinner.\" They then took the bag of gold from the luckless Sheriff ; and spreading a cloak on the grass, they counted out three hundred pounds : after which Robin asked him if he would like some venison for dinner. But the Sheriff told him to let him go, or he would rue the day ; so the outlaw desired his best compliments to his good dame, and wished him a pleasant journey.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "But if Robin loved a joke, he often did a good turn to those who needed his assistance. Once he lent four hundred golden pounds to Sir Rychard o' the Lee, who had mortgaged his lands of Wierysdale for that sum to St. Mary's Abbey, and who happened to pass through Sherwood Forest on his way to York, to beg the Abbot to grant him another year. Robin Hood, moreover, bid Little John accompany him as his squire. When they reached the city, the superior was seated in his hall, and declared to the brethren that if Sir Rychard did",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "8",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

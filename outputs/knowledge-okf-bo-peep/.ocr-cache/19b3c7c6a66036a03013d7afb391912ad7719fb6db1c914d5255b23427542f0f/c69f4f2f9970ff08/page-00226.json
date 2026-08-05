@@ -1,0 +1,40 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 226,
+    "blocks": [
+      {
+        "text": "LITTLE GOODY TWO-SHOES.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "doing good, and thought she could never sufficiently gratify those who had done anything to serve her. These generous sentiments naturally led her to consult the interest of her neighbours; and as most of their lands were meadow, and they depended much on their hay, which had been for many years",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "greatly damaged by the wet weather, she contrived an instrument to direct them when to mow their grass with safety, and prevent their hay being spoiled. They all came to her for",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "12",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

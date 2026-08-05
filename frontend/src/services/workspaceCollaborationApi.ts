@@ -221,3 +221,17 @@ export const convertWorkspaceCollaborationObjectToProposal = async (
   }
   return response.json();
 };
+
+export const applyWorkspaceCollaborationProposal = async (
+  workspaceId: string,
+  objectId: string,
+): Promise<WorkspaceCollaborationObject> => {
+  const response = await apiFetch(
+    `${API_URL}/workspaces/${workspaceId}/collaboration/objects/${objectId}/apply`,
+    { method: 'POST' },
+  );
+  if (!response.ok) {
+    return parseError(response, 'Failed to apply proposal');
+  }
+  return response.json();
+};

@@ -1,0 +1,19 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 176,
+    "blocks": [
+      {
+        "text": "There, close on his haunches,\nSo solemn and wise,\nThe Frog from a corner\nLook'd up to the skies ;\nAnd the Squirrel, well pleased\nSuch diversion to see,",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.96
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

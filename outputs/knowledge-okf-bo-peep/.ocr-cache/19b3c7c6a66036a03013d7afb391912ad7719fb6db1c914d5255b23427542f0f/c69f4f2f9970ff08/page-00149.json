@@ -1,0 +1,33 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 149,
+    "blocks": [
+      {
+        "text": "THE FOX AND THE GEESE.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "\" Quick, quick, let me in! oh, for once be kind,\nFor the huntsman's horn I hear ;\nOh, hide me in any snug place you can find,\nFor the hunters and hounds draw near.\"\n\nSo the Goose looked out in order to see\nWhether Reynard was only in jest ;\nThen, knowing that he in her power would be,\nShe opened the door to her guest.\n\n\" I'll hide you,\" she said, \" in my nice new churn.\"\n\" That will do very well,\" said he ;\n\" And thank you for doing me this good turn,\nMost friendly and kind Ganderee.\"\n\nThen into the churn the Fox quickly got ;\nBut, ere the Goose put on the top,\nA kettle she brought of water quite hot,\nAnd poured in every drop.\n\nThen the Fox cried out, \" O! I burn, I burn,\nAnd I feel in a pitiful plight ;\"\nBut the Goose held fast the lid of the churn,\nSo Reynard he died that night.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.96
+      },
+      {
+        "text": "15",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

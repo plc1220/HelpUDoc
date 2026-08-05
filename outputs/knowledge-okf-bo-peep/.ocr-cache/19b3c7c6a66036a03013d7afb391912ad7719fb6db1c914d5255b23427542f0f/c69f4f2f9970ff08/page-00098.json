@@ -1,0 +1,40 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 98,
+    "blocks": [
+      {
+        "text": "DEATH OF COCK ROBIN.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "Who'll sing a psalm?\nI, said the Thrush,\nAs I sit in a bush,\nAnd I'll sing a psalm.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "Here is the Thrush,\nSinging psalms from the bush.",
+        "blockType": "caption",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "12",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 1.0
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

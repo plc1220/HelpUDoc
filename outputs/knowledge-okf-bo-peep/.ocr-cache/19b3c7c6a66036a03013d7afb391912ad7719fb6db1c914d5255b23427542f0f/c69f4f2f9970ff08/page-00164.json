@@ -1,0 +1,54 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 164,
+    "blocks": [
+      {
+        "text": "JACK SPRAT.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "Jack Sprat was wheeling his wife by the ditch, The barrow turned over, and in she did pitch ; Says Jack, She'll be drown'd, but Joan did reply, I don't think I shall, for the ditch is quite dry.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "Jack brought home his Joan, and she sat in a chair, When in came his cat, that had got but one ear. Says Joan, I'm come home, Puss, pray, how do you do ? The cat wagg'd her tail, and said nothing but \" mew.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "Jack Sprat took his gun, and went to the brook, He shot at the drake, but he killed the duck. He brought it to Joan, who a fire did make To roast the fat duck, while Jack went for the drake.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "The drake was swimming with his curly tail, Jack Sprat came to shoot him, but happened to fail ; He let off his gun, but missing his mark, The drake flew away, crying, \" Quack, quack, quack.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "14",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

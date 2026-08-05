@@ -1,0 +1,40 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 263,
+    "blocks": [
+      {
+        "text": "Treasury of Pleasure Books for Young People.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "THE\nPLEASANT HISTORY\nOF\nHANS IN LUCK.",
+        "blockType": "heading",
+        "headingLevel": 2,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "ILLUSTRATED BY EDWARD WEHNERT.",
+        "blockType": "caption",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "XIX",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

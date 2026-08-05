@@ -1,0 +1,40 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 254,
+    "blocks": [
+      {
+        "text": "THE CHARMED FAWN.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "the beautiful animal, and gave chase, but were unable to overtake it ; and when they thought themselves certain of their prey, it suddenly disappeared within the thicket. It was now dark, and the fawn ran home, and knocked at the door, saying, \" Sister, let me in.\" The little door was immediately opened, and in jumped her companion, and rested all night on his soft couch.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "The next day the hunt was again abroad, and no sooner did the fawn hear the horn and the huntsmen's halloo, than he could not rest, but said to his sister, \" Pray, sister, open the door, for I must be off.\" The sister accordingly opened the door, saying, \" But remember to come back at night, and repeat the same words.\" When the king and the huntsmen again caught sight of the fawn, with his golden collar, they all pursued him ; but he was too swift for them, and evaded them all day long : towards evening, however, they managed to surround him, and one of the hunters wounded him slightly in the foot, so that he limped as he went along, and was obliged to return home very slowly. This enabled one of the huntsmen to watch him to the hut, when he heard him crying out, \" Sister, let me in,\" and saw the door was opened, and immediately closed again. The huntsman then went back, and told the king all he had seen and heard ; and the monarch said that they should hunt again on the following day.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "8",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 1.0
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

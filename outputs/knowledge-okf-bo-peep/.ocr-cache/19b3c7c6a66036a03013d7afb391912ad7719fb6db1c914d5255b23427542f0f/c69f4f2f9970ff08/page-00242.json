@@ -1,0 +1,68 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 242,
+    "blocks": [
+      {
+        "text": "THE UGLY LITTLE DUCK.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "me,\" sighed the duck. \"Not understand you, indeed! If we don't, who should, you yellow beak?\" exclaimed pert madam hen.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.96
+      },
+      {
+        "text": "\"I am determined I will wander out into the world,\" said the little drake, taking courage.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.97
+      },
+      {
+        "text": "\"Yes, do so!\" answered the hen, uncivilly.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "And the poor duckling set off again on his travels, for which he had so longed; but no sooner did any animal see him, than he was sure to be twitted with his ugliness.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.96
+      },
+      {
+        "text": "Autumn was now waning; the leaves in the wood became yellow and brown, and being driven by the wind, danced about in mournful eddies; the air was quite biting, and on the hedge the crow sat and cried \"Caw! caw!\" from sheer cold. The poor persecuted duckling was even worse off than he.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.95
+      },
+      {
+        "text": "One evening, while the sun was going down so red that it looked like a fiery wheel, a flock of large birds suddenly rose from the bushes, sprinkled by the foam of the waves; the ugly green duckling had never seen any creatures so beautiful as they appeared, with their spotless feathers as white as new-fallen snow, and their long graceful necks. The swans, for such they were, after uttering their peculiar cry, extended their beautiful wings and flew away from this cold land to a warmer latitude beyond the sea. As they rose up high into the air, the young duckling stretched his neck after them, and uttered a cry so shrill, that he himself was frightened. He knew not",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.94
+      },
+      {
+        "text": "12",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

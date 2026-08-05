@@ -1,0 +1,32 @@
+---
+type: "policy"
+title: "Adapter Design Policy"
+description: "Policy governing the design of system adapters."
+resource: "workspace-file://live-smoke/docs/architecture/knowledge-okf-enrichment-spec.md#concept=policy%3Aadapter-design-policy"
+tags: []
+status: active
+generated:
+  by: "helpudoc-enrichment/gemini-lite"
+  at: "2026-08-04T00:00:00.000Z"
+sources:
+  - id: "source-span-1"
+    resource: "workspace-file://live-smoke/docs/architecture/knowledge-okf-enrichment-spec.md"
+    title: "knowledge-okf-enrichment-spec.md"
+    locator:
+      kind: "source_blocks"
+      block_ids: ["text-b195", "text-b196"]
+---
+
+# Adapter Design Policy
+
+Policy governing the design of system adapters.
+
+## Evidence-backed assertions
+
+* Adapters must maintain compatibility with future technology options to support scalability or operational requirements. _(blocks text-b195, text-b196; confidence 1.00)_
+
+## Relationships
+
+* must support [Future Technology Options](../system/future-technology-options.md) _(extracted; confidence 1.00)_
+
+[Read the original source](../../source.md)

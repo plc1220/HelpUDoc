@@ -1,0 +1,54 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 212,
+    "blocks": [
+      {
+        "text": "THE THREE BEARS.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "side of the bed, she tumbled out at the other, and ran to the window. Now the window was open, because the Bears, like good, tidy Bears, as they were, always opened their bed-chamber window when they got up in the morning. Out little Silver-hair jumped; and away she ran into the wood, and the Three Bears never saw anything more of her.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "END OF THE STORY",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "OF THE THREE",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "BEARS.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "14",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

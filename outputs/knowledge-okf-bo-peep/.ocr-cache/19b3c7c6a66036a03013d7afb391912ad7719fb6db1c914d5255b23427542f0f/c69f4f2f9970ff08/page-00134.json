@@ -1,0 +1,33 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 134,
+    "blocks": [
+      {
+        "text": "THE OLD WOMAN AND HER PIG.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "to hang the butcher, the butcher began to kill the ox, the ox began to drink the water, the water began to quench the fire, the fire began to burn the stick, the stick began to beat the dog, the dog began to bite the pig,—the pig he rushed right through the stile.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "And so the old Dame got home that night In time to boil her dump-lings.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

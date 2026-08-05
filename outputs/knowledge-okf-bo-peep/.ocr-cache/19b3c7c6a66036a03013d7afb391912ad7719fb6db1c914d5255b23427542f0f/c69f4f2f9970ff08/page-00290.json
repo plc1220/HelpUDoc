@@ -1,0 +1,40 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 290,
+    "blocks": [
+      {
+        "text": "ROBIN HOOD.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "gown, he dressed Little John up in it, and gave him the book, and bid him ask them seven times in the church, lest three should not be enough. The people could not help laughing, but none attempted to forbid the banns, for the bishop and his brother were glad to get out of the church. Robin Hood gave away the maiden, and the whole company had a venison dinner in Sherwood Forest; and from that day Allan-a-Dale was a staunch friend to Robin Hood as long as he lived.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "Robin Hood had often heard tell of the prowess of a certain Friar Tuck, who, having been expelled from Fountain Abbey for his irregular conduct, lived in a rude hut he had built himself amidst the woods, and who was said to wield a quarter-staff and let fly an arrow better than any man in Christendom. So, being anxious to see how far this was true, Robin set off one morning for Fountain Dale, where he found the friar rambling on the bank of the river Skell. The friar was a burly man, at least six feet high, with a broad chest, and an arm fit for a blacksmith. The outlaw walked up to him, saying, \"Carry me over this water, thou brawny friar, or thou hast not an hour to live.\" The friar tucked up his gown, and carried him over without a word; but when Robin seemed to be going, he cried out, \"Stop, my fine fellow, and carry me over this water, or it shall breed you pain.\" Robin did so, and then said, \"As you are double my weight, it is fair I should have two rides to your one, so carry me back again.\" The friar again took Robin on his back; but on reaching the middle of the stream he pitched him into the water, saying, \"Now, my fine fellow, let's see whether you'll sink or swim.\" Robin swam to the bank, and said, \"I see you are worthy to",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "12",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

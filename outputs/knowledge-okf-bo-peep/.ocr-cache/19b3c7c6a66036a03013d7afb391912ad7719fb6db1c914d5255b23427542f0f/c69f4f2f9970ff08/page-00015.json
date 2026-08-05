@@ -1,0 +1,61 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 15,
+    "blocks": [
+      {
+        "text": "TOM THE PIPER'S SON.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "Tom he was a piper's son,\nHe learn'd to play when he was young;\nBut the only tune that he could play\nWas \"Over the hills and far away.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "Tom with his pipe made such a noise,\nHe pleased both the girls and boys;\nThey'd dance and skip while he did play\n\"Over the hills and far away.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "Then Tom he learn'd to play with such skill,\nThat those who heard him could never keep still;\nAs soon as he play'd they began for to dance,-\nE'en pigs on their hind legs would after him prance.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "And as Dolly was milking her cow one day,\nTom took out his pipe and began for to play;\nPoor Doll and the cow they danced a lilt,\nTill her pail it fell down, and the milk it was spilt.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "He met with Dame Trot with a basket of eggs,\nHe used his pipe, and she used her legs;",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "9",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 1.0
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

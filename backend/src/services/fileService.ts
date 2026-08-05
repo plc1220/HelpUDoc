@@ -1,4 +1,6 @@
 import * as fs from 'fs/promises';
+import { createReadStream } from 'fs';
+import { createHash } from 'crypto';
 import * as path from 'path';
 import { S3Service } from './s3Service';
 import { DatabaseService } from './databaseService';
@@ -65,6 +67,115 @@ export class FileService {
     this.workspaceService = workspaceService;
   }
 
+  async createDirectUploadUrl(
+    workspaceId: string,
+    uploadId: string,
+    fileName: string,
+    mimeType: string,
+    userId: string,
+    expiresInSeconds: number,
+    options?: { allowSystemAdmin?: boolean },
+  ): Promise<{ objectKey: string; uploadUrl: string; requestedFileName: string }> {
+    await this.workspaceService.ensureMembership(workspaceId, userId, {
+      requireEdit: true,
+      allowSystemAdmin: options?.allowSystemAdmin,
+    });
+    const requestedFileName = this.normalizeRelativePath(fileName);
+    if (this.isInternalWorkspacePath(requestedFileName)) {
+      throw new ConflictError('System workspace paths are reserved');
+    }
+    const objectKey = normalizeS3Key(
+      workspaceId,
+      path.posix.join('.system', 'uploads', uploadId, path.posix.basename(requestedFileName)),
+    );
+    const uploadUrl = await this.s3Service.createPresignedUploadUrl(
+      objectKey,
+      mimeType,
+      expiresInSeconds,
+    );
+    return { objectKey, uploadUrl, requestedFileName };
+  }
+
+  async inspectStoredObject(objectKey: string) {
+    return this.s3Service.headFile(objectKey);
+  }
+
+  async finalizeDirectUpload(
+    input: {
+      workspaceId: string;
+      objectKey: string;
+      requestedFileName: string;
+      mimeType: string;
+    },
+    userId: string,
+    options?: { allowSystemAdmin?: boolean },
+  ) {
+    await this.workspaceService.ensureMembership(input.workspaceId, userId, {
+      requireEdit: true,
+      allowSystemAdmin: options?.allowSystemAdmin,
+    });
+    const relativePath = await this.resolveUniqueRelativePath(
+      input.workspaceId,
+      input.requestedFileName,
+      userId,
+      options,
+    );
+    let createdFileId: number | null = null;
+    try {
+      const [newFile] = await this.db('files').insert({
+        name: relativePath,
+        workspaceId: input.workspaceId,
+        storageType: 's3',
+        path: input.objectKey,
+        mimeType: input.mimeType,
+        publicUrl: null,
+        createdBy: userId,
+        updatedBy: userId,
+      }).returning('*');
+      createdFileId = Number(newFile.id);
+      await this.workspaceService.touchWorkspace(input.workspaceId, userId, { contentChanged: true });
+      return newFile;
+    } catch (error) {
+      if (createdFileId) await this.db('files').where({ id: createdFileId }).del().catch(() => undefined);
+      throw error;
+    }
+  }
+
+  async deleteStoredObject(objectKey: string): Promise<void> {
+    await this.s3Service.deleteFile(objectKey);
+  }
+
+  async ensureLocalMirror(file: any): Promise<string> {
+    if (file.storageType === 'local') return String(file.path);
+    const localPath = this.getLocalPath(String(file.workspaceId), String(file.name));
+    try {
+      const local = await fs.stat(localPath);
+      const remote = await this.s3Service.headFile(String(file.path));
+      if (local.isFile() && local.size === remote.sizeBytes) return localPath;
+    } catch {
+      // Missing or stale local mirrors are rebuilt from object storage below.
+    }
+    const temporaryPath = `${localPath}.download-${process.pid}-${Date.now()}.part`;
+    await fs.mkdir(path.dirname(localPath), { recursive: true });
+    try {
+      await this.s3Service.downloadFileToPath(String(file.path), temporaryPath);
+      await fs.rename(temporaryPath, localPath);
+      return localPath;
+    } catch (error) {
+      await fs.unlink(temporaryPath).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  async hashFile(file: any): Promise<string> {
+    const localPath = await this.ensureLocalMirror(file);
+    const digest = createHash('sha256');
+    for await (const chunk of createReadStream(localPath)) {
+      digest.update(chunk as Buffer);
+    }
+    return digest.digest('hex');
+  }
+
   private isInternalWorkspacePath(fileName: string): boolean {
     const normalized = fileName.replace(/\\/g, '/').replace(/^\/+/, '').toLowerCase();
     const parts = normalized.split('/').filter(Boolean);
@@ -75,23 +186,46 @@ export class FileService {
     await this.workspaceService.ensureMembership(workspaceId, userId);
     await this.syncWorkspaceFiles(workspaceId);
     const files = await this.db('files').where({ workspaceId });
+    const globalKnowledgeFiles = await this.db('knowledge_sources')
+      .select('fileId')
+      .where({ isGlobal: true, workspaceId })
+      .whereNotNull('fileId');
+    const standaloneKnowledgeFileIds = new Set(
+      globalKnowledgeFiles.map((row: { fileId: number }) => Number(row.fileId)),
+    );
     const visibleFiles = options?.includeInternal
       ? files
-      : files.filter((file) => !this.isInternalWorkspacePath(String(file.name || '')));
+      : files.filter((file) => (
+          !this.isInternalWorkspacePath(String(file.name || ''))
+          && !standaloneKnowledgeFileIds.has(Number(file.id))
+        ));
     await Promise.all(visibleFiles.map((file) => this.clearLegacyPublicUrl(file)));
     return visibleFiles;
   }
 
-  async hasFileName(workspaceId: string, fileName: string, userId: string): Promise<boolean> {
-    await this.workspaceService.ensureMembership(workspaceId, userId);
+  async hasFileName(
+    workspaceId: string,
+    fileName: string,
+    userId: string,
+    options?: { allowSystemAdmin?: boolean },
+  ): Promise<boolean> {
+    await this.workspaceService.ensureMembership(workspaceId, userId, options);
     const existing = await this.db('files').where({ workspaceId, name: fileName }).first();
     return Boolean(existing);
   }
 
-  async resolveUniqueRelativePath(workspaceId: string, fileName: string, userId: string): Promise<string> {
-    await this.workspaceService.ensureMembership(workspaceId, userId, { requireEdit: true });
+  async resolveUniqueRelativePath(
+    workspaceId: string,
+    fileName: string,
+    userId: string,
+    options?: { allowSystemAdmin?: boolean },
+  ): Promise<string> {
+    await this.workspaceService.ensureMembership(workspaceId, userId, {
+      requireEdit: true,
+      allowSystemAdmin: options?.allowSystemAdmin,
+    });
     const relativePath = this.normalizeRelativePath(fileName);
-    if (!await this.hasFileName(workspaceId, relativePath, userId)) {
+    if (!await this.hasFileName(workspaceId, relativePath, userId, options)) {
       return relativePath;
     }
 
@@ -101,13 +235,13 @@ export class FileService {
     const extension = parsed.ext || '';
     for (let index = 2; index <= 99; index += 1) {
       const candidate = `${directory}${baseName} (${index})${extension}`;
-      if (!await this.hasFileName(workspaceId, candidate, userId)) {
+      if (!await this.hasFileName(workspaceId, candidate, userId, options)) {
         return candidate;
       }
     }
 
     let candidate = `${directory}${baseName}-${Date.now()}${extension}`;
-    while (await this.hasFileName(workspaceId, candidate, userId)) {
+    while (await this.hasFileName(workspaceId, candidate, userId, options)) {
       candidate = `${directory}${baseName}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}${extension}`;
     }
     return candidate;
@@ -419,35 +553,64 @@ export class FileService {
       throw new NotFoundError('File not found');
     }
 
-    await this.workspaceService.ensureMembership(file.workspaceId, userId, {
+    const { workspace } = await this.workspaceService.ensureMembership(file.workspaceId, userId, {
       requireEdit: true,
       allowSystemAdmin: options?.allowSystemAdmin,
     });
-    const currentVersion = this.assertVersion(file.version, expectedVersion);
-    const nextVersion = currentVersion + 1;
-
-    if (file.storageType === 'local') {
-      const mimeType = this.resolveMimeType(file.name, file.mimeType) || 'application/octet-stream';
-      const payload = this.isTextFile(file.name, mimeType)
-        ? Buffer.from(content, 'utf-8')
-        : Buffer.from(content, 'base64');
-      await fs.writeFile(file.path, payload);
-    } else {
+    if (file.storageType !== 'local') {
       throw new ConflictError('Updating S3 files is not supported.');
     }
 
-    const [updated] = await this.db('files')
-      .where({ id: fileId })
-      .update({
-        updatedBy: userId,
-        updatedAt: this.db.fn.now(),
-        version: nextVersion,
-      })
-      .returning('*');
+    const freeflow = workspace.visibility === 'team' && workspace.editingPolicy === 'direct';
+    let staleOverwrite = false;
+    let updated: any;
+    await this.db.transaction(async (tx) => {
+      const lockedFile = await tx('files').where({ id: fileId }).forUpdate().first();
+      if (!lockedFile) {
+        throw new NotFoundError('File not found');
+      }
+      const currentVersion = this.assertVersion(
+        lockedFile.version,
+        freeflow ? undefined : expectedVersion,
+      );
+      staleOverwrite = typeof expectedVersion === 'number'
+        && expectedVersion > 0
+        && expectedVersion !== currentVersion;
+      const nextVersion = currentVersion + 1;
+      const mimeType = this.resolveMimeType(lockedFile.name, lockedFile.mimeType) || 'application/octet-stream';
+      const previousContent = await this.readFileBuffer(lockedFile);
+      const payload = this.isTextFile(lockedFile.name, mimeType)
+        ? Buffer.from(content, 'utf-8')
+        : Buffer.from(content, 'base64');
 
-    await this.workspaceService.touchWorkspace(file.workspaceId, userId, { contentChanged: true });
+      await tx('workspace_file_revisions').insert({
+        fileId: lockedFile.id,
+        workspaceId: lockedFile.workspaceId,
+        name: lockedFile.name,
+        version: currentVersion,
+        storageType: lockedFile.storageType,
+        mimeType,
+        content: previousContent,
+        replacedByUserId: userId,
+        staleOverwrite,
+      });
+      await fs.writeFile(lockedFile.path, payload);
+      [updated] = await tx('files')
+        .where({ id: fileId })
+        .update({
+          updatedBy: userId,
+          updatedAt: tx.fn.now(),
+          version: nextVersion,
+        })
+        .returning('*');
+      await tx('workspaces').where({ id: lockedFile.workspaceId }).update({
+        contentRevision: tx.raw('COALESCE("contentRevision", 0) + 1'),
+        updatedAt: tx.fn.now(),
+        lastModifiedBy: userId,
+      });
+    });
 
-    return updated;
+    return { ...updated, staleOverwrite };
   }
 
   async getWorkspaceFilePreview(workspaceId: string, relativePath: string, userId: string) {

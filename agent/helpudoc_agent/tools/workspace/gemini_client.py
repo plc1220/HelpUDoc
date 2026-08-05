@@ -25,6 +25,8 @@ class GeminiClientManager:
         self._model_cfg = model_cfg
         self._search_chat_model: ChatGoogleGenerativeAI | None = None
         self._attachment_chat_model: ChatGoogleGenerativeAI | None = None
+        self._lite_chat_model: ChatGoogleGenerativeAI | None = None
+        self._ingestion_chat_model: ChatGoogleGenerativeAI | None = None
         self._api_key = (
             model_cfg.api_key
             or os.getenv("GOOGLE_CLOUD_API_KEY")
@@ -35,11 +37,11 @@ class GeminiClientManager:
         if model_cfg.provider != "gemini":
             raise ValueError(f"Unsupported model provider {model_cfg.provider}")
 
-        use_vertex = model_cfg.use_vertex_ai
+        # GEMINI_API_KEY is the credential provisioned by the GKE manifests.
+        # Only use Vertex ADC when no API key is available.
+        use_vertex = model_cfg.use_vertex_ai and not self._api_key
 
         client_kwargs: dict = {}
-        if self._api_key:
-            client_kwargs["api_key"] = self._api_key
 
         if use_vertex:
             if not model_cfg.project or not model_cfg.location:
@@ -54,6 +56,8 @@ class GeminiClientManager:
             )
         else:
             client_kwargs["vertexai"] = False
+            if self._api_key:
+                client_kwargs["api_key"] = self._api_key
 
         self.client = self._build_client(client_kwargs)
         self.model_name = model_cfg.chat_model_name
@@ -96,3 +100,41 @@ class GeminiClientManager:
                 timeout=float(DEFAULT_HTTP_TIMEOUT),
             )
         return self._attachment_chat_model
+
+    def get_lite_chat_model(self) -> ChatGoogleGenerativeAI:
+        """Configured Gemini Lite model for bounded Knowledge enrichment tasks."""
+        self._require_configured_client()
+        if self._lite_chat_model is None:
+            from ...gemini_chat import create_chat_google_generative_ai
+
+            model_name = self._model_cfg.resolve_chat_model_name("lite")
+            self._lite_chat_model = create_chat_google_generative_ai(
+                self._model_cfg,
+                model_name,
+                thinking_level=self._model_cfg.resolve_thinking_level("lite"),
+                max_output_tokens=self._model_cfg.resolve_max_output_tokens("lite"),
+                timeout=float(DEFAULT_HTTP_TIMEOUT),
+            )
+        return self._lite_chat_model
+
+    def get_ingestion_chat_model(self) -> ChatGoogleGenerativeAI:
+        """Gemini Flash Lite with a larger structured-output budget for map/reduce parsing."""
+        self._require_configured_client()
+        if self._ingestion_chat_model is None:
+            from ...gemini_chat import create_chat_google_generative_ai
+
+            model_name = self._model_cfg.resolve_chat_model_name("lite")
+            configured = self._model_cfg.resolve_max_output_tokens("lite") or 4096
+            output_tokens = max(configured, int(os.environ.get("KNOWLEDGE_GEMINI_MAX_OUTPUT_TOKENS", "8192")))
+            self._ingestion_chat_model = create_chat_google_generative_ai(
+                self._model_cfg,
+                model_name,
+                thinking_level=self._model_cfg.resolve_thinking_level("lite"),
+                max_output_tokens=output_tokens,
+                timeout=float(DEFAULT_HTTP_TIMEOUT),
+            )
+        return self._ingestion_chat_model
+
+    @property
+    def lite_model_name(self) -> str:
+        return self._model_cfg.resolve_chat_model_name("lite")

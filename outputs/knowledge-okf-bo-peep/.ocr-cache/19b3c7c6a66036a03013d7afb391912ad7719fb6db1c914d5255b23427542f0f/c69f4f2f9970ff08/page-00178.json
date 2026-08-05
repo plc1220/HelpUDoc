@@ -1,0 +1,19 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 178,
+    "blocks": [
+      {
+        "text": "But just in the middle,\nOh ! shocking to tell !\nFrom his rope in an instant\nPoor Harlequin fell ;\nYet he touch'd not the ground,\nBut with talons outspread,",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.96
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

@@ -1,0 +1,61 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 138,
+    "blocks": [
+      {
+        "text": "THE FOX AND THE GEESE.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "\" There's a Mr. Fox,\" said she, \" that I know, Who lives in a covert hard by, To our race he has proved a deadly foe, So beware of his treachery.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "\" Build houses, ere long, of stone or of bricks, And get tiles for your roofs, I pray; For I know, of old, Mr. Reynard's tricks, And I fear he may come any day.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "Thus saying, she died, and her daughters fair,— Gobble, Goosey, and Ganderee,— Agreed together, that they would beware Of Mr. Fox, their enemy.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "But Gobble, the youngest, I grieve to say, Soon came to a very bad end, Because she preferred her own silly way, And would not to her mother attend.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "For she made, with some boards, an open nest, For a roof took the lid of a box; Then quietly laid herself down to rest, And thought she was safe from the Fox.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "4",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

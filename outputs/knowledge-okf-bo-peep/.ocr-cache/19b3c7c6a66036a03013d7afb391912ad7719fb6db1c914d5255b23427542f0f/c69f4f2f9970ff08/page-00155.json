@@ -1,0 +1,47 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 155,
+    "blocks": [
+      {
+        "text": "JENNY WREN.",
+        "blockType": "heading",
+        "headingLevel": 3,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "Robin being angry, Hopp'd upon a twig, Saying, \"Out upon you, Fie upon you, bold-faced jig!\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "Jenny Wren fell sick again, And Jenny Wren did die : The doctors vow'd they'd cure her, Or know the reason why.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "Doctor Hawk felt her pulse, And shaking his head, Says, \"I fear I can't save her, Because she's quite dead.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "5",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 1.0
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

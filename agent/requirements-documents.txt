@@ -1,3 +1,6 @@
 # Small, deterministic readers for on-demand document inspection and OKF publishing.
 pypdf
 python-docx
+PyMuPDF
+markitdown[pdf,docx,pptx,xlsx,xls]==0.1.6
+networkx>=3.4,<4

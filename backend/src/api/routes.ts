@@ -8,6 +8,7 @@ import conversationRoutes from './conversations';
 import scheduleRoutes from './schedules';
 import settingsRoutes from './settings';
 import knowledgeRoutes from './knowledge';
+import knowledgeCatalogRoutes from './knowledgeCatalog';
 import usersRoutes from './users';
 import settingsReflectionRoutes from './settingsReflections';
 import governanceRoutes from './governance';
@@ -66,11 +67,19 @@ export default function(
   router.use('/auth', authRoutes(userService, googleOAuthService));
   router.use('/', governanceRoutes(skillGovernanceService));
   registerSkillBuilderRoutes(router, workspaceService);
-  router.use('/agent', agentRoutes(workspaceService, fileService, googleOAuthService, userService, conversationService));
+  router.use('/agent', agentRoutes(
+    workspaceService,
+    fileService,
+    googleOAuthService,
+    userService,
+    conversationService,
+    knowledgeService,
+  ));
   router.use('/settings', requireSystemAdmin(userService), settingsRoutes(workspaceService, userService, dbService));
   router.use('/settings/reflections', requireSystemAdmin(userService), settingsReflectionRoutes(dailyReflectionService));
   router.use('/users', requireSystemAdmin(userService), usersRoutes(userService, workspaceService));
   router.use('/knowledge', requireSystemAdmin(userService), knowledgeRoutes(knowledgeService, { global: true }));
+  router.use('/knowledge-catalog', knowledgeCatalogRoutes(knowledgeService));
   router.use('/workspaces', workspaceRoutes(workspaceService, workspacePublicationService, userService));
   router.use(
     '/workspaces/:workspaceId/collaboration',

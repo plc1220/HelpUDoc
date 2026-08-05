@@ -1,0 +1,33 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 171,
+    "blocks": [
+      {
+        "text": "THE BUTTERFLY'S BALL.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "And the revels are now Only waiting for you. On the smooth-shaven grass, By the side of the wood, Beneath a broad oak That for ages has stood, See the children of earth, And the tenants of air, For an evening's amusement Together repair.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.97
+      },
+      {
+        "text": "5",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

@@ -1,0 +1,68 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 218,
+    "blocks": [
+      {
+        "text": "LITTLE GOODY TWO-SHOES.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "was very early, she ran all round the village, crying for her brother ; and after some time returned greatly distressed, for he had gone away the night before. However, when the shoemaker came in with her shoes, for which she had been measured by the gentleman's order, she was very much pleased.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.97
+      },
+      {
+        "text": "Nothing could have supported little Margery under the affliction she was in for the loss of her brother, but the pleasure she took in her two shoes. She ran to Mrs. Smith as soon as they were put on, and stroking down her ragged apron, cried out, \" Two Shoes, Ma'm ! see Two Shoes !\" And so she behaved to all the people she met, and by that means obtained the name of Little Goody Two-Shoes.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.96
+      },
+      {
+        "text": "Little Margery saw how good and how wise Mr. Smith was, and concluded that this was owing to his great learning, therefore she wanted of all things to learn to read. For this purpose, she used to meet the little boys and girls as they came from school, borrow their books, and sit down and read till they returned. By this means she soon got more learning than any of her playmates, and laid the following plan for instructing those who were more ignorant than herself. She found that only the following letters were required to spell all the words ; but as some of these letters are large, and some small, she with her knife cut out of several pieces of wood ten sets of each of these :—",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.96
+      },
+      {
+        "text": "a b c d e f g h i j k l m n o p q r s t u v w x y z.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.95
+      },
+      {
+        "text": "And six sets of these :—",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "A B C D E F G H I J K L M N O P Q R S T U V W X Y Z.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.95
+      },
+      {
+        "text": "4",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

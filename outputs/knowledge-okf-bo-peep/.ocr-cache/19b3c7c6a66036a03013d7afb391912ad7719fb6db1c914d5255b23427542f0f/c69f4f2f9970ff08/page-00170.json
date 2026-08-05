@@ -1,0 +1,26 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 170,
+    "blocks": [
+      {
+        "text": "THE BUTTERFLY'S BALL.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "Come, take up your hats, And away let us haste To the Butterfly's ball And the Grasshopper's feast; The trumpeter Gadfly Has summon'd the crew,",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.96
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

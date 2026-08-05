@@ -1,0 +1,11 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 200,
+    "blocks": [],
+    "blank": true,
+    "confidence": 0.0
+  }
+}

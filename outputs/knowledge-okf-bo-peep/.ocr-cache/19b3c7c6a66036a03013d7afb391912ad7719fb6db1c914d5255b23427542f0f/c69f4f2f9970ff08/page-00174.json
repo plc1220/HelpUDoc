@@ -1,0 +1,19 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 174,
+    "blocks": [
+      {
+        "text": "And the sly little Dormouse Crept out of his hole, And led to the feast His blind brother the Mole; And the Snail, with his horns Peeping out from his shell,",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.97
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

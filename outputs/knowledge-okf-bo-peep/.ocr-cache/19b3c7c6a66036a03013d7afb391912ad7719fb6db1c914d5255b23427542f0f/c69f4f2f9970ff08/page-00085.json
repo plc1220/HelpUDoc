@@ -1,0 +1,47 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 85,
+    "blocks": [
+      {
+        "text": "COCK ROBIN AND JENNY WREN.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "When in came the Cuckoo,\nAnd made a great rout ;\nHe caught hold of Jenny,\nAnd pull'd her about.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "Cock Robin was angry,\nAnd so was the Sparrow,\nWho fetched in a hurry\nHis bow and his arrow.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "His aim then he took,\nBut he took it not right ;\nHis skill was not good,\nOr he shot in a fright ;",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "15",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 1.0
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

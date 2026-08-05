@@ -1,0 +1,54 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 219,
+    "blocks": [
+      {
+        "text": "LITTLE GOODY TWO-SHOES.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "And having got an old spelling-book, she made her companions set up the words they wanted to spell.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.97
+      },
+      {
+        "text": "The usual manner of spelling, or carrying on the game, as they called it, was this : suppose the word to be spelt was plum-pudding (and who can suppose a better ?), the children were placed in a circle, and the first brought the letter p, the next l, the next u, the next m, and so on till the whole was spelt ; and if any one brought a wrong letter, he was to pay a fine, or play no more. This was their play ; and every morning she used to go round to teach the children. I once went her rounds with her, and was highly diverted.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.96
+      },
+      {
+        "text": "It was about seven o'clock in the morning when we set out on this important business, and the first house we came to was Farmer Wilson's. Here Margery stopped, and ran up to the door,—tap, tap, tap ! \" Who's there ?\" \" Only little Goody Two-Shoes,\" answered Margery, \" come to teach Billy.\" \" Oh, little Goody,\" says Mrs. Wilson, with pleasure in her face, \" I am glad to see you ! Billy wants you sadly, for he has learned his lesson.\" Then out came the little boy. \" How do, Doody Two-Shoes ?\" says he, not able to speak plain. Yet this little boy had learned all his letters ; for she threw down the small alphabet mixed together, and he picked them up, called them by their right names, and put them all in order. She then threw down the alphabet of capital letters, and he picked them all up, and having told their names, placed them rightly.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.96
+      },
+      {
+        "text": "The next place we came to was Farmer Simpson's. \" Bow, wow, wow !\" says the dog at the door. \" Sirrah !\" says his mistress, \" why do you bark at little Two-Shoes ? Come in,",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.96
+      },
+      {
+        "text": "5",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

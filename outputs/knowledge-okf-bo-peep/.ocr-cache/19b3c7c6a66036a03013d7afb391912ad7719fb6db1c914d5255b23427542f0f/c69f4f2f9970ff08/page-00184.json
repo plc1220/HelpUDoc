@@ -1,0 +1,26 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 184,
+    "blocks": [
+      {
+        "text": "THE LITTLE MAN AND THE LITTLE MAID.",
+        "blockType": "heading",
+        "headingLevel": 2,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "There was a little man,\nAnd he had a little mind\nFor to ask a little maid for to wed, wed, wed.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

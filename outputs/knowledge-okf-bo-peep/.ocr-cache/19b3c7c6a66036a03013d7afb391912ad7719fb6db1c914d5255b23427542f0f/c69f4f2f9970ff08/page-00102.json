@@ -1,0 +1,26 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 102,
+    "blocks": [
+      {
+        "text": "MAJA'S ALPHABET.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "S is for Sarah, talking to cook.\nT is for Thomas, reading a book.\nU is for Urban, rolling the green.\nV 's named Victoria, after our Queen.\nW 's for Walter, flying a kite.\nX is for Xerxes, a boy of great might.\nY 's for Miss Youthful, eating her bread.\nZ 's Zachariah, a-going to bed.",
+        "blockType": "list",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

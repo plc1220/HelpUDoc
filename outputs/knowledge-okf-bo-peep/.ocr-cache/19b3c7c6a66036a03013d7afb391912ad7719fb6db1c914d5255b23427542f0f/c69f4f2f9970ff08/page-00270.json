@@ -1,0 +1,68 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 270,
+    "blocks": [
+      {
+        "text": "HANS IN LUCK.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "milk could he obtain ; and as he set about attempting to milk the cow in the most awkward manner imaginable, the enraged animal gave him a hearty kick with her hind-leg, that laid him sprawling on the ground, where he remained half stunned for a long time, and scarcely able to recollect where he was.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "Fortunately there just came by a butcher trundling a wheelbarrow, in which lay a young pig.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "\" What on earth is the matter ?\" asked he, as he helped the worthy Hans to rise.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "Hans related what had happened, when the butcher handed him his flask, saying, \" There, man, take a draught, and it will soon bring you round again. The cow has no milk to give, for she is an old animal only fit for the yoke, or to be killed and eaten.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "\" Lord, now ! who would have thought it ?\" said Hans, stroking his hair, over his forehead. \" It is, to be sure, all very well to have such an animal as that to kill, particularly as it yields such a lot of meat ; but then I don't much relish cow's flesh : it is not half juicy enough for me. I'd much rather have a young pig like yours. The flesh is far more tasty, to say nothing of the sausages.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "\" I'll tell you what, Hans,\" quoth the butcher, \" I'll let you have my pig in exchange for your cow, just out of kindness.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "8",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 1.0
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

@@ -16,6 +16,7 @@ import {
   type AgentInterruptActionResponse,
   type AgentInterruptResponse,
   type AgentHistoryEntry,
+  type AgentKnowledgeRef,
 } from '../agentService';
 import type {
   ConversationMessageMetadata,
@@ -52,6 +53,7 @@ type StartRunParams = {
   authToken?: string;
   messageContent?: AgentMessageContentBlock[];
   internetSearchEnabled?: boolean;
+  knowledgeRefs?: AgentKnowledgeRef[];
 };
 
 type RunPendingInterrupt = {
@@ -130,6 +132,7 @@ type PersistedRunContext = {
   turnId?: string;
   messageContent?: AgentMessageContentBlock[];
   internetSearchEnabled?: boolean;
+  knowledgeRefs?: AgentKnowledgeRef[];
 };
 
 type ResumePayload =
@@ -2510,6 +2513,7 @@ const serializeRunContext = (params: StartRunParams): string =>
     turnId: params.turnId,
     messageContent: params.messageContent,
     internetSearchEnabled: params.internetSearchEnabled,
+    knowledgeRefs: params.knowledgeRefs,
   } satisfies PersistedRunContext);
 
 const parseRunContext = (raw: string | undefined): RunContext | undefined => {
@@ -2540,6 +2544,7 @@ const parseRunContext = (raw: string | undefined): RunContext | undefined => {
         turnId: typeof parsed.turnId === 'string' ? parsed.turnId : undefined,
         messageContent: Array.isArray(parsed.messageContent) ? parsed.messageContent as AgentMessageContentBlock[] : undefined,
         internetSearchEnabled: typeof parsed.internetSearchEnabled === 'boolean' ? parsed.internetSearchEnabled : undefined,
+        knowledgeRefs: Array.isArray(parsed.knowledgeRefs) ? parsed.knowledgeRefs as AgentKnowledgeRef[] : undefined,
       },
     };
   } catch {
@@ -3875,6 +3880,7 @@ async function runAgentRunWorker(
           authToken: params.authToken,
           messageContent: params.messageContent,
           internetSearchEnabled: params.internetSearchEnabled,
+          knowledgeRefs: params.knowledgeRefs,
           traceContext,
         });
     upstream = response.data;

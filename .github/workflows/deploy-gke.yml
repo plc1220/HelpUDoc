@@ -319,6 +319,18 @@ jobs:
           set -euo pipefail
           gcloud container clusters get-credentials "${GKE_CLUSTER}" --location "${GKE_LOCATION}" --project "${PROJECT_ID}"
 
+      - name: Capture currently deployed images
+        run: |
+          set -euo pipefail
+          if kubectl -n helpudoc get deployment helpudoc-app >/dev/null 2>&1; then
+            echo "CURRENT_BACKEND_IMG=$(kubectl -n helpudoc get deployment helpudoc-app -o jsonpath='{.spec.template.spec.containers[?(@.name=="backend")].image}')" >> "${GITHUB_ENV}"
+            echo "CURRENT_WORKER_IMG=$(kubectl -n helpudoc get deployment helpudoc-app -o jsonpath='{.spec.template.spec.containers[?(@.name=="knowledge-worker")].image}')" >> "${GITHUB_ENV}"
+            echo "CURRENT_AGENT_IMG=$(kubectl -n helpudoc get deployment helpudoc-app -o jsonpath='{.spec.template.spec.containers[?(@.name=="agent")].image}')" >> "${GITHUB_ENV}"
+          fi
+          if kubectl -n helpudoc get deployment helpudoc-frontend >/dev/null 2>&1; then
+            echo "CURRENT_FRONTEND_IMG=$(kubectl -n helpudoc get deployment helpudoc-frontend -o jsonpath='{.spec.template.spec.containers[?(@.name=="frontend")].image}')" >> "${GITHUB_ENV}"
+          fi
+
       - name: Ensure helpudoc-config exists (app deploys only)
         if: ${{ !inputs.deploy_infra }}
         run: |
@@ -353,7 +365,39 @@ jobs:
         run: |
           set -euo pipefail
           kubectl -n helpudoc delete job helpudoc-minio-setup --ignore-not-found
-          kubectl apply -f infra/gke/k8s/
+          kubectl apply -f infra/gke/k8s/00-namespace.yaml
+          STORAGE_PVCS=(
+            postgres-pvc
+            redis-pvc
+            minio-pvc
+            workspace-pvc
+            skills-pvc
+            plugins-pvc
+            agent-config-pvc
+            clickhouse-pvc
+          )
+          EXISTING_PVCS=0
+          for pvc in "${STORAGE_PVCS[@]}"; do
+            if kubectl -n helpudoc get pvc "${pvc}" >/dev/null 2>&1; then
+              EXISTING_PVCS=$((EXISTING_PVCS + 1))
+            fi
+          done
+          if (( EXISTING_PVCS == 0 )); then
+            kubectl apply -f infra/gke/k8s/30-storage.yaml
+          elif (( EXISTING_PVCS == ${#STORAGE_PVCS[@]} )); then
+            echo "PersistentVolumeClaims already exist; preserving their live capacities."
+          else
+            echo "Only ${EXISTING_PVCS}/${#STORAGE_PVCS[@]} expected PersistentVolumeClaims exist; refusing a partial storage reconciliation." >&2
+            exit 1
+          fi
+
+          for manifest in infra/gke/k8s/*.yaml; do
+            MANIFEST_NAME="$(basename "${manifest}")"
+            if [[ "${MANIFEST_NAME}" == "00-namespace.yaml" || "${MANIFEST_NAME}" == "30-storage.yaml" ]]; then
+              continue
+            fi
+            kubectl apply -f "${manifest}"
+          done
 
       - name: Ensure helpudoc-config exists (first install only)
         if: ${{ inputs.deploy_infra }}
@@ -460,9 +504,15 @@ jobs:
           APP_ARGS=()
           if [[ "${{ inputs.build_backend }}" == "true" ]]; then
             APP_ARGS+=("backend=${BACKEND_IMG}")
+            APP_ARGS+=("knowledge-worker=${BACKEND_IMG}")
+          elif [[ -n "${CURRENT_BACKEND_IMG:-}" && -n "${CURRENT_WORKER_IMG:-}" ]]; then
+            APP_ARGS+=("backend=${CURRENT_BACKEND_IMG}")
+            APP_ARGS+=("knowledge-worker=${CURRENT_WORKER_IMG}")
           fi
           if [[ "${{ inputs.build_agent }}" == "true" ]]; then
             APP_ARGS+=("agent=${AGENT_IMG}")
+          elif [[ -n "${CURRENT_AGENT_IMG:-}" ]]; then
+            APP_ARGS+=("agent=${CURRENT_AGENT_IMG}")
           fi
           if (( ${#APP_ARGS[@]} > 0 )); then
             kubectl -n helpudoc set image deployment/helpudoc-app "${APP_ARGS[@]}"
@@ -515,9 +565,26 @@ jobs:
               }')"
           fi
 
+          INIT_AGENT_IMG="${CURRENT_AGENT_IMG:-}"
+          if [[ "${{ inputs.build_agent }}" == "true" ]]; then
+            INIT_AGENT_IMG="${AGENT_IMG}"
+          fi
+          if [[ -n "${INIT_AGENT_IMG}" ]]; then
+            kubectl -n helpudoc patch deployment helpudoc-app --type=strategic -p "$(jq -n \
+              --arg img "${INIT_AGENT_IMG}" \
+              '{spec:{template:{spec:{initContainers:[
+                {name:"seed-skills",image:$img},
+                {name:"seed-plugins",image:$img},
+                {name:"seed-agent-config",image:$img}
+              ]}}}}')"
+          fi
+
           if [[ "${{ inputs.build_frontend }}" == "true" ]]; then
             kubectl -n helpudoc set image deployment/helpudoc-frontend \
               frontend="${FRONTEND_IMG}"
+          elif [[ -n "${CURRENT_FRONTEND_IMG:-}" ]]; then
+            kubectl -n helpudoc set image deployment/helpudoc-frontend \
+              frontend="${CURRENT_FRONTEND_IMG}"
           fi
 
           if [[ "${{ inputs.build_backend }}" == "true" ]]; then
@@ -547,11 +614,57 @@ jobs:
             kubectl -n helpudoc rollout restart deployment/helpudoc-app
           fi
 
+      - name: Reload Caddy infrastructure config
+        if: ${{ inputs.deploy_infra }}
+        run: |
+          set -euo pipefail
+          kubectl -n helpudoc rollout restart deployment/helpudoc-caddy
+
       - name: Wait for rollout
         run: |
           set -euo pipefail
           kubectl -n helpudoc rollout status deployment/helpudoc-app --timeout=20m
           kubectl -n helpudoc rollout status deployment/helpudoc-frontend --timeout=10m
+          if [[ "${{ inputs.deploy_infra }}" == "true" ]]; then
+            kubectl -n helpudoc rollout status deployment/helpudoc-caddy --timeout=5m
+          fi
+
+      - name: Collect rollout diagnostics
+        if: ${{ failure() }}
+        run: |
+          set +e
+          echo "Deployment and ReplicaSet status"
+          kubectl -n helpudoc get deployment helpudoc-app helpudoc-frontend -o wide
+          kubectl -n helpudoc get replicasets -l app=helpudoc-app -o wide
+
+          echo "Application pod status"
+          kubectl -n helpudoc get pods -l app=helpudoc-app -o wide
+          kubectl -n helpudoc describe deployment helpudoc-app
+
+          PODS="$(kubectl -n helpudoc get pods -l app=helpudoc-app -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}')"
+          for pod in ${PODS}; do
+            echo "Pod details: ${pod}"
+            kubectl -n helpudoc describe pod "${pod}"
+
+            INIT_CONTAINERS="$(kubectl -n helpudoc get pod "${pod}" -o jsonpath='{range .spec.initContainers[*]}{.name}{"\n"}{end}')"
+            for container in ${INIT_CONTAINERS}; do
+              echo "Current init-container log: ${pod}/${container}"
+              kubectl -n helpudoc logs "${pod}" -c "${container}" --tail=300
+              echo "Previous init-container log: ${pod}/${container}"
+              kubectl -n helpudoc logs "${pod}" -c "${container}" --previous --tail=300
+            done
+
+            CONTAINERS="$(kubectl -n helpudoc get pod "${pod}" -o jsonpath='{range .spec.containers[*]}{.name}{"\n"}{end}')"
+            for container in ${CONTAINERS}; do
+              echo "Current container log: ${pod}/${container}"
+              kubectl -n helpudoc logs "${pod}" -c "${container}" --tail=300
+              echo "Previous container log: ${pod}/${container}"
+              kubectl -n helpudoc logs "${pod}" -c "${container}" --previous --tail=300
+            done
+          done
+
+          echo "Recent namespace events"
+          kubectl -n helpudoc get events --sort-by=.metadata.creationTimestamp | tail -200
 
       - name: Legacy sync Skills PVC (kubectl exec)
         if: ${{ inputs.sync_runtime_assets }}
@@ -632,6 +745,30 @@ jobs:
           then
             kubectl -n helpudoc get pods -l app=helpudoc-app -o wide || true
             kubectl -n helpudoc describe deploy/helpudoc-app || true
+            kubectl -n helpudoc logs deploy/helpudoc-app -c agent --tail=200 || true
+            exit 1
+          fi
+
+      - name: Post-deploy smoke (Gemini model)
+        run: |
+          set -euo pipefail
+          if ! kubectl -n helpudoc exec -i deploy/helpudoc-app -c agent -- \
+            python - <<'PY'
+          import os
+          from pathlib import Path
+
+          from helpudoc_agent.configuration import load_settings
+          from helpudoc_agent.tools.workspace.gemini_client import GeminiClientManager
+
+          config_path = Path(os.environ["AGENT_CONFIG_PATH"])
+          manager = GeminiClientManager(load_settings(config_path))
+          response = manager.get_lite_chat_model().invoke("Reply with exactly OK.")
+          content = str(getattr(response, "content", "") or "").strip()
+          if not content:
+              raise RuntimeError("Gemini returned an empty response")
+          print(f"GEMINI_MODEL_SMOKE_OK model={manager.lite_model_name}")
+          PY
+          then
             kubectl -n helpudoc logs deploy/helpudoc-app -c agent --tail=200 || true
             exit 1
           fi

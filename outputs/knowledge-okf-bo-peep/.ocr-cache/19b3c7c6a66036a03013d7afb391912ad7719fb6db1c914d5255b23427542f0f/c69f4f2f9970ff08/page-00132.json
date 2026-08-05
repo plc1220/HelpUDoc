@@ -1,0 +1,96 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 132,
+    "blocks": [
+      {
+        "text": "THE OLD WOMAN",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "butcher, butcher will not kill ox, ox will not drink",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.95
+      },
+      {
+        "text": "water, water will not quench fire, fire will not burn",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.95
+      },
+      {
+        "text": "stick, stick will not beat dog, dog will not bite pig,",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.95
+      },
+      {
+        "text": "pig will not get over the stile, and I shall not get",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.95
+      },
+      {
+        "text": "home to-night.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.95
+      },
+      {
+        "text": "\"Yes,\" said the mouse, \"I will, if you will give",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.95
+      },
+      {
+        "text": "me some cheese.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.95
+      },
+      {
+        "text": "So the old Dame put her hand in her pocket and",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.95
+      },
+      {
+        "text": "brought out a nice piece of cheese, and gave it to the",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.95
+      },
+      {
+        "text": "mouse; and when he had nibbled at it, then—",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.95
+      },
+      {
+        "text": "14",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

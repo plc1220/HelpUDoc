@@ -1,0 +1,54 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 281,
+    "blocks": [
+      {
+        "text": "ROBIN HOOD.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "Second and Richard Cœur de Lion, was born in the town of Locksley, in Nottinghamshire, about the year 1160. He was a handsome youth, and the best archer in the county: he regularly bore away the prizes at all the archery meetings, as he was able to strike a deer five hundred yards off. In truth, he was just fit to be one of the royal archers, and would no doubt have turned out better, had not his uncle been persuaded by the monks of Fountain Abbey to leave all his property to the Church; and thus poor Robin, being sent adrift into the world, took refuge in Sherwood Forest, where he met with several other youths, who soon formed themselves into a band under his leadership, and commenced leading the life of outlaws. Robin Hood and his men adopted a uniform of Lincoln green, with a scarlet cap; and each man was armed with a dagger and a basket-hilted sword, and a bow in his hand, and a quiver slung on his back, while the captain always had a bugle-horn with him to summon his followers about him.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.97
+      },
+      {
+        "text": "One day when Robin Hood set out alone in hopes of meeting with some adventure, he reached a brook over which a narrow plank was laid to serve for a bridge; and just as he was going to cross it, a tall and handsome stranger appeared on the other side, and as neither seemed disposed to give way they met in the middle of the bridge.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.96
+      },
+      {
+        "text": "\"Go back,\" cried the stranger to Robin Hood, \"or it will be the worse for you.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.95
+      },
+      {
+        "text": "But Robin Hood laughed at the idea of his giving way to anybody; and proposed they should each take an oak-branch and fight it out, and that whoever could manage to throw the other into the brook should win the day. Accordingly, they",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.96
+      },
+      {
+        "text": "3",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

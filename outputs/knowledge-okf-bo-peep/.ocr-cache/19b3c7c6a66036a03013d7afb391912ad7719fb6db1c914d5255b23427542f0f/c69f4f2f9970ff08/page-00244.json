@@ -1,0 +1,54 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 244,
+    "blocks": [
+      {
+        "text": "THE UGLY LITTLE DUCK.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "and misery that the poor duckling felt during the cold winter. Enough, that he remained cowering under the reeds in a marsh, until the sun again shone warmly on the earth, and the larks once more welcomed spring with their songs.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.97
+      },
+      {
+        "text": "Then the young duckling raised his wings, which were much stronger than formerly, and carried him far away to a large garden, where the apple-trees were in full flower, while the long green twigs of the elder-tree hung down almost into the water, which meandered picturesquely through the soft grass. Oh, how beautiful, how fresh all nature seemed! And now there came from out of the thicket three noble white swans, who began to swim lightly on the water. The poor duckling knew the stately birds, and a feeling of melancholy came over him.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.96
+      },
+      {
+        "text": "\"I will fly towards these royal birds, and they shall kill me for my presumption in daring to go near them—I, who am so ugly. But it matters not: better is it to be killed by them than to be bitten by the ducks, pecked at by the hens, and pushed about by the peasant girls, and to want for food in the winter.\" With these thoughts the duckling flew into the middle of the water, and swam towards the three beautiful swans, who, as they perceived the little stranger, came to welcome him.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.95
+      },
+      {
+        "text": "\"Do but kill me,\" said the poor bird, bending its head towards the water, and awaiting death in quiet submission; when, lo! it saw its own image in the clear surface, and",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.96
+      },
+      {
+        "text": "14",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 198,
+    "blocks": [
+      {
+        "text": "THE LITTLE MAN AND THE LITTLE MAID.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "The little man with joy\nWould take his little boy,\nAnd shew him all around to his neighbours, neighbours, neighbours.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

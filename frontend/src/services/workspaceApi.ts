@@ -139,8 +139,8 @@ export type WorkspaceTeam = {
   name: string;
 };
 
-export type WorkspaceAudienceAction = 'share_selected' | 'publish_selected' | 'publish_team';
 export type WorkspaceNamedGrantRole = 'publisher' | 'contributor' | 'viewer';
+export type WorkspaceEditingPolicy = 'direct' | 'review';
 
 export type PublicationConflict = {
   path: string;
@@ -157,6 +157,7 @@ export type PublishedWorkspaceVersion = {
   note: string | null;
   createdAt: string;
   publisherName: string;
+  isCurrent: boolean;
 };
 
 export const listWorkspaceTeams = async (): Promise<WorkspaceTeam[]> => {
@@ -171,11 +172,6 @@ export const listWorkspaceTeams = async (): Promise<WorkspaceTeam[]> => {
 export const publishWorkspace = async (
   workspaceId: string,
   payload: {
-    audience?: 'team' | 'selected_people';
-    teamId?: string;
-    userIds?: string[];
-    role?: WorkspaceNamedGrantRole;
-    name?: string;
     note?: string;
   },
 ) => {
@@ -196,9 +192,28 @@ export const publishWorkspace = async (
   }>;
 };
 
+export const withdrawWorkspacePublication = async (workspaceId: string) => {
+  const response = await apiFetch(`${API_URL}/workspaces/${workspaceId}/publication/withdraw`, {
+    method: 'POST',
+  });
+  if (!response.ok) {
+    return throwWorkspaceApiError(response, 'Failed to withdraw publication');
+  }
+  return response.json() as Promise<{
+    workspaceId: string;
+    withdrawnVersionId: string;
+    withdrawnVersionNumber: number;
+  }>;
+};
+
 export const shareWorkspaceWithSelectedPeople = async (
   workspaceId: string,
-  payload: { userIds: string[]; role?: WorkspaceNamedGrantRole; name?: string },
+  payload: {
+    userIds: string[];
+    role?: WorkspaceNamedGrantRole;
+    name?: string;
+    editingPolicy?: WorkspaceEditingPolicy;
+  },
 ) => {
   const response = await apiFetch(`${API_URL}/workspaces/${workspaceId}/share`, {
     method: 'POST',
@@ -209,10 +224,25 @@ export const shareWorkspaceWithSelectedPeople = async (
     return throwWorkspaceApiError(response, 'Failed to share workspace');
   }
   return response.json() as Promise<{
+    workspaceId: string;
     teamWorkspaceId: string;
     privateWorkspaceId: string;
     sharedWithUserIds: string[];
   }>;
+};
+
+export const updateWorkspaceEditingPolicy = async (
+  workspaceId: string,
+  editingPolicy: WorkspaceEditingPolicy,
+) => {
+  const response = await apiFetch(`${API_URL}/workspaces/${workspaceId}/editing-policy`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ editingPolicy }),
+  });
+  if (!response.ok) {
+    return throwWorkspaceApiError(response, 'Failed to update workspace editing policy');
+  }
 };
 
 export const createPrivateWorkspaceCopy = async (teamWorkspaceId: string) => {

@@ -53,6 +53,7 @@ type PublishedVersionRecord = {
   teamWorkspaceId: string;
   versionNumber: number;
   sourcePrivateWorkspaceId?: string | null;
+  sourceContentRevision: number;
   publisherUserId: string | null;
   note?: string | null;
   manifest: PublicationManifest | PublicationManifestFile[];
@@ -65,6 +66,7 @@ type PublicationLinkRecord = {
   userId: string;
   basePublishedVersionId: string | null;
   basePrivateContentRevision: number;
+  baseSharedContentRevision: number;
   hasUnpublishedChanges: boolean;
   createdAt: string;
   updatedAt: string;
@@ -87,7 +89,7 @@ export class WorkspacePublicationService {
   }
 
   async publish(
-    privateWorkspaceId: string,
+    workspaceId: string,
     userId: string,
     input: {
       audience?: 'team' | 'selected_people';
@@ -98,93 +100,89 @@ export class WorkspacePublicationService {
       name?: string;
     },
   ) {
-    const { workspace: privateWorkspace } = await this.workspaceService.ensureMembership(
-      privateWorkspaceId,
-      userId,
-      { requireEdit: true },
-    );
-    if (privateWorkspace.visibility !== 'private' || privateWorkspace.ownerId !== userId) {
-      throw new AccessDeniedError('Only the owner can publish a private workspace');
+    const { workspace, membership } = await this.workspaceService.ensureMembership(workspaceId, userId);
+    if (workspace.visibility !== 'team') {
+      throw new ConflictError('Share this workspace before creating a published version');
     }
+    this.ensurePublisher(membership.role);
+    return this.createLivePublishedVersion(workspace, userId, input.note);
+  }
 
-    const existingLink = await this.db<PublicationLinkRecord>('workspace_publication_links')
-      .where({ privateWorkspaceId })
-      .first();
-
-    if (!existingLink) {
-      if (input.audience === 'selected_people') {
-        const selectedUserIds = normalizeSelectedWorkspaceUsers(userId, input.userIds);
-        if (!selectedUserIds.length) {
-          throw new ConflictError('Choose at least one person before publishing');
-        }
-        await this.ensureRegisteredUsers(selectedUserIds);
-        return this.publishFirstVersion(privateWorkspace, userId, {
-          selectedUserIds,
-          selectedRole: input.role || 'viewer',
-          note: input.note,
-          name: input.name,
-        });
-      }
-      if (!input.teamId) {
-        throw new ConflictError('Choose a team before publishing');
-      }
-      await this.ensureGroupMembership(input.teamId, userId);
-      return this.publishFirstVersion(privateWorkspace, userId, {
-        teamId: input.teamId,
-        note: input.note,
-        name: input.name,
-      });
+  async withdraw(workspaceId: string, userId: string) {
+    const { workspace, membership } = await this.workspaceService.ensureMembership(workspaceId, userId);
+    if (workspace.visibility !== 'team') {
+      throw new ConflictError('Only Shared workspace publications can be withdrawn');
     }
-
-    const { workspace: teamWorkspace, membership } = await this.workspaceService.ensureMembership(
-      existingLink.teamWorkspaceId,
-      userId,
-    );
     this.ensurePublisher(membership.role);
 
-    if (teamWorkspace.currentPublishedVersionId !== existingLink.basePublishedVersionId) {
-      throw new ConflictError('Team updates must be reviewed before publishing', {
-        code: 'TEAM_UPDATES_AVAILABLE',
-        teamWorkspaceId: teamWorkspace.id,
+    return this.db.transaction(async (tx) => {
+      const locked = await tx<WorkspaceRecord>('workspaces')
+        .where({ id: workspaceId })
+        .forUpdate()
+        .first();
+      if (!locked || locked.visibility !== 'team') {
+        throw new ConflictError('Only Shared workspace publications can be withdrawn');
+      }
+
+      const publisherMembership = await tx('workspace_members')
+        .select('role')
+        .where({ workspaceId, userId })
+        .forShare()
+        .first() as { role?: WorkspaceRole } | undefined;
+      this.ensurePublisher(publisherMembership?.role || 'viewer');
+
+      if (!locked.currentPublishedVersionId) {
+        throw new ConflictError('This workspace does not have a current published version');
+      }
+      const withdrawnVersion = await tx<PublishedVersionRecord>('workspace_published_versions')
+        .where({ id: locked.currentPublishedVersionId, teamWorkspaceId: workspaceId })
+        .first();
+      if (!withdrawnVersion) {
+        throw new NotFoundError('Current published version not found');
+      }
+
+      await tx('workspaces').where({ id: workspaceId }).update({
+        currentPublishedVersionId: null,
+        updatedAt: tx.fn.now(),
+        lastModifiedBy: userId,
       });
-    }
+      await tx('audit_events').insert({
+        id: uuidv4(),
+        actorUserId: userId,
+        actorRole: 'workspace_owner_or_publisher',
+        action: 'workspace.publication_withdrawn',
+        resourceType: 'workspace',
+        resourceId: workspaceId,
+        metadata: {
+          withdrawnVersionId: withdrawnVersion.id,
+          withdrawnVersionNumber: Number(withdrawnVersion.versionNumber),
+        },
+      });
 
-    if (
-      teamWorkspace.currentPublishedVersionId
-      && !existingLink.hasUnpublishedChanges
-      && Number(privateWorkspace.contentRevision || 0) === Number(existingLink.basePrivateContentRevision || 0)
-    ) {
-      throw new ConflictError('There are no private changes to publish');
-    }
-
-    return this.createPublishedVersion({
-      privateWorkspace,
-      teamWorkspace,
-      userId,
-      note: input.note,
-      existingLink,
+      return {
+        workspaceId,
+        withdrawnVersionId: withdrawnVersion.id,
+        withdrawnVersionNumber: Number(withdrawnVersion.versionNumber),
+      };
     });
   }
 
   async shareWithSelectedPeople(
     privateWorkspaceId: string,
     userId: string,
-    input: { userIds: string[]; role?: WorkspaceNamedGrantRole; name?: string },
+    input: {
+      userIds: string[];
+      role?: WorkspaceNamedGrantRole;
+      name?: string;
+      editingPolicy?: 'direct' | 'review';
+    },
   ) {
-    const { workspace: privateWorkspace } = await this.workspaceService.ensureMembership(
+    const { workspace, membership } = await this.workspaceService.ensureMembership(
       privateWorkspaceId,
       userId,
-      { requireEdit: true },
     );
-    if (privateWorkspace.visibility !== 'private' || privateWorkspace.ownerId !== userId) {
-      throw new AccessDeniedError('Only the owner can share a private workspace');
-    }
-
-    const existingLink = await this.db<PublicationLinkRecord>('workspace_publication_links')
-      .where({ privateWorkspaceId })
-      .first();
-    if (existingLink) {
-      throw new ConflictError('This private workspace already has a shared Team Workspace');
+    if (membership.role !== 'owner' || workspace.ownerId !== userId) {
+      throw new AccessDeniedError('Only the owner can share this workspace');
     }
 
     const selectedUserIds = normalizeSelectedWorkspaceUsers(userId, input.userIds);
@@ -192,60 +190,69 @@ export class WorkspacePublicationService {
       throw new ConflictError('Choose at least one person before sharing');
     }
     await this.ensureRegisteredUsers(selectedUserIds);
+    const selectedRole = input.role || 'viewer';
+    const legacyRole = namedGrantToLegacyWorkspaceRole(selectedRole);
+    const editingPolicy = input.editingPolicy || workspace.editingPolicy || 'direct';
 
-    const teamWorkspace = await this.createTeamWorkspace(privateWorkspace, userId, {
-      selectedUserIds,
-      selectedRole: input.role || 'viewer',
-      name: input.name,
+    await this.db.transaction(async (tx) => {
+      const locked = await tx<WorkspaceRecord>('workspaces')
+        .where({ id: workspace.id })
+        .forUpdate()
+        .first();
+      if (!locked || locked.ownerId !== userId) {
+        throw new AccessDeniedError('Only the owner can share this workspace');
+      }
+
+      await tx('workspaces').where({ id: workspace.id }).update({
+        visibility: 'team',
+        workspaceType: 'team',
+        editingPolicy,
+        updatedAt: tx.fn.now(),
+      });
+      await tx('workspace_members')
+        .insert({ workspaceId: workspace.id, userId, role: 'owner', canEdit: true })
+        .onConflict(['workspaceId', 'userId'])
+        .merge({ role: 'owner', canEdit: true, updatedAt: tx.fn.now() });
+      await tx('workspace_members')
+        .insert(selectedUserIds.map((selectedUserId) => ({
+          workspaceId: workspace.id,
+          userId: selectedUserId,
+          role: legacyRole,
+          canEdit: editingPolicy === 'direct' && selectedRole !== 'viewer',
+        })))
+        .onConflict(['workspaceId', 'userId'])
+        .merge({
+          role: legacyRole,
+          canEdit: editingPolicy === 'direct' && selectedRole !== 'viewer',
+          updatedAt: tx.fn.now(),
+        });
+      await tx('workspace_user_grants')
+        .insert(selectedUserIds.map((selectedUserId) => ({
+          workspaceId: workspace.id,
+          userId: selectedUserId,
+          role: selectedRole,
+          grantedByUserId: userId,
+        })))
+        .onConflict(['workspaceId', 'userId'])
+        .merge({ role: selectedRole, grantedByUserId: userId, updatedAt: tx.fn.now() });
+      await tx('audit_events').insert({
+        id: uuidv4(),
+        actorUserId: userId,
+        actorRole: 'workspace_owner',
+        action: locked.visibility === 'private' ? 'workspace.shared' : 'workspace.access_granted',
+        resourceType: 'workspace',
+        resourceId: workspace.id,
+        metadata: { selectedUserIds, selectedRole, editingPolicy },
+      });
     });
 
-    try {
-      const content = await this.readWorkspaceContent(privateWorkspace.id);
-      await this.replaceWorkspaceContent(teamWorkspace.id, content, userId);
-      await this.db.transaction(async (tx) => {
-        const currentPrivate = await tx<WorkspaceRecord>('workspaces')
-          .select('contentRevision')
-          .where({ id: privateWorkspace.id })
-          .forUpdate()
-          .first();
-        if (Number(currentPrivate?.contentRevision || 0) !== Number(privateWorkspace.contentRevision || 0)) {
-          throw new ConflictError('The private workspace changed while it was being shared. Try again.');
-        }
-        await this.copyValidatedWorkspaceSkillPins(tx, privateWorkspace.id, teamWorkspace.id);
-        await tx('workspace_publication_links').insert({
-          privateWorkspaceId: privateWorkspace.id,
-          teamWorkspaceId: teamWorkspace.id,
-          userId,
-          basePublishedVersionId: null,
-          basePrivateContentRevision: Number(currentPrivate?.contentRevision || 0),
-          hasUnpublishedChanges: false,
-        });
-        await tx('audit_events').insert({
-          id: uuidv4(),
-          actorUserId: userId,
-          actorRole: 'workspace_owner',
-          action: 'workspace.promoted',
-          resourceType: 'workspace',
-          resourceId: teamWorkspace.id,
-          metadata: {
-            sourcePrivateWorkspaceId: privateWorkspace.id,
-            audience: 'selected_people',
-            selectedUserIds,
-            selectedRole: input.role || 'viewer',
-            editingPolicy: 'review',
-          },
-        });
-      });
-      return {
-        privateWorkspaceId: privateWorkspace.id,
-        teamWorkspaceId: teamWorkspace.id,
-        sharedWithUserIds: selectedUserIds,
-      };
-    } catch (error) {
-      await this.db('workspaces').where({ id: teamWorkspace.id }).del();
-      await fs.rm(path.join(WORKSPACE_DIR, teamWorkspace.id), { recursive: true, force: true });
-      throw error;
-    }
+    return {
+      workspaceId: workspace.id,
+      privateWorkspaceId: workspace.id,
+      teamWorkspaceId: workspace.id,
+      sharedWithUserIds: selectedUserIds,
+      editingPolicy,
+    };
   }
 
   async createPrivateCopy(teamWorkspaceId: string, userId: string) {
@@ -254,7 +261,7 @@ export class WorkspacePublicationService {
       userId,
     );
     if (teamWorkspace.visibility !== 'team') {
-      throw new ConflictError('A private copy can only be created from a team workspace');
+      throw new ConflictError('A private copy can only be created from a Shared workspace');
     }
     if (!getWorkspaceRoleCapabilities(membership.role).canPropose) {
       throw new AccessDeniedError('Contributor access is required to create a private working copy');
@@ -275,9 +282,7 @@ export class WorkspacePublicationService {
     const currentVersion = teamWorkspace.currentPublishedVersionId
       ? await this.getPublishedVersion(teamWorkspace.currentPublishedVersionId, teamWorkspace.id)
       : null;
-    const content = currentVersion
-      ? await this.readPublishedVersionContent(currentVersion)
-      : await this.readWorkspaceContent(teamWorkspace.id);
+    const content = await this.readWorkspaceContent(teamWorkspace.id);
     const privateWorkspaceId = uuidv4();
     const name = await this.resolveUniquePrivateCopyName(userId, teamWorkspace.name);
     const slug = await this.generateUniqueSlug(name);
@@ -320,6 +325,7 @@ export class WorkspacePublicationService {
         userId,
         basePublishedVersionId: currentVersion?.id || null,
         basePrivateContentRevision: contentRevision,
+        baseSharedContentRevision: Number(teamWorkspace.contentRevision || 0),
       });
     } catch (error) {
       await this.db('workspaces').where({ id: privateWorkspaceId }).del();
@@ -332,6 +338,85 @@ export class WorkspacePublicationService {
       throw new NotFoundError('Private working copy was not created');
     }
     return this.toPrivateWorkspaceResponse(workspace, teamWorkspaceId);
+  }
+
+  async applyPrivateCopyToShared(
+    privateWorkspaceId: string,
+    sharedWorkspaceId: string,
+    userId: string,
+  ) {
+    const { workspace: sharedWorkspace, membership } = await this.workspaceService.ensureMembership(
+      sharedWorkspaceId,
+      userId,
+    );
+    if (sharedWorkspace.visibility !== 'team') {
+      throw new ConflictError('Change proposals can only be applied to Shared workspaces');
+    }
+    this.ensurePublisher(membership.role);
+
+    const link = await this.db<PublicationLinkRecord>('workspace_publication_links')
+      .where({ privateWorkspaceId, teamWorkspaceId: sharedWorkspaceId })
+      .first();
+    if (!link) {
+      throw new ConflictError('The proposal is not linked to this Shared workspace');
+    }
+    const privateWorkspace = await this.db<WorkspaceRecord>('workspaces')
+      .where({ id: privateWorkspaceId })
+      .first();
+    if (!privateWorkspace || privateWorkspace.visibility !== 'private') {
+      throw new NotFoundError('Proposal working copy not found');
+    }
+    const sourceRevision = Number(privateWorkspace.contentRevision || 0);
+    const content = await this.readWorkspaceContent(privateWorkspaceId);
+
+    return this.db.transaction(async (tx) => {
+      const lockedShared = await tx<WorkspaceRecord>('workspaces')
+        .where({ id: sharedWorkspaceId })
+        .forUpdate()
+        .first();
+      const lockedPrivate = await tx<WorkspaceRecord>('workspaces')
+        .where({ id: privateWorkspaceId })
+        .forShare()
+        .first();
+      if (!lockedShared || !lockedPrivate) {
+        throw new NotFoundError('Proposal workspace not found');
+      }
+      if (Number(lockedPrivate.contentRevision || 0) !== sourceRevision) {
+        throw new ConflictError('The proposal changed while it was being applied. Try again.');
+      }
+      if (Number(lockedShared.contentRevision || 0) !== Number(link.baseSharedContentRevision || 0)) {
+        throw new ConflictError('The Shared workspace changed after this proposal was created', {
+          code: 'PROPOSAL_STALE',
+          baseRevision: Number(link.baseSharedContentRevision || 0),
+          currentRevision: Number(lockedShared.contentRevision || 0),
+        });
+      }
+
+      const appliedRevision = await this.replaceWorkspaceContent(
+        sharedWorkspaceId,
+        content,
+        userId,
+        tx,
+      );
+      await tx('workspace_publication_links')
+        .where({ privateWorkspaceId, teamWorkspaceId: sharedWorkspaceId })
+        .update({
+          basePrivateContentRevision: sourceRevision,
+          baseSharedContentRevision: appliedRevision,
+          hasUnpublishedChanges: false,
+          updatedAt: tx.fn.now(),
+        });
+      await tx('audit_events').insert({
+        id: uuidv4(),
+        actorUserId: userId,
+        actorRole: 'workspace_owner_or_publisher',
+        action: 'workspace.proposal_applied',
+        resourceType: 'workspace',
+        resourceId: sharedWorkspaceId,
+        metadata: { privateWorkspaceId, sourceRevision, appliedRevision },
+      });
+      return { workspaceId: sharedWorkspaceId, contentRevision: appliedRevision };
+    });
   }
 
   async sync(
@@ -352,7 +437,7 @@ export class WorkspacePublicationService {
       .where({ privateWorkspaceId, userId })
       .first();
     if (!link) {
-      throw new ConflictError('This private workspace is not linked to a team workspace');
+      throw new ConflictError('This private workspace is not linked to a Shared workspace');
     }
 
     const { workspace: teamWorkspace } = await this.workspaceService.ensureMembership(link.teamWorkspaceId, userId);
@@ -434,9 +519,10 @@ export class WorkspacePublicationService {
   async listHistory(teamWorkspaceId: string, userId: string) {
     const { workspace } = await this.workspaceService.ensureMembership(teamWorkspaceId, userId);
     if (workspace.visibility !== 'team') {
-      throw new ConflictError('Publication history is only available for team workspaces');
+      throw new ConflictError('Publication history is only available for Shared workspaces');
     }
     return this.db('workspace_published_versions as version')
+      .join('workspaces as workspace', 'workspace.id', 'version.teamWorkspaceId')
       .leftJoin('users as publisher', 'publisher.id', 'version.publisherUserId')
       .where('version.teamWorkspaceId', teamWorkspaceId)
       .select(
@@ -444,6 +530,7 @@ export class WorkspacePublicationService {
         'version.versionNumber',
         'version.note',
         'version.createdAt',
+        this.db.raw('(version.id = workspace."currentPublishedVersionId") as "isCurrent"'),
         this.db.raw(`COALESCE(publisher."displayName", 'Former user') as "publisherName"`),
       )
       .orderBy('version.versionNumber', 'desc');
@@ -455,7 +542,7 @@ export class WorkspacePublicationService {
       userId,
     );
     if (teamWorkspace.visibility !== 'team' || membership.role !== 'owner') {
-      throw new AccessDeniedError('Only the Team owner can restore a published version');
+      throw new AccessDeniedError('Only the Shared workspace owner can restore a published version');
     }
     const restoredVersion = await this.getPublishedVersion(versionId, teamWorkspaceId);
     const content = await this.readPublishedVersionContent(restoredVersion);
@@ -469,7 +556,7 @@ export class WorkspacePublicationService {
           .forUpdate()
           .first();
         if (!lockedTeam) {
-          throw new NotFoundError('Team workspace not found');
+          throw new NotFoundError('Shared workspace not found');
         }
         const currentOwnerMembership = await tx('workspace_members')
           .select('role')
@@ -477,7 +564,7 @@ export class WorkspacePublicationService {
           .forShare()
           .first() as { role?: WorkspaceRole } | undefined;
         if (currentOwnerMembership?.role !== 'owner') {
-          throw new AccessDeniedError('Only the Team owner can restore a published version');
+          throw new AccessDeniedError('Only the Shared workspace owner can restore a published version');
         }
         const previousVersion = lockedTeam.currentPublishedVersionId
           ? await tx<PublishedVersionRecord>('workspace_published_versions')
@@ -490,13 +577,14 @@ export class WorkspacePublicationService {
 
         try {
           const nextVersionNumber = await this.getNextVersionNumber(teamWorkspaceId, tx);
-          await this.replaceWorkspaceContent(teamWorkspaceId, content, userId, tx);
+          const restoredContentRevision = await this.replaceWorkspaceContent(teamWorkspaceId, content, userId, tx);
           const [created] = await tx<PublishedVersionRecord>('workspace_published_versions')
             .insert({
               id: newVersionId,
               teamWorkspaceId,
               versionNumber: nextVersionNumber,
               sourcePrivateWorkspaceId: null,
+              sourceContentRevision: restoredContentRevision,
               publisherUserId: userId,
               note: `Restored version ${restoredVersion.versionNumber}`,
               manifest,
@@ -521,6 +609,95 @@ export class WorkspacePublicationService {
       });
     } catch (error) {
       await fs.rm(this.versionDirectory(newVersionId), { recursive: true, force: true });
+      throw error;
+    }
+  }
+
+  private async createLivePublishedVersion(
+    workspace: WorkspaceRecord,
+    userId: string,
+    note?: string,
+  ) {
+    const sourceRevision = Number(workspace.contentRevision || 0);
+    const content = await this.readWorkspaceContent(workspace.id);
+    const versionId = uuidv4();
+    const manifest = await this.writeVersionSnapshot(versionId, content);
+
+    try {
+      return await this.db.transaction(async (tx) => {
+        const locked = await tx<WorkspaceRecord>('workspaces')
+          .where({ id: workspace.id })
+          .forUpdate()
+          .first();
+        if (!locked || locked.visibility !== 'team') {
+          throw new ConflictError('Only Shared workspaces can be published');
+        }
+        if (Number(locked.contentRevision || 0) !== sourceRevision) {
+          throw new ConflictError('The workspace changed while it was being published. Try again.', {
+            code: 'WORKSPACE_REVISION_CHANGED',
+          });
+        }
+
+        const publisherMembership = await tx('workspace_members')
+          .select('role')
+          .where({ workspaceId: locked.id, userId })
+          .forShare()
+          .first() as { role?: WorkspaceRole } | undefined;
+        this.ensurePublisher(publisherMembership?.role || 'viewer');
+
+        if (locked.currentPublishedVersionId) {
+          const current = await tx<PublishedVersionRecord>('workspace_published_versions')
+            .where({ id: locked.currentPublishedVersionId, teamWorkspaceId: locked.id })
+            .first();
+          if (current && Number(current.sourceContentRevision || 0) === sourceRevision) {
+            throw new ConflictError('There are no workspace changes to publish');
+          }
+        }
+
+        const versionNumber = await this.getNextVersionNumber(locked.id, tx);
+        const [version] = await tx<PublishedVersionRecord>('workspace_published_versions')
+          .insert({
+            id: versionId,
+            teamWorkspaceId: locked.id,
+            versionNumber,
+            sourcePrivateWorkspaceId: null,
+            sourceContentRevision: sourceRevision,
+            publisherUserId: userId,
+            note: String(note || '').trim() || null,
+            manifest,
+          })
+          .returning('*');
+        await this.freezeWorkspaceSkillPins(tx, locked.id, locked.id, version.id);
+        await tx('workspaces').where({ id: locked.id }).update({
+          currentPublishedVersionId: version.id,
+          updatedAt: tx.fn.now(),
+          lastModifiedBy: userId,
+        });
+        await tx('audit_events').insert({
+          id: uuidv4(),
+          actorUserId: userId,
+          actorRole: 'workspace_owner_or_publisher',
+          action: 'workspace.version_published',
+          resourceType: 'workspace',
+          resourceId: locked.id,
+          metadata: {
+            publishedVersionId: version.id,
+            versionNumber: Number(version.versionNumber),
+            sourceContentRevision: sourceRevision,
+          },
+        });
+
+        return {
+          workspaceId: locked.id,
+          teamWorkspaceId: locked.id,
+          privateWorkspaceId: locked.id,
+          publishedVersionId: version.id,
+          publishedVersionNumber: Number(version.versionNumber),
+          publishedAt: version.createdAt,
+        };
+      });
+    } catch (error) {
+      await fs.rm(this.versionDirectory(versionId), { recursive: true, force: true });
       throw error;
     }
   }
@@ -615,7 +792,7 @@ export class WorkspacePublicationService {
 
     const teamWorkspace = await this.db<WorkspaceRecord>('workspaces').where({ id: teamWorkspaceId }).first();
     if (!teamWorkspace) {
-      throw new NotFoundError('Team workspace was not created');
+      throw new NotFoundError('Shared workspace was not created');
     }
     return teamWorkspace;
   }
@@ -645,7 +822,7 @@ export class WorkspacePublicationService {
           .forUpdate()
           .first();
         if (!lockedTeam) {
-          throw new NotFoundError('Team workspace not found');
+          throw new NotFoundError('Shared workspace not found');
         }
 
         const currentLink = input.existingLink
@@ -708,6 +885,7 @@ export class WorkspacePublicationService {
               teamWorkspaceId: lockedTeam.id,
               versionNumber,
               sourcePrivateWorkspaceId: input.privateWorkspace.id,
+              sourceContentRevision: Number(currentPrivate?.contentRevision || 0),
               publisherUserId: input.userId,
               note: String(input.note || '').trim() || null,
               manifest,

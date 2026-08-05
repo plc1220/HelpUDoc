@@ -1,0 +1,54 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 165,
+    "blocks": [
+      {
+        "text": "JACK SPRAT.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "Jack Sprat to live pretty, now bought him a pig, It was not very little, it was not very big ; It was not very lean, it was not very fat, It will serve for a grunter for Little Jack Sprat.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "Then Joan went to market to buy her some fowls, She bought a jackdaw and a couple of owls. The owls they were white, the jackdaw was black, They'll make a fare breed, says little Joan Sprat.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "Jack Sprat bought a cow, his Joan for to please, For Joan she could make both butter and cheese ; Or pancakes or puddings, without any fat : A notable housewife was little Joan Sprat.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "Joan Sprat went to brewing a barrel of ale, She put in some hops that it might not turn stale ; But as for the malt, she forgot to put that, This is brave sober liquor, said little Jack Sprat.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "15",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

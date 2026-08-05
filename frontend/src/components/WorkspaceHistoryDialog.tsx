@@ -81,7 +81,7 @@ const WorkspaceHistoryDialog: React.FC<WorkspaceHistoryDialogProps> = ({
                   key={version.id}
                   divider
                   secondaryAction={
-                    workspace?.role === 'owner' && index > 0 ? (
+                    workspace?.role === 'owner' && !version.isCurrent ? (
                       <Button
                         size="small"
                         disabled={Boolean(restoreId)}
@@ -93,7 +93,11 @@ const WorkspaceHistoryDialog: React.FC<WorkspaceHistoryDialogProps> = ({
                   }
                 >
                   <ListItemText
-                    primary={`Version ${version.versionNumber}${index === 0 ? ' · Current' : ''}`}
+                    primary={`Version ${version.versionNumber}${version.isCurrent
+                      ? ' · Current'
+                      : workspace?.currentPublishedVersionId == null && index === 0
+                        ? ' · Withdrawn'
+                        : ''}`}
                     secondary={`${version.publisherName} · ${new Date(version.createdAt).toLocaleString()}${
                       version.note ? ` · ${version.note}` : ''
                     }`}

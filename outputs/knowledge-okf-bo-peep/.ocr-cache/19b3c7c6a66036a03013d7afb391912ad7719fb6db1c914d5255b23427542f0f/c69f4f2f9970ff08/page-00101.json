@@ -1,0 +1,33 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 101,
+    "blocks": [
+      {
+        "text": "MAJA'S ALPHABET.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "A is for Ann, who is milking a cow.\nB is for Benjamin, making a bow.\nC is for Charlotte, gathering flowers.\nD is for Dick, who is one of the mowers.\nE 's for Eliza, feeding a hen.\nF is for Frank, who is mending his pen.\nG 's Georgiana, shooting an arrow.\nH is for Harry, wheeling a barrow.\nI 's Isabella, gathering fruit.\nJ is for John, who is playing the flute.\nK is for Kate, who is nursing her dolly.\nL is for Lawrence, feeding Poor Polly.\nM is for Maja, learning to draw.\nN is for Nicholas, with a jackdaw.\nO 's for Octavius, riding a goat.\nP 's for Penelope, sailing a boat.\nQ is for Quintus, armed with a lance.\nR is for Rachel, learning to dance.",
+        "blockType": "list",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      },
+      {
+        "text": "15",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 1.0
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

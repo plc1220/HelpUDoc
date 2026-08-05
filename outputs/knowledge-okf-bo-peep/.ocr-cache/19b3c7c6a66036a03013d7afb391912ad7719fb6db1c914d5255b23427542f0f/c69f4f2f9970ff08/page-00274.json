@@ -1,0 +1,75 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 274,
+    "blocks": [
+      {
+        "text": "HANS IN LUCK.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "with it, and the least that could happen to you would be a lodging in the black-hole.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.97
+      },
+      {
+        "text": "Poor Hans now began to be frightened. \"For goodness' sake,\" cried he, \" do help me out of this scrape ; and, as you know this neighbourhood better than I do, pray take my pig in exchange for your goose.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.97
+      },
+      {
+        "text": "\" I know I shall run some risk,\" replied the lad ; \" yet I haven't the heart to leave you in the lurch either.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.97
+      },
+      {
+        "text": "And so saying he took hold of the rope, and drove away the pig as fast as he could into a by-way, while honest Hans pursued his road with the goose under his arm.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.97
+      },
+      {
+        "text": "\" When I come to think of it,\" said he to himself, \" I have gained by the exchange. In the first place, a nice roast goose is a delicious morsel ; then there will be the fat and the dripping to spread upon our bread for months to come ; and, last of all, the beautiful white feathers will serve to fill my pillow, and I'll warrant I shall not want rocking to sleep. How pleased my mother will be!\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.97
+      },
+      {
+        "text": "As he passed through the last village on his way home, he saw a knife-grinder busily turning his wheel, while he kept singing :",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.97
+      },
+      {
+        "text": "\" Old knives and old scissors to make new I grind,\nAnd round turns my wheel e'en swift as the wind.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.96
+      },
+      {
+        "text": "12",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

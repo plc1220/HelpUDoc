@@ -1,6 +1,7 @@
 # Knowledge Ingestion, Semantic Enrichment, and OKF Retrieval Specification
 
-Status: Proposed  
+Status: Phases 1-6 implemented — production rollout remains feature-gated
+
 Target: Replace the lightweight page-as-concept Knowledge publisher  
 Primary systems: `backend/`, `agent/`, `frontend/`, PostgreSQL, Redis, workspace storage  
 Canonical format: Open Knowledge Format (OKF) v0.2
@@ -9,7 +10,7 @@ Canonical format: Open Knowledge Format (OKF) v0.2
 
 HelpUDoc must turn an uploaded document into a complete, provenance-backed, semantically organized knowledge source that an agent can query efficiently.
 
-The current publisher deterministically extracts PDF or DOCX text and writes Markdown, but it treats extracted sections such as `Page 1` as concepts, limits generated section files to 50, and performs lexical scans over the resulting Markdown. This is useful as a safe ingestion baseline, but it is not semantic enrichment and does not provide concept-aware retrieval.
+The legacy publisher deterministically extracted PDF or DOCX text and wrote Markdown, but it treated extracted sections such as `Page 1` as concepts, limited generated section files to 50, and performed lexical scans over the resulting Markdown. This was useful as a safe ingestion baseline, but it was not semantic enrichment and did not provide concept-aware retrieval.
 
 The replacement pipeline will:
 
@@ -20,17 +21,43 @@ The replacement pipeline will:
 5. use the configured Gemini Lite model to extract structured entities, events, claims, topics, and relationships;
 6. canonicalize duplicate entities and validate cross-document relationships;
 7. cluster the canonical graph and generate a linked OKF v0.2 bundle;
-8. build lexical, vector, and graph indexes derived from that bundle and its evidence;
-9. retrieve concepts first, expand through meaningful relationships, and read original evidence before answering; and
+8. build lexical and graph indexes for the first retrieval release while retaining rebuildable multimodal embedding hooks;
+9. retrieve concepts first, expand through meaningful relationships, and read original evidence before answering;
 10. expose completeness, quality, provenance, token usage, cost, and failures in the admin portal.
 
-The OKF bundle is the portable, human-readable knowledge product. PostgreSQL search tables, embeddings, and graph adjacency are derived runtime indexes and can be rebuilt from persisted ingestion artifacts.
+The OKF bundle is the portable, human-readable knowledge product. PostgreSQL search tables, optional embeddings, and graph adjacency are derived runtime indexes and can be rebuilt from persisted ingestion artifacts. Multimodal vector retrieval and reciprocal-rank fusion (RRF) are a later, evaluation-gated extension; they are not required to publish or query the first enriched bundle.
+
+### 1.1 Implementation progress
+
+Last verified: 2026-08-04 against the current local working tree. `Implemented` means code exists and focused automated tests pass; it does not mean the changes are committed, deployed, or production-smoke-tested. Update this section whenever a phase gate changes.
+
+| Phase/capability | Status | Implemented now | Remaining work |
+|---|---|---|---|
+| Phase 0: correctness baseline | Implemented | Removed the 50-section publication cap; complete source-unit accounting, stable locators, warnings, and partial status are represented. | Validate the 950-page local QC fixture again after the remaining pipeline changes. |
+| Conversion routing | Implemented | MarkItDown is the primary Markdown facade; native provenance sidecars remain authoritative where available; long-tail formats receive explicit coarse structural units; conversion failures are visible. | Expand native locator adapters only where evaluation shows the coarse MarkItDown sidecar is insufficient. |
+| Phase 1: extraction, structure, and windows | Implemented | PDF/DOCX and text-like extraction, explicit Gemini Flash Lite OCR (`off|auto|always`), insufficient-text thresholds, page media artifacts, stable locators, usage accounting, deterministic structure, multilingual token estimation, and complete core-window ownership exist. | Extend native layout adapters only where evaluation shows a measurable quality gap. |
+| Durable orchestration | Implemented | PostgreSQL job/task tables, leases, retries, cancellation, superseding, cached map tasks, run artifacts, a dedicated restart-safe worker, orchestration heartbeats, expired-lease recovery, and opt-out of process-local scheduling exist. | Exercise container-kill recovery and multi-worker contention against a deployed PostgreSQL environment. |
+| Phase 2: Gemini enrichment | Implemented | Gemini Flash Lite structured map extraction and concurrent hierarchical reduction, schema/evidence validation, bounded repair, content-hash resume, cross-window canonicalization inputs, and model/rate-card token-cost capture exist. Raw evidence-bearing map results remain canonicalization inputs so reduction cannot become a lossy gate. | Add model-assisted adjudication for the narrowest entity-resolution uncertainty band after a reviewed corpus exists. |
+| Phase 3: graph and OKF publication | Implemented | Canonical concepts, evidence-backed assertions/relationships, deterministic NetworkX Louvain analysis and versioning, graph quality reporting, thin-orphan pruning, immutable snapshots, deterministic OKF v0.2 generation, validation, manifests, and atomic publication exist. | Continue production-scale graph QC and relationship-ontology review. |
+| Phase 4: lexical and graph retrieval | Implemented | Current-snapshot PostgreSQL concept/assertion/relationship retrieval, multilingual lexical scoring, confidence-aware bounded graph expansion, bounded evidence reads, optional vector candidates, and RRF exist; portable bundle navigation remains available. | Benchmark p95 latency and retrieval quality on production-sized workspaces. |
+| Admin/API visibility | Implemented | Preflight cost/coverage preview, current job/report, cancel/retry, graph communities/orphans, bundle inspection, warnings, usage/cost, snapshots, rollback publication, and progress surfaces exist. | Add richer low-confidence comparison and long-running operational dashboards as usage data accumulates. |
+| Phase 5: evaluation and rollout | Implemented locally | Automated extraction/retrieval/graph/OKF tests plus a live 302-page image-only PDF run validate OCR recovery, resumable map processing, hierarchical reduction, deterministic publication, graph retrieval, and evidence locations. | Run Recall@K/MRR and groundedness over the broader golden corpus, plus restart/rollback/backfill drills in a deployed environment. |
+| Phase 6: multimodal vector and RRF | Implemented, feature-gated | Optional `pgvector` initialization with JSON fallback, versioned `gemini-embedding-2` text and page-PDF embeddings, 768-dimensional normalized vectors, text/media index persistence, query embeddings, and lexical/vector RRF are implemented behind environment flags. | Keep disabled by default until Section 17.5 quality, latency, and cost gates pass in the deployment environment. |
+
+Verification snapshot:
+
+- Focused agent ingestion and retrieval suites: `19 passed`.
+- Full backend suite: `150 passed`, `14 skipped`, `0 failed`; backend TypeScript compilation and the production frontend build also pass.
+- Live scanned-PDF evaluation: 302 discovered pages, 301 processed (99.67%), 992 source blocks, 312 processing windows, 1,412 map candidates, 731 assertions, and 661 relationships before canonicalization. The one unresolved page is an effectively blank scan retained as an explicit failure.
+- Published smoke bundle: 686 canonical concepts, 725 assertions, 646 relationships, and 690 bundle files; lexical plus graph retrieval returns citable Bo-Peep, Robin Hood, and Ugly Duckling concepts from the current snapshot.
+- Live Phase 6 adapter check: `gemini-embedding-2` produced normalized 768-dimensional text-query and single-page PDF vectors.
+- Still deployment-gated: dedicated-worker kill/restart recovery, PostgreSQL/pgvector performance under production concurrency, golden-corpus Recall@K/MRR and groundedness, and multimodal/RRF promotion.
 
 ## 2. Problem statement
 
-### 2.1 Current behavior
+### 2.1 Legacy baseline
 
-The current path is:
+Before this implementation work, the path was:
 
 ```text
 PDF/DOCX
@@ -41,7 +68,7 @@ PDF/DOCX
   -> lexical scan across Markdown at query time
 ```
 
-For the 950-page Three-Body PDF used during QC:
+In the original 950-page Three-Body PDF QC baseline:
 
 - all 950 pages were preserved in `source.md`;
 - only pages 1-50 became `concepts/page-*.md`;
@@ -72,12 +99,12 @@ Answering these questions requires canonical concepts, relationships, evidence s
 3. **Semantic concepts**: generate concepts appropriate to the source domain rather than naming pages as concepts.
 4. **Evidence-level provenance**: every generated factual assertion must resolve to one or more source spans.
 5. **Portable knowledge**: emit an OKF v0.2 bundle readable without HelpUDoc-specific infrastructure.
-6. **Efficient retrieval**: combine lexical, vector, and graph retrieval before reading bounded evidence.
+6. **Efficient retrieval**: use wiki-first lexical and graph retrieval before reading bounded evidence; add vector recall and RRF only when evaluation demonstrates material lift.
 7. **Cost control**: use Gemini Lite for enrichment, cache by content fingerprint, and avoid reprocessing unchanged spans.
 8. **Durable processing**: survive API, worker, and container restarts without restarting an entire document.
 9. **Observable quality**: show coverage, graph statistics, low-confidence items, token usage, and cost.
 10. **Deterministic publishing**: generate identical OKF files from the same finalized enrichment snapshot and generator version.
-11. **Access preservation**: derived knowledge must inherit the source's workspace and governance boundary.
+11. **Access preservation**: derived knowledge must inherit the standalone Knowledge source grants; a workspace never gains access merely because a user opens or creates it.
 12. **Multilingual support**: preserve and retrieve Chinese and other non-English content without assuming whitespace tokenization.
 
 ## 4. Non-goals
@@ -85,6 +112,7 @@ Answering these questions requires canonical concepts, relationships, evidence s
 - Treating OKF as a replacement for the original document.
 - Guaranteeing that every model inference is correct without evidence or review.
 - Requiring Neo4j or another dedicated graph database for the first release.
+- Requiring vector search, `pgvector`, or RRF for the first enriched retrieval release.
 - Putting raw page windows into the canonical bundle merely so they can be indexed.
 - Sending image-only documents to a model when OCR is unavailable or disallowed.
 - Generating copyrighted source text beyond the user's authorized workspace boundary.
@@ -95,7 +123,7 @@ Answering these questions requires canonical concepts, relationships, evidence s
 
 | Term | Meaning |
 |---|---|
-| Source unit | A PDF page, DOCX paragraph, table, cell, list item, caption, or equivalent addressable source element |
+| Source unit | A PDF page, DOCX paragraph, slide, sheet, table, cell, list item, caption, or equivalent addressable source element |
 | Source block | Normalized text and layout metadata for one or more source units |
 | Structure node | A detected book, part, chapter, section, subsection, scene, or topic container |
 | Processing window | A bounded core span plus optional surrounding context sent to an enrichment model |
@@ -105,7 +133,7 @@ Answering these questions requires canonical concepts, relationships, evidence s
 | Canonical concept | A deduplicated knowledge node with a stable identifier |
 | Relationship | A directed, typed, evidence-backed edge between canonical concepts |
 | OKF bundle | The published hierarchy of linked Markdown concept documents and reserved indexes/logs |
-| Retrieval index | Rebuildable lexical, vector, and graph data used to find OKF concepts and evidence |
+| Retrieval index | Rebuildable lexical, graph, and optionally vector data used to find OKF concepts and evidence |
 | Enrichment snapshot | The immutable, versioned canonical graph used as input to deterministic OKF generation |
 
 ## 6. Product principles
@@ -125,7 +153,11 @@ Answering these questions requires canonical concepts, relationships, evidence s
 
 ```mermaid
 flowchart LR
-  A["Original PDF or DOCX"] --> B["Deterministic extraction"]
+  U["Browser"] -->|"short-lived signed PUT"| S["Private object storage"]
+  U -->|"authenticated finalize"| C0["Verified source + durable job"]
+  S --> C0
+  C0 --> A["Original supported document"]
+  A --> B["Routed conversion + provenance extraction"]
   B --> C["Normalized source blocks"]
   C --> D["Structure and boundary detection"]
   D --> E["Token-budgeted processing windows"]
@@ -135,13 +167,13 @@ flowchart LR
   H --> I["Clustering and hierarchy"]
   I --> J["Immutable enrichment snapshot"]
   J --> K["Deterministic OKF publisher"]
-  J --> L["Lexical index"]
-  J --> M["Vector index"]
-  J --> N["Graph adjacency index"]
+  J --> L["Lexical index (initial)"]
+  J -. evaluation-gated .-> M["Multimodal vector index (later)"]
+  J --> N["Graph adjacency index (initial)"]
   K --> O["Admin bundle explorer"]
-  L --> P["Hybrid knowledge retrieval"]
-  M --> P
+  L --> P["Wiki-first retrieval"]
   N --> P
+  M -. RRF after promotion gate .-> P
   P --> Q["Bounded evidence read"]
   Q --> R["Agent answer with source locations"]
 ```
@@ -163,7 +195,7 @@ The TypeScript backend owns:
 
 The Python agent service owns:
 
-- PDF/DOCX extraction adapters;
+- routed document conversion plus native provenance adapters;
 - layout and heading analysis;
 - dynamic chunk planning;
 - Gemini Lite structured extraction and reduction;
@@ -174,13 +206,19 @@ The Python agent service owns:
 
 ### 7.3 Storage plane
 
-- Original file: existing workspace file storage.
+- Original file: private object storage, uploaded directly with a short-lived signed URL and registered only after authenticated size/type verification.
 - Durable job and semantic state: PostgreSQL.
-- Generated source artifacts and OKF files: workspace storage.
+- Generated source artifacts and OKF files: the dedicated standalone Knowledge storage namespace. Existing workspace-backed bundles remain readable during migration but are not attached to workspace listings.
 - Progress events and short-lived coordination: Redis Streams.
-- Embeddings: PostgreSQL with `pgvector` in the first release.
+- Embeddings: versioned adapter and artifact contracts are retained initially; PostgreSQL with `pgvector` is enabled only for the later multimodal retrieval phase.
 - Graph traversal: relational adjacency tables and recursive queries in the first release.
 - Tracing: existing Langfuse deployment, with source-content capture disabled or redacted by policy.
+
+### 7.4 Upload and dispatch boundary
+
+Large source bytes do not traverse or buffer in the TypeScript API process. The browser first creates an authenticated upload session, streams the file to a short-lived same-origin object-storage URL, and then calls the authenticated completion endpoint. Completion verifies object metadata and atomically registers the source and durable ingestion task. Parsing starts only after that task exists.
+
+The completion call is the authoritative event because it carries the user's authorization and Knowledge metadata. Object-created notifications are optional reconciliation signals, not the source of truth. Expired or abandoned sessions are deleted by the Knowledge worker. The UI presents upload progress separately from the subsequent queued/extracting/enriching/publishing lifecycle.
 
 ## 8. Pipeline methodology
 
@@ -220,6 +258,21 @@ Required output:
 
 ### 8.2 Stage 1: complete deterministic extraction
 
+#### Conversion routing
+
+MarkItDown is the common conversion facade for supported document types and supplies normalized Markdown when conversion succeeds. It does not become the sole provenance extractor. HelpUDoc also runs a native sidecar adapter for formats where MarkItDown output would discard stable page, paragraph, table, cell, bounding-box, or source-unit locations.
+
+Initial routing policy:
+
+| Source type | Markdown representation | Authoritative locator sidecar |
+|---|---|---|
+| PDF | MarkItDown primary, native rendering fallback | PyMuPDF page/block extraction plus OCR adapter |
+| DOCX | MarkItDown primary, native rendering fallback | `python-docx` headings, paragraphs, and tables |
+| TXT, Markdown, HTML, CSV/TSV, JSON | MarkItDown where useful, otherwise native normalized text | Native line/section/row-oriented blocks |
+| PPTX, XLS/XLSX and other MarkItDown-supported formats | MarkItDown | Structural slide/sheet blocks until a richer native adapter is justified |
+
+Converter mode (`off`, `shadow`, `fallback`, or `primary`), converter version, locator strategy, and warnings are persisted in the extraction manifest. Only local-file conversion is allowed; uploaded content must not cause MarkItDown to fetch arbitrary URLs. A MarkItDown failure may fall back to a successful native extraction, but the fallback remains visible in the manifest.
+
 #### PDF
 
 Use a layout-aware PDF adapter to emit:
@@ -238,9 +291,23 @@ PyMuPDF is the preferred primary adapter. PyPDF remains useful for metadata, out
 If a page contains insufficient native text:
 
 1. mark it `needs_ocr`;
-2. run the configured OCR adapter if policy permits;
+2. in `auto` mode, run the configured Gemini vision OCR adapter if policy permits;
 3. preserve OCR confidence and coordinates; or
 4. publish a visible partial/failed status for that page.
+
+##### OCR activation and converter policy
+
+OCR is explicit pipeline behavior, not an incidental MarkItDown side effect:
+
+- `off`: never send page images to a model; report `needs_ocr` for insufficient pages;
+- `auto` (default): OCR only pages whose native extraction is empty, corrupt, or below the configured text-density threshold; and
+- `always`: OCR every eligible page for controlled comparison or documents known to require it.
+
+The initial concrete OCR implementation uses Gemini vision through the deployment's authenticated Google/Vertex client and ADC. It is invoked through the provider-neutral OCR adapter so extraction accounting, page identity, retries, cost, and failure state remain controlled by HelpUDoc.
+
+MarkItDown remains a common format-to-Markdown conversion layer where it gives useful normalized output. Its OCR plugin is not automatic merely because an image-only PDF is uploaded: the plugin package, plugin enablement, and a compatible model client must all be configured. HelpUDoc must not rely on its silent fallback when a model client is absent. If the plugin is added later, it is wrapped behind the same OCR adapter and reporting contract.
+
+OCR and multimodal embeddings have different responsibilities. OCR creates readable, citable source blocks used by enrichment and evidence verification. An image or PDF embedding creates a similarity vector for discovery but does not create assertions, quotations, or source text and therefore cannot replace OCR.
 
 #### DOCX
 
@@ -266,6 +333,8 @@ type SourceBlock = {
   blockType: 'heading' | 'paragraph' | 'list' | 'table' | 'caption' | 'image_ocr';
   page?: number;
   paragraph?: number;
+  unit?: number;
+  unitType?: 'slide' | 'sheet' | 'section' | string;
   table?: number;
   row?: number;
   cell?: number;
@@ -275,6 +344,7 @@ type SourceBlock = {
   extractionMethod: 'native' | 'ocr' | 'fallback';
   extractionConfidence: number;
   contentHash: string;
+  mediaArtifactId?: string;
 };
 ```
 
@@ -282,6 +352,7 @@ Acceptance gate:
 
 - `processedSourceUnits + failedSourceUnits = discoveredSourceUnits`;
 - no source unit disappears from the accounting; and
+- every OCR attempt records mode, provider/model, latency, usage, and outcome without silently falling back; and
 - the job cannot report `published` while unacknowledged extraction failures exist.
 
 ### 8.3 Stage 2: normalization
@@ -522,7 +593,7 @@ Canonicalization combines deterministic and model-assisted signals:
 
 - exact normalized name and known aliases;
 - type compatibility;
-- embedding similarity;
+- optional embedding similarity when the embedding adapter is enabled;
 - shared evidence context;
 - neighboring entities;
 - structural and temporal compatibility; and
@@ -652,7 +723,7 @@ Only the directory identified by `current.json` is the published OKF bundle. Run
 | Enrichment snapshot | Orchestrator | Publisher, index builders | Immutable and content-addressed |
 | OKF bundle | Deterministic publisher | Humans and agents | Portable, linked, valid OKF v0.2 |
 | Lexical index | Index builder | Retriever | Multilingual exact/fuzzy candidate recall |
-| Vector index | Index builder | Retriever | Semantic candidate recall |
+| Vector index (deferred) | Index builder | Retriever | Optional multimodal semantic recall after the evaluation gate |
 | Graph index | Index builder | Retriever | Relationship and neighborhood expansion |
 | Cost report | Usage collector | Admin, finance | Tokens, calls, retries, model, rate-card version, estimated cost |
 
@@ -693,38 +764,25 @@ Page ranges support verification. They do not determine the concept filename or 
 
 ## 10. Retrieval methodology
 
-### 10.1 Indexes
+### 10.1 Initial indexes
 
 #### Lexical
 
 Store normalized concept fields, assertions, aliases, tags, and evidence text. PostgreSQL `pg_trgm` and exact phrase search provide the initial multilingual baseline. PostgreSQL full-text search may supplement languages with supported tokenization.
 
-#### Vector
-
-Embed:
-
-- concept title plus aliases;
-- description;
-- individual assertions;
-- relationship descriptions; and
-- bounded evidence segments when required.
-
-Embeddings are stored in `pgvector` with model/version and source hash. The embedding model is configured separately from the Gemini Lite generation model.
-
 #### Graph
 
 Persist directed adjacency with relationship type, confidence, evidence, and snapshot ID. PostgreSQL recursive CTEs support bounded one- or two-hop traversal in the first release.
 
-### 10.2 Query flow
+The initial retriever searches canonical wiki concepts and assertions lexically, expands only meaningful graph relationships, and then reads the supporting source blocks. The generated wiki is the coherent context layer; original evidence remains the authority.
+
+### 10.2 Initial query flow: wiki-first lexical and graph retrieval
 
 ```mermaid
 flowchart LR
   A["User question"] --> B["Query analysis"]
   B --> C["Lexical candidates"]
-  B --> D["Vector candidates"]
-  C --> E["Reciprocal-rank fusion"]
-  D --> E
-  E --> F["Graph expansion, max 1-2 hops"]
+  C --> F["Graph expansion, max 1-2 hops"]
   F --> G["Confidence and access filtering"]
   G --> H["Optional Gemini Lite rerank"]
   H --> I["Read selected concepts"]
@@ -735,14 +793,28 @@ flowchart LR
 Rules:
 
 1. `index.md` is used for discovery and progressive navigation, not as the sole search index.
-2. Lexical and vector retrieval run in parallel.
-3. Reciprocal-rank fusion combines candidate rankings without requiring comparable raw scores.
-4. Graph expansion is bounded and relation-aware; it must not flood context with all neighbors.
-5. Low-confidence or ambiguous edges are excluded by default unless the question asks about uncertainty.
-6. A final answer must read the selected evidence rather than cite only a generated summary.
-7. If evidence is absent or contradictory, the agent says so.
+2. Lexical retrieval searches titles, aliases, descriptions, assertions, tags, relationship descriptions, and bounded evidence text.
+3. Graph expansion is bounded and relation-aware; it must not flood context with all neighbors.
+4. Low-confidence or ambiguous edges are excluded by default unless the question asks about uncertainty.
+5. A final answer must read the selected evidence rather than cite only a generated summary.
+6. If evidence is absent or contradictory, the agent says so.
 
-### 10.3 Retrieval result contract
+### 10.3 Deferred multimodal vector retrieval and RRF
+
+The ingestion contracts retain optional embedding inputs and index metadata, but the initial retrieval path does not depend on vectors. A later phase may embed:
+
+- concept titles, aliases, descriptions, and assertions;
+- relationship descriptions and bounded evidence segments;
+- OCR page images, diagrams, screenshots, and other useful visual regions; and
+- short text-plus-image representations when the selected model supports a shared modality space.
+
+`gemini-embedding-2` is the initial candidate because it can place text, images, and short PDFs in a unified embedding space. Page-level image/PDF artifacts remain linked to source locators because an embedding is not evidence. Model limits, dimensionality, cost, and multilingual/multimodal quality are versioned configuration rather than assumptions embedded in the OKF bundle.
+
+When vector retrieval is promoted, lexical and vector candidate lists run in parallel and are combined with RRF before graph expansion. RRF is used because the raw scores from lexical and vector systems are not directly comparable. It preserves strong exact matches while adding paraphrase, vocabulary-mismatch, OCR-noise, and visual-page recall.
+
+Promotion requires a representative evaluation set to show measurable Recall@K or MRR improvement without unacceptable groundedness, latency, cost, or access-control regressions. Vector-only retrieval is not an intended production mode.
+
+### 10.4 Retrieval result contract
 
 ```json
 {
@@ -752,7 +824,7 @@ Rules:
     {
       "id": "character:ye-wenjie",
       "score": 0.92,
-      "reasons": ["vector", "alias", "graph"],
+      "reasons": ["alias", "graph"],
       "path": "concepts/characters/ye-wenjie.md"
     }
   ],
@@ -784,7 +856,7 @@ New tables are namespaced around an ingestion run and immutable snapshot.
 | `knowledge_assertions` | Evidence-backed factual statements |
 | `knowledge_relationships` | Directed typed edges and confidence |
 | `knowledge_evidence_spans` | PDF/DOCX source locators |
-| `knowledge_embeddings` | Versioned concept/assertion vectors |
+| `knowledge_embeddings` (deferred/optional) | Versioned text and media vectors, populated only when vector retrieval is enabled |
 | `knowledge_communities` | Cluster membership and label metadata |
 | `knowledge_snapshots` | Immutable publishable enrichment snapshots |
 | `knowledge_usage_events` | Model calls, tokens, retries, latency, and cost |
@@ -823,6 +895,10 @@ The dedicated TypeScript Knowledge worker claims PostgreSQL tasks with `FOR UPDA
 
 | Method | Route | Purpose |
 |---|---|---|
+| `POST` | `/api/knowledge/uploads` | Create an expiring signed object-storage upload session |
+| `PUT` | signed object URL | Stream source bytes directly from the browser to private storage |
+| `POST` | `/api/knowledge/uploads/:uploadId/complete` | Verify the object and create the source plus durable job |
+| `DELETE` | `/api/knowledge/uploads/:uploadId` | Cancel an incomplete upload and remove its staged object |
 | `POST` | `/api/knowledge/:id/ingestions` | Start or resume enrichment |
 | `GET` | `/api/knowledge/:id/ingestions/current` | Current job, stage, coverage, cost, and warnings |
 | `GET` | `/api/knowledge/:id/ingestions/:runId/report` | Full QC report |
@@ -834,7 +910,7 @@ The dedicated TypeScript Knowledge worker claims PostgreSQL tasks with `FOR UPDA
 
 Existing bundle routes remain compatible while their backing path moves to the current immutable bundle.
 
-The routes above show the global admin form. Workspace-scoped Knowledge uses the equivalent `/api/workspaces/:workspaceId/knowledge/:id/...` routes and applies workspace membership plus Knowledge-grant policy.
+The routes above show the global admin form. `/api/knowledge-catalog` lists the caller's granted, standalone bundles for the `@` picker. Legacy workspace-scoped Knowledge routes remain for non-global records only and never inherit global sources.
 
 ### 12.2 Internal processing APIs
 
@@ -854,12 +930,14 @@ Each call is idempotent by task ID and content hash. Internal endpoints return s
 
 Replace the Markdown tree scan behind `knowledge_search` with a Knowledge retrieval service while retaining the public tool names:
 
-- `knowledge_search`: hybrid candidate retrieval across authorized snapshots;
+- `knowledge_search`: wiki-first lexical candidate retrieval plus bounded graph expansion across authorized snapshots;
 - `knowledge_read`: read a selected OKF concept or bounded evidence span;
 - optional `knowledge_neighbors`: inspect typed graph neighbors when deliberate traversal is useful; and
-- legacy `rag_query`: delegate to the hybrid retriever and stop discarding its mode silently.
+- legacy `rag_query`: delegate to the active retriever and stop discarding its mode silently.
 
 Tool responses include snapshot ID, retrieval reasons, confidence, and source locations.
+
+The public tool contract does not change when vector/RRF is enabled later; only the internal candidate-generation and fusion strategy changes.
 
 ## 13. Technology stack
 
@@ -881,13 +959,12 @@ Tool responses include snapshot ID, retrieval reasons, confidence, and source lo
 | Technology | Reason |
 |---|---|
 | PyMuPDF | Layout-aware PDF block extraction and coordinates |
-| OCR adapter interface | Scanned-document recovery without coupling to one provider |
-| `pgvector` | Versioned semantic embeddings in the existing database |
+| OCR adapter interface with Gemini implementation | Scanned-document recovery with explicit activation, accounting, and provider isolation |
 | PostgreSQL `pg_trgm` | Multilingual lexical/fuzzy baseline, including Chinese text |
 | NetworkX | Initial graph analysis, clustering, diagnostics, and paths |
 | JSON Schema/Pydantic structured outputs | Strict Gemini Lite map/reduce contracts |
 
-Local PostgreSQL should move to a pgvector-enabled PostgreSQL 16 image. Production must verify extension availability before enabling vector indexing.
+The initial release does not require a pgvector-enabled database. Before multimodal vector retrieval is promoted, local and production PostgreSQL must verify compatible `pgvector` availability and apply the optional embedding migrations/index builders.
 
 `pg_trgm` is an initial low-operations baseline, not an assumption that PostgreSQL tokenization is optimal for every language. Retrieval evaluation determines whether a later lexical adapter such as OpenSearch or Tantivy is justified.
 
@@ -896,6 +973,7 @@ Local PostgreSQL should move to a pgvector-enabled PostgreSQL 16 image. Producti
 - Neo4j;
 - Elasticsearch/OpenSearch;
 - a separate vector database;
+- `pgvector` before the multimodal retrieval promotion gate;
 - Kafka; or
 - a new agent framework.
 
@@ -955,7 +1033,7 @@ Cache at four levels:
 1. source extraction by source fingerprint and extractor version;
 2. processing window by ordered block hashes and chunker version;
 3. model map result by window hash, model, prompt, and schema version; and
-4. embedding by normalized content hash and embedding model version.
+4. optional embedding by normalized content/media hash and embedding model version when vector indexing is enabled.
 
 An unchanged page or paragraph must not be re-enriched merely because a different section elsewhere changed.
 
@@ -974,7 +1052,7 @@ Every run reports:
 - number of model calls by stage;
 - input, cached-input, and output tokens when provided;
 - retries and validation-repair calls;
-- embedding units;
+- embedding units when enabled;
 - OCR units;
 - elapsed time by stage;
 - configured rate-card version;
@@ -1003,6 +1081,8 @@ The rate card is versioned configuration because provider pricing changes indepe
 - The Three-Body QC PDF reports `950/950` PDF pages accounted for.
 - No hard-coded 50-section cap remains.
 - Empty or failed pages are listed with extraction method and reason.
+- Image-only pages are OCRed automatically only when OCR mode is `auto` or `always`, policy permits model processing, and a configured client is available.
+- Missing OCR credentials/client configuration produces a visible page and job warning; it never silently claims native extraction success.
 - DOCX reports discovered/processed paragraphs and tables.
 
 ### 17.2 Chunking
@@ -1053,6 +1133,18 @@ Acceptance expectations:
 - unavailable answers are not fabricated; and
 - candidate retrieval p95 is under two seconds for the 950-page QC source, excluding answer-generation latency, after indexes are warm.
 
+The initial lexical-plus-graph release must pass exact, alias, graph, absent-answer, and evidence-location cases. The paraphrase case is measured and reported but does not by itself block the initial release when the answer remains reachable through aliases, assertions, or graph relationships.
+
+Before multimodal vector/RRF retrieval is enabled by default, add evaluation cases for:
+
+- paraphrases with no meaningful lexical overlap;
+- multilingual vocabulary mismatch;
+- OCR-corrupted text;
+- a query whose relevant evidence is primarily a diagram or image; and
+- an exact-match distractor that is semantically wrong.
+
+The promoted vector/RRF configuration must improve Recall@K or MRR over lexical-plus-graph retrieval on the agreed evaluation set while preserving answer groundedness and access filtering. The measured threshold is recorded in the release configuration rather than hard-coded in this specification.
+
 ### 17.6 Admin experience
 
 The Knowledge source card and explorer display:
@@ -1083,7 +1175,8 @@ The Knowledge source card and explorer display:
 - relationship direction and evidence validation;
 - OKF slug/link/index generation;
 - path safety; and
-- reciprocal-rank fusion and graph expansion limits.
+- graph expansion limits; and
+- reciprocal-rank fusion behavior when the deferred vector feature is enabled.
 
 ### 18.2 Integration tests
 
@@ -1107,6 +1200,8 @@ Maintain small committed or license-safe fixtures for:
 - text PDF with outline;
 - text PDF without outline;
 - scanned PDF;
+- mixed native-text and scanned-page PDF;
+- image/diagram-heavy PDF for the later multimodal retrieval gate;
 - multilingual Chinese/English PDF;
 - tables and captions; and
 - deliberate ambiguous aliases.
@@ -1143,7 +1238,7 @@ Expected result:
 
 The existing publisher remains semantically weak but can no longer silently present a partial document as complete.
 
-### Phase 1: durable extraction and dynamic chunk planning
+### Phase 1: durable extraction, Gemini OCR, and dynamic chunk planning
 
 Backend:
 
@@ -1155,7 +1250,10 @@ Backend:
 Agent:
 
 - create `helpudoc_agent/knowledge_ingestion/` modules for extractors, normalization, structure detection, token counting, and chunk planning;
-- add PyMuPDF and OCR adapter contracts; and
+- add PyMuPDF and OCR adapter contracts;
+- implement `off|auto|always` OCR policy with `auto` as the default;
+- implement Gemini vision OCR through the authenticated Google/Vertex client and ADC;
+- retain rendered page/media artifacts and stable locators for later optional multimodal embedding; and
 - implement source-specific test fixtures.
 
 Frontend:
@@ -1165,6 +1263,7 @@ Frontend:
 Exit criteria:
 
 - 950/950 pages accounted for;
+- scanned and mixed PDFs either produce citable OCR blocks or explicit per-page failures;
 - complete non-overlapping core-window coverage; and
 - restart-safe extraction/chunking.
 
@@ -1203,29 +1302,29 @@ Exit criteria:
 - stable output from a fixed snapshot; and
 - admin explorer can inspect concepts, communities, relationships, and provenance.
 
-### Phase 4: hybrid retrieval
+### Phase 4: wiki-first lexical and graph retrieval
 
 Deliverables:
 
-- pgvector-enabled development and production database path;
-- lexical, embedding, and adjacency index builders;
-- hybrid retrieval service with reciprocal-rank fusion;
+- lexical and adjacency index builders;
+- wiki-first retrieval service over canonical concepts, assertions, aliases, relationships, and evidence text;
 - bounded graph expansion;
 - optional Gemini Lite reranking;
 - evidence-span read support; and
-- updated `knowledge_search`, `knowledge_read`, and legacy `rag_query` behavior.
+- updated `knowledge_search`, `knowledge_read`, and legacy `rag_query` behavior;
+- stable embedding adapter, media-artifact locator, index-version, and retrieval-reason hooks that remain inactive by default.
 
 Exit criteria:
 
 - exact retrieval beyond page 50;
-- semantic and multi-hop evaluation targets pass; and
+- alias and multi-hop graph evaluation targets pass;
 - answers expose original PDF/DOCX locations.
 
 ### Phase 5: backfill, evaluation, and controlled rollout
 
 Deliverables:
 
-- feature flags for deterministic-only, enriched, and hybrid-retrieval modes;
+- feature flags for deterministic-only, enriched, lexical-graph, and experimental vector/RRF modes;
 - re-enrichment action for existing Knowledge sources;
 - source-size and estimated-cost preview;
 - workspace/global concurrency quotas;
@@ -1237,6 +1336,27 @@ Exit criteria:
 - existing Knowledge sources can be upgraded without losing the previous bundle;
 - administrators can compare old/new coverage and cost; and
 - retrieval can roll back independently of ingestion.
+
+### Phase 6: optional multimodal vector retrieval and RRF
+
+This phase begins only after Phase 5 evaluation identifies meaningful semantic or visual recall misses.
+
+Deliverables:
+
+- versioned `gemini-embedding-2` adapter for text and eligible page/image artifacts;
+- optional pgvector migrations and index builders;
+- parallel lexical and vector candidate retrieval;
+- reciprocal-rank fusion before bounded graph expansion;
+- multimodal and no-lexical-overlap evaluation fixtures;
+- embedding cost, latency, cache, and model-limit reporting; and
+- independent feature flag and rollback path.
+
+Exit criteria:
+
+- the promotion gate in Section 17.5 is met;
+- every visual/vector result resolves to a permitted source locator and evidence-read path;
+- disabling vector retrieval leaves lexical-plus-graph behavior intact; and
+- re-embedding is versioned and does not mutate the OKF bundle or enrichment snapshot.
 
 ## 20. Expected file-level changes
 
@@ -1253,7 +1373,7 @@ Exit criteria:
 - Add `agent/helpudoc_agent/knowledge_ingestion/`.
 - Move reusable PDF/DOCX extraction out of `api/lightweight_extract.py` into versioned adapters.
 - Add internal ingestion routes under `agent/helpudoc_agent/api/routes/`.
-- Replace the file-scan implementation in `tools/workspace/builtins/knowledge_navigation.py` with calls to hybrid retrieval and evidence-read services.
+- The agent host must pass backend-validated structured `knowledgeRefs` for the current turn. `knowledge_search` and `knowledge_read` are restricted to those selected bundle roots and return no Knowledge when the turn contains no `@` selection. A future service-backed retrieval transport may replace the bounded bundle reader without changing this contract.
 - Reuse the existing Gemini Lite model profile through the agent configuration layer.
 
 ### Frontend
@@ -1265,7 +1385,8 @@ Exit criteria:
 ### Infrastructure
 
 - add a dedicated Knowledge worker deployment/process;
-- enable `pgvector` and `pg_trgm`;
+- enable `pg_trgm` for the initial retrieval release;
+- make `pgvector` an optional Phase 6 infrastructure capability;
 - configure worker concurrency and provider rate limits;
 - configure artifact retention; and
 - add model usage/cost dashboards through existing observability.
@@ -1276,7 +1397,7 @@ Exit criteria:
 2. Existing Knowledge IDs and grants remain stable.
 3. A Knowledge source may retain multiple immutable bundle versions.
 4. The published `current` pointer selects one version atomically.
-5. Old lexical navigation remains behind a fallback flag until hybrid retrieval passes evaluation.
+5. Old Markdown file-scan navigation remains behind a fallback flag until lexical-plus-graph retrieval passes evaluation.
 6. Re-enrichment never overwrites the previous snapshot.
 7. Rollback changes the published pointer and rebuilds/activates the corresponding derived indexes.
 
@@ -1289,7 +1410,10 @@ Exit criteria:
 - Gemini Lite performs enrichment.
 - OKF v0.2 is the portable published format.
 - Deterministic publication begins after an immutable enrichment snapshot.
-- Retrieval combines lexical, vector, and graph signals.
+- Initial retrieval combines lexical discovery, bounded graph expansion, and original evidence reads.
+- Multimodal vector retrieval and RRF are deferred until evaluation demonstrates material recall improvement.
+- Gemini vision through the provider-neutral OCR adapter is the initial scanned-page recovery path; OCR activation is explicit and observable.
+- OCR text is evidence; multimodal embeddings are optional discovery indexes and cannot replace OCR.
 - PostgreSQL remains the first-release source of truth for semantic state and graph adjacency.
 - A dedicated graph database is deferred until evidence shows it is necessary.
 
@@ -1297,12 +1421,18 @@ Exit criteria:
 
 - Initial controlled concept and relationship vocabularies by document profile.
 - Exact Gemini Lite generation settings and concurrency quota.
-- Embedding model and dimensionality.
-- OCR provider policy for production and Chinese-language scans.
+- Gemini OCR model/version, per-page threshold, production quota, and Chinese-language scan benchmark.
 - Human review workflow for ambiguous canonical merges.
 - Maximum accepted verbatim evidence stored in model traces and artifacts.
 - Retention period for failed run artifacts and superseded embeddings.
 - Whether global Knowledge requires an explicit external-model processing consent flag.
+
+### To resolve before Phase 6
+
+- Confirm `gemini-embedding-2` model limits, dimensionality, rate card, and deployment-region availability at implementation time.
+- Define the Recall@K/MRR improvement required for promotion from lexical-plus-graph retrieval.
+- Decide which page images, diagrams, or regions justify embedding rather than text-only indexing.
+- Verify pgvector extension availability and index strategy at expected corpus scale.
 
 ## 23. Definition of done
 
@@ -1313,15 +1443,19 @@ This initiative is complete when:
 3. Gemini Lite produces evidence-backed domain concepts across the entire source;
 4. aliases and relationships are canonicalized with uncertainty retained;
 5. a valid, linked OKF v0.2 bundle is deterministically emitted from an immutable snapshot;
-6. hybrid retrieval answers exact, semantic, and multi-hop questions using bounded context;
+6. lexical-plus-graph retrieval answers exact, alias, and multi-hop questions using bounded context, with semantic misses measured for the optional vector phase;
 7. answers can return to original PDF pages or DOCX structural locations;
 8. the admin portal reports coverage, graph quality, failures, tokens, and cost;
 9. unchanged inputs reuse cached work; and
 10. the system survives restart, supports rollback, and never exposes a partial bundle as published.
 
+Phase 6 multimodal vector/RRF retrieval is considered complete separately when it meets the promotion gate in Section 17.5. It is not a prerequisite for the initial enriched Knowledge release.
+
 ## 24. References
 
 - [Open Knowledge Format v0.2 specification](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md)
 - [OpenWiki](https://github.com/langchain-ai/openwiki)
+- [MarkItDown OCR plugin behavior](https://github.com/microsoft/markitdown/blob/main/packages/markitdown-ocr/README.md)
+- [Gemini multimodal embeddings](https://ai.google.dev/gemini-api/docs/embeddings)
 - [Current HelpUDoc file and Knowledge context flow](../api/file-attachment-flow.md)
 - [Current HelpUDoc architecture](../current-architecture.md)

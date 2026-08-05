@@ -138,9 +138,8 @@ class GuardedTool(BaseTool):
         if not (is_published or write_denied) or self.name not in _WORKSPACE_MUTATING_TOOLS:
             return None
         return (
-            f"Tool '{self.name}' cannot write into a published workspace. "
-            "Use the published content for analysis, then create or open a governed private working copy "
-            "before generating files or running scripts."
+            f"Tool '{self.name}' cannot write into this workspace with the current access or editing policy. "
+            "Use the workspace for analysis, or ask an owner to grant edit access or review the proposed change."
         )
 
     def _memory_guard(self, input: Any) -> Optional[str]:

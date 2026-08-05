@@ -1,0 +1,68 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 217,
+    "blocks": [
+      {
+        "text": "LITTLE GOODY TWO-SHOES.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "looks her little orphans, as much as to say, \" Do, Tommy,— do, Margery, come with me.\" They cried, poor things ! and she sighed away her soul, and, I hope, is happy.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.95
+      },
+      {
+        "text": "It would both have excited your pity and have done your heart good, to have seen how fond these two little ones were of each other, and how, hand in hand, they trotted about.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.97
+      },
+      {
+        "text": "They were both very ragged, and Tommy had two shoes, but Margery had but one. They had nothing, poor things ! to support them but what they picked from the hedges, or got from the poor people, and they slept every night in a barn. Their relations took no notice of them : no, they were rich, and ashamed to own such a poor ragged girl as Margery, and such a dirty curly-pated boy as Tommy.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.96
+      },
+      {
+        "text": "Mr. Smith was a very worthy clergyman, who lived in the parish where little Margery and Tommy were born ; and having a relation come to see him, who was a charitable good man, he sent for these children to him. The gentleman ordered little Margery a new pair of shoes, gave Mr. Smith some money to buy her clothes, and said he would take Tommy, and make him a little sailor ; and, accordingly, had a jacket and trowsers made for him.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.96
+      },
+      {
+        "text": "After some days, the gentleman intended to go to London, and take little Tommy with him. The parting between these two little children was very affecting. They both cried, and they kissed each other an hundred times. At last Tommy wiped off her tears with the end of his jacket, and bid her cry no more, for that he would come to her again when he returned from sea.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.96
+      },
+      {
+        "text": "As soon as little Margery got up the next morning, which",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "3",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

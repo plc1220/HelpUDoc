@@ -1,0 +1,54 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 272,
+    "blocks": [
+      {
+        "text": "HANS IN LUCK.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "out of the wheelbarrow, and put the string that was tied round the animal's leg into his new master's hand.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.97
+      },
+      {
+        "text": "As Hans went along he could not help marvelling at his constant run of luck, which had regularly turned every little disappointment to the very best account. After a time he was overtaken by a lad who was carrying a fine white goose under his arm. They no sooner bid one another good morrow, than Hans related how lucky he had been, and what advantageous bargains he had struck. The lad told him, in turn, that he was carrying the goose to a christening dinner. \"Only just feel how heavy it is,\" continued he, taking the goose up by the wings; \"it has been fattening these eight weeks. I'll be bold to say that whoever tastes a slice of it when it comes to be roasted, will have to wipe away the fat from each corner of his mouth.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "\" Ay,\" said Hans, as he weighed it in one hand, \" it is heavy enough to be sure; but my pig is not to be sneezed at either.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.96
+      },
+      {
+        "text": "Meanwhile the lad was looking all round him with an anxious air, and then shook his head as he observed: \"It's my mind your pig will get you into trouble. I have just come through a village where the mayor's pig was stolen out of",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.97
+      },
+      {
+        "text": "10",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

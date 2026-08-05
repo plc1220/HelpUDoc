@@ -1,0 +1,19 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 172,
+    "blocks": [
+      {
+        "text": "And there came the Beetle, So blind and so black, Who carried the Emmet, His friend, on his back; And there was the Gnat, And the Dragon-fly too,",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.97
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}

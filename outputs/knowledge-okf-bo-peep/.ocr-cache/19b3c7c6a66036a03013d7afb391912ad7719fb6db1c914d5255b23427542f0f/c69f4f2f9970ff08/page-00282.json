@@ -1,0 +1,54 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "promptVersion": "helpudoc-gemini-ocr/1",
+  "renderVersion": "pymupdf-jpeg-144dpi/1",
+  "result": {
+    "pageNumber": 282,
+    "blocks": [
+      {
+        "text": "ROBIN HOOD.",
+        "blockType": "heading",
+        "headingLevel": 1,
+        "bbox": null,
+        "confidence": 0.98
+      },
+      {
+        "text": "set to in right earnest, and after thrashing each other well, the stranger gave Robin Hood a blow on his head, which effectually pitched him into the water. When Robin Hood had waded back to the bank, he put his bugle to his lips, and blew several blasts, till the forest rang again, and his followers came leaping from all directions to see what their Captain wanted. When he had told them how he had been served by the stranger, they would fain have ducked him; but Robin Hood, who admired his bravery, proposed to him to join their band.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.96
+      },
+      {
+        "text": "\"Here's my hand on it,\" cried the stranger, delighted at the proposal. \"Though my name is John Little, you shall find I can do great things.\"",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.95
+      },
+      {
+        "text": "But Will Stutely, one of Robin's merry men, insisted upon it that he must be re-christened; so a feast was held, a barrel of ale broached, and the new comer's name was changed from John Little to Little John, which nickname, seeing that he was near seven feet high, was a perpetual subject for laughter.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.96
+      },
+      {
+        "text": "Not long after this, as Robin Hood sat one morning by the way-side trimming his bow and arrows, there rode by a butcher with a basket of meat, who was hastening to market. After bidding him good morrow, Robin asked what he would take for the horse and the basket? The butcher, somewhat surprised, answered he would not care to sell them for less than four silver marks. \"Do but throw your greasy frock into the bargain,\" said Robin, \"and here's the money.\" Delighted at having concluded so good a bargain, the butcher lost no time in dismounting and throwing off his smock-frock, which the outlaw instantly put on over his clothes, and then galloped away to Nottingham.",
+        "blockType": "paragraph",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.96
+      },
+      {
+        "text": "4",
+        "blockType": "page_number",
+        "headingLevel": null,
+        "bbox": null,
+        "confidence": 0.99
+      }
+    ],
+    "blank": false,
+    "confidence": 0.0
+  }
+}
