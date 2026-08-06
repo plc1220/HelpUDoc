@@ -99,7 +99,7 @@ export default function workspaceCollaborationRoutes(
       );
       res.json({ messages });
     } catch (error) {
-      handleError(res, error, 'Failed to load Team Chat');
+      handleError(res, error, 'Failed to load Workspace Chat');
     }
   });
 
@@ -114,7 +114,7 @@ export default function workspaceCollaborationRoutes(
       );
       res.status(201).json(message);
     } catch (error) {
-      handleError(res, error, 'Failed to post Team Chat message');
+      handleError(res, error, 'Failed to post Workspace Chat message');
     }
   });
 
@@ -150,7 +150,7 @@ export default function workspaceCollaborationRoutes(
       );
       res.status(201).json(reply);
     } catch (error) {
-      handleError(res, error, 'Failed to invoke Lumo in Team Chat');
+      handleError(res, error, 'Failed to invoke Lumo in Workspace Chat');
     }
   });
 

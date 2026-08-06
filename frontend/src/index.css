@@ -1010,6 +1010,67 @@ body {
   color: var(--color-text-primary);
 }
 
+.lumo-inline-edit {
+  display: flex;
+  width: min(100%, 28rem);
+  flex-direction: column;
+  gap: var(--spacing-2);
+}
+
+.lumo-inline-edit-field {
+  width: 100%;
+  border: var(--border-width) solid color-mix(in srgb, var(--color-border-blue) 36%, var(--color-border));
+  border-radius: var(--radius-container);
+  background: color-mix(in srgb, var(--color-background-muted) 76%, var(--color-background-surface));
+  box-shadow: var(--shadow-inset-hover);
+  color: var(--color-text-primary);
+  transition:
+    border-color var(--duration-fast-min) var(--ease-standard),
+    box-shadow var(--duration-fast-min) var(--ease-standard),
+    background-color var(--duration-fast-min) var(--ease-standard);
+}
+
+.lumo-inline-edit-field:focus-within {
+  border-color: var(--color-border-blue);
+  background: var(--color-background-surface);
+  box-shadow: var(--shadow-inset-selected);
+}
+
+.lumo-inline-edit-field textarea {
+  min-height: 6rem;
+  resize: vertical;
+  color: var(--color-text-primary);
+  font-family: var(--font-family-body);
+  font-size: var(--text-body-size);
+  line-height: var(--text-body-leading);
+}
+
+.lumo-inline-edit-field textarea::placeholder {
+  color: var(--color-text-secondary);
+}
+
+.lumo-inline-edit-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--spacing-2);
+}
+
+.lumo-inline-edit-actions .astryx-button[data-variant='ghost'] {
+  color: color-mix(in srgb, var(--color-on-light) 72%, transparent);
+}
+
+.lumo-inline-edit-actions .astryx-button[data-variant='secondary'] {
+  background: var(--color-background-surface);
+  color: var(--color-text-blue);
+  box-shadow: var(--shadow-low);
+}
+
+.lumo-inline-edit-actions .astryx-button[data-variant='secondary']:hover {
+  background: var(--color-background-surface);
+  box-shadow: var(--shadow-med);
+}
+
 .lumo-user-attachments {
   width: min(100%, 28rem);
   margin-top: var(--spacing-2);

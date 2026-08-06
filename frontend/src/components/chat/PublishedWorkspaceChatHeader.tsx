@@ -7,7 +7,9 @@ import {
 import {
   Bot,
   ChevronRight,
+  Eye,
   History,
+  Lock,
   Maximize2,
   MessageSquareText,
   Minimize2,
@@ -80,12 +82,12 @@ export default function PublishedWorkspaceChatHeader({
             >
               <ToggleButton
                 value="team"
-                label="Team Chat"
+                label="Workspace Chat"
                 icon={<MessageSquareText size={14} />}
               />
               <ToggleButton
                 value="private"
-                label="Private with Lumo"
+                label="Private"
                 icon={<Bot size={14} />}
               />
             </ToggleButtonGroup>
@@ -124,14 +126,26 @@ export default function PublishedWorkspaceChatHeader({
           </ButtonGroup>
         ) : null}
       </div>
+
+      {isAgentPaneVisible && mode === 'team' ? (
+        <div className={`mt-2 flex items-center gap-2 rounded-xl px-2.5 py-1.5 ${
+          isDarkMode ? 'bg-slate-900 text-slate-300' : 'bg-slate-50 text-slate-600'
+        }`}>
+          <Eye size={13} className="shrink-0 text-blue-500" />
+          <span className="text-[11px] leading-snug">
+            Visible to workspace members. Lumo reads the Shared Working version.
+          </span>
+        </div>
+      ) : null}
+
       {isAgentPaneVisible && mode === 'private' ? (
         <div className={`mt-2 flex items-center justify-between gap-3 rounded-xl px-2.5 py-1.5 ${
           isDarkMode ? 'bg-slate-900 text-slate-300' : 'bg-slate-50 text-slate-600'
         }`}>
           <div className="flex min-w-0 items-center gap-2">
-            <Bot size={14} className="shrink-0 text-violet-500" />
-            <span className="truncate text-[11px]">
-              Only you can see this conversation. Shared workspace collaboration remains separate.
+            <Lock size={13} className="shrink-0 text-violet-500" />
+            <span className="truncate text-[11px] leading-snug">
+              Visible only to you. Lumo edits My draft, not the Shared workspace.
             </span>
           </div>
           <select

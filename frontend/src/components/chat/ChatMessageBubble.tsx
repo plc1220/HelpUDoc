@@ -5,10 +5,12 @@ import {
   ChatMessageMetadata,
   ChatToolCalls,
 } from '@astryxdesign/core/Chat';
+import { Button } from '@astryxdesign/core/Button';
 import { Card } from '@astryxdesign/core/Card';
 import { Collapsible } from '@astryxdesign/core/Collapsible';
 import { Icon as AstryxIcon } from '@astryxdesign/core/Icon';
 import { Item } from '@astryxdesign/core/Item';
+import { TextArea } from '@astryxdesign/core/TextArea';
 import type { Components } from 'react-markdown';
 import { useCallback, useEffect, useMemo, useState, type Dispatch, type KeyboardEvent, type ReactNode, type SetStateAction } from 'react';
 import { InteractionSurfaceRenderer } from '../../interactions/InteractionSurfaceRenderer';
@@ -1869,10 +1871,6 @@ export default function ChatMessageBubble({
     : 'mt-3 space-y-3 text-xs text-slate-600';
   const userPathPillClassName = 'inline-flex max-w-full items-center gap-1.5 rounded-full border border-white/20 bg-white/10 px-2.5 py-1 text-xs font-medium text-white';
   const userBubbleClassName = 'lumo-user-content';
-  const inlineEditTextareaClassName =
-    'min-h-24 w-full resize-y rounded-lg border border-white/10 bg-black/15 px-3 py-2.5 text-sm leading-relaxed text-white placeholder:text-white/45 shadow-inner shadow-black/10 outline-none transition-all duration-150 focus:border-white/25 focus:bg-black/20 focus:ring-2 focus:ring-white/15';
-  const inlineEditButtonBaseClassName =
-    'inline-flex h-8 items-center justify-center rounded-md px-3 text-xs font-semibold transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/25 disabled:cursor-not-allowed disabled:opacity-50';
   const messageActionBarClassName = 'lumo-message-actions';
   const messageActionButtonClassName = 'lumo-message-action-button';
   const hasMessageActions = !isEditing && (canCopyMessage || message.sender === 'user' || handleScheduleMessage);
@@ -2582,32 +2580,39 @@ export default function ChatMessageBubble({
           <AstryxChatMessageBubble metadata={messageFooterMetadata}>
             <div className={userBubbleClassName}>
             {isEditing ? (
-              <div className="space-y-2.5">
-                <textarea
+              <div className="lumo-inline-edit">
+                <TextArea
+                  label="Edit message text"
+                  isLabelHidden
                   value={editValue}
-                  onChange={(event) => setEditValue(event.target.value)}
+                  onChange={setEditValue}
                   onKeyDown={handleInlineEditKeyDown}
-                  disabled={isStreaming}
-                  autoFocus
-                  className={inlineEditTextareaClassName}
+                  isDisabled={isStreaming}
+                  hasAutoFocus
+                  rows={3}
+                  size="sm"
+                  width="100%"
+                  className="lumo-inline-edit-field"
                   aria-label="Edit message text"
                 />
-                <div className="flex items-center justify-end gap-2">
-                  <button
-                    type="button"
+                <div className="lumo-inline-edit-actions">
+                  <Button
+                    label="Cancel"
+                    variant="ghost"
+                    size="sm"
                     onClick={cancelInlineEdit}
-                    className={`${inlineEditButtonBaseClassName} bg-white/10 text-white/80 hover:bg-white/15 hover:text-white`}
                   >
                     Cancel
-                  </button>
-                  <button
-                    type="button"
+                  </Button>
+                  <Button
+                    label="Retry"
+                    variant="secondary"
+                    size="sm"
                     onClick={saveInlineEdit}
-                    disabled={isStreaming || !editValue.trim()}
-                    className={`${inlineEditButtonBaseClassName} bg-white text-[#255489] shadow-sm hover:bg-white/90`}
+                    isDisabled={isStreaming || !editValue.trim()}
                   >
                     Retry
-                  </button>
+                  </Button>
                 </div>
               </div>
             ) : userText ? (

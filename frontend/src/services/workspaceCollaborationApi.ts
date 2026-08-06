@@ -129,7 +129,7 @@ export const listWorkspaceTeamMessages = async (
     `${API_URL}/workspaces/${workspaceId}/collaboration/team-chat/messages?limit=${limit}`,
   );
   if (!response.ok) {
-    return parseError(response, 'Failed to load Team Chat');
+    return parseError(response, 'Failed to load Workspace Chat');
   }
   const payload = await response.json() as { messages?: WorkspaceTeamMessage[] };
   return payload.messages || [];
@@ -152,7 +152,7 @@ export const postWorkspaceTeamMessage = async (
     },
   );
   if (!response.ok) {
-    return parseError(response, 'Failed to post Team Chat message');
+    return parseError(response, 'Failed to post Workspace Chat message');
   }
   return response.json();
 };

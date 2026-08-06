@@ -251,8 +251,7 @@ export default function AgentChatPane({
   const [sharedMode, setSharedMode] = useState<SharedChatMode>('team');
   const sharedLumoCanWrite = Boolean(
     isSharedWorkspace
-    && sharedWorkspace?.editingPolicy === 'direct'
-    && sharedWorkspace.canEdit,
+    && sharedWorkspace?.canEdit,
   );
   const hasPrivateWorkingCopy = Boolean(sharedWorkspace?.privateCopyWorkspaceId);
   const canReceivePrivateWorkingCopy = Boolean(
@@ -262,7 +261,6 @@ export default function AgentChatPane({
   );
   const canOpenPrivateWorkingCopy = Boolean(
     isSharedWorkspace
-    && sharedWorkspace?.editingPolicy === 'review'
     && hasPrivateWorkingCopy
     && onOpenPrivateWorkingCopy,
   );
@@ -274,7 +272,7 @@ export default function AgentChatPane({
   const handleSharedModeChange = (mode: SharedChatMode) => {
     if (
       mode === 'private'
-      && sharedWorkspace?.editingPolicy === 'review'
+      && !hasPrivateWorkingCopy
       && canReceivePrivateWorkingCopy
       && onOpenPrivateWorkingCopy
     ) {
@@ -348,17 +346,17 @@ export default function AgentChatPane({
                   : 'border-violet-100 bg-violet-50 text-violet-700'
               }`}>
                 <span className="min-w-0">
-                  Private with Lumo is visible only to you. {sharedLumoCanWrite
-                    ? 'Lumo may update the Shared working version in Freeflow.'
+                  Visible only to you. {sharedLumoCanWrite
+                    ? 'Lumo edits the Shared Working version directly.'
                     : hasPrivateWorkingCopy
-                      ? 'Use your Private copy when you want Lumo to make changes.'
+                      ? 'Lumo edits My draft, not the Shared workspace.'
                       : canReceivePrivateWorkingCopy
-                        ? 'Preparing your Private copy for Lumo changes…'
-                        : 'Review access is read-only for Viewers.'}
+                        ? 'Preparing My draft for Lumo changes…'
+                        : 'Viewer access is read-only.'}
                 </span>
                 {canOpenPrivateWorkingCopy ? (
                   <Button
-                    label="Open private copy"
+                    label="Open My draft"
                     size="sm"
                     variant="secondary"
                     icon={<ArrowRight size={14} />}

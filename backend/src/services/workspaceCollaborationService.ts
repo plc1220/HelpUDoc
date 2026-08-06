@@ -149,7 +149,7 @@ export class WorkspaceCollaborationService {
   ): Promise<WorkspaceTeamMessage> {
     const access = await this.ensureSharedWorkspaceAccess(workspaceId, userId);
     if (!canPostWorkspaceTeamMessage(access.membership.role)) {
-      throw new AccessDeniedError('Commenter access is required to post in Team Chat');
+      throw new AccessDeniedError('Commenter access is required to post in Workspace Chat');
     }
 
     const mentionedUserIds = Array.from(new Set(input.mentionedUserIds || []));
@@ -196,11 +196,11 @@ export class WorkspaceCollaborationService {
   ): Promise<WorkspaceTeamMessage> {
     const access = await this.ensureSharedWorkspaceAccess(workspaceId, userId);
     if (!canPostWorkspaceTeamMessage(access.membership.role)) {
-      throw new AccessDeniedError('Commenter access is required to invoke Lumo in Team Chat');
+      throw new AccessDeniedError('Commenter access is required to invoke Lumo in Workspace Chat');
     }
     const message = await this.getTeamMessage(workspaceId, messageId, userId);
     if (message.authorType !== 'user' || message.authorId !== userId) {
-      throw new AccessDeniedError('Lumo can only be invoked from your own Team Chat message');
+      throw new AccessDeniedError('Lumo can only be invoked from your own Workspace Chat message');
     }
     if (!message.mentionsLumo) {
       throw new ConflictError('Tag @Lumo in the message to request a response');
@@ -652,7 +652,7 @@ export class WorkspaceCollaborationService {
       .andWhere('message.id', messageId)
       .first() as WorkspaceTeamMessage | undefined;
     if (!message) {
-      throw new NotFoundError('Team Chat message not found');
+      throw new NotFoundError('Workspace Chat message not found');
     }
     return message;
   }

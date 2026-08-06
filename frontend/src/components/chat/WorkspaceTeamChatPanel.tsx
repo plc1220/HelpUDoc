@@ -128,8 +128,8 @@ export default function WorkspaceTeamChatPanel({
   const role = workspace.role || 'viewer';
   const canComment = COMMENT_ROLES.has(role);
   const canPropose = CONTRIBUTOR_ROLES.has(role);
-  const canLumoWrite = workspace.editingPolicy === 'direct' && workspace.canEdit === true;
-  const workingContextLabel = 'Shared working version';
+  const canLumoWrite = workspace.canEdit === true;
+  const workingContextLabel = 'Shared Working version';
 
   const loadMessages = useCallback(async (showLoading = false) => {
     if (showLoading) setLoading(true);
@@ -138,7 +138,7 @@ export default function WorkspaceTeamChatPanel({
       setMessages(next);
       setError('');
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : 'Failed to load Team Chat');
+      setError(loadError instanceof Error ? loadError.message : 'Failed to load Workspace Chat');
     } finally {
       if (showLoading) setLoading(false);
     }
@@ -185,7 +185,7 @@ export default function WorkspaceTeamChatPanel({
   const mentionSuggestions = useMemo(() => {
     if (mentionQuery === null) return [];
     const options = [
-      { id: 'lumo', displayName: 'Lumo', role: canLumoWrite ? 'AI · Freeflow editor' : 'AI · read-only' },
+      { id: 'lumo', displayName: 'Lumo', role: canLumoWrite ? 'AI · can edit shared' : 'AI · read-only' },
       ...collaborators.map((collaborator) => ({
         id: collaborator.userId,
         displayName: collaborator.displayName,
@@ -284,7 +284,7 @@ export default function WorkspaceTeamChatPanel({
   const renderMessage = (message: WorkspaceTeamMessage, isReply = false) => {
     const isLumo = message.authorType === 'lumo';
     const isActionsOpen = actionMessageId === message.id;
-    const lumoCapability = canLumoWrite ? 'Freeflow · can edit' : 'Read-only · Review';
+    const lumoCapability = canLumoWrite ? 'Can edit shared' : 'Read-only';
     return (
       <article
         key={message.id}
@@ -409,9 +409,9 @@ export default function WorkspaceTeamChatPanel({
             </div>
             <p className={`mt-0.5 text-[11px] ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
               Visible to workspace members. Message normally, or tag <strong>@Lumo</strong> for {canLumoWrite
-                ? 'help that can update Freeflow files.'
-                : workspace.editingPolicy === 'review' && canPropose
-                  ? 'read-only guidance. Use a message proposal to edit privately.'
+                ? 'help that can update shared files directly.'
+                : canPropose
+                  ? 'read-only guidance. Work privately to make edits.'
                   : 'read-only guidance.'}
             </p>
           </div>
@@ -446,7 +446,7 @@ export default function WorkspaceTeamChatPanel({
         {loading ? (
           <div className={`grid h-full place-items-center text-sm ${
             isDarkMode ? 'text-slate-500' : 'text-slate-400'
-          }`}>Loading Team Chat…</div>
+          }`}>Loading Workspace Chat…</div>
         ) : !messageThreads.roots.length ? (
           <div className="grid h-full place-items-center px-8 text-center">
             <div>
@@ -459,7 +459,7 @@ export default function WorkspaceTeamChatPanel({
                 Start the workspace conversation
               </p>
               <p className={`mt-1 text-xs leading-5 ${isDarkMode ? 'text-slate-500' : 'text-slate-500'}`}>
-                Share context, tag teammates, or ask @Lumo about the Shared working version.
+                Share context, tag teammates, or ask @Lumo about the Shared Working version.
               </p>
             </div>
           </div>
@@ -507,16 +507,16 @@ export default function WorkspaceTeamChatPanel({
         ) : null}
         <div className="relative">
           <TextArea
-            label="Team Chat message"
+            label="Workspace Chat message"
             isLabelHidden
             value={draft}
             rows={3}
             width="100%"
             placeholder={canComment
-              ? `Message the team… Use @Lumo for ${canLumoWrite ? 'Freeflow file help' : 'read-only guidance'}`
+              ? `Message the team… Use @Lumo for ${canLumoWrite ? 'shared file help' : 'read-only guidance'}`
               : 'Viewer access is read-only'}
             isDisabled={!canComment || sending}
-            disabledMessage="Commenter access is required to post in Team Chat."
+            disabledMessage="Commenter access is required to post in Workspace Chat."
             startIcon={<AtSign size={16} />}
             onChange={(value) => setDraft(value)}
             onKeyDown={(event) => {
@@ -553,7 +553,7 @@ export default function WorkspaceTeamChatPanel({
         </div>
         <div className="mt-2 flex items-center justify-between gap-3">
           <span className={`text-[11px] ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>
-            {canComment ? 'Enter to send · Shift+Enter for a new line' : 'You can read Team Chat with Viewer access.'}
+            {canComment ? 'Enter to send · Shift+Enter for a new line' : 'You can read Workspace Chat with Viewer access.'}
           </span>
           <Button
             label={replyTo ? 'Send reply' : 'Send'}
