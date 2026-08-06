@@ -10,6 +10,28 @@ import { DatabaseService } from './databaseService';
 import { S3Service } from './s3Service';
 import { WorkspaceRecord, WorkspaceRole, WorkspaceService } from './workspaceService';
 import { getWorkspaceRoleCapabilities } from './workspaceCollaborationPolicy';
+
+/**
+ * Normalizes a database timestamp (Date, ISO string, or epoch number) into
+ * epoch milliseconds. Returns null when the value is missing or unparseable so
+ * callers can skip timestamp-based comparisons instead of treating them as 0.
+ * Mirrors the identical helper in workspaceService for status derivation.
+ */
+const toEpochMillis = (value: unknown): number | null => {
+  if (value == null) return null;
+  if (value instanceof Date) {
+    const time = value.getTime();
+    return Number.isNaN(time) ? null : time;
+  }
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : null;
+  }
+  if (typeof value === 'string') {
+    const time = new Date(value).getTime();
+    return Number.isNaN(time) ? null : time;
+  }
+  return null;
+};
 import {
   namedGrantToLegacyWorkspaceRole,
   normalizeSelectedWorkspaceUsers,
@@ -612,6 +634,123 @@ export class WorkspacePublicationService {
     }
 
     const { workspace: teamWorkspace } = await this.workspaceService.ensureMembership(link.teamWorkspaceId, userId);
+
+    const isModernLink = Number(link.baseSharedContentRevision || 0) > 0;
+
+    if (isModernLink) {
+      return this.syncFromSharedWorking(privateWorkspaceId, privateWorkspace, teamWorkspace, link, userId, resolutions);
+    }
+
+    return this.syncFromPublishedVersion(privateWorkspaceId, teamWorkspace, link, userId, resolutions);
+  }
+
+  private async syncFromSharedWorking(
+    privateWorkspaceId: string,
+    privateWorkspace: WorkspaceRecord,
+    teamWorkspace: WorkspaceRecord,
+    link: PublicationLinkRecord,
+    userId: string,
+    resolutions: Record<string, PublishResolution>,
+  ) {
+    const currentSharedRevision = Number(teamWorkspace.contentRevision || 0);
+    const revisionChanged = currentSharedRevision !== Number(link.baseSharedContentRevision || 0);
+
+    // Conservative fallback matching workspaceService list status: Shared
+    // Working edits that did not bump contentRevision are still detectable if
+    // the workspace updatedAt (or the latest file updatedAt) moved past the
+    // link's last sync timestamp. Direct file insertions may only touch
+    // files.updatedAt without bumping workspace revision/updatedAt.
+    const teamUpdatedAtMillis = toEpochMillis(teamWorkspace.updatedAt);
+    const linkUpdatedAtMillis = toEpochMillis(link.updatedAt);
+    const maxFilesRow = await this.db('files')
+      .where({ workspaceId: teamWorkspace.id })
+      .max('updatedAt as maxUpdatedAt')
+      .first();
+    const teamFilesUpdatedAtMillis = toEpochMillis(maxFilesRow?.maxUpdatedAt);
+    const latestSharedTimestamp = Math.max(
+      teamUpdatedAtMillis ?? 0,
+      teamFilesUpdatedAtMillis ?? 0,
+    ) || null;
+    const sharedUpdatedAfterLink = linkUpdatedAtMillis != null
+      && latestSharedTimestamp != null
+      && latestSharedTimestamp > linkUpdatedAtMillis;
+
+    if (!revisionChanged && !sharedUpdatedAfterLink) {
+      return {
+        workspaceId: privateWorkspaceId,
+        teamWorkspaceId: teamWorkspace.id,
+        status: 'up_to_date' as const,
+        conflicts: [],
+      };
+    }
+
+    const privateRevision = Number(privateWorkspace.contentRevision || 0);
+    const privateHasChanges = privateRevision !== Number(link.basePrivateContentRevision || 0)
+      || link.hasUnpublishedChanges;
+
+    if (!privateHasChanges) {
+      const sharedContent = await this.readWorkspaceContent(teamWorkspace.id);
+      await this.replaceWorkspaceContent(
+        privateWorkspaceId,
+        sharedContent,
+        userId,
+        undefined,
+        async (tx, contentRevision) => {
+          const updated = await tx('workspace_publication_links')
+            .where({ privateWorkspaceId, userId })
+            .update({
+              basePublishedVersionId: teamWorkspace.currentPublishedVersionId || null,
+              basePrivateContentRevision: contentRevision,
+              baseSharedContentRevision: currentSharedRevision,
+              hasUnpublishedChanges: false,
+              updatedAt: tx.fn.now(),
+            });
+          if (updated !== 1) {
+            throw new ConflictError('The private workspace link changed while syncing');
+          }
+          if (teamWorkspace.currentPublishedVersionId) {
+            await this.copyPublishedSkillPinsToWorkspace(
+              tx,
+              teamWorkspace.currentPublishedVersionId,
+              privateWorkspaceId,
+              userId,
+            );
+          }
+        },
+      );
+
+      return {
+        workspaceId: privateWorkspaceId,
+        teamWorkspaceId: teamWorkspace.id,
+        status: 'synced' as const,
+        conflicts: [],
+      };
+    }
+
+    // Both sides changed — try published-base merge if a published version exists
+    if (teamWorkspace.currentPublishedVersionId && link.basePublishedVersionId) {
+      return this.syncFromPublishedVersion(privateWorkspaceId, teamWorkspace, link, userId, resolutions);
+    }
+
+    throw new ConflictError(
+      'Both the Shared workspace and your private draft have changed. Review and merge manually before syncing.',
+      {
+        code: 'REVIEW_NEEDED',
+        privateContentRevision: Number(privateWorkspace.contentRevision || 0),
+        basePrivateContentRevision: Number(link.basePrivateContentRevision || 0),
+        sharedContentRevision: currentSharedRevision,
+        baseSharedContentRevision: Number(link.baseSharedContentRevision || 0),
+      },
+    );
+  }
+
+  private async syncFromPublishedVersion(
+    privateWorkspaceId: string,
+    teamWorkspace: WorkspaceRecord,
+    link: PublicationLinkRecord,
+    userId: string,
+    resolutions: Record<string, PublishResolution>,
+  ) {
     if (!teamWorkspace.currentPublishedVersionId) {
       throw new ConflictError('No published Team version is available to sync');
     }
@@ -623,7 +762,7 @@ export class WorkspacePublicationService {
       return {
         workspaceId: privateWorkspaceId,
         teamWorkspaceId: teamWorkspace.id,
-        status: 'up_to_date',
+        status: 'up_to_date' as const,
         conflicts: [],
       };
     }
@@ -662,6 +801,7 @@ export class WorkspacePublicationService {
           .update({
             basePublishedVersionId: latestVersion.id,
             basePrivateContentRevision: contentRevision,
+            baseSharedContentRevision: Number(teamWorkspace.contentRevision || 0),
             hasUnpublishedChanges: !this.workspaceContentsMatch(merged, teamContent),
             updatedAt: tx.fn.now(),
           });
@@ -705,6 +845,88 @@ export class WorkspacePublicationService {
         this.db.raw(`COALESCE(publisher."displayName", 'Former user') as "publisherName"`),
       )
       .orderBy('version.versionNumber', 'desc');
+  }
+
+  /**
+   * Describe a single published version plus the immutable file/folder listing captured in
+   * its manifest. Read-only: it never touches the mutable Working version.
+   */
+  async getVersionSnapshot(teamWorkspaceId: string, versionId: string, userId: string) {
+    const { workspace } = await this.workspaceService.ensureMembership(teamWorkspaceId, userId);
+    if (workspace.visibility !== 'team') {
+      throw new ConflictError('Published versions are only available for Shared workspaces');
+    }
+    const version = await this.getPublishedVersion(versionId, teamWorkspaceId);
+    const manifest = this.normalizeManifest(version.manifest);
+    const files = manifest.files
+      .map((file) => {
+        const name = this.normalizeRelativePath(file.name);
+        return {
+          id: `published:${version.id}:${name}`,
+          name,
+          path: name,
+          workspaceId: teamWorkspaceId,
+          storageType: 'local' as const,
+          mimeType: file.mimeType || null,
+          size: Number(file.size || 0),
+          publishedVersionId: version.id,
+        };
+      })
+      .sort((left, right) => left.name.localeCompare(right.name));
+    return {
+      workspaceId: teamWorkspaceId,
+      versionId: version.id,
+      versionNumber: Number(version.versionNumber),
+      note: version.note ?? null,
+      createdAt: version.createdAt,
+      isCurrent: workspace.currentPublishedVersionId === version.id,
+      folders: [...new Set(manifest.folders.map((folder) => this.normalizeRelativePath(folder)))].sort(),
+      files,
+    };
+  }
+
+  /**
+   * Read one file out of an immutable published snapshot. Mirrors the shape returned by
+   * FileService.getFileContent so the workspace canvas can render it unchanged.
+   */
+  async readVersionFile(
+    teamWorkspaceId: string,
+    versionId: string,
+    relativePath: string,
+    userId: string,
+  ) {
+    const { workspace } = await this.workspaceService.ensureMembership(teamWorkspaceId, userId);
+    if (workspace.visibility !== 'team') {
+      throw new ConflictError('Published versions are only available for Shared workspaces');
+    }
+    const version = await this.getPublishedVersion(versionId, teamWorkspaceId);
+    const manifest = this.normalizeManifest(version.manifest);
+    const safeName = this.normalizeRelativePath(relativePath);
+    const entry = manifest.files.find((file) => this.normalizeRelativePath(file.name) === safeName);
+    if (!entry) {
+      throw new NotFoundError('File not found in this published version');
+    }
+    const buffer = await fs.readFile(path.join(this.versionDirectory(version.id), safeName));
+    const contentFile: ContentFile = {
+      name: safeName,
+      mimeType: entry.mimeType || null,
+      buffer,
+      hash: entry.hash,
+      size: Number(entry.size || buffer.length),
+    };
+    return {
+      id: `published:${version.id}:${safeName}`,
+      name: safeName,
+      path: safeName,
+      workspaceId: teamWorkspaceId,
+      storageType: 'local' as const,
+      mimeType: contentFile.mimeType,
+      size: contentFile.size,
+      publishedVersionId: version.id,
+      content: this.isTextContent(contentFile)
+        ? buffer.toString('utf-8')
+        : buffer.toString('base64'),
+    };
   }
 
   async restore(teamWorkspaceId: string, versionId: string, userId: string) {

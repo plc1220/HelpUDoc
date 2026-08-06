@@ -27,6 +27,12 @@ import {
   deleteWorkspace,
   getWorkspaces,
   renameWorkspace,
+  getPublishedVersionFileContent,
+  getPublishedVersionSnapshot,
+  syncWorkspaceWithTeam,
+  WorkspaceApiError,
+  type PublicationConflict,
+  type PublishedWorkspaceVersion,
 } from '../../services/workspaceApi';
 import {
   createWorkspaceSchedule,
@@ -96,9 +102,23 @@ import CollapsibleDrawer from '../../components/CollapsibleDrawer';
 import WorkspaceShareDialog from '../../components/WorkspaceShareDialog';
 import WorkspacePublishDialog from '../../components/WorkspacePublishDialog';
 import WorkspaceHistoryDialog from '../../components/WorkspaceHistoryDialog';
+import WorkspaceConflictDialog from '../../components/WorkspaceConflictDialog';
 import WorkspaceWithdrawPublicationDialog from '../../components/WorkspaceWithdrawPublicationDialog';
 import WorkspaceCollaborationDialog from '../../components/WorkspaceCollaborationDialog';
 import WorkspaceReviewChangesDialog from '../../components/WorkspaceReviewChangesDialog';
+import {
+  DRAFT_SYNC_ACTION_LABEL,
+  extractSyncConflicts,
+  isDraftSyncActionable,
+  isLinkedDraftWorkspace,
+} from '../../utils/workspaceDraftSync';
+import {
+  canMutateWorkspaceContent,
+  isPublishedVersionFileId,
+  isPublishedVersionMode,
+  publishedVersionLabel,
+  type PublishedVersionSelection,
+} from '../../utils/workspacePublicationMode';
 import ScheduleDialog from '../../components/schedules/ScheduleDialog';
 import WorkspaceSchedulesPanel from '../../components/schedules/WorkspaceSchedulesPanel';
 import type { UIBlock } from '../../components/UIBlockRenderer';
@@ -913,6 +933,18 @@ export default function WorkspacePage() {
   const [historyWorkspaceTarget, setHistoryWorkspaceTarget] = useState<Workspace | null>(null);
   const [withdrawWorkspaceTarget, setWithdrawWorkspaceTarget] = useState<Workspace | null>(null);
   const [reviewChangesWorkspace, setReviewChangesWorkspace] = useState<Workspace | null>(null);
+  const [draftSyncWorkspace, setDraftSyncWorkspace] = useState<Workspace | null>(null);
+  const [draftSyncConflicts, setDraftSyncConflicts] = useState<PublicationConflict[]>([]);
+  const [syncingDraftWorkspaceId, setSyncingDraftWorkspaceId] = useState<string | null>(null);
+  const [draftSyncError, setDraftSyncError] = useState('');
+  const [publishedVersionView, setPublishedVersionView] = useState<PublishedVersionSelection | null>(null);
+  /**
+   * Published versions are immutable snapshots. While one is selected the canvas is read-only,
+   * independently of the workspace permissions that normally drive editability.
+   */
+  const isPublishedMode = isPublishedVersionMode(publishedVersionView, selectedWorkspace);
+  const canMutateContent = canMutateWorkspaceContent(selectedWorkspace, publishedVersionView);
+  const canSyncSelectedDraft = isDraftSyncActionable(selectedWorkspace);
   const personas = DEFAULT_PERSONAS;
   const [selectedPersona, setSelectedPersona] = useState(DEFAULT_PERSONA_NAME);
   const [isEditMode, setIsEditMode] = useState(false);
@@ -964,7 +996,7 @@ export default function WorkspacePage() {
   const pendingAutoSaveRef = useRef<Promise<boolean> | null>(null);
   const lastAutoSavedContentRef = useRef<string>('');
   const fileContentRequestIdRef = useRef(0);
-  const autoReviewCopyInFlightRef = useRef<Set<string>>(new Set());
+  // autoReviewCopyInFlightRef removed: auto-provisioning is no longer triggered on workspace selection.
   const [isMentionOpen, setIsMentionOpen] = useState(false);
   const [mentionQuery, setMentionQuery] = useState('');
   const [mentionTriggerIndex, setMentionTriggerIndex] = useState<number | null>(null);
@@ -3151,12 +3183,112 @@ export default function WorkspacePage() {
     setIsEditMode(false);
     setWorkspaceNameDraft(workspace.name);
     setFolderPaths([]);
+    // Leaving a workspace always drops any published-version selection so the read-only
+    // snapshot view can never leak into another workspace.
+    setPublishedVersionView(null);
     setSelectedWorkspace(workspace);
     setIsLandingPageVisible(false);
     if (workspace.visibility === 'team') {
       setIsAgentPaneVisible(true);
       setMobileSurface('canvas');
     }
+  }, []);
+
+  /**
+   * Sync the Shared Working version into `My draft`. When overlapping changes exist the backend
+   * answers 409 with the conflict list, which opens `Resolve changes` in the contributor's draft
+   * (spec section 9.3) rather than in the publisher's proposal view.
+   */
+  const runDraftSync = useCallback(async (
+    workspace: Workspace,
+    resolutions: Record<string, 'private' | 'team'> = {},
+  ) => {
+    const isResolving = Object.keys(resolutions).length > 0;
+    setSyncingDraftWorkspaceId(workspace.id);
+    setDraftSyncError('');
+    try {
+      const result = await syncWorkspaceWithTeam(workspace.id, resolutions);
+      setDraftSyncConflicts([]);
+      setDraftSyncWorkspace(null);
+      // Refreshing the list re-selects the open workspace, which reloads its files.
+      await refreshWorkspaceList();
+      addLocalSystemMessage(result?.status === 'up_to_date'
+        ? `${workspace.name} already matches the Shared Working version.`
+        : `Synced the latest Shared Working version into ${workspace.name}.`);
+    } catch (error) {
+      const conflicts = error instanceof WorkspaceApiError
+        ? extractSyncConflicts(error.details) as PublicationConflict[]
+        : [];
+      if (conflicts.length) {
+        setDraftSyncWorkspace(workspace);
+        setDraftSyncConflicts(conflicts);
+        return;
+      }
+      const message = error instanceof Error
+        ? error.message
+        : 'Failed to sync the latest Shared changes.';
+      if (isResolving) {
+        setDraftSyncError(message);
+      } else {
+        addLocalSystemMessage(message);
+      }
+    } finally {
+      setSyncingDraftWorkspaceId(null);
+    }
+  }, [addLocalSystemMessage, refreshWorkspaceList]);
+
+  const handleSyncDraftWorkspace = useCallback((workspace: Workspace) => {
+    void runDraftSync(workspace);
+  }, [runDraftSync]);
+
+  /**
+   * `Review changes` is the primary action for a draft holding private changes (spec section 8.3).
+   * It is reachable from the sidebar row and its action menu without first opening the draft.
+   */
+  const handleReviewDraftChanges = useCallback((workspace: Workspace) => {
+    setReviewChangesWorkspace(workspace);
+  }, []);
+
+  /**
+   * Stale submissions are resolved by syncing inside `My draft` (spec sections 2.7 and 9.4), so the
+   * stale banner in `Review changes` drives the same sync flow — including the 409 conflict hand-off.
+   */
+  const handleSyncDraftFromReviewChanges = useCallback(async () => {
+    if (!reviewChangesWorkspace) return;
+    await runDraftSync(reviewChangesWorkspace);
+  }, [reviewChangesWorkspace, runDraftSync]);
+
+  const handleViewPublishedVersion = useCallback((
+    workspace: Workspace,
+    version: PublishedWorkspaceVersion,
+  ) => {
+    setHistoryWorkspaceTarget(null);
+    if (selectedWorkspace?.id !== workspace.id) {
+      handleSelectWorkspace(workspace);
+    }
+    setIsEditMode(false);
+    setSelectedFile(null);
+    setSelectedFileDetails(null);
+    setSelectedFiles(new Set());
+    setSelectedDashboardPath(null);
+    setFileContent('');
+    setPublishedVersionView({
+      workspaceId: workspace.id,
+      versionId: version.id,
+      versionNumber: version.versionNumber,
+      note: version.note,
+      createdAt: version.createdAt,
+      isCurrent: version.isCurrent,
+    });
+  }, [handleSelectWorkspace, selectedWorkspace?.id]);
+
+  const handleExitPublishedVersion = useCallback(() => {
+    setPublishedVersionView(null);
+    setIsEditMode(false);
+    setSelectedFile(null);
+    setSelectedFileDetails(null);
+    setSelectedFiles(new Set());
+    setFileContent('');
   }, []);
 
   const handleOpenPrivateWorkingCopy = useCallback(async () => {
@@ -3174,47 +3306,56 @@ export default function WorkspacePage() {
     }
   }, [addLocalSystemMessage, handleSelectWorkspace, refreshWorkspaceList, selectedWorkspace]);
 
+  // Spec section 20, point 4: "Automatically provision My draft on first private action,
+  // not on first Shared-workspace open." The previous auto-provision on workspace selection
+  // (gated on editingPolicy === 'review') is intentionally removed.
+
   useEffect(() => {
-    const workspace = selectedWorkspace;
-    const canPropose = workspace?.role === 'owner'
-      || workspace?.role === 'editor'
-      || workspace?.role === 'contributor';
-    if (
-      !workspace
-      || workspace.visibility !== 'team'
-      || workspace.editingPolicy !== 'review'
-      || workspace.privateCopyWorkspaceId
-      || !canPropose
-      || autoReviewCopyInFlightRef.current.has(workspace.id)
-    ) {
+    if (!selectedWorkspace) return;
+    if (publishedVersionView && publishedVersionView.workspaceId === selectedWorkspace.id) {
+      // Published versions are immutable snapshots, so the listing comes from the version
+      // manifest instead of the mutable Working-version file table.
+      let cancelled = false;
+      void (async () => {
+        try {
+          const snapshot = await getPublishedVersionSnapshot(
+            selectedWorkspace.id,
+            publishedVersionView.versionId,
+          );
+          if (cancelled) return;
+          setFolderPaths(snapshot.folders);
+          setFiles(snapshot.files.map((file) => ({
+            id: file.id,
+            name: file.name,
+            path: file.path,
+            workspaceId: file.workspaceId,
+            storageType: file.storageType,
+            mimeType: file.mimeType,
+          })));
+          setWorkspaceKnowledge([]);
+        } catch (error) {
+          if (cancelled) return;
+          console.error('Failed to load published version files', error);
+          setFiles([]);
+          setFolderPaths([]);
+        }
+      })();
+      return () => {
+        cancelled = true;
+      };
+    }
+    loadFilesForWorkspace(selectedWorkspace.id, {
+      includePrivateData: selectedWorkspace.visibility !== 'team',
+    });
+  }, [selectedWorkspace, publishedVersionView, loadFilesForWorkspace]);
+  const handleRefreshFiles = () => {
+    if (!selectedWorkspace) return;
+    if (isPublishedMode) {
+      // Re-selecting the same immutable snapshot is a no-op; refresh the Working version instead.
+      handleExitPublishedVersion();
       return;
     }
-
-    autoReviewCopyInFlightRef.current.add(workspace.id);
-    void createPrivateWorkspaceCopy(workspace.id)
-      .then(() => refreshWorkspaceList())
-      .catch((error) => {
-        console.error('Failed to provision Review private copy', error);
-        addLocalSystemMessage(error instanceof Error
-          ? error.message
-          : 'Failed to provision your Review private copy.');
-      })
-      .finally(() => {
-        autoReviewCopyInFlightRef.current.delete(workspace.id);
-      });
-  }, [addLocalSystemMessage, refreshWorkspaceList, selectedWorkspace]);
-
-  useEffect(() => {
-    if (selectedWorkspace) {
-      loadFilesForWorkspace(selectedWorkspace.id, {
-        includePrivateData: selectedWorkspace.visibility !== 'team',
-      });
-    }
-  }, [selectedWorkspace, loadFilesForWorkspace]);
-  const handleRefreshFiles = () => {
-    if (selectedWorkspace) {
-      loadFilesForWorkspace(selectedWorkspace.id);
-    }
+    loadFilesForWorkspace(selectedWorkspace.id);
   };
 
   const openPlanApprovalEditor = useCallback((
@@ -3273,6 +3414,25 @@ export default function WorkspacePage() {
       return;
     }
     if (selectedFile && selectedWorkspace) {
+      if (isPublishedMode && publishedVersionView && isPublishedVersionFileId(selectedFile.id)) {
+        try {
+          const published = await getPublishedVersionFileContent(
+            publishedVersionView.workspaceId,
+            publishedVersionView.versionId,
+            selectedFile.path || selectedFile.name,
+          );
+          if (!isCurrentRequest()) return;
+          setSelectedFileDetails({ ...selectedFile, ...published });
+          setFileContent(published.content || '');
+          lastAutoSavedContentRef.current = published.content || '';
+        } catch (error) {
+          if (!isCurrentRequest()) return;
+          console.error('Failed to fetch published version file content:', error);
+          setFileContent('Failed to load the locked version of this file.');
+          setSelectedFileDetails(null);
+        }
+        return;
+      }
       if (isDraftWorkspaceFile(selectedFile)) {
         if (!isCurrentRequest()) return;
         const draftContent = selectedFile.content || '';
@@ -3301,7 +3461,7 @@ export default function WorkspacePage() {
       setSelectedFileDetails(null);
       lastAutoSavedContentRef.current = '';
     }
-  }, [selectedDashboardPath, selectedFile, selectedWorkspace]);
+  }, [selectedDashboardPath, selectedFile, selectedWorkspace, isPublishedMode, publishedVersionView]);
 
   useEffect(() => {
     void fetchFileContent();
@@ -6490,6 +6650,13 @@ export default function WorkspacePage() {
     content: string,
   ): Promise<boolean> => {
     if (!selectedWorkspace || !targetFile) return false;
+    if (isPublishedMode) {
+      // Published versions are immutable; never write through the snapshot view.
+      addLocalSystemMessage(
+        'Locked versions are immutable. Return to the Working version to make changes.',
+      );
+      return false;
+    }
 
     try {
       if (isDraftWorkspaceFile(targetFile)) {
@@ -6534,7 +6701,7 @@ export default function WorkspacePage() {
       console.error('Failed to update file:', error);
       return false;
     }
-  }, [addLocalSystemMessage, markPrivateWorkspaceChanged, selectedWorkspace]);
+  }, [addLocalSystemMessage, isPublishedMode, markPrivateWorkspaceChanged, selectedWorkspace]);
 
   const runTrackedWorkspaceSave = useCallback((
     targetFile: WorkspaceFile | null,
@@ -7312,8 +7479,8 @@ export default function WorkspacePage() {
               {selectedWorkspace.visibility !== 'team'
                 ? 'Share workspace'
                 : selectedWorkspace.currentPublishedVersionNumber == null
-                  ? 'Create first published version'
-                  : 'Publish changes'}
+                  ? 'Create first locked version'
+                  : 'Lock changes'}
             </button>
           ) : null}
       </header>
@@ -7326,11 +7493,11 @@ export default function WorkspacePage() {
                 ? 'border-sky-900/60 bg-sky-950/40 text-sky-200'
                 : 'border-blue-100 bg-blue-50 text-blue-700'
             }`}>
-              {selectedWorkspace.canEdit
-                ? selectedWorkspace.editingPolicy === 'review'
-                  ? 'Shared workspace · Review mode'
-                  : 'Shared workspace · Freeflow editing'
-                : 'Shared workspace · View only'}
+              {isPublishedMode && publishedVersionView
+                ? `Shared workspace · ${publishedVersionLabel(publishedVersionView)}`
+                : selectedWorkspace.canEdit
+                  ? 'Shared workspace · Working version'
+                  : 'Shared workspace · View only'}
             </div>
           ) : null}
           <ChatMessageList
@@ -7508,12 +7675,11 @@ export default function WorkspacePage() {
                       <span className={`block truncate text-[10px] ${
                         isDarkMode ? 'text-slate-500' : 'text-slate-500'
                       }`}>
-                        {workspace.teamName
-                          || (workspace.editingPolicy === 'review' ? 'Review' : 'Freeflow')}
+                        {workspace.teamName || 'Shared workspace'}
                         {' · '}
                         {workspace.currentPublishedVersionNumber == null
-                          ? 'Not published'
-                          : `Published v${workspace.currentPublishedVersionNumber}`}
+                          ? 'Working version'
+                          : `Locked v${workspace.currentPublishedVersionNumber}`}
                       </span>
                     </span>
                     {selectedWorkspace?.id === workspace.id ? <Check size={15} className="shrink-0" /> : null}
@@ -7663,6 +7829,9 @@ export default function WorkspacePage() {
           onHistoryWorkspace={setHistoryWorkspaceTarget}
           onWithdrawWorkspace={setWithdrawWorkspaceTarget}
           onManageTeamAccess={handleManageTeamAccess}
+          onSyncDraftWorkspace={handleSyncDraftWorkspace}
+          onReviewDraftChanges={handleReviewDraftChanges}
+          syncingDraftWorkspaceId={syncingDraftWorkspaceId}
           onSelectWorkspace={handleSelectWorkspace}
           onCreateWorkspace={() => {
             void handleCreateWorkspace();
@@ -8151,7 +8320,52 @@ export default function WorkspacePage() {
                     </button>
                   </div>
                 ) : null}
+                {canSyncSelectedDraft && selectedWorkspace ? (
+                  <div className="flex shrink-0 items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleSyncDraftWorkspace(selectedWorkspace)}
+                      disabled={syncingDraftWorkspaceId === selectedWorkspace.id}
+                      title="Sync the latest Shared Working version into My draft"
+                      className={`inline-flex h-9 items-center justify-center gap-2 rounded-lg px-3 text-sm font-medium disabled:cursor-wait disabled:opacity-60 ${
+                        isDarkMode
+                          ? 'bg-amber-500/15 text-amber-200 hover:bg-amber-500/25'
+                          : 'bg-amber-50 text-amber-700 hover:bg-amber-100'
+                      }`}
+                    >
+                      <RotateCcw size={15} />
+                      {syncingDraftWorkspaceId === selectedWorkspace.id ? 'Syncing…' : DRAFT_SYNC_ACTION_LABEL}
+                    </button>
+                  </div>
+                ) : null}
               </div>
+              {isPublishedMode && publishedVersionView ? (
+                <div
+                  role="status"
+                  className={`flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2 text-xs ${
+                    isDarkMode
+                      ? 'border-b border-[#223047] bg-slate-900/70 text-slate-300'
+                      : 'border-b border-gray-200 bg-slate-50 text-slate-600'
+                  }`}
+                >
+                  <span className="font-semibold">{publishedVersionLabel(publishedVersionView)}</span>
+                  <span>
+                    Immutable snapshot locked {new Date(publishedVersionView.createdAt).toLocaleString()}
+                    {publishedVersionView.note ? ` · ${publishedVersionView.note}` : ''}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleExitPublishedVersion}
+                    className={`ml-auto inline-flex h-7 items-center rounded-lg px-2.5 font-semibold ${
+                      isDarkMode
+                        ? 'bg-sky-500/15 text-sky-200 hover:bg-sky-500/25'
+                        : 'bg-blue-50 text-blue-700 hover:bg-blue-100'
+                    }`}
+                  >
+                    Return to Working version
+                  </button>
+                </div>
+              ) : null}
               <div className="flex-1 flex min-h-0">
                 {/* File Explorer */}
                 <div
@@ -8211,7 +8425,7 @@ export default function WorkspacePage() {
                             variant="ghost"
                             size="sm"
                             onClick={() => setIsFileActionMenuOpen((prev) => !prev)}
-                            isDisabled={!selectedWorkspace?.canEdit}
+                            isDisabled={!canMutateContent}
                             aria-haspopup="menu"
                             aria-expanded={isFileActionMenuOpen}
                           />
@@ -8302,7 +8516,7 @@ export default function WorkspacePage() {
                           variant="ghost"
                           size="sm"
                           onClick={handleSelectAllFiles}
-                          isDisabled={!selectedWorkspace?.canEdit || visibleFiles.length === 0}
+                          isDisabled={!canMutateContent || visibleFiles.length === 0}
                         />
                         <IconButton
                           label="Delete selected files"
@@ -8310,7 +8524,7 @@ export default function WorkspacePage() {
                           variant="destructive"
                           size="sm"
                           onClick={handleBulkDelete}
-                          isDisabled={!selectedWorkspace?.canEdit || selectedFiles.size === 0}
+                          isDisabled={!canMutateContent || selectedFiles.size === 0}
                         />
                       </div>
                     )}
@@ -8347,13 +8561,13 @@ export default function WorkspacePage() {
                         selectedFiles={selectedFiles}
                         copiedPublicUrlFileId={copiedPublicUrlFileId}
                         dashboardArtifactsByPath={dashboardArtifactsByPath}
-                        readOnly={!selectedWorkspace?.canEdit}
+                        readOnly={!canMutateContent}
                         isDraftWorkspaceFile={isDraftWorkspaceFile}
                         onSelectFile={(file) => {
                           setSelectedFile(file);
                           setSelectedFileDetails(null);
                           setFileContent('');
-                          setIsEditMode(Boolean(selectedWorkspace?.canEdit) && shouldForceEditMode(file.name));
+                          setIsEditMode(canMutateContent && shouldForceEditMode(file.name));
                         }}
                         onSelectFolder={handleDashboardFolderSelect}
                         onToggleFileSelection={handleFileSelect}
@@ -8435,7 +8649,7 @@ export default function WorkspacePage() {
                           icon={<Edit size={16} />}
                           size="sm"
                           isPressed={isEditMode}
-                          isDisabled={!selectedWorkspace?.canEdit || !selectedFile || !isFileEditable(selectedFile.name)}
+                          isDisabled={!canMutateContent || !selectedFile || !isFileEditable(selectedFile.name)}
                           onPressedChange={(isPressed) => {
                             if (isPressed && !isAgentPaneVisible) {
                               setIsAgentPaneVisible(true);
@@ -8444,13 +8658,15 @@ export default function WorkspacePage() {
                           }}
                         />
                       )}
-                      <Button
-                        label="Save"
-                        variant="primary"
-                        size="sm"
-                        onClick={() => selectedFile && runTrackedWorkspaceSave(selectedFile, fileContent)}
-                        isDisabled={!selectedWorkspace?.canEdit || !isEditMode}
-                      />
+                      {isPublishedMode ? null : (
+                        <Button
+                          label="Save"
+                          variant="primary"
+                          size="sm"
+                          onClick={() => selectedFile && runTrackedWorkspaceSave(selectedFile, fileContent)}
+                          isDisabled={!canMutateContent || !isEditMode}
+                        />
+                      )}
                       {!isEditMode && (
                         <ButtonGroup label="Canvas zoom" size="sm">
                           <IconButton
@@ -8480,7 +8696,7 @@ export default function WorkspacePage() {
                     </div>
                   </div>
                   <div className="flex-1 overflow-hidden min-h-0">
-                    {isEditMode && selectedWorkspace ? (
+                    {isEditMode && !isPublishedMode && selectedWorkspace ? (
                       <Suspense fallback={editorLoadingFallback}>
                         <FileEditor
                           file={selectedFileDetails || selectedFile}
@@ -8840,6 +9056,11 @@ export default function WorkspacePage() {
         workspace={reviewChangesWorkspace}
         colorMode={colorMode}
         onClose={() => setReviewChangesWorkspace(null)}
+        onSyncLatest={isLinkedDraftWorkspace(reviewChangesWorkspace)
+          ? handleSyncDraftFromReviewChanges
+          : undefined}
+        syncing={Boolean(reviewChangesWorkspace)
+          && syncingDraftWorkspaceId === reviewChangesWorkspace?.id}
         onSubmitted={async () => {
           await refreshWorkspaceList();
         }}
@@ -8857,11 +9078,27 @@ export default function WorkspacePage() {
         open={historyWorkspaceTarget !== null}
         workspace={historyWorkspaceTarget}
         onClose={() => setHistoryWorkspaceTarget(null)}
+        onViewVersion={handleViewPublishedVersion}
         onRestored={async () => {
           await refreshWorkspaceList();
           if (historyWorkspaceTarget) {
             await loadFilesForWorkspace(historyWorkspaceTarget.id, { includePrivateData: false });
           }
+        }}
+      />
+      <WorkspaceConflictDialog
+        open={draftSyncWorkspace !== null && draftSyncConflicts.length > 0}
+        conflicts={draftSyncConflicts}
+        busy={Boolean(draftSyncWorkspace) && syncingDraftWorkspaceId === draftSyncWorkspace?.id}
+        error={draftSyncError}
+        onClose={() => {
+          setDraftSyncWorkspace(null);
+          setDraftSyncConflicts([]);
+          setDraftSyncError('');
+        }}
+        onConfirm={async (resolutions) => {
+          if (!draftSyncWorkspace) return;
+          await runDraftSync(draftSyncWorkspace, resolutions);
         }}
       />
       <WorkspaceWithdrawPublicationDialog

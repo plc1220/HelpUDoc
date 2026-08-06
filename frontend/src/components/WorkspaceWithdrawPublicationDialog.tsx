@@ -41,7 +41,7 @@ const WorkspaceWithdrawPublicationDialog: React.FC<WorkspaceWithdrawPublicationD
       await onWithdrawn();
       onClose();
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'Failed to withdraw publication');
+      setError(reason instanceof Error ? reason.message : 'Failed to withdraw lock');
     } finally {
       setBusy(false);
     }
@@ -49,21 +49,21 @@ const WorkspaceWithdrawPublicationDialog: React.FC<WorkspaceWithdrawPublicationD
 
   return (
     <Dialog open={open} onClose={busy ? undefined : onClose} fullWidth maxWidth="xs">
-      <DialogTitle>Withdraw publication?</DialogTitle>
+      <DialogTitle>Withdraw lock?</DialogTitle>
       <DialogContent dividers>
         <Typography variant="body2">
-          <strong>{workspace?.name}</strong> will no longer have a current published version.
-          Its Shared working version and immutable publication history will be preserved.
+          <strong>{workspace?.name}</strong> will no longer have a current locked version.
+          Its Shared working version and immutable locked history will be preserved.
         </Typography>
         <Alert severity="info" sx={{ mt: 2 }}>
-          You can publish the working version again later. The next publication will use a new version number.
+          You can lock the working version again later. The next lock will use a new version number.
         </Alert>
         {error ? <Alert severity="error" sx={{ mt: 2 }}>{error}</Alert> : null}
       </DialogContent>
       <DialogActions>
         <Button onClick={onClose} disabled={busy}>Cancel</Button>
         <Button color="warning" variant="contained" onClick={() => void handleWithdraw()} disabled={busy}>
-          {busy ? 'Withdrawing…' : 'Withdraw publication'}
+          {busy ? 'Withdrawing…' : 'Withdraw lock'}
         </Button>
       </DialogActions>
     </Dialog>

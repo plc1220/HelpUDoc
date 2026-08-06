@@ -35,6 +35,27 @@ const WORKSPACE_ROLE_RANK: Record<WorkspaceRole, number> = {
   owner: 4,
 };
 
+/**
+ * Normalizes a database timestamp (Date, ISO string, or epoch number) into
+ * epoch milliseconds. Returns null when the value is missing or unparseable so
+ * callers can skip timestamp-based comparisons instead of treating them as 0.
+ */
+const toEpochMillis = (value: unknown): number | null => {
+  if (value == null) return null;
+  if (value instanceof Date) {
+    const time = value.getTime();
+    return Number.isNaN(time) ? null : time;
+  }
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : null;
+  }
+  if (typeof value === 'string') {
+    const time = new Date(value).getTime();
+    return Number.isNaN(time) ? null : time;
+  }
+  return null;
+};
+
 export const strongestWorkspaceRole = (
   ...roles: Array<WorkspaceRole | null | undefined>
 ): WorkspaceRole => roles.reduce<WorkspaceRole>(
@@ -178,6 +199,10 @@ export class WorkspaceService {
         'private_link.basePublishedVersionId',
         'private_link.basePrivateContentRevision',
         'private_link.hasUnpublishedChanges',
+        'linked_team.contentRevision as linkedTeamContentRevision',
+        'linked_team.updatedAt as linkedTeamUpdatedAt',
+        'private_link.baseSharedContentRevision',
+        'private_link.updatedAt as publicationLinkUpdatedAt',
         'linked_team_member.role as linkedTeamRole',
         'linked_team_group_member.userId as linkedTeamGroupMemberUserId',
         'team_link.privateWorkspaceId as privateCopyWorkspaceId',
@@ -186,10 +211,22 @@ export class WorkspaceService {
         'published.createdAt as lastPublishedAt',
         'publisher.displayName as latestPublisherName',
         this.db.raw(`(
+          SELECT MAX(f."updatedAt")
+          FROM files AS f
+          WHERE f."workspaceId" = private_link."teamWorkspaceId"
+        ) as "linkedTeamFilesUpdatedAt"`),
+        this.db.raw(`(
           SELECT COUNT(*)::int
           FROM workspace_published_versions AS version_history
           WHERE version_history."teamWorkspaceId" = w.id
         ) as "publishedVersionCount"`),
+        this.db.raw(`(
+          SELECT COUNT(*)::int
+          FROM workspace_collaboration_objects AS collab
+          WHERE collab."workspaceId" = w.id
+            AND collab.type = 'change_proposal'
+            AND collab.status IN ('proposed', 'discussing')
+        ) as "pendingProposalCount"`),
       )
       .where((query) => {
         query
@@ -228,13 +265,39 @@ export class WorkspaceService {
       const linkedTeamAccessible = visibility === 'private'
         && row.linkedTeamWorkspaceId
         && (Boolean(row.linkedTeamRole) || Boolean(row.linkedTeamGroupMemberUserId));
+      const sharedContentRevisionKnown = visibility === 'private'
+        && row.linkedTeamWorkspaceId
+        && row.baseSharedContentRevision != null
+        && Number(row.baseSharedContentRevision) > 0;
+      // Primary signal: the Shared Working copy moved past the revision this
+      // draft was last synced with.
+      const sharedRevisionChanged = sharedContentRevisionKnown
+        ? Number(row.linkedTeamContentRevision || 0) !== Number(row.baseSharedContentRevision || 0)
+        : String(row.linkedTeamCurrentPublishedVersionId || '') !== String(row.basePublishedVersionId || '');
+      // Conservative legacy fallback: older Shared Working edits did not always
+      // bump contentRevision, so a Shared workspace touched after the last
+      // publication-link update still counts as an incoming change. Requires
+      // both timestamps; a link without a timestamp never triggers this.
+      // File-level updatedAt covers direct file insertions that do not bump
+      // workspace revision or workspace updatedAt.
+      const linkUpdatedAtMillis = toEpochMillis(row.publicationLinkUpdatedAt);
+      const linkedTeamUpdatedAtMillis = toEpochMillis(row.linkedTeamUpdatedAt);
+      const linkedTeamFilesUpdatedAtMillis = toEpochMillis(row.linkedTeamFilesUpdatedAt);
+      const latestSharedTimestamp = Math.max(
+        linkedTeamUpdatedAtMillis ?? 0,
+        linkedTeamFilesUpdatedAtMillis ?? 0,
+      ) || null;
+      const sharedUpdatedAfterLink = linkUpdatedAtMillis != null
+        && latestSharedTimestamp != null
+        && latestSharedTimestamp > linkUpdatedAtMillis;
       const teamChanged = visibility === 'private'
         && row.linkedTeamWorkspaceId
         && linkedTeamAccessible
-        && String(row.linkedTeamCurrentPublishedVersionId || '') !== String(row.basePublishedVersionId || '');
+        && (sharedRevisionChanged || sharedUpdatedAfterLink);
       const needsInitialPublication = visibility === 'private'
         && Boolean(row.linkedTeamWorkspaceId)
-        && !row.linkedTeamCurrentPublishedVersionId;
+        && !row.linkedTeamCurrentPublishedVersionId
+        && !sharedContentRevisionKnown;
       const publicationStatus = visibility === 'team'
         ? row.currentPublishedVersionNumber == null
           ? Number(row.publishedVersionCount || 0) > 0
@@ -272,10 +335,8 @@ export class WorkspaceService {
         role: effectiveRole,
         canEdit: visibility === 'private'
           || effectiveRole === 'owner'
-          || (
-            (row.editingPolicy || 'review') === 'direct'
-            && (effectiveRole === 'editor' || effectiveRole === 'contributor')
-          ),
+          || effectiveRole === 'editor'
+          || effectiveRole === 'contributor',
         canPublish: visibility === 'team'
           && (row.directRole === 'owner' || row.directRole === 'editor'),
         teamName: row.teamName || null,
@@ -292,6 +353,9 @@ export class WorkspaceService {
           : Number(row.currentPublishedVersionNumber),
         publishedVersionCount: visibility === 'team'
           ? Number(row.publishedVersionCount || 0)
+          : 0,
+        pendingProposalCount: visibility === 'team'
+          ? Number(row.pendingProposalCount || 0)
           : 0,
         latestPublisherName: visibility === 'private' && row.linkedTeamWorkspaceId && !linkedTeamAccessible
           ? null

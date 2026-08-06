@@ -3,7 +3,7 @@ import test from 'node:test';
 import {
   getImplicitContinuationContext,
   buildContinuationPrompt,
-} from '../src/utils/implicitSkillContinuation';
+} from '../src/utils/implicitSkillContinuation.ts';
 import type { ConversationMessage, ConversationMessageMetadata } from '@helpudoc/contracts/types';
 
 const makeAgentMessage = (

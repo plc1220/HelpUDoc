@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import {
   Box,
+  Button,
   Chip,
   Collapse,
   IconButton,
@@ -15,6 +16,7 @@ import {
 } from '@mui/material';
 import {
   Delete,
+  Difference,
   ExpandLess,
   ExpandMore,
   Groups,
@@ -24,10 +26,22 @@ import {
   MoreHoriz,
   Publish,
   Share,
+  Sync,
   Unpublished,
 } from '@mui/icons-material';
 
 import type { Workspace } from '../types';
+import {
+  DRAFT_REVIEW_CHANGES_ACTION_LABEL,
+  DRAFT_SYNC_ACTION_LABEL,
+  isDraftReviewChangesActionable,
+  isDraftSyncActionable,
+} from '../utils/workspaceDraftSync';
+import {
+  getPrivateWorkspaceStatusLabel,
+  getSharedWorkspaceStatusDetails,
+  getSharedWorkspacePublicationLabel,
+} from '../utils/workspaceStatusLabels';
 
 interface WorkspaceListProps {
   workspaces: Workspace[];
@@ -38,6 +52,9 @@ interface WorkspaceListProps {
   onHistoryWorkspace?: (workspace: Workspace) => void;
   onWithdrawWorkspace?: (workspace: Workspace) => void;
   onManageTeamAccess?: (workspace: Workspace) => void;
+  onSyncDraftWorkspace?: (workspace: Workspace) => void;
+  onReviewDraftChanges?: (workspace: Workspace) => void;
+  syncingDraftWorkspaceId?: string | null;
 }
 
 const COLLAPSE_STORAGE_KEY = 'helpudoc.workspace-sections';
@@ -51,6 +68,9 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
   onHistoryWorkspace,
   onWithdrawWorkspace,
   onManageTeamAccess,
+  onSyncDraftWorkspace,
+  onReviewDraftChanges,
+  syncingDraftWorkspaceId = null,
 }) => {
   const privateWorkspaces = workspaces.filter((workspace) => workspace.visibility !== 'team');
   const sharedWorkspaces = workspaces.filter((workspace) => workspace.visibility === 'team');
@@ -87,14 +107,28 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
     const isWithdrawn = workspace.publicationStatus === 'withdrawn';
     const hasPublishedVersions = Number(workspace.publishedVersionCount || 0) > 0
       || workspace.currentPublishedVersionNumber != null;
+    const canSyncDraft = isDraftSyncActionable(workspace) && Boolean(onSyncDraftWorkspace);
+    const canReviewDraftChanges = isDraftReviewChangesActionable(workspace)
+      && Boolean(onReviewDraftChanges);
+    const isSyncingDraft = syncingDraftWorkspaceId === workspace.id;
     const actions = [
+      canSyncDraft && onSyncDraftWorkspace ? {
+        label: DRAFT_SYNC_ACTION_LABEL,
+        icon: <Sync fontSize="small" />,
+        onClick: () => onSyncDraftWorkspace(workspace),
+      } : null,
+      canReviewDraftChanges && onReviewDraftChanges ? {
+        label: DRAFT_REVIEW_CHANGES_ACTION_LABEL,
+        icon: <Difference fontSize="small" />,
+        onClick: () => onReviewDraftChanges(workspace),
+      } : null,
       isPrivate && !workspace.linkedTeamWorkspaceId && onPublishWorkspace ? {
-        label: `Share ${workspace.name}`,
+        label: `Share workspace`,
         icon: <Share fontSize="small" />,
         onClick: () => onPublishWorkspace(workspace),
       } : null,
       isPrivate && workspace.linkedTeamWorkspaceId ? {
-        label: `Open shared workspace for ${workspace.name}`,
+        label: `Open shared workspace`,
         icon: <Groups fontSize="small" />,
         onClick: () => {
           const linked = workspaces.find((item) => item.id === workspace.linkedTeamWorkspaceId);
@@ -102,46 +136,40 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
         },
       } : null,
       !isPrivate && workspace.canPublish && (hasChangesToPublish || isWithdrawn) && onPublishWorkspace ? {
-        label: workspace.currentPublishedVersionNumber == null
-          ? hasPublishedVersions
-            ? `Publish ${workspace.name} again`
-            : `Create the first published version of ${workspace.name}`
-          : `Publish changes from ${workspace.name}`,
+        label: 'Lock current changes',
         icon: <Publish fontSize="small" />,
         onClick: () => onPublishWorkspace(workspace),
       } : null,
       !isPrivate && hasPublishedVersions && onHistoryWorkspace ? {
-        label: `Open published history for ${workspace.name}`,
+        label: `View locked versions`,
         icon: <History fontSize="small" />,
         onClick: () => onHistoryWorkspace(workspace),
       } : null,
       !isPrivate && workspace.canPublish && workspace.currentPublishedVersionNumber != null && onWithdrawWorkspace ? {
-        label: `Withdraw publication of ${workspace.name}`,
+        label: `Withdraw current lock`,
         icon: <Unpublished fontSize="small" />,
         onClick: () => onWithdrawWorkspace(workspace),
       } : null,
       !isPrivate && isOwner && onManageTeamAccess ? {
-        label: `Manage shared workspace access for ${workspace.name}`,
+        label: `Manage access`,
         icon: <ManageAccounts fontSize="small" />,
         onClick: () => onManageTeamAccess(workspace),
       } : null,
       (isPrivate || isOwner) ? {
-        label: `Delete ${workspace.name}`,
+        label: `Delete workspace`,
         icon: <Delete fontSize="small" />,
         onClick: () => onDeleteWorkspace(workspace.id),
       } : null,
     ].filter(Boolean) as Array<{ label: string; icon: React.ReactNode; onClick: () => void }>;
 
-    const publicationLabel = isWithdrawn
-      ? 'Publication withdrawn'
-      : workspace.currentPublishedVersionNumber == null
-        ? 'Working version only'
-        : hasChangesToPublish
-          ? `Changes since v${workspace.currentPublishedVersionNumber}`
-          : `Published v${workspace.currentPublishedVersionNumber}`;
-    const sharedDetails = [workspace.editingPolicy === 'review' ? 'Review' : 'Freeflow', publicationLabel].join(' · ');
+    const publicationLabel = getSharedWorkspacePublicationLabel(workspace);
+    const sharedDetails = getSharedWorkspaceStatusDetails(workspace);
+    const draftStatusLabel = getPrivateWorkspaceStatusLabel(workspace);
+    const draftStatusColor = canSyncDraft
+      ? 'warning.main'
+      : canReviewDraftChanges ? 'info.main' : 'text.secondary';
     const statusColor = isWithdrawn
-      ? 'text.disabled'
+      ? 'text.secondary'
       : workspace.currentPublishedVersionNumber == null
         ? 'text.secondary'
         : hasChangesToPublish
@@ -205,7 +233,69 @@ const WorkspaceList: React.FC<WorkspaceListProps> = ({
             }}
             secondaryTypographyProps={{ component: 'span' }}
             secondary={isPrivate ? (
-              workspace.linkedTeamWorkspaceId ? 'Private copy' : 'Private'
+              workspace.linkedTeamWorkspaceId ? (
+                <Box component="span" sx={{ display: 'flex', alignItems: 'center', gap: 0.75, minWidth: 0, flexWrap: 'wrap' }}>
+                  <Typography
+                    component="span"
+                    sx={{
+                      fontSize: '0.76rem',
+                      lineHeight: 1.25,
+                      color: draftStatusColor,
+                    }}
+                  >
+                    {draftStatusLabel}
+                  </Typography>
+                  {canSyncDraft && onSyncDraftWorkspace ? (
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      color="warning"
+                      startIcon={<Sync sx={{ fontSize: 14 }} />}
+                      disabled={isSyncingDraft}
+                      aria-label={`${DRAFT_SYNC_ACTION_LABEL} for ${workspace.name}`}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onSyncDraftWorkspace(workspace);
+                      }}
+                      sx={{
+                        minWidth: 0,
+                        px: 0.9,
+                        py: 0,
+                        fontSize: '0.7rem',
+                        lineHeight: 1.6,
+                        textTransform: 'none',
+                        '& .MuiButton-startIcon': { mr: 0.4 },
+                      }}
+                    >
+                      {isSyncingDraft ? 'Syncing…' : DRAFT_SYNC_ACTION_LABEL}
+                    </Button>
+                  ) : null}
+                  {canReviewDraftChanges && onReviewDraftChanges ? (
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      color="info"
+                      startIcon={<Difference sx={{ fontSize: 14 }} />}
+                      aria-label={`${DRAFT_REVIEW_CHANGES_ACTION_LABEL} for ${workspace.name}`}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onReviewDraftChanges(workspace);
+                      }}
+                      sx={{
+                        minWidth: 0,
+                        px: 0.9,
+                        py: 0,
+                        fontSize: '0.7rem',
+                        lineHeight: 1.6,
+                        textTransform: 'none',
+                        '& .MuiButton-startIcon': { mr: 0.4 },
+                      }}
+                    >
+                      {DRAFT_REVIEW_CHANGES_ACTION_LABEL}
+                    </Button>
+                  ) : null}
+                </Box>
+              ) : draftStatusLabel
             ) : (
               <Box component="span" sx={{ display: 'flex', alignItems: 'flex-start', gap: 0.7, minWidth: 0 }}>
                 <Box

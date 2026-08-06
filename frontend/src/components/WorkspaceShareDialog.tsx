@@ -33,10 +33,8 @@ import {
   listWorkspaceTeams,
   removeWorkspaceCollaborator,
   removeWorkspaceTeam,
-  updateWorkspaceEditingPolicy,
   type DirectoryUser,
   type WorkspaceAccessTeam,
-  type WorkspaceEditingPolicy,
   type WorkspaceCollaborator,
   type WorkspaceTeam,
 } from '../services/workspaceApi';
@@ -83,8 +81,6 @@ const WorkspaceShareDialog: React.FC<WorkspaceShareDialogProps> = ({
 
   const [selected, setSelected] = useState<DirectoryUser[]>([]);
   const [inviteRole, setInviteRole] = useState<'editor' | 'contributor' | 'viewer'>('contributor');
-  const [editingPolicy, setEditingPolicy] = useState<WorkspaceEditingPolicy>('direct');
-  const [policyBusy, setPolicyBusy] = useState(false);
   const [inviteBusy, setInviteBusy] = useState(false);
   const [inviteError, setInviteError] = useState<string | null>(null);
   const [removeBusyId, setRemoveBusyId] = useState<string | null>(null);
@@ -136,11 +132,10 @@ const WorkspaceShareDialog: React.FC<WorkspaceShareDialogProps> = ({
       setSelectedTeamId('');
       setSelectedTeamRole('contributor');
       setInviteRole('contributor');
-      setEditingPolicy(workspace?.editingPolicy || 'direct');
       setInviteError(null);
       setTeamError(null);
     }
-  }, [open, workspace?.editingPolicy]);
+  }, [open]);
 
   useEffect(() => {
     if (open && workspaceId) {
@@ -211,23 +206,6 @@ const WorkspaceShareDialog: React.FC<WorkspaceShareDialogProps> = ({
     }
   };
 
-  const handlePolicyChange = async (nextPolicy: WorkspaceEditingPolicy) => {
-    if (!workspaceId || nextPolicy === editingPolicy) return;
-    const previous = editingPolicy;
-    setEditingPolicy(nextPolicy);
-    setPolicyBusy(true);
-    try {
-      await updateWorkspaceEditingPolicy(workspaceId, nextPolicy);
-      await loadCollaborators();
-      await onWorkspaceChanged?.();
-    } catch (e) {
-      setEditingPolicy(previous);
-      setInviteError(e instanceof Error ? e.message : 'Failed to update editing policy');
-    } finally {
-      setPolicyBusy(false);
-    }
-  };
-
   const handleRemove = async (targetUserId: string) => {
     if (!workspaceId) return;
     setRemoveBusyId(targetUserId);
@@ -276,7 +254,7 @@ const WorkspaceShareDialog: React.FC<WorkspaceShareDialogProps> = ({
   return (
     <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm">
       <DialogTitle sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', pr: 1 }}>
-        <span>Manage shared workspace access</span>
+        <span>Manage access</span>
         <IconButton aria-label="close" onClick={onClose} size="small">
           <CloseIcon />
         </IconButton>
@@ -287,29 +265,6 @@ const WorkspaceShareDialog: React.FC<WorkspaceShareDialogProps> = ({
             {workspace.name}
           </Typography>
         ) : null}
-
-        <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600 }}>
-          Editing policy
-        </Typography>
-        <ToggleButtonGroup
-          exclusive
-          fullWidth
-          size="small"
-          value={editingPolicy}
-          disabled={policyBusy}
-          onChange={(_event, value) => {
-            if (value) void handlePolicyChange(value as WorkspaceEditingPolicy);
-          }}
-          sx={{ mb: 1 }}
-        >
-          <ToggleButton value="direct">Freeflow</ToggleButton>
-          <ToggleButton value="review">Review</ToggleButton>
-        </ToggleButtonGroup>
-        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 3 }}>
-          {editingPolicy === 'direct'
-            ? 'Contributors edit the live working version directly.'
-            : 'Contributors submit changes for review before they reach the working version.'}
-        </Typography>
 
         <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600 }}>
           Teams with access
@@ -496,8 +451,8 @@ const WorkspaceShareDialog: React.FC<WorkspaceShareDialogProps> = ({
           </ToggleButtonGroup>
         </Box>
         <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
-          Contributors edit directly in Freeflow or submit changes in Review. Publishers can also create
-          immutable published versions.
+          Contributors can edit shared content directly or work privately and submit changes for review.
+          Publishers can also approve proposals and create immutable locked versions.
         </Typography>
 
         {inviteError ? (

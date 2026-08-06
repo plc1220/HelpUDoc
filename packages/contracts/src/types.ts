@@ -25,6 +25,7 @@ export interface Workspace {
   currentPublishedVersionId?: string | null;
   currentPublishedVersionNumber?: number | null;
   publishedVersionCount?: number;
+  pendingProposalCount?: number;
   latestPublisherName?: string | null;
   lastPublishedAt?: string | null;
   createdAt?: string;

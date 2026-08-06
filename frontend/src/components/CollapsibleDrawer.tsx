@@ -17,6 +17,9 @@ interface CollapsibleDrawerProps {
   onHistoryWorkspace?: (workspace: Workspace) => void;
   onWithdrawWorkspace?: (workspace: Workspace) => void;
   onManageTeamAccess?: (workspace: Workspace) => void;
+  onSyncDraftWorkspace?: (workspace: Workspace) => void;
+  onReviewDraftChanges?: (workspace: Workspace) => void;
+  syncingDraftWorkspaceId?: string | null;
   onSelectWorkspace: (workspace: Workspace) => void;
   onCreateWorkspace: () => void | Promise<void>;
   onOpenSchedules?: () => void;
@@ -41,6 +44,9 @@ const CollapsibleDrawer: React.FC<CollapsibleDrawerProps> = ({
   onHistoryWorkspace,
   onWithdrawWorkspace,
   onManageTeamAccess,
+  onSyncDraftWorkspace,
+  onReviewDraftChanges,
+  syncingDraftWorkspaceId = null,
   onSelectWorkspace,
   onCreateWorkspace,
   onOpenSchedules,
@@ -179,6 +185,9 @@ const CollapsibleDrawer: React.FC<CollapsibleDrawerProps> = ({
               onHistoryWorkspace={onHistoryWorkspace}
               onWithdrawWorkspace={onWithdrawWorkspace}
               onManageTeamAccess={onManageTeamAccess}
+              onSyncDraftWorkspace={onSyncDraftWorkspace}
+              onReviewDraftChanges={onReviewDraftChanges}
+              syncingDraftWorkspaceId={syncingDraftWorkspaceId}
             />
           </Box>
           <Box

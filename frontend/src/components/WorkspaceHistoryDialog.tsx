@@ -25,6 +25,10 @@ type WorkspaceHistoryDialogProps = {
   workspace: Workspace | null;
   onClose: () => void;
   onRestored: () => void | Promise<void>;
+  onViewVersion?: (
+    workspace: Workspace,
+    version: PublishedWorkspaceVersion,
+  ) => void | Promise<void>;
 };
 
 const WorkspaceHistoryDialog: React.FC<WorkspaceHistoryDialogProps> = ({
@@ -32,6 +36,7 @@ const WorkspaceHistoryDialog: React.FC<WorkspaceHistoryDialogProps> = ({
   workspace,
   onClose,
   onRestored,
+  onViewVersion,
 }) => {
   const [versions, setVersions] = useState<PublishedWorkspaceVersion[]>([]);
   const [loading, setLoading] = useState(false);
@@ -50,7 +55,7 @@ const WorkspaceHistoryDialog: React.FC<WorkspaceHistoryDialogProps> = ({
 
   const handleRestore = async (version: PublishedWorkspaceVersion) => {
     if (!workspace) return;
-    if (!window.confirm(`Restore published version ${version.versionNumber}?`)) return;
+    if (!window.confirm(`Restore locked version ${version.versionNumber}?`)) return;
     setRestoreId(version.id);
     setError('');
     try {
@@ -67,7 +72,7 @@ const WorkspaceHistoryDialog: React.FC<WorkspaceHistoryDialogProps> = ({
 
   return (
     <Dialog open={open} onClose={restoreId ? undefined : onClose} fullWidth maxWidth="sm">
-      <DialogTitle>Published history</DialogTitle>
+      <DialogTitle>Locked history</DialogTitle>
       <DialogContent dividers>
         {loading ? (
           <Box sx={{ display: 'flex', justifyContent: 'center', py: 3 }}>
@@ -81,15 +86,27 @@ const WorkspaceHistoryDialog: React.FC<WorkspaceHistoryDialogProps> = ({
                   key={version.id}
                   divider
                   secondaryAction={
-                    workspace?.role === 'owner' && !version.isCurrent ? (
-                      <Button
-                        size="small"
-                        disabled={Boolean(restoreId)}
-                        onClick={() => void handleRestore(version)}
-                      >
-                        {restoreId === version.id ? 'Restoring…' : 'Restore'}
-                      </Button>
-                    ) : undefined
+                    <Box sx={{ display: 'flex', gap: 0.5 }}>
+                      {onViewVersion && workspace ? (
+                        <Button
+                          size="small"
+                          disabled={Boolean(restoreId)}
+                          aria-label={`View locked version ${version.versionNumber} as read-only`}
+                          onClick={() => void onViewVersion(workspace, version)}
+                        >
+                          View
+                        </Button>
+                      ) : null}
+                      {workspace?.role === 'owner' && !version.isCurrent ? (
+                        <Button
+                          size="small"
+                          disabled={Boolean(restoreId)}
+                          onClick={() => void handleRestore(version)}
+                        >
+                          {restoreId === version.id ? 'Restoring…' : 'Restore'}
+                        </Button>
+                      ) : null}
+                    </Box>
                   }
                 >
                   <ListItemText
@@ -100,14 +117,14 @@ const WorkspaceHistoryDialog: React.FC<WorkspaceHistoryDialogProps> = ({
                         : ''}`}
                     secondary={`${version.publisherName} · ${new Date(version.createdAt).toLocaleString()}${
                       version.note ? ` · ${version.note}` : ''
-                    }`}
+                    } · Immutable snapshot`}
                   />
                 </ListItem>
               ))}
             </List>
           ) : (
             <Alert severity="info">
-              This workspace has been shared, but no immutable version has been published yet.
+              This workspace has been shared, but no immutable version has been locked yet.
             </Alert>
           )
         )}

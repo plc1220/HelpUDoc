@@ -45,22 +45,23 @@ const WorkspaceConflictDialog: React.FC<WorkspaceConflictDialogProps> = ({
 
   return (
     <Dialog open={open} onClose={busy ? undefined : onClose} fullWidth maxWidth="sm">
-      <DialogTitle>Review workspace changes</DialogTitle>
+      <DialogTitle>Resolve changes</DialogTitle>
       <DialogContent dividers>
         <Alert severity="warning" sx={{ mb: 2 }}>
-          These files changed in both your private copy and the team version. Choose which version to keep.
+          The Working version changed while you were editing privately.
+          Choose which version to keep for each conflicting file.
         </Alert>
         {conflicts.map((conflict) => (
           <div key={conflict.path} style={{ marginBottom: 18 }}>
             <Typography variant="subtitle2">{conflict.path}</Typography>
             <Typography variant="caption" color="text.secondary">
-              Your copy: {conflict.privateChange}; team: {conflict.teamChange}
+              Your draft: {conflict.privateChange}; Working version: {conflict.teamChange}
             </Typography>
             {conflict.privateText !== undefined && conflict.teamText !== undefined ? (
               <>
                 <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1, mt: 1 }}>
                   <Box>
-                    <Typography variant="caption" sx={{ fontWeight: 700 }}>Your copy</Typography>
+                    <Typography variant="caption" sx={{ fontWeight: 700 }}>Your draft</Typography>
                     <Box
                       component="pre"
                       sx={{
@@ -80,7 +81,7 @@ const WorkspaceConflictDialog: React.FC<WorkspaceConflictDialogProps> = ({
                     </Box>
                   </Box>
                   <Box>
-                    <Typography variant="caption" sx={{ fontWeight: 700 }}>Team version</Typography>
+                    <Typography variant="caption" sx={{ fontWeight: 700 }}>Working version</Typography>
                     <Box
                       component="pre"
                       sx={{
@@ -116,7 +117,7 @@ const WorkspaceConflictDialog: React.FC<WorkspaceConflictDialogProps> = ({
               }}
             >
               <FormControlLabel value="private" control={<Radio />} label="Keep mine" />
-              <FormControlLabel value="team" control={<Radio />} label="Use team version" />
+              <FormControlLabel value="team" control={<Radio />} label="Use Working version" />
             </RadioGroup>
           </div>
         ))}
@@ -129,7 +130,7 @@ const WorkspaceConflictDialog: React.FC<WorkspaceConflictDialogProps> = ({
           onClick={() => void onConfirm(resolutions)}
           disabled={!complete || busy}
         >
-          Apply team updates
+          Save resolved changes
         </Button>
       </DialogActions>
     </Dialog>

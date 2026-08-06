@@ -195,6 +195,30 @@ export type PublishedWorkspaceVersion = {
   isCurrent: boolean;
 };
 
+export type PublishedVersionFile = {
+  id: string;
+  name: string;
+  path: string;
+  workspaceId: string;
+  storageType: 'local';
+  mimeType: string | null;
+  size: number;
+  publishedVersionId: string;
+};
+
+export type PublishedVersionSnapshot = {
+  workspaceId: string;
+  versionId: string;
+  versionNumber: number;
+  note: string | null;
+  createdAt: string;
+  isCurrent: boolean;
+  folders: string[];
+  files: PublishedVersionFile[];
+};
+
+export type PublishedVersionFileContent = PublishedVersionFile & { content: string };
+
 export const listWorkspaceTeams = async (): Promise<WorkspaceTeam[]> => {
   const response = await apiFetch(`${API_URL}/workspaces/teams`);
   if (!response.ok) {
@@ -236,7 +260,7 @@ export const withdrawWorkspacePublication = async (workspaceId: string) => {
     method: 'POST',
   });
   if (!response.ok) {
-    return throwWorkspaceApiError(response, 'Failed to withdraw publication');
+    return throwWorkspaceApiError(response, 'Failed to withdraw lock');
   }
   return response.json() as Promise<{
     workspaceId: string;
@@ -363,6 +387,32 @@ export const listPublishedWorkspaceHistory = async (
   return payload.versions || [];
 };
 
+export const getPublishedVersionSnapshot = async (
+  teamWorkspaceId: string,
+  versionId: string,
+): Promise<PublishedVersionSnapshot> => {
+  const response = await apiFetch(`${API_URL}/workspaces/${teamWorkspaceId}/versions/${versionId}`);
+  if (!response.ok) {
+    return throwWorkspaceApiError(response, 'Failed to load locked version');
+  }
+  return response.json();
+};
+
+export const getPublishedVersionFileContent = async (
+  teamWorkspaceId: string,
+  versionId: string,
+  relativePath: string,
+): Promise<PublishedVersionFileContent> => {
+  const params = new URLSearchParams({ path: relativePath });
+  const response = await apiFetch(
+    `${API_URL}/workspaces/${teamWorkspaceId}/versions/${versionId}/file?${params.toString()}`,
+  );
+  if (!response.ok) {
+    return throwWorkspaceApiError(response, 'Failed to load locked version file');
+  }
+  return response.json();
+};
+
 export const restorePublishedWorkspaceVersion = async (
   teamWorkspaceId: string,
   versionId: string,
@@ -372,7 +422,7 @@ export const restorePublishedWorkspaceVersion = async (
     { method: 'POST' },
   );
   if (!response.ok) {
-    return throwWorkspaceApiError(response, 'Failed to restore published version');
+    return throwWorkspaceApiError(response, 'Failed to restore locked version');
   }
   return response.json();
 };

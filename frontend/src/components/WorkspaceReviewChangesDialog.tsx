@@ -2,6 +2,7 @@ import { Button } from '@astryxdesign/core/Button';
 import {
   Alert,
   Box,
+  Button as MuiButton,
   CircularProgress,
   Dialog,
   DialogActions,
@@ -11,7 +12,7 @@ import {
   Typography,
 } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
-import { FileDiff, FilePlus2, FileX2, GitPullRequestArrow } from 'lucide-react';
+import { FileDiff, FilePlus2, FileX2, GitPullRequestArrow, RotateCcw } from 'lucide-react';
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 
 import type { Workspace } from '../types';
@@ -53,19 +54,29 @@ export default function WorkspaceReviewChangesDialog({
   colorMode,
   onClose,
   onSubmitted,
+  onSyncLatest,
+  syncing = false,
 }: {
   open: boolean;
   workspace: Pick<Workspace, 'id' | 'name'> | null;
   colorMode: 'light' | 'dark';
   onClose: () => void;
   onSubmitted?: () => void | Promise<void>;
+  /**
+   * Runs the same `Sync latest` flow as the `My draft` row, including the 409 conflict hand-off
+   * (spec sections 2.7 and 9). When omitted the banner points at that row instead.
+   */
+  onSyncLatest?: () => void | Promise<void>;
+  syncing?: boolean;
 }) {
   const [changes, setChanges] = useState<WorkspaceReviewChanges | null>(null);
   const [selectedPath, setSelectedPath] = useState('');
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+  const [syncRequested, setSyncRequested] = useState(false);
   const isDarkMode = colorMode === 'dark';
+  const isSyncing = syncing || syncRequested;
 
   const loadChanges = useCallback(async () => {
     if (!workspace?.id) return;
@@ -133,6 +144,22 @@ export default function WorkspaceReviewChangesDialog({
     }
   };
 
+  const syncLatest = useCallback(async () => {
+    if (!onSyncLatest) return;
+    setError('');
+    setSyncRequested(true);
+    try {
+      // Conflicting syncs are surfaced by the caller's `Resolve changes` dialog; reloading the diff
+      // afterwards keeps this view consistent with whatever the sync produced.
+      await onSyncLatest();
+      await loadChanges();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Failed to sync the latest Shared changes');
+    } finally {
+      setSyncRequested(false);
+    }
+  }, [loadChanges, onSyncLatest]);
+
   return (
     <Dialog
       open={open}
@@ -146,8 +173,8 @@ export default function WorkspaceReviewChangesDialog({
           <Typography variant="h6">Review changes</Typography>
           <Typography variant="caption" color="text.secondary">
             {changes
-              ? `${changes.sharedWorkspaceName} working version → ${changes.privateWorkspaceName}`
-              : workspace?.name || 'Private working copy'}
+              ? `${changes.sharedWorkspaceName} Working version → ${changes.privateWorkspaceName}`
+              : workspace?.name || 'My draft'}
           </Typography>
         </Box>
         <IconButton aria-label="Close Review changes" onClick={onClose} size="small">
@@ -155,9 +182,37 @@ export default function WorkspaceReviewChangesDialog({
         </IconButton>
       </DialogTitle>
       {changes?.isStale ? (
-        <Alert severity="warning" square>
-          The Shared working version changed after this private copy was created. The comparison below uses the
-          current Shared version, and the proposal will require stale-change review before it can be applied.
+        <Alert
+          severity="warning"
+          square
+          sx={{ px: 3, py: 1.5, '& .MuiAlert-message': { display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 1, flex: 1, minWidth: 0 } }}
+        >
+          <Box sx={{ flex: '1 1 auto', minWidth: 0 }}>
+            <Typography variant="body2" fontWeight={600} sx={{ mb: 0.25 }}>
+              The Working version changed while you were editing privately.
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              {onSyncLatest
+                ? 'Sync the latest version before this submission can be applied.'
+                : 'Sync the latest version before this submission can be applied. Use Sync latest on the My draft row in the sidebar, or in its action menu.'}
+            </Typography>
+          </Box>
+          <Box sx={{ display: 'flex', gap: 1, flexShrink: 0 }}>
+            {onSyncLatest ? (
+              <MuiButton
+                variant="outlined"
+                size="small"
+                startIcon={<RotateCcw size={14} />}
+                disabled={isSyncing}
+                onClick={() => { void syncLatest(); }}
+              >
+                {isSyncing ? 'Syncing…' : 'Sync latest'}
+              </MuiButton>
+            ) : null}
+            <MuiButton variant="text" size="small" onClick={() => setSelectedPath(changes?.files[0]?.path || '')}>
+              View differences
+            </MuiButton>
+          </Box>
         </Alert>
       ) : null}
       {error ? <Alert severity="error" square>{error}</Alert> : null}
@@ -218,7 +273,7 @@ export default function WorkspaceReviewChangesDialog({
               })}
               {!changes.files.length ? (
                 <Typography variant="body2" color="text.secondary" sx={{ px: 2, py: 3 }}>
-                  This private copy matches the Shared working version.
+                  My draft matches the Shared Working version.
                 </Typography>
               ) : null}
             </Box>
@@ -260,15 +315,15 @@ export default function WorkspaceReviewChangesDialog({
       <DialogActions sx={{ px: 3, py: 2, justifyContent: 'space-between' }}>
         <Typography variant="caption" color="text.secondary">
           {changes?.proposal
-            ? 'This private copy already has an open Review proposal.'
-            : 'Submitting does not publish or directly change the Shared workspace.'}
+            ? 'This draft already has an open submission for review.'
+            : 'Submitting creates an immutable snapshot for publisher review.'}
         </Typography>
         <Box sx={{ display: 'flex', gap: 1 }}>
           <Button label="Close" variant="ghost" onClick={onClose} />
           <Button
             label={changes?.proposal
               ? 'Submitted for review'
-              : submitting ? 'Submitting…' : 'Submit changes for review'}
+              : submitting ? 'Submitting…' : 'Submit for review'}
             variant="primary"
             icon={<GitPullRequestArrow size={16} />}
             isDisabled={submitting || !changes?.hasChanges || Boolean(changes?.proposal)}

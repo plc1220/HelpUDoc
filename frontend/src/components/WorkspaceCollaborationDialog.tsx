@@ -57,7 +57,7 @@ const typeLabel: Record<WorkspaceCollaborationObjectType, string> = {
   annotation: 'Annotation',
   sticky_note: 'Note',
   task: 'Task',
-  change_proposal: 'Change proposal',
+  change_proposal: 'Submission',
 };
 
 const formatDate = (value: string) =>
@@ -232,11 +232,9 @@ const WorkspaceCollaborationDialog = ({
     <Dialog open={open} onClose={onClose} fullWidth maxWidth="lg">
       <DialogTitle sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', pr: 1 }}>
         <Box>
-          <Typography variant="h6">Notes, annotations & proposals</Typography>
+          <Typography variant="h6">Collaboration</Typography>
           <Typography variant="caption" color="text.secondary">
-            {workspace?.editingPolicy === 'review'
-              ? 'Review proposals before applying them to the working version'
-              : 'Notes and proposals stay attached to the live Shared workspace'}
+            Comments, review requests, and activity for the Shared workspace
           </Typography>
         </Box>
         <IconButton aria-label="close collaboration" onClick={onClose} size="small">
@@ -263,7 +261,7 @@ const WorkspaceCollaborationDialog = ({
                 <MenuItem value="annotation" disabled={!filePath}>Annotation {filePath ? '' : '(open a file first)'}</MenuItem>
                 <MenuItem value="sticky_note">Note</MenuItem>
                 <MenuItem value="task">Task</MenuItem>
-                {canPropose ? <MenuItem value="change_proposal">Change proposal</MenuItem> : null}
+                {canPropose ? <MenuItem value="change_proposal">Submit for review</MenuItem> : null}
               </Select>
               {type === 'annotation' && filePath ? (
                 <Alert severity="info" icon={false}>
@@ -357,7 +355,7 @@ const WorkspaceCollaborationDialog = ({
                 <Typography variant="body1" sx={{ mt: 2, whiteSpace: 'pre-wrap' }}>{selected.body}</Typography>
                 {selected.linkedPrivateWorkspaceId ? (
                   <Alert severity="success" sx={{ mt: 2 }}>
-                    A governed private working copy is linked to this proposal and is ready in My Workspaces.
+                    A private draft is linked to this submission and is ready in My Workspaces.
                   </Alert>
                 ) : null}
                 <Stack direction="row" spacing={1} sx={{ my: 2, flexWrap: 'wrap' }}>
@@ -368,7 +366,7 @@ const WorkspaceCollaborationDialog = ({
                     && selected.visibility === 'workspace_audience'
                     && selected.type !== 'change_proposal' ? (
                       <Button size="small" variant="outlined" disabled={actionBusy} onClick={() => void handleConvertToProposal()}>
-                        Turn into proposal
+                        Submit for review
                       </Button>
                     ) : null}
                   {canModerate
@@ -382,13 +380,13 @@ const WorkspaceCollaborationDialog = ({
                           disabled={actionBusy}
                           onClick={() => setReviewCopy({
                             id: selected.linkedPrivateWorkspaceId!,
-                            name: selected.title || 'Proposed private changes',
+                            name: selected.title || 'Submitted changes',
                           })}
                         >
                           Review changes
                         </Button>
                         <Button size="small" variant="contained" disabled={actionBusy} onClick={() => void handleApplyProposal()}>
-                          Apply to working version
+                          Approve and apply
                         </Button>
                       </>
                     ) : null}

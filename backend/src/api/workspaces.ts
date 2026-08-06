@@ -256,6 +256,39 @@ export default function workspaceRoutes(
     }
   });
 
+  router.get('/:workspaceId/versions/:versionId', async (req, res) => {
+    try {
+      const user = requireUserContext(req);
+      const snapshot = await publicationService.getVersionSnapshot(
+        req.params.workspaceId,
+        req.params.versionId,
+        user.userId,
+      );
+      res.json(snapshot);
+    } catch (error) {
+      handleError(res, error, 'Failed to load published version');
+    }
+  });
+
+  router.get('/:workspaceId/versions/:versionId/file', async (req, res) => {
+    try {
+      const user = requireUserContext(req);
+      const relativePath = req.query.path;
+      if (typeof relativePath !== 'string' || !relativePath.trim()) {
+        return res.status(400).json({ error: 'Missing file path' });
+      }
+      const file = await publicationService.readVersionFile(
+        req.params.workspaceId,
+        req.params.versionId,
+        relativePath,
+        user.userId,
+      );
+      res.json(file);
+    } catch (error) {
+      handleError(res, error, 'Failed to load published version file');
+    }
+  });
+
   router.post('/:workspaceId/versions/:versionId/restore', async (req, res) => {
     try {
       const user = requireUserContext(req);

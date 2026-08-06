@@ -15,8 +15,6 @@ import {
   MenuItem,
   Select,
   TextField,
-  ToggleButton,
-  ToggleButtonGroup,
   Typography,
 } from '@mui/material';
 
@@ -27,7 +25,6 @@ import {
   publishWorkspace,
   shareWorkspaceWithAudience,
   type DirectoryUser,
-  type WorkspaceEditingPolicy,
   type WorkspaceNamedGrantRole,
   type WorkspaceTeam,
 } from '../services/workspaceApi';
@@ -55,7 +52,6 @@ const WorkspacePublishDialog: React.FC<WorkspacePublishDialogProps> = ({
   const [teamId, setTeamId] = useState('');
   const [teamsLoading, setTeamsLoading] = useState(false);
   const [namedRole, setNamedRole] = useState<WorkspaceNamedGrantRole>('contributor');
-  const [editingPolicy, setEditingPolicy] = useState<WorkspaceEditingPolicy>('direct');
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -69,7 +65,6 @@ const WorkspacePublishDialog: React.FC<WorkspacePublishDialogProps> = ({
       setTeams([]);
       setTeamId('');
       setNamedRole('contributor');
-      setEditingPolicy('direct');
       setNote('');
       setError('');
     }
@@ -130,7 +125,6 @@ const WorkspacePublishDialog: React.FC<WorkspacePublishDialogProps> = ({
           userIds: selectedPeople.map((person) => person.id),
           teamId: teamId || undefined,
           role: namedRole,
-          editingPolicy,
         });
       } else {
         await publishWorkspace(workspace.id, { note: note.trim() || undefined });
@@ -146,7 +140,7 @@ const WorkspacePublishDialog: React.FC<WorkspacePublishDialogProps> = ({
 
   return (
     <Dialog open={open} onClose={busy ? undefined : onClose} fullWidth maxWidth="sm">
-      <DialogTitle>{isPrivate ? 'Share workspace' : 'Create published version'}</DialogTitle>
+      <DialogTitle>{isPrivate ? 'Share workspace' : 'Lock current changes'}</DialogTitle>
       <DialogContent dividers>
         <Typography variant="body2" sx={{ mb: 2 }}>
           {isPrivate ? (
@@ -155,7 +149,8 @@ const WorkspacePublishDialog: React.FC<WorkspacePublishDialogProps> = ({
             </>
           ) : (
             <>
-              Snapshot the current working revision of <strong>{workspace?.name}</strong>. Live work can continue afterward.
+              Create an immutable locked version from the current Working version of <strong>{workspace?.name}</strong>.
+              Live work continues afterward, and the locked snapshot cannot be edited.
             </>
           )}
         </Typography>
@@ -188,7 +183,7 @@ const WorkspacePublishDialog: React.FC<WorkspacePublishDialogProps> = ({
             {teamId ? (
               <Alert severity="info" sx={{ mb: 2 }}>
                 Team members will receive {namedRole === 'viewer' ? 'Viewer' : 'Contributor'} access to the
-                shared workspace, including Team Chat and collaboration. Publisher authority remains direct-user only.
+                shared workspace, including Workspace Chat and collaboration. Publisher authority remains direct-user only.
               </Alert>
             ) : null}
             <Autocomplete
@@ -231,24 +226,9 @@ const WorkspacePublishDialog: React.FC<WorkspacePublishDialogProps> = ({
                 <MenuItem value="publisher">Publisher</MenuItem>
               </Select>
             </FormControl>
-            <Typography variant="subtitle2" sx={{ mb: 1 }}>Editing policy</Typography>
-            <ToggleButtonGroup
-              exclusive
-              fullWidth
-              size="small"
-              value={editingPolicy}
-              onChange={(_event, value) => {
-                if (value) setEditingPolicy(value as WorkspaceEditingPolicy);
-              }}
-              sx={{ mb: 1.5 }}
-            >
-              <ToggleButton value="direct">Freeflow</ToggleButton>
-              <ToggleButton value="review">Review</ToggleButton>
-            </ToggleButtonGroup>
-            <Alert severity="info">
-              {editingPolicy === 'direct'
-                ? 'Contributors edit the working version directly. The latest successful save wins.'
-                : 'Contributors propose changes; the owner reviews them before they reach the working version.'}
+            <Alert severity="info" sx={{ mb: 2 }}>
+              Contributors can edit shared content directly or work privately and submit changes for review.
+              Publishers can also approve submissions and create immutable locked versions.
             </Alert>
             {!teamId && selectedPeople.length === 0 ? (
               <Alert severity="warning" sx={{ mt: 2 }}>
@@ -258,8 +238,8 @@ const WorkspacePublishDialog: React.FC<WorkspacePublishDialogProps> = ({
           </>
         ) : (
           <TextField
-            label="Publication note (optional)"
-            placeholder="Describe this version"
+            label="Lock note (optional)"
+            placeholder="Describe this locked version"
             value={note}
             onChange={(event) => setNote(event.target.value)}
             multiline
@@ -274,7 +254,7 @@ const WorkspacePublishDialog: React.FC<WorkspacePublishDialogProps> = ({
       <DialogActions sx={{ px: 3, py: 2 }}>
         <Button onClick={onClose} color="inherit" disabled={busy}>Cancel</Button>
         <Button variant="contained" onClick={() => void handleSubmit()} disabled={!canSubmit}>
-          {busy ? <CircularProgress size={22} color="inherit" /> : isPrivate ? 'Share workspace' : 'Create version'}
+          {busy ? <CircularProgress size={22} color="inherit" /> : isPrivate ? 'Share workspace' : 'Lock current changes'}
         </Button>
       </DialogActions>
     </Dialog>
