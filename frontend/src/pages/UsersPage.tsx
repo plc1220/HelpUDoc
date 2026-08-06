@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Avatar } from '@astryxdesign/core/Avatar';
 import { Badge } from '@astryxdesign/core/Badge';
+import { Button } from '@astryxdesign/core/Button';
+import { IconButton } from '@astryxdesign/core/IconButton';
 import { MultiSelector } from '@astryxdesign/core/MultiSelector';
 import { Pagination } from '@astryxdesign/core/Pagination';
 import { SegmentedControl, SegmentedControlItem } from '@astryxdesign/core/SegmentedControl';
@@ -19,6 +21,7 @@ import {
   UserRound,
   Users2,
   Wrench,
+  X,
 } from 'lucide-react';
 import SettingsShell from '../components/settings/SettingsShell';
 import {
@@ -467,19 +470,13 @@ const UsersPage = () => {
       header: 'Role',
       width: pixel(150),
       renderCell: (user) => (
-        <button
-          type="button"
+        <Button
+          label={user.isAdmin ? 'Admin' : 'Member'}
+          variant={user.isAdmin ? 'primary' : 'secondary'}
+          size="sm"
+          icon={user.isAdmin ? <ShieldCheck size={14} /> : <ShieldOff size={14} />}
           onClick={() => void handleToggleAdmin(user)}
-          className={cx(
-            'inline-flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold transition',
-            user.isAdmin
-              ? 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200'
-              : 'bg-slate-100 text-slate-700 hover:bg-slate-200',
-          )}
-        >
-          {user.isAdmin ? <ShieldCheck size={14} /> : <ShieldOff size={14} />}
-          {user.isAdmin ? 'Admin' : 'Member'}
-        </button>
+        />
       ),
     },
     {
@@ -498,21 +495,16 @@ const UsersPage = () => {
         const isCurrentUser = currentUser?.id === user.id;
         const isDeleting = deletingUserId === user.id;
         return (
-          <button
-            type="button"
-            disabled={isCurrentUser || isDeleting}
+          <Button
+            label="Delete"
+            variant="destructive"
+            size="sm"
+            icon={<Trash2 size={14} />}
+            isDisabled={isCurrentUser || isDeleting}
+            isLoading={isDeleting}
             onClick={() => void handleOpenDeleteModal(user)}
-            className={cx(
-              'inline-flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold transition',
-              isCurrentUser || isDeleting
-                ? 'cursor-not-allowed bg-slate-100 text-slate-400'
-                : 'bg-rose-50 text-rose-700 hover:bg-rose-100',
-            )}
-            title={isCurrentUser ? 'Self-delete is blocked in the admin portal' : 'Delete user'}
-          >
-            {isDeleting ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
-            Delete
-          </button>
+            tooltip={isCurrentUser ? 'Self-delete is blocked in the admin portal' : 'Delete user'}
+          />
         );
       },
     },
@@ -572,17 +564,16 @@ const UsersPage = () => {
                   <option value="role">Role</option>
                   <option value="createdAt">Date joined</option>
                 </select>
-                <button
-                  type="button"
+                <Button
+                  label={userSortOrder === 'asc' ? 'Ascending' : 'Descending'}
+                  variant="secondary"
+                  size="sm"
+                  icon={userSortOrder === 'asc' ? <ArrowDownAZ size={16} /> : <ArrowUpAZ size={16} />}
                   onClick={() => {
                     setUserSortOrder((order) => (order === 'asc' ? 'desc' : 'asc'));
                     setUserPage(1);
                   }}
-                  className="settings-portal-button-secondary inline-flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm font-medium"
-                >
-                  {userSortOrder === 'asc' ? <ArrowDownAZ size={16} /> : <ArrowUpAZ size={16} />}
-                  {userSortOrder === 'asc' ? 'Ascending' : 'Descending'}
-                </button>
+                />
               </div>
             </div>
 
@@ -648,15 +639,14 @@ const UsersPage = () => {
                   placeholder="New team name"
                   className="settings-control min-w-0 flex-1 rounded-xl px-3 py-2.5 text-sm"
                 />
-                <button
-                  type="button"
+                <IconButton
+                  label="Create team"
+                  variant="primary"
+                  size="md"
+                  icon={<Plus size={16} />}
                   onClick={() => void handleCreateGroup()}
-                  className="settings-button-primary inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl"
-                  aria-label="Create team"
-                  title="Create team"
-                >
-                  <Plus size={16} />
-                </button>
+                  tooltip="Create team"
+                />
               </div>
 
               <div className="mt-4 max-h-80 space-y-2 overflow-y-auto pr-1 md:max-h-[calc(100vh-22rem)]">
@@ -703,14 +693,13 @@ const UsersPage = () => {
                       title={selectedGroup.name}
                       description={`${groupMembers.length} member${groupMembers.length === 1 ? '' : 's'} · access is inherited by every team member`}
                       actions={(
-                        <button
-                          type="button"
+                        <Button
+                          label="Delete team"
+                          variant="destructive"
+                          size="sm"
+                          icon={<Trash2 size={14} />}
                           onClick={() => void handleDeleteGroup(selectedGroup.id)}
-                          className="inline-flex items-center gap-2 rounded-xl bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700 transition hover:bg-rose-100"
-                        >
-                          <Trash2 size={14} />
-                          Delete team
-                        </button>
+                        />
                       )}
                     />
 
@@ -729,14 +718,13 @@ const UsersPage = () => {
                               <option key={user.id} value={user.id}>{user.displayName}</option>
                             ))}
                           </select>
-                          <button
-                            type="button"
+                          <Button
+                            label="Add"
+                            variant="primary"
+                            size="sm"
                             onClick={() => void handleAddMember()}
-                            disabled={!selectedUserId}
-                            className="settings-button-primary rounded-xl px-4 py-2.5 text-sm font-semibold disabled:opacity-50"
-                          >
-                            Add
-                          </button>
+                            isDisabled={!selectedUserId}
+                          />
                         </div>
                       </div>
 
@@ -761,25 +749,19 @@ const UsersPage = () => {
                                 </div>
                               </div>
                               <div className="flex shrink-0 items-center gap-2">
-                                <button
-                                  type="button"
+                                <Button
+                                  label={member.isTeamLead ? 'Team Lead' : 'Make lead'}
+                                  variant={member.isTeamLead ? 'primary' : 'secondary'}
+                                  size="sm"
+                                  icon={<ShieldCheck size={13} />}
                                   onClick={() => void handleToggleTeamLead(member)}
-                                  className={`inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-semibold ${
-                                    member.isTeamLead
-                                      ? 'bg-emerald-50 text-emerald-700'
-                                      : 'bg-slate-100 text-slate-600'
-                                  }`}
-                                >
-                                  <ShieldCheck size={13} />
-                                  {member.isTeamLead ? 'Team Lead' : 'Make lead'}
-                                </button>
-                                <button
-                                  type="button"
+                                />
+                                <Button
+                                  label="Remove"
+                                  variant="ghost"
+                                  size="sm"
                                   onClick={() => void handleRemoveMember(member.id)}
-                                  className="text-xs font-semibold text-rose-600 hover:text-rose-700"
-                                >
-                                  Remove
-                                </button>
+                                />
                               </div>
                             </div>
                           ))}
@@ -795,23 +777,22 @@ const UsersPage = () => {
                       description="Choose what members of this Team can use. Administrators can manage assignments, but also need access themselves to use a skill."
                       actions={(
                         <div className="flex items-center gap-2">
-                          <button
-                            type="button"
+                          <Button
+                            label="Reset"
+                            variant="secondary"
+                            size="sm"
                             onClick={() => setGroupAccess(savedGroupAccess)}
-                            disabled={!isAccessDirty || accessSaving}
-                            className="settings-portal-button-secondary rounded-xl px-3 py-2 text-xs font-semibold disabled:opacity-50"
-                          >
-                            Reset
-                          </button>
-                          <button
-                            type="button"
+                            isDisabled={!isAccessDirty || accessSaving}
+                          />
+                          <Button
+                            label="Save access"
+                            variant="primary"
+                            size="sm"
+                            icon={accessSaving ? <Loader2 size={14} /> : <KeyRound size={14} />}
                             onClick={() => void handleSaveGroupAccess()}
-                            disabled={!isAccessDirty || accessSaving}
-                            className="settings-button-primary inline-flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold disabled:opacity-50"
-                          >
-                            {accessSaving ? <Loader2 size={14} className="animate-spin" /> : <KeyRound size={14} />}
-                            Save access
-                          </button>
+                            isDisabled={!isAccessDirty || accessSaving}
+                            isLoading={accessSaving}
+                          />
                         </div>
                       )}
                     />
@@ -829,7 +810,7 @@ const UsersPage = () => {
                             <p className="text-xs text-slate-500">Knowledge sources</p>
                           </div>
                           <div className="settings-soft-panel rounded-2xl p-4">
-                            <Wrench size={18} className="text-violet-600" />
+                            <Wrench size={18} className="settings-icon-purple" />
                             <p className="mt-3 text-2xl font-semibold text-slate-950">{groupAccess.skillIds.length}</p>
                             <p className="text-xs text-slate-500">Skills</p>
                           </div>
@@ -966,16 +947,16 @@ const UsersPage = () => {
                   This removes the account, deletes owned workspaces, and detaches authorship metadata from shared records.
                 </p>
               </div>
-              <button
-                type="button"
+              <IconButton
+                label="Close"
+                variant="ghost"
+                size="sm"
+                icon={<X size={16} />}
                 onClick={() => {
                   setPendingDeleteUser(null);
                   setDeletionImpact(null);
                 }}
-                className="rounded-lg px-2 py-1 text-sm text-slate-500 hover:bg-slate-100 hover:text-slate-900"
-              >
-                Close
-              </button>
+              />
             </div>
 
             <div className="mt-5 space-y-3">
@@ -1007,25 +988,24 @@ const UsersPage = () => {
             </div>
 
             <div className="mt-6 flex justify-end gap-3">
-              <button
-                type="button"
+              <Button
+                label="Cancel"
+                variant="secondary"
+                size="sm"
                 onClick={() => {
                   setPendingDeleteUser(null);
                   setDeletionImpact(null);
                 }}
-                className="settings-portal-button-secondary rounded-2xl px-4 py-2.5 text-sm font-semibold"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
+              />
+              <Button
+                label="Delete user"
+                variant="destructive"
+                size="sm"
+                icon={<Trash2 size={16} />}
                 onClick={() => void handleConfirmDeleteUser()}
-                disabled={deletionImpactLoading || deletingUserId === pendingDeleteUser.id}
-                className="settings-button-danger-solid inline-flex items-center gap-2 rounded-2xl px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
-              >
-                {deletingUserId === pendingDeleteUser.id ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
-                Delete user
-              </button>
+                isDisabled={deletionImpactLoading || deletingUserId === pendingDeleteUser.id}
+                isLoading={deletingUserId === pendingDeleteUser.id}
+              />
             </div>
           </div>
         </div>

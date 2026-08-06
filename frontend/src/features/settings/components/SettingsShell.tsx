@@ -1,4 +1,6 @@
 import { useMemo, useState, type ComponentType, type ReactNode } from 'react';
+import { Button } from '@astryxdesign/core/Button';
+import { IconButton } from '@astryxdesign/core/IconButton';
 import { Link, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard,
@@ -65,47 +67,36 @@ const SettingsShell = ({ title, description, eyebrow = 'Workspace settings', act
     });
   };
   const backToWorkspaceAction = (
-    <Link
-      to="/"
-      className="settings-portal-button-secondary inline-flex items-center gap-2 rounded-xl px-3.5 py-2.5 text-sm font-medium transition-colors"
-    >
-      <ArrowLeftCircle size={16} />
-      Back to Workspace
-    </Link>
+    <Button
+      label="Back to Workspace"
+      variant="secondary"
+      size="sm"
+      icon={<ArrowLeftCircle size={16} />}
+      href="/"
+    />
   );
 
   return (
-    <div className="settings-portal min-h-screen lg:flex">
+    <div className="settings-portal">
       <aside
-        className={`settings-portal-sidebar border-b transition-[width] duration-200 ease-out lg:flex lg:min-h-screen lg:flex-col lg:border-b-0 lg:border-r ${
-          isNavigationCollapsed ? 'lg:w-[72px]' : 'lg:w-64'
-        }`}
+        className={`settings-portal-sidebar${isNavigationCollapsed ? ' settings-portal-sidebar-collapsed' : ''}`}
       >
         <div
-          className={`flex min-h-[53px] items-center border-b border-slate-100 px-4 py-3 ${
-            isNavigationCollapsed ? 'lg:justify-center lg:px-2' : 'justify-between sm:px-5'
-          }`}
+          className={`settings-portal-sidebar-header${isNavigationCollapsed ? ' settings-portal-sidebar-header-collapsed' : ''}`}
         >
-          <h1 className={`text-sm font-semibold text-slate-900 ${isNavigationCollapsed ? 'lg:hidden' : ''}`}>
-            Settings
-          </h1>
-          <button
-            type="button"
+          <span className="settings-portal-sidebar-title">Settings</span>
+          <IconButton
+            label={isNavigationCollapsed ? 'Expand settings navigation' : 'Collapse settings navigation'}
+            variant="ghost"
+            size="sm"
+            icon={isNavigationCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
             onClick={toggleNavigation}
-            className="settings-portal-button-secondary hidden h-8 w-8 items-center justify-center rounded-lg transition-colors lg:inline-flex"
-            aria-label={isNavigationCollapsed ? 'Expand settings navigation' : 'Collapse settings navigation'}
-            title={isNavigationCollapsed ? 'Expand navigation' : 'Collapse navigation'}
-          >
-            {isNavigationCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
-          </button>
+            className="settings-portal-nav-toggle"
+            tooltip={isNavigationCollapsed ? 'Expand navigation' : 'Collapse navigation'}
+          />
         </div>
-        <nav
-          className={`flex-1 overflow-x-auto p-3 ${
-            isNavigationCollapsed ? 'lg:px-2' : ''
-          }`}
-          aria-label="Settings navigation"
-        >
-          <div className="flex gap-2 lg:block lg:space-y-1">
+        <nav className="settings-portal-nav" aria-label="Settings navigation">
+          <div className="settings-portal-nav-list">
             {navItems.map(({ label, icon: Icon, path }) => {
               const isActive = path === '/settings'
                 ? location.pathname === path
@@ -117,12 +108,10 @@ const SettingsShell = ({ title, description, eyebrow = 'Workspace settings', act
                   to={path}
                   aria-current={isActive ? 'page' : undefined}
                   title={isNavigationCollapsed ? label : undefined}
-                  className={`settings-portal-nav-item flex min-w-fit items-center rounded-lg py-2 text-sm font-medium transition-colors ${
-                    isNavigationCollapsed ? 'gap-3 px-3 lg:justify-center lg:gap-0 lg:px-2' : 'gap-3 px-3'
-                  } ${isActive ? 'settings-portal-nav-item-active' : ''}`}
+                  className={`settings-portal-nav-item${isNavigationCollapsed ? ' settings-portal-nav-item-collapsed' : ''}${isActive ? ' settings-portal-nav-item-active' : ''}`}
                 >
                   <Icon size={16} />
-                  <span className={isNavigationCollapsed ? 'lg:hidden' : ''}>{label}</span>
+                  <span className="settings-portal-nav-label">{label}</span>
                 </Link>
               );
             })}
@@ -130,17 +119,17 @@ const SettingsShell = ({ title, description, eyebrow = 'Workspace settings', act
         </nav>
       </aside>
 
-      <main className="min-w-0 flex-1 overflow-y-auto">
-        <div className="w-full px-4 py-4 sm:px-6 sm:py-5 lg:px-8 lg:py-6">
-          <div className="space-y-6">
-            <div className="border-b border-slate-200 pb-4">
-              <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
+      <main className="settings-portal-main">
+        <div className="settings-portal-content">
+          <div className="settings-portal-page-stack">
+            <div className="settings-portal-page-header">
+              <div className="settings-portal-page-header-content">
                 <div>
-                  <p className="text-xs font-medium uppercase tracking-[0.14em] text-slate-500">{eyebrow}</p>
-                  <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">{title}</h2>
-                  {description && <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600 sm:text-base">{description}</p>}
+                  <p className="settings-portal-eyebrow">{eyebrow}</p>
+                  <h2 className="settings-portal-page-title">{title}</h2>
+                  {description && <p className="settings-portal-page-description">{description}</p>}
                 </div>
-                <div className="flex flex-wrap items-center gap-3 xl:justify-end">
+                <div className="settings-portal-page-actions">
                   {backToWorkspaceAction}
                   {actions}
                 </div>

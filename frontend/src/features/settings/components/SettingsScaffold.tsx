@@ -1,5 +1,7 @@
 import type { ComponentType, ReactNode } from 'react';
 import { Card } from '@astryxdesign/core/Card';
+import { Heading } from '@astryxdesign/core/Heading';
+import { Text } from '@astryxdesign/core/Text';
 import { Loader2 } from 'lucide-react';
 
 const cx = (...classes: Array<string | false | null | undefined>) => classes.filter(Boolean).join(' ');
@@ -29,15 +31,15 @@ type SectionHeaderProps = {
 };
 
 export const SettingsSectionHeader = ({ title, description, eyebrow, actions }: SectionHeaderProps) => (
-  <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-    <div className="space-y-1.5">
+  <div className="settings-section-header">
+    <div className="settings-section-header-copy">
       {eyebrow ? (
-        <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-500">{eyebrow}</p>
+        <Text type="label" color="secondary" display="block" className="settings-section-eyebrow">{eyebrow}</Text>
       ) : null}
-      <h3 className="text-lg font-semibold tracking-tight text-slate-950">{title}</h3>
-      {description ? <p className="max-w-2xl text-sm leading-6 text-slate-600">{description}</p> : null}
+      <Heading level={3} className="settings-section-title">{title}</Heading>
+      {description ? <Text type="supporting" color="secondary" as="p" className="settings-section-description">{description}</Text> : null}
     </div>
-    {actions ? <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div> : null}
+    {actions ? <div className="settings-section-actions">{actions}</div> : null}
   </div>
 );
 
@@ -48,13 +50,13 @@ type NoticeProps = {
 };
 
 const noticeStyles: Record<NonNullable<NoticeProps['variant']>, string> = {
-  info: 'border-blue-200 bg-blue-50/80 text-slate-700',
-  warning: 'border-amber-200 bg-amber-50 text-amber-800',
-  error: 'border-rose-200 bg-rose-50 text-rose-700',
+  info: 'settings-notice-info',
+  warning: 'settings-notice-warning',
+  error: 'settings-notice-error',
 };
 
 export const SettingsNotice = ({ children, variant = 'info', className }: NoticeProps) => (
-  <div className={cx('settings-portal-surface-muted rounded-2xl border px-4 py-3 text-sm', noticeStyles[variant], className)}>{children}</div>
+  <div className={cx('settings-notice', noticeStyles[variant], className)}>{children}</div>
 );
 
 type EmptyStateProps = {
@@ -74,20 +76,20 @@ export const SettingsEmptyState = ({
 }: EmptyStateProps) => (
   <div
     className={cx(
-      'settings-portal-surface-muted rounded-[24px] border border-dashed border-slate-200 p-8',
-      align === 'center' ? 'text-center' : 'text-left',
+      'settings-empty-state',
+      align === 'center' ? 'settings-empty-state-centered' : 'settings-empty-state-aligned',
     )}
   >
-    <div className={cx('flex gap-4', align === 'center' ? 'flex-col items-center' : 'items-start')}>
+    <div className={cx('settings-empty-state-content', align === 'center' ? 'settings-empty-state-content-centered' : '')}>
       {Icon ? (
-        <span className="settings-portal-icon-muted flex h-12 w-12 items-center justify-center rounded-2xl ring-1 ring-slate-200">
+        <span className="settings-portal-icon-muted settings-empty-state-icon">
           <Icon size={20} />
         </span>
       ) : null}
-      <div className={cx('space-y-2', align === 'center' ? 'max-w-md' : 'flex-1')}>
-        <p className="text-base font-semibold text-slate-900">{title}</p>
-        <p className="text-sm leading-6 text-slate-600">{description}</p>
-        {action ? <div className={cx('pt-2', align === 'center' ? 'flex justify-center' : 'flex')}>{action}</div> : null}
+      <div className={cx('settings-empty-state-copy', align === 'center' ? 'settings-empty-state-copy-centered' : '')}>
+        <Text type="large" weight="semibold" as="p">{title}</Text>
+        <Text type="supporting" color="secondary" as="p">{description}</Text>
+        {action ? <div className="settings-empty-state-action">{action}</div> : null}
       </div>
     </div>
   </div>
@@ -99,9 +101,9 @@ type LoadingStateProps = {
 };
 
 export const SettingsLoadingState = ({ label, className }: LoadingStateProps) => (
-  <div className={cx('settings-portal-surface-muted flex items-center gap-3 rounded-2xl border border-slate-200 p-4 text-sm text-slate-600', className)}>
-    <Loader2 className="h-4 w-4 animate-spin" />
-    {label}
+  <div className={cx('settings-loading-state', className)}>
+    <Loader2 className="settings-loading-state-icon animate-spin" />
+    <Text type="supporting" color="secondary">{label}</Text>
   </div>
 );
 
@@ -123,14 +125,14 @@ type MetricCardProps = {
 
 export const SettingsMetricCard = ({ label, value, hint, icon: Icon }: MetricCardProps) => (
   <Card padding={5} className="settings-portal-card">
-    <div className="flex items-start justify-between gap-4">
+    <div className="settings-metric-card-content">
       <div>
-        <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">{label}</p>
-        <p className="mt-3 text-3xl font-semibold text-slate-950">{value}</p>
-        {hint ? <p className="mt-1 text-sm text-slate-500">{hint}</p> : null}
+        <Text type="label" color="secondary" display="block" className="settings-section-eyebrow">{label}</Text>
+        <Text size="3xl" weight="semibold" display="block" className="settings-metric-value">{value}</Text>
+        {hint ? <Text type="supporting" color="secondary" display="block">{hint}</Text> : null}
       </div>
       {Icon ? (
-        <span className="settings-portal-icon inline-flex h-11 w-11 items-center justify-center rounded-2xl">
+        <span className="settings-portal-icon settings-metric-icon">
           <Icon size={18} />
         </span>
       ) : null}
@@ -149,7 +151,7 @@ type TabsProps<T extends string> = {
 };
 
 export const SettingsTabs = <T extends string>({ tabs, value, onChange }: TabsProps<T>) => (
-  <div className="settings-portal-surface-muted inline-flex flex-wrap items-center gap-1 rounded-2xl border border-slate-200 p-1">
+  <div className="settings-portal-tabs">
     {tabs.map(({ id, label, icon: Icon }) => {
       const isActive = id === value;
       return (
@@ -158,9 +160,9 @@ export const SettingsTabs = <T extends string>({ tabs, value, onChange }: TabsPr
           type="button"
           onClick={() => onChange(id)}
           className={cx(
-            'settings-portal-nav-item inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-medium transition',
+            'settings-portal-tab',
             isActive
-              ? 'settings-portal-nav-item-active'
+              ? 'settings-portal-tab-active'
               : '',
           )}
         >
