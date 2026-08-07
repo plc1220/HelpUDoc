@@ -633,7 +633,11 @@ def _install_dependency_stubs():
         class _GraphInterrupt(Exception):
             pass
 
+        class _GraphRecursionError(RecursionError):
+            pass
+
         langgraph_errors.GraphInterrupt = _GraphInterrupt
+        langgraph_errors.GraphRecursionError = _GraphRecursionError
         sys.modules["langgraph.errors"] = langgraph_errors
         langgraph_pkg.errors = langgraph_errors
 
@@ -946,6 +950,61 @@ def test_chat_stream_returns_error_when_agent_missing(client_with_stubs):
 
     assert messages == [{"type": "error", "message": "Agent not initialized"}]
     assert source_tracker.updated_workspaces == []
+
+
+def test_chat_stream_preserves_python_stream_error_on_done(client_with_stubs):
+    client, registry, _ = client_with_stubs
+
+    class FailingAgent(StreamingAgent):
+        async def astream_events(self, *_args, **_kwargs):
+            raise RuntimeError("upstream boom")
+            yield {}  # pragma: no cover - generator marker
+
+    runtime = DummyRuntime("workspace-stream-error", FailingAgent([]))
+    registry.set_runtime("research", "workspace-stream-error", runtime)
+
+    payload = {"message": "hi", "history": []}
+    with client.stream(
+        "POST",
+        "/agents/research/workspace/workspace-stream-error/chat/stream",
+        json=payload,
+    ) as response:
+        assert response.status_code == 200
+        messages = _collect_stream_payloads(response)
+
+    errors = [item for item in messages if item["type"] == "error"]
+    assert errors and "upstream boom" in errors[0]["message"]
+    assert messages[-1]["type"] == "done"
+    assert messages[-1]["status"] == "failed"
+    assert "upstream boom" in messages[-1]["error"]
+
+
+def test_chat_stream_preserves_graph_recursion_error_cause(client_with_stubs):
+    client, registry, _ = client_with_stubs
+    from langgraph.errors import GraphRecursionError
+
+    class RecursionAgent(StreamingAgent):
+        async def astream_events(self, *_args, **_kwargs):
+            raise GraphRecursionError("Recursion limit of 1000 reached")
+            yield {}  # pragma: no cover - generator marker
+
+    runtime = DummyRuntime("workspace-recursion", RecursionAgent([]))
+    registry.set_runtime("research", "workspace-recursion", runtime)
+
+    payload = {"message": "hi", "history": []}
+    with client.stream(
+        "POST",
+        "/agents/research/workspace/workspace-recursion/chat/stream",
+        json=payload,
+    ) as response:
+        assert response.status_code == 200
+        messages = _collect_stream_payloads(response)
+
+    terminal = messages[-1]
+    assert terminal["type"] == "done"
+    assert terminal["status"] == "failed"
+    assert "recursion limit of 1000" in terminal["error"]
+    assert "Recursion limit of 1000 reached" in terminal["error"]
 
 
 def test_chat_stream_returns_404_for_unknown_agent(client_with_stubs):

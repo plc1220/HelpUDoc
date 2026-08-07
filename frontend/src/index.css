@@ -974,6 +974,9 @@ body {
 }
 
 .helpudoc-mdxeditor {
+  display: flex;
+  height: 100%;
+  flex-direction: column;
   min-height: 0;
   background: var(--color-background-surface);
   color: var(--color-text-primary);
@@ -991,6 +994,13 @@ body {
   --accentBg: color-mix(in srgb, var(--color-accent) 12%, transparent);
   --accentBgHover: color-mix(in srgb, var(--color-accent) 16%, transparent);
   --accentBgActive: color-mix(in srgb, var(--color-accent) 22%, transparent);
+}
+
+.helpudoc-mdxeditor .mdxeditor-root-contenteditable {
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .helpudoc-mdxeditor-light.helpudoc-mdxeditor,

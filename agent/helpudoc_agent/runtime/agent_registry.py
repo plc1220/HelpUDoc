@@ -628,7 +628,7 @@ class AgentRegistry:
             middleware=middleware,
             checkpointer=self._checkpointer,
             store=self._memory_store.store if self._memory_store is not None else None,
-        ).with_config({"recursion_limit": 1000})
+        ).with_config({"recursion_limit": int(self.settings.backend.recursion_limit)})
 
         runtime = AgentRuntimeState(agent_name=resolved_name, workspace_state=workspace_state, agent=agent)
         self._cache[key] = runtime

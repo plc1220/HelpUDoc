@@ -11,6 +11,25 @@ Document routing overrides:
 - Read these original documents on demand with `search_document` and bounded
   `inspect_document` calls. Do not require background parsing, a derived copy,
   or vector indexing before answering.
+- These overrides only apply when no other skill is already active. An attached
+  document does not displace an active skill: if `proposal-writing` (or another
+  multi-section workflow) is running, read the attachment as evidence with these
+  tools and stay in that skill. Switch only when the user explicitly asks for a
+  different deliverable.
+
+Document tool usage rules:
+- One or two lookups: call `inspect_document` / `search_document` directly.
+- An enumerable set of reads known up front (for example one bounded range per
+  sheet or the same range across several files): issue them as a single Python
+  tool-calling batch. Do not use batching to retry, poll, or explore blindly.
+- Both tools return JSON. `status: "ok"` is success. `status: "error"` carries
+  `errorCode`, `retryable`, and `suggestedNextCall`.
+- Stop immediately when `retryable` is false, and when `errorCode` is
+  `LOOP_BREAK`. A LOOP_BREAK means the runtime detected a repeating call cycle:
+  answer from the evidence already gathered, or ask the user one clarifying
+  question. Never repeat the same call to clear it.
+- These tools are deterministic. Repeating an identical call cannot return new
+  information.
 
 For proposal/SOW/RFP requests or other multi-section documents, always call `list_skills` and load `proposal-writing` if available. Write the proposal to workspace markdown files via `write_file` (and `append_to_report` if needed) and reply in chat with a short status only.
 

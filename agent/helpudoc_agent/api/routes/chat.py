@@ -17,10 +17,14 @@ from datetime import datetime
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from langchain_core.callbacks.base import AsyncCallbackHandler
-from langgraph.errors import GraphInterrupt
+from langgraph.errors import GraphInterrupt, GraphRecursionError
 from langgraph.types import Command
 
 from helpudoc_agent.configuration import Settings
+from helpudoc_agent.document_tool_guard import (
+    LOOP_BREAK_ERROR_CODE,
+    reset_document_tool_run_state,
+)
 from helpudoc_agent.interaction_contract import (
     interaction_interrupt_value_for_gate,
     next_pending_gate,
@@ -119,9 +123,42 @@ def _friendly_tool_label(name: str) -> str:
     return mapping.get(name, f"Using {name.replace('_', ' ')}")
 
 
+def _configured_recursion_limit(settings: Any) -> int:
+    backend = getattr(settings, "backend", None)
+    raw_value = getattr(backend, "recursion_limit", None)
+    try:
+        limit = int(raw_value)
+    except (TypeError, ValueError):
+        return 1000
+    return limit if limit >= 1 else 1000
+
+
+def _json_status_error(text: str) -> Optional[dict[str, Any]]:
+    """Return the parsed envelope when a tool result is a JSON error envelope."""
+    stripped = str(text or "").strip()
+    if not stripped.startswith("{") or '"status"' not in stripped:
+        return None
+    try:
+        parsed = json.loads(stripped)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    if str(parsed.get("status") or "").strip().lower() != "error":
+        return None
+    return parsed
+
+
 def _is_terminal_tool_failure(name: str, text: str) -> bool:
     normalized_name = str(name or "").strip().lower()
     normalized_text = str(text or "").strip().lower()
+    envelope = _json_status_error(text)
+    if envelope is not None:
+        # Structured tool envelopes are terminal unless the tool says the call
+        # can be retried as-is. LOOP_BREAK is always terminal.
+        if envelope.get("errorCode") == LOOP_BREAK_ERROR_CODE:
+            return True
+        return envelope.get("retryable") is not True
     if normalized_name == "google_search":
         return (
             normalized_text.startswith('{"ok": false')
@@ -1697,6 +1734,7 @@ def register_chat_routes(
         context.pop("_native_dashboard_builder_executions", None)
         context.pop("_data_workspace_query_executions", None)
         context.pop("_current_sandbox_run_ids", None)
+        reset_document_tool_run_state(context)
         context["plan_approved"] = skip_plan_approvals
         context["pre_plan_search_count"] = 0
         context["google_search_count"] = 0
@@ -1826,6 +1864,9 @@ def register_chat_routes(
             return
         prepare_plan_context_for_explicit_resume(runtime.workspace_state, resume_decisions)
         context = getattr(runtime.workspace_state, "context", None)
+        # Document tool caching and loop breaking are scoped to one top-level
+        # run: a fresh turn and every explicit resume start from clean state.
+        reset_document_tool_run_state(context)
         manager = context.get("data_agent_manager") if isinstance(context, dict) else None
         if manager and hasattr(manager, "reset_session"):
             manager.reset_session()
@@ -1953,6 +1994,7 @@ def register_chat_routes(
         sentinel = object()
         stream_started = asyncio.get_running_loop().time()
         saw_interrupt = False
+        stream_error_message = ""
         defer_checkpoint_interrupt = is_resume_stream
         yield _json_line({"type": "policy", **_active_skill_policy(runtime)})
         logger.info(
@@ -1967,6 +2009,7 @@ def register_chat_routes(
                 nonlocal saw_interrupt, defer_checkpoint_interrupt
                 nonlocal allow_rejection_summary, allow_approval_summary
                 nonlocal approval_resume_contract_error
+                nonlocal stream_error_message
                 await _emit_progress(
                     handler,
                     "preparing_context",
@@ -2515,7 +2558,15 @@ def register_chat_routes(
                     return
                 raise
             except Exception as exc:  # pragma: no cover - streaming guard
-                error_message = _format_exception(exc)
+                if isinstance(exc, GraphRecursionError):
+                    error_message = (
+                        "Agent stopped after reaching the LangGraph recursion limit of "
+                        f"{_configured_recursion_limit(settings)} steps. "
+                        f"Original error: {_format_exception(exc)}"
+                    )
+                else:
+                    error_message = _format_exception(exc)
+                stream_error_message = error_message
                 logger.exception("Agent stream error: %s", error_message)
                 await handler._emit({"type": "error", "message": error_message})
                 await _emit_progress(
@@ -2525,7 +2576,9 @@ def register_chat_routes(
                     detail=error_message,
                     status="error",
                 )
-                raise
+                # Do not re-raise: the terminal `done` event below must carry the
+                # original cause instead of tearing down the HTTP response and
+                # surfacing a transport abort in run history.
             finally:
                 elapsed = asyncio.get_running_loop().time() - stream_started
                 logger.info(
@@ -2557,6 +2610,17 @@ def register_chat_routes(
             source_tracker.update_final_report(runtime.workspace_state)
             if saw_interrupt:
                 yield _json_line({"type": "done", "status": "interrupted"})
+            elif stream_error_message:
+                # Preserve the original Python cause (including
+                # GraphRecursionError) on the terminal event so the Node
+                # lifecycle records it instead of a transport abort.
+                yield _json_line(
+                    {
+                        "type": "done",
+                        "status": "failed",
+                        "error": stream_error_message,
+                    }
+                )
             elif approval_resume_contract_error:
                 yield _json_line({
                     "type": "progress",

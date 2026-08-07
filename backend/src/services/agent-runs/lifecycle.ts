@@ -604,6 +604,7 @@ export const resolveStreamCloseDisposition = (input: {
   sawInterruptPayload?: Record<string, unknown> | null;
   loopErrorMessage?: string;
   stallErrorMessage?: string;
+  streamErrorMessage?: string;
   aborted?: boolean;
   contractErrorMessage?: string;
 }): { status: AgentRunStatus; error?: string; preserveInterrupt: boolean } => {
@@ -615,6 +616,12 @@ export const resolveStreamCloseDisposition = (input: {
   }
   if (input.stallErrorMessage) {
     return { status: 'failed', error: input.stallErrorMessage, preserveInterrupt: false };
+  }
+  // An upstream error reported by the agent process is the real cause. It must
+  // win over the transport-level abort that usually follows it, otherwise run
+  // history records 'aborted' instead of the original failure.
+  if (input.streamErrorMessage) {
+    return { status: 'failed', error: input.streamErrorMessage, preserveInterrupt: false };
   }
   if (input.aborted) {
     return { status: 'cancelled', preserveInterrupt: false };
@@ -3073,6 +3080,7 @@ async function runAgentRunWorker(
   let contractErrorMessage = '';
   let loopErrorMessage = '';
   let stallErrorMessage = '';
+  let streamErrorMessage = '';
   let latestFrontendSlidesArtifactPaths: Record<string, string> = {};
   let settled = false;
   let processingQueue: Promise<void> = Promise.resolve();
@@ -3798,6 +3806,16 @@ async function runAgentRunWorker(
       return 'continue';
     }
     await appendStreamEvent(runId, eventToAppend ? JSON.stringify(normalizeInterruptPayloadRecord(eventToAppend)) : line);
+    if (parsed?.type === 'error' || (parsed?.type === 'done' && terminalEvent?.status === 'failed')) {
+      // Keep the first upstream cause. Later transport aborts must not replace it.
+      // `contract_error` is deliberately excluded: it stays below user cancellation.
+      const upstreamError = parsed?.type === 'error'
+        ? coerceText(parsed.message || parsed.error).trim()
+        : coerceText(terminalEvent?.error).trim();
+      if (upstreamError && !streamErrorMessage) {
+        streamErrorMessage = upstreamError;
+      }
+    }
     if (parsed?.type === 'contract_error') {
       contractErrorMessage =
         typeof parsed.message === 'string' && parsed.message.trim()
@@ -3908,6 +3926,7 @@ async function runAgentRunWorker(
         sawInterruptPayload,
         loopErrorMessage,
         stallErrorMessage,
+        streamErrorMessage,
         aborted: controller.signal.aborted,
         contractErrorMessage,
       });
@@ -3925,6 +3944,7 @@ async function runAgentRunWorker(
         sawInterruptPayload,
         loopErrorMessage,
         stallErrorMessage,
+        streamErrorMessage,
         aborted: controller.signal.aborted,
       });
 
@@ -3947,13 +3967,17 @@ async function runAgentRunWorker(
       await finalizeRun(status, error.message);
     });
   } catch (error: any) {
-    const status: AgentRunStatus = controller.signal.aborted ? 'cancelled' : 'failed';
-    if (!controller.signal.aborted) {
+    const status: AgentRunStatus = streamErrorMessage
+      ? 'failed'
+      : controller.signal.aborted
+        ? 'cancelled'
+        : 'failed';
+    if (!controller.signal.aborted && !streamErrorMessage) {
       const message = buildAgentErrorPayload(error, params.persona);
       const errorPayload = JSON.stringify({ type: 'error', message });
       await appendStreamEvent(runId, errorPayload);
     }
-    await finalizeRun(status, error?.message || 'Agent run failed');
+    await finalizeRun(status, streamErrorMessage || error?.message || 'Agent run failed');
   }
 }
 

@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional
 import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from .config.env import get_agent_runtime_env, is_local_dev_node_env
+from .config.env import env_trim, get_agent_runtime_env, is_local_dev_node_env
 
 
 PACKAGE_ROOT = Path(__file__).resolve().parent
@@ -173,6 +173,15 @@ class BackendConfig(BaseModel):
         description=(
             "When true, synthesize a clarification interrupt if a skill turn ends with "
             "prose that asks for user input but never called request_clarification."
+        ),
+    )
+    recursion_limit: int = Field(
+        default=1000,
+        ge=1,
+        description=(
+            "LangGraph recursion limit for agent runs. Long multi-section skill runs "
+            "legitimately need a high ceiling, so the default is 1000 and should not "
+            "be lowered to work around tool loops."
         ),
     )
 
@@ -444,6 +453,17 @@ def load_settings(config_path: Path | None = None) -> Settings:
                 base_dir=override_base_dir,
             )
             config_dict["backend"] = backend_cfg
+    recursion_limit_override = env_trim("AGENT_RECURSION_LIMIT")
+    if recursion_limit_override:
+        backend_cfg = config_dict.get("backend") or {}
+        if isinstance(backend_cfg, dict):
+            try:
+                parsed_limit = int(recursion_limit_override)
+            except ValueError:
+                parsed_limit = 0
+            if parsed_limit >= 1:
+                backend_cfg["recursion_limit"] = parsed_limit
+                config_dict["backend"] = backend_cfg
 
     payload = {
         "model": config_dict.get("model", {}),

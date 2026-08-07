@@ -21,6 +21,9 @@ backend:
   plugins_root: plugins
   sync_skills_to_workspace: false
   implicit_input_guard: true
+  # Long multi-section skill runs need a high ceiling. Do not lower this to
+  # work around tool loops; the runtime breaks document tool loops directly.
+  recursion_limit: 1000
   code_interpreter:
     enabled: true
     tool_name: eval

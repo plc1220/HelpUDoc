@@ -725,6 +725,59 @@ test('resolveStreamCloseDisposition preserves an emitted interrupt ahead of stre
   );
 });
 
+test('resolveStreamCloseDisposition keeps the upstream cause ahead of a transport abort', () => {
+  // A Python-side error (for example GraphRecursionError) must survive the
+  // abort that follows it, so run history shows the original cause.
+  assert.deepEqual(
+    resolveStreamCloseDisposition({
+      streamErrorMessage: 'Agent stopped after reaching the LangGraph recursion limit of 1000 steps.',
+      aborted: true,
+    }),
+    {
+      status: 'failed',
+      error: 'Agent stopped after reaching the LangGraph recursion limit of 1000 steps.',
+      preserveInterrupt: false,
+    },
+  );
+
+  // Loop and stall detection still win over the upstream error text.
+  assert.deepEqual(
+    resolveStreamCloseDisposition({
+      loopErrorMessage: 'loop',
+      streamErrorMessage: 'boom',
+      aborted: true,
+    }),
+    { status: 'failed', error: 'loop', preserveInterrupt: false },
+  );
+  assert.deepEqual(
+    resolveStreamCloseDisposition({
+      stallErrorMessage: 'stall',
+      streamErrorMessage: 'boom',
+    }),
+    { status: 'failed', error: 'stall', preserveInterrupt: false },
+  );
+
+  // A pending interrupt is still preserved above every failure signal.
+  assert.deepEqual(
+    resolveStreamCloseDisposition({
+      sawInterruptPayload: { type: 'interrupt', kind: 'clarification' },
+      streamErrorMessage: 'boom',
+    }),
+    { status: 'awaiting_approval', preserveInterrupt: true },
+  );
+
+  // Without an upstream error, a user cancellation is still a cancellation and
+  // contract errors stay below it.
+  assert.deepEqual(
+    resolveStreamCloseDisposition({ aborted: true }),
+    { status: 'cancelled', preserveInterrupt: false },
+  );
+  assert.deepEqual(
+    resolveStreamCloseDisposition({ aborted: true, contractErrorMessage: 'contract' }),
+    { status: 'cancelled', preserveInterrupt: false },
+  );
+});
+
 test('terminalEventFromStreamPayload ignores recoverable progress tool errors', () => {
   assert.equal(
     terminalEventFromStreamPayload({

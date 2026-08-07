@@ -37,6 +37,28 @@ required_artifacts:
 - When the user provides an existing proposal or polished example, treat it as source material to be revised in place. Do not append "new improved sections" after the existing proposal unless the user explicitly asks for an addendum.
 - When the user provides DOCX examples, use their structure and level of formality as a style template, but keep markdown as the canonical editable source unless a DOCX export tool is explicitly available.
 
+## Attachments do not displace this skill
+An attached or tagged file is evidence, not a new task. While `proposal-writing`
+is active:
+- A tagged `.xlsx`/`.xlsm`/`.csv` workbook does not hand the run over to the
+  `xlsx` skill, and a tagged `.pdf`/`.docx` does not hand it over to `pdf` or
+  `docx`. Stay in this workflow and keep producing the required proposal
+  artifacts.
+- Read the attachment with `search_document` to locate the relevant content,
+  then `inspect_document` with a bounded page/paragraph/sheet range. Use direct
+  calls for one or two lookups; use a Python tool-calling batch only for an
+  enumerable set of reads known up front (for example one bounded range per
+  sheet).
+- Record what you extracted in `/research_context.md` under `User-provided
+  facts`, with the file name and the page/sheet/cell location.
+- Both document tools return JSON. On `status: "error"` with
+  `retryable: false`, or on `errorCode: "LOOP_BREAK"`, stop reading that file,
+  follow `suggestedNextCall`, and either continue the proposal from the evidence
+  you have or list the unread source under `Unknowns not verified`. Never repeat
+  the same failing call.
+- Only switch skills if the user explicitly asks for a spreadsheet, PDF, or
+  Word deliverable instead of a proposal.
+
 ## Proposal quality standard
 Good proposals in this workspace should feel like a commercial SOW, not a generic generated report. Default to the following structure unless the user asks for a lighter proposal:
 

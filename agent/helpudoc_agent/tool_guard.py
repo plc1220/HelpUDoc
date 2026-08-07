@@ -9,6 +9,11 @@ from langchain_core.tools import BaseTool
 from langgraph.errors import GraphBubbleUp
 from pydantic import ConfigDict, Field
 
+from .document_tool_guard import (
+    DOCUMENT_TOOL_NAMES,
+    check_document_tool_call,
+    record_document_tool_result,
+)
 from .skills_registry import is_tool_allowed
 from .state import WorkspaceState
 
@@ -255,6 +260,25 @@ class GuardedTool(BaseTool):
             if key not in {"id", "name", "type"}
         }
 
+    def _document_tool_context(self) -> Optional[dict]:
+        if self.name not in DOCUMENT_TOOL_NAMES:
+            return None
+        context = self.workspace_state.context
+        return context if isinstance(context, dict) else None
+
+    def _document_tool_short_circuit(self, payload: Any) -> Optional[str]:
+        """Return a cached result or a structured LOOP_BREAK for repeat cycles."""
+        context = self._document_tool_context()
+        if context is None:
+            return None
+        return check_document_tool_call(context, self.name, payload)
+
+    def _record_document_tool_result(self, payload: Any, result: Any) -> None:
+        context = self._document_tool_context()
+        if context is None:
+            return
+        record_document_tool_result(context, self.name, payload, result)
+
     def invoke(self, input: Any, config: Any = None, **kwargs: Any) -> Any:
         error = self._workspace_write_guard() or self._guard()
         if error:
@@ -262,8 +286,13 @@ class GuardedTool(BaseTool):
         memory_error = self._memory_guard(input)
         if memory_error:
             return self._blocked_result(input, memory_error)
+        wrapped_input = self._unwrap_runtime_input(input)
+        short_circuit = self._document_tool_short_circuit(wrapped_input)
+        if short_circuit is not None:
+            return self._success_result(input, short_circuit)
         try:
-            result = self.wrapped_tool.invoke(self._unwrap_runtime_input(input), config=config, **kwargs)
+            result = self.wrapped_tool.invoke(wrapped_input, config=config, **kwargs)
+            self._record_document_tool_result(wrapped_input, result)
             return self._success_result(input, result)
         except Exception as exc:
             return self._exception_result(input, exc)
@@ -275,12 +304,16 @@ class GuardedTool(BaseTool):
         memory_error = self._memory_guard(input)
         if memory_error:
             return self._blocked_result(input, memory_error)
+        wrapped_input = self._unwrap_runtime_input(input)
+        short_circuit = self._document_tool_short_circuit(wrapped_input)
+        if short_circuit is not None:
+            return self._success_result(input, short_circuit)
         try:
-            wrapped_input = self._unwrap_runtime_input(input)
             if hasattr(self.wrapped_tool, "ainvoke"):
                 result = await self.wrapped_tool.ainvoke(wrapped_input, config=config, **kwargs)
             else:
                 result = self.wrapped_tool.invoke(wrapped_input, config=config, **kwargs)
+            self._record_document_tool_result(wrapped_input, result)
             return self._success_result(input, result)
         except Exception as exc:
             return self._exception_result(input, exc)
@@ -301,8 +334,13 @@ class GuardedTool(BaseTool):
         memory_error = self._memory_guard(payload)
         if memory_error:
             return self._blocked_result(payload, memory_error)
+        short_circuit = self._document_tool_short_circuit(payload)
+        if short_circuit is not None:
+            return short_circuit
         try:
-            return self.wrapped_tool.invoke(payload)
+            result = self.wrapped_tool.invoke(payload)
+            self._record_document_tool_result(payload, result)
+            return result
         except Exception as exc:
             return self._exception_result(payload, exc)
 
@@ -322,9 +360,15 @@ class GuardedTool(BaseTool):
         memory_error = self._memory_guard(payload)
         if memory_error:
             return self._blocked_result(payload, memory_error)
+        short_circuit = self._document_tool_short_circuit(payload)
+        if short_circuit is not None:
+            return short_circuit
         try:
             if hasattr(self.wrapped_tool, "ainvoke"):
-                return await self.wrapped_tool.ainvoke(payload)
-            return self.wrapped_tool.invoke(payload)
+                result = await self.wrapped_tool.ainvoke(payload)
+            else:
+                result = self.wrapped_tool.invoke(payload)
+            self._record_document_tool_result(payload, result)
+            return result
         except Exception as exc:
             return self._exception_result(payload, exc)
